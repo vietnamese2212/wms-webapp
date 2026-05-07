@@ -1,6 +1,6 @@
 # Prisma Schema Review – WMS Webapp
 
-> Cập nhật lần cuối: 2026-05-07 (rev 4)
+> Cập nhật lần cuối: 2026-05-07 (rev 7)
 > Database: **PostgreSQL** (Supabase hoặc PostgreSQL gốc — Prisma provider không đổi)
 
 ---
@@ -40,20 +40,20 @@ Warehouse (Kho lớn)          → Ba Vì, Bàu Bàng
 
 | Model | Mục đích | Trạng thái |
 |---|---|---|
-| `Warehouse` | Kho lớn (Ba Vì, Bàu Bàng...) | 🆕 Cần tạo mới |
-| `SubWarehouse` | Kho nhỏ (TP1, TP2...) | 🆕 Cần tạo mới |
-| `Location` | Vị trí trong kho nhỏ | 🔄 Refactor (thêm FK) |
-| `Material` | Danh mục hàng hóa | 🆕 Cần tạo mới |
-| `Manufacturer` | Nhà máy sản xuất (NMSX) | 🆕 Cần tạo mới |
-| `Employee` | Nhân viên hệ thống | 🔄 Refactor (thêm warehouse_id) |
-| `Vehicle` | Xe vận chuyển | 🔄 Tách Driver |
-| `Driver` | Tài xế | 🆕 Cần tạo mới (tách từ Vehicle) |
-| `InventoryEntry` | Pallet tồn kho | 🔄 Refactor nặng |
-| `ExportHistory` | Lịch sử xuất kho | 🔄 Thêm FK |
-| `ProductionImport` | Phiếu nhập từ sản xuất | ✅ Ổn |
-| `LocationTransfer` | Chuyển vị trí pallet | ✅ Ổn |
-| `Menu` | Phân quyền menu | ✅ Ổn |
-| `Setting` | Cài đặt hệ thống | ✅ Ổn |
+| `Warehouse` | Kho lớn (Ba Vì, Bàu Bàng...) | ✅ Đã tạo, API + seed ổn |
+| `SubWarehouse` | Kho nhỏ (TP1, TP2...) | ✅ Đã tạo, API + seed ổn |
+| `Location` | Vị trí trong kho nhỏ | ✅ Đã tạo, location_code tự sinh |
+| `Material` | Danh mục hàng hóa | ✅ Đã tạo, đầy đủ field logistics |
+| `Manufacturer` | Nhà máy sản xuất (NMSX) | ✅ Đã tạo, API + seed ổn |
+| `Employee` | Nhân viên hệ thống | ✅ Đã tạo, có warehouse_id |
+| `Vehicle` | Xe vận chuyển | ✅ Đã tạo, có default_driver_id |
+| `Driver` | Tài xế | ✅ Đã tạo (tách từ Vehicle) |
+| `InventoryEntry` | Pallet tồn kho | ✅ Đã tạo, có stack_layer |
+| `ExportHistory` | Lịch sử xuất kho | ✅ Đã tạo |
+| `ProductionImport` | Phiếu nhập từ sản xuất | ✅ Đã tạo |
+| `LocationTransfer` | Chuyển vị trí pallet | ✅ Đã tạo |
+| `Menu` | Phân quyền menu | ✅ Đã tạo |
+| `Setting` | Cài đặt hệ thống | ✅ Đã tạo |
 
 ---
 
@@ -145,31 +145,74 @@ model Manufacturer {
 
 ```prisma
 model Material {
-  id                   String        @id @default(uuid())
-  material_code        String        @unique   // "1234567890"
-  material_description String                  // "Thùng carton 3 lớp 40x30x30"
-  short_name           String?                 // Auto: "Thùng carton [890]"
-  custom_short_name    String?                 // User override phần tên (suffix [890] giữ nguyên)
-  product_type         String?
-  unit                 String?                 // "thùng", "cái", "kg"
-  manufacturer_id      String?
-  manufacturer         Manufacturer? @relation(fields: [manufacturer_id], references: [id])
-  notes                String?
-  is_active            Boolean       @default(true)
-  created_at           DateTime      @default(now())
-  updated_at           DateTime      @updatedAt
+  id                    String        @id @default(uuid())
+  material_code         String        @unique   // "510000127"
+  material_description  String                  // "LOF Ba Vì Sữa tươi Có đường 180mlx48"
+  short_name            String?                 // Auto: "Ba Vì 180 [127]"
+  custom_short_name     String?                 // User override tên (suffix [xxx] giữ nguyên)
 
-  inventory_entries    InventoryEntry[]
-  export_history       ExportHistory[]
+  // Phân loại
+  category              String?                 // "Thành phẩm" | "NVL" | "POSM" | "Bao bì"...
+  product_type          String?                 // Loại pack size: "180", "110", "200"...
+  unit                  String?                 // "thùng", "cái", "kg"
+
+  // Thông số logistics – Thành phẩm
+  weight_kg             Decimal?               // Trọng lượng 1 thùng (kg)
+  cartons_per_pallet    Int?                   // Thùng/Pallet
+  cartons_per_pallet_mn Int?                   // Thùng/Pallet khu vực MN
+  units_per_carton      Int?                   // Hộp/Thùng
+
+  // Thông số logistics – NVL
+  ea_per_pallet         Int?                   // EA/Pallet → số pallet = CEIL(tổng EA / ea_per_pallet)
+
+  // Chất lượng & lưu kho
+  shelf_life_days       Int?                   // Hạn sử dụng (ngày)
+  storage_category      String?                // Điều kiện lưu kho: "UHT", "Fresh", "Frozen"...
+
+  // Truy xuất & tham chiếu
+  old_code              String?                // Mã cũ (legacy / migration)
+  image_url             String?                // Ảnh sản phẩm
+
+  manufacturer_id       String?
+  manufacturer          Manufacturer? @relation(fields: [manufacturer_id], references: [id])
+  notes                 String?
+  is_active             Boolean       @default(true)
+  created_at            DateTime      @default(now())
+  updated_at            DateTime      @updatedAt
+
+  inventory_entries     InventoryEntry[]
+  export_history        ExportHistory[]
+  production_imports    ProductionImport[]
 }
 ```
 
 **Logic sinh `short_name` tự động (backend):**
 ```typescript
-const suffix = material_code.slice(-3)           // "890"
+const suffix = material_code.slice(-3)           // "127"
 const base   = custom_short_name ?? material_description
-short_name   = `${base} [${suffix}]`             // "Thùng carton [890]"
+short_name   = `${base} [${suffix}]`             // "Ba Vì 180 [127]"
 ```
+
+**Mapping từ spreadsheet thực tế:**
+
+| Cột spreadsheet | Field DB | Ghi chú |
+|---|---|---|
+| Material | `material_code` | Mã SAP |
+| Material Description | `material_description` | Tên đầy đủ |
+| Tên gọi tắt | `short_name` / `custom_short_name` | Tự sinh hoặc override |
+| Loại | `product_type` | Pack size: 180, 110, 200... |
+| KG | `weight_kg` | KG/thùng |
+| Thùng_Pallet | `cartons_per_pallet` | |
+| Thùng_Pallet_MN | `cartons_per_pallet_mn` | Khu vực miền Nam |
+| Hộp_Thùng | `units_per_carton` | |
+| EA_Pallet (NVL) | `ea_per_pallet` | Chỉ NVL, tính pallet = CEIL(EA/ea_per_pallet) |
+| SHELFLIFE | `shelf_life_days` | Ngày |
+| KHO | `storage_category` | UHT, Fresh, Frozen... |
+| Mã cũ | `old_code` | Legacy code |
+| Hình ảnh | `image_url` | URL ảnh |
+| Note | `notes` | |
+
+**Filter API hỗ trợ:** `?category=NVL`, `?storage_category=UHT`, `?manufacturer_id=...`, `?search=...` (tìm theo code, description, short_name, old_code)
 
 ---
 
@@ -342,6 +385,9 @@ model Vehicle {
 - [x] `bypass_location` → thay bằng `stack_layer Int` (1=sàn, 2/3=chồng, không tính slot)
 - [x] Vehicle–Driver: 1 xe nhiều tài xế, Vehicle có `default_driver_id`, DeliveryOrder có `driver_id` riêng
 - [x] Legacy fields: `id2` xoá, `date_field` xoá, `match_date` xoá, `update_field` → `updated_at @updatedAt`
+- [x] Material logistics fields: `weight_kg`, `cartons_per_pallet`, `cartons_per_pallet_mn`, `units_per_carton`, `shelf_life_days`, `storage_category`, `old_code`, `image_url`
+- [x] Material `category`: phân loại "Thành phẩm" / "NVL" / "POSM" / "Bao bì"...
+- [x] Material `ea_per_pallet`: số EA/pallet cho NVL → pallet = CEIL(tổng EA ÷ ea_per_pallet)
 
 ---
 
@@ -398,3 +444,6 @@ Masterdata > Vị trí kho
 | 2026-05-07 | Xác nhận Material naming convention, thêm `custom_short_name` |
 | 2026-05-07 | Xác nhận multi-warehouse, location hierarchy, NMSX=Manufacturer, PostgreSQL/Supabase — thiết kế lại toàn bộ schema |
 | 2026-05-07 | Xác nhận cycle/bypass_location/Vehicle-Driver/legacy fields — hoàn tất tất cả câu hỏi, schema sẵn sàng |
+| 2026-05-07 | Deploy backend lên Vercel API routes; fix vite-env.d.ts; tất cả model ✅ live trên Supabase |
+| 2026-05-07 | Material: thêm 8 field logistics (weight_kg, cartons_per_pallet, cartons_per_pallet_mn, units_per_carton, shelf_life_days, storage_category, old_code, image_url) |
+| 2026-05-07 | Material: thêm `category` (Thành phẩm/NVL/POSM/Bao bì) và `ea_per_pallet` (tính pallet cho NVL) |

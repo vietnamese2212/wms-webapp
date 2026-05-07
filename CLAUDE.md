@@ -14,6 +14,43 @@
 
 
 
+## Trạng thái thực tế & Chuẩn code
+
+### Tính năng chưa hoàn thiện (phải fix trước khi coi là done)
+
+| Module | Vấn đề | File liên quan |
+|---|---|---|
+| **Auth** | Middleware JWT chưa implement, toàn bộ routes đang không được bảo vệ | `backend/src/middlewares/` (trống) |
+| **Outbound** | Page dùng mock data + placeholder camera, chưa kết nối API thực | `frontend/src/pages/wms/Outbound.tsx` |
+| **TMS / HR backend** | Routes bị comment out trong `app.ts`, chưa có controller/service | `backend/src/app.ts` dòng 28–30 |
+| **Services layer** | `backend/src/services/` trống — business logic đang nhét hết trong controllers | `backend/src/services/` |
+
+### Quy chuẩn bắt buộc khi viết code mới
+
+**TypeScript – không dùng `any`:**
+- Không viết `as any`, `as any[]`, hay `(err as any)` — phải định nghĩa kiểu rõ ràng
+- Lỗi từ Axios dùng `import type { AxiosError } from 'axios'`, không cast thủ công
+- API response hooks phải có return type cụ thể, không dùng generic `any[]`
+
+**Backend – tách biệt trách nhiệm:**
+- Business logic phải nằm trong `services/`, controller chỉ nhận request → gọi service → trả response
+- Mọi route mới phải đi qua auth middleware (sau khi implement)
+- Input validation dùng express-validator tại middleware, không validate inline trong controller
+
+**Cấu hình – không hardcode:**
+- Domain CORS, URL Vercel, port phải lấy từ `process.env`, không ghi cứng trong code
+- Ví dụ sai: `'https://wms-webapp.vercel.app'` — phải là `process.env.ALLOWED_ORIGIN`
+
+**QR parsing – validate date:**
+- Sau khi parse ngày từ QR string, kiểm tra `isNaN(date.getTime())` trước khi dùng
+- Không để invalid date âm thầm thành `null` mà không log warning
+
+**Frontend – error boundary:**
+- Mỗi route-level page phải được wrap bởi React Error Boundary để tránh crash toàn app
+- Lỗi API hiển thị inline (banner đỏ trong component), không dùng `console.error` làm cách duy nhất
+
+---
+
 ## QR Scanning Behavior (AppSheet-style)
 
 Tất cả màn hình có quét QR (nhập kho, xuất kho, kiểm kho, chấm công…) phải tuân theo nguyên tắc:

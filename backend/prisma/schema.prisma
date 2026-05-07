@@ -26,44 +26,31 @@ model Warehouse {
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
 
-  sub_warehouses SubWarehouse[]
-  employees      Employee[]
+  locations  Location[]
+  employees  Employee[]
 }
 
-model SubWarehouse {
-  id           String    @id @default(uuid())
-  warehouse_id String
-  warehouse    Warehouse @relation(fields: [warehouse_id], references: [id])
-  code         String              // "TP1", "NL1" – dùng làm prefix location_code
-  name         String              // "Thành phẩm 1", "Nguyên liệu 1"
-  type         String?             // "THANH_PHAM" | "NGUYEN_LIEU" | "BAN_THANH_PHAM"
-  is_active    Boolean  @default(true)
-  created_at   DateTime @default(now())
-  updated_at   DateTime @updatedAt
-
-  locations    Location[]
-
-  @@unique([warehouse_id, code])
-  @@index([warehouse_id])
-}
-
-// location_code tự động sinh: "{warehouse.code}_{subwarehouse.code}_{row}_{shelf}"
+// location_code tự động sinh: "{warehouse.code}_{sub_code}_{row}_{shelf}"
 // VD: "BV_TP1_1_T1"
 model Location {
-  id               String       @id @default(uuid())
-  sub_warehouse_id String
-  sub_warehouse    SubWarehouse @relation(fields: [sub_warehouse_id], references: [id])
-  location_code    String       @unique  // Auto-generated, không nhập tay
-  row              String               // "1", "2", "3"
-  shelf            String               // "T1", "T2" (tầng/kệ)
-  max_pallets      Int          @default(1)  // Số slot sàn tối đa
-  is_active        Boolean      @default(true)
-  created_at       DateTime     @default(now())
-  updated_at       DateTime     @updatedAt
+  id            String    @id @default(uuid())
+  warehouse_id  String
+  warehouse     Warehouse @relation(fields: [warehouse_id], references: [id])
+  sub_code      String              // "TP1", "NL1" – prefix kho nhỏ
+  sub_name      String?             // "Thành phẩm 1", "Nguyên liệu 1"
+  sub_type      String?             // "THANH_PHAM" | "NGUYEN_LIEU" | "BAN_THANH_PHAM"
+  location_code String    @unique   // Auto-generated, không nhập tay
+  row           String              // "1", "2", "3"
+  shelf         String              // "T1", "T2" (tầng/kệ)
+  max_pallets   Int       @default(1)
+  is_active     Boolean   @default(true)
+  created_at    DateTime  @default(now())
+  updated_at    DateTime  @updatedAt
 
   inventory_entries InventoryEntry[]
 
-  @@index([sub_warehouse_id])
+  @@index([warehouse_id])
+  @@index([warehouse_id, sub_code])
 }
 
 // ============================================================

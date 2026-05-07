@@ -27,7 +27,6 @@ async function main() {
   await prisma.material.deleteMany()
   await prisma.manufacturer.deleteMany()
   await prisma.location.deleteMany()
-  await prisma.subWarehouse.deleteMany()
   await prisma.employee.deleteMany()
   await prisma.warehouse.deleteMany()
   await prisma.menu.deleteMany()
@@ -41,20 +40,6 @@ async function main() {
     data: { code: 'BB', name: 'Kho Bàu Bàng', address: 'Bàu Bàng, Bình Dương' },
   })
 
-  // ─── SUB-WAREHOUSE ─────────────────────────────────────────
-  const bv_tp1 = await prisma.subWarehouse.create({
-    data: { warehouse_id: bavi.id, code: 'TP1', name: 'Thành phẩm 1', type: 'THANH_PHAM' },
-  })
-  const bv_tp2 = await prisma.subWarehouse.create({
-    data: { warehouse_id: bavi.id, code: 'TP2', name: 'Thành phẩm 2', type: 'THANH_PHAM' },
-  })
-  const bv_nl1 = await prisma.subWarehouse.create({
-    data: { warehouse_id: bavi.id, code: 'NL1', name: 'Nguyên liệu 1', type: 'NGUYEN_LIEU' },
-  })
-  const bb_tp1 = await prisma.subWarehouse.create({
-    data: { warehouse_id: baubang.id, code: 'TP1', name: 'Thành phẩm 1', type: 'THANH_PHAM' },
-  })
-
   // ─── LOCATION ──────────────────────────────────────────────
   // BV_TP1: 3 hàng × 2 tầng = 6 vị trí
   const locs_bv_tp1: Awaited<ReturnType<typeof prisma.location.create>>[] = []
@@ -63,11 +48,10 @@ async function main() {
       locs_bv_tp1.push(
         await prisma.location.create({
           data: {
-            sub_warehouse_id: bv_tp1.id,
+            warehouse_id: bavi.id,
+            sub_code: 'TP1', sub_name: 'Thành phẩm 1', sub_type: 'THANH_PHAM',
             location_code: `BV_TP1_${row}_${shelf}`,
-            row: String(row),
-            shelf,
-            max_pallets: 2,
+            row: String(row), shelf, max_pallets: 2,
           },
         })
       )
@@ -81,11 +65,10 @@ async function main() {
       locs_bv_tp2.push(
         await prisma.location.create({
           data: {
-            sub_warehouse_id: bv_tp2.id,
+            warehouse_id: bavi.id,
+            sub_code: 'TP2', sub_name: 'Thành phẩm 2', sub_type: 'THANH_PHAM',
             location_code: `BV_TP2_${row}_${shelf}`,
-            row: String(row),
-            shelf,
-            max_pallets: 3,
+            row: String(row), shelf, max_pallets: 3,
           },
         })
       )
@@ -97,11 +80,10 @@ async function main() {
     for (const shelf of ['T1', 'T2']) {
       await prisma.location.create({
         data: {
-          sub_warehouse_id: bv_nl1.id,
+          warehouse_id: bavi.id,
+          sub_code: 'NL1', sub_name: 'Nguyên liệu 1', sub_type: 'NGUYEN_LIEU',
           location_code: `BV_NL1_${row}_${shelf}`,
-          row: String(row),
-          shelf,
-          max_pallets: 2,
+          row: String(row), shelf, max_pallets: 2,
         },
       })
     }
@@ -114,11 +96,10 @@ async function main() {
       locs_bb_tp1.push(
         await prisma.location.create({
           data: {
-            sub_warehouse_id: bb_tp1.id,
+            warehouse_id: baubang.id,
+            sub_code: 'TP1', sub_name: 'Thành phẩm 1', sub_type: 'THANH_PHAM',
             location_code: `BB_TP1_${row}_${shelf}`,
-            row: String(row),
-            shelf,
-            max_pallets: 2,
+            row: String(row), shelf, max_pallets: 2,
           },
         })
       )

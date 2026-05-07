@@ -8,23 +8,20 @@ function buildLocationCode(warehouseCode: string, subCode: string, row: string, 
 
 export async function listLocations(req: Request, res: Response) {
   try {
-    const { sub_warehouse_id, warehouse_id, active } = req.query
+    const { warehouse_id, sub_code, active } = req.query
     const data = await prisma.location.findMany({
       where: {
-        ...(sub_warehouse_id ? { sub_warehouse_id: String(sub_warehouse_id) } : {}),
-        ...(warehouse_id ? { sub_warehouse: { warehouse_id: String(warehouse_id) } } : {}),
+        ...(warehouse_id ? { warehouse_id: String(warehouse_id) } : {}),
+        ...(sub_code ? { sub_code: String(sub_code) } : {}),
         ...(active === 'true' ? { is_active: true } : {}),
       },
       include: {
-        sub_warehouse: {
-          select: { id: true, code: true, name: true, warehouse: { select: { id: true, code: true, name: true } } },
-        },
+        warehouse: { select: { id: true, code: true, name: true } },
         _count: { select: { inventory_entries: true } },
       },
-      orderBy: [{ sub_warehouse_id: 'asc' }, { row: 'asc' }, { shelf: 'asc' }],
+      orderBy: [{ sub_code: 'asc' }, { row: 'asc' }, { shelf: 'asc' }],
     })
 
-    // Tính số slot đang dùng (chỉ đếm stack_layer = 1)
     const withUsage = await Promise.all(
       data.map(async (loc) => {
         const used_slots = await prisma.inventoryEntry.count({
@@ -37,18 +34,37 @@ export async function listLocations(req: Request, res: Response) {
   } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
+// Trả về danh sách sub-group (sub_code distinct) của 1 warehouse
+export async function listSubGroups(req: Request, res: Response) {
+  try {
+    const { warehouse_id } = req.query
+    if (!warehouse_id) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu warehouse_id')
+
+    const groups = await prisma.location.groupBy({
+      by: ['sub_code', 'sub_name', 'sub_type'],
+      where: { warehouse_id: String(warehouse_id), is_active: true },
+      _count: { id: true },
+      orderBy: { sub_code: 'asc' },
+    })
+    ok(res, groups.map(g => ({
+      sub_code: g.sub_code,
+      sub_name: g.sub_name,
+      sub_type: g.sub_type,
+      location_count: g._count.id,
+    })))
+  } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+}
+
 export async function getLocation(req: Request, res: Response) {
   try {
     const data = await prisma.location.findUnique({
       where: { id: req.params.id },
       include: {
-        sub_warehouse: {
-          include: { warehouse: { select: { id: true, code: true, name: true } } },
-        },
+        warehouse: { select: { id: true, code: true, name: true } },
         inventory_entries: {
           where: { status: { in: ['IN_STOCK', 'PARTIAL'] } },
           include: { material: { select: { id: true, material_code: true, short_name: true } } },
-          orderBy: [{ stack_layer: 'asc' }],
+          orderBy: { stack_layer: 'asc' },
         },
       },
     })
@@ -59,36 +75,32 @@ export async function getLocation(req: Request, res: Response) {
 
 export async function createLocation(req: Request, res: Response) {
   try {
-    const { sub_warehouse_id, row, shelf, max_pallets } = req.body
-    if (!sub_warehouse_id || !row || !shelf)
-      return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu sub_warehouse_id, row hoặc shelf')
+    const { warehouse_id, sub_code, sub_name, sub_type, row, shelf, max_pallets } = req.body
+    if (!warehouse_id || !sub_code || !row || !shelf)
+      return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu warehouse_id, sub_code, row hoặc shelf')
 
-    const subWarehouse = await prisma.subWarehouse.findUnique({
-      where: { id: sub_warehouse_id },
-      include: { warehouse: true },
-    })
-    if (!subWarehouse) return fail(res, 404, 'NOT_FOUND', 'Kho nhỏ không tồn tại')
+    const warehouse = await prisma.warehouse.findUnique({ where: { id: warehouse_id } })
+    if (!warehouse) return fail(res, 404, 'NOT_FOUND', 'Kho không tồn tại')
 
     const location_code = buildLocationCode(
-      subWarehouse.warehouse.code,
-      subWarehouse.code,
+      warehouse.code,
+      String(sub_code).trim().toUpperCase(),
       String(row).trim(),
       String(shelf).trim()
     )
 
     const data = await prisma.location.create({
       data: {
-        sub_warehouse_id,
+        warehouse_id,
+        sub_code: String(sub_code).trim().toUpperCase(),
+        sub_name: sub_name ? String(sub_name).trim() : undefined,
+        sub_type: sub_type ?? undefined,
         location_code,
         row: String(row).trim(),
         shelf: String(shelf).trim(),
         max_pallets: max_pallets ? Number(max_pallets) : 1,
       },
-      include: {
-        sub_warehouse: {
-          select: { id: true, code: true, name: true, warehouse: { select: { id: true, code: true, name: true } } },
-        },
-      },
+      include: { warehouse: { select: { id: true, code: true, name: true } } },
     })
     ok(res, data)
   } catch (e: any) {
@@ -99,10 +111,12 @@ export async function createLocation(req: Request, res: Response) {
 
 export async function updateLocation(req: Request, res: Response) {
   try {
-    const { max_pallets, is_active } = req.body
+    const { sub_name, sub_type, max_pallets, is_active } = req.body
     const data = await prisma.location.update({
       where: { id: req.params.id },
       data: {
+        ...(sub_name !== undefined && { sub_name: sub_name ? String(sub_name).trim() : null }),
+        ...(sub_type !== undefined && { sub_type }),
         ...(max_pallets !== undefined && { max_pallets: Number(max_pallets) }),
         ...(is_active !== undefined && { is_active: Boolean(is_active) }),
       },

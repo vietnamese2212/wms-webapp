@@ -7,7 +7,7 @@ export async function listWarehouses(req: Request, res: Response) {
     const onlyActive = req.query.active === 'true'
     const data = await prisma.warehouse.findMany({
       where: onlyActive ? { is_active: true } : undefined,
-      include: { _count: { select: { sub_warehouses: true, employees: true } } },
+      include: { _count: { select: { locations: true, employees: true } } },
       orderBy: { name: 'asc' },
     })
     ok(res, data)
@@ -18,15 +18,26 @@ export async function getWarehouse(req: Request, res: Response) {
   try {
     const data = await prisma.warehouse.findUnique({
       where: { id: req.params.id },
-      include: {
-        sub_warehouses: {
-          orderBy: { name: 'asc' },
-          include: { _count: { select: { locations: true } } },
-        },
-      },
     })
     if (!data) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy kho')
-    ok(res, data)
+
+    // Lấy danh sách sub-group từ location (thay thế sub_warehouses)
+    const subGroups = await prisma.location.groupBy({
+      by: ['sub_code', 'sub_name', 'sub_type'],
+      where: { warehouse_id: req.params.id, is_active: true },
+      _count: { id: true },
+      orderBy: { sub_code: 'asc' },
+    })
+
+    ok(res, {
+      ...data,
+      sub_groups: subGroups.map(g => ({
+        sub_code: g.sub_code,
+        sub_name: g.sub_name,
+        sub_type: g.sub_type,
+        location_count: g._count.id,
+      })),
+    })
   } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 

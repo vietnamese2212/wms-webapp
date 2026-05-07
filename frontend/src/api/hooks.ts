@@ -22,19 +22,21 @@ export function useWarehouses(onlyActive = false) {
   })
 }
 
-export function useSubWarehouses(warehouseId?: string) {
+// Sub-groups = kho nhỏ (TP1, TP2...) lấy từ Location (không còn bảng SubWarehouse)
+export function useSubGroups(warehouseId?: string) {
   return useQuery({
-    queryKey: ['sub-warehouses', warehouseId],
+    queryKey: ['sub-groups', warehouseId],
+    enabled: !!warehouseId,
     queryFn: async () => {
-      const { data } = await apiClient.get('/masterdata/sub-warehouses', {
-        params: warehouseId ? { warehouse_id: warehouseId } : {},
+      const { data } = await apiClient.get('/masterdata/locations/sub-groups', {
+        params: { warehouse_id: warehouseId },
       })
       return data.data as any[]
     },
   })
 }
 
-export function useLocationsReal(params?: { sub_warehouse_id?: string; warehouse_id?: string }) {
+export function useLocationsReal(params?: { warehouse_id?: string; sub_code?: string }) {
   return useQuery({
     queryKey: ['locations-real', params],
     queryFn: async () => {
@@ -74,21 +76,15 @@ export function useCreateWarehouse() {
   })
 }
 
-export function useCreateSubWarehouse() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (body: { warehouse_id: string; code: string; name: string; type?: string }) =>
-      apiClient.post('/masterdata/sub-warehouses', body).then((r) => r.data.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['sub-warehouses'] }),
-  })
-}
-
 export function useCreateLocation() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { sub_warehouse_id: string; row: string; shelf: string; max_pallets?: number }) =>
+    mutationFn: (body: { warehouse_id: string; sub_code: string; sub_name?: string; sub_type?: string; row: string; shelf: string; max_pallets?: number }) =>
       apiClient.post('/masterdata/locations', body).then((r) => r.data.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['locations-real'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['locations-real'] })
+      qc.invalidateQueries({ queryKey: ['sub-groups'] })
+    },
   })
 }
 

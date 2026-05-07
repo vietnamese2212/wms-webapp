@@ -173,6 +173,42 @@ async function main() {
     },
   })
 
+  // Thành phẩm sữa – dữ liệu thực từ LOF
+  const mat6 = await prisma.material.create({
+    data: {
+      material_code: '510000127',
+      material_description: 'LOF Ba Vì Sữa tươi Có đường 180mlx48',
+      custom_short_name: 'Ba Vì 180',
+      short_name: makeShortName('LOF Ba Vì Sữa tươi Có đường 180mlx48', '510000127', 'Ba Vì 180'),
+      product_type: '180',
+      unit: 'thùng',
+      weight_kg: 9.82,
+      cartons_per_pallet: 110,
+      cartons_per_pallet_mn: 110,
+      units_per_carton: 48,
+      shelf_life_days: 240,
+      storage_category: 'UHT',
+      old_code: '401000002',
+    },
+  })
+  const mat7 = await prisma.material.create({
+    data: {
+      material_code: '510000126',
+      material_description: 'LOF Ba Vì Sữa tươi Có đường 110mlx48',
+      custom_short_name: 'Ba Vì 110',
+      short_name: makeShortName('LOF Ba Vì Sữa tươi Có đường 110mlx48', '510000126', 'Ba Vì 110'),
+      product_type: '110',
+      unit: 'thùng',
+      weight_kg: 6.1,
+      cartons_per_pallet: 140,
+      cartons_per_pallet_mn: 140,
+      units_per_carton: 48,
+      shelf_life_days: 240,
+      storage_category: 'UHT',
+      old_code: '401000001',
+    },
+  })
+
   // ─── EMPLOYEE ──────────────────────────────────────────────
   const pw = await bcrypt.hash('123456', 10)
 

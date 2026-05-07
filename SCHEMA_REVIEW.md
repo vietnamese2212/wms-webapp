@@ -1,6 +1,6 @@
 # Prisma Schema Review – WMS Webapp
 
-> Cập nhật lần cuối: 2026-05-07 (rev 3)
+> Cập nhật lần cuối: 2026-05-07 (rev 4)
 > Database: **PostgreSQL** (Supabase hoặc PostgreSQL gốc — Prisma provider không đổi)
 
 ---
@@ -200,58 +200,148 @@ Giữ lại chỉ thông tin **trạng thái hiện tại** của pallet, xoá c
 
 ```prisma
 model InventoryEntry {
-  id              String       @id @default(uuid())
-  pallet_code     String       @unique   // Mã QR của pallet
+  id              String        @id @default(uuid())
+  pallet_code     String        @unique   // Mã QR của pallet
   location_id     String
-  location        Location     @relation(fields: [location_id], references: [id])
+  location        Location      @relation(fields: [location_id], references: [id])
   material_id     String
-  material        Material     @relation(fields: [material_id], references: [id])
+  material        Material      @relation(fields: [material_id], references: [id])
   manufacturer_id String?
   manufacturer    Manufacturer? @relation(fields: [manufacturer_id], references: [id])
-  cycle           String?      // Chu kỳ sản xuất (cần xác nhận thêm)
-  cartons_imported Int         // Số thùng nhập vào pallet này
+
+  // Chu kỳ sản xuất – bóc tách từ QR hoặc chọn tay
+  cycle           String?
+
+  // Pallet stacking – thay thế bypass_location
+  stack_layer     Int     @default(1)
+  // 1 = nằm dưới sàn (tính vào max_pallets của Location)
+  // 2, 3 = chồng lên pallet khác (không tính vào max_pallets)
+
+  cartons_imported Int
   production_date  DateTime?
-  status          String       @default("IN_STOCK")  // "IN_STOCK" | "EXPORTED" | "TRANSFERRED"
-  created_at      DateTime     @default(now())
-  updated_at      DateTime     @updatedAt
+  status           String   @default("IN_STOCK")
+  // "IN_STOCK" | "EXPORTED" | "TRANSFERRED" | "PARTIAL"
+
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
 
   export_history     ExportHistory[]
   location_transfers LocationTransfer[]
+
+  @@index([location_id, status])
 }
 ```
 
+#### ✅ Cải tiến `bypass_location` → `stack_layer`
+
+**Vấn đề cũ:** `bypass_location = true` là cờ thủ công, không nói lên vị trí chồng hay logic kiểm tra.
+
+**Thiết kế mới:**
+
+| `stack_layer` | Ý nghĩa | Tính vào slot? |
+|---|---|---|
+| `1` | Pallet đặt trên sàn | ✅ Có |
+| `2` | Chồng lên pallet layer 1 | ❌ Không |
+| `3` | Chồng lên pallet layer 2 | ❌ Không |
+
+**Logic kiểm tra Location đầy (backend):**
+```typescript
+// Đếm số slot đang dùng = chỉ đếm pallet layer 1
+const usedSlots = await prisma.inventoryEntry.count({
+  where: { location_id, stack_layer: 1, status: 'IN_STOCK' }
+})
+const isFull = usedSlots >= location.max_pallets
+// → Pallet layer 2/3 luôn được nhập vào nếu layer bên dưới tồn tại
+```
+
+**UI khi nhập kho:**
+- Mặc định `stack_layer = 1`
+- Nếu location đầy → hệ thống hỏi "Pallet này chồng lên pallet đang có?" → chọn layer 2 hoặc 3
+- Hệ thống kiểm tra layer bên dưới phải tồn tại (layer 2 cần có layer 1 cùng location)
+
+---
+
 **Fields đã xoá khỏi InventoryEntry:**
 ```
-exported_quantity       → tính từ SUM(ExportHistory.quantity)
-remaining_quantity      → tính từ cartons_imported - exported
-exported_match_stock    → legacy, xoá
-exported_transfer_code  → legacy, xoá
+exported_quantity          → tính từ SUM(ExportHistory.quantity)
+remaining_quantity         → tính từ cartons_imported - exported
+exported_match_stock       → legacy, xoá
+exported_transfer_code     → legacy, xoá
 exported_transfer_location → đã có LocationTransfer
-new_pallet_code         → đã có LocationTransfer
-transfer_time           → đã có LocationTransfer
-id2                     → legacy, xoá
-update_field            → đổi thành updated_at @updatedAt
-date_field              → legacy, xoá
-match_date              → legacy, xoá
-bypass_location         → cần xác nhận thêm
+new_pallet_code            → đã có LocationTransfer
+transfer_time              → đã có LocationTransfer
+id2                        → xoá (confirmed)
+update_field               → đổi thành updated_at @updatedAt
+date_field                 → xoá (không rõ mục đích, confirmed)
+match_date                 → xoá (không rõ mục đích, confirmed)
+bypass_location            → thay bằng stack_layer Int
 ```
 
 ---
 
-## Câu hỏi đã xác nhận
+### Vehicle & Driver – 1 xe, nhiều tài xế
+
+**Thiết kế:**
+- `Vehicle` có `default_driver_id` → tài xế mặc định khi tạo trong Masterdata
+- Mỗi `DeliveryOrder` có `driver_id` riêng → có thể khác với default (ghi đè lúc tạo lệnh)
+- `Driver` là model độc lập, không gắn cứng vào xe
+
+```prisma
+model Driver {
+  id          String   @id @default(uuid())
+  code        String?  @unique
+  name        String
+  phone       String?
+  id_card     String?
+  license_no  String?
+  is_active   Boolean  @default(true)
+  created_at  DateTime @default(now())
+
+  vehicles          Vehicle[]        // các xe mà driver này là default
+  delivery_orders   DeliveryOrder[]  // các chuyến thực tế driver đã/đang lái
+}
+
+model Vehicle {
+  id                String   @id @default(uuid())
+  plate_number      String   @unique
+  type              String?            // "xe tải", "xe container"
+  capacity_tons     Float?
+  default_driver_id String?
+  default_driver    Driver?  @relation(fields: [default_driver_id], references: [id])
+  next_inspection   DateTime?
+  is_active         Boolean  @default(true)
+  created_at        DateTime @default(now())
+
+  delivery_orders   DeliveryOrder[]
+}
+```
+
+**UI Masterdata – Xe:**
+- Khi tạo xe → dropdown chọn tài xế mặc định (optional)
+- Khi tạo lệnh vận chuyển → pre-fill tài xế từ `default_driver`, nhưng có thể đổi
+
+---
+
+### `cycle` – Chu kỳ sản xuất
+
+- **Nguồn**: bóc tách từ QR code của pallet khi scan, hoặc chọn tay
+- **Kiểu dữ liệu**: `String` (linh hoạt — có thể là "2025-05", "Đợt 3", "C05", tuỳ QR format)
+- **Không cần bảng riêng** tại thời điểm này — lưu trực tiếp trong `InventoryEntry.cycle`
+- Khi cần thống kê theo cycle: `GROUP BY cycle`
+
+---
+
+## Tất cả câu hỏi đã xác nhận ✅
 
 - [x] `material` = mã hàng, `material_description` = tên đầy đủ, `short_name` = `{tên} [{3 số cuối}]`
-- [x] `location_code` format: `BV_TP1_1_T1` (`{warehouse}_{subwarehouse}_{row}_{shelf}`)
-- [x] `nmsx` = Nhà máy sản xuất = Manufacturer, có thể là ký hiệu chữ/số → Model riêng `Manufacturer`
-- [x] Database: **PostgreSQL** (Supabase). Prisma `provider = "postgresql"` — tương thích hoàn toàn nếu sau này chuyển sang PostgreSQL gốc
-- [x] Multi-warehouse: cần 2 model mới `Warehouse` và `SubWarehouse`, Employee gắn với Warehouse
-
-## Câu hỏi còn lại
-
-- [ ] `cycle` trong `InventoryEntry` là gì? (chu kỳ sản xuất theo tháng? theo đợt?)
-- [ ] `bypass_location` nghĩa là gì trong nghiệp vụ?
-- [ ] 1 xe có nhiều tài xế theo ca không, hay 1 tài xế cố định 1 xe?
-- [ ] Các field `id2`, `date_field`, `match_date` trong InventoryEntry có cần migrate sang DB mới không?
+- [x] `location_code` format: `BV_TP1_1_T1` (tự sinh từ warehouse/subwarehouse/row/shelf)
+- [x] `nmsx` = Nhà máy sản xuất → Model `Manufacturer` (code = ký hiệu chữ/số)
+- [x] Database: **PostgreSQL via Supabase** (hoặc PostgreSQL gốc — cùng Prisma provider)
+- [x] Multi-warehouse + SubWarehouse: dữ liệu động, quản lý qua Masterdata UI
+- [x] `cycle` = chu kỳ sản xuất, bóc từ QR hoặc chọn tay → `String` trong InventoryEntry
+- [x] `bypass_location` → thay bằng `stack_layer Int` (1=sàn, 2/3=chồng, không tính slot)
+- [x] Vehicle–Driver: 1 xe nhiều tài xế, Vehicle có `default_driver_id`, DeliveryOrder có `driver_id` riêng
+- [x] Legacy fields: `id2` xoá, `date_field` xoá, `match_date` xoá, `update_field` → `updated_at @updatedAt`
 
 ---
 
@@ -307,3 +397,4 @@ Masterdata > Vị trí kho
 | 2026-05-07 | Review lần đầu, tạo file theo dõi |
 | 2026-05-07 | Xác nhận Material naming convention, thêm `custom_short_name` |
 | 2026-05-07 | Xác nhận multi-warehouse, location hierarchy, NMSX=Manufacturer, PostgreSQL/Supabase — thiết kế lại toàn bộ schema |
+| 2026-05-07 | Xác nhận cycle/bypass_location/Vehicle-Driver/legacy fields — hoàn tất tất cả câu hỏi, schema sẵn sàng |

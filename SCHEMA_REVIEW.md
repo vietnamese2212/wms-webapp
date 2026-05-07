@@ -1,6 +1,6 @@
 # Prisma Schema Review – WMS Webapp
 
-> Cập nhật lần cuối: 2026-05-07 (rev 7)
+> Cập nhật lần cuối: 2026-05-07 (rev 8)
 > Database: **PostgreSQL** (Supabase hoặc PostgreSQL gốc — Prisma provider không đổi)
 
 ---
@@ -10,21 +10,23 @@
 ### Phân cấp vị trí kho
 
 ```
-Warehouse (Kho lớn)          → Ba Vì, Bàu Bàng
-  └─ SubWarehouse (Kho nhỏ)  → Ba Vì_Thành phẩm 1, Ba Vì_Thành phẩm 2
-       └─ Location (Vị trí)  → BV_TP1_1_T1, BV_TP2_1_T2...
+Warehouse (Kho lớn)   → Ba Vì, Bàu Bàng
+  └─ Location (Vị trí) → BV_TP1_1_T1, BV_TP2_1_T2...
+       (sub_code/sub_name/sub_type embedded trong Location)
 ```
+
+> ⚠️ **rev 8**: Đã bỏ bảng `SubWarehouse`. Thông tin kho nhỏ (TP1, NL1...) được lưu trực tiếp trong `Location` dưới dạng `sub_code`, `sub_name`, `sub_type`.
 
 **Phân tích location_code `BV_TP1_1_T1`:**
 
-| Segment | Ý nghĩa | Ví dụ |
-|---|---|---|
-| `BV` | Prefix của Warehouse | Ba Vì |
-| `TP1` | Prefix của SubWarehouse | Thành phẩm 1 |
-| `1` | Số hàng (row) | Hàng 1 |
-| `T1` | Số kệ/tầng (shelf/tier) | Tầng 1 |
+| Segment | Ý nghĩa | Field | Ví dụ |
+|---|---|---|---|
+| `BV` | Prefix kho lớn | `warehouse.code` | Ba Vì |
+| `TP1` | Prefix kho nhỏ | `location.sub_code` | Thành phẩm 1 |
+| `1` | Số hàng | `location.row` | Hàng 1 |
+| `T1` | Tầng/kệ | `location.shelf` | Tầng 1 |
 
-→ `location_code` = `{warehouse_prefix}_{subwarehouse_prefix}_{row}_{shelf}` — **tự động sinh** từ các field riêng.
+→ `location_code` = `{warehouse.code}_{sub_code}_{row}_{shelf}` — **tự động sinh** trong backend.
 
 ---
 
@@ -41,8 +43,8 @@ Warehouse (Kho lớn)          → Ba Vì, Bàu Bàng
 | Model | Mục đích | Trạng thái |
 |---|---|---|
 | `Warehouse` | Kho lớn (Ba Vì, Bàu Bàng...) | ✅ Đã tạo, API + seed ổn |
-| `SubWarehouse` | Kho nhỏ (TP1, TP2...) | ✅ Đã tạo, API + seed ổn |
-| `Location` | Vị trí trong kho nhỏ | ✅ Đã tạo, location_code tự sinh |
+| ~~`SubWarehouse`~~ | ~~Kho nhỏ~~ | 🗑️ Đã xoá — embed vào Location |
+| `Location` | Vị trí kho (có sub_code/sub_name/sub_type) | ✅ Đã refactor, 2-table |
 | `Material` | Danh mục hàng hóa | ✅ Đã tạo, đầy đủ field logistics |
 | `Manufacturer` | Nhà máy sản xuất (NMSX) | ✅ Đã tạo, API + seed ổn |
 | `Employee` | Nhân viên hệ thống | ✅ Đã tạo, có warehouse_id |
@@ -63,65 +65,68 @@ Warehouse (Kho lớn)          → Ba Vì, Bàu Bàng
 
 ```prisma
 model Warehouse {
-  id          String   @id @default(uuid())
-  code        String   @unique   // "BV", "BB"
-  name        String             // "Kho Ba Vì", "Kho Bàu Bàng"
-  address     String?
-  is_active   Boolean  @default(true)
-  created_at  DateTime @default(now())
+  id         String   @id @default(uuid())
+  code       String   @unique  // "BV", "BB"
+  name       String            // "Kho Ba Vì", "Kho Bàu Bàng"
+  address    String?
+  is_active  Boolean  @default(true)
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
 
-  sub_warehouses SubWarehouse[]
-  employees      Employee[]
+  locations  Location[]
+  employees  Employee[]
 }
 ```
 
 ---
 
-### SubWarehouse – Kho nhỏ
+### Location – Vị trí kho *(rev 8: 2-table, embed sub info)*
 
-```prisma
-model SubWarehouse {
-  id           String    @id @default(uuid())
-  warehouse_id String
-  warehouse    Warehouse @relation(fields: [warehouse_id], references: [id])
-  code         String              // "TP1", "TP2", "NL1"
-  name         String              // "Thành phẩm 1", "Nguyên liệu 1"
-  type         String?             // "THANH_PHAM", "NGUYEN_LIEU", "BAN_THANH_PHAM"
-  is_active    Boolean  @default(true)
-
-  locations    Location[]
-
-  @@unique([warehouse_id, code])
-}
-```
-
----
-
-### Location – Vị trí kho (đã refactor)
+> Không còn bảng `SubWarehouse`. Thông tin kho nhỏ được lưu trực tiếp trong mỗi dòng Location.
 
 ```prisma
 model Location {
-  id               String       @id @default(uuid())
-  sub_warehouse_id String
-  sub_warehouse    SubWarehouse @relation(fields: [sub_warehouse_id], references: [id])
-  location_code    String       @unique   // "BV_TP1_1_T1" – tự động sinh
-  row              String?               // "1", "2"
-  shelf            String?               // "T1", "T2"
-  max_pallets      Int          @default(1)
-  is_active        Boolean      @default(true)
+  id            String    @id @default(uuid())
+  warehouse_id  String
+  warehouse     Warehouse @relation(fields: [warehouse_id], references: [id])
+  sub_code      String              // "TP1", "NL1" – prefix kho nhỏ
+  sub_name      String?             // "Thành phẩm 1", "Nguyên liệu 1"
+  sub_type      String?             // "THANH_PHAM" | "NGUYEN_LIEU" | "BAN_THANH_PHAM"
+  location_code String    @unique   // "BV_TP1_1_T1" – tự động sinh
+  row           String              // "1", "2", "3"
+  shelf         String              // "T1", "T2"
+  max_pallets   Int       @default(1)
+  is_active     Boolean   @default(true)
+  created_at    DateTime  @default(now())
+  updated_at    DateTime  @updatedAt
 
   inventory_entries InventoryEntry[]
 
-  @@index([sub_warehouse_id])
+  @@index([warehouse_id])
+  @@index([warehouse_id, sub_code])
 }
 ```
 
 **Logic sinh `location_code` tự động (backend):**
 ```typescript
-const wh = warehouse.code           // "BV"
-const swh = subWarehouse.code       // "TP1"
-location_code = `${wh}_${swh}_${row}_${shelf}`  // "BV_TP1_1_T1"
+const warehouse = await prisma.warehouse.findUnique({ where: { id: warehouse_id } })
+location_code = `${warehouse.code}_${sub_code}_${row}_${shelf}`  // "BV_TP1_1_T1"
 ```
+
+**API thay thế `/sub-warehouses`:**
+```
+GET /api/masterdata/locations/sub-groups?warehouse_id=xxx
+→ [{sub_code, sub_name, sub_type, location_count}, ...]
+// Derived từ Location.groupBy — không cần bảng riêng
+```
+
+**Trade-off đã cân nhắc:**
+
+| | 3 bảng (cũ) | 2 bảng (hiện tại) |
+|---|---|---|
+| JOIN để lấy full info | 2 JOIN | 1 JOIN |
+| Đổi tên kho nhỏ | 1 UPDATE row | UPDATE nhiều Location |
+| Phù hợp quy mô | Over-engineered | ✅ Đủ dùng |
 
 ---
 
@@ -380,7 +385,7 @@ model Vehicle {
 - [x] `location_code` format: `BV_TP1_1_T1` (tự sinh từ warehouse/subwarehouse/row/shelf)
 - [x] `nmsx` = Nhà máy sản xuất → Model `Manufacturer` (code = ký hiệu chữ/số)
 - [x] Database: **PostgreSQL via Supabase** (hoặc PostgreSQL gốc — cùng Prisma provider)
-- [x] Multi-warehouse + SubWarehouse: dữ liệu động, quản lý qua Masterdata UI
+- [x] Multi-warehouse + kho nhỏ: dữ liệu động, sub_code/sub_name/sub_type embedded trong Location (bỏ bảng SubWarehouse)
 - [x] `cycle` = chu kỳ sản xuất, bóc từ QR hoặc chọn tay → `String` trong InventoryEntry
 - [x] `bypass_location` → thay bằng `stack_layer Int` (1=sàn, 2/3=chồng, không tính slot)
 - [x] Vehicle–Driver: 1 xe nhiều tài xế, Vehicle có `default_driver_id`, DeliveryOrder có `driver_id` riêng
@@ -402,19 +407,17 @@ Masterdata > Vị trí kho
   ├─ Quản lý Kho lớn (Warehouse)
   │     CRUD: Tên, Mã (prefix), Địa chỉ, Bật/Tắt
   │
-  ├─ Quản lý Kho nhỏ (SubWarehouse)
-  │     CRUD: Thuộc kho lớn nào, Tên, Mã (prefix), Loại, Bật/Tắt
-  │
   └─ Quản lý Vị trí (Location)
-        CRUD: Thuộc kho nhỏ nào, Hàng, Kệ/Tầng, Số pallet tối đa, Bật/Tắt
-        location_code → tự động sinh: "{warehouse.code}_{subwarehouse.code}_{row}_{shelf}"
+        CRUD: Thuộc kho nào, Sub_code, Sub_name, Hàng, Kệ/Tầng, Số pallet tối đa, Bật/Tắt
+        location_code → tự động sinh: "{warehouse.code}_{sub_code}_{row}_{shelf}"
 ```
 
 ### Quy tắc khi tạo Location
 
-1. User chọn Warehouse → chọn SubWarehouse → nhập row + shelf + max_pallets
+1. User chọn Warehouse → nhập sub_code (VD: TP1) + sub_name (VD: Thành phẩm 1) + row + shelf + max_pallets
 2. Backend tự sinh `location_code` — user không nhập thủ công
 3. `location_code` là unique, không cho trùng
+4. Các Location cùng `warehouse_id + sub_code` tạo thành 1 nhóm kho nhỏ (derived, không cần bảng riêng)
 
 ### Masterdata khác cũng cần giao diện CRUD
 
@@ -447,3 +450,4 @@ Masterdata > Vị trí kho
 | 2026-05-07 | Deploy backend lên Vercel API routes; fix vite-env.d.ts; tất cả model ✅ live trên Supabase |
 | 2026-05-07 | Material: thêm 8 field logistics (weight_kg, cartons_per_pallet, cartons_per_pallet_mn, units_per_carton, shelf_life_days, storage_category, old_code, image_url) |
 | 2026-05-07 | Material: thêm `category` (Thành phẩm/NVL/POSM/Bao bì) và `ea_per_pallet` (tính pallet cho NVL) |
+| 2026-05-07 | **Refactor 2-table**: xoá SubWarehouse, embed sub_code/sub_name/sub_type vào Location; thêm endpoint /locations/sub-groups |

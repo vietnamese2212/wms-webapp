@@ -255,6 +255,42 @@ bypass_location         → cần xác nhận thêm
 
 ---
 
+## Masterdata quản lý vị trí kho
+
+Toàn bộ Warehouse / SubWarehouse / Location đều là **dữ liệu động** — người dùng tự tạo/sửa/xoá qua giao diện, không cần đụng code.
+
+### Màn hình Masterdata cần xây dựng
+
+```
+Masterdata > Vị trí kho
+  ├─ Quản lý Kho lớn (Warehouse)
+  │     CRUD: Tên, Mã (prefix), Địa chỉ, Bật/Tắt
+  │
+  ├─ Quản lý Kho nhỏ (SubWarehouse)
+  │     CRUD: Thuộc kho lớn nào, Tên, Mã (prefix), Loại, Bật/Tắt
+  │
+  └─ Quản lý Vị trí (Location)
+        CRUD: Thuộc kho nhỏ nào, Hàng, Kệ/Tầng, Số pallet tối đa, Bật/Tắt
+        location_code → tự động sinh: "{warehouse.code}_{subwarehouse.code}_{row}_{shelf}"
+```
+
+### Quy tắc khi tạo Location
+
+1. User chọn Warehouse → chọn SubWarehouse → nhập row + shelf + max_pallets
+2. Backend tự sinh `location_code` — user không nhập thủ công
+3. `location_code` là unique, không cho trùng
+
+### Masterdata khác cũng cần giao diện CRUD
+
+| Màn hình | Model |
+|---|---|
+| Danh mục hàng hóa | `Material` |
+| Nhà máy sản xuất | `Manufacturer` |
+| Nhân viên | `Employee` |
+| Xe + Tài xế | `Vehicle` / `Driver` |
+
+---
+
 ## Ghi chú về PostgreSQL / Supabase
 
 - **Supabase = managed PostgreSQL** – hoàn toàn tương thích với Prisma

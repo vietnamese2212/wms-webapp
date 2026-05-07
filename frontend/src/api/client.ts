@@ -1,7 +1,9 @@
 import axios from 'axios'
 
+// Dev: Vite proxy chuyển /api → localhost:4000
+// Prod: VITE_API_URL trỏ đến Railway backend (VD: https://wms-backend.railway.app)
 export const apiClient = axios.create({
-  baseURL: '/api',
+  baseURL: (import.meta.env.VITE_API_URL ?? '') + '/api',
   timeout: 10000,
   headers: { 'Content-Type': 'application/json' },
 })

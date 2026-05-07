@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft, QrCode, CheckCircle2, XCircle, Trash2,
@@ -9,7 +9,6 @@ import { vi }                  from 'date-fns/locale'
 import { PageHeader }          from '@/components/shared/PageHeader'
 import { TableSkeleton }       from '@/components/shared/TableSkeleton'
 import { QRScanner }           from '@/components/shared/QRScanner'
-import type { QRScannerHandle } from '@/components/shared/QRScanner'
 import { Button }              from '@/components/ui/button'
 import { Badge }               from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -25,6 +24,7 @@ import {
   useUpdateInboundOrder,
 } from '@/api/hooks'
 import { inboundOrderStatusLabel } from '@/utils/formatters'
+import { playBeep }                from '@/utils/audio'
 import type { InboundOrderStatus } from '@/types'
 
 // ─── Status badge ────────────────────────────────────────────
@@ -43,7 +43,7 @@ function InboundStatusBadge({ status }: { status: string }) {
   )
 }
 
-// ─── Scan feedback banner ─────────────────────────────────────
+// ─── Scan result banner ───────────────────────────────────────
 
 type FeedbackState =
   | { type: 'pending' }
@@ -53,23 +53,23 @@ type FeedbackState =
 function ScanFeedback({ state }: { state: FeedbackState }) {
   if (state.type === 'pending') {
     return (
-      <div className="rounded-lg bg-blue-50 border border-blue-200 p-2.5 text-sm text-blue-700 animate-pulse">
-        Đang lưu...
+      <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 text-sm text-blue-700 animate-pulse flex items-center gap-2">
+        <QrCode className="h-4 w-4 shrink-0" /> Đang lưu pallet...
       </div>
     )
   }
   if (state.type === 'success') {
     return (
-      <div className="rounded-lg bg-green-50 border border-green-200 p-2.5 text-sm text-green-800 flex items-center gap-2">
+      <div className="rounded-lg bg-green-50 border border-green-200 p-3 text-sm text-green-800 flex items-center gap-2">
         <CheckCircle2 className="h-4 w-4 shrink-0" />
-        {state.msg}
+        <span>{state.msg}</span>
       </div>
     )
   }
   return (
-    <div className="rounded-lg bg-red-50 border border-red-200 p-2.5 text-sm text-red-700 flex items-start gap-2">
+    <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700 flex items-start gap-2">
       <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-      {state.msg}
+      <span>{state.msg}</span>
     </div>
   )
 }
@@ -91,19 +91,20 @@ export default function InboundDetail() {
   const { mutate: scanPallet,    isPending: scanning    } = useScanPallet()
   const { mutate: updateOrder                           } = useUpdateInboundOrder()
 
-  const scannerHandle = useRef<QRScannerHandle>(null)
-  const [showScanner,  setShowScanner]  = useState(false)
-  const [feedback,     setFeedback]     = useState<FeedbackState | null>(null)
+  const [showScanner, setShowScanner] = useState(false)
+  const [feedback,    setFeedback]    = useState<FeedbackState | null>(null)
 
-  const isOpen   = order?.status === 'OPEN'
-  const entries  = order?.inventory_entries ?? []
-  const hasLoc   = !!order?.location_id
+  const isOpen  = order?.status === 'OPEN'
+  const entries = order?.inventory_entries ?? []
+  const hasLoc  = !!order?.location_id
 
-  // ── Instant scan: QR detected → API immediately ──────────
+  // ── Instant scan: beep → đóng camera → gọi API ───────────
   function handleScan(raw: string) {
-    if (!order) return
-    if (!order.location_id) {
-      setFeedback({ type: 'error', msg: 'Chưa chọn vị trí nhập. Chọn vị trí bên dưới trước khi quét.' })
+    playBeep()            // tiếng bíp ngay lập tức
+    setShowScanner(false) // đóng camera, quay ra trang
+
+    if (!order?.location_id) {
+      setFeedback({ type: 'error', msg: 'Chưa chọn vị trí. Chọn vị trí rồi quét lại.' })
       return
     }
     setFeedback({ type: 'pending' })
@@ -111,21 +112,14 @@ export default function InboundDetail() {
       { orderId: order.id, qr_code: raw, location_id: order.location_id },
       {
         onSuccess: (data) => {
-          const p = data.entry
           setFeedback({
             type: 'success',
-            msg: `Đã nhập: ${p.pallet_code} · ${p.cartons_imported} thùng · ${p.location?.location_code ?? ''}`,
+            msg: `Đã nhập: ${data.entry.pallet_code} · ${data.entry.cartons_imported} thùng · ${data.entry.location?.location_code ?? ''}`,
           })
-          // Auto-resume sau 1.5s để quét pallet tiếp theo
-          setTimeout(() => {
-            scannerHandle.current?.resume()
-            setFeedback(null)
-          }, 1500)
         },
         onError: (err) => {
           const msg = (err as any)?.response?.data?.error?.message ?? 'Lỗi không xác định'
           setFeedback({ type: 'error', msg })
-          // Camera dừng lại, user bấm "Quét tiếp" để thử lại
         },
       }
     )
@@ -180,7 +174,7 @@ export default function InboundDetail() {
 
       <div className="p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-        {/* ── Left: Order info + QR scanner ── */}
+        {/* ── Left: Order info + scan button ── */}
         <div className="space-y-4 lg:col-span-1">
 
           {/* Order info card */}
@@ -200,6 +194,7 @@ export default function InboundDetail() {
                   {order.material?.short_name ?? order.material?.material_description}
                 </span>
               </div>
+
               <div className="flex items-start gap-2">
                 <MapPin className="h-4 w-4 text-slate-400 mt-0.5" />
                 <div className="flex-1">
@@ -209,20 +204,16 @@ export default function InboundDetail() {
                     </Badge>
                   ) : isOpen ? (
                     <div className="space-y-1">
-                      <p className="text-xs text-amber-700 font-medium">Chưa chọn vị trí</p>
-                      <Select
-                        onValueChange={(v) =>
-                          updateOrder({ id: order.id, location_id: v })
-                        }
-                      >
+                      <p className="text-xs text-amber-700 font-medium flex items-center gap-1">
+                        <AlertTriangle className="h-3 w-3" /> Chưa chọn vị trí
+                      </p>
+                      <Select onValueChange={(v) => updateOrder({ id: order.id, location_id: v })}>
                         <SelectTrigger className="h-7 text-xs">
                           <SelectValue placeholder="Chọn vị trí nhập" />
                         </SelectTrigger>
                         <SelectContent>
                           {allLocations.map((l: any) => (
-                            <SelectItem key={l.id} value={l.id}>
-                              {l.location_code}
-                            </SelectItem>
+                            <SelectItem key={l.id} value={l.id}>{l.location_code}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
@@ -232,6 +223,7 @@ export default function InboundDetail() {
                   )}
                 </div>
               </div>
+
               <div className="flex items-center gap-2">
                 <Layers className="h-4 w-4 text-slate-400" />
                 <span>
@@ -243,6 +235,7 @@ export default function InboundDetail() {
                   )}
                 </span>
               </div>
+
               {order.notes && (
                 <p className="text-xs text-slate-500 italic border-t pt-2">{order.notes}</p>
               )}
@@ -253,51 +246,49 @@ export default function InboundDetail() {
             </CardContent>
           </Card>
 
-          {/* QR Scanner card (only when OPEN) */}
+          {/* Scan action card (only when OPEN) */}
           {isOpen && (
             <Card>
-              <CardHeader className="pb-3">
+              <CardHeader className="pb-2">
                 <CardTitle className="text-base flex items-center gap-2">
-                  <QrCode className="h-4 w-4" />
-                  Quét QR pallet
-                  {scanning && (
-                    <span className="ml-auto text-xs text-blue-500 animate-pulse">Đang lưu...</span>
-                  )}
+                  <QrCode className="h-4 w-4" /> Quét QR pallet
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-2">
+              <CardContent className="space-y-3">
 
-                {/* Require location before scan */}
-                {!hasLoc && (
-                  <div className="rounded-lg bg-amber-50 border border-amber-200 p-2.5 text-xs text-amber-800 flex items-center gap-2 mb-2">
-                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                    Chọn vị trí nhập ở trên trước khi quét
-                  </div>
+                {/* Inline camera */}
+                {showScanner && (
+                  <QRScanner
+                    onScan={handleScan}
+                    onClose={() => setShowScanner(false)}
+                  />
                 )}
 
-                {/* Inline scan feedback */}
-                {feedback && <ScanFeedback state={feedback} />}
+                {/* Scan feedback (outside camera) */}
+                {!showScanner && feedback && (
+                  <ScanFeedback state={feedback} />
+                )}
 
-                {showScanner ? (
-                  <QRScanner
-                    ref={scannerHandle}
-                    onScan={handleScan}
-                    onClose={() => { setShowScanner(false); setFeedback(null) }}
-                  />
-                ) : (
+                {/* Scan / scanning button */}
+                {!showScanner && (
                   <Button
-                    className="w-full gap-2"
-                    disabled={!hasLoc}
-                    onClick={() => { setShowScanner(true); setFeedback(null) }}
+                    className="w-full gap-2 h-12 text-base"
+                    disabled={!hasLoc || scanning}
+                    onClick={() => { setFeedback(null); setShowScanner(true) }}
                   >
-                    <QrCode className="h-4 w-4" />
-                    {hasLoc ? 'Mở camera quét QR' : 'Chọn vị trí trước'}
+                    <QrCode className="h-5 w-5" />
+                    {scanning   ? 'Đang lưu...' :
+                     !hasLoc    ? 'Chọn vị trí trước' :
+                     feedback?.type === 'success' ? 'Quét pallet tiếp' :
+                     'Mở camera quét QR'}
                   </Button>
                 )}
 
-                <p className="text-[10px] text-slate-400 text-center">
-                  Định dạng: <span className="font-mono">ddmmyy_Mã_CK_Máy_STT_NMSX</span>
-                </p>
+                {!showScanner && (
+                  <p className="text-[10px] text-slate-400 text-center">
+                    Định dạng: <span className="font-mono">ddmmyy_Mã_CK_Máy_STT_NMSX</span>
+                  </p>
+                )}
               </CardContent>
             </Card>
           )}

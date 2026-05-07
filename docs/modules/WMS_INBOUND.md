@@ -50,13 +50,21 @@ GET    /api/wms/inbound-orders/:id/location-suggestions
 ```
 
 ## QR Scan Flow (AppSheet-style – instant, no confirm dialog)
-1. User chọn vị trí trên phiếu (nếu chưa có)
-2. Mở camera → camera luôn active
-3. Camera bắt QR → `onScan(raw)` → gọi API ngay (location = order.location_id, stack_layer = 1 default)
-4. Thành công → banner xanh + auto-resume camera sau 1.5s → quét pallet tiếp
-5. Lỗi → banner đỏ + camera pause → user bấm "Quét tiếp"
-6. Không có confirm dialog
-- `QRScanner` export `QRScannerHandle { resume() }` qua `forwardRef`
+1. User chọn vị trí trên phiếu (nếu chưa có — inline select trong card)
+2. Bấm "Mở camera quét QR" → camera hiện trong card
+3. Camera bắt QR → `playBeep()` ngay lập tức → **camera đóng lại** → quay ra trang chính
+4. API call chạy background (`location_id = order.location_id`, `stack_layer = 1` default)
+5. Thành công → banner xanh hiện bên ngoài → nút đổi thành "Quét pallet tiếp"
+6. Lỗi → banner đỏ → nút "Mở camera quét QR" để thử lại
+7. Không có confirm dialog, không có delay nhân tạo
+
+### Audio
+- `frontend/src/utils/audio.ts` → `playBeep(frequency?, duration?)` dùng Web Audio API
+- Gọi trước khi đóng camera để user có phản hồi âm thanh ngay lập tức
+
+### QRScanner component
+- Export `QRScannerHandle { resume() }` qua `forwardRef` (dùng cho các module khác nếu cần)
+- Khi parent muốn đóng camera ngay: parent gọi `setShowScanner(false)` → component unmount → cleanup tự stop camera
 
 ## Frontend Files
 ```

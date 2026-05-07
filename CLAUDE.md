@@ -5,6 +5,11 @@
 - **Sau mỗi lần sửa code xong, luôn push lên GitHub ngay lập tức** (không cần người dùng nhắc).
 - Vercel sẽ tự động deploy sau khi push.
 - Remote: `https://github.com/vietnamese2212/wms-webapp.git` (branch `main`)
+- **Sau mỗi lần sửa `backend/prisma/schema.prisma`, luôn chạy ngay:**
+  ```bash
+  cd backend && npx prisma migrate dev --name <mô_tả_thay_đổi>
+  ```
+  Sau đó push cả migration file lên GitHub. Không bao giờ sửa schema mà không migrate.
 
 
 

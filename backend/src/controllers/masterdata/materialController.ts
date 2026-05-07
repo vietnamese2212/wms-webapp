@@ -10,12 +10,13 @@ function buildShortName(description: string, code: string, custom?: string | nul
 
 export async function listMaterials(req: Request, res: Response) {
   try {
-    const { active, search, manufacturer_id, storage_category } = req.query
+    const { active, search, manufacturer_id, storage_category, category } = req.query
     const data = await prisma.material.findMany({
       where: {
         ...(active === 'true' ? { is_active: true } : {}),
         ...(manufacturer_id ? { manufacturer_id: String(manufacturer_id) } : {}),
         ...(storage_category ? { storage_category: String(storage_category) } : {}),
+        ...(category ? { category: String(category) } : {}),
         ...(search
           ? {
               OR: [
@@ -51,9 +52,9 @@ export async function createMaterial(req: Request, res: Response) {
   try {
     const {
       material_code, material_description, custom_short_name,
-      product_type, unit, manufacturer_id, notes,
+      category, product_type, unit, manufacturer_id, notes,
       weight_kg, cartons_per_pallet, cartons_per_pallet_mn,
-      units_per_carton, shelf_life_days, storage_category, old_code, image_url,
+      units_per_carton, ea_per_pallet, shelf_life_days, storage_category, old_code, image_url,
     } = req.body
     if (!material_code || !material_description)
       return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu material_code hoặc material_description')
@@ -65,12 +66,14 @@ export async function createMaterial(req: Request, res: Response) {
         material_description: String(material_description).trim(),
         short_name,
         custom_short_name: custom_short_name ? String(custom_short_name).trim() : undefined,
+        category: category ?? undefined,
         product_type: product_type ?? undefined,
         unit: unit ?? undefined,
         weight_kg: weight_kg != null ? weight_kg : undefined,
         cartons_per_pallet: cartons_per_pallet != null ? Number(cartons_per_pallet) : undefined,
         cartons_per_pallet_mn: cartons_per_pallet_mn != null ? Number(cartons_per_pallet_mn) : undefined,
         units_per_carton: units_per_carton != null ? Number(units_per_carton) : undefined,
+        ea_per_pallet: ea_per_pallet != null ? Number(ea_per_pallet) : undefined,
         shelf_life_days: shelf_life_days != null ? Number(shelf_life_days) : undefined,
         storage_category: storage_category ?? undefined,
         old_code: old_code ? String(old_code).trim() : undefined,
@@ -91,10 +94,10 @@ export async function createMaterial(req: Request, res: Response) {
 export async function updateMaterial(req: Request, res: Response) {
   try {
     const {
-      material_description, custom_short_name, product_type, unit,
+      material_description, custom_short_name, category, product_type, unit,
       manufacturer_id, notes, is_active,
       weight_kg, cartons_per_pallet, cartons_per_pallet_mn,
-      units_per_carton, shelf_life_days, storage_category, old_code, image_url,
+      units_per_carton, ea_per_pallet, shelf_life_days, storage_category, old_code, image_url,
     } = req.body
 
     let short_name: string | undefined
@@ -114,12 +117,14 @@ export async function updateMaterial(req: Request, res: Response) {
         ...(material_description !== undefined && { material_description: String(material_description).trim() }),
         ...(custom_short_name !== undefined && { custom_short_name: custom_short_name ? String(custom_short_name).trim() : null }),
         ...(short_name !== undefined && { short_name }),
+        ...(category !== undefined && { category }),
         ...(product_type !== undefined && { product_type }),
         ...(unit !== undefined && { unit }),
         ...(weight_kg !== undefined && { weight_kg }),
         ...(cartons_per_pallet !== undefined && { cartons_per_pallet: cartons_per_pallet != null ? Number(cartons_per_pallet) : null }),
         ...(cartons_per_pallet_mn !== undefined && { cartons_per_pallet_mn: cartons_per_pallet_mn != null ? Number(cartons_per_pallet_mn) : null }),
         ...(units_per_carton !== undefined && { units_per_carton: units_per_carton != null ? Number(units_per_carton) : null }),
+        ...(ea_per_pallet !== undefined && { ea_per_pallet: ea_per_pallet != null ? Number(ea_per_pallet) : null }),
         ...(shelf_life_days !== undefined && { shelf_life_days: shelf_life_days != null ? Number(shelf_life_days) : null }),
         ...(storage_category !== undefined && { storage_category }),
         ...(old_code !== undefined && { old_code: old_code ? String(old_code).trim() : null }),

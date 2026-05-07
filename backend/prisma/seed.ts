@@ -180,6 +180,7 @@ async function main() {
       material_description: 'LOF Ba Vì Sữa tươi Có đường 180mlx48',
       custom_short_name: 'Ba Vì 180',
       short_name: makeShortName('LOF Ba Vì Sữa tươi Có đường 180mlx48', '510000127', 'Ba Vì 180'),
+      category: 'Thành phẩm',
       product_type: '180',
       unit: 'thùng',
       weight_kg: 9.82,
@@ -197,6 +198,7 @@ async function main() {
       material_description: 'LOF Ba Vì Sữa tươi Có đường 110mlx48',
       custom_short_name: 'Ba Vì 110',
       short_name: makeShortName('LOF Ba Vì Sữa tươi Có đường 110mlx48', '510000126', 'Ba Vì 110'),
+      category: 'Thành phẩm',
       product_type: '110',
       unit: 'thùng',
       weight_kg: 6.1,
@@ -206,6 +208,17 @@ async function main() {
       shelf_life_days: 240,
       storage_category: 'UHT',
       old_code: '401000001',
+    },
+  })
+  // NVL mẫu – theo dõi bằng EA
+  const mat8 = await prisma.material.create({
+    data: {
+      material_code: '200000001',
+      material_description: 'Màng PE bọc pallet 500m',
+      short_name: makeShortName('Màng PE bọc pallet 500m', '200000001'),
+      category: 'NVL',
+      unit: 'cuộn',
+      ea_per_pallet: 200,
     },
   })
 

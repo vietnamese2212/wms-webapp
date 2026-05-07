@@ -90,12 +90,14 @@ model Material {
   // short_name = "{custom_short_name ?? material_description} [{last 3 digits}]"
   short_name            String?
   custom_short_name     String?                // User override tên, suffix [xxx] giữ nguyên
+  category              String?                // Phân loại: "Thành phẩm", "NVL", "POSM", "Bao bì"...
   product_type          String?                // Loại: "180", "110", "200"...
   unit                  String?                // "thùng", "cái", "kg"
   weight_kg             Decimal?               // KG – trọng lượng 1 thùng (kg)
-  cartons_per_pallet    Int?                   // Thùng/Pallet
-  cartons_per_pallet_mn Int?                   // Thùng/Pallet (khu vực MN)
+  cartons_per_pallet    Int?                   // Thùng/Pallet (Thành phẩm)
+  cartons_per_pallet_mn Int?                   // Thùng/Pallet khu vực MN (Thành phẩm)
   units_per_carton      Int?                   // Hộp/Thùng
+  ea_per_pallet         Int?                   // EA/Pallet (NVL) – tính pallet = tổng EA ÷ ea_per_pallet
   shelf_life_days       Int?                   // Shelf life (ngày)
   storage_category      String?                // KHO: "UHT", "Fresh", "Frozen"...
   old_code              String?                // Mã cũ (legacy)

@@ -10,6 +10,7 @@
   cd backend && npx prisma migrate dev --name <mô_tả_thay_đổi>
   ```
   Sau đó push cả migration file lên GitHub. Không bao giờ sửa schema mà không migrate.
+- **Sau mỗi lần sửa `backend/prisma/schema.prisma`, luôn cập nhật `SCHEMA_REVIEW.md` ngay lập tức** — cập nhật schema code, bảng trạng thái model, và thêm dòng vào Changelog.
 
 
 

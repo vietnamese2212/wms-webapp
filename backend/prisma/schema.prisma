@@ -1,0 +1,393 @@
+// WMS Supply Chain – Prisma Schema
+// Database: PostgreSQL (Supabase hoặc PostgreSQL gốc)
+// generator client sẽ tạo @prisma/client để dùng trong code
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// MASTERDATA – VỊ TRÍ KHO
+// ============================================================
+
+model Warehouse {
+  id         String   @id @default(uuid())
+  code       String   @unique  // "BV", "BB" – dùng làm prefix location_code
+  name       String            // "Kho Ba Vì", "Kho Bàu Bàng"
+  address    String?
+  is_active  Boolean  @default(true)
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  sub_warehouses SubWarehouse[]
+  employees      Employee[]
+}
+
+model SubWarehouse {
+  id           String    @id @default(uuid())
+  warehouse_id String
+  warehouse    Warehouse @relation(fields: [warehouse_id], references: [id])
+  code         String              // "TP1", "NL1" – dùng làm prefix location_code
+  name         String              // "Thành phẩm 1", "Nguyên liệu 1"
+  type         String?             // "THANH_PHAM" | "NGUYEN_LIEU" | "BAN_THANH_PHAM"
+  is_active    Boolean  @default(true)
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  locations    Location[]
+
+  @@unique([warehouse_id, code])
+  @@index([warehouse_id])
+}
+
+// location_code tự động sinh: "{warehouse.code}_{subwarehouse.code}_{row}_{shelf}"
+// VD: "BV_TP1_1_T1"
+model Location {
+  id               String       @id @default(uuid())
+  sub_warehouse_id String
+  sub_warehouse    SubWarehouse @relation(fields: [sub_warehouse_id], references: [id])
+  location_code    String       @unique  // Auto-generated, không nhập tay
+  row              String               // "1", "2", "3"
+  shelf            String               // "T1", "T2" (tầng/kệ)
+  max_pallets      Int          @default(1)  // Số slot sàn tối đa
+  is_active        Boolean      @default(true)
+  created_at       DateTime     @default(now())
+  updated_at       DateTime     @updatedAt
+
+  inventory_entries InventoryEntry[]
+
+  @@index([sub_warehouse_id])
+}
+
+// ============================================================
+// MASTERDATA – HÀNG HOÁ
+// ============================================================
+
+// NMSX – Nhà máy sản xuất (ký hiệu chữ/số)
+model Manufacturer {
+  id         String   @id @default(uuid())
+  code       String   @unique  // "A", "01", "NM3"
+  name       String?
+  is_active  Boolean  @default(true)
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  materials         Material[]
+  inventory_entries InventoryEntry[]
+}
+
+model Material {
+  id                   String        @id @default(uuid())
+  material_code        String        @unique  // "1234567890"
+  material_description String                 // "Thùng carton 3 lớp 40x30x30"
+  // short_name = "{custom_short_name ?? material_description} [{last 3 digits}]"
+  // VD: "Thùng carton [890]"
+  short_name           String?
+  custom_short_name    String?                // User override phần tên, suffix [890] giữ nguyên
+  product_type         String?
+  unit                 String?                // "thùng", "cái", "kg"
+  manufacturer_id      String?
+  manufacturer         Manufacturer? @relation(fields: [manufacturer_id], references: [id])
+  notes                String?
+  is_active            Boolean       @default(true)
+  created_at           DateTime      @default(now())
+  updated_at           DateTime      @updatedAt
+
+  inventory_entries  InventoryEntry[]
+  export_history     ExportHistory[]
+  production_imports ProductionImport[]
+}
+
+// ============================================================
+// MASTERDATA – NHÂN SỰ
+// ============================================================
+
+model Employee {
+  id            String     @id @default(uuid())
+  warehouse_id  String?
+  warehouse     Warehouse? @relation(fields: [warehouse_id], references: [id])
+  employee_code String?    @unique
+  name          String
+  role          String
+  // "ADMIN" | "WAREHOUSE_MANAGER" | "WAREHOUSE_STAFF" | "DRIVER" | "HR_MANAGER"
+  department    String?
+  phone         String?
+  email         String?    @unique
+  password      String     // bcrypt hash
+  is_active     Boolean    @default(true)
+  created_at    DateTime   @default(now())
+  updated_at    DateTime   @updatedAt
+
+  schedules          Schedule[]
+  overtime_requests  OvertimeRequest[]
+  attendances        Attendance[]
+  production_imports ProductionImport[]
+  location_transfers LocationTransfer[]
+  export_history     ExportHistory[]
+}
+
+// ============================================================
+// MASTERDATA – XE & TÀI XẾ
+// ============================================================
+
+model Driver {
+  id         String   @id @default(uuid())
+  code       String?  @unique
+  name       String
+  phone      String?
+  id_card    String?
+  license_no String?
+  is_active  Boolean  @default(true)
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  // Các xe mà driver này là tài xế mặc định
+  default_for_vehicles Vehicle[]
+  // Các chuyến giao hàng thực tế driver đã/đang lái
+  delivery_orders      DeliveryOrder[]
+}
+
+model Vehicle {
+  id                String    @id @default(uuid())
+  plate_number      String    @unique  // "51C-12345"
+  type              String?            // "Xe tải", "Xe container", "Xe bán tải"
+  capacity_tons     Float?
+  default_driver_id String?
+  // Tài xế mặc định (hiển thị khi tạo lệnh vận chuyển, có thể ghi đè)
+  default_driver    Driver?   @relation(fields: [default_driver_id], references: [id])
+  next_inspection   DateTime?
+  notes             String?
+  is_active         Boolean   @default(true)
+  created_at        DateTime  @default(now())
+  updated_at        DateTime  @updatedAt
+
+  delivery_orders   DeliveryOrder[]
+}
+
+// ============================================================
+// WMS – QUẢN LÝ KHO
+// ============================================================
+
+model InventoryEntry {
+  id              String        @id @default(uuid())
+  pallet_code     String        @unique  // Mã QR dán trên pallet
+  location_id     String
+  location        Location      @relation(fields: [location_id], references: [id])
+  material_id     String
+  material        Material      @relation(fields: [material_id], references: [id])
+  manufacturer_id String?
+  manufacturer    Manufacturer? @relation(fields: [manufacturer_id], references: [id])
+
+  // Chu kỳ sản xuất – bóc từ QR hoặc chọn tay (VD: "2025-05", "Đợt 3")
+  cycle           String?
+
+  // Pallet stacking – thay thế bypass_location cũ:
+  // stack_layer = 1 → pallet đặt sàn, tính vào max_pallets của Location
+  // stack_layer = 2, 3 → chồng lên pallet khác, KHÔNG tính vào max_pallets
+  stack_layer     Int           @default(1)
+
+  cartons_imported Int
+  production_date  DateTime?
+  status           String       @default("IN_STOCK")
+  // "IN_STOCK" | "EXPORTED" | "TRANSFERRED" | "PARTIAL"
+  notes            String?
+  created_at       DateTime     @default(now())
+  updated_at       DateTime     @updatedAt
+
+  export_history     ExportHistory[]
+  location_transfers LocationTransfer[]
+
+  @@index([location_id, status])
+  @@index([material_id])
+  @@index([status])
+}
+
+// Lịch sử xuất kho – mỗi lần xuất tạo 1 record
+model ExportHistory {
+  id                 String          @id @default(uuid())
+  inventory_entry_id String?
+  inventory_entry    InventoryEntry? @relation(fields: [inventory_entry_id], references: [id])
+  material_id        String?
+  material           Material?       @relation(fields: [material_id], references: [id])
+  exported_by        String?
+  exported_by_emp    Employee?       @relation(fields: [exported_by], references: [id])
+  delivery_order_id  String?
+  delivery_order     DeliveryOrder?  @relation(fields: [delivery_order_id], references: [id])
+  quantity           Int
+  export_date        DateTime        @default(now())
+  notes              String?
+  created_at         DateTime        @default(now())
+
+  @@index([inventory_entry_id])
+  @@index([export_date])
+}
+
+// Phiếu nhập từ sản xuất
+model ProductionImport {
+  id              String     @id @default(uuid())
+  import_code     String?    @unique
+  material_id     String?
+  material        Material?  @relation(fields: [material_id], references: [id])
+  imported_by     String?
+  imported_by_emp Employee?  @relation(fields: [imported_by], references: [id])
+  quantity        Int
+  import_date     DateTime   @default(now())
+  notes           String?
+  created_at      DateTime   @default(now())
+  updated_at      DateTime   @updatedAt
+
+  @@index([import_date])
+}
+
+// Lịch sử chuyển vị trí pallet
+model LocationTransfer {
+  id                 String         @id @default(uuid())
+  inventory_entry_id String
+  inventory_entry    InventoryEntry @relation(fields: [inventory_entry_id], references: [id])
+  from_location_id   String?
+  to_location_id     String?
+  transferred_by     String?
+  transferred_by_emp Employee?      @relation(fields: [transferred_by], references: [id])
+  transfer_date      DateTime       @default(now())
+  notes              String?
+  created_at         DateTime       @default(now())
+
+  @@index([inventory_entry_id])
+}
+
+// ============================================================
+// TMS – QUẢN LÝ VẬN CHUYỂN
+// ============================================================
+
+model DeliveryOrder {
+  id           String    @id @default(uuid())
+  order_code   String?   @unique
+  vehicle_id   String?
+  vehicle      Vehicle?  @relation(fields: [vehicle_id], references: [id])
+  driver_id    String?
+  // Tài xế thực tế cho chuyến này (có thể khác với default_driver của xe)
+  driver       Driver?   @relation(fields: [driver_id], references: [id])
+  origin       String?
+  destination  String?
+  status       String    @default("PENDING")
+  // "PENDING" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED"
+  scheduled_at DateTime?
+  completed_at DateTime?
+  notes        String?
+  created_at   DateTime  @default(now())
+  updated_at   DateTime  @updatedAt
+
+  export_history ExportHistory[]
+
+  @@index([status])
+  @@index([vehicle_id])
+  @@index([scheduled_at])
+}
+
+// ============================================================
+// HR – QUẢN LÝ NHÂN SỰ
+// ============================================================
+
+model Shift {
+  id           String   @id @default(uuid())
+  name         String            // "Ca sáng", "Ca chiều", "Ca tối"
+  start_time   String            // "08:00"
+  end_time     String            // "17:00"
+  days_of_week String[]          // ["1","2","3","4","5"] – thứ trong tuần
+  is_active    Boolean  @default(true)
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  schedules    Schedule[]
+}
+
+model Schedule {
+  id          String   @id @default(uuid())
+  employee_id String
+  employee    Employee @relation(fields: [employee_id], references: [id])
+  shift_id    String
+  shift       Shift    @relation(fields: [shift_id], references: [id])
+  date        DateTime @db.Date
+  status      String   @default("SCHEDULED")
+  // "SCHEDULED" | "CONFIRMED" | "ABSENT" | "LATE"
+  check_in    String?  // "08:05" – giờ vào thực tế
+  check_out   String?  // "17:10" – giờ ra thực tế
+  notes       String?
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  @@unique([employee_id, date])
+  @@index([date])
+  @@index([employee_id])
+}
+
+model OvertimeRequest {
+  id          String    @id @default(uuid())
+  employee_id String
+  employee    Employee  @relation(fields: [employee_id], references: [id])
+  date        DateTime  @db.Date
+  hours       Float
+  reason      String?
+  status      String    @default("PENDING")
+  // "PENDING" | "APPROVED" | "REJECTED"
+  approved_by String?
+  approved_at DateTime?
+  notes       String?
+  created_at  DateTime  @default(now())
+  updated_at  DateTime  @updatedAt
+
+  @@index([employee_id])
+  @@index([status])
+  @@index([date])
+}
+
+model Attendance {
+  id          String    @id @default(uuid())
+  employee_id String
+  employee    Employee  @relation(fields: [employee_id], references: [id])
+  date        DateTime  @db.Date
+  check_in    DateTime?
+  check_out   DateTime?
+  created_at  DateTime  @default(now())
+  updated_at  DateTime  @updatedAt
+
+  @@unique([employee_id, date])
+  @@index([date])
+}
+
+// ============================================================
+// SYSTEM
+// ============================================================
+
+// Phân quyền menu theo role
+model Menu {
+  id        String  @id @default(uuid())
+  key       String  @unique
+  label     String
+  path      String?
+  icon      String?
+  parent_id String?
+  parent    Menu?   @relation("MenuTree", fields: [parent_id], references: [id])
+  children  Menu[]  @relation("MenuTree")
+  roles     String  // Comma-separated: "ADMIN,WAREHOUSE_MANAGER"
+  order     Int     @default(0)
+  is_active Boolean @default(true)
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+}
+
+// Cài đặt hệ thống dạng key-value
+model Setting {
+  id         String   @id @default(uuid())
+  key        String   @unique
+  value      String
+  type       String?  // "string" | "number" | "boolean" | "json"
+  label      String?
+  updated_at DateTime @updatedAt
+}

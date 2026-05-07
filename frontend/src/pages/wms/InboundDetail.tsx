@@ -24,7 +24,7 @@ import {
   useUpdateInboundOrder,
 } from '@/api/hooks'
 import { inboundOrderStatusLabel } from '@/utils/formatters'
-import { playBeep }                from '@/utils/audio'
+import { playBeep, unlockAudio }   from '@/utils/audio'
 import type { InboundOrderStatus } from '@/types'
 
 // ─── Status badge ────────────────────────────────────────────
@@ -74,6 +74,42 @@ function ScanFeedback({ state }: { state: FeedbackState }) {
   )
 }
 
+// ─── Full-screen camera overlay ───────────────────────────────
+
+interface CameraOverlayProps {
+  materialCode: string
+  locationCode: string
+  onScan: (raw: string) => void
+  onClose: () => void
+}
+
+function CameraOverlay({ materialCode, locationCode, onScan, onClose }: CameraOverlayProps) {
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col bg-black">
+      {/* Top bar */}
+      <div className="flex items-center gap-3 px-4 pt-safe-top py-3 bg-black/80 shrink-0">
+        <button
+          onClick={onClose}
+          className="p-2 rounded-full hover:bg-white/10 transition-colors"
+        >
+          <ArrowLeft className="h-5 w-5 text-white" />
+        </button>
+        <div className="min-w-0">
+          <p className="text-white text-sm font-medium leading-tight">Quét QR pallet</p>
+          <p className="text-slate-400 text-xs truncate">
+            {materialCode} · {locationCode}
+          </p>
+        </div>
+      </div>
+
+      {/* Camera area – fills remaining screen */}
+      <div className="flex-1 overflow-hidden">
+        <QRScanner onScan={onScan} onClose={onClose} />
+      </div>
+    </div>
+  )
+}
+
 // ─── Main page ───────────────────────────────────────────────
 
 export default function InboundDetail() {
@@ -91,17 +127,23 @@ export default function InboundDetail() {
   const { mutate: scanPallet,    isPending: scanning    } = useScanPallet()
   const { mutate: updateOrder                           } = useUpdateInboundOrder()
 
-  const [showScanner, setShowScanner] = useState(false)
-  const [feedback,    setFeedback]    = useState<FeedbackState | null>(null)
+  const [showCamera, setShowCamera] = useState(false)
+  const [feedback,   setFeedback]   = useState<FeedbackState | null>(null)
 
   const isOpen  = order?.status === 'OPEN'
   const entries = order?.inventory_entries ?? []
   const hasLoc  = !!order?.location_id
 
-  // ── Instant scan: beep → đóng camera → gọi API ───────────
+  function openCamera() {
+    unlockAudio()   // unlock AudioContext trong user-gesture (click) này
+    setFeedback(null)
+    setShowCamera(true)
+  }
+
+  // Bắt được QR: beep → đóng overlay → gọi API
   function handleScan(raw: string) {
-    playBeep()            // tiếng bíp ngay lập tức
-    setShowScanner(false) // đóng camera, quay ra trang
+    playBeep()
+    setShowCamera(false)
 
     if (!order?.location_id) {
       setFeedback({ type: 'error', msg: 'Chưa chọn vị trí. Chọn vị trí rồi quét lại.' })
@@ -139,232 +181,224 @@ export default function InboundDetail() {
   }
 
   return (
-    <div className="space-y-0">
-      <PageHeader
-        title={order.import_code ?? 'Phiếu nhập kho'}
-        description={`${order.warehouse?.name ?? ''} – ${order.material?.material_code ?? ''} ${order.material?.short_name ?? ''}`}
-        actions={
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={() => navigate('/wms/inbound')}>
-              <ArrowLeft className="h-4 w-4 mr-1" /> Quay lại
-            </Button>
-            {isOpen && (
-              <>
-                <Button
-                  size="sm" variant="outline"
-                  className="text-red-600 hover:bg-red-50"
-                  disabled={cancelling}
-                  onClick={() => cancelOrder(order.id)}
-                >
-                  <XCircle className="h-4 w-4 mr-1" /> Hủy phiếu
-                </Button>
-                <Button
-                  size="sm"
-                  disabled={completing || entries.length === 0}
-                  onClick={() => completeOrder(order.id)}
-                >
-                  <CheckCircle2 className="h-4 w-4 mr-1" />
-                  {completing ? 'Đang lưu...' : 'Hoàn thành'}
-                </Button>
-              </>
-            )}
-          </div>
-        }
-      />
+    <>
+      {/* Full-screen camera overlay */}
+      {showCamera && (
+        <CameraOverlay
+          materialCode={order.material?.material_code ?? ''}
+          locationCode={order.location?.location_code ?? ''}
+          onScan={handleScan}
+          onClose={() => setShowCamera(false)}
+        />
+      )}
 
-      <div className="p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
-
-        {/* ── Left: Order info + scan button ── */}
-        <div className="space-y-4 lg:col-span-1">
-
-          {/* Order info card */}
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base flex items-center justify-between">
-                Thông tin phiếu
-                <InboundStatusBadge status={order.status} />
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3 text-sm">
-              <div className="flex items-center gap-2">
-                <Package className="h-4 w-4 text-slate-400" />
-                <span className="font-medium">{order.material?.material_code}</span>
-                <span className="text-slate-500">–</span>
-                <span className="text-slate-600 truncate">
-                  {order.material?.short_name ?? order.material?.material_description}
-                </span>
-              </div>
-
-              <div className="flex items-start gap-2">
-                <MapPin className="h-4 w-4 text-slate-400 mt-0.5" />
-                <div className="flex-1">
-                  {order.location ? (
-                    <Badge variant="outline" className="font-mono text-xs">
-                      {order.location.location_code}
-                    </Badge>
-                  ) : isOpen ? (
-                    <div className="space-y-1">
-                      <p className="text-xs text-amber-700 font-medium flex items-center gap-1">
-                        <AlertTriangle className="h-3 w-3" /> Chưa chọn vị trí
-                      </p>
-                      <Select onValueChange={(v) => updateOrder({ id: order.id, location_id: v })}>
-                        <SelectTrigger className="h-7 text-xs">
-                          <SelectValue placeholder="Chọn vị trí nhập" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {allLocations.map((l: any) => (
-                            <SelectItem key={l.id} value={l.id}>{l.location_code}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  ) : (
-                    <span className="text-slate-400 text-xs">Chưa chọn vị trí</span>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <Layers className="h-4 w-4 text-slate-400" />
-                <span>
-                  <span className="font-semibold text-blue-600">{entries.length}</span>
-                  {order.planned_pallets ? (
-                    <span className="text-slate-500"> / {order.planned_pallets} pallet dự kiến</span>
-                  ) : (
-                    <span className="text-slate-500"> pallet đã quét</span>
-                  )}
-                </span>
-              </div>
-
-              {order.notes && (
-                <p className="text-xs text-slate-500 italic border-t pt-2">{order.notes}</p>
+      <div className="space-y-0">
+        <PageHeader
+          title={order.import_code ?? 'Phiếu nhập kho'}
+          description={`${order.warehouse?.name ?? ''} – ${order.material?.material_code ?? ''} ${order.material?.short_name ?? ''}`}
+          actions={
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" size="sm" onClick={() => navigate('/wms/inbound')}>
+                <ArrowLeft className="h-4 w-4 mr-1" /> Quay lại
+              </Button>
+              {isOpen && (
+                <>
+                  <Button
+                    size="sm" variant="outline"
+                    className="text-red-600 hover:bg-red-50"
+                    disabled={cancelling}
+                    onClick={() => cancelOrder(order.id)}
+                  >
+                    <XCircle className="h-4 w-4 mr-1" /> Hủy phiếu
+                  </Button>
+                  <Button
+                    size="sm"
+                    disabled={completing || entries.length === 0}
+                    onClick={() => completeOrder(order.id)}
+                  >
+                    <CheckCircle2 className="h-4 w-4 mr-1" />
+                    {completing ? 'Đang lưu...' : 'Hoàn thành'}
+                  </Button>
+                </>
               )}
-              <div className="text-xs text-slate-400 border-t pt-2 space-y-0.5">
-                <p>Tạo bởi: {order.imported_by_emp?.name ?? order.created_by_emp?.name ?? '—'}</p>
-                <p>Ngày tạo: {format(parseISO(order.created_at), 'dd/MM/yyyy HH:mm', { locale: vi })}</p>
-              </div>
-            </CardContent>
-          </Card>
+            </div>
+          }
+        />
 
-          {/* Scan action card (only when OPEN) */}
-          {isOpen && (
+        <div className="p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+          {/* ── Left: Order info + scan button ── */}
+          <div className="space-y-4 lg:col-span-1">
+
             <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <QrCode className="h-4 w-4" /> Quét QR pallet
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center justify-between">
+                  Thông tin phiếu
+                  <InboundStatusBadge status={order.status} />
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-3">
+              <CardContent className="space-y-3 text-sm">
+                <div className="flex items-center gap-2">
+                  <Package className="h-4 w-4 text-slate-400" />
+                  <span className="font-medium">{order.material?.material_code}</span>
+                  <span className="text-slate-500">–</span>
+                  <span className="text-slate-600 truncate">
+                    {order.material?.short_name ?? order.material?.material_description}
+                  </span>
+                </div>
 
-                {/* Inline camera */}
-                {showScanner && (
-                  <QRScanner
-                    onScan={handleScan}
-                    onClose={() => setShowScanner(false)}
-                  />
+                <div className="flex items-start gap-2">
+                  <MapPin className="h-4 w-4 text-slate-400 mt-0.5" />
+                  <div className="flex-1">
+                    {order.location ? (
+                      <Badge variant="outline" className="font-mono text-xs">
+                        {order.location.location_code}
+                      </Badge>
+                    ) : isOpen ? (
+                      <div className="space-y-1">
+                        <p className="text-xs text-amber-700 font-medium flex items-center gap-1">
+                          <AlertTriangle className="h-3 w-3" /> Chưa chọn vị trí
+                        </p>
+                        <Select onValueChange={(v) => updateOrder({ id: order.id, location_id: v })}>
+                          <SelectTrigger className="h-7 text-xs">
+                            <SelectValue placeholder="Chọn vị trí nhập" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {allLocations.map((l: any) => (
+                              <SelectItem key={l.id} value={l.id}>{l.location_code}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ) : (
+                      <span className="text-slate-400 text-xs">Chưa chọn vị trí</span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Layers className="h-4 w-4 text-slate-400" />
+                  <span>
+                    <span className="font-semibold text-blue-600">{entries.length}</span>
+                    {order.planned_pallets ? (
+                      <span className="text-slate-500"> / {order.planned_pallets} pallet dự kiến</span>
+                    ) : (
+                      <span className="text-slate-500"> pallet đã quét</span>
+                    )}
+                  </span>
+                </div>
+
+                {order.notes && (
+                  <p className="text-xs text-slate-500 italic border-t pt-2">{order.notes}</p>
                 )}
+                <div className="text-xs text-slate-400 border-t pt-2 space-y-0.5">
+                  <p>Tạo bởi: {order.imported_by_emp?.name ?? order.created_by_emp?.name ?? '—'}</p>
+                  <p>Ngày tạo: {format(parseISO(order.created_at), 'dd/MM/yyyy HH:mm', { locale: vi })}</p>
+                </div>
+              </CardContent>
+            </Card>
 
-                {/* Scan feedback (outside camera) */}
-                {!showScanner && feedback && (
-                  <ScanFeedback state={feedback} />
-                )}
+            {/* Scan action card */}
+            {isOpen && (
+              <Card>
+                <CardContent className="pt-4 space-y-3">
+                  {feedback && <ScanFeedback state={feedback} />}
 
-                {/* Scan / scanning button */}
-                {!showScanner && (
                   <Button
-                    className="w-full gap-2 h-12 text-base"
+                    className="w-full h-14 gap-2 text-base font-semibold"
                     disabled={!hasLoc || scanning}
-                    onClick={() => { setFeedback(null); setShowScanner(true) }}
+                    onClick={openCamera}
                   >
                     <QrCode className="h-5 w-5" />
-                    {scanning   ? 'Đang lưu...' :
-                     !hasLoc    ? 'Chọn vị trí trước' :
-                     feedback?.type === 'success' ? 'Quét pallet tiếp' :
-                     'Mở camera quét QR'}
+                    {scanning
+                      ? 'Đang lưu...'
+                      : !hasLoc
+                        ? 'Chọn vị trí trước'
+                        : feedback?.type === 'success'
+                          ? 'Quét pallet tiếp ▸'
+                          : 'Mở camera quét QR'}
                   </Button>
-                )}
 
-                {!showScanner && (
                   <p className="text-[10px] text-slate-400 text-center">
                     Định dạng: <span className="font-mono">ddmmyy_Mã_CK_Máy_STT_NMSX</span>
                   </p>
+                </CardContent>
+              </Card>
+            )}
+          </div>
+
+          {/* ── Right: Pallet list ── */}
+          <div className="lg:col-span-2">
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">
+                  Danh sách pallet đã quét
+                  <Badge variant="secondary" className="ml-2">{entries.length}</Badge>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                {entries.length === 0 ? (
+                  <div className="flex flex-col items-center gap-2 py-12 text-slate-400">
+                    <QrCode className="h-10 w-10 opacity-30" />
+                    <p className="text-sm">Chưa có pallet nào được quét</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="text-xs">Mã pallet (QR)</TableHead>
+                          <TableHead className="text-xs">NSX</TableHead>
+                          <TableHead className="text-xs">CK</TableHead>
+                          <TableHead className="text-xs">Máy</TableHead>
+                          <TableHead className="text-xs">NMSX</TableHead>
+                          <TableHead className="text-xs text-right">Thùng</TableHead>
+                          <TableHead className="text-xs">Vị trí</TableHead>
+                          <TableHead className="text-xs">T</TableHead>
+                          {isOpen && <TableHead className="text-xs w-8" />}
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {entries.map((entry) => (
+                          <TableRow key={entry.id} className="text-xs">
+                            <TableCell className="font-mono">{entry.pallet_code}</TableCell>
+                            <TableCell>
+                              {entry.production_date
+                                ? format(parseISO(entry.production_date), 'dd/MM/yy', { locale: vi })
+                                : '—'}
+                            </TableCell>
+                            <TableCell>{entry.cycle ?? '—'}</TableCell>
+                            <TableCell>{entry.machine_code ?? '—'}</TableCell>
+                            <TableCell>{entry.manufacturer?.code ?? '—'}</TableCell>
+                            <TableCell className="text-right tabular-nums">{entry.cartons_imported}</TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className="font-mono text-[10px]">
+                                {entry.location.location_code}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>{entry.stack_layer}</TableCell>
+                            {isOpen && (
+                              <TableCell>
+                                <button
+                                  className="text-slate-400 hover:text-red-500 transition-colors p-1"
+                                  onClick={() => deleteEntry({ orderId: order.id, entryId: entry.id })}
+                                  title="Xóa pallet"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </TableCell>
+                            )}
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
                 )}
               </CardContent>
             </Card>
-          )}
-        </div>
-
-        {/* ── Right: Pallet list ── */}
-        <div className="lg:col-span-2">
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">
-                Danh sách pallet đã quét
-                <Badge variant="secondary" className="ml-2">{entries.length}</Badge>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="p-0">
-              {entries.length === 0 ? (
-                <div className="flex flex-col items-center gap-2 py-12 text-slate-400">
-                  <QrCode className="h-10 w-10 opacity-30" />
-                  <p className="text-sm">Chưa có pallet nào được quét</p>
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="text-xs">Mã pallet (QR)</TableHead>
-                        <TableHead className="text-xs">NSX</TableHead>
-                        <TableHead className="text-xs">CK</TableHead>
-                        <TableHead className="text-xs">Máy</TableHead>
-                        <TableHead className="text-xs">NMSX</TableHead>
-                        <TableHead className="text-xs text-right">Thùng</TableHead>
-                        <TableHead className="text-xs">Vị trí</TableHead>
-                        <TableHead className="text-xs">T</TableHead>
-                        {isOpen && <TableHead className="text-xs w-8" />}
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {entries.map((entry) => (
-                        <TableRow key={entry.id} className="text-xs">
-                          <TableCell className="font-mono">{entry.pallet_code}</TableCell>
-                          <TableCell>
-                            {entry.production_date
-                              ? format(parseISO(entry.production_date), 'dd/MM/yy', { locale: vi })
-                              : '—'}
-                          </TableCell>
-                          <TableCell>{entry.cycle ?? '—'}</TableCell>
-                          <TableCell>{entry.machine_code ?? '—'}</TableCell>
-                          <TableCell>{entry.manufacturer?.code ?? '—'}</TableCell>
-                          <TableCell className="text-right tabular-nums">{entry.cartons_imported}</TableCell>
-                          <TableCell>
-                            <Badge variant="outline" className="font-mono text-[10px]">
-                              {entry.location.location_code}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>{entry.stack_layer}</TableCell>
-                          {isOpen && (
-                            <TableCell>
-                              <button
-                                className="text-slate-400 hover:text-red-500 transition-colors p-1"
-                                onClick={() => deleteEntry({ orderId: order.id, entryId: entry.id })}
-                                title="Xóa pallet"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
-                            </TableCell>
-                          )}
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          </div>
         </div>
       </div>
-    </div>
+    </>
   )
 }

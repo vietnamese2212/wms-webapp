@@ -1,6 +1,7 @@
 # Module WMS – Nhập kho (Inbound)
 
 ## Status: ✅ DONE (backend + frontend + migration applied)
+## Lưu ý: Cần tốc độ truy xuất và di chuyển giữa các transaction nhanh, ưu tiên cảm giác sử dụng của người dùng
 
 ## Flow
 1. User tạo phiếu nhập (`ProductionImport`) → chọn kho, material, vị trí (optional), planned_pallets
@@ -51,20 +52,23 @@ GET    /api/wms/inbound-orders/:id/location-suggestions
 
 ## QR Scan Flow (AppSheet-style – instant, no confirm dialog)
 1. User chọn vị trí trên phiếu (nếu chưa có — inline select trong card)
-2. Bấm "Mở camera quét QR" → camera hiện trong card
-3. Camera bắt QR → `playBeep()` ngay lập tức → **camera đóng lại** → quay ra trang chính
+2. Bấm "Mở camera quét QR" → **full-screen overlay** mở (camera chiếm toàn màn hình)
+3. Camera bắt QR → `playBeep()` ngay lập tức → overlay đóng → quay ra trang phiếu
 4. API call chạy background (`location_id = order.location_id`, `stack_layer = 1` default)
-5. Thành công → banner xanh hiện bên ngoài → nút đổi thành "Quét pallet tiếp"
+5. Thành công → banner xanh hiện trong scan card → nút đổi thành "Quét pallet tiếp ▸"
 6. Lỗi → banner đỏ → nút "Mở camera quét QR" để thử lại
 7. Không có confirm dialog, không có delay nhân tạo
 
 ### Audio
-- `frontend/src/utils/audio.ts` → `playBeep(frequency?, duration?)` dùng Web Audio API
-- Gọi trước khi đóng camera để user có phản hồi âm thanh ngay lập tức
+- `frontend/src/utils/audio.ts` → `unlockAudio()` + `playBeep()`
+- **`unlockAudio()` PHẢI gọi trong onClick** (user-gesture) khi mở camera — browser chặn AudioContext nếu không có gesture
+- `playBeep()` dùng shared AudioContext đã unlock
 
-### QRScanner component
-- Export `QRScannerHandle { resume() }` qua `forwardRef` (dùng cho các module khác nếu cần)
-- Khi parent muốn đóng camera ngay: parent gọi `setShowScanner(false)` → component unmount → cleanup tự stop camera
+### Camera UX – Full-screen overlay (`CameraOverlay` component trong InboundDetail)
+- `fixed inset-0 z-50 bg-black` — chiếm toàn màn hình như native app
+- Top bar: nút back + material code + location code đang nhập
+- Khi QR detect: overlay đóng ngay (`setShowCamera(false)`) → camera unmount → cleanup tự stop
+- `QRScanner` export `QRScannerHandle { resume() }` qua `forwardRef` (cho các module khác nếu cần)
 
 ## Frontend Files
 ```

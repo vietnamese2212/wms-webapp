@@ -1,6 +1,6 @@
 # Prisma Schema Review – WMS Webapp
 
-> Cập nhật lần cuối: 2026-05-07 (rev 8)
+> Cập nhật lần cuối: 2026-05-07 (rev 9)
 > Database: **PostgreSQL** (Supabase hoặc PostgreSQL gốc — Prisma provider không đổi)
 
 ---
@@ -50,9 +50,9 @@ Warehouse (Kho lớn)   → Ba Vì, Bàu Bàng
 | `Employee` | Nhân viên hệ thống | ✅ Đã tạo, có warehouse_id |
 | `Vehicle` | Xe vận chuyển | ✅ Đã tạo, có default_driver_id |
 | `Driver` | Tài xế | ✅ Đã tạo (tách từ Vehicle) |
-| `InventoryEntry` | Pallet tồn kho | ✅ Đã tạo, có stack_layer |
+| `InventoryEntry` | Pallet tồn kho | ✅ Có machine_code, import_order_id, created_by, updated_by |
 | `ExportHistory` | Lịch sử xuất kho | ✅ Đã tạo |
-| `ProductionImport` | Phiếu nhập từ sản xuất | ✅ Đã tạo |
+| `ProductionImport` | Phiếu nhập kho (bảng cha) | ✅ Refactor thành phiếu nhập đầy đủ (rev 9) |
 | `LocationTransfer` | Chuyển vị trí pallet | ✅ Đã tạo |
 | `Menu` | Phân quyền menu | ✅ Đã tạo |
 | `Setting` | Cài đặt hệ thống | ✅ Đã tạo |
@@ -451,3 +451,4 @@ Masterdata > Vị trí kho
 | 2026-05-07 | Material: thêm 8 field logistics (weight_kg, cartons_per_pallet, cartons_per_pallet_mn, units_per_carton, shelf_life_days, storage_category, old_code, image_url) |
 | 2026-05-07 | Material: thêm `category` (Thành phẩm/NVL/POSM/Bao bì) và `ea_per_pallet` (tính pallet cho NVL) |
 | 2026-05-07 | **Refactor 2-table**: xoá SubWarehouse, embed sub_code/sub_name/sub_type vào Location; thêm endpoint /locations/sub-groups |
+| 2026-05-07 | **rev 9 – Tính năng Nhập kho**: `ProductionImport` refactor thành phiếu nhập đầy đủ (thêm warehouse_id, location_id, status, planned_pallets, created_by, updated_by; xoá quantity); `InventoryEntry` thêm machine_code, import_order_id, created_by, updated_by; WMS API /api/wms/inbound-orders; QRScanner component; trang Inbound list + InboundDetail |

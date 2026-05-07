@@ -2,6 +2,7 @@ import express from 'express'
 import cors from 'cors'
 import dotenv from 'dotenv'
 import masterdataRouter from './routes/masterdata'
+import wmsRouter from './routes/wms'
 
 dotenv.config()
 
@@ -21,10 +22,10 @@ app.get('/api/health', (_req, res) => {
 })
 
 app.use('/api/masterdata', masterdataRouter)
+app.use('/api/wms', wmsRouter)
 
 // Các router sẽ thêm sau:
 // app.use('/api/auth', authRouter)
-// app.use('/api/wms', wmsRouter)
 // app.use('/api/tms', tmsRouter)
 // app.use('/api/hr', hrRouter)
 

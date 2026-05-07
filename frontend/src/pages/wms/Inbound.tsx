@@ -1,34 +1,189 @@
 import { useState } from 'react'
-import { Plus, Search, QrCode, PackagePlus, Clock, CheckCircle2 } from 'lucide-react'
-import { PageHeader } from '@/components/shared/PageHeader'
-import { TransactionStatusBadge } from '@/components/shared/StatusBadge'
-import { TableSkeleton } from '@/components/shared/TableSkeleton'
-import { EmptyState } from '@/components/shared/EmptyState'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
+import { useNavigate } from 'react-router-dom'
+import { Plus, Search, PackagePlus, Clock, CheckCircle2, XCircle } from 'lucide-react'
+import { PageHeader }      from '@/components/shared/PageHeader'
+import { TableSkeleton }   from '@/components/shared/TableSkeleton'
+import { EmptyState }      from '@/components/shared/EmptyState'
+import { Button }          from '@/components/ui/button'
+import { Input }           from '@/components/ui/input'
+import { Card, CardContent } from '@/components/ui/card'
+import { Badge }           from '@/components/ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
-import { Label } from '@/components/ui/label'
+import { Label }           from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { useTransactions } from '@/api/hooks'
-import { formatDateTime, getLocationCode } from '@/utils/formatters'
+import { useInboundOrders, useCreateInboundOrder, useWarehouses, useMaterials, useLocationsReal } from '@/api/hooks'
+import { inboundOrderStatusLabel } from '@/utils/formatters'
+import { format, parseISO }        from 'date-fns'
+import { vi }                      from 'date-fns/locale'
+import type { InboundOrderStatus } from '@/types'
 
-export default function Inbound() {
-  const { data: allTxns, isLoading } = useTransactions()
-  const [search, setSearch] = useState('')
-  const [showNew, setShowNew] = useState(false)
+const statusVariant: Record<InboundOrderStatus, string> = {
+  OPEN:      'bg-amber-100 text-amber-800',
+  COMPLETED: 'bg-green-100 text-green-800',
+  CANCELLED: 'bg-slate-100 text-slate-600',
+}
 
-  const transactions = allTxns?.filter((t) => t.type === 'INBOUND') ?? []
-  const filtered = transactions.filter((t) =>
-    t.product.name.toLowerCase().includes(search.toLowerCase()) ||
-    t.referenceNo.toLowerCase().includes(search.toLowerCase())
+function InboundStatusBadge({ status }: { status: string }) {
+  const cls = statusVariant[status as InboundOrderStatus] ?? 'bg-slate-100 text-slate-600'
+  return (
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${cls}`}>
+      {inboundOrderStatusLabel[status] ?? status}
+    </span>
+  )
+}
+
+// ─── Create order dialog ─────────────────────────────────────
+
+function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const navigate = useNavigate()
+  const [warehouseId, setWarehouseId] = useState('')
+  const [materialId,  setMaterialId]  = useState('')
+  const [locationId,  setLocationId]  = useState('')
+  const [planned,     setPlanned]     = useState('')
+  const [notes,       setNotes]       = useState('')
+  const [matSearch,   setMatSearch]   = useState('')
+
+  const { data: warehouses = [] } = useWarehouses(true)
+  const { data: materials  = [] } = useMaterials({ search: matSearch || undefined })
+  const { data: locations  = [] } = useLocationsReal(
+    warehouseId ? { warehouse_id: warehouseId } : undefined
   )
 
-  const pending = transactions.filter((t) => t.status === 'PENDING').length
-  const inProgress = transactions.filter((t) => t.status === 'IN_PROGRESS').length
-  const completed = transactions.filter((t) => t.status === 'COMPLETED').length
+  const { mutate: createOrder, isPending, error } = useCreateInboundOrder()
+
+  function handleSubmit() {
+    if (!warehouseId || !materialId) return
+    createOrder(
+      {
+        warehouse_id:    warehouseId,
+        material_id:     materialId,
+        location_id:     locationId || undefined,
+        planned_pallets: planned ? Number(planned) : undefined,
+        notes:           notes || undefined,
+      },
+      {
+        onSuccess: (data) => {
+          onClose()
+          navigate(`/wms/inbound/${data.order.id}`)
+        },
+      }
+    )
+  }
+
+  function handleClose() {
+    setWarehouseId(''); setMaterialId(''); setLocationId('')
+    setPlanned(''); setNotes(''); setMatSearch('')
+    onClose()
+  }
+
+  const apiError = (error as any)?.response?.data?.error?.message
+
+  return (
+    <Dialog open={open} onOpenChange={handleClose}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Tạo phiếu nhập kho</DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4 py-2">
+          {apiError && (
+            <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
+              {apiError}
+            </div>
+          )}
+
+          <div className="space-y-2">
+            <Label>Kho <span className="text-red-500">*</span></Label>
+            <Select value={warehouseId} onValueChange={setWarehouseId}>
+              <SelectTrigger><SelectValue placeholder="Chọn kho" /></SelectTrigger>
+              <SelectContent>
+                {warehouses.map((w: any) => (
+                  <SelectItem key={w.id} value={w.id}>{w.name} ({w.code})</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Hàng hóa <span className="text-red-500">*</span></Label>
+            <Input
+              placeholder="Tìm mã hàng hoặc tên..."
+              value={matSearch}
+              onChange={(e) => setMatSearch(e.target.value)}
+              className="mb-1"
+            />
+            <Select value={materialId} onValueChange={setMaterialId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Chọn hàng hóa" />
+              </SelectTrigger>
+              <SelectContent>
+                {materials.map((m: any) => (
+                  <SelectItem key={m.id} value={m.id}>
+                    {m.material_code} – {m.short_name ?? m.material_description}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Vị trí nhập <span className="text-xs text-slate-400">(không bắt buộc, có thể chọn khi quét)</span></Label>
+            <Select value={locationId} onValueChange={setLocationId} disabled={!warehouseId}>
+              <SelectTrigger><SelectValue placeholder={warehouseId ? 'Chọn vị trí' : 'Chọn kho trước'} /></SelectTrigger>
+              <SelectContent>
+                {locations.map((l: any) => (
+                  <SelectItem key={l.id} value={l.id}>{l.location_code}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-2">
+              <Label>Số pallet dự kiến</Label>
+              <Input
+                type="number" min="1" placeholder="0"
+                value={planned} onChange={(e) => setPlanned(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Ghi chú</Label>
+              <Input placeholder="Tuỳ chọn" value={notes} onChange={(e) => setNotes(e.target.value)} />
+            </div>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={handleClose}>Huỷ</Button>
+          <Button
+            onClick={handleSubmit}
+            disabled={!warehouseId || !materialId || isPending}
+          >
+            {isPending ? 'Đang tạo...' : 'Tạo phiếu'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ─── Main page ───────────────────────────────────────────────
+
+export default function Inbound() {
+  const navigate = useNavigate()
+  const [search,    setSearch]    = useState('')
+  const [statusFilter, setStatus] = useState('ALL')
+  const [showNew,   setShowNew]   = useState(false)
+
+  const { data: orders = [], isLoading } = useInboundOrders({
+    search:  search || undefined,
+    status:  statusFilter !== 'ALL' ? statusFilter : undefined,
+  })
+
+  const open      = orders.filter((o) => o.status === 'OPEN').length
+  const completed = orders.filter((o) => o.status === 'COMPLETED').length
+  const cancelled = orders.filter((o) => o.status === 'CANCELLED').length
 
   return (
     <div>
@@ -37,28 +192,19 @@ export default function Inbound() {
         description="Quản lý phiếu nhập kho và theo dõi hàng đến"
         actions={
           <Button onClick={() => setShowNew(true)}>
-            <Plus className="h-4 w-4 mr-2" />
-            Tạo phiếu nhập
+            <Plus className="h-4 w-4 mr-2" /> Tạo phiếu nhập
           </Button>
         }
       />
 
+      {/* Stats */}
       <div className="grid grid-cols-3 gap-4 p-6 pb-0">
         <Card>
           <CardContent className="flex items-center gap-3 p-4">
             <Clock className="h-5 w-5 text-amber-500" />
             <div>
-              <p className="text-xl font-bold">{pending}</p>
-              <p className="text-xs text-muted-foreground">Chờ xử lý</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex items-center gap-3 p-4">
-            <PackagePlus className="h-5 w-5 text-blue-500" />
-            <div>
-              <p className="text-xl font-bold">{inProgress}</p>
-              <p className="text-xs text-muted-foreground">Đang nhập</p>
+              <p className="text-xl font-bold">{open}</p>
+              <p className="text-xs text-muted-foreground">Đang mở</p>
             </div>
           </CardContent>
         </Card>
@@ -71,32 +217,51 @@ export default function Inbound() {
             </div>
           </CardContent>
         </Card>
+        <Card>
+          <CardContent className="flex items-center gap-3 p-4">
+            <XCircle className="h-5 w-5 text-slate-400" />
+            <div>
+              <p className="text-xl font-bold">{cancelled}</p>
+              <p className="text-xs text-muted-foreground">Đã hủy</p>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       <div className="p-6 space-y-4">
+        {/* Filters */}
         <div className="flex gap-3">
           <div className="relative flex-1 max-w-sm">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Tìm mã phiếu, sản phẩm..."
+              placeholder="Tìm mã phiếu, hàng hóa..."
               className="pl-9"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
-          <Button variant="outline" size="icon">
-            <QrCode className="h-4 w-4" />
-          </Button>
+          <Select value={statusFilter} onValueChange={setStatus}>
+            <SelectTrigger className="w-36">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ALL">Tất cả</SelectItem>
+              <SelectItem value="OPEN">Đang mở</SelectItem>
+              <SelectItem value="COMPLETED">Hoàn thành</SelectItem>
+              <SelectItem value="CANCELLED">Đã hủy</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
 
+        {/* Table */}
         <Card>
           {isLoading ? (
-            <TableSkeleton rows={4} cols={6} />
-          ) : filtered.length === 0 ? (
+            <TableSkeleton rows={5} cols={7} />
+          ) : orders.length === 0 ? (
             <EmptyState
               icon={PackagePlus}
-              title="Không có phiếu nhập"
-              description="Tạo phiếu nhập kho mới để bắt đầu."
+              title="Chưa có phiếu nhập"
+              description="Tạo phiếu nhập kho để bắt đầu quét hàng vào kho."
               action={
                 <Button onClick={() => setShowNew(true)}>
                   <Plus className="h-4 w-4 mr-2" /> Tạo phiếu nhập
@@ -108,37 +273,60 @@ export default function Inbound() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Mã phiếu</TableHead>
-                  <TableHead>Sản phẩm</TableHead>
+                  <TableHead>Hàng hóa</TableHead>
                   <TableHead className="hidden sm:table-cell">Vị trí</TableHead>
-                  <TableHead className="text-right">Số pallet</TableHead>
-                  <TableHead className="hidden md:table-cell">Người nhập</TableHead>
-                  <TableHead className="hidden lg:table-cell">Thời gian</TableHead>
+                  <TableHead className="text-right">Pallet</TableHead>
+                  <TableHead className="hidden md:table-cell">Người tạo</TableHead>
+                  <TableHead className="hidden lg:table-cell">Ngày tạo</TableHead>
                   <TableHead>Trạng thái</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filtered.map((txn) => (
-                  <TableRow key={txn.id} className="cursor-pointer">
+                {orders.map((order) => (
+                  <TableRow
+                    key={order.id}
+                    className="cursor-pointer hover:bg-slate-50"
+                    onClick={() => navigate(`/wms/inbound/${order.id}`)}
+                  >
                     <TableCell>
-                      <span className="font-mono text-xs font-medium">{txn.referenceNo}</span>
+                      <span className="font-mono text-xs font-medium">
+                        {order.import_code ?? order.id.slice(0, 8)}
+                      </span>
                     </TableCell>
                     <TableCell>
                       <div>
-                        <p className="text-sm font-medium">{txn.product.name}</p>
-                        <p className="text-xs text-muted-foreground">{txn.product.sku}</p>
+                        <p className="text-sm font-medium">
+                          {order.material?.short_name ?? order.material?.material_description ?? '—'}
+                        </p>
+                        <p className="text-xs text-muted-foreground">{order.material?.material_code}</p>
                       </div>
                     </TableCell>
                     <TableCell className="hidden sm:table-cell">
-                      <Badge variant="outline" className="font-mono text-xs">
-                        {getLocationCode(txn.location)}
-                      </Badge>
+                      {order.location ? (
+                        <Badge variant="outline" className="font-mono text-xs">
+                          {order.location.location_code}
+                        </Badge>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">Chưa chọn</span>
+                      )}
                     </TableCell>
-                    <TableCell className="text-right font-medium tabular-nums">{txn.pallets}</TableCell>
-                    <TableCell className="hidden md:table-cell text-sm text-muted-foreground">{txn.userName}</TableCell>
+                    <TableCell className="text-right font-medium tabular-nums">
+                      <span className="text-blue-600 font-semibold">
+                        {order._count.inventory_entries}
+                      </span>
+                      {order.planned_pallets ? (
+                        <span className="text-xs text-muted-foreground"> / {order.planned_pallets}</span>
+                      ) : null}
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell text-sm text-muted-foreground">
+                      {order.imported_by_emp?.name ?? order.created_by_emp?.name ?? '—'}
+                    </TableCell>
                     <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">
-                      {formatDateTime(txn.createdAt)}
+                      {format(parseISO(order.created_at), 'dd/MM/yyyy HH:mm', { locale: vi })}
                     </TableCell>
-                    <TableCell><TransactionStatusBadge status={txn.status} /></TableCell>
+                    <TableCell>
+                      <InboundStatusBadge status={order.status} />
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -147,63 +335,7 @@ export default function Inbound() {
         </Card>
       </div>
 
-      {/* New Inbound Dialog */}
-      <Dialog open={showNew} onOpenChange={setShowNew}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Tạo phiếu nhập kho</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="space-y-2">
-              <Label>Mã đơn hàng (PO)</Label>
-              <Input placeholder="VD: PO-2026-0514" />
-            </div>
-            <div className="space-y-2">
-              <Label>Sản phẩm</Label>
-              <Select>
-                <SelectTrigger><SelectValue placeholder="Chọn sản phẩm" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="P001">SKU-001 - Thùng carton 3 lớp</SelectItem>
-                  <SelectItem value="P002">SKU-002 - Băng keo OPP trong</SelectItem>
-                  <SelectItem value="P003">SKU-003 - Pallet gỗ tiêu chuẩn</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label>Số pallet</Label>
-                <Input type="number" placeholder="0" min="1" />
-              </div>
-              <div className="space-y-2">
-                <Label>Số lượng / pallet</Label>
-                <Input type="number" placeholder="0" min="1" />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label>Vị trí nhập</Label>
-              <Select>
-                <SelectTrigger><SelectValue placeholder="Chọn vị trí" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="L001">A-01.1.01 (còn 2 slot)</SelectItem>
-                  <SelectItem value="L002">A-01.1.02 (còn 7 slot)</SelectItem>
-                  <SelectItem value="L003">A-01.2.01 (còn 8 slot)</SelectItem>
-                  <SelectItem value="L005">B-01.1.01 (còn 7 slot)</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="rounded-lg border border-dashed border-amber-300 bg-amber-50 dark:bg-amber-950/20 p-3">
-              <div className="flex items-start gap-2 text-amber-800 dark:text-amber-300">
-                <QrCode className="h-4 w-4 mt-0.5 shrink-0" />
-                <p className="text-xs">Quét QR Pallet sau khi chọn vị trí để xác nhận nhập kho. Hệ thống sẽ kiểm tra tự động.</p>
-              </div>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowNew(false)}>Huỷ</Button>
-            <Button onClick={() => setShowNew(false)}>Tạo phiếu nhập</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <CreateOrderDialog open={showNew} onClose={() => setShowNew(false)} />
     </div>
   )
 }

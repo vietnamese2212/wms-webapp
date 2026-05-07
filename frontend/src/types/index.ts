@@ -163,6 +163,59 @@ export interface OvertimeRequest {
   createdAt: string
 }
 
+// WMS – Inbound
+export type InboundOrderStatus = 'OPEN' | 'COMPLETED' | 'CANCELLED'
+
+export interface InboundOrder {
+  id:              string
+  import_code:     string | null
+  warehouse_id:    string | null
+  warehouse:       { id: string; code: string; name: string } | null
+  location_id:     string | null
+  location:        { id: string; location_code: string; sub_code: string; max_pallets: number } | null
+  material_id:     string | null
+  material:        { id: string; material_code: string; short_name: string | null; material_description: string; cartons_per_pallet: number | null; cartons_per_pallet_mn: number | null } | null
+  planned_pallets: number | null
+  status:          InboundOrderStatus
+  import_date:     string
+  notes:           string | null
+  created_by_emp:  { id: string; name: string } | null
+  updated_by_emp:  { id: string; name: string } | null
+  imported_by_emp: { id: string; name: string } | null
+  _count:          { inventory_entries: number }
+  created_at:      string
+  updated_at:      string
+  inventory_entries?: PalletEntry[]
+}
+
+export interface PalletEntry {
+  id:              string
+  pallet_code:     string
+  location:        { id: string; location_code: string; sub_code: string }
+  material:        { id: string; material_code: string; short_name: string | null }
+  manufacturer:    { id: string; code: string; name: string | null } | null
+  cycle:           string | null
+  machine_code:    string | null
+  stack_layer:     number
+  cartons_imported: number
+  production_date: string | null
+  status:          string
+  created_by_emp:  { id: string; name: string } | null
+  updated_by_emp:  { id: string; name: string } | null
+  created_at:      string
+}
+
+export interface LocationSuggestion {
+  id:               string
+  location_code:    string
+  sub_code:         string
+  sub_name:         string | null
+  max_pallets:      number
+  used_slots:       number
+  available_slots:  number
+  has_same_material: boolean
+}
+
 // KPI
 export interface KPIMetric {
   label: string

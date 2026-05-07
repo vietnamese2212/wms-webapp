@@ -26,8 +26,9 @@ model Warehouse {
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
 
-  locations  Location[]
-  employees  Employee[]
+  locations          Location[]
+  employees          Employee[]
+  production_imports ProductionImport[]
 }
 
 // location_code tự động sinh: "{warehouse.code}_{sub_code}_{row}_{shelf}"
@@ -47,7 +48,8 @@ model Location {
   created_at    DateTime  @default(now())
   updated_at    DateTime  @updatedAt
 
-  inventory_entries InventoryEntry[]
+  inventory_entries  InventoryEntry[]
+  production_imports ProductionImport[]
 
   @@index([warehouse_id])
   @@index([warehouse_id, sub_code])
@@ -124,9 +126,17 @@ model Employee {
   schedules          Schedule[]
   overtime_requests  OvertimeRequest[]
   attendances        Attendance[]
-  production_imports ProductionImport[]
   location_transfers LocationTransfer[]
   export_history     ExportHistory[]
+
+  // ProductionImport (phiếu nhập) relations – named to avoid ambiguity
+  production_imports_imported  ProductionImport[] @relation("PIImportedBy")
+  production_imports_created   ProductionImport[] @relation("PICreatedBy")
+  production_imports_updated   ProductionImport[] @relation("PIUpdatedBy")
+
+  // InventoryEntry audit relations
+  inv_entries_created InventoryEntry[] @relation("IECreatedBy")
+  inv_entries_updated InventoryEntry[] @relation("IEUpdatedBy")
 }
 
 // ============================================================
@@ -181,8 +191,20 @@ model InventoryEntry {
   manufacturer_id String?
   manufacturer    Manufacturer? @relation(fields: [manufacturer_id], references: [id])
 
-  // Chu kỳ sản xuất – bóc từ QR hoặc chọn tay (VD: "2025-05", "Đợt 3")
+  // Chu kỳ sản xuất – bóc từ QR hoặc chọn tay (VD: "C05", "2025-05")
   cycle           String?
+  // Máy sản xuất – bóc từ QR (VD: "M1", "M2")
+  machine_code    String?
+
+  // Liên kết phiếu nhập kho
+  import_order_id String?
+  import_order    ProductionImport? @relation(fields: [import_order_id], references: [id])
+
+  // Audit trail
+  created_by      String?
+  created_by_emp  Employee? @relation("IECreatedBy", fields: [created_by], references: [id])
+  updated_by      String?
+  updated_by_emp  Employee? @relation("IEUpdatedBy", fields: [updated_by], references: [id])
 
   // Pallet stacking – thay thế bypass_location cũ:
   // stack_layer = 1 → pallet đặt sàn, tính vào max_pallets của Location
@@ -203,6 +225,42 @@ model InventoryEntry {
   @@index([location_id, status])
   @@index([material_id])
   @@index([status])
+  @@index([import_order_id])
+}
+
+// Phiếu nhập kho – bảng cha (header record)
+model ProductionImport {
+  id              String     @id @default(uuid())
+  import_code     String?    @unique    // Auto-gen: "NK-20260507-001"
+  warehouse_id    String?
+  warehouse       Warehouse? @relation(fields: [warehouse_id], references: [id])
+  location_id     String?              // Vị trí nhập (có thể thay đổi trước khi hoàn thành)
+  location        Location?  @relation(fields: [location_id], references: [id])
+  material_id     String?
+  material        Material?  @relation(fields: [material_id], references: [id])
+  planned_pallets Int?                 // Số pallet dự kiến (optional)
+  status          String     @default("OPEN")
+  // "OPEN" | "COMPLETED" | "CANCELLED"
+
+  // Audit – người tạo, người sửa lần cuối
+  imported_by     String?
+  imported_by_emp Employee?  @relation("PIImportedBy", fields: [imported_by], references: [id])
+  created_by      String?
+  created_by_emp  Employee?  @relation("PICreatedBy", fields: [created_by], references: [id])
+  updated_by      String?
+  updated_by_emp  Employee?  @relation("PIUpdatedBy", fields: [updated_by], references: [id])
+
+  import_date     DateTime   @default(now())
+  notes           String?
+  created_at      DateTime   @default(now())
+  updated_at      DateTime   @updatedAt
+
+  inventory_entries InventoryEntry[]
+
+  @@index([warehouse_id])
+  @@index([status])
+  @@index([import_date])
+  @@index([material_id])
 }
 
 // Lịch sử xuất kho – mỗi lần xuất tạo 1 record
@@ -223,23 +281,6 @@ model ExportHistory {
 
   @@index([inventory_entry_id])
   @@index([export_date])
-}
-
-// Phiếu nhập từ sản xuất
-model ProductionImport {
-  id              String     @id @default(uuid())
-  import_code     String?    @unique
-  material_id     String?
-  material        Material?  @relation(fields: [material_id], references: [id])
-  imported_by     String?
-  imported_by_emp Employee?  @relation(fields: [imported_by], references: [id])
-  quantity        Int
-  import_date     DateTime   @default(now())
-  notes           String?
-  created_at      DateTime   @default(now())
-  updated_at      DateTime   @updatedAt
-
-  @@index([import_date])
 }
 
 // Lịch sử chuyển vị trí pallet

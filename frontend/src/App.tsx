@@ -4,7 +4,8 @@ import { useAuthStore } from '@/stores/authStore'
 
 import Dashboard from '@/pages/Dashboard'
 import Inventory from '@/pages/wms/Inventory'
-import Inbound from '@/pages/wms/Inbound'
+import Inbound       from '@/pages/wms/Inbound'
+import InboundDetail from '@/pages/wms/InboundDetail'
 import Outbound from '@/pages/wms/Outbound'
 import Locations from '@/pages/wms/Locations'
 import Vehicles from '@/pages/tms/Vehicles'
@@ -34,6 +35,7 @@ export default function App() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/wms/inventory" element={<Inventory />} />
         <Route path="/wms/inbound" element={<Inbound />} />
+        <Route path="/wms/inbound/:id" element={<InboundDetail />} />
         <Route path="/wms/outbound" element={<Outbound />} />
         <Route path="/wms/locations" element={<Locations />} />
         <Route path="/tms/vehicles" element={<Vehicles />} />

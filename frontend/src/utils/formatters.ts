@@ -86,3 +86,16 @@ export const roleLabel: Record<string, string> = {
 export function getLocationCode(location: { zone: string; row: string; shelf: string; bin: string }) {
   return `${location.zone}-${location.row}.${location.shelf}.${location.bin}`
 }
+
+export const inboundOrderStatusLabel: Record<string, string> = {
+  OPEN:      'Đang mở',
+  COMPLETED: 'Hoàn thành',
+  CANCELLED: 'Đã hủy',
+}
+
+export const palletStatusLabel: Record<string, string> = {
+  IN_STOCK:    'Trong kho',
+  EXPORTED:    'Đã xuất',
+  TRANSFERRED: 'Đã chuyển',
+  PARTIAL:     'Xuất một phần',
+}

@@ -5,6 +5,7 @@ import {
   mockLocations, mockOvertimeRequests,
 } from '@/utils/mockData'
 import { apiClient } from './client'
+import type { InboundOrder } from '@/types'
 
 const delay = (ms = 600) => new Promise((r) => setTimeout(r, ms))
 
@@ -106,6 +107,113 @@ export function useCreateManufacturer() {
     mutationFn: (body: { code: string; name?: string }) =>
       apiClient.post('/masterdata/manufacturers', body).then((r) => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['manufacturers'] }),
+  })
+}
+
+// ─── WMS – Inbound Orders (API thật) ────────────────────────
+
+export function useInboundOrders(params?: { warehouse_id?: string; status?: string; search?: string }) {
+  return useQuery({
+    queryKey: ['inbound-orders', params],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/inbound-orders', { params })
+      return data.data as InboundOrder[]
+    },
+  })
+}
+
+export function useInboundOrder(id?: string) {
+  return useQuery({
+    queryKey: ['inbound-order', id],
+    enabled: !!id,
+    queryFn: async () => {
+      const { data } = await apiClient.get(`/wms/inbound-orders/${id}`)
+      return data.data as InboundOrder
+    },
+  })
+}
+
+export function useInboundLocationSuggestions(orderId?: string) {
+  return useQuery({
+    queryKey: ['inbound-location-suggestions', orderId],
+    enabled: !!orderId,
+    queryFn: async () => {
+      const { data } = await apiClient.get(`/wms/inbound-orders/${orderId}/location-suggestions`)
+      return data.data as import('@/types').LocationSuggestion[]
+    },
+  })
+}
+
+export function useCreateInboundOrder() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: {
+      warehouse_id: string
+      material_id: string
+      location_id?: string
+      planned_pallets?: number
+      notes?: string
+      imported_by?: string
+    }) => apiClient.post('/wms/inbound-orders', body).then((r) => r.data.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['inbound-orders'] }),
+  })
+}
+
+export function useUpdateInboundOrder() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string; location_id?: string; planned_pallets?: number; notes?: string }) =>
+      apiClient.patch(`/wms/inbound-orders/${id}`, body).then((r) => r.data.data),
+    onSuccess: (_d, v) => {
+      qc.invalidateQueries({ queryKey: ['inbound-orders'] })
+      qc.invalidateQueries({ queryKey: ['inbound-order', v.id] })
+    },
+  })
+}
+
+export function useCompleteInboundOrder() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.post(`/wms/inbound-orders/${id}/complete`).then((r) => r.data.data),
+    onSuccess: (_d, id) => {
+      qc.invalidateQueries({ queryKey: ['inbound-orders'] })
+      qc.invalidateQueries({ queryKey: ['inbound-order', id] })
+    },
+  })
+}
+
+export function useCancelInboundOrder() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.post(`/wms/inbound-orders/${id}/cancel`).then((r) => r.data.data),
+    onSuccess: (_d, id) => {
+      qc.invalidateQueries({ queryKey: ['inbound-orders'] })
+      qc.invalidateQueries({ queryKey: ['inbound-order', id] })
+    },
+  })
+}
+
+export function useScanPallet() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ orderId, ...body }: {
+      orderId: string
+      qr_code: string
+      location_id: string
+      stack_layer?: number
+      cartons_override?: number
+      employee_id?: string
+    }) => apiClient.post(`/wms/inbound-orders/${orderId}/scan`, body).then((r) => r.data.data),
+    onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ['inbound-order', v.orderId] }),
+  })
+}
+
+export function useDeletePalletEntry() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ orderId, entryId }: { orderId: string; entryId: string }) =>
+      apiClient.delete(`/wms/inbound-orders/${orderId}/entries/${entryId}`).then((r) => r.data.data),
+    onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ['inbound-order', v.orderId] }),
   })
 }
 

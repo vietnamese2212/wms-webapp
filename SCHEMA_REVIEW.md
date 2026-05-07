@@ -1,19 +1,55 @@
 # Prisma Schema Review – WMS Webapp
 
-> Cập nhật lần cuối: 2026-05-07 (rev 2)  
-> Database: **MySQL** (lưu ý: CLAUDE.md ghi PostgreSQL — cần thống nhất)
+> Cập nhật lần cuối: 2026-05-07 (rev 3)
+> Database: **PostgreSQL** (Supabase hoặc PostgreSQL gốc — Prisma provider không đổi)
 
 ---
 
-## Tổng quan các Model
+## Tổng quan kiến trúc (đã xác nhận)
+
+### Phân cấp vị trí kho
+
+```
+Warehouse (Kho lớn)          → Ba Vì, Bàu Bàng
+  └─ SubWarehouse (Kho nhỏ)  → Ba Vì_Thành phẩm 1, Ba Vì_Thành phẩm 2
+       └─ Location (Vị trí)  → BV_TP1_1_T1, BV_TP2_1_T2...
+```
+
+**Phân tích location_code `BV_TP1_1_T1`:**
+
+| Segment | Ý nghĩa | Ví dụ |
+|---|---|---|
+| `BV` | Prefix của Warehouse | Ba Vì |
+| `TP1` | Prefix của SubWarehouse | Thành phẩm 1 |
+| `1` | Số hàng (row) | Hàng 1 |
+| `T1` | Số kệ/tầng (shelf/tier) | Tầng 1 |
+
+→ `location_code` = `{warehouse_prefix}_{subwarehouse_prefix}_{row}_{shelf}` — **tự động sinh** từ các field riêng.
+
+---
+
+### Multi-tenant & Phân quyền
+
+- Mỗi user (Employee) thuộc 1 Warehouse
+- Role-based access: Admin toàn hệ thống / Manager theo Warehouse / Staff theo SubWarehouse
+- Data của từng Warehouse độc lập với nhau
+
+---
+
+## Trạng thái các Model
 
 | Model | Mục đích | Trạng thái |
 |---|---|---|
-| `Employee` | Nhân viên hệ thống | ✅ Ổn |
-| `Location` | Vị trí kho | ⚠️ Cần bổ sung |
-| `Vehicle` | Xe vận chuyển + tài xế | ⚠️ Nên tách |
-| `InventoryEntry` | Pallet tồn kho | 🔴 Quá nặng, cần refactor |
-| `ExportHistory` | Lịch sử xuất kho | ⚠️ Thiếu liên kết |
+| `Warehouse` | Kho lớn (Ba Vì, Bàu Bàng...) | 🆕 Cần tạo mới |
+| `SubWarehouse` | Kho nhỏ (TP1, TP2...) | 🆕 Cần tạo mới |
+| `Location` | Vị trí trong kho nhỏ | 🔄 Refactor (thêm FK) |
+| `Material` | Danh mục hàng hóa | 🆕 Cần tạo mới |
+| `Manufacturer` | Nhà máy sản xuất (NMSX) | 🆕 Cần tạo mới |
+| `Employee` | Nhân viên hệ thống | 🔄 Refactor (thêm warehouse_id) |
+| `Vehicle` | Xe vận chuyển | 🔄 Tách Driver |
+| `Driver` | Tài xế | 🆕 Cần tạo mới (tách từ Vehicle) |
+| `InventoryEntry` | Pallet tồn kho | 🔄 Refactor nặng |
+| `ExportHistory` | Lịch sử xuất kho | 🔄 Thêm FK |
 | `ProductionImport` | Phiếu nhập từ sản xuất | ✅ Ổn |
 | `LocationTransfer` | Chuyển vị trí pallet | ✅ Ổn |
 | `Menu` | Phân quyền menu | ✅ Ổn |
@@ -21,40 +57,107 @@
 
 ---
 
-## Vấn đề cần xử lý
+## Schema đề xuất đầy đủ
 
-### 🔴 1. Thiếu bảng Master `Material` (Quan trọng nhất)
+### Warehouse – Kho lớn
 
-Hiện tại thông tin hàng hoá đang lưu dạng **string lặp lại** trong `InventoryEntry` và `ExportHistory`.
+```prisma
+model Warehouse {
+  id          String   @id @default(uuid())
+  code        String   @unique   // "BV", "BB"
+  name        String             // "Kho Ba Vì", "Kho Bàu Bàng"
+  address     String?
+  is_active   Boolean  @default(true)
+  created_at  DateTime @default(now())
 
-**Hậu quả:** Không thể tra cứu danh mục hàng, dễ nhập sai tên, không thể filter/report theo loại hàng.
+  sub_warehouses SubWarehouse[]
+  employees      Employee[]
+}
+```
 
-#### ✅ Đã xác nhận – Cấu trúc tên hàng
+---
 
-| Field | Ý nghĩa | Ví dụ |
-|---|---|---|
-| `material` | Mã hàng | `1234567890` |
-| `material_description` | Tên đầy đủ | `Thùng carton 3 lớp 40x30x30` |
-| `short_name` | Tên ngắn (auto hoặc tuỳ chỉnh) | `Thùng carton [890]` |
+### SubWarehouse – Kho nhỏ
 
-**Quy tắc `short_name`:**
-- Format: `{material_description hoặc tên tuỳ chỉnh} [{3 số cuối của material_code}]`
-- VD: material = `1234567890` → suffix = `[890]`
-- User có thể override phần tên, nhưng suffix `[890]` luôn giữ nguyên
+```prisma
+model SubWarehouse {
+  id           String    @id @default(uuid())
+  warehouse_id String
+  warehouse    Warehouse @relation(fields: [warehouse_id], references: [id])
+  code         String              // "TP1", "TP2", "NL1"
+  name         String              // "Thành phẩm 1", "Nguyên liệu 1"
+  type         String?             // "THANH_PHAM", "NGUYEN_LIEU", "BAN_THANH_PHAM"
+  is_active    Boolean  @default(true)
 
-**Schema đề xuất cho bảng `Material`:**
+  locations    Location[]
+
+  @@unique([warehouse_id, code])
+}
+```
+
+---
+
+### Location – Vị trí kho (đã refactor)
+
+```prisma
+model Location {
+  id               String       @id @default(uuid())
+  sub_warehouse_id String
+  sub_warehouse    SubWarehouse @relation(fields: [sub_warehouse_id], references: [id])
+  location_code    String       @unique   // "BV_TP1_1_T1" – tự động sinh
+  row              String?               // "1", "2"
+  shelf            String?               // "T1", "T2"
+  max_pallets      Int          @default(1)
+  is_active        Boolean      @default(true)
+
+  inventory_entries InventoryEntry[]
+
+  @@index([sub_warehouse_id])
+}
+```
+
+**Logic sinh `location_code` tự động (backend):**
+```typescript
+const wh = warehouse.code           // "BV"
+const swh = subWarehouse.code       // "TP1"
+location_code = `${wh}_${swh}_${row}_${shelf}`  // "BV_TP1_1_T1"
+```
+
+---
+
+### Manufacturer – Nhà máy sản xuất (NMSX)
+
+```prisma
+model Manufacturer {
+  id         String   @id @default(uuid())
+  code       String   @unique   // Ký hiệu chữ/số – VD: "A", "01", "NM3"
+  name       String?            // Tên đầy đủ nếu có
+  is_active  Boolean  @default(true)
+
+  materials  Material[]
+  inventory_entries InventoryEntry[]
+}
+```
+
+---
+
+### Material – Danh mục hàng hóa
+
 ```prisma
 model Material {
-  id                   String  @id @default(uuid())
-  material_code        String  @unique   // Mã hàng – VD: "1234567890"
-  material_description String            // Tên đầy đủ – VD: "Thùng carton 3 lớp 40x30x30"
-  short_name           String?           // Tên ngắn – VD: "Thùng carton [890]"
-  custom_short_name    String?           // Tên ngắn tuỳ chỉnh do user đặt (nếu override)
-  product_type         String?           // Loại sản phẩm
-  machine              String?           // Máy sản xuất (liên quan cycle)
-  unit                 String?           // Đơn vị tính (thùng, cái, kg...)
+  id                   String        @id @default(uuid())
+  material_code        String        @unique   // "1234567890"
+  material_description String                  // "Thùng carton 3 lớp 40x30x30"
+  short_name           String?                 // Auto: "Thùng carton [890]"
+  custom_short_name    String?                 // User override phần tên (suffix [890] giữ nguyên)
+  product_type         String?
+  unit                 String?                 // "thùng", "cái", "kg"
+  manufacturer_id      String?
+  manufacturer         Manufacturer? @relation(fields: [manufacturer_id], references: [id])
   notes                String?
-  is_active            Boolean @default(true)
+  is_active            Boolean       @default(true)
+  created_at           DateTime      @default(now())
+  updated_at           DateTime      @updatedAt
 
   inventory_entries    InventoryEntry[]
   export_history       ExportHistory[]
@@ -63,125 +166,101 @@ model Material {
 
 **Logic sinh `short_name` tự động (backend):**
 ```typescript
-// Khi tạo/cập nhật Material
 const suffix = material_code.slice(-3)           // "890"
-const base = custom_short_name ?? material_description
-short_name = `${base} [${suffix}]`
-// → "Thùng carton [890]" hoặc "Tên tuỳ chỉnh [890]"
+const base   = custom_short_name ?? material_description
+short_name   = `${base} [${suffix}]`             // "Thùng carton [890]"
 ```
 
 ---
 
-### 🔴 2. `InventoryEntry` quá nặng – trộn lẫn nhiều concern
+### Employee – Nhân viên (đã refactor)
 
-Model này đang chứa cả:
-- Thông tin nhập kho gốc
-- Thông tin xuất kho (`exported_quantity`)
-- Thông tin chuyển vị trí (`transfer_time`, `new_pallet_code`)
-- Các field legacy không rõ (`id2`, `update_field`, `date_field`, `match_date`)
-
-**Đề xuất:** Giữ `InventoryEntry` chỉ lưu **trạng thái hiện tại của pallet**, các action (xuất/chuyển) lưu ở bảng riêng đã có (`ExportHistory`, `LocationTransfer`).
-
-**Fields nên xem xét bỏ khỏi InventoryEntry:**
-```
-exported_quantity       → tính từ ExportHistory
-remaining_quantity      → tính từ cartons_imported - exported_quantity
-exported_match_stock    → legacy?
-exported_transfer_code  → legacy?
-exported_transfer_location → trùng LocationTransfer
-new_pallet_code         → trùng LocationTransfer
-transfer_time           → trùng LocationTransfer
-id2                     → không rõ mục đích
-update_field            → đặt tên lại thành updated_at
-date_field              → không rõ mục đích
-match_date              → không rõ mục đích
-```
-
----
-
-### ⚠️ 3. `ExportHistory` không liên kết với `InventoryEntry`
-
-Hiện tại không biết pallet nào đã được xuất. Cần thêm:
 ```prisma
-inventory_entry_id  String?
-inventory_entry     InventoryEntry? @relation(fields: [inventory_entry_id], references: [id])
-```
-
----
-
-### ⚠️ 4. `Vehicle` trộn thông tin xe + tài xế
-
-Nếu 1 xe có nhiều tài xế theo ca, hoặc 1 tài xế lái nhiều xe → cần tách:
-```prisma
-model Driver {
-  id          String  @id @default(uuid())
-  name        String?
-  phone       String?
-  id_card     String?
-  vehicles    Vehicle[]
+model Employee {
+  id           String    @id @default(uuid())
+  warehouse_id String?
+  warehouse    Warehouse? @relation(fields: [warehouse_id], references: [id])
+  name         String
+  employee_code String?  @unique
+  role         String    // "ADMIN" | "WAREHOUSE_MANAGER" | "WAREHOUSE_STAFF" | "DRIVER" | "HR_MANAGER"
+  department   String?
+  phone        String?
+  email        String?   @unique
+  password     String    // bcrypt hash
+  is_active    Boolean   @default(true)
+  created_at   DateTime  @default(now())
 }
 ```
-*(Tuỳ nghiệp vụ thực tế — hỏi lại)*
 
 ---
 
-### ⚠️ 5. `Location` thiếu cấu trúc phân cấp
+### InventoryEntry – Pallet tồn kho (đã refactor)
 
-Hiện chỉ có `location_code` (string). Nếu cần filter theo khu/hàng/kệ:
+Giữ lại chỉ thông tin **trạng thái hiện tại** của pallet, xoá các field computed/legacy.
+
 ```prisma
-warehouse     String?   // Tên kho
-zone          String?   // Khu (A, B, C)
-aisle         String?   // Dãy (01, 02)
-shelf         String?   // Kệ (1, 2, 3)
-bin           String?   // Ô (01, 02)
+model InventoryEntry {
+  id              String       @id @default(uuid())
+  pallet_code     String       @unique   // Mã QR của pallet
+  location_id     String
+  location        Location     @relation(fields: [location_id], references: [id])
+  material_id     String
+  material        Material     @relation(fields: [material_id], references: [id])
+  manufacturer_id String?
+  manufacturer    Manufacturer? @relation(fields: [manufacturer_id], references: [id])
+  cycle           String?      // Chu kỳ sản xuất (cần xác nhận thêm)
+  cartons_imported Int         // Số thùng nhập vào pallet này
+  production_date  DateTime?
+  status          String       @default("IN_STOCK")  // "IN_STOCK" | "EXPORTED" | "TRANSFERRED"
+  created_at      DateTime     @default(now())
+  updated_at      DateTime     @updatedAt
+
+  export_history     ExportHistory[]
+  location_transfers LocationTransfer[]
+}
 ```
-*(Nếu `location_code` đã encode đủ thông tin VD: `A-01-1-01` thì có thể parse — hỏi lại)*
+
+**Fields đã xoá khỏi InventoryEntry:**
+```
+exported_quantity       → tính từ SUM(ExportHistory.quantity)
+remaining_quantity      → tính từ cartons_imported - exported
+exported_match_stock    → legacy, xoá
+exported_transfer_code  → legacy, xoá
+exported_transfer_location → đã có LocationTransfer
+new_pallet_code         → đã có LocationTransfer
+transfer_time           → đã có LocationTransfer
+id2                     → legacy, xoá
+update_field            → đổi thành updated_at @updatedAt
+date_field              → legacy, xoá
+match_date              → legacy, xoá
+bypass_location         → cần xác nhận thêm
+```
 
 ---
 
-### ⚠️ 6. `remaining_quantity` và `exported_quantity` là computed fields
+## Câu hỏi đã xác nhận
 
-Đang lưu trong DB → **nguy cơ mất đồng bộ** nếu có bug. Nên tính động từ transactions thay vì lưu trực tiếp.
+- [x] `material` = mã hàng, `material_description` = tên đầy đủ, `short_name` = `{tên} [{3 số cuối}]`
+- [x] `location_code` format: `BV_TP1_1_T1` (`{warehouse}_{subwarehouse}_{row}_{shelf}`)
+- [x] `nmsx` = Nhà máy sản xuất = Manufacturer, có thể là ký hiệu chữ/số → Model riêng `Manufacturer`
+- [x] Database: **PostgreSQL** (Supabase). Prisma `provider = "postgresql"` — tương thích hoàn toàn nếu sau này chuyển sang PostgreSQL gốc
+- [x] Multi-warehouse: cần 2 model mới `Warehouse` và `SubWarehouse`, Employee gắn với Warehouse
 
----
+## Câu hỏi còn lại
 
-### ℹ️ 7. Database: MySQL vs PostgreSQL
-
-`CLAUDE.md` ghi PostgreSQL, schema dùng MySQL. Cần thống nhất trước khi setup backend. MySQL hoàn toàn ổn với Prisma.
-
----
-
-## Câu hỏi cần xác nhận với bạn
-
-- [x] `material` trong `InventoryEntry` là mã hàng hay tên hàng? → **Đã xác nhận**: `material` = mã hàng, `material_description` = tên đầy đủ, `short_name` theo quy tắc `{tên} [{3 số cuối mã}]`
-- [ ] `location_code` format thực tế là gì? (VD: `A-01-1-01`?)
-- [ ] 1 xe có nhiều tài xế không, hay 1 tài xế cố định 1 xe?
-- [ ] Các field `id2`, `date_field`, `match_date`, `update_field` dùng để làm gì?
-- [ ] `nmsx` là viết tắt của gì?
-- [ ] `cycle` trong `InventoryEntry` là gì? (chu kỳ sản xuất?)
+- [ ] `cycle` trong `InventoryEntry` là gì? (chu kỳ sản xuất theo tháng? theo đợt?)
 - [ ] `bypass_location` nghĩa là gì trong nghiệp vụ?
-- [ ] Dùng MySQL hay đổi sang PostgreSQL?
+- [ ] 1 xe có nhiều tài xế theo ca không, hay 1 tài xế cố định 1 xe?
+- [ ] Các field `id2`, `date_field`, `match_date` trong InventoryEntry có cần migrate sang DB mới không?
 
 ---
 
-## Schema đề xuất bổ sung (Draft)
+## Ghi chú về PostgreSQL / Supabase
 
-```prisma
-// Thêm bảng này
-model Material {
-  id                String @id @default(uuid())
-  material_code     String @unique
-  material_name     String
-  short_name        String?
-  product_type      String?
-  unit              String?
-  notes             String?
-}
-
-// Sửa InventoryEntry: thêm FK material
-// Sửa ExportHistory: thêm FK inventory_entry_id
-// Xem xét tách Driver khỏi Vehicle
-```
+- **Supabase = managed PostgreSQL** – hoàn toàn tương thích với Prisma
+- `schema.prisma` chỉ cần `provider = "postgresql"` – **không cần thay đổi** khi switch từ Supabase sang PostgreSQL thuần
+- Supabase cung cấp thêm: Auth, Storage, Realtime (có thể thay thế Redis + socket.io về sau)
+- Kết nối: dùng Supabase connection string → `DATABASE_URL` trong `.env`
 
 ---
 
@@ -190,4 +269,5 @@ model Material {
 | Ngày | Thay đổi |
 |---|---|
 | 2026-05-07 | Review lần đầu, tạo file theo dõi |
-| 2026-05-07 | Xác nhận quy tắc đặt tên Material: mã/tên/short_name; cập nhật schema đề xuất với `custom_short_name` |
+| 2026-05-07 | Xác nhận Material naming convention, thêm `custom_short_name` |
+| 2026-05-07 | Xác nhận multi-warehouse, location hierarchy, NMSX=Manufacturer, PostgreSQL/Supabase — thiết kế lại toàn bộ schema |

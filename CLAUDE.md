@@ -38,7 +38,7 @@ Chạy trên browser và mobile (iOS/Android) thông qua PWA. Không cần cài 
 ### Backend
 - **Node.js** + **Express** + **TypeScript**
 - **Prisma ORM** – database access layer
-- **PostgreSQL** – primary database
+- **PostgreSQL** via **Supabase** (hoặc PostgreSQL gốc — Prisma provider giống nhau)
 - **Redis** – session cache, realtime queue
 - **JWT** – authentication (access + refresh tokens)
 - **bcrypt** – password hashing
@@ -47,9 +47,9 @@ Chạy trên browser và mobile (iOS/Android) thông qua PWA. Không cần cài 
 - **socket.io** – realtime notifications
 
 ### DevOps / Infrastructure
-- **Docker** + **Docker Compose** – local development và deployment
+- **Supabase** – managed PostgreSQL, Auth, Storage (production)
+- **Docker** + **Docker Compose** – local development
 - **Nginx** – reverse proxy, serve static files
-- **PostgreSQL** chạy trong Docker
 
 ---
 

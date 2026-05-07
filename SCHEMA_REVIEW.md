@@ -1,6 +1,6 @@
 # Prisma Schema Review – WMS Webapp
 
-> Cập nhật lần cuối: 2026-05-07  
+> Cập nhật lần cuối: 2026-05-07 (rev 2)  
 > Database: **MySQL** (lưu ý: CLAUDE.md ghi PostgreSQL — cần thống nhất)
 
 ---
@@ -25,25 +25,49 @@
 
 ### 🔴 1. Thiếu bảng Master `Material` (Quan trọng nhất)
 
-Hiện tại thông tin hàng hoá (`material`, `short_name`, `material_description`, `product_type`) đang lưu dạng **string lặp lại** trong `InventoryEntry` và `ExportHistory`.
+Hiện tại thông tin hàng hoá đang lưu dạng **string lặp lại** trong `InventoryEntry` và `ExportHistory`.
 
 **Hậu quả:** Không thể tra cứu danh mục hàng, dễ nhập sai tên, không thể filter/report theo loại hàng.
 
-**Đề xuất:** Tạo bảng `Material`:
+#### ✅ Đã xác nhận – Cấu trúc tên hàng
+
+| Field | Ý nghĩa | Ví dụ |
+|---|---|---|
+| `material` | Mã hàng | `1234567890` |
+| `material_description` | Tên đầy đủ | `Thùng carton 3 lớp 40x30x30` |
+| `short_name` | Tên ngắn (auto hoặc tuỳ chỉnh) | `Thùng carton [890]` |
+
+**Quy tắc `short_name`:**
+- Format: `{material_description hoặc tên tuỳ chỉnh} [{3 số cuối của material_code}]`
+- VD: material = `1234567890` → suffix = `[890]`
+- User có thể override phần tên, nhưng suffix `[890]` luôn giữ nguyên
+
+**Schema đề xuất cho bảng `Material`:**
 ```prisma
 model Material {
-  id                  String  @id @default(uuid())
-  material_code       String  @unique  // mã hàng
-  material_name       String           // tên đầy đủ
-  short_name          String?          // tên ngắn
-  product_type        String?          // loại sản phẩm
-  machine             String?          // máy sản xuất
-  unit                String?          // đơn vị (thùng, cái...)
-  notes               String?
+  id                   String  @id @default(uuid())
+  material_code        String  @unique   // Mã hàng – VD: "1234567890"
+  material_description String            // Tên đầy đủ – VD: "Thùng carton 3 lớp 40x30x30"
+  short_name           String?           // Tên ngắn – VD: "Thùng carton [890]"
+  custom_short_name    String?           // Tên ngắn tuỳ chỉnh do user đặt (nếu override)
+  product_type         String?           // Loại sản phẩm
+  machine              String?           // Máy sản xuất (liên quan cycle)
+  unit                 String?           // Đơn vị tính (thùng, cái, kg...)
+  notes                String?
+  is_active            Boolean @default(true)
 
-  inventory_entries   InventoryEntry[]
-  export_history      ExportHistory[]
+  inventory_entries    InventoryEntry[]
+  export_history       ExportHistory[]
 }
+```
+
+**Logic sinh `short_name` tự động (backend):**
+```typescript
+// Khi tạo/cập nhật Material
+const suffix = material_code.slice(-3)           // "890"
+const base = custom_short_name ?? material_description
+short_name = `${base} [${suffix}]`
+// → "Thùng carton [890]" hoặc "Tên tuỳ chỉnh [890]"
 ```
 
 ---
@@ -129,7 +153,7 @@ bin           String?   // Ô (01, 02)
 
 ## Câu hỏi cần xác nhận với bạn
 
-- [ ] `material` trong `InventoryEntry` là mã hàng hay tên hàng? Có bảng danh mục riêng chưa?
+- [x] `material` trong `InventoryEntry` là mã hàng hay tên hàng? → **Đã xác nhận**: `material` = mã hàng, `material_description` = tên đầy đủ, `short_name` theo quy tắc `{tên} [{3 số cuối mã}]`
 - [ ] `location_code` format thực tế là gì? (VD: `A-01-1-01`?)
 - [ ] 1 xe có nhiều tài xế không, hay 1 tài xế cố định 1 xe?
 - [ ] Các field `id2`, `date_field`, `match_date`, `update_field` dùng để làm gì?
@@ -166,3 +190,4 @@ model Material {
 | Ngày | Thay đổi |
 |---|---|
 | 2026-05-07 | Review lần đầu, tạo file theo dõi |
+| 2026-05-07 | Xác nhận quy tắc đặt tên Material: mã/tên/short_name; cập nhật schema đề xuất với `custom_short_name` |

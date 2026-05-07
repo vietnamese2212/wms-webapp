@@ -1,5 +1,13 @@
 # WMS Supply Chain Webapp
 
+## Quy tắc làm việc
+
+- **Sau mỗi lần sửa code xong, luôn push lên GitHub ngay lập tức** (không cần người dùng nhắc).
+- Vercel sẽ tự động deploy sau khi push.
+- Remote: `https://github.com/vietnamese2212/wms-webapp.git` (branch `main`)
+
+
+
 ## Project Overview
 
 Webapp quản lý vận hành Supply Chain toàn diện, bao gồm:

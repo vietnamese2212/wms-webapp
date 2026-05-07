@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft, QrCode, CheckCircle2, XCircle, Trash2,
@@ -9,27 +9,23 @@ import { vi }                  from 'date-fns/locale'
 import { PageHeader }          from '@/components/shared/PageHeader'
 import { TableSkeleton }       from '@/components/shared/TableSkeleton'
 import { QRScanner }           from '@/components/shared/QRScanner'
+import type { QRScannerHandle } from '@/components/shared/QRScanner'
 import { Button }              from '@/components/ui/button'
 import { Badge }               from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Input }               from '@/components/ui/input'
-import { Label }               from '@/components/ui/label'
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
-} from '@/components/ui/dialog'
 import {
   useInboundOrder,
-  useInboundLocationSuggestions,
   useCompleteInboundOrder,
   useCancelInboundOrder,
   useScanPallet,
   useDeletePalletEntry,
   useLocationsReal,
+  useUpdateInboundOrder,
 } from '@/api/hooks'
 import { inboundOrderStatusLabel } from '@/utils/formatters'
-import type { InboundOrderStatus, LocationSuggestion } from '@/types'
+import type { InboundOrderStatus } from '@/types'
 
 // ─── Status badge ────────────────────────────────────────────
 
@@ -47,236 +43,96 @@ function InboundStatusBadge({ status }: { status: string }) {
   )
 }
 
-// ─── Scan confirmation dialog ────────────────────────────────
+// ─── Scan feedback banner ─────────────────────────────────────
 
-interface ParsedQRPreview {
-  raw:              string
-  material_code:    string
-  cycle:            string
-  machine_code:     string
-  manufacturer_code: string
-  production_date:  string // ddmmyy
-  pallet_seq:       string
-}
+type FeedbackState =
+  | { type: 'pending' }
+  | { type: 'success'; msg: string }
+  | { type: 'error';   msg: string }
 
-function parsedFromRaw(raw: string): ParsedQRPreview | null {
-  const parts = raw.trim().split('_')
-  if (parts.length < 6) return null
-  const [dateStr, material_code, cycle, machine_code, pallet_seq, manufacturer_code] = parts
-  return { raw, material_code, cycle, machine_code, manufacturer_code, production_date: dateStr, pallet_seq }
-}
-
-interface ScanDialogProps {
-  orderId:    string
-  materialCode: string | undefined
-  open:       boolean
-  scannedRaw: string
-  suggestions: LocationSuggestion[]
-  defaultLocationId: string | null
-  allLocations: any[]
-  onClose:    () => void
-  onSuccess:  (warnings: string[]) => void
-}
-
-function ScanConfirmDialog({
-  orderId, materialCode, open, scannedRaw,
-  suggestions, defaultLocationId, allLocations,
-  onClose, onSuccess,
-}: ScanDialogProps) {
-  const parsed = parsedFromRaw(scannedRaw)
-  const [locationId,   setLocationId]   = useState(defaultLocationId ?? '')
-  const [stackLayer,   setStackLayer]   = useState('1')
-  const [cartonOverride, setCartonOverride] = useState('')
-
-  const { mutate: scanPallet, isPending, error } = useScanPallet()
-  const apiError = (error as any)?.response?.data?.error?.message
-
-  function handleConfirm() {
-    if (!locationId) return
-    scanPallet(
-      {
-        orderId,
-        qr_code:         scannedRaw,
-        location_id:     locationId,
-        stack_layer:     Number(stackLayer),
-        cartons_override: cartonOverride ? Number(cartonOverride) : undefined,
-      },
-      {
-        onSuccess: (data) => {
-          onSuccess(data.warnings ?? [])
-          onClose()
-        },
-      }
+function ScanFeedback({ state }: { state: FeedbackState }) {
+  if (state.type === 'pending') {
+    return (
+      <div className="rounded-lg bg-blue-50 border border-blue-200 p-2.5 text-sm text-blue-700 animate-pulse">
+        Đang lưu...
+      </div>
     )
   }
-
-  if (!parsed) return null
-
-  const isMaterialMismatch = materialCode && parsed.material_code !== materialCode
-
+  if (state.type === 'success') {
+    return (
+      <div className="rounded-lg bg-green-50 border border-green-200 p-2.5 text-sm text-green-800 flex items-center gap-2">
+        <CheckCircle2 className="h-4 w-4 shrink-0" />
+        {state.msg}
+      </div>
+    )
+  }
   return (
-    <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>Xác nhận pallet</DialogTitle>
-        </DialogHeader>
-
-        <div className="space-y-4 py-2">
-          {/* Parsed QR info */}
-          <div className="rounded-lg bg-slate-50 border border-slate-200 p-3 space-y-1.5 text-sm">
-            <div className="grid grid-cols-2 gap-1">
-              <span className="text-slate-500">Mã hàng (QR):</span>
-              <span className={`font-mono font-semibold ${isMaterialMismatch ? 'text-red-600' : 'text-slate-900'}`}>
-                {parsed.material_code}
-              </span>
-              <span className="text-slate-500">Ngày SX:</span>
-              <span className="font-medium">{parsed.production_date}</span>
-              <span className="text-slate-500">Chu kỳ:</span>
-              <span className="font-medium">{parsed.cycle}</span>
-              <span className="text-slate-500">Máy:</span>
-              <span className="font-medium">{parsed.machine_code}</span>
-              <span className="text-slate-500">Số TT pallet:</span>
-              <span className="font-mono font-medium">{parsed.pallet_seq}</span>
-              <span className="text-slate-500">NMSX:</span>
-              <span className="font-medium">{parsed.manufacturer_code}</span>
-            </div>
-          </div>
-
-          {/* Material mismatch warning */}
-          {isMaterialMismatch && (
-            <div className="flex items-start gap-2 rounded-lg bg-red-50 border border-red-200 p-3">
-              <AlertTriangle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
-              <p className="text-sm text-red-700">
-                <strong>Sai hàng hóa!</strong> QR có mã <strong>{parsed.material_code}</strong> nhưng phiếu yêu cầu <strong>{materialCode}</strong>.
-              </p>
-            </div>
-          )}
-
-          {/* API error */}
-          {apiError && (
-            <div className="flex items-start gap-2 rounded-lg bg-red-50 border border-red-200 p-3">
-              <AlertTriangle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
-              <p className="text-sm text-red-700">{apiError}</p>
-            </div>
-          )}
-
-          {/* Location selector */}
-          <div className="space-y-1.5">
-            <Label>Vị trí <span className="text-red-500">*</span></Label>
-            {suggestions.length > 0 && (
-              <p className="text-xs text-slate-500">Gợi ý (còn chỗ):</p>
-            )}
-            <div className="flex flex-wrap gap-1.5 mb-2">
-              {suggestions.map((s) => (
-                <button
-                  key={s.id}
-                  onClick={() => setLocationId(s.id)}
-                  className={`
-                    inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-mono transition-colors
-                    ${locationId === s.id
-                      ? 'border-blue-500 bg-blue-50 text-blue-700'
-                      : 'border-slate-200 hover:border-blue-300 hover:bg-blue-50'}
-                    ${s.has_same_material ? 'border-green-300' : ''}
-                  `}
-                >
-                  {s.location_code}
-                  <span className={`text-[10px] ${s.available_slots <= 1 ? 'text-amber-600' : 'text-slate-400'}`}>
-                    {s.available_slots}/{s.max_pallets}
-                  </span>
-                  {s.has_same_material && <span className="text-green-600">●</span>}
-                </button>
-              ))}
-            </div>
-            <Select value={locationId} onValueChange={setLocationId}>
-              <SelectTrigger><SelectValue placeholder="Hoặc chọn vị trí bất kỳ" /></SelectTrigger>
-              <SelectContent>
-                {allLocations.map((l: any) => (
-                  <SelectItem key={l.id} value={l.id}>{l.location_code}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Stack layer */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>Tầng pallet</Label>
-              <Select value={stackLayer} onValueChange={setStackLayer}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="1">Tầng 1 (sàn)</SelectItem>
-                  <SelectItem value="2">Tầng 2 (chồng lên T1)</SelectItem>
-                  <SelectItem value="3">Tầng 3 (chồng lên T2)</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Thùng/pallet <span className="text-slate-400 text-xs">(tự điền từ DM)</span></Label>
-              <Input
-                type="number" min="0" placeholder="Tự động"
-                value={cartonOverride}
-                onChange={(e) => setCartonOverride(e.target.value)}
-              />
-            </div>
-          </div>
-        </div>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Huỷ</Button>
-          <Button
-            onClick={handleConfirm}
-            disabled={!locationId || isMaterialMismatch || isPending}
-          >
-            {isPending ? 'Đang lưu...' : 'Xác nhận nhập'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <div className="rounded-lg bg-red-50 border border-red-200 p-2.5 text-sm text-red-700 flex items-start gap-2">
+      <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+      {state.msg}
+    </div>
   )
 }
 
 // ─── Main page ───────────────────────────────────────────────
 
 export default function InboundDetail() {
-  const { id }     = useParams<{ id: string }>()
-  const navigate   = useNavigate()
+  const { id }   = useParams<{ id: string }>()
+  const navigate = useNavigate()
 
   const { data: order, isLoading } = useInboundOrder(id)
-  const { data: suggestions = [] } = useInboundLocationSuggestions(id)
   const { data: allLocations = [] } = useLocationsReal(
     order?.warehouse_id ? { warehouse_id: order.warehouse_id } : undefined
   )
 
   const { mutate: completeOrder, isPending: completing } = useCompleteInboundOrder()
   const { mutate: cancelOrder,   isPending: cancelling  } = useCancelInboundOrder()
-  const { mutate: deleteEntry,   isPending: deletingId  } = useDeletePalletEntry()
+  const { mutate: deleteEntry                           } = useDeletePalletEntry()
+  const { mutate: scanPallet,    isPending: scanning    } = useScanPallet()
+  const { mutate: updateOrder                           } = useUpdateInboundOrder()
 
-  const [showScanner, setShowScanner] = useState(false)
-  const [scannedRaw,  setScannedRaw]  = useState('')
-  const [showConfirm, setShowConfirm] = useState(false)
-  const [toastMsgs,   setToastMsgs]   = useState<string[]>([])
+  const scannerHandle = useRef<QRScannerHandle>(null)
+  const [showScanner,  setShowScanner]  = useState(false)
+  const [feedback,     setFeedback]     = useState<FeedbackState | null>(null)
 
-  const isOpen = order?.status === 'OPEN'
+  const isOpen   = order?.status === 'OPEN'
+  const entries  = order?.inventory_entries ?? []
+  const hasLoc   = !!order?.location_id
 
-  function handleScanResult(raw: string) {
-    setShowScanner(false)
-    setScannedRaw(raw)
-    setShowConfirm(true)
-  }
-
-  function handleScanSuccess(warnings: string[]) {
-    setShowConfirm(false)
-    setScannedRaw('')
-    if (warnings.length) setToastMsgs(warnings)
-    setTimeout(() => setToastMsgs([]), 4000)
+  // ── Instant scan: QR detected → API immediately ──────────
+  function handleScan(raw: string) {
+    if (!order) return
+    if (!order.location_id) {
+      setFeedback({ type: 'error', msg: 'Chưa chọn vị trí nhập. Chọn vị trí bên dưới trước khi quét.' })
+      return
+    }
+    setFeedback({ type: 'pending' })
+    scanPallet(
+      { orderId: order.id, qr_code: raw, location_id: order.location_id },
+      {
+        onSuccess: (data) => {
+          const p = data.entry
+          setFeedback({
+            type: 'success',
+            msg: `Đã nhập: ${p.pallet_code} · ${p.cartons_imported} thùng · ${p.location?.location_code ?? ''}`,
+          })
+          // Auto-resume sau 1.5s để quét pallet tiếp theo
+          setTimeout(() => {
+            scannerHandle.current?.resume()
+            setFeedback(null)
+          }, 1500)
+        },
+        onError: (err) => {
+          const msg = (err as any)?.response?.data?.error?.message ?? 'Lỗi không xác định'
+          setFeedback({ type: 'error', msg })
+          // Camera dừng lại, user bấm "Quét tiếp" để thử lại
+        },
+      }
+    )
   }
 
   if (isLoading) {
-    return (
-      <div className="p-6">
-        <TableSkeleton rows={6} cols={4} />
-      </div>
-    )
+    return <div className="p-6"><TableSkeleton rows={6} cols={4} /></div>
   }
 
   if (!order) {
@@ -287,8 +143,6 @@ export default function InboundDetail() {
       </div>
     )
   }
-
-  const entries = order.inventory_entries ?? []
 
   return (
     <div className="space-y-0">
@@ -303,8 +157,7 @@ export default function InboundDetail() {
             {isOpen && (
               <>
                 <Button
-                  size="sm"
-                  variant="outline"
+                  size="sm" variant="outline"
                   className="text-red-600 hover:bg-red-50"
                   disabled={cancelling}
                   onClick={() => cancelOrder(order.id)}
@@ -325,23 +178,12 @@ export default function InboundDetail() {
         }
       />
 
-      {/* Toast messages */}
-      {toastMsgs.length > 0 && (
-        <div className="mx-6 mt-4 rounded-lg bg-amber-50 border border-amber-200 p-3 space-y-1">
-          {toastMsgs.map((m, i) => (
-            <p key={i} className="text-sm text-amber-800 flex items-center gap-2">
-              <AlertTriangle className="h-3.5 w-3.5 shrink-0" /> {m}
-            </p>
-          ))}
-        </div>
-      )}
-
       <div className="p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
 
         {/* ── Left: Order info + QR scanner ── */}
         <div className="space-y-4 lg:col-span-1">
 
-          {/* Order header card */}
+          {/* Order info card */}
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-base flex items-center justify-between">
@@ -358,15 +200,37 @@ export default function InboundDetail() {
                   {order.material?.short_name ?? order.material?.material_description}
                 </span>
               </div>
-              <div className="flex items-center gap-2">
-                <MapPin className="h-4 w-4 text-slate-400" />
-                {order.location ? (
-                  <Badge variant="outline" className="font-mono text-xs">
-                    {order.location.location_code}
-                  </Badge>
-                ) : (
-                  <span className="text-slate-400 text-xs">Chưa chọn vị trí</span>
-                )}
+              <div className="flex items-start gap-2">
+                <MapPin className="h-4 w-4 text-slate-400 mt-0.5" />
+                <div className="flex-1">
+                  {order.location ? (
+                    <Badge variant="outline" className="font-mono text-xs">
+                      {order.location.location_code}
+                    </Badge>
+                  ) : isOpen ? (
+                    <div className="space-y-1">
+                      <p className="text-xs text-amber-700 font-medium">Chưa chọn vị trí</p>
+                      <Select
+                        onValueChange={(v) =>
+                          updateOrder({ id: order.id, location_id: v })
+                        }
+                      >
+                        <SelectTrigger className="h-7 text-xs">
+                          <SelectValue placeholder="Chọn vị trí nhập" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {allLocations.map((l: any) => (
+                            <SelectItem key={l.id} value={l.id}>
+                              {l.location_code}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ) : (
+                    <span className="text-slate-400 text-xs">Chưa chọn vị trí</span>
+                  )}
+                </div>
               </div>
               <div className="flex items-center gap-2">
                 <Layers className="h-4 w-4 text-slate-400" />
@@ -389,29 +253,50 @@ export default function InboundDetail() {
             </CardContent>
           </Card>
 
-          {/* QR Scanner (only when OPEN) */}
+          {/* QR Scanner card (only when OPEN) */}
           {isOpen && (
             <Card>
               <CardHeader className="pb-3">
-                <CardTitle className="text-base">Quét QR pallet</CardTitle>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <QrCode className="h-4 w-4" />
+                  Quét QR pallet
+                  {scanning && (
+                    <span className="ml-auto text-xs text-blue-500 animate-pulse">Đang lưu...</span>
+                  )}
+                </CardTitle>
               </CardHeader>
-              <CardContent>
+              <CardContent className="space-y-2">
+
+                {/* Require location before scan */}
+                {!hasLoc && (
+                  <div className="rounded-lg bg-amber-50 border border-amber-200 p-2.5 text-xs text-amber-800 flex items-center gap-2 mb-2">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                    Chọn vị trí nhập ở trên trước khi quét
+                  </div>
+                )}
+
+                {/* Inline scan feedback */}
+                {feedback && <ScanFeedback state={feedback} />}
+
                 {showScanner ? (
                   <QRScanner
-                    onScan={handleScanResult}
-                    onClose={() => setShowScanner(false)}
+                    ref={scannerHandle}
+                    onScan={handleScan}
+                    onClose={() => { setShowScanner(false); setFeedback(null) }}
                   />
                 ) : (
                   <Button
                     className="w-full gap-2"
-                    onClick={() => setShowScanner(true)}
+                    disabled={!hasLoc}
+                    onClick={() => { setShowScanner(true); setFeedback(null) }}
                   >
-                    <QrCode className="h-4 w-4" /> Mở camera quét QR
+                    <QrCode className="h-4 w-4" />
+                    {hasLoc ? 'Mở camera quét QR' : 'Chọn vị trí trước'}
                   </Button>
                 )}
 
-                <p className="mt-3 text-xs text-slate-400 text-center">
-                  Định dạng QR: <span className="font-mono">ddmmyy_Mã_ChuKy_Máy_STT_NMSX</span>
+                <p className="text-[10px] text-slate-400 text-center">
+                  Định dạng: <span className="font-mono">ddmmyy_Mã_CK_Máy_STT_NMSX</span>
                 </p>
               </CardContent>
             </Card>
@@ -452,9 +337,7 @@ export default function InboundDetail() {
                     <TableBody>
                       {entries.map((entry) => (
                         <TableRow key={entry.id} className="text-xs">
-                          <TableCell className="font-mono">
-                            {entry.pallet_code}
-                          </TableCell>
+                          <TableCell className="font-mono">{entry.pallet_code}</TableCell>
                           <TableCell>
                             {entry.production_date
                               ? format(parseISO(entry.production_date), 'dd/MM/yy', { locale: vi })
@@ -491,21 +374,6 @@ export default function InboundDetail() {
           </Card>
         </div>
       </div>
-
-      {/* Scan confirmation dialog */}
-      {showConfirm && (
-        <ScanConfirmDialog
-          orderId={order.id}
-          materialCode={order.material?.material_code}
-          open={showConfirm}
-          scannedRaw={scannedRaw}
-          suggestions={suggestions}
-          defaultLocationId={order.location_id}
-          allLocations={allLocations}
-          onClose={() => { setShowConfirm(false); setScannedRaw('') }}
-          onSuccess={handleScanSuccess}
-        />
-      )}
     </div>
   )
 }

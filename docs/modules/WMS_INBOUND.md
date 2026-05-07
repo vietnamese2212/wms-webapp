@@ -49,11 +49,20 @@ DELETE /api/wms/inbound-orders/:id/entries/:entryId
 GET    /api/wms/inbound-orders/:id/location-suggestions
 ```
 
+## QR Scan Flow (AppSheet-style – instant, no confirm dialog)
+1. User chọn vị trí trên phiếu (nếu chưa có)
+2. Mở camera → camera luôn active
+3. Camera bắt QR → `onScan(raw)` → gọi API ngay (location = order.location_id, stack_layer = 1 default)
+4. Thành công → banner xanh + auto-resume camera sau 1.5s → quét pallet tiếp
+5. Lỗi → banner đỏ + camera pause → user bấm "Quét tiếp"
+6. Không có confirm dialog
+- `QRScanner` export `QRScannerHandle { resume() }` qua `forwardRef`
+
 ## Frontend Files
 ```
-frontend/src/pages/wms/Inbound.tsx         ← list (stats + table + create dialog)
-frontend/src/pages/wms/InboundDetail.tsx   ← detail (QR scanner + pallet table + confirm dialog)
-frontend/src/components/shared/QRScanner.tsx ← html5-qrcode wrapper
+frontend/src/pages/wms/Inbound.tsx           ← list (stats + table + create dialog)
+frontend/src/pages/wms/InboundDetail.tsx     ← detail (instant QR scan + inline feedback + pallet table)
+frontend/src/components/shared/QRScanner.tsx ← html5-qrcode wrapper + forwardRef + QRScannerHandle
 ```
 
 ## Frontend Hooks (hooks.ts)

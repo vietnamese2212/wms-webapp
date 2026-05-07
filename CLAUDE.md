@@ -14,6 +14,18 @@
 
 
 
+## QR Scanning Behavior (AppSheet-style)
+
+Tất cả màn hình có quét QR (nhập kho, xuất kho, kiểm kho, chấm công…) phải tuân theo nguyên tắc:
+
+- **Instant scan – không có bước confirm**: Camera bắt được QR → gọi API lưu luôn, không hiện dialog xác nhận.
+- **Inline feedback**: Kết quả (thành công / lỗi) hiển thị ngay trong giao diện scanner bằng banner màu xanh/đỏ — không dùng modal hay toast bên ngoài.
+- **Auto-resume sau thành công**: Sau khi lưu thành công, camera tự tắt overlay "đã dừng" và tiếp tục quét sau ~1.5s để người dùng quét nhiều pallet liên tiếp.
+- **Dừng khi lỗi**: Nếu lỗi (sai hàng, đầy kho, trùng pallet…), camera giữ trạng thái pause — người dùng đọc lỗi rồi bấm "Quét tiếp" để tiếp tục.
+- **Component `QRScanner`**: Export `QRScannerHandle { resume() }` qua `forwardRef` để parent có thể auto-resume sau khi API thành công.
+
+---
+
 ## Project Overview
 
 Webapp quản lý vận hành Supply Chain toàn diện, bao gồm:

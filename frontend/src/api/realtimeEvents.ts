@@ -2,6 +2,17 @@ import type { RealtimeChannel } from '@supabase/supabase-js'
 import { supabaseClient } from '@/lib/supabase'
 import { queryClient } from './queryClient'
 
+// Maps table name → query keys to invalidate.
+// Add entries here when new modules with real API queries are built.
+const TABLE_QUERY_MAP: Record<string, string[][]> = {
+  ProductionImport: [['inbound-orders'], ['inbound-order']],
+  InventoryEntry:   [['inbound-order'], ['locations-real']],
+  Location:         [['locations-real'], ['sub-groups']],
+  Material:         [['materials']],
+  Manufacturer:     [['manufacturers']],
+  Warehouse:        [['warehouses']],
+}
+
 let channel: RealtimeChannel | null = null
 
 export function connectRealtimeEvents(): void {
@@ -9,33 +20,25 @@ export function connectRealtimeEvents(): void {
 
   channel = supabaseClient
     .channel('wms-db-changes')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'ProductionImport' }, () => {
-      queryClient.invalidateQueries({ queryKey: ['inbound-orders'] })
-      queryClient.invalidateQueries({ queryKey: ['inbound-order'] })
-    })
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'InventoryEntry' }, () => {
-      queryClient.invalidateQueries({ queryKey: ['inbound-order'] })
-      queryClient.invalidateQueries({ queryKey: ['locations-real'] })
-    })
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'Location' }, () => {
-      queryClient.invalidateQueries({ queryKey: ['locations-real'] })
-      queryClient.invalidateQueries({ queryKey: ['sub-groups'] })
-    })
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'Material' }, () => {
-      queryClient.invalidateQueries({ queryKey: ['materials'] })
-    })
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'Manufacturer' }, () => {
-      queryClient.invalidateQueries({ queryKey: ['manufacturers'] })
-    })
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'Warehouse' }, () => {
-      queryClient.invalidateQueries({ queryKey: ['warehouses'] })
-    })
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: '*' },
+      (payload) => {
+        const keys = TABLE_QUERY_MAP[payload.table]
+        if (keys) {
+          keys.forEach((k) => queryClient.invalidateQueries({ queryKey: k }))
+        } else {
+          // Unknown / new table — invalidate everything to stay in sync
+          queryClient.invalidateQueries()
+        }
+      }
+    )
     .subscribe((status) => {
       if (status === 'SUBSCRIBED') {
-        console.info('[realtime] connected — live updates active')
+        console.info('[realtime] connected — all tables live')
       }
       if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-        console.warn('[realtime] subscription error, will retry:', status)
+        console.warn('[realtime] error, retrying:', status)
       }
     })
 }

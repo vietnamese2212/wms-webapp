@@ -129,8 +129,8 @@ export function useInboundOrders(params?: { warehouse_id?: string; status?: stri
   const key = lsKey('wms:io', params)
   return useQuery({
     queryKey: ['inbound-orders', params],
-    staleTime: 30_000,
-    refetchInterval: 15_000,
+    staleTime: 0,
+    refetchInterval: 60_000,
     refetchOnWindowFocus: true,
     // Shows last-known data instantly on refresh / cold start; always refetches in background
     initialData: () => lsGet<InboundOrder[]>(key),
@@ -148,8 +148,8 @@ export function useInboundOrder(id?: string) {
   return useQuery({
     queryKey: ['inbound-order', id],
     enabled: !!id,
-    staleTime: 20_000,
-    refetchInterval: 15_000,
+    staleTime: 0,
+    refetchInterval: 60_000,
     refetchOnWindowFocus: true,
     // 1) list cache (instant navigate from list), 2) localStorage (direct URL / refresh)
     placeholderData: () => {

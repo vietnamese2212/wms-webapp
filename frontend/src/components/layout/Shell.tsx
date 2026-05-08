@@ -1,10 +1,19 @@
+import { useEffect } from 'react'
 import { Outlet } from 'react-router-dom'
 import { Sidebar } from './Sidebar'
 import { Header } from './Header'
 import { BottomNav } from './BottomNav'
 import { Toaster } from '@/components/ui/toaster'
+import { apiClient } from '@/api/client'
 
 export function Shell() {
+  useEffect(() => {
+    // Warm up serverless function + DB connection on app load.
+    // Cold start can take 3-5s; this ping fires early so subsequent
+    // data requests (when user navigates) land on a warm runtime.
+    apiClient.get('/health').catch(() => {})
+  }, [])
+
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar />

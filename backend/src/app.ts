@@ -3,6 +3,7 @@ import cors from 'cors'
 import dotenv from 'dotenv'
 import masterdataRouter from './routes/masterdata'
 import wmsRouter from './routes/wms'
+import { prisma } from './lib/prisma'
 
 dotenv.config()
 
@@ -17,8 +18,14 @@ app.use(cors({
 }))
 app.use(express.json())
 
-app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() })
+// Warm up: pings DB so Prisma connection pool is ready for the next real query
+app.get('/api/health', async (_req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`
+    res.json({ status: 'ok' })
+  } catch {
+    res.json({ status: 'ok' })   // still respond ok — warmup is best-effort
+  }
 })
 
 app.use('/api/masterdata', masterdataRouter)

@@ -1,6 +1,20 @@
 -- Migration: Add ImportShift, QAStatus, pallet_sequence_no, qa_status_id, shift_id
 -- Date: 2026-05-08
 
+-- 0. Fix event trigger: object_identity already contains schema+quotes, use %s not %I
+CREATE OR REPLACE FUNCTION _auto_add_table_to_realtime()
+RETURNS event_trigger LANGUAGE plpgsql AS $$
+DECLARE
+  obj record;
+BEGIN
+  FOR obj IN SELECT * FROM pg_event_trigger_ddl_commands()
+  LOOP
+    IF obj.command_tag = 'CREATE TABLE' AND obj.schema_name = 'public' THEN
+      EXECUTE format('ALTER PUBLICATION supabase_realtime ADD TABLE %s', obj.object_identity);
+    END IF;
+  END LOOP;
+END $$;
+
 -- 1. Ca nhập (Import Shift) master data
 CREATE TABLE "ImportShift" (
   "id"            TEXT        NOT NULL PRIMARY KEY,
@@ -52,6 +66,4 @@ SET "warehouse_id" = (SELECT "id" FROM "Warehouse" WHERE "code" = 'BV' LIMIT 1),
     "updated_at"   = now()
 WHERE "name" = 'Nguyễn Văn Quản Lý';
 
--- 8. Enable Realtime for new tables
-ALTER PUBLICATION supabase_realtime ADD TABLE "ImportShift";
-ALTER PUBLICATION supabase_realtime ADD TABLE "QAStatus";
+-- 8. Realtime is handled automatically by the fixed event trigger above

@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import { prisma } from '../../lib/prisma'
 import { ok, fail } from '../../utils/response'
 import { parseInboundQR } from '../../utils/qrParser'
+import { emitInboundChanged } from '../../lib/events'
 
 // ─── Helpers ────────────────────────────────────────────────
 
@@ -66,14 +67,6 @@ export async function createOrder(req: Request, res: Response) {
     if (!warehouse_id) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu warehouse_id')
     if (!material_id)  return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu material_id')
 
-    // Validate foreign keys
-    const [wh, mat] = await Promise.all([
-      prisma.warehouse.findUnique({ where: { id: warehouse_id } }),
-      prisma.material.findUnique({ where: { id: material_id } }),
-    ])
-    if (!wh)  return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy kho')
-    if (!mat) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy hàng hóa')
-
     // Auto-generate import_code
     const today = new Date()
     const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate())
@@ -100,9 +93,12 @@ export async function createOrder(req: Request, res: Response) {
 
     // Return order + location suggestions
     const suggestions = await getLocationSuggestionsData(warehouse_id, material_id)
+    emitInboundChanged()
     ok(res, { order, location_suggestions: suggestions })
   } catch (e: unknown) {
-    if ((e as { code?: string }).code === 'P2002') return fail(res, 409, 'DUPLICATE', 'Mã phiếu đã tồn tại')
+    const code = (e as { code?: string }).code
+    if (code === 'P2002') return fail(res, 409, 'DUPLICATE', 'Mã phiếu đã tồn tại')
+    if (code === 'P2003') return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy kho hoặc hàng hóa')
     fail(res, 500, 'SERVER_ERROR', 'Lỗi server')
   }
 }
@@ -146,9 +142,10 @@ export async function updateOrder(req: Request, res: Response) {
       },
       include: INCLUDE_ORDER,
     })
+    emitInboundChanged()
     ok(res, updated)
-  } catch (e: any) {
-    if (e.code === 'P2025') return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
+  } catch (e: unknown) {
+    if ((e as { code?: string }).code === 'P2025') return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     fail(res, 500, 'SERVER_ERROR', 'Lỗi server')
   }
 }
@@ -167,6 +164,7 @@ export async function completeOrder(req: Request, res: Response) {
       data: { status: 'COMPLETED', updated_by: req.body.updated_by ?? null },
       include: INCLUDE_ORDER,
     })
+    emitInboundChanged()
     ok(res, updated)
   } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
@@ -184,6 +182,7 @@ export async function cancelOrder(req: Request, res: Response) {
       data: { status: 'CANCELLED', updated_by: req.body.updated_by ?? null },
       include: INCLUDE_ORDER,
     })
+    emitInboundChanged()
     ok(res, updated)
   } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
@@ -211,8 +210,13 @@ export async function scanQR(req: Request, res: Response) {
     const parsed = parseInboundQR(qr_code)
     if (!parsed.is_valid) return fail(res, 400, 'INVALID_QR', parsed.error ?? 'QR không hợp lệ')
 
-    // Validate material match
-    const material = await prisma.material.findUnique({ where: { material_code: parsed.material_code } })
+    // Run independent lookups in parallel
+    const [material, existingPallet, location] = await Promise.all([
+      prisma.material.findUnique({ where: { material_code: parsed.material_code } }),
+      prisma.inventoryEntry.findUnique({ where: { pallet_code: parsed.pallet_code } }),
+      prisma.location.findUnique({ where: { id: location_id } }),
+    ])
+
     if (!material) {
       return fail(res, 400, 'MATERIAL_NOT_FOUND',
         `Mã hàng "${parsed.material_code}" từ QR không tồn tại trong hệ thống`)
@@ -221,13 +225,7 @@ export async function scanQR(req: Request, res: Response) {
       return fail(res, 400, 'MATERIAL_MISMATCH',
         `Hàng hóa không khớp: QR có "${parsed.material_code}" (${material.material_description}) nhưng phiếu nhập yêu cầu "${order.material?.material_code}"`)
     }
-
-    // Check duplicate pallet
-    const existing = await prisma.inventoryEntry.findUnique({ where: { pallet_code: parsed.pallet_code } })
-    if (existing) return fail(res, 409, 'DUPLICATE_PALLET', `Pallet "${parsed.pallet_code}" đã được nhập kho`)
-
-    // Validate location
-    const location = await prisma.location.findUnique({ where: { id: location_id } })
+    if (existingPallet) return fail(res, 409, 'DUPLICATE_PALLET', `Pallet "${parsed.pallet_code}" đã được nhập kho`)
     if (!location) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy vị trí kho')
     if (!location.is_active) return fail(res, 400, 'LOCATION_INACTIVE', 'Vị trí kho không hoạt động')
 
@@ -293,9 +291,10 @@ export async function scanQR(req: Request, res: Response) {
       warnings.push('Số thùng/pallet chưa được cấu hình cho hàng hóa này – đã nhập 0')
     }
 
+    emitInboundChanged()
     ok(res, { entry, warnings })
-  } catch (e: any) {
-    if (e.code === 'P2002') return fail(res, 409, 'DUPLICATE_PALLET', 'Pallet đã tồn tại trong hệ thống')
+  } catch (e: unknown) {
+    if ((e as { code?: string }).code === 'P2002') return fail(res, 409, 'DUPLICATE_PALLET', 'Pallet đã tồn tại trong hệ thống')
     fail(res, 500, 'SERVER_ERROR', 'Lỗi server')
   }
 }
@@ -323,6 +322,7 @@ export async function updateEntry(req: Request, res: Response) {
       },
       include: INCLUDE_ENTRY,
     })
+    emitInboundChanged()
     ok(res, updated)
   } catch (e: unknown) {
     if ((e as { code?: string }).code === 'P2025') return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy pallet')
@@ -345,9 +345,10 @@ export async function removeEntry(req: Request, res: Response) {
     if (entry.import_order_id !== order_id) return fail(res, 400, 'ENTRY_NOT_IN_ORDER', 'Pallet không thuộc phiếu nhập này')
 
     await prisma.inventoryEntry.delete({ where: { id: entryId } })
+    emitInboundChanged()
     ok(res, { deleted: true })
-  } catch (e: any) {
-    if (e.code === 'P2025') return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy pallet')
+  } catch (e: unknown) {
+    if ((e as { code?: string }).code === 'P2025') return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy pallet')
     fail(res, 500, 'SERVER_ERROR', 'Lỗi server')
   }
 }

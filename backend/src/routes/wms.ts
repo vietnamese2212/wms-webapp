@@ -1,7 +1,27 @@
 import { Router } from 'express'
 import * as inbound from '../controllers/wms/inboundController'
+import { inboundEmitter } from '../lib/events'
 
 const router = Router()
+
+// SSE – real-time push (Railway persistent server only; Vercel serverless will close early)
+router.get('/events', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream')
+  res.setHeader('Cache-Control', 'no-cache')
+  res.setHeader('Connection', 'keep-alive')
+  res.setHeader('Access-Control-Allow-Origin', '*')
+  res.flushHeaders()
+
+  const keepAlive = setInterval(() => res.write(': ping\n\n'), 25_000)
+
+  const send = () => res.write('data: 1\n\n')
+  inboundEmitter.on('changed', send)
+
+  req.on('close', () => {
+    clearInterval(keepAlive)
+    inboundEmitter.off('changed', send)
+  })
+})
 
 // Inbound orders (phiếu nhập kho)
 router.get('/inbound-orders',                           inbound.listOrders)

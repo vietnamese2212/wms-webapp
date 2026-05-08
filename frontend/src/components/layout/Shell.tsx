@@ -6,6 +6,7 @@ import { Header } from './Header'
 import { BottomNav } from './BottomNav'
 import { Toaster } from '@/components/ui/toaster'
 import { apiClient } from '@/api/client'
+import { connectRealtimeEvents } from '@/api/realtimeEvents'
 
 export function Shell() {
   const qc = useQueryClient()
@@ -23,6 +24,9 @@ export function Shell() {
       queryFn: () => apiClient.get('/wms/inbound-orders').then((r) => r.data.data),
       staleTime: 30_000,
     })
+
+    // Connect to SSE for real-time sync (no-op if VITE_API_URL is not set)
+    connectRealtimeEvents()
   }, [qc])
 
   return (

@@ -116,7 +116,7 @@ export default function InboundDetail() {
   const { id }   = useParams<{ id: string }>()
   const navigate = useNavigate()
 
-  const { data: order, isLoading } = useInboundOrder(id)
+  const { data: order, isLoading, isPlaceholderData } = useInboundOrder(id)
   const { data: allLocations = [] } = useLocationsReal(
     order?.warehouse_id ? { warehouse_id: order.warehouse_id } : undefined
   )
@@ -140,7 +140,7 @@ export default function InboundDetail() {
     setShowCamera(true)
   }
 
-  // Bắt được QR: beep → đóng overlay → gọi API
+  // Bắt được QR: beep → đóng overlay → feedback ngay → gọi API background
   function handleScan(raw: string) {
     playBeep()
     setShowCamera(false)
@@ -149,17 +149,23 @@ export default function InboundDetail() {
       setFeedback({ type: 'error', msg: 'Chưa chọn vị trí. Chọn vị trí rồi quét lại.' })
       return
     }
-    setFeedback({ type: 'pending' })
+
+    // Hiện kết quả ngay lập tức (optimistic) — không đợi API
+    const materialCode = raw.split('_')[1] ?? raw
+    setFeedback({ type: 'success', msg: `Đã quét: ${materialCode}` })
+
     scanPallet(
       { orderId: order.id, qr_code: raw, location_id: order.location_id },
       {
         onSuccess: (data) => {
+          // Cập nhật với thông tin đầy đủ từ server
           setFeedback({
             type: 'success',
             msg: `Đã nhập: ${data.entry.pallet_code} · ${data.entry.cartons_imported} thùng · ${data.entry.location?.location_code ?? ''}`,
           })
         },
         onError: (err) => {
+          // Rollback: báo lỗi, optimistic entry đã được xóa trong hook
           const msg = (err as any)?.response?.data?.error?.message ?? 'Lỗi không xác định'
           setFeedback({ type: 'error', msg })
         },
@@ -167,7 +173,8 @@ export default function InboundDetail() {
     )
   }
 
-  if (isLoading) {
+  // Full skeleton only on very first load (no cache at all)
+  if (isLoading && !order) {
     return <div className="p-6"><TableSkeleton rows={6} cols={4} /></div>
   }
 
@@ -337,7 +344,9 @@ export default function InboundDetail() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="p-0">
-                {entries.length === 0 ? (
+                {isPlaceholderData ? (
+                  <TableSkeleton rows={3} cols={8} />
+                ) : entries.length === 0 ? (
                   <div className="flex flex-col items-center gap-2 py-12 text-slate-400">
                     <QrCode className="h-10 w-10 opacity-30" />
                     <p className="text-sm">Chưa có pallet nào được quét</p>

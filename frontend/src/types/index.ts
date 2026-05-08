@@ -8,6 +8,7 @@ export interface User {
   role: Role
   avatar?: string
   department?: string
+  warehouse_id?: string
 }
 
 // WMS
@@ -221,6 +222,7 @@ export interface InboundOrder {
   updated_by_emp:  { id: string; name: string } | null
   imported_by_emp: { id: string; name: string } | null
   _count:          { inventory_entries: number }
+  total_cartons?:  number
   created_at:      string
   updated_at:      string
   inventory_entries?: PalletEntry[]

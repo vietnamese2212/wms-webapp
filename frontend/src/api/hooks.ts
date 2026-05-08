@@ -209,6 +209,7 @@ export function useCreateInboundOrder() {
       material_id: string
       location_id?: string
       shift_id?: string
+      import_date?: string
       notes?: string
       imported_by?: string
     }) => apiClient.post('/wms/inbound-orders', body).then((r) => r.data.data),

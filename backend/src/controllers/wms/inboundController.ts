@@ -42,11 +42,16 @@ function generateImportCode(date: Date, seq: number): string {
 }
 
 async function attachCount(order: Record<string, unknown>): Promise<Record<string, unknown>> {
-  const { count } = await supabase
+  const { data } = await supabase
     .from('InventoryEntry')
-    .select('*', { count: 'exact', head: true })
+    .select('cartons_imported')
     .eq('import_order_id', order.id as string)
-  return { ...order, _count: { inventory_entries: count ?? 0 } }
+  const entries = (data ?? []) as { cartons_imported: number }[]
+  return {
+    ...order,
+    _count: { inventory_entries: entries.length },
+    total_cartons: entries.reduce((sum, e) => sum + (e.cartons_imported || 0), 0),
+  }
 }
 
 // ─── List inbound orders ─────────────────────────────────────
@@ -86,7 +91,7 @@ export async function listOrders(req: Request, res: Response) {
 
 export async function createOrder(req: Request, res: Response) {
   try {
-    const { warehouse_id, material_id, location_id, planned_pallets, shift_id, notes, imported_by } = req.body
+    const { warehouse_id, material_id, location_id, planned_pallets, shift_id, import_date, notes, imported_by } = req.body
     if (!warehouse_id) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu warehouse_id')
     if (!material_id)  return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu material_id')
 
@@ -113,6 +118,7 @@ export async function createOrder(req: Request, res: Response) {
         location_id:     location_id ?? null,
         planned_pallets: planned_pallets ? Number(planned_pallets) : null,
         shift_id:        shift_id ?? null,
+        import_date:     import_date ? new Date(import_date).toISOString() : new Date().toISOString(),
         notes:           notes ?? null,
         imported_by:     imported_by ?? null,
         created_by:      imported_by ?? null,

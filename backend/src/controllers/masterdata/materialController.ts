@@ -1,5 +1,5 @@
 import { Request, Response } from 'express'
-import { prisma } from '../../lib/prisma'
+import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 
 function buildShortName(description: string, code: string, custom?: string | null) {
@@ -11,38 +11,37 @@ function buildShortName(description: string, code: string, custom?: string | nul
 export async function listMaterials(req: Request, res: Response) {
   try {
     const { active, search, manufacturer_id, storage_category, category } = req.query
-    const data = await prisma.material.findMany({
-      where: {
-        ...(active === 'true' ? { is_active: true } : {}),
-        ...(manufacturer_id ? { manufacturer_id: String(manufacturer_id) } : {}),
-        ...(storage_category ? { storage_category: String(storage_category) } : {}),
-        ...(category ? { category: String(category) } : {}),
-        ...(search
-          ? {
-              OR: [
-                { material_code: { contains: String(search), mode: 'insensitive' } },
-                { material_description: { contains: String(search), mode: 'insensitive' } },
-                { short_name: { contains: String(search), mode: 'insensitive' } },
-                { old_code: { contains: String(search), mode: 'insensitive' } },
-              ],
-            }
-          : {}),
-      },
-      include: {
-        manufacturer: { select: { id: true, code: true, name: true } },
-      },
-      orderBy: { material_code: 'asc' },
-    })
-    ok(res, data)
+
+    let query = supabase
+      .from('Material')
+      .select('*, manufacturer:Manufacturer(id, code, name)')
+      .order('material_code')
+
+    if (active === 'true') query = query.eq('is_active', true)
+    if (manufacturer_id) query = query.eq('manufacturer_id', String(manufacturer_id))
+    if (storage_category) query = query.eq('storage_category', String(storage_category))
+    if (category) query = query.eq('category', String(category))
+    if (search) {
+      const s = String(search)
+      query = query.or(
+        `material_code.ilike.%${s}%,material_description.ilike.%${s}%,short_name.ilike.%${s}%,old_code.ilike.%${s}%`
+      )
+    }
+
+    const { data, error } = await query
+    if (error) throw error
+    ok(res, data ?? [])
   } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 export async function getMaterial(req: Request, res: Response) {
   try {
-    const data = await prisma.material.findUnique({
-      where: { id: req.params.id },
-      include: { manufacturer: { select: { id: true, code: true, name: true } } },
-    })
+    const { data, error } = await supabase
+      .from('Material')
+      .select('*, manufacturer:Manufacturer(id, code, name)')
+      .eq('id', req.params.id)
+      .maybeSingle()
+    if (error) throw error
     if (!data) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy hàng hóa')
     ok(res, data)
   } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
@@ -60,35 +59,39 @@ export async function createMaterial(req: Request, res: Response) {
       return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu material_code hoặc material_description')
 
     const short_name = buildShortName(material_description, material_code, custom_short_name)
-    const data = await prisma.material.create({
-      data: {
+
+    const { data, error } = await supabase
+      .from('Material')
+      .insert({
         material_code: String(material_code).trim(),
         material_description: String(material_description).trim(),
         short_name,
-        custom_short_name: custom_short_name ? String(custom_short_name).trim() : undefined,
-        category: category ?? undefined,
-        product_type: product_type ?? undefined,
-        unit: unit ?? undefined,
-        weight_kg: weight_kg != null ? weight_kg : undefined,
-        cartons_per_pallet: cartons_per_pallet != null ? Number(cartons_per_pallet) : undefined,
-        cartons_per_pallet_mn: cartons_per_pallet_mn != null ? Number(cartons_per_pallet_mn) : undefined,
-        units_per_carton: units_per_carton != null ? Number(units_per_carton) : undefined,
-        ea_per_pallet: ea_per_pallet != null ? Number(ea_per_pallet) : undefined,
-        shelf_life_days: shelf_life_days != null ? Number(shelf_life_days) : undefined,
-        storage_category: storage_category ?? undefined,
-        old_code: old_code ? String(old_code).trim() : undefined,
-        image_url: image_url ?? undefined,
-        manufacturer_id: manufacturer_id ?? undefined,
-        notes: notes ?? undefined,
-      },
-      include: { manufacturer: { select: { id: true, code: true, name: true } } },
-    })
+        custom_short_name: custom_short_name ? String(custom_short_name).trim() : null,
+        category: category ?? null,
+        product_type: product_type ?? null,
+        unit: unit ?? null,
+        weight_kg: weight_kg != null ? weight_kg : null,
+        cartons_per_pallet: cartons_per_pallet != null ? Number(cartons_per_pallet) : null,
+        cartons_per_pallet_mn: cartons_per_pallet_mn != null ? Number(cartons_per_pallet_mn) : null,
+        units_per_carton: units_per_carton != null ? Number(units_per_carton) : null,
+        ea_per_pallet: ea_per_pallet != null ? Number(ea_per_pallet) : null,
+        shelf_life_days: shelf_life_days != null ? Number(shelf_life_days) : null,
+        storage_category: storage_category ?? null,
+        old_code: old_code ? String(old_code).trim() : null,
+        image_url: image_url ?? null,
+        manufacturer_id: manufacturer_id ?? null,
+        notes: notes ?? null,
+      })
+      .select('*, manufacturer:Manufacturer(id, code, name)')
+      .single()
+
+    if (error) {
+      if (error.code === '23505') return fail(res, 409, 'DUPLICATE', 'Mã hàng đã tồn tại')
+      if (error.code === '23503') return fail(res, 404, 'NOT_FOUND', 'Nhà máy không tồn tại')
+      throw error
+    }
     ok(res, data)
-  } catch (e: any) {
-    if (e.code === 'P2002') return fail(res, 409, 'DUPLICATE', 'Mã hàng đã tồn tại')
-    if (e.code === 'P2003') return fail(res, 404, 'NOT_FOUND', 'Nhà máy không tồn tại')
-    fail(res, 500, 'SERVER_ERROR', 'Lỗi server')
-  }
+  } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 export async function updateMaterial(req: Request, res: Response) {
@@ -102,7 +105,8 @@ export async function updateMaterial(req: Request, res: Response) {
 
     let short_name: string | undefined
     if (material_description !== undefined || custom_short_name !== undefined) {
-      const current = await prisma.material.findUnique({ where: { id: req.params.id } })
+      const { data: current } = await supabase
+        .from('Material').select('material_code, material_description, custom_short_name').eq('id', req.params.id).maybeSingle()
       if (!current) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy hàng hóa')
       short_name = buildShortName(
         material_description ?? current.material_description,
@@ -111,46 +115,44 @@ export async function updateMaterial(req: Request, res: Response) {
       )
     }
 
-    const data = await prisma.material.update({
-      where: { id: req.params.id },
-      data: {
-        ...(material_description !== undefined && { material_description: String(material_description).trim() }),
-        ...(custom_short_name !== undefined && { custom_short_name: custom_short_name ? String(custom_short_name).trim() : null }),
-        ...(short_name !== undefined && { short_name }),
-        ...(category !== undefined && { category }),
-        ...(product_type !== undefined && { product_type }),
-        ...(unit !== undefined && { unit }),
-        ...(weight_kg !== undefined && { weight_kg }),
-        ...(cartons_per_pallet !== undefined && { cartons_per_pallet: cartons_per_pallet != null ? Number(cartons_per_pallet) : null }),
-        ...(cartons_per_pallet_mn !== undefined && { cartons_per_pallet_mn: cartons_per_pallet_mn != null ? Number(cartons_per_pallet_mn) : null }),
-        ...(units_per_carton !== undefined && { units_per_carton: units_per_carton != null ? Number(units_per_carton) : null }),
-        ...(ea_per_pallet !== undefined && { ea_per_pallet: ea_per_pallet != null ? Number(ea_per_pallet) : null }),
-        ...(shelf_life_days !== undefined && { shelf_life_days: shelf_life_days != null ? Number(shelf_life_days) : null }),
-        ...(storage_category !== undefined && { storage_category }),
-        ...(old_code !== undefined && { old_code: old_code ? String(old_code).trim() : null }),
-        ...(image_url !== undefined && { image_url }),
-        ...(manufacturer_id !== undefined && { manufacturer_id: manufacturer_id || null }),
-        ...(notes !== undefined && { notes }),
-        ...(is_active !== undefined && { is_active: Boolean(is_active) }),
-      },
-      include: { manufacturer: { select: { id: true, code: true, name: true } } },
-    })
+    const patch: Record<string, unknown> = {}
+    if (material_description !== undefined) patch.material_description = String(material_description).trim()
+    if (custom_short_name !== undefined) patch.custom_short_name = custom_short_name ? String(custom_short_name).trim() : null
+    if (short_name !== undefined) patch.short_name = short_name
+    if (category !== undefined) patch.category = category
+    if (product_type !== undefined) patch.product_type = product_type
+    if (unit !== undefined) patch.unit = unit
+    if (weight_kg !== undefined) patch.weight_kg = weight_kg
+    if (cartons_per_pallet !== undefined) patch.cartons_per_pallet = cartons_per_pallet != null ? Number(cartons_per_pallet) : null
+    if (cartons_per_pallet_mn !== undefined) patch.cartons_per_pallet_mn = cartons_per_pallet_mn != null ? Number(cartons_per_pallet_mn) : null
+    if (units_per_carton !== undefined) patch.units_per_carton = units_per_carton != null ? Number(units_per_carton) : null
+    if (ea_per_pallet !== undefined) patch.ea_per_pallet = ea_per_pallet != null ? Number(ea_per_pallet) : null
+    if (shelf_life_days !== undefined) patch.shelf_life_days = shelf_life_days != null ? Number(shelf_life_days) : null
+    if (storage_category !== undefined) patch.storage_category = storage_category
+    if (old_code !== undefined) patch.old_code = old_code ? String(old_code).trim() : null
+    if (image_url !== undefined) patch.image_url = image_url
+    if (manufacturer_id !== undefined) patch.manufacturer_id = manufacturer_id || null
+    if (notes !== undefined) patch.notes = notes
+    if (is_active !== undefined) patch.is_active = Boolean(is_active)
+
+    const { data, error } = await supabase
+      .from('Material')
+      .update(patch)
+      .eq('id', req.params.id)
+      .select('*, manufacturer:Manufacturer(id, code, name)')
+      .maybeSingle()
+    if (error) throw error
+    if (!data) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy hàng hóa')
     ok(res, data)
-  } catch (e: any) {
-    if (e.code === 'P2025') return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy hàng hóa')
-    fail(res, 500, 'SERVER_ERROR', 'Lỗi server')
-  }
+  } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 export async function deleteMaterial(req: Request, res: Response) {
   try {
-    const data = await prisma.material.update({
-      where: { id: req.params.id },
-      data: { is_active: false },
-    })
+    const { data, error } = await supabase
+      .from('Material').update({ is_active: false }).eq('id', req.params.id).select().maybeSingle()
+    if (error) throw error
+    if (!data) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy hàng hóa')
     ok(res, data)
-  } catch (e: any) {
-    if (e.code === 'P2025') return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy hàng hóa')
-    fail(res, 500, 'SERVER_ERROR', 'Lỗi server')
-  }
+  } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }

@@ -3,7 +3,7 @@ import cors from 'cors'
 import dotenv from 'dotenv'
 import masterdataRouter from './routes/masterdata'
 import wmsRouter from './routes/wms'
-import { prisma } from './lib/prisma'
+import { supabase } from './lib/supabase'
 
 dotenv.config()
 
@@ -18,22 +18,17 @@ app.use(cors({
 }))
 app.use(express.json())
 
-// Warm up: pings DB so Prisma connection pool is ready for the next real query
+// Warm up: simple HTTP call to Supabase (no TCP pool to initialize)
 app.get('/api/health', async (_req, res) => {
   try {
-    await prisma.$queryRaw`SELECT 1`
+    await supabase.from('Warehouse').select('id').limit(1)
     res.json({ status: 'ok' })
   } catch {
-    res.json({ status: 'ok' })   // still respond ok — warmup is best-effort
+    res.json({ status: 'ok' })
   }
 })
 
 app.use('/api/masterdata', masterdataRouter)
 app.use('/api/wms', wmsRouter)
-
-// Các router sẽ thêm sau:
-// app.use('/api/auth', authRouter)
-// app.use('/api/tms', tmsRouter)
-// app.use('/api/hr', hrRouter)
 
 export default app

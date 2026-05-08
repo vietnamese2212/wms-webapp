@@ -101,8 +101,8 @@ export async function createOrder(req: Request, res: Response) {
     // Return order + location suggestions
     const suggestions = await getLocationSuggestionsData(warehouse_id, material_id)
     ok(res, { order, location_suggestions: suggestions })
-  } catch (e: any) {
-    if (e.code === 'P2002') return fail(res, 409, 'DUPLICATE', 'Mã phiếu đã tồn tại')
+  } catch (e: unknown) {
+    if ((e as { code?: string }).code === 'P2002') return fail(res, 409, 'DUPLICATE', 'Mã phiếu đã tồn tại')
     fail(res, 500, 'SERVER_ERROR', 'Lỗi server')
   }
 }
@@ -296,6 +296,36 @@ export async function scanQR(req: Request, res: Response) {
     ok(res, { entry, warnings })
   } catch (e: any) {
     if (e.code === 'P2002') return fail(res, 409, 'DUPLICATE_PALLET', 'Pallet đã tồn tại trong hệ thống')
+    fail(res, 500, 'SERVER_ERROR', 'Lỗi server')
+  }
+}
+
+// ─── Update a pallet entry ───────────────────────────────────
+
+export async function updateEntry(req: Request, res: Response) {
+  try {
+    const { id: order_id, entryId } = req.params
+    const { cartons_imported, stack_layer } = req.body
+
+    const order = await prisma.productionImport.findUnique({ where: { id: order_id } })
+    if (!order)                  return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
+    if (order.status !== 'OPEN') return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập đã đóng')
+
+    const entry = await prisma.inventoryEntry.findUnique({ where: { id: entryId } })
+    if (!entry)                              return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy pallet')
+    if (entry.import_order_id !== order_id)  return fail(res, 400, 'ENTRY_NOT_IN_ORDER', 'Pallet không thuộc phiếu nhập này')
+
+    const updated = await prisma.inventoryEntry.update({
+      where: { id: entryId },
+      data: {
+        ...(cartons_imported !== undefined && { cartons_imported: Number(cartons_imported) }),
+        ...(stack_layer      !== undefined && { stack_layer: Number(stack_layer) }),
+      },
+      include: INCLUDE_ENTRY,
+    })
+    ok(res, updated)
+  } catch (e: unknown) {
+    if ((e as { code?: string }).code === 'P2025') return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy pallet')
     fail(res, 500, 'SERVER_ERROR', 'Lỗi server')
   }
 }

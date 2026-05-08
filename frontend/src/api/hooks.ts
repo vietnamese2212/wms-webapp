@@ -115,6 +115,8 @@ export function useCreateManufacturer() {
 export function useInboundOrders(params?: { warehouse_id?: string; status?: string; search?: string }) {
   return useQuery({
     queryKey: ['inbound-orders', params],
+    staleTime: 30_000,
+    refetchInterval: 15_000,
     queryFn: async () => {
       const { data } = await apiClient.get('/wms/inbound-orders', { params })
       return data.data as InboundOrder[]
@@ -127,6 +129,8 @@ export function useInboundOrder(id?: string) {
   return useQuery({
     queryKey: ['inbound-order', id],
     enabled: !!id,
+    staleTime: 20_000,
+    refetchInterval: 20_000,
     // Show data from list cache immediately while detail loads
     placeholderData: () => {
       const caches = qc.getQueriesData<InboundOrder[]>({ queryKey: ['inbound-orders'] })
@@ -264,6 +268,19 @@ export function useDeletePalletEntry() {
   return useMutation({
     mutationFn: ({ orderId, entryId }: { orderId: string; entryId: string }) =>
       apiClient.delete(`/wms/inbound-orders/${orderId}/entries/${entryId}`).then((r) => r.data.data),
+    onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ['inbound-order', v.orderId] }),
+  })
+}
+
+export function useUpdatePalletEntry() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ orderId, entryId, ...body }: {
+      orderId: string
+      entryId: string
+      cartons_imported?: number
+      stack_layer?: number
+    }) => apiClient.patch(`/wms/inbound-orders/${orderId}/entries/${entryId}`, body).then((r) => r.data.data),
     onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ['inbound-order', v.orderId] }),
   })
 }

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft, QrCode, CheckCircle2, XCircle, Trash2,
-  MapPin, Package, AlertTriangle, Layers,
+  MapPin, Package, AlertTriangle, Layers, Pencil,
 } from 'lucide-react'
 import { format, parseISO }    from 'date-fns'
 import { vi }                  from 'date-fns/locale'
@@ -11,21 +11,25 @@ import { TableSkeleton }       from '@/components/shared/TableSkeleton'
 import { QRScanner }           from '@/components/shared/QRScanner'
 import { Button }              from '@/components/ui/button'
 import { Badge }               from '@/components/ui/badge'
+import { Input }               from '@/components/ui/input'
+import { Label }               from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import {
   useInboundOrder,
   useCompleteInboundOrder,
   useCancelInboundOrder,
   useScanPallet,
   useDeletePalletEntry,
+  useUpdatePalletEntry,
   useLocationsReal,
   useUpdateInboundOrder,
 } from '@/api/hooks'
 import { inboundOrderStatusLabel } from '@/utils/formatters'
 import { playBeep, unlockAudio }   from '@/utils/audio'
-import type { InboundOrderStatus } from '@/types'
+import type { InboundOrder, InboundOrderStatus, PalletEntry } from '@/types'
 
 // ─── Status badge ────────────────────────────────────────────
 
@@ -46,18 +50,10 @@ function InboundStatusBadge({ status }: { status: string }) {
 // ─── Scan result banner ───────────────────────────────────────
 
 type FeedbackState =
-  | { type: 'pending' }
   | { type: 'success'; msg: string }
   | { type: 'error';   msg: string }
 
 function ScanFeedback({ state }: { state: FeedbackState }) {
-  if (state.type === 'pending') {
-    return (
-      <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 text-sm text-blue-700 animate-pulse flex items-center gap-2">
-        <QrCode className="h-4 w-4 shrink-0" /> Đang lưu pallet...
-      </div>
-    )
-  }
   if (state.type === 'success') {
     return (
       <div className="rounded-lg bg-green-50 border border-green-200 p-3 text-sm text-green-800 flex items-center gap-2">
@@ -86,7 +82,6 @@ interface CameraOverlayProps {
 function CameraOverlay({ materialCode, locationCode, onScan, onClose }: CameraOverlayProps) {
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-black">
-      {/* Top bar */}
       <div className="flex items-center gap-3 px-4 pt-safe-top py-3 bg-black/80 shrink-0">
         <button
           onClick={onClose}
@@ -101,12 +96,182 @@ function CameraOverlay({ materialCode, locationCode, onScan, onClose }: CameraOv
           </p>
         </div>
       </div>
-
-      {/* Camera area – fills remaining screen */}
       <div className="flex-1 overflow-hidden">
         <QRScanner onScan={onScan} onClose={onClose} />
       </div>
     </div>
+  )
+}
+
+// ─── Edit order dialog ────────────────────────────────────────
+
+interface EditOrderDialogProps {
+  order: InboundOrder
+  locations: { id: string; location_code: string }[]
+  open: boolean
+  onClose: () => void
+}
+
+function EditOrderDialog({ order, locations, open, onClose }: EditOrderDialogProps) {
+  const [locationId, setLocationId] = useState(order.location_id ?? '')
+  const [planned,    setPlanned]    = useState(order.planned_pallets?.toString() ?? '')
+  const [notes,      setNotes]      = useState(order.notes ?? '')
+
+  const { mutate: updateOrder, isPending, error } = useUpdateInboundOrder()
+
+  function handleSubmit() {
+    updateOrder(
+      {
+        id:              order.id,
+        location_id:     locationId || undefined,
+        planned_pallets: planned ? Number(planned) : undefined,
+        notes:           notes || undefined,
+      },
+      { onSuccess: onClose },
+    )
+  }
+
+  const apiError = (error as { response?: { data?: { error?: { message?: string } } } } | null)
+    ?.response?.data?.error?.message
+
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Sửa thông tin phiếu</DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4 py-2">
+          {apiError && (
+            <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
+              {apiError}
+            </div>
+          )}
+
+          <div className="space-y-2">
+            <Label>Vị trí nhập kho</Label>
+            <Select value={locationId} onValueChange={setLocationId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Chọn vị trí" />
+              </SelectTrigger>
+              <SelectContent>
+                {locations.map((l) => (
+                  <SelectItem key={l.id} value={l.id}>{l.location_code}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Số pallet dự kiến</Label>
+            <Input
+              type="number" min="1" placeholder="Không giới hạn"
+              value={planned}
+              onChange={(e) => setPlanned(e.target.value)}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Ghi chú</Label>
+            <Input
+              placeholder="Không có ghi chú"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+            />
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Huỷ</Button>
+          <Button onClick={handleSubmit} disabled={isPending}>
+            {isPending ? 'Đang lưu...' : 'Lưu'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ─── Edit entry dialog ────────────────────────────────────────
+
+interface EditEntryDialogProps {
+  orderId: string
+  entry: PalletEntry
+  open: boolean
+  onClose: () => void
+}
+
+function EditEntryDialog({ orderId, entry, open, onClose }: EditEntryDialogProps) {
+  const [cartons,    setCartons]    = useState(entry.cartons_imported.toString())
+  const [stackLayer, setStackLayer] = useState(entry.stack_layer.toString())
+
+  const { mutate: updateEntry, isPending, error } = useUpdatePalletEntry()
+
+  function handleSubmit() {
+    updateEntry(
+      {
+        orderId,
+        entryId:          entry.id,
+        cartons_imported: Number(cartons),
+        stack_layer:      Number(stackLayer),
+      },
+      { onSuccess: onClose },
+    )
+  }
+
+  const apiError = (error as { response?: { data?: { error?: { message?: string } } } } | null)
+    ?.response?.data?.error?.message
+
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Sửa pallet</DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-1 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600 font-mono mb-2">
+          {entry.pallet_code}
+        </div>
+
+        <div className="space-y-4">
+          {apiError && (
+            <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
+              {apiError}
+            </div>
+          )}
+
+          <div className="space-y-2">
+            <Label>Số thùng / pallet</Label>
+            <Input
+              type="number" min="0"
+              value={cartons}
+              onChange={(e) => setCartons(e.target.value)}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Tầng chồng (stack layer)</Label>
+            <Select value={stackLayer} onValueChange={setStackLayer}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="1">Tầng 1 (sàn)</SelectItem>
+                <SelectItem value="2">Tầng 2</SelectItem>
+                <SelectItem value="3">Tầng 3</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Huỷ</Button>
+          <Button onClick={handleSubmit} disabled={isPending}>
+            {isPending ? 'Đang lưu...' : 'Lưu'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -124,11 +289,13 @@ export default function InboundDetail() {
   const { mutate: completeOrder, isPending: completing } = useCompleteInboundOrder()
   const { mutate: cancelOrder,   isPending: cancelling  } = useCancelInboundOrder()
   const { mutate: deleteEntry                           } = useDeletePalletEntry()
-  const { mutate: scanPallet,    isPending: scanning    } = useScanPallet()
+  const { mutate: scanPallet                            } = useScanPallet()
   const { mutate: updateOrder                           } = useUpdateInboundOrder()
 
-  const [showCamera, setShowCamera] = useState(false)
-  const [feedback,   setFeedback]   = useState<FeedbackState | null>(null)
+  const [showCamera,   setShowCamera]   = useState(false)
+  const [feedback,     setFeedback]     = useState<FeedbackState | null>(null)
+  const [showEditOrder, setShowEditOrder] = useState(false)
+  const [editingEntry,  setEditingEntry]  = useState<PalletEntry | null>(null)
 
   const isOpen  = order?.status === 'OPEN'
   const entries = order?.inventory_entries ?? []
@@ -158,15 +325,14 @@ export default function InboundDetail() {
       { orderId: order.id, qr_code: raw, location_id: order.location_id },
       {
         onSuccess: (data) => {
-          // Cập nhật với thông tin đầy đủ từ server
           setFeedback({
             type: 'success',
             msg: `Đã nhập: ${data.entry.pallet_code} · ${data.entry.cartons_imported} thùng · ${data.entry.location?.location_code ?? ''}`,
           })
         },
         onError: (err) => {
-          // Rollback: báo lỗi, optimistic entry đã được xóa trong hook
-          const msg = (err as any)?.response?.data?.error?.message ?? 'Lỗi không xác định'
+          const msg = (err as { response?: { data?: { error?: { message?: string } } } })
+            ?.response?.data?.error?.message ?? 'Lỗi không xác định'
           setFeedback({ type: 'error', msg })
         },
       }
@@ -196,6 +362,26 @@ export default function InboundDetail() {
           locationCode={order.location?.location_code ?? ''}
           onScan={handleScan}
           onClose={() => setShowCamera(false)}
+        />
+      )}
+
+      {/* Edit order dialog */}
+      {showEditOrder && (
+        <EditOrderDialog
+          order={order}
+          locations={allLocations}
+          open={showEditOrder}
+          onClose={() => setShowEditOrder(false)}
+        />
+      )}
+
+      {/* Edit entry dialog */}
+      {editingEntry && (
+        <EditEntryDialog
+          orderId={order.id}
+          entry={editingEntry}
+          open={!!editingEntry}
+          onClose={() => setEditingEntry(null)}
         />
       )}
 
@@ -241,7 +427,18 @@ export default function InboundDetail() {
               <CardHeader className="pb-3">
                 <CardTitle className="text-base flex items-center justify-between">
                   Thông tin phiếu
-                  <InboundStatusBadge status={order.status} />
+                  <div className="flex items-center gap-2">
+                    <InboundStatusBadge status={order.status} />
+                    {isOpen && (
+                      <button
+                        onClick={() => setShowEditOrder(true)}
+                        className="p-1 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
+                        title="Sửa thông tin phiếu"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3 text-sm">
@@ -271,7 +468,7 @@ export default function InboundDetail() {
                             <SelectValue placeholder="Chọn vị trí nhập" />
                           </SelectTrigger>
                           <SelectContent>
-                            {allLocations.map((l: any) => (
+                            {allLocations.map((l: { id: string; location_code: string }) => (
                               <SelectItem key={l.id} value={l.id}>{l.location_code}</SelectItem>
                             ))}
                           </SelectContent>
@@ -313,17 +510,15 @@ export default function InboundDetail() {
 
                   <Button
                     className="w-full h-14 gap-2 text-base font-semibold"
-                    disabled={!hasLoc || scanning}
+                    disabled={!hasLoc}
                     onClick={openCamera}
                   >
                     <QrCode className="h-5 w-5" />
-                    {scanning
-                      ? 'Đang lưu...'
-                      : !hasLoc
-                        ? 'Chọn vị trí trước'
-                        : feedback?.type === 'success'
-                          ? 'Quét pallet tiếp ▸'
-                          : 'Mở camera quét QR'}
+                    {!hasLoc
+                      ? 'Chọn vị trí trước'
+                      : feedback?.type === 'success'
+                        ? 'Quét pallet tiếp ▸'
+                        : 'Mở camera quét QR'}
                   </Button>
 
                   <p className="text-[10px] text-slate-400 text-center">
@@ -364,7 +559,7 @@ export default function InboundDetail() {
                           <TableHead className="text-xs text-right">Thùng</TableHead>
                           <TableHead className="text-xs">Vị trí</TableHead>
                           <TableHead className="text-xs">T</TableHead>
-                          {isOpen && <TableHead className="text-xs w-8" />}
+                          {isOpen && <TableHead className="text-xs w-16" />}
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -388,13 +583,22 @@ export default function InboundDetail() {
                             <TableCell>{entry.stack_layer}</TableCell>
                             {isOpen && (
                               <TableCell>
-                                <button
-                                  className="text-slate-400 hover:text-red-500 transition-colors p-1"
-                                  onClick={() => deleteEntry({ orderId: order.id, entryId: entry.id })}
-                                  title="Xóa pallet"
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </button>
+                                <div className="flex items-center gap-0.5">
+                                  <button
+                                    className="text-slate-400 hover:text-blue-500 transition-colors p-1"
+                                    onClick={() => setEditingEntry(entry)}
+                                    title="Sửa pallet"
+                                  >
+                                    <Pencil className="h-3.5 w-3.5" />
+                                  </button>
+                                  <button
+                                    className="text-slate-400 hover:text-red-500 transition-colors p-1"
+                                    onClick={() => deleteEntry({ orderId: order.id, entryId: entry.id })}
+                                    title="Xóa pallet"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </button>
+                                </div>
                               </TableCell>
                             )}
                           </TableRow>

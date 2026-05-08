@@ -112,14 +112,32 @@ export function useCreateManufacturer() {
 
 // ─── WMS – Inbound Orders (API thật) ────────────────────────
 
+// Helpers: persist query results to localStorage so data shows instantly on refresh/cold start
+function lsGet<T>(key: string): T | undefined {
+  try { const r = localStorage.getItem(key); return r ? (JSON.parse(r) as T) : undefined }
+  catch { return undefined }
+}
+function lsSet(key: string, val: unknown): void {
+  try { localStorage.setItem(key, JSON.stringify(val)) } catch {}
+}
+function lsKey(prefix: string, params?: Record<string, string | undefined>): string {
+  const clean = Object.fromEntries(Object.entries(params ?? {}).filter(([, v]) => v !== undefined))
+  return `${prefix}:${JSON.stringify(clean)}`
+}
+
 export function useInboundOrders(params?: { warehouse_id?: string; status?: string; search?: string }) {
+  const key = lsKey('wms:io', params)
   return useQuery({
     queryKey: ['inbound-orders', params],
     staleTime: 30_000,
     refetchInterval: 15_000,
     refetchOnWindowFocus: true,
+    // Shows last-known data instantly on refresh / cold start; always refetches in background
+    initialData: () => lsGet<InboundOrder[]>(key),
+    initialDataUpdatedAt: 0,
     queryFn: async () => {
       const { data } = await apiClient.get('/wms/inbound-orders', { params })
+      lsSet(key, data.data)
       return data.data as InboundOrder[]
     },
   })
@@ -133,16 +151,18 @@ export function useInboundOrder(id?: string) {
     staleTime: 20_000,
     refetchInterval: 15_000,
     refetchOnWindowFocus: true,
-    // Show data from list cache immediately while detail loads
+    // 1) list cache (instant navigate from list), 2) localStorage (direct URL / refresh)
     placeholderData: () => {
       const caches = qc.getQueriesData<InboundOrder[]>({ queryKey: ['inbound-orders'] })
       for (const [, list] of caches) {
         const found = list?.find((o) => o.id === id)
         if (found) return found
       }
+      return lsGet<InboundOrder>(`wms:io-detail:${id}`)
     },
     queryFn: async () => {
       const { data } = await apiClient.get(`/wms/inbound-orders/${id}`)
+      lsSet(`wms:io-detail:${id}`, data.data)
       return data.data as InboundOrder
     },
   })

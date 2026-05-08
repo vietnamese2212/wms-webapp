@@ -86,9 +86,14 @@ GET    /api/wms/inbound-orders/:id/location-suggestions
 
 ### staleTime + refetchInterval
 - `useInboundOrders`: `staleTime: 30_000`, `refetchInterval: 15_000`
-- `useInboundOrder`: `staleTime: 20_000`, `refetchInterval: 20_000`
+- `useInboundOrder`: `staleTime: 20_000`, `refetchInterval: 15_000`
 - Điều hướng trong 30s → hiện cache ngay lập tức, không refetch
 - Real-time: tự cập nhật khi máy khác thêm/xóa pallet, không cần F5
+
+### Prefetch khi app khởi động (Shell.tsx)
+- `Shell.tsx` dùng `qc.prefetchQuery(['inbound-orders', {}])` ngay khi app mount
+- Cùng lúc với warmup `/api/health` → data đã có trong cache trước khi user navigate
+- Hiệu quả với cold start: function warming up và data fetching chạy song song
 
 ## Edit Functionality
 

@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { Outlet } from 'react-router-dom'
 import { Sidebar } from './Sidebar'
 import { Header } from './Header'
@@ -7,12 +8,22 @@ import { Toaster } from '@/components/ui/toaster'
 import { apiClient } from '@/api/client'
 
 export function Shell() {
+  const qc = useQueryClient()
+
   useEffect(() => {
     // Warm up serverless function + DB connection on app load.
     // Cold start can take 3-5s; this ping fires early so subsequent
     // data requests (when user navigates) land on a warm runtime.
     apiClient.get('/health').catch(() => {})
-  }, [])
+
+    // Prefetch inbound orders immediately so navigating to /wms/inbound is instant.
+    // Fires while user is still on the home/dashboard page.
+    qc.prefetchQuery({
+      queryKey: ['inbound-orders', {}],
+      queryFn: () => apiClient.get('/wms/inbound-orders').then((r) => r.data.data),
+      staleTime: 30_000,
+    })
+  }, [qc])
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">

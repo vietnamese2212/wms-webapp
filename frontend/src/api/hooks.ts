@@ -115,8 +115,8 @@ export function useCreateManufacturer() {
 export function useInboundOrders(params?: { warehouse_id?: string; status?: string; search?: string }) {
   return useQuery({
     queryKey: ['inbound-orders', params],
-    staleTime: 0,
-    refetchInterval: 8_000,
+    staleTime: 30_000,
+    refetchInterval: 15_000,
     refetchOnWindowFocus: true,
     queryFn: async () => {
       const { data } = await apiClient.get('/wms/inbound-orders', { params })
@@ -130,8 +130,8 @@ export function useInboundOrder(id?: string) {
   return useQuery({
     queryKey: ['inbound-order', id],
     enabled: !!id,
-    staleTime: 0,
-    refetchInterval: 5_000,
+    staleTime: 20_000,
+    refetchInterval: 15_000,
     refetchOnWindowFocus: true,
     // Show data from list cache immediately while detail loads
     placeholderData: () => {

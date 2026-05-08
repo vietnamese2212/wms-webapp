@@ -21,7 +21,7 @@ export async function listWarehouses(req: Request, res: Response) {
       return { ...rest, _count: { locations: extractCount(Location), employees: extractCount(Employee) } }
     })
     ok(res, result)
-  } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 export async function getWarehouse(req: Request, res: Response) {
@@ -47,7 +47,7 @@ export async function getWarehouse(req: Request, res: Response) {
     }
 
     ok(res, { ...data, sub_groups: Array.from(groupMap.values()) })
-  } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 export async function createWarehouse(req: Request, res: Response) {
@@ -57,7 +57,7 @@ export async function createWarehouse(req: Request, res: Response) {
 
     const { data, error } = await supabase
       .from('Warehouse')
-      .insert({ code: String(code).toUpperCase().trim(), name: String(name).trim(), address })
+      .insert({ code: String(code).toUpperCase().trim(), name: String(name).trim(), address, updated_at: new Date().toISOString() })
       .select().single()
 
     if (error) {
@@ -65,13 +65,13 @@ export async function createWarehouse(req: Request, res: Response) {
       throw error
     }
     ok(res, data)
-  } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 export async function updateWarehouse(req: Request, res: Response) {
   try {
     const { name, address, is_active } = req.body
-    const patch: Record<string, unknown> = {}
+    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
     if (name !== undefined) patch.name = String(name).trim()
     if (address !== undefined) patch.address = address
     if (is_active !== undefined) patch.is_active = Boolean(is_active)
@@ -81,15 +81,15 @@ export async function updateWarehouse(req: Request, res: Response) {
     if (error) throw error
     if (!data) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy kho')
     ok(res, data)
-  } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 export async function deleteWarehouse(req: Request, res: Response) {
   try {
     const { data, error } = await supabase
-      .from('Warehouse').update({ is_active: false }).eq('id', req.params.id).select().maybeSingle()
+      .from('Warehouse').update({ is_active: false, updated_at: new Date().toISOString() }).eq('id', req.params.id).select().maybeSingle()
     if (error) throw error
     if (!data) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy kho')
     ok(res, data)
-  } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }

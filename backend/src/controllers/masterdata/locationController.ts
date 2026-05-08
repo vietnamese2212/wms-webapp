@@ -40,7 +40,7 @@ export async function listLocations(req: Request, res: Response) {
       })
     )
     ok(res, withUsage)
-  } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 export async function listSubGroups(req: Request, res: Response) {
@@ -63,7 +63,7 @@ export async function listSubGroups(req: Request, res: Response) {
       groupMap.get(key)!.location_count++
     }
     ok(res, Array.from(groupMap.values()))
-  } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 export async function getLocation(req: Request, res: Response) {
@@ -82,7 +82,7 @@ export async function getLocation(req: Request, res: Response) {
     if (entErr) throw entErr
 
     ok(res, { ...loc, inventory_entries: entries ?? [] })
-  } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 export async function createLocation(req: Request, res: Response) {
@@ -114,6 +114,7 @@ export async function createLocation(req: Request, res: Response) {
         row: String(row).trim(),
         shelf: String(shelf).trim(),
         max_pallets: max_pallets ? Number(max_pallets) : 1,
+        updated_at: new Date().toISOString(),
       })
       .select('*, warehouse:Warehouse(id, code, name)')
       .single()
@@ -123,13 +124,13 @@ export async function createLocation(req: Request, res: Response) {
       throw error
     }
     ok(res, data)
-  } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 export async function updateLocation(req: Request, res: Response) {
   try {
     const { sub_name, sub_type, max_pallets, is_active } = req.body
-    const patch: Record<string, unknown> = {}
+    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
     if (sub_name !== undefined) patch.sub_name = sub_name ? String(sub_name).trim() : null
     if (sub_type !== undefined) patch.sub_type = sub_type
     if (max_pallets !== undefined) patch.max_pallets = Number(max_pallets)
@@ -140,15 +141,15 @@ export async function updateLocation(req: Request, res: Response) {
     if (error) throw error
     if (!data) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy vị trí')
     ok(res, data)
-  } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 export async function deleteLocation(req: Request, res: Response) {
   try {
     const { data, error } = await supabase
-      .from('Location').update({ is_active: false }).eq('id', req.params.id).select().maybeSingle()
+      .from('Location').update({ is_active: false, updated_at: new Date().toISOString() }).eq('id', req.params.id).select().maybeSingle()
     if (error) throw error
     if (!data) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy vị trí')
     ok(res, data)
-  } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }

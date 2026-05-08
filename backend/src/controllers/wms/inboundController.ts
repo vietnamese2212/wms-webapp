@@ -75,7 +75,7 @@ export async function listOrders(req: Request, res: Response) {
     // Add _count.inventory_entries for each order in parallel
     const result = await Promise.all((data ?? []).map(attachCount))
     ok(res, result)
-  } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 // ─── Create inbound order ────────────────────────────────────
@@ -111,6 +111,7 @@ export async function createOrder(req: Request, res: Response) {
         imported_by:     imported_by ?? null,
         created_by:      imported_by ?? null,
         status:          'OPEN',
+        updated_at:      new Date().toISOString(),
       })
       .select(ORDER_SELECT)
       .single()
@@ -124,7 +125,7 @@ export async function createOrder(req: Request, res: Response) {
     const suggestions = await getLocationSuggestionsData(warehouse_id, material_id)
     emitInboundChanged()
     ok(res, { order: { ...order, _count: { inventory_entries: 0 } }, location_suggestions: suggestions })
-  } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 // ─── Get single order ────────────────────────────────────────
@@ -144,7 +145,7 @@ export async function getOrder(req: Request, res: Response) {
       inventory_entries: entries ?? [],
       _count: { inventory_entries: entries?.length ?? 0 },
     })
-  } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 // ─── Update order header ─────────────────────────────────────
@@ -158,7 +159,7 @@ export async function updateOrder(req: Request, res: Response) {
     if (!existing) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (existing.status !== 'OPEN') return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập đã đóng, không thể sửa')
 
-    const patch: Record<string, unknown> = {}
+    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
     if (location_id     !== undefined) patch.location_id = location_id
     if (planned_pallets !== undefined) patch.planned_pallets = Number(planned_pallets)
     if (notes           !== undefined) patch.notes = notes
@@ -172,7 +173,7 @@ export async function updateOrder(req: Request, res: Response) {
     const withCount = await attachCount(updated as Record<string, unknown>)
     emitInboundChanged()
     ok(res, withCount)
-  } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 // ─── Complete order ──────────────────────────────────────────
@@ -187,7 +188,7 @@ export async function completeOrder(req: Request, res: Response) {
 
     const { data: updated, error } = await supabase
       .from('ProductionImport')
-      .update({ status: 'COMPLETED', updated_by: req.body.updated_by ?? null })
+      .update({ status: 'COMPLETED', updated_by: req.body.updated_by ?? null, updated_at: new Date().toISOString() })
       .eq('id', req.params.id)
       .select(ORDER_SELECT).maybeSingle()
     if (error) throw error
@@ -195,7 +196,7 @@ export async function completeOrder(req: Request, res: Response) {
     const withCount = await attachCount(updated as Record<string, unknown>)
     emitInboundChanged()
     ok(res, withCount)
-  } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 // ─── Cancel order ────────────────────────────────────────────
@@ -209,7 +210,7 @@ export async function cancelOrder(req: Request, res: Response) {
 
     const { data: updated, error } = await supabase
       .from('ProductionImport')
-      .update({ status: 'CANCELLED', updated_by: req.body.updated_by ?? null })
+      .update({ status: 'CANCELLED', updated_by: req.body.updated_by ?? null, updated_at: new Date().toISOString() })
       .eq('id', req.params.id)
       .select(ORDER_SELECT).maybeSingle()
     if (error) throw error
@@ -217,7 +218,7 @@ export async function cancelOrder(req: Request, res: Response) {
     const withCount = await attachCount(updated as Record<string, unknown>)
     emitInboundChanged()
     ok(res, withCount)
-  } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 // ─── Scan QR → create InventoryEntry ────────────────────────
@@ -317,6 +318,7 @@ export async function scanQR(req: Request, res: Response) {
         created_by:      employee_id ?? null,
         updated_by:      employee_id ?? null,
         status:          'IN_STOCK',
+        updated_at:      new Date().toISOString(),
       })
       .select(ENTRY_SELECT)
       .single()
@@ -336,7 +338,7 @@ export async function scanQR(req: Request, res: Response) {
 
     emitInboundChanged()
     ok(res, { entry, warnings })
-  } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 // ─── Update a pallet entry ───────────────────────────────────
@@ -355,7 +357,7 @@ export async function updateEntry(req: Request, res: Response) {
     if (!entry)                              return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy pallet')
     if (entry.import_order_id !== order_id)  return fail(res, 400, 'ENTRY_NOT_IN_ORDER', 'Pallet không thuộc phiếu nhập này')
 
-    const patch: Record<string, unknown> = {}
+    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
     if (cartons_imported !== undefined) patch.cartons_imported = Number(cartons_imported)
     if (stack_layer      !== undefined) patch.stack_layer = Number(stack_layer)
 
@@ -366,7 +368,7 @@ export async function updateEntry(req: Request, res: Response) {
 
     emitInboundChanged()
     ok(res, updated)
-  } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 // ─── Remove a pallet entry from order ───────────────────────
@@ -389,7 +391,7 @@ export async function removeEntry(req: Request, res: Response) {
 
     emitInboundChanged()
     ok(res, { deleted: true })
-  } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 // ─── Location suggestions ────────────────────────────────────
@@ -402,7 +404,7 @@ export async function getLocationSuggestions(req: Request, res: Response) {
     if (!order.warehouse_id)  return fail(res, 400, 'NO_WAREHOUSE', 'Phiếu nhập chưa có kho')
 
     ok(res, await getLocationSuggestionsData(order.warehouse_id, order.material_id))
-  } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 // ─── Internal helper ─────────────────────────────────────────

@@ -31,7 +31,7 @@ export async function listMaterials(req: Request, res: Response) {
     const { data, error } = await query
     if (error) throw error
     ok(res, data ?? [])
-  } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 export async function getMaterial(req: Request, res: Response) {
@@ -44,7 +44,7 @@ export async function getMaterial(req: Request, res: Response) {
     if (error) throw error
     if (!data) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy hàng hóa')
     ok(res, data)
-  } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 export async function createMaterial(req: Request, res: Response) {
@@ -81,6 +81,7 @@ export async function createMaterial(req: Request, res: Response) {
         image_url: image_url ?? null,
         manufacturer_id: manufacturer_id ?? null,
         notes: notes ?? null,
+        updated_at: new Date().toISOString(),
       })
       .select('*, manufacturer:Manufacturer(id, code, name)')
       .single()
@@ -91,7 +92,7 @@ export async function createMaterial(req: Request, res: Response) {
       throw error
     }
     ok(res, data)
-  } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 export async function updateMaterial(req: Request, res: Response) {
@@ -115,7 +116,7 @@ export async function updateMaterial(req: Request, res: Response) {
       )
     }
 
-    const patch: Record<string, unknown> = {}
+    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
     if (material_description !== undefined) patch.material_description = String(material_description).trim()
     if (custom_short_name !== undefined) patch.custom_short_name = custom_short_name ? String(custom_short_name).trim() : null
     if (short_name !== undefined) patch.short_name = short_name
@@ -144,15 +145,15 @@ export async function updateMaterial(req: Request, res: Response) {
     if (error) throw error
     if (!data) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy hàng hóa')
     ok(res, data)
-  } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 export async function deleteMaterial(req: Request, res: Response) {
   try {
     const { data, error } = await supabase
-      .from('Material').update({ is_active: false }).eq('id', req.params.id).select().maybeSingle()
+      .from('Material').update({ is_active: false, updated_at: new Date().toISOString() }).eq('id', req.params.id).select().maybeSingle()
     if (error) throw error
     if (!data) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy hàng hóa')
     ok(res, data)
-  } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }

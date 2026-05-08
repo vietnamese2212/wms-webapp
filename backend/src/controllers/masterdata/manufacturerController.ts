@@ -21,7 +21,7 @@ export async function listManufacturers(req: Request, res: Response) {
       return { ...rest, _count: { materials: extractCount(Material) } }
     })
     ok(res, result)
-  } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 export async function getManufacturer(req: Request, res: Response) {
@@ -34,7 +34,7 @@ export async function getManufacturer(req: Request, res: Response) {
     if (matErr) throw matErr
     if (!mfr) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy nhà máy')
     ok(res, { ...mfr, materials: mats ?? [] })
-  } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 export async function createManufacturer(req: Request, res: Response) {
@@ -44,7 +44,7 @@ export async function createManufacturer(req: Request, res: Response) {
 
     const { data, error } = await supabase
       .from('Manufacturer')
-      .insert({ code: String(code).trim(), name: name ? String(name).trim() : null })
+      .insert({ code: String(code).trim(), name: name ? String(name).trim() : null, updated_at: new Date().toISOString() })
       .select().single()
 
     if (error) {
@@ -52,13 +52,13 @@ export async function createManufacturer(req: Request, res: Response) {
       throw error
     }
     ok(res, data)
-  } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 export async function updateManufacturer(req: Request, res: Response) {
   try {
     const { name, is_active } = req.body
-    const patch: Record<string, unknown> = {}
+    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
     if (name !== undefined) patch.name = String(name).trim()
     if (is_active !== undefined) patch.is_active = Boolean(is_active)
 
@@ -67,15 +67,15 @@ export async function updateManufacturer(req: Request, res: Response) {
     if (error) throw error
     if (!data) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy nhà máy')
     ok(res, data)
-  } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 export async function deleteManufacturer(req: Request, res: Response) {
   try {
     const { data, error } = await supabase
-      .from('Manufacturer').update({ is_active: false }).eq('id', req.params.id).select().maybeSingle()
+      .from('Manufacturer').update({ is_active: false, updated_at: new Date().toISOString() }).eq('id', req.params.id).select().maybeSingle()
     if (error) throw error
     if (!data) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy nhà máy')
     ok(res, data)
-  } catch { fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }

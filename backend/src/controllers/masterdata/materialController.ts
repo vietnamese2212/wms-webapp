@@ -1,4 +1,5 @@
 import { Request, Response } from 'express'
+import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 
@@ -63,6 +64,7 @@ export async function createMaterial(req: Request, res: Response) {
     const { data, error } = await supabase
       .from('Material')
       .insert({
+        id:            randomUUID(),
         material_code: String(material_code).trim(),
         material_description: String(material_description).trim(),
         short_name,

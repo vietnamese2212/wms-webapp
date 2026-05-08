@@ -1,4 +1,5 @@
 import { Request, Response } from 'express'
+import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 
@@ -44,7 +45,7 @@ export async function createManufacturer(req: Request, res: Response) {
 
     const { data, error } = await supabase
       .from('Manufacturer')
-      .insert({ code: String(code).trim(), name: name ? String(name).trim() : null, updated_at: new Date().toISOString() })
+      .insert({ id: randomUUID(), code: String(code).trim(), name: name ? String(name).trim() : null, updated_at: new Date().toISOString() })
       .select().single()
 
     if (error) {

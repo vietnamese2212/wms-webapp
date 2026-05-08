@@ -1,4 +1,5 @@
 import { Request, Response } from 'express'
+import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { parseInboundQR } from '../../utils/qrParser'
@@ -102,6 +103,7 @@ export async function createOrder(req: Request, res: Response) {
     const { data: order, error } = await supabase
       .from('ProductionImport')
       .insert({
+        id:              randomUUID(),
         import_code,
         warehouse_id,
         material_id,
@@ -305,6 +307,7 @@ export async function scanQR(req: Request, res: Response) {
     const { data: entry, error: entErr } = await supabase
       .from('InventoryEntry')
       .insert({
+        id:              randomUUID(),
         pallet_code:     parsed.pallet_code,
         location_id,
         material_id:     material.id,

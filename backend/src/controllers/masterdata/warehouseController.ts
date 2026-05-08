@@ -1,4 +1,5 @@
 import { Request, Response } from 'express'
+import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 
@@ -57,7 +58,7 @@ export async function createWarehouse(req: Request, res: Response) {
 
     const { data, error } = await supabase
       .from('Warehouse')
-      .insert({ code: String(code).toUpperCase().trim(), name: String(name).trim(), address, updated_at: new Date().toISOString() })
+      .insert({ id: randomUUID(), code: String(code).toUpperCase().trim(), name: String(name).trim(), address, updated_at: new Date().toISOString() })
       .select().single()
 
     if (error) {

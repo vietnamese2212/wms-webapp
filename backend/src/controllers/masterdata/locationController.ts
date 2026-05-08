@@ -1,4 +1,5 @@
 import { Request, Response } from 'express'
+import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 
@@ -106,6 +107,7 @@ export async function createLocation(req: Request, res: Response) {
     const { data, error } = await supabase
       .from('Location')
       .insert({
+        id:          randomUUID(),
         warehouse_id,
         sub_code: String(sub_code).trim().toUpperCase(),
         sub_name: sub_name ? String(sub_name).trim() : null,

@@ -1,5 +1,5 @@
 // Auth
-export type Role = 'ADMIN' | 'WAREHOUSE_MANAGER' | 'WAREHOUSE_STAFF' | 'DRIVER' | 'HR_MANAGER'
+export type Role = 'ADMIN' | 'OWN' | 'WAREHOUSE_MANAGER' | 'WAREHOUSE_STAFF' | 'DRIVER' | 'HR_MANAGER'
 
 export interface User {
   id: string
@@ -9,6 +9,7 @@ export interface User {
   avatar?: string
   department?: string
   warehouse_id?: string
+  warehouse_name?: string
 }
 
 // WMS

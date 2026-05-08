@@ -20,6 +20,7 @@ export const useAuthStore = create<AuthState>()(
         email: 'admin@wms.vn',
         role: 'WAREHOUSE_MANAGER',
         department: 'Kho vận',
+        warehouse_name: 'Kho Ba Vì',
       },
       isAuthenticated: true,
       token: 'mock-jwt-token',

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Plus, Search, PackagePlus } from 'lucide-react'
 import type { AxiosError } from 'axios'
@@ -31,29 +31,36 @@ interface LocationWithCapacity {
 
 // ─── Create order dialog ─────────────────────────────────────
 
+type MatItem = { id: string; material_code: string; short_name: string | null; material_description: string }
+
 function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const navigate  = useNavigate()
   const user      = useAuthStore((s) => s.user)
-  const isAdmin   = user?.role === 'ADMIN'
+  const isOWN     = user?.role === 'OWN'
 
-  const [warehouseId, setWarehouseId] = useState(user?.warehouse_id ?? '')
+  const [warehouseId, setWarehouseId] = useState('')
   const [materialId,  setMaterialId]  = useState('')
   const [locationId,  setLocationId]  = useState('')
   const [shiftId,     setShiftId]     = useState('')
   const [importDate,  setImportDate]  = useState(format(new Date(), 'yyyy-MM-dd'))
   const [notes,       setNotes]       = useState('')
-  const [matSearch,   setMatSearch]   = useState('')
+
+  // Material combobox state
+  const [matSearch,  setMatSearch]  = useState('')
+  const [matOpen,    setMatOpen]    = useState(false)
+  const matRef = useRef<HTMLDivElement>(null)
 
   // Reset all fields each time the dialog opens
   useEffect(() => {
     if (open) {
       setWarehouseId(user?.warehouse_id ?? '')
       setMaterialId('')
+      setMatSearch('')
+      setMatOpen(false)
       setLocationId('')
       setShiftId('')
       setImportDate(format(new Date(), 'yyyy-MM-dd'))
       setNotes('')
-      setMatSearch('')
     }
   }, [open, user?.warehouse_id])
 
@@ -64,7 +71,29 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
     warehouseId ? { warehouse_id: warehouseId } : undefined
   )
 
+  // Auto-select warehouse by name when warehouse_id not set (mock auth scenario)
+  useEffect(() => {
+    if (!open || warehouseId || !user?.warehouse_name || !warehouses.length) return
+    const match = (warehouses as { id: string; name: string }[]).find(w => w.name === user.warehouse_name)
+    if (match) setWarehouseId(match.id)
+  }, [open, warehouses, user?.warehouse_name, warehouseId])
+
+  // Close combobox on click outside
+  useEffect(() => {
+    if (!matOpen) return
+    const handler = (e: MouseEvent) => {
+      if (matRef.current && !matRef.current.contains(e.target as Node)) setMatOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [matOpen])
+
   const { mutate: createOrder, isPending, error } = useCreateInboundOrder()
+
+  const selectedMat = (materials as MatItem[]).find(m => m.id === materialId)
+  const matInputValue = matOpen
+    ? matSearch
+    : (selectedMat ? `${selectedMat.material_code} – ${selectedMat.short_name ?? selectedMat.material_description}` : matSearch)
 
   function handleSubmit() {
     if (!warehouseId || !materialId || !locationId) return
@@ -76,7 +105,7 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
         shift_id:     shiftId   || undefined,
         import_date:  importDate,
         notes:        notes     || undefined,
-        imported_by:  user?.id,
+        // imported_by omitted — auth not fully implemented, mock user.id doesn't exist in Employee table
       },
       {
         onSuccess: (data) => {
@@ -103,10 +132,10 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
             </div>
           )}
 
-          {/* Kho – auto-fill theo user, chỉ ADMIN mới đổi được */}
+          {/* Kho – auto-fill theo user, chỉ OWN mới đổi được */}
           <div className="space-y-2">
             <Label>Kho <span className="text-red-500">*</span></Label>
-            {isAdmin || !user?.warehouse_id ? (
+            {isOWN ? (
               <Select value={warehouseId} onValueChange={setWarehouseId}>
                 <SelectTrigger><SelectValue placeholder="Chọn kho" /></SelectTrigger>
                 <SelectContent>
@@ -117,32 +146,41 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
               </Select>
             ) : (
               <div className="flex h-10 items-center rounded-md border bg-slate-50 px-3 text-sm text-slate-700">
-                {(warehouses as { id: string; name: string }[]).find((w) => w.id === warehouseId)?.name ?? warehouseId}
+                {(warehouses as { id: string; name: string }[]).find((w) => w.id === warehouseId)?.name ?? (warehouseId || '—')}
               </div>
             )}
           </div>
 
-          {/* Material */}
+          {/* Material – combobox tìm kiếm nội tuyến */}
           <div className="space-y-2">
             <Label>Material <span className="text-red-500">*</span></Label>
-            <Input
-              placeholder="Tìm mã hoặc tên hàng..."
-              value={matSearch}
-              onChange={(e) => setMatSearch(e.target.value)}
-              className="mb-1"
-            />
-            <Select value={materialId} onValueChange={setMaterialId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Chọn material" />
-              </SelectTrigger>
-              <SelectContent>
-                {(materials as { id: string; material_code: string; short_name: string | null; material_description: string }[]).map((m) => (
-                  <SelectItem key={m.id} value={m.id}>
-                    {m.material_code} – {m.short_name ?? m.material_description}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div ref={matRef} className="relative">
+              <Input
+                placeholder="Tìm mã hoặc tên hàng..."
+                value={matInputValue}
+                onChange={(e) => { setMatSearch(e.target.value); setMaterialId(''); setMatOpen(true) }}
+                onFocus={() => setMatOpen(true)}
+              />
+              {matOpen && (
+                <div className="absolute z-[100] w-full mt-1 max-h-52 overflow-y-auto rounded-md border bg-white shadow-lg">
+                  {(materials as MatItem[]).map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      className={`w-full text-left px-3 py-2 text-sm hover:bg-slate-100 flex items-baseline gap-2 ${m.id === materialId ? 'bg-slate-50 font-medium' : ''}`}
+                      onMouseDown={(e) => { e.preventDefault(); e.stopPropagation() }}
+                      onClick={() => { setMaterialId(m.id); setMatSearch(''); setMatOpen(false) }}
+                    >
+                      <span className="font-mono text-xs text-slate-500 shrink-0">{m.material_code}</span>
+                      <span className="text-slate-800 truncate">{m.short_name ?? m.material_description}</span>
+                    </button>
+                  ))}
+                  {(materials as MatItem[]).length === 0 && (
+                    <div className="px-3 py-3 text-sm text-slate-400 text-center">Không tìm thấy hàng hóa</div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Vị trí – required, color-coded by capacity */}
@@ -295,13 +333,13 @@ export default function Inbound() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Ngày nhập</TableHead>
-                  <TableHead>Ca</TableHead>
-                  <TableHead className="hidden sm:table-cell">Vị trí</TableHead>
-                  <TableHead>Material</TableHead>
-                  <TableHead className="text-right hidden sm:table-cell">Thùng</TableHead>
-                  <TableHead className="text-right">Pallet</TableHead>
-                  <TableHead className="hidden md:table-cell">Ghi chú</TableHead>
+                  <TableHead className="px-2 py-1.5 text-xs">Ngày nhập</TableHead>
+                  <TableHead className="px-2 py-1.5 text-xs">Ca</TableHead>
+                  <TableHead className="px-2 py-1.5 text-xs hidden sm:table-cell">Vị trí</TableHead>
+                  <TableHead className="px-2 py-1.5 text-xs">Material</TableHead>
+                  <TableHead className="px-2 py-1.5 text-xs text-right hidden sm:table-cell">Thùng</TableHead>
+                  <TableHead className="px-2 py-1.5 text-xs text-right">Pallet</TableHead>
+                  <TableHead className="px-2 py-1.5 text-xs hidden md:table-cell">Ghi chú</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -311,21 +349,21 @@ export default function Inbound() {
                     className="cursor-pointer hover:bg-slate-50"
                     onClick={() => navigate(`/wms/inbound/${order.id}`)}
                   >
-                    <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
+                    <TableCell className="px-2 py-1.5 text-xs text-muted-foreground whitespace-nowrap">
                       {order.import_date
-                        ? format(parseISO(order.import_date), 'dd/MM/yyyy', { locale: vi })
+                        ? format(parseISO(order.import_date), 'dd/MM/yy', { locale: vi })
                         : '—'}
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="px-2 py-1.5">
                       {order.shift ? (
-                        <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-slate-100">
+                        <span className="text-xs font-medium px-1 py-0.5 rounded bg-slate-100">
                           {order.shift.name}
                         </span>
                       ) : (
                         <span className="text-xs text-muted-foreground">—</span>
                       )}
                     </TableCell>
-                    <TableCell className="hidden sm:table-cell">
+                    <TableCell className="px-2 py-1.5 hidden sm:table-cell">
                       {order.location ? (
                         <span className="font-mono text-xs font-medium">
                           {order.location.location_code}
@@ -334,23 +372,21 @@ export default function Inbound() {
                         <span className="text-xs text-muted-foreground">—</span>
                       )}
                     </TableCell>
-                    <TableCell>
-                      <div>
-                        <p className="text-sm font-medium">
-                          {order.material?.short_name ?? order.material?.material_description ?? '—'}
-                        </p>
-                        <p className="text-xs text-muted-foreground">{order.material?.material_code}</p>
-                      </div>
+                    <TableCell className="px-2 py-1.5">
+                      <p className="text-xs font-medium leading-tight">
+                        {order.material?.short_name ?? order.material?.material_description ?? '—'}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">{order.material?.material_code}</p>
                     </TableCell>
-                    <TableCell className="text-right tabular-nums hidden sm:table-cell text-sm">
+                    <TableCell className="px-2 py-1.5 text-right tabular-nums hidden sm:table-cell text-xs">
                       {order.total_cartons ?? '—'}
                     </TableCell>
-                    <TableCell className="text-right font-medium tabular-nums">
-                      <span className="text-blue-600 font-semibold">
+                    <TableCell className="px-2 py-1.5 text-right tabular-nums">
+                      <span className="text-xs text-blue-600 font-semibold">
                         {order._count.inventory_entries}
                       </span>
                     </TableCell>
-                    <TableCell className="hidden md:table-cell text-xs text-muted-foreground max-w-[160px] truncate">
+                    <TableCell className="px-2 py-1.5 hidden md:table-cell text-xs text-muted-foreground max-w-[140px] truncate">
                       {order.notes ?? '—'}
                     </TableCell>
                   </TableRow>

@@ -74,60 +74,74 @@ interface ScanDialogProps {
 
 function ScanDialog({ order, open, onClose }: ScanDialogProps) {
   const scannerRef = useRef<QRScannerHandle>(null)
-  const { mutate: scanPallet } = useScanPallet()
+  const { mutate: scanPallet, isPending } = useScanPallet()
 
   const defaultCartons = order.material?.cartons_per_pallet?.toString() ?? '0'
   const [cartons,    setCartons]    = useState(defaultCartons)
   const [stackLayer, setStackLayer] = useState('1')
   const [feedback,   setFeedback]   = useState<FeedbackState | null>(null)
+  const [pendingQR,  setPendingQR]  = useState<string | null>(null)
 
   useEffect(() => {
     if (open) {
       setFeedback(null)
+      setPendingQR(null)
       setCartons(order.material?.cartons_per_pallet?.toString() ?? '0')
+      setStackLayer('1')
     }
   }, [open, order.material?.cartons_per_pallet])
 
+  // Step 1: QR detected → preview for confirmation
   function handleScan(raw: string) {
     playBeep()
+    setPendingQR(raw)
+    setFeedback(null)
+  }
 
+  // Step 2: operator reviews and clicks Save
+  function handleSave() {
+    if (!pendingQR) return
     const locationId = order.location_id
     if (!locationId) {
       setFeedback({ type: 'error', msg: 'Chưa chọn vị trí. Đóng dialog và chọn vị trí trước.' })
       return
     }
 
-    const partialCode = raw.split('_').slice(0, 2).join('_')
-    setFeedback({ type: 'success', msg: `Đang lưu: ${partialCode}…` })
-
     scanPallet(
       {
         orderId:          order.id,
-        qr_code:          raw,
+        qr_code:          pendingQR,
         location_id:      locationId,
         stack_layer:      Number(stackLayer),
         cartons_override: Number(cartons) || undefined,
       },
       {
         onSuccess: (data) => {
+          setPendingQR(null)
           setFeedback({
             type: 'success',
             msg: `✓ ${data.entry.pallet_code} · ${data.entry.cartons_imported} thùng · ${data.entry.location?.location_code ?? ''}`,
           })
-          // Auto-resume camera after 1.5s (CLAUDE.md: auto-resume after success)
+          // Auto-resume camera after 1.5s
           setTimeout(() => {
             scannerRef.current?.resume()
             setFeedback(null)
           }, 1500)
         },
         onError: (err) => {
+          setPendingQR(null)
           const msg = (err as AxiosError<{ error: { message: string } }>)
             ?.response?.data?.error?.message ?? 'Lỗi không xác định'
           setFeedback({ type: 'error', msg })
-          // Camera stays paused on error so operator reads the message
         },
       }
     )
+  }
+
+  function handleRetry() {
+    setPendingQR(null)
+    setFeedback(null)
+    scannerRef.current?.resume()
   }
 
   return (
@@ -143,6 +157,14 @@ function ScanDialog({ order, open, onClose }: ScanDialogProps) {
 
         <div className="space-y-3">
           <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} />
+
+          {/* Pending QR preview */}
+          {pendingQR && !feedback && (
+            <div className="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2">
+              <p className="text-[10px] text-blue-400 mb-0.5">QR đã nhận – kiểm tra rồi bấm Lưu:</p>
+              <p className="font-mono text-xs text-blue-800 font-medium break-all">{pendingQR}</p>
+            </div>
+          )}
 
           {feedback && <ScanFeedback state={feedback} />}
 
@@ -167,6 +189,23 @@ function ScanDialog({ order, open, onClose }: ScanDialogProps) {
               </Select>
             </div>
           </div>
+
+          {/* Action row: Save / Cancel pending QR, or Retry after error */}
+          {pendingQR && (
+            <div className="flex gap-2">
+              <Button className="flex-1" disabled={isPending} onClick={handleSave}>
+                {isPending ? 'Đang lưu...' : 'Lưu pallet'}
+              </Button>
+              <Button variant="ghost" disabled={isPending} onClick={handleRetry}>
+                Huỷ
+              </Button>
+            </div>
+          )}
+          {!pendingQR && feedback?.type === 'error' && (
+            <Button variant="outline" className="w-full" onClick={handleRetry}>
+              Quét tiếp
+            </Button>
+          )}
 
           <p className="text-[10px] text-slate-400 text-center">
             Định dạng: <span className="font-mono">ddmmyy_Mã_CK_Máy_STT_NMSX</span>
@@ -529,70 +568,70 @@ export default function InboundDetail() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="text-xs whitespace-nowrap">NSX</TableHead>
-                      <TableHead className="text-xs">Mã pallet</TableHead>
-                      <TableHead className="text-xs text-right">Thùng</TableHead>
-                      <TableHead className="text-xs hidden md:table-cell">Người quét</TableHead>
-                      <TableHead className="text-xs hidden sm:table-cell whitespace-nowrap">Ngày</TableHead>
-                      <TableHead className="text-xs hidden sm:table-cell whitespace-nowrap">Giờ</TableHead>
-                      <TableHead className="text-xs hidden lg:table-cell">NMSX</TableHead>
-                      <TableHead className="text-xs hidden lg:table-cell">CK</TableHead>
-                      <TableHead className="text-xs hidden lg:table-cell">Máy</TableHead>
-                      <TableHead className="text-xs hidden sm:table-cell text-right">STT</TableHead>
-                      {isOpen && <TableHead className="w-14" />}
+                      <TableHead className="px-2 py-1 text-[11px] whitespace-nowrap">NSX</TableHead>
+                      <TableHead className="px-2 py-1 text-[11px]">Mã pallet</TableHead>
+                      <TableHead className="px-2 py-1 text-[11px] text-right">Thùng</TableHead>
+                      <TableHead className="px-2 py-1 text-[11px] hidden md:table-cell">Người quét</TableHead>
+                      <TableHead className="px-2 py-1 text-[11px] hidden sm:table-cell whitespace-nowrap">Ngày</TableHead>
+                      <TableHead className="px-2 py-1 text-[11px] hidden sm:table-cell whitespace-nowrap">Giờ</TableHead>
+                      <TableHead className="px-2 py-1 text-[11px] hidden lg:table-cell">NMSX</TableHead>
+                      <TableHead className="px-2 py-1 text-[11px] hidden lg:table-cell">CK</TableHead>
+                      <TableHead className="px-2 py-1 text-[11px] hidden lg:table-cell">Máy</TableHead>
+                      <TableHead className="px-2 py-1 text-[11px] hidden sm:table-cell text-right">STT</TableHead>
+                      {isOpen && <TableHead className="px-1 py-1 w-12" />}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {entries.map((entry) => (
                       <TableRow key={entry.id} className="text-xs">
-                        <TableCell className="whitespace-nowrap text-slate-500">
+                        <TableCell className="px-2 py-1 whitespace-nowrap text-slate-500">
                           {entry.production_date
                             ? format(parseISO(entry.production_date), 'dd/MM/yy', { locale: vi })
                             : '—'}
                         </TableCell>
-                        <TableCell className="font-mono font-medium">
+                        <TableCell className="px-2 py-1 font-mono font-medium text-[11px]">
                           {entry.pallet_code}
                         </TableCell>
-                        <TableCell className="text-right tabular-nums font-medium">
+                        <TableCell className="px-2 py-1 text-right tabular-nums font-medium">
                           {entry.cartons_imported}
                         </TableCell>
-                        <TableCell className="hidden md:table-cell text-slate-500">
+                        <TableCell className="px-2 py-1 hidden md:table-cell text-slate-500">
                           {entry.created_by_emp?.name ?? '—'}
                         </TableCell>
-                        <TableCell className="hidden sm:table-cell text-slate-500 whitespace-nowrap">
+                        <TableCell className="px-2 py-1 hidden sm:table-cell text-slate-500 whitespace-nowrap">
                           {format(parseISO(entry.created_at), 'dd/MM/yy', { locale: vi })}
                         </TableCell>
-                        <TableCell className="hidden sm:table-cell text-slate-500 whitespace-nowrap tabular-nums">
+                        <TableCell className="px-2 py-1 hidden sm:table-cell text-slate-500 whitespace-nowrap tabular-nums">
                           {format(parseISO(entry.created_at), 'HH:mm', { locale: vi })}
                         </TableCell>
-                        <TableCell className="hidden lg:table-cell">
+                        <TableCell className="px-2 py-1 hidden lg:table-cell">
                           {entry.manufacturer?.code ?? '—'}
                         </TableCell>
-                        <TableCell className="hidden lg:table-cell">
+                        <TableCell className="px-2 py-1 hidden lg:table-cell">
                           {entry.cycle ?? '—'}
                         </TableCell>
-                        <TableCell className="hidden lg:table-cell">
+                        <TableCell className="px-2 py-1 hidden lg:table-cell">
                           {entry.machine_code ?? '—'}
                         </TableCell>
-                        <TableCell className="hidden sm:table-cell text-right tabular-nums">
+                        <TableCell className="px-2 py-1 hidden sm:table-cell text-right tabular-nums">
                           {entry.pallet_sequence_no ?? '—'}
                         </TableCell>
                         {isOpen && (
-                          <TableCell>
+                          <TableCell className="px-1 py-1">
                             <div className="flex items-center justify-end gap-0.5">
                               <button
-                                className="text-slate-400 hover:text-blue-500 transition-colors p-1"
+                                className="text-slate-400 hover:text-blue-500 transition-colors p-0.5"
                                 onClick={() => setEditingEntry(entry)}
                                 title="Sửa"
                               >
-                                <Pencil className="h-3.5 w-3.5" />
+                                <Pencil className="h-3 w-3" />
                               </button>
                               <button
-                                className="text-slate-400 hover:text-red-500 transition-colors p-1"
+                                className="text-slate-400 hover:text-red-500 transition-colors p-0.5"
                                 onClick={() => deleteEntry({ orderId: order.id, entryId: entry.id })}
                                 title="Xóa"
                               >
-                                <Trash2 className="h-3.5 w-3.5" />
+                                <Trash2 className="h-3 w-3" />
                               </button>
                             </div>
                           </TableCell>

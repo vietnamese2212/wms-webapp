@@ -108,6 +108,13 @@ export async function createOrder(req: Request, res: Response) {
 
     const import_code = generateImportCode(today, (todayCount ?? 0) + 1)
 
+    // Validate imported_by — skip if employee doesn't exist (e.g. mock/dev user IDs)
+    let resolvedImportedBy: string | null = null
+    if (imported_by) {
+      const { data: emp } = await supabase.from('Employee').select('id').eq('id', imported_by).maybeSingle()
+      resolvedImportedBy = emp?.id ?? null
+    }
+
     const { data: order, error } = await supabase
       .from('ProductionImport')
       .insert({
@@ -120,8 +127,8 @@ export async function createOrder(req: Request, res: Response) {
         shift_id:        shift_id ?? null,
         import_date:     import_date ? new Date(import_date).toISOString() : new Date().toISOString(),
         notes:           notes ?? null,
-        imported_by:     imported_by ?? null,
-        created_by:      imported_by ?? null,
+        imported_by:     resolvedImportedBy,
+        created_by:      resolvedImportedBy,
         status:          'OPEN',
         updated_at:      new Date().toISOString(),
       })
@@ -130,7 +137,7 @@ export async function createOrder(req: Request, res: Response) {
 
     if (error) {
       if (error.code === '23505') return fail(res, 409, 'DUPLICATE', 'Mã phiếu đã tồn tại')
-      if (error.code === '23503') return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy kho hoặc hàng hóa')
+      if (error.code === '23503') return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy kho hoặc hàng hóa — kiểm tra warehouse_id, material_id, location_id, shift_id')
       throw error
     }
 

@@ -77,6 +77,7 @@ export const overtimeStatusLabel: Record<OvertimeStatus, string> = {
 
 export const roleLabel: Record<string, string> = {
   ADMIN: 'Quản trị viên',
+  OWN: 'Chủ doanh nghiệp',
   WAREHOUSE_MANAGER: 'Quản lý kho',
   WAREHOUSE_STAFF: 'Nhân viên kho',
   DRIVER: 'Tài xế',

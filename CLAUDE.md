@@ -5,12 +5,12 @@
 - **Sau mỗi lần sửa code xong, luôn push lên GitHub ngay lập tức** (không cần người dùng nhắc).
 - Vercel sẽ tự động deploy sau khi push.
 - Remote: `https://github.com/vietnamese2212/wms-webapp.git` (branch `main`)
-- **Sau mỗi lần sửa `backend/prisma/schema.prisma`, luôn chạy ngay:**
-  ```bash
-  cd backend && npx prisma migrate dev --name <mô_tả_thay_đổi>
-  ```
-  Sau đó push cả migration file lên GitHub. Không bao giờ sửa schema mà không migrate.
-- **Sau mỗi lần sửa `backend/prisma/schema.prisma`, luôn cập nhật `SCHEMA_REVIEW.md` ngay lập tức** — cập nhật schema code, bảng trạng thái model, và thêm dòng vào Changelog.
+- **Sau mỗi lần thay đổi database schema (thêm/xóa/sửa column, bảng, constraint), luôn:**
+  1. Viết file SQL migration vào `backend/migrations/` với tên `YYYYMMDD_<mô_tả>.sql`
+  2. Apply lên Supabase qua **Dashboard → SQL Editor** (paste & run) hoặc Supabase CLI (`supabase db push`)
+  3. Push file migration SQL lên GitHub cùng với code thay đổi
+  4. Cập nhật `SCHEMA_REVIEW.md` ngay lập tức — schema code, bảng trạng thái model, và thêm dòng vào Changelog
+- `backend/prisma/schema.prisma` chỉ còn là **tài liệu tham khảo cấu trúc** (dev-only), không dùng trong runtime. Không chạy `prisma migrate dev` trên production.
 
 
 
@@ -26,6 +26,12 @@
 | **Services layer** | `backend/src/services/` trống — business logic đang nhét hết trong controllers | `backend/src/services/` |
 
 ### Quy chuẩn bắt buộc khi viết code mới
+
+**Database INSERT/UPDATE – bắt buộc:**
+- Mọi INSERT phải cung cấp `id: randomUUID()` — cột `id TEXT NOT NULL` trong DB không có `DEFAULT gen_random_uuid()` (Prisma sinh UUID ở app-level, Supabase JS không tự làm điều này)
+- Mọi INSERT và UPDATE phải cung cấp `updated_at: new Date().toISOString()` — cột `updated_at TIMESTAMP NOT NULL` trong DB không có `DEFAULT CURRENT_TIMESTAMP`
+- Import: `import { randomUUID } from 'crypto'` ở đầu mỗi controller có INSERT
+- DB client entry point: `import { supabase } from '../../lib/supabase'` — không import Prisma
 
 **TypeScript – không dùng `any`:**
 - Không viết `as any`, `as any[]`, hay `(err as any)` — phải định nghĩa kiểu rõ ràng
@@ -92,8 +98,9 @@ Chạy trên browser và mobile (iOS/Android) thông qua PWA. Không cần cài 
 
 ### Backend
 - **Node.js** + **Express** + **TypeScript**
-- **Prisma ORM** – database access layer
-- **PostgreSQL** via **Supabase** (hoặc PostgreSQL gốc — Prisma provider giống nhau)
+- **`@supabase/supabase-js`** – runtime database client (entry point: `backend/src/lib/supabase.ts`, dùng service role key)
+- **PostgreSQL** via **Supabase** – managed database, Auth, Storage
+- **Prisma** *(dev-only)* – `schema.prisma` chỉ dùng làm tài liệu tham khảo cấu trúc; schema thực tế apply qua SQL migration files
 - **Redis** – session cache, realtime queue
 - **JWT** – authentication (access + refresh tokens)
 - **bcrypt** – password hashing
@@ -251,24 +258,18 @@ POST   /api/auth/logout
 
 ---
 
-## Data Models (Prisma – key entities)
+## Data Models (key entities — xem chi tiết trong `SCHEMA_REVIEW.md`)
 
-```prisma
-model Product { id, sku, name, unit, category, minStock, qrCode }
-model Location { id, zone, row, shelf, bin, qrCode, capacity }
-model InventoryItem { id, productId, locationId, quantity, updatedAt }
-model Transaction { id, type, productId, locationId, quantity, userId, note, createdAt }
+Schema thực tế được quản lý qua SQL migration files trong `backend/migrations/`. Tham khảo `SCHEMA_REVIEW.md` để xem đầy đủ các bảng và columns hiện tại.
 
-model Vehicle { id, plateNumber, type, capacity, driverId, status, nextInspectionDate }
-model Driver { id, name, licenseNumber, phone, status }
-model DeliveryOrder { id, vehicleId, driverId, origin, destination, status, scheduledAt, completedAt }
+**Bảng chính đã triển khai:**
+- `Warehouse`, `Location`, `Material`, `Manufacturer` — masterdata
+- `ProductionImport`, `InventoryEntry` — nhập kho / tồn kho
+- `Employee` — nhân sự (cơ bản)
 
-model Employee { id, name, employeeCode, role, department, phone, qrCode }
-model Shift { id, name, startTime, endTime, daysOfWeek }
-model Schedule { id, employeeId, shiftId, date, status }
-model OvertimeRequest { id, employeeId, date, hours, reason, status, approvedBy }
-model Attendance { id, employeeId, checkIn, checkOut, date }
-```
+**Lưu ý quan trọng về schema:**
+- Cột `id TEXT NOT NULL` — **không có** `DEFAULT gen_random_uuid()` → phải truyền `id: randomUUID()` khi INSERT
+- Cột `updated_at TIMESTAMP NOT NULL` — **không có** `DEFAULT CURRENT_TIMESTAMP` → phải truyền `updated_at: new Date().toISOString()` khi INSERT và UPDATE
 
 ---
 
@@ -278,8 +279,9 @@ model Attendance { id, employeeId, checkIn, checkOut, date }
 # Backend
 cd backend
 npm install
-npx prisma migrate dev
 npm run dev              # ts-node-dev, port 4000
+
+# Thay đổi schema database (viết SQL migration rồi apply qua Supabase Dashboard > SQL Editor)
 
 # Frontend
 cd frontend

@@ -216,7 +216,7 @@ export interface InboundOrder {
   shift_id:        string | null
   shift:           { id: string; code: string; name: string } | null
   status:          InboundOrderStatus
-  import_date:     string
+  import_date:     string | null
   notes:           string | null
   created_by_emp:  { id: string; name: string } | null
   updated_by_emp:  { id: string; name: string } | null

@@ -37,3 +37,5 @@ vite.config.ts.timestamp-*
 
 # TypeScript
 *.tsbuildinfo
+
+.vercel

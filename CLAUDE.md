@@ -12,15 +12,13 @@
   4. Cập nhật `SCHEMA_REVIEW.md` ngay lập tức — schema code, bảng trạng thái model, và thêm dòng vào Changelog
 - `backend/prisma/schema.prisma` chỉ còn là **tài liệu tham khảo cấu trúc** (dev-only), không dùng trong runtime. Không chạy `prisma migrate dev` trên production.
 
-
-
 ## Trạng thái thực tế & Chuẩn code
 
 ### Tính năng chưa hoàn thiện (phải fix trước khi coi là done)
 
 | Module | Vấn đề | File liên quan |
 |---|---|---|
-| **Auth** | Middleware JWT chưa implement, toàn bộ routes đang không được bảo vệ | `backend/src/middlewares/` (trống) |
+| **Auth** | Middleware JWT chưa implement, toàn bộ routes chưa bảo vệ. Mock user trong `authStore.ts` dùng `warehouse_name: 'Kho Ba Vì'` để auto-select kho khi dev | `backend/src/middlewares/` (trống), `frontend/src/stores/authStore.ts` |
 | **Outbound** | Page dùng mock data + placeholder camera, chưa kết nối API thực | `frontend/src/pages/wms/Outbound.tsx` |
 | **TMS / HR backend** | Routes bị comment out trong `app.ts`, chưa có controller/service | `backend/src/app.ts` dòng 28–30 |
 | **Services layer** | `backend/src/services/` trống — business logic đang nhét hết trong controllers | `backend/src/services/` |
@@ -57,15 +55,21 @@
 
 ---
 
-## QR Scanning Behavior (AppSheet-style)
+## QR Scanning Behavior
 
-Tất cả màn hình có quét QR (nhập kho, xuất kho, kiểm kho, chấm công…) phải tuân theo nguyên tắc:
+### Nhập kho (Inbound) — Scan → Xác nhận → Lưu
+Camera bắt được QR → **camera dừng**, hiển thị preview QR đã nhận (màu xanh dương) → operator kiểm tra / chỉnh số thùng + tầng chồng → bấm **"Lưu pallet"** để commit lên API.
+- Không tự động lưu khi scan — luôn có bước xác nhận tay.
+- Sau lưu thành công: feedback xanh + camera tự resume sau 1.5s.
+- Sau lỗi: feedback đỏ, nút "Quét tiếp" để resume thủ công.
+- Nút "Huỷ" (khi đang chờ lưu) → xoá pending QR, resume camera ngay.
 
-- **Instant scan – không có bước confirm**: Camera bắt được QR → gọi API lưu luôn, không hiện dialog xác nhận.
-- **Inline feedback**: Kết quả (thành công / lỗi) hiển thị ngay trong giao diện scanner bằng banner màu xanh/đỏ — không dùng modal hay toast bên ngoài.
-- **Auto-resume sau thành công**: Sau khi lưu thành công, camera tự tắt overlay "đã dừng" và tiếp tục quét sau ~1.5s để người dùng quét nhiều pallet liên tiếp.
-- **Dừng khi lỗi**: Nếu lỗi (sai hàng, đầy kho, trùng pallet…), camera giữ trạng thái pause — người dùng đọc lỗi rồi bấm "Quét tiếp" để tiếp tục.
-- **Component `QRScanner`**: Export `QRScannerHandle { resume() }` qua `forwardRef` để parent có thể auto-resume sau khi API thành công.
+### Các flow khác (Xuất kho, Kiểm kho, Chấm công) — Instant scan
+Camera bắt được QR → gọi API lưu luôn, không có bước xác nhận.
+- **Inline feedback**: banner xanh/đỏ ngay trong giao diện scanner.
+- **Auto-resume sau thành công**: ~1.5s, camera tự tiếp tục.
+- **Dừng khi lỗi**: camera pause, người dùng đọc lỗi → bấm "Quét tiếp".
+- **Component `QRScanner`**: `forwardRef<QRScannerHandle>` với method `resume()` để parent control.
 
 ---
 
@@ -200,11 +204,22 @@ Neutral:   slate-*               – text, borders, backgrounds
 Surface:   white / slate-50      – card backgrounds
 ```
 
+**Màu trạng thái dữ liệu trong bảng (capacity / fill state):**
+- **Full** (đã đầy): `text-blue-700 font-semibold`
+- **Partial** (một phần): `text-amber-600`
+- **Empty** (trống): không có class màu (mặc định slate)
+
 ### Typography
 - Font: **Inter** (system fallback: sans-serif)
 - Heading: `text-xl font-semibold` (page title), `text-base font-medium` (section)
 - Body: `text-sm text-slate-700`
 - Caption/label: `text-xs text-slate-500`
+
+### Table Data Standards
+- **Font dữ liệu chính** (mã pallet, tên hàng, số lượng): `text-lg` (18px) — đủ lớn để đọc nhanh trên mobile/màn hình kho
+- **Font metadata** (ngày, giờ, người quét, NMSX, CK, Máy, STT): `text-xs` hoặc `text-[11px]` — thu nhỏ tối đa để nhường diện tích cho dữ liệu chính
+- **Row padding compact** (bảng ≥ 20 rows): `py-1 px-2` thay cho default `py-3 px-4`
+- **Material selector**: combobox dạng Input + dropdown nội tuyến (server-side search), không dùng Input riêng + Select riêng
 
 ### Layout Patterns
 - **Desktop**: Sidebar cố định 240px + content area
@@ -254,7 +269,9 @@ POST   /api/auth/logout
 ### Auth
 - JWT access token (15 phút) trong `Authorization: Bearer` header
 - Refresh token (7 ngày) trong HttpOnly cookie
-- Role-based access: `ADMIN`, `WAREHOUSE_MANAGER`, `WAREHOUSE_STAFF`, `DRIVER`, `HR_MANAGER`
+- Role-based access: `OWN` (chủ DN – chọn kho tự do), `ADMIN`, `WAREHOUSE_MANAGER` (kho cố định), `WAREHOUSE_STAFF`, `DRIVER`, `HR_MANAGER`
+- `WAREHOUSE_MANAGER` / `WAREHOUSE_STAFF`: `warehouse_name` trong User object → auto-select kho khi tạo phiếu; trường kho là read-only
+- Chỉ `OWN` mới thấy dropdown chọn kho tự do
 
 ---
 

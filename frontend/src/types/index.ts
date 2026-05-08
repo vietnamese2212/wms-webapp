@@ -163,6 +163,42 @@ export interface OvertimeRequest {
   createdAt: string
 }
 
+// Masterdata – Ca nhập & Tình trạng QA
+export interface ImportShift {
+  id:            string
+  code:          string
+  name:          string
+  display_order: number
+  is_active:     boolean
+}
+
+export interface QAStatus {
+  id:            string
+  code:          string
+  name:          string
+  display_order: number
+  is_active:     boolean
+}
+
+export interface Material {
+  id:                   string
+  material_code:        string
+  material_description: string
+  short_name:           string | null
+  custom_short_name:    string | null
+  category:             string | null
+  product_type:         string | null
+  unit:                 string | null
+  weight_kg:            number | null
+  cartons_per_pallet:   number | null
+  cartons_per_pallet_mn: number | null
+  units_per_carton:     number | null
+  shelf_life_days:      number | null
+  storage_category:     string | null
+  manufacturer_id:      string | null
+  is_active:            boolean
+}
+
 // WMS – Inbound
 export type InboundOrderStatus = 'OPEN' | 'COMPLETED' | 'CANCELLED'
 
@@ -176,6 +212,8 @@ export interface InboundOrder {
   material_id:     string | null
   material:        { id: string; material_code: string; short_name: string | null; material_description: string; cartons_per_pallet: number | null; cartons_per_pallet_mn: number | null } | null
   planned_pallets: number | null
+  shift_id:        string | null
+  shift:           { id: string; code: string; name: string } | null
   status:          InboundOrderStatus
   import_date:     string
   notes:           string | null
@@ -194,15 +232,19 @@ export interface PalletEntry {
   location:        { id: string; location_code: string; sub_code: string }
   material:        { id: string; material_code: string; short_name: string | null }
   manufacturer:    { id: string; code: string; name: string | null } | null
-  cycle:           string | null
-  machine_code:    string | null
-  stack_layer:     number
-  cartons_imported: number
-  production_date: string | null
-  status:          string
-  created_by_emp:  { id: string; name: string } | null
-  updated_by_emp:  { id: string; name: string } | null
-  created_at:      string
+  cycle:              string | null
+  machine_code:       string | null
+  pallet_sequence_no: number | null
+  qa_status_id:       string | null
+  qa_status:          { id: string; code: string; name: string } | null
+  stack_layer:        number
+  cartons_imported:   number
+  production_date:    string | null
+  status:             string
+  created_by_emp:     { id: string; name: string } | null
+  updated_by_emp:     { id: string; name: string } | null
+  created_at:         string
+  updated_at:         string
 }
 
 export interface LocationSuggestion {

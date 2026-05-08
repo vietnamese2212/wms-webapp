@@ -62,7 +62,29 @@ export function useMaterials(params?: { search?: string; manufacturer_id?: strin
     queryKey: ['materials', params],
     queryFn: async () => {
       const { data } = await apiClient.get('/masterdata/materials', { params })
-      return data.data as any[]
+      return data.data as import('@/types').Material[]
+    },
+  })
+}
+
+export function useImportShifts() {
+  return useQuery({
+    queryKey: ['import-shifts'],
+    staleTime: 10 * 60_000,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/masterdata/import-shifts')
+      return data.data as import('@/types').ImportShift[]
+    },
+  })
+}
+
+export function useQAStatuses() {
+  return useQuery({
+    queryKey: ['qa-statuses'],
+    staleTime: 10 * 60_000,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/masterdata/qa-statuses')
+      return data.data as import('@/types').QAStatus[]
     },
   })
 }
@@ -186,7 +208,7 @@ export function useCreateInboundOrder() {
       warehouse_id: string
       material_id: string
       location_id?: string
-      planned_pallets?: number
+      shift_id?: string
       notes?: string
       imported_by?: string
     }) => apiClient.post('/wms/inbound-orders', body).then((r) => r.data.data),
@@ -237,6 +259,7 @@ export function useScanPallet() {
       location_id: string
       stack_layer?: number
       cartons_override?: number
+      qa_status_id?: string
       employee_id?: string
     }) => apiClient.post(`/wms/inbound-orders/${orderId}/scan`, body).then((r) => r.data.data),
 

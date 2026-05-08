@@ -3,6 +3,7 @@ import * as warehouse from '../controllers/masterdata/warehouseController'
 import * as location from '../controllers/masterdata/locationController'
 import * as manufacturer from '../controllers/masterdata/manufacturerController'
 import * as material from '../controllers/masterdata/materialController'
+import * as shiftQa from '../controllers/masterdata/shiftQaController'
 
 const router = Router()
 
@@ -34,5 +35,15 @@ router.post('/materials',        material.createMaterial)
 router.get('/materials/:id',     material.getMaterial)
 router.put('/materials/:id',     material.updateMaterial)
 router.delete('/materials/:id',  material.deleteMaterial)
+
+// ImportShift (Ca nhập)
+router.get('/import-shifts',        shiftQa.listImportShifts)
+router.post('/import-shifts',       shiftQa.createImportShift)
+router.put('/import-shifts/:id',    shiftQa.updateImportShift)
+
+// QAStatus (Tình trạng QA)
+router.get('/qa-statuses',          shiftQa.listQAStatuses)
+router.post('/qa-statuses',         shiftQa.createQAStatus)
+router.put('/qa-statuses/:id',      shiftQa.updateQAStatus)
 
 export default router

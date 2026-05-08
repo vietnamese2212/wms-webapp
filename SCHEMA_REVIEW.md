@@ -47,12 +47,14 @@ Warehouse (Kho lớn)   → Ba Vì, Bàu Bàng
 | `Location` | Vị trí kho (có sub_code/sub_name/sub_type) | ✅ Đã refactor, 2-table |
 | `Material` | Danh mục hàng hóa | ✅ Đã tạo, đầy đủ field logistics |
 | `Manufacturer` | Nhà máy sản xuất (NMSX) | ✅ Đã tạo, API + seed ổn |
+| `ImportShift` | Ca nhập (Ca 1, Ca 2, Ca 3, HC) | ✅ rev 10 – bảng mới, seed sẵn |
+| `QAStatus` | Tình trạng QA (X, X cảm quan, X 7, OK) | ✅ rev 10 – bảng mới, seed sẵn |
 | `Employee` | Nhân viên hệ thống | ✅ Đã tạo, có warehouse_id |
 | `Vehicle` | Xe vận chuyển | ✅ Đã tạo, có default_driver_id |
 | `Driver` | Tài xế | ✅ Đã tạo (tách từ Vehicle) |
-| `InventoryEntry` | Pallet tồn kho | ✅ Có machine_code, import_order_id, created_by, updated_by |
+| `InventoryEntry` | Pallet tồn kho | ✅ rev 10 – thêm pallet_sequence_no, qa_status_id |
 | `ExportHistory` | Lịch sử xuất kho | ✅ Đã tạo |
-| `ProductionImport` | Phiếu nhập kho (bảng cha) | ✅ Refactor thành phiếu nhập đầy đủ (rev 9) |
+| `ProductionImport` | Phiếu nhập kho (bảng cha) | ✅ rev 10 – thêm shift_id |
 | `LocationTransfer` | Chuyển vị trí pallet | ✅ Đã tạo |
 | `Menu` | Phân quyền menu | ✅ Đã tạo |
 | `Setting` | Cài đặt hệ thống | ✅ Đã tạo |
@@ -452,3 +454,4 @@ Masterdata > Vị trí kho
 | 2026-05-07 | Material: thêm `category` (Thành phẩm/NVL/POSM/Bao bì) và `ea_per_pallet` (tính pallet cho NVL) |
 | 2026-05-07 | **Refactor 2-table**: xoá SubWarehouse, embed sub_code/sub_name/sub_type vào Location; thêm endpoint /locations/sub-groups |
 | 2026-05-07 | **rev 9 – Tính năng Nhập kho**: `ProductionImport` refactor thành phiếu nhập đầy đủ (thêm warehouse_id, location_id, status, planned_pallets, created_by, updated_by; xoá quantity); `InventoryEntry` thêm machine_code, import_order_id, created_by, updated_by; WMS API /api/wms/inbound-orders; QRScanner component; trang Inbound list + InboundDetail |
+| 2026-05-08 | **rev 10 – Ca nhập & QA**: tạo bảng `ImportShift` (Ca 1, Ca 2, Ca 3, HC) và `QAStatus` (X, X cảm quan, X 7, OK); `InventoryEntry` thêm `pallet_sequence_no` (INT, từ vị trí 5 QR), `qa_status_id` (FK QAStatus); `ProductionImport` thêm `shift_id` (FK ImportShift); cập nhật QR parser; API masterdata /import-shifts, /qa-statuses; Employee Nguyễn Văn Quản Lý → Kho BV |

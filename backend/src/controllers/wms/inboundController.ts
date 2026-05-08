@@ -8,11 +8,12 @@ import { emitInboundChanged } from '../../lib/events'
 // ─── Select strings ──────────────────────────────────────────
 
 const ORDER_SELECT = `
-  id, import_code, warehouse_id, location_id, material_id, planned_pallets, status,
+  id, import_code, warehouse_id, location_id, material_id, planned_pallets, shift_id, status,
   imported_by, created_by, updated_by, import_date, notes, created_at, updated_at,
   warehouse:Warehouse(id, code, name),
   location:Location(id, location_code, sub_code, max_pallets),
   material:Material(id, material_code, short_name, material_description, cartons_per_pallet, cartons_per_pallet_mn),
+  shift:ImportShift(id, code, name),
   imported_by_emp:Employee!imported_by(id, name),
   created_by_emp:Employee!created_by(id, name),
   updated_by_emp:Employee!updated_by(id, name)
@@ -20,11 +21,13 @@ const ORDER_SELECT = `
 
 const ENTRY_SELECT = `
   id, pallet_code, location_id, material_id, manufacturer_id, cycle, machine_code,
+  pallet_sequence_no, qa_status_id,
   import_order_id, created_by, updated_by, stack_layer, cartons_imported, production_date,
   status, notes, created_at, updated_at,
   location:Location(id, location_code, sub_code),
   material:Material(id, material_code, short_name),
   manufacturer:Manufacturer(id, code, name),
+  qa_status:QAStatus(id, code, name),
   created_by_emp:Employee!created_by(id, name),
   updated_by_emp:Employee!updated_by(id, name)
 `.trim()
@@ -83,7 +86,7 @@ export async function listOrders(req: Request, res: Response) {
 
 export async function createOrder(req: Request, res: Response) {
   try {
-    const { warehouse_id, material_id, location_id, planned_pallets, notes, imported_by } = req.body
+    const { warehouse_id, material_id, location_id, planned_pallets, shift_id, notes, imported_by } = req.body
     if (!warehouse_id) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu warehouse_id')
     if (!material_id)  return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu material_id')
 
@@ -109,6 +112,7 @@ export async function createOrder(req: Request, res: Response) {
         material_id,
         location_id:     location_id ?? null,
         planned_pallets: planned_pallets ? Number(planned_pallets) : null,
+        shift_id:        shift_id ?? null,
         notes:           notes ?? null,
         imported_by:     imported_by ?? null,
         created_by:      imported_by ?? null,
@@ -154,7 +158,7 @@ export async function getOrder(req: Request, res: Response) {
 
 export async function updateOrder(req: Request, res: Response) {
   try {
-    const { location_id, planned_pallets, notes, updated_by } = req.body
+    const { location_id, planned_pallets, shift_id, notes, updated_by } = req.body
 
     const { data: existing } = await supabase
       .from('ProductionImport').select('status').eq('id', req.params.id).maybeSingle()
@@ -164,6 +168,7 @@ export async function updateOrder(req: Request, res: Response) {
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
     if (location_id     !== undefined) patch.location_id = location_id
     if (planned_pallets !== undefined) patch.planned_pallets = Number(planned_pallets)
+    if (shift_id        !== undefined) patch.shift_id = shift_id
     if (notes           !== undefined) patch.notes = notes
     if (updated_by      !== undefined) patch.updated_by = updated_by
 
@@ -228,7 +233,7 @@ export async function cancelOrder(req: Request, res: Response) {
 export async function scanQR(req: Request, res: Response) {
   try {
     const { id: order_id } = req.params
-    const { qr_code, location_id, stack_layer = 1, cartons_override, employee_id } = req.body
+    const { qr_code, location_id, stack_layer = 1, cartons_override, qa_status_id, employee_id } = req.body
 
     if (!qr_code)     return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu qr_code')
     if (!location_id) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu location_id')
@@ -312,16 +317,18 @@ export async function scanQR(req: Request, res: Response) {
         location_id,
         material_id:     material.id,
         manufacturer_id: manufacturer?.id ?? null,
-        cycle:           parsed.cycle || null,
-        machine_code:    parsed.machine_code || null,
-        stack_layer:     stackLayerNum,
+        cycle:              parsed.cycle || null,
+        machine_code:       parsed.machine_code || null,
+        pallet_sequence_no: parsed.pallet_sequence_no,
+        stack_layer:        stackLayerNum,
         cartons_imported,
-        production_date: parsed.production_date,
-        import_order_id: order_id,
-        created_by:      employee_id ?? null,
-        updated_by:      employee_id ?? null,
-        status:          'IN_STOCK',
-        updated_at:      new Date().toISOString(),
+        production_date:    parsed.production_date,
+        qa_status_id:       qa_status_id ?? null,
+        import_order_id:    order_id,
+        created_by:         employee_id ?? null,
+        updated_by:         employee_id ?? null,
+        status:             'IN_STOCK',
+        updated_at:         new Date().toISOString(),
       })
       .select(ENTRY_SELECT)
       .single()

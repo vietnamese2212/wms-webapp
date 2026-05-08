@@ -2,15 +2,16 @@
 // Example: 070526_510000127_C05_M1_001_A
 
 export interface ParsedQR {
-  pallet_code:       string
-  production_date:   Date | null
-  material_code:     string
-  cycle:             string
-  machine_code:      string
-  pallet_sequence:   string
-  manufacturer_code: string
-  is_valid:          boolean
-  error?:            string
+  pallet_code:        string
+  production_date:    Date | null
+  material_code:      string
+  cycle:              string
+  machine_code:       string
+  pallet_sequence:    string   // raw string, e.g. "001"
+  pallet_sequence_no: number | null  // parsed integer, e.g. 1
+  manufacturer_code:  string
+  is_valid:           boolean
+  error?:             string
 }
 
 export function parseInboundQR(raw: string): ParsedQR {
@@ -18,13 +19,14 @@ export function parseInboundQR(raw: string): ParsedQR {
   const parts = clean.split('_')
 
   const base: Omit<ParsedQR, 'is_valid' | 'error'> = {
-    pallet_code:       clean,
-    production_date:   null,
-    material_code:     '',
-    cycle:             '',
-    machine_code:      '',
-    pallet_sequence:   '',
-    manufacturer_code: '',
+    pallet_code:        clean,
+    production_date:    null,
+    material_code:      '',
+    cycle:              '',
+    machine_code:       '',
+    pallet_sequence:    '',
+    pallet_sequence_no: null,
+    manufacturer_code:  '',
   }
 
   if (parts.length < 6) {
@@ -43,14 +45,18 @@ export function parseInboundQR(raw: string): ParsedQR {
     if (!isNaN(d.getTime())) production_date = d
   }
 
+  const palletSeqStr = palletSeq ?? ''
+  const seqNum = parseInt(palletSeqStr, 10)
+
   return {
-    pallet_code:       clean,
+    pallet_code:        clean,
     production_date,
-    material_code:     materialCode ?? '',
-    cycle:             cycle ?? '',
-    machine_code:      machineCode ?? '',
-    pallet_sequence:   palletSeq ?? '',
-    manufacturer_code: manufacturerCode ?? '',
-    is_valid:          true,
+    material_code:      materialCode ?? '',
+    cycle:              cycle ?? '',
+    machine_code:       machineCode ?? '',
+    pallet_sequence:    palletSeqStr,
+    pallet_sequence_no: isNaN(seqNum) ? null : seqNum,
+    manufacturer_code:  manufacturerCode ?? '',
+    is_valid:           true,
   }
 }

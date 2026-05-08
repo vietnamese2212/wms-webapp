@@ -104,6 +104,34 @@ model Material {
 }
 
 // ============================================================
+// MASTERDATA – CA NHẬP & TÌNH TRẠNG QA
+// ============================================================
+
+model ImportShift {
+  id            String   @id @default(uuid())
+  code          String   @unique  // "CA1", "CA2", "CA3", "HC"
+  name          String            // "Ca 1", "Ca 2", "Ca 3", "HC"
+  display_order Int      @default(0)
+  is_active     Boolean  @default(true)
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  production_imports ProductionImport[]
+}
+
+model QAStatus {
+  id            String   @id @default(uuid())
+  code          String   @unique  // "X", "XCQ", "X7", "OK"
+  name          String            // "X", "X cảm quan", "X 7", "OK"
+  display_order Int      @default(0)
+  is_active     Boolean  @default(true)
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  inventory_entries InventoryEntry[]
+}
+
+// ============================================================
 // MASTERDATA – NHÂN SỰ
 // ============================================================
 
@@ -206,6 +234,13 @@ model InventoryEntry {
   updated_by      String?
   updated_by_emp  Employee? @relation("IEUpdatedBy", fields: [updated_by], references: [id])
 
+  // Số thứ tự pallet – vị trí thứ 5 trong QR code (VD: 001 → 1)
+  pallet_sequence_no Int?
+
+  // Tình trạng QA
+  qa_status_id    String?
+  qa_status       QAStatus?    @relation(fields: [qa_status_id], references: [id])
+
   // Pallet stacking – thay thế bypass_location cũ:
   // stack_layer = 1 → pallet đặt sàn, tính vào max_pallets của Location
   // stack_layer = 2, 3 → chồng lên pallet khác, KHÔNG tính vào max_pallets
@@ -239,6 +274,8 @@ model ProductionImport {
   material_id     String?
   material        Material?  @relation(fields: [material_id], references: [id])
   planned_pallets Int?                 // Số pallet dự kiến (optional)
+  shift_id        String?
+  shift           ImportShift? @relation(fields: [shift_id], references: [id])
   status          String     @default("OPEN")
   // "OPEN" | "COMPLETED" | "CANCELLED"
 

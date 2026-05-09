@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import { Button }  from '@/components/ui/button'
 import { Card }    from '@/components/ui/card'
+import { Input }   from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { QRScanner } from '@/components/shared/QRScanner'
@@ -64,24 +65,26 @@ interface ScanDialogProps {
 
 function ScanDialog({ open, item, gdoId, onClose }: ScanDialogProps) {
   const scannerRef = useRef<QRScannerHandle>(null)
-  const [feedback,   setFeedback]   = useState<FeedbackState>(null)
-  const [pendingQR,  setPendingQR]  = useState<string | null>(null)
+  const [feedback,       setFeedback]       = useState<FeedbackState>(null)
+  const [pendingQR,      setPendingQR]      = useState<string | null>(null)
+  const [pendingCartons, setPendingCartons] = useState(1)
   const { mutate: scanItem, isPending } = useScanOutboundItem()
 
-  const matName   = item.material?.custom_short_name ?? item.material?.short_name ?? item.material_code_raw ?? '—'
+  const matName   = item.material?.short_name ?? item.material_code_raw ?? '—'
   const remaining = Math.max(0, item.cartons_ordered - item.cartons_scanned)
 
   // Camera pauses automatically after decode (QRScanner calls scanner.pause)
   function handleScan(qr_code: string) {
     playBeep()
     setPendingQR(qr_code)
+    setPendingCartons(remaining > 0 ? remaining : 1)
     setFeedback(null)
   }
 
   function handleSave() {
     if (!pendingQR || isPending) return
     scanItem(
-      { gdoId, itemId: item.id, qr_code: pendingQR },
+      { gdoId, itemId: item.id, qr_code: pendingQR, cartons_override: pendingCartons },
       {
         onSuccess: (data) => {
           setPendingQR(null)
@@ -147,13 +150,26 @@ function ScanDialog({ open, item, gdoId, onClose }: ScanDialogProps) {
             )}
           </div>
 
-          {/* Pending QR preview */}
+          {/* Pending QR preview + carton count */}
           {pendingQR && !feedback && (
-            <div className="rounded-lg bg-green-50 border border-green-200 px-3 py-2.5 flex items-center gap-2">
-              <CheckCircle2 className="h-4 w-4 text-green-600 shrink-0" />
-              <div className="min-w-0">
-                <p className="text-lg font-medium text-green-800">Sẵn sàng lưu</p>
-                <p className="font-mono text-[10px] text-green-500 truncate">{pendingQR}</p>
+            <div className="space-y-2">
+              <div className="rounded-lg bg-green-50 border border-green-200 px-3 py-2.5 flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 text-green-600 shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-lg font-medium text-green-800">Sẵn sàng lưu</p>
+                  <p className="font-mono text-[10px] text-green-500 truncate">{pendingQR}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <label className="text-sm text-slate-600 shrink-0">Số thùng:</label>
+                <Input
+                  type="number"
+                  min={1}
+                  value={pendingCartons}
+                  onChange={e => setPendingCartons(Math.max(1, parseInt(e.target.value) || 1))}
+                  className="h-9 text-center font-semibold text-base w-24"
+                />
+                <span className="text-sm text-slate-400">/ {remaining} cần xuất</span>
               </div>
             </div>
           )}
@@ -239,7 +255,7 @@ export default function OutboundItemDetail() {
     )
   }
 
-  const matName  = item.material?.custom_short_name ?? item.material?.short_name ?? item.material_code_raw ?? '—'
+  const matName  = item.material?.short_name ?? item.material_code_raw ?? '—'
   const matCode  = item.material?.material_code ?? item.material_code_raw ?? '—'
   const isPOSM   = item.material_type === 'POSM'
   const isLoscam = item.material_type === 'Pallet Loscam' || (item.material_code_raw ?? '').includes('810000')

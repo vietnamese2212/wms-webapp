@@ -401,7 +401,7 @@ export async function getItemInventory(req: Request, res: Response) {
 export async function scanItem(req: Request, res: Response) {
   try {
     const { itemId } = req.params
-    const { qr_code, employee_id } = req.body as { qr_code: string; employee_id?: string }
+    const { qr_code, employee_id, cartons_override } = req.body as { qr_code: string; employee_id?: string; cartons_override?: number }
     const qr = (qr_code ?? '').trim()
     if (!qr) return fail(res, 'qr_code là bắt buộc', 400)
 
@@ -432,7 +432,8 @@ export async function scanItem(req: Request, res: Response) {
     if (available <= 0) return fail(res, `Pallet "${qr}" đã xuất hết số thùng`, 400)
     const remaining_on_item = Number(item.cartons_ordered) - Number(item.cartons_scanned)
     if (remaining_on_item <= 0) return fail(res, 'Mặt hàng đã đủ số lượng', 400)
-    const to_take = Math.min(available, remaining_on_item)
+    const cap     = Math.min(available, remaining_on_item)
+    const to_take = cartons_override ? Math.min(Math.max(1, Number(cartons_override)), cap) : cap
 
     const t = now()
 

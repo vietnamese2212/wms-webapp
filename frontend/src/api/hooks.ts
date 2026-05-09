@@ -585,7 +585,7 @@ export function useScanOutboundItem() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ gdoId, itemId, ...body }: {
-      gdoId: string; itemId: string; qr_code: string; employee_id?: string
+      gdoId: string; itemId: string; qr_code: string; employee_id?: string; cartons_override?: number
     }) => apiClient.post(`/wms/outbound/${gdoId}/items/${itemId}/scan`, body).then(r => r.data.data),
     onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ['gdo', v.gdoId] }),
   })

@@ -35,14 +35,24 @@ export function parseInboundQR(raw: string): ParsedQR {
 
   const [dateStr, materialCode, cycle, machineCode, palletSeq, manufacturerCode] = parts
 
-  // Parse date: ddmmyy → Date
+  // Parse date: ddmmyy → Date (with strict calendar validation)
   let production_date: Date | null = null
   if (dateStr && dateStr.length === 6) {
     const day   = parseInt(dateStr.slice(0, 2), 10)
-    const month = parseInt(dateStr.slice(2, 4), 10) - 1  // 0-indexed
+    const month = parseInt(dateStr.slice(2, 4), 10)
     const year  = 2000 + parseInt(dateStr.slice(4, 6), 10)
-    const d = new Date(Date.UTC(year, month, day))
-    if (!isNaN(d.getTime())) production_date = d
+    if (month < 1 || month > 12) {
+      return { ...base, is_valid: false, error: `Ngày QR không hợp lệ: tháng ${month} không tồn tại (${dateStr})` }
+    }
+    if (day < 1 || day > 31) {
+      return { ...base, is_valid: false, error: `Ngày QR không hợp lệ: ngày ${day} không tồn tại (${dateStr})` }
+    }
+    const d = new Date(Date.UTC(year, month - 1, day))
+    // JS rolls over invalid dates (e.g. Feb 30 → Mar 2); verify month/day unchanged
+    if (d.getUTCMonth() !== month - 1 || d.getUTCDate() !== day) {
+      return { ...base, is_valid: false, error: `Ngày QR không hợp lệ: ${day}/${month}/${year - 2000} không tồn tại` }
+    }
+    production_date = d
   }
 
   const palletSeqStr = palletSeq ?? ''

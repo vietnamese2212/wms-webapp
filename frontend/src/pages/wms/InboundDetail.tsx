@@ -20,9 +20,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import {
   useInboundOrder, useCompleteInboundOrder, useCancelInboundOrder,
-  useScanPallet, useDeletePalletEntry, useUpdatePalletEntry,
+  useScanPallet, useDeletePalletEntry, useDeletePalletEntries, useUpdatePalletEntry,
   useLocationsReal, useUpdateInboundOrder,
 } from '@/api/hooks'
+import { useAuthStore }            from '@/stores/authStore'
 import { inboundOrderStatusLabel } from '@/utils/formatters'
 import { playBeep, unlockAudio }   from '@/utils/audio'
 import type { InboundOrder, InboundOrderStatus, PalletEntry } from '@/types'
@@ -74,6 +75,20 @@ function validateQR(raw: string, order: InboundOrder): ValidationResult {
   const parts = raw.split('_')
   if (parts.length < 5) {
     return { ok: false, msg: `Định dạng QR không hợp lệ (${parts.length} phần, cần ≥5)` }
+  }
+  // Validate date field ddmmyy
+  const datePart = parts[0] ?? ''
+  if (datePart.length === 6) {
+    const dd = parseInt(datePart.slice(0, 2), 10)
+    const mm = parseInt(datePart.slice(2, 4), 10)
+    const yy = 2000 + parseInt(datePart.slice(4, 6), 10)
+    if (mm < 1 || mm > 12) {
+      return { ok: false, msg: `Ngày QR không hợp lệ: tháng ${mm} không tồn tại (${datePart})` }
+    }
+    const d = new Date(Date.UTC(yy, mm - 1, dd))
+    if (d.getUTCMonth() !== mm - 1 || d.getUTCDate() !== dd) {
+      return { ok: false, msg: `Ngày QR không hợp lệ: ${dd}/${mm}/${datePart.slice(4)} không tồn tại` }
+    }
   }
   const qrMat   = (parts[1] ?? '').trim().toUpperCase()
   const orderMat = (order.material?.material_code ?? '').trim().toUpperCase()
@@ -401,17 +416,51 @@ export default function InboundDetail() {
     order?.warehouse_id ? { warehouse_id: order.warehouse_id } : undefined
   )
 
+  const user = useAuthStore(s => s.user)
+
   const { mutate: completeOrder, isPending: completing } = useCompleteInboundOrder()
   const { mutate: cancelOrder,   isPending: cancelling  } = useCancelInboundOrder()
   const { mutate: deleteEntry                           } = useDeletePalletEntry()
+  const { mutate: deleteEntries                         } = useDeletePalletEntries()
   const { mutate: updateOrder                           } = useUpdateInboundOrder()
 
   const [showScan,      setShowScan]      = useState(false)
   const [showEditOrder, setShowEditOrder] = useState(false)
   const [editingEntry,  setEditingEntry]  = useState<PalletEntry | null>(null)
+  const [selectedIds,   setSelectedIds]   = useState<Set<string>>(new Set())
+  const [confirm, setConfirm] = useState<{ title: string; msg: string; onOk: () => void } | null>(null)
+
+  function openConfirm(title: string, msg: string, onOk: () => void) {
+    setConfirm({ title, msg, onOk })
+  }
 
   const isOpen  = order?.status === 'OPEN'
   const entries = order?.inventory_entries ?? []
+
+  const PRIVILEGED = ['OWN', 'ADMIN', 'WAREHOUSE_MANAGER']
+  const isPrivileged = PRIVILEGED.includes(user?.role ?? '')
+
+  function canDeleteEntry(entry: PalletEntry): boolean {
+    if (!isOpen) return false
+    if (isPrivileged) return true
+    if (!user?.id || entry.created_by_emp?.id !== user.id) return false
+    const importDate = new Date(entry.import_date ?? entry.created_at)
+    return (Date.now() - importDate.getTime()) / 86_400_000 <= 2
+  }
+
+  function toggleAll() {
+    if (entries.length > 0 && entries.every(e => selectedIds.has(e.id)))
+      setSelectedIds(new Set())
+    else
+      setSelectedIds(new Set(entries.filter(canDeleteEntry).map(e => e.id)))
+  }
+
+  function toggleEntry(id: string) {
+    setSelectedIds(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s })
+  }
+
+  const allDeletableSelected = entries.filter(canDeleteEntry).length > 0 &&
+    entries.filter(canDeleteEntry).every(e => selectedIds.has(e.id))
 
   if (isLoading && !order) {
     return <div className="p-6"><TableSkeleton rows={8} cols={7} /></div>
@@ -451,6 +500,25 @@ export default function InboundDetail() {
         onClose={() => setShowScan(false)}
       />
 
+      {/* ── Confirm dialog ── */}
+      {confirm && (
+        <Dialog open onOpenChange={(v) => { if (!v) setConfirm(null) }}>
+          <DialogContent className="sm:max-w-sm">
+            <DialogHeader><DialogTitle>{confirm.title}</DialogTitle></DialogHeader>
+            <p className="text-sm text-slate-600 py-1">{confirm.msg}</p>
+            <DialogFooter className="gap-2">
+              <Button variant="outline" onClick={() => setConfirm(null)}>Không</Button>
+              <Button
+                className="bg-red-600 hover:bg-red-700 text-white"
+                onClick={() => { confirm.onOk(); setConfirm(null) }}
+              >
+                Xác nhận
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+
       <div className="flex flex-col h-full min-h-0">
 
         {/* ── Compact header (~20%) ── */}
@@ -468,7 +536,6 @@ export default function InboundDetail() {
               <span className="font-semibold font-mono text-sm truncate">
                 {order.import_code ?? order.id.slice(0, 8)}
               </span>
-              <InboundStatusBadge status={order.status} />
               {isOpen && (
                 <button
                   onClick={() => setShowEditOrder(true)}
@@ -480,16 +547,22 @@ export default function InboundDetail() {
               )}
             </div>
 
-            {isOpen && (
-              <div className="flex items-center gap-2 shrink-0">
-                <Button
-                  size="sm" variant="outline"
-                  className="text-red-600 hover:bg-red-50 h-7 text-xs px-2"
+            <div className="flex items-center gap-1.5 shrink-0">
+              {isOpen && (
+                <button
+                  className="p-1.5 rounded text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors"
                   disabled={cancelling}
-                  onClick={() => cancelOrder(order.id)}
+                  title="Hủy phiếu nhập"
+                  onClick={() => openConfirm(
+                    'Hủy phiếu nhập',
+                    `Xác nhận hủy phiếu "${order.import_code ?? order.id.slice(0, 8)}"? Thao tác này không thể hoàn tác.`,
+                    () => cancelOrder(order.id)
+                  )}
                 >
-                  <XCircle className="h-3.5 w-3.5 mr-1" /> Hủy
-                </Button>
+                  <XCircle className="h-4 w-4" />
+                </button>
+              )}
+              {isOpen && (
                 <Button
                   size="sm"
                   className="h-7 text-xs px-2"
@@ -499,8 +572,8 @@ export default function InboundDetail() {
                   <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
                   {completing ? 'Đang lưu…' : 'Hoàn thành'}
                 </Button>
-              </div>
-            )}
+              )}
+            </div>
           </div>
 
           {/* Row 2: info chips */}
@@ -566,22 +639,41 @@ export default function InboundDetail() {
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-semibold text-slate-700">
               Danh sách pallet đã quét
-              <span className="ml-2 text-xs font-normal text-slate-400">
-                {entries.length} pallet
-              </span>
+              <span className="ml-2 text-xs font-normal text-slate-400">{entries.length} pallet</span>
+              {selectedIds.size > 0 && (
+                <span className="ml-1.5 text-xs text-blue-600">· {selectedIds.size} đã chọn</span>
+              )}
             </h2>
-            {isOpen && (
-              <Button
-                size="sm"
-                className="h-8 gap-1.5"
-                disabled={!order.location_id}
-                onClick={() => { unlockAudio(); setShowScan(true) }}
-                title={!order.location_id ? 'Chọn vị trí trước' : undefined}
-              >
-                <Plus className="h-3.5 w-3.5" />
-                {order.location_id ? 'Thêm pallet' : 'Chọn vị trí trước'}
-              </Button>
-            )}
+            <div className="flex items-center gap-2">
+              {isOpen && selectedIds.size > 0 && (
+                <Button
+                  size="sm" variant="outline"
+                  className="h-8 gap-1.5 text-red-600 hover:bg-red-50 border-red-200"
+                  onClick={() => openConfirm(
+                    'Xóa pallet đã chọn',
+                    `Xác nhận xóa ${selectedIds.size} pallet? Thao tác này không thể hoàn tác.`,
+                    () => deleteEntries(
+                      { orderId: order.id, entryIds: [...selectedIds], employeeId: user?.id },
+                      { onSuccess: () => setSelectedIds(new Set()) }
+                    )
+                  )}
+                >
+                  <Trash2 className="h-3.5 w-3.5" /> Xóa ({selectedIds.size})
+                </Button>
+              )}
+              {isOpen && (
+                <Button
+                  size="sm"
+                  className="h-8 gap-1.5"
+                  disabled={!order.location_id}
+                  onClick={() => { unlockAudio(); setShowScan(true) }}
+                  title={!order.location_id ? 'Chọn vị trí trước' : undefined}
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  {order.location_id ? 'Thêm pallet' : 'Chọn vị trí trước'}
+                </Button>
+              )}
+            </div>
           </div>
 
           <Card>
@@ -606,6 +698,16 @@ export default function InboundDetail() {
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      {isOpen && (
+                        <TableHead className="px-2 py-1 w-8">
+                          <input
+                            type="checkbox"
+                            className="h-3.5 w-3.5 rounded border-slate-300 cursor-pointer accent-blue-600"
+                            checked={allDeletableSelected}
+                            onChange={toggleAll}
+                          />
+                        </TableHead>
+                      )}
                       <TableHead className="px-2 py-1 text-[11px] whitespace-nowrap">NSX</TableHead>
                       <TableHead className="px-2 py-1 text-[11px]">Mã pallet</TableHead>
                       <TableHead className="px-2 py-1 text-[11px] text-right">Thùng</TableHead>
@@ -621,7 +723,21 @@ export default function InboundDetail() {
                   </TableHeader>
                   <TableBody>
                     {entries.map((entry) => (
-                      <TableRow key={entry.id} className="text-xs">
+                      <TableRow key={entry.id} className={`text-xs ${selectedIds.has(entry.id) ? 'bg-blue-50' : ''}`}>
+                        {isOpen && (
+                          <TableCell className="px-2 py-1">
+                            {canDeleteEntry(entry) ? (
+                              <input
+                                type="checkbox"
+                                className="h-3.5 w-3.5 rounded border-slate-300 cursor-pointer accent-blue-600"
+                                checked={selectedIds.has(entry.id)}
+                                onChange={() => toggleEntry(entry.id)}
+                              />
+                            ) : (
+                              <span className="block h-3.5 w-3.5" />
+                            )}
+                          </TableCell>
+                        )}
                         <TableCell className="px-2 py-1 whitespace-nowrap text-slate-500">
                           {entry.production_date
                             ? format(parseISO(entry.production_date), 'dd/MM/yy', { locale: vi })
@@ -664,13 +780,19 @@ export default function InboundDetail() {
                               >
                                 <Pencil className="h-3 w-3" />
                               </button>
-                              <button
-                                className="text-slate-400 hover:text-red-500 transition-colors p-0.5"
-                                onClick={() => deleteEntry({ orderId: order.id, entryId: entry.id })}
-                                title="Xóa"
-                              >
-                                <Trash2 className="h-3 w-3" />
-                              </button>
+                              {canDeleteEntry(entry) && (
+                                <button
+                                  className="text-slate-400 hover:text-red-500 transition-colors p-0.5"
+                                  onClick={() => openConfirm(
+                                    'Xóa pallet',
+                                    `Xác nhận xóa pallet "${entry.pallet_code}"?`,
+                                    () => deleteEntry({ orderId: order.id, entryId: entry.id, employeeId: user?.id })
+                                  )}
+                                  title="Xóa"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </button>
+                              )}
                             </div>
                           </TableCell>
                         )}

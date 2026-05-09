@@ -23,7 +23,7 @@ const ENTRY_SELECT = `
   id, pallet_code, location_id, material_id, manufacturer_id, cycle, machine_code,
   pallet_sequence_no, qa_status_id,
   import_order_id, created_by, updated_by, stack_layer, cartons_imported, production_date,
-  status, notes, created_at, updated_at,
+  status, notes, import_date, update_date, created_at, updated_at,
   location:Location(id, location_code, sub_code),
   material:Material(id, material_code, short_name),
   manufacturer:Manufacturer(id, code, name),
@@ -341,6 +341,8 @@ export async function scanQR(req: Request, res: Response) {
         created_by:         employee_id ?? null,
         updated_by:         employee_id ?? null,
         status:             'IN_STOCK',
+        import_date:        new Date().toISOString(),
+        update_date:        new Date().toISOString(),
         updated_at:         new Date().toISOString(),
       })
       .select(ENTRY_SELECT)
@@ -380,7 +382,8 @@ export async function updateEntry(req: Request, res: Response) {
     if (!entry)                              return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy pallet')
     if (entry.import_order_id !== order_id)  return fail(res, 400, 'ENTRY_NOT_IN_ORDER', 'Pallet không thuộc phiếu nhập này')
 
-    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
+    const now = new Date().toISOString()
+    const patch: Record<string, unknown> = { updated_at: now, update_date: now }
     if (cartons_imported !== undefined) patch.cartons_imported = Number(cartons_imported)
     if (stack_layer      !== undefined) patch.stack_layer = Number(stack_layer)
 
@@ -394,26 +397,94 @@ export async function updateEntry(req: Request, res: Response) {
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
-// ─── Remove a pallet entry from order ───────────────────────
+// ─── Permission helper ───────────────────────────────────────
+
+const PRIVILEGED_ROLES = ['OWN', 'ADMIN', 'WAREHOUSE_MANAGER']
+
+async function checkDeletePermission(
+  employee_id: string | undefined,
+  entries: { created_by: string | null; import_date: string | null; created_at: string }[]
+): Promise<{ allowed: boolean; reason?: string }> {
+  if (!employee_id) return { allowed: true } // no auth yet → allow
+  const { data: emp } = await supabase.from('Employee').select('id, role').eq('id', employee_id).maybeSingle()
+  if (emp && PRIVILEGED_ROLES.includes(emp.role)) return { allowed: true }
+
+  const now = Date.now()
+  for (const entry of entries) {
+    if (entry.created_by !== employee_id) {
+      return { allowed: false, reason: 'Bạn không có quyền xóa pallet của người khác' }
+    }
+    const importDate = new Date(entry.import_date ?? entry.created_at).getTime()
+    if ((now - importDate) / 86_400_000 > 2) {
+      return { allowed: false, reason: 'Chỉ có thể xóa pallet trong vòng 2 ngày sau khi nhập' }
+    }
+  }
+  return { allowed: true }
+}
+
+// ─── Remove a single pallet entry ───────────────────────────
 
 export async function removeEntry(req: Request, res: Response) {
   try {
     const { id: order_id, entryId } = req.params
+    const { employee_id } = req.body ?? {}
 
     const [{ data: order }, { data: entry }] = await Promise.all([
       supabase.from('ProductionImport').select('status').eq('id', order_id).maybeSingle(),
-      supabase.from('InventoryEntry').select('id, import_order_id').eq('id', entryId).maybeSingle(),
+      supabase.from('InventoryEntry')
+        .select('id, import_order_id, created_by, import_date, created_at')
+        .eq('id', entryId).maybeSingle(),
     ])
     if (!order)                              return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (order.status !== 'OPEN')             return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập đã đóng')
     if (!entry)                              return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy pallet')
     if (entry.import_order_id !== order_id)  return fail(res, 400, 'ENTRY_NOT_IN_ORDER', 'Pallet không thuộc phiếu nhập này')
 
+    const perm = await checkDeletePermission(employee_id, [entry])
+    if (!perm.allowed) return fail(res, 403, 'FORBIDDEN', perm.reason!)
+
     const { error } = await supabase.from('InventoryEntry').delete().eq('id', entryId)
     if (error) throw error
 
     emitInboundChanged()
     ok(res, { deleted: true })
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+}
+
+// ─── Bulk remove pallet entries ──────────────────────────────
+
+export async function removeEntries(req: Request, res: Response) {
+  try {
+    const { id: order_id } = req.params
+    const { entry_ids, employee_id } = req.body ?? {}
+
+    if (!Array.isArray(entry_ids) || entry_ids.length === 0) {
+      return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu entry_ids')
+    }
+
+    const { data: order } = await supabase
+      .from('ProductionImport').select('status').eq('id', order_id).maybeSingle()
+    if (!order)                  return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
+    if (order.status !== 'OPEN') return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập đã đóng')
+
+    const { data: entries } = await supabase
+      .from('InventoryEntry')
+      .select('id, import_order_id, created_by, import_date, created_at')
+      .in('id', entry_ids)
+    if (!entries?.length) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy pallet')
+
+    const wrongOrder = entries.find(e => e.import_order_id !== order_id)
+    if (wrongOrder) return fail(res, 400, 'ENTRY_NOT_IN_ORDER', 'Một số pallet không thuộc phiếu nhập này')
+
+    const perm = await checkDeletePermission(employee_id, entries)
+    if (!perm.allowed) return fail(res, 403, 'FORBIDDEN', perm.reason!)
+
+    const { error } = await supabase
+      .from('InventoryEntry').delete().in('id', entry_ids).eq('import_order_id', order_id)
+    if (error) throw error
+
+    emitInboundChanged()
+    ok(res, { deleted: entries.length })
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 

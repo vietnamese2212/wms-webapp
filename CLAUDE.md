@@ -5,6 +5,101 @@
 - **Push GitHub sau mỗi lần sửa code** — Vercel tự deploy.
 - Remote: `https://github.com/vietnamese2212/wms-webapp.git` (branch `main`)
 - **Thay đổi DB schema**: viết SQL → `backend/migrations/YYYYMMDD_<desc>.sql` → apply qua Supabase Dashboard → SQL Editor → push GitHub → cập nhật `SCHEMA_REVIEW.md`.
+
+# CLAUDE.md
+
+Các nguyên tắc hành vi nhằm giảm những lỗi lập trình phổ biến của LLM. Có thể kết hợp với các hướng dẫn riêng của project khi cần.
+
+> **Đánh đổi:** Các nguyên tắc này ưu tiên sự cẩn trọng hơn tốc độ. Với các tác vụ đơn giản, hãy tự cân nhắc linh hoạt.
+
+---
+
+# 1. Suy nghĩ trước khi code
+
+> **Đừng tự suy diễn. Đừng che giấu sự không chắc chắn. Hãy nêu rõ các đánh đổi.**
+
+Trước khi triển khai:
+
+- Nêu rõ các giả định của bạn. Nếu không chắc, hãy hỏi.
+- Nếu có nhiều cách hiểu khác nhau, hãy trình bày chúng — đừng tự âm thầm chọn một.
+- Nếu có cách đơn giản hơn, hãy nói ra. Sẵn sàng phản biện khi cần.
+- Nếu có điều gì chưa rõ, hãy dừng lại. Chỉ rõ điểm gây mơ hồ. Hỏi lại.
+
+---
+
+# 2. Ưu tiên sự đơn giản
+
+> **Chỉ viết lượng code tối thiểu để giải quyết vấn đề. Không thêm thứ chưa cần.**
+
+- Không thêm tính năng ngoài yêu cầu.
+- Không tạo abstraction cho thứ chỉ dùng một lần.
+- Không thêm “tính linh hoạt” hay “khả năng cấu hình” nếu chưa được yêu cầu.
+- Không viết xử lý lỗi cho các trường hợp gần như không thể xảy ra.
+- Nếu bạn viết 200 dòng nhưng thực tế có thể giải bằng 50 dòng, hãy viết lại.
+
+Tự hỏi:
+
+> “Một senior engineer có thấy đoạn này bị over-engineering không?”
+
+Nếu có, hãy đơn giản hóa.
+
+---
+
+# 3. Thay đổi có chủ đích, phạm vi nhỏ
+
+> **Chỉ chạm vào thứ cần thiết. Chỉ dọn dẹp phần bạn gây ảnh hưởng.**
+
+Khi chỉnh sửa code hiện có:
+
+- Đừng “tiện tay cải thiện” code, comment hay format ở vùng liên quan.
+- Đừng refactor thứ chưa hỏng.
+- Hãy theo style hiện có, kể cả khi bạn thích cách khác hơn.
+- Nếu thấy dead code không liên quan, hãy ghi chú — đừng tự xóa.
+
+Khi thay đổi của bạn tạo ra phần thừa:
+
+- Xóa import/variable/function mà CHÍNH thay đổi của bạn làm thành không dùng nữa.
+- Đừng xóa dead code có sẵn từ trước nếu chưa được yêu cầu.
+
+Nguyên tắc kiểm tra:
+
+> Mỗi dòng thay đổi đều phải truy ngược được tới yêu cầu của người dùng.
+
+---
+
+# 4. Thực thi theo mục tiêu rõ ràng
+
+> **Định nghĩa tiêu chí thành công. Lặp lại cho tới khi xác minh được.**
+
+Biến task thành các mục tiêu có thể kiểm chứng:
+
+- “Thêm validation”  
+  → “Viết test cho input không hợp lệ, sau đó làm cho test pass”
+
+- “Fix bug”  
+  → “Viết test tái hiện bug, sau đó sửa để test pass”
+
+- “Refactor X”  
+  → “Đảm bảo test pass cả trước và sau refactor”
+
+Với task nhiều bước, hãy nêu kế hoạch ngắn gọn:
+
+```txt
+1. [Bước] → kiểm tra: [điều cần verify]
+2. [Bước] → kiểm tra: [điều cần verify]
+3. [Bước] → kiểm tra: [điều cần verify]
+```
+
+Tiêu chí thành công rõ ràng giúp bạn làm việc độc lập tốt hơn.  
+Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phải hỏi lại liên tục.
+
+---
+
+# Các nguyên tắc này đang hiệu quả nếu:
+
+- Diff có ít thay đổi thừa hơn
+- Ít phải viết lại do over-engineering
+- Các câu hỏi làm rõ xuất hiện trước khi implement thay vì sau khi gây lỗi
 ---
 
 ## Chuẩn code bắt buộc

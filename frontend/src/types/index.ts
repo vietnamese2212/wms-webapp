@@ -246,6 +246,8 @@ export interface PalletEntry {
   status:             string
   created_by_emp:     { id: string; name: string } | null
   updated_by_emp:     { id: string; name: string } | null
+  import_date:        string | null
+  update_date:        string | null
   created_at:         string
   updated_at:         string
 }

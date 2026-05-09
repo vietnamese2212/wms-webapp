@@ -316,8 +316,21 @@ export function useScanPallet() {
 export function useDeletePalletEntry() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ orderId, entryId }: { orderId: string; entryId: string }) =>
-      apiClient.delete(`/wms/inbound-orders/${orderId}/entries/${entryId}`).then((r) => r.data.data),
+    mutationFn: ({ orderId, entryId, employeeId }: { orderId: string; entryId: string; employeeId?: string }) =>
+      apiClient.delete(`/wms/inbound-orders/${orderId}/entries/${entryId}`, {
+        data: { employee_id: employeeId },
+      }).then((r) => r.data.data),
+    onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ['inbound-order', v.orderId] }),
+  })
+}
+
+export function useDeletePalletEntries() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ orderId, entryIds, employeeId }: { orderId: string; entryIds: string[]; employeeId?: string }) =>
+      apiClient.delete(`/wms/inbound-orders/${orderId}/entries`, {
+        data: { entry_ids: entryIds, employee_id: employeeId },
+      }).then((r) => r.data.data),
     onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ['inbound-order', v.orderId] }),
   })
 }

@@ -33,6 +33,7 @@ router.post('/inbound-orders/:id/cancel',               inbound.cancelOrder)
 router.post('/inbound-orders/:id/scan',                 inbound.scanQR)
 router.patch('/inbound-orders/:id/entries/:entryId',    inbound.updateEntry)
 router.delete('/inbound-orders/:id/entries/:entryId',   inbound.removeEntry)
+router.delete('/inbound-orders/:id/entries',            inbound.removeEntries)
 router.get('/inbound-orders/:id/location-suggestions',  inbound.getLocationSuggestions)
 
 export default router

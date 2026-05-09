@@ -50,7 +50,7 @@ function ProgressBar({ scanned, ordered }: { scanned: number; ordered: number })
       <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
         <div className={`h-full rounded-full transition-all ${cls}`} style={{ width: `${pct}%` }} />
       </div>
-      <span className={`text-xs tabular-nums ${pct >= 100 ? 'text-green-700 font-semibold' : 'text-slate-500'}`}>
+      <span className={`text-lg tabular-nums font-medium ${pct >= 100 ? 'text-green-700 font-semibold' : 'text-slate-600'}`}>
         {scanned}/{ordered}
       </span>
     </div>
@@ -232,22 +232,22 @@ function ItemsTable({ doRecords, gdoId }: {
               {hasHeaderText && (
                 <TableCell className="px-3 py-2 align-top hidden md:table-cell">
                   {item.header_text
-                    ? <span className="text-sm text-slate-600">{item.header_text}</span>
-                    : <span className="text-slate-300 text-sm">—</span>}
+                    ? <span className="text-lg text-slate-600">{item.header_text}</span>
+                    : <span className="text-slate-300 text-lg">—</span>}
                 </TableCell>
               )}
               {hasBatchRequired && (
                 <TableCell className="px-3 py-2 align-top hidden md:table-cell">
                   {item.batch_required
-                    ? <span className="text-sm text-slate-600">{item.batch_required}</span>
-                    : <span className="text-slate-300 text-sm">—</span>}
+                    ? <span className="text-lg text-slate-600">{item.batch_required}</span>
+                    : <span className="text-slate-300 text-lg">—</span>}
                 </TableCell>
               )}
               {hasDateRequired && (
                 <TableCell className="px-3 py-2 align-top hidden md:table-cell">
                   {item.date_required
-                    ? <span className="text-sm text-slate-600">{format(parseISO(item.date_required), 'dd/MM/yy', { locale: vi })}</span>
-                    : <span className="text-slate-300 text-sm">—</span>}
+                    ? <span className="text-lg text-slate-600">{format(parseISO(item.date_required), 'dd/MM/yy', { locale: vi })}</span>
+                    : <span className="text-slate-300 text-lg">—</span>}
                 </TableCell>
               )}
               <TableCell className="px-3 py-2 align-top">
@@ -343,35 +343,35 @@ export default function OutboundDetail() {
           </div>
 
           {/* Row 2: GDO info */}
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-600">
-            <span className="flex items-center gap-1">
-              <Truck className="h-3.5 w-3.5 text-slate-400" />
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-lg text-slate-600">
+            <span className="flex items-center gap-1.5">
+              <Truck className="h-4 w-4 text-slate-400 shrink-0" />
               <span className="font-medium">
                 {format(parseISO(gdo.delivery_date), 'dd/MM/yyyy', { locale: vi })}
               </span>
               {gdo.delivery_date !== gdo.planned_date && (
-                <span className="text-amber-600 text-xs ml-1">
+                <span className="text-amber-600 text-sm ml-1">
                   (KH: {format(parseISO(gdo.planned_date), 'dd/MM')})
                 </span>
               )}
             </span>
             {gdo.dvvt && <span>{gdo.dvvt}</span>}
             {npp && <span className="text-slate-500">{npp}</span>}
-            <span className="flex items-center gap-1">
-              <Package className="h-3.5 w-3.5 text-slate-400" />
-              {totalScanned}/{totalOrdered} thùng
+            <span className="flex items-center gap-1.5">
+              <Package className="h-4 w-4 text-slate-400 shrink-0" />
+              <span className="font-medium">{totalScanned}/{totalOrdered}</span> thùng
             </span>
           </div>
 
           {/* Start info */}
           {gdo.started_at && (
-            <Card className="px-3 py-2 bg-blue-50 border-blue-200 text-sm">
+            <Card className="px-3 py-2 bg-blue-50 border-blue-200 text-lg">
               <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-slate-700">
                 <span><strong>Biển số:</strong> {gdo.license_plate}</span>
                 {gdo.container_number && <span><strong>Cont:</strong> {gdo.container_number}</span>}
                 {gdo.exporter_name    && <span><strong>Người xuất:</strong> {gdo.exporter_name}</span>}
                 {gdo.loader_name      && <span><strong>Bốc xếp:</strong> {gdo.loader_name}</span>}
-                <span className="text-slate-500 text-xs">
+                <span className="text-slate-500 text-sm">
                   Bắt đầu: {format(parseISO(gdo.started_at), 'HH:mm dd/MM', { locale: vi })}
                 </span>
               </div>
@@ -379,8 +379,9 @@ export default function OutboundDetail() {
           )}
 
           {gdo.assigned_at && !gdo.started_at && (
-            <div className="text-xs text-slate-400">
-              Giao đơn: {gdo.assigned_by ?? '—'} lúc {format(parseISO(gdo.assigned_at), 'HH:mm dd/MM', { locale: vi })}
+            <div className="text-lg text-slate-500">
+              Giao đơn: <span className="font-medium">{gdo.assigned_by ?? '—'}</span>
+              <span className="text-sm text-slate-400 ml-1">lúc {format(parseISO(gdo.assigned_at), 'HH:mm dd/MM', { locale: vi })}</span>
             </div>
           )}
 

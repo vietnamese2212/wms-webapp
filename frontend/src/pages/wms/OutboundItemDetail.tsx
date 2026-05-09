@@ -44,7 +44,7 @@ function ProgressBar({ scanned, ordered }: { scanned: number; ordered: number })
       <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
         <div className={`h-full rounded-full transition-all ${cls}`} style={{ width: `${pct}%` }} />
       </div>
-      <span className={`text-sm tabular-nums font-medium ${pct >= 100 ? 'text-green-700 font-semibold' : 'text-slate-600'}`}>
+      <span className={`text-lg tabular-nums font-medium ${pct >= 100 ? 'text-green-700 font-semibold' : 'text-slate-600'}`}>
         {scanned}/{ordered} thùng
       </span>
     </div>
@@ -96,7 +96,7 @@ function ScanDialog({ open, item, gdoId, onClose }: ScanDialogProps) {
         <div className="p-4 space-y-3">
           <div>
             <p className="font-semibold text-lg text-slate-800">{matName}</p>
-            <p className="text-sm text-slate-500">
+            <p className="text-lg text-slate-500">
               {item.material?.material_code ?? item.material_code_raw}
               {' · '}còn <strong>{remaining}</strong> thùng cần xuất
             </p>
@@ -276,9 +276,9 @@ export default function OutboundItemDetail() {
           </div>
 
           {/* Row 3: meta */}
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-500">
-            <span className="flex items-center gap-1">
-              <Package className="h-3.5 w-3.5 text-slate-400" />
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-lg text-slate-500">
+            <span className="flex items-center gap-1.5">
+              <Package className="h-4 w-4 text-slate-400 shrink-0" />
               <span className="font-medium text-slate-700">{item.cartons_ordered}</span> thùng
               {item.boxes_display > 0 && (
                 <span className="ml-1">· <span className="font-medium text-slate-700">{item.boxes_display}</span> hộp</span>
@@ -288,16 +288,16 @@ export default function OutboundItemDetail() {
               <span><span className="font-medium text-slate-700">{item.pallets_estimated}</span> pallet ước tính</span>
             )}
             {item.material_type && (
-              <span className="text-[11px] bg-slate-100 text-slate-600 rounded px-1.5 py-0.5">{item.material_type}</span>
+              <span className="text-sm bg-slate-100 text-slate-600 rounded px-1.5 py-0.5">{item.material_type}</span>
             )}
             {item.header_text && (
-              <span className="text-xs text-slate-500">Header: <span className="text-slate-700">{item.header_text}</span></span>
+              <span className="text-lg text-slate-700">{item.header_text}</span>
             )}
             {item.batch_required && (
-              <span className="text-xs text-slate-500">Batch: <span className="text-slate-700">{item.batch_required}</span></span>
+              <span>Batch: <span className="font-medium text-slate-700">{item.batch_required}</span></span>
             )}
             {item.date_required && (
-              <span className="text-xs text-slate-500">Date req: <span className="text-slate-700">{format(parseISO(item.date_required), 'dd/MM/yyyy', { locale: vi })}</span></span>
+              <span>Date req: <span className="font-medium text-slate-700">{format(parseISO(item.date_required), 'dd/MM/yyyy', { locale: vi })}</span></span>
             )}
           </div>
 

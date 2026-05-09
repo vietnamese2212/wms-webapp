@@ -399,16 +399,28 @@ export async function updateEntry(req: Request, res: Response) {
 
 // ─── Permission helper ───────────────────────────────────────
 
-const PRIVILEGED_ROLES = ['OWN', 'ADMIN', 'WAREHOUSE_MANAGER']
-
 async function checkDeletePermission(
   employee_id: string | undefined,
-  entries: { created_by: string | null; import_date: string | null; created_at: string }[]
+  entries: { created_by: string | null; import_date: string | null; created_at: string }[],
+  order_warehouse_id: string | null
 ): Promise<{ allowed: boolean; reason?: string }> {
   if (!employee_id) return { allowed: true } // no auth yet → allow
-  const { data: emp } = await supabase.from('Employee').select('id, role').eq('id', employee_id).maybeSingle()
-  if (emp && PRIVILEGED_ROLES.includes(emp.role)) return { allowed: true }
+  const { data: emp } = await supabase
+    .from('Employee').select('id, role, warehouse_id').eq('id', employee_id).maybeSingle()
+  if (!emp) return { allowed: true }
 
+  // OWN: can delete from any warehouse
+  if (emp.role === 'OWN') return { allowed: true }
+
+  // ADMIN / WAREHOUSE_MANAGER: can delete only from their assigned warehouse
+  if (emp.role === 'ADMIN' || emp.role === 'WAREHOUSE_MANAGER') {
+    if (emp.warehouse_id && order_warehouse_id && emp.warehouse_id !== order_warehouse_id) {
+      return { allowed: false, reason: 'Bạn chỉ có thể xóa pallet tại kho của mình' }
+    }
+    return { allowed: true }
+  }
+
+  // Other roles: must be the importer + within 2 days
   const now = Date.now()
   for (const entry of entries) {
     if (entry.created_by !== employee_id) {
@@ -430,7 +442,7 @@ export async function removeEntry(req: Request, res: Response) {
     const { employee_id } = req.body ?? {}
 
     const [{ data: order }, { data: entry }] = await Promise.all([
-      supabase.from('ProductionImport').select('status').eq('id', order_id).maybeSingle(),
+      supabase.from('ProductionImport').select('status, warehouse_id').eq('id', order_id).maybeSingle(),
       supabase.from('InventoryEntry')
         .select('id, import_order_id, created_by, import_date, created_at')
         .eq('id', entryId).maybeSingle(),
@@ -440,7 +452,7 @@ export async function removeEntry(req: Request, res: Response) {
     if (!entry)                              return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy pallet')
     if (entry.import_order_id !== order_id)  return fail(res, 400, 'ENTRY_NOT_IN_ORDER', 'Pallet không thuộc phiếu nhập này')
 
-    const perm = await checkDeletePermission(employee_id, [entry])
+    const perm = await checkDeletePermission(employee_id, [entry], order.warehouse_id as string | null)
     if (!perm.allowed) return fail(res, 403, 'FORBIDDEN', perm.reason!)
 
     const { error } = await supabase.from('InventoryEntry').delete().eq('id', entryId)
@@ -463,7 +475,7 @@ export async function removeEntries(req: Request, res: Response) {
     }
 
     const { data: order } = await supabase
-      .from('ProductionImport').select('status').eq('id', order_id).maybeSingle()
+      .from('ProductionImport').select('status, warehouse_id').eq('id', order_id).maybeSingle()
     if (!order)                  return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (order.status !== 'OPEN') return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập đã đóng')
 
@@ -476,7 +488,7 @@ export async function removeEntries(req: Request, res: Response) {
     const wrongOrder = entries.find(e => e.import_order_id !== order_id)
     if (wrongOrder) return fail(res, 400, 'ENTRY_NOT_IN_ORDER', 'Một số pallet không thuộc phiếu nhập này')
 
-    const perm = await checkDeletePermission(employee_id, entries)
+    const perm = await checkDeletePermission(employee_id, entries, order.warehouse_id as string | null)
     if (!perm.allowed) return fail(res, 403, 'FORBIDDEN', perm.reason!)
 
     const { error } = await supabase

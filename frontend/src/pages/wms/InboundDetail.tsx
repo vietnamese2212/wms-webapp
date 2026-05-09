@@ -19,7 +19,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import {
-  useInboundOrder, useCompleteInboundOrder, useCancelInboundOrder,
+  useInboundOrder, useCancelInboundOrder,
   useScanPallet, useDeletePalletEntry, useDeletePalletEntries, useUpdatePalletEntry,
   useLocationsReal, useUpdateInboundOrder,
 } from '@/api/hooks'
@@ -421,8 +421,7 @@ export default function InboundDetail() {
 
   const user = useAuthStore(s => s.user)
 
-  const { mutate: completeOrder, isPending: completing } = useCompleteInboundOrder()
-  const { mutate: cancelOrder,   isPending: cancelling  } = useCancelInboundOrder()
+  const { mutate: cancelOrder, isPending: cancelling } = useCancelInboundOrder()
   const { mutate: deleteEntry                           } = useDeletePalletEntry()
   const { mutate: deleteEntries                         } = useDeletePalletEntries()
   const { mutate: updateOrder                           } = useUpdateInboundOrder()
@@ -441,12 +440,15 @@ export default function InboundDetail() {
   const isOpen  = order?.status === 'OPEN'
   const entries = order?.inventory_entries ?? []
 
-  const PRIVILEGED = ['OWN', 'ADMIN', 'WAREHOUSE_MANAGER']
-  const isPrivileged = PRIVILEGED.includes(user?.role ?? '')
-
   function canDeleteEntry(entry: PalletEntry): boolean {
     if (!isOpen) return false
-    if (isPrivileged) return true
+    const role = user?.role ?? ''
+    if (role === 'OWN') return true
+    if (role === 'ADMIN' || role === 'WAREHOUSE_MANAGER') {
+      // can delete only from their assigned warehouse
+      return !user?.warehouse_id || user.warehouse_id === order.warehouse_id
+    }
+    // other roles: must be the importer + within 2 days
     if (!user?.id || entry.created_by_emp?.id !== user.id) return false
     const importDate = new Date(entry.import_date ?? entry.created_at)
     return (Date.now() - importDate.getTime()) / 86_400_000 <= 2
@@ -556,28 +558,18 @@ export default function InboundDetail() {
 
             <div className="flex items-center gap-1.5 shrink-0">
               {isOpen && (
-                <button
-                  className="p-1.5 rounded text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+                <Button
+                  size="sm" variant="outline"
+                  className="h-7 text-xs px-2 text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700"
                   disabled={cancelling}
-                  title="Hủy phiếu nhập"
                   onClick={() => openConfirm(
                     'Hủy phiếu nhập',
                     `Xác nhận hủy phiếu "${order.import_code ?? order.id.slice(0, 8)}"? Thao tác này không thể hoàn tác.`,
                     () => cancelOrder(order.id)
                   )}
                 >
-                  <XCircle className="h-4 w-4" />
-                </button>
-              )}
-              {isOpen && (
-                <Button
-                  size="sm"
-                  className="h-7 text-xs px-2"
-                  disabled={completing || entries.length === 0}
-                  onClick={() => completeOrder(order.id)}
-                >
-                  <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
-                  {completing ? 'Đang lưu…' : 'Hoàn thành'}
+                  <XCircle className="h-3.5 w-3.5 mr-1" />
+                  {cancelling ? 'Đang hủy…' : 'Hủy phiếu'}
                 </Button>
               )}
             </div>

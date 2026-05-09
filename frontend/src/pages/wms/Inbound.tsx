@@ -414,7 +414,11 @@ function InboundRow({ order, onClick }: { order: InboundOrder; onClick: () => vo
         <div className="text-[10px] text-slate-400 font-mono">{matCode}</div>
       </TableCell>
       <TableCell className="px-2 py-1.5 text-right">
-        <span className="text-xs font-semibold tabular-nums text-blue-700">
+        <span className={`text-xs font-semibold tabular-nums ${
+          order.status === 'COMPLETED'              ? 'text-blue-700' :
+          order._count.inventory_entries > 0        ? 'text-amber-600' :
+                                                      'text-slate-400'
+        }`}>
           {order._count.inventory_entries}
         </span>
         <span className="text-[10px] text-slate-400 ml-0.5">pl</span>

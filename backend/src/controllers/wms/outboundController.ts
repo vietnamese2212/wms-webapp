@@ -383,7 +383,7 @@ export async function getItemInventory(req: Request, res: Response) {
     if (!item) return fail(res, 'Không tìm thấy mặt hàng', 404)
 
     const { data, error } = await (supabase.from('InventoryEntry') as any)
-      .select('id, pallet_code, cartons_imported, cartons_remaining, status, qa_status_id, location:Location(location_code), qa_status:QAStatus(code,label)')
+      .select('id, pallet_code, cartons_imported, cartons_remaining, status, qa_status_id, location:Location(location_code), qa_status:QAStatus(code,name)')
       .eq('material_id', item.material_id)
       .gt('cartons_remaining', 0)
       .order('created_at')
@@ -411,13 +411,13 @@ export async function scanItem(req: Request, res: Response) {
     if (item.status === 'COMPLETED') return fail(res, 'Mặt hàng này đã xuất đủ số lượng', 400)
 
     const { data: inv } = await (supabase.from('InventoryEntry') as any)
-      .select('*, qa_status:QAStatus(code,label)')
+      .select('*, qa_status:QAStatus(code,name)')
       .eq('pallet_code', qr)
       .maybeSingle()
     if (!inv) return fail(res, `Pallet "${qr}" chưa được nhập kho — kiểm tra lại phiếu nhập inbound`, 404)
 
     if (inv.qa_status_id && inv.qa_status?.code !== 'OK') {
-      return fail(res, `Pallet bị giữ QA: ${inv.qa_status?.label ?? inv.qa_status_id} — không được xuất`, 400)
+      return fail(res, `Pallet bị giữ QA: ${inv.qa_status?.name ?? inv.qa_status_id} — không được xuất`, 400)
     }
 
     if (item.material_id && inv.material_id !== item.material_id) {

@@ -348,7 +348,7 @@ export default function Inbound() {
         </p>
       </div>
 
-      {/* Table */}
+      {/* List */}
       <div className="flex-1 overflow-auto pb-20 lg:pb-4">
         {isLoading ? (
           <div className="p-4"><TableSkeleton rows={5} cols={6} /></div>
@@ -364,21 +364,32 @@ export default function Inbound() {
             }
           />
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow className="bg-slate-50">
-                <TableHead className="text-xs font-medium text-slate-500 px-3 py-2 whitespace-nowrap">Ngày nhập</TableHead>
-                <TableHead className="text-xs font-medium text-slate-500 px-3 py-2 whitespace-nowrap hidden sm:table-cell">Ca</TableHead>
-                <TableHead className="text-xs font-medium text-slate-500 px-3 py-2">Material</TableHead>
-                <TableHead className="text-xs font-medium text-slate-500 px-3 py-2 text-right whitespace-nowrap">Pallet</TableHead>
-                <TableHead className="text-xs font-medium text-slate-500 px-3 py-2 text-right whitespace-nowrap hidden sm:table-cell">Tổng đã nhập</TableHead>
-                <TableHead className="text-xs font-medium text-slate-500 px-3 py-2 hidden md:table-cell">Người nhập</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {orders.map(order => <InboundRow key={order.id} order={order} onClick={() => navigate(`/wms/inbound/${order.id}`)} />)}
-            </TableBody>
-          </Table>
+          <>
+            {/* Mobile: card list */}
+            <div className="sm:hidden divide-y">
+              {orders.map(order => (
+                <InboundCard key={order.id} order={order} onClick={() => navigate(`/wms/inbound/${order.id}`)} />
+              ))}
+            </div>
+            {/* Desktop: table */}
+            <div className="hidden sm:block">
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-slate-50">
+                    <TableHead className="text-xs font-medium text-slate-500 px-3 py-2 whitespace-nowrap">Ngày nhập</TableHead>
+                    <TableHead className="text-xs font-medium text-slate-500 px-3 py-2 whitespace-nowrap">Ca</TableHead>
+                    <TableHead className="text-xs font-medium text-slate-500 px-3 py-2">Material</TableHead>
+                    <TableHead className="text-xs font-medium text-slate-500 px-3 py-2 text-right whitespace-nowrap">Pallet</TableHead>
+                    <TableHead className="text-xs font-medium text-slate-500 px-3 py-2 text-right whitespace-nowrap">Tổng đã nhập</TableHead>
+                    <TableHead className="text-xs font-medium text-slate-500 px-3 py-2 hidden md:table-cell">Người nhập</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {orders.map(order => <InboundRow key={order.id} order={order} onClick={() => navigate(`/wms/inbound/${order.id}`)} />)}
+                </TableBody>
+              </Table>
+            </div>
+          </>
         )}
       </div>
 
@@ -387,55 +398,74 @@ export default function Inbound() {
   )
 }
 
-function InboundRow({ order, onClick }: { order: InboundOrder; onClick: () => void }) {
-  const dateShort = order.import_date ? format(parseISO(order.import_date), 'dd/MM', { locale: vi }) : '—'
-  const dateFull  = order.import_date ? format(parseISO(order.import_date), 'dd/MM/yyyy', { locale: vi }) : '—'
-  const isToday   = order.import_date === TODAY
-  const importer  = order.imported_by_emp?.name ?? order.created_by_emp?.name ?? '—'
-  const matName   = order.material?.short_name ?? order.material?.material_description ?? '—'
-  const matCode   = order.material?.material_code ?? ''
-  const pallets   = order._count.inventory_entries
+function statusColors(status: InboundOrder['status'], pallets: number) {
+  if (status === 'COMPLETED') return { bg: 'bg-blue-50',   hover: 'hover:bg-blue-100',   text: 'text-blue-700'  }
+  if (pallets > 0)            return { bg: 'bg-amber-50',  hover: 'hover:bg-amber-100',  text: 'text-amber-600' }
+  return                             { bg: '',              hover: 'hover:bg-slate-50',   text: 'text-slate-400' }
+}
 
-  const rowBg = order.status === 'COMPLETED'
-    ? 'bg-blue-50 hover:bg-blue-100'
-    : pallets > 0
-    ? 'bg-amber-50 hover:bg-amber-100'
-    : 'hover:bg-slate-50'
-
-  const palletCls = order.status === 'COMPLETED'
-    ? 'text-blue-700'
-    : pallets > 0
-    ? 'text-amber-600'
-    : 'text-slate-400'
+function InboundCard({ order, onClick }: { order: InboundOrder; onClick: () => void }) {
+  const dateFull = order.import_date ? format(parseISO(order.import_date), 'dd/MM/yyyy', { locale: vi }) : '—'
+  const isToday  = order.import_date === TODAY
+  const importer = order.imported_by_emp?.name ?? order.created_by_emp?.name ?? '—'
+  const matName  = order.material?.short_name ?? order.material?.material_description ?? '—'
+  const matCode  = order.material?.material_code ?? ''
+  const pallets  = order._count.inventory_entries
+  const { bg, hover, text } = statusColors(order.status, pallets)
 
   return (
-    <TableRow className={`cursor-pointer transition-colors ${rowBg}`} onClick={onClick}>
-      <TableCell className="px-2 py-1.5">
-        <div className="flex items-center gap-1">
-          <span className="text-xs font-medium tabular-nums sm:hidden">{dateShort}</span>
-          <span className="text-xs font-medium tabular-nums hidden sm:inline">{dateFull}</span>
-          {isToday && (
-            <span className="text-[10px] bg-blue-100 text-blue-700 rounded-full px-1.5 py-0.5 font-medium">Hôm nay</span>
-          )}
+    <div className={`px-4 py-3 cursor-pointer transition-colors ${bg} ${hover}`} onClick={onClick}>
+      <div className="flex items-center justify-between mb-0.5">
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs font-medium tabular-nums">{dateFull}</span>
+          {isToday && <span className="text-[10px] bg-blue-100 text-blue-700 rounded-full px-1.5 py-0.5 font-medium">Hôm nay</span>}
         </div>
-        {order.shift && (
-          <div className="text-[10px] text-slate-500 mt-0.5 sm:hidden">{order.shift.name}</div>
-        )}
+        <span className="text-xs text-slate-500">{order.shift?.name ?? '—'}</span>
+      </div>
+      <div className="text-sm font-semibold text-slate-800 leading-tight">{matName}</div>
+      <div className="text-[10px] text-slate-400 font-mono mb-2">{matCode}</div>
+      <div className="flex items-center gap-3 text-xs">
+        <span className={`font-semibold tabular-nums ${text}`}>
+          {pallets} <span className="font-normal text-slate-400">pl</span>
+        </span>
+        <span className="tabular-nums text-slate-600">
+          {order.total_cartons ?? 0} <span className="text-slate-400">thùng</span>
+        </span>
+        <span className="ml-auto text-slate-500 truncate max-w-[130px]">{importer}</span>
+      </div>
+    </div>
+  )
+}
+
+function InboundRow({ order, onClick }: { order: InboundOrder; onClick: () => void }) {
+  const dateFull = order.import_date ? format(parseISO(order.import_date), 'dd/MM/yyyy', { locale: vi }) : '—'
+  const isToday  = order.import_date === TODAY
+  const importer = order.imported_by_emp?.name ?? order.created_by_emp?.name ?? '—'
+  const matName  = order.material?.short_name ?? order.material?.material_description ?? '—'
+  const matCode  = order.material?.material_code ?? ''
+  const pallets  = order._count.inventory_entries
+  const { bg, hover, text } = statusColors(order.status, pallets)
+
+  return (
+    <TableRow className={`cursor-pointer transition-colors ${bg} ${hover}`} onClick={onClick}>
+      <TableCell className="px-2 py-1.5">
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs font-medium tabular-nums">{dateFull}</span>
+          {isToday && <span className="text-[10px] bg-blue-100 text-blue-700 rounded-full px-1.5 py-0.5 font-medium">Hôm nay</span>}
+        </div>
       </TableCell>
-      <TableCell className="px-2 py-1.5 hidden sm:table-cell">
-        {order.shift
-          ? <span className="text-xs font-medium">{order.shift.name}</span>
-          : <span className="text-slate-300 text-xs">—</span>}
+      <TableCell className="px-2 py-1.5">
+        {order.shift ? <span className="text-xs font-medium">{order.shift.name}</span> : <span className="text-slate-300 text-xs">—</span>}
       </TableCell>
-      <TableCell className="px-2 py-1.5 min-w-0 max-w-[140px]">
-        <div className="text-xs font-medium leading-tight truncate">{matName}</div>
+      <TableCell className="px-2 py-1.5">
+        <div className="text-xs font-medium leading-tight">{matName}</div>
         <div className="text-[10px] text-slate-400 font-mono">{matCode}</div>
       </TableCell>
       <TableCell className="px-2 py-1.5 text-right">
-        <span className={`text-xs font-semibold tabular-nums ${palletCls}`}>{pallets}</span>
+        <span className={`text-xs font-semibold tabular-nums ${text}`}>{pallets}</span>
         <span className="text-[10px] text-slate-400 ml-0.5">pl</span>
       </TableCell>
-      <TableCell className="px-2 py-1.5 text-right hidden sm:table-cell">
+      <TableCell className="px-2 py-1.5 text-right">
         <span className="text-xs font-semibold tabular-nums">{order.total_cartons ?? 0}</span>
         <span className="text-[10px] text-slate-400 ml-0.5">thùng</span>
       </TableCell>

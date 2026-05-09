@@ -206,7 +206,7 @@ function ItemsTable({ doRecords, gdoId }: {
             const textCls = itemTextCls(item)
             const rowBg   = itemRowBg(item)
             const matCode = item.material?.material_code ?? item.material_code_raw ?? '—'
-            const matName = item.material?.custom_short_name ?? item.material?.short_name ?? item.material_code_raw ?? '—'
+            const matName = item.material?.short_name ?? item.material_code_raw ?? '—'
 
             return (
               <TableRow

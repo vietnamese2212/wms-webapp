@@ -385,7 +385,7 @@ export async function getItemInventory(req: Request, res: Response) {
     const { data, error } = await (supabase.from('InventoryEntry') as any)
       .select('id, pallet_code, cartons_imported, cartons_remaining, status, qa_status_id, location:Location(location_code), qa_status:QAStatus(code,label)')
       .eq('material_id', item.material_id)
-      .in('status', ['IN_STOCK', 'PARTIAL', 'In_Stock'])
+      .gt('cartons_remaining', 0)
       .order('created_at')
     if (error) return fail(res, error.message)
 
@@ -410,28 +410,11 @@ export async function scanItem(req: Request, res: Response) {
     if (itemErr || !item) return fail(res, 'Không tìm thấy mặt hàng', 404)
     if (item.status === 'COMPLETED') return fail(res, 'Mặt hàng này đã xuất đủ số lượng', 400)
 
-    // Check existence first (any status) for better error messages
-    const { data: existCheck } = await (supabase.from('InventoryEntry') as any)
-      .select('id, status')
-      .eq('pallet_code', qr)
-      .maybeSingle()
-    if (!existCheck) {
-      return fail(res, `Pallet "${qr}" chưa được nhập kho — kiểm tra lại phiếu nhập inbound`, 404)
-    }
-
     const { data: inv } = await (supabase.from('InventoryEntry') as any)
       .select('*, qa_status:QAStatus(code,label)')
       .eq('pallet_code', qr)
-      .in('status', ['IN_STOCK', 'PARTIAL', 'In_Stock'])
       .maybeSingle()
-    if (!inv) {
-      const statusMsg: Record<string, string> = {
-        EXPORTED:   'Pallet này đã được xuất kho rồi',
-        QUARANTINE: 'Pallet đang bị giữ QA — không được xuất',
-        CANCELLED:  'Pallet đã bị hủy',
-      }
-      return fail(res, statusMsg[existCheck.status as string] ?? `Pallet không ở trạng thái xuất được (${existCheck.status})`, 400)
-    }
+    if (!inv) return fail(res, `Pallet "${qr}" chưa được nhập kho — kiểm tra lại phiếu nhập inbound`, 404)
 
     if (inv.qa_status_id && inv.qa_status?.code !== 'OK') {
       return fail(res, `Pallet bị giữ QA: ${inv.qa_status?.label ?? inv.qa_status_id} — không được xuất`, 400)
@@ -446,6 +429,7 @@ export async function scanItem(req: Request, res: Response) {
     if (dupCheck) return fail(res, `Pallet "${qr}" đã được quét trong phiếu này`, 400)
 
     const available        = Number(inv.cartons_remaining ?? inv.cartons_imported)
+    if (available <= 0) return fail(res, `Pallet "${qr}" đã xuất hết số thùng`, 400)
     const remaining_on_item = Number(item.cartons_ordered) - Number(item.cartons_scanned)
     if (remaining_on_item <= 0) return fail(res, 'Mặt hàng đã đủ số lượng', 400)
     const to_take = Math.min(available, remaining_on_item)

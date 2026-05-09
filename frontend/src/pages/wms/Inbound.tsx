@@ -1,11 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Search, PackagePlus } from 'lucide-react'
+import { Plus, Search, PackagePlus, CalendarDays, X } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
 import { useAuthStore }        from '@/stores/authStore'
-import { PageHeader }          from '@/components/shared/PageHeader'
 import { TableSkeleton }       from '@/components/shared/TableSkeleton'
 import { EmptyState }          from '@/components/shared/EmptyState'
 import { Button }              from '@/components/ui/button'
@@ -20,6 +19,8 @@ import {
   useWarehouses, useMaterials, useLocationsReal, useImportShifts,
 } from '@/api/hooks'
 import type { InboundOrder } from '@/types'
+
+const TODAY = new Date().toISOString().slice(0, 10)
 
 interface LocationWithCapacity {
   id: string
@@ -270,134 +271,161 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
 
 export default function Inbound() {
   const navigate = useNavigate()
-  const [search,   setSearch]   = useState('')
-  const [sortDesc, setSortDesc] = useState(true)
-  const [showNew,  setShowNew]  = useState(false)
+  const [search,  setSearch]  = useState('')
+  const [date,    setDate]    = useState(TODAY)
+  const [showNew, setShowNew] = useState(false)
 
   const { data: orders = [], isLoading } = useInboundOrders({
     search: search || undefined,
+    date:   date   || undefined,
   })
 
-  // Backend returns desc by default; reverse for asc
-  const sorted: InboundOrder[] = sortDesc ? orders : [...orders].reverse()
+  const dateLabel = date
+    ? format(parseISO(date), 'EEEE, dd/MM/yyyy', { locale: vi })
+    : 'Tất cả ngày'
 
   return (
-    <div>
-      <PageHeader
-        title="Nhập kho"
-        description="Quản lý phiếu nhập kho"
-        actions={
-          <Button onClick={() => setShowNew(true)}>
-            <Plus className="h-4 w-4 mr-2" /> Tạo phiếu nhập
+    <div className="flex flex-col h-full">
+      {/* Header */}
+      <div className="border-b bg-white px-4 py-3 shrink-0 space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <h1 className="text-xl font-semibold flex items-center gap-2">
+            <PackagePlus className="h-5 w-5 text-slate-500" />
+            Nhập kho
+          </h1>
+          <Button size="sm" className="gap-1.5" onClick={() => setShowNew(true)}>
+            <Plus className="h-4 w-4" /> Tạo phiếu nhập
           </Button>
-        }
-      />
-
-      <div className="p-6 space-y-4">
-        <div className="flex gap-3">
-          <div className="relative flex-1 max-w-sm">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Tìm mã phiếu, hàng hóa..."
-              className="pl-9"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-          </div>
-          <Select value={sortDesc ? 'desc' : 'asc'} onValueChange={(v) => setSortDesc(v === 'desc')}>
-            <SelectTrigger className="w-44">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="desc">Mới nhất trước</SelectItem>
-              <SelectItem value="asc">Cũ nhất trước</SelectItem>
-            </SelectContent>
-          </Select>
         </div>
 
-        <Card>
-          {isLoading ? (
-            <TableSkeleton rows={5} cols={6} />
-          ) : sorted.length === 0 ? (
-            <EmptyState
-              icon={PackagePlus}
-              title="Chưa có phiếu nhập"
-              description="Tạo phiếu nhập kho để bắt đầu quét hàng vào kho."
-              action={
-                <Button onClick={() => setShowNew(true)}>
-                  <Plus className="h-4 w-4 mr-2" /> Tạo phiếu nhập
-                </Button>
-              }
+        {/* Filters */}
+        <div className="flex gap-2">
+          {/* Date filter */}
+          <div className="relative flex items-center gap-1.5">
+            <CalendarDays className="absolute left-2.5 h-4 w-4 text-slate-400 pointer-events-none" />
+            <Input
+              type="date"
+              className="pl-8 h-8 text-sm w-[160px]"
+              value={date}
+              onChange={e => setDate(e.target.value)}
             />
+            {date && date !== TODAY && (
+              <button
+                className="ml-1 text-xs text-slate-400 hover:text-slate-700 underline whitespace-nowrap"
+                onClick={() => setDate(TODAY)}
+              >
+                Hôm nay
+              </button>
+            )}
+            {date && (
+              <button
+                className="p-0.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-600"
+                title="Xem tất cả ngày"
+                onClick={() => setDate('')}
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+          {/* Search */}
+          <div className="relative flex-1">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+            <Input className="pl-8 h-8 text-sm" placeholder="Tìm mã phiếu, hàng hóa…" value={search} onChange={e => setSearch(e.target.value)} />
+          </div>
+        </div>
+
+        {/* Date label */}
+        <p className="text-xs text-slate-500 -mt-1">
+          {date ? (
+            <>
+              <span className="font-medium text-slate-700">{dateLabel}</span>
+              {date === TODAY && <span className="ml-1.5 text-blue-600 font-medium">· Hôm nay</span>}
+            </>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="px-2 py-1.5 text-xs">Ngày nhập</TableHead>
-                  <TableHead className="px-2 py-1.5 text-xs">Ca</TableHead>
-                  <TableHead className="px-2 py-1.5 text-xs hidden sm:table-cell">Vị trí</TableHead>
-                  <TableHead className="px-2 py-1.5 text-xs">Material</TableHead>
-                  <TableHead className="px-2 py-1.5 text-xs text-right hidden sm:table-cell">Thùng</TableHead>
-                  <TableHead className="px-2 py-1.5 text-xs text-right">Pallet</TableHead>
-                  <TableHead className="px-2 py-1.5 text-xs hidden md:table-cell">Ghi chú</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {sorted.map((order) => (
-                  <TableRow
-                    key={order.id}
-                    className="cursor-pointer hover:bg-slate-50"
-                    onClick={() => navigate(`/wms/inbound/${order.id}`)}
-                  >
-                    <TableCell className="px-2 py-1.5 text-xs text-muted-foreground whitespace-nowrap">
-                      {order.import_date
-                        ? format(parseISO(order.import_date), 'dd/MM/yy', { locale: vi })
-                        : '—'}
-                    </TableCell>
-                    <TableCell className="px-2 py-1.5">
-                      {order.shift ? (
-                        <span className="text-xs font-medium px-1 py-0.5 rounded bg-slate-100">
-                          {order.shift.name}
-                        </span>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="px-2 py-1.5 hidden sm:table-cell">
-                      {order.location ? (
-                        <span className="font-mono text-xs font-medium">
-                          {order.location.location_code}
-                        </span>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="px-2 py-1.5">
-                      <p className="text-xs font-medium leading-tight">
-                        {order.material?.short_name ?? order.material?.material_description ?? '—'}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">{order.material?.material_code}</p>
-                    </TableCell>
-                    <TableCell className="px-2 py-1.5 text-right tabular-nums hidden sm:table-cell text-xs">
-                      {order.total_cartons ?? '—'}
-                    </TableCell>
-                    <TableCell className="px-2 py-1.5 text-right tabular-nums">
-                      <span className="text-xs text-blue-600 font-semibold">
-                        {order._count.inventory_entries}
-                      </span>
-                    </TableCell>
-                    <TableCell className="px-2 py-1.5 hidden md:table-cell text-xs text-muted-foreground max-w-[140px] truncate">
-                      {order.notes ?? '—'}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <span className="italic">Hiển thị tất cả ngày</span>
           )}
-        </Card>
+          <span className="ml-1.5">— {orders.length} phiếu nhập</span>
+        </p>
+      </div>
+
+      {/* Table */}
+      <div className="flex-1 overflow-auto pb-20 lg:pb-4">
+        {isLoading ? (
+          <div className="p-4"><TableSkeleton rows={5} cols={6} /></div>
+        ) : orders.length === 0 ? (
+          <EmptyState
+            icon={PackagePlus}
+            title="Chưa có phiếu nhập"
+            description={date ? `Không có phiếu nhập ngày ${format(parseISO(date), 'dd/MM/yyyy')}` : 'Tạo phiếu nhập kho để bắt đầu quét hàng vào kho.'}
+            action={
+              <Button onClick={() => setShowNew(true)}>
+                <Plus className="h-4 w-4 mr-2" /> Tạo phiếu nhập
+              </Button>
+            }
+          />
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow className="bg-slate-50">
+                <TableHead className="text-xs font-medium text-slate-500 px-3 py-2 whitespace-nowrap">Ngày nhập</TableHead>
+                <TableHead className="text-xs font-medium text-slate-500 px-3 py-2 whitespace-nowrap">Ca</TableHead>
+                <TableHead className="text-xs font-medium text-slate-500 px-3 py-2">Material</TableHead>
+                <TableHead className="text-xs font-medium text-slate-500 px-3 py-2 text-right whitespace-nowrap">Pallet</TableHead>
+                <TableHead className="text-xs font-medium text-slate-500 px-3 py-2 text-right whitespace-nowrap hidden sm:table-cell">Tổng đã nhập</TableHead>
+                <TableHead className="text-xs font-medium text-slate-500 px-3 py-2 hidden md:table-cell">Người nhập</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {orders.map(order => <InboundRow key={order.id} order={order} onClick={() => navigate(`/wms/inbound/${order.id}`)} />)}
+            </TableBody>
+          </Table>
+        )}
       </div>
 
       <CreateOrderDialog open={showNew} onClose={() => setShowNew(false)} />
     </div>
+  )
+}
+
+function InboundRow({ order, onClick }: { order: InboundOrder; onClick: () => void }) {
+  const dateStr  = order.import_date ? format(parseISO(order.import_date), 'dd/MM/yyyy', { locale: vi }) : '—'
+  const isToday  = order.import_date === TODAY
+  const importer = order.imported_by_emp?.name ?? order.created_by_emp?.name ?? '—'
+  const matName  = order.material?.short_name ?? order.material?.material_description ?? '—'
+  const matCode  = order.material?.material_code ?? ''
+
+  return (
+    <TableRow className="cursor-pointer hover:bg-slate-50 transition-colors" onClick={onClick}>
+      <TableCell className="px-3 py-2">
+        <div className="flex items-center gap-1.5">
+          <span className="text-lg font-medium tabular-nums">{dateStr}</span>
+          {isToday && (
+            <span className="text-[10px] bg-blue-100 text-blue-700 rounded-full px-1.5 py-0.5 font-medium">Hôm nay</span>
+          )}
+        </div>
+      </TableCell>
+      <TableCell className="px-3 py-2">
+        {order.shift
+          ? <span className="text-lg font-medium">{order.shift.name}</span>
+          : <span className="text-slate-300 text-lg">—</span>}
+      </TableCell>
+      <TableCell className="px-3 py-2">
+        <div className="text-lg font-medium leading-tight">{matName}</div>
+        <div className="text-[11px] text-slate-400 font-mono">{matCode}</div>
+      </TableCell>
+      <TableCell className="px-3 py-2 text-right">
+        <span className="text-lg font-semibold tabular-nums text-blue-700">
+          {order._count.inventory_entries}
+        </span>
+        <span className="text-xs text-slate-400 ml-1">pl</span>
+      </TableCell>
+      <TableCell className="px-3 py-2 text-right hidden sm:table-cell">
+        <span className="text-lg font-semibold tabular-nums">{order.total_cartons ?? 0}</span>
+        <span className="text-xs text-slate-400 ml-1">thùng</span>
+      </TableCell>
+      <TableCell className="px-3 py-2 hidden md:table-cell">
+        <span className="text-lg text-slate-700">{importer}</span>
+      </TableCell>
+    </TableRow>
   )
 }

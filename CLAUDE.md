@@ -5,8 +5,6 @@
 - **Push GitHub sau mỗi lần sửa code** — Vercel tự deploy.
 - Remote: `https://github.com/vietnamese2212/wms-webapp.git` (branch `main`)
 - **Thay đổi DB schema**: viết SQL → `backend/migrations/YYYYMMDD_<desc>.sql` → apply qua Supabase Dashboard → SQL Editor → push GitHub → cập nhật `SCHEMA_REVIEW.md`.
-- `backend/prisma/schema.prisma` — tài liệu tham khảo cấu trúc only, không dùng trong runtime.
-
 ---
 
 ## Chuẩn code bắt buộc
@@ -14,7 +12,7 @@
 **Database INSERT/UPDATE:**
 - Mọi INSERT phải có `id: randomUUID()` và `updated_at: new Date().toISOString()` — DB không có DEFAULT cho 2 cột này, thiếu → lỗi 23502
 - `import { randomUUID } from 'crypto'` ở đầu mọi controller có INSERT
-- DB client: `import { supabase } from '../../lib/supabase'` — không import Prisma
+- DB client: `import { supabase } from '../../lib/supabase'`
 
 **TypeScript:**
 - Không dùng `as any`, `as any[]` — định nghĩa type rõ ràng

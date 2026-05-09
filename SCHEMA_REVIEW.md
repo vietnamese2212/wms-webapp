@@ -141,4 +141,4 @@ created_at, updated_at
 | 2026-05-07 | 9 | ProductionImport + InventoryEntry refactor đầy đủ, WMS Inbound API |
 | 2026-05-08 | 10 | ImportShift, QAStatus, `pallet_sequence_no`, `qa_status_id`, `shift_id` |
 | 2026-05-08 | — | Supabase Realtime bật tất cả bảng `public` + event trigger auto-add bảng mới |
-| 2026-05-09 | — | Prisma loại khỏi runtime, chuẩn INSERT `randomUUID()` + `updated_at` |
+| 2026-05-09 | — | Chuẩn INSERT `randomUUID()` + `updated_at` bắt buộc |

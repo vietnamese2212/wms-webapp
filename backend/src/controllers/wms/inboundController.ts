@@ -335,6 +335,7 @@ export async function scanQR(req: Request, res: Response) {
         pallet_sequence_no: parsed.pallet_sequence_no,
         stack_layer:        stackLayerNum,
         cartons_imported,
+        cartons_remaining:  cartons_imported,
         production_date:    parsed.production_date,
         qa_status_id:       qa_status_id ?? null,
         import_order_id:    order_id,

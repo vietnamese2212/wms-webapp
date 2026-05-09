@@ -191,32 +191,9 @@ function ScanDialog({ order, open, onClose }: ScanDialogProps) {
         </DialogHeader>
 
         <div className="space-y-3">
-          {/* Inputs above camera — user sets before scanning */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <Label className="text-xs">Số thùng / pallet</Label>
-              <Input
-                type="number" min="0"
-                value={cartons}
-                onChange={(e) => setCartons(e.target.value)}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Tầng chồng</Label>
-              <Select value={stackLayer} onValueChange={setStackLayer}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="1">Tầng 1 (sàn)</SelectItem>
-                  <SelectItem value="2">Tầng 2</SelectItem>
-                  <SelectItem value="3">Tầng 3</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
           <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} />
 
-          {/* Validation result — immediately after camera, before Save */}
+          {/* Validation result — right after camera */}
           {pendingQR && validation && !feedback && (
             validation.ok ? (
               <div className="rounded-lg bg-green-50 border border-green-200 px-3 py-2.5 flex items-center gap-2">
@@ -239,7 +216,7 @@ function ScanDialog({ order, open, onClose }: ScanDialogProps) {
 
           {feedback && <ScanFeedback state={feedback} />}
 
-          {/* Save + Cancel — right below validation, no scroll needed */}
+          {/* Save + Cancel — right below validation */}
           <div className="flex gap-2">
             <Button className="flex-1" disabled={!canSave} onClick={handleSave}>
               {isPending ? 'Đang lưu...' : 'Lưu pallet'}
@@ -247,6 +224,29 @@ function ScanDialog({ order, open, onClose }: ScanDialogProps) {
             <Button variant="outline" disabled={isPending} onClick={handleCancel}>
               Huỷ
             </Button>
+          </div>
+
+          {/* Inputs at bottom — adjust before/after scanning */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Số thùng / pallet</Label>
+              <Input
+                type="number" min="0"
+                value={cartons}
+                onChange={(e) => setCartons(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Tầng chồng</Label>
+              <Select value={stackLayer} onValueChange={setStackLayer}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1">Tầng 1 (sàn)</SelectItem>
+                  <SelectItem value="2">Tầng 2</SelectItem>
+                  <SelectItem value="3">Tầng 3</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
         </div>
       </DialogContent>

@@ -396,35 +396,35 @@ function InboundRow({ order, onClick }: { order: InboundOrder; onClick: () => vo
 
   return (
     <TableRow className="cursor-pointer hover:bg-slate-50 transition-colors" onClick={onClick}>
-      <TableCell className="px-3 py-2">
+      <TableCell className="px-2 py-1.5">
         <div className="flex items-center gap-1.5">
-          <span className="text-lg font-medium tabular-nums">{dateStr}</span>
+          <span className="text-xs font-medium tabular-nums">{dateStr}</span>
           {isToday && (
             <span className="text-[10px] bg-blue-100 text-blue-700 rounded-full px-1.5 py-0.5 font-medium">Hôm nay</span>
           )}
         </div>
       </TableCell>
-      <TableCell className="px-3 py-2">
+      <TableCell className="px-2 py-1.5">
         {order.shift
-          ? <span className="text-lg font-medium">{order.shift.name}</span>
-          : <span className="text-slate-300 text-lg">—</span>}
+          ? <span className="text-xs font-medium">{order.shift.name}</span>
+          : <span className="text-slate-300 text-xs">—</span>}
       </TableCell>
-      <TableCell className="px-3 py-2">
-        <div className="text-lg font-medium leading-tight">{matName}</div>
-        <div className="text-[11px] text-slate-400 font-mono">{matCode}</div>
+      <TableCell className="px-2 py-1.5">
+        <div className="text-xs font-medium leading-tight">{matName}</div>
+        <div className="text-[10px] text-slate-400 font-mono">{matCode}</div>
       </TableCell>
-      <TableCell className="px-3 py-2 text-right">
-        <span className="text-lg font-semibold tabular-nums text-blue-700">
+      <TableCell className="px-2 py-1.5 text-right">
+        <span className="text-xs font-semibold tabular-nums text-blue-700">
           {order._count.inventory_entries}
         </span>
-        <span className="text-xs text-slate-400 ml-1">pl</span>
+        <span className="text-[10px] text-slate-400 ml-0.5">pl</span>
       </TableCell>
-      <TableCell className="px-3 py-2 text-right hidden sm:table-cell">
-        <span className="text-lg font-semibold tabular-nums">{order.total_cartons ?? 0}</span>
-        <span className="text-xs text-slate-400 ml-1">thùng</span>
+      <TableCell className="px-2 py-1.5 text-right hidden sm:table-cell">
+        <span className="text-xs font-semibold tabular-nums">{order.total_cartons ?? 0}</span>
+        <span className="text-[10px] text-slate-400 ml-0.5">thùng</span>
       </TableCell>
-      <TableCell className="px-3 py-2 hidden md:table-cell">
-        <span className="text-lg text-slate-700">{importer}</span>
+      <TableCell className="px-2 py-1.5 hidden md:table-cell">
+        <span className="text-xs text-slate-700">{importer}</span>
       </TableCell>
     </TableRow>
   )

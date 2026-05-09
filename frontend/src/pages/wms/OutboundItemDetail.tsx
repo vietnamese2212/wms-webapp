@@ -405,16 +405,16 @@ export default function OutboundItemDetail() {
                   <TableBody>
                     {scans.map(se => (
                       <TableRow key={se.id}>
-                        <TableCell className="px-3 py-2 font-mono text-lg font-medium">
+                        <TableCell className="px-2 py-1.5 font-mono text-xs font-medium">
                           {se.pallet_code}
                         </TableCell>
-                        <TableCell className="px-3 py-2 text-right tabular-nums text-lg font-semibold">
+                        <TableCell className="px-2 py-1.5 text-right tabular-nums text-xs font-semibold">
                           {se.cartons_scanned}
                         </TableCell>
-                        <TableCell className="px-3 py-2 hidden sm:table-cell text-lg text-slate-500 whitespace-nowrap">
+                        <TableCell className="px-2 py-1.5 hidden sm:table-cell text-xs text-slate-500 whitespace-nowrap">
                           {se.scanned_at ? format(parseISO(se.scanned_at), 'dd/MM/yy', { locale: vi }) : '—'}
                         </TableCell>
-                        <TableCell className="px-3 py-2 hidden sm:table-cell text-lg text-slate-500 tabular-nums">
+                        <TableCell className="px-2 py-1.5 hidden sm:table-cell text-xs text-slate-500 tabular-nums">
                           {se.scanned_at ? format(parseISO(se.scanned_at), 'HH:mm', { locale: vi }) : '—'}
                         </TableCell>
                         <TableCell className="px-1 py-2">

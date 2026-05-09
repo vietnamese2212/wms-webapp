@@ -42,7 +42,7 @@ function Badge({ status }: { status: string }) {
 
 // ─── Progress bar ──────────────────────────────────────────────
 
-function ProgressBar({ scanned, ordered }: { scanned: number; ordered: number }) {
+function ProgressBar({ scanned, ordered, compact = false }: { scanned: number; ordered: number; compact?: boolean }) {
   const pct = ordered > 0 ? Math.min(100, (scanned / ordered) * 100) : 0
   const cls = pct >= 100 ? 'bg-green-500' : pct > 0 ? 'bg-amber-500' : 'bg-slate-200'
   return (
@@ -50,7 +50,7 @@ function ProgressBar({ scanned, ordered }: { scanned: number; ordered: number })
       <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
         <div className={`h-full rounded-full transition-all ${cls}`} style={{ width: `${pct}%` }} />
       </div>
-      <span className={`text-lg tabular-nums font-medium ${pct >= 100 ? 'text-green-700 font-semibold' : 'text-slate-600'}`}>
+      <span className={`${compact ? 'text-xs' : 'text-lg'} tabular-nums font-medium ${pct >= 100 ? 'text-green-700 font-semibold' : 'text-slate-600'}`}>
         {scanned}/{ordered}
       </span>
     </div>
@@ -206,48 +206,48 @@ function ItemsTable({ doRecords, gdoId }: {
               className="cursor-pointer hover:bg-slate-50 transition-colors"
               onClick={() => navigate(`/wms/outbound/${gdoId}/items/${item.id}`)}
             >
-              <TableCell className={`px-3 py-2 align-top ${textCls}`}>
-                <div className="text-xs text-slate-400 tabular-nums">{item.delivery_code}</div>
-                <div className={`text-lg font-mono font-semibold mt-0.5 ${textCls}`}>{matCode}</div>
+              <TableCell className={`px-2 py-1.5 align-top ${textCls}`}>
+                <div className="text-[10px] text-slate-400 tabular-nums">{item.delivery_code}</div>
+                <div className={`text-xs font-mono font-semibold mt-0.5 ${textCls}`}>{matCode}</div>
               </TableCell>
-              <TableCell className={`px-3 py-2 align-top ${textCls}`}>
-                <div className={`text-lg font-medium leading-tight ${textCls}`}>{matName}</div>
+              <TableCell className={`px-2 py-1.5 align-top ${textCls}`}>
+                <div className={`text-xs font-medium leading-tight ${textCls}`}>{matName}</div>
                 {item.material_type !== 'POSM' && (
-                  <ProgressBar scanned={item.cartons_scanned} ordered={item.cartons_ordered} />
+                  <ProgressBar compact scanned={item.cartons_scanned} ordered={item.cartons_ordered} />
                 )}
                 {(item.scan_entries?.length ?? 0) > 0 && (
-                  <div className="text-[11px] text-slate-400 mt-0.5">{item.scan_entries.length} pallet</div>
+                  <div className="text-[10px] text-slate-400 mt-0.5">{item.scan_entries.length} pallet</div>
                 )}
               </TableCell>
-              <TableCell className={`px-3 py-2 align-top text-right ${textCls}`}>
-                <span className={`text-lg font-semibold tabular-nums ${textCls}`}>{item.cartons_ordered}</span>
+              <TableCell className={`px-2 py-1.5 align-top text-right ${textCls}`}>
+                <span className={`text-xs font-semibold tabular-nums ${textCls}`}>{item.cartons_ordered}</span>
               </TableCell>
               {hasBoxes && (
-                <TableCell className={`px-3 py-2 align-top text-right ${textCls}`}>
+                <TableCell className={`px-2 py-1.5 align-top text-right ${textCls}`}>
                   {item.boxes_display > 0
-                    ? <span className={`text-lg tabular-nums ${textCls}`}>{item.boxes_display}</span>
-                    : <span className="text-slate-300">—</span>}
+                    ? <span className={`text-xs tabular-nums ${textCls}`}>{item.boxes_display}</span>
+                    : <span className="text-slate-300 text-xs">—</span>}
                 </TableCell>
               )}
               {hasHeaderText && (
-                <TableCell className="px-3 py-2 align-top hidden md:table-cell">
+                <TableCell className="px-2 py-1.5 align-top hidden md:table-cell">
                   {item.header_text
-                    ? <span className="text-lg text-slate-600">{item.header_text}</span>
-                    : <span className="text-slate-300 text-lg">—</span>}
+                    ? <span className="text-xs text-slate-600">{item.header_text}</span>
+                    : <span className="text-slate-300 text-xs">—</span>}
                 </TableCell>
               )}
               {hasBatchRequired && (
-                <TableCell className="px-3 py-2 align-top hidden md:table-cell">
+                <TableCell className="px-2 py-1.5 align-top hidden md:table-cell">
                   {item.batch_required
-                    ? <span className="text-lg text-slate-600">{item.batch_required}</span>
-                    : <span className="text-slate-300 text-lg">—</span>}
+                    ? <span className="text-xs text-slate-600">{item.batch_required}</span>
+                    : <span className="text-slate-300 text-xs">—</span>}
                 </TableCell>
               )}
               {hasDateRequired && (
-                <TableCell className="px-3 py-2 align-top hidden md:table-cell">
+                <TableCell className="px-2 py-1.5 align-top hidden md:table-cell">
                   {item.date_required
-                    ? <span className="text-lg text-slate-600">{format(parseISO(item.date_required), 'dd/MM/yy', { locale: vi })}</span>
-                    : <span className="text-slate-300 text-lg">—</span>}
+                    ? <span className="text-xs text-slate-600">{format(parseISO(item.date_required), 'dd/MM/yy', { locale: vi })}</span>
+                    : <span className="text-slate-300 text-xs">—</span>}
                 </TableCell>
               )}
               <TableCell className="px-3 py-2 align-top">

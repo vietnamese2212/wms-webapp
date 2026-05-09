@@ -197,38 +197,38 @@ function GDORow({ gdo, onClick }: { gdo: GDO; onClick: () => void }) {
       className="cursor-pointer hover:bg-slate-50 transition-colors"
       onClick={onClick}
     >
-      <TableCell className="px-3 py-2">
+      <TableCell className="px-2 py-1.5">
         <div className="flex items-center gap-1.5">
-          <span className="text-lg font-medium tabular-nums">{dateLabel}</span>
+          <span className="text-xs font-medium tabular-nums">{dateLabel}</span>
           {isToday && gdo.status !== 'COMPLETED' && (
             <span className="text-[10px] bg-blue-100 text-blue-700 rounded-full px-1.5 py-0.5 font-medium">Hôm nay</span>
           )}
           {gdo.delivery_date !== gdo.planned_date && (
-            <span className="text-xs text-amber-600">(KH {format(parseISO(gdo.planned_date), 'dd/MM')})</span>
+            <span className="text-[10px] text-amber-600">(KH {format(parseISO(gdo.planned_date), 'dd/MM')})</span>
           )}
         </div>
       </TableCell>
-      <TableCell className="px-3 py-2">
-        <span className="text-lg font-mono font-semibold">{gdo.group_code}</span>
+      <TableCell className="px-2 py-1.5">
+        <span className="text-xs font-mono font-semibold">{gdo.group_code}</span>
       </TableCell>
-      <TableCell className="px-3 py-2 hidden sm:table-cell">
-        <span className="text-lg text-slate-700">{gdo.export_type ?? '—'}</span>
+      <TableCell className="px-2 py-1.5 hidden sm:table-cell">
+        <span className="text-xs text-slate-700">{gdo.export_type ?? '—'}</span>
       </TableCell>
-      <TableCell className="px-3 py-2 hidden sm:table-cell">
-        <span className="text-lg text-slate-700">{gdo.dvvt ?? '—'}</span>
+      <TableCell className="px-2 py-1.5 hidden sm:table-cell">
+        <span className="text-xs text-slate-700">{gdo.dvvt ?? '—'}</span>
       </TableCell>
-      <TableCell className="px-3 py-2 max-w-[180px] truncate hidden md:table-cell" title={npp}>
-        <span className="text-lg text-slate-700">{npp}</span>
+      <TableCell className="px-2 py-1.5 max-w-[180px] truncate hidden md:table-cell" title={npp}>
+        <span className="text-xs text-slate-700">{npp}</span>
       </TableCell>
-      <TableCell className="px-3 py-2 text-right">
-        <span className="text-lg font-semibold tabular-nums">{gdo.total_cartons ?? 0}</span>
-        <span className="text-xs text-slate-400 ml-1">thùng</span>
+      <TableCell className="px-2 py-1.5 text-right">
+        <span className="text-xs font-semibold tabular-nums">{gdo.total_cartons ?? 0}</span>
+        <span className="text-[10px] text-slate-400 ml-0.5">thùng</span>
       </TableCell>
-      <TableCell className="px-3 py-2 text-right hidden sm:table-cell">
-        <span className="text-lg font-semibold tabular-nums">{gdo.total_pallets ?? 0}</span>
-        <span className="text-xs text-slate-400 ml-1">pl</span>
+      <TableCell className="px-2 py-1.5 text-right hidden sm:table-cell">
+        <span className="text-xs font-semibold tabular-nums">{gdo.total_pallets ?? 0}</span>
+        <span className="text-[10px] text-slate-400 ml-0.5">pl</span>
       </TableCell>
-      <TableCell className="px-3 py-2"><StatusBadge status={gdo.status} /></TableCell>
+      <TableCell className="px-2 py-1.5"><StatusBadge status={gdo.status} /></TableCell>
     </TableRow>
   )
 }

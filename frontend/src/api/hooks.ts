@@ -5,7 +5,7 @@ import {
   mockLocations, mockOvertimeRequests,
 } from '@/utils/mockData'
 import { apiClient } from './client'
-import type { InboundOrder } from '@/types'
+import type { InboundOrder, Department, JobTitle, EmployeeRecord } from '@/types'
 
 const delay = (ms = 600) => new Promise((r) => setTimeout(r, ms))
 
@@ -390,7 +390,7 @@ export function useDeliveries() {
   })
 }
 
-// HR
+// HR (mock)
 export function useEmployees() {
   return useQuery({
     queryKey: ['employees'],
@@ -409,5 +409,124 @@ export function useOvertimeRequests() {
   return useQuery({
     queryKey: ['overtime'],
     queryFn: async () => { await delay(); return mockOvertimeRequests },
+  })
+}
+
+// ─── Permission masterdata (API thật) ────────────────────────────────────────
+
+export function useDepartments() {
+  return useQuery({
+    queryKey: ['departments'],
+    staleTime: 10 * 60_000,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/masterdata/departments')
+      return data.data as Department[]
+    },
+  })
+}
+
+export function useJobTitles(departmentId?: string) {
+  return useQuery({
+    queryKey: ['job-titles', departmentId],
+    staleTime: 10 * 60_000,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/masterdata/job-titles', {
+        params: departmentId ? { department_id: departmentId } : {},
+      })
+      return data.data as JobTitle[]
+    },
+  })
+}
+
+export function useEmployeeRecords(params?: { department_id?: string; search?: string; is_active?: string }) {
+  return useQuery({
+    queryKey: ['employee-records', params],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/masterdata/employees', { params })
+      return data.data as EmployeeRecord[]
+    },
+  })
+}
+
+export function useEmployeeRecord(id?: string) {
+  return useQuery({
+    queryKey: ['employee-record', id],
+    enabled: !!id,
+    queryFn: async () => {
+      const { data } = await apiClient.get(`/masterdata/employees/${id}`)
+      return data.data as EmployeeRecord
+    },
+  })
+}
+
+export function useCreateEmployee() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: {
+      name: string; employee_code: string; email?: string; phone?: string
+      department_id?: string; job_title_id?: string
+      action_level?: string; allowed_categories?: string[]; warehouse_scope?: string
+      warehouse_ids?: string[]
+    }) => apiClient.post('/masterdata/employees', body).then(r => r.data.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['employee-records'] }),
+  })
+}
+
+export function useUpdateEmployee() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: {
+      id: string; name?: string; phone?: string; email?: string
+      department_id?: string; job_title_id?: string
+      action_level?: string; allowed_categories?: string[]; warehouse_scope?: string
+      is_active?: boolean
+    }) => apiClient.patch(`/masterdata/employees/${id}`, body).then(r => r.data.data),
+    onSuccess: (_d, v) => {
+      qc.invalidateQueries({ queryKey: ['employee-records'] })
+      qc.invalidateQueries({ queryKey: ['employee-record', v.id] })
+    },
+  })
+}
+
+export function useSetEmployeeWarehouses() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, warehouse_ids }: { id: string; warehouse_ids: string[] }) =>
+      apiClient.put(`/masterdata/employees/${id}/warehouses`, { warehouse_ids }).then(r => r.data.data),
+    onSuccess: (_d, v) => {
+      qc.invalidateQueries({ queryKey: ['employee-records'] })
+      qc.invalidateQueries({ queryKey: ['employee-record', v.id] })
+    },
+  })
+}
+
+export function useCreateDepartment() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { name: string; code: string; allowed_modules?: string[] }) =>
+      apiClient.post('/masterdata/departments', body).then(r => r.data.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['departments'] }),
+  })
+}
+
+export function useCreateJobTitle() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: {
+      name: string; department_id: string; action_level: string
+      allowed_categories?: string[]; warehouse_scope?: string
+    }) => apiClient.post('/masterdata/job-titles', body).then(r => r.data.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['job-titles'] }),
+  })
+}
+
+export function useUpdateJobTitle() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: {
+      id: string; name?: string; action_level?: string
+      allowed_categories?: string[]; warehouse_scope?: string; is_active?: boolean
+    }) => apiClient.put(`/masterdata/job-titles/${id}`, body).then(r => r.data.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['job-titles'] }),
   })
 }

@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Read(//c/Users/lam.tranhoang/OneDrive - LOF JSC/WAREHOUSE/CLAUDECODE/WMS webapp/backend/migrations\" 2>/dev/null | grep -E '/**)",
+      "Bash(awk '{print $6, $7, $8, $9}')"
+    ]
+  }
+}

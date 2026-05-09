@@ -24,7 +24,8 @@
       "Bash(npm uninstall *)",
       "Bash(npx tsc *)",
       "Bash(claude /cost)",
-      "Bash(claude --version)"
+      "Bash(claude --version)",
+      "Bash(git commit *)"
     ]
   }
 }

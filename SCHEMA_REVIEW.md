@@ -1,6 +1,6 @@
 # Schema Review – WMS Webapp
 
-> Cập nhật lần cuối: 2026-05-09 (rev 10)
+> Cập nhật lần cuối: 2026-05-09 (rev 11)
 > Database: PostgreSQL via Supabase · client: `@supabase/supabase-js` (service role)
 
 ---
@@ -24,7 +24,10 @@ BV_TP1_1_T1 = {warehouse.code}_{sub_code}_{row}_{shelf}
 | `Location` | Vị trí kho (embed sub info) | ✅ API + seed |
 | `Material` | Danh mục hàng hóa | ✅ API + seed |
 | `Manufacturer` | Nhà máy sản xuất (NMSX) | ✅ API + seed |
-| `Employee` | Nhân viên hệ thống | ✅ API cơ bản |
+| `Department` | Phòng ban + module access | ✅ API + seed (rev 11) |
+| `JobTitle` | Chức danh — permission template | ✅ API + seed (rev 11) |
+| `Employee` | Nhân viên — action_level, categories, scope | ✅ API đầy đủ (rev 11) |
+| `UserWarehouseAccess` | Kho được phép của từng nhân viên | ✅ API + migrate (rev 11) |
 | `ImportShift` | Ca nhập (Ca 1/2/3, HC) | ✅ seed sẵn |
 | `QAStatus` | Tình trạng QA (X, X CQ, X7, OK) | ✅ seed sẵn |
 | `ProductionImport` | Phiếu nhập kho (bảng cha) | ✅ API đầy đủ |
@@ -142,3 +145,4 @@ created_at, updated_at
 | 2026-05-08 | 10 | ImportShift, QAStatus, `pallet_sequence_no`, `qa_status_id`, `shift_id` |
 | 2026-05-08 | — | Supabase Realtime bật tất cả bảng `public` + event trigger auto-add bảng mới |
 | 2026-05-09 | — | Chuẩn INSERT `randomUUID()` + `updated_at` bắt buộc |
+| 2026-05-09 | 11 | Permission system: `Department`, `JobTitle`, `UserWarehouseAccess`, mở rộng `Employee` (action_level, allowed_categories, warehouse_scope). Backend `permissions.ts` với `can()` + `loadActor()`. API + UI User Management |

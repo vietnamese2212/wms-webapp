@@ -1,5 +1,8 @@
 // Auth
 export type Role = 'ADMIN' | 'OWN' | 'WAREHOUSE_MANAGER' | 'WAREHOUSE_STAFF' | 'DRIVER' | 'HR_MANAGER'
+export type ActionLevel = 'NATIONAL_MANAGER' | 'SITE_MANAGER' | 'SUPERVISOR' | 'OPERATOR' | 'STAFF' | 'VIEWER'
+export type AppModule   = 'inbound' | 'outbound' | 'inventory' | 'reports' | 'admin'
+export type Category    = 'TP' | 'NVL' | 'POSM' | 'BAO_BI'
 
 export interface User {
   id: string
@@ -10,6 +13,54 @@ export interface User {
   department?: string
   warehouse_id?: string
   warehouse_name?: string
+  // Permission system fields
+  action_level?:       ActionLevel
+  allowed_categories?: Category[]
+  warehouse_scope?:    'NATIONAL' | 'ASSIGNED'
+  warehouse_ids?:      string[]
+  allowed_modules?:    AppModule[]
+}
+
+// ─── Permission masterdata ────────────────────────────────────────────────────
+
+export interface Department {
+  id:              string
+  name:            string
+  code:            string
+  allowed_modules: AppModule[]
+  is_active:       boolean
+}
+
+export interface JobTitle {
+  id:                 string
+  name:               string
+  department_id:      string
+  action_level:       ActionLevel
+  allowed_categories: Category[]
+  warehouse_scope:    'NATIONAL' | 'ASSIGNED'
+  is_active:          boolean
+  department?:        Pick<Department, 'id' | 'name' | 'code'>
+}
+
+export interface EmployeeRecord {
+  id:                 string
+  name:               string
+  employee_code:      string
+  email:              string | null
+  phone:              string | null
+  role:               Role
+  department:         string | null       // legacy text field
+  department_id:      string | null
+  job_title_id:       string | null
+  action_level:       ActionLevel | null
+  allowed_categories: Category[]
+  warehouse_scope:    'NATIONAL' | 'ASSIGNED'
+  warehouse_id:       string | null       // legacy single warehouse
+  is_active:          boolean
+  created_at:         string
+  dept?:              Pick<Department, 'id' | 'name' | 'code'> | null
+  job_title?:         Pick<JobTitle, 'id' | 'name' | 'action_level' | 'allowed_categories' | 'warehouse_scope'> | null
+  warehouse_access?:  { warehouse_id: string; warehouse: { id: string; code: string; name: string } }[]
 }
 
 // WMS

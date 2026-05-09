@@ -12,6 +12,7 @@ import Vehicles from '@/pages/tms/Vehicles'
 import Deliveries from '@/pages/tms/Deliveries'
 import Employees from '@/pages/hr/Employees'
 import Schedule from '@/pages/hr/Schedule'
+import UserManagement from '@/pages/masterdata/UserManagement'
 import Settings from '@/pages/Settings'
 import Login from '@/pages/Login'
 
@@ -42,6 +43,7 @@ export default function App() {
         <Route path="/tms/deliveries" element={<Deliveries />} />
         <Route path="/hr/employees" element={<Employees />} />
         <Route path="/hr/schedule" element={<Schedule />} />
+        <Route path="/masterdata/users" element={<UserManagement />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

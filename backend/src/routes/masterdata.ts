@@ -1,9 +1,11 @@
 import { Router } from 'express'
-import * as warehouse from '../controllers/masterdata/warehouseController'
-import * as location from '../controllers/masterdata/locationController'
+import * as warehouse   from '../controllers/masterdata/warehouseController'
+import * as location    from '../controllers/masterdata/locationController'
 import * as manufacturer from '../controllers/masterdata/manufacturerController'
-import * as material from '../controllers/masterdata/materialController'
-import * as shiftQa from '../controllers/masterdata/shiftQaController'
+import * as material    from '../controllers/masterdata/materialController'
+import * as shiftQa     from '../controllers/masterdata/shiftQaController'
+import * as department  from '../controllers/masterdata/departmentController'
+import * as employee    from '../controllers/masterdata/employeeController'
 
 const router = Router()
 
@@ -45,5 +47,20 @@ router.put('/import-shifts/:id',    shiftQa.updateImportShift)
 router.get('/qa-statuses',          shiftQa.listQAStatuses)
 router.post('/qa-statuses',         shiftQa.createQAStatus)
 router.put('/qa-statuses/:id',      shiftQa.updateQAStatus)
+
+// Department + JobTitle
+router.get('/departments',          department.listDepartments)
+router.post('/departments',         department.createDepartment)
+router.put('/departments/:id',      department.updateDepartment)
+router.get('/job-titles',           department.listJobTitles)    // ?department_id=
+router.post('/job-titles',          department.createJobTitle)
+router.put('/job-titles/:id',       department.updateJobTitle)
+
+// Employee (nhân sự + phân quyền)
+router.get('/employees',            employee.listEmployees)      // ?department_id=&search=&is_active=
+router.post('/employees',           employee.createEmployee)
+router.get('/employees/:id',        employee.getEmployee)
+router.patch('/employees/:id',      employee.updateEmployee)
+router.put('/employees/:id/warehouses', employee.setWarehouseAccess)
 
 export default router

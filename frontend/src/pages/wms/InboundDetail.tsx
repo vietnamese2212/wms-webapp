@@ -64,6 +64,35 @@ function ScanFeedback({ state }: { state: FeedbackState }) {
   )
 }
 
+// ─── QR parsing ───────────────────────────────────────────────
+
+type ParsedQR =
+  | { valid: true; matCode: string; cycle: string; machine: string; seqNo: number | null; manufacturer: string | null; productionDate: Date | null }
+  | { valid: false; error: string }
+
+function parseQR(raw: string): ParsedQR {
+  const parts = raw.split('_')
+  if (parts.length < 5) {
+    return { valid: false, error: `Định dạng không đúng (${parts.length} phần, cần ≥5)` }
+  }
+  const [datePart, matCode, cycle, machine, seqStr, manufacturer] = parts
+  let productionDate: Date | null = null
+  if (datePart?.length === 6) {
+    const d = new Date(`20${datePart.slice(4)}-${datePart.slice(2, 4)}-${datePart.slice(0, 2)}`)
+    if (!isNaN(d.getTime())) productionDate = d
+  }
+  const seqNo = parseInt(seqStr ?? '', 10)
+  return {
+    valid: true,
+    matCode: matCode ?? '',
+    cycle: cycle ?? '',
+    machine: machine ?? '',
+    seqNo: isNaN(seqNo) ? null : seqNo,
+    manufacturer: manufacturer ?? null,
+    productionDate,
+  }
+}
+
 // ─── Scan dialog (embedded QR camera + sticky settings) ───────
 
 interface ScanDialogProps {
@@ -81,26 +110,27 @@ function ScanDialog({ order, open, onClose }: ScanDialogProps) {
   const [stackLayer, setStackLayer] = useState('1')
   const [feedback,   setFeedback]   = useState<FeedbackState | null>(null)
   const [pendingQR,  setPendingQR]  = useState<string | null>(null)
+  const [parsedQR,   setParsedQR]   = useState<ParsedQR | null>(null)
 
   useEffect(() => {
     if (open) {
       setFeedback(null)
       setPendingQR(null)
+      setParsedQR(null)
       setCartons(order.material?.cartons_per_pallet?.toString() ?? '0')
       setStackLayer('1')
     }
   }, [open, order.material?.cartons_per_pallet])
 
-  // Step 1: QR detected → preview for confirmation
   function handleScan(raw: string) {
     playBeep()
     setPendingQR(raw)
+    setParsedQR(parseQR(raw))
     setFeedback(null)
   }
 
-  // Step 2: operator reviews and clicks Save
   function handleSave() {
-    if (!pendingQR) return
+    if (!pendingQR || !parsedQR?.valid) return
     const locationId = order.location_id
     if (!locationId) {
       setFeedback({ type: 'error', msg: 'Chưa chọn vị trí. Đóng dialog và chọn vị trí trước.' })
@@ -118,11 +148,11 @@ function ScanDialog({ order, open, onClose }: ScanDialogProps) {
       {
         onSuccess: (data) => {
           setPendingQR(null)
+          setParsedQR(null)
           setFeedback({
             type: 'success',
             msg: `✓ ${data.entry.pallet_code} · ${data.entry.cartons_imported} thùng · ${data.entry.location?.location_code ?? ''}`,
           })
-          // Auto-resume camera after 1.5s
           setTimeout(() => {
             scannerRef.current?.resume()
             setFeedback(null)
@@ -130,6 +160,7 @@ function ScanDialog({ order, open, onClose }: ScanDialogProps) {
         },
         onError: (err) => {
           setPendingQR(null)
+          setParsedQR(null)
           const msg = (err as AxiosError<{ error: { message: string } }>)
             ?.response?.data?.error?.message ?? 'Lỗi không xác định'
           setFeedback({ type: 'error', msg })
@@ -138,11 +169,18 @@ function ScanDialog({ order, open, onClose }: ScanDialogProps) {
     )
   }
 
-  function handleRetry() {
-    setPendingQR(null)
-    setFeedback(null)
-    scannerRef.current?.resume()
+  function handleCancel() {
+    if (pendingQR) {
+      setPendingQR(null)
+      setParsedQR(null)
+      setFeedback(null)
+      scannerRef.current?.resume()
+    } else {
+      onClose()
+    }
   }
+
+  const canSave = !!pendingQR && parsedQR?.valid === true && !isPending
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose() }}>
@@ -158,12 +196,28 @@ function ScanDialog({ order, open, onClose }: ScanDialogProps) {
         <div className="space-y-3">
           <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} />
 
-          {/* Pending QR preview */}
-          {pendingQR && !feedback && (
-            <div className="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2">
-              <p className="text-[10px] text-blue-400 mb-0.5">QR đã nhận – kiểm tra rồi bấm Lưu:</p>
-              <p className="font-mono text-xs text-blue-800 font-medium break-all">{pendingQR}</p>
-            </div>
+          {/* Immediate QR parse result — shown right after scan */}
+          {pendingQR && parsedQR && !feedback && (
+            parsedQR.valid ? (
+              <div className="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 space-y-1">
+                <p className="font-mono text-xs text-blue-800 break-all">{pendingQR}</p>
+                <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-[10px] text-blue-600">
+                  {parsedQR.productionDate && <span>NSX: {format(parsedQR.productionDate, 'dd/MM/yy')}</span>}
+                  {parsedQR.cycle && <span>CK: {parsedQR.cycle}</span>}
+                  {parsedQR.machine && <span>Máy: {parsedQR.machine}</span>}
+                  {parsedQR.seqNo != null && <span>STT: {parsedQR.seqNo}</span>}
+                  {parsedQR.manufacturer && <span>NMSX: {parsedQR.manufacturer}</span>}
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2">
+                <p className="text-xs text-red-700 flex items-start gap-1.5">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                  {parsedQR.error}
+                </p>
+                <p className="font-mono text-[10px] text-red-400 break-all mt-1">{pendingQR}</p>
+              </div>
+            )
           )}
 
           {feedback && <ScanFeedback state={feedback} />}
@@ -190,22 +244,15 @@ function ScanDialog({ order, open, onClose }: ScanDialogProps) {
             </div>
           </div>
 
-          {/* Action row: Save / Cancel pending QR, or Retry after error */}
-          {pendingQR && (
-            <div className="flex gap-2">
-              <Button className="flex-1" disabled={isPending} onClick={handleSave}>
-                {isPending ? 'Đang lưu...' : 'Lưu pallet'}
-              </Button>
-              <Button variant="ghost" disabled={isPending} onClick={handleRetry}>
-                Huỷ
-              </Button>
-            </div>
-          )}
-          {!pendingQR && feedback?.type === 'error' && (
-            <Button variant="outline" className="w-full" onClick={handleRetry}>
-              Quét tiếp
+          {/* Save + Cancel — where Upload button was */}
+          <div className="flex gap-2">
+            <Button className="flex-1" disabled={!canSave} onClick={handleSave}>
+              {isPending ? 'Đang lưu...' : 'Lưu pallet'}
             </Button>
-          )}
+            <Button variant="outline" disabled={isPending} onClick={handleCancel}>
+              Huỷ
+            </Button>
+          </div>
 
           <p className="text-[10px] text-slate-400 text-center">
             Định dạng: <span className="font-mono">ddmmyy_Mã_CK_Máy_STT_NMSX</span>

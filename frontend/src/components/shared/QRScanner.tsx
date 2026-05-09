@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { Html5Qrcode, Html5QrcodeScannerState } from 'html5-qrcode'
-import { Camera, Upload, X } from 'lucide-react'
+import { Camera, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 interface QRScannerProps {
@@ -58,9 +58,9 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
                 onDecode,
                 () => {},
               )
-              .catch(() => setError('Không thể mở camera. Dùng nút upload ảnh phía dưới.'))
+              .catch(() => setError('Không thể mở camera. Kiểm tra quyền truy cập camera.'))
           } else {
-            setError('Không thể mở camera. Dùng nút upload ảnh phía dưới.')
+            setError('Không thể mở camera. Kiểm tra quyền truy cập camera.')
           }
         })
 
@@ -68,20 +68,6 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
         scanner.stop().catch(() => {}).finally(() => scanner.clear())
       }
     }, []) // eslint-disable-line react-hooks/exhaustive-deps
-
-    async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
-      const file = e.target.files?.[0]
-      if (!file) return
-      try {
-        const scanner = new Html5Qrcode('qr-file-scanner')
-        const result = await scanner.scanFile(file, false)
-        scanner.clear()
-        onScan(result)
-      } catch {
-        setError('Không đọc được QR từ ảnh. Thử ảnh khác.')
-      }
-      e.target.value = ''
-    }
 
     return (
       <div className="flex flex-col gap-3">
@@ -121,15 +107,6 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
           </button>
         </div>
 
-        <div id="qr-file-scanner" className="hidden" />
-
-        <label className="cursor-pointer">
-          <input type="file" accept="image/*" className="sr-only" onChange={handleFileUpload} />
-          <div className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-slate-300 p-3 text-sm text-slate-500 hover:border-blue-400 hover:text-blue-500 transition-colors">
-            <Upload className="h-4 w-4" />
-            Upload ảnh QR (không có camera)
-          </div>
-        </label>
       </div>
     )
   }

@@ -75,10 +75,14 @@ function validateQR(raw: string, order: InboundOrder): ValidationResult {
   if (parts.length < 5) {
     return { ok: false, msg: `Định dạng QR không hợp lệ (${parts.length} phần, cần ≥5)` }
   }
-  const qrMat  = (parts[1] ?? '').trim().toUpperCase()
+  const qrMat   = (parts[1] ?? '').trim().toUpperCase()
   const orderMat = (order.material?.material_code ?? '').trim().toUpperCase()
   if (orderMat && qrMat !== orderMat) {
     return { ok: false, msg: `Sai mã hàng — QR: "${parts[1]}", phiếu: "${order.material?.material_code}"` }
+  }
+  const alreadyIn = order.inventory_entries?.some(e => e.pallet_code === raw)
+  if (alreadyIn) {
+    return { ok: false, msg: 'Pallet này đã được nhập trong phiếu' }
   }
   if (!order.location_id) {
     return { ok: false, msg: 'Chưa chọn vị trí — đóng dialog và chọn vị trí trước' }
@@ -187,31 +191,7 @@ function ScanDialog({ order, open, onClose }: ScanDialogProps) {
         </DialogHeader>
 
         <div className="space-y-3">
-          <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} />
-
-          {/* Validation result — shown immediately after scan */}
-          {pendingQR && validation && !feedback && (
-            validation.ok ? (
-              <div className="rounded-lg bg-green-50 border border-green-200 px-3 py-2.5 flex items-center gap-2">
-                <CheckCircle2 className="h-4 w-4 text-green-600 shrink-0" />
-                <div>
-                  <p className="text-sm font-medium text-green-800">{validation.msg}</p>
-                  <p className="font-mono text-[10px] text-green-500 truncate max-w-[320px]">{pendingQR}</p>
-                </div>
-              </div>
-            ) : (
-              <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2.5 flex items-start gap-2">
-                <AlertTriangle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-sm font-medium text-red-700">{validation.msg}</p>
-                  <p className="font-mono text-[10px] text-red-400 truncate max-w-[320px]">{pendingQR}</p>
-                </div>
-              </div>
-            )
-          )}
-
-          {feedback && <ScanFeedback state={feedback} />}
-
+          {/* Inputs above camera — user sets before scanning */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
               <Label className="text-xs">Số thùng / pallet</Label>
@@ -234,7 +214,32 @@ function ScanDialog({ order, open, onClose }: ScanDialogProps) {
             </div>
           </div>
 
-          {/* Save + Cancel — where Upload button was */}
+          <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} />
+
+          {/* Validation result — immediately after camera, before Save */}
+          {pendingQR && validation && !feedback && (
+            validation.ok ? (
+              <div className="rounded-lg bg-green-50 border border-green-200 px-3 py-2.5 flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 text-green-600 shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-green-800">{validation.msg}</p>
+                  <p className="font-mono text-[10px] text-green-500 truncate">{pendingQR}</p>
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2.5 flex items-start gap-2">
+                <AlertTriangle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-red-700">{validation.msg}</p>
+                  <p className="font-mono text-[10px] text-red-400 truncate">{pendingQR}</p>
+                </div>
+              </div>
+            )
+          )}
+
+          {feedback && <ScanFeedback state={feedback} />}
+
+          {/* Save + Cancel — right below validation, no scroll needed */}
           <div className="flex gap-2">
             <Button className="flex-1" disabled={!canSave} onClick={handleSave}>
               {isPending ? 'Đang lưu...' : 'Lưu pallet'}
@@ -243,10 +248,6 @@ function ScanDialog({ order, open, onClose }: ScanDialogProps) {
               Huỷ
             </Button>
           </div>
-
-          <p className="text-[10px] text-slate-400 text-center">
-            Định dạng: <span className="font-mono">ddmmyy_Mã_CK_Máy_STT_NMSX</span>
-          </p>
         </div>
       </DialogContent>
     </Dialog>

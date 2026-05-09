@@ -332,12 +332,12 @@ export default function Inbound() {
             )}
           </div>
           {/* Shift filter */}
-          <Select value={shiftId} onValueChange={setShiftId}>
+          <Select value={shiftId || '__all__'} onValueChange={v => setShiftId(v === '__all__' ? '' : v)}>
             <SelectTrigger className="h-8 text-sm w-[120px]">
               <SelectValue placeholder="Tất cả ca" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="">Tất cả ca</SelectItem>
+              <SelectItem value="__all__">Tất cả ca</SelectItem>
               {(shifts as { id: string; name: string }[]).map(s => (
                 <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
               ))}

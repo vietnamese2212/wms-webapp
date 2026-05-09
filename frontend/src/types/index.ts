@@ -273,8 +273,9 @@ export interface InboundOrder {
   created_by_emp:  { id: string; name: string } | null
   updated_by_emp:  { id: string; name: string } | null
   imported_by_emp: { id: string; name: string } | null
-  _count:          { inventory_entries: number }
-  total_cartons?:  number
+  _count:              { inventory_entries: number }
+  total_cartons?:      number
+  location_used_slots?: number
   created_at:      string
   updated_at:      string
   inventory_entries?: PalletEntry[]

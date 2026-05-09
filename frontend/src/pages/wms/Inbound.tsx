@@ -389,10 +389,13 @@ export default function Inbound() {
   )
 }
 
-function statusColors(status: InboundOrder['status'], pallets: number) {
-  if (status === 'COMPLETED') return { bg: 'bg-blue-50',   hover: 'hover:bg-blue-100',   text: 'text-blue-700'  }
-  if (pallets > 0)            return { bg: 'bg-amber-50',  hover: 'hover:bg-amber-100',  text: 'text-amber-600' }
-  return                             { bg: '',              hover: 'hover:bg-slate-50',   text: 'text-slate-400' }
+function statusColors(order: InboundOrder) {
+  const used = order.location_used_slots ?? 0
+  const max  = order.location?.max_pallets ?? 0
+  const full = max > 0 && used >= max
+  if (full)    return { bg: 'bg-blue-50',   hover: 'hover:bg-blue-100',   text: 'text-blue-700'  }
+  if (used > 0) return { bg: 'bg-amber-50',  hover: 'hover:bg-amber-100',  text: 'text-amber-600' }
+  return              { bg: '',              hover: 'hover:bg-slate-50',   text: 'text-slate-400' }
 }
 
 function InboundRow({ order, onClick }: { order: InboundOrder; onClick: () => void }) {
@@ -402,7 +405,7 @@ function InboundRow({ order, onClick }: { order: InboundOrder; onClick: () => vo
   const matName  = order.material?.short_name ?? order.material?.material_description ?? '—'
   const matCode  = order.material?.material_code ?? ''
   const pallets  = order._count.inventory_entries
-  const { bg, hover, text } = statusColors(order.status, pallets)
+  const { bg, hover, text } = statusColors(order)
 
   return (
     <TableRow className={`cursor-pointer transition-colors ${bg} ${hover}`} onClick={onClick}>

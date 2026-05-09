@@ -42,15 +42,22 @@ function generateImportCode(date: Date, seq: number): string {
 }
 
 async function attachCount(order: Record<string, unknown>): Promise<Record<string, unknown>> {
-  const { data } = await supabase
-    .from('InventoryEntry')
-    .select('cartons_imported')
-    .eq('import_order_id', order.id as string)
-  const entries = (data ?? []) as { cartons_imported: number }[]
+  const locationId = order.location_id as string | null
+
+  const [entriesRes, slotsRes] = await Promise.all([
+    supabase.from('InventoryEntry').select('cartons_imported').eq('import_order_id', order.id as string),
+    locationId
+      ? supabase.from('InventoryEntry').select('*', { count: 'exact', head: true })
+          .eq('location_id', locationId).eq('stack_layer', 1).in('status', ['IN_STOCK', 'PARTIAL'])
+      : Promise.resolve({ count: 0, data: null, error: null }),
+  ])
+
+  const entries = (entriesRes.data ?? []) as { cartons_imported: number }[]
   return {
     ...order,
     _count: { inventory_entries: entries.length },
     total_cartons: entries.reduce((sum, e) => sum + (e.cartons_imported || 0), 0),
+    location_used_slots: slotsRes.count ?? 0,
   }
 }
 

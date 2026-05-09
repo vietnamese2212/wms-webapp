@@ -22,7 +22,9 @@
       "Bash(node -e ' *)",
       "Bash(rm run-migration.js)",
       "Bash(npm uninstall *)",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(claude /cost)",
+      "Bash(claude --version)"
     ]
   }
 }

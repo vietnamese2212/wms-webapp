@@ -288,8 +288,8 @@ export default function UserManagement() {
   const [editingEmp,  setEditingEmp]  = useState<EmployeeRecord | null | 'new'>('new' as never)
   const [showDialog,  setShowDialog]  = useState(false)
 
-  const { data: departments = [] }               = useDepartments()
-  const { data: employees = [], isLoading }       = useEmployeeRecords({
+  const { data: departments = [] } = useDepartments()
+  const { data: employees = [], isLoading, isError, error } = useEmployeeRecords({
     department_id: filterDept || undefined,
     search: search || undefined,
   })
@@ -338,6 +338,13 @@ export default function UserManagement() {
           </SelectContent>
         </Select>
       </div>
+
+      {/* API error */}
+      {isError && (
+        <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+          Lỗi tải dữ liệu: {(error as { message?: string })?.message ?? 'Không kết nối được backend'}
+        </div>
+      )}
 
       {/* Table */}
       <Card>

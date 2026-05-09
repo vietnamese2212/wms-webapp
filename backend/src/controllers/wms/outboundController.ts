@@ -484,6 +484,82 @@ export async function scanItem(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
+// ─── Delete scan entry (hủy QR đã quét) ─────────────────────
+
+export async function deleteScanEntry(req: Request, res: Response) {
+  try {
+    const { gdoId, itemId, scanId } = req.params
+
+    const { data: scan } = await (supabase.from('OutboundScanEntry') as any)
+      .select('*').eq('id', scanId).eq('item_id', itemId).single()
+    if (!scan) return fail(res, 'Không tìm thấy bản ghi quét', 404)
+
+    const t = now()
+
+    // Restore inventory
+    if (scan.inventory_entry_id) {
+      const { data: inv } = await (supabase.from('InventoryEntry') as any)
+        .select('cartons_remaining, cartons_imported').eq('id', scan.inventory_entry_id).single()
+      if (inv) {
+        const restored  = Number(inv.cartons_remaining ?? 0) + Number(scan.cartons_scanned)
+        const maxImport = Number(inv.cartons_imported)
+        const invStatus = restored >= maxImport ? 'IN_STOCK' : 'PARTIAL'
+        await (supabase.from('InventoryEntry') as any)
+          .update({ cartons_remaining: restored, status: invStatus, updated_at: t })
+          .eq('id', scan.inventory_entry_id)
+      }
+    }
+
+    await (supabase.from('OutboundScanEntry') as any).delete().eq('id', scanId)
+
+    // Recalculate item
+    const { data: item } = await (supabase.from('OutboundItem') as any)
+      .select('*').eq('id', itemId).single()
+    if (item) {
+      const { data: remainingScans } = await (supabase.from('OutboundScanEntry') as any)
+        .select('cartons_scanned').eq('item_id', itemId)
+      const newCartons  = (remainingScans ?? []).reduce((s: number, e: any) => s + Number(e.cartons_scanned), 0)
+      const newItemStatus = newCartons === 0 ? 'PENDING'
+        : newCartons >= Number(item.cartons_ordered) ? 'COMPLETED'
+        : 'IN_PROGRESS'
+      await (supabase.from('OutboundItem') as any)
+        .update({ cartons_scanned: newCartons, status: newItemStatus, updated_at: t }).eq('id', itemId)
+
+      // Recalculate DO
+      const { data: siblingItems } = await (supabase.from('OutboundItem') as any)
+        .select('id, status').eq('do_id', item.do_id)
+      const allStatuses = (siblingItems ?? []).map((i: any) =>
+        i.id === itemId ? newItemStatus : i.status
+      )
+      const doCompleted   = allStatuses.every((s: string) => s === 'COMPLETED')
+      const doAnyProgress = allStatuses.some((s: string) => s !== 'PENDING')
+      const doStatus      = doCompleted ? 'COMPLETED' : doAnyProgress ? 'IN_PROGRESS' : 'PENDING'
+      const { data: doRow } = await (supabase.from('OutboundDelivery') as any)
+        .update({ status: doStatus, updated_at: t })
+        .eq('id', item.do_id).select('gdo_id').single()
+
+      // Recalculate GDO (respect started_at — once started, minimum IN_PROGRESS)
+      if (doRow?.gdo_id) {
+        const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
+          .select('started_at').eq('id', gdoId).single()
+        const { data: siblingDOs } = await (supabase.from('OutboundDelivery') as any)
+          .select('id, status').eq('gdo_id', doRow.gdo_id)
+        const doStatuses = (siblingDOs ?? []).map((d: any) =>
+          d.id === item.do_id ? doStatus : d.status
+        )
+        const gdoCompleted   = doStatuses.every((s: string) => s === 'COMPLETED')
+        const gdoAnyProgress = doStatuses.some((s: string) => s !== 'PENDING')
+        let gdoStatus = gdoCompleted ? 'COMPLETED' : gdoAnyProgress ? 'IN_PROGRESS' : 'PENDING'
+        if (gdo?.started_at && gdoStatus === 'PENDING') gdoStatus = 'IN_PROGRESS'
+        await (supabase.from('GroupDeliveryOrder') as any)
+          .update({ status: gdoStatus, updated_at: t }).eq('id', doRow.gdo_id)
+      }
+    }
+
+    return ok(res, { success: true })
+  } catch (e) { return fail(res, String(e)) }
+}
+
 // ─── Manual complete item (Pallet Loscam) ────────────────────
 
 export async function manualCompleteItem(req: Request, res: Response) {

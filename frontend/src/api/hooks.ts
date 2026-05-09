@@ -600,6 +600,15 @@ export function useManualCompleteItem() {
   })
 }
 
+export function useDeleteOutboundScanEntry() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ gdoId, itemId, scanId }: { gdoId: string; itemId: string; scanId: string }) =>
+      apiClient.delete(`/wms/outbound/${gdoId}/items/${itemId}/scans/${scanId}`).then(r => r.data.data),
+    onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ['gdo', v.gdoId] }),
+  })
+}
+
 export function useAssignGDO() {
   const qc = useQueryClient()
   return useMutation({

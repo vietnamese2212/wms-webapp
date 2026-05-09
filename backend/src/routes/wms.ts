@@ -49,8 +49,9 @@ router.get('/outbound/:id',                                   outbound.getGDO)
 router.patch('/outbound/:id',                                 outbound.patchGDO)
 router.post('/outbound/:id/assign',                           outbound.assignGDO)
 router.post('/outbound/:id/start',                            outbound.startGDO)
-router.post('/outbound/:gdoId/items/:itemId/scan',            outbound.scanItem)
-router.post('/outbound/:gdoId/items/:itemId/manual-complete', outbound.manualCompleteItem)
-router.get('/outbound/:gdoId/items/:itemId/inventory',        outbound.getItemInventory)
+router.post('/outbound/:gdoId/items/:itemId/scan',                  outbound.scanItem)
+router.delete('/outbound/:gdoId/items/:itemId/scans/:scanId',       outbound.deleteScanEntry)
+router.post('/outbound/:gdoId/items/:itemId/manual-complete',       outbound.manualCompleteItem)
+router.get('/outbound/:gdoId/items/:itemId/inventory',              outbound.getItemInventory)
 
 export default router

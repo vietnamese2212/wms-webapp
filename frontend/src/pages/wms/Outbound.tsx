@@ -2,7 +2,7 @@ import { useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
-import { Upload, Search, Truck, CheckCircle2, AlertTriangle } from 'lucide-react'
+import { Upload, Search, Truck, CheckCircle2, AlertTriangle, CalendarDays, X } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
 import { Input }  from '@/components/ui/input'
@@ -10,6 +10,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { useGDOs, useUploadGDOExcel } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import type { GDO, OutboundStatus } from '@/types'
+
+const TODAY = new Date().toISOString().slice(0, 10)
 
 const statusCls: Record<OutboundStatus, string> = {
   PENDING:     'bg-slate-100 text-slate-600',
@@ -35,12 +37,14 @@ export default function Outbound() {
   const fileRef  = useRef<HTMLInputElement>(null)
 
   const [search,    setSearch]    = useState('')
+  const [date,      setDate]      = useState(TODAY)
   const [uploadErr, setUploadErr] = useState<string | null>(null)
   const [uploadOk,  setUploadOk]  = useState<string | null>(null)
 
   const { data: gdos = [], isLoading } = useGDOs({
     warehouse_id: user?.warehouse_id || undefined,
     search: search || undefined,
+    date:   date   || undefined,
   })
   const { mutate: uploadExcel, isPending: uploading } = useUploadGDOExcel()
 
@@ -65,6 +69,10 @@ export default function Outbound() {
     )
     e.target.value = ''
   }
+
+  const dateLabel = date
+    ? format(parseISO(date), 'EEEE, dd/MM/yyyy', { locale: vi })
+    : 'Tất cả ngày'
 
   return (
     <div className="flex flex-col h-full">
@@ -93,36 +101,80 @@ export default function Outbound() {
           </div>
         )}
 
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-          <Input className="pl-9 h-8 text-sm" placeholder="Tìm số xe…" value={search} onChange={e => setSearch(e.target.value)} />
+        {/* Filters */}
+        <div className="flex gap-2">
+          {/* Date filter */}
+          <div className="relative flex items-center gap-1.5">
+            <CalendarDays className="absolute left-2.5 h-4 w-4 text-slate-400 pointer-events-none" />
+            <Input
+              type="date"
+              className="pl-8 h-8 text-sm w-[160px]"
+              value={date}
+              onChange={e => setDate(e.target.value)}
+            />
+            {date && date !== TODAY && (
+              <button
+                className="ml-1 text-xs text-slate-400 hover:text-slate-700 underline whitespace-nowrap"
+                onClick={() => setDate(TODAY)}
+              >
+                Hôm nay
+              </button>
+            )}
+            {date && (
+              <button
+                className="p-0.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-600"
+                title="Xem tất cả ngày"
+                onClick={() => setDate('')}
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+          {/* Search */}
+          <div className="relative flex-1">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+            <Input className="pl-8 h-8 text-sm" placeholder="Tìm số xe…" value={search} onChange={e => setSearch(e.target.value)} />
+          </div>
         </div>
+
+        {/* Date label */}
+        <p className="text-xs text-slate-500 -mt-1">
+          {date ? (
+            <>
+              <span className="font-medium text-slate-700">{dateLabel}</span>
+              {date === TODAY && <span className="ml-1.5 text-blue-600 font-medium">· Hôm nay</span>}
+            </>
+          ) : (
+            <span className="italic">Hiển thị tất cả ngày</span>
+          )}
+          <span className="ml-1.5">— {gdos.length} chuyến xe</span>
+        </p>
       </div>
 
       {/* Table */}
       <div className="flex-1 overflow-auto pb-20 lg:pb-4">
         {isLoading ? (
           <div className="p-4 space-y-2">
-            {[1,2,3,4].map(i => <div key={i} className="h-12 rounded bg-slate-100 animate-pulse" />)}
+            {[1,2,3,4].map(i => <div key={i} className="h-14 rounded bg-slate-100 animate-pulse" />)}
           </div>
         ) : gdos.length === 0 ? (
           <div className="flex flex-col items-center gap-2 py-16 text-slate-400">
             <Truck className="h-10 w-10 opacity-30" />
-            <p className="text-sm">{search ? 'Không tìm thấy chuyến xe' : 'Chưa có chuyến xe nào'}</p>
-            <p className="text-xs">Upload file Excel để bắt đầu</p>
+            <p className="text-sm">{search ? 'Không tìm thấy chuyến xe' : date ? `Không có chuyến xe ngày ${format(parseISO(date), 'dd/MM/yyyy')}` : 'Chưa có chuyến xe nào'}</p>
+            {!date && <p className="text-xs">Upload file Excel để bắt đầu</p>}
           </div>
         ) : (
           <Table>
             <TableHeader>
               <TableRow className="bg-slate-50">
-                <TableHead className="text-xs font-medium text-slate-500 whitespace-nowrap">Ngày xuất</TableHead>
-                <TableHead className="text-xs font-medium text-slate-500 whitespace-nowrap">Số xe</TableHead>
-                <TableHead className="text-xs font-medium text-slate-500 whitespace-nowrap">Loại xuất</TableHead>
-                <TableHead className="text-xs font-medium text-slate-500 whitespace-nowrap">ĐVVT</TableHead>
-                <TableHead className="text-xs font-medium text-slate-500 whitespace-nowrap">Tên NPP</TableHead>
-                <TableHead className="text-xs font-medium text-slate-500 text-right whitespace-nowrap">Tổng thùng</TableHead>
-                <TableHead className="text-xs font-medium text-slate-500 text-right whitespace-nowrap">Tổng pallet</TableHead>
-                <TableHead className="text-xs font-medium text-slate-500 whitespace-nowrap">Trạng thái</TableHead>
+                <TableHead className="text-xs font-medium text-slate-500 whitespace-nowrap px-3 py-2">Ngày xuất</TableHead>
+                <TableHead className="text-xs font-medium text-slate-500 whitespace-nowrap px-3 py-2">Số xe</TableHead>
+                <TableHead className="text-xs font-medium text-slate-500 whitespace-nowrap px-3 py-2 hidden sm:table-cell">Loại xuất</TableHead>
+                <TableHead className="text-xs font-medium text-slate-500 whitespace-nowrap px-3 py-2 hidden sm:table-cell">ĐVVT</TableHead>
+                <TableHead className="text-xs font-medium text-slate-500 whitespace-nowrap px-3 py-2 hidden md:table-cell">Tên NPP</TableHead>
+                <TableHead className="text-xs font-medium text-slate-500 text-right whitespace-nowrap px-3 py-2">Tổng thùng</TableHead>
+                <TableHead className="text-xs font-medium text-slate-500 text-right whitespace-nowrap px-3 py-2 hidden sm:table-cell">Pallet</TableHead>
+                <TableHead className="text-xs font-medium text-slate-500 whitespace-nowrap px-3 py-2">Trạng thái</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -136,7 +188,7 @@ export default function Outbound() {
 }
 
 function GDORow({ gdo, onClick }: { gdo: GDO; onClick: () => void }) {
-  const isToday   = gdo.delivery_date === new Date().toISOString().slice(0, 10)
+  const isToday   = gdo.delivery_date === TODAY
   const dateLabel = format(parseISO(gdo.delivery_date), 'dd/MM/yyyy', { locale: vi })
   const npp       = gdo.distributor_names?.join(', ') ?? '—'
 
@@ -145,7 +197,7 @@ function GDORow({ gdo, onClick }: { gdo: GDO; onClick: () => void }) {
       className="cursor-pointer hover:bg-slate-50 transition-colors"
       onClick={onClick}
     >
-      <TableCell className="py-2">
+      <TableCell className="px-3 py-2">
         <div className="flex items-center gap-1.5">
           <span className="text-lg font-medium tabular-nums">{dateLabel}</span>
           {isToday && gdo.status !== 'COMPLETED' && (
@@ -156,21 +208,27 @@ function GDORow({ gdo, onClick }: { gdo: GDO; onClick: () => void }) {
           )}
         </div>
       </TableCell>
-      <TableCell className="py-2">
+      <TableCell className="px-3 py-2">
         <span className="text-lg font-mono font-semibold">{gdo.group_code}</span>
       </TableCell>
-      <TableCell className="py-2"><span className="text-lg text-slate-700">{gdo.export_type ?? '—'}</span></TableCell>
-      <TableCell className="py-2"><span className="text-lg text-slate-700">{gdo.dvvt ?? '—'}</span></TableCell>
-      <TableCell className="py-2 max-w-[180px] truncate" title={npp}><span className="text-lg text-slate-700">{npp}</span></TableCell>
-      <TableCell className="py-2 text-right">
+      <TableCell className="px-3 py-2 hidden sm:table-cell">
+        <span className="text-lg text-slate-700">{gdo.export_type ?? '—'}</span>
+      </TableCell>
+      <TableCell className="px-3 py-2 hidden sm:table-cell">
+        <span className="text-lg text-slate-700">{gdo.dvvt ?? '—'}</span>
+      </TableCell>
+      <TableCell className="px-3 py-2 max-w-[180px] truncate hidden md:table-cell" title={npp}>
+        <span className="text-lg text-slate-700">{npp}</span>
+      </TableCell>
+      <TableCell className="px-3 py-2 text-right">
         <span className="text-lg font-semibold tabular-nums">{gdo.total_cartons ?? 0}</span>
         <span className="text-xs text-slate-400 ml-1">thùng</span>
       </TableCell>
-      <TableCell className="py-2 text-right">
+      <TableCell className="px-3 py-2 text-right hidden sm:table-cell">
         <span className="text-lg font-semibold tabular-nums">{gdo.total_pallets ?? 0}</span>
         <span className="text-xs text-slate-400 ml-1">pl</span>
       </TableCell>
-      <TableCell className="py-2"><StatusBadge status={gdo.status} /></TableCell>
+      <TableCell className="px-3 py-2"><StatusBadge status={gdo.status} /></TableCell>
     </TableRow>
   )
 }

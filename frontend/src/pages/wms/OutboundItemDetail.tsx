@@ -4,16 +4,19 @@ import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
 import {
-  ArrowLeft, QrCode, CheckCircle2, AlertTriangle, Package,
+  ArrowLeft, QrCode, CheckCircle2, AlertTriangle, Package, Trash2,
 } from 'lucide-react'
 import { Button }  from '@/components/ui/button'
 import { Card }    from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { QRScanner } from '@/components/shared/QRScanner'
 import type { QRScannerHandle } from '@/components/shared/QRScanner'
-import { useGDO, useScanOutboundItem, useManualCompleteItem } from '@/api/hooks'
+import { useGDO, useScanOutboundItem, useManualCompleteItem, useDeleteOutboundScanEntry } from '@/api/hooks'
 import { playBeep, unlockAudio } from '@/utils/audio'
 import type { OutboundItem, OutboundStatus } from '@/types'
+
+// ─── Status badge ──────────────────────────────────────────────
 
 const statusCls: Record<OutboundStatus, string> = {
   PENDING:     'bg-slate-100 text-slate-600',
@@ -124,6 +127,30 @@ function ScanDialog({ open, item, gdoId, onClose }: ScanDialogProps) {
   )
 }
 
+// ─── Confirm dialog ────────────────────────────────────────────
+
+function ConfirmDialog({
+  open, title, message, onConfirm, onCancel, loading,
+}: {
+  open: boolean; title: string; message: string
+  onConfirm: () => void; onCancel: () => void; loading?: boolean
+}) {
+  return (
+    <Dialog open={open} onOpenChange={v => { if (!v) onCancel() }}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader><DialogTitle>{title}</DialogTitle></DialogHeader>
+        <p className="text-sm text-slate-600 py-1">{message}</p>
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={onCancel} disabled={loading}>Không</Button>
+          <Button className="bg-red-600 hover:bg-red-700 text-white" onClick={onConfirm} disabled={loading}>
+            {loading ? 'Đang xử lý…' : 'Xác nhận'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 // ─── Main page ─────────────────────────────────────────────────
 
 export default function OutboundItemDetail() {
@@ -131,10 +158,12 @@ export default function OutboundItemDetail() {
   const navigate = useNavigate()
 
   const { data: gdo, isLoading } = useGDO(gdoId)
-  const { mutate: manualComplete, isPending: completing } = useManualCompleteItem()
+  const { mutate: manualComplete,  isPending: completing  } = useManualCompleteItem()
+  const { mutate: deleteScanEntry, isPending: deleting    } = useDeleteOutboundScanEntry()
 
   const [hasOpenedScan, setHasOpenedScan] = useState(false)
   const [showScan,      setShowScan]      = useState(false)
+  const [confirmScanId, setConfirmScanId] = useState<string | null>(null)
 
   if (isLoading || !gdo) {
     return (
@@ -163,11 +192,27 @@ export default function OutboundItemDetail() {
   const isDone   = item.status === 'COMPLETED'
   const scans    = item.scan_entries ?? []
 
+  // Workflow: can only scan if GDO has been started
+  const canScan  = !!gdo.started_at
+  const notStartedMsg = !gdo.started_at
+    ? (!gdo.assigned_at ? 'Cần Giao đơn → Bắt đầu trước khi quét' : 'Cần Bắt đầu xuất kho trước khi quét')
+    : null
+
   function openScan() {
     unlockAudio()
     setHasOpenedScan(true)
     setShowScan(true)
   }
+
+  function handleDeleteScan() {
+    if (!confirmScanId) return
+    deleteScanEntry(
+      { gdoId: gdoId!, itemId: item!.id, scanId: confirmScanId },
+      { onSettled: () => setConfirmScanId(null) }
+    )
+  }
+
+  const confirmScan = scans.find(s => s.id === confirmScanId)
 
   return (
     <>
@@ -175,12 +220,23 @@ export default function OutboundItemDetail() {
         <ScanDialog open={showScan} item={item} gdoId={gdoId!} onClose={() => setShowScan(false)} />
       )}
 
+      <ConfirmDialog
+        open={!!confirmScanId}
+        title="Hủy pallet đã quét"
+        message={confirmScan
+          ? `Xác nhận hủy pallet "${confirmScan.pallet_code}" (${confirmScan.cartons_scanned} thùng)? Tồn kho sẽ được hoàn lại.`
+          : ''}
+        onConfirm={handleDeleteScan}
+        onCancel={() => setConfirmScanId(null)}
+        loading={deleting}
+      />
+
       <div className="flex flex-col h-full min-h-0">
 
         {/* ── Header ── */}
         <div className="border-b bg-white px-4 pt-3 pb-3 shrink-0 space-y-2">
 
-          {/* Row 1: back + code + status + action button */}
+          {/* Row 1: back + code + status + action */}
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 min-w-0">
               <button
@@ -202,10 +258,12 @@ export default function OutboundItemDetail() {
                     onClick={() => manualComplete({ gdoId: gdoId!, itemId: item.id })}>
                     {completing ? '…' : 'Lưu thủ công'}
                   </Button>
-                ) : (
+                ) : canScan ? (
                   <Button size="sm" className="h-8 gap-1.5" onClick={openScan}>
                     <QrCode className="h-3.5 w-3.5" /> Quét pallet
                   </Button>
+                ) : (
+                  <span className="text-xs text-slate-400 italic hidden sm:inline">Chưa bắt đầu</span>
                 )}
               </div>
             )}
@@ -217,11 +275,14 @@ export default function OutboundItemDetail() {
             {!isPOSM && <ProgressBar scanned={item.cartons_scanned} ordered={item.cartons_ordered} />}
           </div>
 
-          {/* Row 3: meta chips */}
+          {/* Row 3: meta */}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-500">
             <span className="flex items-center gap-1">
               <Package className="h-3.5 w-3.5 text-slate-400" />
-              <span className="font-medium text-slate-700">{item.cartons_ordered}</span> thùng đặt
+              <span className="font-medium text-slate-700">{item.cartons_ordered}</span> thùng
+              {item.boxes_display > 0 && (
+                <span className="ml-1">· <span className="font-medium text-slate-700">{item.boxes_display}</span> hộp</span>
+              )}
             </span>
             {item.pallets_estimated > 0 && (
               <span><span className="font-medium text-slate-700">{item.pallets_estimated}</span> pallet ước tính</span>
@@ -229,8 +290,24 @@ export default function OutboundItemDetail() {
             {item.material_type && (
               <span className="text-[11px] bg-slate-100 text-slate-600 rounded px-1.5 py-0.5">{item.material_type}</span>
             )}
-            <span className="font-mono text-xs text-slate-400">{gdo.group_code}</span>
+            {item.header_text && (
+              <span className="text-xs text-slate-500">Header: <span className="text-slate-700">{item.header_text}</span></span>
+            )}
+            {item.batch_required && (
+              <span className="text-xs text-slate-500">Batch: <span className="text-slate-700">{item.batch_required}</span></span>
+            )}
+            {item.date_required && (
+              <span className="text-xs text-slate-500">Date req: <span className="text-slate-700">{format(parseISO(item.date_required), 'dd/MM/yyyy', { locale: vi })}</span></span>
+            )}
           </div>
+
+          {/* Not-started warning */}
+          {notStartedMsg && !isDone && !isPOSM && (
+            <div className="rounded bg-amber-50 border border-amber-200 px-3 py-1.5 text-xs text-amber-700 flex items-center gap-1.5">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+              {notStartedMsg}
+            </div>
+          )}
         </div>
 
         {/* ── Scan list ── */}
@@ -241,7 +318,7 @@ export default function OutboundItemDetail() {
               Pallet đã quét
               <span className="ml-2 text-xs font-normal text-slate-400">{scans.length} pallet</span>
             </h2>
-            {!isDone && !isPOSM && !isLoscam && (
+            {!isDone && !isPOSM && !isLoscam && canScan && (
               <Button size="sm" className="h-8 gap-1.5" onClick={openScan}>
                 <QrCode className="h-3.5 w-3.5" /> Quét pallet
               </Button>
@@ -253,7 +330,7 @@ export default function OutboundItemDetail() {
               <div className="flex flex-col items-center gap-2 py-12 text-slate-400">
                 <QrCode className="h-10 w-10 opacity-30" />
                 <p className="text-sm">Chưa có pallet nào được quét</p>
-                {!isDone && !isPOSM && !isLoscam && (
+                {!isDone && !isPOSM && !isLoscam && canScan && (
                   <Button size="sm" variant="outline" onClick={openScan}>
                     <QrCode className="h-4 w-4 mr-1" /> Quét pallet đầu tiên
                   </Button>
@@ -264,26 +341,36 @@ export default function OutboundItemDetail() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="px-2 py-1 text-[11px]">Mã pallet</TableHead>
-                      <TableHead className="px-2 py-1 text-[11px] text-right">Thùng</TableHead>
-                      <TableHead className="px-2 py-1 text-[11px] hidden sm:table-cell whitespace-nowrap">Ngày</TableHead>
-                      <TableHead className="px-2 py-1 text-[11px] hidden sm:table-cell whitespace-nowrap">Giờ</TableHead>
+                      <TableHead className="px-3 py-1 text-[11px]">Mã pallet</TableHead>
+                      <TableHead className="px-3 py-1 text-[11px] text-right">Thùng</TableHead>
+                      <TableHead className="px-3 py-1 text-[11px] hidden sm:table-cell whitespace-nowrap">Ngày</TableHead>
+                      <TableHead className="px-3 py-1 text-[11px] hidden sm:table-cell whitespace-nowrap">Giờ</TableHead>
+                      <TableHead className="px-1 py-1 w-10" />
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {scans.map(se => (
                       <TableRow key={se.id}>
-                        <TableCell className="px-2 py-1.5 font-mono text-sm font-medium">
+                        <TableCell className="px-3 py-2 font-mono text-lg font-medium">
                           {se.pallet_code}
                         </TableCell>
-                        <TableCell className="px-2 py-1.5 text-right tabular-nums text-lg font-semibold">
+                        <TableCell className="px-3 py-2 text-right tabular-nums text-lg font-semibold">
                           {se.cartons_scanned}
                         </TableCell>
-                        <TableCell className="px-2 py-1.5 hidden sm:table-cell text-sm text-slate-500 whitespace-nowrap">
+                        <TableCell className="px-3 py-2 hidden sm:table-cell text-lg text-slate-500 whitespace-nowrap">
                           {se.scanned_at ? format(parseISO(se.scanned_at), 'dd/MM/yy', { locale: vi }) : '—'}
                         </TableCell>
-                        <TableCell className="px-2 py-1.5 hidden sm:table-cell text-sm text-slate-500 tabular-nums">
+                        <TableCell className="px-3 py-2 hidden sm:table-cell text-lg text-slate-500 tabular-nums">
                           {se.scanned_at ? format(parseISO(se.scanned_at), 'HH:mm', { locale: vi }) : '—'}
+                        </TableCell>
+                        <TableCell className="px-1 py-2">
+                          <button
+                            className="p-1 rounded text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                            title="Hủy pallet này"
+                            onClick={() => setConfirmScanId(se.id)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
                         </TableCell>
                       </TableRow>
                     ))}

@@ -344,3 +344,60 @@ export interface ApiError {
     message: string
   }
 }
+
+// WMS – Outbound
+export type OutboundStatus = 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED'
+
+export interface OutboundScanEntry {
+  id:                 string
+  item_id:            string
+  inventory_entry_id: string | null
+  pallet_code:        string
+  cartons_scanned:    number
+  scanned_by:         string | null
+  scanned_at:         string
+}
+
+export interface OutboundItem {
+  id:                 string
+  do_id:              string
+  material_id:        string | null
+  material_code_raw:  string | null
+  material:           { id: string; material_code: string; short_name: string | null; custom_short_name: string | null; cartons_per_pallet: number | null; weight_kg: number | null } | null
+  cartons_ordered:    number
+  boxes_display:      number
+  weight:             number | null
+  loose_picking:      number
+  pallets_estimated:  number
+  material_type:      string | null   // "Thành phẩm" | "POSM" | "Pallet Loscam"
+  export_type:        string | null
+  header_text:        string | null
+  batch_required:     string | null
+  date_required:      string | null
+  cs_responsible:     string | null
+  cartons_scanned:    number
+  status:             OutboundStatus
+  scan_entries:       OutboundScanEntry[]
+}
+
+export interface OutboundDelivery {
+  id:               string
+  gdo_id:           string
+  delivery_code:    string
+  distributor_name: string | null
+  status:           OutboundStatus
+  items:            OutboundItem[]
+}
+
+export interface GDO {
+  id:               string
+  group_code:       string
+  planned_date:     string
+  delivery_date:    string
+  warehouse_id:     string | null
+  dvvt:             string | null
+  status:           OutboundStatus
+  do_count?:        number
+  created_at:       string
+  delivery_orders?: OutboundDelivery[]
+}

@@ -1,154 +1,180 @@
-import { useState } from 'react'
-import { Plus, Search, QrCode, PackageMinus, Scan } from 'lucide-react'
-import { PageHeader } from '@/components/shared/PageHeader'
-import { TransactionStatusBadge } from '@/components/shared/StatusBadge'
-import { TableSkeleton } from '@/components/shared/TableSkeleton'
-import { EmptyState } from '@/components/shared/EmptyState'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Card, CardContent } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog'
-import { useTransactions } from '@/api/hooks'
-import { formatDateTime, getLocationCode } from '@/utils/formatters'
+import { useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { format, parseISO } from 'date-fns'
+import { vi } from 'date-fns/locale'
+import { Upload, Search, Truck, CheckCircle2, Clock, AlertTriangle } from 'lucide-react'
+import type { AxiosError } from 'axios'
+import { Button }   from '@/components/ui/button'
+import { Input }    from '@/components/ui/input'
+import { Card }     from '@/components/ui/card'
+import { useGDOs, useUploadGDOExcel } from '@/api/hooks'
+import { useAuthStore } from '@/stores/authStore'
+import type { GDO, OutboundStatus } from '@/types'
+
+// ─── Status badge ──────────────────────────────────────────────
+
+const statusCls: Record<OutboundStatus, string> = {
+  PENDING:     'bg-slate-100 text-slate-600',
+  IN_PROGRESS: 'bg-amber-100 text-amber-800',
+  COMPLETED:   'bg-green-100 text-green-800',
+  CANCELLED:   'bg-red-100 text-red-600',
+}
+const statusLabel: Record<OutboundStatus, string> = {
+  PENDING:     'Chờ xuất',
+  IN_PROGRESS: 'Đang xuất',
+  COMPLETED:   'Hoàn thành',
+  CANCELLED:   'Đã hủy',
+}
+function StatusBadge({ status }: { status: string }) {
+  const s = status as OutboundStatus
+  return (
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${statusCls[s] ?? 'bg-slate-100 text-slate-600'}`}>
+      {statusLabel[s] ?? status}
+    </span>
+  )
+}
+
+// ─── Main page ─────────────────────────────────────────────────
 
 export default function Outbound() {
-  const { data: allTxns, isLoading } = useTransactions()
-  const [search, setSearch] = useState('')
-  const [showScan, setShowScan] = useState(false)
+  const navigate    = useNavigate()
+  const user        = useAuthStore(s => s.user)
+  const fileRef     = useRef<HTMLInputElement>(null)
 
-  const transactions = allTxns?.filter((t) => t.type === 'OUTBOUND') ?? []
-  const filtered = transactions.filter((t) =>
-    t.product.name.toLowerCase().includes(search.toLowerCase()) ||
-    t.referenceNo.toLowerCase().includes(search.toLowerCase())
-  )
+  const [search,    setSearch]    = useState('')
+  const [uploadErr, setUploadErr] = useState<string | null>(null)
+  const [uploadOk,  setUploadOk]  = useState<string | null>(null)
+
+  const { data: gdos = [], isLoading } = useGDOs({
+    warehouse_id: user?.warehouse_id || undefined,
+    search: search || undefined,
+  })
+  const { mutate: uploadExcel, isPending: uploading } = useUploadGDOExcel()
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploadErr(null)
+    setUploadOk(null)
+    uploadExcel(
+      { file, warehouse_id: user?.warehouse_id || undefined },
+      {
+        onSuccess: (result) => {
+          const created = result.filter((r: any) => r.created).length
+          const skipped = result.filter((r: any) => r.skipped).length
+          setUploadOk(`Nhập thành công ${created} chuyến xe${skipped ? `, bỏ qua ${skipped} (đã tồn tại)` : ''}`)
+        },
+        onError: (err) => {
+          const msg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi upload file'
+          setUploadErr(msg)
+        },
+      }
+    )
+    e.target.value = ''
+  }
 
   return (
-    <div>
-      <PageHeader
-        title="Xuất kho"
-        description="Quản lý phiếu xuất kho theo đơn hàng"
-        actions={
-          <>
-            <Button variant="outline" onClick={() => setShowScan(true)}>
-              <Scan className="h-4 w-4 mr-2" />
-              Quét QR Order
-            </Button>
-            <Button>
-              <Plus className="h-4 w-4 mr-2" />
-              Tạo phiếu xuất
-            </Button>
-          </>
-        }
-      />
-
-      <div className="grid grid-cols-3 gap-4 p-6 pb-0">
-        {[
-          { label: 'Chờ xử lý', value: transactions.filter((t) => t.status === 'PENDING').length, color: 'text-amber-600' },
-          { label: 'Đang xuất', value: transactions.filter((t) => t.status === 'IN_PROGRESS').length, color: 'text-blue-600' },
-          { label: 'Hoàn thành', value: transactions.filter((t) => t.status === 'COMPLETED').length, color: 'text-green-600' },
-        ].map((s) => (
-          <Card key={s.label}>
-            <CardContent className="p-4">
-              <p className={`text-xl font-bold ${s.color}`}>{s.value}</p>
-              <p className="text-xs text-muted-foreground">{s.label}</p>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
-      <div className="p-6 space-y-4">
-        <div className="flex gap-3">
-          <div className="relative flex-1 max-w-sm">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Tìm mã SO, sản phẩm..."
-              className="pl-9"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-          </div>
+    <div className="flex flex-col h-full">
+      {/* Header */}
+      <div className="border-b bg-white px-4 py-3 shrink-0 space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <h1 className="text-xl font-semibold flex items-center gap-2">
+            <Truck className="h-5 w-5 text-slate-500" />
+            Xuất kho
+          </h1>
+          <Button
+            size="sm"
+            disabled={uploading}
+            onClick={() => fileRef.current?.click()}
+            className="gap-1.5"
+          >
+            <Upload className="h-4 w-4" />
+            {uploading ? 'Đang xử lý…' : 'Upload Excel'}
+          </Button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".xlsx,.xls"
+            className="hidden"
+            onChange={handleFileChange}
+          />
         </div>
 
-        <Card>
-          {isLoading ? (
-            <TableSkeleton rows={4} cols={6} />
-          ) : filtered.length === 0 ? (
-            <EmptyState
-              icon={PackageMinus}
-              title="Không có phiếu xuất"
-              description="Tạo phiếu xuất kho hoặc quét QR order để bắt đầu."
-            />
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Mã phiếu (SO)</TableHead>
-                  <TableHead>Sản phẩm</TableHead>
-                  <TableHead className="hidden sm:table-cell">Vị trí</TableHead>
-                  <TableHead className="text-right">Pallet</TableHead>
-                  <TableHead className="hidden md:table-cell">Người xuất</TableHead>
-                  <TableHead className="hidden lg:table-cell">Thời gian</TableHead>
-                  <TableHead>Trạng thái</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filtered.map((txn) => (
-                  <TableRow key={txn.id} className="cursor-pointer">
-                    <TableCell>
-                      <span className="font-mono text-xs font-medium">{txn.referenceNo}</span>
-                    </TableCell>
-                    <TableCell>
-                      <div>
-                        <p className="text-sm font-medium">{txn.product.name}</p>
-                        <p className="text-xs text-muted-foreground">{txn.product.sku}</p>
-                      </div>
-                    </TableCell>
-                    <TableCell className="hidden sm:table-cell">
-                      <Badge variant="outline" className="font-mono text-xs">
-                        {getLocationCode(txn.location)}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right font-medium tabular-nums">{txn.pallets}</TableCell>
-                    <TableCell className="hidden md:table-cell text-sm text-muted-foreground">{txn.userName}</TableCell>
-                    <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">
-                      {formatDateTime(txn.createdAt)}
-                    </TableCell>
-                    <TableCell><TransactionStatusBadge status={txn.status} /></TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </Card>
+        {uploadOk && (
+          <div className="rounded-lg bg-green-50 border border-green-200 px-3 py-2 text-sm text-green-800 flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4 shrink-0" />
+            {uploadOk}
+          </div>
+        )}
+        {uploadErr && (
+          <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700 flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            {uploadErr}
+          </div>
+        )}
+
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+          <Input
+            className="pl-9 h-8 text-sm"
+            placeholder="Tìm số xe…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
+        </div>
       </div>
 
-      {/* QR Scan Dialog */}
-      <Dialog open={showScan} onOpenChange={setShowScan}>
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Quét QR Order</DialogTitle>
-            <DialogDescription>Quét mã QR trên phiếu xuất kho hoặc đơn hàng</DialogDescription>
-          </DialogHeader>
-          <div className="flex flex-col items-center gap-4 py-4">
-            <div className="flex h-48 w-48 items-center justify-center rounded-xl border-2 border-dashed border-primary/30 bg-muted">
-              <div className="text-center space-y-2">
-                <QrCode className="h-12 w-12 text-muted-foreground mx-auto" />
-                <p className="text-xs text-muted-foreground">Camera sẽ hiện ở đây</p>
-              </div>
-            </div>
-            <p className="text-xs text-muted-foreground text-center">
-              Hướng camera vào mã QR trên phiếu xuất kho.<br />
-              Hệ thống sẽ tự động nhận diện và tải đơn hàng.
-            </p>
+      {/* List */}
+      <div className="flex-1 overflow-auto p-4 pb-20 lg:pb-4 space-y-2">
+        {isLoading ? (
+          <div className="space-y-2">
+            {[1,2,3].map(i => <div key={i} className="h-20 rounded-xl bg-slate-100 animate-pulse" />)}
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowScan(false)}>Huỷ</Button>
-            <Button onClick={() => setShowScan(false)}>Nhập thủ công</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        ) : gdos.length === 0 ? (
+          <div className="flex flex-col items-center gap-2 py-16 text-slate-400">
+            <Truck className="h-10 w-10 opacity-30" />
+            <p className="text-sm">{search ? 'Không tìm thấy chuyến xe' : 'Chưa có chuyến xe nào'}</p>
+            <p className="text-xs">Upload file Excel để bắt đầu</p>
+          </div>
+        ) : (
+          gdos.map((gdo) => <GDOCard key={gdo.id} gdo={gdo} onClick={() => navigate(`/wms/outbound/${gdo.id}`)} />)
+        )}
+      </div>
     </div>
+  )
+}
+
+function GDOCard({ gdo, onClick }: { gdo: GDO; onClick: () => void }) {
+  const isToday = gdo.delivery_date === new Date().toISOString().slice(0, 10)
+  return (
+    <Card
+      className="p-3 cursor-pointer hover:bg-slate-50 transition-colors border border-slate-200 rounded-xl"
+      onClick={onClick}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="font-mono font-semibold text-sm">{gdo.group_code}</span>
+            <StatusBadge status={gdo.status} />
+            {isToday && gdo.status !== 'COMPLETED' && (
+              <span className="text-[10px] bg-blue-100 text-blue-700 rounded-full px-1.5 py-0.5 font-medium">Hôm nay</span>
+            )}
+          </div>
+          <div className="flex items-center gap-3 mt-1 text-xs text-slate-500">
+            <span className="flex items-center gap-1">
+              <Clock className="h-3 w-3" />
+              {format(parseISO(gdo.delivery_date), 'dd/MM/yyyy', { locale: vi })}
+              {gdo.delivery_date !== gdo.planned_date && (
+                <span className="text-amber-600 ml-1">(kế hoạch {format(parseISO(gdo.planned_date), 'dd/MM')})</span>
+              )}
+            </span>
+            {gdo.dvvt && <span>{gdo.dvvt}</span>}
+            {gdo.do_count !== undefined && (
+              <span>{gdo.do_count} DO</span>
+            )}
+          </div>
+        </div>
+      </div>
+    </Card>
   )
 }

@@ -32,7 +32,11 @@ BV_TP1_1_T1 = {warehouse.code}_{sub_code}_{row}_{shelf}
 | `QAStatus` | Tình trạng QA (X, X CQ, X7, OK) | ✅ seed sẵn |
 | `ProductionImport` | Phiếu nhập kho (bảng cha) | ✅ API đầy đủ |
 | `InventoryEntry` | Pallet tồn kho | ✅ API đầy đủ |
-| `ExportHistory` | Lịch sử xuất kho | ✅ bảng tạo sẵn |
+| `ExportHistory` | Lịch sử xuất kho | ⏳ bảng cũ, thay bằng `OutboundScanEntry` |
+| `GroupDeliveryOrder` | Chuyến xe (Số xe) — nhóm các DO | ✅ API + UI (rev 12) |
+| `DeliveryOrder` | Phiếu giao hàng SAP (Delivery) | ✅ API + UI (rev 12) |
+| `DeliveryOrderItem` | Dòng mặt hàng trong DO | ✅ API + UI (rev 12) |
+| `OutboundScanEntry` | Log QR scan xuất kho | ✅ API (rev 12) |
 | `LocationTransfer` | Chuyển vị trí pallet | ✅ bảng tạo sẵn |
 | `Vehicle` / `Driver` | TMS — xe + tài xế | ⏳ bảng tạo, chưa có API |
 | `Menu` / `Setting` | Phân quyền menu, cài đặt | ⏳ bảng tạo, chưa dùng |
@@ -146,3 +150,4 @@ created_at, updated_at
 | 2026-05-08 | — | Supabase Realtime bật tất cả bảng `public` + event trigger auto-add bảng mới |
 | 2026-05-09 | — | Chuẩn INSERT `randomUUID()` + `updated_at` bắt buộc |
 | 2026-05-09 | 11 | Permission system: `Department`, `JobTitle`, `UserWarehouseAccess`, mở rộng `Employee` (action_level, allowed_categories, warehouse_scope). Backend `permissions.ts` với `can()` + `loadActor()`. API + UI User Management |
+| 2026-05-09 | 12 | Outbound module: `GroupDeliveryOrder`, `DeliveryOrder`, `DeliveryOrderItem`, `OutboundScanEntry`. `InventoryEntry.cartons_imported` → DECIMAL, thêm `cartons_remaining`. Excel upload, QR scan với QA block + tịnh tiến logic. |

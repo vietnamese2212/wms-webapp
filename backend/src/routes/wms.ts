@@ -1,6 +1,10 @@
 import { Router } from 'express'
+import multer from 'multer'
 import * as inbound from '../controllers/wms/inboundController'
+import * as outbound from '../controllers/wms/outboundController'
 import { inboundEmitter } from '../lib/events'
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } })
 
 const router = Router()
 
@@ -35,5 +39,15 @@ router.patch('/inbound-orders/:id/entries/:entryId',    inbound.updateEntry)
 router.delete('/inbound-orders/:id/entries/:entryId',   inbound.removeEntry)
 router.delete('/inbound-orders/:id/entries',            inbound.removeEntries)
 router.get('/inbound-orders/:id/location-suggestions',  inbound.getLocationSuggestions)
+
+// Outbound (chuyến xe / xuất kho)
+router.get('/outbound',                                       outbound.listGDOs)
+router.post('/outbound',                                      outbound.createGDO)
+router.post('/outbound/upload', upload.single('file'),        outbound.uploadExcel)
+router.get('/outbound/:id',                                   outbound.getGDO)
+router.patch('/outbound/:id',                                 outbound.patchGDO)
+router.post('/outbound/:gdoId/items/:itemId/scan',            outbound.scanItem)
+router.post('/outbound/:gdoId/items/:itemId/manual-complete', outbound.manualCompleteItem)
+router.get('/outbound/:gdoId/items/:itemId/inventory',        outbound.getItemInventory)
 
 export default router

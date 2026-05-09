@@ -6,7 +6,8 @@ import Dashboard from '@/pages/Dashboard'
 import Inventory from '@/pages/wms/Inventory'
 import Inbound       from '@/pages/wms/Inbound'
 import InboundDetail from '@/pages/wms/InboundDetail'
-import Outbound from '@/pages/wms/Outbound'
+import Outbound       from '@/pages/wms/Outbound'
+import OutboundDetail from '@/pages/wms/OutboundDetail'
 import Locations from '@/pages/wms/Locations'
 import Vehicles from '@/pages/tms/Vehicles'
 import Deliveries from '@/pages/tms/Deliveries'
@@ -38,6 +39,7 @@ export default function App() {
         <Route path="/wms/inbound" element={<Inbound />} />
         <Route path="/wms/inbound/:id" element={<InboundDetail />} />
         <Route path="/wms/outbound" element={<Outbound />} />
+        <Route path="/wms/outbound/:id" element={<OutboundDetail />} />
         <Route path="/wms/locations" element={<Locations />} />
         <Route path="/tms/vehicles" element={<Vehicles />} />
         <Route path="/tms/deliveries" element={<Deliveries />} />

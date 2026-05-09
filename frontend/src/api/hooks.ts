@@ -5,7 +5,7 @@ import {
   mockLocations, mockOvertimeRequests,
 } from '@/utils/mockData'
 import { apiClient } from './client'
-import type { InboundOrder, Department, JobTitle, EmployeeRecord } from '@/types'
+import type { InboundOrder, Department, JobTitle, EmployeeRecord, GDO } from '@/types'
 
 const delay = (ms = 600) => new Promise((r) => setTimeout(r, ms))
 
@@ -528,5 +528,74 @@ export function useUpdateJobTitle() {
       allowed_categories?: string[]; warehouse_scope?: string; is_active?: boolean
     }) => apiClient.put(`/masterdata/job-titles/${id}`, body).then(r => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['job-titles'] }),
+  })
+}
+
+// ─── Outbound (API thật) ─────────────────────────────────────────────────────
+
+export function useGDOs(params?: { warehouse_id?: string; status?: string; date?: string; search?: string }) {
+  return useQuery({
+    queryKey: ['gdos', params],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/outbound', { params })
+      return data.data as GDO[]
+    },
+  })
+}
+
+export function useGDO(id?: string) {
+  return useQuery({
+    queryKey: ['gdo', id],
+    enabled: !!id,
+    queryFn: async () => {
+      const { data } = await apiClient.get(`/wms/outbound/${id}`)
+      return data.data as GDO
+    },
+  })
+}
+
+export function usePatchGDO() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string; delivery_date?: string; status?: string }) =>
+      apiClient.patch(`/wms/outbound/${id}`, body).then(r => r.data.data),
+    onSuccess: (_d, v) => {
+      qc.invalidateQueries({ queryKey: ['gdos'] })
+      qc.invalidateQueries({ queryKey: ['gdo', v.id] })
+    },
+  })
+}
+
+export function useUploadGDOExcel() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ file, warehouse_id }: { file: File; warehouse_id?: string }) => {
+      const form = new FormData()
+      form.append('file', file)
+      if (warehouse_id) form.append('warehouse_id', warehouse_id)
+      return apiClient.post('/wms/outbound/upload', form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      }).then(r => r.data.data)
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['gdos'] }),
+  })
+}
+
+export function useScanOutboundItem() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ gdoId, itemId, ...body }: {
+      gdoId: string; itemId: string; qr_code: string; employee_id?: string
+    }) => apiClient.post(`/wms/outbound/${gdoId}/items/${itemId}/scan`, body).then(r => r.data.data),
+    onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ['gdo', v.gdoId] }),
+  })
+}
+
+export function useManualCompleteItem() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ gdoId, itemId }: { gdoId: string; itemId: string }) =>
+      apiClient.post(`/wms/outbound/${gdoId}/items/${itemId}/manual-complete`).then(r => r.data.data),
+    onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ['gdo', v.gdoId] }),
   })
 }

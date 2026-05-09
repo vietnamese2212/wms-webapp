@@ -413,7 +413,7 @@ export default function InboundDetail() {
         onClose={() => setShowScan(false)}
       />
 
-      <div className="flex flex-col min-h-0">
+      <div className="flex flex-col h-full min-h-0">
 
         {/* ── Compact header (~20%) ── */}
         <div className="border-b bg-white px-4 pt-3 pb-3 shrink-0 space-y-2">
@@ -523,7 +523,7 @@ export default function InboundDetail() {
         </div>
 
         {/* ── Pallet table (~80%) ── */}
-        <div className="flex-1 p-4 overflow-auto">
+        <div className="flex-1 p-4 overflow-auto pb-20 lg:pb-4">
 
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-semibold text-slate-700">

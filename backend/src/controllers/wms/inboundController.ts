@@ -65,7 +65,7 @@ async function attachCount(order: Record<string, unknown>): Promise<Record<strin
 
 export async function listOrders(req: Request, res: Response) {
   try {
-    const { warehouse_id, status, material_id, search, date } = req.query as Record<string, string>
+    const { warehouse_id, status, material_id, search, date, shift_id } = req.query as Record<string, string>
 
     let query = supabase.from('ProductionImport').select(ORDER_SELECT).order('created_at', { ascending: false })
 
@@ -73,6 +73,7 @@ export async function listOrders(req: Request, res: Response) {
     if (status)       query = query.eq('status', status)
     if (material_id)  query = query.eq('material_id', material_id)
     if (date)         query = query.eq('import_date', date)
+    if (shift_id)     query = query.eq('shift_id', shift_id)
 
     if (search) {
       // Step 1: find material IDs matching the search term

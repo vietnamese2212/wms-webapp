@@ -273,11 +273,15 @@ export default function Inbound() {
   const navigate = useNavigate()
   const [search,  setSearch]  = useState('')
   const [date,    setDate]    = useState(TODAY)
+  const [shiftId, setShiftId] = useState('')
   const [showNew, setShowNew] = useState(false)
 
+  const { data: shifts = [] } = useImportShifts()
+
   const { data: orders = [], isLoading } = useInboundOrders({
-    search: search || undefined,
-    date:   date   || undefined,
+    search:   search   || undefined,
+    date:     date     || undefined,
+    shift_id: shiftId  || undefined,
   })
 
   const dateLabel = date
@@ -299,7 +303,7 @@ export default function Inbound() {
         </div>
 
         {/* Filters */}
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           {/* Date filter */}
           <div className="relative flex items-center gap-1.5">
             <CalendarDays className="absolute left-2.5 h-4 w-4 text-slate-400 pointer-events-none" />
@@ -327,8 +331,20 @@ export default function Inbound() {
               </button>
             )}
           </div>
+          {/* Shift filter */}
+          <Select value={shiftId} onValueChange={setShiftId}>
+            <SelectTrigger className="h-8 text-sm w-[120px]">
+              <SelectValue placeholder="Tất cả ca" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="">Tất cả ca</SelectItem>
+              {(shifts as { id: string; name: string }[]).map(s => (
+                <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           {/* Search */}
-          <div className="relative flex-1">
+          <div className="relative flex-1 min-w-[120px]">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
             <Input className="pl-8 h-8 text-sm" placeholder="Tìm mã phiếu, hàng hóa…" value={search} onChange={e => setSearch(e.target.value)} />
           </div>

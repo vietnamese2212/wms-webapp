@@ -2,7 +2,7 @@ import { NavLink, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard, Package, PackagePlus, PackageMinus, MapPin,
   Truck, Navigation, Users, Calendar, Settings, ChevronLeft, ChevronRight,
-  BarChart3, ClipboardList,
+  BarChart3, ClipboardList, UserCog,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useUIStore } from '@/stores/uiStore'
@@ -52,6 +52,12 @@ const navGroups: NavGroup[] = [
     items: [
       { to: '/hr/employees', icon: Users, label: 'Nhân viên' },
       { to: '/hr/schedule', icon: Calendar, label: 'Lịch làm việc' },
+    ],
+  },
+  {
+    label: 'Quản trị',
+    items: [
+      { to: '/masterdata/users', icon: UserCog, label: 'Quản lý người dùng' },
     ],
   },
 ]

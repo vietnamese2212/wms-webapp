@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { Fragment, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
@@ -6,6 +6,7 @@ import { vi } from 'date-fns/locale'
 import {
   ArrowLeft, QrCode, CheckCircle2, AlertTriangle,
   Truck, Package, ClipboardList, Play,
+  ChevronDown, ChevronRight,
 } from 'lucide-react'
 import { Button }  from '@/components/ui/button'
 import { Input }   from '@/components/ui/input'
@@ -301,64 +302,107 @@ function ItemRow({ item, gdoId, onScan }: {
   onScan: (item: OutboundItem) => void
 }) {
   const { mutate: manualComplete, isPending: completing } = useManualCompleteItem()
+  const [expanded, setExpanded] = useState(false)
   const matName  = item.material?.custom_short_name ?? item.material?.short_name ?? item.material_code_raw ?? '—'
   const matCode  = item.material?.material_code ?? item.material_code_raw ?? '—'
   const isPOSM   = item.material_type === 'POSM'
   const isLoscam = item.material_type === 'Pallet Loscam' || (item.material_code_raw ?? '').includes('810000')
   const isDone   = item.status === 'COMPLETED'
+  const scans    = item.scan_entries ?? []
 
   return (
-    <TableRow className={isDone ? 'opacity-60' : ''}>
-      <TableCell className="py-2 align-top">
-        <div className="text-[11px] text-slate-400 tabular-nums">{item.delivery_code}</div>
-        <div className="text-xs font-mono text-slate-600 mt-0.5">{matCode}</div>
-      </TableCell>
-      <TableCell className="py-2 align-top">
-        <div className="text-lg font-medium text-slate-800 leading-tight">{matName}</div>
-        {!isPOSM && (
-          <ProgressBar scanned={item.cartons_scanned} ordered={item.cartons_ordered} />
-        )}
-      </TableCell>
-      <TableCell className="py-2 align-top">
-        {item.material_type && (
-          <span className="text-[10px] bg-slate-100 text-slate-600 rounded px-1 py-0.5">{item.material_type}</span>
-        )}
-      </TableCell>
-      <TableCell className="py-2 align-top text-right">
-        <span className="text-lg font-semibold tabular-nums">{item.cartons_ordered}</span>
-        {item.boxes_display > 0 && <div className="text-xs text-slate-400">{item.boxes_display} hộp</div>}
-      </TableCell>
-      <TableCell className="py-2 align-top text-right">
-        {item.pallets_estimated > 0 && (
-          <span className="text-lg tabular-nums">{item.pallets_estimated}</span>
-        )}
-      </TableCell>
-      <TableCell className="py-2 align-top">
-        {isDone ? (
-          <CheckCircle2 className="h-4 w-4 text-green-500" />
-        ) : (
-          <Badge status={item.status} />
-        )}
-      </TableCell>
-      <TableCell className="py-2 align-top">
-        {!isDone && (
-          <>
-            {isPOSM ? (
-              <span className="text-xs text-slate-400 italic">Tự bypass</span>
-            ) : isLoscam ? (
-              <Button size="sm" variant="outline" className="h-8 text-sm px-3" disabled={completing}
-                onClick={() => manualComplete({ gdoId, itemId: item.id })}>
-                {completing ? '…' : 'Lưu'}
-              </Button>
-            ) : (
-              <Button size="sm" className="h-8 text-sm px-3 gap-1" onClick={() => onScan(item)}>
-                <QrCode className="h-3.5 w-3.5" />Quét
-              </Button>
+    <Fragment>
+      <TableRow
+        className={`cursor-pointer select-none ${isDone ? 'opacity-60' : ''}`}
+        onClick={() => !isPOSM && setExpanded(e => !e)}
+      >
+        <TableCell className="py-2 align-top">
+          <div className="flex items-start gap-1">
+            {!isPOSM && (
+              <span className="text-slate-400 mt-1 shrink-0">
+                {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+              </span>
             )}
-          </>
-        )}
-      </TableCell>
-    </TableRow>
+            <div>
+              <div className="text-[11px] text-slate-400 tabular-nums">{item.delivery_code}</div>
+              <div className="text-xs font-mono text-slate-600 mt-0.5">{matCode}</div>
+            </div>
+          </div>
+        </TableCell>
+        <TableCell className="py-2 align-top">
+          <div className="text-lg font-medium text-slate-800 leading-tight">{matName}</div>
+          {!isPOSM && (
+            <ProgressBar scanned={item.cartons_scanned} ordered={item.cartons_ordered} />
+          )}
+          {scans.length > 0 && (
+            <div className="text-[11px] text-slate-400 mt-0.5">{scans.length} pallet đã quét</div>
+          )}
+        </TableCell>
+        <TableCell className="py-2 align-top">
+          {item.material_type && (
+            <span className="text-[10px] bg-slate-100 text-slate-600 rounded px-1 py-0.5">{item.material_type}</span>
+          )}
+        </TableCell>
+        <TableCell className="py-2 align-top text-right">
+          <span className="text-lg font-semibold tabular-nums">{item.cartons_ordered}</span>
+          {item.boxes_display > 0 && <div className="text-xs text-slate-400">{item.boxes_display} hộp</div>}
+        </TableCell>
+        <TableCell className="py-2 align-top text-right">
+          {item.pallets_estimated > 0 && (
+            <span className="text-lg tabular-nums">{item.pallets_estimated}</span>
+          )}
+        </TableCell>
+        <TableCell className="py-2 align-top">
+          {isDone ? (
+            <CheckCircle2 className="h-4 w-4 text-green-500" />
+          ) : (
+            <Badge status={item.status} />
+          )}
+        </TableCell>
+        <TableCell className="py-2 align-top" onClick={e => e.stopPropagation()}>
+          {!isDone && (
+            <>
+              {isPOSM ? (
+                <span className="text-xs text-slate-400 italic">Tự bypass</span>
+              ) : isLoscam ? (
+                <Button size="sm" variant="outline" className="h-8 text-sm px-3" disabled={completing}
+                  onClick={() => manualComplete({ gdoId, itemId: item.id })}>
+                  {completing ? '…' : 'Lưu'}
+                </Button>
+              ) : (
+                <Button size="sm" className="h-8 text-sm px-3 gap-1" onClick={() => onScan(item)}>
+                  <QrCode className="h-3.5 w-3.5" />Quét
+                </Button>
+              )}
+            </>
+          )}
+        </TableCell>
+      </TableRow>
+      {expanded && (
+        <TableRow className="bg-slate-50/60 hover:bg-slate-50/60">
+          <TableCell colSpan={7} className="py-2 pl-10 pr-4">
+            {scans.length === 0 ? (
+              <p className="text-xs text-slate-400 italic">Chưa có pallet nào được quét</p>
+            ) : (
+              <div className="space-y-1.5">
+                <div className="text-[11px] font-medium text-slate-500">Pallet đã quét ({scans.length}):</div>
+                {scans.map(se => (
+                  <div key={se.id} className="flex items-center gap-4">
+                    <span className="font-mono text-sm text-slate-700">{se.pallet_code}</span>
+                    <span className="text-sm text-slate-500 tabular-nums">{se.cartons_scanned} thùng</span>
+                    {se.scanned_at && (
+                      <span className="text-xs text-slate-400">
+                        {format(parseISO(se.scanned_at), 'HH:mm dd/MM', { locale: vi })}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </TableCell>
+        </TableRow>
+      )}
+    </Fragment>
   )
 }
 

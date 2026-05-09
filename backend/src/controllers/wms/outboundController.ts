@@ -402,19 +402,36 @@ export async function scanItem(req: Request, res: Response) {
   try {
     const { itemId } = req.params
     const { qr_code, employee_id } = req.body as { qr_code: string; employee_id?: string }
-    if (!qr_code) return fail(res, 'qr_code là bắt buộc', 400)
+    const qr = (qr_code ?? '').trim()
+    if (!qr) return fail(res, 'qr_code là bắt buộc', 400)
 
     const { data: item, error: itemErr } = await (supabase.from('OutboundItem') as any)
       .select('*').eq('id', itemId).single()
     if (itemErr || !item) return fail(res, 'Không tìm thấy mặt hàng', 404)
     if (item.status === 'COMPLETED') return fail(res, 'Mặt hàng này đã xuất đủ số lượng', 400)
 
-    const { data: inv, error: invErr } = await (supabase.from('InventoryEntry') as any)
+    // Check existence first (any status) for better error messages
+    const { data: existCheck } = await (supabase.from('InventoryEntry') as any)
+      .select('id, status')
+      .eq('pallet_code', qr)
+      .maybeSingle()
+    if (!existCheck) {
+      return fail(res, `Pallet "${qr}" chưa được nhập kho — kiểm tra lại phiếu nhập inbound`, 404)
+    }
+
+    const { data: inv } = await (supabase.from('InventoryEntry') as any)
       .select('*, qa_status:QAStatus(code,label)')
-      .eq('pallet_code', qr_code)
+      .eq('pallet_code', qr)
       .in('status', ['IN_STOCK', 'PARTIAL'])
-      .single()
-    if (invErr || !inv) return fail(res, `Không tìm thấy pallet "${qr_code}" trong tồn kho`, 404)
+      .maybeSingle()
+    if (!inv) {
+      const statusMsg: Record<string, string> = {
+        EXPORTED:   'Pallet này đã được xuất kho rồi',
+        QUARANTINE: 'Pallet đang bị giữ QA — không được xuất',
+        CANCELLED:  'Pallet đã bị hủy',
+      }
+      return fail(res, statusMsg[existCheck.status as string] ?? `Pallet không ở trạng thái xuất được (${existCheck.status})`, 400)
+    }
 
     if (inv.qa_status_id && inv.qa_status?.code !== 'OK') {
       return fail(res, `Pallet bị giữ QA: ${inv.qa_status?.label ?? inv.qa_status_id} — không được xuất`, 400)
@@ -425,8 +442,8 @@ export async function scanItem(req: Request, res: Response) {
     }
 
     const { data: dupCheck } = await (supabase.from('OutboundScanEntry') as any)
-      .select('id').eq('item_id', itemId).eq('pallet_code', qr_code).maybeSingle()
-    if (dupCheck) return fail(res, `Pallet "${qr_code}" đã được quét trong phiếu này`, 400)
+      .select('id').eq('item_id', itemId).eq('pallet_code', qr).maybeSingle()
+    if (dupCheck) return fail(res, `Pallet "${qr}" đã được quét trong phiếu này`, 400)
 
     const available        = Number(inv.cartons_remaining ?? inv.cartons_imported)
     const remaining_on_item = Number(item.cartons_ordered) - Number(item.cartons_scanned)
@@ -446,7 +463,7 @@ export async function scanItem(req: Request, res: Response) {
     const scanId = randomUUID()
     await (supabase.from('OutboundScanEntry') as any).insert({
       id: scanId, item_id: itemId, inventory_entry_id: inv.id,
-      pallet_code: qr_code, cartons_scanned: to_take,
+      pallet_code: qr, cartons_scanned: to_take,
       scanned_by: employee_id ?? null, scanned_at: t,
       created_at: t, updated_at: t,
     })
@@ -477,7 +494,7 @@ export async function scanItem(req: Request, res: Response) {
     }
 
     return ok(res, {
-      scan_entry: { id: scanId, pallet_code: qr_code, cartons_scanned: to_take },
+      scan_entry: { id: scanId, pallet_code: qr, cartons_scanned: to_take },
       item: { ...item, cartons_scanned: new_scanned, status: new_item_status },
     })
   } catch (e) { return fail(res, String(e)) }

@@ -159,9 +159,9 @@ function GDORow({ gdo, onClick }: { gdo: GDO; onClick: () => void }) {
       <TableCell className="py-2">
         <span className="text-lg font-mono font-semibold">{gdo.group_code}</span>
       </TableCell>
-      <TableCell className="py-2 text-sm text-slate-600">{gdo.export_type ?? '—'}</TableCell>
-      <TableCell className="py-2 text-sm text-slate-600">{gdo.dvvt ?? '—'}</TableCell>
-      <TableCell className="py-2 text-sm text-slate-600 max-w-[180px] truncate" title={npp}>{npp}</TableCell>
+      <TableCell className="py-2"><span className="text-lg text-slate-700">{gdo.export_type ?? '—'}</span></TableCell>
+      <TableCell className="py-2"><span className="text-lg text-slate-700">{gdo.dvvt ?? '—'}</span></TableCell>
+      <TableCell className="py-2 max-w-[180px] truncate" title={npp}><span className="text-lg text-slate-700">{npp}</span></TableCell>
       <TableCell className="py-2 text-right">
         <span className="text-lg font-semibold tabular-nums">{gdo.total_cartons ?? 0}</span>
         <span className="text-xs text-slate-400 ml-1">thùng</span>

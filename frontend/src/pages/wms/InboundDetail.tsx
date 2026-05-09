@@ -206,10 +206,10 @@ function ScanDialog({ order, open, onClose }: ScanDialogProps) {
           <div className="relative">
             <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} />
 
-            {/* Save button floats at midpoint between camera center and right edge, vertically centered */}
+            {/* Save button: on the diagonal from bottom-left to top-right, near top-right corner */}
             {canSave && (
               <button
-                className="absolute left-[75%] top-1/2 -translate-x-1/2 -translate-y-1/2 z-10
+                className="absolute left-[75%] top-[25%] -translate-x-1/2 -translate-y-1/2 z-10
                            bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white
                            rounded-full px-5 py-2 text-sm font-semibold shadow-xl
                            transition-all"
@@ -560,8 +560,9 @@ export default function InboundDetail() {
               {isOpen && (
                 <Button
                   size="sm" variant="outline"
-                  className="h-7 text-xs px-2 text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700"
-                  disabled={cancelling}
+                  className="h-7 text-xs px-2 text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700 disabled:opacity-40"
+                  disabled={cancelling || entries.length > 0}
+                  title={entries.length > 0 ? 'Xóa hết pallet trước khi hủy phiếu' : undefined}
                   onClick={() => openConfirm(
                     'Hủy phiếu nhập',
                     `Xác nhận hủy phiếu "${order.import_code ?? order.id.slice(0, 8)}"? Thao tác này không thể hoàn tác.`,

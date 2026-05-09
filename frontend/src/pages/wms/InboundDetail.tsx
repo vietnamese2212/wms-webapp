@@ -105,7 +105,7 @@ function validateQR(raw: string, order: InboundOrder): ValidationResult {
   return { ok: true, msg: `Hợp lệ · ${order.material?.material_code} · ${order.location?.location_code ?? ''}` }
 }
 
-// ─── Scan dialog (embedded QR camera + sticky settings) ───────
+// ─── Scan overlay (camera stays mounted to avoid repeated permission prompts) ──
 
 interface ScanDialogProps {
   order: InboundOrder
@@ -120,9 +120,9 @@ function ScanDialog({ order, open, onClose }: ScanDialogProps) {
   const defaultCartons = order.material?.cartons_per_pallet?.toString() ?? '0'
   const [cartons,    setCartons]    = useState(defaultCartons)
   const [stackLayer, setStackLayer] = useState('1')
-  const [feedback,    setFeedback]    = useState<FeedbackState | null>(null)
-  const [pendingQR,   setPendingQR]   = useState<string | null>(null)
-  const [validation,  setValidation]  = useState<ValidationResult | null>(null)
+  const [feedback,   setFeedback]   = useState<FeedbackState | null>(null)
+  const [pendingQR,  setPendingQR]  = useState<string | null>(null)
+  const [validation, setValidation] = useState<ValidationResult | null>(null)
 
   useEffect(() => {
     if (open) {
@@ -131,6 +131,8 @@ function ScanDialog({ order, open, onClose }: ScanDialogProps) {
       setValidation(null)
       setCartons(order.material?.cartons_per_pallet?.toString() ?? '0')
       setStackLayer('1')
+      // Resume camera in case it was paused from previous scan
+      setTimeout(() => scannerRef.current?.resume(), 50)
     }
   }, [open, order.material?.cartons_per_pallet])
 
@@ -145,18 +147,11 @@ function ScanDialog({ order, open, onClose }: ScanDialogProps) {
     if (!pendingQR || !validation?.ok) return
     const locationId = order.location_id
     if (!locationId) {
-      setFeedback({ type: 'error', msg: 'Chưa chọn vị trí. Đóng dialog và chọn vị trí trước.' })
+      setFeedback({ type: 'error', msg: 'Chưa chọn vị trí. Đóng và chọn vị trí trước.' })
       return
     }
-
     scanPallet(
-      {
-        orderId:          order.id,
-        qr_code:          pendingQR,
-        location_id:      locationId,
-        stack_layer:      Number(stackLayer),
-        cartons_override: Number(cartons) || undefined,
-      },
+      { orderId: order.id, qr_code: pendingQR, location_id: locationId, stack_layer: Number(stackLayer), cartons_override: Number(cartons) || undefined },
       {
         onSuccess: (data) => {
           setPendingQR(null)
@@ -165,16 +160,12 @@ function ScanDialog({ order, open, onClose }: ScanDialogProps) {
             type: 'success',
             msg: `✓ ${data.entry.pallet_code} · ${data.entry.cartons_imported} thùng · ${data.entry.location?.location_code ?? ''}`,
           })
-          setTimeout(() => {
-            scannerRef.current?.resume()
-            setFeedback(null)
-          }, 1500)
+          setTimeout(() => { scannerRef.current?.resume(); setFeedback(null) }, 1500)
         },
         onError: (err) => {
           setPendingQR(null)
           setValidation(null)
-          const msg = (err as AxiosError<{ error: { message: string } }>)
-            ?.response?.data?.error?.message ?? 'Lỗi không xác định'
+          const msg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
           setFeedback({ type: 'error', msg })
         },
       }
@@ -194,21 +185,42 @@ function ScanDialog({ order, open, onClose }: ScanDialogProps) {
 
   const canSave = !!pendingQR && validation?.ok === true && !isPending
 
+  // Keep this overlay always in DOM (never unmount) — camera stays alive, no repeated permission prompts
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) onClose() }}>
-      <DialogContent className="sm:max-w-md p-4">
-        <DialogHeader className="pb-1">
-          <DialogTitle className="text-base">Quét QR pallet</DialogTitle>
+    <div className={`fixed inset-0 z-50 flex flex-col ${open ? '' : 'hidden'}`} aria-hidden={!open}>
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/60" onClick={handleCancel} />
+
+      {/* Bottom sheet */}
+      <div className="relative mt-auto bg-white rounded-t-2xl max-h-[90dvh] overflow-y-auto">
+        <div className="p-4 space-y-3">
+
+          {/* Subtitle: material + short name + location */}
           <p className="text-xs text-slate-500">
-            {order.material?.material_code}
-            {order.location && <> · <span className="font-mono">{order.location.location_code}</span></>}
+            <span className="font-medium text-slate-700">{order.material?.material_code}</span>
+            {order.material?.short_name && <span className="text-slate-500"> · {order.material.short_name}</span>}
+            {order.location && <span className="font-mono"> · {order.location.location_code}</span>}
           </p>
-        </DialogHeader>
 
-        <div className="space-y-3">
-          <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} />
+          {/* Camera with floating Save button */}
+          <div className="relative">
+            <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} />
 
-          {/* Validation result — right after camera */}
+            {/* Save button floats at midpoint between camera center and right edge, vertically centered */}
+            {canSave && (
+              <button
+                className="absolute left-[75%] top-1/2 -translate-x-1/2 -translate-y-1/2 z-10
+                           bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white
+                           rounded-full px-5 py-2 text-sm font-semibold shadow-xl
+                           transition-all"
+                onClick={handleSave}
+              >
+                {isPending ? '…' : 'Lưu'}
+              </button>
+            )}
+          </div>
+
+          {/* Validation result */}
           {pendingQR && validation && !feedback && (
             validation.ok ? (
               <div className="rounded-lg bg-green-50 border border-green-200 px-3 py-2.5 flex items-center gap-2">
@@ -231,25 +243,16 @@ function ScanDialog({ order, open, onClose }: ScanDialogProps) {
 
           {feedback && <ScanFeedback state={feedback} />}
 
-          {/* Save + Cancel — right below validation */}
-          <div className="flex gap-2">
-            <Button className="flex-1" disabled={!canSave} onClick={handleSave}>
-              {isPending ? 'Đang lưu...' : 'Lưu pallet'}
-            </Button>
-            <Button variant="outline" disabled={isPending} onClick={handleCancel}>
-              Huỷ
-            </Button>
-          </div>
+          {/* Cancel */}
+          <Button variant="outline" className="w-full" disabled={isPending} onClick={handleCancel}>
+            Huỷ
+          </Button>
 
-          {/* Inputs at bottom — adjust before/after scanning */}
+          {/* Inputs */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
               <Label className="text-xs">Số thùng / pallet</Label>
-              <Input
-                type="number" min="0"
-                value={cartons}
-                onChange={(e) => setCartons(e.target.value)}
-              />
+              <Input type="number" min="0" value={cartons} onChange={(e) => setCartons(e.target.value)} />
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Tầng chồng</Label>
@@ -264,8 +267,8 @@ function ScanDialog({ order, open, onClose }: ScanDialogProps) {
             </div>
           </div>
         </div>
-      </DialogContent>
-    </Dialog>
+      </div>
+    </div>
   )
 }
 
@@ -425,6 +428,7 @@ export default function InboundDetail() {
   const { mutate: updateOrder                           } = useUpdateInboundOrder()
 
   const [showScan,      setShowScan]      = useState(false)
+  const [hasOpenedScan, setHasOpenedScan] = useState(false)
   const [showEditOrder, setShowEditOrder] = useState(false)
   const [editingEntry,  setEditingEntry]  = useState<PalletEntry | null>(null)
   const [selectedIds,   setSelectedIds]   = useState<Set<string>>(new Set())
@@ -494,11 +498,14 @@ export default function InboundDetail() {
           onClose={() => setEditingEntry(null)}
         />
       )}
-      <ScanDialog
-        order={order}
-        open={showScan}
-        onClose={() => setShowScan(false)}
-      />
+      {/* ScanDialog: mount once on first open, then keep alive (CSS hidden) to avoid re-requesting camera permission */}
+      {hasOpenedScan && (
+        <ScanDialog
+          order={order}
+          open={showScan}
+          onClose={() => setShowScan(false)}
+        />
+      )}
 
       {/* ── Confirm dialog ── */}
       {confirm && (
@@ -666,7 +673,7 @@ export default function InboundDetail() {
                   size="sm"
                   className="h-8 gap-1.5"
                   disabled={!order.location_id}
-                  onClick={() => { unlockAudio(); setShowScan(true) }}
+                  onClick={() => { unlockAudio(); setHasOpenedScan(true); setShowScan(true) }}
                   title={!order.location_id ? 'Chọn vị trí trước' : undefined}
                 >
                   <Plus className="h-3.5 w-3.5" />
@@ -687,7 +694,7 @@ export default function InboundDetail() {
                   <Button
                     size="sm" variant="outline"
                     disabled={!order.location_id}
-                    onClick={() => { unlockAudio(); setShowScan(true) }}
+                    onClick={() => { unlockAudio(); setHasOpenedScan(true); setShowScan(true) }}
                   >
                     <Plus className="h-4 w-4 mr-1" /> Thêm pallet đầu tiên
                   </Button>

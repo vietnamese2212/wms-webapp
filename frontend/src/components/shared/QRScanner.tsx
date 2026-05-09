@@ -1,7 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { Html5Qrcode, Html5QrcodeScannerState } from 'html5-qrcode'
-import { Camera, X } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { X } from 'lucide-react'
 
 interface QRScannerProps {
   onScan: (value: string) => void
@@ -17,14 +16,12 @@ const SCANNER_ID = 'qr-scanner-container'
 export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
   function QRScanner({ onScan, onClose }, ref) {
     const scannerRef = useRef<Html5Qrcode | null>(null)
-    const [error,  setError]  = useState<string | null>(null)
-    const [paused, setPaused] = useState(false)
+    const [error, setError] = useState<string | null>(null)
 
     function handleResume() {
       const s = scannerRef.current
       if (s && s.getState() === Html5QrcodeScannerState.PAUSED) {
         s.resume()
-        setPaused(false)
       }
     }
 
@@ -37,7 +34,6 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
       const onDecode = (decodedText: string) => {
         if (scanner.getState() === Html5QrcodeScannerState.SCANNING) {
           scanner.pause(true)
-          setPaused(true)
         }
         onScan(decodedText)
       }
@@ -75,19 +71,9 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
           <div id={SCANNER_ID} className="w-full" />
 
           {/* Scanning overlay */}
-          {!error && !paused && (
+          {!error && (
             <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
               <div className="w-64 h-64 border-2 border-blue-400 rounded-lg animate-pulse" />
-            </div>
-          )}
-
-          {/* Paused overlay */}
-          {paused && (
-            <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center gap-3">
-              <p className="text-white text-sm font-medium">Đã dừng sau khi quét</p>
-              <Button size="sm" onClick={handleResume} className="gap-2">
-                <Camera className="h-4 w-4" /> Quét tiếp
-              </Button>
             </div>
           )}
 

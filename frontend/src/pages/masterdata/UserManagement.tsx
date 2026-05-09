@@ -284,13 +284,13 @@ function EmployeeFormDialog({ emp, open, onClose }: EmpFormProps) {
 
 export default function UserManagement() {
   const [search,      setSearch]      = useState('')
-  const [filterDept,  setFilterDept]  = useState('')
+  const [filterDept,  setFilterDept]  = useState('__all__')
   const [editingEmp,  setEditingEmp]  = useState<EmployeeRecord | null | 'new'>('new' as never)
   const [showDialog,  setShowDialog]  = useState(false)
 
   const { data: departments = [] } = useDepartments()
   const { data: employees = [], isLoading, isError, error } = useEmployeeRecords({
-    department_id: filterDept || undefined,
+    department_id: filterDept === '__all__' ? undefined : filterDept,
     search: search || undefined,
   })
 
@@ -331,7 +331,7 @@ export default function UserManagement() {
             <SelectValue placeholder="Tất cả phòng ban" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="">Tất cả phòng ban</SelectItem>
+            <SelectItem value="__all__">Tất cả phòng ban</SelectItem>
             {departments.map(d => (
               <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
             ))}

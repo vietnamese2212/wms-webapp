@@ -599,3 +599,41 @@ export function useManualCompleteItem() {
     onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ['gdo', v.gdoId] }),
   })
 }
+
+export function useAssignGDO() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, assigned_by }: { id: string; assigned_by?: string }) =>
+      apiClient.post(`/wms/outbound/${id}/assign`, { assigned_by }).then(r => r.data.data),
+    onSuccess: (_d, v) => {
+      qc.invalidateQueries({ queryKey: ['gdos'] })
+      qc.invalidateQueries({ queryKey: ['gdo', v.id] })
+    },
+  })
+}
+
+export function useStartGDO() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: {
+      id: string; license_plate: string; container_number?: string
+      exporter_name?: string; loader_name?: string; forklift_driver_id?: string
+    }) => apiClient.post(`/wms/outbound/${id}/start`, body).then(r => r.data.data),
+    onSuccess: (_d, v) => {
+      qc.invalidateQueries({ queryKey: ['gdos'] })
+      qc.invalidateQueries({ queryKey: ['gdo', v.id] })
+    },
+  })
+}
+
+export function useWarehouseEmployees(warehouse_id?: string | null) {
+  return useQuery({
+    queryKey: ['warehouse-employees', warehouse_id],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/outbound/employees', {
+        params: warehouse_id ? { warehouse_id } : undefined,
+      })
+      return data.data as { id: string; name: string; employee_code: string }[]
+    },
+  })
+}

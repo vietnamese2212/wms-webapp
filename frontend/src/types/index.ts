@@ -397,7 +397,22 @@ export interface GDO {
   warehouse_id:     string | null
   dvvt:             string | null
   status:           OutboundStatus
-  do_count?:        number
   created_at:       string
+  // List aggregates
+  do_count?:        number
+  distributor_names?: string[]
+  export_type?:     string | null
+  total_cartons?:   number
+  total_pallets?:   number
+  // Workflow fields
+  assigned_at?:        string | null
+  assigned_by?:        string | null
+  started_at?:         string | null
+  license_plate?:      string | null
+  container_number?:   string | null
+  exporter_name?:      string | null
+  loader_name?:        string | null
+  forklift_driver_id?: string | null
+  // Detail
   delivery_orders?: OutboundDelivery[]
 }

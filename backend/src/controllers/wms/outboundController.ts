@@ -13,13 +13,13 @@ async function fetchGDOFull(id: string) {
     .select('*').eq('id', id).single()
   if (error || !gdo) return null
 
-  const { data: dos } = await (supabase.from('DeliveryOrder') as any)
+  const { data: dos } = await (supabase.from('OutboundDelivery') as any)
     .select('*').eq('gdo_id', id).order('delivery_code')
 
   const doIds = (dos ?? []).map((d: any) => d.id)
 
   const { data: items } = doIds.length
-    ? await (supabase.from('DeliveryOrderItem') as any)
+    ? await (supabase.from('OutboundItem') as any)
         .select('*, material:Material(id,material_code,short_name,custom_short_name,cartons_per_pallet,weight_kg)')
         .in('do_id', doIds)
         .order('id')
@@ -73,7 +73,7 @@ export async function listGDOs(req: Request, res: Response) {
     const gdoIds = (data ?? []).map((g: any) => g.id)
     let doCountMap = new Map<string, number>()
     if (gdoIds.length) {
-      const { data: dos } = await (supabase.from('DeliveryOrder') as any)
+      const { data: dos } = await (supabase.from('OutboundDelivery') as any)
         .select('id, gdo_id').in('gdo_id', gdoIds)
       for (const d of (dos ?? [])) {
         doCountMap.set(d.gdo_id, (doCountMap.get(d.gdo_id) ?? 0) + 1)
@@ -197,7 +197,7 @@ export async function uploadExcel(req: Request, res: Response) {
       for (const [delivery_code, doRows] of byDelivery) {
         const doId = randomUUID()
         const distributor_name = String(doRows[0]['Tên NPP'] ?? '').trim() || null
-        await (supabase.from('DeliveryOrder') as any).insert({
+        await (supabase.from('OutboundDelivery') as any).insert({
           id: doId, gdo_id: gdoId, delivery_code, distributor_name, status: 'PENDING', updated_at: now(),
         })
 
@@ -228,7 +228,7 @@ export async function uploadExcel(req: Request, res: Response) {
           }
         })
         if (itemsToInsert.length) {
-          await (supabase.from('DeliveryOrderItem') as any).insert(itemsToInsert)
+          await (supabase.from('OutboundItem') as any).insert(itemsToInsert)
         }
       }
 
@@ -244,14 +244,14 @@ export async function uploadExcel(req: Request, res: Response) {
 export async function getItemInventory(req: Request, res: Response) {
   try {
     const { itemId } = req.params
-    const { data: item } = await (supabase.from('DeliveryOrderItem') as any)
+    const { data: item } = await (supabase.from('OutboundItem') as any)
       .select('material_id').eq('id', itemId).single()
     if (!item) return fail(res, 'Không tìm thấy mặt hàng', 404)
 
     const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
       .select('warehouse_id')
       .eq('id',
-        (await (supabase.from('DeliveryOrder') as any)
+        (await (supabase.from('OutboundDelivery') as any)
           .select('gdo_id').eq('id', req.params.gdoId ?? '').single()
         ).data?.gdo_id ?? ''
       ).single()
@@ -283,7 +283,7 @@ export async function scanItem(req: Request, res: Response) {
     if (!qr_code) return fail(res, 'qr_code là bắt buộc', 400)
 
     // 1. Get item
-    const { data: item, error: itemErr } = await (supabase.from('DeliveryOrderItem') as any)
+    const { data: item, error: itemErr } = await (supabase.from('OutboundItem') as any)
       .select('*').eq('id', itemId).single()
     if (itemErr || !item) return fail(res, 'Không tìm thấy mặt hàng', 404)
     if (item.status === 'COMPLETED') return fail(res, 'Mặt hàng này đã xuất đủ số lượng', 400)
@@ -340,22 +340,22 @@ export async function scanItem(req: Request, res: Response) {
     // 9. Update item
     const new_scanned = Number(item.cartons_scanned) + to_take
     const new_item_status = new_scanned >= Number(item.cartons_ordered) ? 'COMPLETED' : 'IN_PROGRESS'
-    await (supabase.from('DeliveryOrderItem') as any)
+    await (supabase.from('OutboundItem') as any)
       .update({ cartons_scanned: new_scanned, status: new_item_status, updated_at: t }).eq('id', itemId)
 
     // 10. Cascade: check DO status
-    const { data: siblingItems } = await (supabase.from('DeliveryOrderItem') as any)
+    const { data: siblingItems } = await (supabase.from('OutboundItem') as any)
       .select('status').eq('do_id', item.do_id)
     const doCompleted = (siblingItems ?? []).every((i: any) =>
       i.id === itemId ? new_item_status === 'COMPLETED' : i.status === 'COMPLETED'
     )
     const new_do_status = doCompleted ? 'COMPLETED' : 'IN_PROGRESS'
-    const { data: doRow } = await (supabase.from('DeliveryOrder') as any)
+    const { data: doRow } = await (supabase.from('OutboundDelivery') as any)
       .update({ status: new_do_status, updated_at: t }).eq('id', item.do_id).select('gdo_id').single()
 
     // 11. Cascade: check GDO status
     if (doRow?.gdo_id) {
-      const { data: siblingDOs } = await (supabase.from('DeliveryOrder') as any)
+      const { data: siblingDOs } = await (supabase.from('OutboundDelivery') as any)
         .select('status').eq('gdo_id', doRow.gdo_id)
       const gdoCompleted = (siblingDOs ?? []).every((d: any) =>
         d.id === item.do_id ? doCompleted : d.status === 'COMPLETED'
@@ -377,27 +377,27 @@ export async function scanItem(req: Request, res: Response) {
 export async function manualCompleteItem(req: Request, res: Response) {
   try {
     const { itemId } = req.params
-    const { data: item } = await (supabase.from('DeliveryOrderItem') as any)
+    const { data: item } = await (supabase.from('OutboundItem') as any)
       .select('*').eq('id', itemId).single()
     if (!item) return fail(res, 'Không tìm thấy mặt hàng', 404)
 
     const t = now()
-    await (supabase.from('DeliveryOrderItem') as any)
+    await (supabase.from('OutboundItem') as any)
       .update({ status: 'COMPLETED', cartons_scanned: item.cartons_ordered, updated_at: t }).eq('id', itemId)
 
     // Cascade DO
-    const { data: siblingItems } = await (supabase.from('DeliveryOrderItem') as any)
+    const { data: siblingItems } = await (supabase.from('OutboundItem') as any)
       .select('status').eq('do_id', item.do_id)
     const doCompleted = (siblingItems ?? []).every((i: any) =>
       i.id === itemId ? true : i.status === 'COMPLETED'
     )
-    const { data: doRow } = await (supabase.from('DeliveryOrder') as any)
+    const { data: doRow } = await (supabase.from('OutboundDelivery') as any)
       .update({ status: doCompleted ? 'COMPLETED' : 'IN_PROGRESS', updated_at: t })
       .eq('id', item.do_id).select('gdo_id').single()
 
     // Cascade GDO
     if (doRow?.gdo_id) {
-      const { data: siblingDOs } = await (supabase.from('DeliveryOrder') as any)
+      const { data: siblingDOs } = await (supabase.from('OutboundDelivery') as any)
         .select('status').eq('gdo_id', doRow.gdo_id)
       const gdoCompleted = (siblingDOs ?? []).every((d: any) =>
         d.id === item.do_id ? doCompleted : d.status === 'COMPLETED'

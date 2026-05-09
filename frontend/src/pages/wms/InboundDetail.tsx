@@ -3,7 +3,7 @@ import { useParams, useNavigate }       from 'react-router-dom'
 import type { AxiosError }              from 'axios'
 import {
   ArrowLeft, Plus, CheckCircle2, XCircle, Trash2,
-  MapPin, Package, AlertTriangle, Pencil, QrCode,
+  MapPin, Package, AlertTriangle, QrCode,
   Clock, Calendar, User,
 } from 'lucide-react'
 import { format, parseISO }    from 'date-fns'
@@ -20,7 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import {
   useInboundOrder, useCancelInboundOrder,
-  useScanPallet, useDeletePalletEntry, useDeletePalletEntries, useUpdatePalletEntry,
+  useScanPallet, useDeletePalletEntry, useDeletePalletEntries,
   useLocationsReal, useUpdateInboundOrder,
 } from '@/api/hooks'
 import { useAuthStore }            from '@/stores/authStore'
@@ -272,142 +272,6 @@ function ScanDialog({ order, open, onClose }: ScanDialogProps) {
   )
 }
 
-// ─── Edit order dialog ────────────────────────────────────────
-
-interface EditOrderDialogProps {
-  order: InboundOrder
-  locations: { id: string; location_code: string }[]
-  open: boolean
-  onClose: () => void
-}
-
-function EditOrderDialog({ order, locations, open, onClose }: EditOrderDialogProps) {
-  const [locationId, setLocationId] = useState(order.location_id ?? '')
-  const [notes,      setNotes]      = useState(order.notes ?? '')
-
-  const { mutate: updateOrder, isPending, error } = useUpdateInboundOrder()
-
-  function handleSubmit() {
-    updateOrder(
-      { id: order.id, location_id: locationId || undefined, notes: notes || undefined },
-      { onSuccess: onClose },
-    )
-  }
-
-  const apiError = (error as AxiosError<{ error: { message: string } }>)
-    ?.response?.data?.error?.message
-
-  return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) onClose() }}>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader><DialogTitle>Sửa thông tin phiếu</DialogTitle></DialogHeader>
-
-        <div className="space-y-4 py-2">
-          {apiError && (
-            <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
-              {apiError}
-            </div>
-          )}
-          <div className="space-y-2">
-            <Label>Vị trí nhập kho</Label>
-            <Select value={locationId} onValueChange={setLocationId}>
-              <SelectTrigger><SelectValue placeholder="Chọn vị trí" /></SelectTrigger>
-              <SelectContent>
-                {locations.map((l) => (
-                  <SelectItem key={l.id} value={l.id}>{l.location_code}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-2">
-            <Label>Ghi chú</Label>
-            <Input
-              placeholder="Không có ghi chú"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-            />
-          </div>
-        </div>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Huỷ</Button>
-          <Button onClick={handleSubmit} disabled={isPending}>
-            {isPending ? 'Đang lưu...' : 'Lưu'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-// ─── Edit entry dialog ────────────────────────────────────────
-
-interface EditEntryDialogProps {
-  orderId: string
-  entry: PalletEntry
-  open: boolean
-  onClose: () => void
-}
-
-function EditEntryDialog({ orderId, entry, open, onClose }: EditEntryDialogProps) {
-  const [cartons,    setCartons]    = useState(entry.cartons_imported.toString())
-  const [stackLayer, setStackLayer] = useState(entry.stack_layer.toString())
-
-  const { mutate: updateEntry, isPending, error } = useUpdatePalletEntry()
-
-  function handleSubmit() {
-    updateEntry(
-      { orderId, entryId: entry.id, cartons_imported: Number(cartons), stack_layer: Number(stackLayer) },
-      { onSuccess: onClose },
-    )
-  }
-
-  const apiError = (error as AxiosError<{ error: { message: string } }>)
-    ?.response?.data?.error?.message
-
-  return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) onClose() }}>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader><DialogTitle>Sửa pallet</DialogTitle></DialogHeader>
-
-        <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600 font-mono mb-2">
-          {entry.pallet_code}
-        </div>
-
-        <div className="space-y-4">
-          {apiError && (
-            <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
-              {apiError}
-            </div>
-          )}
-          <div className="space-y-2">
-            <Label>Số thùng / pallet</Label>
-            <Input type="number" min="0" value={cartons} onChange={(e) => setCartons(e.target.value)} />
-          </div>
-          <div className="space-y-2">
-            <Label>Tầng chồng</Label>
-            <Select value={stackLayer} onValueChange={setStackLayer}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="1">Tầng 1 (sàn)</SelectItem>
-                <SelectItem value="2">Tầng 2</SelectItem>
-                <SelectItem value="3">Tầng 3</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Huỷ</Button>
-          <Button onClick={handleSubmit} disabled={isPending}>
-            {isPending ? 'Đang lưu...' : 'Lưu'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
 // ─── Main page ────────────────────────────────────────────────
 
 export default function InboundDetail() {
@@ -428,8 +292,6 @@ export default function InboundDetail() {
 
   const [showScan,      setShowScan]      = useState(false)
   const [hasOpenedScan, setHasOpenedScan] = useState(false)
-  const [showEditOrder, setShowEditOrder] = useState(false)
-  const [editingEntry,  setEditingEntry]  = useState<PalletEntry | null>(null)
   const [selectedIds,   setSelectedIds]   = useState<Set<string>>(new Set())
   const [confirm, setConfirm] = useState<{ title: string; msg: string; onOk: () => void } | null>(null)
 
@@ -483,23 +345,6 @@ export default function InboundDetail() {
 
   return (
     <>
-      {/* Dialogs */}
-      {showEditOrder && (
-        <EditOrderDialog
-          order={order}
-          locations={allLocations}
-          open={showEditOrder}
-          onClose={() => setShowEditOrder(false)}
-        />
-      )}
-      {editingEntry && (
-        <EditEntryDialog
-          orderId={order.id}
-          entry={editingEntry}
-          open={!!editingEntry}
-          onClose={() => setEditingEntry(null)}
-        />
-      )}
       {/* ScanDialog: mount once on first open, then keep alive (CSS hidden) to avoid re-requesting camera permission */}
       {hasOpenedScan && (
         <ScanDialog
@@ -545,15 +390,6 @@ export default function InboundDetail() {
               <span className="font-semibold font-mono text-sm truncate">
                 {order.import_code ?? order.id.slice(0, 8)}
               </span>
-              {isOpen && (
-                <button
-                  onClick={() => setShowEditOrder(true)}
-                  className="p-1 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors shrink-0"
-                  title="Sửa thông tin phiếu"
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                </button>
-              )}
             </div>
 
             <div className="flex items-center gap-1.5 shrink-0">
@@ -772,28 +608,19 @@ export default function InboundDetail() {
                         </TableCell>
                         {isOpen && (
                           <TableCell className="px-1 py-1">
-                            <div className="flex items-center justify-end gap-0.5">
+                            {canDeleteEntry(entry) && (
                               <button
-                                className="text-slate-400 hover:text-blue-500 transition-colors p-0.5"
-                                onClick={() => setEditingEntry(entry)}
-                                title="Sửa"
+                                className="text-slate-400 hover:text-red-500 transition-colors p-0.5 flex"
+                                onClick={() => openConfirm(
+                                  'Xóa pallet',
+                                  `Xác nhận xóa pallet "${entry.pallet_code}"?`,
+                                  () => deleteEntry({ orderId: order.id, entryId: entry.id, employeeId: user?.id })
+                                )}
+                                title="Xóa"
                               >
-                                <Pencil className="h-3 w-3" />
+                                <Trash2 className="h-3 w-3" />
                               </button>
-                              {canDeleteEntry(entry) && (
-                                <button
-                                  className="text-slate-400 hover:text-red-500 transition-colors p-0.5"
-                                  onClick={() => openConfirm(
-                                    'Xóa pallet',
-                                    `Xác nhận xóa pallet "${entry.pallet_code}"?`,
-                                    () => deleteEntry({ orderId: order.id, entryId: entry.id, employeeId: user?.id })
-                                  )}
-                                  title="Xóa"
-                                >
-                                  <Trash2 className="h-3 w-3" />
-                                </button>
-                              )}
-                            </div>
+                            )}
                           </TableCell>
                         )}
                       </TableRow>

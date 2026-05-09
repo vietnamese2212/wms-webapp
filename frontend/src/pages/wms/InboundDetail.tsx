@@ -64,33 +64,26 @@ function ScanFeedback({ state }: { state: FeedbackState }) {
   )
 }
 
-// ─── QR parsing ───────────────────────────────────────────────
+// ─── QR validation ────────────────────────────────────────────
 
-type ParsedQR =
-  | { valid: true; matCode: string; cycle: string; machine: string; seqNo: number | null; manufacturer: string | null; productionDate: Date | null }
-  | { valid: false; error: string }
+type ValidationResult =
+  | { ok: true; msg: string }
+  | { ok: false; msg: string }
 
-function parseQR(raw: string): ParsedQR {
+function validateQR(raw: string, order: InboundOrder): ValidationResult {
   const parts = raw.split('_')
   if (parts.length < 5) {
-    return { valid: false, error: `Định dạng không đúng (${parts.length} phần, cần ≥5)` }
+    return { ok: false, msg: `Định dạng QR không hợp lệ (${parts.length} phần, cần ≥5)` }
   }
-  const [datePart, matCode, cycle, machine, seqStr, manufacturer] = parts
-  let productionDate: Date | null = null
-  if (datePart?.length === 6) {
-    const d = new Date(`20${datePart.slice(4)}-${datePart.slice(2, 4)}-${datePart.slice(0, 2)}`)
-    if (!isNaN(d.getTime())) productionDate = d
+  const qrMat  = (parts[1] ?? '').trim().toUpperCase()
+  const orderMat = (order.material?.material_code ?? '').trim().toUpperCase()
+  if (orderMat && qrMat !== orderMat) {
+    return { ok: false, msg: `Sai mã hàng — QR: "${parts[1]}", phiếu: "${order.material?.material_code}"` }
   }
-  const seqNo = parseInt(seqStr ?? '', 10)
-  return {
-    valid: true,
-    matCode: matCode ?? '',
-    cycle: cycle ?? '',
-    machine: machine ?? '',
-    seqNo: isNaN(seqNo) ? null : seqNo,
-    manufacturer: manufacturer ?? null,
-    productionDate,
+  if (!order.location_id) {
+    return { ok: false, msg: 'Chưa chọn vị trí — đóng dialog và chọn vị trí trước' }
   }
+  return { ok: true, msg: `Hợp lệ · ${order.material?.material_code} · ${order.location?.location_code ?? ''}` }
 }
 
 // ─── Scan dialog (embedded QR camera + sticky settings) ───────
@@ -108,15 +101,15 @@ function ScanDialog({ order, open, onClose }: ScanDialogProps) {
   const defaultCartons = order.material?.cartons_per_pallet?.toString() ?? '0'
   const [cartons,    setCartons]    = useState(defaultCartons)
   const [stackLayer, setStackLayer] = useState('1')
-  const [feedback,   setFeedback]   = useState<FeedbackState | null>(null)
-  const [pendingQR,  setPendingQR]  = useState<string | null>(null)
-  const [parsedQR,   setParsedQR]   = useState<ParsedQR | null>(null)
+  const [feedback,    setFeedback]    = useState<FeedbackState | null>(null)
+  const [pendingQR,   setPendingQR]   = useState<string | null>(null)
+  const [validation,  setValidation]  = useState<ValidationResult | null>(null)
 
   useEffect(() => {
     if (open) {
       setFeedback(null)
       setPendingQR(null)
-      setParsedQR(null)
+      setValidation(null)
       setCartons(order.material?.cartons_per_pallet?.toString() ?? '0')
       setStackLayer('1')
     }
@@ -125,12 +118,12 @@ function ScanDialog({ order, open, onClose }: ScanDialogProps) {
   function handleScan(raw: string) {
     playBeep()
     setPendingQR(raw)
-    setParsedQR(parseQR(raw))
+    setValidation(validateQR(raw, order))
     setFeedback(null)
   }
 
   function handleSave() {
-    if (!pendingQR || !parsedQR?.valid) return
+    if (!pendingQR || !validation?.ok) return
     const locationId = order.location_id
     if (!locationId) {
       setFeedback({ type: 'error', msg: 'Chưa chọn vị trí. Đóng dialog và chọn vị trí trước.' })
@@ -148,7 +141,7 @@ function ScanDialog({ order, open, onClose }: ScanDialogProps) {
       {
         onSuccess: (data) => {
           setPendingQR(null)
-          setParsedQR(null)
+          setValidation(null)
           setFeedback({
             type: 'success',
             msg: `✓ ${data.entry.pallet_code} · ${data.entry.cartons_imported} thùng · ${data.entry.location?.location_code ?? ''}`,
@@ -160,7 +153,7 @@ function ScanDialog({ order, open, onClose }: ScanDialogProps) {
         },
         onError: (err) => {
           setPendingQR(null)
-          setParsedQR(null)
+          setValidation(null)
           const msg = (err as AxiosError<{ error: { message: string } }>)
             ?.response?.data?.error?.message ?? 'Lỗi không xác định'
           setFeedback({ type: 'error', msg })
@@ -172,7 +165,7 @@ function ScanDialog({ order, open, onClose }: ScanDialogProps) {
   function handleCancel() {
     if (pendingQR) {
       setPendingQR(null)
-      setParsedQR(null)
+      setValidation(null)
       setFeedback(null)
       scannerRef.current?.resume()
     } else {
@@ -180,7 +173,7 @@ function ScanDialog({ order, open, onClose }: ScanDialogProps) {
     }
   }
 
-  const canSave = !!pendingQR && parsedQR?.valid === true && !isPending
+  const canSave = !!pendingQR && validation?.ok === true && !isPending
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose() }}>
@@ -196,26 +189,23 @@ function ScanDialog({ order, open, onClose }: ScanDialogProps) {
         <div className="space-y-3">
           <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} />
 
-          {/* Immediate QR parse result — shown right after scan */}
-          {pendingQR && parsedQR && !feedback && (
-            parsedQR.valid ? (
-              <div className="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 space-y-1">
-                <p className="font-mono text-xs text-blue-800 break-all">{pendingQR}</p>
-                <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-[10px] text-blue-600">
-                  {parsedQR.productionDate && <span>NSX: {format(parsedQR.productionDate, 'dd/MM/yy')}</span>}
-                  {parsedQR.cycle && <span>CK: {parsedQR.cycle}</span>}
-                  {parsedQR.machine && <span>Máy: {parsedQR.machine}</span>}
-                  {parsedQR.seqNo != null && <span>STT: {parsedQR.seqNo}</span>}
-                  {parsedQR.manufacturer && <span>NMSX: {parsedQR.manufacturer}</span>}
+          {/* Validation result — shown immediately after scan */}
+          {pendingQR && validation && !feedback && (
+            validation.ok ? (
+              <div className="rounded-lg bg-green-50 border border-green-200 px-3 py-2.5 flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 text-green-600 shrink-0" />
+                <div>
+                  <p className="text-sm font-medium text-green-800">{validation.msg}</p>
+                  <p className="font-mono text-[10px] text-green-500 truncate max-w-[320px]">{pendingQR}</p>
                 </div>
               </div>
             ) : (
-              <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2">
-                <p className="text-xs text-red-700 flex items-start gap-1.5">
-                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                  {parsedQR.error}
-                </p>
-                <p className="font-mono text-[10px] text-red-400 break-all mt-1">{pendingQR}</p>
+              <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2.5 flex items-start gap-2">
+                <AlertTriangle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-medium text-red-700">{validation.msg}</p>
+                  <p className="font-mono text-[10px] text-red-400 truncate max-w-[320px]">{pendingQR}</p>
+                </div>
               </div>
             )
           )}

@@ -43,7 +43,6 @@ Warehouse (Kho lớn)   → Ba Vì, Bàu Bàng
 | Model | Mục đích | Trạng thái |
 |---|---|---|
 | `Warehouse` | Kho lớn (Ba Vì, Bàu Bàng...) | ✅ Đã tạo, API + seed ổn |
-| ~~`SubWarehouse`~~ | ~~Kho nhỏ~~ | 🗑️ Đã xoá — embed vào Location |
 | `Location` | Vị trí kho (có sub_code/sub_name/sub_type) | ✅ Đã refactor, 2-table |
 | `Material` | Danh mục hàng hóa | ✅ Đã tạo, đầy đủ field logistics |
 | `Manufacturer` | Nhà máy sản xuất (NMSX) | ✅ Đã tạo, API + seed ổn |

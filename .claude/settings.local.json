@@ -21,7 +21,8 @@
       "Bash(node run-migration.js)",
       "Bash(node -e ' *)",
       "Bash(rm run-migration.js)",
-      "Bash(npm uninstall *)"
+      "Bash(npm uninstall *)",
+      "Bash(npx tsc *)"
     ]
   }
 }

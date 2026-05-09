@@ -64,29 +64,43 @@ interface ScanDialogProps {
 
 function ScanDialog({ open, item, gdoId, onClose }: ScanDialogProps) {
   const scannerRef = useRef<QRScannerHandle>(null)
-  const [feedback, setFeedback] = useState<FeedbackState>(null)
+  const [feedback,   setFeedback]   = useState<FeedbackState>(null)
+  const [pendingQR,  setPendingQR]  = useState<string | null>(null)
   const { mutate: scanItem, isPending } = useScanOutboundItem()
 
   const matName   = item.material?.custom_short_name ?? item.material?.short_name ?? item.material_code_raw ?? '—'
   const remaining = Math.max(0, item.cartons_ordered - item.cartons_scanned)
 
+  // Camera pauses automatically after decode (QRScanner calls scanner.pause)
   function handleScan(qr_code: string) {
-    if (isPending) return
     playBeep()
+    setPendingQR(qr_code)
     setFeedback(null)
+  }
+
+  function handleSave() {
+    if (!pendingQR || isPending) return
     scanItem(
-      { gdoId, itemId: item.id, qr_code },
+      { gdoId, itemId: item.id, qr_code: pendingQR },
       {
         onSuccess: (data) => {
+          setPendingQR(null)
           setFeedback({ type: 'success', msg: `✓ ${data.scan_entry.pallet_code} · ${data.scan_entry.cartons_scanned} thùng` })
           setTimeout(() => { scannerRef.current?.resume(); setFeedback(null) }, 1500)
         },
         onError: (err) => {
+          setPendingQR(null)
           const msg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
           setFeedback({ type: 'error', msg })
         },
       }
     )
+  }
+
+  function dismissPending() {
+    setPendingQR(null)
+    setFeedback(null)
+    scannerRef.current?.resume()
   }
 
   return (
@@ -101,17 +115,57 @@ function ScanDialog({ open, item, gdoId, onClose }: ScanDialogProps) {
               {' · '}còn <strong>{remaining}</strong> thùng cần xuất
             </p>
           </div>
+
+          {/* Camera with floating action buttons */}
           <div className="relative">
             <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} />
+
+            {/* "Quét tiếp": top-center, dismiss pending and resume */}
+            {pendingQR && (
+              <button
+                className="absolute left-1/2 top-[8%] -translate-x-1/2 -translate-y-1/2 z-10
+                           bg-white/90 hover:bg-white text-slate-700 border border-slate-300
+                           rounded-full px-4 py-1.5 text-sm font-medium shadow-lg transition-all"
+                onClick={dismissPending}
+              >
+                Quét tiếp
+              </button>
+            )}
+
+            {/* "Lưu": center of camera, confirm scan */}
+            {pendingQR && (
+              <button
+                className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10
+                           bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white
+                           rounded-full px-6 py-2.5 text-sm font-semibold shadow-xl transition-all
+                           disabled:opacity-60"
+                onClick={handleSave}
+                disabled={isPending}
+              >
+                {isPending ? '…' : 'Lưu'}
+              </button>
+            )}
           </div>
+
+          {/* Pending QR preview */}
+          {pendingQR && !feedback && (
+            <div className="rounded-lg bg-green-50 border border-green-200 px-3 py-2.5 flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4 text-green-600 shrink-0" />
+              <div className="min-w-0">
+                <p className="text-lg font-medium text-green-800">Sẵn sàng lưu</p>
+                <p className="font-mono text-[10px] text-green-500 truncate">{pendingQR}</p>
+              </div>
+            </div>
+          )}
+
           {feedback?.type === 'success' && (
-            <div className="rounded-lg bg-green-50 border border-green-200 p-2.5 text-sm text-green-800 flex items-center gap-2">
+            <div className="rounded-lg bg-green-50 border border-green-200 p-2.5 text-lg text-green-800 flex items-center gap-2">
               <CheckCircle2 className="h-4 w-4 shrink-0" />{feedback.msg}
             </div>
           )}
           {feedback?.type === 'error' && (
             <div className="space-y-2">
-              <div className="rounded-lg bg-red-50 border border-red-200 p-2.5 text-sm text-red-700 flex items-start gap-2">
+              <div className="rounded-lg bg-red-50 border border-red-200 p-2.5 text-lg text-red-700 flex items-start gap-2">
                 <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />{feedback.msg}
               </div>
               <Button variant="outline" size="sm" className="w-full"

@@ -172,15 +172,11 @@ function ScanDialog({ order, open, onClose }: ScanDialogProps) {
     )
   }
 
-  function handleCancel() {
-    if (pendingQR) {
-      setPendingQR(null)
-      setValidation(null)
-      setFeedback(null)
-      scannerRef.current?.resume()
-    } else {
-      onClose()
-    }
+  function dismissPending() {
+    setPendingQR(null)
+    setValidation(null)
+    setFeedback(null)
+    scannerRef.current?.resume()
   }
 
   const canSave = !!pendingQR && validation?.ok === true && !isPending
@@ -189,7 +185,7 @@ function ScanDialog({ order, open, onClose }: ScanDialogProps) {
   return (
     <div className={`fixed inset-0 z-50 flex flex-col ${open ? '' : 'hidden'}`} aria-hidden={!open}>
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/60" onClick={handleCancel} />
+      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
 
       {/* Bottom sheet */}
       <div className="relative mt-auto bg-white rounded-t-2xl max-h-[90dvh] overflow-y-auto">
@@ -202,16 +198,29 @@ function ScanDialog({ order, open, onClose }: ScanDialogProps) {
             {order.location && <span className="font-mono"> · {order.location.location_code}</span>}
           </p>
 
-          {/* Camera with floating Save button */}
+          {/* Camera with floating buttons */}
           <div className="relative">
             <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} />
 
-            {/* Save button: on the diagonal from bottom-left to top-right, near top-right corner */}
+            {/* "Quét tiếp": top-center, shown when a QR is pending */}
+            {pendingQR && (
+              <button
+                className="absolute left-1/2 top-[8%] -translate-x-1/2 -translate-y-1/2 z-10
+                           bg-white/90 hover:bg-white text-slate-700 border border-slate-300
+                           rounded-full px-4 py-1.5 text-sm font-medium shadow-lg
+                           transition-all"
+                onClick={dismissPending}
+              >
+                Quét tiếp
+              </button>
+            )}
+
+            {/* "Lưu": center of camera, shown when validation passes */}
             {canSave && (
               <button
-                className="absolute left-[75%] top-[25%] -translate-x-1/2 -translate-y-1/2 z-10
+                className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10
                            bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white
-                           rounded-full px-5 py-2 text-sm font-semibold shadow-xl
+                           rounded-full px-6 py-2.5 text-sm font-semibold shadow-xl
                            transition-all"
                 onClick={handleSave}
               >
@@ -243,8 +252,8 @@ function ScanDialog({ order, open, onClose }: ScanDialogProps) {
 
           {feedback && <ScanFeedback state={feedback} />}
 
-          {/* Cancel */}
-          <Button variant="outline" className="w-full" disabled={isPending} onClick={handleCancel}>
+          {/* Close dialog */}
+          <Button variant="outline" className="w-full" disabled={isPending} onClick={onClose}>
             Huỷ
           </Button>
 

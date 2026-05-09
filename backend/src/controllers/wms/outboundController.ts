@@ -385,7 +385,7 @@ export async function getItemInventory(req: Request, res: Response) {
     const { data, error } = await (supabase.from('InventoryEntry') as any)
       .select('id, pallet_code, cartons_imported, cartons_remaining, status, qa_status_id, location:Location(location_code), qa_status:QAStatus(code,label)')
       .eq('material_id', item.material_id)
-      .in('status', ['IN_STOCK', 'PARTIAL'])
+      .in('status', ['IN_STOCK', 'PARTIAL', 'In_Stock'])
       .order('created_at')
     if (error) return fail(res, error.message)
 
@@ -422,7 +422,7 @@ export async function scanItem(req: Request, res: Response) {
     const { data: inv } = await (supabase.from('InventoryEntry') as any)
       .select('*, qa_status:QAStatus(code,label)')
       .eq('pallet_code', qr)
-      .in('status', ['IN_STOCK', 'PARTIAL'])
+      .in('status', ['IN_STOCK', 'PARTIAL', 'In_Stock'])
       .maybeSingle()
     if (!inv) {
       const statusMsg: Record<string, string> = {

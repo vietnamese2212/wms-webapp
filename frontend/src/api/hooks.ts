@@ -287,6 +287,8 @@ export function useScanPallet() {
         status:             'IN_STOCK',
         created_by_emp:     null,
         updated_by_emp:     null,
+        import_date:        new Date().toISOString(),
+        update_date:        new Date().toISOString(),
         created_at:         new Date().toISOString(),
         updated_at:         new Date().toISOString(),
       }

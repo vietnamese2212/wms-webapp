@@ -408,7 +408,7 @@ export default function UserManagement() {
                         <div className="flex gap-1 flex-wrap">
                           {(emp.warehouse_access ?? []).map(wa => (
                             <span key={wa.warehouse_id} className="text-xs text-slate-600 bg-slate-100 rounded px-1.5 py-0.5">
-                              {wa.warehouse.name}
+                              {wa.warehouse?.name ?? wa.warehouse_id}
                             </span>
                           ))}
                           {(emp.warehouse_access ?? []).length === 0 && (

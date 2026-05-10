@@ -14,6 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { QRScanner } from '@/components/shared/QRScanner'
 import type { QRScannerHandle } from '@/components/shared/QRScanner'
 import { useGDO, useScanOutboundItem, useManualCompleteItem, useDeleteOutboundScanEntry } from '@/api/hooks'
+import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 import { playBeep, unlockAudio } from '@/utils/audio'
 import type { OutboundItem, OutboundStatus } from '@/types'
 
@@ -230,6 +231,7 @@ export default function OutboundItemDetail() {
   const { data: gdo, isLoading } = useGDO(gdoId)
   const { mutate: manualComplete,  isPending: completing  } = useManualCompleteItem()
   const { mutate: deleteScanEntry, isPending: deleting    } = useDeleteOutboundScanEntry()
+  const { vehicles } = useActiveVehiclesStore()
 
   const [hasOpenedScan, setHasOpenedScan] = useState(false)
   const [showScan,      setShowScan]      = useState(false)
@@ -338,6 +340,31 @@ export default function OutboundItemDetail() {
               </div>
             )}
           </div>
+
+          {/* Quick-switch bar — hiện khi có xe đã đánh dấu */}
+          {vehicles.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1">
+              <span className="text-[9px] text-slate-400 shrink-0">Đang làm:</span>
+              {vehicles.map(v => (
+                <button
+                  key={v.id}
+                  onClick={() => navigate(`/wms/outbound/${v.id}`)}
+                  className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium whitespace-nowrap border transition-colors ${
+                    v.id === gdoId
+                      ? 'bg-amber-100 text-amber-800 border-amber-300'
+                      : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${
+                    v.status === 'IN_PROGRESS' ? 'bg-amber-500'
+                    : v.status === 'COMPLETED'  ? 'bg-green-500'
+                    : 'bg-slate-300'
+                  }`} />
+                  {v.group_code}
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* Row 2: material name + progress */}
           <div className="space-y-1.5">

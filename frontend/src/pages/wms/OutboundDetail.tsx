@@ -1,11 +1,11 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
 import {
   ArrowLeft, CheckCircle2,
-  Truck, Package, ClipboardList, Play, ChevronRight,
+  Truck, Package, ClipboardList, Play, ChevronRight, Bookmark,
 } from 'lucide-react'
 import { Button }  from '@/components/ui/button'
 import { Input }   from '@/components/ui/input'
@@ -18,6 +18,7 @@ import {
   useGDO, useAssignGDO, useStartGDO, useWarehouseEmployees,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
+import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 import type { OutboundItem, OutboundDelivery, OutboundStatus, GDO } from '@/types'
 
 // ─── Status badge ──────────────────────────────────────────────
@@ -281,8 +282,14 @@ export default function OutboundDetail() {
 
   const { data: gdo, isLoading } = useGDO(id)
   const { mutate: assignGDO, isPending: assigning } = useAssignGDO()
+  const { vehicles, pin, unpin, isPinned, update } = useActiveVehiclesStore()
+  const pinned = isPinned(id ?? '')
 
   const [showStart, setShowStart] = useState(false)
+
+  useEffect(() => {
+    if (gdo) update(gdo.id, gdo.status)
+  }, [gdo?.status, gdo?.id])
 
   if (isLoading || !gdo) {
     return (
@@ -325,6 +332,16 @@ export default function OutboundDetail() {
               </button>
               <span className="font-mono font-semibold text-sm">{gdo.group_code}</span>
               <Badge status={gdo.status} />
+              <button
+                onClick={() => pinned
+                  ? unpin(gdo.id)
+                  : pin({ id: gdo.id, group_code: gdo.group_code, status: gdo.status })
+                }
+                className={`p-1 rounded transition-colors shrink-0 ${pinned ? 'text-amber-500' : 'text-slate-300 hover:text-slate-500'}`}
+                title={pinned ? 'Bỏ đánh dấu đang làm' : 'Đánh dấu đang làm xe này'}
+              >
+                <Bookmark className="h-3.5 w-3.5" fill={pinned ? 'currentColor' : 'none'} />
+              </button>
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
               {!gdo.assigned_at && (
@@ -380,6 +397,31 @@ export default function OutboundDetail() {
           )}
 
           <ProgressBar scanned={totalScanned} ordered={totalOrdered} />
+
+          {/* Quick-switch bar — hiện khi có xe đã đánh dấu */}
+          {vehicles.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1 pt-0.5">
+              <span className="text-[9px] text-slate-400 shrink-0">Đang làm:</span>
+              {vehicles.map(v => (
+                <button
+                  key={v.id}
+                  onClick={() => navigate(`/wms/outbound/${v.id}`)}
+                  className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium whitespace-nowrap border transition-colors ${
+                    v.id === id
+                      ? 'bg-amber-100 text-amber-800 border-amber-300'
+                      : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${
+                    v.status === 'IN_PROGRESS' ? 'bg-amber-500'
+                    : v.status === 'COMPLETED'  ? 'bg-green-500'
+                    : 'bg-slate-300'
+                  }`} />
+                  {v.group_code}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* ── Items table: ~80% ── */}

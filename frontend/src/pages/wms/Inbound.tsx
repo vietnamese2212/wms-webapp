@@ -5,6 +5,7 @@ import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
 import { useAuthStore }        from '@/stores/authStore'
+import { useWmsFilterStore }  from '@/stores/wmsFilterStore'
 import { TableSkeleton }       from '@/components/shared/TableSkeleton'
 import { EmptyState }          from '@/components/shared/EmptyState'
 import { Button }              from '@/components/ui/button'
@@ -271,21 +272,19 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
 
 export default function Inbound() {
   const navigate = useNavigate()
-  const [search,  setSearch]  = useState('')
-  const [date,    setDate]    = useState(TODAY)
-  const [shiftId, setShiftId] = useState('')
+  const { inbound: f, setInbound } = useWmsFilterStore()
   const [showNew, setShowNew] = useState(false)
 
   const { data: shifts = [] } = useImportShifts()
 
   const { data: orders = [], isLoading } = useInboundOrders({
-    search:   search   || undefined,
-    date:     date     || undefined,
-    shift_id: shiftId  || undefined,
+    search:   f.search  || undefined,
+    date:     f.date    || undefined,
+    shift_id: f.shiftId || undefined,
   })
 
-  const dateLabel = date
-    ? format(parseISO(date), 'EEEE, dd/MM/yyyy', { locale: vi })
+  const dateLabel = f.date
+    ? format(parseISO(f.date), 'EEEE, dd/MM/yyyy', { locale: vi })
     : 'Tất cả ngày'
 
   return (
@@ -310,29 +309,29 @@ export default function Inbound() {
             <Input
               type="date"
               className="pl-8 h-8 text-sm w-[160px]"
-              value={date}
-              onChange={e => setDate(e.target.value)}
+              value={f.date}
+              onChange={e => setInbound({ date: e.target.value })}
             />
-            {date && date !== TODAY && (
+            {f.date && f.date !== TODAY && (
               <button
                 className="ml-1 text-xs text-slate-400 hover:text-slate-700 underline whitespace-nowrap"
-                onClick={() => setDate(TODAY)}
+                onClick={() => setInbound({ date: TODAY })}
               >
                 Hôm nay
               </button>
             )}
-            {date && (
+            {f.date && (
               <button
                 className="p-0.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-600"
                 title="Xem tất cả ngày"
-                onClick={() => setDate('')}
+                onClick={() => setInbound({ date: '' })}
               >
                 <X className="h-3.5 w-3.5" />
               </button>
             )}
           </div>
           {/* Shift filter */}
-          <Select value={shiftId || '__all__'} onValueChange={v => setShiftId(v === '__all__' ? '' : v)}>
+          <Select value={f.shiftId || '__all__'} onValueChange={v => setInbound({ shiftId: v === '__all__' ? '' : v })}>
             <SelectTrigger className="h-8 text-sm w-[120px]">
               <SelectValue placeholder="Tất cả ca" />
             </SelectTrigger>
@@ -346,16 +345,16 @@ export default function Inbound() {
           {/* Search */}
           <div className="relative flex-1 min-w-[120px]">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-            <Input className="pl-8 h-8 text-sm" placeholder="Tìm mã phiếu, hàng hóa…" value={search} onChange={e => setSearch(e.target.value)} />
+            <Input className="pl-8 h-8 text-sm" placeholder="Tìm mã phiếu, hàng hóa…" value={f.search} onChange={e => setInbound({ search: e.target.value })} />
           </div>
         </div>
 
         {/* Date label */}
         <p className="text-xs text-slate-500 -mt-1">
-          {date ? (
+          {f.date ? (
             <>
               <span className="font-medium text-slate-700">{dateLabel}</span>
-              {date === TODAY && <span className="ml-1.5 text-blue-600 font-medium">· Hôm nay</span>}
+              {f.date === TODAY && <span className="ml-1.5 text-blue-600 font-medium">· Hôm nay</span>}
             </>
           ) : (
             <span className="italic">Hiển thị tất cả ngày</span>
@@ -372,7 +371,7 @@ export default function Inbound() {
           <EmptyState
             icon={PackagePlus}
             title="Chưa có phiếu nhập"
-            description={date ? `Không có phiếu nhập ngày ${format(parseISO(date), 'dd/MM/yyyy')}` : 'Tạo phiếu nhập kho để bắt đầu quét hàng vào kho.'}
+            description={f.date ? `Không có phiếu nhập ngày ${format(parseISO(f.date), 'dd/MM/yyyy')}` : 'Tạo phiếu nhập kho để bắt đầu quét hàng vào kho.'}
             action={
               <Button onClick={() => setShowNew(true)}>
                 <Plus className="h-4 w-4 mr-2" /> Tạo phiếu nhập

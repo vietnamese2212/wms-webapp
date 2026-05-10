@@ -2,6 +2,7 @@ import { Router } from 'express'
 import multer from 'multer'
 import * as inbound from '../controllers/wms/inboundController'
 import * as outbound from '../controllers/wms/outboundController'
+import * as inventory from '../controllers/wms/inventoryController'
 import { inboundEmitter } from '../lib/events'
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } })
@@ -39,6 +40,9 @@ router.patch('/inbound-orders/:id/entries/:entryId',    inbound.updateEntry)
 router.delete('/inbound-orders/:id/entries/:entryId',   inbound.removeEntry)
 router.delete('/inbound-orders/:id/entries',            inbound.removeEntries)
 router.get('/inbound-orders/:id/location-suggestions',  inbound.getLocationSuggestions)
+
+// Inventory (tồn kho)
+router.get('/inventory', inventory.listInventory)
 
 // Outbound (chuyến xe / xuất kho)
 router.get('/outbound',                                       outbound.listGDOs)

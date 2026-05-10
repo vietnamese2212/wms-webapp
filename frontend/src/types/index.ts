@@ -346,6 +346,34 @@ export interface ApiError {
   }
 }
 
+// WMS – Inventory
+export type InventoryStatus = 'IN_STOCK' | 'PARTIAL' | 'EXPORTED' | 'TRANSFERRED' | 'QUARANTINE' | 'CANCELLED'
+
+export interface InventoryEntry {
+  id:                 string
+  pallet_code:        string
+  location_id:        string
+  material_id:        string | null
+  manufacturer_id:    string | null
+  cycle:              string | null
+  machine_code:       string | null
+  pallet_sequence_no: number | null
+  qa_status_id:       string | null
+  stack_layer:        number
+  cartons_imported:   number
+  cartons_remaining:  number | null
+  production_date:    string | null
+  status:             InventoryStatus | string
+  import_date:        string | null
+  update_date:        string | null
+  created_at:         string
+  updated_at:         string
+  location:     { id: string; location_code: string; sub_code: string } | null
+  material:     { id: string; material_code: string; short_name: string | null } | null
+  manufacturer: { id: string; code: string; name: string | null } | null
+  qa_status:    { id: string; code: string; name: string } | null
+}
+
 // WMS – Outbound
 export type OutboundStatus = 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED' | 'PAUSED'
 

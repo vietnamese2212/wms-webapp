@@ -5,7 +5,7 @@ import {
   mockLocations, mockOvertimeRequests,
 } from '@/utils/mockData'
 import { apiClient } from './client'
-import type { InboundOrder, Department, JobTitle, EmployeeRecord, GDO } from '@/types'
+import type { InboundOrder, Department, JobTitle, EmployeeRecord, GDO, InventoryEntry } from '@/types'
 
 const delay = (ms = 600) => new Promise((r) => setTimeout(r, ms))
 
@@ -350,7 +350,29 @@ export function useUpdatePalletEntry() {
   })
 }
 
-// WMS
+// WMS – Inventory (API thật)
+export function useInventoryEntries(params?: {
+  warehouse_id?: string
+  location_code?: string
+  material_search?: string
+  qa_status_id?: string
+  status?: string
+  search?: string
+  page?: number
+  limit?: number
+}) {
+  return useQuery({
+    queryKey: ['inventory-entries', params],
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/inventory', { params })
+      return data.data as { entries: InventoryEntry[]; total: number; page: number; limit: number }
+    },
+  })
+}
+
+// WMS (mock — legacy, không dùng nữa)
 export function useInventory() {
   return useQuery({
     queryKey: ['inventory'],

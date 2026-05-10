@@ -35,6 +35,12 @@ function parseExcelDate(val: any): string | null {
   }
   const s = String(val).trim()
   if (!s) return null
+  // dd/mm/yyyy (Vietnamese default — JS Date() would misread as mm/dd)
+  const dmy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+  if (dmy) {
+    const date = new Date(Date.UTC(parseInt(dmy[3]), parseInt(dmy[2]) - 1, parseInt(dmy[1])))
+    return isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10)
+  }
   const d = new Date(s)
   return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10)
 }
@@ -299,7 +305,7 @@ export async function uploadExcel(req: Request, res: Response) {
     const [warehousesRes, materialsRes, existingRes] = await Promise.all([
       (supabase.from('Warehouse') as any).select('id, code, name').eq('is_active', true),
       (supabase.from('Material') as any).select('id, material_code'),
-      (supabase.from('GroupDeliveryOrder') as any).select('group_code').in('group_code', allGroupCodes),
+      (supabase.from('GroupDeliveryOrder') as any).select('id, group_code, status').in('group_code', allGroupCodes),
     ])
 
     const warehouseByKey = new Map<string, string>()
@@ -310,7 +316,26 @@ export async function uploadExcel(req: Request, res: Response) {
     const matMap = new Map<string, string>(
       (materialsRes.data ?? []).map((m: any) => [m.material_code.trim(), m.id])
     )
-    const existingSet = new Set((existingRes.data ?? []).map((g: any) => g.group_code as string))
+
+    // Classify existing GDOs: PENDING → safe to overwrite; others → blocked
+    const overwritableIds: string[] = []
+    const blockedSet = new Set<string>()
+    for (const g of (existingRes.data ?? [])) {
+      if (g.status === 'PENDING') overwritableIds.push(g.id)
+      else blockedSet.add(g.group_code as string)
+    }
+
+    // Delete overwritable GDOs (cascade: OutboundItem → OutboundDelivery → GDO)
+    if (overwritableIds.length) {
+      const { data: dosToDelete } = await (supabase.from('OutboundDelivery') as any)
+        .select('id').in('gdo_id', overwritableIds)
+      const doIdsToDelete = (dosToDelete ?? []).map((d: any) => d.id as string)
+      if (doIdsToDelete.length) {
+        await (supabase.from('OutboundItem') as any).delete().in('do_id', doIdsToDelete)
+        await (supabase.from('OutboundDelivery') as any).delete().in('id', doIdsToDelete)
+      }
+      await (supabase.from('GroupDeliveryOrder') as any).delete().in('id', overwritableIds)
+    }
 
     // Build all inserts in-memory (no per-vehicle DB round trips)
     const created: any[] = []
@@ -319,8 +344,8 @@ export async function uploadExcel(req: Request, res: Response) {
     const itemInserts: any[] = []
 
     for (const [group_code, groupRows] of byVehicle) {
-      if (existingSet.has(group_code)) {
-        created.push({ group_code, skipped: true, reason: 'Đã tồn tại' })
+      if (blockedSet.has(group_code)) {
+        created.push({ group_code, skipped: true, reason: 'Đang hoặc đã xuất hàng — không thể ghi đè' })
         continue
       }
 

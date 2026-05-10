@@ -1,6 +1,6 @@
 # Schema Review – WMS Webapp
 
-> Cập nhật lần cuối: 2026-05-10 (rev 13)
+> Cập nhật lần cuối: 2026-05-10 (rev 13 — Customer table removed, not needed)
 > Database: PostgreSQL via Supabase · client: `@supabase/supabase-js` (service role)
 
 ---

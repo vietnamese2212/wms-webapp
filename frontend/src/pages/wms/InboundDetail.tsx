@@ -542,9 +542,9 @@ export default function InboundDetail() {
               <div className="overflow-x-auto">
                 <Table>
                   <TableHeader>
-                    <TableRow>
+                    <TableRow className="bg-slate-50">
                       {isOpen && (
-                        <TableHead className="px-2 py-1 w-8">
+                        <TableHead className="px-2 py-1.5 w-8">
                           <input
                             type="checkbox"
                             className="h-3.5 w-3.5 rounded border-slate-300 cursor-pointer accent-blue-600"
@@ -553,22 +553,22 @@ export default function InboundDetail() {
                           />
                         </TableHead>
                       )}
-                      <TableHead className="px-2 py-1 text-[11px] whitespace-nowrap">NSX</TableHead>
-                      <TableHead className="px-2 py-1 text-[11px]">Mã pallet</TableHead>
-                      <TableHead className="px-2 py-1 text-[11px] text-right">Thùng</TableHead>
-                      <TableHead className="px-2 py-1 text-[11px] hidden md:table-cell">Người quét</TableHead>
-                      <TableHead className="px-2 py-1 text-[11px] hidden sm:table-cell whitespace-nowrap">Ngày</TableHead>
-                      <TableHead className="px-2 py-1 text-[11px] hidden sm:table-cell whitespace-nowrap">Giờ</TableHead>
-                      <TableHead className="px-2 py-1 text-[11px] hidden lg:table-cell">NMSX</TableHead>
-                      <TableHead className="px-2 py-1 text-[11px] hidden lg:table-cell">CK</TableHead>
-                      <TableHead className="px-2 py-1 text-[11px] hidden lg:table-cell">Máy</TableHead>
-                      <TableHead className="px-2 py-1 text-[11px] hidden sm:table-cell text-right">STT</TableHead>
-                      {isOpen && <TableHead className="px-1 py-1 w-12" />}
+                      <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap">NSX</TableHead>
+                      <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Mã pallet</TableHead>
+                      <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right">Thùng</TableHead>
+                      <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Người quét</TableHead>
+                      <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap">Ngày</TableHead>
+                      <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap">Giờ</TableHead>
+                      <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">NMSX</TableHead>
+                      <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">CK</TableHead>
+                      <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Máy</TableHead>
+                      <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right">STT</TableHead>
+                      {isOpen && <TableHead className="px-1 py-1.5 w-12" />}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {entries.map((entry) => (
-                      <TableRow key={entry.id} className={`text-xs ${selectedIds.has(entry.id) ? 'bg-blue-50' : ''}`}>
+                      <TableRow key={entry.id} className={selectedIds.has(entry.id) ? 'bg-blue-50' : 'hover:bg-slate-50'}>
                         {isOpen && (
                           <TableCell className="px-2 py-1">
                             {canDeleteEntry(entry) ? (
@@ -583,36 +583,36 @@ export default function InboundDetail() {
                             )}
                           </TableCell>
                         )}
-                        <TableCell className="px-2 py-1 whitespace-nowrap text-slate-500">
+                        <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-slate-500">
                           {entry.production_date
                             ? format(parseISO(entry.production_date), 'dd/MM/yy', { locale: vi })
                             : '—'}
                         </TableCell>
-                        <TableCell className="px-2 py-1 font-mono font-medium text-[11px]">
+                        <TableCell className="px-2 py-1 font-mono font-semibold text-[10px]">
                           {entry.pallet_code}
                         </TableCell>
-                        <TableCell className="px-2 py-1 text-right tabular-nums font-medium">
+                        <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums font-semibold">
                           {entry.cartons_imported}
                         </TableCell>
-                        <TableCell className="px-2 py-1 hidden md:table-cell text-slate-500">
+                        <TableCell className="px-2 py-1 text-[10px] text-slate-500">
                           {entry.created_by_emp?.name ?? '—'}
                         </TableCell>
-                        <TableCell className="px-2 py-1 hidden sm:table-cell text-slate-500 whitespace-nowrap">
+                        <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">
                           {format(parseISO(entry.created_at), 'dd/MM/yy', { locale: vi })}
                         </TableCell>
-                        <TableCell className="px-2 py-1 hidden sm:table-cell text-slate-500 whitespace-nowrap tabular-nums">
+                        <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap tabular-nums">
                           {format(parseISO(entry.created_at), 'HH:mm', { locale: vi })}
                         </TableCell>
-                        <TableCell className="px-2 py-1 hidden lg:table-cell">
+                        <TableCell className="px-2 py-1 text-[10px] text-slate-500">
                           {entry.manufacturer?.code ?? '—'}
                         </TableCell>
-                        <TableCell className="px-2 py-1 hidden lg:table-cell">
+                        <TableCell className="px-2 py-1 text-[10px] text-slate-500">
                           {entry.cycle ?? '—'}
                         </TableCell>
-                        <TableCell className="px-2 py-1 hidden lg:table-cell">
+                        <TableCell className="px-2 py-1 text-[10px] text-slate-500">
                           {entry.machine_code ?? '—'}
                         </TableCell>
-                        <TableCell className="px-2 py-1 hidden sm:table-cell text-right tabular-nums">
+                        <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums text-slate-500">
                           {entry.pallet_sequence_no ?? '—'}
                         </TableCell>
                         {isOpen && (

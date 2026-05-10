@@ -118,15 +118,16 @@ export default function Locations() {
           ) : filtered.length === 0 ? (
             <EmptyState icon={MapPin} title="Không tìm thấy vị trí" />
           ) : (
+            <div className="overflow-x-auto">
             <Table>
               <TableHeader>
-                <TableRow>
-                  <TableHead>Mã vị trí</TableHead>
-                  <TableHead>Khu / Hàng / Kệ</TableHead>
-                  <TableHead>Sức chứa</TableHead>
-                  <TableHead>Đang chứa</TableHead>
-                  <TableHead>Trạng thái</TableHead>
-                  <TableHead className="text-right">Thao tác</TableHead>
+                <TableRow className="bg-slate-50">
+                  <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Mã vị trí</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Khu / Hàng / Kệ</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Sức chứa</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Đang chứa</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Trạng thái</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right">Thao tác</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -135,17 +136,17 @@ export default function Locations() {
                   const isFull = loc.currentPallets >= loc.capacity
                   const isEmpty = loc.currentPallets === 0
                   return (
-                    <TableRow key={loc.id}>
-                      <TableCell>
-                        <Badge variant="outline" className="font-mono">
+                    <TableRow key={loc.id} className="hover:bg-slate-50">
+                      <TableCell className="px-2 py-1">
+                        <Badge variant="outline" className="font-mono text-[10px]">
                           {loc.zone}-{loc.row}.{loc.shelf}.{loc.bin}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
+                      <TableCell className="px-2 py-1 text-[10px] text-slate-500">
                         Khu {loc.zone} / Hàng {loc.row} / Kệ {loc.shelf}
                       </TableCell>
-                      <TableCell className="text-sm">{loc.capacity} pallet</TableCell>
-                      <TableCell>
+                      <TableCell className="px-2 py-1 text-[10px]">{loc.capacity} pallet</TableCell>
+                      <TableCell className="px-2 py-1">
                         <div className="flex items-center gap-2">
                           <div className="w-20">
                             <Progress
@@ -154,17 +155,17 @@ export default function Locations() {
                               indicatorClassName={isFull ? 'bg-red-500' : pct >= 70 ? 'bg-amber-500' : 'bg-green-500'}
                             />
                           </div>
-                          <span className="text-xs tabular-nums text-muted-foreground">
+                          <span className="text-[10px] tabular-nums text-slate-500">
                             {loc.currentPallets}/{loc.capacity}
                           </span>
                         </div>
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="px-2 py-1">
                         <Badge variant={isFull ? 'danger' : isEmpty ? 'slate' : 'success'}>
                           {isFull ? 'Đầy' : isEmpty ? 'Trống' : 'Còn chỗ'}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-right">
+                      <TableCell className="px-2 py-1 text-right">
                         <Button variant="ghost" size="icon-sm">
                           <QrCode className="h-3.5 w-3.5" />
                         </Button>
@@ -174,6 +175,7 @@ export default function Locations() {
                 })}
               </TableBody>
             </Table>
+            </div>
           )}
         </Card>
       </div>

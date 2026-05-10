@@ -108,36 +108,37 @@ export default function Inventory() {
               description="Thử thay đổi bộ lọc hoặc từ khoá tìm kiếm."
             />
           ) : (
+            <div className="overflow-x-auto">
             <Table>
               <TableHeader>
-                <TableRow>
-                  <TableHead>SKU / Tên sản phẩm</TableHead>
-                  <TableHead className="hidden sm:table-cell">Vị trí</TableHead>
-                  <TableHead className="text-right">Số lượng</TableHead>
-                  <TableHead className="text-right hidden md:table-cell">Pallet</TableHead>
-                  <TableHead className="hidden lg:table-cell">Lô hàng</TableHead>
-                  <TableHead className="hidden lg:table-cell">Cập nhật</TableHead>
-                  <TableHead>Trạng thái</TableHead>
+                <TableRow className="bg-slate-50">
+                  <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">SKU / Tên sản phẩm</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Vị trí</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right">Số lượng</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right">Pallet</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Lô hàng</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Cập nhật</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Trạng thái</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filtered.map((item) => (
-                  <TableRow key={item.id}>
-                    <TableCell>
+                  <TableRow key={item.id} className="hover:bg-slate-50">
+                    <TableCell className="px-2 py-1">
                       <div>
-                        <p className="font-medium text-sm">{item.product.name}</p>
-                        <p className="text-xs text-muted-foreground font-mono">{item.product.sku}</p>
+                        <p className="font-medium text-[10px]">{item.product.name}</p>
+                        <p className="text-[9px] text-slate-400 font-mono">{item.product.sku}</p>
                       </div>
                     </TableCell>
-                    <TableCell className="hidden sm:table-cell">
-                      <Badge variant="outline" className="font-mono text-xs">
+                    <TableCell className="px-2 py-1">
+                      <Badge variant="outline" className="font-mono text-[10px]">
                         {getLocationCode(item.location)}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-right font-medium tabular-nums">
-                      {item.quantity} <span className="text-muted-foreground text-xs">{item.product.unit}</span>
+                    <TableCell className="px-2 py-1 text-[10px] text-right font-semibold tabular-nums">
+                      {item.quantity} <span className="text-[9px] text-slate-400">{item.product.unit}</span>
                     </TableCell>
-                    <TableCell className="text-right hidden md:table-cell">
+                    <TableCell className="px-2 py-1 text-right">
                       <div className="flex items-center justify-end gap-2">
                         <div className="w-16">
                           <Progress
@@ -149,24 +150,25 @@ export default function Inventory() {
                             }
                           />
                         </div>
-                        <span className="tabular-nums text-xs">
+                        <span className="tabular-nums text-[10px] text-slate-500">
                           {item.pallets}/{item.location.capacity}
                         </span>
                       </div>
                     </TableCell>
-                    <TableCell className="hidden lg:table-cell text-xs text-muted-foreground font-mono">
+                    <TableCell className="px-2 py-1 text-[10px] text-slate-500 font-mono">
                       {item.batchNumber ?? '—'}
                     </TableCell>
-                    <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">
+                    <TableCell className="px-2 py-1 text-[10px] text-slate-500">
                       {formatDateTime(item.updatedAt)}
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="px-2 py-1">
                       <StockStatusBadge status={item.status} />
                     </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
+            </div>
           )}
         </Card>
         <p className="text-xs text-muted-foreground mt-2 pb-2">

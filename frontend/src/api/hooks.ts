@@ -575,6 +575,7 @@ export function useUploadGDOExcel() {
       if (warehouse_id) form.append('warehouse_id', warehouse_id)
       return apiClient.post('/wms/outbound/upload', form, {
         headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 60000,
       }).then(r => r.data.data)
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['gdos'] }),

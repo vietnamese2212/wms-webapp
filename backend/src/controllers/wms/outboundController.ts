@@ -294,39 +294,42 @@ export async function uploadExcel(req: Request, res: Response) {
     }
     if (!byVehicle.size) return fail(res, 'Không tìm thấy cột "Số xe" hoặc dữ liệu trống', 400)
 
-    // Pre-load warehouses for "Kho xuất" matching
-    const { data: warehouses } = await (supabase.from('Warehouse') as any)
-      .select('id, code, name').eq('is_active', true)
+    // Pre-load warehouses, materials, and existing GDOs in parallel
+    const allGroupCodes = [...byVehicle.keys()]
+    const [warehousesRes, materialsRes, existingRes] = await Promise.all([
+      (supabase.from('Warehouse') as any).select('id, code, name').eq('is_active', true),
+      (supabase.from('Material') as any).select('id, material_code'),
+      (supabase.from('GroupDeliveryOrder') as any).select('group_code').in('group_code', allGroupCodes),
+    ])
+
     const warehouseByKey = new Map<string, string>()
-    for (const w of (warehouses ?? [])) {
+    for (const w of (warehousesRes.data ?? [])) {
       warehouseByKey.set(w.code.trim().toLowerCase(), w.id)
       warehouseByKey.set(w.name.trim().toLowerCase(), w.id)
     }
-
-    // Pre-load materials
-    const { data: materials } = await (supabase.from('Material') as any).select('id, material_code')
     const matMap = new Map<string, string>(
-      (materials ?? []).map((m: any) => [m.material_code.trim(), m.id])
+      (materialsRes.data ?? []).map((m: any) => [m.material_code.trim(), m.id])
     )
+    const existingSet = new Set((existingRes.data ?? []).map((g: any) => g.group_code as string))
 
+    // Build all inserts in-memory (no per-vehicle DB round trips)
     const created: any[] = []
+    const gdoInserts:  any[] = []
+    const doInserts:   any[] = []
+    const itemInserts: any[] = []
 
     for (const [group_code, groupRows] of byVehicle) {
-      const { data: existing } = await (supabase.from('GroupDeliveryOrder') as any)
-        .select('id').eq('group_code', group_code).single()
-      if (existing) {
+      if (existingSet.has(group_code)) {
         created.push({ group_code, skipped: true, reason: 'Đã tồn tại' })
         continue
       }
 
-      const planned_date = parsePlannedDate(group_code) ?? new Date().toISOString().slice(0, 10)
-      // "Ngày xuất" column overrides planned_date as delivery_date
+      const planned_date  = parsePlannedDate(group_code) ?? new Date().toISOString().slice(0, 10)
       const delivery_date = parseExcelDate(groupRows[0]['Ngày xuất']) ?? planned_date
-      const dvvt      = String(groupRows[0]['DVVT']      ?? groupRows[0]['Đơn vị']  ?? '').trim() || null
-      const kho_xuat  = String(groupRows[0]['Kho xuất']  ?? groupRows[0]['Kho xuat'] ?? '').trim()
-      const loai_kho  = String(groupRows[0]['Loại kho']  ?? groupRows[0]['Loai kho'] ?? '').trim() || null
+      const dvvt     = String(groupRows[0]['DVVT']     ?? groupRows[0]['Đơn vị']  ?? '').trim() || null
+      const kho_xuat = String(groupRows[0]['Kho xuất'] ?? groupRows[0]['Kho xuat'] ?? '').trim()
+      const loai_kho = String(groupRows[0]['Loại kho'] ?? groupRows[0]['Loai kho'] ?? '').trim() || null
 
-      // Resolve warehouse: column takes priority over body fallback
       let resolved_warehouse_id = warehouse_id ?? null
       if (kho_xuat) {
         const found = warehouseByKey.get(kho_xuat.toLowerCase())
@@ -338,11 +341,11 @@ export async function uploadExcel(req: Request, res: Response) {
       }
 
       const gdoId = randomUUID()
-      const { error: gdoErr } = await (supabase.from('GroupDeliveryOrder') as any).insert({
+      gdoInserts.push({
         id: gdoId, group_code, planned_date, delivery_date,
-        warehouse_id: resolved_warehouse_id, dvvt, warehouse_type: loai_kho, status: 'PENDING', updated_at: now(),
+        warehouse_id: resolved_warehouse_id, dvvt, warehouse_type: loai_kho,
+        status: 'PENDING', updated_at: now(),
       })
-      if (gdoErr) { created.push({ group_code, skipped: true, reason: gdoErr.message }); continue }
 
       const byDelivery = new Map<string, Record<string, any>[]>()
       for (const row of groupRows) {
@@ -356,41 +359,51 @@ export async function uploadExcel(req: Request, res: Response) {
       for (const [delivery_code, doRows] of byDelivery) {
         const doId = randomUUID()
         const distributor_name = String(doRows[0]['Tên NPP'] ?? '').trim() || null
-        await (supabase.from('OutboundDelivery') as any).insert({
-          id: doId, gdo_id: gdoId, delivery_code, distributor_name, status: 'PENDING', updated_at: now(),
+        doInserts.push({
+          id: doId, gdo_id: gdoId, delivery_code, distributor_name,
+          status: 'PENDING', updated_at: now(),
         })
 
-        const itemsToInsert = doRows.map(row => {
-          const mat_code     = String(row['Material'] ?? '').trim()
+        for (const row of doRows) {
+          const mat_code      = String(row['Material'] ?? '').trim()
           const material_type = String(row['Material_type'] ?? '').trim() || null
-          return {
+          itemInserts.push({
             id: randomUUID(),
             do_id: doId,
-            material_id:        matMap.get(mat_code) ?? null,
-            material_code_raw:  mat_code,
-            cartons_ordered:    parseDecimal(row['Thùng']),
-            boxes_display:      parseDecimal(row['Hộp']),
-            weight:             parseDecimal(row['Tải']),
-            loose_picking:      parseDecimal(row['Nhặt lẻ']),
-            pallets_estimated:  parseDecimal(String(row['Pallet'] ?? '').replace(',', '.')),
+            material_id:       matMap.get(mat_code) ?? null,
+            material_code_raw: mat_code,
+            cartons_ordered:   parseDecimal(row['Thùng']),
+            boxes_display:     parseDecimal(row['Hộp']),
+            weight:            parseDecimal(row['Tải']),
+            loose_picking:     parseDecimal(row['Nhặt lẻ']),
+            pallets_estimated: parseDecimal(String(row['Pallet'] ?? '').replace(',', '.')),
             material_type,
-            export_type:    String(row['Loại xuất'] ?? '').trim() || null,
-            header_text:    String(row['HEADER TEXT'] ?? '').trim() || null,
+            export_type:    String(row['Loại xuất']     ?? '').trim() || null,
+            header_text:    String(row['HEADER TEXT']   ?? '').trim() || null,
             batch_required: String(row['Batch_Yêu cầu'] ?? '').trim() || null,
             date_required:  parseExcelDate(row['%Date_Yêu cầu']) ?? null,
-            cs_responsible: String(row['CS phụ trách'] ?? '').trim() || null,
+            cs_responsible: String(row['CS phụ trách']  ?? '').trim() || null,
             cartons_scanned: 0,
             status: material_type === 'POSM' ? 'COMPLETED' : 'PENDING',
             updated_at: now(),
-          }
-        })
-        if (itemsToInsert.length) {
-          await (supabase.from('OutboundItem') as any).insert(itemsToInsert)
+          })
         }
       }
-
       created.push({ group_code, id: gdoId, created: true })
     }
+
+    // Batch inserts — chunk at 100 to stay within Supabase payload limits
+    const CHUNK = 100
+    async function batchInsert(table: string, rows: any[]) {
+      for (let i = 0; i < rows.length; i += CHUNK) {
+        const { error } = await (supabase.from(table) as any).insert(rows.slice(i, i + CHUNK))
+        if (error) throw new Error(`${table}: ${error.message}`)
+      }
+    }
+
+    if (gdoInserts.length)  await batchInsert('GroupDeliveryOrder', gdoInserts)
+    if (doInserts.length)   await batchInsert('OutboundDelivery',   doInserts)
+    if (itemInserts.length) await batchInsert('OutboundItem',       itemInserts)
 
     return ok(res, { created }, 201)
   } catch (e) { return fail(res, String(e)) }

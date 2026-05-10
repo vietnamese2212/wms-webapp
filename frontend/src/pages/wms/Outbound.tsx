@@ -17,9 +17,10 @@ import type { GDO } from '@/types'
 const TODAY = new Date().toISOString().slice(0, 10)
 
 function gdoRowBg(gdo: GDO) {
-  if (gdo.status === 'COMPLETED') return 'bg-blue-50 hover:bg-blue-100'
+  if (gdo.status === 'COMPLETED')  return 'bg-blue-50 hover:bg-blue-100'
   if (gdo.status === 'IN_PROGRESS') return 'bg-amber-50 hover:bg-amber-100'
-  if (gdo.assigned_at)              return 'bg-green-50 hover:bg-green-100'
+  if (gdo.status === 'PAUSED')     return 'bg-red-50 hover:bg-red-100'
+  if (gdo.assigned_at)             return 'bg-green-50 hover:bg-green-100'
   return 'hover:bg-slate-50'
 }
 

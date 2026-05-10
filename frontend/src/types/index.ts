@@ -347,7 +347,7 @@ export interface ApiError {
 }
 
 // WMS – Outbound
-export type OutboundStatus = 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED'
+export type OutboundStatus = 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED' | 'PAUSED'
 
 export interface OutboundScanEntry {
   id:                 string

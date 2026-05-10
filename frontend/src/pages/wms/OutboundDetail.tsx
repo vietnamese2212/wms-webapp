@@ -5,7 +5,7 @@ import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
 import {
   ArrowLeft, CheckCircle2,
-  Truck, Package, ClipboardList, Play, ChevronRight, Bookmark,
+  Truck, Package, ClipboardList, Play, Pause, ChevronRight, Bookmark,
 } from 'lucide-react'
 import { Button }  from '@/components/ui/button'
 import { Input }   from '@/components/ui/input'
@@ -15,7 +15,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import {
-  useGDO, useAssignGDO, useStartGDO, useWarehouseEmployees,
+  useGDO, useAssignGDO, useStartGDO, useWarehouseEmployees, usePatchGDO,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
@@ -28,9 +28,10 @@ const statusCls: Record<OutboundStatus, string> = {
   IN_PROGRESS: 'bg-amber-100 text-amber-800',
   COMPLETED:   'bg-green-100 text-green-800',
   CANCELLED:   'bg-red-100 text-red-600',
+  PAUSED:      'bg-red-100 text-red-700',
 }
 const statusLabel: Record<OutboundStatus, string> = {
-  PENDING: 'Chờ xuất', IN_PROGRESS: 'Đang xuất', COMPLETED: 'Hoàn thành', CANCELLED: 'Đã hủy',
+  PENDING: 'Chờ xuất', IN_PROGRESS: 'Đang xuất', COMPLETED: 'Hoàn thành', CANCELLED: 'Đã hủy', PAUSED: 'Tạm dừng',
 }
 function Badge({ status }: { status: string }) {
   const s = status as OutboundStatus
@@ -282,8 +283,11 @@ export default function OutboundDetail() {
 
   const { data: gdo, isLoading } = useGDO(id)
   const { mutate: assignGDO, isPending: assigning } = useAssignGDO()
+  const { mutate: patchGDO,  isPending: patching  } = usePatchGDO()
   const { vehicles, pin, unpin, isPinned, update } = useActiveVehiclesStore()
   const pinned = isPinned(id ?? '')
+
+  const canManagePause = user?.role === 'ADMIN' || user?.role === 'WAREHOUSE_MANAGER'
 
   const [showStart, setShowStart] = useState(false)
 
@@ -356,6 +360,23 @@ export default function OutboundDetail() {
                   <Play className="h-3 w-3" />Bắt đầu
                 </Button>
               )}
+              {canManagePause && gdo.status === 'IN_PROGRESS' && (
+                <Button size="sm" variant="outline"
+                  className="h-7 text-xs gap-1 px-2 border-red-200 text-red-600 hover:bg-red-50"
+                  disabled={patching}
+                  onClick={() => patchGDO({ id: gdo.id, status: 'PAUSED' })}>
+                  <Pause className="h-3 w-3" />
+                  {patching ? '…' : 'Tạm dừng'}
+                </Button>
+              )}
+              {canManagePause && gdo.status === 'PAUSED' && (
+                <Button size="sm" className="h-7 text-xs gap-1 px-2 bg-green-600 hover:bg-green-700"
+                  disabled={patching}
+                  onClick={() => patchGDO({ id: gdo.id, status: 'IN_PROGRESS' })}>
+                  <Play className="h-3 w-3" />
+                  {patching ? '…' : 'Tiếp tục'}
+                </Button>
+              )}
             </div>
           </div>
 
@@ -416,6 +437,7 @@ export default function OutboundDetail() {
                 <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${
                   v.status === 'IN_PROGRESS' ? 'bg-amber-500'
                   : v.status === 'COMPLETED'  ? 'bg-green-500'
+                  : v.status === 'PAUSED'     ? 'bg-red-500'
                   : 'bg-slate-300'
                 }`} />
                 {v.group_code}

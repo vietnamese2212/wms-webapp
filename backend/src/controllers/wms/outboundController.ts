@@ -276,6 +276,119 @@ export async function getWarehouseEmployees(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
+// ─── Merge upload for PAUSED GDO ─────────────────────────────
+
+async function mergePausedGDO(
+  gdoId: string,
+  group_code: string,
+  delivery_date: string,
+  planned_date: string,
+  warehouse_id: string | null,
+  dvvt: string | null,
+  warehouse_type: string | null,
+  byDelivery: Map<string, Record<string, any>[]>,
+  matMap: Map<string, string>
+): Promise<{ group_code: string; id?: string; merged?: boolean; skipped?: boolean; reason?: string }> {
+  const t = now()
+
+  const { data: existingDOs } = await (supabase.from('OutboundDelivery') as any)
+    .select('id, delivery_code').eq('gdo_id', gdoId)
+
+  const existingDoIds = (existingDOs ?? []).map((d: any) => d.id as string)
+  const { data: existingItems } = existingDoIds.length
+    ? await (supabase.from('OutboundItem') as any)
+        .select('id, do_id, material_code_raw, cartons_scanned').in('do_id', existingDoIds)
+    : { data: [] }
+
+  const existingDOByCode = new Map<string, any>()
+  for (const d of (existingDOs ?? [])) existingDOByCode.set(d.delivery_code as string, d)
+
+  const itemKey = (doId: string, matCode: string) => `${doId}::${matCode}`
+  const existingItemByKey = new Map<string, any>()
+  for (const i of (existingItems ?? [])) {
+    existingItemByKey.set(itemKey(i.do_id, i.material_code_raw ?? ''), i)
+  }
+
+  // Validate: new cartons_ordered >= cartons_scanned for all matched items
+  for (const [delivery_code, doRows] of byDelivery) {
+    const existingDO = existingDOByCode.get(delivery_code)
+    if (!existingDO) continue
+    for (const row of doRows) {
+      const mat_code    = String(row['Material'] ?? '').trim()
+      const newCartons  = parseDecimal(row['Thùng'])
+      const existing    = existingItemByKey.get(itemKey(existingDO.id, mat_code))
+      if (existing && newCartons < Number(existing.cartons_scanned)) {
+        return {
+          group_code, skipped: true,
+          reason: `${mat_code}: thùng mới (${newCartons}) < đã xuất (${existing.cartons_scanned})`,
+        }
+      }
+    }
+  }
+
+  // Update GDO header
+  await (supabase.from('GroupDeliveryOrder') as any)
+    .update({ delivery_date, planned_date, warehouse_id, dvvt, warehouse_type, updated_at: t })
+    .eq('id', gdoId)
+
+  // Upsert DOs + items
+  for (const [delivery_code, doRows] of byDelivery) {
+    const distributor_name = String(doRows[0]['Tên NPP'] ?? '').trim() || null
+    const existingDO = existingDOByCode.get(delivery_code)
+    let doId: string
+
+    if (existingDO) {
+      doId = existingDO.id as string
+      await (supabase.from('OutboundDelivery') as any).update({ distributor_name, updated_at: t }).eq('id', doId)
+    } else {
+      doId = randomUUID()
+      await (supabase.from('OutboundDelivery') as any).insert({
+        id: doId, gdo_id: gdoId, delivery_code, distributor_name, status: 'PENDING', updated_at: t,
+      })
+    }
+
+    for (const row of doRows) {
+      const mat_code      = String(row['Material'] ?? '').trim()
+      const material_type = String(row['Material_type'] ?? '').trim() || null
+      const newCartons    = parseDecimal(row['Thùng'])
+      const fields = {
+        material_id:       matMap.get(mat_code) ?? null,
+        material_code_raw: mat_code,
+        cartons_ordered:   newCartons,
+        boxes_display:     parseDecimal(row['Hộp']),
+        weight:            parseDecimal(row['Tải']),
+        loose_picking:     parseDecimal(row['Nhặt lẻ']),
+        pallets_estimated: parseDecimal(String(row['Pallet'] ?? '').replace(',', '.')),
+        material_type,
+        export_type:    String(row['Loại xuất']     ?? '').trim() || null,
+        header_text:    String(row['HEADER TEXT']   ?? '').trim() || null,
+        batch_required: String(row['Batch_Yêu cầu'] ?? '').trim() || null,
+        date_required:  parseExcelDate(row['%Date_Yêu cầu']) ?? null,
+        cs_responsible: String(row['CS phụ trách']  ?? '').trim() || null,
+        updated_at: t,
+      }
+
+      const existing = existingDO ? existingItemByKey.get(itemKey(existingDO.id, mat_code)) : null
+      if (existing) {
+        const scanned   = Number(existing.cartons_scanned)
+        const newStatus = material_type === 'POSM' ? 'COMPLETED'
+          : scanned >= newCartons ? 'COMPLETED'
+          : scanned > 0 ? 'IN_PROGRESS'
+          : 'PENDING'
+        await (supabase.from('OutboundItem') as any).update({ ...fields, status: newStatus }).eq('id', existing.id)
+      } else {
+        await (supabase.from('OutboundItem') as any).insert({
+          id: randomUUID(), do_id: doId, ...fields,
+          cartons_scanned: 0,
+          status: material_type === 'POSM' ? 'COMPLETED' : 'PENDING',
+        })
+      }
+    }
+  }
+
+  return { group_code, id: gdoId, merged: true }
+}
+
 // ─── Upload Excel ─────────────────────────────────────────────
 
 export async function uploadExcel(req: Request, res: Response) {
@@ -317,11 +430,13 @@ export async function uploadExcel(req: Request, res: Response) {
       (materialsRes.data ?? []).map((m: any) => [m.material_code.trim(), m.id])
     )
 
-    // Classify existing GDOs: PENDING → safe to overwrite; others → blocked
+    // Classify existing GDOs
     const overwritableIds: string[] = []
+    const pausedGDOMap = new Map<string, string>() // group_code → id
     const blockedSet = new Set<string>()
     for (const g of (existingRes.data ?? [])) {
       if (g.status === 'PENDING') overwritableIds.push(g.id)
+      else if (g.status === 'PAUSED') pausedGDOMap.set(g.group_code as string, g.id)
       else blockedSet.add(g.group_code as string)
     }
 
@@ -349,12 +464,25 @@ export async function uploadExcel(req: Request, res: Response) {
         continue
       }
 
-      const planned_date  = parsePlannedDate(group_code) ?? new Date().toISOString().slice(0, 10)
-      const delivery_date = parseExcelDate(groupRows[0]['Ngày xuất']) ?? planned_date
+      // 2.2: group_code format (ddmmyy_...)
+      const planned_date = parsePlannedDate(group_code)
+      if (!planned_date) {
+        created.push({ group_code, skipped: true, reason: 'Mã xe không đúng định dạng (cần tiền tố ddmmyy_...)' })
+        continue
+      }
+
+      // 2.1: delivery_date required and parseable
+      const delivery_date = parseExcelDate(groupRows[0]['Ngày xuất'])
+      if (!delivery_date) {
+        created.push({ group_code, skipped: true, reason: `Ngày xuất không hợp lệ hoặc trống: "${groupRows[0]['Ngày xuất'] ?? ''}"` })
+        continue
+      }
+
       const dvvt     = String(groupRows[0]['DVVT']     ?? groupRows[0]['Đơn vị']  ?? '').trim() || null
       const kho_xuat = String(groupRows[0]['Kho xuất'] ?? groupRows[0]['Kho xuat'] ?? '').trim()
       const loai_kho = String(groupRows[0]['Loại kho'] ?? groupRows[0]['Loai kho'] ?? '').trim() || null
 
+      // 2.3: warehouse required
       let resolved_warehouse_id = warehouse_id ?? null
       if (kho_xuat) {
         const found = warehouseByKey.get(kho_xuat.toLowerCase())
@@ -363,14 +491,19 @@ export async function uploadExcel(req: Request, res: Response) {
           continue
         }
         resolved_warehouse_id = found
+      } else if (!resolved_warehouse_id) {
+        created.push({ group_code, skipped: true, reason: 'Thiếu thông tin kho xuất' })
+        continue
       }
 
-      const gdoId = randomUUID()
-      gdoInserts.push({
-        id: gdoId, group_code, planned_date, delivery_date,
-        warehouse_id: resolved_warehouse_id, dvvt, warehouse_type: loai_kho,
-        status: 'PENDING', updated_at: now(),
-      })
+      // 3.1: all material codes must exist in DB
+      const unknownMats = [...new Set(
+        groupRows.filter(r => String(r['Material'] ?? '').trim()).map(r => String(r['Material']).trim())
+      )].filter(c => !matMap.has(c))
+      if (unknownMats.length) {
+        created.push({ group_code, skipped: true, reason: `Mã hàng không tìm thấy: ${unknownMats.join(', ')}` })
+        continue
+      }
 
       const byDelivery = new Map<string, Record<string, any>[]>()
       for (const row of groupRows) {
@@ -380,6 +513,25 @@ export async function uploadExcel(req: Request, res: Response) {
         list.push(row)
         byDelivery.set(code, list)
       }
+
+      // PAUSED: merge instead of delete+recreate
+      if (pausedGDOMap.has(group_code)) {
+        const mergeResult = await mergePausedGDO(
+          pausedGDOMap.get(group_code)!,
+          group_code, delivery_date, planned_date,
+          resolved_warehouse_id, dvvt, loai_kho,
+          byDelivery, matMap
+        )
+        created.push(mergeResult)
+        continue
+      }
+
+      const gdoId = randomUUID()
+      gdoInserts.push({
+        id: gdoId, group_code, planned_date, delivery_date,
+        warehouse_id: resolved_warehouse_id, dvvt, warehouse_type: loai_kho,
+        status: 'PENDING', updated_at: now(),
+      })
 
       for (const [delivery_code, doRows] of byDelivery) {
         const doId = randomUUID()

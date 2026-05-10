@@ -25,9 +25,10 @@ const statusCls: Record<OutboundStatus, string> = {
   IN_PROGRESS: 'bg-amber-100 text-amber-800',
   COMPLETED:   'bg-green-100 text-green-800',
   CANCELLED:   'bg-red-100 text-red-600',
+  PAUSED:      'bg-red-100 text-red-700',
 }
 const statusLabel: Record<OutboundStatus, string> = {
-  PENDING: 'Chờ xuất', IN_PROGRESS: 'Đang xuất', COMPLETED: 'Hoàn thành', CANCELLED: 'Đã hủy',
+  PENDING: 'Chờ xuất', IN_PROGRESS: 'Đang xuất', COMPLETED: 'Hoàn thành', CANCELLED: 'Đã hủy', PAUSED: 'Tạm dừng',
 }
 function Badge({ status }: { status: string }) {
   const s = status as OutboundStatus
@@ -399,6 +400,7 @@ export default function OutboundItemDetail() {
                 <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${
                   v.status === 'IN_PROGRESS' ? 'bg-amber-500'
                   : v.status === 'COMPLETED'  ? 'bg-green-500'
+                  : v.status === 'PAUSED'     ? 'bg-red-500'
                   : 'bg-slate-300'
                 }`} />
                 {v.group_code}

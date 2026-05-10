@@ -12,11 +12,12 @@
  */
 
 const path = require('path')
-process.chdir(path.join(__dirname, '..', 'backend'))
-require('dotenv').config()
+const BASE = path.join(__dirname, '..', 'backend')
+const dotenv = require(path.join(BASE, 'node_modules', 'dotenv'))
+dotenv.config({ path: path.join(BASE, '.env') })
 
-const { createClient } = require('@supabase/supabase-js')
-const XLSX = require('xlsx')
+const { createClient } = require(path.join(BASE, 'node_modules', '@supabase', 'supabase-js'))
+const XLSX = require(path.join(BASE, 'node_modules', 'xlsx'))
 const { randomUUID } = require('crypto')
 
 const key = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').replace(/^<|>$/g, '')

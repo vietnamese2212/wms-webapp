@@ -12,20 +12,13 @@ Các nguyên tắc hành vi nhằm giảm những lỗi lập trình phổ biế
 
 > **Đánh đổi:** Các nguyên tắc này ưu tiên sự cẩn trọng hơn tốc độ. Với các tác vụ đơn giản, hãy tự cân nhắc linh hoạt.
 
----
-
 # 1. Suy nghĩ trước khi code
-
 > **Đừng tự suy diễn. Đừng che giấu sự không chắc chắn. Hãy nêu rõ các đánh đổi.**
-
 Trước khi triển khai:
-
 - Nêu rõ các giả định của bạn. Nếu không chắc, hãy hỏi.
 - Nếu có nhiều cách hiểu khác nhau, hãy trình bày chúng — đừng tự âm thầm chọn một.
 - Nếu có cách đơn giản hơn, hãy nói ra. Sẵn sàng phản biện khi cần.
 - Nếu có điều gì chưa rõ, hãy dừng lại. Chỉ rõ điểm gây mơ hồ. Hỏi lại.
-
----
 
 # 2. Ưu tiên sự đơn giản
 
@@ -36,17 +29,10 @@ Trước khi triển khai:
 - Không thêm “tính linh hoạt” hay “khả năng cấu hình” nếu chưa được yêu cầu.
 - Không viết xử lý lỗi cho các trường hợp gần như không thể xảy ra.
 - Nếu bạn viết 200 dòng nhưng thực tế có thể giải bằng 50 dòng, hãy viết lại.
-
 Tự hỏi:
-
 > “Một senior engineer có thấy đoạn này bị over-engineering không?”
-
 Nếu có, hãy đơn giản hóa.
-
----
-
 # 3. Thay đổi có chủ đích, phạm vi nhỏ
-
 > **Chỉ chạm vào thứ cần thiết. Chỉ dọn dẹp phần bạn gây ảnh hưởng.**
 
 Khi chỉnh sửa code hiện có:
@@ -123,161 +109,99 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 
 ## Tech Stack
 
-### Frontend
-- React 18 + TypeScript + Vite
-- Tailwind CSS v3 + shadcn/ui (Radix UI primitives)
-- React Router v6 · TanStack Query · React Hook Form + Zod
-- html5-qrcode · date-fns · Lucide React
-- **Supabase Realtime** (`frontend/src/lib/supabase.ts`, anon key) — invalidate React Query khi DB thay đổi, không cần polling
+**Frontend:** React 18 + TypeScript + Vite · Tailwind CSS v3 + shadcn/ui · React Router v6 · TanStack Query · html5-qrcode · date-fns · Lucide React
+**Supabase Realtime** (`frontend/src/lib/supabase.ts`, anon key) — invalidate React Query khi DB thay đổi, không cần polling
 
-### Backend
-- Node.js + Express + TypeScript
-- `@supabase/supabase-js` — DB client (service role key, `backend/src/lib/supabase.ts`)
-- JWT auth — chưa implement middleware
+**Backend:** Node.js + Express + TypeScript · `@supabase/supabase-js` service role (`backend/src/lib/supabase.ts`) · JWT auth chưa implement
 
-### Infrastructure
-- Supabase — PostgreSQL + Realtime (tất cả bảng `public` đã bật)
-- Vercel — frontend + backend serverless, auto-deploy từ GitHub `main`
+**Infra:** Supabase (PostgreSQL + Realtime, tất cả bảng `public` đã bật) · Vercel (auto-deploy từ GitHub `main`)
+
+---
+
+## API & Auth
+
+```json
+{ "success": true, "data": { ... } }
+{ "success": false, "error": { "code": "NOT_FOUND", "message": "..." } }
+```
+
+Roles: `OWN` (chọn kho tự do) · `WAREHOUSE_MANAGER` / `WAREHOUSE_STAFF` (kho cố định).
+Mock user: `frontend/src/stores/authStore.ts` — `warehouse_name: 'Kho Ba Vì'` khi dev.
 
 ---
 
 ## QR Scanning
 
-### Inbound — Scan → Xác nhận → Lưu
-Camera bắt QR → camera dừng → preview xanh → operator chỉnh số thùng / tầng chồng → **"Lưu pallet"** → API commit.
-- Thành công: feedback xanh, camera resume sau 1.5s
-- Lỗi: feedback đỏ, bấm "Quét tiếp" để resume thủ công
-- "Huỷ": xoá pending QR, resume ngay
-
-### Outbound — Scan → Chỉnh số thùng → Lưu
-Camera bắt QR → camera dừng → hiện ô nhập số thùng (mặc định = số thùng còn cần xuất) → **"Lưu"** → API commit.
-- Floating "Quét tiếp" + "Lưu" overlay trên camera khi có `pendingQR`
-- Thành công: feedback xanh, camera resume sau 1.5s
-- Lỗi: feedback đỏ, bấm "Quét tiếp" để resume thủ công
+**Inbound** — Scan → preview xanh → chỉnh số thùng / tầng chồng → **"Lưu pallet"** → API.
+**Outbound** — Scan → ô nhập số thùng (mặc định = còn cần xuất) + floating "Quét tiếp"/"Lưu" → API.
+Cả hai: thành công → feedback xanh + auto-resume 1.5s · lỗi → feedback đỏ + "Quét tiếp" thủ công.
 `QRScanner` export `forwardRef<QRScannerHandle>` với method `resume()`.
 
 ---
 
 ## Design System
 
-**Colors:**
-```
-Primary:  blue-600    CTA, active states
-Success:  green-500   hoàn thành, OK
-Warning:  amber-500   cảnh báo, pending
-Danger:   red-500     lỗi, từ chối
-```
+**Brand colors:** `blue-600` CTA · `green-500` OK · `amber-500` cảnh báo · `red-500` lỗi
 
-**Row colors — trạng thái:**
+**Row colors theo trạng thái** (áp dụng nhất quán mọi module):
 ```
-COMPLETED / đầy vị trí  →  bg-blue-50  hover:bg-blue-100
+COMPLETED / đầy vị trí   →  bg-blue-50  hover:bg-blue-100
 IN_PROGRESS / đang xử lý →  bg-amber-50 hover:bg-amber-100
 Đã giao đơn (assigned)   →  bg-green-50 hover:bg-green-100
-PENDING / chưa xử lý     →  hover:bg-slate-50   (nền trắng)
+PENDING / chưa xử lý     →  hover:bg-slate-50  (nền trắng)
 ```
-Áp dụng nhất quán ở cả list page và detail page cho mọi module.
 
-**Typography:**
-- Page title: `text-xl font-semibold` · Section: `text-base font-medium`
-- Body: `text-sm text-slate-700` · Caption/label: `text-xs text-slate-500`
+**Typography:** Page title `text-xl font-semibold` · Section `text-base font-medium` · Body `text-sm` · Label `text-xs text-slate-500`
 
 ---
 
-## Table Format Standards (bắt buộc cho mọi module)
+## Table Standards (bắt buộc mọi module)
 
-### Font size trong table
-| Loại dữ liệu | Class |
-|---|---|
-| Header cột | `text-[9px] font-medium text-slate-500` |
-| Mã hàng / mã pallet / ID | `text-[10px] font-mono font-semibold` |
-| Tên hàng / tên người / text chính | `text-[10px] font-medium` |
-| Số lượng / số đếm | `text-[10px] font-semibold tabular-nums` |
-| Sub-label / đơn vị (thùng, pl, kg…) | `text-[9px] text-slate-400` |
-| Metadata (ngày, giờ, trạng thái phụ) | `text-[10px] text-slate-500` |
+**2 cỡ font:**
+- **Header cột:** `text-[9px] font-medium text-slate-500` · padding `px-2 py-1.5` · nền `bg-slate-50`
+- **Dữ liệu:** `text-[10px]` · thêm `font-mono font-semibold` cho mã/ID, `font-semibold tabular-nums` cho số, `text-slate-400` cho đơn vị phụ (thùng, pl…)
 
-### Padding row
-- Compact (≥ 15 rows): `px-2 py-1`
-- Header row: `px-2 py-1.5`
-- Header row background: `bg-slate-50`
+**Padding data row:** `px-2 py-1`
 
-### Responsive / mobile
-- **Không ẩn cột trên mobile** — giảm font thay vì `hidden sm:table-cell`
-- Wrap table trong `<div className="overflow-x-auto">` để scroll ngang thay vì vỡ layout
-- Page wrapper cho list: `flex flex-col h-full`
-- Table area: `flex-1 overflow-auto pb-20 lg:pb-4`
+**Responsive:** Không ẩn cột trên mobile (`hidden sm:table-cell` bị cấm) — wrap `overflow-x-auto`, scroll ngang thay vì vỡ layout.
 
-### Định dạng ngày trong table
-- Compact (cell): `dd/MM/yy` — không thêm nhãn "Hôm nay" vào ô
-- Header / tiêu đề trang: `EEEE, dd/MM/yyyy` với locale `vi`
+**Ngày:** cell dùng `dd/MM/yy` · tiêu đề trang dùng `EEEE, dd/MM/yyyy` (locale `vi`).
 
-### Tên hàng (Material name)
-Luôn dùng: `material?.short_name ?? material_code_raw ?? '—'`
-Không dùng `custom_short_name`.
+**Tên hàng:** `material?.short_name ?? material_code_raw ?? '—'` — không dùng `custom_short_name`.
 
-### Filter dropdown
-- Sentinel cho "tất cả": dùng `'__all__'` không dùng `''` — Radix UI crash khi `value=""`
-- Convert trong `onValueChange`: `v === '__all__' ? '' : v`
-- Trigger size: `h-7 text-xs`
-- Filter row: `<div className="flex gap-2 flex-wrap">`
+**Filter "tất cả":** sentinel `'__all__'`, không dùng `''` — Radix UI crash với `value=""`.
 
 ---
 
-## Detail Page Layout — 20/80
+## Layout
 
-Trang detail có phần header info + phần bảng dữ liệu:
+**List page:** `<div className="flex flex-col h-full">` · table area `flex-1 overflow-auto pb-20 lg:pb-4`
 
+**Detail page (20/80):**
 ```tsx
 <div className="flex flex-col h-full min-h-0">
-  {/* Header ~20% */}
+  {/* Header 20% — text-xs, px-3 py-2, space-y-1.5 */}
   <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5 overflow-y-auto"
-       style={{ maxHeight: '22vh' }}>
-    {/* tất cả text dùng text-xs */}
-  </div>
+       style={{ maxHeight: '22vh' }} />
 
-  {/* Table ~80% */}
+  {/* Table 80% — flex-1 min-h-0 bắt buộc */}
   <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
-    <div className="overflow-x-auto">
-      <Table className="min-w-full">...</Table>
-    </div>
+    <div className="overflow-x-auto"><Table className="min-w-full" /></div>
   </div>
 </div>
 ```
 
-- Header: tất cả text dùng `text-xs`, padding `px-3 py-2`, spacing `space-y-1.5`
-- `shrink-0` + `max-h: 22vh` + `overflow-y-auto` → header không đẩy bảng ra ngoài màn hình
-- `flex-1 min-h-0` trên table container là bắt buộc để overflow hoạt động đúng trong flex
-
----
-
-## Layout chung
-
-- Desktop: sidebar 240px cố định + content area
-- Mobile: bottom nav bar + header back button
-- Cards: `rounded-xl shadow-sm border border-slate-200 p-4`
-- Material selector: combobox Input + dropdown inline, server-side search
-
----
-
-## API Conventions
-
-```json
-{ "success": true, "data": { ... } }
-{ "success": false, "error": { "code": "NOT_FOUND", "message": "Không tìm thấy..." } }
-```
-
-Auth roles: `OWN` (chọn kho tự do) · `WAREHOUSE_MANAGER` / `WAREHOUSE_STAFF` (kho cố định, read-only).
-Mock user trong `frontend/src/stores/authStore.ts` dùng `warehouse_name: 'Kho Ba Vì'` khi dev.
+**Chung:** Desktop sidebar 240px · Mobile bottom nav · Cards `rounded-xl shadow-sm border border-slate-200 p-4`
 
 ---
 
 ## Tính năng chưa hoàn thiện
 
-| Module | Vấn đề | File |
-|---|---|---|
-| **Auth** | JWT middleware chưa implement, routes chưa bảo vệ | `backend/src/middlewares/` |
-| **Outbound** | Đã implement đầy đủ (list + detail + QR scan) ✅ | `frontend/src/pages/wms/Outbound.tsx` |
-| **TMS / HR** | Routes comment out, chưa có controller | `backend/src/app.ts` dòng 28–30 |
-| **Services layer** | Business logic trong controllers, `services/` trống | `backend/src/services/` |
+| Module | Trạng thái |
+|---|---|
+| **Auth** | JWT middleware chưa implement — `backend/src/middlewares/` |
+| **TMS / HR** | Routes comment out, chưa có controller — `backend/src/app.ts` dòng 28–30 |
+| **Services layer** | Business logic trong controllers, `services/` trống |
 
 ---
 
@@ -288,13 +212,6 @@ cd backend && npm run dev    # port 4000
 cd frontend && npm run dev   # port 5173
 ```
 
-**Env vars (Vercel):**
-- Backend: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`
-- Frontend: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`
+Vercel env: `SUPABASE_URL` · `SUPABASE_SERVICE_ROLE_KEY` (backend) · `VITE_SUPABASE_URL` · `VITE_SUPABASE_ANON_KEY` (frontend)
 
-**Env vars (local frontend/.env):**
-```
-VITE_API_URL=
-VITE_SUPABASE_URL=https://bxxryrmpfabvjitqbdnw.supabase.co
-VITE_SUPABASE_ANON_KEY=<anon-key>
-```
+Local `frontend/.env`: `VITE_API_URL=` · `VITE_SUPABASE_URL=https://bxxryrmpfabvjitqbdnw.supabase.co`

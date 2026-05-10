@@ -397,32 +397,32 @@ export default function OutboundDetail() {
           )}
 
           <ProgressBar scanned={totalScanned} ordered={totalOrdered} />
-
-          {/* Quick-switch bar — hiện khi có xe đã đánh dấu */}
-          {vehicles.length > 0 && (
-            <div className="flex flex-wrap items-center gap-1 pt-0.5">
-              <span className="text-[9px] text-slate-400 shrink-0">Đang làm:</span>
-              {vehicles.map(v => (
-                <button
-                  key={v.id}
-                  onClick={() => navigate(`/wms/outbound/${v.id}`)}
-                  className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium whitespace-nowrap border transition-colors ${
-                    v.id === id
-                      ? 'bg-amber-100 text-amber-800 border-amber-300'
-                      : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-                  }`}
-                >
-                  <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${
-                    v.status === 'IN_PROGRESS' ? 'bg-amber-500'
-                    : v.status === 'COMPLETED'  ? 'bg-green-500'
-                    : 'bg-slate-300'
-                  }`} />
-                  {v.group_code}
-                </button>
-              ))}
-            </div>
-          )}
         </div>
+
+        {/* Quick-switch bar — nằm ngoài header để không gây scroll */}
+        {vehicles.length > 0 && (
+          <div className="border-b bg-white px-3 py-1.5 shrink-0 flex flex-wrap items-center gap-1">
+            <span className="text-[9px] text-slate-400 shrink-0">Đang làm:</span>
+            {vehicles.map(v => (
+              <button
+                key={v.id}
+                onClick={() => navigate(`/wms/outbound/${v.id}`)}
+                className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium whitespace-nowrap border transition-colors ${
+                  v.id === id
+                    ? 'bg-amber-100 text-amber-800 border-amber-300'
+                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                }`}
+              >
+                <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${
+                  v.status === 'IN_PROGRESS' ? 'bg-amber-500'
+                  : v.status === 'COMPLETED'  ? 'bg-green-500'
+                  : 'bg-slate-300'
+                }`} />
+                {v.group_code}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* ── Items table: ~80% ── */}
         <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">

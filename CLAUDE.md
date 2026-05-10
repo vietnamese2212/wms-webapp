@@ -1,7 +1,7 @@
 # WMS Supply Chain Webapp
 
 ## Quy tắc làm việc
-
+Ngôn ngữ trao đổi: tiếng việt
 - **Push GitHub sau mỗi lần sửa code** — Vercel tự deploy.
 - Remote: `https://github.com/vietnamese2212/wms-webapp.git` (branch `main`)
 - **Thay đổi DB schema**: viết SQL → `backend/migrations/YYYYMMDD_<desc>.sql` → apply qua Supabase Dashboard → SQL Editor → push GitHub → cập nhật `SCHEMA_REVIEW.md`.
@@ -99,7 +99,7 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 
 - Diff có ít thay đổi thừa hơn
 - Ít phải viết lại do over-engineering
-- Các câu hỏi làm rõ xuất hiện trước khi implement thay vì sau khi gây lỗi
+- Các câu hỏi làm rõ xuất hiện trước khi implement thay vì sau khi gây lỗi11
 ---
 
 ## Chuẩn code bắt buộc
@@ -149,8 +149,11 @@ Camera bắt QR → camera dừng → preview xanh → operator chỉnh số th�
 - Lỗi: feedback đỏ, bấm "Quét tiếp" để resume thủ công
 - "Huỷ": xoá pending QR, resume ngay
 
-### Các flow khác (Xuất kho, Kiểm kho, Chấm công) — Instant scan
-Camera bắt QR → gọi API ngay, không có bước confirm. Auto-resume 1.5s sau thành công, dừng khi lỗi.
+### Outbound — Scan → Chỉnh số thùng → Lưu
+Camera bắt QR → camera dừng → hiện ô nhập số thùng (mặc định = số thùng còn cần xuất) → **"Lưu"** → API commit.
+- Floating "Quét tiếp" + "Lưu" overlay trên camera khi có `pendingQR`
+- Thành công: feedback xanh, camera resume sau 1.5s
+- Lỗi: feedback đỏ, bấm "Quét tiếp" để resume thủ công
 `QRScanner` export `forwardRef<QRScannerHandle>` với method `resume()`.
 
 ---
@@ -164,22 +167,94 @@ Success:  green-500   hoàn thành, OK
 Warning:  amber-500   cảnh báo, pending
 Danger:   red-500     lỗi, từ chối
 ```
-Capacity fill: Full → `text-blue-700 font-semibold` · Partial → `text-amber-600` · Empty → default slate
+
+**Row colors — trạng thái:**
+```
+COMPLETED / đầy vị trí  →  bg-blue-50  hover:bg-blue-100
+IN_PROGRESS / đang xử lý →  bg-amber-50 hover:bg-amber-100
+Đã giao đơn (assigned)   →  bg-green-50 hover:bg-green-100
+PENDING / chưa xử lý     →  hover:bg-slate-50   (nền trắng)
+```
+Áp dụng nhất quán ở cả list page và detail page cho mọi module.
 
 **Typography:**
 - Page title: `text-xl font-semibold` · Section: `text-base font-medium`
 - Body: `text-sm text-slate-700` · Caption/label: `text-xs text-slate-500`
 
-**Table standards:**
-- Dữ liệu chính (mã pallet, tên hàng, số lượng): `text-lg`
-- Metadata (ngày, người, NMSX, máy): `text-xs` / `text-[11px]`
-- Compact rows (≥ 20 rows): `py-1 px-2`
-- Material selector: combobox Input + dropdown inline, server-side search
+---
 
-**Layout:**
+## Table Format Standards (bắt buộc cho mọi module)
+
+### Font size trong table
+| Loại dữ liệu | Class |
+|---|---|
+| Header cột | `text-[9px] font-medium text-slate-500` |
+| Mã hàng / mã pallet / ID | `text-[10px] font-mono font-semibold` |
+| Tên hàng / tên người / text chính | `text-[10px] font-medium` |
+| Số lượng / số đếm | `text-[10px] font-semibold tabular-nums` |
+| Sub-label / đơn vị (thùng, pl, kg…) | `text-[9px] text-slate-400` |
+| Metadata (ngày, giờ, trạng thái phụ) | `text-[10px] text-slate-500` |
+
+### Padding row
+- Compact (≥ 15 rows): `px-2 py-1`
+- Header row: `px-2 py-1.5`
+- Header row background: `bg-slate-50`
+
+### Responsive / mobile
+- **Không ẩn cột trên mobile** — giảm font thay vì `hidden sm:table-cell`
+- Wrap table trong `<div className="overflow-x-auto">` để scroll ngang thay vì vỡ layout
+- Page wrapper cho list: `flex flex-col h-full`
+- Table area: `flex-1 overflow-auto pb-20 lg:pb-4`
+
+### Định dạng ngày trong table
+- Compact (cell): `dd/MM/yy` — không thêm nhãn "Hôm nay" vào ô
+- Header / tiêu đề trang: `EEEE, dd/MM/yyyy` với locale `vi`
+
+### Tên hàng (Material name)
+Luôn dùng: `material?.short_name ?? material_code_raw ?? '—'`
+Không dùng `custom_short_name`.
+
+### Filter dropdown
+- Sentinel cho "tất cả": dùng `'__all__'` không dùng `''` — Radix UI crash khi `value=""`
+- Convert trong `onValueChange`: `v === '__all__' ? '' : v`
+- Trigger size: `h-7 text-xs`
+- Filter row: `<div className="flex gap-2 flex-wrap">`
+
+---
+
+## Detail Page Layout — 20/80
+
+Trang detail có phần header info + phần bảng dữ liệu:
+
+```tsx
+<div className="flex flex-col h-full min-h-0">
+  {/* Header ~20% */}
+  <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5 overflow-y-auto"
+       style={{ maxHeight: '22vh' }}>
+    {/* tất cả text dùng text-xs */}
+  </div>
+
+  {/* Table ~80% */}
+  <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+    <div className="overflow-x-auto">
+      <Table className="min-w-full">...</Table>
+    </div>
+  </div>
+</div>
+```
+
+- Header: tất cả text dùng `text-xs`, padding `px-3 py-2`, spacing `space-y-1.5`
+- `shrink-0` + `max-h: 22vh` + `overflow-y-auto` → header không đẩy bảng ra ngoài màn hình
+- `flex-1 min-h-0` trên table container là bắt buộc để overflow hoạt động đúng trong flex
+
+---
+
+## Layout chung
+
 - Desktop: sidebar 240px cố định + content area
 - Mobile: bottom nav bar + header back button
 - Cards: `rounded-xl shadow-sm border border-slate-200 p-4`
+- Material selector: combobox Input + dropdown inline, server-side search
 
 ---
 
@@ -200,7 +275,7 @@ Mock user trong `frontend/src/stores/authStore.ts` dùng `warehouse_name: 'Kho B
 | Module | Vấn đề | File |
 |---|---|---|
 | **Auth** | JWT middleware chưa implement, routes chưa bảo vệ | `backend/src/middlewares/` |
-| **Outbound** | Mock data, chưa kết nối API | `frontend/src/pages/wms/Outbound.tsx` |
+| **Outbound** | Đã implement đầy đủ (list + detail + QR scan) ✅ | `frontend/src/pages/wms/Outbound.tsx` |
 | **TMS / HR** | Routes comment out, chưa có controller | `backend/src/app.ts` dòng 28–30 |
 | **Services layer** | Business logic trong controllers, `services/` trống | `backend/src/services/` |
 

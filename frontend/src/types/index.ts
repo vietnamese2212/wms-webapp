@@ -396,6 +396,8 @@ export interface GDO {
   planned_date:     string
   delivery_date:    string
   warehouse_id:     string | null
+  warehouse_type:   string | null
+  warehouse?:       { id: string; code: string; name: string } | null
   dvvt:             string | null
   status:           OutboundStatus
   created_at:       string

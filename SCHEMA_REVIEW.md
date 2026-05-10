@@ -1,6 +1,6 @@
 # Schema Review – WMS Webapp
 
-> Cập nhật lần cuối: 2026-05-09 (rev 11)
+> Cập nhật lần cuối: 2026-05-10 (rev 13)
 > Database: PostgreSQL via Supabase · client: `@supabase/supabase-js` (service role)
 
 ---
@@ -151,3 +151,4 @@ created_at, updated_at
 | 2026-05-09 | — | Chuẩn INSERT `randomUUID()` + `updated_at` bắt buộc |
 | 2026-05-09 | 11 | Permission system: `Department`, `JobTitle`, `UserWarehouseAccess`, mở rộng `Employee` (action_level, allowed_categories, warehouse_scope). Backend `permissions.ts` với `can()` + `loadActor()`. API + UI User Management |
 | 2026-05-09 | 12 | Outbound module: `GroupDeliveryOrder`, `DeliveryOrder`, `DeliveryOrderItem`, `OutboundScanEntry`. `InventoryEntry.cartons_imported` → DECIMAL, thêm `cartons_remaining`. Excel upload, QR scan với QA block + tịnh tiến logic. |
+| 2026-05-10 | 13 | `GroupDeliveryOrder` thêm `warehouse_type TEXT`. Excel template thêm cột "Kho xuất" (match Warehouse by name/code) và "Loại kho" (lưu vào warehouse_type). |

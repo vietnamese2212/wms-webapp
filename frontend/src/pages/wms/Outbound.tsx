@@ -200,6 +200,8 @@ export default function Outbound() {
                 <TableRow className="bg-slate-50">
                   <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Ngày xuất</TableHead>
                   <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Số xe</TableHead>
+                  <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Kho xuất</TableHead>
+                  <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Loại kho</TableHead>
                   <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Loại xuất</TableHead>
                   <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">ĐVVT</TableHead>
                   <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Tên NPP</TableHead>
@@ -229,6 +231,12 @@ function GDORow({ gdo, onClick }: { gdo: GDO; onClick: () => void }) {
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px] font-mono font-semibold">{gdo.group_code}</span>
+      </TableCell>
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        <span className="text-[10px] text-slate-700">{gdo.warehouse?.name ?? '—'}</span>
+      </TableCell>
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        <span className="text-[10px] text-slate-700">{gdo.warehouse_type ?? '—'}</span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px] text-slate-700">{gdo.export_type ?? '—'}</span>

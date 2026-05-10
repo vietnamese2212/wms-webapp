@@ -50,7 +50,7 @@ function isExcludedFromCount(item: any): boolean {
 
 async function fetchGDOFull(id: string) {
   const { data: gdo, error } = await (supabase.from('GroupDeliveryOrder') as any)
-    .select('*').eq('id', id).single()
+    .select('*, warehouse:Warehouse(id,code,name)').eq('id', id).single()
   if (error || !gdo) return null
 
   const { data: dos } = await (supabase.from('OutboundDelivery') as any)
@@ -100,7 +100,7 @@ export async function listGDOs(req: Request, res: Response) {
   try {
     const { warehouse_id, status, date, search } = req.query as Record<string, string>
     let q = (supabase.from('GroupDeliveryOrder') as any)
-      .select('*')
+      .select('*, warehouse:Warehouse(id,code,name)')
       .order('delivery_date', { ascending: false })
     if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
     if (status)       q = q.eq('status', status)
@@ -176,8 +176,8 @@ export async function getGDO(req: Request, res: Response) {
 
 export async function createGDO(req: Request, res: Response) {
   try {
-    const { group_code, delivery_date, warehouse_id, dvvt } = req.body as {
-      group_code: string; delivery_date: string; warehouse_id?: string; dvvt?: string
+    const { group_code, delivery_date, warehouse_id, dvvt, warehouse_type } = req.body as {
+      group_code: string; delivery_date: string; warehouse_id?: string; dvvt?: string; warehouse_type?: string
     }
     if (!group_code || !delivery_date) return fail(res, 'group_code và delivery_date là bắt buộc', 400)
 
@@ -186,6 +186,7 @@ export async function createGDO(req: Request, res: Response) {
     const { error } = await (supabase.from('GroupDeliveryOrder') as any).insert({
       id, group_code, planned_date, delivery_date,
       warehouse_id: warehouse_id ?? null, dvvt: dvvt ?? null,
+      warehouse_type: warehouse_type ?? null,
       status: 'PENDING', updated_at: now(),
     })
     if (error) return fail(res, error.message)
@@ -293,6 +294,15 @@ export async function uploadExcel(req: Request, res: Response) {
     }
     if (!byVehicle.size) return fail(res, 'Không tìm thấy cột "Số xe" hoặc dữ liệu trống', 400)
 
+    // Pre-load warehouses for "Kho xuất" matching
+    const { data: warehouses } = await (supabase.from('Warehouse') as any)
+      .select('id, code, name').eq('is_active', true)
+    const warehouseByKey = new Map<string, string>()
+    for (const w of (warehouses ?? [])) {
+      warehouseByKey.set(w.code.trim().toLowerCase(), w.id)
+      warehouseByKey.set(w.name.trim().toLowerCase(), w.id)
+    }
+
     // Pre-load materials
     const { data: materials } = await (supabase.from('Material') as any).select('id, material_code')
     const matMap = new Map<string, string>(
@@ -312,12 +322,25 @@ export async function uploadExcel(req: Request, res: Response) {
       const planned_date = parsePlannedDate(group_code) ?? new Date().toISOString().slice(0, 10)
       // "Ngày xuất" column overrides planned_date as delivery_date
       const delivery_date = parseExcelDate(groupRows[0]['Ngày xuất']) ?? planned_date
-      const dvvt = String(groupRows[0]['DVVT'] ?? groupRows[0]['Đơn vị'] ?? '').trim() || null
+      const dvvt      = String(groupRows[0]['DVVT']      ?? groupRows[0]['Đơn vị']  ?? '').trim() || null
+      const kho_xuat  = String(groupRows[0]['Kho xuất']  ?? groupRows[0]['Kho xuat'] ?? '').trim()
+      const loai_kho  = String(groupRows[0]['Loại kho']  ?? groupRows[0]['Loai kho'] ?? '').trim() || null
+
+      // Resolve warehouse: column takes priority over body fallback
+      let resolved_warehouse_id = warehouse_id ?? null
+      if (kho_xuat) {
+        const found = warehouseByKey.get(kho_xuat.toLowerCase())
+        if (!found) {
+          created.push({ group_code, skipped: true, reason: `Không tìm thấy kho "${kho_xuat}"` })
+          continue
+        }
+        resolved_warehouse_id = found
+      }
 
       const gdoId = randomUUID()
       const { error: gdoErr } = await (supabase.from('GroupDeliveryOrder') as any).insert({
         id: gdoId, group_code, planned_date, delivery_date,
-        warehouse_id: warehouse_id ?? null, dvvt, status: 'PENDING', updated_at: now(),
+        warehouse_id: resolved_warehouse_id, dvvt, warehouse_type: loai_kho, status: 'PENDING', updated_at: now(),
       })
       if (gdoErr) { created.push({ group_code, skipped: true, reason: gdoErr.message }); continue }
 

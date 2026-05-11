@@ -109,12 +109,11 @@ function validateQR(raw: string, order: InboundOrder): ValidationResult {
 
 interface ScanDialogProps {
   order: InboundOrder
-  open: boolean
   onClose: () => void
   employeeId?: string
 }
 
-function ScanDialog({ order, open, onClose, employeeId }: ScanDialogProps) {
+function ScanDialog({ order, onClose, employeeId }: ScanDialogProps) {
   const scannerRef = useRef<QRScannerHandle>(null)
   const { mutate: scanPallet, isPending } = useScanPallet()
 
@@ -124,18 +123,6 @@ function ScanDialog({ order, open, onClose, employeeId }: ScanDialogProps) {
   const [feedback,   setFeedback]   = useState<FeedbackState | null>(null)
   const [pendingQR,  setPendingQR]  = useState<string | null>(null)
   const [validation, setValidation] = useState<ValidationResult | null>(null)
-
-  useEffect(() => {
-    if (open) {
-      setFeedback(null)
-      setPendingQR(null)
-      setValidation(null)
-      setCartons(order.material?.cartons_per_pallet?.toString() ?? '0')
-      setStackLayer('1')
-      // Resume camera in case it was paused from previous scan
-      setTimeout(() => scannerRef.current?.resume(), 50)
-    }
-  }, [open, order.material?.cartons_per_pallet])
 
   function handleScan(raw: string) {
     playBeep()
@@ -182,9 +169,8 @@ function ScanDialog({ order, open, onClose, employeeId }: ScanDialogProps) {
 
   const canSave = !!pendingQR && validation?.ok === true && !isPending
 
-  // Keep this overlay always in DOM (never unmount) — camera stays alive, no repeated permission prompts
   return (
-    <div className={`fixed inset-0 z-50 flex flex-col ${open ? '' : 'hidden'}`} aria-hidden={!open}>
+    <div className="fixed inset-0 z-50 flex flex-col">
       {/* Backdrop */}
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
 
@@ -308,9 +294,8 @@ export default function InboundDetail() {
   const { mutate: deleteEntries                         } = useDeletePalletEntries()
   const { mutate: updateOrder                           } = useUpdateInboundOrder()
 
-  const [showScan,      setShowScan]      = useState(false)
-  const [hasOpenedScan, setHasOpenedScan] = useState(false)
-  const [selectedIds,   setSelectedIds]   = useState<Set<string>>(new Set())
+  const [showScan,    setShowScan]    = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [confirm, setConfirm] = useState<{ title: string; msg: string; onOk: () => void } | null>(null)
 
   function openConfirm(title: string, msg: string, onOk: () => void) {
@@ -363,11 +348,9 @@ export default function InboundDetail() {
 
   return (
     <>
-      {/* ScanDialog: mount once on first open, then keep alive (CSS hidden) to avoid re-requesting camera permission */}
-      {hasOpenedScan && (
+      {showScan && (
         <ScanDialog
           order={order}
-          open={showScan}
           onClose={() => setShowScan(false)}
           employeeId={currentEmpId}
         />
@@ -521,7 +504,7 @@ export default function InboundDetail() {
                   size="sm"
                   className="h-8 gap-1.5"
                   disabled={!order.location_id}
-                  onClick={() => { unlockAudio(); setHasOpenedScan(true); setShowScan(true) }}
+                  onClick={() => { unlockAudio(); setShowScan(true) }}
                   title={!order.location_id ? 'Chọn vị trí trước' : undefined}
                 >
                   <Plus className="h-3.5 w-3.5" />
@@ -542,7 +525,7 @@ export default function InboundDetail() {
                   <Button
                     size="sm" variant="outline"
                     disabled={!order.location_id}
-                    onClick={() => { unlockAudio(); setHasOpenedScan(true); setShowScan(true) }}
+                    onClick={() => { unlockAudio(); setShowScan(true) }}
                   >
                     <Plus className="h-4 w-4 mr-1" /> Thêm pallet đầu tiên
                   </Button>

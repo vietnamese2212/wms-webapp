@@ -55,18 +55,15 @@ function ProgressBar({ scanned, ordered }: { scanned: number; ordered: number })
   )
 }
 
-// ─── ScanDialog (keep-alive camera) ──────────────────────────
-
 type FeedbackState = { type: 'success' | 'error'; msg: string } | null
 
 interface ScanDialogProps {
-  open:    boolean
   item:    OutboundItem
   gdoId:   string
   onClose: () => void
 }
 
-function ScanDialog({ open, item, gdoId, onClose }: ScanDialogProps) {
+function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
   const scannerRef = useRef<QRScannerHandle>(null)
   const [feedback,       setFeedback]       = useState<FeedbackState>(null)
   const [pendingQR,      setPendingQR]      = useState<string | null>(null)
@@ -110,7 +107,7 @@ function ScanDialog({ open, item, gdoId, onClose }: ScanDialogProps) {
   }
 
   return (
-    <div className={`fixed inset-0 z-50 flex flex-col ${open ? '' : 'hidden'}`} aria-hidden={!open}>
+    <div className="fixed inset-0 z-50 flex flex-col">
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
       <div className="relative mt-auto bg-white rounded-t-2xl max-h-[90dvh] overflow-y-auto">
         <div className="p-4 space-y-3">
@@ -235,8 +232,7 @@ export default function OutboundItemDetail() {
   const { mutate: deleteScanEntry, isPending: deleting    } = useDeleteOutboundScanEntry()
   const { vehicles } = useActiveVehiclesStore()
 
-  const [hasOpenedScan, setHasOpenedScan] = useState(false)
-  const [showScan,      setShowScan]      = useState(false)
+  const [showScan, setShowScan] = useState(false)
   const [confirmScanId, setConfirmScanId] = useState<string | null>(null)
 
   if (isLoading || !gdo) {
@@ -274,7 +270,6 @@ export default function OutboundItemDetail() {
 
   function openScan() {
     unlockAudio()
-    setHasOpenedScan(true)
     setShowScan(true)
   }
 
@@ -290,8 +285,8 @@ export default function OutboundItemDetail() {
 
   return (
     <>
-      {hasOpenedScan && (
-        <ScanDialog open={showScan} item={item} gdoId={gdoId!} onClose={() => setShowScan(false)} />
+      {showScan && (
+        <ScanDialog item={item} gdoId={gdoId!} onClose={() => setShowScan(false)} />
       )}
 
       <ConfirmDialog

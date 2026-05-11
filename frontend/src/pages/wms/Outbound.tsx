@@ -364,7 +364,9 @@ function GDORow({ gdo, onClick }: { gdo: GDO; onClick: () => void }) {
 
       {/* Lái xe nâng */}
       <TableCell className="px-2 py-1 whitespace-nowrap">
-        <span className="text-[10px] text-slate-700">{gdo.forklift_driver?.name ?? '—'}</span>
+        <span className="text-[10px] text-slate-700">
+          {gdo.forklift_driver_names || gdo.forklift_driver?.name || '—'}
+        </span>
       </TableCell>
 
       {/* Bốc xếp */}

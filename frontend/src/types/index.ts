@@ -447,8 +447,9 @@ export interface GDO {
   container_number?:   string | null
   exporter_name?:      string | null
   loader_name?:        string | null
-  forklift_driver_id?: string | null
-  forklift_driver?:    { id: string; name: string } | null
+  forklift_driver_id?:    string | null
+  forklift_driver_names?: string | null
+  forklift_driver?:       { id: string; name: string } | null
   // Detail
   delivery_orders?: OutboundDelivery[]
 }

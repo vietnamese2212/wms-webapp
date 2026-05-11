@@ -649,7 +649,8 @@ export function useStartGDO() {
   return useMutation({
     mutationFn: ({ id, ...body }: {
       id: string; license_plate: string; container_number?: string
-      exporter_name?: string; loader_name?: string; forklift_driver_id?: string
+      exporter_name?: string; loader_name?: string
+      forklift_driver_id?: string; forklift_driver_names?: string
     }) => apiClient.post(`/wms/outbound/${id}/start`, body).then(r => r.data.data),
     onSuccess: (_d, v) => {
       qc.invalidateQueries({ queryKey: ['gdos'] })

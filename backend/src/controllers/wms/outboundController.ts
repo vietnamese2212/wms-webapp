@@ -235,10 +235,10 @@ export async function startGDO(req: Request, res: Response) {
   try {
     const {
       license_plate, container_number, exporter_name,
-      loader_name, forklift_driver_id,
+      loader_name, forklift_driver_id, forklift_driver_names,
     } = req.body as {
       license_plate?: string; container_number?: string; exporter_name?: string
-      loader_name?: string; forklift_driver_id?: string
+      loader_name?: string; forklift_driver_id?: string; forklift_driver_names?: string
     }
     if (!license_plate) return fail(res, 'Biển số xe là bắt buộc', 400)
 
@@ -246,10 +246,11 @@ export async function startGDO(req: Request, res: Response) {
       .update({
         started_at: now(),
         license_plate,
-        container_number: container_number ?? null,
-        exporter_name:    exporter_name ?? null,
-        loader_name:      loader_name ?? null,
-        forklift_driver_id: forklift_driver_id ?? null,
+        container_number:       container_number       ?? null,
+        exporter_name:          exporter_name          ?? null,
+        loader_name:            loader_name            ?? null,
+        forklift_driver_id:     forklift_driver_id     ?? null,
+        forklift_driver_names:  forklift_driver_names  ?? null,
         status:     'IN_PROGRESS',
         updated_at: now(),
       })

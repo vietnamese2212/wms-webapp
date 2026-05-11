@@ -62,6 +62,64 @@ function ProgressBar({ scanned, ordered, compact = false }: { scanned: number; o
 
 // ─── Bắt đầu dialog ───────────────────────────────────────────
 
+// ─── Tag multi-picker (employee dropdown + removable tags) ───
+
+type EmpOption = { id: string; name: string; employee_code?: string }
+
+function TagPicker({
+  fixedName,
+  employees,
+  selectedIds,
+  onChange,
+  placeholder = 'Thêm người…',
+}: {
+  fixedName?: string
+  employees: EmpOption[]
+  selectedIds: string[]
+  onChange: (ids: string[]) => void
+  placeholder?: string
+}) {
+  const unselected = employees.filter(e => !selectedIds.includes(e.id))
+  return (
+    <div className="rounded-md border border-input bg-background px-2 py-2 space-y-2">
+      <div className="flex flex-wrap gap-1.5 min-h-[22px]">
+        {fixedName && (
+          <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 font-medium">
+            {fixedName}
+          </span>
+        )}
+        {selectedIds.map(id => {
+          const emp = employees.find(e => e.id === id)
+          return (
+            <span key={id} className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">
+              {emp?.name ?? id}
+              <button type="button" onClick={() => onChange(selectedIds.filter(s => s !== id))}>
+                <X className="h-3 w-3 text-slate-400 hover:text-red-500" />
+              </button>
+            </span>
+          )
+        })}
+      </div>
+      {unselected.length > 0 && (
+        <Select value="" onValueChange={v => { if (v) onChange([...selectedIds, v]) }}>
+          <SelectTrigger className="h-7 text-xs border-dashed">
+            <SelectValue placeholder={placeholder} />
+          </SelectTrigger>
+          <SelectContent>
+            {unselected.map(e => (
+              <SelectItem key={e.id} value={e.id}>
+                {e.name}{e.employee_code ? ` (${e.employee_code})` : ''}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
+    </div>
+  )
+}
+
+// ─── Start dialog ─────────────────────────────────────────────
+
 function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose: () => void }) {
   const user = useAuthStore(s => s.user)
   const { data: employees = [] } = useWarehouseEmployees(gdo.warehouse_id)
@@ -71,19 +129,31 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
   const allItems    = (gdo.delivery_orders ?? []).flatMap(d => d.items)
   const isContainer = allItems.some(i => i.export_type?.toLowerCase().includes('cont'))
 
-  const [form, setForm] = useState({
-    license_plate:      '',
-    container_number:   '',
-    exporter_name:      user?.name ?? '',
-    loader_name:        '',
-    forklift_driver_id: '',
-  })
+  const [licPlate,         setLicPlate]         = useState('')
+  const [containerNum,     setContainerNum]     = useState('')
+  const [loaderName,       setLoaderName]       = useState('')
+  const [extraExporterIds, setExtraExporterIds] = useState<string[]>([])
+  const [forklifterIds,    setForklifterIds]    = useState<string[]>([])
+
+  // Resolved names for submission
+  const empMap = new Map((employees as EmpOption[]).map(e => [e.id, e.name]))
+  const exporterName = [user?.name, ...extraExporterIds.map(id => empMap.get(id) ?? id)]
+    .filter(Boolean).join(', ')
+  const forklifterNames = forklifterIds.map(id => empMap.get(id) ?? id).filter(Boolean).join(', ')
 
   function handleSubmit() {
-    if (!form.license_plate.trim()) { setErr('Vui lòng nhập biển số xe'); return }
+    if (!licPlate.trim()) { setErr('Vui lòng nhập biển số xe'); return }
     setErr(null)
     startGDO(
-      { id: gdo.id, ...form, forklift_driver_id: form.forklift_driver_id || undefined },
+      {
+        id:                   gdo.id,
+        license_plate:        licPlate,
+        container_number:     containerNum || undefined,
+        exporter_name:        exporterName || undefined,
+        loader_name:          loaderName   || undefined,
+        forklift_driver_id:   forklifterIds[0] || undefined,
+        forklift_driver_names: forklifterNames || undefined,
+      },
       {
         onSuccess: onClose,
         onError: (e) => {
@@ -94,10 +164,6 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
     )
   }
 
-  function set(field: keyof typeof form, val: string) {
-    setForm(f => ({ ...f, [field]: val }))
-  }
-
   return (
     <Dialog open={open} onOpenChange={v => { if (!v) onClose() }}>
       <DialogContent className="max-w-sm">
@@ -106,40 +172,43 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
           <div className="space-y-1">
             <Label className="text-xs">Biển số xe *</Label>
             <Input className="text-lg h-10" placeholder="VD: 30A-12345"
-              value={form.license_plate} onChange={e => set('license_plate', e.target.value.toUpperCase())} />
+              value={licPlate} onChange={e => setLicPlate(e.target.value.toUpperCase())} />
           </div>
           {isContainer && (
             <div className="space-y-1">
               <Label className="text-xs">Số container</Label>
               <Input className="text-lg h-10" placeholder="VD: ABCD1234567"
-                value={form.container_number} onChange={e => set('container_number', e.target.value.toUpperCase())} />
+                value={containerNum} onChange={e => setContainerNum(e.target.value.toUpperCase())} />
             </div>
           )}
+
           <div className="space-y-1">
             <Label className="text-xs">Người xuất</Label>
-            <Input className="text-sm h-9" value={form.exporter_name}
-              onChange={e => set('exporter_name', e.target.value)} />
+            <TagPicker
+              fixedName={user?.name}
+              employees={employees as EmpOption[]}
+              selectedIds={extraExporterIds}
+              onChange={setExtraExporterIds}
+              placeholder="Thêm người xuất…"
+            />
           </div>
+
+          <div className="space-y-1">
+            <Label className="text-xs">Lái xe nâng</Label>
+            <TagPicker
+              employees={employees as EmpOption[]}
+              selectedIds={forklifterIds}
+              onChange={setForklifterIds}
+              placeholder="Chọn lái xe nâng…"
+            />
+          </div>
+
           <div className="space-y-1">
             <Label className="text-xs">Bốc xếp</Label>
             <Input className="text-sm h-9" placeholder="Tên bốc xếp"
-              value={form.loader_name} onChange={e => set('loader_name', e.target.value)} />
+              value={loaderName} onChange={e => setLoaderName(e.target.value)} />
           </div>
-          <div className="space-y-1">
-            <Label className="text-xs">Lái xe nâng</Label>
-            <Select value={form.forklift_driver_id} onValueChange={v => set('forklift_driver_id', v)}>
-              <SelectTrigger className="text-sm h-9">
-                <SelectValue placeholder="Chọn lái xe nâng…" />
-              </SelectTrigger>
-              <SelectContent>
-                {employees.map(emp => (
-                  <SelectItem key={emp.id} value={emp.id}>
-                    {emp.name} {emp.employee_code ? `(${emp.employee_code})` : ''}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+
           {err && (
             <div className="rounded bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{err}</div>
           )}

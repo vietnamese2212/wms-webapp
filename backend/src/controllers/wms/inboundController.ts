@@ -167,6 +167,7 @@ export async function createOrder(req: Request, res: Response) {
         imported_by:     resolvedImportedBy,
         created_by:      resolvedImportedBy,
         status:          'OPEN',
+        created_at:      new Date().toISOString(),
         updated_at:      new Date().toISOString(),
       })
       .select(ORDER_SELECT)
@@ -381,6 +382,7 @@ export async function scanQR(req: Request, res: Response) {
         status:             'IN_STOCK',
         import_date:        vnDate(),
         update_date:        vnDate(),
+        created_at:         new Date().toISOString(),
         updated_at:         new Date().toISOString(),
       })
       .select(ENTRY_SELECT)

@@ -136,6 +136,7 @@ created_at, updated_at
 ## Lưu ý INSERT bắt buộc
 
 - `id TEXT NOT NULL` — không có `DEFAULT` → phải truyền `id: randomUUID()`
+- `created_at TIMESTAMP NOT NULL` — phải truyền `created_at: new Date().toISOString()` để đảm bảo suffix `Z` (UTC rõ ràng)
 - `updated_at TIMESTAMP NOT NULL` — không có `DEFAULT` → phải truyền `updated_at: new Date().toISOString()`
 
 ---

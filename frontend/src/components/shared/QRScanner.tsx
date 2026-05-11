@@ -44,12 +44,11 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
           const side = Math.floor(Math.min(w, h) * 0.85)
           return { width: side, height: side }
         },
-        aspectRatio: 1.0,
       }
 
       scanner
         .start(
-          { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
+          { facingMode: 'environment' },
           scanConfig,
           onDecode,
           () => {},
@@ -58,7 +57,7 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
           if (String(err).includes('NotFoundError') || String(err).includes('OverconstrainedError')) {
             scanner
               .start(
-                { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
+                { facingMode: 'user' },
                 scanConfig,
                 onDecode,
                 () => {},

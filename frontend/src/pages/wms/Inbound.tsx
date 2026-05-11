@@ -32,16 +32,16 @@ interface LocationWithCapacity {
   used_slots: number
 }
 
-const SUB_TYPE_LABELS: Record<string, string> = {
-  THANH_PHAM:    'Thành phẩm',
-  NGUYEN_LIEU:   'Nguyên liệu',
-  BAN_THANH_PHAM:'Bán thành phẩm',
-}
+// Bảng cấu hình Loại kho: sub_type (Location) ↔ label ↔ Material.category
+// Thêm entry mới ở đây khi có loại kho mới
+const LOAI_KHO_CONFIG = [
+  { sub_type: 'THANH_PHAM',    label: 'Thành phẩm', mat_category: 'TP'   },
+  { sub_type: 'NGUYEN_LIEU',   label: 'NVL',         mat_category: 'NVL'  },
+  { sub_type: 'POSM',          label: 'POSM',         mat_category: 'POSM' },
+] as const
 
-// Loại kho → Material.category (dùng để lọc danh sách hàng hóa)
-const SUB_TYPE_TO_CATEGORY: Record<string, string> = {
-  THANH_PHAM:  'TP',
-  NGUYEN_LIEU: 'NVL',
+function subTypeLabel(st: string) {
+  return LOAI_KHO_CONFIG.find(c => c.sub_type === st)?.label ?? st
 }
 
 // ─── Create order dialog ─────────────────────────────────────
@@ -82,16 +82,19 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
   }, [open, user?.warehouse_id])
 
   const { data: warehouses = [] } = useWarehouses(true)
-  const matCategory = subType ? (SUB_TYPE_TO_CATEGORY[subType] ?? undefined) : undefined
-  const { data: materials  = [] } = useMaterials({ search: matSearch || undefined, category: matCategory })
   const { data: shifts     = [] } = useImportShifts()
   const { data: locations  = [] } = useLocationsReal(
     warehouseId ? { warehouse_id: warehouseId } : undefined
   )
 
-  const allLocs = locations as LocationWithCapacity[]
-  const subTypeOpts = [...new Set(allLocs.map(l => l.sub_type).filter(Boolean))] as string[]
-  const filteredLocs = subType ? allLocs.filter(l => l.sub_type === subType) : allLocs
+  const allLocs     = locations as LocationWithCapacity[]
+  // Chỉ hiện loại kho nào thực sự có vị trí trong kho đã chọn
+  const availSubTypes = new Set(allLocs.map(l => l.sub_type).filter(Boolean))
+  const loaiKhoOpts   = LOAI_KHO_CONFIG.filter(c => availSubTypes.has(c.sub_type))
+  const filteredLocs  = subType ? allLocs.filter(l => l.sub_type === subType) : allLocs
+
+  const matCategory = LOAI_KHO_CONFIG.find(c => c.sub_type === subType)?.mat_category
+  const { data: materials = [] } = useMaterials({ search: matSearch || undefined, category: matCategory })
 
   // Auto-select warehouse by name when warehouse_id not set (mock auth scenario)
   useEffect(() => {
@@ -158,7 +161,7 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
           <div className="space-y-2">
             <Label>Kho <span className="text-red-500">*</span></Label>
             {isOWN ? (
-              <Select value={warehouseId} onValueChange={setWarehouseId}>
+              <Select value={warehouseId} onValueChange={v => { setWarehouseId(v); setSubType(''); setLocationId(''); setMaterialId(''); setMatSearch('') }}>
                 <SelectTrigger><SelectValue placeholder="Chọn kho" /></SelectTrigger>
                 <SelectContent>
                   {(warehouses as { id: string; name: string; code: string }[]).map((w) => (
@@ -173,30 +176,61 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
             )}
           </div>
 
-          {/* Loại kho – lọc cả vị trí lẫn danh sách hàng hóa */}
-          {subTypeOpts.length > 0 && (
+          {/* Loại kho – lọc cả vị trí lẫn danh sách hàng hóa theo cùng category */}
+          {loaiKhoOpts.length > 0 && (
             <div className="space-y-2">
-              <Label>Loại kho</Label>
+              <Label>Loại kho <span className="text-red-500">*</span></Label>
               <Select value={subType || '__all__'} onValueChange={v => { setSubType(v === '__all__' ? '' : v); setLocationId(''); setMaterialId(''); setMatSearch('') }} disabled={!warehouseId}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Tất cả loại" />
+                  <SelectValue placeholder="Chọn loại kho" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__all__">Tất cả loại</SelectItem>
-                  {subTypeOpts.map(st => (
-                    <SelectItem key={st} value={st}>{SUB_TYPE_LABELS[st] ?? st}</SelectItem>
+                  {loaiKhoOpts.map(c => (
+                    <SelectItem key={c.sub_type} value={c.sub_type}>{c.label}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
           )}
 
-          {/* Material – combobox tìm kiếm, lọc theo loại kho nếu đã chọn */}
+          {/* Vị trí – lọc theo loại kho, color-coded by capacity */}
+          <div className="space-y-2">
+            <Label>
+              Vị trí nhập <span className="text-red-500">*</span>
+              <span className="ml-2 text-xs font-normal text-slate-400">
+                đầy=xanh · một phần=cam · trống=trắng
+              </span>
+            </Label>
+            <Select value={locationId} onValueChange={setLocationId} disabled={!warehouseId}>
+              <SelectTrigger>
+                <SelectValue placeholder={!warehouseId ? 'Chọn kho trước' : !subType ? 'Chọn loại kho trước' : 'Chọn vị trí'} />
+              </SelectTrigger>
+              <SelectContent>
+                {filteredLocs.map((l) => {
+                  const isFull    = l.max_pallets > 0 && l.used_slots >= l.max_pallets
+                  const isPartial = l.used_slots > 0 && !isFull
+                  return (
+                    <SelectItem key={l.id} value={l.id}>
+                      <span className={isFull ? 'text-blue-700 font-semibold' : isPartial ? 'text-amber-600' : ''}>
+                        {l.location_code}
+                      </span>
+                      <span className="ml-2 text-xs text-slate-400">
+                        ({l.used_slots}/{l.max_pallets})
+                      </span>
+                    </SelectItem>
+                  )
+                })}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Material – combobox, lọc theo mat_category của loại kho đã chọn */}
           <div className="space-y-2">
             <Label>Material <span className="text-red-500">*</span></Label>
             <div ref={matRef} className="relative">
               <Input
-                placeholder={matCategory ? `Tìm hàng ${SUB_TYPE_LABELS[subType] ?? ''}…` : 'Tìm mã hoặc tên hàng...'}
+                placeholder={matCategory ? `Tìm hàng ${subTypeLabel(subType)}…` : 'Tìm mã hoặc tên hàng...'}
                 value={matInputValue}
                 onChange={(e) => { setMatSearch(e.target.value); setMaterialId(''); setMatOpen(true) }}
                 onFocus={() => setMatOpen(true)}
@@ -221,37 +255,6 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
                 </div>
               )}
             </div>
-          </div>
-
-          {/* Vị trí – required, color-coded by capacity */}
-          <div className="space-y-2">
-            <Label>
-              Vị trí nhập <span className="text-red-500">*</span>
-              <span className="ml-2 text-xs font-normal text-slate-400">
-                đầy=xanh · một phần=cam · trống=trắng
-              </span>
-            </Label>
-            <Select value={locationId} onValueChange={setLocationId} disabled={!warehouseId}>
-              <SelectTrigger>
-                <SelectValue placeholder={warehouseId ? 'Chọn vị trí' : 'Chọn kho trước'} />
-              </SelectTrigger>
-              <SelectContent>
-                {filteredLocs.map((l) => {
-                  const isFull    = l.max_pallets > 0 && l.used_slots >= l.max_pallets
-                  const isPartial = l.used_slots > 0 && !isFull
-                  return (
-                    <SelectItem key={l.id} value={l.id}>
-                      <span className={isFull ? 'text-blue-700 font-semibold' : isPartial ? 'text-amber-600' : ''}>
-                        {l.location_code}
-                      </span>
-                      <span className="ml-2 text-xs text-slate-400">
-                        ({l.used_slots}/{l.max_pallets})
-                      </span>
-                    </SelectItem>
-                  )
-                })}
-              </SelectContent>
-            </Select>
           </div>
 
           {/* Ca nhập + Ngày nhập */}

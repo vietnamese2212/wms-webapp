@@ -586,8 +586,8 @@ export default function InboundDetail() {
                         <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums font-semibold">
                           {entry.cartons_imported}
                         </TableCell>
-                        <TableCell className="px-2 py-1 text-[10px] text-slate-500 max-w-[80px]">
-                          <span className="block truncate">{entry.created_by_emp?.name ?? '—'}</span>
+                        <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">
+                          {entry.created_by_emp?.name ?? '—'}
                         </TableCell>
                         <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">
                           {formatTimestampDate(entry.created_at, true)}

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Search, PackagePlus, CalendarDays, X, ChevronDown, User, MapPin } from 'lucide-react'
+import { Plus, Search, PackagePlus, CalendarDays, X, ChevronDown, User, MapPin, Filter } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
@@ -421,8 +421,9 @@ export default function Inbound() {
   const navigate  = useNavigate()
   const user      = useAuthStore(s => s.user)
   const { inbound: f, setInbound } = useWmsFilterStore()
-  const [showNew,  setShowNew]  = useState(false)
-  const [locOpen,  setLocOpen]  = useState(false)
+  const [showNew,     setShowNew]     = useState(false)
+  const [locOpen,     setLocOpen]     = useState(false)
+  const [showFilters, setShowFilters] = useState(false)
 
   const { data: shifts     = [] } = useImportShifts()
   const { data: warehouses = [] } = useWarehouses(true)
@@ -510,7 +511,7 @@ export default function Inbound() {
   let dateLabel = 'Tất cả ngày'
   if (f.dateFrom && f.dateTo) {
     dateLabel = f.dateFrom === f.dateTo
-      ? format(parseISO(f.dateFrom), 'EEEE, dd-MM-yyyy', { locale: vi })
+      ? format(parseISO(f.dateFrom), 'dd-MM-yyyy', { locale: vi })
       : `${format(parseISO(f.dateFrom), 'dd-MM-yyyy')} – ${format(parseISO(f.dateTo), 'dd-MM-yyyy')}`
   } else if (f.dateFrom) {
     dateLabel = `Từ ${format(parseISO(f.dateFrom), 'dd-MM-yyyy')}`
@@ -520,109 +521,135 @@ export default function Inbound() {
 
   const hasClientFilters = filterMaterials.length > 0 || filterCycles.length > 0 || filterMachines.length > 0 || !!importerSearch
 
+  const activeFilterCount = [
+    hasDate, !!f.warehouseId, !!f.materialCategory, !!f.shiftId,
+    filterMaterials.length > 0, filterCycles.length > 0, filterMachines.length > 0, !!importerSearch,
+  ].filter(Boolean).length
+
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="border-b bg-white px-4 py-3 shrink-0 space-y-2">
-        <div className="flex items-center justify-between gap-2">
-          <h1 className="text-xl font-semibold flex items-center gap-2">
+        {/* Row 1: Title + Search + Filter toggle + Create button */}
+        <div className="flex items-center gap-2">
+          <h1 className="text-xl font-semibold flex items-center gap-2 shrink-0">
             <PackagePlus className="h-5 w-5 text-slate-500" />
             Nhập kho
           </h1>
-          <Button size="sm" className="gap-1.5" onClick={() => setShowNew(true)}>
-            <Plus className="h-4 w-4" /> Tạo phiếu nhập
-          </Button>
-        </div>
-
-        {/* Row 1: Date range + Ca + Search */}
-        <div className="flex gap-2 flex-wrap items-center">
-          <div className="flex items-center gap-1">
-            <CalendarDays className="h-4 w-4 text-slate-400 shrink-0" />
-            <Input type="date" className="h-8 text-sm w-[138px]"
-              value={f.dateFrom} onChange={e => setInbound({ dateFrom: e.target.value })} />
-            <span className="text-xs text-slate-400">–</span>
-            <Input type="date" className="h-8 text-sm w-[138px]"
-              value={f.dateTo} onChange={e => setInbound({ dateTo: e.target.value })} />
-            {!isToday && (
-              <button className="text-xs text-slate-400 hover:text-slate-700 underline whitespace-nowrap ml-1"
-                onClick={() => setInbound({ dateFrom: TODAY, dateTo: TODAY })}>
-                Hôm nay
-              </button>
-            )}
-            {hasDate && (
-              <button className="p-0.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-600"
-                title="Xem tất cả ngày" onClick={() => setInbound({ dateFrom: '', dateTo: '' })}>
-                <X className="h-3.5 w-3.5" />
-              </button>
-            )}
-          </div>
-
-          <Select value={f.warehouseId || '__all__'} onValueChange={v => setInbound({ warehouseId: v === '__all__' ? '' : v, filterMaterials: [], filterCycles: [], filterMachines: [] })}>
-            <SelectTrigger className="h-8 text-sm w-[120px]">
-              <SelectValue placeholder="Tất cả kho" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">Tất cả kho</SelectItem>
-              {(warehouses as { id: string; name: string }[]).map(w => (
-                <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <Select value={f.materialCategory || '__all__'} onValueChange={v => setInbound({ materialCategory: v === '__all__' ? '' : v, filterMaterials: [], filterCycles: [], filterMachines: [] })}>
-            <SelectTrigger className="h-8 text-sm w-[130px]">
-              <SelectValue placeholder="Loại kho" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">Tất cả loại</SelectItem>
-              <SelectItem value="TP">Thành phẩm</SelectItem>
-              <SelectItem value="NVL">Nguyên vật liệu</SelectItem>
-              <SelectItem value="POSM">POSM</SelectItem>
-              <SelectItem value="BAO_BI">Bao bì</SelectItem>
-            </SelectContent>
-          </Select>
-
-          <Select value={f.shiftId || '__all__'} onValueChange={v => setInbound({ shiftId: v === '__all__' ? '' : v })}>
-            <SelectTrigger className="h-8 text-sm w-[100px]">
-              <SelectValue placeholder="Tất cả ca" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">Tất cả ca</SelectItem>
-              {(shifts as { id: string; name: string }[]).map(s => (
-                <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <div className="relative flex-1 min-w-[120px]">
+          <div className="relative flex-1 min-w-[100px]">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
             <Input className="pl-8 h-8 text-sm" placeholder="Tìm mã phiếu, hàng hóa…"
               value={f.search} onChange={e => setInbound({ search: e.target.value })} />
           </div>
+          <button
+            className={`flex items-center gap-1 h-8 px-2.5 rounded-md border text-xs font-medium transition-colors shrink-0 ${
+              showFilters || activeFilterCount > 0
+                ? 'bg-blue-50 border-blue-200 text-blue-700'
+                : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+            }`}
+            onClick={() => setShowFilters(v => !v)}
+          >
+            <Filter className="h-3.5 w-3.5" />
+            Lọc
+            {activeFilterCount > 0 && (
+              <span className="bg-blue-600 text-white text-[10px] rounded-full w-4 h-4 flex items-center justify-center leading-none">
+                {activeFilterCount}
+              </span>
+            )}
+          </button>
+          <Button size="sm" className="gap-1.5 shrink-0" onClick={() => setShowNew(true)}>
+            <Plus className="h-4 w-4" /> Tạo phiếu nhập
+          </Button>
         </div>
 
-        {/* Row 2: Multi-select client filters */}
-        <div className="flex gap-2 flex-wrap items-center">
-          <MultiSelectDropdown label="Material" options={materialOptions} searchable
-            selected={filterMaterials} onChange={v => setInbound({ filterMaterials: v })} />
-          <MultiSelectDropdown label="Chu kỳ" options={cycleOptions}
-            selected={filterCycles} onChange={v => setInbound({ filterCycles: v })} />
-          <MultiSelectDropdown label="Máy" options={machineOptions}
-            selected={filterMachines} onChange={v => setInbound({ filterMachines: v })} />
+        {/* Collapsible filter panel */}
+        {showFilters && (
+          <>
+            {/* Date range + Server-side selects */}
+            <div className="flex gap-2 flex-wrap items-center">
+              <div className="flex items-center gap-1">
+                <CalendarDays className="h-4 w-4 text-slate-400 shrink-0" />
+                <Input type="date" className="h-8 text-sm w-[138px]"
+                  value={f.dateFrom} onChange={e => setInbound({ dateFrom: e.target.value })} />
+                <span className="text-xs text-slate-400">–</span>
+                <Input type="date" className="h-8 text-sm w-[138px]"
+                  value={f.dateTo} onChange={e => setInbound({ dateTo: e.target.value })} />
+                {!isToday && (
+                  <button className="text-xs text-slate-400 hover:text-slate-700 underline whitespace-nowrap ml-1"
+                    onClick={() => setInbound({ dateFrom: TODAY, dateTo: TODAY })}>
+                    Hôm nay
+                  </button>
+                )}
+                {hasDate && (
+                  <button className="p-0.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-600"
+                    title="Xem tất cả ngày" onClick={() => setInbound({ dateFrom: '', dateTo: '' })}>
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
 
-          <div className="relative">
-            <User className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
-            <Input className="pl-6 h-7 text-xs w-[130px]" placeholder="Người nhập…"
-              value={importerSearch} onChange={e => setInbound({ importerSearch: e.target.value })} />
-          </div>
+              <Select value={f.warehouseId || '__all__'} onValueChange={v => setInbound({ warehouseId: v === '__all__' ? '' : v, filterMaterials: [], filterCycles: [], filterMachines: [] })}>
+                <SelectTrigger className="h-8 text-sm w-[120px]">
+                  <SelectValue placeholder="Tất cả kho" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">Tất cả kho</SelectItem>
+                  {(warehouses as { id: string; name: string }[]).map(w => (
+                    <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
 
-          {hasClientFilters && (
-            <button className="flex items-center gap-1 text-[10px] text-red-400 hover:text-red-600 px-1"
-              onClick={() => setInbound({ filterMaterials: [], filterCycles: [], filterMachines: [], importerSearch: '' })}>
-              <X className="h-3 w-3" /> Xóa lọc
-            </button>
-          )}
-        </div>
+              <Select value={f.materialCategory || '__all__'} onValueChange={v => setInbound({ materialCategory: v === '__all__' ? '' : v, filterMaterials: [], filterCycles: [], filterMachines: [] })}>
+                <SelectTrigger className="h-8 text-sm w-[130px]">
+                  <SelectValue placeholder="Loại kho" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">Tất cả loại</SelectItem>
+                  <SelectItem value="TP">Thành phẩm</SelectItem>
+                  <SelectItem value="NVL">Nguyên vật liệu</SelectItem>
+                  <SelectItem value="POSM">POSM</SelectItem>
+                  <SelectItem value="BAO_BI">Bao bì</SelectItem>
+                </SelectContent>
+              </Select>
+
+              <Select value={f.shiftId || '__all__'} onValueChange={v => setInbound({ shiftId: v === '__all__' ? '' : v })}>
+                <SelectTrigger className="h-8 text-sm w-[100px]">
+                  <SelectValue placeholder="Tất cả ca" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">Tất cả ca</SelectItem>
+                  {(shifts as { id: string; name: string }[]).map(s => (
+                    <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Multi-select client filters */}
+            <div className="flex gap-2 flex-wrap items-center">
+              <MultiSelectDropdown label="Material" options={materialOptions} searchable
+                selected={filterMaterials} onChange={v => setInbound({ filterMaterials: v })} />
+              <MultiSelectDropdown label="Chu kỳ" options={cycleOptions}
+                selected={filterCycles} onChange={v => setInbound({ filterCycles: v })} />
+              <MultiSelectDropdown label="Máy" options={machineOptions}
+                selected={filterMachines} onChange={v => setInbound({ filterMachines: v })} />
+
+              <div className="relative">
+                <User className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                <Input className="pl-6 h-7 text-xs w-[130px]" placeholder="Người nhập…"
+                  value={importerSearch} onChange={e => setInbound({ importerSearch: e.target.value })} />
+              </div>
+
+              {hasClientFilters && (
+                <button className="flex items-center gap-1 text-[10px] text-red-400 hover:text-red-600 px-1"
+                  onClick={() => setInbound({ filterMaterials: [], filterCycles: [], filterMachines: [], importerSearch: '' })}>
+                  <X className="h-3 w-3" /> Xóa lọc
+                </button>
+              )}
+            </div>
+          </>
+        )}
 
         {/* Summary */}
         <p className="text-xs text-slate-500 -mt-1">
@@ -768,11 +795,9 @@ function InboundRow({ order, onClick }: { order: InboundOrder; onClick: () => vo
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px] font-mono text-slate-600">{order.location?.location_code ?? '—'}</span>
       </TableCell>
-      <TableCell className="px-2 py-1">
-        <div className="text-[10px] leading-tight">
-          <span className="font-medium">{matName}</span>
-          {matCode && <span className="ml-1 text-[9px] text-slate-400 font-mono">{matCode}</span>}
-        </div>
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        <span className="text-[10px] font-medium">{matName}</span>
+        {matCode && <span className="ml-1 text-[9px] text-slate-400 font-mono">{matCode}</span>}
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         <span className={`text-[10px] font-semibold tabular-nums ${text}`}>{pallets}</span>

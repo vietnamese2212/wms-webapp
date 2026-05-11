@@ -174,7 +174,9 @@ PENDING / chưa xử lý     →  hover:bg-slate-50  (nền trắng)
 
 **Responsive:** Không ẩn cột trên mobile (`hidden sm:table-cell` bị cấm) — wrap `overflow-x-auto`, scroll ngang thay vì vỡ layout.
 
-**Ngày:** cell dùng `dd/MM/yy` · tiêu đề trang dùng `EEEE, dd/MM/yyyy` (locale `vi`).
+**Ngày:** cell dùng `dd-MM-yy` · tiêu đề trang dùng `EEEE, dd-MM-yyyy` (locale `vi`).
+
+**Sticky header (bắt buộc):** `TableHead` base component đã có `sticky top-0 z-10 bg-slate-50` — tự động áp dụng cho mọi table. Không cần thêm thủ công. Đảm bảo table nằm trong container `overflow-auto` để sticky hoạt động.
 
 **Tên hàng:** `material?.short_name ?? material_code_raw ?? '—'` — không dùng `custom_short_name`.
 

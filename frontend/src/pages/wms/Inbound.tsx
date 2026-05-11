@@ -699,13 +699,15 @@ export default function Inbound() {
             <div className="overflow-x-auto">
               <Table className="min-w-full">
                 <TableHeader>
-                  <TableRow className="bg-slate-50">
+                  <TableRow>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Ngày nhập</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Ca</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Vị trí</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Material</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Pallet</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Tổng nhập</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Người nhập</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Ca</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Ghi chú</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -749,12 +751,10 @@ function InboundRow({ order, onClick }: { order: InboundOrder; onClick: () => vo
         {isRowToday && <span className="ml-1 text-[9px] text-blue-600 font-medium">· Hôm nay</span>}
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
-        {order.shift
-          ? <span className="text-[10px] font-medium">{order.shift.name}</span>
-          : <span className="text-[10px] text-slate-300">—</span>}
+        <span className="text-[10px] font-mono text-slate-600">{order.location?.location_code ?? '—'}</span>
       </TableCell>
-      <TableCell className="px-2 py-1 max-w-[160px]">
-        <div className="text-[10px] leading-tight truncate">
+      <TableCell className="px-2 py-1">
+        <div className="text-[10px] leading-tight">
           <span className="font-medium">{matName}</span>
           {matCode && <span className="ml-1 text-[9px] text-slate-400 font-mono">{matCode}</span>}
         </div>
@@ -769,6 +769,14 @@ function InboundRow({ order, onClick }: { order: InboundOrder; onClick: () => vo
       </TableCell>
       <TableCell className="px-2 py-1 max-w-[90px]">
         <span className="text-[10px] text-slate-700 truncate block">{importer}</span>
+      </TableCell>
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        {order.shift
+          ? <span className="text-[10px] font-medium">{order.shift.name}</span>
+          : <span className="text-[10px] text-slate-300">—</span>}
+      </TableCell>
+      <TableCell className="px-2 py-1">
+        <span className="text-[10px] text-slate-500">{order.notes ?? '—'}</span>
       </TableCell>
     </TableRow>
   )

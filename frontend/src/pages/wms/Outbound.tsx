@@ -74,7 +74,7 @@ export default function Outbound() {
   }
 
   const dateLabel = f.date
-    ? format(parseISO(f.date), 'EEEE, dd/MM/yyyy', { locale: vi })
+    ? format(parseISO(f.date), 'EEEE, dd-MM-yyyy', { locale: vi })
     : 'Tất cả ngày'
 
   return (
@@ -190,7 +190,7 @@ export default function Outbound() {
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center gap-2 py-16 text-slate-400">
             <Truck className="h-10 w-10 opacity-30" />
-            <p className="text-sm">{f.search ? 'Không tìm thấy chuyến xe' : f.date ? `Không có chuyến xe ngày ${format(parseISO(f.date), 'dd/MM/yyyy')}` : 'Chưa có chuyến xe nào'}</p>
+            <p className="text-sm">{f.search ? 'Không tìm thấy chuyến xe' : f.date ? `Không có chuyến xe ngày ${format(parseISO(f.date), 'dd-MM-yyyy')}` : 'Chưa có chuyến xe nào'}</p>
             {!f.date && <p className="text-xs">Upload file Excel để bắt đầu</p>}
           </div>
         ) : (
@@ -224,7 +224,7 @@ export default function Outbound() {
 function GDORow({ gdo, onClick }: { gdo: GDO; onClick: () => void }) {
   const { pin, unpin, isPinned } = useActiveVehiclesStore()
   const pinned    = isPinned(gdo.id)
-  const dateLabel = format(parseISO(gdo.delivery_date), 'dd/MM/yy', { locale: vi })
+  const dateLabel = format(parseISO(gdo.delivery_date), 'dd-MM-yy', { locale: vi })
   const npp       = gdo.distributor_names?.join(', ') ?? '—'
 
   return (

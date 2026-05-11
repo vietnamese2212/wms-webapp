@@ -2,12 +2,12 @@ import { format, formatDistanceToNow, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
 import type { TransactionType, TransactionStatus, DeliveryStatus, VehicleStatus, EmployeeStatus, StockStatus, OvertimeStatus } from '@/types'
 
-export function formatDate(dateStr: string, fmt = 'dd/MM/yyyy') {
+export function formatDate(dateStr: string, fmt = 'dd-MM-yyyy') {
   return format(parseISO(dateStr), fmt, { locale: vi })
 }
 
 export function formatDateTime(dateStr: string) {
-  return format(parseISO(dateStr), 'dd/MM/yyyy HH:mm:ss', { locale: vi })
+  return format(parseISO(dateStr), 'dd-MM-yyyy HH:mm:ss', { locale: vi })
 }
 
 export function formatTimeAgo(dateStr: string) {

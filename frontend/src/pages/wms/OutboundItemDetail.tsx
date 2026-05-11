@@ -370,7 +370,7 @@ export default function OutboundItemDetail() {
               <span>Batch: <span className="font-medium text-slate-700">{item.batch_required}</span></span>
             )}
             {item.date_required && (
-              <span>Date req: <span className="font-medium text-slate-700">{format(parseISO(item.date_required), 'dd/MM/yyyy', { locale: vi })}</span></span>
+              <span>Date req: <span className="font-medium text-slate-700">{format(parseISO(item.date_required), 'dd-MM-yyyy', { locale: vi })}</span></span>
             )}
           </div>
 
@@ -457,7 +457,7 @@ export default function OutboundItemDetail() {
                           {se.cartons_scanned}
                         </TableCell>
                         <TableCell className="px-2 py-1.5 hidden sm:table-cell text-xs text-slate-500 whitespace-nowrap">
-                          {se.scanned_at ? format(parseISO(se.scanned_at), 'dd/MM/yy', { locale: vi }) : '—'}
+                          {se.scanned_at ? format(parseISO(se.scanned_at), 'dd-MM-yy', { locale: vi }) : '—'}
                         </TableCell>
                         <TableCell className="px-2 py-1.5 hidden sm:table-cell text-xs text-slate-500 tabular-nums">
                           {se.scanned_at ? format(parseISO(se.scanned_at), 'HH:mm', { locale: vi }) : '—'}

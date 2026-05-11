@@ -255,7 +255,7 @@ function ItemsTable({ doRecords, gdoId }: {
                 {hasDateRequired && (
                   <TableCell className="px-2 py-1 align-top">
                     {item.date_required
-                      ? <span className="text-[10px] text-slate-600">{format(parseISO(item.date_required), 'dd/MM/yy', { locale: vi })}</span>
+                      ? <span className="text-[10px] text-slate-600">{format(parseISO(item.date_required), 'dd-MM-yy', { locale: vi })}</span>
                       : <span className="text-[10px] text-slate-300">—</span>}
                   </TableCell>
                 )}
@@ -384,9 +384,9 @@ export default function OutboundDetail() {
           <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-600">
             <span className="flex items-center gap-1">
               <Truck className="h-3 w-3 text-slate-400 shrink-0" />
-              <span className="font-medium">{format(parseISO(gdo.delivery_date), 'dd/MM/yy', { locale: vi })}</span>
+              <span className="font-medium">{format(parseISO(gdo.delivery_date), 'dd-MM-yy', { locale: vi })}</span>
               {gdo.delivery_date !== gdo.planned_date && (
-                <span className="text-amber-600 ml-0.5">(KH {format(parseISO(gdo.planned_date), 'dd/MM')})</span>
+                <span className="text-amber-600 ml-0.5">(KH {format(parseISO(gdo.planned_date), 'dd-MM')})</span>
               )}
             </span>
             {gdo.dvvt && <span>{gdo.dvvt}</span>}
@@ -405,7 +405,7 @@ export default function OutboundDetail() {
                 {gdo.container_number && <span><strong>Cont:</strong> {gdo.container_number}</span>}
                 {gdo.exporter_name    && <span><strong>Xuất:</strong> {gdo.exporter_name}</span>}
                 {gdo.loader_name      && <span><strong>Bốc:</strong> {gdo.loader_name}</span>}
-                <span className="text-slate-400">{format(parseISO(gdo.started_at), 'dd/MM/yyyy HH:mm:ss', { locale: vi })}</span>
+                <span className="text-slate-400">{format(parseISO(gdo.started_at), 'dd-MM-yyyy HH:mm:ss', { locale: vi })}</span>
               </div>
             </Card>
           )}
@@ -413,7 +413,7 @@ export default function OutboundDetail() {
           {gdo.assigned_at && !gdo.started_at && (
             <div className="text-xs text-slate-500">
               Giao đơn: <span className="font-medium">{gdo.assigned_by ?? '—'}</span>
-              <span className="text-slate-400 ml-1">{format(parseISO(gdo.assigned_at), 'dd/MM/yyyy HH:mm:ss', { locale: vi })}</span>
+              <span className="text-slate-400 ml-1">{format(parseISO(gdo.assigned_at), 'dd-MM-yyyy HH:mm:ss', { locale: vi })}</span>
             </div>
           )}
 

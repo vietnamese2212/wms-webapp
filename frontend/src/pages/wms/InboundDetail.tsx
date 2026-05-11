@@ -474,7 +474,7 @@ export default function InboundDetail() {
 
             <span className="flex items-center gap-1">
               <Calendar className="h-3 w-3 text-slate-400 shrink-0" />
-              {format(parseISO(order.import_date ?? order.created_at), 'dd/MM/yyyy', { locale: vi })}
+              {format(parseISO(order.import_date ?? order.created_at), 'dd-MM-yyyy', { locale: vi })}
             </span>
 
             <span className="flex items-center gap-1">
@@ -595,7 +595,7 @@ export default function InboundDetail() {
                         )}
                         <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-slate-500">
                           {entry.production_date
-                            ? format(parseISO(entry.production_date), 'dd/MM/yy', { locale: vi })
+                            ? format(parseISO(entry.production_date), 'dd-MM-yy', { locale: vi })
                             : '—'}
                         </TableCell>
                         <TableCell className="px-2 py-1 font-mono font-semibold text-[10px]">
@@ -608,7 +608,7 @@ export default function InboundDetail() {
                           {entry.created_by_emp?.name ?? '—'}
                         </TableCell>
                         <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">
-                          {format(parseISO(entry.created_at), 'dd/MM/yy', { locale: vi })}
+                          {format(parseISO(entry.created_at), 'dd-MM-yy', { locale: vi })}
                         </TableCell>
                         <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap tabular-nums">
                           {format(parseISO(entry.created_at), 'HH:mm:ss', { locale: vi })}

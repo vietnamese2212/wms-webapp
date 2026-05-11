@@ -232,7 +232,7 @@ function EntryRow({ entry: e }: { entry: InventoryEntry }) {
   const matName  = e.material?.short_name ?? '—'
   const qa       = e.qa_status?.code ?? '—'
   const dateStr  = e.import_date
-    ? format(parseISO(e.import_date), 'dd/MM/yy')
+    ? format(parseISO(e.import_date), 'dd-MM-yy')
     : '—'
   const remaining = e.cartons_remaining ?? e.cartons_imported
 

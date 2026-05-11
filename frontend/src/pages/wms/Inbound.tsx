@@ -493,12 +493,12 @@ export default function Inbound() {
   let dateLabel = 'Tất cả ngày'
   if (f.dateFrom && f.dateTo) {
     dateLabel = f.dateFrom === f.dateTo
-      ? format(parseISO(f.dateFrom), 'EEEE, dd/MM/yyyy', { locale: vi })
-      : `${format(parseISO(f.dateFrom), 'dd/MM/yyyy')} – ${format(parseISO(f.dateTo), 'dd/MM/yyyy')}`
+      ? format(parseISO(f.dateFrom), 'EEEE, dd-MM-yyyy', { locale: vi })
+      : `${format(parseISO(f.dateFrom), 'dd-MM-yyyy')} – ${format(parseISO(f.dateTo), 'dd-MM-yyyy')}`
   } else if (f.dateFrom) {
-    dateLabel = `Từ ${format(parseISO(f.dateFrom), 'dd/MM/yyyy')}`
+    dateLabel = `Từ ${format(parseISO(f.dateFrom), 'dd-MM-yyyy')}`
   } else if (f.dateTo) {
-    dateLabel = `Đến ${format(parseISO(f.dateTo), 'dd/MM/yyyy')}`
+    dateLabel = `Đến ${format(parseISO(f.dateTo), 'dd-MM-yyyy')}`
   }
 
   const hasClientFilters = filterMaterials.length > 0 || filterCycles.length > 0 || filterMachines.length > 0 || !!importerSearch
@@ -734,7 +734,7 @@ function statusColors(order: InboundOrder) {
 }
 
 function InboundRow({ order, onClick }: { order: InboundOrder; onClick: () => void }) {
-  const dateFull = order.import_date ? format(parseISO(order.import_date), 'dd/MM/yy', { locale: vi }) : '—'
+  const dateFull = order.import_date ? format(parseISO(order.import_date), 'dd-MM-yy', { locale: vi }) : '—'
   const isRowToday = order.import_date?.slice(0, 10) === TODAY
   const importer = order.imported_by_emp?.name ?? order.created_by_emp?.name ?? '—'
   const matName  = order.material?.short_name ?? order.material?.material_description ?? '—'

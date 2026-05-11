@@ -69,8 +69,8 @@ export default function Schedule() {
                 <ChevronLeft className="h-4 w-4" />
               </Button>
               <div className="text-sm font-medium">
-                {format(weekStart, 'dd/MM', { locale: vi })} –{' '}
-                {format(addDays(weekStart, 6), 'dd/MM/yyyy', { locale: vi })}
+                {format(weekStart, 'dd-MM', { locale: vi })} –{' '}
+                {format(addDays(weekStart, 6), 'dd-MM-yyyy', { locale: vi })}
               </div>
               <Button variant="outline" size="icon" onClick={() => setCurrentWeek((d) => addWeeks(d, 1))}>
                 <ChevronRight className="h-4 w-4" />
@@ -140,7 +140,7 @@ export default function Schedule() {
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-sm">
                   <Calendar className="h-4 w-4" />
-                  Lịch hôm nay – {format(new Date(), 'dd/MM/yyyy', { locale: vi })}
+                  Lịch hôm nay – {format(new Date(), 'dd-MM-yyyy', { locale: vi })}
                 </CardTitle>
               </CardHeader>
               <CardContent>

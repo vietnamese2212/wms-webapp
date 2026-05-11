@@ -4,9 +4,19 @@ import type { TransactionType, TransactionStatus, DeliveryStatus, VehicleStatus,
 
 // Intl-based helpers — always display in Vietnam timezone (UTC+7) regardless of browser OS
 const VN_TZ = 'Asia/Ho_Chi_Minh'
+
+// Supabase TIMESTAMP columns return strings without TZ suffix (e.g. "2026-05-11T06:36:06.123").
+// Without Z, new Date() treats them as LOCAL time — must force UTC by appending Z.
+function toUtcDate(isoStr: string): Date {
+  if (isoStr && !isoStr.endsWith('Z') && !/[+\-]\d{2}:?\d{2}$/.test(isoStr)) {
+    return new Date(isoStr + 'Z')
+  }
+  return new Date(isoStr)
+}
+
 function vnParts(isoStr: string, opts: Intl.DateTimeFormatOptions): Record<string, string> {
   return new Intl.DateTimeFormat('en', { timeZone: VN_TZ, ...opts })
-    .formatToParts(new Date(isoStr))
+    .formatToParts(toUtcDate(isoStr))
     .reduce<Record<string, string>>((acc, p) => { acc[p.type] = p.value; return acc }, {})
 }
 

@@ -18,6 +18,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import {
   useInboundOrders, useCreateInboundOrder,
   useWarehouses, useMaterials, useLocationsReal, useImportShifts,
+  useEmployeeRecords,
 } from '@/api/hooks'
 import type { InboundOrder } from '@/types'
 
@@ -53,18 +54,24 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
   const user      = useAuthStore((s) => s.user)
   const isOWN     = user?.role === 'OWN'
 
-  const [warehouseId, setWarehouseId] = useState('')
-  const [subType,     setSubType]     = useState('')
-  const [materialId,  setMaterialId]  = useState('')
-  const [locationId,  setLocationId]  = useState('')
-  const [shiftId,     setShiftId]     = useState('')
-  const [importDate,  setImportDate]  = useState(format(new Date(), 'yyyy-MM-dd'))
-  const [notes,       setNotes]       = useState('')
+  const [warehouseId,     setWarehouseId]     = useState('')
+  const [subType,         setSubType]         = useState('')
+  const [materialId,      setMaterialId]      = useState('')
+  const [locationId,      setLocationId]      = useState('')
+  const [importedByEmpId, setImportedByEmpId] = useState('')
+  const [shiftId,         setShiftId]         = useState('')
+  const [importDate,      setImportDate]      = useState(format(new Date(), 'yyyy-MM-dd'))
+  const [notes,           setNotes]           = useState('')
 
   // Material combobox state
-  const [matSearch,  setMatSearch]  = useState('')
-  const [matOpen,    setMatOpen]    = useState(false)
+  const [matSearch, setMatSearch] = useState('')
+  const [matOpen,   setMatOpen]   = useState(false)
   const matRef = useRef<HTMLDivElement>(null)
+
+  // Người nhập combobox state
+  const [empSearch, setEmpSearch] = useState('')
+  const [empOpen,   setEmpOpen]   = useState(false)
+  const empRef = useRef<HTMLDivElement>(null)
 
   // Reset all fields each time the dialog opens
   useEffect(() => {
@@ -75,6 +82,9 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
       setMatSearch('')
       setMatOpen(false)
       setLocationId('')
+      setImportedByEmpId('')
+      setEmpSearch('')
+      setEmpOpen(false)
       setShiftId('')
       setImportDate(format(new Date(), 'yyyy-MM-dd'))
       setNotes('')
@@ -96,6 +106,13 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
   const matCategory = LOAI_KHO_CONFIG.find(c => c.sub_type === subType)?.mat_category
   const { data: materials = [] } = useMaterials({ search: matSearch || undefined, category: matCategory })
 
+  const { data: allEmployees = [] } = useEmployeeRecords({ is_active: 'true' })
+  type EmpItem = { id: string; name: string; employee_code: string }
+  const empList = (allEmployees as EmpItem[]).filter(e =>
+    !empSearch || e.name.toLowerCase().includes(empSearch.toLowerCase()) || e.employee_code.toLowerCase().includes(empSearch.toLowerCase())
+  )
+  const selectedEmp = (allEmployees as EmpItem[]).find(e => e.id === importedByEmpId)
+
   // Auto-select warehouse by name when warehouse_id not set (mock auth scenario)
   useEffect(() => {
     if (!open || warehouseId || !user?.warehouse_name || !warehouses.length) return
@@ -103,7 +120,7 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
     if (match) setWarehouseId(match.id)
   }, [open, warehouses, user?.warehouse_name, warehouseId])
 
-  // Close combobox on click outside
+  // Close comboboxes on click outside
   useEffect(() => {
     if (!matOpen) return
     const handler = (e: MouseEvent) => {
@@ -113,6 +130,15 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
     return () => document.removeEventListener('mousedown', handler)
   }, [matOpen])
 
+  useEffect(() => {
+    if (!empOpen) return
+    const handler = (e: MouseEvent) => {
+      if (empRef.current && !empRef.current.contains(e.target as Node)) setEmpOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [empOpen])
+
   const { mutate: createOrder, isPending, error } = useCreateInboundOrder()
 
   const selectedMat = (materials as MatItem[]).find(m => m.id === materialId)
@@ -121,16 +147,16 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
     : (selectedMat ? `${selectedMat.material_code} – ${selectedMat.short_name ?? selectedMat.material_description}` : matSearch)
 
   function handleSubmit() {
-    if (!warehouseId || !materialId || !locationId) return
+    if (!warehouseId || !subType || !materialId || !locationId) return
     createOrder(
       {
         warehouse_id: warehouseId,
         material_id:  materialId,
         location_id:  locationId,
-        shift_id:     shiftId   || undefined,
+        shift_id:     shiftId          || undefined,
         import_date:  importDate,
-        notes:        notes     || undefined,
-        // imported_by omitted — auth not fully implemented, mock user.id doesn't exist in Employee table
+        notes:        notes            || undefined,
+        imported_by:  importedByEmpId  || undefined,
       },
       {
         onSuccess: (data) => {
@@ -180,12 +206,11 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
           {loaiKhoOpts.length > 0 && (
             <div className="space-y-2">
               <Label>Loại kho <span className="text-red-500">*</span></Label>
-              <Select value={subType || '__all__'} onValueChange={v => { setSubType(v === '__all__' ? '' : v); setLocationId(''); setMaterialId(''); setMatSearch('') }} disabled={!warehouseId}>
+              <Select value={subType} onValueChange={v => { setSubType(v); setLocationId(''); setMaterialId(''); setMatSearch('') }} disabled={!warehouseId}>
                 <SelectTrigger>
                   <SelectValue placeholder="Chọn loại kho" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="__all__">Tất cả loại</SelectItem>
                   {loaiKhoOpts.map(c => (
                     <SelectItem key={c.sub_type} value={c.sub_type}>{c.label}</SelectItem>
                   ))}
@@ -280,11 +305,35 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
             </div>
           </div>
 
-          {/* Người nhập – read-only, từ user đang login */}
+          {/* Người nhập – combobox tìm theo tên/mã nhân viên */}
           <div className="space-y-2">
-            <Label>Người nhập</Label>
-            <div className="flex h-10 items-center rounded-md border bg-slate-50 px-3 text-sm text-slate-700">
-              {user?.name ?? '—'}
+            <Label>Người nhập <span className="text-red-500">*</span></Label>
+            <div ref={empRef} className="relative">
+              <Input
+                placeholder="Tìm tên hoặc mã nhân viên..."
+                value={empOpen ? empSearch : (selectedEmp ? `${selectedEmp.name} (${selectedEmp.employee_code})` : empSearch)}
+                onChange={(e) => { setEmpSearch(e.target.value); setImportedByEmpId(''); setEmpOpen(true) }}
+                onFocus={() => setEmpOpen(true)}
+              />
+              {empOpen && (
+                <div className="absolute z-[100] w-full mt-1 max-h-48 overflow-y-auto rounded-md border bg-white shadow-lg">
+                  {empList.map((e) => (
+                    <button
+                      key={e.id}
+                      type="button"
+                      className={`w-full text-left px-3 py-2 text-sm hover:bg-slate-100 flex items-baseline gap-2 ${e.id === importedByEmpId ? 'bg-slate-50 font-medium' : ''}`}
+                      onMouseDown={(ev) => { ev.preventDefault(); ev.stopPropagation() }}
+                      onClick={() => { setImportedByEmpId(e.id); setEmpSearch(''); setEmpOpen(false) }}
+                    >
+                      <span className="font-mono text-xs text-slate-500 shrink-0">{e.employee_code}</span>
+                      <span className="text-slate-800 truncate">{e.name}</span>
+                    </button>
+                  ))}
+                  {empList.length === 0 && (
+                    <div className="px-3 py-3 text-sm text-slate-400 text-center">Không tìm thấy nhân viên</div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
@@ -299,7 +348,7 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
           <Button variant="outline" onClick={onClose}>Huỷ</Button>
           <Button
             onClick={handleSubmit}
-            disabled={!warehouseId || !materialId || !locationId || isPending}
+            disabled={!warehouseId || !subType || !locationId || !materialId || !importedByEmpId || isPending}
           >
             {isPending ? 'Đang tạo...' : 'Tạo phiếu'}
           </Button>

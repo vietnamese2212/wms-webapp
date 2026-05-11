@@ -34,10 +34,13 @@ const ENTRY_SELECT = `
 
 // ─── Helpers ─────────────────────────────────────────────────
 
-function generateImportCode(date: Date, seq: number): string {
-  const y = date.getFullYear()
-  const m = String(date.getMonth() + 1).padStart(2, '0')
-  const d = String(date.getDate()).padStart(2, '0')
+// Trả về YYYY-MM-DD theo giờ Hà Nội (UTC+7)
+function vnDate(): string {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+}
+
+function generateImportCode(dateStr: string, seq: number): string {
+  const [y, m, d] = dateStr.split('-')
   return `NK-${y}${m}${d}-${String(seq).padStart(3, '0')}`
 }
 
@@ -129,10 +132,10 @@ export async function createOrder(req: Request, res: Response) {
     if (!warehouse_id) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu warehouse_id')
     if (!material_id)  return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu material_id')
 
-    // Count today's orders for import_code sequence
-    const today = new Date()
-    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).toISOString()
-    const todayEnd   = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1).toISOString()
+    // Count today's orders for import_code sequence (dùng giờ Hà Nội)
+    const todayStr   = vnDate()
+    const todayStart = new Date(`${todayStr}T00:00:00+07:00`).toISOString()
+    const todayEnd   = new Date(`${todayStr}T23:59:59.999+07:00`).toISOString()
 
     const { count: todayCount } = await supabase
       .from('ProductionImport')
@@ -140,7 +143,7 @@ export async function createOrder(req: Request, res: Response) {
       .gte('created_at', todayStart)
       .lt('created_at', todayEnd)
 
-    const import_code = generateImportCode(today, (todayCount ?? 0) + 1)
+    const import_code = generateImportCode(todayStr, (todayCount ?? 0) + 1)
 
     // Validate imported_by — skip if employee doesn't exist (e.g. mock/dev user IDs)
     let resolvedImportedBy: string | null = null
@@ -159,7 +162,7 @@ export async function createOrder(req: Request, res: Response) {
         location_id:     location_id ?? null,
         planned_pallets: planned_pallets ? Number(planned_pallets) : null,
         shift_id:        shift_id ?? null,
-        import_date:     import_date ? new Date(import_date).toISOString() : new Date().toISOString(),
+        import_date:     import_date ? import_date.slice(0, 10) : todayStr,
         notes:           notes ?? null,
         imported_by:     resolvedImportedBy,
         created_by:      resolvedImportedBy,
@@ -376,8 +379,8 @@ export async function scanQR(req: Request, res: Response) {
         created_by:         employee_id ?? null,
         updated_by:         employee_id ?? null,
         status:             'IN_STOCK',
-        import_date:        new Date().toISOString(),
-        update_date:        new Date().toISOString(),
+        import_date:        vnDate(),
+        update_date:        vnDate(),
         updated_at:         new Date().toISOString(),
       })
       .select(ENTRY_SELECT)
@@ -417,8 +420,7 @@ export async function updateEntry(req: Request, res: Response) {
     if (!entry)                              return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy pallet')
     if (entry.import_order_id !== order_id)  return fail(res, 400, 'ENTRY_NOT_IN_ORDER', 'Pallet không thuộc phiếu nhập này')
 
-    const now = new Date().toISOString()
-    const patch: Record<string, unknown> = { updated_at: now, update_date: now }
+    const patch: Record<string, unknown> = { updated_at: new Date().toISOString(), update_date: vnDate() }
     if (cartons_imported !== undefined) patch.cartons_imported = Number(cartons_imported)
     if (stack_layer      !== undefined) patch.stack_layer = Number(stack_layer)
 

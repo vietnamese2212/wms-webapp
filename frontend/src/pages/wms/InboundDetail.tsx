@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useNavigate }       from 'react-router-dom'
 import type { AxiosError }              from 'axios'
 import {
@@ -21,7 +21,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import {
   useInboundOrder, useCancelInboundOrder,
   useScanPallet, useDeletePalletEntry, useDeletePalletEntries,
-  useLocationsReal, useUpdateInboundOrder,
+  useLocationsReal, useUpdateInboundOrder, useEmployeeRecords,
 } from '@/api/hooks'
 import { useAuthStore }            from '@/stores/authStore'
 import { inboundOrderStatusLabel } from '@/utils/formatters'
@@ -111,9 +111,10 @@ interface ScanDialogProps {
   order: InboundOrder
   open: boolean
   onClose: () => void
+  employeeId?: string
 }
 
-function ScanDialog({ order, open, onClose }: ScanDialogProps) {
+function ScanDialog({ order, open, onClose, employeeId }: ScanDialogProps) {
   const scannerRef = useRef<QRScannerHandle>(null)
   const { mutate: scanPallet, isPending } = useScanPallet()
 
@@ -151,7 +152,7 @@ function ScanDialog({ order, open, onClose }: ScanDialogProps) {
       return
     }
     scanPallet(
-      { orderId: order.id, qr_code: pendingQR, location_id: locationId, stack_layer: Number(stackLayer), cartons_override: Number(cartons) || undefined },
+      { orderId: order.id, qr_code: pendingQR, location_id: locationId, stack_layer: Number(stackLayer), cartons_override: Number(cartons) || undefined, employee_id: employeeId },
       {
         onSuccess: (data) => {
           setPendingQR(null)
@@ -294,6 +295,14 @@ export default function InboundDetail() {
 
   const user = useAuthStore(s => s.user)
 
+  // Khớp user hiện tại với Employee record để gửi employee_id khi scan
+  const { data: allEmployees = [] } = useEmployeeRecords({ is_active: 'true' })
+  type EmpLookup = { id: string; name: string }
+  const currentEmpId = useMemo(
+    () => (allEmployees as EmpLookup[]).find(e => e.name.toLowerCase() === (user?.name ?? '').toLowerCase())?.id,
+    [allEmployees, user?.name]
+  )
+
   const { mutate: cancelOrder, isPending: cancelling } = useCancelInboundOrder()
   const { mutate: deleteEntry                           } = useDeletePalletEntry()
   const { mutate: deleteEntries                         } = useDeletePalletEntries()
@@ -360,6 +369,7 @@ export default function InboundDetail() {
           order={order}
           open={showScan}
           onClose={() => setShowScan(false)}
+          employeeId={currentEmpId}
         />
       )}
 

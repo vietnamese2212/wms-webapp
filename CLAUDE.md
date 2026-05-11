@@ -99,6 +99,14 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 - Không dùng `as any`, `as any[]` — định nghĩa type rõ ràng
 - Axios error: `import type { AxiosError } from 'axios'`
 
+**Timezone — bắt buộc:**
+- Múi giờ: **Asia/Ho_Chi_Minh (UTC+7 / Hà Nội)**
+- Business date (`import_date`, `update_date`…): lưu chỉ ngày `YYYY-MM-DD` theo giờ VN:  
+  `new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })` → `'2026-05-11'`
+- System timestamp (`created_at`, `updated_at`): UTC `new Date().toISOString()` là OK
+- Khi tính khoảng ngày theo giờ VN để query DB: `new Date(\`${vnDate}T00:00:00+07:00\`).toISOString()`
+- Format hiển thị cho user: `dd/mm/yyyy` (ngày) · `dd/mm/yyyy HH:mm` (ngày giờ)
+
 **QR parsing:**
 - Sau parse ngày: `isNaN(date.getTime())` trước khi dùng
 

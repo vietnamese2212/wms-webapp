@@ -10,7 +10,6 @@ import { TableSkeleton }       from '@/components/shared/TableSkeleton'
 import { EmptyState }          from '@/components/shared/EmptyState'
 import { Button }              from '@/components/ui/button'
 import { Input }               from '@/components/ui/input'
-import { Card }                from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Label }               from '@/components/ui/label'
@@ -54,24 +53,18 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
   const user      = useAuthStore((s) => s.user)
   const isOWN     = user?.role === 'OWN'
 
-  const [warehouseId,     setWarehouseId]     = useState('')
-  const [subType,         setSubType]         = useState('')
-  const [materialId,      setMaterialId]      = useState('')
-  const [locationId,      setLocationId]      = useState('')
-  const [importedByEmpId, setImportedByEmpId] = useState('')
-  const [shiftId,         setShiftId]         = useState('')
-  const [importDate,      setImportDate]      = useState(format(new Date(), 'yyyy-MM-dd'))
-  const [notes,           setNotes]           = useState('')
+  const [warehouseId, setWarehouseId] = useState('')
+  const [subType,     setSubType]     = useState('')
+  const [materialId,  setMaterialId]  = useState('')
+  const [locationId,  setLocationId]  = useState('')
+  const [shiftId,     setShiftId]     = useState('')
+  const [importDate,  setImportDate]  = useState(format(new Date(), 'yyyy-MM-dd'))
+  const [notes,       setNotes]       = useState('')
 
   // Material combobox state
   const [matSearch, setMatSearch] = useState('')
   const [matOpen,   setMatOpen]   = useState(false)
   const matRef = useRef<HTMLDivElement>(null)
-
-  // Người nhập combobox state
-  const [empSearch, setEmpSearch] = useState('')
-  const [empOpen,   setEmpOpen]   = useState(false)
-  const empRef = useRef<HTMLDivElement>(null)
 
   // Reset all fields each time the dialog opens
   useEffect(() => {
@@ -82,9 +75,6 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
       setMatSearch('')
       setMatOpen(false)
       setLocationId('')
-      setImportedByEmpId('')
-      setEmpSearch('')
-      setEmpOpen(false)
       setShiftId('')
       setImportDate(format(new Date(), 'yyyy-MM-dd'))
       setNotes('')
@@ -106,12 +96,13 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
   const matCategory = LOAI_KHO_CONFIG.find(c => c.sub_type === subType)?.mat_category
   const { data: materials = [] } = useMaterials({ search: matSearch || undefined, category: matCategory })
 
+  // Người nhập: tự động khớp theo tên user đang đăng nhập
   const { data: allEmployees = [] } = useEmployeeRecords({ is_active: 'true' })
   type EmpItem = { id: string; name: string; employee_code: string }
-  const empList = (allEmployees as EmpItem[]).filter(e =>
-    !empSearch || e.name.toLowerCase().includes(empSearch.toLowerCase()) || e.employee_code.toLowerCase().includes(empSearch.toLowerCase())
+  const importedByEmpId = useMemo(
+    () => (allEmployees as EmpItem[]).find(e => e.name.toLowerCase() === (user?.name ?? '').toLowerCase())?.id ?? '',
+    [allEmployees, user?.name]
   )
-  const selectedEmp = (allEmployees as EmpItem[]).find(e => e.id === importedByEmpId)
 
   // Auto-select warehouse by name when warehouse_id not set (mock auth scenario)
   useEffect(() => {
@@ -129,15 +120,6 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [matOpen])
-
-  useEffect(() => {
-    if (!empOpen) return
-    const handler = (e: MouseEvent) => {
-      if (empRef.current && !empRef.current.contains(e.target as Node)) setEmpOpen(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [empOpen])
 
   const { mutate: createOrder, isPending, error } = useCreateInboundOrder()
 
@@ -305,34 +287,14 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
             </div>
           </div>
 
-          {/* Người nhập – combobox tìm theo tên/mã nhân viên */}
+          {/* Người nhập – tự động theo user hiện tại */}
           <div className="space-y-2">
-            <Label>Người nhập <span className="text-red-500">*</span></Label>
-            <div ref={empRef} className="relative">
-              <Input
-                placeholder="Tìm tên hoặc mã nhân viên..."
-                value={empOpen ? empSearch : (selectedEmp ? `${selectedEmp.name} (${selectedEmp.employee_code})` : empSearch)}
-                onChange={(e) => { setEmpSearch(e.target.value); setImportedByEmpId(''); setEmpOpen(true) }}
-                onFocus={() => setEmpOpen(true)}
-              />
-              {empOpen && (
-                <div className="absolute z-[100] w-full mt-1 max-h-48 overflow-y-auto rounded-md border bg-white shadow-lg">
-                  {empList.map((e) => (
-                    <button
-                      key={e.id}
-                      type="button"
-                      className={`w-full text-left px-3 py-2 text-sm hover:bg-slate-100 flex items-baseline gap-2 ${e.id === importedByEmpId ? 'bg-slate-50 font-medium' : ''}`}
-                      onMouseDown={(ev) => { ev.preventDefault(); ev.stopPropagation() }}
-                      onClick={() => { setImportedByEmpId(e.id); setEmpSearch(''); setEmpOpen(false) }}
-                    >
-                      <span className="font-mono text-xs text-slate-500 shrink-0">{e.employee_code}</span>
-                      <span className="text-slate-800 truncate">{e.name}</span>
-                    </button>
-                  ))}
-                  {empList.length === 0 && (
-                    <div className="px-3 py-3 text-sm text-slate-400 text-center">Không tìm thấy nhân viên</div>
-                  )}
-                </div>
+            <Label>Người nhập</Label>
+            <div className="flex h-10 items-center rounded-md border bg-slate-50 px-3 text-sm text-slate-700 gap-2">
+              <User className="h-4 w-4 text-slate-400 shrink-0" />
+              <span className="truncate">{user?.name ?? '—'}</span>
+              {!importedByEmpId && (
+                <span className="ml-auto text-xs text-amber-500 shrink-0">chưa khớp nhân viên</span>
               )}
             </div>
           </div>
@@ -348,7 +310,7 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
           <Button variant="outline" onClick={onClose}>Huỷ</Button>
           <Button
             onClick={handleSubmit}
-            disabled={!warehouseId || !subType || !locationId || !materialId || !importedByEmpId || isPending}
+            disabled={!warehouseId || !subType || !locationId || !materialId || isPending}
           >
             {isPending ? 'Đang tạo...' : 'Tạo phiếu'}
           </Button>
@@ -438,7 +400,7 @@ export default function Inbound() {
   const user      = useAuthStore(s => s.user)
   const { inbound: f, setInbound } = useWmsFilterStore()
   const [showNew,  setShowNew]  = useState(false)
-  const [locOpen,  setLocOpen]  = useState(true)
+  const [locOpen,  setLocOpen]  = useState(false)
 
   const { data: shifts     = [] } = useImportShifts()
   const { data: warehouses = [] } = useWarehouses(true)
@@ -641,6 +603,60 @@ export default function Inbound() {
           {totalPallets > 0 && <> · <span className="font-medium text-slate-700">{totalPallets}</span> pallet</>}
           {totalCartons > 0 && <> · <span className="font-medium text-slate-700">{totalCartons.toLocaleString()}</span> thùng</>}
         </p>
+
+        {/* Vị trí hàng nhập – collapsible trong header */}
+        {!isLoading && filteredOrders.length > 0 && (
+          <div className="rounded-md border border-slate-200 overflow-hidden">
+            <button
+              className="w-full flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 bg-slate-50 hover:bg-slate-100 text-left"
+              onClick={() => setLocOpen(v => !v)}>
+              <MapPin className="h-3.5 w-3.5 text-slate-400" />
+              Vị trí hàng nhập ({locationSummary.length} vị trí) · {totalPallets} pallet · {totalCartons.toLocaleString()} thùng
+              <ChevronDown className={`h-3 w-3 ml-auto transition-transform ${locOpen ? 'rotate-180' : ''}`} />
+            </button>
+            {locOpen && (
+              <div className="px-3 py-2 overflow-x-auto border-t border-slate-200 bg-white">
+                {/* Filter info */}
+                {(() => {
+                  const parts = [
+                    hasDate ? dateLabel : null,
+                    f.warehouseId ? (warehouses as { id: string; name: string }[]).find(w => w.id === f.warehouseId)?.name : null,
+                    f.materialCategory ? ({ TP: 'Thành phẩm', NVL: 'NVL', POSM: 'POSM', BAO_BI: 'Bao bì' } as Record<string, string>)[f.materialCategory] : null,
+                    f.shiftId ? (shifts as { id: string; name: string }[]).find(s => s.id === f.shiftId)?.name : null,
+                  ].filter(Boolean)
+                  return parts.length > 0 ? (
+                    <p className="text-[10px] text-slate-400 mb-1.5">Lọc: {parts.join(' · ')}</p>
+                  ) : null
+                })()}
+                <table className="text-[11px] w-full max-w-sm">
+                  <thead>
+                    <tr className="text-slate-400 border-b">
+                      <th className="py-1 pr-6 text-left font-medium">Vị trí</th>
+                      <th className="py-1 pr-6 text-right font-medium">Pallet</th>
+                      <th className="py-1 text-right font-medium">Thùng nhập</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {locationSummary.map(row => (
+                      <tr key={row.loc} className="border-b border-slate-100">
+                        <td className="py-1 pr-6 font-mono text-slate-700">{row.loc}</td>
+                        <td className="py-1 pr-6 text-right tabular-nums font-semibold">{row.pallets}</td>
+                        <td className="py-1 text-right tabular-nums">{row.cartons.toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="text-slate-500 font-semibold border-t">
+                      <td className="py-1 pr-6">Tổng</td>
+                      <td className="py-1 pr-6 text-right tabular-nums">{totalPallets}</td>
+                      <td className="py-1 text-right tabular-nums">{totalCartons.toLocaleString()}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Scrollable content */}
@@ -660,46 +676,6 @@ export default function Inbound() {
           />
         ) : (
           <>
-            {/* Location summary */}
-            <div className="border-b bg-slate-50/60">
-              <button
-                className="w-full flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 text-left"
-                onClick={() => setLocOpen(v => !v)}>
-                <MapPin className="h-3.5 w-3.5 text-slate-400" />
-                Vị trí hàng nhập ({locationSummary.length} vị trí)
-                <ChevronDown className={`h-3 w-3 ml-auto transition-transform ${locOpen ? 'rotate-180' : ''}`} />
-              </button>
-              {locOpen && (
-                <div className="px-4 pb-3 overflow-x-auto">
-                  <table className="text-[11px] w-full max-w-sm">
-                    <thead>
-                      <tr className="text-slate-400 border-b">
-                        <th className="py-1 pr-6 text-left font-medium">Vị trí</th>
-                        <th className="py-1 pr-6 text-right font-medium">Pallet</th>
-                        <th className="py-1 text-right font-medium">Thùng nhập</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {locationSummary.map(row => (
-                        <tr key={row.loc} className="border-b border-slate-100">
-                          <td className="py-1 pr-6 font-mono text-slate-700">{row.loc}</td>
-                          <td className="py-1 pr-6 text-right tabular-nums font-semibold">{row.pallets}</td>
-                          <td className="py-1 text-right tabular-nums">{row.cartons.toLocaleString()}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot>
-                      <tr className="text-slate-500 font-semibold border-t">
-                        <td className="py-1 pr-6">Tổng</td>
-                        <td className="py-1 pr-6 text-right tabular-nums">{totalPallets}</td>
-                        <td className="py-1 text-right tabular-nums">{totalCartons.toLocaleString()}</td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-              )}
-            </div>
-
             {/* Orders table */}
             <div className="overflow-x-auto">
               <Table className="min-w-full">

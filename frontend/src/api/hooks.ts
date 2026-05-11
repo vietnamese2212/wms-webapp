@@ -659,6 +659,22 @@ export function useStartGDO() {
   })
 }
 
+function makeUndoGDOMutation(path: string) {
+  return function() {
+    const qc = useQueryClient()
+    return useMutation({
+      mutationFn: (id: string) => apiClient.post(`/wms/outbound/${id}/${path}`).then(r => r.data.data),
+      onSuccess: (_d: unknown, id: string) => {
+        qc.invalidateQueries({ queryKey: ['gdos'] })
+        qc.invalidateQueries({ queryKey: ['gdo', id] })
+      },
+    })
+  }
+}
+export const useUnassignGDO   = makeUndoGDOMutation('unassign')
+export const useUnstartGDO    = makeUndoGDOMutation('unstart')
+export const useUncompleteGDO = makeUndoGDOMutation('uncomplete')
+
 export function useWarehouseEmployees(warehouse_id?: string | null) {
   return useQuery({
     queryKey: ['warehouse-employees', warehouse_id],

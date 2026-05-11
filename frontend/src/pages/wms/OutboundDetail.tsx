@@ -6,7 +6,7 @@ import { vi } from 'date-fns/locale'
 import { formatDateTime } from '@/utils/formatters'
 import {
   ArrowLeft, CheckCircle2,
-  Truck, Package, ClipboardList, Play, Pause, ChevronRight, Bookmark, X,
+  Truck, Package, ClipboardList, Play, Pause, ChevronRight, Bookmark, X, RotateCcw,
 } from 'lucide-react'
 import { Button }  from '@/components/ui/button'
 import { Input }   from '@/components/ui/input'
@@ -17,6 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import {
   useGDO, useAssignGDO, useStartGDO, useWarehouseEmployees, usePatchGDO,
+  useUnassignGDO, useUnstartGDO, useUncompleteGDO,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
@@ -350,14 +351,29 @@ export default function OutboundDetail() {
   const user     = useAuthStore(s => s.user)
 
   const { data: gdo, isLoading } = useGDO(id)
-  const { mutate: assignGDO, isPending: assigning } = useAssignGDO()
-  const { mutate: patchGDO,  isPending: patching  } = usePatchGDO()
+  const { mutate: assignGDO,    isPending: assigning   } = useAssignGDO()
+  const { mutate: patchGDO,     isPending: patching    } = usePatchGDO()
+  const { mutate: unassignGDO,  isPending: unassigning } = useUnassignGDO()
+  const { mutate: unstartGDO,   isPending: unstarting  } = useUnstartGDO()
+  const { mutate: uncompleteGDO, isPending: uncompleting } = useUncompleteGDO()
   const { vehicles, pin, unpin, isPinned, update } = useActiveVehiclesStore()
   const pinned = isPinned(id ?? '')
 
-  const canManagePause = user?.role === 'ADMIN' || user?.role === 'WAREHOUSE_MANAGER'
+  const canManage = user?.role === 'ADMIN' || user?.role === 'WAREHOUSE_MANAGER'
+  const canManagePause = canManage
 
   const [showStart, setShowStart] = useState(false)
+  const [undoErr,   setUndoErr]   = useState<string | null>(null)
+
+  function doUndo(mutateFn: (id: string, opts: { onError: (e: unknown) => void }) => void) {
+    setUndoErr(null)
+    mutateFn(id!, {
+      onError: (e) => {
+        const msg = (e as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
+        setUndoErr(msg)
+      },
+    })
+  }
 
   useEffect(() => {
     if (gdo) update(gdo.id, gdo.status)
@@ -382,7 +398,8 @@ export default function OutboundDetail() {
   const npp = [...new Set(allDOs.map(d => d.distributor_name).filter(Boolean))].join(', ')
 
   // Workflow state
-  const canStart = !!gdo.assigned_at && !gdo.started_at
+  const canStart       = !!gdo.assigned_at && !gdo.started_at
+  const hasScanEntries = allItems.some(i => i.cartons_scanned > 0)
 
   return (
     <>
@@ -415,7 +432,8 @@ export default function OutboundDetail() {
                 <Bookmark className="h-3.5 w-3.5" fill={pinned ? 'currentColor' : 'none'} />
               </button>
             </div>
-            <div className="flex items-center gap-1.5 shrink-0">
+            <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+              {/* ── Forward actions ── */}
               {!gdo.assigned_at && (
                 <Button size="sm" variant="outline" className="h-7 text-xs gap-1 px-2" disabled={assigning}
                   onClick={() => assignGDO({ id: gdo.id, assigned_by: user?.name ?? undefined })}>
@@ -443,6 +461,36 @@ export default function OutboundDetail() {
                   onClick={() => patchGDO({ id: gdo.id, status: 'IN_PROGRESS' })}>
                   <Play className="h-3 w-3" />
                   {patching ? '…' : 'Tiếp tục'}
+                </Button>
+              )}
+
+              {/* ── Undo actions (chỉ manager) ── */}
+              {canManage && gdo.status === 'COMPLETED' && (
+                <Button size="sm" variant="outline"
+                  className="h-7 text-xs gap-1 px-2 border-slate-300 text-slate-500 hover:bg-slate-50"
+                  disabled={uncompleting}
+                  onClick={() => doUndo((id, opts) => uncompleteGDO(id, opts))}>
+                  <RotateCcw className="h-3 w-3" />
+                  {uncompleting ? '…' : 'Bỏ HT'}
+                </Button>
+              )}
+              {canManage && !!gdo.started_at && gdo.status !== 'COMPLETED' && (
+                <Button size="sm" variant="outline"
+                  className="h-7 text-xs gap-1 px-2 border-slate-300 text-slate-500 hover:bg-slate-50 disabled:opacity-40"
+                  disabled={unstarting || hasScanEntries}
+                  title={hasScanEntries ? 'Xóa hết QR đã quét trước' : 'Gỡ bắt đầu'}
+                  onClick={() => doUndo((id, opts) => unstartGDO(id, opts))}>
+                  <RotateCcw className="h-3 w-3" />
+                  {unstarting ? '…' : 'Gỡ BĐ'}
+                </Button>
+              )}
+              {canManage && !!gdo.assigned_at && !gdo.started_at && (
+                <Button size="sm" variant="outline"
+                  className="h-7 text-xs gap-1 px-2 border-slate-300 text-slate-500 hover:bg-slate-50"
+                  disabled={unassigning}
+                  onClick={() => doUndo((id, opts) => unassignGDO(id, opts))}>
+                  <RotateCcw className="h-3 w-3" />
+                  {unassigning ? '…' : 'Gỡ GĐ'}
                 </Button>
               )}
             </div>
@@ -485,6 +533,12 @@ export default function OutboundDetail() {
             </div>
           )}
 
+          {undoErr && (
+            <div className="rounded bg-red-50 border border-red-200 px-2 py-1 text-xs text-red-700 flex items-center gap-1">
+              <span>{undoErr}</span>
+              <button className="ml-auto" onClick={() => setUndoErr(null)}><X className="h-3 w-3" /></button>
+            </div>
+          )}
           <ProgressBar scanned={totalScanned} ordered={totalOrdered} />
         </div>
 

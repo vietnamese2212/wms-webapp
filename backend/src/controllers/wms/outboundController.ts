@@ -229,6 +229,22 @@ export async function assignGDO(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
+// ─── Unassign GDO (Gỡ giao đơn) ──────────────────────────────
+
+export async function unassignGDO(req: Request, res: Response) {
+  try {
+    const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
+      .select('assigned_at, started_at').eq('id', req.params.id).single()
+    if (!gdo?.assigned_at) return fail(res, 'Đơn chưa được giao đơn', 400)
+    if (gdo?.started_at)   return fail(res, 'Cần gỡ bắt đầu trước khi gỡ giao đơn', 400)
+    const { error } = await (supabase.from('GroupDeliveryOrder') as any)
+      .update({ assigned_at: null, assigned_by: null, status: 'PENDING', updated_at: now() })
+      .eq('id', req.params.id)
+    if (error) return fail(res, error.message)
+    return ok(res, await fetchGDOFull(req.params.id))
+  } catch (e) { return fail(res, String(e)) }
+}
+
 // ─── Start GDO (Bắt đầu xuất kho) ────────────────────────────
 
 export async function startGDO(req: Request, res: Response) {
@@ -258,6 +274,59 @@ export async function startGDO(req: Request, res: Response) {
     if (error) return fail(res, error.message)
     const result = await fetchGDOFull(req.params.id)
     return ok(res, result)
+  } catch (e) { return fail(res, String(e)) }
+}
+
+// ─── Unstart GDO (Gỡ bắt đầu) ────────────────────────────────
+
+export async function unstartGDO(req: Request, res: Response) {
+  try {
+    const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
+      .select('started_at').eq('id', req.params.id).single()
+    if (!gdo?.started_at) return fail(res, 'Đơn chưa được bắt đầu', 400)
+
+    // Kiểm tra chưa có QR nào được quét
+    const { data: doList } = await (supabase.from('OutboundDelivery') as any)
+      .select('id').eq('gdo_id', req.params.id)
+    const doIds = (doList ?? []).map((d: any) => d.id)
+    if (doIds.length) {
+      const { data: items } = await (supabase.from('OutboundItem') as any)
+        .select('id').in('do_id', doIds)
+      const itemIds = (items ?? []).map((i: any) => i.id)
+      if (itemIds.length) {
+        const { count } = await (supabase.from('OutboundScanEntry') as any)
+          .select('id', { count: 'exact', head: true }).in('item_id', itemIds)
+        if ((count ?? 0) > 0)
+          return fail(res, 'Cần xóa hết QR đã quét trước khi gỡ bắt đầu', 400)
+      }
+    }
+
+    const t = now()
+    const { error } = await (supabase.from('GroupDeliveryOrder') as any)
+      .update({
+        started_at: null, license_plate: null, container_number: null,
+        exporter_name: null, loader_name: null,
+        forklift_driver_id: null, forklift_driver_names: null,
+        status: 'PENDING', updated_at: t,
+      })
+      .eq('id', req.params.id)
+    if (error) return fail(res, error.message)
+    return ok(res, await fetchGDOFull(req.params.id))
+  } catch (e) { return fail(res, String(e)) }
+}
+
+// ─── Uncomplete GDO (Bỏ hoàn thành) ──────────────────────────
+
+export async function uncompleteGDO(req: Request, res: Response) {
+  try {
+    const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
+      .select('status').eq('id', req.params.id).single()
+    if (gdo?.status !== 'COMPLETED') return fail(res, 'Đơn chưa hoàn thành', 400)
+    const { error } = await (supabase.from('GroupDeliveryOrder') as any)
+      .update({ status: 'IN_PROGRESS', completed_at: null, updated_at: now() })
+      .eq('id', req.params.id)
+    if (error) return fail(res, error.message)
+    return ok(res, await fetchGDOFull(req.params.id))
   } catch (e) { return fail(res, String(e)) }
 }
 

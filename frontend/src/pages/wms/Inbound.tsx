@@ -324,14 +324,15 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
 
 interface MultiOpt { value: string; label: string }
 
-function MultiSelectDropdown({ label, options, selected, onChange }: {
-  label: string; options: MultiOpt[]; selected: string[]; onChange: (v: string[]) => void
+function MultiSelectDropdown({ label, options, selected, onChange, searchable }: {
+  label: string; options: MultiOpt[]; selected: string[]; onChange: (v: string[]) => void; searchable?: boolean
 }) {
-  const [open, setOpen] = useState(false)
+  const [open,   setOpen]   = useState(false)
+  const [search, setSearch] = useState('')
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    if (!open) return
+    if (!open) { setSearch(''); return }
     const handler = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
     }
@@ -340,6 +341,10 @@ function MultiSelectDropdown({ label, options, selected, onChange }: {
   }, [open])
 
   const active = selected.length > 0
+  const visible = searchable && search
+    ? options.filter(o => o.label.toLowerCase().includes(search.toLowerCase()))
+    : options
+
   return (
     <div ref={ref} className="relative">
       <button type="button" onClick={() => setOpen(v => !v)}
@@ -349,27 +354,41 @@ function MultiSelectDropdown({ label, options, selected, onChange }: {
         <ChevronDown className="h-3 w-3 ml-0.5" />
       </button>
       {open && (
-        <div className="absolute z-50 top-full left-0 mt-1 bg-white border rounded-md shadow-lg min-w-[150px] max-h-52 overflow-y-auto">
-          {active && (
-            <button type="button" className="w-full text-left px-3 py-1.5 text-[10px] text-red-500 hover:bg-red-50 border-b"
-              onClick={() => onChange([])}>Xóa lọc</button>
+        <div className="absolute z-50 top-full left-0 mt-1 bg-white border rounded-md shadow-lg min-w-[220px] max-h-64 flex flex-col">
+          {searchable && (
+            <div className="p-2 border-b shrink-0">
+              <input
+                autoFocus
+                className="w-full text-xs border border-slate-200 rounded px-2 py-1 outline-none focus:border-blue-400"
+                placeholder="Tìm…"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                onMouseDown={e => e.stopPropagation()}
+              />
+            </div>
           )}
-          {options.length === 0 && (
-            <div className="px-3 py-2 text-xs text-slate-400 text-center">Không có dữ liệu</div>
-          )}
-          {options.map(opt => (
-            <label key={opt.value} className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 cursor-pointer">
-              <input type="checkbox" className="h-3 w-3"
-                checked={selected.includes(opt.value)}
-                onChange={() => {
-                  const next = selected.includes(opt.value)
-                    ? selected.filter(v => v !== opt.value)
-                    : [...selected, opt.value]
-                  onChange(next)
-                }} />
-              <span className="text-[11px] text-slate-700 truncate max-w-[120px]">{opt.label}</span>
-            </label>
-          ))}
+          <div className="overflow-y-auto flex-1">
+            {active && !search && (
+              <button type="button" className="w-full text-left px-3 py-1.5 text-[10px] text-red-500 hover:bg-red-50 border-b"
+                onClick={() => onChange([])}>Xóa lọc</button>
+            )}
+            {visible.length === 0 && (
+              <div className="px-3 py-2 text-xs text-slate-400 text-center">Không tìm thấy</div>
+            )}
+            {visible.map(opt => (
+              <label key={opt.value} className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 cursor-pointer">
+                <input type="checkbox" className="h-3 w-3 shrink-0"
+                  checked={selected.includes(opt.value)}
+                  onChange={() => {
+                    const next = selected.includes(opt.value)
+                      ? selected.filter(v => v !== opt.value)
+                      : [...selected, opt.value]
+                    onChange(next)
+                  }} />
+                <span className="text-[11px] text-slate-700">{opt.label}</span>
+              </label>
+            ))}
+          </div>
         </div>
       )}
     </div>
@@ -567,7 +586,7 @@ export default function Inbound() {
 
         {/* Row 2: Multi-select client filters */}
         <div className="flex gap-2 flex-wrap items-center">
-          <MultiSelectDropdown label="Material" options={materialOptions}
+          <MultiSelectDropdown label="Material" options={materialOptions} searchable
             selected={filterMaterials} onChange={v => setInbound({ filterMaterials: v })} />
           <MultiSelectDropdown label="Chu kỳ" options={cycleOptions}
             selected={filterCycles} onChange={v => setInbound({ filterCycles: v })} />

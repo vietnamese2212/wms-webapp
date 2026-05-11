@@ -42,21 +42,38 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
           maxScansPerSecond:    15,
           highlightScanRegion:  false,
           highlightCodeOutline: false,
-          // Scan full video frame — no restrictive region
-          calculateScanRegion: (v) => ({
-            x: 0, y: 0,
-            width:  v.videoWidth  || v.clientWidth,
-            height: v.videoHeight || v.clientHeight,
-          }),
+          // Full frame, process at up to 1280px (default is 400px — too small for distance)
+          calculateScanRegion: (v) => {
+            const w = v.videoWidth  || v.clientWidth  || 1280
+            const h = v.videoHeight || v.clientHeight || 720
+            const scale = Math.min(1, 1280 / Math.max(w, h))
+            return {
+              x: 0, y: 0, width: w, height: h,
+              downScaledWidth:  Math.round(w * scale),
+              downScaledHeight: Math.round(h * scale),
+            }
+          },
           returnDetailedScanResult: true,
         },
       )
 
       scannerRef.current = scanner
 
-      scanner.start().catch(() => {
-        setError('Không thể mở camera. Kiểm tra quyền truy cập camera.')
-      })
+      scanner.start()
+        .then(async () => {
+          // Request highest available resolution after scanner acquires the stream
+          const stream = video.srcObject as MediaStream | null
+          const track  = stream?.getVideoTracks()[0]
+          if (track) {
+            await track.applyConstraints({
+              width:  { ideal: 3840 },
+              height: { ideal: 2160 },
+            }).catch(() => {})
+          }
+        })
+        .catch(() => {
+          setError('Không thể mở camera. Kiểm tra quyền truy cập camera.')
+        })
 
       return () => {
         scanner.destroy()

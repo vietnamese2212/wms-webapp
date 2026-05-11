@@ -3,7 +3,13 @@
     "allow": [
       "Bash(npm run *)",
       "Read(//c/Users/lam.tranhoang/OneDrive - LOF JSC/WAREHOUSE/CLAUDECODE/WMS webapp/backend/migrations\" 2>/dev/null | grep -E '/**)",
-      "Bash(awk '{print $6, $7, $8, $9}')"
+      "Bash(awk '{print $6, $7, $8, $9}')",
+      "Bash(netstat -ano)",
+      "Bash(findstr \":4000\")",
+      "Bash(findstr \"LISTENING\")",
+      "Bash(taskkill /PID 31908 /F)",
+      "Bash(node -e ' *)",
+      "Bash(node scripts/gen_outbound_template.js)"
     ]
   }
 }

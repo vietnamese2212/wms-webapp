@@ -27,8 +27,15 @@ interface LocationWithCapacity {
   id: string
   location_code: string
   sub_code: string
+  sub_type: string | null
   max_pallets: number
   used_slots: number
+}
+
+const SUB_TYPE_LABELS: Record<string, string> = {
+  THANH_PHAM:    'Thành phẩm',
+  NGUYEN_LIEU:   'Nguyên liệu',
+  BAN_THANH_PHAM:'Bán thành phẩm',
 }
 
 // ─── Create order dialog ─────────────────────────────────────
@@ -41,6 +48,7 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
   const isOWN     = user?.role === 'OWN'
 
   const [warehouseId, setWarehouseId] = useState('')
+  const [subType,     setSubType]     = useState('')
   const [materialId,  setMaterialId]  = useState('')
   const [locationId,  setLocationId]  = useState('')
   const [shiftId,     setShiftId]     = useState('')
@@ -56,6 +64,7 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
   useEffect(() => {
     if (open) {
       setWarehouseId(user?.warehouse_id ?? '')
+      setSubType('')
       setMaterialId('')
       setMatSearch('')
       setMatOpen(false)
@@ -72,6 +81,10 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
   const { data: locations  = [] } = useLocationsReal(
     warehouseId ? { warehouse_id: warehouseId } : undefined
   )
+
+  const allLocs = locations as LocationWithCapacity[]
+  const subTypeOpts = [...new Set(allLocs.map(l => l.sub_type).filter(Boolean))] as string[]
+  const filteredLocs = subType ? allLocs.filter(l => l.sub_type === subType) : allLocs
 
   // Auto-select warehouse by name when warehouse_id not set (mock auth scenario)
   useEffect(() => {
@@ -185,6 +198,24 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
             </div>
           </div>
 
+          {/* Loại kho – lọc vị trí theo sub_type */}
+          {subTypeOpts.length > 0 && (
+            <div className="space-y-2">
+              <Label>Loại kho</Label>
+              <Select value={subType || '__all__'} onValueChange={v => { setSubType(v === '__all__' ? '' : v); setLocationId('') }} disabled={!warehouseId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Tất cả loại" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">Tất cả loại</SelectItem>
+                  {subTypeOpts.map(st => (
+                    <SelectItem key={st} value={st}>{SUB_TYPE_LABELS[st] ?? st}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
           {/* Vị trí – required, color-coded by capacity */}
           <div className="space-y-2">
             <Label>
@@ -198,7 +229,7 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
                 <SelectValue placeholder={warehouseId ? 'Chọn vị trí' : 'Chọn kho trước'} />
               </SelectTrigger>
               <SelectContent>
-                {(locations as LocationWithCapacity[]).map((l) => {
+                {filteredLocs.map((l) => {
                   const isFull    = l.max_pallets > 0 && l.used_slots >= l.max_pallets
                   const isPartial = l.used_slots > 0 && !isFull
                   return (

@@ -206,6 +206,15 @@ export async function createGDO(req: Request, res: Response) {
 export async function patchGDO(req: Request, res: Response) {
   try {
     const { delivery_date, status } = req.body as { delivery_date?: string; status?: string }
+
+    // PAUSED: chỉ cho đổi status (ví dụ resume → IN_PROGRESS), không sửa dữ liệu khác
+    if (delivery_date) {
+      const { data: current } = await (supabase.from('GroupDeliveryOrder') as any)
+        .select('status').eq('id', req.params.id).single()
+      if (current?.status === 'PAUSED')
+        return fail(res, 'Chuyến đang tạm dừng — chỉ được đổi trạng thái, không sửa dữ liệu', 400)
+    }
+
     const { error } = await (supabase.from('GroupDeliveryOrder') as any)
       .update({ delivery_date, status, updated_at: now() })
       .eq('id', req.params.id)
@@ -352,7 +361,6 @@ async function mergePausedGDO(
   gdoId: string,
   group_code: string,
   delivery_date: string,
-  planned_date: string,
   warehouse_id: string | null,
   dvvt: string | null,
   warehouse_type: string | null,
@@ -379,14 +387,40 @@ async function mergePausedGDO(
     existingItemByKey.set(itemKey(i.do_id, i.material_code_raw ?? ''), i)
   }
 
-  // Validate: new cartons_ordered >= cartons_scanned for all matched items
+  // Build set of delivery_code::material_code present in new file
+  const newFileItemKeys = new Set<string>()
+  for (const [delivery_code, rows] of byDelivery) {
+    for (const row of rows) {
+      newFileItemKeys.add(`${delivery_code}::${String(row['Material'] ?? '').trim()}`)
+    }
+  }
+  const newDeliveryCodes = new Set([...byDelivery.keys()])
+
+  // Validation 1: every scanned item must exist in new file (cannot remove exported items)
+  const scannedItems = (existingItems ?? []).filter((i: any) => Number(i.cartons_scanned) > 0)
+  const missingScanned: string[] = []
+  for (const item of scannedItems) {
+    const existingDO = (existingDOs ?? []).find((d: any) => d.id === item.do_id)
+    if (!existingDO) continue
+    if (!newFileItemKeys.has(`${existingDO.delivery_code}::${item.material_code_raw ?? ''}`)) {
+      missingScanned.push(`${item.material_code_raw} (DO ${existingDO.delivery_code}, đã xuất ${item.cartons_scanned} thùng)`)
+    }
+  }
+  if (missingScanned.length) {
+    return {
+      group_code, skipped: true,
+      reason: `Mã hàng đã xuất không có trong file mới: ${missingScanned.join('; ')}`,
+    }
+  }
+
+  // Validation 2: new cartons_ordered >= cartons_scanned for all matched items
   for (const [delivery_code, doRows] of byDelivery) {
     const existingDO = existingDOByCode.get(delivery_code)
     if (!existingDO) continue
     for (const row of doRows) {
-      const mat_code    = String(row['Material'] ?? '').trim()
-      const newCartons  = parseDecimal(row['Thùng'])
-      const existing    = existingItemByKey.get(itemKey(existingDO.id, mat_code))
+      const mat_code   = String(row['Material'] ?? '').trim()
+      const newCartons = parseDecimal(row['Thùng'])
+      const existing   = existingItemByKey.get(itemKey(existingDO.id, mat_code))
       if (existing && newCartons < Number(existing.cartons_scanned)) {
         return {
           group_code, skipped: true,
@@ -396,12 +430,32 @@ async function mergePausedGDO(
     }
   }
 
-  // Update GDO header
+  // Cleanup: delete stale items not in new file (all have cartons_scanned=0, blocked otherwise)
+  const staleItemIds = (existingItems ?? [])
+    .filter((i: any) => {
+      const d = (existingDOs ?? []).find((d: any) => d.id === i.do_id)
+      if (!d) return true
+      return !newFileItemKeys.has(`${d.delivery_code}::${i.material_code_raw ?? ''}`)
+    })
+    .map((i: any) => i.id as string)
+  if (staleItemIds.length) {
+    await (supabase.from('OutboundItem') as any).delete().in('id', staleItemIds)
+  }
+
+  // Cleanup: delete stale DOs not in new file (items already deleted above)
+  const staleDOIds = (existingDOs ?? [])
+    .filter((d: any) => !newDeliveryCodes.has(d.delivery_code as string))
+    .map((d: any) => d.id as string)
+  if (staleDOIds.length) {
+    await (supabase.from('OutboundDelivery') as any).delete().in('id', staleDOIds)
+  }
+
+  // Update GDO header — preserve workflow fields (started_at, assigned_at, status, license_plate, etc.)
   await (supabase.from('GroupDeliveryOrder') as any)
-    .update({ delivery_date, planned_date, warehouse_id, dvvt, warehouse_type, updated_at: t })
+    .update({ delivery_date, planned_date: delivery_date, warehouse_id, dvvt, warehouse_type, updated_at: t })
     .eq('id', gdoId)
 
-  // Upsert DOs + items
+  // Upsert DOs + items from new file
   for (const [delivery_code, doRows] of byDelivery) {
     const distributor_name = String(doRows[0]['Tên NPP'] ?? '').trim() || null
     const existingDO = existingDOByCode.get(delivery_code)
@@ -488,7 +542,9 @@ export async function uploadExcel(req: Request, res: Response) {
     const [warehousesRes, materialsRes, existingRes] = await Promise.all([
       (supabase.from('Warehouse') as any).select('id, code, name').eq('is_active', true),
       (supabase.from('Material') as any).select('id, material_code'),
-      (supabase.from('GroupDeliveryOrder') as any).select('id, group_code, status').in('group_code', allGroupCodes),
+      (supabase.from('GroupDeliveryOrder') as any)
+        .select('id, group_code, status, assigned_at, assigned_by')
+        .in('group_code', allGroupCodes),
     ])
 
     const warehouseByKey = new Map<string, string>()
@@ -501,58 +557,63 @@ export async function uploadExcel(req: Request, res: Response) {
     )
 
     // Classify existing GDOs
-    const overwritableIds: string[] = []
-    const pausedGDOMap = new Map<string, string>() // group_code → id
-    const blockedSet = new Set<string>()
+    // pendingSimpleMap   : PENDING, no assignment → delete+recreate GDO
+    // pendingPreserveMap : PENDING, has assignment → keep GDO row, replace DOs/Items
+    // pausedGDOMap       : PAUSED → merge (strict validation)
+    // blockedMap         : IN_PROGRESS / COMPLETED → skip
+    const pendingSimpleMap   = new Map<string, string>()
+    const pendingPreserveMap = new Map<string, string>() // group_code → id
+    const pausedGDOMap       = new Map<string, string>()
+    const blockedMap         = new Map<string, string>() // group_code → status
+
     for (const g of (existingRes.data ?? [])) {
-      if (g.status === 'PENDING') overwritableIds.push(g.id)
-      else if (g.status === 'PAUSED') pausedGDOMap.set(g.group_code as string, g.id)
-      else blockedSet.add(g.group_code as string)
-    }
-
-    // Delete overwritable GDOs (cascade: OutboundItem → OutboundDelivery → GDO)
-    if (overwritableIds.length) {
-      const { data: dosToDelete } = await (supabase.from('OutboundDelivery') as any)
-        .select('id').in('gdo_id', overwritableIds)
-      const doIdsToDelete = (dosToDelete ?? []).map((d: any) => d.id as string)
-      if (doIdsToDelete.length) {
-        await (supabase.from('OutboundItem') as any).delete().in('do_id', doIdsToDelete)
-        await (supabase.from('OutboundDelivery') as any).delete().in('id', doIdsToDelete)
+      if (g.status === 'PENDING') {
+        if (g.assigned_at) pendingPreserveMap.set(g.group_code as string, g.id)
+        else               pendingSimpleMap.set(g.group_code as string, g.id)
+      } else if (g.status === 'PAUSED') {
+        pausedGDOMap.set(g.group_code as string, g.id)
+      } else {
+        blockedMap.set(g.group_code as string, g.status)
       }
-      await (supabase.from('GroupDeliveryOrder') as any).delete().in('id', overwritableIds)
     }
 
-    // Build all inserts in-memory (no per-vehicle DB round trips)
-    const created: any[] = []
-    const gdoInserts:  any[] = []
-    const doInserts:   any[] = []
-    const itemInserts: any[] = []
+    // ── First pass: validate all vehicles, build insert lists ──
+    // Deletions happen AFTER this loop so a failed vehicle never loses its old data.
+
+    const created:  any[] = []
+    const gdoInserts:  any[] = []   // new GDO rows (pendingSimple + new)
+    const doInserts:   any[] = []   // all new DO rows
+    const itemInserts: any[] = []   // all new Item rows
+    const toReplaceIds:   string[] = [] // pendingSimple IDs → cascade delete
+    const toPreserveIds:  string[] = [] // pendingPreserve IDs → delete DOs only, update GDO
+    const preserveGDOUpdates: { id: string; fields: Record<string, unknown> }[] = []
 
     for (const [group_code, groupRows] of byVehicle) {
-      if (blockedSet.has(group_code)) {
-        created.push({ group_code, skipped: true, reason: 'Đang hoặc đã xuất hàng — không thể ghi đè' })
+      // Blocked: IN_PROGRESS or COMPLETED
+      if (blockedMap.has(group_code)) {
+        const status = blockedMap.get(group_code)!
+        const reason = status === 'COMPLETED'
+          ? 'Đã hoàn thành — không thể ghi đè'
+          : 'Đang xuất — chỉ upload được khi chuyến tạm dừng (PAUSED)'
+        created.push({ group_code, skipped: true, reason, existing_status: status })
         continue
       }
 
-      // 2.2: group_code format (ddmmyy_...)
-      const planned_date = parsePlannedDate(group_code)
-      if (!planned_date) {
-        created.push({ group_code, skipped: true, reason: 'Mã xe không đúng định dạng (cần tiền tố ddmmyy_...)' })
-        continue
-      }
-
-      // 2.1: delivery_date required and parseable
+      // delivery_date from "Ngày xuất" — also used as planned_date
       const delivery_date = parseExcelDate(groupRows[0]['Ngày xuất'])
       if (!delivery_date) {
         created.push({ group_code, skipped: true, reason: `Ngày xuất không hợp lệ hoặc trống: "${groupRows[0]['Ngày xuất'] ?? ''}"` })
         continue
       }
 
+      // Warn (non-blocking) if group_code lacks ddmmyy_ prefix
+      const groupCodeWarn = parsePlannedDate(group_code) ? undefined
+        : 'Mã xe không có tiền tố ngày ddmmyy_ — kiểm tra lại định dạng'
+
       const dvvt     = String(groupRows[0]['DVVT']     ?? groupRows[0]['Đơn vị']  ?? '').trim() || null
       const kho_xuat = String(groupRows[0]['Kho xuất'] ?? groupRows[0]['Kho xuat'] ?? '').trim()
       const loai_kho = String(groupRows[0]['Loại kho'] ?? groupRows[0]['Loai kho'] ?? '').trim() || null
 
-      // 2.3: warehouse required
       let resolved_warehouse_id = warehouse_id ?? null
       if (kho_xuat) {
         const found = warehouseByKey.get(kho_xuat.toLowerCase())
@@ -566,7 +627,6 @@ export async function uploadExcel(req: Request, res: Response) {
         continue
       }
 
-      // 3.1: all material codes must exist in DB
       const unknownMats = [...new Set(
         groupRows.filter(r => String(r['Material'] ?? '').trim()).map(r => String(r['Material']).trim())
       )].filter(c => !matMap.has(c))
@@ -584,62 +644,111 @@ export async function uploadExcel(req: Request, res: Response) {
         byDelivery.set(code, list)
       }
 
-      // PAUSED: merge instead of delete+recreate
+      // PAUSED → merge (strict: scanned items must all exist in new file)
       if (pausedGDOMap.has(group_code)) {
         const mergeResult = await mergePausedGDO(
           pausedGDOMap.get(group_code)!,
-          group_code, delivery_date, planned_date,
+          group_code, delivery_date,
           resolved_warehouse_id, dvvt, loai_kho,
           byDelivery, matMap
         )
+        if (mergeResult.merged && groupCodeWarn) (mergeResult as any).warn = groupCodeWarn
         created.push(mergeResult)
         continue
       }
 
+      // Helper: build DO + Item rows for a given gdoId
+      const collectDOsAndItems = (gdoId: string) => {
+        for (const [delivery_code, doRows] of byDelivery) {
+          const doId = randomUUID()
+          const distributor_name = String(doRows[0]['Tên NPP'] ?? '').trim() || null
+          doInserts.push({ id: doId, gdo_id: gdoId, delivery_code, distributor_name, status: 'PENDING', updated_at: now() })
+          for (const row of doRows) {
+            const mat_code      = String(row['Material'] ?? '').trim()
+            const material_type = String(row['Material_type'] ?? '').trim() || null
+            itemInserts.push({
+              id: randomUUID(), do_id: doId,
+              material_id:       matMap.get(mat_code) ?? null,
+              material_code_raw: mat_code,
+              cartons_ordered:   parseDecimal(row['Thùng']),
+              boxes_display:     parseDecimal(row['Hộp']),
+              weight:            parseDecimal(row['Tải']),
+              loose_picking:     parseDecimal(row['Nhặt lẻ']),
+              pallets_estimated: parseDecimal(String(row['Pallet'] ?? '').replace(',', '.')),
+              material_type,
+              export_type:    String(row['Loại xuất']     ?? '').trim() || null,
+              header_text:    String(row['HEADER TEXT']   ?? '').trim() || null,
+              batch_required: String(row['Batch_Yêu cầu'] ?? '').trim() || null,
+              date_required:  parseDecimal(row['%Date_Yêu cầu']) || null,
+              cs_responsible: String(row['CS phụ trách']  ?? '').trim() || null,
+              cartons_scanned: 0,
+              status: material_type === 'POSM' ? 'COMPLETED' : 'PENDING',
+              updated_at: now(),
+            })
+          }
+        }
+      }
+
+      // PENDING with assignment → keep GDO row + assigned_at, replace DOs/Items
+      if (pendingPreserveMap.has(group_code)) {
+        const gdoId = pendingPreserveMap.get(group_code)!
+        toPreserveIds.push(gdoId)
+        preserveGDOUpdates.push({
+          id: gdoId,
+          fields: { delivery_date, planned_date: delivery_date, warehouse_id: resolved_warehouse_id, dvvt, warehouse_type: loai_kho, updated_at: now() },
+        })
+        collectDOsAndItems(gdoId)
+        const entry: any = { group_code, id: gdoId, created: true, preserved_assignment: true }
+        if (groupCodeWarn) entry.warn = groupCodeWarn
+        created.push(entry)
+        continue
+      }
+
+      // PENDING (no assignment) or new → create fresh GDO
+      if (pendingSimpleMap.has(group_code)) {
+        toReplaceIds.push(pendingSimpleMap.get(group_code)!)
+      }
       const gdoId = randomUUID()
       gdoInserts.push({
-        id: gdoId, group_code, planned_date, delivery_date,
+        id: gdoId, group_code, planned_date: delivery_date, delivery_date,
         warehouse_id: resolved_warehouse_id, dvvt, warehouse_type: loai_kho,
         status: 'PENDING', updated_at: now(),
       })
-
-      for (const [delivery_code, doRows] of byDelivery) {
-        const doId = randomUUID()
-        const distributor_name = String(doRows[0]['Tên NPP'] ?? '').trim() || null
-        doInserts.push({
-          id: doId, gdo_id: gdoId, delivery_code, distributor_name,
-          status: 'PENDING', updated_at: now(),
-        })
-
-        for (const row of doRows) {
-          const mat_code      = String(row['Material'] ?? '').trim()
-          const material_type = String(row['Material_type'] ?? '').trim() || null
-          itemInserts.push({
-            id: randomUUID(),
-            do_id: doId,
-            material_id:       matMap.get(mat_code) ?? null,
-            material_code_raw: mat_code,
-            cartons_ordered:   parseDecimal(row['Thùng']),
-            boxes_display:     parseDecimal(row['Hộp']),
-            weight:            parseDecimal(row['Tải']),
-            loose_picking:     parseDecimal(row['Nhặt lẻ']),
-            pallets_estimated: parseDecimal(String(row['Pallet'] ?? '').replace(',', '.')),
-            material_type,
-            export_type:    String(row['Loại xuất']     ?? '').trim() || null,
-            header_text:    String(row['HEADER TEXT']   ?? '').trim() || null,
-            batch_required: String(row['Batch_Yêu cầu'] ?? '').trim() || null,
-            date_required:  parseDecimal(row['%Date_Yêu cầu']) || null,
-            cs_responsible: String(row['CS phụ trách']  ?? '').trim() || null,
-            cartons_scanned: 0,
-            status: material_type === 'POSM' ? 'COMPLETED' : 'PENDING',
-            updated_at: now(),
-          })
-        }
-      }
-      created.push({ group_code, id: gdoId, created: true })
+      collectDOsAndItems(gdoId)
+      const entry: any = { group_code, id: gdoId, created: true }
+      if (groupCodeWarn) entry.warn = groupCodeWarn
+      created.push(entry)
     }
 
-    // Batch inserts — chunk at 100 to stay within Supabase payload limits
+    // ── Delete validated PENDING GDOs ──
+
+    // Simple PENDING → cascade delete entire GDO
+    if (toReplaceIds.length) {
+      const { data: dosToDelete } = await (supabase.from('OutboundDelivery') as any)
+        .select('id').in('gdo_id', toReplaceIds)
+      const doIdsToDelete = (dosToDelete ?? []).map((d: any) => d.id as string)
+      if (doIdsToDelete.length) {
+        await (supabase.from('OutboundItem') as any).delete().in('do_id', doIdsToDelete)
+        await (supabase.from('OutboundDelivery') as any).delete().in('id', doIdsToDelete)
+      }
+      await (supabase.from('GroupDeliveryOrder') as any).delete().in('id', toReplaceIds)
+    }
+
+    // Preserve PENDING → delete DOs/Items only, update GDO header
+    if (toPreserveIds.length) {
+      const { data: dosToDelete } = await (supabase.from('OutboundDelivery') as any)
+        .select('id').in('gdo_id', toPreserveIds)
+      const doIdsToDelete = (dosToDelete ?? []).map((d: any) => d.id as string)
+      if (doIdsToDelete.length) {
+        await (supabase.from('OutboundItem') as any).delete().in('do_id', doIdsToDelete)
+        await (supabase.from('OutboundDelivery') as any).delete().in('id', doIdsToDelete)
+      }
+      for (const { id, fields } of preserveGDOUpdates) {
+        await (supabase.from('GroupDeliveryOrder') as any).update(fields).eq('id', id)
+      }
+    }
+
+    // ── Batch inserts ──
     const CHUNK = 100
     async function batchInsert(table: string, rows: any[]) {
       for (let i = 0; i < rows.length; i += CHUNK) {
@@ -683,10 +792,14 @@ export async function getItemInventory(req: Request, res: Response) {
 
 export async function scanItem(req: Request, res: Response) {
   try {
-    const { itemId } = req.params
+    const { gdoId, itemId } = req.params
     const { qr_code, employee_id, cartons_override } = req.body as { qr_code: string; employee_id?: string; cartons_override?: number }
     const qr = (qr_code ?? '').trim()
     if (!qr) return fail(res, 'qr_code là bắt buộc', 400)
+
+    const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
+      .select('status').eq('id', gdoId).single()
+    if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng — không thể quét', 400)
 
     const { data: item, error: itemErr } = await (supabase.from('OutboundItem') as any)
       .select('*').eq('id', itemId).single()
@@ -806,6 +919,10 @@ export async function deleteScanEntry(req: Request, res: Response) {
   try {
     const { gdoId, itemId, scanId } = req.params
 
+    const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
+      .select('status').eq('id', gdoId).single()
+    if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng — không thể xóa QR', 400)
+
     const { data: scan } = await (supabase.from('OutboundScanEntry') as any)
       .select('*').eq('id', scanId).eq('item_id', itemId).single()
     if (!scan) return fail(res, 'Không tìm thấy bản ghi quét', 404)
@@ -880,7 +997,12 @@ export async function deleteScanEntry(req: Request, res: Response) {
 
 export async function manualCompleteItem(req: Request, res: Response) {
   try {
-    const { itemId } = req.params
+    const { gdoId, itemId } = req.params
+
+    const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
+      .select('status').eq('id', gdoId).single()
+    if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng — không thể cập nhật', 400)
+
     const { data: item } = await (supabase.from('OutboundItem') as any)
       .select('*').eq('id', itemId).single()
     if (!item) return fail(res, 'Không tìm thấy mặt hàng', 404)

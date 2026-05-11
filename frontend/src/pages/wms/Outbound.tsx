@@ -2,7 +2,7 @@ import { useRef, useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
-import { Upload, Search, Truck, CheckCircle2, AlertTriangle, CalendarDays, X, Bookmark } from 'lucide-react'
+import { Upload, Search, Truck, CheckCircle2, AlertTriangle, CalendarDays, X, Bookmark, Info } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
 import { Input }  from '@/components/ui/input'
@@ -28,10 +28,11 @@ function gdoRowBg(gdo: GDO) {
 
 // ─── Tình trạng label ─────────────────────────────────────────
 function gdoStatusInfo(gdo: GDO): { label: string; cls: string } {
-  if (gdo.status === 'COMPLETED')  return { label: 'Hoàn thành', cls: 'bg-blue-100 text-blue-700'   }
+  if (gdo.status === 'COMPLETED')   return { label: 'Hoàn thành', cls: 'bg-blue-100 text-blue-700'   }
   if (gdo.status === 'IN_PROGRESS') return { label: 'Đang xuất',  cls: 'bg-amber-100 text-amber-700' }
-  if (gdo.assigned_at)             return { label: 'Giao đơn',   cls: 'bg-green-100 text-green-700' }
-  return                                  { label: '—',           cls: 'bg-slate-100 text-slate-400' }
+  if (gdo.status === 'PAUSED')      return { label: 'Tạm dừng',   cls: 'bg-red-100 text-red-700'     }
+  if (gdo.assigned_at)              return { label: 'Giao đơn',   cls: 'bg-green-100 text-green-700' }
+  return                                   { label: '—',           cls: 'bg-slate-100 text-slate-400' }
 }
 
 // ─── Natural sort on trailing number (ABC101 < ABC102 < ABC201) ─
@@ -54,8 +55,9 @@ export default function Outbound() {
   const fileRef  = useRef<HTMLInputElement>(null)
 
   const { outbound: f, setOutbound } = useWmsFilterStore()
-  const [uploadErr, setUploadErr] = useState<string | null>(null)
-  const [uploadOk,  setUploadOk]  = useState<string | null>(null)
+  const [uploadErr,  setUploadErr]  = useState<string | null>(null)
+  const [uploadOk,   setUploadOk]   = useState<string | null>(null)
+  const [uploadWarn, setUploadWarn] = useState<string | null>(null)
 
   const { data: gdos = [], isLoading } = useGDOs({
     warehouse_id: user?.warehouse_id || undefined,
@@ -89,13 +91,33 @@ export default function Outbound() {
     if (!file) return
     setUploadErr(null)
     setUploadOk(null)
+    setUploadWarn(null)
     uploadExcel(
       { file, warehouse_id: user?.warehouse_id || undefined },
       {
         onSuccess: (result) => {
-          const n = result.created?.filter((r: any) => r.created).length ?? 0
-          const s = result.created?.filter((r: any) => r.skipped).length ?? 0
-          setUploadOk(`Nhập thành công ${n} chuyến xe${s ? `, bỏ qua ${s} (đang hoặc đã hoạt động)` : ''}`)
+          const items = (result.created ?? []) as Array<{ group_code: string; created?: boolean; merged?: boolean; skipped?: boolean; reason?: string; warn?: string }>
+          const nCreated = items.filter(r => r.created && !r.merged).length
+          const nMerged  = items.filter(r => r.merged).length
+          const skipped  = items.filter(r => r.skipped)
+          const warned   = items.filter(r => r.warn)
+
+          const okParts = [
+            nCreated > 0 && `Tạo mới ${nCreated} xe`,
+            nMerged  > 0 && `Cập nhật ${nMerged} xe (PAUSED)`,
+          ].filter(Boolean).join(' · ')
+          setUploadOk(okParts || (skipped.length ? undefined : 'Không có xe mới') as any)
+
+          const warnLines: string[] = []
+          if (skipped.length) {
+            warnLines.push(`Bỏ qua ${skipped.length} chuyến xe:`)
+            skipped.forEach(s => warnLines.push(`• ${s.group_code}: ${s.reason}`))
+          }
+          if (warned.length) {
+            warnLines.push(`Cảnh báo định dạng mã xe:`)
+            warned.forEach(w => warnLines.push(`• ${w.group_code}: ${w.warn}`))
+          }
+          if (warnLines.length) setUploadWarn(warnLines.join('\n'))
         },
         onError: (err) => {
           const msg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi upload file'
@@ -129,6 +151,12 @@ export default function Outbound() {
         {uploadOk && (
           <div className="rounded-lg bg-green-50 border border-green-200 px-3 py-2 text-sm text-green-800 flex items-center gap-2">
             <CheckCircle2 className="h-4 w-4 shrink-0" />{uploadOk}
+          </div>
+        )}
+        {uploadWarn && (
+          <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800 flex items-start gap-2">
+            <Info className="h-4 w-4 shrink-0 mt-0.5" />
+            <pre className="whitespace-pre-wrap font-sans">{uploadWarn}</pre>
           </div>
         )}
         {uploadErr && (

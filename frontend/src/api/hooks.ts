@@ -600,7 +600,7 @@ export function useUploadGDOExcel() {
         timeout: 60000,
       }).then(r => r.data.data)
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['gdos'] }),
+    onSuccess: () => qc.refetchQueries({ queryKey: ['gdos'] }),
   })
 }
 

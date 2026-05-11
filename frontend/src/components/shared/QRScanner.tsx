@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
-import { Html5Qrcode, Html5QrcodeScannerState } from 'html5-qrcode'
+import QrScanner from 'qr-scanner'
 import { X } from 'lucide-react'
 
 interface QRScannerProps {
@@ -11,88 +11,75 @@ export interface QRScannerHandle {
   resume: () => void
 }
 
-const SCANNER_ID = 'qr-scanner-container'
-
 export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
   function QRScanner({ onScan, onClose }, ref) {
-    const scannerRef = useRef<Html5Qrcode | null>(null)
+    const videoRef  = useRef<HTMLVideoElement>(null)
+    const scannerRef = useRef<QrScanner | null>(null)
+    const pausedRef  = useRef(false)
     const [error, setError] = useState<string | null>(null)
 
-    function handleResume() {
-      const s = scannerRef.current
-      if (s && s.getState() === Html5QrcodeScannerState.PAUSED) {
-        s.resume()
-      }
-    }
-
-    useImperativeHandle(ref, () => ({ resume: handleResume }))
+    useImperativeHandle(ref, () => ({
+      resume: () => {
+        pausedRef.current = false
+        scannerRef.current?.start()
+      },
+    }))
 
     useEffect(() => {
-      const scanner = new Html5Qrcode(SCANNER_ID)
+      const video = videoRef.current
+      if (!video) return
+
+      const scanner = new QrScanner(
+        video,
+        (result) => {
+          if (pausedRef.current) return
+          pausedRef.current = true
+          scanner.pause()
+          onScan(result.data)
+        },
+        {
+          preferredCamera:      'environment',
+          maxScansPerSecond:    15,
+          highlightScanRegion:  false,
+          highlightCodeOutline: false,
+          // Scan full video frame — no restrictive region
+          calculateScanRegion: (v) => ({
+            x: 0, y: 0,
+            width:  v.videoWidth  || v.clientWidth,
+            height: v.videoHeight || v.clientHeight,
+          }),
+          returnDetailedScanResult: true,
+        },
+      )
+
       scannerRef.current = scanner
 
-      const onDecode = (decodedText: string) => {
-        if (scanner.getState() === Html5QrcodeScannerState.SCANNING) {
-          scanner.pause(true)
-        }
-        onScan(decodedText)
-      }
-
-      const scanConfig = {
-        fps: 15,
-        qrbox: (w: number, h: number) => {
-          const side = Math.floor(Math.min(w, h) * 0.85)
-          return { width: side, height: side }
-        },
-      }
-
-      scanner
-        .start(
-          { facingMode: 'environment' },
-          scanConfig,
-          onDecode,
-          () => {},
-        )
-        .catch((err) => {
-          if (String(err).includes('NotFoundError') || String(err).includes('OverconstrainedError')) {
-            scanner
-              .start(
-                { facingMode: 'user' },
-                scanConfig,
-                onDecode,
-                () => {},
-              )
-              .catch(() => setError('Không thể mở camera. Kiểm tra quyền truy cập camera.'))
-          } else {
-            setError('Không thể mở camera. Kiểm tra quyền truy cập camera.')
-          }
-        })
+      scanner.start().catch(() => {
+        setError('Không thể mở camera. Kiểm tra quyền truy cập camera.')
+      })
 
       return () => {
-        scanner.stop().catch(() => {}).finally(() => scanner.clear())
+        scanner.destroy()
       }
-    }, []) // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [])
 
     return (
       <div className="flex flex-col gap-3">
         <div className="relative rounded-xl overflow-hidden border border-slate-200 bg-slate-900">
-          <div id={SCANNER_ID} className="w-full" />
+          <video ref={videoRef} className="w-full" playsInline muted />
 
-          {/* Scanning overlay */}
           {!error && (
             <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
               <div className="w-[85%] aspect-square border-2 border-blue-400 rounded-lg animate-pulse" />
             </div>
           )}
-
-          {/* Error overlay */}
           {error && (
             <div className="absolute inset-0 bg-slate-900 flex flex-col items-center justify-center gap-2 p-4">
               <p className="text-slate-300 text-xs text-center">{error}</p>
             </div>
           )}
 
-          {/* Close button */}
           <button
             onClick={onClose}
             className="absolute top-2 right-2 bg-black/40 text-white rounded-full p-1 hover:bg-black/60 transition-colors"
@@ -100,7 +87,6 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
             <X className="h-4 w-4" />
           </button>
         </div>
-
       </div>
     )
   }

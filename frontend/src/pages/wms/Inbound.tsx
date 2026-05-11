@@ -415,6 +415,22 @@ function applyClientFilters(
   })
 }
 
+// ─── Date button: displays dd-MM-yyyy, overlays native date picker ──────────
+
+function DateBtn({ value, placeholder, onChange }: { value: string; placeholder: string; onChange: (v: string) => void }) {
+  return (
+    <div className="relative inline-flex shrink-0">
+      <span className={`text-xs px-2.5 py-1 rounded-md border whitespace-nowrap select-none ${
+        value ? 'bg-white border-blue-300 text-blue-900 font-semibold' : 'bg-white/70 border-blue-200 text-blue-400'
+      }`}>
+        {value ? format(parseISO(value), 'dd-MM-yyyy') : placeholder}
+      </span>
+      <input type="date" className="absolute inset-0 opacity-0 w-full cursor-pointer"
+        value={value} onChange={e => onChange(e.target.value)} />
+    </div>
+  )
+}
+
 // ─── Main page ───────────────────────────────────────────────
 
 export default function Inbound() {
@@ -564,32 +580,31 @@ export default function Inbound() {
 
         {/* Collapsible filter panel */}
         {showFilters && (
-          <>
-            {/* Date range + Server-side selects */}
-            <div className="flex gap-2 flex-wrap items-center">
-              <div className="flex items-center gap-1">
-                <CalendarDays className="h-4 w-4 text-slate-400 shrink-0" />
-                <Input type="date" className="h-8 text-sm w-[138px]"
-                  value={f.dateFrom} onChange={e => setInbound({ dateFrom: e.target.value })} />
-                <span className="text-xs text-slate-400">–</span>
-                <Input type="date" className="h-8 text-sm w-[138px]"
-                  value={f.dateTo} onChange={e => setInbound({ dateTo: e.target.value })} />
-                {!isToday && (
-                  <button className="text-xs text-slate-400 hover:text-slate-700 underline whitespace-nowrap ml-1"
-                    onClick={() => setInbound({ dateFrom: TODAY, dateTo: TODAY })}>
-                    Hôm nay
-                  </button>
-                )}
-                {hasDate && (
-                  <button className="p-0.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-600"
-                    title="Xem tất cả ngày" onClick={() => setInbound({ dateFrom: '', dateTo: '' })}>
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </div>
+          <div className="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2.5 space-y-2">
+            {/* Hàng 1: Ngày */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <CalendarDays className="h-3.5 w-3.5 text-blue-400 shrink-0" />
+              <DateBtn value={f.dateFrom} placeholder="Từ ngày" onChange={v => setInbound({ dateFrom: v })} />
+              <span className="text-blue-300 text-xs">–</span>
+              <DateBtn value={f.dateTo} placeholder="Đến ngày" onChange={v => setInbound({ dateTo: v })} />
+              {!isToday && (
+                <button className="text-xs text-blue-500 hover:text-blue-700 underline whitespace-nowrap"
+                  onClick={() => setInbound({ dateFrom: TODAY, dateTo: TODAY })}>
+                  Hôm nay
+                </button>
+              )}
+              {hasDate && (
+                <button className="p-0.5 rounded hover:bg-blue-100 text-blue-300 hover:text-blue-500"
+                  onClick={() => setInbound({ dateFrom: '', dateTo: '' })}>
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </div>
 
+            {/* Hàng 2: Kho / Loại / Ca */}
+            <div className="flex gap-2 flex-wrap items-center">
               <Select value={f.warehouseId || '__all__'} onValueChange={v => setInbound({ warehouseId: v === '__all__' ? '' : v, filterMaterials: [], filterCycles: [], filterMachines: [] })}>
-                <SelectTrigger className="h-8 text-sm w-[120px]">
+                <SelectTrigger className="h-7 text-xs w-[110px] bg-white">
                   <SelectValue placeholder="Tất cả kho" />
                 </SelectTrigger>
                 <SelectContent>
@@ -601,7 +616,7 @@ export default function Inbound() {
               </Select>
 
               <Select value={f.materialCategory || '__all__'} onValueChange={v => setInbound({ materialCategory: v === '__all__' ? '' : v, filterMaterials: [], filterCycles: [], filterMachines: [] })}>
-                <SelectTrigger className="h-8 text-sm w-[130px]">
+                <SelectTrigger className="h-7 text-xs w-[120px] bg-white">
                   <SelectValue placeholder="Loại kho" />
                 </SelectTrigger>
                 <SelectContent>
@@ -614,7 +629,7 @@ export default function Inbound() {
               </Select>
 
               <Select value={f.shiftId || '__all__'} onValueChange={v => setInbound({ shiftId: v === '__all__' ? '' : v })}>
-                <SelectTrigger className="h-8 text-sm w-[100px]">
+                <SelectTrigger className="h-7 text-xs w-[90px] bg-white">
                   <SelectValue placeholder="Tất cả ca" />
                 </SelectTrigger>
                 <SelectContent>
@@ -626,7 +641,7 @@ export default function Inbound() {
               </Select>
             </div>
 
-            {/* Multi-select client filters */}
+            {/* Hàng 3: Material / Chu kỳ / Máy / Người nhập */}
             <div className="flex gap-2 flex-wrap items-center">
               <MultiSelectDropdown label="Material" options={materialOptions} searchable
                 selected={filterMaterials} onChange={v => setInbound({ filterMaterials: v })} />
@@ -634,13 +649,11 @@ export default function Inbound() {
                 selected={filterCycles} onChange={v => setInbound({ filterCycles: v })} />
               <MultiSelectDropdown label="Máy" options={machineOptions}
                 selected={filterMachines} onChange={v => setInbound({ filterMachines: v })} />
-
               <div className="relative">
                 <User className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
-                <Input className="pl-6 h-7 text-xs w-[130px]" placeholder="Người nhập…"
+                <Input className="pl-6 h-7 text-xs w-[120px] bg-white" placeholder="Người nhập…"
                   value={importerSearch} onChange={e => setInbound({ importerSearch: e.target.value })} />
               </div>
-
               {hasClientFilters && (
                 <button className="flex items-center gap-1 text-[10px] text-red-400 hover:text-red-600 px-1"
                   onClick={() => setInbound({ filterMaterials: [], filterCycles: [], filterMachines: [], importerSearch: '' })}>
@@ -648,7 +661,7 @@ export default function Inbound() {
                 </button>
               )}
             </div>
-          </>
+          </div>
         )}
 
         {/* Summary */}

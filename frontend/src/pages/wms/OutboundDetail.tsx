@@ -6,7 +6,7 @@ import { vi } from 'date-fns/locale'
 import { formatDateTime } from '@/utils/formatters'
 import {
   ArrowLeft, CheckCircle2,
-  Truck, Package, ClipboardList, Play, Pause, ChevronRight, Bookmark,
+  Truck, Package, ClipboardList, Play, Pause, ChevronRight, Bookmark, X,
 } from 'lucide-react'
 import { Button }  from '@/components/ui/button'
 import { Input }   from '@/components/ui/input'

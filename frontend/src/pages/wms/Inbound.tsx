@@ -38,6 +38,12 @@ const SUB_TYPE_LABELS: Record<string, string> = {
   BAN_THANH_PHAM:'Bán thành phẩm',
 }
 
+// Loại kho → Material.category (dùng để lọc danh sách hàng hóa)
+const SUB_TYPE_TO_CATEGORY: Record<string, string> = {
+  THANH_PHAM:  'TP',
+  NGUYEN_LIEU: 'NVL',
+}
+
 // ─── Create order dialog ─────────────────────────────────────
 
 type MatItem = { id: string; material_code: string; short_name: string | null; material_description: string }
@@ -76,7 +82,8 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
   }, [open, user?.warehouse_id])
 
   const { data: warehouses = [] } = useWarehouses(true)
-  const { data: materials  = [] } = useMaterials({ search: matSearch || undefined })
+  const matCategory = subType ? (SUB_TYPE_TO_CATEGORY[subType] ?? undefined) : undefined
+  const { data: materials  = [] } = useMaterials({ search: matSearch || undefined, category: matCategory })
   const { data: shifts     = [] } = useImportShifts()
   const { data: locations  = [] } = useLocationsReal(
     warehouseId ? { warehouse_id: warehouseId } : undefined
@@ -166,12 +173,30 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
             )}
           </div>
 
-          {/* Material – combobox tìm kiếm nội tuyến */}
+          {/* Loại kho – lọc cả vị trí lẫn danh sách hàng hóa */}
+          {subTypeOpts.length > 0 && (
+            <div className="space-y-2">
+              <Label>Loại kho</Label>
+              <Select value={subType || '__all__'} onValueChange={v => { setSubType(v === '__all__' ? '' : v); setLocationId(''); setMaterialId(''); setMatSearch('') }} disabled={!warehouseId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Tất cả loại" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">Tất cả loại</SelectItem>
+                  {subTypeOpts.map(st => (
+                    <SelectItem key={st} value={st}>{SUB_TYPE_LABELS[st] ?? st}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          {/* Material – combobox tìm kiếm, lọc theo loại kho nếu đã chọn */}
           <div className="space-y-2">
             <Label>Material <span className="text-red-500">*</span></Label>
             <div ref={matRef} className="relative">
               <Input
-                placeholder="Tìm mã hoặc tên hàng..."
+                placeholder={matCategory ? `Tìm hàng ${SUB_TYPE_LABELS[subType] ?? ''}…` : 'Tìm mã hoặc tên hàng...'}
                 value={matInputValue}
                 onChange={(e) => { setMatSearch(e.target.value); setMaterialId(''); setMatOpen(true) }}
                 onFocus={() => setMatOpen(true)}
@@ -197,24 +222,6 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
               )}
             </div>
           </div>
-
-          {/* Loại kho – lọc vị trí theo sub_type */}
-          {subTypeOpts.length > 0 && (
-            <div className="space-y-2">
-              <Label>Loại kho</Label>
-              <Select value={subType || '__all__'} onValueChange={v => { setSubType(v === '__all__' ? '' : v); setLocationId('') }} disabled={!warehouseId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Tất cả loại" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__all__">Tất cả loại</SelectItem>
-                  {subTypeOpts.map(st => (
-                    <SelectItem key={st} value={st}>{SUB_TYPE_LABELS[st] ?? st}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
 
           {/* Vị trí – required, color-coded by capacity */}
           <div className="space-y-2">

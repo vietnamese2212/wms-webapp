@@ -57,7 +57,7 @@ export function useManufacturers() {
   })
 }
 
-export function useMaterials(params?: { search?: string; manufacturer_id?: string }) {
+export function useMaterials(params?: { search?: string; manufacturer_id?: string; category?: string }) {
   return useQuery({
     queryKey: ['materials', params],
     queryFn: async () => {

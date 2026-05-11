@@ -7,7 +7,7 @@ export function formatDate(dateStr: string, fmt = 'dd/MM/yyyy') {
 }
 
 export function formatDateTime(dateStr: string) {
-  return format(parseISO(dateStr), 'dd/MM/yyyy HH:mm', { locale: vi })
+  return format(parseISO(dateStr), 'dd/MM/yyyy HH:mm:ss', { locale: vi })
 }
 
 export function formatTimeAgo(dateStr: string) {

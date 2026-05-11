@@ -611,7 +611,7 @@ export default function InboundDetail() {
                           {format(parseISO(entry.created_at), 'dd/MM/yy', { locale: vi })}
                         </TableCell>
                         <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap tabular-nums">
-                          {format(parseISO(entry.created_at), 'HH:mm', { locale: vi })}
+                          {format(parseISO(entry.created_at), 'HH:mm:ss', { locale: vi })}
                         </TableCell>
                         <TableCell className="px-2 py-1 text-[10px] text-slate-500">
                           {entry.manufacturer?.code ?? '—'}

@@ -405,7 +405,7 @@ export default function OutboundDetail() {
                 {gdo.container_number && <span><strong>Cont:</strong> {gdo.container_number}</span>}
                 {gdo.exporter_name    && <span><strong>Xuất:</strong> {gdo.exporter_name}</span>}
                 {gdo.loader_name      && <span><strong>Bốc:</strong> {gdo.loader_name}</span>}
-                <span className="text-slate-400">{format(parseISO(gdo.started_at), 'HH:mm dd/MM', { locale: vi })}</span>
+                <span className="text-slate-400">{format(parseISO(gdo.started_at), 'dd/MM/yyyy HH:mm:ss', { locale: vi })}</span>
               </div>
             </Card>
           )}
@@ -413,7 +413,7 @@ export default function OutboundDetail() {
           {gdo.assigned_at && !gdo.started_at && (
             <div className="text-xs text-slate-500">
               Giao đơn: <span className="font-medium">{gdo.assigned_by ?? '—'}</span>
-              <span className="text-slate-400 ml-1">{format(parseISO(gdo.assigned_at), 'HH:mm dd/MM', { locale: vi })}</span>
+              <span className="text-slate-400 ml-1">{format(parseISO(gdo.assigned_at), 'dd/MM/yyyy HH:mm:ss', { locale: vi })}</span>
             </div>
           )}
 

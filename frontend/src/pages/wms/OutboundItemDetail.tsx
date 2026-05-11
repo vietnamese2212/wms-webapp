@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
+import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import {
   ArrowLeft, QrCode, CheckCircle2, AlertTriangle, Package, Trash2,
 } from 'lucide-react'
@@ -457,10 +458,10 @@ export default function OutboundItemDetail() {
                           {se.cartons_scanned}
                         </TableCell>
                         <TableCell className="px-2 py-1.5 hidden sm:table-cell text-xs text-slate-500 whitespace-nowrap">
-                          {se.scanned_at ? format(parseISO(se.scanned_at), 'dd-MM-yy', { locale: vi }) : '—'}
+                          {se.scanned_at ? formatTimestampDate(se.scanned_at, true) : '—'}
                         </TableCell>
                         <TableCell className="px-2 py-1.5 hidden sm:table-cell text-xs text-slate-500 tabular-nums">
-                          {se.scanned_at ? format(parseISO(se.scanned_at), 'HH:mm', { locale: vi }) : '—'}
+                          {se.scanned_at ? formatTimestampTime(se.scanned_at, false) : '—'}
                         </TableCell>
                         <TableCell className="px-1 py-2">
                           <button

@@ -106,7 +106,9 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 - System timestamp (`created_at`, `updated_at`): UTC `new Date().toISOString()` là OK
 - Khi tính khoảng ngày theo giờ VN để query DB: `new Date(\`${vnDate}T00:00:00+07:00\`).toISOString()`
 - Format hiển thị cho user: `dd-MM-yyyy` (ngày) · `dd-MM-yyyy HH:mm:ss` (ngày giờ) — dùng `formatDate()` / `formatDateTime()` từ `utils/formatters.ts`
-- Table cell không gian hẹp: cho phép `dd-MM-yy` (ngày) và `HH:mm:ss` (giờ) trong cột riêng biệt
+- **Timestamp (`created_at`, `updated_at`, `started_at`, `scanned_at`…)**: dùng `formatDateTime()` / `formatTimestampDate()` / `formatTimestampTime()` — các hàm này dùng `Intl` API với `timeZone: 'Asia/Ho_Chi_Minh'`, không phụ thuộc timezone OS/browser
+- **Date-only (`import_date`, `delivery_date`…)**: dùng `formatDate()` (date-fns) — timezone-safe vì không có component giờ
+- Table cell không gian hẹp: `formatTimestampDate(str, true)` → `dd-MM-yy` · `formatTimestampTime(str)` → `HH:mm:ss`
 
 **QR parsing:**
 - Sau parse ngày: `isNaN(date.getTime())` trước khi dùng

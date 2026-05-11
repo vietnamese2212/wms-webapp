@@ -24,7 +24,7 @@ import {
   useLocationsReal, useUpdateInboundOrder, useEmployeeRecords,
 } from '@/api/hooks'
 import { useAuthStore }            from '@/stores/authStore'
-import { inboundOrderStatusLabel } from '@/utils/formatters'
+import { inboundOrderStatusLabel, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { playBeep, unlockAudio }   from '@/utils/audio'
 import type { InboundOrder, InboundOrderStatus, PalletEntry } from '@/types'
 
@@ -608,10 +608,10 @@ export default function InboundDetail() {
                           {entry.created_by_emp?.name ?? '—'}
                         </TableCell>
                         <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">
-                          {format(parseISO(entry.created_at), 'dd-MM-yy', { locale: vi })}
+                          {formatTimestampDate(entry.created_at, true)}
                         </TableCell>
                         <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap tabular-nums">
-                          {format(parseISO(entry.created_at), 'HH:mm:ss', { locale: vi })}
+                          {formatTimestampTime(entry.created_at)}
                         </TableCell>
                         <TableCell className="px-2 py-1 text-[10px] text-slate-500">
                           {entry.manufacturer?.code ?? '—'}

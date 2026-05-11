@@ -581,9 +581,17 @@ export function usePatchGDO() {
   return useMutation({
     mutationFn: ({ id, ...body }: { id: string; delivery_date?: string; status?: string }) =>
       apiClient.patch(`/wms/outbound/${id}`, body).then(r => r.data.data),
-    onSuccess: (_d, v) => {
+    onMutate: async ({ id, status }) => {
+      if (!status) return
+      await qc.cancelQueries({ queryKey: ['gdo', id] })
+      const prev = qc.getQueryData(['gdo', id])
+      qc.setQueryData(['gdo', id], (old: any) => old ? { ...old, status } : old)
+      return { prev, id }
+    },
+    onError: (_, __, ctx: any) => ctx && qc.setQueryData(['gdo', ctx.id], ctx.prev),
+    onSettled: (_, __, { id }) => {
       qc.invalidateQueries({ queryKey: ['gdos'] })
-      qc.invalidateQueries({ queryKey: ['gdo', v.id] })
+      qc.invalidateQueries({ queryKey: ['gdo', id] })
     },
   })
 }
@@ -637,9 +645,16 @@ export function useAssignGDO() {
   return useMutation({
     mutationFn: ({ id, assigned_by }: { id: string; assigned_by?: string }) =>
       apiClient.post(`/wms/outbound/${id}/assign`, { assigned_by }).then(r => r.data.data),
-    onSuccess: (_d, v) => {
+    onMutate: async ({ id }) => {
+      await qc.cancelQueries({ queryKey: ['gdo', id] })
+      const prev = qc.getQueryData(['gdo', id])
+      qc.setQueryData(['gdo', id], (old: any) => old ? { ...old, assigned_at: new Date().toISOString() } : old)
+      return { prev, id }
+    },
+    onError: (_, __, ctx: any) => ctx && qc.setQueryData(['gdo', ctx.id], ctx.prev),
+    onSettled: (_, __, { id }) => {
       qc.invalidateQueries({ queryKey: ['gdos'] })
-      qc.invalidateQueries({ queryKey: ['gdo', v.id] })
+      qc.invalidateQueries({ queryKey: ['gdo', id] })
     },
   })
 }
@@ -652,28 +667,46 @@ export function useStartGDO() {
       exporter_name?: string; loader_name?: string
       forklift_driver_id?: string; forklift_driver_names?: string
     }) => apiClient.post(`/wms/outbound/${id}/start`, body).then(r => r.data.data),
-    onSuccess: (_d, v) => {
+    onMutate: async ({ id }) => {
+      await qc.cancelQueries({ queryKey: ['gdo', id] })
+      const prev = qc.getQueryData(['gdo', id])
+      qc.setQueryData(['gdo', id], (old: any) => old ? { ...old, started_at: new Date().toISOString(), status: 'IN_PROGRESS' } : old)
+      return { prev, id }
+    },
+    onError: (_, __, ctx: any) => ctx && qc.setQueryData(['gdo', ctx.id], ctx.prev),
+    onSettled: (_, __, { id }) => {
       qc.invalidateQueries({ queryKey: ['gdos'] })
-      qc.invalidateQueries({ queryKey: ['gdo', v.id] })
+      qc.invalidateQueries({ queryKey: ['gdo', id] })
     },
   })
 }
 
-function makeUndoGDOMutation(path: string) {
+function makeUndoGDOMutation(path: string, optimisticFn?: (old: any) => any) {
   return function() {
     const qc = useQueryClient()
     return useMutation({
       mutationFn: (id: string) => apiClient.post(`/wms/outbound/${id}/${path}`).then(r => r.data.data),
-      onSuccess: (_d: unknown, id: string) => {
+      onMutate: async (id: string) => {
+        if (!optimisticFn) return
+        await qc.cancelQueries({ queryKey: ['gdo', id] })
+        const prev = qc.getQueryData(['gdo', id])
+        qc.setQueryData(['gdo', id], (old: any) => old ? optimisticFn(old) : old)
+        return { prev, id }
+      },
+      onError: (_, _id, ctx: any) => ctx?.prev && qc.setQueryData(['gdo', ctx.id], ctx.prev),
+      onSettled: (_d, _e, id) => {
         qc.invalidateQueries({ queryKey: ['gdos'] })
         qc.invalidateQueries({ queryKey: ['gdo', id] })
       },
     })
   }
 }
-export const useUnassignGDO   = makeUndoGDOMutation('unassign')
-export const useUnstartGDO    = makeUndoGDOMutation('unstart')
-export const useUncompleteGDO = makeUndoGDOMutation('uncomplete')
+export const useUnassignGDO   = makeUndoGDOMutation('unassign',
+  old => ({ ...old, assigned_at: null, assigned_by: null, status: 'PENDING' }))
+export const useUnstartGDO    = makeUndoGDOMutation('unstart',
+  old => ({ ...old, started_at: null, license_plate: null, container_number: null, exporter_name: null, loader_name: null, forklift_driver_id: null, forklift_driver_names: null, status: 'PENDING' }))
+export const useUncompleteGDO = makeUndoGDOMutation('uncomplete',
+  old => ({ ...old, status: 'IN_PROGRESS', completed_at: null }))
 
 export function useWarehouseEmployees(warehouse_id?: string | null) {
   return useQuery({

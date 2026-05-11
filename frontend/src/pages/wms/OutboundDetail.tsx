@@ -483,7 +483,7 @@ export default function OutboundDetail() {
                   {uncompleting ? '…' : 'Bỏ HT'}
                 </Button>
               )}
-              {canManage && !!gdo.started_at && gdo.status !== 'COMPLETED' && (
+              {canManage && !!gdo.started_at && gdo.status !== 'COMPLETED' && gdo.status !== 'PAUSED' && (
                 <Button size="sm" variant="outline"
                   className="h-7 text-xs gap-1 px-2 border-slate-300 text-slate-500 hover:bg-slate-50 disabled:opacity-40"
                   disabled={unstarting || hasScanEntries}

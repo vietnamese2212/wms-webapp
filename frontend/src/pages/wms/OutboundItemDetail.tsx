@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import type { AxiosError } from 'axios'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import {
-  ArrowLeft, QrCode, CheckCircle2, AlertTriangle, Package, Trash2,
+  ArrowLeft, QrCode, CheckCircle2, AlertTriangle, Package, Trash2, Pause,
 } from 'lucide-react'
 import { Button }  from '@/components/ui/button'
 import { Card }    from '@/components/ui/card'
@@ -260,8 +260,9 @@ export default function OutboundItemDetail() {
   const isDone   = item.status === 'COMPLETED'
   const scans    = item.scan_entries ?? []
 
-  // Workflow: can only scan if GDO has been started
-  const canScan  = !!gdo.started_at
+  // Workflow: can only scan if GDO has been started and not paused
+  const isPaused = gdo.status === 'PAUSED'
+  const canScan  = !!gdo.started_at && !isPaused
   const notStartedMsg = !gdo.started_at
     ? (!gdo.assigned_at ? 'Cần Giao đơn → Bắt đầu trước khi quét' : 'Cần Bắt đầu xuất kho trước khi quét')
     : null
@@ -321,7 +322,7 @@ export default function OutboundItemDetail() {
                 {isPOSM ? (
                   <span className="text-xs text-slate-400 italic">Tự bypass</span>
                 ) : isLoscam ? (
-                  <Button size="sm" variant="outline" className="h-7 text-xs" disabled={completing}
+                  <Button size="sm" variant="outline" className="h-7 text-xs" disabled={completing || isPaused}
                     onClick={() => manualComplete({ gdoId: gdoId!, itemId: item.id })}>
                     {completing ? '…' : 'Lưu thủ công'}
                   </Button>
@@ -375,8 +376,16 @@ export default function OutboundItemDetail() {
             </div>
           )}
 
+          {/* PAUSED banner */}
+          {isPaused && !isDone && (
+            <div className="rounded bg-red-50 border border-red-200 px-2 py-1 text-xs text-red-700 flex items-center gap-1.5">
+              <Pause className="h-3.5 w-3.5 shrink-0" />
+              Chuyến xe đang tạm dừng — không thể quét hay chỉnh sửa
+            </div>
+          )}
+
           {/* Not-started warning */}
-          {notStartedMsg && !isDone && !isPOSM && (
+          {notStartedMsg && !isDone && !isPOSM && !isPaused && (
             <div className="rounded bg-amber-50 border border-amber-200 px-2 py-1 text-xs text-amber-700 flex items-center gap-1.5">
               <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
               {notStartedMsg}
@@ -465,9 +474,10 @@ export default function OutboundItemDetail() {
                         </TableCell>
                         <TableCell className="px-1 py-2">
                           <button
-                            className="p-1 rounded text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors"
-                            title="Hủy pallet này"
-                            onClick={() => setConfirmScanId(se.id)}
+                            className={`p-1 rounded transition-colors ${isPaused ? 'text-slate-200 cursor-not-allowed' : 'text-slate-300 hover:text-red-500 hover:bg-red-50'}`}
+                            title={isPaused ? 'Chuyến đang tạm dừng' : 'Hủy pallet này'}
+                            disabled={isPaused}
+                            onClick={() => !isPaused && setConfirmScanId(se.id)}
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>

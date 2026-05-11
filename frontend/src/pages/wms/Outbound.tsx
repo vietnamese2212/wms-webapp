@@ -1,4 +1,4 @@
-import { useRef, useState, useMemo } from 'react'
+import { useRef, useState, useMemo, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
@@ -55,16 +55,21 @@ export default function Outbound() {
   const fileRef  = useRef<HTMLInputElement>(null)
 
   const { outbound: f, setOutbound } = useWmsFilterStore()
-  const [uploadErr,  setUploadErr]  = useState<string | null>(null)
-  const [uploadOk,   setUploadOk]   = useState<string | null>(null)
-  const [uploadWarn, setUploadWarn] = useState<string | null>(null)
+  const [uploadErr,       setUploadErr]       = useState<string | null>(null)
+  const [uploadOk,        setUploadOk]        = useState<string | null>(null)
+  const [uploadWarn,      setUploadWarn]      = useState<string | null>(null)
+  const [postUploadLoading, setPostUploadLoading] = useState(false)
 
-  const { data: gdos = [], isLoading } = useGDOs({
+  const { data: gdos = [], isLoading, isFetching } = useGDOs({
     warehouse_id: user?.warehouse_id || undefined,
     search: f.search || undefined,
     date:   f.date   || undefined,
   })
   const { mutate: uploadExcel, isPending: uploading } = useUploadGDOExcel()
+
+  useEffect(() => {
+    if (postUploadLoading && !isFetching) setPostUploadLoading(false)
+  }, [isFetching, postUploadLoading])
 
   const typeOptions = useMemo(() => [...new Set(gdos.map(g => g.export_type).filter(Boolean))] as string[], [gdos])
   const dvvtOptions = useMemo(() => [...new Set(gdos.map(g => g.dvvt).filter(Boolean))] as string[], [gdos])
@@ -92,6 +97,7 @@ export default function Outbound() {
     setUploadErr(null)
     setUploadOk(null)
     setUploadWarn(null)
+    setPostUploadLoading(true)
     uploadExcel(
       { file, warehouse_id: user?.warehouse_id || undefined },
       {
@@ -138,6 +144,7 @@ export default function Outbound() {
           }
         },
         onError: (err) => {
+          setPostUploadLoading(false)
           const msg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi upload file'
           setUploadErr(msg)
         },
@@ -262,7 +269,7 @@ export default function Outbound() {
 
       {/* Table */}
       <div className="flex-1 overflow-auto pb-20 lg:pb-4">
-        {isLoading ? (
+        {isLoading || postUploadLoading ? (
           <div className="p-4 space-y-2">
             {[1,2,3,4].map(i => <div key={i} className="h-10 rounded bg-slate-100 animate-pulse" />)}
           </div>

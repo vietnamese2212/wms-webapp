@@ -745,17 +745,19 @@ function InboundRow({ order, onClick }: { order: InboundOrder; onClick: () => vo
   return (
     <TableRow className={`cursor-pointer transition-colors ${bg} ${hover}`} onClick={onClick}>
       <TableCell className="px-2 py-1 whitespace-nowrap">
-        <div className="text-[10px] font-medium tabular-nums">{dateFull}</div>
-        {isRowToday && <div className="text-[9px] text-blue-600 font-medium">Hôm nay</div>}
+        <span className="text-[10px] font-medium tabular-nums">{dateFull}</span>
+        {isRowToday && <span className="ml-1 text-[9px] text-blue-600 font-medium">· Hôm nay</span>}
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         {order.shift
           ? <span className="text-[10px] font-medium">{order.shift.name}</span>
           : <span className="text-[10px] text-slate-300">—</span>}
       </TableCell>
-      <TableCell className="px-2 py-1 max-w-[120px]">
-        <div className="text-[10px] font-medium leading-tight truncate">{matName}</div>
-        <div className="text-[9px] text-slate-400 font-mono">{matCode}</div>
+      <TableCell className="px-2 py-1 max-w-[160px]">
+        <div className="text-[10px] leading-tight truncate">
+          <span className="font-medium">{matName}</span>
+          {matCode && <span className="ml-1 text-[9px] text-slate-400 font-mono">{matCode}</span>}
+        </div>
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         <span className={`text-[10px] font-semibold tabular-nums ${text}`}>{pallets}</span>

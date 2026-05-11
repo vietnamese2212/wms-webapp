@@ -433,7 +433,7 @@ async function mergePausedGDO(
         export_type:    String(row['Loại xuất']     ?? '').trim() || null,
         header_text:    String(row['HEADER TEXT']   ?? '').trim() || null,
         batch_required: String(row['Batch_Yêu cầu'] ?? '').trim() || null,
-        date_required:  parseExcelDate(row['%Date_Yêu cầu']) ?? null,
+        date_required:  parseDecimal(row['%Date_Yêu cầu']) || null,
         cs_responsible: String(row['CS phụ trách']  ?? '').trim() || null,
         updated_at: t,
       }
@@ -628,7 +628,7 @@ export async function uploadExcel(req: Request, res: Response) {
             export_type:    String(row['Loại xuất']     ?? '').trim() || null,
             header_text:    String(row['HEADER TEXT']   ?? '').trim() || null,
             batch_required: String(row['Batch_Yêu cầu'] ?? '').trim() || null,
-            date_required:  parseExcelDate(row['%Date_Yêu cầu']) ?? null,
+            date_required:  parseDecimal(row['%Date_Yêu cầu']) || null,
             cs_responsible: String(row['CS phụ trách']  ?? '').trim() || null,
             cartons_scanned: 0,
             status: material_type === 'POSM' ? 'COMPLETED' : 'PENDING',
@@ -701,6 +701,33 @@ export async function scanItem(req: Request, res: Response) {
 
     if (inv.qa_status_id && inv.qa_status?.code !== 'OK') {
       return fail(res, `Pallet bị giữ QA: ${inv.qa_status?.name ?? inv.qa_status_id} — không được xuất`, 400)
+    }
+
+    // Kiểm tra % shelf life còn lại nếu item có yêu cầu
+    const dateReqPct = Number(item.date_required ?? 0)
+    if (dateReqPct > 0) {
+      const matId = item.material_id ?? inv.material_id
+      const { data: mat } = matId
+        ? await (supabase.from('Material') as any).select('shelf_life_days').eq('id', matId).single()
+        : { data: null }
+      const shelfLifeDays = mat?.shelf_life_days ? Number(mat.shelf_life_days) : 0
+      if (!shelfLifeDays) {
+        return fail(res, `Mặt hàng chưa có Shelf Life — không thể kiểm tra %Date`, 400)
+      }
+      const prodDate = inv.production_date ? new Date(inv.production_date) : null
+      if (!prodDate || isNaN(prodDate.getTime())) {
+        return fail(res, `Pallet "${qr}" không có NSX — không thể kiểm tra %Date`, 400)
+      }
+      const today      = new Date()
+      const expiryMs   = prodDate.getTime() + shelfLifeDays * 86_400_000
+      const remainDays = (expiryMs - today.getTime()) / 86_400_000
+      const remainPct  = (remainDays / shelfLifeDays) * 100
+      if (remainPct < dateReqPct) {
+        return fail(res,
+          `%Date còn lại: ${Math.floor(remainPct)}% < yêu cầu ${dateReqPct}% (NSX ${inv.production_date}, HSD ${shelfLifeDays} ngày)`,
+          400
+        )
+      }
     }
 
     if (item.material_id && inv.material_id !== item.material_id) {

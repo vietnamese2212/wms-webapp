@@ -404,7 +404,7 @@ export interface OutboundItem {
   export_type:        string | null
   header_text:        string | null
   batch_required:     string | null
-  date_required:      string | null
+  date_required:      number | null
   cs_responsible:     string | null
   cartons_scanned:    number
   status:             OutboundStatus

@@ -255,8 +255,10 @@ function ItemsTable({ doRecords, gdoId }: {
   // Determine which optional columns have data
   const hasHeaderText    = allItems.some(i => i.header_text)
   const hasBatchRequired = allItems.some(i => i.batch_required)
-  const hasDateRequired  = allItems.some(i => i.date_required)
+  const hasDateRequired  = allItems.some(i => i.date_required != null && i.date_required > 0)
   const hasBoxes         = allItems.some(i => i.boxes_display > 0)
+  const hasLoosePicking  = allItems.some(i => i.loose_picking > 0)
+  const hasCsResp        = allItems.some(i => i.cs_responsible)
 
   return (
     <Table className="min-w-full">
@@ -266,9 +268,11 @@ function ItemsTable({ doRecords, gdoId }: {
             <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Tên hàng</TableHead>
             <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Thùng</TableHead>
             {hasBoxes         && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Hộp</TableHead>}
+            {hasLoosePicking  && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Nhặt lẻ</TableHead>}
             {hasHeaderText    && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Header</TableHead>}
             {hasBatchRequired && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Batch</TableHead>}
-            {hasDateRequired  && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Date req.</TableHead>}
+            {hasDateRequired  && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">%Date</TableHead>}
+            {hasCsResp        && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">CS</TableHead>}
             <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Số DO</TableHead>
             <TableHead className="w-5 px-1 py-1.5" />
           </TableRow>
@@ -302,16 +306,23 @@ function ItemsTable({ doRecords, gdoId }: {
                   <span className={`text-[10px] font-semibold tabular-nums ${textCls}`}>{item.cartons_ordered}</span>
                 </TableCell>
                 {hasBoxes && (
-                  <TableCell className={`px-2 py-1 align-top text-right`}>
+                  <TableCell className="px-2 py-1 align-top text-right">
                     {item.boxes_display > 0
                       ? <span className={`text-[10px] tabular-nums ${textCls}`}>{item.boxes_display}</span>
+                      : <span className="text-[10px] text-slate-300">—</span>}
+                  </TableCell>
+                )}
+                {hasLoosePicking && (
+                  <TableCell className="px-2 py-1 align-top text-right">
+                    {item.loose_picking > 0
+                      ? <span className={`text-[10px] tabular-nums ${textCls}`}>{item.loose_picking}</span>
                       : <span className="text-[10px] text-slate-300">—</span>}
                   </TableCell>
                 )}
                 {hasHeaderText && (
                   <TableCell className="px-2 py-1 align-top">
                     {item.header_text
-                      ? <span className="text-[10px] text-slate-600">{item.header_text}</span>
+                      ? <span className="text-[10px] text-slate-600 whitespace-nowrap">{item.header_text}</span>
                       : <span className="text-[10px] text-slate-300">—</span>}
                   </TableCell>
                 )}
@@ -323,9 +334,16 @@ function ItemsTable({ doRecords, gdoId }: {
                   </TableCell>
                 )}
                 {hasDateRequired && (
+                  <TableCell className="px-2 py-1 align-top text-right">
+                    {item.date_required != null && item.date_required > 0
+                      ? <span className="text-[10px] font-semibold tabular-nums text-amber-700">{item.date_required}%</span>
+                      : <span className="text-[10px] text-slate-300">—</span>}
+                  </TableCell>
+                )}
+                {hasCsResp && (
                   <TableCell className="px-2 py-1 align-top">
-                    {item.date_required
-                      ? <span className="text-[10px] text-slate-600">{format(parseISO(item.date_required), 'dd-MM-yy', { locale: vi })}</span>
+                    {item.cs_responsible
+                      ? <span className="text-[10px] text-slate-600">{item.cs_responsible}</span>
                       : <span className="text-[10px] text-slate-300">—</span>}
                   </TableCell>
                 )}

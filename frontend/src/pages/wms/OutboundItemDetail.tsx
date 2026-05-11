@@ -1,8 +1,6 @@
 import { useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import type { AxiosError } from 'axios'
-import { format, parseISO } from 'date-fns'
-import { vi } from 'date-fns/locale'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import {
   ArrowLeft, QrCode, CheckCircle2, AlertTriangle, Package, Trash2,
@@ -352,6 +350,9 @@ export default function OutboundItemDetail() {
               {item.boxes_display > 0 && (
                 <span className="ml-1">· <span className="font-medium text-slate-700">{item.boxes_display}</span> hộp</span>
               )}
+              {item.loose_picking > 0 && (
+                <span className="ml-1">· nhặt lẻ <span className="font-medium text-slate-700">{item.loose_picking}</span></span>
+              )}
             </span>
             {item.pallets_estimated > 0 && (
               <span><span className="font-medium text-slate-700">{item.pallets_estimated}</span> pallet ước tính</span>
@@ -360,13 +361,13 @@ export default function OutboundItemDetail() {
               <span className="text-sm bg-slate-100 text-slate-600 rounded px-1.5 py-0.5">{item.material_type}</span>
             )}
             {item.header_text && (
-              <span className="text-lg text-slate-700">{item.header_text}</span>
+              <span className="text-lg text-slate-700 whitespace-nowrap">{item.header_text}</span>
             )}
             {item.batch_required && (
-              <span>Batch: <span className="font-medium text-slate-700">{item.batch_required}</span></span>
+              <span className="whitespace-nowrap">Batch: <span className="font-medium text-slate-700">{item.batch_required}</span></span>
             )}
-            {item.date_required && (
-              <span>Date req: <span className="font-medium text-slate-700">{format(parseISO(item.date_required), 'dd-MM-yyyy', { locale: vi })}</span></span>
+            {item.date_required != null && item.date_required > 0 && (
+              <span className="whitespace-nowrap">%Date yêu cầu: <span className="font-semibold text-amber-700">{item.date_required}%</span></span>
             )}
           </div>
 

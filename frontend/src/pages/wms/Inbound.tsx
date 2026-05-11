@@ -51,7 +51,7 @@ type MatItem = { id: string; material_code: string; short_name: string | null; m
 function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const navigate  = useNavigate()
   const user      = useAuthStore((s) => s.user)
-  const isOWN     = user?.role === 'OWN'
+  const canPickWarehouse = !user?.warehouse_id
 
   const [warehouseId, setWarehouseId] = useState('')
   const [subType,     setSubType]     = useState('')
@@ -165,10 +165,10 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
             </div>
           )}
 
-          {/* Kho – auto-fill theo user, chỉ OWN mới đổi được */}
+          {/* Kho – tự do nếu user không có warehouse_id cố định */}
           <div className="space-y-2">
             <Label>Kho <span className="text-red-500">*</span></Label>
-            {isOWN ? (
+            {canPickWarehouse ? (
               <Select value={warehouseId} onValueChange={v => { setWarehouseId(v); setSubType(''); setLocationId(''); setMaterialId(''); setMatSearch('') }}>
                 <SelectTrigger><SelectValue placeholder="Chọn kho" /></SelectTrigger>
                 <SelectContent>

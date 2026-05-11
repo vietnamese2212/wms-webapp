@@ -45,18 +45,25 @@ async function attachCount(order: Record<string, unknown>): Promise<Record<strin
   const locationId = order.location_id as string | null
 
   const [entriesRes, slotsRes] = await Promise.all([
-    supabase.from('InventoryEntry').select('cartons_imported').eq('import_order_id', order.id as string),
+    supabase.from('InventoryEntry')
+      .select('cartons_imported, cycle, machine_code')
+      .eq('import_order_id', order.id as string),
     locationId
       ? supabase.from('InventoryEntry').select('*', { count: 'exact', head: true })
           .eq('location_id', locationId).eq('stack_layer', 1).in('status', ['IN_STOCK', 'PARTIAL'])
       : Promise.resolve({ count: 0, data: null, error: null }),
   ])
 
-  const entries = (entriesRes.data ?? []) as { cartons_imported: number }[]
+  const entries = (entriesRes.data ?? []) as { cartons_imported: number; cycle: string | null; machine_code: string | null }[]
+  const cycles       = [...new Set(entries.map(e => e.cycle).filter((c): c is string => !!c))]
+  const machine_codes = [...new Set(entries.map(e => e.machine_code).filter((m): m is string => !!m))]
+
   return {
     ...order,
     _count: { inventory_entries: entries.length },
     total_cartons: entries.reduce((sum, e) => sum + (e.cartons_imported || 0), 0),
+    cycles,
+    machine_codes,
     location_used_slots: slotsRes.count ?? 0,
   }
 }
@@ -65,18 +72,28 @@ async function attachCount(order: Record<string, unknown>): Promise<Record<strin
 
 export async function listOrders(req: Request, res: Response) {
   try {
-    const { warehouse_id, status, material_id, search, date, shift_id } = req.query as Record<string, string>
+    const { warehouse_id, status, material_id, search, date, date_from, date_to, shift_id } = req.query as Record<string, string>
 
-    let query = supabase.from('ProductionImport').select(ORDER_SELECT).order('created_at', { ascending: false })
+    let query = supabase.from('ProductionImport').select(ORDER_SELECT)
+      .order('import_date', { ascending: false })
+      .order('created_at',  { ascending: false })
 
     if (warehouse_id) query = query.eq('warehouse_id', warehouse_id)
     if (status)       query = query.eq('status', status)
     if (material_id)  query = query.eq('material_id', material_id)
-    if (date)         query = query.eq('import_date', date)
     if (shift_id)     query = query.eq('shift_id', shift_id)
 
+    // Date range – support legacy ?date= and new ?date_from= / ?date_to=
+    const from = date_from || date
+    const to   = date_to   || date
+    if (from) query = query.gte('import_date', from)
+    if (to) {
+      const [y, m, d] = to.split('-').map(Number)
+      const nextDay = new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10)
+      query = query.lt('import_date', nextDay)
+    }
+
     if (search) {
-      // Step 1: find material IDs matching the search term
       const { data: mats } = await supabase
         .from('Material').select('id')
         .or(`material_code.ilike.%${search}%,short_name.ilike.%${search}%`)
@@ -90,7 +107,6 @@ export async function listOrders(req: Request, res: Response) {
     const { data, error } = await query
     if (error) throw error
 
-    // Add _count.inventory_entries for each order in parallel
     const result = await Promise.all((data ?? []).map(attachCount))
     ok(res, result)
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }

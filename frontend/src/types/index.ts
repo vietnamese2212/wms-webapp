@@ -275,6 +275,8 @@ export interface InboundOrder {
   imported_by_emp: { id: string; name: string } | null
   _count:              { inventory_entries: number }
   total_cartons?:      number
+  cycles?:             string[]
+  machine_codes?:      string[]
   location_used_slots?: number
   created_at:      string
   updated_at:      string

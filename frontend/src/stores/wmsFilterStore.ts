@@ -12,8 +12,13 @@ interface OutboundFilters {
 }
 interface InboundFilters {
   search: string
-  date: string
+  dateFrom: string
+  dateTo: string
   shiftId: string
+  filterMaterials: string[]
+  filterCycles: string[]
+  filterMachines: string[]
+  importerSearch: string
 }
 interface InventoryFilters {
   search: string        // pallet_code search
@@ -37,7 +42,7 @@ export const useWmsFilterStore = create<WmsFilterState>()(
   persist(
     (set) => ({
       outbound:  { search: '', date: today(), filterType: '', filterDvvt: '', filterNpp: '' },
-      inbound:   { search: '', date: today(), shiftId: '' },
+      inbound:   { search: '', dateFrom: today(), dateTo: today(), shiftId: '', filterMaterials: [], filterCycles: [], filterMachines: [], importerSearch: '' },
       inventory: { search: '', materialSearch: '', locationCode: '', qaStatusId: '', status: '', warehouseId: '', page: 1 },
       setOutbound:  (f) => set(s => ({ outbound:  { ...s.outbound,  ...f } })),
       setInbound:   (f) => set(s => ({ inbound:   { ...s.inbound,   ...f } })),

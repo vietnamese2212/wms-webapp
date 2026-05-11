@@ -428,11 +428,6 @@ export default function OutboundItemDetail() {
               Pallet đã quét
               <span className="ml-2 text-xs font-normal text-slate-400">{scans.length} pallet</span>
             </h2>
-            {!isDone && !isPOSM && !isLoscam && canScan && (
-              <Button size="sm" className="h-8 gap-1.5" onClick={openScan}>
-                <QrCode className="h-3.5 w-3.5" /> Quét pallet
-              </Button>
-            )}
           </div>
 
           <Card>

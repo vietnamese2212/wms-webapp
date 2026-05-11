@@ -38,10 +38,19 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
         onScan(decodedText)
       }
 
+      const scanConfig = {
+        fps: 15,
+        qrbox: (w: number, h: number) => {
+          const side = Math.floor(Math.min(w, h) * 0.85)
+          return { width: side, height: side }
+        },
+        aspectRatio: 1.0,
+      }
+
       scanner
         .start(
-          { facingMode: 'environment' },
-          { fps: 10, qrbox: { width: 260, height: 260 } },
+          { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
+          scanConfig,
           onDecode,
           () => {},
         )
@@ -49,8 +58,8 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
           if (String(err).includes('NotFoundError') || String(err).includes('OverconstrainedError')) {
             scanner
               .start(
-                { facingMode: 'user' },
-                { fps: 10, qrbox: { width: 260, height: 260 } },
+                { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
+                scanConfig,
                 onDecode,
                 () => {},
               )
@@ -73,7 +82,7 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
           {/* Scanning overlay */}
           {!error && (
             <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-              <div className="w-64 h-64 border-2 border-blue-400 rounded-lg animate-pulse" />
+              <div className="w-[85%] aspect-square border-2 border-blue-400 rounded-lg animate-pulse" />
             </div>
           )}
 

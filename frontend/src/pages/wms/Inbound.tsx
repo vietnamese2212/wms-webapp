@@ -713,8 +713,7 @@ export default function Inbound() {
         ) : (
           <>
             {/* Orders table */}
-            <div className="overflow-x-auto">
-              <Table className="min-w-full">
+            <Table className="min-w-full">
                 <TableHeader>
                   <TableRow>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Ngày nhập</TableHead>
@@ -733,7 +732,6 @@ export default function Inbound() {
                   ))}
                 </TableBody>
               </Table>
-            </div>
           </>
         )}
       </div>

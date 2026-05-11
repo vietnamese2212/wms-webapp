@@ -121,8 +121,7 @@ export default function Locations() {
         ) : filtered.length === 0 ? (
           <EmptyState icon={MapPin} title="Không tìm thấy vị trí" />
         ) : (
-          <div className="overflow-x-auto">
-            <Table className="min-w-full">
+          <Table className="min-w-full">
               <TableHeader>
                 <TableRow className="bg-slate-50">
                   <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Mã vị trí</TableHead>
@@ -183,7 +182,6 @@ export default function Locations() {
                 })}
               </TableBody>
             </Table>
-          </div>
         )}
       </div>
     </div>

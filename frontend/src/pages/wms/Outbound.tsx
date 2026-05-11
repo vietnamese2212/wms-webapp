@@ -194,8 +194,7 @@ export default function Outbound() {
             {!f.date && <p className="text-xs">Upload file Excel để bắt đầu</p>}
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <Table className="min-w-full">
+          <Table className="min-w-full">
               <TableHeader>
                 <TableRow className="bg-slate-50">
                   <TableHead className="px-1.5 py-1.5 w-7" />
@@ -214,7 +213,6 @@ export default function Outbound() {
                 {filtered.map(gdo => <GDORow key={gdo.id} gdo={gdo} onClick={() => navigate(`/wms/outbound/${gdo.id}`)} />)}
               </TableBody>
             </Table>
-          </div>
         )}
       </div>
     </div>

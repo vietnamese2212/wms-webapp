@@ -432,8 +432,7 @@ export default function OutboundItemDetail() {
                 )}
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <Table>
+              <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead className="px-3 py-1 text-[11px]">Mã pallet</TableHead>
@@ -471,7 +470,6 @@ export default function OutboundItemDetail() {
                     ))}
                   </TableBody>
                 </Table>
-              </div>
             )}
           </Card>
         </div>

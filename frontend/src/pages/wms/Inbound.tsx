@@ -395,6 +395,9 @@ function MultiSelectDropdown({ label, options, selected, onChange, searchable }:
   )
 }
 
+// Ca sort order: Ca 1 → Ca 2 → Ca 3 → HC → unknown last
+const SHIFT_ORDER: Record<string, number> = { 'Ca 1': 0, 'Ca 2': 1, 'Ca 3': 2, 'HC': 3 }
+
 // ─── Client-side cascade filter ───────────────────────────────
 
 function applyClientFilters(
@@ -446,6 +449,20 @@ export default function Inbound() {
   const filteredOrders = useMemo(
     () => applyClientFilters(serverOrders, filterMaterials, filterCycles, filterMachines, importerSearch),
     [serverOrders, filterMaterials, filterCycles, filterMachines, importerSearch]
+  )
+
+  // Sort: ngày desc → ca asc (Ca 1, Ca 2, Ca 3, HC) → giờ tạo asc
+  const sortedOrders = useMemo(() =>
+    [...filteredOrders].sort((a, b) => {
+      const dateA = a.import_date ?? ''
+      const dateB = b.import_date ?? ''
+      if (dateA !== dateB) return dateB.localeCompare(dateA)
+      const sA = SHIFT_ORDER[a.shift?.name ?? ''] ?? 99
+      const sB = SHIFT_ORDER[b.shift?.name ?? ''] ?? 99
+      if (sA !== sB) return sA - sB
+      return a.created_at.localeCompare(b.created_at)
+    }),
+    [filteredOrders]
   )
 
   // Options for each multi-select — computed from subset excluding that filter's own selection
@@ -711,7 +728,7 @@ export default function Inbound() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredOrders.map(order => (
+                  {sortedOrders.map(order => (
                     <InboundRow key={order.id} order={order} onClick={() => navigate(`/wms/inbound/${order.id}`)} />
                   ))}
                 </TableBody>

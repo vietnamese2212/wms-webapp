@@ -253,7 +253,6 @@ function ItemsTable({ doRecords, gdoId }: {
   )
 
   // Determine which optional columns have data
-  const hasHeaderText    = allItems.some(i => i.header_text)
   const hasBatchRequired = allItems.some(i => i.batch_required)
   const hasDateRequired  = allItems.some(i => i.date_required != null && i.date_required > 0)
   const hasBoxes         = allItems.some(i => i.boxes_display > 0)
@@ -269,7 +268,6 @@ function ItemsTable({ doRecords, gdoId }: {
             <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Thùng</TableHead>
             {hasBoxes         && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Hộp</TableHead>}
             {hasLoosePicking  && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Nhặt lẻ</TableHead>}
-            {hasHeaderText    && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Header</TableHead>}
             {hasBatchRequired && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Batch</TableHead>}
             {hasDateRequired  && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">%Date</TableHead>}
             {hasCsResp        && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">CS</TableHead>}
@@ -316,13 +314,6 @@ function ItemsTable({ doRecords, gdoId }: {
                   <TableCell className="px-2 py-1 align-top text-right">
                     {item.loose_picking > 0
                       ? <span className={`text-[10px] tabular-nums ${textCls}`}>{item.loose_picking}</span>
-                      : <span className="text-[10px] text-slate-300">—</span>}
-                  </TableCell>
-                )}
-                {hasHeaderText && (
-                  <TableCell className="px-2 py-1 align-top">
-                    {item.header_text
-                      ? <span className="text-[10px] text-slate-600 whitespace-nowrap">{item.header_text}</span>
                       : <span className="text-[10px] text-slate-300">—</span>}
                   </TableCell>
                 )}

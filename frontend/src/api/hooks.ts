@@ -147,7 +147,7 @@ function lsKey(prefix: string, params?: Record<string, string | undefined>): str
   return `${prefix}:${JSON.stringify(clean)}`
 }
 
-export function useInboundOrders(params?: { warehouse_id?: string; status?: string; search?: string; date?: string; date_from?: string; date_to?: string; shift_id?: string }) {
+export function useInboundOrders(params?: { warehouse_id?: string; status?: string; search?: string; date?: string; date_from?: string; date_to?: string; shift_id?: string; material_category?: string }) {
   const key = lsKey('wms:io', params)
   return useQuery({
     queryKey: ['inbound-orders', params],

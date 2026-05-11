@@ -15,17 +15,19 @@ interface InboundFilters {
   dateFrom: string
   dateTo: string
   shiftId: string
+  warehouseId: string
+  materialCategory: string
   filterMaterials: string[]
   filterCycles: string[]
   filterMachines: string[]
   importerSearch: string
 }
 interface InventoryFilters {
-  search: string        // pallet_code search
+  search: string
   materialSearch: string
   locationCode: string
   qaStatusId: string
-  status: string        // '' = IN_STOCK+PARTIAL (default), 'ALL', or specific status
+  status: string
   warehouseId: string
   page: number
 }
@@ -38,16 +40,22 @@ interface WmsFilterState {
   setInventory: (f: Partial<InventoryFilters>) => void
 }
 
+const INBOUND_DEFAULT: InboundFilters = {
+  search: '', dateFrom: today(), dateTo: today(), shiftId: '',
+  warehouseId: '', materialCategory: '',
+  filterMaterials: [], filterCycles: [], filterMachines: [], importerSearch: '',
+}
+
 export const useWmsFilterStore = create<WmsFilterState>()(
   persist(
     (set) => ({
       outbound:  { search: '', date: today(), filterType: '', filterDvvt: '', filterNpp: '' },
-      inbound:   { search: '', dateFrom: today(), dateTo: today(), shiftId: '', filterMaterials: [], filterCycles: [], filterMachines: [], importerSearch: '' },
+      inbound:   INBOUND_DEFAULT,
       inventory: { search: '', materialSearch: '', locationCode: '', qaStatusId: '', status: '', warehouseId: '', page: 1 },
       setOutbound:  (f) => set(s => ({ outbound:  { ...s.outbound,  ...f } })),
-      setInbound:   (f) => set(s => ({ inbound:   { ...s.inbound,   ...f } })),
+      setInbound:   (f) => set(s => ({ inbound:   { ...INBOUND_DEFAULT, ...s.inbound, ...f } })),
       setInventory: (f) => set(s => ({ inventory: { ...s.inventory, ...f } })),
     }),
-    { name: 'wms-filters', storage: createJSONStorage(() => sessionStorage) }
+    { name: 'wms-filters-v2', storage: createJSONStorage(() => sessionStorage) }
   )
 )

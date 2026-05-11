@@ -72,16 +72,25 @@ async function attachCount(order: Record<string, unknown>): Promise<Record<strin
 
 export async function listOrders(req: Request, res: Response) {
   try {
-    const { warehouse_id, status, material_id, search, date, date_from, date_to, shift_id } = req.query as Record<string, string>
+    const { warehouse_id, status, material_id, material_category, search, date, date_from, date_to, shift_id } = req.query as Record<string, string>
 
     let query = supabase.from('ProductionImport').select(ORDER_SELECT)
       .order('import_date', { ascending: false })
       .order('created_at',  { ascending: false })
 
-    if (warehouse_id) query = query.eq('warehouse_id', warehouse_id)
-    if (status)       query = query.eq('status', status)
-    if (material_id)  query = query.eq('material_id', material_id)
-    if (shift_id)     query = query.eq('shift_id', shift_id)
+    if (warehouse_id)      query = query.eq('warehouse_id', warehouse_id)
+    if (status)            query = query.eq('status', status)
+    if (material_id)       query = query.eq('material_id', material_id)
+    if (shift_id)          query = query.eq('shift_id', shift_id)
+
+    // Filter by material category (Loại kho: TP / NVL / POSM / BAO_BI)
+    if (material_category) {
+      const { data: catMats } = await supabase
+        .from('Material').select('id').eq('category', material_category)
+      const catMatIds = (catMats ?? []).map((m: { id: string }) => m.id)
+      if (catMatIds.length === 0) { ok(res, []); return }
+      query = query.in('material_id', catMatIds)
+    }
 
     // Date range – support legacy ?date= and new ?date_from= / ?date_to=
     const from = date_from || date

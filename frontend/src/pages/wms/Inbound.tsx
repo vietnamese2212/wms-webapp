@@ -350,17 +350,26 @@ export default function Inbound() {
   const [showNew,  setShowNew]  = useState(false)
   const [locOpen,  setLocOpen]  = useState(true)
 
-  const { data: shifts = [] } = useImportShifts()
+  const { data: shifts     = [] } = useImportShifts()
+  const { data: warehouses = [] } = useWarehouses(true)
+
+  // Resolve effective warehouse: store override → user's warehouse
+  const effectiveWarehouseId = f.warehouseId || user?.warehouse_id || undefined
 
   const { data: serverOrders = [], isLoading } = useInboundOrders({
-    warehouse_id: user?.warehouse_id || undefined,
-    search:       f.search    || undefined,
-    date_from:    f.dateFrom  || undefined,
-    date_to:      f.dateTo    || undefined,
-    shift_id:     f.shiftId   || undefined,
+    warehouse_id:      effectiveWarehouseId,
+    search:            f.search           || undefined,
+    date_from:         f.dateFrom         || undefined,
+    date_to:           f.dateTo           || undefined,
+    shift_id:          f.shiftId          || undefined,
+    material_category: f.materialCategory || undefined,
   })
 
-  const { filterMaterials, filterCycles, filterMachines, importerSearch } = f
+  // Null-safe defaults for all array/string fields (guards against stale session state)
+  const filterMaterials = f.filterMaterials ?? []
+  const filterCycles    = f.filterCycles    ?? []
+  const filterMachines  = f.filterMachines  ?? []
+  const importerSearch  = f.importerSearch  ?? ''
 
   // Cascade-filtered orders
   const filteredOrders = useMemo(
@@ -460,8 +469,33 @@ export default function Inbound() {
             )}
           </div>
 
+          <Select value={f.warehouseId || '__all__'} onValueChange={v => setInbound({ warehouseId: v === '__all__' ? '' : v, filterMaterials: [], filterCycles: [], filterMachines: [] })}>
+            <SelectTrigger className="h-8 text-sm w-[120px]">
+              <SelectValue placeholder="Tất cả kho" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">Tất cả kho</SelectItem>
+              {(warehouses as { id: string; name: string }[]).map(w => (
+                <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select value={f.materialCategory || '__all__'} onValueChange={v => setInbound({ materialCategory: v === '__all__' ? '' : v, filterMaterials: [], filterCycles: [], filterMachines: [] })}>
+            <SelectTrigger className="h-8 text-sm w-[130px]">
+              <SelectValue placeholder="Loại kho" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">Tất cả loại</SelectItem>
+              <SelectItem value="TP">Thành phẩm</SelectItem>
+              <SelectItem value="NVL">Nguyên vật liệu</SelectItem>
+              <SelectItem value="POSM">POSM</SelectItem>
+              <SelectItem value="BAO_BI">Bao bì</SelectItem>
+            </SelectContent>
+          </Select>
+
           <Select value={f.shiftId || '__all__'} onValueChange={v => setInbound({ shiftId: v === '__all__' ? '' : v })}>
-            <SelectTrigger className="h-8 text-sm w-[110px]">
+            <SelectTrigger className="h-8 text-sm w-[100px]">
               <SelectValue placeholder="Tất cả ca" />
             </SelectTrigger>
             <SelectContent>

@@ -108,8 +108,32 @@ export default function Outbound() {
           setUploadOk(okParts || (skipped.length ? undefined : 'Không có xe mới') as any)
 
           if (skipped.length) {
+            type SkippedItem = { group_code: string; reason?: string }
+            const CATS: { key: string; label: string; match: (r: string) => boolean; detailPrefix?: string }[] = [
+              { key: 'format',    label: 'Mã xe sai format ngày ddmmyy_',          match: r => r.includes('tiền tố ngày ddmmyy_') },
+              { key: 'date',      label: 'Ngày xuất không hợp lệ',                 match: r => r.includes('Ngày xuất không hợp lệ'), detailPrefix: 'Ngày xuất không hợp lệ hoặc trống: ' },
+              { key: 'mat',       label: 'Mã hàng không có trong hệ thống',        match: r => r.includes('Mã hàng không tìm thấy'),  detailPrefix: 'Mã hàng không tìm thấy: ' },
+              { key: 'wh',        label: 'Kho xuất không tìm thấy',                match: r => r.includes('tìm thấy kho') || r.includes('Thiếu thông tin kho') },
+              { key: 'completed', label: 'Đã hoàn thành — không thể ghi đè',       match: r => r.includes('Đã hoàn thành') },
+              { key: 'progress',  label: 'Đang xuất — chỉ upload được khi PAUSED', match: r => r.includes('Đang xuất') },
+              { key: 'missing',   label: 'Mã hàng đã xuất bị xóa khỏi file mới',  match: r => r.includes('đã xuất không có trong file'), detailPrefix: 'Mã hàng đã xuất không có trong file mới: ' },
+              { key: 'cartons',   label: 'Số thùng mới nhỏ hơn đã xuất',          match: r => r.includes('Số thùng mới nhỏ hơn'),       detailPrefix: 'Số thùng mới nhỏ hơn đã xuất: ' },
+              { key: 'other',     label: 'Lỗi khác',                               match: () => true },
+            ]
+            const groups = new Map<string, { label: string; detailPrefix?: string; items: SkippedItem[] }>()
+            for (const item of skipped) {
+              const cat = CATS.find(c => c.match(item.reason ?? ''))!
+              if (!groups.has(cat.key)) groups.set(cat.key, { label: cat.label, detailPrefix: cat.detailPrefix, items: [] })
+              groups.get(cat.key)!.items.push(item)
+            }
             const lines = [`Bỏ qua ${skipped.length} chuyến xe:`]
-            skipped.forEach(s => lines.push(`• GDO ${s.group_code}: ${s.reason}`))
+            for (const { label, detailPrefix, items } of groups.values()) {
+              lines.push(`\n[${label}] — ${items.length} xe:`)
+              for (const item of items) {
+                const detail = detailPrefix ? (item.reason ?? '').replace(detailPrefix, '').trim() : ''
+                lines.push(detail ? `  • ${item.group_code}: ${detail}` : `  • ${item.group_code}`)
+              }
+            }
             setUploadWarn(lines.join('\n'))
           }
         },

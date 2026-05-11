@@ -43,10 +43,10 @@ function ProgressBar({ scanned, ordered }: { scanned: number; ordered: number })
   const cls = pct >= 100 ? 'bg-green-500' : pct > 0 ? 'bg-amber-500' : 'bg-slate-200'
   return (
     <div className="flex items-center gap-2">
-      <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
+      <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
         <div className={`h-full rounded-full transition-all ${cls}`} style={{ width: `${pct}%` }} />
       </div>
-      <span className={`text-lg tabular-nums font-medium ${pct >= 100 ? 'text-green-700 font-semibold' : 'text-slate-600'}`}>
+      <span className={`text-sm tabular-nums font-medium ${pct >= 100 ? 'text-green-700 font-semibold' : 'text-slate-600'}`}>
         {scanned}/{ordered} thùng
       </span>
     </div>
@@ -300,33 +300,33 @@ export default function OutboundItemDetail() {
 
       <div className="flex flex-col h-full min-h-0">
 
-        {/* ── Header ── */}
-        <div className="border-b bg-white px-4 pt-3 pb-3 shrink-0 space-y-2">
+        {/* ── Header: ~30% ── */}
+        <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5 overflow-y-auto" style={{ maxHeight: '30vh' }}>
 
           {/* Row 1: back + code + status + action */}
           <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 min-w-0">
+            <div className="flex items-center gap-1.5 min-w-0">
               <button
                 onClick={() => navigate(`/wms/outbound/${gdoId}`)}
                 className="p-1 rounded hover:bg-slate-100 text-slate-500 shrink-0 transition-colors"
               >
                 <ArrowLeft className="h-4 w-4" />
               </button>
-              <span className="font-mono font-semibold text-lg truncate">{matCode}</span>
+              <span className="font-mono font-semibold text-sm">{matCode}</span>
               <Badge status={item.status} />
             </div>
 
             {!isDone && (
               <div className="shrink-0">
                 {isPOSM ? (
-                  <span className="text-sm text-slate-400 italic">Tự bypass</span>
+                  <span className="text-xs text-slate-400 italic">Tự bypass</span>
                 ) : isLoscam ? (
-                  <Button size="sm" variant="outline" className="h-8 text-sm" disabled={completing}
+                  <Button size="sm" variant="outline" className="h-7 text-xs" disabled={completing}
                     onClick={() => manualComplete({ gdoId: gdoId!, itemId: item.id })}>
                     {completing ? '…' : 'Lưu thủ công'}
                   </Button>
                 ) : canScan ? (
-                  <Button size="sm" className="h-8 gap-1.5" onClick={openScan}>
+                  <Button size="sm" className="h-7 text-xs gap-1" onClick={openScan}>
                     <QrCode className="h-3.5 w-3.5" /> Quét pallet
                   </Button>
                 ) : (
@@ -337,15 +337,15 @@ export default function OutboundItemDetail() {
           </div>
 
           {/* Row 2: material name + progress */}
-          <div className="space-y-1.5">
-            <p className="text-lg font-medium text-slate-800 leading-tight">{matName}</p>
+          <div className="space-y-1">
+            <p className="text-sm font-medium text-slate-800 leading-tight">{matName}</p>
             {!isPOSM && <ProgressBar scanned={item.cartons_scanned} ordered={item.cartons_ordered} />}
           </div>
 
-          {/* Row 3: meta */}
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-lg text-slate-500">
-            <span className="flex items-center gap-1.5">
-              <Package className="h-4 w-4 text-slate-400 shrink-0" />
+          {/* Row 3: số lượng + meta nhỏ */}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-500">
+            <span className="flex items-center gap-1">
+              <Package className="h-3 w-3 text-slate-400 shrink-0" />
               <span className="font-medium text-slate-700">{item.cartons_ordered}</span> thùng
               {item.boxes_display > 0 && (
                 <span className="ml-1">· <span className="font-medium text-slate-700">{item.boxes_display}</span> hộp</span>
@@ -355,25 +355,29 @@ export default function OutboundItemDetail() {
               )}
             </span>
             {item.pallets_estimated > 0 && (
-              <span><span className="font-medium text-slate-700">{item.pallets_estimated}</span> pallet ước tính</span>
+              <span><span className="font-medium text-slate-700">{item.pallets_estimated}</span> pl</span>
             )}
             {item.material_type && (
-              <span className="text-sm bg-slate-100 text-slate-600 rounded px-1.5 py-0.5">{item.material_type}</span>
-            )}
-            {item.header_text && (
-              <span className="text-lg text-slate-700 whitespace-nowrap">{item.header_text}</span>
+              <span className="bg-slate-100 text-slate-600 rounded px-1.5 py-0.5">{item.material_type}</span>
             )}
             {item.batch_required && (
-              <span className="whitespace-nowrap">Batch: <span className="font-medium text-slate-700">{item.batch_required}</span></span>
+              <span>Batch: <span className="font-medium text-slate-700">{item.batch_required}</span></span>
             )}
             {item.date_required != null && item.date_required > 0 && (
-              <span className="whitespace-nowrap">%Date yêu cầu: <span className="font-semibold text-amber-700">{item.date_required}%</span></span>
+              <span>%Date: <span className="font-semibold text-amber-700">{item.date_required}%</span></span>
             )}
           </div>
 
+          {/* Header text: hiển thị đầy đủ, cho phép wrap */}
+          {item.header_text && (
+            <div className="text-xs font-medium text-slate-700 bg-blue-50 border border-blue-100 rounded px-2 py-1 leading-snug">
+              {item.header_text}
+            </div>
+          )}
+
           {/* Not-started warning */}
           {notStartedMsg && !isDone && !isPOSM && (
-            <div className="rounded bg-amber-50 border border-amber-200 px-3 py-1.5 text-xs text-amber-700 flex items-center gap-1.5">
+            <div className="rounded bg-amber-50 border border-amber-200 px-2 py-1 text-xs text-amber-700 flex items-center gap-1.5">
               <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
               {notStartedMsg}
             </div>
@@ -406,8 +410,9 @@ export default function OutboundItemDetail() {
           </div>
         )}
 
-        {/* ── Scan list ── */}
-        <div className="flex-1 p-4 overflow-auto pb-20 lg:pb-4">
+        {/* ── Scan list: ~70% ── */}
+        <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+        <div className="p-3">
 
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-semibold text-slate-700">
@@ -473,6 +478,7 @@ export default function OutboundItemDetail() {
                 </Table>
             )}
           </Card>
+        </div>
         </div>
       </div>
     </>

@@ -441,11 +441,14 @@ export interface GDO {
   assigned_at?:        string | null
   assigned_by?:        string | null
   started_at?:         string | null
+  last_scanned_at?:    string | null
+  completed_at?:       string | null
   license_plate?:      string | null
   container_number?:   string | null
   exporter_name?:      string | null
   loader_name?:        string | null
   forklift_driver_id?: string | null
+  forklift_driver?:    { id: string; name: string } | null
   // Detail
   delivery_orders?: OutboundDelivery[]
 }

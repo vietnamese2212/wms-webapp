@@ -12,16 +12,40 @@ import { useGDOs, useUploadGDOExcel } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
+import { formatTimestampTime } from '@/utils/formatters'
 import type { GDO } from '@/types'
 
 const TODAY = new Date().toISOString().slice(0, 10)
 
+// ─── Row background by status ─────────────────────────────────
 function gdoRowBg(gdo: GDO) {
   if (gdo.status === 'COMPLETED')  return 'bg-blue-50 hover:bg-blue-100'
   if (gdo.status === 'IN_PROGRESS') return 'bg-amber-50 hover:bg-amber-100'
   if (gdo.status === 'PAUSED')     return 'bg-red-50 hover:bg-red-100'
   if (gdo.assigned_at)             return 'bg-green-50 hover:bg-green-100'
   return 'hover:bg-slate-50'
+}
+
+// ─── Tình trạng label ─────────────────────────────────────────
+function gdoStatusInfo(gdo: GDO): { label: string; cls: string } {
+  if (gdo.status === 'COMPLETED')  return { label: 'Hoàn thành', cls: 'bg-blue-100 text-blue-700'   }
+  if (gdo.status === 'IN_PROGRESS') return { label: 'Đang xuất',  cls: 'bg-amber-100 text-amber-700' }
+  if (gdo.assigned_at)             return { label: 'Giao đơn',   cls: 'bg-green-100 text-green-700' }
+  return                                  { label: '—',           cls: 'bg-slate-100 text-slate-400' }
+}
+
+// ─── Natural sort on trailing number (ABC101 < ABC102 < ABC201) ─
+function naturalSortCode(a: string, b: string): number {
+  const numA = parseInt(a.match(/(\d+)$/)?.[1] ?? '0', 10)
+  const numB = parseInt(b.match(/(\d+)$/)?.[1] ?? '0', 10)
+  if (numA !== numB) return numA - numB
+  return a.localeCompare(b)
+}
+
+// ─── Short timestamp helper ───────────────────────────────────
+function fTime(ts: string | null | undefined): string {
+  if (!ts) return '—'
+  return formatTimestampTime(ts)
 }
 
 export default function Outbound() {
@@ -50,6 +74,15 @@ export default function Outbound() {
     if (f.filterNpp  && !(g.distributor_names ?? []).includes(f.filterNpp)) return false
     return true
   }), [gdos, f.filterType, f.filterDvvt, f.filterNpp])
+
+  // Sort: ngày desc → loại xuất asc → số xe natural asc
+  const sorted = useMemo(() => [...filtered].sort((a, b) => {
+    if (a.delivery_date !== b.delivery_date)
+      return b.delivery_date.localeCompare(a.delivery_date)
+    const ta = a.export_type ?? '', tb = b.export_type ?? ''
+    if (ta !== tb) return ta.localeCompare(tb)
+    return naturalSortCode(a.group_code, b.group_code)
+  }), [filtered])
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -177,7 +210,7 @@ export default function Outbound() {
           ) : (
             <span className="italic">Hiển thị tất cả ngày</span>
           )}
-          <span className="ml-1.5">— {filtered.length} chuyến xe</span>
+          <span className="ml-1.5">— {sorted.length} chuyến xe</span>
         </p>
       </div>
 
@@ -187,32 +220,40 @@ export default function Outbound() {
           <div className="p-4 space-y-2">
             {[1,2,3,4].map(i => <div key={i} className="h-10 rounded bg-slate-100 animate-pulse" />)}
           </div>
-        ) : filtered.length === 0 ? (
+        ) : sorted.length === 0 ? (
           <div className="flex flex-col items-center gap-2 py-16 text-slate-400">
             <Truck className="h-10 w-10 opacity-30" />
             <p className="text-sm">{f.search ? 'Không tìm thấy chuyến xe' : f.date ? `Không có chuyến xe ngày ${format(parseISO(f.date), 'dd-MM-yyyy')}` : 'Chưa có chuyến xe nào'}</p>
             {!f.date && <p className="text-xs">Upload file Excel để bắt đầu</p>}
           </div>
         ) : (
-          <Table className="min-w-full">
-              <TableHeader>
-                <TableRow className="bg-slate-50">
-                  <TableHead className="px-1.5 py-1.5 w-7" />
-                  <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Ngày xuất</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Số xe</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Kho xuất</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Loại kho</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Loại xuất</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">ĐVVT</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Tên NPP</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 text-right whitespace-nowrap px-2 py-1.5">Tổng thùng</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 text-right whitespace-nowrap px-2 py-1.5">Pallet</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filtered.map(gdo => <GDORow key={gdo.id} gdo={gdo} onClick={() => navigate(`/wms/outbound/${gdo.id}`)} />)}
-              </TableBody>
-            </Table>
+          <Table className="min-w-[1600px]">
+            <TableHeader>
+              <TableRow className="bg-slate-50">
+                <TableHead className="px-1.5 py-1.5 w-7" />
+                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Ngày xuất</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Số xe</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Tên NPP</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">ĐVVT</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 text-right whitespace-nowrap px-2 py-1.5">Tổng thùng</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 text-right whitespace-nowrap px-2 py-1.5">Pallet</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Kho xuất</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Loại xuất</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Loại kho</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Giờ giao đơn</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Giờ bắt đầu</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Giờ quét xong</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Giờ kết thúc</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Tình trạng</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Người xuất</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Lái xe nâng</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Bốc xếp</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {sorted.map(gdo => <GDORow key={gdo.id} gdo={gdo} onClick={() => navigate(`/wms/outbound/${gdo.id}`)} />)}
+            </TableBody>
+          </Table>
         )}
       </div>
     </div>
@@ -224,9 +265,11 @@ function GDORow({ gdo, onClick }: { gdo: GDO; onClick: () => void }) {
   const pinned    = isPinned(gdo.id)
   const dateLabel = format(parseISO(gdo.delivery_date), 'dd-MM-yy', { locale: vi })
   const npp       = gdo.distributor_names?.join(', ') ?? '—'
+  const { label: statusLabel, cls: statusCls } = gdoStatusInfo(gdo)
 
   return (
     <TableRow className={`cursor-pointer transition-colors ${gdoRowBg(gdo)}`} onClick={onClick}>
+      {/* Bookmark */}
       <TableCell className="px-1.5 py-1" onClick={e => e.stopPropagation()}>
         <button
           onClick={() => pinned
@@ -239,34 +282,94 @@ function GDORow({ gdo, onClick }: { gdo: GDO; onClick: () => void }) {
           <Bookmark className="h-3 w-3" fill={pinned ? 'currentColor' : 'none'} />
         </button>
       </TableCell>
+
+      {/* Ngày xuất */}
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px] font-medium tabular-nums">{dateLabel}</span>
       </TableCell>
+
+      {/* Số xe */}
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px] font-mono font-semibold">{gdo.group_code}</span>
       </TableCell>
-      <TableCell className="px-2 py-1 whitespace-nowrap">
-        <span className="text-[10px] text-slate-700">{gdo.warehouse?.name ?? '—'}</span>
-      </TableCell>
-      <TableCell className="px-2 py-1 whitespace-nowrap">
-        <span className="text-[10px] text-slate-700">{gdo.warehouse_type ?? '—'}</span>
-      </TableCell>
-      <TableCell className="px-2 py-1 whitespace-nowrap">
-        <span className="text-[10px] text-slate-700">{gdo.export_type ?? '—'}</span>
-      </TableCell>
-      <TableCell className="px-2 py-1 whitespace-nowrap">
-        <span className="text-[10px] text-slate-700">{gdo.dvvt ?? '—'}</span>
-      </TableCell>
+
+      {/* Tên NPP */}
       <TableCell className="px-2 py-1 max-w-[150px]">
         <span className="text-[10px] text-slate-700 truncate block" title={npp}>{npp}</span>
       </TableCell>
+
+      {/* ĐVVT */}
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        <span className="text-[10px] text-slate-700">{gdo.dvvt ?? '—'}</span>
+      </TableCell>
+
+      {/* Tổng thùng */}
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         <span className="text-[10px] font-semibold tabular-nums">{gdo.total_cartons ?? 0}</span>
         <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
       </TableCell>
+
+      {/* Pallet */}
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         <span className="text-[10px] font-semibold tabular-nums">{gdo.total_pallets ?? 0}</span>
         <span className="text-[9px] text-slate-400 ml-0.5">pl</span>
+      </TableCell>
+
+      {/* Kho xuất */}
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        <span className="text-[10px] text-slate-700">{gdo.warehouse?.name ?? '—'}</span>
+      </TableCell>
+
+      {/* Loại xuất */}
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        <span className="text-[10px] text-slate-700">{gdo.export_type ?? '—'}</span>
+      </TableCell>
+
+      {/* Loại kho */}
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        <span className="text-[10px] text-slate-700">{gdo.warehouse_type ?? '—'}</span>
+      </TableCell>
+
+      {/* Giờ giao đơn */}
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        <span className="text-[10px] tabular-nums text-slate-600">{fTime(gdo.assigned_at)}</span>
+      </TableCell>
+
+      {/* Giờ bắt đầu */}
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        <span className="text-[10px] tabular-nums text-slate-600">{fTime(gdo.started_at)}</span>
+      </TableCell>
+
+      {/* Giờ quét xong */}
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        <span className="text-[10px] tabular-nums text-slate-600">{fTime(gdo.last_scanned_at)}</span>
+      </TableCell>
+
+      {/* Giờ kết thúc */}
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        <span className="text-[10px] tabular-nums text-slate-600">{fTime(gdo.completed_at)}</span>
+      </TableCell>
+
+      {/* Tình trạng */}
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${statusCls}`}>
+          {statusLabel}
+        </span>
+      </TableCell>
+
+      {/* Người xuất */}
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        <span className="text-[10px] text-slate-700">{gdo.exporter_name ?? '—'}</span>
+      </TableCell>
+
+      {/* Lái xe nâng */}
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        <span className="text-[10px] text-slate-700">{gdo.forklift_driver?.name ?? '—'}</span>
+      </TableCell>
+
+      {/* Bốc xếp */}
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        <span className="text-[10px] text-slate-700">{gdo.loader_name ?? '—'}</span>
       </TableCell>
     </TableRow>
   )

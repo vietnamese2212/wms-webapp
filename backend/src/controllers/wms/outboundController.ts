@@ -106,7 +106,7 @@ export async function listGDOs(req: Request, res: Response) {
   try {
     const { warehouse_id, status, date, search } = req.query as Record<string, string>
     let q = (supabase.from('GroupDeliveryOrder') as any)
-      .select('*, warehouse:Warehouse(id,code,name)')
+      .select('*, warehouse:Warehouse(id,code,name), forklift_driver:Employee!forklift_driver_id(id,name)')
       .order('delivery_date', { ascending: false })
     if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
     if (status)       q = q.eq('status', status)
@@ -687,7 +687,12 @@ export async function scanItem(req: Request, res: Response) {
         d.id === item.do_id ? doCompleted : d.status === 'COMPLETED'
       )
       await (supabase.from('GroupDeliveryOrder') as any)
-        .update({ status: gdoCompleted ? 'COMPLETED' : 'IN_PROGRESS', updated_at: t })
+        .update({
+          status:           gdoCompleted ? 'COMPLETED' : 'IN_PROGRESS',
+          last_scanned_at:  t,
+          ...(gdoCompleted ? { completed_at: t } : {}),
+          updated_at:       t,
+        })
         .eq('id', doRow.gdo_id)
     }
 
@@ -803,7 +808,11 @@ export async function manualCompleteItem(req: Request, res: Response) {
         d.id === item.do_id ? doCompleted : d.status === 'COMPLETED'
       )
       await (supabase.from('GroupDeliveryOrder') as any)
-        .update({ status: gdoCompleted ? 'COMPLETED' : 'IN_PROGRESS', updated_at: t })
+        .update({
+          status:     gdoCompleted ? 'COMPLETED' : 'IN_PROGRESS',
+          ...(gdoCompleted ? { completed_at: t } : {}),
+          updated_at: t,
+        })
         .eq('id', doRow.gdo_id)
     }
 

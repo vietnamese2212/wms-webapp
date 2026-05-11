@@ -361,6 +361,7 @@ async function mergePausedGDO(
   gdoId: string,
   group_code: string,
   delivery_date: string,
+  planned_date: string,
   warehouse_id: string | null,
   dvvt: string | null,
   warehouse_type: string | null,
@@ -413,7 +414,8 @@ async function mergePausedGDO(
     }
   }
 
-  // Validation 2: new cartons_ordered >= cartons_scanned for all matched items
+  // Validation 2: new cartons_ordered >= cartons_scanned — collect ALL failures before blocking
+  const cartonErrors: string[] = []
   for (const [delivery_code, doRows] of byDelivery) {
     const existingDO = existingDOByCode.get(delivery_code)
     if (!existingDO) continue
@@ -422,11 +424,14 @@ async function mergePausedGDO(
       const newCartons = parseDecimal(row['Thùng'])
       const existing   = existingItemByKey.get(itemKey(existingDO.id, mat_code))
       if (existing && newCartons < Number(existing.cartons_scanned)) {
-        return {
-          group_code, skipped: true,
-          reason: `${mat_code}: thùng mới (${newCartons}) < đã xuất (${existing.cartons_scanned})`,
-        }
+        cartonErrors.push(`${mat_code} (mới ${newCartons} < đã xuất ${existing.cartons_scanned})`)
       }
+    }
+  }
+  if (cartonErrors.length) {
+    return {
+      group_code, skipped: true,
+      reason: `Số thùng mới nhỏ hơn đã xuất: ${cartonErrors.join(', ')}`,
     }
   }
 
@@ -452,7 +457,7 @@ async function mergePausedGDO(
 
   // Update GDO header — preserve workflow fields (started_at, assigned_at, status, license_plate, etc.)
   await (supabase.from('GroupDeliveryOrder') as any)
-    .update({ delivery_date, planned_date: delivery_date, warehouse_id, dvvt, warehouse_type, updated_at: t })
+    .update({ delivery_date, planned_date, warehouse_id, dvvt, warehouse_type, updated_at: t })
     .eq('id', gdoId)
 
   // Upsert DOs + items from new file
@@ -599,16 +604,18 @@ export async function uploadExcel(req: Request, res: Response) {
         continue
       }
 
-      // delivery_date from "Ngày xuất" — also used as planned_date
       const delivery_date = parseExcelDate(groupRows[0]['Ngày xuất'])
       if (!delivery_date) {
         created.push({ group_code, skipped: true, reason: `Ngày xuất không hợp lệ hoặc trống: "${groupRows[0]['Ngày xuất'] ?? ''}"` })
         continue
       }
 
-      // Warn (non-blocking) if group_code lacks ddmmyy_ prefix
-      const groupCodeWarn = parsePlannedDate(group_code) ? undefined
-        : 'Mã xe không có tiền tố ngày ddmmyy_ — kiểm tra lại định dạng'
+      // planned_date phải parse được từ tiền tố ddmmyy_ của group_code — sai format → chặn
+      const planned_date = parsePlannedDate(group_code)
+      if (!planned_date) {
+        created.push({ group_code, skipped: true, reason: 'Mã xe không có tiền tố ngày ddmmyy_ hợp lệ — không thể xác định ngày kế hoạch' })
+        continue
+      }
 
       const dvvt     = String(groupRows[0]['DVVT']     ?? groupRows[0]['Đơn vị']  ?? '').trim() || null
       const kho_xuat = String(groupRows[0]['Kho xuất'] ?? groupRows[0]['Kho xuat'] ?? '').trim()
@@ -648,11 +655,10 @@ export async function uploadExcel(req: Request, res: Response) {
       if (pausedGDOMap.has(group_code)) {
         const mergeResult = await mergePausedGDO(
           pausedGDOMap.get(group_code)!,
-          group_code, delivery_date,
+          group_code, delivery_date, planned_date,
           resolved_warehouse_id, dvvt, loai_kho,
           byDelivery, matMap
         )
-        if (mergeResult.merged && groupCodeWarn) (mergeResult as any).warn = groupCodeWarn
         created.push(mergeResult)
         continue
       }
@@ -695,12 +701,10 @@ export async function uploadExcel(req: Request, res: Response) {
         toPreserveIds.push(gdoId)
         preserveGDOUpdates.push({
           id: gdoId,
-          fields: { delivery_date, planned_date: delivery_date, warehouse_id: resolved_warehouse_id, dvvt, warehouse_type: loai_kho, updated_at: now() },
+          fields: { delivery_date, planned_date, warehouse_id: resolved_warehouse_id, dvvt, warehouse_type: loai_kho, updated_at: now() },
         })
         collectDOsAndItems(gdoId)
-        const entry: any = { group_code, id: gdoId, created: true, preserved_assignment: true }
-        if (groupCodeWarn) entry.warn = groupCodeWarn
-        created.push(entry)
+        created.push({ group_code, id: gdoId, created: true, preserved_assignment: true })
         continue
       }
 
@@ -710,14 +714,12 @@ export async function uploadExcel(req: Request, res: Response) {
       }
       const gdoId = randomUUID()
       gdoInserts.push({
-        id: gdoId, group_code, planned_date: delivery_date, delivery_date,
+        id: gdoId, group_code, planned_date, delivery_date,
         warehouse_id: resolved_warehouse_id, dvvt, warehouse_type: loai_kho,
         status: 'PENDING', updated_at: now(),
       })
       collectDOsAndItems(gdoId)
-      const entry: any = { group_code, id: gdoId, created: true }
-      if (groupCodeWarn) entry.warn = groupCodeWarn
-      created.push(entry)
+      created.push({ group_code, id: gdoId, created: true })
     }
 
     // ── Delete validated PENDING GDOs ──

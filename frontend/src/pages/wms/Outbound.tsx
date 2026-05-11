@@ -96,11 +96,10 @@ export default function Outbound() {
       { file, warehouse_id: user?.warehouse_id || undefined },
       {
         onSuccess: (result) => {
-          const items = (result.created ?? []) as Array<{ group_code: string; created?: boolean; merged?: boolean; skipped?: boolean; reason?: string; warn?: string }>
+          const items = (result.created ?? []) as Array<{ group_code: string; created?: boolean; merged?: boolean; skipped?: boolean; reason?: string }>
           const nCreated = items.filter(r => r.created && !r.merged).length
           const nMerged  = items.filter(r => r.merged).length
           const skipped  = items.filter(r => r.skipped)
-          const warned   = items.filter(r => r.warn)
 
           const okParts = [
             nCreated > 0 && `Tạo mới ${nCreated} xe`,
@@ -108,16 +107,11 @@ export default function Outbound() {
           ].filter(Boolean).join(' · ')
           setUploadOk(okParts || (skipped.length ? undefined : 'Không có xe mới') as any)
 
-          const warnLines: string[] = []
           if (skipped.length) {
-            warnLines.push(`Bỏ qua ${skipped.length} chuyến xe:`)
-            skipped.forEach(s => warnLines.push(`• ${s.group_code}: ${s.reason}`))
+            const lines = [`Bỏ qua ${skipped.length} chuyến xe:`]
+            skipped.forEach(s => lines.push(`• GDO ${s.group_code}: ${s.reason}`))
+            setUploadWarn(lines.join('\n'))
           }
-          if (warned.length) {
-            warnLines.push(`Cảnh báo định dạng mã xe:`)
-            warned.forEach(w => warnLines.push(`• ${w.group_code}: ${w.warn}`))
-          }
-          if (warnLines.length) setUploadWarn(warnLines.join('\n'))
         },
         onError: (err) => {
           const msg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi upload file'

@@ -9,7 +9,7 @@ const ENTRY_SELECT = `
   production_date, status, import_date, update_date, adjustment_qty, stocktake_at,
   created_at, updated_at,
   location:Location(id, location_code, sub_code, sub_name, sub_type, warehouse:Warehouse(id, name, code)),
-  material:Material(id, material_code, short_name, shelf_life_days),
+  material:Material(id, material_code, short_name, shelf_life_days, category),
   manufacturer:Manufacturer(id, code, name),
   qa_status:QAStatus(id, code, name),
   created_by_emp:Employee!created_by(id, name),

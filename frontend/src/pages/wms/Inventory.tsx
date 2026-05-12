@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Package, Search, X, SlidersHorizontal, ChevronRight, Filter } from 'lucide-react'
+import { Package, Search, X, SlidersHorizontal, ChevronRight, Filter, Check } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -81,17 +81,22 @@ function QAModal({ open, ids, qaStatuses, onClose }: {
   qaStatuses: { id: string; code: string; name: string }[]
   onClose: () => void
 }) {
-  const [qaId, setQaId]     = useState('')
+  const [qaId, setQaId]     = useState('')   // '__ok__' = clear (send null), else QA status id
   const [error, setError]   = useState('')
   const { mutate, isPending } = useBulkUpdateInventoryQA()
 
-  // Only show non-OK QA statuses in the action modal
-  const options = qaStatuses.filter(q => q.code.toUpperCase() !== 'OK')
+  // Non-OK statuses first, then OK as final option (sends null)
+  const nonOk  = qaStatuses.filter(q => q.code.toUpperCase() !== 'OK')
+  const hasOk  = qaStatuses.some(q => q.code.toUpperCase() === 'OK')
+  const qaOptions: { id: string; label: string }[] = [
+    ...nonOk.map(q => ({ id: q.id, label: `${q.code} – ${q.name}` })),
+    ...(hasOk ? [{ id: '__ok__', label: 'OK' }] : []),
+  ]
 
   function handleSubmit() {
     setError('')
     mutate(
-      { ids, qa_status_id: qaId === '__clear__' ? null : qaId },
+      { ids, qa_status_id: qaId === '__ok__' ? null : qaId },
       {
         onSuccess: () => { setQaId(''); onClose() },
         onError: (e: any) => setError(e?.response?.data?.error?.message ?? 'Lỗi không xác định'),
@@ -112,15 +117,25 @@ function QAModal({ open, ids, qaStatuses, onClose }: {
           )}
           <div className="space-y-1.5">
             <Label className="text-xs">QA Status mới</Label>
-            <Select value={qaId} onValueChange={setQaId}>
-              <SelectTrigger><SelectValue placeholder="Chọn QA status…" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__clear__">— Xóa QA (trả về OK) —</SelectItem>
-                {options.map(q => (
-                  <SelectItem key={q.id} value={q.id}>{q.code} – {q.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="border rounded-md overflow-hidden">
+              {qaOptions.map(opt => (
+                <label key={opt.id}
+                  className={`flex items-center gap-2.5 px-3 py-2 cursor-pointer border-b last:border-b-0 transition-colors ${
+                    qaId === opt.id ? 'bg-blue-50' : 'hover:bg-slate-50'
+                  }`}
+                  onClick={() => setQaId(prev => prev === opt.id ? '' : opt.id)}
+                >
+                  <div className={`w-3.5 h-3.5 border rounded shrink-0 flex items-center justify-center transition-colors ${
+                    qaId === opt.id ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white'
+                  }`}>
+                    {qaId === opt.id && <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />}
+                  </div>
+                  <span className={`text-xs ${opt.id === '__ok__' ? 'text-green-700 font-medium' : 'text-slate-700'}`}>
+                    {opt.label}
+                  </span>
+                </label>
+              ))}
+            </div>
           </div>
         </div>
         <DialogFooter>
@@ -144,11 +159,10 @@ function LocationModal({ open, ids, warehouseId, onClose }: {
   const { data: allLocs = [] } = useLocationsReal(warehouseId ? { warehouse_id: warehouseId } : undefined)
 
   const filtered = useMemo(() => {
-    if (!search) return []
     const s = search.toLowerCase()
     return (allLocs as any[]).filter((l: any) =>
-      l.location_code?.toLowerCase().includes(s) || l.sub_code?.toLowerCase().includes(s)
-    ).slice(0, 20)
+      !s || l.location_code?.toLowerCase().includes(s) || l.sub_code?.toLowerCase().includes(s)
+    )
   }, [allLocs, search])
 
   const selectedLoc = useMemo(() =>
@@ -182,43 +196,41 @@ function LocationModal({ open, ids, warehouseId, onClose }: {
           )}
           <div className="space-y-1.5">
             <Label className="text-xs">Vị trí mới</Label>
-            {selectedLoc ? (
-              <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded px-3 py-1.5">
-                <span className="text-sm font-mono font-semibold text-blue-800">{formatLoc(selectedLoc)}</span>
-                <span className="text-xs text-blue-500 ml-1">({selectedLoc.used_slots ?? 0}/{selectedLoc.max_pallets})</span>
-                <button className="ml-auto text-blue-400 hover:text-blue-600" onClick={reset}>
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            ) : (
-              <>
-                <Input placeholder="Tìm vị trí…" value={search} autoFocus
-                  onChange={e => setSearch(e.target.value)} className="h-8 text-sm" />
-                {search && (
-                  <div className="border rounded max-h-44 overflow-y-auto">
-                    {filtered.length === 0 ? (
-                      <div className="px-3 py-2 text-xs text-slate-400 text-center">Không tìm thấy</div>
-                    ) : (
-                      filtered.map((l: any) => {
-                        const isFull = l.max_pallets > 0 && (l.used_slots ?? 0) >= l.max_pallets
-                        return (
-                          <button key={l.id}
-                            disabled={isFull}
-                            className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 ${
-                              isFull ? 'opacity-50 cursor-not-allowed bg-slate-50' : 'hover:bg-slate-50'
-                            }`}
-                            onClick={() => { if (!isFull) { setLocId(l.id); setSearch('') } }}>
-                            <span className="font-mono font-semibold">{formatLoc(l)}</span>
-                            <span className={`ml-auto ${isFull ? 'text-red-400 font-medium' : 'text-slate-400'}`}>
-                              {l.used_slots ?? 0}/{l.max_pallets}{isFull ? ' (đầy)' : ''}
-                            </span>
-                          </button>
-                        )
-                      })
-                    )}
-                  </div>
-                )}
-              </>
+            <Input placeholder="Tìm vị trí…" value={search} autoFocus
+              onChange={e => setSearch(e.target.value)} className="h-8 text-sm" />
+            <div className="border rounded max-h-52 overflow-y-auto">
+              {filtered.length === 0 ? (
+                <div className="px-3 py-2 text-xs text-slate-400 text-center">Không tìm thấy</div>
+              ) : (
+                filtered.map((l: any) => {
+                  const isFull = l.max_pallets > 0 && (l.used_slots ?? 0) >= l.max_pallets
+                  const isSelected = locId === l.id
+                  return (
+                    <label key={l.id}
+                      className={`flex items-center gap-2.5 px-3 py-2 cursor-pointer border-b last:border-b-0 transition-colors ${
+                        isSelected ? 'bg-blue-50' : isFull ? 'opacity-50 bg-slate-50 cursor-not-allowed' : 'hover:bg-slate-50'
+                      }`}
+                      onClick={() => { if (!isFull) setLocId(prev => prev === l.id ? '' : l.id) }}
+                    >
+                      <div className={`w-3.5 h-3.5 border rounded shrink-0 flex items-center justify-center transition-colors ${
+                        isSelected ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white'
+                      }`}>
+                        {isSelected && <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />}
+                      </div>
+                      <span className="text-xs font-mono font-semibold">{formatLoc(l)}</span>
+                      <span className={`ml-auto text-[10px] ${isFull ? 'text-red-400 font-medium' : 'text-slate-400'}`}>
+                        {l.used_slots ?? 0}/{l.max_pallets}{isFull ? ' (đầy)' : ''}
+                      </span>
+                    </label>
+                  )
+                })
+              )}
+            </div>
+            {selectedLoc && (
+              <p className="text-[10px] text-blue-600">
+                Đã chọn: <strong className="font-mono">{formatLoc(selectedLoc)}</strong>
+                <button className="ml-2 text-slate-400 hover:text-red-500" onClick={reset}>✕ bỏ chọn</button>
+              </p>
             )}
           </div>
         </div>
@@ -273,37 +285,40 @@ function MaterialModal({ open, ids, onClose }: {
           )}
           <div className="space-y-1.5">
             <Label className="text-xs">Hàng hóa mới</Label>
-            {matId && selectedMat ? (
-              <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded px-3 py-1.5">
-                <div className="min-w-0">
-                  <span className="text-xs font-mono font-semibold text-blue-800">{selectedMat.material_code}</span>
-                  <span className="text-xs text-blue-600 ml-1.5 truncate">{selectedMat.short_name ?? ''}</span>
-                </div>
-                <button className="ml-auto text-blue-400 hover:text-blue-600 shrink-0" onClick={reset}>
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            ) : (
-              <>
-                <Input placeholder="Tìm mã hoặc tên hàng…" value={search} autoFocus
-                  onChange={e => { setSearch(e.target.value); setMatId('') }} className="h-8 text-sm" />
-                {search && (
-                  <div className="border rounded max-h-44 overflow-y-auto">
-                    {(materials as any[]).length === 0 ? (
-                      <div className="px-3 py-2 text-xs text-slate-400 text-center">Không tìm thấy</div>
-                    ) : (
-                      (materials as any[]).map((m: any) => (
-                        <button key={m.id}
-                          className="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-50 flex items-baseline gap-2"
-                          onClick={() => { setMatId(m.id); setSearch('') }}>
-                          <span className="font-mono text-slate-500 shrink-0">{m.material_code}</span>
-                          <span className="text-slate-700 truncate">{m.short_name ?? m.material_description}</span>
-                        </button>
-                      ))
-                    )}
-                  </div>
+            <Input placeholder="Tìm mã hoặc tên hàng…" value={search} autoFocus
+              onChange={e => { setSearch(e.target.value); setMatId('') }} className="h-8 text-sm" />
+            {search && (
+              <div className="border rounded max-h-52 overflow-y-auto">
+                {(materials as any[]).length === 0 ? (
+                  <div className="px-3 py-2 text-xs text-slate-400 text-center">Không tìm thấy</div>
+                ) : (
+                  (materials as any[]).map((m: any) => {
+                    const isSelected = matId === m.id
+                    return (
+                      <label key={m.id}
+                        className={`flex items-center gap-2.5 px-3 py-2 cursor-pointer border-b last:border-b-0 transition-colors ${
+                          isSelected ? 'bg-blue-50' : 'hover:bg-slate-50'
+                        }`}
+                        onClick={() => setMatId(prev => prev === m.id ? '' : m.id)}
+                      >
+                        <div className={`w-3.5 h-3.5 border rounded shrink-0 flex items-center justify-center transition-colors ${
+                          isSelected ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white'
+                        }`}>
+                          {isSelected && <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />}
+                        </div>
+                        <span className="text-[10px] font-mono text-slate-500 shrink-0">{m.material_code}</span>
+                        <span className="text-xs text-slate-700 truncate">{m.short_name ?? m.material_description}</span>
+                      </label>
+                    )
+                  })
                 )}
-              </>
+              </div>
+            )}
+            {selectedMat && (
+              <p className="text-[10px] text-blue-600">
+                Đã chọn: <strong className="font-mono">{selectedMat.material_code}</strong> – {selectedMat.short_name ?? ''}
+                <button className="ml-2 text-slate-400 hover:text-red-500" onClick={reset}>✕ bỏ chọn</button>
+              </p>
             )}
           </div>
         </div>
@@ -622,8 +637,7 @@ export default function Inventory() {
             </div>
           ) : (
             <>
-              <div className="overflow-x-auto">
-                <Table className="min-w-full">
+              <Table className="min-w-[900px]">
                   <TableHeader>
                     <TableRow className="bg-slate-50">
                       {/* Checkbox select-all */}
@@ -663,8 +677,7 @@ export default function Inventory() {
                       />
                     ))}
                   </TableBody>
-                </Table>
-              </div>
+              </Table>
 
               {totalPages > 1 && (
                 <div className="flex items-center justify-center gap-3 py-3 border-t bg-white">
@@ -768,7 +781,7 @@ function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick }: {
   const prodDateStr   = e.production_date ? formatTimestampDate(e.production_date, true) : '—'
   const adjQty        = e.adjustment_qty ?? 0
   const warehouseNm   = e.location?.warehouse?.name ?? '—'
-  const loaiKho       = e.location?.sub_name ?? e.location?.sub_type ?? '—'
+  const loaiKho       = e.material?.category ?? '—'
 
   return (
     <TableRow
@@ -874,7 +887,7 @@ function DetailPanel({ entry: e, onClose }: { entry: InventoryEntry; onClose: ()
   }
 
   const warehouseNm = e.location?.warehouse?.name ?? '—'
-  const loaiKho     = e.location?.sub_name ?? e.location?.sub_type ?? '—'
+  const loaiKho     = e.material?.category ?? '—'
 
   return (
     <div className="w-72 shrink-0 border-l bg-white overflow-y-auto flex flex-col">
@@ -897,7 +910,7 @@ function DetailPanel({ entry: e, onClose }: { entry: InventoryEntry; onClose: ()
           <Row label="Kho"      value={warehouseNm} />
           <Row label="Loại kho" value={loaiKho} />
           <Row label="Mã hàng"  value={e.material?.material_code ?? '—'} mono />
-          <Row label="Tên hàng" value={e.material?.short_name ?? '—'} />
+          <Row label="Tên hàng" value={e.material?.short_name ?? '—'} wrap />
           <Row label="Vị trí"   value={loc} mono />
           <Row label="QA"       value={e.qa_status ? `${e.qa_status.code} – ${e.qa_status.name}` : '—'} />
         </Section>
@@ -924,7 +937,7 @@ function DetailPanel({ entry: e, onClose }: { entry: InventoryEntry; onClose: ()
 
         {/* Production */}
         <Section title="Sản xuất">
-          <Row label="NMSX"    value={e.manufacturer?.name ?? e.manufacturer?.code ?? '—'} />
+          <Row label="NMSX"    value={e.manufacturer?.code ?? '—'} mono />
           <Row label="Chu kỳ" value={e.cycle ?? '—'} mono />
           <Row label="Máy"    value={e.machine_code ?? '—'} mono />
         </Section>
@@ -1004,13 +1017,13 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   )
 }
 
-function Row({ label, value, mono, bold, cls }: {
-  label: string; value: string; mono?: boolean; bold?: boolean; cls?: string
+function Row({ label, value, mono, bold, cls, wrap }: {
+  label: string; value: string; mono?: boolean; bold?: boolean; cls?: string; wrap?: boolean
 }) {
   return (
     <div className="flex justify-between gap-2 py-0.5">
       <span className="text-slate-400 shrink-0">{label}</span>
-      <span className={`text-right truncate ${mono ? 'font-mono' : ''} ${bold ? 'font-semibold' : ''} ${cls ?? 'text-slate-700'}`}>
+      <span className={`text-right ${wrap ? 'break-words min-w-0' : 'truncate'} ${mono ? 'font-mono' : ''} ${bold ? 'font-semibold' : ''} ${cls ?? 'text-slate-700'}`}>
         {value}
       </span>
     </div>

@@ -373,7 +373,7 @@ export interface InventoryEntry {
   created_at:         string
   updated_at:         string
   location:              { id: string; location_code: string; sub_code: string; sub_name: string | null; sub_type: string | null; warehouse?: { id: string; name: string; code: string } | null } | null
-  material:              { id: string; material_code: string; short_name: string | null; shelf_life_days: number | null } | null
+  material:              { id: string; material_code: string; short_name: string | null; shelf_life_days: number | null; category: string | null } | null
   manufacturer:          { id: string; code: string; name: string | null } | null
   qa_status:             { id: string; code: string; name: string } | null
   created_by_emp:        { id: string; name: string } | null

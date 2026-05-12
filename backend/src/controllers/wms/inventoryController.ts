@@ -8,7 +8,7 @@ const ENTRY_SELECT = `
   pallet_sequence_no, qa_status_id, stack_layer, cartons_imported, cartons_remaining,
   production_date, status, import_date, update_date, adjustment_qty, stocktake_at,
   created_at, updated_at,
-  location:Location(id, location_code, sub_code, warehouse:Warehouse(id, name, code, warehouse_type)),
+  location:Location(id, location_code, sub_code, sub_name, sub_type, warehouse:Warehouse(id, name, code)),
   material:Material(id, material_code, short_name, shelf_life_days),
   manufacturer:Manufacturer(id, code, name),
   qa_status:QAStatus(id, code, name),
@@ -48,7 +48,7 @@ function applyInventoryFilters(q: any, p: FilterParams): any {
 
 export async function listInventory(req: Request, res: Response) {
   const {
-    warehouse_id, warehouse_type, location_code, material_search,
+    warehouse_id, sub_type, location_code, material_search,
     status, search, page = '1', limit = '50',
     manufacturer_id, cycle, machine_code, import_date_from, import_date_to,
   } = req.query as Record<string, string>
@@ -61,32 +61,12 @@ export async function listInventory(req: Request, res: Response) {
   const limitNum = Math.min(200, Math.max(1, parseInt(limit) || 50))
   const offset   = (pageNum - 1) * limitNum
 
-  // Resolve location_ids for warehouse / warehouse_type / location_code filters
+  // Resolve location_ids for warehouse / sub_type / location_code filters
   let locationFilter: string[] | null = null
-  if (warehouse_id || warehouse_type || location_code) {
-    let resolvedWarehouseIds: string[] = []
-
-    if (warehouse_type) {
-      const { data: whs } = await (supabase.from('Warehouse') as any)
-        .select('id').ilike('warehouse_type', `%${warehouse_type}%`)
-      resolvedWarehouseIds = (whs ?? []).map((w: any) => w.id as string)
-
-      if (warehouse_id) {
-        // Intersect: only keep the specific warehouse if it matches the type
-        resolvedWarehouseIds = resolvedWarehouseIds.includes(warehouse_id) ? [warehouse_id] : []
-      }
-    } else if (warehouse_id) {
-      resolvedWarehouseIds = [warehouse_id]
-    }
-
-    // If warehouse filters produced no matches, return empty
-    if ((warehouse_type || warehouse_id) && resolvedWarehouseIds.length === 0) {
-      return ok(res, { entries: [], total: 0, page: pageNum, limit: limitNum, total_cartons_remaining: 0 })
-    }
-
+  if (warehouse_id || sub_type || location_code) {
     let locQ = (supabase.from('Location') as any).select('id')
-    if (resolvedWarehouseIds.length === 1)      locQ = locQ.eq('warehouse_id', resolvedWarehouseIds[0])
-    else if (resolvedWarehouseIds.length > 1)   locQ = locQ.in('warehouse_id', resolvedWarehouseIds)
+    if (warehouse_id)  locQ = locQ.eq('warehouse_id', warehouse_id)
+    if (sub_type)      locQ = locQ.eq('sub_type', sub_type)
     if (location_code) locQ = locQ.ilike('location_code', `%${location_code}%`)
 
     const { data: locs, error: locErr } = await locQ

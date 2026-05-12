@@ -12,7 +12,7 @@ import {
 import { Label } from '@/components/ui/label'
 import {
   useInventoryEntries, useWarehouses, useQAStatuses, useAdjustInventory,
-  useLocationsReal, useMaterials,
+  useLocationsReal, useMaterials, useLocationSubTypes,
   useBulkUpdateInventoryQA, useBulkTransferLocation, useBulkTransferMaterial,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
@@ -376,17 +376,9 @@ export default function Inventory() {
   const [showFilters,  setShowFilters]  = useState(false)
   const [actionModal,  setActionModal]  = useState<'qa' | 'location' | 'material' | null>(null)
 
-  const { data: warehouses = [] } = useWarehouses(true)
-  const { data: qaStatuses = [] } = useQAStatuses()
-
-  // Derive distinct warehouse types from warehouses list
-  const warehouseTypes = useMemo(() => {
-    const seen = new Set<string>()
-    return (warehouses as any[])
-      .map((w: any) => w.warehouse_type as string | null)
-      .filter((t): t is string => Boolean(t))
-      .filter(t => { if (seen.has(t)) return false; seen.add(t); return true })
-  }, [warehouses])
+  const { data: warehouses    = [] } = useWarehouses(true)
+  const { data: qaStatuses    = [] } = useQAStatuses()
+  const { data: subTypes      = [] } = useLocationSubTypes()
 
   // Auto-set warehouse from auth
   useEffect(() => {
@@ -397,7 +389,7 @@ export default function Inventory() {
 
   const { data, isLoading } = useInventoryEntries({
     warehouse_id:    f.warehouseId      || undefined,
-    warehouse_type:  f.warehouseType    || undefined,
+    sub_type:        f.warehouseType    || undefined,
     location_code:   f.locationCode     || undefined,
     material_search: f.materialSearch   || undefined,
     qa_status_ids:   f.qaStatusIds.length > 0 ? f.qaStatusIds : undefined,
@@ -549,16 +541,16 @@ export default function Inventory() {
                 </SelectContent>
               </Select>
 
-              {/* Loại kho */}
+              {/* Loại kho (Location.sub_type) */}
               <Select value={f.warehouseType || '__all__'}
                 onValueChange={v => setInventory({ warehouseType: v === '__all__' ? '' : v, page: 1 })}>
-                <SelectTrigger className="h-7 text-xs w-[110px] bg-white">
+                <SelectTrigger className="h-7 text-xs w-[120px] bg-white">
                   <SelectValue placeholder="Loại kho" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__all__">Tất cả loại</SelectItem>
-                  {warehouseTypes.map(t => (
-                    <SelectItem key={t} value={t}>{t}</SelectItem>
+                  {(subTypes as { sub_type: string; label: string }[]).map(t => (
+                    <SelectItem key={t.sub_type} value={t.sub_type}>{t.label}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -807,8 +799,8 @@ function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick }: {
   const pct           = calcDatePct(e.production_date, e.material?.shelf_life_days ?? null)
   const prodDateStr   = e.production_date ? formatTimestampDate(e.production_date, true) : '—'
   const adjQty        = e.adjustment_qty ?? 0
-  const warehouseNm   = (e.location as any)?.warehouse?.name ?? '—'
-  const warehouseType = (e.location as any)?.warehouse?.warehouse_type ?? '—'
+  const warehouseNm   = e.location?.warehouse?.name ?? '—'
+  const loaiKho       = e.location?.sub_name ?? e.location?.sub_type ?? '—'
 
   return (
     <TableRow
@@ -825,8 +817,8 @@ function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick }: {
         <span className="text-[10px] text-slate-600 truncate block" title={warehouseNm}>{warehouseNm}</span>
       </TableCell>
       {/* Loại kho */}
-      <TableCell className="px-2 py-1 whitespace-nowrap">
-        <span className="text-[10px] text-slate-500">{warehouseType}</span>
+      <TableCell className="px-2 py-1 whitespace-nowrap max-w-[80px]">
+        <span className="text-[10px] text-slate-500 truncate block" title={loaiKho}>{loaiKho}</span>
       </TableCell>
       {/* Mã hàng */}
       <TableCell className="px-2 py-1 whitespace-nowrap">
@@ -913,8 +905,8 @@ function DetailPanel({ entry: e, onClose }: { entry: InventoryEntry; onClose: ()
     )
   }
 
-  const warehouseNm   = (e.location as any)?.warehouse?.name ?? '—'
-  const warehouseType = (e.location as any)?.warehouse?.warehouse_type ?? '—'
+  const warehouseNm = e.location?.warehouse?.name ?? '—'
+  const loaiKho     = e.location?.sub_name ?? e.location?.sub_type ?? '—'
 
   return (
     <div className="w-72 shrink-0 border-l bg-white overflow-y-auto flex flex-col">
@@ -935,7 +927,7 @@ function DetailPanel({ entry: e, onClose }: { entry: InventoryEntry; onClose: ()
         {/* Core info */}
         <Section title="Thông tin hàng">
           <Row label="Kho"      value={warehouseNm} />
-          <Row label="Loại kho" value={warehouseType} />
+          <Row label="Loại kho" value={loaiKho} />
           <Row label="Mã hàng"  value={e.material?.material_code ?? '—'} mono />
           <Row label="Tên hàng" value={e.material?.short_name ?? '—'} />
           <Row label="Vị trí"   value={loc} mono />

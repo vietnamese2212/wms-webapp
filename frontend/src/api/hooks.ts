@@ -350,10 +350,21 @@ export function useUpdatePalletEntry() {
   })
 }
 
+export function useLocationSubTypes() {
+  return useQuery({
+    queryKey: ['location-sub-types'],
+    staleTime: 5 * 60_000,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/masterdata/locations/sub-types')
+      return data.data as { sub_type: string; label: string }[]
+    },
+  })
+}
+
 // WMS – Inventory (API thật)
 export function useInventoryEntries(params?: {
   warehouse_id?: string
-  warehouse_type?: string
+  sub_type?: string
   location_code?: string
   material_search?: string
   qa_status_ids?: string[]

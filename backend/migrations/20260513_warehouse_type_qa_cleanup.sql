@@ -1,10 +1,3 @@
--- Thêm cột warehouse_type vào bảng Warehouse
-ALTER TABLE "Warehouse"
-  ADD COLUMN IF NOT EXISTS "warehouse_type" TEXT;
-
-COMMENT ON COLUMN "Warehouse"."warehouse_type" IS
-  'Loại kho: TP (Thành phẩm), NVL (Nguyên vật liệu), POSM, Bao bì, v.v.';
-
 -- Xóa QA status "OK" khỏi InventoryEntry
 -- (bỏ trống = mặc định OK, không cần lưu vào qa_status_id)
 UPDATE "InventoryEntry"
@@ -14,10 +7,10 @@ WHERE qa_status_id IN (
   SELECT id FROM "QAStatus" WHERE UPPER(code) = 'OK'
 );
 
--- Sau khi apply migration, thực hiện các bước thủ công sau:
--- 1. Set warehouse_type cho từng kho:
---    UPDATE "Warehouse" SET warehouse_type = 'TP' WHERE code = '...'
--- 2. Confirm và set nmsx_code nếu chưa làm:
---    UPDATE "Warehouse" SET nmsx_code = 'B' WHERE code = 'BV'  -- Kho Ba Vì
---    UPDATE "Warehouse" SET nmsx_code = 'D' WHERE code = 'BB'  -- Kho Bàu Bàng
---    UPDATE "Warehouse" SET nmsx_code = 'O' WHERE code = 'GC'  -- NM gia công
+-- NOTE: Không thêm warehouse_type vào bảng Warehouse.
+-- "Loại kho" (TP, NVL, POSM...) đã được lưu trong bảng Location:
+--   Location.sub_type  = "THANH_PHAM" | "NGUYEN_LIEU" | "BAN_THANH_PHAM" (enum)
+--   Location.sub_name  = "Thành phẩm 1", "Nguyên liệu 1"... (hiển thị)
+--   Location.sub_code  = "TP1", "NL1"... (mã ngắn)
+-- Mỗi Warehouse có nhiều Location thuộc các loại khác nhau.
+-- InventoryEntry → location_id → Location(sub_type, sub_name) → Warehouse(name)

@@ -18,6 +18,7 @@ router.delete('/warehouses/:id', warehouse.deleteWarehouse)
 
 // Location (sub_code/sub_name/sub_type embedded)
 router.get('/locations/sub-groups',  location.listSubGroups)   // ?warehouse_id=xxx
+router.get('/locations/sub-types',   location.listSubTypes)    // distinct sub_type + label
 router.get('/locations',             location.listLocations)    // ?warehouse_id=&sub_code=
 router.post('/locations',            location.createLocation)
 router.get('/locations/:id',         location.getLocation)

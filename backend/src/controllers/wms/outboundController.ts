@@ -680,7 +680,7 @@ export async function uploadExcel(req: Request, res: Response) {
       const dvvt     = String(groupRows[0]['DVVT']     ?? groupRows[0]['Đơn vị']  ?? '').trim() || null
       const kho_xuat = String(groupRows[0]['Kho xuất'] ?? groupRows[0]['Kho xuat'] ?? '').trim()
       const loaiKhoSet = [...new Set(groupRows.map(r => String(r['Loại kho'] ?? r['Loai kho'] ?? '').trim()).filter(Boolean))]
-      const loai_kho = loaiKhoSet.length > 1 ? 'Hỗn hợp' : (loaiKhoSet[0] ?? null)
+      const loai_kho = loaiKhoSet.length ? loaiKhoSet.join('+') : null
 
       let resolved_warehouse_id = warehouse_id ?? null
       if (kho_xuat) {

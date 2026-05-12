@@ -9,6 +9,8 @@ interface OutboundFilters {
   filterType: string
   filterDvvt: string
   filterNpp: string
+  warehouseId: string
+  warehouseType: string
 }
 interface InboundFilters {
   search: string
@@ -29,7 +31,7 @@ interface InventoryFilters {
   qaStatusIds: string[]
   status: string
   warehouseId: string
-  warehouseType: string
+  materialCategory: string
   page: number
   manufacturerId: string
   cycle: string
@@ -54,17 +56,17 @@ const INBOUND_DEFAULT: InboundFilters = {
 export const useWmsFilterStore = create<WmsFilterState>()(
   persist(
     (set) => ({
-      outbound:  { search: '', date: today(), filterType: '', filterDvvt: '', filterNpp: '' },
+      outbound:  { search: '', date: today(), filterType: '', filterDvvt: '', filterNpp: '', warehouseId: '', warehouseType: '' },
       inbound:   INBOUND_DEFAULT,
       inventory: {
         search: '', materialSearch: '', locationCode: '', qaStatusIds: [], status: '',
-        warehouseId: '', warehouseType: '', page: 1, manufacturerId: '',
+        warehouseId: '', materialCategory: '', page: 1, manufacturerId: '',
         cycle: '', machineCode: '', datePctMin: '',
       },
       setOutbound:  (f) => set(s => ({ outbound:  { ...s.outbound,  ...f } })),
       setInbound:   (f) => set(s => ({ inbound:   { ...INBOUND_DEFAULT, ...s.inbound, ...f } })),
       setInventory: (f) => set(s => ({ inventory: { ...s.inventory, ...f } })),
     }),
-    { name: 'wms-filters-v3', storage: createJSONStorage(() => sessionStorage) }
+    { name: 'wms-filters-v4', storage: createJSONStorage(() => sessionStorage) }
   )
 )

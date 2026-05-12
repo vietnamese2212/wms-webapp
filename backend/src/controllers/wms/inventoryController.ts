@@ -48,7 +48,7 @@ function applyInventoryFilters(q: any, p: FilterParams): any {
 
 export async function listInventory(req: Request, res: Response) {
   const {
-    warehouse_id, sub_type, location_code, material_search,
+    warehouse_id, category, location_code, material_search,
     status, search, page = '1', limit = '50',
     manufacturer_id, cycle, machine_code, import_date_from, import_date_to,
   } = req.query as Record<string, string>
@@ -61,12 +61,11 @@ export async function listInventory(req: Request, res: Response) {
   const limitNum = Math.min(200, Math.max(1, parseInt(limit) || 50))
   const offset   = (pageNum - 1) * limitNum
 
-  // Resolve location_ids for warehouse / sub_type / location_code filters
+  // Resolve location_ids for warehouse / location_code filters
   let locationFilter: string[] | null = null
-  if (warehouse_id || sub_type || location_code) {
+  if (warehouse_id || location_code) {
     let locQ = (supabase.from('Location') as any).select('id')
     if (warehouse_id)  locQ = locQ.eq('warehouse_id', warehouse_id)
-    if (sub_type)      locQ = locQ.eq('sub_type', sub_type)
     if (location_code) locQ = locQ.ilike('location_code', `%${location_code}%`)
 
     const { data: locs, error: locErr } = await locQ
@@ -76,12 +75,13 @@ export async function listInventory(req: Request, res: Response) {
       return ok(res, { entries: [], total: 0, page: pageNum, limit: limitNum, total_cartons_remaining: 0 })
   }
 
-  // Resolve material_ids for material search
+  // Resolve material_ids for material search + category filter
   let materialFilter: string[] | null = null
-  if (material_search) {
-    const { data: mats, error: matErr } = await (supabase.from('Material') as any)
-      .select('id')
-      .or(`material_code.ilike.%${material_search}%,short_name.ilike.%${material_search}%`)
+  if (material_search || category) {
+    let matQ = (supabase.from('Material') as any).select('id')
+    if (material_search) matQ = matQ.or(`material_code.ilike.%${material_search}%,short_name.ilike.%${material_search}%`)
+    if (category)        matQ = matQ.eq('category', category)
+    const { data: mats, error: matErr } = await matQ
     if (matErr) return fail(res, 500, 'DB_ERROR', matErr.message)
     materialFilter = (mats ?? []).map((m: any) => m.id as string)
     if (materialFilter.length === 0)

@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Input }  from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { useGDOs, useUploadGDOExcel } from '@/api/hooks'
+import { useGDOs, useUploadGDOExcel, useWarehouses } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
@@ -60,8 +60,16 @@ export default function Outbound() {
   const [uploadWarn,      setUploadWarn]      = useState<string | null>(null)
   const [postUploadLoading, setPostUploadLoading] = useState(false)
 
+  const { data: warehouses = [] } = useWarehouses(true)
+
+  useEffect(() => {
+    if (!f.warehouseId && user?.warehouse_id) {
+      setOutbound({ warehouseId: user.warehouse_id })
+    }
+  }, [user?.warehouse_id]) // eslint-disable-line
+
   const { data: gdos = [], isLoading, isFetching } = useGDOs({
-    warehouse_id: user?.warehouse_id || undefined,
+    warehouse_id: f.warehouseId || undefined,
     search: f.search || undefined,
     date:   f.date   || undefined,
   })
@@ -71,16 +79,18 @@ export default function Outbound() {
     if (postUploadLoading && !isFetching) setPostUploadLoading(false)
   }, [isFetching, postUploadLoading])
 
-  const typeOptions = useMemo(() => [...new Set(gdos.map(g => g.export_type).filter(Boolean))] as string[], [gdos])
-  const dvvtOptions = useMemo(() => [...new Set(gdos.map(g => g.dvvt).filter(Boolean))] as string[], [gdos])
-  const nppOptions  = useMemo(() => [...new Set(gdos.flatMap(g => g.distributor_names ?? []).filter(Boolean))], [gdos])
+  const typeOptions        = useMemo(() => [...new Set(gdos.map(g => g.export_type).filter(Boolean))] as string[], [gdos])
+  const dvvtOptions        = useMemo(() => [...new Set(gdos.map(g => g.dvvt).filter(Boolean))] as string[], [gdos])
+  const nppOptions         = useMemo(() => [...new Set(gdos.flatMap(g => g.distributor_names ?? []).filter(Boolean))], [gdos])
+  const warehouseTypeOpts  = useMemo(() => [...new Set(gdos.map(g => g.warehouse_type).filter(Boolean))] as string[], [gdos])
 
   const filtered = useMemo(() => gdos.filter(g => {
-    if (f.filterType && g.export_type !== f.filterType) return false
-    if (f.filterDvvt && g.dvvt !== f.filterDvvt) return false
-    if (f.filterNpp  && !(g.distributor_names ?? []).includes(f.filterNpp)) return false
+    if (f.filterType    && g.export_type !== f.filterType) return false
+    if (f.filterDvvt    && g.dvvt !== f.filterDvvt) return false
+    if (f.filterNpp     && !(g.distributor_names ?? []).includes(f.filterNpp)) return false
+    if (f.warehouseType && g.warehouse_type !== f.warehouseType) return false
     return true
-  }), [gdos, f.filterType, f.filterDvvt, f.filterNpp])
+  }), [gdos, f.filterType, f.filterDvvt, f.filterNpp, f.warehouseType])
 
   // Sort: ngày desc → loại xuất asc → số xe natural asc
   const sorted = useMemo(() => [...filtered].sort((a, b) => {
@@ -220,8 +230,30 @@ export default function Outbound() {
           </div>
         </div>
 
-        {/* Row 2: Loại xuất / ĐVVT / NPP filters */}
+        {/* Row 2: Kho / Loại kho / Loại xuất / ĐVVT / NPP filters */}
         <div className="flex gap-2 flex-wrap">
+          <Select value={f.warehouseId || '__all__'} onValueChange={v => setOutbound({ warehouseId: v === '__all__' ? '' : v })}>
+            <SelectTrigger className="h-7 text-xs w-[130px]">
+              <SelectValue placeholder="Kho xuất" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">Tất cả kho</SelectItem>
+              {(warehouses as any[]).map((w: any) => <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+
+          {warehouseTypeOpts.length > 0 && (
+            <Select value={f.warehouseType || '__all__'} onValueChange={v => setOutbound({ warehouseType: v === '__all__' ? '' : v })}>
+              <SelectTrigger className="h-7 text-xs w-[130px]">
+                <SelectValue placeholder="Loại kho" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">Tất cả loại kho</SelectItem>
+                {warehouseTypeOpts.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          )}
+
           <Select value={f.filterType || '__all__'} onValueChange={v => setOutbound({ filterType: v === '__all__' ? '' : v })}>
             <SelectTrigger className="h-7 text-xs w-[130px]">
               <SelectValue placeholder="Loại xuất" />

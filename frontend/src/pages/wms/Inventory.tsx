@@ -12,7 +12,7 @@ import {
 import { Label } from '@/components/ui/label'
 import {
   useInventoryEntries, useWarehouses, useQAStatuses, useAdjustInventory,
-  useLocationsReal, useMaterials, useLocationSubTypes,
+  useLocationsReal, useMaterials,
   useBulkUpdateInventoryQA, useBulkTransferLocation, useBulkTransferMaterial,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
@@ -67,6 +67,13 @@ const DATE_PCT_OPTIONS = [
   { value: '80', label: '> 80%' },
   { value: '60', label: '> 60%' },
   { value: '30', label: '> 30%' },
+]
+
+const CATEGORY_OPTIONS = [
+  { value: 'TP',     label: 'Thành phẩm' },
+  { value: 'NVL',    label: 'NVL' },
+  { value: 'POSM',   label: 'POSM' },
+  { value: 'BAO_BI', label: 'Bao bì' },
 ]
 
 // ─── QA multi-select dropdown ────────────────────────────────
@@ -376,9 +383,8 @@ export default function Inventory() {
   const [showFilters,  setShowFilters]  = useState(false)
   const [actionModal,  setActionModal]  = useState<'qa' | 'location' | 'material' | null>(null)
 
-  const { data: warehouses    = [] } = useWarehouses(true)
-  const { data: qaStatuses    = [] } = useQAStatuses()
-  const { data: subTypes      = [] } = useLocationSubTypes()
+  const { data: warehouses = [] } = useWarehouses(true)
+  const { data: qaStatuses = [] } = useQAStatuses()
 
   // Auto-set warehouse from auth
   useEffect(() => {
@@ -388,9 +394,9 @@ export default function Inventory() {
   }, [user?.warehouse_id]) // eslint-disable-line
 
   const { data, isLoading } = useInventoryEntries({
-    warehouse_id:    f.warehouseId      || undefined,
-    sub_type:        f.warehouseType    || undefined,
-    location_code:   f.locationCode     || undefined,
+    warehouse_id:    f.warehouseId        || undefined,
+    category:        f.materialCategory   || undefined,
+    location_code:   f.locationCode       || undefined,
     material_search: f.materialSearch   || undefined,
     qa_status_ids:   f.qaStatusIds.length > 0 ? f.qaStatusIds : undefined,
     status:          f.status           || undefined,
@@ -439,7 +445,7 @@ export default function Inventory() {
   function resetFilters() {
     setInventory({
       search: '', materialSearch: '', locationCode: '', qaStatusIds: [], status: '',
-      warehouseType: '', manufacturerId: '', cycle: '', machineCode: '', datePctMin: '', page: 1,
+      materialCategory: '', manufacturerId: '', cycle: '', machineCode: '', datePctMin: '', page: 1,
     })
   }
 
@@ -454,11 +460,11 @@ export default function Inventory() {
   }
 
   const hasFilters = !!(f.search || f.materialSearch || f.locationCode || f.qaStatusIds.length > 0
-    || f.status || f.warehouseType || f.manufacturerId || f.cycle || f.machineCode || f.datePctMin)
+    || f.status || f.materialCategory || f.manufacturerId || f.cycle || f.machineCode || f.datePctMin)
 
   const activeFilterCount = [
     !!f.locationCode, !!f.materialSearch, f.qaStatusIds.length > 0, !!f.status,
-    !!f.warehouseType, !!f.cycle, !!f.machineCode, !!f.datePctMin,
+    !!f.materialCategory, !!f.cycle, !!f.machineCode, !!f.datePctMin,
   ].filter(Boolean).length
 
   function closeActionModal() {
@@ -541,16 +547,16 @@ export default function Inventory() {
                 </SelectContent>
               </Select>
 
-              {/* Loại kho (Location.sub_type) */}
-              <Select value={f.warehouseType || '__all__'}
-                onValueChange={v => setInventory({ warehouseType: v === '__all__' ? '' : v, page: 1 })}>
+              {/* Loại kho (Material.category) */}
+              <Select value={f.materialCategory || '__all__'}
+                onValueChange={v => setInventory({ materialCategory: v === '__all__' ? '' : v, page: 1 })}>
                 <SelectTrigger className="h-7 text-xs w-[120px] bg-white">
                   <SelectValue placeholder="Loại kho" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__all__">Tất cả loại</SelectItem>
-                  {(subTypes as { sub_type: string; label: string }[]).map(t => (
-                    <SelectItem key={t.sub_type} value={t.sub_type}>{t.label}</SelectItem>
+                  {CATEGORY_OPTIONS.map(o => (
+                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>

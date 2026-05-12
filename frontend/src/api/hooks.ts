@@ -364,7 +364,7 @@ export function useLocationSubTypes() {
 // WMS – Inventory (API thật)
 export function useInventoryEntries(params?: {
   warehouse_id?: string
-  sub_type?: string
+  category?: string
   location_code?: string
   material_search?: string
   qa_status_ids?: string[]

@@ -368,12 +368,17 @@ export interface InventoryEntry {
   status:             InventoryStatus | string
   import_date:        string | null
   update_date:        string | null
+  adjustment_qty:     number | null
+  stocktake_at:       string | null
   created_at:         string
   updated_at:         string
-  location:     { id: string; location_code: string; sub_code: string } | null
-  material:     { id: string; material_code: string; short_name: string | null } | null
-  manufacturer: { id: string; code: string; name: string | null } | null
-  qa_status:    { id: string; code: string; name: string } | null
+  location:              { id: string; location_code: string; sub_code: string } | null
+  material:              { id: string; material_code: string; short_name: string | null; shelf_life_days: number | null } | null
+  manufacturer:          { id: string; code: string; name: string | null } | null
+  qa_status:             { id: string; code: string; name: string } | null
+  created_by_emp:        { id: string; name: string } | null
+  updated_by_emp:        { id: string; name: string } | null
+  stocktake_by_emp:      { id: string; name: string } | null
 }
 
 // WMS – Outbound

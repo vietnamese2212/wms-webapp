@@ -99,7 +99,6 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
   }
 
   function dismissPending() {
-    setPendingQR(null)
     setFeedback(null)
     scannerRef.current?.resume()
   }
@@ -121,8 +120,8 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
           <div className="relative">
             <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} />
 
-            {/* "Quét tiếp": top-center, dismiss pending and resume */}
-            {pendingQR && (
+            {/* "Quét tiếp": chỉ hiện sau khi lưu xong hoặc báo lỗi */}
+            {feedback !== null && (
               <button
                 className="absolute left-1/2 top-[8%] -translate-x-1/2 -translate-y-1/2 z-10
                            bg-white/90 hover:bg-white text-slate-700 border border-slate-300

@@ -42,7 +42,8 @@ router.delete('/inbound-orders/:id/entries',            inbound.removeEntries)
 router.get('/inbound-orders/:id/location-suggestions',  inbound.getLocationSuggestions)
 
 // Inventory (tồn kho)
-router.get('/inventory', inventory.listInventory)
+router.get('/inventory',                  inventory.listInventory)
+router.patch('/inventory/:id/adjust',     inventory.adjustInventory)
 
 // Outbound (chuyến xe / xuất kho)
 router.get('/outbound',                                       outbound.listGDOs)

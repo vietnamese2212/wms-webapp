@@ -8,9 +8,7 @@ Ngôn ngữ trao đổi: tiếng việt
 
 # CLAUDE.md
 
-Các nguyên tắc hành vi nhằm giảm những lỗi lập trình phổ biến của LLM. Có thể kết hợp với các hướng dẫn riêng của project khi cần.
-
-> **Đánh đổi:** Các nguyên tắc này ưu tiên sự cẩn trọng hơn tốc độ. Với các tác vụ đơn giản, hãy tự cân nhắc linh hoạt.
+Các nguyên tắc hành vi khi xây dựng app
 
 # 1. Suy nghĩ trước khi code
 > **Đừng tự suy diễn. Đừng che giấu sự không chắc chắn. Hãy nêu rõ các đánh đổi.**
@@ -21,7 +19,6 @@ Trước khi triển khai:
 - Nếu có điều gì chưa rõ, hãy dừng lại. Chỉ rõ điểm gây mơ hồ. Hỏi lại.
 
 # 2. Ưu tiên sự đơn giản
-
 > **Chỉ viết lượng code tối thiểu để giải quyết vấn đề. Không thêm thứ chưa cần.**
 
 - Không thêm tính năng ngoài yêu cầu.
@@ -36,7 +33,6 @@ Nếu có, hãy đơn giản hóa.
 > **Chỉ chạm vào thứ cần thiết. Chỉ dọn dẹp phần bạn gây ảnh hưởng.**
 
 Khi chỉnh sửa code hiện có:
-
 - Đừng “tiện tay cải thiện” code, comment hay format ở vùng liên quan.
 - Đừng refactor thứ chưa hỏng.
 - Hãy theo style hiện có, kể cả khi bạn thích cách khác hơn.
@@ -50,15 +46,10 @@ Khi thay đổi của bạn tạo ra phần thừa:
 Nguyên tắc kiểm tra:
 
 > Mỗi dòng thay đổi đều phải truy ngược được tới yêu cầu của người dùng.
-
 ---
-
 # 4. Thực thi theo mục tiêu rõ ràng
-
 > **Định nghĩa tiêu chí thành công. Lặp lại cho tới khi xác minh được.**
-
 Biến task thành các mục tiêu có thể kiểm chứng:
-
 - “Thêm validation”  
   → “Viết test cho input không hợp lệ, sau đó làm cho test pass”
 
@@ -78,18 +69,13 @@ Với task nhiều bước, hãy nêu kế hoạch ngắn gọn:
 
 Tiêu chí thành công rõ ràng giúp bạn làm việc độc lập tốt hơn.  
 Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phải hỏi lại liên tục.
-
 ---
-
 # Các nguyên tắc này đang hiệu quả nếu:
-
 - Diff có ít thay đổi thừa hơn
 - Ít phải viết lại do over-engineering
 - Các câu hỏi làm rõ xuất hiện trước khi implement thay vì sau khi gây lỗi11
 ---
-
 ## Chuẩn code bắt buộc
-
 **Database INSERT/UPDATE:**
 - Mọi INSERT phải có `id: randomUUID()` và `updated_at: new Date().toISOString()` — DB không có DEFAULT cho 2 cột này, thiếu → lỗi 23502
 - `import { randomUUID } from 'crypto'` ở đầu mọi controller có INSERT
@@ -98,7 +84,6 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 **TypeScript:**
 - Không dùng `as any`, `as any[]` — định nghĩa type rõ ràng
 - Axios error: `import type { AxiosError } from 'axios'`
-
 **Timezone — bắt buộc:**
 - Múi giờ: **Asia/Ho_Chi_Minh (UTC+7 / Hà Nội)**
 - Business date (`import_date`, `update_date`…): lưu chỉ ngày `YYYY-MM-DD` theo giờ VN:  
@@ -115,9 +100,7 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 
 **Frontend:**
 - Lỗi API hiển thị inline (banner đỏ trong component), không chỉ `console.error`
-
 ---
-
 ## Tech Stack
 
 **Frontend:** React 18 + TypeScript + Vite · Tailwind CSS v3 + shadcn/ui · React Router v6 · TanStack Query · html5-qrcode · date-fns · Lucide React
@@ -126,19 +109,15 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 **Backend:** Node.js + Express + TypeScript · `@supabase/supabase-js` service role (`backend/src/lib/supabase.ts`) · JWT auth chưa implement
 
 **Infra:** Supabase (PostgreSQL + Realtime, tất cả bảng `public` đã bật) · Vercel (auto-deploy từ GitHub `main`)
-
 ---
-
 ## API & Auth
 
 ```json
 { "success": true, "data": { ... } }
 { "success": false, "error": { "code": "NOT_FOUND", "message": "..." } }
 ```
-
 Roles: `OWN` (chọn kho tự do) · `WAREHOUSE_MANAGER` / `WAREHOUSE_STAFF` (kho cố định).
 Mock user: `frontend/src/stores/authStore.ts` — `warehouse_name: 'Kho Ba Vì'` khi dev.
-
 ---
 
 ## QR Scanning
@@ -147,9 +126,7 @@ Mock user: `frontend/src/stores/authStore.ts` — `warehouse_name: 'Kho Ba Vì'`
 **Outbound** — Scan → ô nhập số thùng (mặc định = còn cần xuất) + floating "Quét tiếp"/"Lưu" → API.
 Cả hai: thành công → feedback xanh + auto-resume 1.5s · lỗi → feedback đỏ + "Quét tiếp" thủ công.
 `QRScanner` export `forwardRef<QRScannerHandle>` với method `resume()`.
-
 ---
-
 ## Design System
 
 **Brand colors:** `blue-600` CTA · `green-500` OK · `amber-500` cảnh báo · `red-500` lỗi
@@ -161,13 +138,9 @@ IN_PROGRESS / đang xử lý →  bg-amber-50 hover:bg-amber-100
 Đã giao đơn (assigned)   →  bg-green-50 hover:bg-green-100
 PENDING / chưa xử lý     →  hover:bg-slate-50  (nền trắng)
 ```
-
 **Typography:** Page title `text-xl font-semibold` · Section `text-base font-medium` · Body `text-sm` · Label `text-xs text-slate-500`
-
 ---
-
 ## Table Standards (bắt buộc mọi module)
-
 **2 cỡ font:**
 - **Header cột:** `text-[9px] font-medium text-slate-500` · padding `px-2 py-1.5` · nền `bg-slate-50`
 - **Dữ liệu:** `text-[10px]` · thêm `font-mono font-semibold` cho mã/ID, `font-semibold tabular-nums` cho số, `text-slate-400` cho đơn vị phụ (thùng, pl…)

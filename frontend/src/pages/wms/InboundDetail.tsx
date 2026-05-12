@@ -189,8 +189,8 @@ function ScanDialog({ order, onClose, employeeId }: ScanDialogProps) {
           <div className="relative">
             <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} />
 
-            {/* "Quét tiếp": top-center, shown when a QR is pending */}
-            {pendingQR && (
+            {/* "Quét tiếp": only shown when validation fails (can't save, must rescan) */}
+            {pendingQR && validation?.ok === false && (
               <button
                 className="absolute left-1/2 top-[8%] -translate-x-1/2 -translate-y-1/2 z-10
                            bg-white/90 hover:bg-white text-slate-700 border border-slate-300

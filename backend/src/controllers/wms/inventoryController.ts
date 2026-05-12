@@ -1,15 +1,20 @@
 import { Request, Response } from 'express'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
+import { randomUUID } from 'crypto'
 
 const ENTRY_SELECT = `
   id, pallet_code, location_id, material_id, manufacturer_id, cycle, machine_code,
   pallet_sequence_no, qa_status_id, stack_layer, cartons_imported, cartons_remaining,
-  production_date, status, import_date, update_date, created_at, updated_at,
+  production_date, status, import_date, update_date, adjustment_qty, stocktake_at,
+  created_at, updated_at,
   location:Location(id, location_code, sub_code),
-  material:Material(id, material_code, short_name),
+  material:Material(id, material_code, short_name, shelf_life_days),
   manufacturer:Manufacturer(id, code, name),
-  qa_status:QAStatus(id, code, name)
+  qa_status:QAStatus(id, code, name),
+  created_by_emp:Employee!created_by(id, name),
+  updated_by_emp:Employee!updated_by(id, name),
+  stocktake_by_emp:Employee!stocktake_by(id, name)
 `.trim()
 
 export async function listInventory(req: Request, res: Response) {
@@ -69,4 +74,57 @@ export async function listInventory(req: Request, res: Response) {
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
 
   return ok(res, { entries: data ?? [], total: count ?? 0, page: pageNum, limit: limitNum })
+}
+
+const ACTIVE_STATUSES = ['IN_STOCK', 'PARTIAL', 'EXPORTED']
+
+export async function adjustInventory(req: Request, res: Response) {
+  const { id } = req.params
+  const { adjustment, stocktake_by } = req.body as { adjustment: number; stocktake_by?: string }
+
+  if (typeof adjustment !== 'number' || adjustment === 0) {
+    return fail(res, 400, 'INVALID_INPUT', 'adjustment phải là số khác 0')
+  }
+
+  const { data: entry, error: fetchErr } = await (supabase.from('InventoryEntry') as any)
+    .select('id, cartons_remaining, cartons_imported, adjustment_qty, status')
+    .eq('id', id)
+    .maybeSingle()
+
+  if (fetchErr || !entry) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy pallet')
+
+  const newRemaining = Number(entry.cartons_remaining ?? 0) + adjustment
+  if (newRemaining < 0) return fail(res, 400, 'INVALID_INPUT', 'Tồn kho không thể âm')
+
+  const now = new Date().toISOString()
+  const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+
+  let newStatus = entry.status
+  if (ACTIVE_STATUSES.includes(entry.status)) {
+    if (newRemaining <= 0) newStatus = 'EXPORTED'
+    else if (newRemaining >= Number(entry.cartons_imported)) newStatus = 'IN_STOCK'
+    else newStatus = 'PARTIAL'
+  }
+
+  const patch: Record<string, any> = {
+    cartons_remaining: newRemaining,
+    adjustment_qty:    Number(entry.adjustment_qty ?? 0) + adjustment,
+    status:            newStatus,
+    updated_at:        now,
+    update_date:       vnDate,
+  }
+
+  if (stocktake_by) {
+    patch.stocktake_by = stocktake_by
+    patch.stocktake_at = now
+  }
+
+  const { data: updated, error: updateErr } = await (supabase.from('InventoryEntry') as any)
+    .update(patch)
+    .eq('id', id)
+    .select(ENTRY_SELECT)
+    .single()
+
+  if (updateErr) return fail(res, 500, 'DB_ERROR', updateErr.message)
+  return ok(res, { entry: updated })
 }

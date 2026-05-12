@@ -372,6 +372,19 @@ export function useInventoryEntries(params?: {
   })
 }
 
+export function useAdjustInventory() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ id, adjustment }: { id: string; adjustment: number }) => {
+      const { data } = await apiClient.patch(`/wms/inventory/${id}/adjust`, { adjustment })
+      return data.data as { entry: InventoryEntry }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['inventory-entries'] })
+    },
+  })
+}
+
 // WMS (mock — legacy, không dùng nữa)
 export function useInventory() {
   return useQuery({

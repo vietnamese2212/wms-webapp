@@ -418,14 +418,16 @@ function applyClientFilters(
 // ─── Date button: displays dd-MM-yyyy, overlays native date picker ──────────
 
 function DateBtn({ value, placeholder, onChange }: { value: string; placeholder: string; onChange: (v: string) => void }) {
+  const inputRef = useRef<HTMLInputElement>(null)
   return (
-    <div className="relative inline-flex shrink-0">
-      <span className={`text-xs px-2.5 py-1 rounded-md border whitespace-nowrap select-none ${
+    <div className="relative inline-flex shrink-0 cursor-pointer"
+      onClick={() => inputRef.current?.showPicker()}>
+      <span className={`text-xs px-2.5 py-1 rounded-md border whitespace-nowrap select-none pointer-events-none ${
         value ? 'bg-white border-blue-300 text-blue-900 font-semibold' : 'bg-white/70 border-blue-200 text-blue-400'
       }`}>
         {value ? format(parseISO(value), 'dd-MM-yyyy') : placeholder}
       </span>
-      <input type="date" className="absolute inset-0 opacity-0 w-full cursor-pointer"
+      <input ref={inputRef} type="date" className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
         value={value} onChange={e => onChange(e.target.value)} />
     </div>
   )

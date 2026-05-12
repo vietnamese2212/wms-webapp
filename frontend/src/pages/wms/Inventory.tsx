@@ -430,6 +430,11 @@ export default function Inventory() {
     })
   }, [entries, f.datePctRanges])
 
+  const displayTotal   = f.datePctRanges.length > 0 ? displayEntries.length : total
+  const displayCartons = f.datePctRanges.length > 0
+    ? displayEntries.reduce((sum, e) => sum + Number(e.cartons_remaining ?? e.cartons_imported ?? 0), 0)
+    : totalCartons
+
   // Derive pallet context for action modals (from first checked entry on current page)
   const firstCheckedEntry = useMemo(() =>
     displayEntries.find(e => checkedIds.has(e.id)), [displayEntries, checkedIds]
@@ -640,12 +645,12 @@ export default function Inventory() {
         <p className="text-xs text-slate-500">
           {isLoading ? 'Đang tải…' : (
             <>
-              <span className="font-medium text-slate-700">{total.toLocaleString()}</span>
+              <span className="font-medium text-slate-700">{displayTotal.toLocaleString()}</span>
               <span className="text-slate-400"> pallet</span>
-              {totalCartons > 0 && (
+              {displayCartons > 0 && (
                 <>
                   <span className="mx-1.5 text-slate-300">·</span>
-                  <span className="font-medium text-slate-700">{totalCartons.toLocaleString()}</span>
+                  <span className="font-medium text-slate-700">{displayCartons.toLocaleString()}</span>
                   <span className="text-slate-400"> thùng tồn</span>
                 </>
               )}

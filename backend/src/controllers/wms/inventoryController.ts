@@ -17,10 +17,40 @@ const ENTRY_SELECT = `
   stocktake_by_emp:Employee!stocktake_by(id, name)
 `.trim()
 
+interface FilterParams {
+  status?: string
+  locationFilter?: string[] | null
+  materialFilter?: string[] | null
+  qa_status_id?: string
+  search?: string
+  manufacturer_id?: string
+  cycle?: string
+  machine_code?: string
+  import_date_from?: string
+  import_date_to?: string
+}
+
+function applyInventoryFilters(q: any, p: FilterParams): any {
+  if (!p.status || p.status === '') q = q.in('status', ['IN_STOCK', 'PARTIAL'])
+  else if (p.status !== 'ALL')       q = q.eq('status', p.status)
+
+  if (p.locationFilter)    q = q.in('location_id', p.locationFilter)
+  if (p.materialFilter)    q = q.in('material_id', p.materialFilter)
+  if (p.qa_status_id)      q = q.eq('qa_status_id', p.qa_status_id)
+  if (p.search)            q = q.ilike('pallet_code', `%${p.search}%`)
+  if (p.manufacturer_id)   q = q.eq('manufacturer_id', p.manufacturer_id)
+  if (p.cycle)             q = q.ilike('cycle', `%${p.cycle}%`)
+  if (p.machine_code)      q = q.ilike('machine_code', `%${p.machine_code}%`)
+  if (p.import_date_from)  q = q.gte('import_date', p.import_date_from)
+  if (p.import_date_to)    q = q.lte('import_date', p.import_date_to)
+  return q
+}
+
 export async function listInventory(req: Request, res: Response) {
   const {
     warehouse_id, location_code, material_search, qa_status_id,
     status, search, page = '1', limit = '50',
+    manufacturer_id, cycle, machine_code, import_date_from, import_date_to,
   } = req.query as Record<string, string>
 
   const pageNum  = Math.max(1, parseInt(page) || 1)
@@ -37,7 +67,7 @@ export async function listInventory(req: Request, res: Response) {
     if (locErr) return fail(res, 500, 'DB_ERROR', locErr.message)
     locationFilter = (locs ?? []).map((l: any) => l.id as string)
     if (locationFilter.length === 0)
-      return ok(res, { entries: [], total: 0, page: pageNum, limit: limitNum })
+      return ok(res, { entries: [], total: 0, page: pageNum, limit: limitNum, total_cartons_remaining: 0 })
   }
 
   // Resolve material_ids for material search
@@ -49,31 +79,35 @@ export async function listInventory(req: Request, res: Response) {
     if (matErr) return fail(res, 500, 'DB_ERROR', matErr.message)
     materialFilter = (mats ?? []).map((m: any) => m.id as string)
     if (materialFilter.length === 0)
-      return ok(res, { entries: [], total: 0, page: pageNum, limit: limitNum })
+      return ok(res, { entries: [], total: 0, page: pageNum, limit: limitNum, total_cartons_remaining: 0 })
   }
 
-  let query = (supabase.from('InventoryEntry') as any).select(ENTRY_SELECT, { count: 'exact' })
-
-  // Status: default = IN_STOCK + PARTIAL; 'ALL' = no filter; specific value = exact match
-  if (!status || status === '') {
-    query = query.in('status', ['IN_STOCK', 'PARTIAL'])
-  } else if (status !== 'ALL') {
-    query = query.eq('status', status)
+  const filterParams: FilterParams = {
+    status, locationFilter, materialFilter, qa_status_id, search,
+    manufacturer_id, cycle, machine_code, import_date_from, import_date_to,
   }
 
-  if (locationFilter) query = query.in('location_id', locationFilter)
-  if (materialFilter) query = query.in('material_id', materialFilter)
-  if (qa_status_id)   query = query.eq('qa_status_id', qa_status_id)
-  if (search)         query = query.ilike('pallet_code', `%${search}%`)
+  // Main paginated query
+  const mainQ = applyInventoryFilters(
+    (supabase.from('InventoryEntry') as any).select(ENTRY_SELECT, { count: 'exact' }),
+    filterParams
+  ).order('import_date', { ascending: false, nullsFirst: false }).range(offset, offset + limitNum - 1)
 
-  query = query
-    .order('import_date', { ascending: false, nullsFirst: false })
-    .range(offset, offset + limitNum - 1)
+  // Aggregate query (no pagination — fetch only cartons_remaining for total)
+  const aggQ = applyInventoryFilters(
+    (supabase.from('InventoryEntry') as any).select('cartons_remaining'),
+    filterParams
+  )
 
-  const { data, count, error } = await query
+  const [{ data, count, error }, { data: aggData }] = await Promise.all([mainQ, aggQ])
+
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
 
-  return ok(res, { entries: data ?? [], total: count ?? 0, page: pageNum, limit: limitNum })
+  const total_cartons_remaining = (aggData ?? []).reduce(
+    (s: number, e: any) => s + (Number(e.cartons_remaining) || 0), 0
+  )
+
+  return ok(res, { entries: data ?? [], total: count ?? 0, page: pageNum, limit: limitNum, total_cartons_remaining })
 }
 
 const ACTIVE_STATUSES = ['IN_STOCK', 'PARTIAL', 'EXPORTED']
@@ -96,7 +130,7 @@ export async function adjustInventory(req: Request, res: Response) {
   const newRemaining = Number(entry.cartons_remaining ?? 0) + adjustment
   if (newRemaining < 0) return fail(res, 400, 'INVALID_INPUT', 'Tồn kho không thể âm')
 
-  const now = new Date().toISOString()
+  const now    = new Date().toISOString()
   const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
   let newStatus = entry.status
@@ -127,4 +161,73 @@ export async function adjustInventory(req: Request, res: Response) {
 
   if (updateErr) return fail(res, 500, 'DB_ERROR', updateErr.message)
   return ok(res, { entry: updated })
+}
+
+// ─── Bulk actions ────────────────────────────────────────────
+
+export async function bulkUpdateQA(req: Request, res: Response) {
+  const { ids, qa_status_id, employee_id } = req.body as {
+    ids: string[]; qa_status_id: string | null; employee_id?: string
+  }
+  if (!Array.isArray(ids) || ids.length === 0)
+    return fail(res, 400, 'INVALID_INPUT', 'Cần ít nhất 1 pallet')
+
+  const now    = new Date().toISOString()
+  const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+
+  const patch: Record<string, unknown> = { qa_status_id: qa_status_id ?? null, updated_at: now, update_date: vnDate }
+  if (employee_id) patch.updated_by = employee_id
+
+  const { error } = await (supabase.from('InventoryEntry') as any).update(patch).in('id', ids)
+  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  return ok(res, { updated: ids.length })
+}
+
+export async function bulkTransferLocation(req: Request, res: Response) {
+  const { ids, location_id, employee_id } = req.body as {
+    ids: string[]; location_id: string; employee_id?: string
+  }
+  if (!Array.isArray(ids) || ids.length === 0)
+    return fail(res, 400, 'INVALID_INPUT', 'Cần ít nhất 1 pallet')
+  if (!location_id)
+    return fail(res, 400, 'INVALID_INPUT', 'Thiếu location_id')
+
+  const { data: loc } = await (supabase.from('Location') as any)
+    .select('id, is_active, location_code').eq('id', location_id).maybeSingle()
+  if (!loc)           return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy vị trí')
+  if (!loc.is_active) return fail(res, 400, 'LOCATION_INACTIVE', 'Vị trí không hoạt động')
+
+  const now    = new Date().toISOString()
+  const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+
+  const patch: Record<string, unknown> = { location_id, updated_at: now, update_date: vnDate }
+  if (employee_id) patch.updated_by = employee_id
+
+  const { error } = await (supabase.from('InventoryEntry') as any).update(patch).in('id', ids)
+  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  return ok(res, { updated: ids.length, location_code: loc.location_code })
+}
+
+export async function bulkTransferMaterial(req: Request, res: Response) {
+  const { ids, material_id, employee_id } = req.body as {
+    ids: string[]; material_id: string; employee_id?: string
+  }
+  if (!Array.isArray(ids) || ids.length === 0)
+    return fail(res, 400, 'INVALID_INPUT', 'Cần ít nhất 1 pallet')
+  if (!material_id)
+    return fail(res, 400, 'INVALID_INPUT', 'Thiếu material_id')
+
+  const { data: mat } = await (supabase.from('Material') as any)
+    .select('id, material_code').eq('id', material_id).maybeSingle()
+  if (!mat) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy hàng hóa')
+
+  const now    = new Date().toISOString()
+  const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+
+  const patch: Record<string, unknown> = { material_id, updated_at: now, update_date: vnDate }
+  if (employee_id) patch.updated_by = employee_id
+
+  const { error } = await (supabase.from('InventoryEntry') as any).update(patch).in('id', ids)
+  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  return ok(res, { updated: ids.length, material_code: mat.material_code })
 }

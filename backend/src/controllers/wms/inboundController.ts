@@ -289,10 +289,10 @@ export async function scanQR(req: Request, res: Response) {
     if (!qr_code)     return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu qr_code')
     if (!location_id) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu location_id')
 
-    // Load order with material
+    // Load order with material + warehouse nmsx_code
     const { data: order } = await supabase
       .from('ProductionImport')
-      .select('id, status, material_id, material:Material(material_code, cartons_per_pallet)')
+      .select('id, status, material_id, warehouse_id, material:Material(material_code, cartons_per_pallet), warehouse:Warehouse(id, nmsx_code)')
       .eq('id', order_id).maybeSingle()
     if (!order)                     return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (order.status !== 'OPEN')    return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập không còn ở trạng thái mở')
@@ -301,6 +301,15 @@ export async function scanQR(req: Request, res: Response) {
     // Parse QR
     const parsed = parseInboundQR(qr_code)
     if (!parsed.is_valid) return fail(res, 400, 'INVALID_QR', parsed.error ?? 'QR không hợp lệ')
+
+    // Validate NMSX code (position 6 of QR) matches warehouse nmsx_code if configured
+    const warehouseNmsxCode = (order.warehouse as { nmsx_code?: string | null } | null)?.nmsx_code
+    if (warehouseNmsxCode && parsed.manufacturer_code) {
+      if (parsed.manufacturer_code.toUpperCase() !== warehouseNmsxCode.toUpperCase()) {
+        return fail(res, 400, 'WAREHOUSE_MISMATCH',
+          `Mã kho trên QR "${parsed.manufacturer_code}" không khớp kho hiện tại (cần mã "${warehouseNmsxCode}")`)
+      }
+    }
 
     // Parallel: material lookup + duplicate check + location lookup
     const [matResult, dupResult, locResult] = await Promise.all([

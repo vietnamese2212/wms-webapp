@@ -1,10 +1,17 @@
-import { useEffect, useState } from 'react'
-import { Package, Search, X, SlidersHorizontal, ChevronRight } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Package, Search, X, SlidersHorizontal, ChevronRight, Filter, CalendarDays } from 'lucide-react'
+import { format, parseISO } from 'date-fns'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { useInventoryEntries, useWarehouses, useQAStatuses, useAdjustInventory } from '@/api/hooks'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
+import { Label } from '@/components/ui/label'
+import {
+  useInventoryEntries, useWarehouses, useQAStatuses, useAdjustInventory,
+  useManufacturers, useLocationsReal, useMaterials,
+  useBulkUpdateInventoryQA, useBulkTransferLocation, useBulkTransferMaterial,
+} from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
@@ -33,8 +40,9 @@ function datePctCls(pct: number): string {
   return 'text-red-600 font-semibold'
 }
 
-function entryRowBg(e: InventoryEntry, selected: boolean): string {
-  if (selected) return 'bg-blue-100'
+function entryRowBg(e: InventoryEntry, selected: boolean, checked: boolean): string {
+  if (checked)   return 'bg-green-50 hover:bg-green-100'
+  if (selected)  return 'bg-blue-100'
   if (e.status === 'PARTIAL')    return 'bg-amber-50 hover:bg-amber-100'
   if (e.status === 'QUARANTINE') return 'bg-red-50 hover:bg-red-100'
   if (e.status === 'EXPORTED' || e.status === 'TRANSFERRED') return 'bg-blue-50 hover:bg-blue-100'
@@ -52,17 +60,279 @@ const STATUS_CLS: Record<string, string> = {
 }
 
 const LIMIT = 50
+const TODAY = new Date().toISOString().slice(0, 10)
+
+// ─── DateBtn (same pattern as Inbound.tsx) ────────────────────
+
+function DateBtn({ value, placeholder, onChange }: {
+  value: string; placeholder: string; onChange: (v: string) => void
+}) {
+  const inputRef = useRef<HTMLInputElement>(null)
+  return (
+    <div className="relative inline-flex shrink-0 cursor-pointer"
+      onClick={() => inputRef.current?.showPicker()}>
+      <span className={`text-xs px-2.5 py-1 rounded-md border whitespace-nowrap select-none pointer-events-none ${
+        value ? 'bg-white border-blue-300 text-blue-900 font-semibold' : 'bg-white/70 border-blue-200 text-blue-400'
+      }`}>
+        {value ? format(parseISO(value), 'dd-MM-yyyy') : placeholder}
+      </span>
+      <input ref={inputRef} type="date"
+        className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
+        value={value} onChange={e => onChange(e.target.value)} />
+    </div>
+  )
+}
+
+// ─── Action modals ────────────────────────────────────────────
+
+function QAModal({ open, ids, qaStatuses, onClose }: {
+  open: boolean
+  ids: string[]
+  qaStatuses: { id: string; code: string; name: string }[]
+  onClose: () => void
+}) {
+  const [qaId, setQaId]     = useState('')
+  const [error, setError]   = useState('')
+  const { mutate, isPending } = useBulkUpdateInventoryQA()
+
+  function handleSubmit() {
+    setError('')
+    mutate(
+      { ids, qa_status_id: qaId === '__clear__' ? null : qaId },
+      {
+        onSuccess: () => { setQaId(''); onClose() },
+        onError: (e: any) => setError(e?.response?.data?.error?.message ?? 'Lỗi không xác định'),
+      }
+    )
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={v => { if (!v) { setQaId(''); setError(''); onClose() } }}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Cập nhật QA Status</DialogTitle>
+          <p className="text-xs text-slate-500">{ids.length} pallet đã chọn</p>
+        </DialogHeader>
+        <div className="space-y-3 py-2">
+          {error && (
+            <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</div>
+          )}
+          <div className="space-y-1.5">
+            <Label className="text-xs">QA Status mới</Label>
+            <Select value={qaId} onValueChange={setQaId}>
+              <SelectTrigger><SelectValue placeholder="Chọn QA status…" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__clear__">— Xóa QA —</SelectItem>
+                {qaStatuses.map(q => (
+                  <SelectItem key={q.id} value={q.id}>{q.code} – {q.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Huỷ</Button>
+          <Button disabled={!qaId || isPending} onClick={handleSubmit}>
+            {isPending ? '…' : 'Cập nhật'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function LocationModal({ open, ids, warehouseId, onClose }: {
+  open: boolean; ids: string[]; warehouseId?: string; onClose: () => void
+}) {
+  const [search, setSearch]   = useState('')
+  const [locId, setLocId]     = useState('')
+  const [error, setError]     = useState('')
+  const { mutate, isPending }  = useBulkTransferLocation()
+  const { data: allLocs = [] } = useLocationsReal(warehouseId ? { warehouse_id: warehouseId } : undefined)
+
+  const filtered = useMemo(() => {
+    if (!search) return []
+    const s = search.toLowerCase()
+    return (allLocs as any[]).filter((l: any) =>
+      l.location_code?.toLowerCase().includes(s) || l.sub_code?.toLowerCase().includes(s)
+    ).slice(0, 20)
+  }, [allLocs, search])
+
+  const selectedLoc = useMemo(() =>
+    (allLocs as any[]).find((l: any) => l.id === locId), [allLocs, locId]
+  )
+
+  function reset() { setLocId(''); setSearch(''); setError('') }
+
+  function handleSubmit() {
+    if (!locId) { setError('Chọn vị trí trước'); return }
+    setError('')
+    mutate(
+      { ids, location_id: locId },
+      {
+        onSuccess: () => { reset(); onClose() },
+        onError: (e: any) => setError(e?.response?.data?.error?.message ?? 'Lỗi không xác định'),
+      }
+    )
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={v => { if (!v) { reset(); onClose() } }}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Chuyển vị trí</DialogTitle>
+          <p className="text-xs text-slate-500">{ids.length} pallet đã chọn</p>
+        </DialogHeader>
+        <div className="space-y-3 py-2">
+          {error && (
+            <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</div>
+          )}
+          <div className="space-y-1.5">
+            <Label className="text-xs">Vị trí mới</Label>
+            {selectedLoc ? (
+              <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded px-3 py-1.5">
+                <span className="text-sm font-mono font-semibold text-blue-800">{formatLoc(selectedLoc)}</span>
+                <span className="text-xs text-blue-500 ml-1">({selectedLoc.used_slots ?? 0}/{selectedLoc.max_pallets})</span>
+                <button className="ml-auto text-blue-400 hover:text-blue-600" onClick={reset}>
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ) : (
+              <>
+                <Input placeholder="Tìm vị trí…" value={search} autoFocus
+                  onChange={e => setSearch(e.target.value)} className="h-8 text-sm" />
+                {search && (
+                  <div className="border rounded max-h-44 overflow-y-auto">
+                    {filtered.length === 0 ? (
+                      <div className="px-3 py-2 text-xs text-slate-400 text-center">Không tìm thấy</div>
+                    ) : (
+                      filtered.map((l: any) => (
+                        <button key={l.id}
+                          className="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-50 flex items-center gap-2"
+                          onClick={() => { setLocId(l.id); setSearch('') }}>
+                          <span className="font-mono font-semibold">{formatLoc(l)}</span>
+                          <span className="ml-auto text-slate-400">{l.used_slots ?? 0}/{l.max_pallets}</span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => { reset(); onClose() }}>Huỷ</Button>
+          <Button disabled={!locId || isPending} onClick={handleSubmit}>
+            {isPending ? '…' : 'Chuyển'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function MaterialModal({ open, ids, onClose }: {
+  open: boolean; ids: string[]; onClose: () => void
+}) {
+  const [search, setSearch]   = useState('')
+  const [matId, setMatId]     = useState('')
+  const [error, setError]     = useState('')
+  const { mutate, isPending }  = useBulkTransferMaterial()
+  const { data: materials = [] } = useMaterials({ search: search || undefined })
+
+  const selectedMat = useMemo(() =>
+    (materials as any[]).find((m: any) => m.id === matId), [materials, matId]
+  )
+
+  function reset() { setMatId(''); setSearch(''); setError('') }
+
+  function handleSubmit() {
+    if (!matId) { setError('Chọn hàng hóa trước'); return }
+    setError('')
+    mutate(
+      { ids, material_id: matId },
+      {
+        onSuccess: () => { reset(); onClose() },
+        onError: (e: any) => setError(e?.response?.data?.error?.message ?? 'Lỗi không xác định'),
+      }
+    )
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={v => { if (!v) { reset(); onClose() } }}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Chuyển mã hàng</DialogTitle>
+          <p className="text-xs text-slate-500">{ids.length} pallet đã chọn</p>
+        </DialogHeader>
+        <div className="space-y-3 py-2">
+          {error && (
+            <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</div>
+          )}
+          <div className="space-y-1.5">
+            <Label className="text-xs">Hàng hóa mới</Label>
+            {matId && selectedMat ? (
+              <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded px-3 py-1.5">
+                <div className="min-w-0">
+                  <span className="text-xs font-mono font-semibold text-blue-800">{selectedMat.material_code}</span>
+                  <span className="text-xs text-blue-600 ml-1.5 truncate">{selectedMat.short_name ?? ''}</span>
+                </div>
+                <button className="ml-auto text-blue-400 hover:text-blue-600 shrink-0" onClick={reset}>
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ) : (
+              <>
+                <Input placeholder="Tìm mã hoặc tên hàng…" value={search} autoFocus
+                  onChange={e => { setSearch(e.target.value); setMatId('') }} className="h-8 text-sm" />
+                {search && (
+                  <div className="border rounded max-h-44 overflow-y-auto">
+                    {(materials as any[]).length === 0 ? (
+                      <div className="px-3 py-2 text-xs text-slate-400 text-center">Không tìm thấy</div>
+                    ) : (
+                      (materials as any[]).map((m: any) => (
+                        <button key={m.id}
+                          className="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-50 flex items-baseline gap-2"
+                          onClick={() => { setMatId(m.id); setSearch('') }}>
+                          <span className="font-mono text-slate-500 shrink-0">{m.material_code}</span>
+                          <span className="text-slate-700 truncate">{m.short_name ?? m.material_description}</span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => { reset(); onClose() }}>Huỷ</Button>
+          <Button disabled={!matId || isPending} onClick={handleSubmit}>
+            {isPending ? '…' : 'Chuyển'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
 
 // ─── Main component ───────────────────────────────────────────
 
 export default function Inventory() {
   const user = useAuthStore(s => s.user)
   const { inventory: f, setInventory } = useWmsFilterStore()
-  const [selected, setSelected] = useState<InventoryEntry | null>(null)
 
-  const { data: warehouses = [] } = useWarehouses(true)
-  const { data: qaStatuses = [] }  = useQAStatuses()
+  const [selected,     setSelected]     = useState<InventoryEntry | null>(null)
+  const [checkedIds,   setCheckedIds]   = useState<Set<string>>(new Set())
+  const [showFilters,  setShowFilters]  = useState(false)
+  const [actionModal,  setActionModal]  = useState<'qa' | 'location' | 'material' | null>(null)
 
+  const { data: warehouses    = [] } = useWarehouses(true)
+  const { data: qaStatuses    = [] } = useQAStatuses()
+  const { data: manufacturers = [] } = useManufacturers()
+
+  // Auto-set warehouse from auth
   useEffect(() => {
     if (!f.warehouseId && user?.warehouse_id) {
       setInventory({ warehouseId: user.warehouse_id })
@@ -70,25 +340,27 @@ export default function Inventory() {
   }, [user?.warehouse_id]) // eslint-disable-line
 
   const { data, isLoading } = useInventoryEntries({
-    warehouse_id:    f.warehouseId   || undefined,
-    location_code:   f.locationCode  || undefined,
-    material_search: f.materialSearch || undefined,
-    qa_status_id:    f.qaStatusId    || undefined,
-    status:          f.status        || undefined,
-    search:          f.search        || undefined,
+    warehouse_id:    f.warehouseId      || undefined,
+    location_code:   f.locationCode     || undefined,
+    material_search: f.materialSearch   || undefined,
+    qa_status_id:    f.qaStatusId       || undefined,
+    status:          f.status           || undefined,
+    search:          f.search           || undefined,
+    manufacturer_id: f.manufacturerId   || undefined,
+    cycle:           f.cycle            || undefined,
+    machine_code:    f.machineCode      || undefined,
+    import_date_from: f.importDateFrom  || undefined,
+    import_date_to:   f.importDateTo    || undefined,
     page:            f.page,
     limit:           LIMIT,
   })
 
-  const entries    = data?.entries ?? []
-  const total      = data?.total   ?? 0
-  const totalPages = Math.max(1, Math.ceil(total / LIMIT))
-
-  function resetFilters() {
-    setInventory({ search: '', materialSearch: '', locationCode: '', qaStatusId: '', status: '', page: 1 })
-  }
-
-  const hasFilters = f.search || f.materialSearch || f.locationCode || f.qaStatusId || f.status
+  const entries           = data?.entries               ?? []
+  const total             = data?.total                 ?? 0
+  const totalCartons      = data?.total_cartons_remaining ?? 0
+  const totalPages        = Math.max(1, Math.ceil(total / LIMIT))
+  const checkedCount      = checkedIds.size
+  const checkedIdArr      = useMemo(() => [...checkedIds], [checkedIds])
 
   // Keep selected entry in sync when list refreshes
   useEffect(() => {
@@ -97,92 +369,219 @@ export default function Inventory() {
     if (refreshed) setSelected(refreshed)
   }, [entries]) // eslint-disable-line
 
+  // Clear checked IDs that are no longer in the current page
+  useEffect(() => {
+    if (checkedIds.size === 0) return
+    const pageIds = new Set(entries.map(e => e.id))
+    const stale = [...checkedIds].filter(id => !pageIds.has(id))
+    if (stale.length > 0) {
+      setCheckedIds(prev => { const next = new Set(prev); stale.forEach(id => next.delete(id)); return next })
+    }
+  }, [entries]) // eslint-disable-line
+
+  function resetFilters() {
+    setInventory({
+      search: '', materialSearch: '', locationCode: '', qaStatusId: '', status: '',
+      manufacturerId: '', cycle: '', machineCode: '', importDateFrom: '', importDateTo: '', page: 1,
+    })
+  }
+
+  function toggleCheck(id: string, e: React.MouseEvent) {
+    e.stopPropagation()
+    setCheckedIds(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next })
+  }
+
+  function toggleAll() {
+    if (checkedIds.size === entries.length && entries.length > 0) setCheckedIds(new Set())
+    else setCheckedIds(new Set(entries.map(e => e.id)))
+  }
+
+  const hasFilters = f.search || f.materialSearch || f.locationCode || f.qaStatusId || f.status
+    || f.manufacturerId || f.cycle || f.machineCode || f.importDateFrom || f.importDateTo
+
+  const activeFilterCount = [
+    !!f.locationCode, !!f.materialSearch, !!f.qaStatusId, !!f.status,
+    !!f.manufacturerId, !!f.cycle, !!f.machineCode, !!f.importDateFrom, !!f.importDateTo,
+  ].filter(Boolean).length
+
+  const isToday = f.importDateFrom === TODAY && f.importDateTo === TODAY
+
+  function closeActionModal() {
+    setActionModal(null)
+    setCheckedIds(new Set())
+  }
+
   return (
     <div className="flex flex-col h-full">
       {/* ── Filter header ── */}
-      <div className="border-b bg-white px-4 py-3 shrink-0 space-y-2">
-        <div className="flex items-center justify-between gap-2">
-          <h1 className="text-xl font-semibold flex items-center gap-2">
+      <div className="border-b bg-white px-4 py-2 shrink-0 space-y-1.5">
+        {/* Row 1: Title + Search + Filter toggle */}
+        <div className="flex items-center gap-2">
+          <h1 className="text-xl font-semibold flex items-center gap-2 shrink-0">
             <Package className="h-5 w-5 text-slate-500" />
             Tồn kho
           </h1>
-          {hasFilters && (
-            <button onClick={resetFilters}
-              className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-700">
-              <X className="h-3.5 w-3.5" />Xóa bộ lọc
-            </button>
-          )}
-        </div>
 
-        {/* Row 1: Kho + tìm pallet */}
-        <div className="flex gap-2">
+          {/* Kho */}
           <Select
             value={f.warehouseId || '__all__'}
             onValueChange={v => setInventory({ warehouseId: v === '__all__' ? '' : v, page: 1 })}
           >
-            <SelectTrigger className="h-8 text-xs w-[150px]">
-              <SelectValue placeholder="Chọn kho" />
+            <SelectTrigger className="h-8 text-xs w-[130px] shrink-0">
+              <SelectValue placeholder="Tất cả kho" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="__all__">Tất cả kho</SelectItem>
-              {warehouses.map((w: any) => (
+              {(warehouses as any[]).map((w: any) => (
                 <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
               ))}
             </SelectContent>
           </Select>
 
-          <div className="relative flex-1">
+          {/* Pallet search */}
+          <div className="relative flex-1 min-w-0">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
             <Input className="pl-8 h-8 text-sm" placeholder="Tìm mã pallet…"
               value={f.search}
               onChange={e => setInventory({ search: e.target.value, page: 1 })} />
           </div>
+
+          {/* Filter toggle */}
+          <button
+            className={`flex items-center gap-1 h-8 px-2.5 rounded-md border text-xs font-medium transition-colors shrink-0 ${
+              showFilters || activeFilterCount > 0
+                ? 'bg-blue-50 border-blue-200 text-blue-700'
+                : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+            }`}
+            onClick={() => setShowFilters(v => !v)}
+          >
+            <Filter className="h-3.5 w-3.5" />
+            Lọc
+            {activeFilterCount > 0 && (
+              <span className="bg-blue-600 text-white text-[10px] rounded-full w-4 h-4 flex items-center justify-center leading-none">
+                {activeFilterCount}
+              </span>
+            )}
+          </button>
         </div>
 
-        {/* Row 2: Vị trí + Hàng + QA + Trạng thái */}
-        <div className="flex gap-2 flex-wrap">
-          <Input className="h-7 text-xs w-[110px]" placeholder="Vị trí…"
-            value={f.locationCode}
-            onChange={e => setInventory({ locationCode: e.target.value, page: 1 })} />
+        {/* Collapsible filter panel */}
+        {showFilters && (
+          <div className="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 space-y-2">
+            {/* Ngày nhập */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <CalendarDays className="h-3.5 w-3.5 text-blue-400 shrink-0" />
+              <DateBtn value={f.importDateFrom} placeholder="Từ ngày nhập"
+                onChange={v => setInventory({ importDateFrom: v, page: 1 })} />
+              <span className="text-blue-300 text-xs">–</span>
+              <DateBtn value={f.importDateTo} placeholder="Đến ngày nhập"
+                onChange={v => setInventory({ importDateTo: v, page: 1 })} />
+              {!isToday && (
+                <button className="text-xs text-blue-500 hover:text-blue-700 underline whitespace-nowrap"
+                  onClick={() => setInventory({ importDateFrom: TODAY, importDateTo: TODAY, page: 1 })}>
+                  Hôm nay
+                </button>
+              )}
+              {(f.importDateFrom || f.importDateTo) && (
+                <button className="p-0.5 rounded hover:bg-blue-100 text-blue-300 hover:text-blue-500"
+                  onClick={() => setInventory({ importDateFrom: '', importDateTo: '', page: 1 })}>
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </div>
 
-          <Input className="h-7 text-xs w-[140px]" placeholder="Mã / tên hàng…"
-            value={f.materialSearch}
-            onChange={e => setInventory({ materialSearch: e.target.value, page: 1 })} />
+            {/* Other filters */}
+            <div className="flex gap-2 flex-wrap items-center">
+              <Input className="h-7 text-xs w-[110px] bg-white" placeholder="Vị trí…"
+                value={f.locationCode}
+                onChange={e => setInventory({ locationCode: e.target.value, page: 1 })} />
 
-          <Select value={f.qaStatusId || '__all__'} onValueChange={v => setInventory({ qaStatusId: v === '__all__' ? '' : v, page: 1 })}>
-            <SelectTrigger className="h-7 text-xs w-[100px]">
-              <SelectValue placeholder="QA" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">Tất cả QA</SelectItem>
-              {qaStatuses.map((q: any) => (
-                <SelectItem key={q.id} value={q.id}>{q.code} – {q.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+              <Input className="h-7 text-xs w-[130px] bg-white" placeholder="Mã / tên hàng…"
+                value={f.materialSearch}
+                onChange={e => setInventory({ materialSearch: e.target.value, page: 1 })} />
 
-          <Select value={f.status || '__active__'} onValueChange={v => setInventory({ status: v === '__active__' ? '' : v, page: 1 })}>
-            <SelectTrigger className="h-7 text-xs w-[130px]">
-              <SelectValue placeholder="Trạng thái" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__active__">Đang tồn</SelectItem>
-              <SelectItem value="ALL">Tất cả</SelectItem>
-              <SelectItem value="IN_STOCK">Còn hàng</SelectItem>
-              <SelectItem value="PARTIAL">Xuất 1 phần</SelectItem>
-              <SelectItem value="QUARANTINE">Cách ly</SelectItem>
-              <SelectItem value="EXPORTED">Đã xuất</SelectItem>
-              <SelectItem value="TRANSFERRED">Đã chuyển</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
+              <Select value={f.manufacturerId || '__all__'}
+                onValueChange={v => setInventory({ manufacturerId: v === '__all__' ? '' : v, page: 1 })}>
+                <SelectTrigger className="h-7 text-xs w-[100px] bg-white">
+                  <SelectValue placeholder="NMSX" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">Tất cả NMSX</SelectItem>
+                  {(manufacturers as any[]).map((m: any) => (
+                    <SelectItem key={m.id} value={m.id}>{m.code}{m.name ? ` – ${m.name}` : ''}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
 
-        <p className="text-xs text-slate-500 -mt-1">
+              <Select value={f.qaStatusId || '__all__'}
+                onValueChange={v => setInventory({ qaStatusId: v === '__all__' ? '' : v, page: 1 })}>
+                <SelectTrigger className="h-7 text-xs w-[100px] bg-white">
+                  <SelectValue placeholder="QA" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">Tất cả QA</SelectItem>
+                  {(qaStatuses as any[]).map((q: any) => (
+                    <SelectItem key={q.id} value={q.id}>{q.code} – {q.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <Select value={f.status || '__active__'}
+                onValueChange={v => setInventory({ status: v === '__active__' ? '' : v, page: 1 })}>
+                <SelectTrigger className="h-7 text-xs w-[130px] bg-white">
+                  <SelectValue placeholder="Trạng thái" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__active__">Đang tồn</SelectItem>
+                  <SelectItem value="ALL">Tất cả</SelectItem>
+                  <SelectItem value="IN_STOCK">Còn hàng</SelectItem>
+                  <SelectItem value="PARTIAL">Xuất 1 phần</SelectItem>
+                  <SelectItem value="QUARANTINE">Cách ly</SelectItem>
+                  <SelectItem value="EXPORTED">Đã xuất</SelectItem>
+                  <SelectItem value="TRANSFERRED">Đã chuyển</SelectItem>
+                </SelectContent>
+              </Select>
+
+              <Input className="h-7 text-xs w-[80px] bg-white" placeholder="Chu kỳ…"
+                value={f.cycle}
+                onChange={e => setInventory({ cycle: e.target.value, page: 1 })} />
+
+              <Input className="h-7 text-xs w-[80px] bg-white" placeholder="Máy…"
+                value={f.machineCode}
+                onChange={e => setInventory({ machineCode: e.target.value, page: 1 })} />
+
+              {hasFilters && (
+                <button onClick={resetFilters}
+                  className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-700 whitespace-nowrap">
+                  <X className="h-3.5 w-3.5" />Xóa lọc
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Totals bar */}
+        <p className="text-xs text-slate-500">
           {isLoading ? 'Đang tải…' : (
             <>
-              <span className="font-medium text-slate-700">{total.toLocaleString()}</span> pallet
-              {totalPages > 1 && <span className="ml-1.5">— trang {f.page}/{totalPages}</span>}
-              {selected && <span className="ml-2 text-blue-600">· 1 đang chọn</span>}
+              <span className="font-medium text-slate-700">{total.toLocaleString()}</span>
+              <span className="text-slate-400"> pallet</span>
+              {totalCartons > 0 && (
+                <>
+                  <span className="mx-1.5 text-slate-300">·</span>
+                  <span className="font-medium text-slate-700">{totalCartons.toLocaleString()}</span>
+                  <span className="text-slate-400"> thùng tồn</span>
+                </>
+              )}
+              {totalPages > 1 && (
+                <span className="ml-1.5 text-slate-400">— trang {f.page}/{totalPages}</span>
+              )}
+              {checkedCount > 0 && (
+                <span className="ml-2 text-green-600 font-medium">· {checkedCount} đang chọn</span>
+              )}
+              {selected && checkedCount === 0 && (
+                <span className="ml-2 text-blue-600">· 1 đang xem</span>
+              )}
             </>
           )}
         </p>
@@ -210,6 +609,15 @@ export default function Inventory() {
                 <Table className="min-w-full">
                   <TableHeader>
                     <TableRow className="bg-slate-50">
+                      {/* Checkbox select-all */}
+                      <TableHead className="px-2 py-1.5 w-7">
+                        <input
+                          type="checkbox"
+                          className="h-3.5 w-3.5 cursor-pointer"
+                          checked={checkedIds.size === entries.length && entries.length > 0}
+                          onChange={toggleAll}
+                        />
+                      </TableHead>
                       <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Mã hàng</TableHead>
                       <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Tên hàng</TableHead>
                       <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Mã pallet</TableHead>
@@ -230,6 +638,8 @@ export default function Inventory() {
                         key={e.id}
                         entry={e}
                         isSelected={selected?.id === e.id}
+                        isChecked={checkedIds.has(e.id)}
+                        onCheck={ev => toggleCheck(e.id, ev)}
                         onClick={() => setSelected(prev => prev?.id === e.id ? null : e)}
                       />
                     ))}
@@ -266,15 +676,67 @@ export default function Inventory() {
           />
         )}
       </div>
+
+      {/* ── Floating action bar (when items checked) ── */}
+      {checkedCount > 0 && (
+        <div className="fixed bottom-16 lg:bottom-6 left-1/2 -translate-x-1/2 z-50
+          bg-slate-800 text-white rounded-full shadow-2xl px-4 py-2
+          flex items-center gap-3 text-sm whitespace-nowrap">
+          <span className="text-slate-300 text-xs font-medium">{checkedCount} pallet</span>
+          <div className="w-px h-4 bg-slate-600" />
+          <button
+            className="flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-slate-700 hover:bg-slate-600 transition-colors"
+            onClick={() => setActionModal('qa')}>
+            QA Status
+          </button>
+          <button
+            className="flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-slate-700 hover:bg-slate-600 transition-colors"
+            onClick={() => setActionModal('location')}>
+            Vị trí
+          </button>
+          <button
+            className="flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-slate-700 hover:bg-slate-600 transition-colors"
+            onClick={() => setActionModal('material')}>
+            Mã hàng
+          </button>
+          <div className="w-px h-4 bg-slate-600" />
+          <button
+            className="text-slate-400 hover:text-white transition-colors"
+            onClick={() => setCheckedIds(new Set())}>
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
+      {/* ── Action modals ── */}
+      <QAModal
+        open={actionModal === 'qa'}
+        ids={checkedIdArr}
+        qaStatuses={qaStatuses as { id: string; code: string; name: string }[]}
+        onClose={closeActionModal}
+      />
+      <LocationModal
+        open={actionModal === 'location'}
+        ids={checkedIdArr}
+        warehouseId={f.warehouseId || user?.warehouse_id || undefined}
+        onClose={closeActionModal}
+      />
+      <MaterialModal
+        open={actionModal === 'material'}
+        ids={checkedIdArr}
+        onClose={closeActionModal}
+      />
     </div>
   )
 }
 
 // ─── EntryRow ─────────────────────────────────────────────────
 
-function EntryRow({ entry: e, isSelected, onClick }: {
+function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick }: {
   entry: InventoryEntry
   isSelected: boolean
+  isChecked: boolean
+  onCheck: (ev: React.MouseEvent) => void
   onClick: () => void
 }) {
   const loc        = formatLoc(e.location)
@@ -284,16 +746,19 @@ function EntryRow({ entry: e, isSelected, onClick }: {
   const remaining  = e.cartons_remaining ?? e.cartons_imported
   const exported   = Math.max(0, Number(e.cartons_imported) - Number(remaining))
   const pct        = calcDatePct(e.production_date, e.material?.shelf_life_days ?? null)
-  const prodDateStr = e.production_date
-    ? formatTimestampDate(e.production_date, true)
-    : '—'
-  const adjQty = e.adjustment_qty ?? 0
+  const prodDateStr = e.production_date ? formatTimestampDate(e.production_date, true) : '—'
+  const adjQty     = e.adjustment_qty ?? 0
 
   return (
     <TableRow
-      className={`transition-colors cursor-pointer ${entryRowBg(e, isSelected)}`}
+      className={`transition-colors cursor-pointer ${entryRowBg(e, isSelected, isChecked)}`}
       onClick={onClick}
     >
+      {/* Checkbox */}
+      <TableCell className="px-2 py-1" onClick={onCheck}>
+        <input type="checkbox" className="h-3.5 w-3.5 cursor-pointer"
+          checked={isChecked} onChange={() => {}} />
+      </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px] font-mono font-semibold text-slate-700">{matCode}</span>
       </TableCell>
@@ -350,15 +815,15 @@ function EntryRow({ entry: e, isSelected, onClick }: {
 // ─── Detail panel ─────────────────────────────────────────────
 
 function DetailPanel({ entry: e, onClose }: { entry: InventoryEntry; onClose: () => void }) {
-  const [adjInput, setAdjInput]     = useState('')
-  const [showAdj, setShowAdj]       = useState(false)
-  const [adjError, setAdjError]     = useState('')
+  const [adjInput, setAdjInput]       = useState('')
+  const [showAdj, setShowAdj]         = useState(false)
+  const [adjError, setAdjError]       = useState('')
   const { mutate: adjust, isPending } = useAdjustInventory()
 
-  const loc        = formatLoc(e.location)
-  const remaining  = e.cartons_remaining ?? e.cartons_imported
-  const exported   = Math.max(0, Number(e.cartons_imported) - Number(remaining))
-  const pct        = calcDatePct(e.production_date, e.material?.shelf_life_days ?? null)
+  const loc       = formatLoc(e.location)
+  const remaining = e.cartons_remaining ?? e.cartons_imported
+  const exported  = Math.max(0, Number(e.cartons_imported) - Number(remaining))
+  const pct       = calcDatePct(e.production_date, e.material?.shelf_life_days ?? null)
 
   function handleAdjust() {
     const val = parseFloat(adjInput)
@@ -401,10 +866,10 @@ function DetailPanel({ entry: e, onClose }: { entry: InventoryEntry; onClose: ()
 
         {/* Quantities */}
         <Section title="Số lượng">
-          <Row label="Nhập"      value={`${e.cartons_imported} thùng`} />
-          <Row label="Xuất"      value={exported > 0 ? `${exported} thùng` : '—'} />
-          <Row label="Tồn"       value={`${remaining} thùng`} bold />
-          <Row label="Điều chỉnh" value={e.adjustment_qty ? `${e.adjustment_qty > 0 ? '+' : ''}${e.adjustment_qty}` : '—'}
+          <Row label="Nhập"       value={`${e.cartons_imported} thùng`} />
+          <Row label="Xuất"       value={exported > 0 ? `${exported} thùng` : '—'} />
+          <Row label="Tồn"        value={`${remaining} thùng`} bold />
+          <Row label="Điều chỉnh" value={e.adjustment_qty ? `${Number(e.adjustment_qty) > 0 ? '+' : ''}${e.adjustment_qty}` : '—'}
             cls={e.adjustment_qty ? (Number(e.adjustment_qty) > 0 ? 'text-green-600' : 'text-red-600') : ''} />
         </Section>
 
@@ -415,8 +880,7 @@ function DetailPanel({ entry: e, onClose }: { entry: InventoryEntry; onClose: ()
           <Row label="HSD (ngày)"
             value={e.material?.shelf_life_days ? `${e.material.shelf_life_days} ngày` : '—'} />
           {pct !== null && (
-            <Row label="% Date còn" value={`${pct}%`}
-              cls={datePctCls(pct)} bold />
+            <Row label="% Date còn" value={`${pct}%`} cls={datePctCls(pct)} bold />
           )}
         </Section>
 
@@ -430,7 +894,7 @@ function DetailPanel({ entry: e, onClose }: { entry: InventoryEntry; onClose: ()
         {/* Import */}
         <Section title="Nhập kho">
           <Row label="Ngày nhập"  value={e.import_date ? formatTimestampDate(e.import_date) : '—'} />
-          <Row label="Giờ nhập"   value={e.import_date ? formatTimestampTime(e.import_date) : '—'} />
+          <Row label="Giờ nhập"   value={e.created_at ? formatTimestampTime(e.created_at) : '—'} />
           <Row label="Người nhập" value={e.created_by_emp?.name ?? '—'} />
         </Section>
 
@@ -478,7 +942,8 @@ function DetailPanel({ entry: e, onClose }: { entry: InventoryEntry; onClose: ()
                 <Button size="sm" className="flex-1" onClick={handleAdjust} disabled={isPending || !adjInput}>
                   {isPending ? '…' : 'Xác nhận'}
                 </Button>
-                <Button size="sm" variant="outline" onClick={() => { setShowAdj(false); setAdjInput(''); setAdjError('') }}>
+                <Button size="sm" variant="outline"
+                  onClick={() => { setShowAdj(false); setAdjInput(''); setAdjError('') }}>
                   Hủy
                 </Button>
               </div>

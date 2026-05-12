@@ -73,8 +73,8 @@ type ValidationResult =
 
 function validateQR(raw: string, order: InboundOrder): ValidationResult {
   const parts = raw.split('_')
-  if (parts.length < 5) {
-    return { ok: false, msg: `Định dạng QR không hợp lệ (${parts.length} phần, cần ≥5)` }
+  if (parts.length < 6) {
+    return { ok: false, msg: `Định dạng QR không hợp lệ (${parts.length} phần, cần ≥6: ddmmyy_Hàng_CK_Máy_STT_NMSX)` }
   }
   // Validate date field ddmmyy
   const datePart = parts[0] ?? ''

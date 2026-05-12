@@ -6,7 +6,7 @@ import { vi } from 'date-fns/locale'
 import { formatDateTime } from '@/utils/formatters'
 import {
   ArrowLeft, CheckCircle2,
-  Truck, Package, ClipboardList, Play, Pause, ChevronRight, Bookmark, X, RotateCcw,
+  Truck, Package, ClipboardList, Play, Pause, ChevronRight, Bookmark, X, RotateCcw, Pencil,
 } from 'lucide-react'
 import { Button }  from '@/components/ui/button'
 import { Input }   from '@/components/ui/input'
@@ -17,7 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import {
   useGDO, useAssignGDO, useStartGDO, useWarehouseEmployees, usePatchGDO,
-  useUnassignGDO, useUnstartGDO, useUncompleteGDO,
+  useUnassignGDO, useUnstartGDO, useUncompleteGDO, useUpdateTransport,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
@@ -225,6 +225,101 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
   )
 }
 
+// ─── Edit transport dialog ────────────────────────────────────
+
+function EditTransportDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose: () => void }) {
+  const { data: employees = [] } = useWarehouseEmployees(gdo.warehouse_id)
+  const { mutate: updateTransport, isPending } = useUpdateTransport()
+  const [err, setErr] = useState<string | null>(null)
+
+  const allItems    = (gdo.delivery_orders ?? []).flatMap(d => d.items)
+  const isContainer = allItems.some(i => i.export_type?.toLowerCase().includes('cont'))
+
+  const [licPlate,        setLicPlate]        = useState(gdo.license_plate ?? '')
+  const [containerNum,    setContainerNum]    = useState(gdo.container_number ?? '')
+  const [exporterName,    setExporterName]    = useState(gdo.exporter_name ?? '')
+  const [loaderName,      setLoaderName]      = useState(gdo.loader_name ?? '')
+  const [forklifterIds,   setForklifterIds]   = useState<string[]>(
+    gdo.forklift_driver_id ? [gdo.forklift_driver_id] : []
+  )
+
+  const empMap = new Map((employees as EmpOption[]).map(e => [e.id, e.name]))
+  const forklifterNames = forklifterIds.map(id => empMap.get(id) ?? id).filter(Boolean).join(', ')
+
+  function handleSubmit() {
+    if (!licPlate.trim()) { setErr('Vui lòng nhập biển số xe'); return }
+    setErr(null)
+    updateTransport(
+      {
+        id:                    gdo.id,
+        license_plate:         licPlate,
+        container_number:      containerNum  || undefined,
+        exporter_name:         exporterName  || undefined,
+        loader_name:           loaderName    || undefined,
+        forklift_driver_id:    forklifterIds[0] || undefined,
+        forklift_driver_names: forklifterNames  || undefined,
+      },
+      {
+        onSuccess: onClose,
+        onError: (e) => {
+          const msg = (e as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
+          setErr(msg)
+        },
+      }
+    )
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={v => { if (!v) onClose() }}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader><DialogTitle className="text-base">Sửa thông tin xe</DialogTitle></DialogHeader>
+        <div className="space-y-3 py-1">
+          <div className="space-y-1">
+            <Label className="text-xs">Biển số xe *</Label>
+            <Input className="text-lg h-10" placeholder="VD: 30A-12345"
+              value={licPlate} onChange={e => setLicPlate(e.target.value.toUpperCase())} />
+          </div>
+          {(isContainer || containerNum) && (
+            <div className="space-y-1">
+              <Label className="text-xs">Số container</Label>
+              <Input className="text-lg h-10" placeholder="VD: ABCD1234567"
+                value={containerNum} onChange={e => setContainerNum(e.target.value.toUpperCase())} />
+            </div>
+          )}
+          <div className="space-y-1">
+            <Label className="text-xs">Người xuất</Label>
+            <Input className="text-sm h-9" placeholder="Tên người xuất"
+              value={exporterName} onChange={e => setExporterName(e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Lái xe nâng</Label>
+            <TagPicker
+              employees={employees as EmpOption[]}
+              selectedIds={forklifterIds}
+              onChange={setForklifterIds}
+              placeholder="Chọn lái xe nâng…"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Bốc xếp</Label>
+            <Input className="text-sm h-9" placeholder="Tên bốc xếp"
+              value={loaderName} onChange={e => setLoaderName(e.target.value)} />
+          </div>
+          {err && (
+            <div className="rounded bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{err}</div>
+          )}
+        </div>
+        <DialogFooter className="gap-2">
+          <Button variant="outline" size="sm" onClick={onClose} disabled={isPending}>Hủy</Button>
+          <Button size="sm" onClick={handleSubmit} disabled={isPending}>
+            {isPending ? 'Đang lưu…' : 'Lưu'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 // ─── Row color by item status ──────────────────────────────────
 
 function itemTextCls(item: OutboundItem): string {
@@ -371,8 +466,9 @@ export default function OutboundDetail() {
   const canManage = user?.role === 'ADMIN' || user?.role === 'WAREHOUSE_MANAGER'
   const canManagePause = canManage
 
-  const [showStart, setShowStart] = useState(false)
-  const [undoErr,   setUndoErr]   = useState<string | null>(null)
+  const [showStart,         setShowStart]         = useState(false)
+  const [showEditTransport, setShowEditTransport] = useState(false)
+  const [undoErr,           setUndoErr]           = useState<string | null>(null)
 
   function doUndo(mutateFn: (id: string, opts: { onError: (e: unknown) => void }) => void) {
     setUndoErr(null)
@@ -414,6 +510,9 @@ export default function OutboundDetail() {
     <>
       {showStart && (
         <StartDialog open={showStart} gdo={gdo} onClose={() => setShowStart(false)} />
+      )}
+      {showEditTransport && (
+        <EditTransportDialog open={showEditTransport} gdo={gdo} onClose={() => setShowEditTransport(false)} />
       )}
 
       <div className="flex flex-col h-full min-h-0">
@@ -525,12 +624,23 @@ export default function OutboundDetail() {
           {/* Start info */}
           {gdo.started_at && (
             <Card className="px-2 py-1 bg-blue-50 border-blue-200">
-              <div className="flex flex-wrap gap-x-3 gap-y-0 text-xs text-slate-700">
-                <span><strong>Biển số:</strong> {gdo.license_plate}</span>
-                {gdo.container_number && <span><strong>Cont:</strong> {gdo.container_number}</span>}
-                {gdo.exporter_name    && <span><strong>Xuất:</strong> {gdo.exporter_name}</span>}
-                {gdo.loader_name      && <span><strong>Bốc:</strong> {gdo.loader_name}</span>}
-                <span className="text-slate-400">{formatDateTime(gdo.started_at)}</span>
+              <div className="flex items-start justify-between gap-1">
+                <div className="flex flex-wrap gap-x-3 gap-y-0 text-xs text-slate-700">
+                  <span><strong>Biển số:</strong> {gdo.license_plate}</span>
+                  {gdo.container_number && <span><strong>Cont:</strong> {gdo.container_number}</span>}
+                  {gdo.exporter_name    && <span><strong>Xuất:</strong> {gdo.exporter_name}</span>}
+                  {gdo.loader_name      && <span><strong>Bốc:</strong> {gdo.loader_name}</span>}
+                  <span className="text-slate-400">{formatDateTime(gdo.started_at)}</span>
+                </div>
+                {canManage && (
+                  <button
+                    onClick={() => setShowEditTransport(true)}
+                    className="shrink-0 p-1 rounded hover:bg-blue-200 text-blue-600 transition-colors"
+                    title="Sửa thông tin xe"
+                  >
+                    <Pencil className="h-3 w-3" />
+                  </button>
+                )}
               </div>
             </Card>
           )}

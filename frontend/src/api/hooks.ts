@@ -826,6 +826,21 @@ export function useStartGDO() {
   })
 }
 
+export function useUpdateTransport() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: {
+      id: string; license_plate: string; container_number?: string
+      exporter_name?: string; loader_name?: string
+      forklift_driver_id?: string; forklift_driver_names?: string
+    }) => apiClient.patch(`/wms/outbound/${id}/transport`, body).then(r => r.data.data as GDO),
+    onSuccess: (data, { id }) => {
+      qc.setQueryData(['gdo', id], data)
+      qc.invalidateQueries({ queryKey: ['gdos'] })
+    },
+  })
+}
+
 function makeUndoGDOMutation(path: string, optimisticFn?: (old: any) => any) {
   return function() {
     const qc = useQueryClient()

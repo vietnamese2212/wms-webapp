@@ -61,6 +61,7 @@ router.delete('/outbound/:id',                                outbound.deleteGDO
 router.post('/outbound/:id/assign',                           outbound.assignGDO)
 router.post('/outbound/:id/unassign',                         outbound.unassignGDO)
 router.post('/outbound/:id/start',                            outbound.startGDO)
+router.patch('/outbound/:id/transport',                       outbound.updateTransport)
 router.post('/outbound/:id/unstart',                          outbound.unstartGDO)
 router.post('/outbound/:id/uncomplete',                       outbound.uncompleteGDO)
 router.post('/outbound/:gdoId/items/:itemId/scan',                  outbound.scanItem)

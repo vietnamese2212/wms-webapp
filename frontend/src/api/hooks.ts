@@ -660,6 +660,37 @@ export function useUpdateJobTitle() {
 
 // ─── Outbound (API thật) ─────────────────────────────────────────────────────
 
+type CreateGDOPayload = {
+  group_code: string
+  delivery_date: string
+  warehouse_id?: string
+  dvvt?: string
+  warehouse_type?: string
+  delivery_orders: Array<{
+    delivery_code: string
+    distributor_name?: string
+    items: Array<{
+      material_code: string
+      cartons_ordered: number
+      boxes_display?: number
+      weight?: number
+      pallets_estimated?: number
+      material_type?: string
+    }>
+  }>
+}
+
+export function useCreateGDO() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (body: CreateGDOPayload) => {
+      const { data } = await apiClient.post('/wms/outbound', body)
+      return data.data as GDO
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['gdos'] }),
+  })
+}
+
 export function useGDOs(params?: { warehouse_id?: string; status?: string; date?: string; search?: string }) {
   return useQuery({
     queryKey: ['gdos', params],

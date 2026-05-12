@@ -180,23 +180,83 @@ export async function getGDO(req: Request, res: Response) {
 
 // ─── Create GDO manually ──────────────────────────────────────
 
+type ManualItem = {
+  material_code: string
+  cartons_ordered: number
+  boxes_display?: number
+  weight?: number
+  pallets_estimated?: number
+  loose_picking?: number
+  material_type?: string
+  export_type?: string
+}
+type ManualDO = {
+  delivery_code: string
+  distributor_name?: string
+  items: ManualItem[]
+}
+
 export async function createGDO(req: Request, res: Response) {
   try {
-    const { group_code, delivery_date, warehouse_id, dvvt, warehouse_type } = req.body as {
+    const { group_code, delivery_date, warehouse_id, dvvt, warehouse_type, delivery_orders } = req.body as {
       group_code: string; delivery_date: string; warehouse_id?: string; dvvt?: string; warehouse_type?: string
+      delivery_orders?: ManualDO[]
     }
     if (!group_code || !delivery_date) return fail(res, 'group_code và delivery_date là bắt buộc', 400)
 
     const planned_date = parsePlannedDate(group_code) ?? delivery_date
-    const id = randomUUID()
+    const gdoId = randomUUID()
     const { error } = await (supabase.from('GroupDeliveryOrder') as any).insert({
-      id, group_code, planned_date, delivery_date,
+      id: gdoId, group_code, planned_date, delivery_date,
       warehouse_id: warehouse_id ?? null, dvvt: dvvt ?? null,
       warehouse_type: warehouse_type ?? null,
       status: 'PENDING', updated_at: now(),
     })
     if (error) return fail(res, error.message)
-    const result = await fetchGDOFull(id)
+
+    if (delivery_orders?.length) {
+      // Pre-load material_ids
+      const allCodes = [...new Set(delivery_orders.flatMap(d => d.items.map(i => i.material_code)))]
+      const { data: mats } = await (supabase.from('Material') as any)
+        .select('id, material_code').in('material_code', allCodes)
+      const matMap = new Map<string, string>((mats ?? []).map((m: any) => [m.material_code, m.id]))
+
+      for (const doRow of delivery_orders) {
+        if (!doRow.delivery_code) return fail(res, 'delivery_code là bắt buộc', 400)
+        const doId = randomUUID()
+        const { error: doErr } = await (supabase.from('OutboundDelivery') as any).insert({
+          id: doId, gdo_id: gdoId,
+          delivery_code: doRow.delivery_code,
+          distributor_name: doRow.distributor_name ?? null,
+          status: 'PENDING', updated_at: now(),
+        })
+        if (doErr) return fail(res, doErr.message)
+
+        const itemsToInsert = doRow.items.map((item: ManualItem) => {
+          const isSpecial = item.material_type === 'POSM' || item.material_type === 'Pallet Loscam'
+          return {
+            id: randomUUID(),
+            do_id: doId,
+            material_id: matMap.get(item.material_code) ?? null,
+            material_code_raw: item.material_code,
+            cartons_ordered: item.cartons_ordered,
+            boxes_display: item.boxes_display ?? 0,
+            weight: item.weight ?? null,
+            pallets_estimated: item.pallets_estimated ?? 0,
+            loose_picking: item.loose_picking ?? 0,
+            material_type: item.material_type ?? null,
+            export_type: item.export_type ?? null,
+            cartons_scanned: 0,
+            status: isSpecial ? 'COMPLETED' : 'PENDING',
+            updated_at: now(),
+          }
+        })
+        const { error: itemErr } = await (supabase.from('OutboundItem') as any).insert(itemsToInsert)
+        if (itemErr) return fail(res, itemErr.message)
+      }
+    }
+
+    const result = await fetchGDOFull(gdoId)
     return ok(res, result, 201)
   } catch (e) { return fail(res, String(e)) }
 }
@@ -619,7 +679,8 @@ export async function uploadExcel(req: Request, res: Response) {
 
       const dvvt     = String(groupRows[0]['DVVT']     ?? groupRows[0]['Đơn vị']  ?? '').trim() || null
       const kho_xuat = String(groupRows[0]['Kho xuất'] ?? groupRows[0]['Kho xuat'] ?? '').trim()
-      const loai_kho = String(groupRows[0]['Loại kho'] ?? groupRows[0]['Loai kho'] ?? '').trim() || null
+      const loaiKhoSet = [...new Set(groupRows.map(r => String(r['Loại kho'] ?? r['Loai kho'] ?? '').trim()).filter(Boolean))]
+      const loai_kho = loaiKhoSet.length > 1 ? 'Hỗn hợp' : (loaiKhoSet[0] ?? null)
 
       let resolved_warehouse_id = warehouse_id ?? null
       if (kho_xuat) {

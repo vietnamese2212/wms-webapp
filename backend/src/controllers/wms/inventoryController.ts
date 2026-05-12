@@ -238,7 +238,7 @@ export async function adjustInventory(req: Request, res: Response) {
     patch.stocktake_by = stocktake_by
     patch.stocktake_at = now
   }
-  if (employee_id) patch.updated_by = employee_id
+  if (employee_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employee_id)) patch.updated_by = employee_id
 
   const { data: updated, error: updateErr } = await (supabase.from('InventoryEntry') as any)
     .update(patch)
@@ -263,7 +263,7 @@ export async function bulkUpdateQA(req: Request, res: Response) {
   const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
   const patch: Record<string, unknown> = { qa_status_id: qa_status_id ?? null, updated_at: now, update_date: vnDate }
-  if (employee_id) patch.updated_by = employee_id
+  if (employee_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employee_id)) patch.updated_by = employee_id
 
   const { error } = await (supabase.from('InventoryEntry') as any).update(patch).in('id', ids)
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
@@ -303,7 +303,7 @@ export async function bulkTransferLocation(req: Request, res: Response) {
   const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
   const patch: Record<string, unknown> = { location_id, updated_at: now, update_date: vnDate }
-  if (employee_id) patch.updated_by = employee_id
+  if (employee_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employee_id)) patch.updated_by = employee_id
 
   const { error } = await (supabase.from('InventoryEntry') as any).update(patch).in('id', ids)
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
@@ -327,7 +327,7 @@ export async function bulkTransferMaterial(req: Request, res: Response) {
   const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
   const patch: Record<string, unknown> = { material_id, updated_at: now, update_date: vnDate }
-  if (employee_id) patch.updated_by = employee_id
+  if (employee_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employee_id)) patch.updated_by = employee_id
 
   const { error } = await (supabase.from('InventoryEntry') as any).update(patch).in('id', ids)
   if (error) return fail(res, 500, 'DB_ERROR', error.message)

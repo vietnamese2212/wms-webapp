@@ -436,8 +436,8 @@ export function useInventoryFacets(params?: { warehouse_ids?: string[]; categori
 export function useAdjustInventory() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async ({ id, adjustment }: { id: string; adjustment: number }) => {
-      const { data } = await apiClient.patch(`/wms/inventory/${id}/adjust`, { adjustment })
+    mutationFn: async ({ id, adjustment, employee_id }: { id: string; adjustment: number; employee_id?: string }) => {
+      const { data } = await apiClient.patch(`/wms/inventory/${id}/adjust`, { adjustment, employee_id })
       return data.data as { entry: InventoryEntry }
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['inventory-entries'] }) },
@@ -447,8 +447,8 @@ export function useAdjustInventory() {
 export function useBulkUpdateInventoryQA() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async ({ ids, qa_status_id }: { ids: string[]; qa_status_id: string | null }) => {
-      const { data } = await apiClient.patch('/wms/inventory/bulk-qa', { ids, qa_status_id })
+    mutationFn: async ({ ids, qa_status_id, employee_id }: { ids: string[]; qa_status_id: string | null; employee_id?: string }) => {
+      const { data } = await apiClient.patch('/wms/inventory/bulk-qa', { ids, qa_status_id, employee_id })
       return data.data as { updated: number }
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['inventory-entries'] }) },
@@ -458,8 +458,8 @@ export function useBulkUpdateInventoryQA() {
 export function useBulkTransferLocation() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async ({ ids, location_id }: { ids: string[]; location_id: string }) => {
-      const { data } = await apiClient.patch('/wms/inventory/bulk-location', { ids, location_id })
+    mutationFn: async ({ ids, location_id, employee_id }: { ids: string[]; location_id: string; employee_id?: string }) => {
+      const { data } = await apiClient.patch('/wms/inventory/bulk-location', { ids, location_id, employee_id })
       return data.data as { updated: number; location_code: string }
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['inventory-entries'] }) },
@@ -469,8 +469,8 @@ export function useBulkTransferLocation() {
 export function useBulkTransferMaterial() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async ({ ids, material_id }: { ids: string[]; material_id: string }) => {
-      const { data } = await apiClient.patch('/wms/inventory/bulk-material', { ids, material_id })
+    mutationFn: async ({ ids, material_id, employee_id }: { ids: string[]; material_id: string; employee_id?: string }) => {
+      const { data } = await apiClient.patch('/wms/inventory/bulk-material', { ids, material_id, employee_id })
       return data.data as { updated: number; material_code: string }
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['inventory-entries'] }) },

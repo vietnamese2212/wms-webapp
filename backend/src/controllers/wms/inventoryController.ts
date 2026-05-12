@@ -200,7 +200,7 @@ const ACTIVE_STATUSES = ['IN_STOCK', 'PARTIAL', 'EXPORTED']
 
 export async function adjustInventory(req: Request, res: Response) {
   const { id } = req.params
-  const { adjustment, stocktake_by } = req.body as { adjustment: number; stocktake_by?: string }
+  const { adjustment, stocktake_by, employee_id } = req.body as { adjustment: number; stocktake_by?: string; employee_id?: string }
 
   if (typeof adjustment !== 'number' || adjustment === 0) {
     return fail(res, 400, 'INVALID_INPUT', 'adjustment phải là số khác 0')
@@ -238,6 +238,7 @@ export async function adjustInventory(req: Request, res: Response) {
     patch.stocktake_by = stocktake_by
     patch.stocktake_at = now
   }
+  if (employee_id) patch.updated_by = employee_id
 
   const { data: updated, error: updateErr } = await (supabase.from('InventoryEntry') as any)
     .update(patch)

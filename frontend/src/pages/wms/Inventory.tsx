@@ -78,6 +78,7 @@ function QAPanel({ ids, qaStatuses, onClose }: {
   qaStatuses: { id: string; code: string; name: string }[]
   onClose: () => void
 }) {
+  const user = useAuthStore(s => s.user)
   const [qaId, setQaId]     = useState('')
   const [error, setError]   = useState('')
   const { mutate, isPending } = useBulkUpdateInventoryQA()
@@ -92,7 +93,7 @@ function QAPanel({ ids, qaStatuses, onClose }: {
   function handleSubmit() {
     setError('')
     mutate(
-      { ids, qa_status_id: qaId === '__ok__' ? null : qaId },
+      { ids, qa_status_id: qaId === '__ok__' ? null : qaId, employee_id: user?.id },
       {
         onSuccess: () => { setQaId(''); onClose() },
         onError: (e: any) => setError(e?.response?.data?.error?.message ?? 'Lỗi không xác định'),
@@ -151,6 +152,7 @@ function QAPanel({ ids, qaStatuses, onClose }: {
 function LocationPanel({ ids, warehouseId, category, onClose }: {
   ids: string[]; warehouseId?: string; category?: string; onClose: () => void
 }) {
+  const user = useAuthStore(s => s.user)
   const [search, setSearch]   = useState('')
   const [locId, setLocId]     = useState('')
   const [error, setError]     = useState('')
@@ -176,7 +178,7 @@ function LocationPanel({ ids, warehouseId, category, onClose }: {
     if (!locId) { setError('Chọn vị trí trước'); return }
     setError('')
     mutate(
-      { ids, location_id: locId },
+      { ids, location_id: locId, employee_id: user?.id },
       {
         onSuccess: () => { reset(); onClose() },
         onError: (e: any) => setError(e?.response?.data?.error?.message ?? 'Lỗi không xác định'),
@@ -252,23 +254,24 @@ function LocationPanel({ ids, warehouseId, category, onClose }: {
 function MaterialPanel({ ids, category, onClose }: {
   ids: string[]; category?: string; onClose: () => void
 }) {
-  const [search, setSearch]   = useState('')
-  const [matId, setMatId]     = useState('')
-  const [error, setError]     = useState('')
-  const { mutate, isPending }  = useBulkTransferMaterial()
+  const user = useAuthStore(s => s.user)
+  const [search, setSearch]     = useState('')
+  const [matId, setMatId]       = useState('')
+  const [error, setError]       = useState('')
+  const [confirming, setConfirming] = useState(false)
+  const { mutate, isPending }   = useBulkTransferMaterial()
   const { data: materials = [] } = useMaterials({ search: search || undefined, category: category || undefined })
 
   const selectedMat = useMemo(() =>
     (materials as any[]).find((m: any) => m.id === matId), [materials, matId]
   )
 
-  function reset() { setMatId(''); setSearch(''); setError('') }
+  function reset() { setMatId(''); setSearch(''); setError(''); setConfirming(false) }
 
   function handleSubmit() {
-    if (!matId) { setError('Chọn hàng hóa trước'); return }
     setError('')
     mutate(
-      { ids, material_id: matId },
+      { ids, material_id: matId, employee_id: user?.id },
       {
         onSuccess: () => { reset(); onClose() },
         onError: (e: any) => setError(e?.response?.data?.error?.message ?? 'Lỗi không xác định'),
@@ -291,55 +294,80 @@ function MaterialPanel({ ids, category, onClose }: {
         {error && (
           <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</div>
         )}
-        <div className="space-y-1.5">
-          <Label className="text-xs">Hàng hóa mới</Label>
-          {category && (
-            <p className="text-[10px] text-blue-600 bg-blue-50 border border-blue-100 rounded px-2 py-1">
-              Chỉ hiện mã cùng loại: <strong>{category}</strong>
-            </p>
-          )}
-          <Input placeholder="Tìm mã hoặc tên hàng…" value={search} autoFocus
-            onChange={e => { setSearch(e.target.value); setMatId('') }} className="h-8 text-sm" />
-          {(search || category) && (
-            <div className="border rounded max-h-[calc(100vh-320px)] overflow-y-auto">
-              {(materials as any[]).length === 0 ? (
-                <div className="px-3 py-2 text-xs text-slate-400 text-center">Không tìm thấy</div>
-              ) : (
-                (materials as any[]).map((m: any) => {
-                  const isSelected = matId === m.id
-                  return (
-                    <label key={m.id}
-                      className={`flex items-center gap-2.5 px-3 py-2 cursor-pointer border-b last:border-b-0 transition-colors ${
-                        isSelected ? 'bg-blue-50' : 'hover:bg-slate-50'
-                      }`}
-                      onClick={() => setMatId(prev => prev === m.id ? '' : m.id)}
-                    >
-                      <div className={`w-3.5 h-3.5 border rounded shrink-0 flex items-center justify-center transition-colors ${
-                        isSelected ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white'
-                      }`}>
-                        {isSelected && <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />}
-                      </div>
-                      <span className="text-[10px] font-mono text-slate-500 shrink-0">{m.material_code}</span>
-                      <span className="text-xs text-slate-700 truncate">{m.short_name ?? m.material_description}</span>
-                    </label>
-                  )
-                })
-              )}
+
+        {confirming ? (
+          /* ── Confirm step ── */
+          <div className="space-y-3">
+            <div className="border border-amber-200 bg-amber-50 rounded-lg p-3 space-y-2">
+              <p className="text-xs font-semibold text-amber-800">Xác nhận chuyển mã?</p>
+              <div className="text-[10px] text-amber-700 space-y-0.5">
+                <p><span className="text-slate-500">Số pallet:</span> <strong>{ids.length}</strong></p>
+                <p><span className="text-slate-500">Mã mới:</span> <strong className="font-mono">{selectedMat?.material_code}</strong></p>
+                {selectedMat?.short_name && (
+                  <p><span className="text-slate-500">Tên:</span> {selectedMat.short_name}</p>
+                )}
+              </div>
+              <p className="text-[10px] text-amber-600">Thao tác này sẽ đổi mã hàng của tất cả pallet đã chọn.</p>
             </div>
-          )}
-          {selectedMat && (
-            <p className="text-[10px] text-blue-600">
-              Đã chọn: <strong className="font-mono">{selectedMat.material_code}</strong> – {selectedMat.short_name ?? ''}
-              <button className="ml-2 text-slate-400 hover:text-red-500" onClick={reset}>✕ bỏ chọn</button>
-            </p>
-          )}
-        </div>
-        <div className="flex gap-2 pt-1">
-          <Button variant="outline" className="flex-1" onClick={() => { reset(); onClose() }}>Huỷ</Button>
-          <Button className="flex-1" disabled={!matId || isPending} onClick={handleSubmit}>
-            {isPending ? '…' : 'Chuyển'}
-          </Button>
-        </div>
+            <div className="flex gap-2">
+              <Button variant="outline" className="flex-1" onClick={() => setConfirming(false)}>Quay lại</Button>
+              <Button className="flex-1 bg-amber-600 hover:bg-amber-700" disabled={isPending} onClick={handleSubmit}>
+                {isPending ? '…' : 'Xác nhận chuyển'}
+              </Button>
+            </div>
+          </div>
+        ) : (
+          /* ── Select step ── */
+          <div className="space-y-1.5">
+            <Label className="text-xs">Hàng hóa mới</Label>
+            {category && (
+              <p className="text-[10px] text-blue-600 bg-blue-50 border border-blue-100 rounded px-2 py-1">
+                Chỉ hiện mã cùng loại: <strong>{category}</strong>
+              </p>
+            )}
+            <Input placeholder="Tìm mã hoặc tên hàng…" value={search} autoFocus
+              onChange={e => { setSearch(e.target.value); setMatId('') }} className="h-8 text-sm" />
+            {(search || category) && (
+              <div className="border rounded max-h-[calc(100vh-320px)] overflow-y-auto">
+                {(materials as any[]).length === 0 ? (
+                  <div className="px-3 py-2 text-xs text-slate-400 text-center">Không tìm thấy</div>
+                ) : (
+                  (materials as any[]).map((m: any) => {
+                    const isSelected = matId === m.id
+                    return (
+                      <label key={m.id}
+                        className={`flex items-center gap-2.5 px-3 py-2 cursor-pointer border-b last:border-b-0 transition-colors ${
+                          isSelected ? 'bg-blue-50' : 'hover:bg-slate-50'
+                        }`}
+                        onClick={() => setMatId(prev => prev === m.id ? '' : m.id)}
+                      >
+                        <div className={`w-3.5 h-3.5 border rounded shrink-0 flex items-center justify-center transition-colors ${
+                          isSelected ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white'
+                        }`}>
+                          {isSelected && <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />}
+                        </div>
+                        <span className="text-[10px] font-mono text-slate-500 shrink-0">{m.material_code}</span>
+                        <span className="text-xs text-slate-700 truncate">{m.short_name ?? m.material_description}</span>
+                      </label>
+                    )
+                  })
+                )}
+              </div>
+            )}
+            {selectedMat && (
+              <p className="text-[10px] text-blue-600">
+                Đã chọn: <strong className="font-mono">{selectedMat.material_code}</strong> – {selectedMat.short_name ?? ''}
+                <button className="ml-2 text-slate-400 hover:text-red-500" onClick={reset}>✕ bỏ chọn</button>
+              </p>
+            )}
+            <div className="flex gap-2 pt-1">
+              <Button variant="outline" className="flex-1" onClick={() => { reset(); onClose() }}>Huỷ</Button>
+              <Button className="flex-1" disabled={!matId} onClick={() => setConfirming(true)}>
+                Chuyển
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -865,6 +893,7 @@ function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick }: {
 // ─── Detail panel ─────────────────────────────────────────────
 
 function DetailPanel({ entry: e, onClose }: { entry: InventoryEntry; onClose: () => void }) {
+  const user = useAuthStore(s => s.user)
   const [adjInput, setAdjInput]       = useState('')
   const [showAdj, setShowAdj]         = useState(false)
   const [adjError, setAdjError]       = useState('')
@@ -880,7 +909,7 @@ function DetailPanel({ entry: e, onClose }: { entry: InventoryEntry; onClose: ()
     if (isNaN(val) || val === 0) { setAdjError('Nhập số khác 0'); return }
     setAdjError('')
     adjust(
-      { id: e.id, adjustment: val },
+      { id: e.id, adjustment: val, employee_id: user?.id },
       {
         onSuccess: () => { setAdjInput(''); setShowAdj(false) },
         onError: (err: any) => {

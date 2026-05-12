@@ -35,9 +35,9 @@ interface LocationWithCapacity {
 // Bảng cấu hình Loại kho: sub_type (Location) ↔ label ↔ Material.category
 // Thêm entry mới ở đây khi có loại kho mới
 const LOAI_KHO_CONFIG = [
-  { sub_type: 'THANH_PHAM',    label: 'Thành phẩm', mat_category: 'TP'   },
-  { sub_type: 'NGUYEN_LIEU',   label: 'NVL',         mat_category: 'NVL'  },
-  { sub_type: 'POSM',          label: 'POSM',         mat_category: 'POSM' },
+  { sub_type: 'THANH_PHAM',    label: 'Thành phẩm', mat_category: 'Thành phẩm' },
+  { sub_type: 'NGUYEN_LIEU',   label: 'NVL',         mat_category: 'NVL'        },
+  { sub_type: 'POSM',          label: 'POSM',         mat_category: 'POSM'       },
 ] as const
 
 function subTypeLabel(st: string) {
@@ -623,10 +623,10 @@ export default function Inbound() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__all__">Tất cả loại</SelectItem>
-                  <SelectItem value="TP">Thành phẩm</SelectItem>
-                  <SelectItem value="NVL">Nguyên vật liệu</SelectItem>
+                  <SelectItem value="Thành phẩm">Thành phẩm</SelectItem>
+                  <SelectItem value="NVL">NVL</SelectItem>
                   <SelectItem value="POSM">POSM</SelectItem>
-                  <SelectItem value="BAO_BI">Bao bì</SelectItem>
+                  <SelectItem value="Bao bì">Bao bì</SelectItem>
                 </SelectContent>
               </Select>
 
@@ -699,7 +699,7 @@ export default function Inbound() {
                   const parts = [
                     hasDate ? dateLabel : null,
                     f.warehouseId ? (warehouses as { id: string; name: string }[]).find(w => w.id === f.warehouseId)?.name : null,
-                    f.materialCategory ? ({ TP: 'Thành phẩm', NVL: 'NVL', POSM: 'POSM', BAO_BI: 'Bao bì' } as Record<string, string>)[f.materialCategory] : null,
+                    f.materialCategory || null,
                     f.shiftId ? (shifts as { id: string; name: string }[]).find(s => s.id === f.shiftId)?.name : null,
                   ].filter(Boolean)
                   return parts.length > 0 ? (

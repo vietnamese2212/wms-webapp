@@ -661,23 +661,10 @@ export function useUpdateJobTitle() {
 // ─── Outbound (API thật) ─────────────────────────────────────────────────────
 
 type CreateGDOPayload = {
-  group_code: string
   delivery_date: string
   warehouse_id?: string
   dvvt?: string
-  warehouse_type?: string
-  delivery_orders: Array<{
-    delivery_code: string
-    distributor_name?: string
-    items: Array<{
-      material_code: string
-      cartons_ordered: number
-      boxes_display?: number
-      weight?: number
-      pallets_estimated?: number
-      material_type?: string
-    }>
-  }>
+  items: Array<{ material_code: string; cartons_ordered: number }>
 }
 
 export function useCreateGDO() {

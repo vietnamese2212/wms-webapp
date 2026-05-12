@@ -180,81 +180,67 @@ export async function getGDO(req: Request, res: Response) {
 
 // ─── Create GDO manually ──────────────────────────────────────
 
-type ManualItem = {
-  material_code: string
-  cartons_ordered: number
-  boxes_display?: number
-  weight?: number
-  pallets_estimated?: number
-  loose_picking?: number
-  material_type?: string
-  export_type?: string
-}
-type ManualDO = {
-  delivery_code: string
-  distributor_name?: string
-  items: ManualItem[]
-}
-
 export async function createGDO(req: Request, res: Response) {
   try {
-    const { group_code, delivery_date, warehouse_id, dvvt, warehouse_type, delivery_orders } = req.body as {
-      group_code: string; delivery_date: string; warehouse_id?: string; dvvt?: string; warehouse_type?: string
-      delivery_orders?: ManualDO[]
+    const { delivery_date, warehouse_id, dvvt, items } = req.body as {
+      delivery_date: string
+      warehouse_id?: string
+      dvvt?: string
+      items?: Array<{ material_code: string; cartons_ordered: number }>
     }
-    if (!group_code || !delivery_date) return fail(res, 'group_code và delivery_date là bắt buộc', 400)
+    if (!delivery_date) return fail(res, 'delivery_date là bắt buộc', 400)
+    if (!items?.length) return fail(res, 'Phải có ít nhất 1 mặt hàng', 400)
 
-    const planned_date = parsePlannedDate(group_code) ?? delivery_date
+    // Auto-generate group_code: ddmmyy_ĐT_01, _02, ...
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+    const [yr, mo, dy] = today.split('-')
+    const ddmmyy = `${dy}${mo}${yr.slice(2)}`
+    const prefix = `${ddmmyy}_ĐT_`
+    const { data: existing } = await (supabase.from('GroupDeliveryOrder') as any)
+      .select('group_code').ilike('group_code', `${prefix}%`)
+    const maxNum = Math.max(0, ...(existing ?? []).map((r: any) => parseInt(r.group_code.replace(prefix, '')) || 0))
+    const group_code = `${prefix}${String(maxNum + 1).padStart(2, '0')}`
+
     const gdoId = randomUUID()
     const { error } = await (supabase.from('GroupDeliveryOrder') as any).insert({
-      id: gdoId, group_code, planned_date, delivery_date,
+      id: gdoId, group_code, planned_date: delivery_date, delivery_date,
       warehouse_id: warehouse_id ?? null, dvvt: dvvt ?? null,
-      warehouse_type: warehouse_type ?? null,
-      status: 'PENDING', updated_at: now(),
+      warehouse_type: null, status: 'PENDING', updated_at: now(),
     })
     if (error) return fail(res, error.message)
 
-    if (delivery_orders?.length) {
-      // Pre-load material_ids
-      const allCodes = [...new Set(delivery_orders.flatMap(d => d.items.map(i => i.material_code)))]
-      const { data: mats } = await (supabase.from('Material') as any)
-        .select('id, material_code').in('material_code', allCodes)
-      const matMap = new Map<string, string>((mats ?? []).map((m: any) => [m.material_code, m.id]))
+    // Load material info (id + category → material_type)
+    const allCodes = [...new Set(items.map(i => i.material_code))]
+    const { data: mats } = await (supabase.from('Material') as any)
+      .select('id, material_code, category').in('material_code', allCodes)
+    const matMap = new Map<string, { id: string; category: string | null }>(
+      (mats ?? []).map((m: any) => [m.material_code, { id: m.id, category: m.category }])
+    )
 
-      for (const doRow of delivery_orders) {
-        if (!doRow.delivery_code) return fail(res, 'delivery_code là bắt buộc', 400)
-        const doId = randomUUID()
-        const { error: doErr } = await (supabase.from('OutboundDelivery') as any).insert({
-          id: doId, gdo_id: gdoId,
-          delivery_code: doRow.delivery_code,
-          distributor_name: doRow.distributor_name ?? null,
-          status: 'PENDING', updated_at: now(),
-        })
-        if (doErr) return fail(res, doErr.message)
+    // Single DO for manual orders
+    const doId = randomUUID()
+    const { error: doErr } = await (supabase.from('OutboundDelivery') as any).insert({
+      id: doId, gdo_id: gdoId, delivery_code: 'ĐT01',
+      distributor_name: null, status: 'PENDING', updated_at: now(),
+    })
+    if (doErr) return fail(res, doErr.message)
 
-        const itemsToInsert = doRow.items.map((item: ManualItem) => {
-          const isSpecial = item.material_type === 'POSM' || item.material_type === 'Pallet Loscam'
-          return {
-            id: randomUUID(),
-            do_id: doId,
-            material_id: matMap.get(item.material_code) ?? null,
-            material_code_raw: item.material_code,
-            cartons_ordered: item.cartons_ordered,
-            boxes_display: item.boxes_display ?? 0,
-            weight: item.weight ?? null,
-            pallets_estimated: item.pallets_estimated ?? 0,
-            loose_picking: item.loose_picking ?? 0,
-            material_type: item.material_type ?? null,
-            export_type: item.export_type ?? null,
-            cartons_scanned: 0,
-            status: isSpecial ? 'COMPLETED' : 'PENDING',
-            updated_at: now(),
-          }
-        })
-        const { error: itemErr } = await (supabase.from('OutboundItem') as any).insert(itemsToInsert)
-        if (itemErr) return fail(res, itemErr.message)
+    const itemsToInsert = items.map(item => {
+      const matInfo = matMap.get(item.material_code)
+      const material_type = matInfo?.category ?? null
+      const isSpecial = material_type === 'POSM' || material_type === 'Pallet Loscam'
+      return {
+        id: randomUUID(), do_id: doId,
+        material_id: matInfo?.id ?? null,
+        material_code_raw: item.material_code,
+        cartons_ordered: item.cartons_ordered,
+        boxes_display: 0, weight: null, pallets_estimated: 0, loose_picking: 0,
+        material_type, export_type: null, cartons_scanned: 0,
+        status: isSpecial ? 'COMPLETED' : 'PENDING', updated_at: now(),
       }
-    }
+    })
+    const { error: itemErr } = await (supabase.from('OutboundItem') as any).insert(itemsToInsert)
+    if (itemErr) return fail(res, itemErr.message)
 
     const result = await fetchGDOFull(gdoId)
     return ok(res, result, 201)

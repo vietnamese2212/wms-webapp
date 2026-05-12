@@ -573,7 +573,7 @@ export default function OutboundDetail() {
                   <Play className="h-3 w-3" />Bắt đầu
                 </Button>
               )}
-              {gdo.status === 'IN_PROGRESS' && (
+              {gdo.status === 'IN_PROGRESS' && totalOrdered > 0 && totalScanned >= totalOrdered && (
                 <Button size="sm"
                   className="h-7 text-xs gap-1 px-2 bg-green-600 hover:bg-green-700"
                   disabled={patching}

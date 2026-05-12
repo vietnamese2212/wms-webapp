@@ -6,17 +6,17 @@ const today = () => new Date().toISOString().slice(0, 10)
 interface OutboundFilters {
   search: string
   date: string
-  filterType: string
-  filterDvvt: string
-  filterNpp: string
+  filterTypes: string[]         // was filterType: string
+  filterDvvts: string[]         // was filterDvvt: string
+  filterNpps: string[]          // was filterNpp: string
   warehouseId: string
-  warehouseType: string
+  filterWarehouseTypes: string[]  // was warehouseType: string
 }
 interface InboundFilters {
   search: string
   dateFrom: string
   dateTo: string
-  shiftId: string
+  filterShiftIds: string[]      // replaces shiftId: string — client-side
   warehouseId: string
   materialCategory: string
   filterMaterials: string[]
@@ -48,7 +48,7 @@ interface WmsFilterState {
 }
 
 const INBOUND_DEFAULT: InboundFilters = {
-  search: '', dateFrom: today(), dateTo: today(), shiftId: '',
+  search: '', dateFrom: today(), dateTo: today(), filterShiftIds: [],
   warehouseId: '', materialCategory: '',
   filterMaterials: [], filterCycles: [], filterMachines: [], importerSearch: '',
 }
@@ -56,7 +56,11 @@ const INBOUND_DEFAULT: InboundFilters = {
 export const useWmsFilterStore = create<WmsFilterState>()(
   persist(
     (set) => ({
-      outbound:  { search: '', date: today(), filterType: '', filterDvvt: '', filterNpp: '', warehouseId: '', warehouseType: '' },
+      outbound: {
+        search: '', date: today(),
+        filterTypes: [], filterDvvts: [], filterNpps: [],
+        warehouseId: '', filterWarehouseTypes: [],
+      },
       inbound:   INBOUND_DEFAULT,
       inventory: {
         search: '', materialSearch: '', locationCode: '', qaStatusIds: [], status: '',
@@ -67,6 +71,6 @@ export const useWmsFilterStore = create<WmsFilterState>()(
       setInbound:   (f) => set(s => ({ inbound:   { ...INBOUND_DEFAULT, ...s.inbound, ...f } })),
       setInventory: (f) => set(s => ({ inventory: { ...s.inventory, ...f } })),
     }),
-    { name: 'wms-filters-v4', storage: createJSONStorage(() => sessionStorage) }
+    { name: 'wms-filters-v5', storage: createJSONStorage(() => sessionStorage) }
   )
 )

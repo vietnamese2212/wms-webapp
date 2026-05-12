@@ -65,9 +65,16 @@ const STATUS_CLS: Record<string, string> = {
 const LIMIT = 50
 const DATE_PCT_OPTIONS = [
   { value: '80', label: '> 80%' },
-  { value: '60', label: '> 60%' },
-  { value: '30', label: '> 30%' },
+  { value: '60', label: '60–80%' },
+  { value: '30', label: '30–60%' },
 ]
+
+function filterByDatePct(pct: number, range: string): boolean {
+  if (range === '80') return pct > 80
+  if (range === '60') return pct > 60 && pct <= 80
+  if (range === '30') return pct > 30 && pct <= 60
+  return true
+}
 
 
 // ─── QA multi-select dropdown ────────────────────────────────
@@ -413,10 +420,9 @@ export default function Inventory() {
   // Client-side % date filter applied on current page
   const displayEntries = useMemo(() => {
     if (!f.datePctMin) return entries
-    const minPct = parseInt(f.datePctMin)
     return entries.filter(e => {
       const pct = calcDatePct(e.production_date, e.material?.shelf_life_days ?? null)
-      return pct !== null && pct >= minPct
+      return pct !== null && filterByDatePct(pct, f.datePctMin)
     })
   }, [entries, f.datePctMin])
 
@@ -494,6 +500,22 @@ export default function Inventory() {
             </SelectContent>
           </Select>
 
+          {/* Loại kho — luôn hiển thị */}
+          <Select
+            value={f.materialCategory || '__all__'}
+            onValueChange={v => setInventory({ materialCategory: v === '__all__' ? '' : v, page: 1 })}
+          >
+            <SelectTrigger className="h-8 text-xs w-[120px] shrink-0">
+              <SelectValue placeholder="Loại kho" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">Tất cả loại</SelectItem>
+              {(categories as string[]).map(c => (
+                <SelectItem key={c} value={c}>{c}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
           {/* Pallet search */}
           <div className="relative flex-1 min-w-0">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
@@ -525,34 +547,15 @@ export default function Inventory() {
         {showFilters && (
           <div className="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2">
             <div className="flex gap-2 flex-wrap items-center">
-              {/* Tình trạng tồn kho */}
+              {/* Tình trạng tồn kho — 2 option */}
               <Select value={f.status || '__active__'}
                 onValueChange={v => setInventory({ status: v === '__active__' ? '' : v, page: 1 })}>
-                <SelectTrigger className="h-7 text-xs w-[120px] bg-white">
-                  <SelectValue placeholder="Tình trạng" />
+                <SelectTrigger className="h-7 text-xs w-[110px] bg-white">
+                  <SelectValue placeholder="Còn tồn" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__active__">Còn tồn</SelectItem>
                   <SelectItem value="ALL">Tất cả</SelectItem>
-                  <SelectItem value="IN_STOCK">Còn hàng</SelectItem>
-                  <SelectItem value="PARTIAL">Xuất 1 phần</SelectItem>
-                  <SelectItem value="QUARANTINE">Cách ly</SelectItem>
-                  <SelectItem value="EXPORTED">Đã xuất</SelectItem>
-                  <SelectItem value="TRANSFERRED">Đã chuyển</SelectItem>
-                </SelectContent>
-              </Select>
-
-              {/* Loại kho (Material.category) */}
-              <Select value={f.materialCategory || '__all__'}
-                onValueChange={v => setInventory({ materialCategory: v === '__all__' ? '' : v, page: 1 })}>
-                <SelectTrigger className="h-7 text-xs w-[120px] bg-white">
-                  <SelectValue placeholder="Loại kho" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__all__">Tất cả loại</SelectItem>
-                  {(categories as string[]).map(c => (
-                    <SelectItem key={c} value={c}>{c}</SelectItem>
-                  ))}
                 </SelectContent>
               </Select>
 

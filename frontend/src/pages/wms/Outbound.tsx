@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
 import { Upload, Search, Truck, CheckCircle2, AlertTriangle, CalendarDays, X, Bookmark, Info } from 'lucide-react'
+import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
 import { Input }  from '@/components/ui/input'
@@ -79,18 +80,23 @@ export default function Outbound() {
     if (postUploadLoading && !isFetching) setPostUploadLoading(false)
   }, [isFetching, postUploadLoading])
 
-  const typeOptions        = useMemo(() => [...new Set(gdos.map(g => g.export_type).filter(Boolean))] as string[], [gdos])
-  const dvvtOptions        = useMemo(() => [...new Set(gdos.map(g => g.dvvt).filter(Boolean))] as string[], [gdos])
-  const nppOptions         = useMemo(() => [...new Set(gdos.flatMap(g => g.distributor_names ?? []).filter(Boolean))], [gdos])
-  const warehouseTypeOpts  = useMemo(() => [...new Set(gdos.map(g => g.warehouse_type).filter(Boolean))] as string[], [gdos])
+  const typeOptions       = useMemo(() => [...new Set(gdos.map(g => g.export_type).filter(Boolean))] as string[], [gdos])
+  const dvvtOptions       = useMemo(() => [...new Set(gdos.map(g => g.dvvt).filter(Boolean))] as string[], [gdos])
+  const nppOptions        = useMemo(() => [...new Set(gdos.flatMap(g => g.distributor_names ?? []).filter(Boolean))], [gdos])
+  const warehouseTypeOpts = useMemo(() => [...new Set(gdos.map(g => g.warehouse_type).filter(Boolean))] as string[], [gdos])
+
+  const filterTypes         = f.filterTypes         ?? []
+  const filterDvvts         = f.filterDvvts         ?? []
+  const filterNpps          = f.filterNpps          ?? []
+  const filterWarehouseTypes = f.filterWarehouseTypes ?? []
 
   const filtered = useMemo(() => gdos.filter(g => {
-    if (f.filterType    && g.export_type !== f.filterType) return false
-    if (f.filterDvvt    && g.dvvt !== f.filterDvvt) return false
-    if (f.filterNpp     && !(g.distributor_names ?? []).includes(f.filterNpp)) return false
-    if (f.warehouseType && g.warehouse_type !== f.warehouseType) return false
+    if (filterTypes.length          > 0 && !filterTypes.includes(g.export_type ?? ''))                              return false
+    if (filterDvvts.length          > 0 && !filterDvvts.includes(g.dvvt ?? ''))                                     return false
+    if (filterNpps.length           > 0 && !(g.distributor_names ?? []).some(n => filterNpps.includes(n)))          return false
+    if (filterWarehouseTypes.length > 0 && !filterWarehouseTypes.includes(g.warehouse_type ?? ''))                  return false
     return true
-  }), [gdos, f.filterType, f.filterDvvt, f.filterNpp, f.warehouseType])
+  }), [gdos, filterTypes, filterDvvts, filterNpps, filterWarehouseTypes])
 
   // Sort: ngày desc → loại xuất asc → số xe natural asc
   const sorted = useMemo(() => [...filtered].sort((a, b) => {
@@ -231,7 +237,7 @@ export default function Outbound() {
         </div>
 
         {/* Row 2: Kho / Loại kho / Loại xuất / ĐVVT / NPP filters */}
-        <div className="flex gap-2 flex-wrap">
+        <div className="flex gap-2 flex-wrap items-center">
           <Select value={f.warehouseId || '__all__'} onValueChange={v => setOutbound({ warehouseId: v === '__all__' ? '' : v })}>
             <SelectTrigger className="h-7 text-xs w-[130px]">
               <SelectValue placeholder="Kho xuất" />
@@ -242,47 +248,34 @@ export default function Outbound() {
             </SelectContent>
           </Select>
 
-          {warehouseTypeOpts.length > 0 && (
-            <Select value={f.warehouseType || '__all__'} onValueChange={v => setOutbound({ warehouseType: v === '__all__' ? '' : v })}>
-              <SelectTrigger className="h-7 text-xs w-[130px]">
-                <SelectValue placeholder="Loại kho" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">Tất cả loại kho</SelectItem>
-                {warehouseTypeOpts.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          )}
+          <MultiSelectFilter
+            label="Loại kho"
+            options={warehouseTypeOpts.map(t => ({ value: t, label: t }))}
+            selected={filterWarehouseTypes}
+            onChange={v => setOutbound({ filterWarehouseTypes: v })}
+          />
 
-          <Select value={f.filterType || '__all__'} onValueChange={v => setOutbound({ filterType: v === '__all__' ? '' : v })}>
-            <SelectTrigger className="h-7 text-xs w-[130px]">
-              <SelectValue placeholder="Loại xuất" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">Tất cả loại</SelectItem>
-              {typeOptions.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
-            </SelectContent>
-          </Select>
+          <MultiSelectFilter
+            label="Loại xuất"
+            options={typeOptions.map(t => ({ value: t, label: t }))}
+            selected={filterTypes}
+            onChange={v => setOutbound({ filterTypes: v })}
+          />
 
-          <Select value={f.filterDvvt || '__all__'} onValueChange={v => setOutbound({ filterDvvt: v === '__all__' ? '' : v })}>
-            <SelectTrigger className="h-7 text-xs w-[110px]">
-              <SelectValue placeholder="ĐVVT" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">Tất cả ĐVVT</SelectItem>
-              {dvvtOptions.map(d => <SelectItem key={d} value={d}>{d}</SelectItem>)}
-            </SelectContent>
-          </Select>
+          <MultiSelectFilter
+            label="ĐVVT"
+            options={dvvtOptions.map(d => ({ value: d, label: d }))}
+            selected={filterDvvts}
+            onChange={v => setOutbound({ filterDvvts: v })}
+          />
 
-          <Select value={f.filterNpp || '__all__'} onValueChange={v => setOutbound({ filterNpp: v === '__all__' ? '' : v })}>
-            <SelectTrigger className="h-7 text-xs w-[150px]">
-              <SelectValue placeholder="Tên NPP" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">Tất cả NPP</SelectItem>
-              {nppOptions.map(n => <SelectItem key={n} value={n}>{n}</SelectItem>)}
-            </SelectContent>
-          </Select>
+          <MultiSelectFilter
+            label="NPP"
+            options={nppOptions.map(n => ({ value: n, label: n }))}
+            selected={filterNpps}
+            onChange={v => setOutbound({ filterNpps: v })}
+            width="min-w-[140px]"
+          />
         </div>
 
         {/* Date label */}

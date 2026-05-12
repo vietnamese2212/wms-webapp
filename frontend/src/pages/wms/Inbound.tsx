@@ -17,8 +17,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import {
   useInboundOrders, useCreateInboundOrder,
   useWarehouses, useMaterials, useLocationsReal, useImportShifts,
-  useEmployeeRecords,
+  useEmployeeRecords, useMaterialCategories,
 } from '@/api/hooks'
+import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import type { InboundOrder } from '@/types'
 
 const TODAY = new Date().toISOString().slice(0, 10)
@@ -368,10 +369,17 @@ function MultiSelectDropdown({ label, options, selected, onChange, searchable }:
             </div>
           )}
           <div className="overflow-y-auto flex-1">
-            {active && !search && (
-              <button type="button" className="w-full text-left px-3 py-1.5 text-[10px] text-red-500 hover:bg-red-50 border-b"
-                onClick={() => onChange([])}>Xóa lọc</button>
-            )}
+            {/* Tất cả */}
+            <label className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 cursor-pointer border-b border-slate-100">
+              <input type="checkbox" className="h-3 w-3 shrink-0"
+                checked={visible.length > 0 && visible.every(o => selected.includes(o.value))}
+                onChange={() => {
+                  const allSel = visible.every(o => selected.includes(o.value))
+                  if (allSel) onChange([])
+                  else onChange(visible.map(o => o.value))
+                }} />
+              <span className="text-[11px] text-slate-500 font-medium">Tất cả</span>
+            </label>
             {visible.length === 0 && (
               <div className="px-3 py-2 text-xs text-slate-400 text-center">Không tìm thấy</div>
             )}
@@ -388,6 +396,10 @@ function MultiSelectDropdown({ label, options, selected, onChange, searchable }:
                 <span className="text-[11px] text-slate-700">{opt.label}</span>
               </label>
             ))}
+            {active && !search && (
+              <button type="button" className="w-full text-left px-3 py-1.5 text-[10px] text-red-500 hover:bg-red-50 border-t"
+                onClick={() => onChange([])}>Xóa lọc</button>
+            )}
           </div>
         </div>
       )}
@@ -402,15 +414,16 @@ const SHIFT_ORDER: Record<string, number> = { 'Ca 1': 0, 'Ca 2': 1, 'Ca 3': 2, '
 
 function applyClientFilters(
   orders: InboundOrder[],
-  mats: string[], cycles: string[], machines: string[], importer: string,
-  exclude?: 'mat' | 'cycle' | 'machine' | 'importer'
+  mats: string[], cycles: string[], machines: string[], importer: string, shiftIds: string[],
+  exclude?: 'mat' | 'cycle' | 'machine' | 'importer' | 'shift'
 ) {
   return orders.filter(order => {
     const importerName = (order.imported_by_emp?.name ?? order.created_by_emp?.name ?? '').toLowerCase()
-    if (exclude !== 'mat'      && mats.length     > 0 && !mats.includes(order.material_id ?? ''))                          return false
-    if (exclude !== 'cycle'    && cycles.length   > 0 && !(order.cycles ?? []).some(c => cycles.includes(c)))               return false
-    if (exclude !== 'machine'  && machines.length > 0 && !(order.machine_codes ?? []).some(m => machines.includes(m)))      return false
-    if (exclude !== 'importer' && importer             && !importerName.includes(importer.toLowerCase()))                   return false
+    if (exclude !== 'mat'      && mats.length     > 0 && !mats.includes(order.material_id ?? ''))                      return false
+    if (exclude !== 'cycle'    && cycles.length   > 0 && !(order.cycles ?? []).some(c => cycles.includes(c)))           return false
+    if (exclude !== 'machine'  && machines.length > 0 && !(order.machine_codes ?? []).some(m => machines.includes(m)))  return false
+    if (exclude !== 'importer' && importer             && !importerName.includes(importer.toLowerCase()))               return false
+    if (exclude !== 'shift'    && shiftIds.length > 0 && !shiftIds.includes(order.shift_id ?? ''))                      return false
     return true
   })
 }
@@ -445,6 +458,7 @@ export default function Inbound() {
 
   const { data: shifts     = [] } = useImportShifts()
   const { data: warehouses = [] } = useWarehouses(true)
+  const { data: categories = [] } = useMaterialCategories()
 
   // Resolve effective warehouse: store override → user's warehouse
   const effectiveWarehouseId = f.warehouseId || user?.warehouse_id || undefined
@@ -454,7 +468,6 @@ export default function Inbound() {
     search:            f.search           || undefined,
     date_from:         f.dateFrom         || undefined,
     date_to:           f.dateTo           || undefined,
-    shift_id:          f.shiftId          || undefined,
     material_category: f.materialCategory || undefined,
   })
 
@@ -462,12 +475,19 @@ export default function Inbound() {
   const filterMaterials = f.filterMaterials ?? []
   const filterCycles    = f.filterCycles    ?? []
   const filterMachines  = f.filterMachines  ?? []
+  const filterShiftIds  = f.filterShiftIds  ?? []
   const importerSearch  = f.importerSearch  ?? ''
 
   // Cascade-filtered orders
   const filteredOrders = useMemo(
-    () => applyClientFilters(serverOrders, filterMaterials, filterCycles, filterMachines, importerSearch),
-    [serverOrders, filterMaterials, filterCycles, filterMachines, importerSearch]
+    () => applyClientFilters(serverOrders, filterMaterials, filterCycles, filterMachines, importerSearch, filterShiftIds),
+    [serverOrders, filterMaterials, filterCycles, filterMachines, importerSearch, filterShiftIds]
+  )
+
+  // Shift options for multi-select (from master data, not derived from orders)
+  const shiftOptions = useMemo(() =>
+    (shifts as { id: string; name: string }[]).map(s => ({ value: s.id, label: s.name })),
+    [shifts]
   )
 
   // Sort: ngày desc → ca asc (Ca 1, Ca 2, Ca 3, HC) → giờ tạo asc
@@ -486,23 +506,23 @@ export default function Inbound() {
 
   // Options for each multi-select — computed from subset excluding that filter's own selection
   const materialOptions = useMemo(() => {
-    const sub = applyClientFilters(serverOrders, filterMaterials, filterCycles, filterMachines, importerSearch, 'mat')
+    const sub = applyClientFilters(serverOrders, filterMaterials, filterCycles, filterMachines, importerSearch, filterShiftIds, 'mat')
     const seen = new Map<string, string>()
     for (const o of sub)
       if (o.material_id && !seen.has(o.material_id))
         seen.set(o.material_id, o.material?.short_name ?? o.material?.material_description ?? o.material_id)
     return [...seen.entries()].map(([value, label]) => ({ value, label }))
-  }, [serverOrders, filterCycles, filterMachines, importerSearch])
+  }, [serverOrders, filterCycles, filterMachines, importerSearch, filterShiftIds])
 
   const cycleOptions = useMemo(() => {
-    const sub = applyClientFilters(serverOrders, filterMaterials, filterCycles, filterMachines, importerSearch, 'cycle')
+    const sub = applyClientFilters(serverOrders, filterMaterials, filterCycles, filterMachines, importerSearch, filterShiftIds, 'cycle')
     return [...new Set(sub.flatMap(o => o.cycles ?? []))].map(c => ({ value: c, label: c }))
-  }, [serverOrders, filterMaterials, filterMachines, importerSearch])
+  }, [serverOrders, filterMaterials, filterMachines, importerSearch, filterShiftIds])
 
   const machineOptions = useMemo(() => {
-    const sub = applyClientFilters(serverOrders, filterMaterials, filterCycles, filterMachines, importerSearch, 'machine')
+    const sub = applyClientFilters(serverOrders, filterMaterials, filterCycles, filterMachines, importerSearch, filterShiftIds, 'machine')
     return [...new Set(sub.flatMap(o => o.machine_codes ?? []))].map(m => ({ value: m, label: m }))
-  }, [serverOrders, filterMaterials, filterCycles, importerSearch])
+  }, [serverOrders, filterMaterials, filterCycles, importerSearch, filterShiftIds])
 
   // Totals
   const totalPallets = useMemo(() => filteredOrders.reduce((s, o) => s + o._count.inventory_entries, 0), [filteredOrders])
@@ -537,10 +557,10 @@ export default function Inbound() {
     dateLabel = `Đến ${format(parseISO(f.dateTo), 'dd-MM-yyyy')}`
   }
 
-  const hasClientFilters = filterMaterials.length > 0 || filterCycles.length > 0 || filterMachines.length > 0 || !!importerSearch
+  const hasClientFilters = filterMaterials.length > 0 || filterCycles.length > 0 || filterMachines.length > 0 || !!importerSearch || filterShiftIds.length > 0
 
   const activeFilterCount = [
-    hasDate, !!f.warehouseId, !!f.materialCategory, !!f.shiftId,
+    hasDate, !!f.warehouseId, !!f.materialCategory, filterShiftIds.length > 0,
     filterMaterials.length > 0, filterCycles.length > 0, filterMachines.length > 0, !!importerSearch,
   ].filter(Boolean).length
 
@@ -617,30 +637,27 @@ export default function Inbound() {
                 </SelectContent>
               </Select>
 
+              {/* Loại kho — dynamic từ API */}
               <Select value={f.materialCategory || '__all__'} onValueChange={v => setInbound({ materialCategory: v === '__all__' ? '' : v, filterMaterials: [], filterCycles: [], filterMachines: [] })}>
                 <SelectTrigger className="h-7 text-xs w-[120px] bg-white">
                   <SelectValue placeholder="Loại kho" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__all__">Tất cả loại</SelectItem>
-                  <SelectItem value="Thành phẩm">Thành phẩm</SelectItem>
-                  <SelectItem value="NVL">NVL</SelectItem>
-                  <SelectItem value="POSM">POSM</SelectItem>
-                  <SelectItem value="Bao bì">Bao bì</SelectItem>
-                </SelectContent>
-              </Select>
-
-              <Select value={f.shiftId || '__all__'} onValueChange={v => setInbound({ shiftId: v === '__all__' ? '' : v })}>
-                <SelectTrigger className="h-7 text-xs w-[90px] bg-white">
-                  <SelectValue placeholder="Tất cả ca" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__all__">Tất cả ca</SelectItem>
-                  {(shifts as { id: string; name: string }[]).map(s => (
-                    <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                  {(categories as string[]).map(c => (
+                    <SelectItem key={c} value={c}>{c}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+
+              {/* Ca — client-side multi-select */}
+              <MultiSelectFilter
+                label="Ca"
+                options={shiftOptions}
+                selected={filterShiftIds}
+                onChange={v => setInbound({ filterShiftIds: v })}
+                searchable={false}
+              />
             </div>
 
             {/* Hàng 3: Material / Chu kỳ / Máy / Người nhập */}
@@ -658,7 +675,7 @@ export default function Inbound() {
               </div>
               {hasClientFilters && (
                 <button className="flex items-center gap-1 text-[10px] text-red-400 hover:text-red-600 px-1"
-                  onClick={() => setInbound({ filterMaterials: [], filterCycles: [], filterMachines: [], importerSearch: '' })}>
+                  onClick={() => setInbound({ filterMaterials: [], filterCycles: [], filterMachines: [], filterShiftIds: [], importerSearch: '' })}>
                   <X className="h-3 w-3" /> Xóa lọc
                 </button>
               )}
@@ -700,7 +717,7 @@ export default function Inbound() {
                     hasDate ? dateLabel : null,
                     f.warehouseId ? (warehouses as { id: string; name: string }[]).find(w => w.id === f.warehouseId)?.name : null,
                     f.materialCategory || null,
-                    f.shiftId ? (shifts as { id: string; name: string }[]).find(s => s.id === f.shiftId)?.name : null,
+                    filterShiftIds.length > 0 ? `Ca: ${filterShiftIds.map(id => (shifts as { id: string; name: string }[]).find(s => s.id === id)?.name ?? id).join(', ')}` : null,
                   ].filter(Boolean)
                   return parts.length > 0 ? (
                     <p className="text-[10px] text-slate-400 mb-1.5">Lọc: {parts.join(' · ')}</p>

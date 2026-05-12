@@ -140,6 +140,28 @@ PENDING / chưa xử lý     →  hover:bg-slate-50  (nền trắng)
 ```
 **Typography:** Page title `text-xl font-semibold` · Section `text-base font-medium` · Body `text-sm` · Label `text-xs text-slate-500`
 ---
+## Filter Standards (bắt buộc mọi module)
+
+**Kiểu filter Excel** — mọi dropdown filter phải theo nguyên tắc:
+1. **Search contains** — ô tìm kiếm trong dropdown, không phân biệt hoa thường
+2. **Options từ data thực** — không hardcode; lấy từ API hoặc tính từ data hiện có
+3. **Multi-select + "Tất cả"** — dùng `MultiSelectFilter` từ `@/components/shared/MultiSelectFilter`
+4. **Checkbox vuông + dấu tích** — hiển thị trạng thái chọn từng item
+
+**Component:** `MultiSelectFilter` (props: `label`, `options: MSOpt[]`, `selected: string[]`, `onChange`, `searchable?`, `width?`)
+
+**Tình trạng Còn tồn (Inventory):** chỉ 2 option — `Còn tồn` (default, `status=''`) / `Tất cả` (`status='ALL'`). Không thêm per-status option.
+
+**% Date range (Inventory):**
+- `> 80%`  = `pct > 80`
+- `60–80%` = `60 < pct ≤ 80`
+- `30–60%` = `30 < pct ≤ 60`
+
+**Filter phía server vs client:**
+- Server-side: `warehouse_id`, `material_category` trong Inventory (paginated) + Inbound
+- Client-side: Material / Chu kỳ / Máy / Người nhập / Ca trong Inbound; tất cả Outbound; %Date Inventory
+
+---
 ## Table Standards (bắt buộc mọi module)
 **2 cỡ font:**
 - **Header cột:** `text-[9px] font-medium text-slate-500` · padding `px-2 py-1.5` · nền `bg-slate-50`

@@ -4,7 +4,6 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import {
@@ -19,10 +18,9 @@ import type { InventoryEntry } from '@/types'
 
 // ─── Helpers ──────────────────────────────────────────────────
 
-function formatLoc(loc: { location_code: string; sub_code: string } | null): string {
+function formatLoc(loc: { location_code: string } | null): string {
   if (!loc) return '—'
-  const tang = loc.sub_code?.split('-')[0] ?? ''
-  return tang ? `${loc.location_code}_${tang}` : loc.location_code
+  return loc.location_code
 }
 
 function calcDatePct(prodDate: string | null, shelfDays: number | null): number | null {
@@ -75,17 +73,15 @@ function filterByDatePct(pct: number, range: string): boolean {
 
 // ─── Action modals ────────────────────────────────────────────
 
-function QAModal({ open, ids, qaStatuses, onClose }: {
-  open: boolean
+function QAPanel({ ids, qaStatuses, onClose }: {
   ids: string[]
   qaStatuses: { id: string; code: string; name: string }[]
   onClose: () => void
 }) {
-  const [qaId, setQaId]     = useState('')   // '__ok__' = clear (send null), else QA status id
+  const [qaId, setQaId]     = useState('')
   const [error, setError]   = useState('')
   const { mutate, isPending } = useBulkUpdateInventoryQA()
 
-  // Non-OK statuses first, then OK as final option (sends null)
   const nonOk  = qaStatuses.filter(q => q.code.toUpperCase() !== 'OK')
   const hasOk  = qaStatuses.some(q => q.code.toUpperCase() === 'OK')
   const qaOptions: { id: string; label: string }[] = [
@@ -105,52 +101,55 @@ function QAModal({ open, ids, qaStatuses, onClose }: {
   }
 
   return (
-    <Dialog open={open} onOpenChange={v => { if (!v) { setQaId(''); setError(''); onClose() } }}>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader>
-          <DialogTitle>Cập nhật QA Status</DialogTitle>
-          <p className="text-xs text-slate-500">{ids.length} pallet đã chọn</p>
-        </DialogHeader>
-        <div className="space-y-3 py-2">
-          {error && (
-            <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</div>
-          )}
-          <div className="space-y-1.5">
-            <Label className="text-xs">QA Status mới</Label>
-            <div className="border rounded-md overflow-hidden">
-              {qaOptions.map(opt => (
-                <label key={opt.id}
-                  className={`flex items-center gap-2.5 px-3 py-2 cursor-pointer border-b last:border-b-0 transition-colors ${
-                    qaId === opt.id ? 'bg-blue-50' : 'hover:bg-slate-50'
-                  }`}
-                  onClick={() => setQaId(prev => prev === opt.id ? '' : opt.id)}
-                >
-                  <div className={`w-3.5 h-3.5 border rounded shrink-0 flex items-center justify-center transition-colors ${
-                    qaId === opt.id ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white'
-                  }`}>
-                    {qaId === opt.id && <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />}
-                  </div>
-                  <span className={`text-xs ${opt.id === '__ok__' ? 'text-green-700 font-medium' : 'text-slate-700'}`}>
-                    {opt.label}
-                  </span>
-                </label>
-              ))}
-            </div>
+    <div className="w-72 shrink-0 border-l bg-white overflow-y-auto flex flex-col">
+      <div className="flex items-center justify-between px-3 py-2 border-b bg-slate-50 shrink-0">
+        <p className="text-xs font-semibold text-slate-700">Cập nhật QA Status</p>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-slate-500">{ids.length} pallet</span>
+          <button onClick={() => { setQaId(''); setError(''); onClose() }} className="text-slate-400 hover:text-slate-700">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+      <div className="p-3 space-y-3 text-xs flex-1">
+        {error && (
+          <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</div>
+        )}
+        <div className="space-y-1.5">
+          <Label className="text-xs">QA Status mới</Label>
+          <div className="border rounded-md overflow-hidden">
+            {qaOptions.map(opt => (
+              <label key={opt.id}
+                className={`flex items-center gap-2.5 px-3 py-2 cursor-pointer border-b last:border-b-0 transition-colors ${
+                  qaId === opt.id ? 'bg-blue-50' : 'hover:bg-slate-50'
+                }`}
+                onClick={() => setQaId(prev => prev === opt.id ? '' : opt.id)}
+              >
+                <div className={`w-3.5 h-3.5 border rounded shrink-0 flex items-center justify-center transition-colors ${
+                  qaId === opt.id ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white'
+                }`}>
+                  {qaId === opt.id && <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />}
+                </div>
+                <span className={`text-xs ${opt.id === '__ok__' ? 'text-green-700 font-medium' : 'text-slate-700'}`}>
+                  {opt.label}
+                </span>
+              </label>
+            ))}
           </div>
         </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Huỷ</Button>
-          <Button disabled={!qaId || isPending} onClick={handleSubmit}>
+        <div className="flex gap-2 pt-1">
+          <Button variant="outline" className="flex-1" onClick={() => { setQaId(''); setError(''); onClose() }}>Huỷ</Button>
+          <Button className="flex-1" disabled={!qaId || isPending} onClick={handleSubmit}>
             {isPending ? '…' : 'Cập nhật'}
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </div>
+      </div>
+    </div>
   )
 }
 
-function LocationModal({ open, ids, warehouseId, category, onClose }: {
-  open: boolean; ids: string[]; warehouseId?: string; category?: string; onClose: () => void
+function LocationPanel({ ids, warehouseId, category, onClose }: {
+  ids: string[]; warehouseId?: string; category?: string; onClose: () => void
 }) {
   const [search, setSearch]   = useState('')
   const [locId, setLocId]     = useState('')
@@ -186,75 +185,77 @@ function LocationModal({ open, ids, warehouseId, category, onClose }: {
   }
 
   return (
-    <Dialog open={open} onOpenChange={v => { if (!v) { reset(); onClose() } }}>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader>
-          <DialogTitle>Chuyển vị trí</DialogTitle>
-          <p className="text-xs text-slate-500">{ids.length} pallet đã chọn</p>
-        </DialogHeader>
-        <div className="space-y-3 py-2">
-          {error && (
-            <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</div>
-          )}
-          <div className="space-y-1.5">
-            <Label className="text-xs">Vị trí mới</Label>
-            <Input placeholder="Tìm vị trí…" value={search} autoFocus
-              onChange={e => setSearch(e.target.value)} className="h-8 text-sm" />
-            <div className="border rounded max-h-52 overflow-y-auto">
-              {filtered.length === 0 ? (
-                <div className="px-3 py-2 text-xs text-slate-400 text-center">Không tìm thấy</div>
-              ) : (
-                filtered.map((l: any) => {
-                  const isFull = l.max_pallets > 0 && (l.used_slots ?? 0) >= l.max_pallets
-                  const isSelected = locId === l.id
-                  return (
-                    <label key={l.id}
-                      className={`flex items-center gap-2.5 px-3 py-2 cursor-pointer border-b last:border-b-0 transition-colors ${
-                        isSelected ? 'bg-blue-50' : isFull ? 'opacity-50 bg-slate-50 cursor-not-allowed' : 'hover:bg-slate-50'
-                      }`}
-                      onClick={() => { if (!isFull) setLocId(prev => prev === l.id ? '' : l.id) }}
-                    >
-                      <div className={`w-3.5 h-3.5 border rounded shrink-0 flex items-center justify-center transition-colors ${
-                        isSelected ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white'
-                      }`}>
-                        {isSelected && <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />}
-                      </div>
-                      <span className="text-xs font-mono font-semibold">{formatLoc(l)}</span>
-                      <span className={`ml-auto text-[10px] ${isFull ? 'text-red-400 font-medium' : 'text-slate-400'}`}>
-                        {l.used_slots ?? 0}/{l.max_pallets}{isFull ? ' (đầy)' : ''}
-                      </span>
-                    </label>
-                  )
-                })
-              )}
-            </div>
-            {selectedLoc && (
-              <p className="text-[10px] text-blue-600">
-                Đã chọn: <strong className="font-mono">{formatLoc(selectedLoc)}</strong>
-                <button className="ml-2 text-slate-400 hover:text-red-500" onClick={reset}>✕ bỏ chọn</button>
-              </p>
+    <div className="w-72 shrink-0 border-l bg-white overflow-y-auto flex flex-col">
+      <div className="flex items-center justify-between px-3 py-2 border-b bg-slate-50 shrink-0">
+        <p className="text-xs font-semibold text-slate-700">Chuyển vị trí</p>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-slate-500">{ids.length} pallet</span>
+          <button onClick={() => { reset(); onClose() }} className="text-slate-400 hover:text-slate-700">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+      <div className="p-3 space-y-3 text-xs flex-1">
+        {error && (
+          <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</div>
+        )}
+        <div className="space-y-1.5">
+          <Label className="text-xs">Vị trí mới</Label>
+          <Input placeholder="Tìm vị trí…" value={search} autoFocus
+            onChange={e => setSearch(e.target.value)} className="h-8 text-sm" />
+          <div className="border rounded max-h-[calc(100vh-280px)] overflow-y-auto">
+            {filtered.length === 0 ? (
+              <div className="px-3 py-2 text-xs text-slate-400 text-center">Không tìm thấy</div>
+            ) : (
+              filtered.map((l: any) => {
+                const isFull = l.max_pallets > 0 && (l.used_slots ?? 0) >= l.max_pallets
+                const isSelected = locId === l.id
+                return (
+                  <label key={l.id}
+                    className={`flex items-center gap-2.5 px-3 py-2 cursor-pointer border-b last:border-b-0 transition-colors ${
+                      isSelected ? 'bg-blue-50' : isFull ? 'opacity-50 bg-slate-50 cursor-not-allowed' : 'hover:bg-slate-50'
+                    }`}
+                    onClick={() => { if (!isFull) setLocId(prev => prev === l.id ? '' : l.id) }}
+                  >
+                    <div className={`w-3.5 h-3.5 border rounded shrink-0 flex items-center justify-center transition-colors ${
+                      isSelected ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white'
+                    }`}>
+                      {isSelected && <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />}
+                    </div>
+                    <span className="text-xs font-mono font-semibold">{formatLoc(l)}</span>
+                    <span className={`ml-auto text-[10px] ${isFull ? 'text-red-400 font-medium' : 'text-slate-400'}`}>
+                      {l.used_slots ?? 0}/{l.max_pallets}{isFull ? ' (đầy)' : ''}
+                    </span>
+                  </label>
+                )
+              })
             )}
           </div>
+          {selectedLoc && (
+            <p className="text-[10px] text-blue-600">
+              Đã chọn: <strong className="font-mono">{formatLoc(selectedLoc)}</strong>
+              <button className="ml-2 text-slate-400 hover:text-red-500" onClick={reset}>✕ bỏ chọn</button>
+            </p>
+          )}
         </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => { reset(); onClose() }}>Huỷ</Button>
-          <Button disabled={!locId || isPending} onClick={handleSubmit}>
+        <div className="flex gap-2 pt-1">
+          <Button variant="outline" className="flex-1" onClick={() => { reset(); onClose() }}>Huỷ</Button>
+          <Button className="flex-1" disabled={!locId || isPending} onClick={handleSubmit}>
             {isPending ? '…' : 'Chuyển'}
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </div>
+      </div>
+    </div>
   )
 }
 
-function MaterialModal({ open, ids, category, onClose }: {
-  open: boolean; ids: string[]; category?: string; onClose: () => void
+function MaterialPanel({ ids, category, onClose }: {
+  ids: string[]; category?: string; onClose: () => void
 }) {
   const [search, setSearch]   = useState('')
   const [matId, setMatId]     = useState('')
   const [error, setError]     = useState('')
   const { mutate, isPending }  = useBulkTransferMaterial()
-  // category always filters; search narrows further. Show list immediately when category set.
   const { data: materials = [] } = useMaterials({ search: search || undefined, category: category || undefined })
 
   const selectedMat = useMemo(() =>
@@ -276,68 +277,71 @@ function MaterialModal({ open, ids, category, onClose }: {
   }
 
   return (
-    <Dialog open={open} onOpenChange={v => { if (!v) { reset(); onClose() } }}>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader>
-          <DialogTitle>Chuyển mã hàng</DialogTitle>
-          <p className="text-xs text-slate-500">{ids.length} pallet đã chọn</p>
-        </DialogHeader>
-        <div className="space-y-3 py-2">
-          {error && (
-            <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</div>
-          )}
-          <div className="space-y-1.5">
-            <Label className="text-xs">Hàng hóa mới</Label>
-            {category && (
-              <p className="text-[10px] text-blue-600 bg-blue-50 border border-blue-100 rounded px-2 py-1">
-                Chỉ hiện mã cùng loại: <strong>{category}</strong>
-              </p>
-            )}
-            <Input placeholder="Tìm mã hoặc tên hàng…" value={search} autoFocus
-              onChange={e => { setSearch(e.target.value); setMatId('') }} className="h-8 text-sm" />
-            {(search || category) && (
-              <div className="border rounded max-h-52 overflow-y-auto">
-                {(materials as any[]).length === 0 ? (
-                  <div className="px-3 py-2 text-xs text-slate-400 text-center">Không tìm thấy</div>
-                ) : (
-                  (materials as any[]).map((m: any) => {
-                    const isSelected = matId === m.id
-                    return (
-                      <label key={m.id}
-                        className={`flex items-center gap-2.5 px-3 py-2 cursor-pointer border-b last:border-b-0 transition-colors ${
-                          isSelected ? 'bg-blue-50' : 'hover:bg-slate-50'
-                        }`}
-                        onClick={() => setMatId(prev => prev === m.id ? '' : m.id)}
-                      >
-                        <div className={`w-3.5 h-3.5 border rounded shrink-0 flex items-center justify-center transition-colors ${
-                          isSelected ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white'
-                        }`}>
-                          {isSelected && <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />}
-                        </div>
-                        <span className="text-[10px] font-mono text-slate-500 shrink-0">{m.material_code}</span>
-                        <span className="text-xs text-slate-700 truncate">{m.short_name ?? m.material_description}</span>
-                      </label>
-                    )
-                  })
-                )}
-              </div>
-            )}
-            {selectedMat && (
-              <p className="text-[10px] text-blue-600">
-                Đã chọn: <strong className="font-mono">{selectedMat.material_code}</strong> – {selectedMat.short_name ?? ''}
-                <button className="ml-2 text-slate-400 hover:text-red-500" onClick={reset}>✕ bỏ chọn</button>
-              </p>
-            )}
-          </div>
+    <div className="w-72 shrink-0 border-l bg-white overflow-y-auto flex flex-col">
+      <div className="flex items-center justify-between px-3 py-2 border-b bg-slate-50 shrink-0">
+        <p className="text-xs font-semibold text-slate-700">Chuyển mã hàng</p>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-slate-500">{ids.length} pallet</span>
+          <button onClick={() => { reset(); onClose() }} className="text-slate-400 hover:text-slate-700">
+            <X className="h-4 w-4" />
+          </button>
         </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => { reset(); onClose() }}>Huỷ</Button>
-          <Button disabled={!matId || isPending} onClick={handleSubmit}>
+      </div>
+      <div className="p-3 space-y-3 text-xs flex-1">
+        {error && (
+          <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</div>
+        )}
+        <div className="space-y-1.5">
+          <Label className="text-xs">Hàng hóa mới</Label>
+          {category && (
+            <p className="text-[10px] text-blue-600 bg-blue-50 border border-blue-100 rounded px-2 py-1">
+              Chỉ hiện mã cùng loại: <strong>{category}</strong>
+            </p>
+          )}
+          <Input placeholder="Tìm mã hoặc tên hàng…" value={search} autoFocus
+            onChange={e => { setSearch(e.target.value); setMatId('') }} className="h-8 text-sm" />
+          {(search || category) && (
+            <div className="border rounded max-h-[calc(100vh-320px)] overflow-y-auto">
+              {(materials as any[]).length === 0 ? (
+                <div className="px-3 py-2 text-xs text-slate-400 text-center">Không tìm thấy</div>
+              ) : (
+                (materials as any[]).map((m: any) => {
+                  const isSelected = matId === m.id
+                  return (
+                    <label key={m.id}
+                      className={`flex items-center gap-2.5 px-3 py-2 cursor-pointer border-b last:border-b-0 transition-colors ${
+                        isSelected ? 'bg-blue-50' : 'hover:bg-slate-50'
+                      }`}
+                      onClick={() => setMatId(prev => prev === m.id ? '' : m.id)}
+                    >
+                      <div className={`w-3.5 h-3.5 border rounded shrink-0 flex items-center justify-center transition-colors ${
+                        isSelected ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white'
+                      }`}>
+                        {isSelected && <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />}
+                      </div>
+                      <span className="text-[10px] font-mono text-slate-500 shrink-0">{m.material_code}</span>
+                      <span className="text-xs text-slate-700 truncate">{m.short_name ?? m.material_description}</span>
+                    </label>
+                  )
+                })
+              )}
+            </div>
+          )}
+          {selectedMat && (
+            <p className="text-[10px] text-blue-600">
+              Đã chọn: <strong className="font-mono">{selectedMat.material_code}</strong> – {selectedMat.short_name ?? ''}
+              <button className="ml-2 text-slate-400 hover:text-red-500" onClick={reset}>✕ bỏ chọn</button>
+            </p>
+          )}
+        </div>
+        <div className="flex gap-2 pt-1">
+          <Button variant="outline" className="flex-1" onClick={() => { reset(); onClose() }}>Huỷ</Button>
+          <Button className="flex-1" disabled={!matId || isPending} onClick={handleSubmit}>
             {isPending ? '…' : 'Chuyển'}
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -715,13 +719,16 @@ export default function Inventory() {
           )}
         </div>
 
-        {/* Detail drawer */}
-        {selected && (
-          <DetailPanel
-            entry={selected}
-            onClose={() => setSelected(null)}
-          />
-        )}
+        {/* Detail / Action side panel */}
+        {actionModal === 'qa' ? (
+          <QAPanel ids={checkedIdArr} qaStatuses={qaStatuses as { id: string; code: string; name: string }[]} onClose={closeActionModal} />
+        ) : actionModal === 'location' ? (
+          <LocationPanel ids={checkedIdArr} warehouseId={actionWarehouseId} category={actionCategory} onClose={closeActionModal} />
+        ) : actionModal === 'material' ? (
+          <MaterialPanel ids={checkedIdArr} category={actionCategory} onClose={closeActionModal} />
+        ) : selected ? (
+          <DetailPanel entry={selected} onClose={() => setSelected(null)} />
+        ) : null}
       </div>
 
       {/* ── Floating action bar (when items checked) ── */}
@@ -755,26 +762,6 @@ export default function Inventory() {
         </div>
       )}
 
-      {/* ── Action modals ── */}
-      <QAModal
-        open={actionModal === 'qa'}
-        ids={checkedIdArr}
-        qaStatuses={qaStatuses as { id: string; code: string; name: string }[]}
-        onClose={closeActionModal}
-      />
-      <LocationModal
-        open={actionModal === 'location'}
-        ids={checkedIdArr}
-        warehouseId={actionWarehouseId}
-        category={actionCategory}
-        onClose={closeActionModal}
-      />
-      <MaterialModal
-        open={actionModal === 'material'}
-        ids={checkedIdArr}
-        category={actionCategory}
-        onClose={closeActionModal}
-      />
     </div>
   )
 }
@@ -823,8 +810,8 @@ function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick }: {
         <span className="text-[10px] font-mono font-semibold text-slate-700">{matCode}</span>
       </TableCell>
       {/* Tên hàng */}
-      <TableCell className="px-2 py-1 max-w-[110px]">
-        <span className="text-[10px] text-slate-700 truncate block" title={matName}>{matName}</span>
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        <span className="text-[10px] text-slate-700">{matName}</span>
       </TableCell>
       {/* Mã pallet */}
       <TableCell className="px-2 py-1 whitespace-nowrap">

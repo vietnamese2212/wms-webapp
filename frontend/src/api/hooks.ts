@@ -660,20 +660,42 @@ export function useUpdateJobTitle() {
 
 // ─── Outbound (API thật) ─────────────────────────────────────────────────────
 
-type CreateGDOPayload = {
+type GDOFormPayload = {
   delivery_date: string
   warehouse_id?: string
-  dvvt?: string
+  dvvt: string
+  customer_name: string
+  export_type: string
   items: Array<{ material_code: string; cartons_ordered: number }>
 }
 
 export function useCreateGDO() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (body: CreateGDOPayload) => {
+    mutationFn: async (body: GDOFormPayload) => {
       const { data } = await apiClient.post('/wms/outbound', body)
       return data.data as GDO
     },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['gdos'] }),
+  })
+}
+
+export function useUpdateGDO() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: GDOFormPayload & { id: string }) =>
+      apiClient.put(`/wms/outbound/${id}`, body).then(r => r.data.data),
+    onSuccess: (_, { id }) => {
+      qc.invalidateQueries({ queryKey: ['gdos'] })
+      qc.invalidateQueries({ queryKey: ['gdo', id] })
+    },
+  })
+}
+
+export function useDeleteGDO() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.delete(`/wms/outbound/${id}`).then(r => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['gdos'] }),
   })
 }

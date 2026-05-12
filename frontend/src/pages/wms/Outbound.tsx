@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Input }  from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { useGDOs, useUploadGDOExcel, useWarehouses, useCreateGDO, useMaterials } from '@/api/hooks'
+import { useGDOs, useUploadGDOExcel, useWarehouses, useCreateGDO, useUpdateGDO, useDeleteGDO, useMaterials, useGDO, useAssignGDO } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
@@ -17,6 +17,7 @@ import { formatTimestampTime } from '@/utils/formatters'
 import type { GDO } from '@/types'
 
 const TODAY = new Date().toISOString().slice(0, 10)
+const EXPORT_TYPES = ['Xe Container', 'Xe Pallet', 'Xe Xá']
 
 // ─── Row background by status ─────────────────────────────────
 function gdoRowBg(gdo: GDO) {
@@ -27,7 +28,6 @@ function gdoRowBg(gdo: GDO) {
   return 'hover:bg-slate-50'
 }
 
-// ─── Tình trạng label ─────────────────────────────────────────
 function gdoStatusInfo(gdo: GDO): { label: string; cls: string } {
   if (gdo.status === 'COMPLETED')   return { label: 'Hoàn thành', cls: 'bg-blue-100 text-blue-700'   }
   if (gdo.status === 'IN_PROGRESS') return { label: 'Đang xuất',  cls: 'bg-amber-100 text-amber-700' }
@@ -36,7 +36,6 @@ function gdoStatusInfo(gdo: GDO): { label: string; cls: string } {
   return                                   { label: '—',           cls: 'bg-slate-100 text-slate-400' }
 }
 
-// ─── Natural sort on trailing number (ABC101 < ABC102 < ABC201) ─
 function naturalSortCode(a: string, b: string): number {
   const numA = parseInt(a.match(/(\d+)$/)?.[1] ?? '0', 10)
   const numB = parseInt(b.match(/(\d+)$/)?.[1] ?? '0', 10)
@@ -44,7 +43,6 @@ function naturalSortCode(a: string, b: string): number {
   return a.localeCompare(b)
 }
 
-// ─── Short timestamp helper ───────────────────────────────────
 function fTime(ts: string | null | undefined): string {
   if (!ts) return '—'
   return formatTimestampTime(ts)
@@ -60,7 +58,8 @@ export default function Outbound() {
   const [uploadOk,        setUploadOk]        = useState<string | null>(null)
   const [uploadWarn,      setUploadWarn]      = useState<string | null>(null)
   const [postUploadLoading, setPostUploadLoading] = useState(false)
-  const [showCreate, setShowCreate] = useState(false)
+  const [showCreate,  setShowCreate]  = useState(false)
+  const [editingGDOId, setEditingGDOId] = useState<string | null>(null)
 
   const { data: warehouses = [] } = useWarehouses(true)
 
@@ -76,6 +75,8 @@ export default function Outbound() {
     date:   f.date   || undefined,
   })
   const { mutate: uploadExcel, isPending: uploading } = useUploadGDOExcel()
+  const { mutate: deleteGDO } = useDeleteGDO()
+  const { mutate: assignGDO } = useAssignGDO()
 
   useEffect(() => {
     if (postUploadLoading && !isFetching) setPostUploadLoading(false)
@@ -99,7 +100,6 @@ export default function Outbound() {
     return true
   }), [gdos, filterTypes, filterDvvts, filterNpps, filterWarehouseTypes])
 
-  // Sort: ngày desc → loại xuất asc → số xe natural asc
   const sorted = useMemo(() => [...filtered].sort((a, b) => {
     if (a.delivery_date !== b.delivery_date)
       return b.delivery_date.localeCompare(a.delivery_date)
@@ -111,9 +111,7 @@ export default function Outbound() {
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
-    setUploadErr(null)
-    setUploadOk(null)
-    setUploadWarn(null)
+    setUploadErr(null); setUploadOk(null); setUploadWarn(null)
     setPostUploadLoading(true)
     uploadExcel(
       { file, warehouse_id: user?.warehouse_id || undefined },
@@ -123,13 +121,11 @@ export default function Outbound() {
           const nCreated = items.filter(r => r.created && !r.merged).length
           const nMerged  = items.filter(r => r.merged).length
           const skipped  = items.filter(r => r.skipped)
-
           const okParts = [
             nCreated > 0 && `Tạo mới ${nCreated} xe`,
             nMerged  > 0 && `Cập nhật ${nMerged} xe (PAUSED)`,
           ].filter(Boolean).join(' · ')
           setUploadOk(okParts || (skipped.length ? undefined : 'Không có xe mới') as any)
-
           if (skipped.length) {
             type SkippedItem = { group_code: string; reason?: string }
             const CATS: { key: string; label: string; match: (r: string) => boolean; detailPrefix?: string }[] = [
@@ -170,6 +166,17 @@ export default function Outbound() {
     e.target.value = ''
   }
 
+  function handleDelete(gdo: GDO, e: React.MouseEvent) {
+    e.stopPropagation()
+    if (!confirm(`Xóa đơn "${gdo.group_code}"?\nHành động này không thể hoàn tác.`)) return
+    deleteGDO(gdo.id, {
+      onError: (err) => {
+        const msg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi xóa đơn'
+        alert(msg)
+      },
+    })
+  }
+
   const dateLabel = f.date
     ? format(parseISO(f.date), 'EEEE, dd-MM-yyyy', { locale: vi })
     : 'Tất cả ngày'
@@ -184,7 +191,7 @@ export default function Outbound() {
             Xuất kho
           </h1>
           <div className="flex gap-2">
-            <Button size="sm" variant="outline" onClick={() => setShowCreate(s => !s)} className="gap-1.5">
+            <Button size="sm" variant="outline" onClick={() => setShowCreate(true)} className="gap-1.5">
               <PenSquare className="h-4 w-4" />
               Tạo đơn
             </Button>
@@ -243,7 +250,7 @@ export default function Outbound() {
           </div>
         </div>
 
-        {/* Row 2: Kho / Loại kho / Loại xuất / ĐVVT / NPP filters */}
+        {/* Row 2: Filters */}
         <div className="flex gap-2 flex-wrap items-center">
           <Select value={f.warehouseId || '__all__'} onValueChange={v => setOutbound({ warehouseId: v === '__all__' ? '' : v })}>
             <SelectTrigger className="h-7 text-xs w-[130px]">
@@ -254,38 +261,12 @@ export default function Outbound() {
               {(warehouses as any[]).map((w: any) => <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>)}
             </SelectContent>
           </Select>
-
-          <MultiSelectFilter
-            label="Loại kho"
-            options={warehouseTypeOpts.map(t => ({ value: t, label: t }))}
-            selected={filterWarehouseTypes}
-            onChange={v => setOutbound({ filterWarehouseTypes: v })}
-          />
-
-          <MultiSelectFilter
-            label="Loại xuất"
-            options={typeOptions.map(t => ({ value: t, label: t }))}
-            selected={filterTypes}
-            onChange={v => setOutbound({ filterTypes: v })}
-          />
-
-          <MultiSelectFilter
-            label="ĐVVT"
-            options={dvvtOptions.map(d => ({ value: d, label: d }))}
-            selected={filterDvvts}
-            onChange={v => setOutbound({ filterDvvts: v })}
-          />
-
-          <MultiSelectFilter
-            label="NPP"
-            options={nppOptions.map(n => ({ value: n, label: n }))}
-            selected={filterNpps}
-            onChange={v => setOutbound({ filterNpps: v })}
-            width="min-w-[140px]"
-          />
+          <MultiSelectFilter label="Loại kho" options={warehouseTypeOpts.map(t => ({ value: t, label: t }))} selected={filterWarehouseTypes} onChange={v => setOutbound({ filterWarehouseTypes: v })} />
+          <MultiSelectFilter label="Loại xuất" options={typeOptions.map(t => ({ value: t, label: t }))} selected={filterTypes} onChange={v => setOutbound({ filterTypes: v })} />
+          <MultiSelectFilter label="ĐVVT" options={dvvtOptions.map(d => ({ value: d, label: d }))} selected={filterDvvts} onChange={v => setOutbound({ filterDvvts: v })} />
+          <MultiSelectFilter label="NPP" options={nppOptions.map(n => ({ value: n, label: n }))} selected={filterNpps} onChange={v => setOutbound({ filterNpps: v })} width="min-w-[140px]" />
         </div>
 
-        {/* Date label */}
         <p className="text-xs text-slate-500 -mt-1">
           {f.date ? (
             <>
@@ -299,76 +280,99 @@ export default function Outbound() {
         </p>
       </div>
 
-      {/* Table + Panel */}
-      <div className="flex flex-1 min-h-0">
-        <div className="flex-1 overflow-auto pb-20 lg:pb-4">
-          {isLoading || postUploadLoading ? (
-            <div className="p-4 space-y-2">
-              {[1,2,3,4].map(i => <div key={i} className="h-10 rounded bg-slate-100 animate-pulse" />)}
-            </div>
-          ) : sorted.length === 0 ? (
-            <div className="flex flex-col items-center gap-2 py-16 text-slate-400">
-              <Truck className="h-10 w-10 opacity-30" />
-              <p className="text-sm">{f.search ? 'Không tìm thấy chuyến xe' : f.date ? `Không có chuyến xe ngày ${format(parseISO(f.date), 'dd-MM-yyyy')}` : 'Chưa có chuyến xe nào'}</p>
-              {!f.date && <p className="text-xs">Upload file Excel để bắt đầu</p>}
-            </div>
-          ) : (
-            <Table className="min-w-[1600px]">
-              <TableHeader>
-                <TableRow className="bg-slate-50">
-                  <TableHead className="px-1.5 py-1.5 w-7" />
-                  <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Ngày xuất</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Số xe</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Tên NPP</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">ĐVVT</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 text-right whitespace-nowrap px-2 py-1.5">Tổng thùng</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 text-right whitespace-nowrap px-2 py-1.5">Pallet</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Kho xuất</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Loại xuất</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Loại kho</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Giờ giao đơn</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Giờ bắt đầu</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Giờ quét xong</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Giờ kết thúc</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Tình trạng</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Người xuất</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Lái xe nâng</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Bốc xếp</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {sorted.map(gdo => <GDORow key={gdo.id} gdo={gdo} onClick={() => navigate(`/wms/outbound/${gdo.id}`)} />)}
-              </TableBody>
-            </Table>
-          )}
-        </div>
-        {showCreate && (
-          <CreateGDOPanel
-            defaultWarehouseId={f.warehouseId || user?.warehouse_id || ''}
-            onClose={() => setShowCreate(false)}
-          />
+      {/* Table */}
+      <div className="flex-1 overflow-auto pb-20 lg:pb-4">
+        {isLoading || postUploadLoading ? (
+          <div className="p-4 space-y-2">
+            {[1,2,3,4].map(i => <div key={i} className="h-10 rounded bg-slate-100 animate-pulse" />)}
+          </div>
+        ) : sorted.length === 0 ? (
+          <div className="flex flex-col items-center gap-2 py-16 text-slate-400">
+            <Truck className="h-10 w-10 opacity-30" />
+            <p className="text-sm">{f.search ? 'Không tìm thấy chuyến xe' : f.date ? `Không có chuyến xe ngày ${format(parseISO(f.date), 'dd-MM-yyyy')}` : 'Chưa có chuyến xe nào'}</p>
+            {!f.date && <p className="text-xs">Upload file Excel để bắt đầu</p>}
+          </div>
+        ) : (
+          <Table className="min-w-[1700px]">
+            <TableHeader>
+              <TableRow className="bg-slate-50">
+                <TableHead className="px-1.5 py-1.5 w-7" />
+                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5 w-16">Thao tác</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Ngày xuất</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Số xe</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Tên NPP</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">ĐVVT</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 text-right whitespace-nowrap px-2 py-1.5">Tổng thùng</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 text-right whitespace-nowrap px-2 py-1.5">Pallet</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Kho xuất</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Loại xuất</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Loại kho</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Giờ giao đơn</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Giờ bắt đầu</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Giờ quét xong</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Giờ kết thúc</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Tình trạng</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Người xuất</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Lái xe nâng</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Bốc xếp</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {sorted.map(gdo => (
+                <GDORow
+                  key={gdo.id}
+                  gdo={gdo}
+                  onClick={() => navigate(`/wms/outbound/${gdo.id}`)}
+                  onEdit={e => { e.stopPropagation(); setEditingGDOId(gdo.id) }}
+                  onDelete={e => handleDelete(gdo, e)}
+                  onAssign={e => { e.stopPropagation(); assignGDO({ id: gdo.id }) }}
+                />
+              ))}
+            </TableBody>
+          </Table>
         )}
       </div>
+
+      {/* Modals */}
+      {showCreate && (
+        <GDOModal
+          defaultWarehouseId={f.warehouseId || user?.warehouse_id || ''}
+          onClose={() => setShowCreate(false)}
+        />
+      )}
+      {editingGDOId && (
+        <EditGDOModal
+          gdoId={editingGDOId}
+          defaultWarehouseId={f.warehouseId || user?.warehouse_id || ''}
+          onClose={() => setEditingGDOId(null)}
+        />
+      )}
     </div>
   )
 }
 
-function GDORow({ gdo, onClick }: { gdo: GDO; onClick: () => void }) {
+// ─── GDO Row ──────────────────────────────────────────────────
+
+function GDORow({ gdo, onClick, onEdit, onDelete, onAssign }: {
+  gdo: GDO
+  onClick: () => void
+  onEdit: (e: React.MouseEvent) => void
+  onDelete: (e: React.MouseEvent) => void
+  onAssign: (e: React.MouseEvent) => void
+}) {
   const { pin, unpin, isPinned } = useActiveVehiclesStore()
   const pinned    = isPinned(gdo.id)
   const dateLabel = format(parseISO(gdo.delivery_date), 'dd-MM-yy', { locale: vi })
   const npp       = gdo.distributor_names?.join(', ') ?? '—'
   const { label: statusLabel, cls: statusCls } = gdoStatusInfo(gdo)
+  const isPending = gdo.status === 'PENDING'
 
   return (
     <TableRow className={`cursor-pointer transition-colors ${gdoRowBg(gdo)}`} onClick={onClick}>
       {/* Bookmark */}
       <TableCell className="px-1.5 py-1" onClick={e => e.stopPropagation()}>
         <button
-          onClick={() => pinned
-            ? unpin(gdo.id)
-            : pin({ id: gdo.id, group_code: gdo.group_code, status: gdo.status })
-          }
+          onClick={() => pinned ? unpin(gdo.id) : pin({ id: gdo.id, group_code: gdo.group_code, status: gdo.status })}
           className={`p-0.5 rounded transition-colors ${pinned ? 'text-amber-500' : 'text-slate-300 hover:text-slate-500'}`}
           title={pinned ? 'Bỏ đánh dấu' : 'Đánh dấu đang làm'}
         >
@@ -376,93 +380,86 @@ function GDORow({ gdo, onClick }: { gdo: GDO; onClick: () => void }) {
         </button>
       </TableCell>
 
-      {/* Ngày xuất */}
+      {/* Actions */}
+      <TableCell className="px-1.5 py-1 whitespace-nowrap" onClick={e => e.stopPropagation()}>
+        {isPending && (
+          <div className="flex items-center gap-1">
+            <button onClick={onEdit} title="Sửa đơn" className="p-0.5 rounded text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors">
+              <PenSquare className="h-3 w-3" />
+            </button>
+            <button onClick={onDelete} title="Xóa đơn" className="p-0.5 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors">
+              <Trash2 className="h-3 w-3" />
+            </button>
+          </div>
+        )}
+      </TableCell>
+
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px] font-medium tabular-nums">{dateLabel}</span>
       </TableCell>
-
-      {/* Số xe */}
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px] font-mono font-semibold">{gdo.group_code}</span>
       </TableCell>
-
-      {/* Tên NPP */}
       <TableCell className="px-2 py-1 max-w-[150px]">
         <span className="text-[10px] text-slate-700 truncate block" title={npp}>{npp}</span>
       </TableCell>
-
-      {/* ĐVVT */}
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px] text-slate-700">{gdo.dvvt ?? '—'}</span>
       </TableCell>
-
-      {/* Tổng thùng */}
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         <span className="text-[10px] font-semibold tabular-nums">{gdo.total_cartons ?? 0}</span>
         <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
       </TableCell>
-
-      {/* Pallet */}
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         <span className="text-[10px] font-semibold tabular-nums">{gdo.total_pallets ?? 0}</span>
         <span className="text-[9px] text-slate-400 ml-0.5">pl</span>
       </TableCell>
-
-      {/* Kho xuất */}
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px] text-slate-700">{gdo.warehouse?.name ?? '—'}</span>
       </TableCell>
-
-      {/* Loại xuất */}
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px] text-slate-700">{gdo.export_type ?? '—'}</span>
       </TableCell>
-
-      {/* Loại kho */}
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px] text-slate-700">{gdo.warehouse_type ?? '—'}</span>
       </TableCell>
 
-      {/* Giờ giao đơn */}
-      <TableCell className="px-2 py-1 whitespace-nowrap">
-        <span className="text-[10px] tabular-nums text-slate-600">{fTime(gdo.assigned_at)}</span>
+      {/* Giờ giao đơn — inline assign action */}
+      <TableCell className="px-2 py-1 whitespace-nowrap" onClick={e => e.stopPropagation()}>
+        {gdo.assigned_at ? (
+          <span className="text-[10px] tabular-nums text-green-700 font-medium">{fTime(gdo.assigned_at)}</span>
+        ) : isPending ? (
+          <button
+            onClick={onAssign}
+            className="text-[9px] px-1.5 py-0.5 rounded bg-green-100 text-green-700 hover:bg-green-200 font-medium transition-colors"
+          >
+            Giao đơn
+          </button>
+        ) : (
+          <span className="text-[10px] tabular-nums text-slate-400">—</span>
+        )}
       </TableCell>
 
-      {/* Giờ bắt đầu */}
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px] tabular-nums text-slate-600">{fTime(gdo.started_at)}</span>
       </TableCell>
-
-      {/* Giờ quét xong */}
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px] tabular-nums text-slate-600">{fTime(gdo.last_scanned_at)}</span>
       </TableCell>
-
-      {/* Giờ kết thúc */}
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px] tabular-nums text-slate-600">{fTime(gdo.completed_at)}</span>
       </TableCell>
-
-      {/* Tình trạng */}
       <TableCell className="px-2 py-1 whitespace-nowrap">
-        <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${statusCls}`}>
-          {statusLabel}
-        </span>
+        <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${statusCls}`}>{statusLabel}</span>
       </TableCell>
-
-      {/* Người xuất */}
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px] text-slate-700">{gdo.exporter_name ?? '—'}</span>
       </TableCell>
-
-      {/* Lái xe nâng */}
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px] text-slate-700">
           {gdo.forklift_driver_names || gdo.forklift_driver?.name || '—'}
         </span>
       </TableCell>
-
-      {/* Bốc xếp */}
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px] text-slate-700">{gdo.loader_name ?? '—'}</span>
       </TableCell>
@@ -482,6 +479,9 @@ function MatPicker({ value, matName, onSelect }: {
   const [search, setSearch] = useState(value)
   const [open, setOpen] = useState(false)
   const { data: mats = [] } = useMaterials({ search: search.length > 1 ? search : undefined })
+
+  // Sync when value changes externally (edit mode pre-fill)
+  useEffect(() => { setSearch(value) }, [value])
 
   return (
     <div className="relative flex-1 min-w-0">
@@ -519,35 +519,236 @@ function MatPicker({ value, matName, onSelect }: {
   )
 }
 
-// ─── Create GDO panel ─────────────────────────────────────────
+// ─── Item row type ────────────────────────────────────────────
 
-type ItemRow = { id: string; material_code: string; mat_name: string; category: string | null; cartons: number }
+type ItemRow = {
+  id: string
+  material_code: string
+  mat_name: string
+  category: string | null
+  cartons: number
+  min_cartons: number  // 0 for new items, cartons_scanned for existing
+}
 
 let _uid = 0
 const uid = () => String(++_uid)
-const makeItem = (): ItemRow => ({ id: uid(), material_code: '', mat_name: '', category: null, cartons: 0 })
+const makeItem = (): ItemRow => ({ id: uid(), material_code: '', mat_name: '', category: null, cartons: 0, min_cartons: 0 })
 
-function CreateGDOPanel({ defaultWarehouseId, onClose }: { defaultWarehouseId: string; onClose: () => void }) {
-  const TODAY_STR = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
-  const [date, setDate] = useState(TODAY_STR)
-  const [warehouseId, setWarehouseId] = useState(defaultWarehouseId)
-  const [dvvt, setDvvt] = useState('')
-  const [items, setItems] = useState<ItemRow[]>([makeItem()])
-  const [error, setError] = useState('')
+// ─── Shared form UI ───────────────────────────────────────────
 
+function GDOFormBody({
+  gdo,
+  mode,
+  date, setDate,
+  warehouseId, setWarehouseId,
+  dvvt, setDvvt,
+  customerName, setCustomerName,
+  exportType, setExportType,
+  items, setItems,
+  error,
+  isPending: submitting,
+  onSubmit,
+  onClose,
+}: {
+  gdo?: GDO | null
+  mode: 'create' | 'edit'
+  date: string; setDate: (v: string) => void
+  warehouseId: string; setWarehouseId: (v: string) => void
+  dvvt: string; setDvvt: (v: string) => void
+  customerName: string; setCustomerName: (v: string) => void
+  exportType: string; setExportType: (v: string) => void
+  items: ItemRow[]; setItems: React.Dispatch<React.SetStateAction<ItemRow[]>>
+  error: string
+  isPending: boolean
+  onSubmit: () => void
+  onClose: () => void
+}) {
   const { data: warehouses = [] } = useWarehouses(true)
-  const { mutate: createGDO, isPending } = useCreateGDO()
+  const isMultiDO = (gdo?.do_count ?? 0) > 1
 
-  // Preview of auto-generated code
+  const TODAY_STR = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   const [yr, mo, dy] = TODAY_STR.split('-')
-  const codePreview = `${dy}${mo}${yr.slice(2)}_ĐT_XX`
+  const codePreview = mode === 'create' ? `${dy}${mo}${yr.slice(2)}_ĐT_XX` : gdo?.group_code ?? ''
 
   function updateItem(id: string, patch: Partial<ItemRow>) {
     setItems(rows => rows.map(r => r.id === id ? { ...r, ...patch } : r))
   }
 
+  return (
+    <>
+      {/* Header */}
+      <div className="flex items-center justify-between px-5 py-3.5 border-b shrink-0">
+        <div>
+          <h2 className="text-sm font-semibold text-slate-800">
+            {mode === 'create' ? 'Tạo đơn xuất thủ công' : `Sửa đơn: ${gdo?.group_code}`}
+          </h2>
+          <p className="text-[10px] text-slate-400 mt-0.5">
+            {mode === 'create'
+              ? <>Mã xe tự động: <span className="font-mono font-semibold text-slate-600">{codePreview}</span></>
+              : <>Trạng thái: <span className="font-semibold text-amber-600">PENDING</span> — có thể chỉnh sửa</>
+            }
+          </p>
+        </div>
+        <button onClick={onClose} className="p-1 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-600">
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+
+      {/* Body */}
+      <div className="overflow-y-auto flex-1 px-5 py-4 space-y-4">
+
+        {/* Header fields — 2 columns */}
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1">
+            <label className="text-[10px] font-medium text-slate-500">Ngày xuất <span className="text-red-500">*</span></label>
+            <Input type="date" className="h-8 text-xs" value={date} onChange={e => setDate(e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <label className="text-[10px] font-medium text-slate-500">Kho xuất</label>
+            <Select value={warehouseId || '__none__'} onValueChange={v => setWarehouseId(v === '__none__' ? '' : v)}>
+              <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Chọn kho…" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">— Không chọn</SelectItem>
+                {(warehouses as any[]).map((w: any) => <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <label className="text-[10px] font-medium text-slate-500">Tên khách hàng <span className="text-red-500">*</span></label>
+            <Input className="h-8 text-xs" placeholder="Tên NPP / khách hàng…" value={customerName} onChange={e => setCustomerName(e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <label className="text-[10px] font-medium text-slate-500">ĐVVT <span className="text-red-500">*</span></label>
+            <Input className="h-8 text-xs" placeholder="Đơn vị vận tải…" value={dvvt} onChange={e => setDvvt(e.target.value)} />
+          </div>
+          <div className="space-y-1 col-span-2">
+            <label className="text-[10px] font-medium text-slate-500">Loại xuất <span className="text-red-500">*</span></label>
+            <div className="flex gap-2">
+              {EXPORT_TYPES.map(t => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setExportType(t)}
+                  className={`flex-1 h-8 text-xs rounded-md border font-medium transition-colors ${
+                    exportType === t
+                      ? 'bg-blue-600 border-blue-600 text-white'
+                      : 'border-slate-200 text-slate-600 hover:border-blue-300 hover:text-blue-600'
+                  }`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <hr className="border-slate-100" />
+
+        {/* Items */}
+        <div className="space-y-2">
+          <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Danh sách hàng</p>
+
+          {isMultiDO && mode === 'edit' && (
+            <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-[11px] text-amber-700">
+              Đơn này có nhiều OD — chỉ cập nhật thông tin chung. Sửa chi tiết hàng hóa qua Upload Excel.
+            </div>
+          )}
+
+          {!isMultiDO && items.map((item, idx) => (
+            <div key={item.id} className="border border-slate-200 rounded-lg p-2.5 space-y-2 bg-slate-50/50">
+              <div className="flex items-center justify-between">
+                <span className="text-[9px] font-medium text-slate-400">#{idx + 1}</span>
+                {(items.length > 1 && item.min_cartons === 0) && (
+                  <button onClick={() => setItems(rows => rows.filter(r => r.id !== item.id))} className="text-slate-300 hover:text-red-400" title="Xóa dòng">
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                )}
+                {item.min_cartons > 0 && (
+                  <span className="text-[9px] text-amber-600">Đã xuất {item.min_cartons} thùng</span>
+                )}
+              </div>
+              <MatPicker
+                value={item.material_code}
+                matName={item.mat_name}
+                onSelect={(code, name, category) => updateItem(item.id, { material_code: code, mat_name: name, category })}
+              />
+              <div className="flex items-center gap-2">
+                <label className="text-[10px] text-slate-500 shrink-0">Số thùng <span className="text-red-500">*</span></label>
+                <Input
+                  type="number"
+                  min={item.min_cartons || 1}
+                  className={`h-7 text-[10px] text-right flex-1 ${item.cartons > 0 && item.cartons < item.min_cartons ? 'border-red-400' : ''}`}
+                  value={item.cartons || ''}
+                  onChange={e => updateItem(item.id, { cartons: parseInt(e.target.value) || 0 })}
+                />
+                {item.category && (
+                  <span className="text-[9px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded shrink-0">{item.category}</span>
+                )}
+              </div>
+              {item.cartons > 0 && item.cartons < item.min_cartons && (
+                <p className="text-[9px] text-red-600">Tối thiểu {item.min_cartons} thùng (đã xuất)</p>
+              )}
+            </div>
+          ))}
+
+          {!isMultiDO && (
+            <button
+              onClick={() => setItems(rows => [...rows, makeItem()])}
+              className="flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-700 w-full justify-center border border-dashed border-blue-200 rounded-lg py-1.5 hover:border-blue-400"
+            >
+              <Plus className="h-3 w-3" /> Thêm mặt hàng
+            </button>
+          )}
+        </div>
+
+        {error && (
+          <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-[11px] text-red-700">{error}</div>
+        )}
+      </div>
+
+      {/* Footer */}
+      <div className="border-t px-5 py-3 shrink-0 bg-slate-50/50 flex justify-end gap-2">
+        <Button variant="outline" size="sm" onClick={onClose} disabled={submitting}>Hủy</Button>
+        <Button size="sm" disabled={submitting} onClick={onSubmit} className="min-w-[100px]">
+          {submitting ? 'Đang lưu…' : mode === 'create' ? 'Tạo đơn xuất' : 'Lưu thay đổi'}
+        </Button>
+      </div>
+    </>
+  )
+}
+
+// ─── Shared modal wrapper ─────────────────────────────────────
+
+function ModalOverlay({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative z-10 bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+        {children}
+      </div>
+    </div>
+  )
+}
+
+// ─── Create modal ─────────────────────────────────────────────
+
+function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string; onClose: () => void }) {
+  const TODAY_STR = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+  const [date, setDate]               = useState(TODAY_STR)
+  const [warehouseId, setWarehouseId] = useState(defaultWarehouseId)
+  const [dvvt, setDvvt]               = useState('')
+  const [customerName, setCustomerName] = useState('')
+  const [exportType, setExportType]   = useState('')
+  const [items, setItems]             = useState<ItemRow[]>([makeItem()])
+  const [error, setError]             = useState('')
+
+  const { mutate: createGDO, isPending } = useCreateGDO()
+
   function handleSubmit() {
-    if (!date) return setError('Chọn ngày xuất')
+    if (!date)         return setError('Chọn ngày xuất')
+    if (!customerName.trim()) return setError('Nhập tên khách hàng')
+    if (!dvvt.trim())  return setError('Nhập đơn vị vận tải')
+    if (!exportType)   return setError('Chọn loại xuất')
     for (const item of items) {
       if (!item.material_code.trim()) return setError('Chọn mã hàng cho tất cả dòng')
       if (!item.cartons || item.cartons <= 0) return setError('Số thùng phải > 0')
@@ -557,7 +758,9 @@ function CreateGDOPanel({ defaultWarehouseId, onClose }: { defaultWarehouseId: s
       {
         delivery_date: date,
         warehouse_id: warehouseId || undefined,
-        dvvt: dvvt.trim() || undefined,
+        dvvt: dvvt.trim(),
+        customer_name: customerName.trim(),
+        export_type: exportType,
         items: items.map(i => ({ material_code: i.material_code, cartons_ordered: i.cartons })),
       },
       {
@@ -571,95 +774,116 @@ function CreateGDOPanel({ defaultWarehouseId, onClose }: { defaultWarehouseId: s
   }
 
   return (
-    <div className="w-80 shrink-0 border-l bg-white overflow-y-auto flex flex-col">
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b bg-slate-50 shrink-0">
-        <span className="text-xs font-semibold text-slate-700">Tạo đơn thủ công</span>
-        <button onClick={onClose} className="p-0.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-600">
-          <X className="h-4 w-4" />
-        </button>
-      </div>
+    <ModalOverlay onClose={onClose}>
+      <GDOFormBody
+        mode="create"
+        date={date} setDate={setDate}
+        warehouseId={warehouseId} setWarehouseId={setWarehouseId}
+        dvvt={dvvt} setDvvt={setDvvt}
+        customerName={customerName} setCustomerName={setCustomerName}
+        exportType={exportType} setExportType={setExportType}
+        items={items} setItems={setItems}
+        error={error} isPending={isPending}
+        onSubmit={handleSubmit} onClose={onClose}
+      />
+    </ModalOverlay>
+  )
+}
 
-      <div className="p-3 space-y-3 flex-1 overflow-y-auto">
-        {/* Số xe */}
-        <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-[10px] text-slate-500">
-          Số xe tự động: <span className="font-mono font-semibold text-slate-700">{codePreview}</span>
+// ─── Edit modal ───────────────────────────────────────────────
+
+function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: string; defaultWarehouseId: string; onClose: () => void }) {
+  const { data: gdo, isLoading } = useGDO(gdoId)
+
+  const [date, setDate]               = useState('')
+  const [warehouseId, setWarehouseId] = useState(defaultWarehouseId)
+  const [dvvt, setDvvt]               = useState('')
+  const [customerName, setCustomerName] = useState('')
+  const [exportType, setExportType]   = useState('')
+  const [items, setItems]             = useState<ItemRow[]>([])
+  const [error, setError]             = useState('')
+  const [initialized, setInitialized] = useState(false)
+
+  const { mutate: updateGDO, isPending } = useUpdateGDO()
+
+  // Pre-fill once GDO loads
+  useEffect(() => {
+    if (!gdo || initialized) return
+    setInitialized(true)
+    setDate(gdo.delivery_date)
+    setWarehouseId(gdo.warehouse_id ?? '')
+    setDvvt(gdo.dvvt ?? '')
+    setCustomerName(gdo.distributor_names?.[0] ?? '')
+    setExportType(gdo.export_type ?? '')
+
+    // Build items from delivery_orders (single DO for manual)
+    const allItems: ItemRow[] = (gdo.delivery_orders ?? []).flatMap(doRow =>
+      (doRow.items ?? []).map((item: any) => ({
+        id: uid(),
+        material_code: item.material_code_raw ?? '',
+        mat_name: item.material?.short_name ?? '',
+        category: item.material_type ?? null,
+        cartons: item.cartons_ordered ?? 0,
+        min_cartons: item.cartons_scanned ?? 0,
+      }))
+    )
+    setItems(allItems.length ? allItems : [makeItem()])
+  }, [gdo, initialized])
+
+  function handleSubmit() {
+    if (!date)        return setError('Chọn ngày xuất')
+    if (!customerName.trim()) return setError('Nhập tên khách hàng')
+    if (!dvvt.trim()) return setError('Nhập đơn vị vận tải')
+    if (!exportType)  return setError('Chọn loại xuất')
+    const isMultiDO = (gdo?.do_count ?? 0) > 1
+    if (!isMultiDO) {
+      for (const item of items) {
+        if (!item.material_code.trim()) return setError('Chọn mã hàng cho tất cả dòng')
+        if (!item.cartons || item.cartons <= 0) return setError('Số thùng phải > 0')
+        if (item.cartons < item.min_cartons) return setError(`Số thùng không được nhỏ hơn đã xuất (${item.min_cartons})`)
+      }
+    }
+    setError('')
+    updateGDO(
+      {
+        id: gdoId,
+        delivery_date: date,
+        warehouse_id: warehouseId || undefined,
+        dvvt: dvvt.trim(),
+        customer_name: customerName.trim(),
+        export_type: exportType,
+        items: isMultiDO ? undefined as any : items.map(i => ({ material_code: i.material_code, cartons_ordered: i.cartons })),
+      },
+      {
+        onSuccess: () => onClose(),
+        onError: (e: unknown) => {
+          const msg = (e as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi cập nhật đơn'
+          setError(msg)
+        },
+      }
+    )
+  }
+
+  return (
+    <ModalOverlay onClose={onClose}>
+      {isLoading ? (
+        <div className="flex items-center justify-center py-16">
+          <div className="text-sm text-slate-400">Đang tải…</div>
         </div>
-
-        {/* Header fields */}
-        <div className="space-y-2">
-          <div className="space-y-1">
-            <label className="text-[10px] text-slate-500">Ngày xuất <span className="text-red-500">*</span></label>
-            <Input type="date" className="h-7 text-xs" value={date} onChange={e => setDate(e.target.value)} />
-          </div>
-          <div className="space-y-1">
-            <label className="text-[10px] text-slate-500">Kho xuất</label>
-            <Select value={warehouseId || '__none__'} onValueChange={v => setWarehouseId(v === '__none__' ? '' : v)}>
-              <SelectTrigger className="h-7 text-xs"><SelectValue placeholder="Chọn kho…" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none__">— Không chọn</SelectItem>
-                {(warehouses as any[]).map((w: any) => <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1">
-            <label className="text-[10px] text-slate-500">ĐVVT</label>
-            <Input className="h-7 text-xs" placeholder="Đơn vị vận tải…" value={dvvt} onChange={e => setDvvt(e.target.value)} />
-          </div>
-        </div>
-
-        {/* Items */}
-        <div className="space-y-2">
-          <p className="text-[10px] font-medium text-slate-500 uppercase tracking-wide">Danh sách hàng</p>
-          {items.map((item, idx) => (
-            <div key={item.id} className="border border-slate-200 rounded-lg p-2 space-y-1.5 bg-slate-50/50">
-              <div className="flex items-center justify-between">
-                <span className="text-[9px] text-slate-400">#{idx + 1}</span>
-                {items.length > 1 && (
-                  <button onClick={() => setItems(rows => rows.filter(r => r.id !== item.id))} className="text-slate-300 hover:text-red-400">
-                    <Trash2 className="h-3 w-3" />
-                  </button>
-                )}
-              </div>
-              <MatPicker
-                value={item.material_code}
-                matName={item.mat_name}
-                onSelect={(code, name, category) => updateItem(item.id, { material_code: code, mat_name: name, category })}
-              />
-              <div className="flex items-center gap-2">
-                <label className="text-[10px] text-slate-500 shrink-0">Số thùng</label>
-                <Input
-                  type="number" min={1}
-                  className="h-7 text-[10px] text-right flex-1"
-                  value={item.cartons || ''}
-                  onChange={e => updateItem(item.id, { cartons: parseInt(e.target.value) || 0 })}
-                />
-                {item.category && (
-                  <span className="text-[9px] text-slate-400 shrink-0">{item.category}</span>
-                )}
-              </div>
-            </div>
-          ))}
-
-          <button
-            onClick={() => setItems(rows => [...rows, makeItem()])}
-            className="flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-700 w-full justify-center border border-dashed border-blue-200 rounded-lg py-1.5 hover:border-blue-400"
-          >
-            <Plus className="h-3 w-3" /> Thêm mặt hàng
-          </button>
-        </div>
-
-        {error && (
-          <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-[11px] text-red-700">{error}</div>
-        )}
-      </div>
-
-      {/* Footer */}
-      <div className="border-t px-3 py-2 shrink-0 bg-white">
-        <Button className="w-full h-8 text-xs" disabled={isPending} onClick={handleSubmit}>
-          {isPending ? 'Đang tạo…' : 'Tạo đơn xuất'}
-        </Button>
-      </div>
-    </div>
+      ) : (
+        <GDOFormBody
+          mode="edit"
+          gdo={gdo}
+          date={date} setDate={setDate}
+          warehouseId={warehouseId} setWarehouseId={setWarehouseId}
+          dvvt={dvvt} setDvvt={setDvvt}
+          customerName={customerName} setCustomerName={setCustomerName}
+          exportType={exportType} setExportType={setExportType}
+          items={items} setItems={setItems}
+          error={error} isPending={isPending}
+          onSubmit={handleSubmit} onClose={onClose}
+        />
+      )}
+    </ModalOverlay>
   )
 }

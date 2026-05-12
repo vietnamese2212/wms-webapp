@@ -182,10 +182,9 @@ export async function getGDO(req: Request, res: Response) {
 
 export async function createGDO(req: Request, res: Response) {
   try {
-    const { delivery_date, warehouse_id, dvvt, items } = req.body as {
-      delivery_date: string
-      warehouse_id?: string
-      dvvt?: string
+    const { delivery_date, warehouse_id, dvvt, customer_name, export_type, items } = req.body as {
+      delivery_date: string; warehouse_id?: string; dvvt?: string
+      customer_name?: string; export_type?: string
       items?: Array<{ material_code: string; cartons_ordered: number }>
     }
     if (!delivery_date) return fail(res, 'delivery_date là bắt buộc', 400)
@@ -221,7 +220,7 @@ export async function createGDO(req: Request, res: Response) {
     const doId = randomUUID()
     const { error: doErr } = await (supabase.from('OutboundDelivery') as any).insert({
       id: doId, gdo_id: gdoId, delivery_code: 'ĐT01',
-      distributor_name: null, status: 'PENDING', updated_at: now(),
+      distributor_name: customer_name ?? null, status: 'PENDING', updated_at: now(),
     })
     if (doErr) return fail(res, doErr.message)
 
@@ -235,7 +234,7 @@ export async function createGDO(req: Request, res: Response) {
         material_code_raw: item.material_code,
         cartons_ordered: item.cartons_ordered,
         boxes_display: 0, weight: null, pallets_estimated: 0, loose_picking: 0,
-        material_type, export_type: null, cartons_scanned: 0,
+        material_type, export_type: export_type ?? null, cartons_scanned: 0,
         status: isSpecial ? 'COMPLETED' : 'PENDING', updated_at: now(),
       }
     })
@@ -244,6 +243,131 @@ export async function createGDO(req: Request, res: Response) {
 
     const result = await fetchGDOFull(gdoId)
     return ok(res, result, 201)
+  } catch (e) { return fail(res, String(e)) }
+}
+
+// ─── Delete GDO ───────────────────────────────────────────────
+
+export async function deleteGDO(req: Request, res: Response) {
+  try {
+    const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
+      .select('status').eq('id', req.params.id).single()
+    if (!gdo) return fail(res, 'Không tìm thấy chuyến xe', 404)
+    if (gdo.status !== 'PENDING') return fail(res, 'Chỉ có thể xóa đơn ở trạng thái chờ (PENDING)', 400)
+
+    const { data: dos } = await (supabase.from('OutboundDelivery') as any)
+      .select('id').eq('gdo_id', req.params.id)
+    const doIds = (dos ?? []).map((d: any) => d.id as string)
+    if (doIds.length) {
+      await (supabase.from('OutboundItem') as any).delete().in('do_id', doIds)
+      await (supabase.from('OutboundDelivery') as any).delete().in('id', doIds)
+    }
+    await (supabase.from('GroupDeliveryOrder') as any).delete().eq('id', req.params.id)
+    return ok(res, { success: true })
+  } catch (e) { return fail(res, String(e)) }
+}
+
+// ─── Update GDO (header + items, chỉ PENDING) ─────────────────
+
+export async function updateGDO(req: Request, res: Response) {
+  try {
+    const { delivery_date, warehouse_id, dvvt, customer_name, export_type, items } = req.body as {
+      delivery_date?: string; warehouse_id?: string; dvvt?: string
+      customer_name?: string; export_type?: string
+      items?: Array<{ material_code: string; cartons_ordered: number }>
+    }
+
+    const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
+      .select('status').eq('id', req.params.id).single()
+    if (!gdo) return fail(res, 'Không tìm thấy chuyến xe', 404)
+    if (gdo.status !== 'PENDING') return fail(res, 'Chỉ sửa được đơn ở trạng thái PENDING', 400)
+
+    const t = now()
+
+    await (supabase.from('GroupDeliveryOrder') as any)
+      .update({ delivery_date, warehouse_id: warehouse_id ?? null, dvvt: dvvt ?? null, updated_at: t })
+      .eq('id', req.params.id)
+
+    const { data: dos } = await (supabase.from('OutboundDelivery') as any)
+      .select('id').eq('gdo_id', req.params.id)
+    const doList = dos ?? []
+
+    if (doList.length !== 1) {
+      // Multi-DO (Excel): chỉ cập nhật header, không đụng items
+      return ok(res, await fetchGDOFull(req.params.id))
+    }
+
+    const doId = doList[0].id
+    await (supabase.from('OutboundDelivery') as any)
+      .update({ distributor_name: customer_name ?? null, updated_at: t }).eq('id', doId)
+
+    if (!items) return ok(res, await fetchGDOFull(req.params.id))
+
+    const { data: existingItems } = await (supabase.from('OutboundItem') as any)
+      .select('id, material_code_raw, cartons_ordered, cartons_scanned').eq('do_id', doId)
+
+    const existingByCode = new Map<string, any>(
+      (existingItems ?? []).map((i: any) => [i.material_code_raw as string, i])
+    )
+    const newCodes = new Set(items.map(i => i.material_code))
+
+    // Kiểm tra xóa item có scan
+    for (const [code, ex] of existingByCode) {
+      if (!newCodes.has(code) && Number(ex.cartons_scanned) > 0) {
+        return fail(res, `Không thể xóa mã hàng "${code}" đã xuất ${ex.cartons_scanned} thùng`, 400)
+      }
+    }
+
+    // Kiểm tra số thùng < đã xuất
+    for (const item of items) {
+      const ex = existingByCode.get(item.material_code)
+      if (ex && item.cartons_ordered < Number(ex.cartons_scanned)) {
+        return fail(res, `Số thùng "${item.material_code}" (${item.cartons_ordered}) nhỏ hơn đã xuất (${ex.cartons_scanned})`, 400)
+      }
+    }
+
+    // Xóa items bị loại bỏ
+    const toDeleteIds = (existingItems ?? [])
+      .filter((i: any) => !newCodes.has(i.material_code_raw as string))
+      .map((i: any) => i.id as string)
+    if (toDeleteIds.length) {
+      await (supabase.from('OutboundItem') as any).delete().in('id', toDeleteIds)
+    }
+
+    // Load material cho items mới
+    const newCodes2 = items.filter(i => !existingByCode.has(i.material_code)).map(i => i.material_code)
+    let matMap = new Map<string, { id: string; category: string | null }>()
+    if (newCodes2.length) {
+      const { data: mats } = await (supabase.from('Material') as any)
+        .select('id, material_code, category').in('material_code', newCodes2)
+      matMap = new Map((mats ?? []).map((m: any) => [m.material_code as string, { id: m.id, category: m.category }]))
+    }
+
+    for (const item of items) {
+      const ex = existingByCode.get(item.material_code)
+      if (ex) {
+        const scanned = Number(ex.cartons_scanned)
+        const newStatus = scanned >= item.cartons_ordered ? 'COMPLETED' : scanned > 0 ? 'IN_PROGRESS' : 'PENDING'
+        await (supabase.from('OutboundItem') as any)
+          .update({ cartons_ordered: item.cartons_ordered, export_type: export_type ?? null, status: newStatus, updated_at: t })
+          .eq('id', ex.id)
+      } else {
+        const matInfo = matMap.get(item.material_code)
+        const material_type = matInfo?.category ?? null
+        const isSpecial = material_type === 'POSM' || material_type === 'Pallet Loscam'
+        await (supabase.from('OutboundItem') as any).insert({
+          id: randomUUID(), do_id: doId,
+          material_id: matInfo?.id ?? null,
+          material_code_raw: item.material_code,
+          cartons_ordered: item.cartons_ordered,
+          boxes_display: 0, weight: null, pallets_estimated: 0, loose_picking: 0,
+          material_type, export_type: export_type ?? null, cartons_scanned: 0,
+          status: isSpecial ? 'COMPLETED' : 'PENDING', updated_at: t,
+        })
+      }
+    }
+
+    return ok(res, await fetchGDOFull(req.params.id))
   } catch (e) { return fail(res, String(e)) }
 }
 

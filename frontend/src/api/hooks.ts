@@ -353,9 +353,10 @@ export function useUpdatePalletEntry() {
 // WMS – Inventory (API thật)
 export function useInventoryEntries(params?: {
   warehouse_id?: string
+  warehouse_type?: string
   location_code?: string
   material_search?: string
-  qa_status_id?: string
+  qa_status_ids?: string[]
   status?: string
   search?: string
   page?: number
@@ -363,15 +364,19 @@ export function useInventoryEntries(params?: {
   manufacturer_id?: string
   cycle?: string
   machine_code?: string
-  import_date_from?: string
-  import_date_to?: string
 }) {
   return useQuery({
     queryKey: ['inventory-entries', params],
     staleTime: 0,
     refetchOnWindowFocus: true,
     queryFn: async () => {
-      const { data } = await apiClient.get('/wms/inventory', { params })
+      const { qa_status_ids, ...rest } = params ?? {}
+      const { data } = await apiClient.get('/wms/inventory', {
+        params: {
+          ...rest,
+          ...(qa_status_ids && qa_status_ids.length > 0 ? { qa_status_ids: qa_status_ids.join(',') } : {}),
+        },
+      })
       return data.data as { entries: InventoryEntry[]; total: number; page: number; limit: number; total_cartons_remaining: number }
     },
   })

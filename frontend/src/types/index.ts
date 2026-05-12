@@ -372,7 +372,7 @@ export interface InventoryEntry {
   stocktake_at:       string | null
   created_at:         string
   updated_at:         string
-  location:              { id: string; location_code: string; sub_code: string } | null
+  location:              { id: string; location_code: string; sub_code: string; warehouse?: { id: string; name: string; code: string; warehouse_type: string | null } | null } | null
   material:              { id: string; material_code: string; short_name: string | null; shelf_life_days: number | null } | null
   manufacturer:          { id: string; code: string; name: string | null } | null
   qa_status:             { id: string; code: string; name: string } | null

@@ -8,7 +8,7 @@ const ENTRY_SELECT = `
   pallet_sequence_no, qa_status_id, stack_layer, cartons_imported, cartons_remaining,
   production_date, status, import_date, update_date, adjustment_qty, stocktake_at,
   created_at, updated_at,
-  location:Location(id, location_code, sub_code),
+  location:Location(id, location_code, sub_code, warehouse:Warehouse(id, name, code, warehouse_type)),
   material:Material(id, material_code, short_name, shelf_life_days),
   manufacturer:Manufacturer(id, code, name),
   qa_status:QAStatus(id, code, name),
@@ -21,7 +21,7 @@ interface FilterParams {
   status?: string
   locationFilter?: string[] | null
   materialFilter?: string[] | null
-  qa_status_id?: string
+  qa_status_ids?: string[]
   search?: string
   manufacturer_id?: string
   cycle?: string
@@ -34,36 +34,62 @@ function applyInventoryFilters(q: any, p: FilterParams): any {
   if (!p.status || p.status === '') q = q.in('status', ['IN_STOCK', 'PARTIAL'])
   else if (p.status !== 'ALL')       q = q.eq('status', p.status)
 
-  if (p.locationFilter)    q = q.in('location_id', p.locationFilter)
-  if (p.materialFilter)    q = q.in('material_id', p.materialFilter)
-  if (p.qa_status_id)      q = q.eq('qa_status_id', p.qa_status_id)
-  if (p.search)            q = q.ilike('pallet_code', `%${p.search}%`)
-  if (p.manufacturer_id)   q = q.eq('manufacturer_id', p.manufacturer_id)
-  if (p.cycle)             q = q.ilike('cycle', `%${p.cycle}%`)
-  if (p.machine_code)      q = q.ilike('machine_code', `%${p.machine_code}%`)
-  if (p.import_date_from)  q = q.gte('import_date', p.import_date_from)
-  if (p.import_date_to)    q = q.lte('import_date', p.import_date_to)
+  if (p.locationFilter)                          q = q.in('location_id', p.locationFilter)
+  if (p.materialFilter)                          q = q.in('material_id', p.materialFilter)
+  if (p.qa_status_ids && p.qa_status_ids.length > 0) q = q.in('qa_status_id', p.qa_status_ids)
+  if (p.search)           q = q.ilike('pallet_code', `%${p.search}%`)
+  if (p.manufacturer_id)  q = q.eq('manufacturer_id', p.manufacturer_id)
+  if (p.cycle)            q = q.ilike('cycle', `%${p.cycle}%`)
+  if (p.machine_code)     q = q.ilike('machine_code', `%${p.machine_code}%`)
+  if (p.import_date_from) q = q.gte('import_date', p.import_date_from)
+  if (p.import_date_to)   q = q.lte('import_date', p.import_date_to)
   return q
 }
 
 export async function listInventory(req: Request, res: Response) {
   const {
-    warehouse_id, location_code, material_search, qa_status_id,
+    warehouse_id, warehouse_type, location_code, material_search,
     status, search, page = '1', limit = '50',
     manufacturer_id, cycle, machine_code, import_date_from, import_date_to,
   } = req.query as Record<string, string>
+
+  // qa_status_ids: comma-separated string → array
+  const rawQaIds = req.query.qa_status_ids as string | undefined
+  const qa_status_ids = rawQaIds ? rawQaIds.split(',').filter(Boolean) : undefined
 
   const pageNum  = Math.max(1, parseInt(page) || 1)
   const limitNum = Math.min(200, Math.max(1, parseInt(limit) || 50))
   const offset   = (pageNum - 1) * limitNum
 
-  // Resolve location_ids for warehouse / location_code filters
+  // Resolve location_ids for warehouse / warehouse_type / location_code filters
   let locationFilter: string[] | null = null
-  if (warehouse_id || location_code) {
-    let q = (supabase.from('Location') as any).select('id')
-    if (warehouse_id)  q = q.eq('warehouse_id', warehouse_id)
-    if (location_code) q = q.ilike('location_code', `%${location_code}%`)
-    const { data: locs, error: locErr } = await q
+  if (warehouse_id || warehouse_type || location_code) {
+    let resolvedWarehouseIds: string[] = []
+
+    if (warehouse_type) {
+      const { data: whs } = await (supabase.from('Warehouse') as any)
+        .select('id').ilike('warehouse_type', `%${warehouse_type}%`)
+      resolvedWarehouseIds = (whs ?? []).map((w: any) => w.id as string)
+
+      if (warehouse_id) {
+        // Intersect: only keep the specific warehouse if it matches the type
+        resolvedWarehouseIds = resolvedWarehouseIds.includes(warehouse_id) ? [warehouse_id] : []
+      }
+    } else if (warehouse_id) {
+      resolvedWarehouseIds = [warehouse_id]
+    }
+
+    // If warehouse filters produced no matches, return empty
+    if ((warehouse_type || warehouse_id) && resolvedWarehouseIds.length === 0) {
+      return ok(res, { entries: [], total: 0, page: pageNum, limit: limitNum, total_cartons_remaining: 0 })
+    }
+
+    let locQ = (supabase.from('Location') as any).select('id')
+    if (resolvedWarehouseIds.length === 1)      locQ = locQ.eq('warehouse_id', resolvedWarehouseIds[0])
+    else if (resolvedWarehouseIds.length > 1)   locQ = locQ.in('warehouse_id', resolvedWarehouseIds)
+    if (location_code) locQ = locQ.ilike('location_code', `%${location_code}%`)
+
+    const { data: locs, error: locErr } = await locQ
     if (locErr) return fail(res, 500, 'DB_ERROR', locErr.message)
     locationFilter = (locs ?? []).map((l: any) => l.id as string)
     if (locationFilter.length === 0)
@@ -83,7 +109,7 @@ export async function listInventory(req: Request, res: Response) {
   }
 
   const filterParams: FilterParams = {
-    status, locationFilter, materialFilter, qa_status_id, search,
+    status, locationFilter, materialFilter, qa_status_ids, search,
     manufacturer_id, cycle, machine_code, import_date_from, import_date_to,
   }
 
@@ -93,7 +119,7 @@ export async function listInventory(req: Request, res: Response) {
     filterParams
   ).order('import_date', { ascending: false, nullsFirst: false }).range(offset, offset + limitNum - 1)
 
-  // Aggregate query (no pagination — fetch only cartons_remaining for total)
+  // Aggregate query (no pagination — sum cartons_remaining across all matching entries)
   const aggQ = applyInventoryFilters(
     (supabase.from('InventoryEntry') as any).select('cartons_remaining'),
     filterParams
@@ -193,9 +219,24 @@ export async function bulkTransferLocation(req: Request, res: Response) {
     return fail(res, 400, 'INVALID_INPUT', 'Thiếu location_id')
 
   const { data: loc } = await (supabase.from('Location') as any)
-    .select('id, is_active, location_code').eq('id', location_id).maybeSingle()
+    .select('id, is_active, location_code, max_pallets')
+    .eq('id', location_id).maybeSingle()
   if (!loc)           return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy vị trí')
   if (!loc.is_active) return fail(res, 400, 'LOCATION_INACTIVE', 'Vị trí không hoạt động')
+
+  // Check capacity: count active pallets already at this location
+  if (loc.max_pallets > 0) {
+    const { count: usedSlots } = await (supabase.from('InventoryEntry') as any)
+      .select('id', { count: 'exact', head: true })
+      .eq('location_id', location_id)
+      .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE'])
+
+    const available = loc.max_pallets - (usedSlots ?? 0)
+    if (available < ids.length) {
+      return fail(res, 400, 'LOCATION_FULL',
+        `Vị trí ${loc.location_code} không đủ chỗ (còn ${Math.max(0, available)} slot, cần ${ids.length})`)
+    }
+  }
 
   const now    = new Date().toISOString()
   const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })

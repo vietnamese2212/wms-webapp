@@ -469,6 +469,9 @@ export default function OutboundDetail() {
   const [showStart,         setShowStart]         = useState(false)
   const [showEditTransport, setShowEditTransport] = useState(false)
   const [undoErr,           setUndoErr]           = useState<string | null>(null)
+  const [pendingConfirm, setPendingConfirm] = useState<{
+    title: string; message: string; onConfirm: () => void
+  } | null>(null)
 
   function doUndo(mutateFn: (id: string, opts: { onError: (e: unknown) => void }) => void) {
     setUndoErr(null)
@@ -514,6 +517,18 @@ export default function OutboundDetail() {
       {showEditTransport && (
         <EditTransportDialog open={showEditTransport} gdo={gdo} onClose={() => setShowEditTransport(false)} />
       )}
+      {pendingConfirm && (
+        <Dialog open onOpenChange={v => { if (!v) setPendingConfirm(null) }}>
+          <DialogContent className="sm:max-w-xs">
+            <DialogHeader><DialogTitle className="text-base">{pendingConfirm.title}</DialogTitle></DialogHeader>
+            <p className="text-sm text-slate-600 py-1">{pendingConfirm.message}</p>
+            <DialogFooter className="gap-2">
+              <Button variant="outline" size="sm" onClick={() => setPendingConfirm(null)}>Không</Button>
+              <Button size="sm" onClick={() => { pendingConfirm.onConfirm(); setPendingConfirm(null) }}>Xác nhận</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
 
       <div className="flex flex-col h-full min-h-0">
 
@@ -544,7 +559,11 @@ export default function OutboundDetail() {
               {/* ── Forward actions ── */}
               {!gdo.assigned_at && (
                 <Button size="sm" variant="outline" className="h-7 text-xs gap-1 px-2" disabled={assigning}
-                  onClick={() => assignGDO({ id: gdo.id, assigned_by: user?.name ?? undefined })}>
+                  onClick={() => setPendingConfirm({
+                    title: 'Giao đơn',
+                    message: `Xác nhận giao đơn ${gdo.group_code}?`,
+                    onConfirm: () => assignGDO({ id: gdo.id, assigned_by: user?.name ?? undefined }),
+                  })}>
                   <ClipboardList className="h-3 w-3" />
                   {assigning ? '…' : 'Giao đơn'}
                 </Button>
@@ -552,6 +571,19 @@ export default function OutboundDetail() {
               {canStart && (
                 <Button size="sm" className="h-7 text-xs gap-1 px-2" onClick={() => setShowStart(true)}>
                   <Play className="h-3 w-3" />Bắt đầu
+                </Button>
+              )}
+              {gdo.status === 'IN_PROGRESS' && (
+                <Button size="sm"
+                  className="h-7 text-xs gap-1 px-2 bg-green-600 hover:bg-green-700"
+                  disabled={patching}
+                  onClick={() => setPendingConfirm({
+                    title: 'Hoàn thành',
+                    message: `Xác nhận hoàn thành chuyến ${gdo.group_code}?`,
+                    onConfirm: () => patchGDO({ id: gdo.id, status: 'COMPLETED' }),
+                  })}>
+                  <CheckCircle2 className="h-3 w-3" />
+                  {patching ? '…' : 'Hoàn thành'}
                 </Button>
               )}
               {canManagePause && gdo.status === 'IN_PROGRESS' && (
@@ -632,15 +664,13 @@ export default function OutboundDetail() {
                   {gdo.loader_name      && <span><strong>Bốc:</strong> {gdo.loader_name}</span>}
                   <span className="text-slate-400">{formatDateTime(gdo.started_at)}</span>
                 </div>
-                {canManage && (
-                  <button
-                    onClick={() => setShowEditTransport(true)}
-                    className="shrink-0 p-1 rounded hover:bg-blue-200 text-blue-600 transition-colors"
-                    title="Sửa thông tin xe"
-                  >
-                    <Pencil className="h-3 w-3" />
-                  </button>
-                )}
+                <button
+                  onClick={() => setShowEditTransport(true)}
+                  className="shrink-0 p-1 rounded hover:bg-blue-200 text-blue-600 transition-colors"
+                  title="Sửa thông tin xe"
+                >
+                  <Pencil className="h-3 w-3" />
+                </button>
               </div>
             </Card>
           )}

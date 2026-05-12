@@ -9,7 +9,7 @@ function buildLocationCode(warehouseCode: string, subCode: string, row: string, 
 
 export async function listLocations(req: Request, res: Response) {
   try {
-    const { warehouse_id, sub_code, active } = req.query
+    const { warehouse_id, sub_code, active, category } = req.query
 
     let query = supabase
       .from('Location')
@@ -19,6 +19,8 @@ export async function listLocations(req: Request, res: Response) {
     if (warehouse_id) query = query.eq('warehouse_id', String(warehouse_id))
     if (sub_code) query = query.eq('sub_code', String(sub_code))
     if (active === 'true') query = query.eq('is_active', true)
+    // category filter: match exact OR null (uncategorized locations accept all)
+    if (category) query = (query as any).or(`category.eq.${String(category)},category.is.null`)
 
     const { data, error } = await query
     if (error) throw error

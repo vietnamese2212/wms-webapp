@@ -37,7 +37,7 @@ export function useSubGroups(warehouseId?: string) {
   })
 }
 
-export function useLocationsReal(params?: { warehouse_id?: string; sub_code?: string }) {
+export function useLocationsReal(params?: { warehouse_id?: string; sub_code?: string; category?: string }) {
   return useQuery({
     queryKey: ['locations-real', params],
     queryFn: async () => {

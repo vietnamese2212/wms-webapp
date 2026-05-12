@@ -149,14 +149,16 @@ function QAModal({ open, ids, qaStatuses, onClose }: {
   )
 }
 
-function LocationModal({ open, ids, warehouseId, onClose }: {
-  open: boolean; ids: string[]; warehouseId?: string; onClose: () => void
+function LocationModal({ open, ids, warehouseId, category, onClose }: {
+  open: boolean; ids: string[]; warehouseId?: string; category?: string; onClose: () => void
 }) {
   const [search, setSearch]   = useState('')
   const [locId, setLocId]     = useState('')
   const [error, setError]     = useState('')
   const { mutate, isPending }  = useBulkTransferLocation()
-  const { data: allLocs = [] } = useLocationsReal(warehouseId ? { warehouse_id: warehouseId } : undefined)
+  const { data: allLocs = [] } = useLocationsReal(
+    warehouseId ? { warehouse_id: warehouseId, category: category || undefined } : undefined
+  )
 
   const filtered = useMemo(() => {
     const s = search.toLowerCase()
@@ -245,14 +247,15 @@ function LocationModal({ open, ids, warehouseId, onClose }: {
   )
 }
 
-function MaterialModal({ open, ids, onClose }: {
-  open: boolean; ids: string[]; onClose: () => void
+function MaterialModal({ open, ids, category, onClose }: {
+  open: boolean; ids: string[]; category?: string; onClose: () => void
 }) {
   const [search, setSearch]   = useState('')
   const [matId, setMatId]     = useState('')
   const [error, setError]     = useState('')
   const { mutate, isPending }  = useBulkTransferMaterial()
-  const { data: materials = [] } = useMaterials({ search: search || undefined })
+  // category always filters; search narrows further. Show list immediately when category set.
+  const { data: materials = [] } = useMaterials({ search: search || undefined, category: category || undefined })
 
   const selectedMat = useMemo(() =>
     (materials as any[]).find((m: any) => m.id === matId), [materials, matId]
@@ -285,9 +288,14 @@ function MaterialModal({ open, ids, onClose }: {
           )}
           <div className="space-y-1.5">
             <Label className="text-xs">Hàng hóa mới</Label>
+            {category && (
+              <p className="text-[10px] text-blue-600 bg-blue-50 border border-blue-100 rounded px-2 py-1">
+                Chỉ hiện mã cùng loại: <strong>{category}</strong>
+              </p>
+            )}
             <Input placeholder="Tìm mã hoặc tên hàng…" value={search} autoFocus
               onChange={e => { setSearch(e.target.value); setMatId('') }} className="h-8 text-sm" />
-            {search && (
+            {(search || category) && (
               <div className="border rounded max-h-52 overflow-y-auto">
                 {(materials as any[]).length === 0 ? (
                   <div className="px-3 py-2 text-xs text-slate-400 text-center">Không tìm thấy</div>
@@ -389,6 +397,13 @@ export default function Inventory() {
       return pct !== null && f.datePctRanges.some(r => filterByDatePct(pct, r))
     })
   }, [entries, f.datePctRanges])
+
+  // Derive pallet context for action modals (from first checked entry on current page)
+  const firstCheckedEntry = useMemo(() =>
+    displayEntries.find(e => checkedIds.has(e.id)), [displayEntries, checkedIds]
+  )
+  const actionWarehouseId = firstCheckedEntry?.location?.warehouse?.id
+  const actionCategory    = firstCheckedEntry?.material?.category ?? undefined
 
   // Keep selected entry in sync when list refreshes
   useEffect(() => {
@@ -750,12 +765,14 @@ export default function Inventory() {
       <LocationModal
         open={actionModal === 'location'}
         ids={checkedIdArr}
-        warehouseId={f.warehouseIds[0] || user?.warehouse_id || undefined}
+        warehouseId={actionWarehouseId}
+        category={actionCategory}
         onClose={closeActionModal}
       />
       <MaterialModal
         open={actionModal === 'material'}
         ids={checkedIdArr}
+        category={actionCategory}
         onClose={closeActionModal}
       />
     </div>

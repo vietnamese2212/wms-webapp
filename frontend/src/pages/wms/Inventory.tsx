@@ -1,17 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Package, Search, X, SlidersHorizontal, ChevronRight, Filter, ChevronDown } from 'lucide-react'
+import { Package, Search, X, SlidersHorizontal, ChevronRight, Filter } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
-import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuTrigger,
-  DropdownMenuCheckboxItem, DropdownMenuSeparator, DropdownMenuLabel,
-} from '@/components/ui/dropdown-menu'
 import { Label } from '@/components/ui/label'
+import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import {
-  useInventoryEntries, useWarehouses, useQAStatuses, useAdjustInventory,
+  useInventoryEntries, useInventoryFacets, useWarehouses, useQAStatuses, useAdjustInventory,
   useLocationsReal, useMaterials, useMaterialCategories,
   useBulkUpdateInventoryQA, useBulkTransferLocation, useBulkTransferMaterial,
 } from '@/api/hooks'
@@ -74,58 +71,6 @@ function filterByDatePct(pct: number, range: string): boolean {
   if (range === '60') return pct > 60 && pct <= 80
   if (range === '30') return pct > 30 && pct <= 60
   return true
-}
-
-
-// ─── QA multi-select dropdown ────────────────────────────────
-
-function QAFilterDropdown({ qaStatuses, selected, onChange }: {
-  qaStatuses: { id: string; code: string; name: string }[]
-  selected: string[]
-  onChange: (ids: string[]) => void
-}) {
-  // Exclude OK status from filter options (blank = OK)
-  const options = qaStatuses.filter(q => q.code.toUpperCase() !== 'OK')
-  const label = selected.length === 0 ? 'QA Status' : `QA (${selected.length})`
-
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button className={`h-7 text-xs px-2.5 rounded border bg-white flex items-center gap-1 whitespace-nowrap ${
-          selected.length > 0 ? 'border-blue-300 text-blue-700 font-medium' : 'border-slate-200 text-slate-600'
-        }`}>
-          {label}
-          <ChevronDown className="h-3 w-3 opacity-60 ml-0.5" />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-[190px]">
-        {options.map(q => (
-          <DropdownMenuCheckboxItem
-            key={q.id}
-            className="text-xs"
-            checked={selected.includes(q.id)}
-            onCheckedChange={checked => {
-              if (checked) onChange([...selected, q.id])
-              else onChange(selected.filter(id => id !== q.id))
-            }}
-          >
-            {q.code} – {q.name}
-          </DropdownMenuCheckboxItem>
-        ))}
-        {selected.length > 0 && (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuLabel
-              className="text-[10px] text-slate-400 cursor-pointer hover:text-slate-700 py-1.5 font-normal"
-              onClick={() => onChange([])}
-            >
-              Xóa lọc QA
-            </DropdownMenuLabel>
-          </>
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  )
 }
 
 // ─── Action modals ────────────────────────────────────────────
@@ -387,27 +332,31 @@ export default function Inventory() {
   const { data: warehouses   = [] } = useWarehouses(true)
   const { data: qaStatuses   = [] } = useQAStatuses()
   const { data: categories   = [] } = useMaterialCategories()
+  const { data: facets } = useInventoryFacets({
+    warehouse_ids: f.warehouseIds.length > 0 ? f.warehouseIds : undefined,
+    categories:    f.materialCategories.length > 0 ? f.materialCategories : undefined,
+  })
 
   // Auto-set warehouse from auth
   useEffect(() => {
-    if (!f.warehouseId && user?.warehouse_id) {
-      setInventory({ warehouseId: user.warehouse_id })
+    if (f.warehouseIds.length === 0 && user?.warehouse_id) {
+      setInventory({ warehouseIds: [user.warehouse_id] })
     }
   }, [user?.warehouse_id]) // eslint-disable-line
 
   const { data, isLoading } = useInventoryEntries({
-    warehouse_id:    f.warehouseId        || undefined,
-    category:        f.materialCategory   || undefined,
-    location_code:   f.locationCode       || undefined,
-    material_search: f.materialSearch   || undefined,
-    qa_status_ids:   f.qaStatusIds.length > 0 ? f.qaStatusIds : undefined,
-    status:          f.status           || undefined,
-    search:          f.search           || undefined,
-    manufacturer_id: f.manufacturerId   || undefined,
-    cycle:           f.cycle            || undefined,
-    machine_code:    f.machineCode      || undefined,
-    page:            f.page,
-    limit:           LIMIT,
+    warehouse_ids:      f.warehouseIds.length > 0 ? f.warehouseIds : undefined,
+    categories:         f.materialCategories.length > 0 ? f.materialCategories : undefined,
+    filter_locations:   f.filterLocations.length > 0 ? f.filterLocations : undefined,
+    filter_material_ids:f.filterMaterialIds.length > 0 ? f.filterMaterialIds : undefined,
+    qa_status_ids:      f.qaStatusIds.length > 0 ? f.qaStatusIds : undefined,
+    status:             f.status     || undefined,
+    search:             f.search     || undefined,
+    manufacturer_id:    f.manufacturerId || undefined,
+    filter_cycles:      f.filterCycles.length > 0 ? f.filterCycles : undefined,
+    filter_machines:    f.filterMachines.length > 0 ? f.filterMachines : undefined,
+    page:               f.page,
+    limit:              LIMIT,
   })
 
   const entries           = data?.entries               ?? []
@@ -419,12 +368,12 @@ export default function Inventory() {
 
   // Client-side % date filter applied on current page
   const displayEntries = useMemo(() => {
-    if (!f.datePctMin) return entries
+    if (f.datePctRanges.length === 0) return entries
     return entries.filter(e => {
       const pct = calcDatePct(e.production_date, e.material?.shelf_life_days ?? null)
-      return pct !== null && filterByDatePct(pct, f.datePctMin)
+      return pct !== null && f.datePctRanges.some(r => filterByDatePct(pct, r))
     })
-  }, [entries, f.datePctMin])
+  }, [entries, f.datePctRanges])
 
   // Keep selected entry in sync when list refreshes
   useEffect(() => {
@@ -445,8 +394,8 @@ export default function Inventory() {
 
   function resetFilters() {
     setInventory({
-      search: '', materialSearch: '', locationCode: '', qaStatusIds: [], status: '',
-      materialCategory: '', manufacturerId: '', cycle: '', machineCode: '', datePctMin: '', page: 1,
+      search: '', filterLocations: [], filterMaterialIds: [], qaStatusIds: [], status: '',
+      materialCategories: [], manufacturerId: '', filterCycles: [], filterMachines: [], datePctRanges: [], page: 1,
     })
   }
 
@@ -460,13 +409,24 @@ export default function Inventory() {
     else setCheckedIds(new Set(displayEntries.map(e => e.id)))
   }
 
-  const hasFilters = !!(f.search || f.materialSearch || f.locationCode || f.qaStatusIds.length > 0
-    || f.status || f.materialCategory || f.manufacturerId || f.cycle || f.machineCode || f.datePctMin)
+  const hasFilters = !!(f.search || f.filterLocations.length > 0 || f.filterMaterialIds.length > 0
+    || f.qaStatusIds.length > 0 || f.status || f.materialCategories.length > 0
+    || f.manufacturerId || f.filterCycles.length > 0 || f.filterMachines.length > 0 || f.datePctRanges.length > 0)
 
   const activeFilterCount = [
-    !!f.locationCode, !!f.materialSearch, f.qaStatusIds.length > 0, !!f.status,
-    !!f.materialCategory, !!f.cycle, !!f.machineCode, !!f.datePctMin,
+    f.filterLocations.length > 0, f.filterMaterialIds.length > 0, f.qaStatusIds.length > 0,
+    !!f.status, f.filterCycles.length > 0, f.filterMachines.length > 0, f.datePctRanges.length > 0,
   ].filter(Boolean).length
+
+  // MultiSelectFilter option lists
+  const warehouseOpts  = (warehouses as any[]).map((w: any) => ({ value: w.id, label: w.name }))
+  const categoryOpts   = (categories as string[]).map(c => ({ value: c, label: c }))
+  const qaOpts         = (qaStatuses as any[]).map((q: any) => ({ value: q.id, label: `${q.code} – ${q.name}` }))
+  const locationOpts   = (facets?.locations ?? []).map(l => ({ value: l.code, label: l.code }))
+  const materialOpts   = (facets?.materials ?? []).map(m => ({ value: m.id, label: m.name ? `${m.code} – ${m.name}` : m.code }))
+  const cycleOpts      = (facets?.cycles ?? []).map(c => ({ value: c, label: c }))
+  const machineOpts    = (facets?.machines ?? []).map(m => ({ value: m, label: m }))
+  const datePctOpts    = DATE_PCT_OPTIONS
 
   function closeActionModal() {
     setActionModal(null)
@@ -477,7 +437,7 @@ export default function Inventory() {
     <div className="flex flex-col h-full">
       {/* ── Filter header ── */}
       <div className="border-b bg-white px-4 py-2 shrink-0 space-y-1.5">
-        {/* Row 1: Title + Kho + Search + Filter toggle */}
+        {/* Row 1: Title + Kho + Loại kho + Search + Filter toggle */}
         <div className="flex items-center gap-2">
           <h1 className="text-xl font-semibold flex items-center gap-2 shrink-0">
             <Package className="h-5 w-5 text-slate-500" />
@@ -485,36 +445,24 @@ export default function Inventory() {
           </h1>
 
           {/* Kho */}
-          <Select
-            value={f.warehouseId || '__all__'}
-            onValueChange={v => setInventory({ warehouseId: v === '__all__' ? '' : v, page: 1 })}
-          >
-            <SelectTrigger className="h-8 text-xs w-[130px] shrink-0">
-              <SelectValue placeholder="Tất cả kho" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">Tất cả kho</SelectItem>
-              {(warehouses as any[]).map((w: any) => (
-                <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <MultiSelectFilter
+            label="Kho"
+            options={warehouseOpts}
+            selected={f.warehouseIds}
+            onChange={v => setInventory({ warehouseIds: v, page: 1 })}
+            searchable={warehouseOpts.length > 5}
+            width="min-w-[100px]"
+          />
 
-          {/* Loại kho — luôn hiển thị */}
-          <Select
-            value={f.materialCategory || '__all__'}
-            onValueChange={v => setInventory({ materialCategory: v === '__all__' ? '' : v, page: 1 })}
-          >
-            <SelectTrigger className="h-8 text-xs w-[120px] shrink-0">
-              <SelectValue placeholder="Loại kho" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">Tất cả loại</SelectItem>
-              {(categories as string[]).map(c => (
-                <SelectItem key={c} value={c}>{c}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {/* Loại kho */}
+          <MultiSelectFilter
+            label="Loại kho"
+            options={categoryOpts}
+            selected={f.materialCategories}
+            onChange={v => setInventory({ materialCategories: v, page: 1 })}
+            searchable={false}
+            width="min-w-[90px]"
+          />
 
           {/* Pallet search */}
           <div className="relative flex-1 min-w-0">
@@ -559,46 +507,62 @@ export default function Inventory() {
                 </SelectContent>
               </Select>
 
-              {/* Tên hàng / Short name */}
-              <Input className="h-7 text-xs w-[140px] bg-white" placeholder="Tên hàng / short…"
-                value={f.materialSearch}
-                onChange={e => setInventory({ materialSearch: e.target.value, page: 1 })} />
-
-              {/* Vị trí */}
-              <Input className="h-7 text-xs w-[100px] bg-white" placeholder="Vị trí…"
-                value={f.locationCode}
-                onChange={e => setInventory({ locationCode: e.target.value, page: 1 })} />
-
-              {/* QA multi-select */}
-              <QAFilterDropdown
-                qaStatuses={qaStatuses as { id: string; code: string; name: string }[]}
-                selected={f.qaStatusIds}
-                onChange={ids => setInventory({ qaStatusIds: ids, page: 1 })}
+              {/* Tên hàng — multi-select từ facets */}
+              <MultiSelectFilter
+                label="Tên hàng"
+                options={materialOpts}
+                selected={f.filterMaterialIds}
+                onChange={v => setInventory({ filterMaterialIds: v, page: 1 })}
+                width="min-w-[120px]"
               />
 
-              {/* Chu kỳ */}
-              <Input className="h-7 text-xs w-[75px] bg-white" placeholder="Chu kỳ…"
-                value={f.cycle}
-                onChange={e => setInventory({ cycle: e.target.value, page: 1 })} />
+              {/* Vị trí — multi-select từ facets */}
+              <MultiSelectFilter
+                label="Vị trí"
+                options={locationOpts}
+                selected={f.filterLocations}
+                onChange={v => setInventory({ filterLocations: v, page: 1 })}
+                width="min-w-[90px]"
+              />
 
-              {/* Máy */}
-              <Input className="h-7 text-xs w-[75px] bg-white" placeholder="Máy…"
-                value={f.machineCode}
-                onChange={e => setInventory({ machineCode: e.target.value, page: 1 })} />
+              {/* QA Status — multi-select */}
+              <MultiSelectFilter
+                label="QA Status"
+                options={qaOpts}
+                selected={f.qaStatusIds}
+                onChange={v => setInventory({ qaStatusIds: v, page: 1 })}
+                width="min-w-[100px]"
+              />
 
-              {/* % Date */}
-              <Select value={f.datePctMin || '__all__'}
-                onValueChange={v => setInventory({ datePctMin: v === '__all__' ? '' : v })}>
-                <SelectTrigger className="h-7 text-xs w-[90px] bg-white">
-                  <SelectValue placeholder="% Date" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__all__">Tất cả</SelectItem>
-                  {DATE_PCT_OPTIONS.map(o => (
-                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {/* Chu kỳ — multi-select từ facets */}
+              <MultiSelectFilter
+                label="Chu kỳ"
+                options={cycleOpts}
+                selected={f.filterCycles}
+                onChange={v => setInventory({ filterCycles: v, page: 1 })}
+                searchable={cycleOpts.length > 5}
+                width="min-w-[80px]"
+              />
+
+              {/* Máy — multi-select từ facets */}
+              <MultiSelectFilter
+                label="Máy"
+                options={machineOpts}
+                selected={f.filterMachines}
+                onChange={v => setInventory({ filterMachines: v, page: 1 })}
+                searchable={machineOpts.length > 5}
+                width="min-w-[70px]"
+              />
+
+              {/* % Date — multi-select, OR logic */}
+              <MultiSelectFilter
+                label="% Date"
+                options={datePctOpts}
+                selected={f.datePctRanges}
+                onChange={v => setInventory({ datePctRanges: v })}
+                searchable={false}
+                width="min-w-[80px]"
+              />
 
               {hasFilters && (
                 <button onClick={resetFilters}
@@ -632,7 +596,7 @@ export default function Inventory() {
               {selected && checkedCount === 0 && (
                 <span className="ml-2 text-blue-600">· 1 đang xem</span>
               )}
-              {f.datePctMin && (
+              {f.datePctRanges.length > 0 && (
                 <span className="ml-2 text-amber-600 text-[10px]">(% date: trang hiện tại)</span>
               )}
             </>
@@ -773,7 +737,7 @@ export default function Inventory() {
       <LocationModal
         open={actionModal === 'location'}
         ids={checkedIdArr}
-        warehouseId={f.warehouseId || user?.warehouse_id || undefined}
+        warehouseId={f.warehouseIds[0] || user?.warehouse_id || undefined}
         onClose={closeActionModal}
       />
       <MaterialModal

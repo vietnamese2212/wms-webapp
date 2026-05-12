@@ -374,9 +374,10 @@ export function useMaterialCategories() {
 
 // WMS – Inventory (API thật)
 export function useInventoryEntries(params?: {
-  warehouse_id?: string
-  category?: string
-  location_code?: string
+  warehouse_ids?: string[]
+  categories?: string[]
+  filter_locations?: string[]
+  filter_material_ids?: string[]
   material_search?: string
   qa_status_ids?: string[]
   status?: string
@@ -384,22 +385,50 @@ export function useInventoryEntries(params?: {
   page?: number
   limit?: number
   manufacturer_id?: string
-  cycle?: string
-  machine_code?: string
+  filter_cycles?: string[]
+  filter_machines?: string[]
 }) {
   return useQuery({
     queryKey: ['inventory-entries', params],
     staleTime: 0,
     refetchOnWindowFocus: true,
     queryFn: async () => {
-      const { qa_status_ids, ...rest } = params ?? {}
+      const { warehouse_ids, categories, filter_locations, filter_material_ids, qa_status_ids, filter_cycles, filter_machines, ...rest } = params ?? {}
       const { data } = await apiClient.get('/wms/inventory', {
         params: {
           ...rest,
-          ...(qa_status_ids && qa_status_ids.length > 0 ? { qa_status_ids: qa_status_ids.join(',') } : {}),
+          ...(warehouse_ids?.length      ? { warehouse_ids:      warehouse_ids.join(',')      } : {}),
+          ...(categories?.length         ? { categories:         categories.join(',')         } : {}),
+          ...(filter_locations?.length   ? { filter_locations:   filter_locations.join(',')   } : {}),
+          ...(filter_material_ids?.length? { filter_material_ids:filter_material_ids.join(',')} : {}),
+          ...(qa_status_ids?.length      ? { qa_status_ids:      qa_status_ids.join(',')      } : {}),
+          ...(filter_cycles?.length      ? { filter_cycles:      filter_cycles.join(',')      } : {}),
+          ...(filter_machines?.length    ? { filter_machines:    filter_machines.join(',')    } : {}),
         },
       })
       return data.data as { entries: InventoryEntry[]; total: number; page: number; limit: number; total_cartons_remaining: number }
+    },
+  })
+}
+
+export function useInventoryFacets(params?: { warehouse_ids?: string[]; categories?: string[] }) {
+  return useQuery({
+    queryKey: ['inventory-facets', params],
+    staleTime: 5 * 60_000,
+    queryFn: async () => {
+      const { warehouse_ids, categories } = params ?? {}
+      const { data } = await apiClient.get('/wms/inventory/facets', {
+        params: {
+          ...(warehouse_ids?.length ? { warehouse_ids: warehouse_ids.join(',') } : {}),
+          ...(categories?.length    ? { categories:    categories.join(',')    } : {}),
+        },
+      })
+      return data.data as {
+        cycles:    string[]
+        machines:  string[]
+        locations: { id: string; code: string }[]
+        materials: { id: string; code: string; name: string | null }[]
+      }
     },
   })
 }

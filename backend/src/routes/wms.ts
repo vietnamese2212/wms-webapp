@@ -42,6 +42,7 @@ router.delete('/inbound-orders/:id/entries',            inbound.removeEntries)
 router.get('/inbound-orders/:id/location-suggestions',  inbound.getLocationSuggestions)
 
 // Inventory (tồn kho)
+router.get('/inventory/facets',               inventory.listFacets)
 router.get('/inventory',                      inventory.listInventory)
 router.patch('/inventory/bulk-qa',            inventory.bulkUpdateQA)
 router.patch('/inventory/bulk-location',      inventory.bulkTransferLocation)

@@ -71,7 +71,10 @@ export function MultiSelectFilter({
       </button>
 
       {open && (
-        <div className="absolute z-50 top-full left-0 mt-1 bg-white border rounded-md shadow-lg min-w-[190px] max-h-64 flex flex-col">
+        <div
+          className="absolute z-50 top-full left-0 mt-1 bg-white border rounded-md shadow-lg min-w-[190px] max-h-64 flex flex-col"
+          onMouseDown={e => e.stopPropagation()}
+        >
           {searchable && (
             <div className="p-1.5 border-b shrink-0">
               <input

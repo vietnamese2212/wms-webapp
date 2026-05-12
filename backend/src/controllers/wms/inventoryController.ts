@@ -24,8 +24,8 @@ interface FilterParams {
   qa_status_ids?: string[]
   search?: string
   manufacturer_id?: string
-  cycle?: string
-  machine_code?: string
+  filterCycles?: string[]
+  filterMachines?: string[]
   import_date_from?: string
   import_date_to?: string
 }
@@ -34,28 +34,45 @@ function applyInventoryFilters(q: any, p: FilterParams): any {
   if (!p.status || p.status === '') q = q.in('status', ['IN_STOCK', 'PARTIAL'])
   else if (p.status !== 'ALL')       q = q.eq('status', p.status)
 
-  if (p.locationFilter)                          q = q.in('location_id', p.locationFilter)
-  if (p.materialFilter)                          q = q.in('material_id', p.materialFilter)
+  if (p.locationFilter)                              q = q.in('location_id', p.locationFilter)
+  if (p.materialFilter)                              q = q.in('material_id', p.materialFilter)
   if (p.qa_status_ids && p.qa_status_ids.length > 0) q = q.in('qa_status_id', p.qa_status_ids)
-  if (p.search)           q = q.ilike('pallet_code', `%${p.search}%`)
-  if (p.manufacturer_id)  q = q.eq('manufacturer_id', p.manufacturer_id)
-  if (p.cycle)            q = q.ilike('cycle', `%${p.cycle}%`)
-  if (p.machine_code)     q = q.ilike('machine_code', `%${p.machine_code}%`)
+  if (p.search)          q = q.ilike('pallet_code', `%${p.search}%`)
+  if (p.manufacturer_id) q = q.eq('manufacturer_id', p.manufacturer_id)
+  const fCyc = p.filterCycles ?? []
+  if (fCyc.length === 1)    q = q.eq('cycle', fCyc[0])
+  else if (fCyc.length > 1) q = q.in('cycle', fCyc)
+  const fMach = p.filterMachines ?? []
+  if (fMach.length === 1)    q = q.eq('machine_code', fMach[0])
+  else if (fMach.length > 1) q = q.in('machine_code', fMach)
   if (p.import_date_from) q = q.gte('import_date', p.import_date_from)
   if (p.import_date_to)   q = q.lte('import_date', p.import_date_to)
   return q
 }
 
-export async function listInventory(req: Request, res: Response) {
-  const {
-    warehouse_id, category, location_code, material_search,
-    status, search, page = '1', limit = '50',
-    manufacturer_id, cycle, machine_code, import_date_from, import_date_to,
-  } = req.query as Record<string, string>
+function parseArr(raw: string | undefined): string[] {
+  return raw ? raw.split(',').filter(Boolean) : []
+}
 
-  // qa_status_ids: comma-separated string → array
-  const rawQaIds = req.query.qa_status_ids as string | undefined
-  const qa_status_ids = rawQaIds ? rawQaIds.split(',').filter(Boolean) : undefined
+export async function listInventory(req: Request, res: Response) {
+  const q = req.query as Record<string, string>
+  const status           = q.status
+  const search           = q.search
+  const material_search  = q.material_search
+  const manufacturer_id  = q.manufacturer_id
+  const import_date_from = q.import_date_from
+  const import_date_to   = q.import_date_to
+  const page             = q.page  ?? '1'
+  const limit            = q.limit ?? '50'
+
+  // Multi-value params (comma-separated)
+  const warehouseIds     = parseArr(q.warehouse_ids)
+  const categories       = parseArr(q.categories)
+  const filterLocations  = parseArr(q.filter_locations)
+  const filterCycles     = parseArr(q.filter_cycles)
+  const filterMachines   = parseArr(q.filter_machines)
+  const filterMaterialIds = parseArr(q.filter_material_ids)
+  const qa_status_ids    = parseArr(q.qa_status_ids).length > 0 ? parseArr(q.qa_status_ids) : undefined
 
   const pageNum  = Math.max(1, parseInt(page) || 1)
   const limitNum = Math.min(200, Math.max(1, parseInt(limit) || 50))
@@ -63,10 +80,12 @@ export async function listInventory(req: Request, res: Response) {
 
   // Resolve location_ids for warehouse / location_code filters
   let locationFilter: string[] | null = null
-  if (warehouse_id || location_code) {
+  if (warehouseIds.length || filterLocations.length) {
     let locQ = (supabase.from('Location') as any).select('id')
-    if (warehouse_id)  locQ = locQ.eq('warehouse_id', warehouse_id)
-    if (location_code) locQ = locQ.ilike('location_code', `%${location_code}%`)
+    if (warehouseIds.length === 1)     locQ = locQ.eq('warehouse_id', warehouseIds[0])
+    else if (warehouseIds.length > 1)  locQ = locQ.in('warehouse_id', warehouseIds)
+    if (filterLocations.length === 1)  locQ = locQ.eq('location_code', filterLocations[0])
+    else if (filterLocations.length > 1) locQ = locQ.in('location_code', filterLocations)
 
     const { data: locs, error: locErr } = await locQ
     if (locErr) return fail(res, 500, 'DB_ERROR', locErr.message)
@@ -75,12 +94,14 @@ export async function listInventory(req: Request, res: Response) {
       return ok(res, { entries: [], total: 0, page: pageNum, limit: limitNum, total_cartons_remaining: 0 })
   }
 
-  // Resolve material_ids for material search + category filter
+  // Resolve material_ids for material search + category + explicit IDs
   let materialFilter: string[] | null = null
-  if (material_search || category) {
+  if (material_search || categories.length || filterMaterialIds.length) {
     let matQ = (supabase.from('Material') as any).select('id')
-    if (material_search) matQ = matQ.or(`material_code.ilike.%${material_search}%,short_name.ilike.%${material_search}%`)
-    if (category)        matQ = matQ.eq('category', category)
+    if (material_search)               matQ = matQ.or(`material_code.ilike.%${material_search}%,short_name.ilike.%${material_search}%`)
+    if (categories.length === 1)       matQ = matQ.eq('category', categories[0])
+    else if (categories.length > 1)    matQ = matQ.in('category', categories)
+    if (filterMaterialIds.length > 0)  matQ = matQ.in('id', filterMaterialIds)
     const { data: mats, error: matErr } = await matQ
     if (matErr) return fail(res, 500, 'DB_ERROR', matErr.message)
     materialFilter = (mats ?? []).map((m: any) => m.id as string)
@@ -90,7 +111,7 @@ export async function listInventory(req: Request, res: Response) {
 
   const filterParams: FilterParams = {
     status, locationFilter, materialFilter, qa_status_ids, search,
-    manufacturer_id, cycle, machine_code, import_date_from, import_date_to,
+    manufacturer_id, filterCycles, filterMachines, import_date_from, import_date_to,
   }
 
   // Main paginated query
@@ -114,6 +135,65 @@ export async function listInventory(req: Request, res: Response) {
   )
 
   return ok(res, { entries: data ?? [], total: count ?? 0, page: pageNum, limit: limitNum, total_cartons_remaining })
+}
+
+export async function listFacets(req: Request, res: Response) {
+  const q = req.query as Record<string, string>
+  const warehouseIds = parseArr(q.warehouse_ids)
+  const categories   = parseArr(q.categories)
+
+  let locationFilter: string[] | null = null
+  if (warehouseIds.length > 0) {
+    let locQ = (supabase.from('Location') as any).select('id')
+    if (warehouseIds.length === 1) locQ = locQ.eq('warehouse_id', warehouseIds[0])
+    else locQ = locQ.in('warehouse_id', warehouseIds)
+    const { data: locs } = await locQ
+    locationFilter = (locs ?? []).map((l: any) => l.id as string)
+    if (locationFilter.length === 0)
+      return ok(res, { cycles: [], machines: [], locations: [], materials: [] })
+  }
+
+  let materialFilter: string[] | null = null
+  if (categories.length > 0) {
+    let matQ = (supabase.from('Material') as any).select('id')
+    if (categories.length === 1) matQ = matQ.eq('category', categories[0])
+    else matQ = matQ.in('category', categories)
+    const { data: mats } = await matQ
+    materialFilter = (mats ?? []).map((m: any) => m.id as string)
+    if (materialFilter.length === 0)
+      return ok(res, { cycles: [], machines: [], locations: [], materials: [] })
+  }
+
+  let invQ = (supabase.from('InventoryEntry') as any)
+    .select('cycle, machine_code, location_id, material_id, location:Location(location_code), material:Material(material_code, short_name)')
+    .in('status', ['IN_STOCK', 'PARTIAL'])
+    .limit(5000)
+
+  if (locationFilter) invQ = invQ.in('location_id', locationFilter)
+  if (materialFilter) invQ = invQ.in('material_id', materialFilter)
+
+  const { data: entries, error } = await invQ
+  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+
+  const cycles   = [...new Set((entries ?? []).map((e: any) => e.cycle).filter(Boolean))].sort() as string[]
+  const machines = [...new Set((entries ?? []).map((e: any) => e.machine_code).filter(Boolean))].sort() as string[]
+
+  const locationMap = new Map<string, string>()
+  const materialMap = new Map<string, { code: string; name: string | null }>()
+
+  for (const e of (entries ?? [])) {
+    if (e.location && !locationMap.has(e.location_id))
+      locationMap.set(e.location_id, e.location.location_code)
+    if (e.material && !materialMap.has(e.material_id))
+      materialMap.set(e.material_id, { code: e.material.material_code, name: e.material.short_name })
+  }
+
+  const locations = [...locationMap.entries()].map(([id, code]) => ({ id, code }))
+    .sort((a, b) => a.code.localeCompare(b.code))
+  const materials = [...materialMap.entries()].map(([id, v]) => ({ id, code: v.code, name: v.name }))
+    .sort((a, b) => a.code.localeCompare(b.code))
+
+  return ok(res, { cycles, machines, locations, materials })
 }
 
 const ACTIVE_STATUSES = ['IN_STOCK', 'PARTIAL', 'EXPORTED']

@@ -159,3 +159,13 @@ export async function deleteMaterial(req: Request, res: Response) {
     ok(res, data)
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
+
+export async function listCategories(req: Request, res: Response) {
+  try {
+    const { data, error } = await supabase
+      .from('Material').select('category').eq('is_active', true).not('category', 'is', null)
+    if (error) throw error
+    const cats = [...new Set((data ?? []).map((m: any) => m.category).filter(Boolean))].sort()
+    ok(res, cats)
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+}

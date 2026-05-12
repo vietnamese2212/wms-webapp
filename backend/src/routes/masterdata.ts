@@ -33,9 +33,10 @@ router.put('/manufacturers/:id',     manufacturer.updateManufacturer)
 router.delete('/manufacturers/:id',  manufacturer.deleteManufacturer)
 
 // Material
-router.get('/materials',         material.listMaterials)
-router.post('/materials',        material.createMaterial)
-router.get('/materials/:id',     material.getMaterial)
+router.get('/materials',            material.listMaterials)
+router.get('/materials/categories', material.listCategories)
+router.post('/materials',           material.createMaterial)
+router.get('/materials/:id',        material.getMaterial)
 router.put('/materials/:id',     material.updateMaterial)
 router.delete('/materials/:id',  material.deleteMaterial)
 

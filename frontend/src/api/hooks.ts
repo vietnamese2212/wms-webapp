@@ -361,6 +361,17 @@ export function useLocationSubTypes() {
   })
 }
 
+export function useMaterialCategories() {
+  return useQuery({
+    queryKey: ['material-categories'],
+    staleTime: 10 * 60_000,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/masterdata/materials/categories')
+      return data.data as string[]
+    },
+  })
+}
+
 // WMS – Inventory (API thật)
 export function useInventoryEntries(params?: {
   warehouse_id?: string

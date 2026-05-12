@@ -12,7 +12,7 @@ import {
 import { Label } from '@/components/ui/label'
 import {
   useInventoryEntries, useWarehouses, useQAStatuses, useAdjustInventory,
-  useLocationsReal, useMaterials,
+  useLocationsReal, useMaterials, useMaterialCategories,
   useBulkUpdateInventoryQA, useBulkTransferLocation, useBulkTransferMaterial,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
@@ -69,12 +69,6 @@ const DATE_PCT_OPTIONS = [
   { value: '30', label: '> 30%' },
 ]
 
-const CATEGORY_OPTIONS = [
-  { value: 'TP',     label: 'Thành phẩm' },
-  { value: 'NVL',    label: 'NVL' },
-  { value: 'POSM',   label: 'POSM' },
-  { value: 'BAO_BI', label: 'Bao bì' },
-]
 
 // ─── QA multi-select dropdown ────────────────────────────────
 
@@ -383,8 +377,9 @@ export default function Inventory() {
   const [showFilters,  setShowFilters]  = useState(false)
   const [actionModal,  setActionModal]  = useState<'qa' | 'location' | 'material' | null>(null)
 
-  const { data: warehouses = [] } = useWarehouses(true)
-  const { data: qaStatuses = [] } = useQAStatuses()
+  const { data: warehouses   = [] } = useWarehouses(true)
+  const { data: qaStatuses   = [] } = useQAStatuses()
+  const { data: categories   = [] } = useMaterialCategories()
 
   // Auto-set warehouse from auth
   useEffect(() => {
@@ -555,8 +550,8 @@ export default function Inventory() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__all__">Tất cả loại</SelectItem>
-                  {CATEGORY_OPTIONS.map(o => (
-                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                  {(categories as string[]).map(c => (
+                    <SelectItem key={c} value={c}>{c}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>

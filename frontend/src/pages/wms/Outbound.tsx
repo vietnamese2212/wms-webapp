@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Input }  from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { useGDOs, useUploadGDOExcel, useWarehouses, useCreateGDO, useUpdateGDO, useDeleteGDO, useMaterials, useGDO, useAssignGDO, useLookup, useAddLookup } from '@/api/hooks'
+import { useGDOs, useUploadGDOExcel, useWarehouses, useCreateGDO, useUpdateGDO, useDeleteGDO, useMaterials, useGDO, useAssignGDO, useLookup, useAddLookup, useDeleteLookup } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
@@ -20,8 +20,8 @@ const TODAY = new Date().toISOString().slice(0, 10)
 // So sánh không phân biệt hoa thường và dấu ("xe container"→"Xe Container", "xe xa"→"Xe Xá")
 const normalizeForMatch = (s: string) =>
   s.normalize('NFD').replace(/\p{Mn}/gu, '').toLowerCase().trim()
-const canonicalExportType = (raw: string, types: string[]) =>
-  types.find(t => normalizeForMatch(t) === normalizeForMatch(raw)) ?? raw
+const canonicalExportType = (raw: string, types: { value: string }[]) =>
+  types.find(t => normalizeForMatch(t.value) === normalizeForMatch(raw))?.value ?? raw
 
 // ─── Row background by status ─────────────────────────────────
 function gdoRowBg(gdo: GDO) {
@@ -584,6 +584,7 @@ function GDOFormBody({
   const { data: warehouses = [] } = useWarehouses(true)
   const { data: exportTypes = [] } = useLookup('export_type')
   const { mutate: addLookup } = useAddLookup()
+  const { mutate: deleteLookup } = useDeleteLookup()
   const [addingType, setAddingType] = useState(false)
   const [newTypeName, setNewTypeName] = useState('')
   const isMultiDO = (gdo?.delivery_orders?.length ?? 0) > 1
@@ -660,13 +661,23 @@ function GDOFormBody({
               Loại xuất <span className="text-red-500">*</span>
             </label>
             <div className="flex flex-wrap gap-2">
-              {exportTypes.map(t => (
-                <button key={t} type="button" onClick={() => setExportType(t)}
-                  className={`h-8 px-3 text-xs rounded-md border font-medium transition-colors ${
-                    exportType === t ? 'bg-blue-600 border-blue-600 text-white' : 'border-slate-200 text-slate-600 hover:border-blue-300 hover:text-blue-600'
-                  }`}>
-                  {t}
-                </button>
+              {exportTypes.map(item => (
+                <div key={item.id} className="relative group">
+                  <button type="button" onClick={() => setExportType(item.value)}
+                    className={`h-8 pl-3 pr-6 text-xs rounded-md border font-medium transition-colors ${
+                      exportType === item.value ? 'bg-blue-600 border-blue-600 text-white' : 'border-slate-200 text-slate-600 hover:border-blue-300 hover:text-blue-600'
+                    }`}>
+                    {item.value}
+                  </button>
+                  <button type="button"
+                    onClick={() => {
+                      if (exportType === item.value) setExportType('')
+                      deleteLookup({ type: 'export_type', id: item.id })
+                    }}
+                    className="absolute right-1 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center justify-center w-4 h-4 rounded-full text-[10px] text-slate-400 hover:text-red-500 hover:bg-red-50">
+                    ×
+                  </button>
+                </div>
               ))}
               {addingType ? (
                 <div className="flex gap-1">
@@ -681,7 +692,7 @@ function GDOFormBody({
                         e.preventDefault()
                         if (!newTypeName.trim()) return
                         addLookup({ type: 'export_type', value: newTypeName.trim() }, {
-                          onSuccess: () => { setExportType(newTypeName.trim()); setNewTypeName(''); setAddingType(false) },
+                          onSuccess: (data) => { setExportType(data.value); setNewTypeName(''); setAddingType(false) },
                         })
                       }
                       if (e.key === 'Escape') { setNewTypeName(''); setAddingType(false) }

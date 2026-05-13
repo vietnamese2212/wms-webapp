@@ -28,12 +28,12 @@ export async function addLookup(req: Request, res: Response) {
   const t = new Date().toISOString()
   const { data: existing } = await supabase
     .from('LookupValue')
-    .select('id')
+    .select('id, sort_order')
     .eq('type', type)
     .order('sort_order', { ascending: false })
     .limit(1)
 
-  const nextSort = existing?.length ? (existing[0] as any).sort_order + 1 : 1
+  const nextSort = existing?.length ? Number((existing[0] as any).sort_order ?? 0) + 1 : 1
 
   const { data, error } = await supabase
     .from('LookupValue')
@@ -46,4 +46,11 @@ export async function addLookup(req: Request, res: Response) {
     return fail(res, error.message, 500)
   }
   res.json({ success: true, data })
+}
+
+export async function deleteLookup(req: Request, res: Response) {
+  const { id } = req.params
+  const { error } = await supabase.from('LookupValue').delete().eq('id', id)
+  if (error) return fail(res, error.message, 500)
+  res.json({ success: true })
 }

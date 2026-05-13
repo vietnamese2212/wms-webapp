@@ -30,8 +30,9 @@ router.get('/events', (req, res) => {
 })
 
 // Lookup values (loại xuất, v.v.)
-router.get('/lookup',  lookup.listLookup)
-router.post('/lookup', lookup.addLookup)
+router.get('/lookup',        lookup.listLookup)
+router.post('/lookup',       lookup.addLookup)
+router.delete('/lookup/:id', lookup.deleteLookup)
 
 // Inbound orders (phiếu nhập kho)
 router.get('/inbound-orders',                           inbound.listOrders)

@@ -737,7 +737,6 @@ export function useLoosePickingItems(params: { warehouse_id?: string; date?: str
       const { data } = await apiClient.get('/wms/loosepicking', { params })
       return data.data as LoosePickingItem[]
     },
-    enabled: !!params.warehouse_id,
   })
 }
 

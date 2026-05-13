@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useParams, useNavigate }       from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import type { AxiosError }              from 'axios'
 import {
   ArrowLeft, Plus, CheckCircle2, XCircle, Trash2,
@@ -273,6 +273,8 @@ function ScanDialog({ order, onClose, employeeId }: ScanDialogProps) {
 export default function InboundDetail() {
   const { id }   = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const autoScan = searchParams.get('scan') === '1'
 
   const { data: order, isLoading, isPlaceholderData } = useInboundOrder(id)
   const { data: allLocations = [] } = useLocationsReal(
@@ -295,6 +297,14 @@ export default function InboundDetail() {
   const { mutate: updateOrder                           } = useUpdateInboundOrder()
 
   const [showScan,    setShowScan]    = useState(false)
+
+  // Auto-open scan khi navigate từ list với ?scan=1
+  useEffect(() => {
+    if (autoScan && order && order.status === 'OPEN' && order.location_id) {
+      unlockAudio()
+      setShowScan(true)
+    }
+  }, [autoScan, order]) // eslint-disable-line
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [confirm, setConfirm] = useState<{ title: string; msg: string; onOk: () => void } | null>(null)
 
@@ -427,18 +437,7 @@ export default function InboundDetail() {
             <span className="flex items-center gap-1">
               <MapPin className="h-3 w-3 text-slate-400 shrink-0" />
               {order.location ? (
-                <>
-                  <span className="font-mono font-medium">{order.location.location_code}</span>
-                  {isOpen && (
-                    <button
-                      onClick={() => { unlockAudio(); setShowScan(true) }}
-                      className="ml-1 flex items-center gap-0.5 text-[10px] font-medium text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 rounded px-1.5 py-0.5 transition-colors"
-                      title="Thêm pallet"
-                    >
-                      <Plus className="h-2.5 w-2.5" /> Thêm pallet
-                    </button>
-                  )}
-                </>
+                <span className="font-mono font-medium">{order.location.location_code}</span>
               ) : isOpen ? (
                 <span className="text-amber-600 flex items-center gap-1">
                   <AlertTriangle className="h-3 w-3" />

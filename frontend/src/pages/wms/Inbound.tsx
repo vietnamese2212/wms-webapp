@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Search, PackagePlus, CalendarDays, X, ChevronDown, User, MapPin, Filter } from 'lucide-react'
+import { Plus, Search, PackagePlus, CalendarDays, X, ChevronDown, User, MapPin, Filter, QrCode } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
@@ -21,6 +21,7 @@ import {
 } from '@/api/hooks'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import type { InboundOrder } from '@/types'
+import { unlockAudio } from '@/utils/audio'
 
 const TODAY = new Date().toISOString().slice(0, 10)
 
@@ -787,7 +788,14 @@ export default function Inbound() {
                 </TableHeader>
                 <TableBody>
                   {sortedOrders.map(order => (
-                    <InboundRow key={order.id} order={order} onClick={() => navigate(`/wms/inbound/${order.id}`)} />
+                    <InboundRow
+                      key={order.id}
+                      order={order}
+                      onClick={() => navigate(`/wms/inbound/${order.id}`)}
+                      onScan={order.status === 'OPEN' && !!order.location_id
+                        ? (e) => { e.stopPropagation(); unlockAudio(); navigate(`/wms/inbound/${order.id}?scan=1`) }
+                        : undefined}
+                    />
                   ))}
                 </TableBody>
               </Table>
@@ -809,7 +817,7 @@ function statusColors(order: InboundOrder) {
   return               { bg: '',            hover: 'hover:bg-slate-50',  text: 'text-slate-400' }
 }
 
-function InboundRow({ order, onClick }: { order: InboundOrder; onClick: () => void }) {
+function InboundRow({ order, onClick, onScan }: { order: InboundOrder; onClick: () => void; onScan?: (e: React.MouseEvent) => void }) {
   const dateFull = order.import_date ? format(parseISO(order.import_date), 'dd-MM-yy', { locale: vi }) : '—'
   const isRowToday = order.import_date?.slice(0, 10) === TODAY
   const importer = order.imported_by_emp?.name ?? order.created_by_emp?.name ?? '—'
@@ -825,7 +833,18 @@ function InboundRow({ order, onClick }: { order: InboundOrder; onClick: () => vo
         {isRowToday && <span className="ml-1 text-[9px] text-blue-600 font-medium">· Hôm nay</span>}
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
-        <span className="text-[10px] font-mono text-slate-600">{order.location?.location_code ?? '—'}</span>
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] font-mono text-slate-600">{order.location?.location_code ?? '—'}</span>
+          {onScan && (
+            <button
+              onClick={onScan}
+              className="flex items-center gap-0.5 text-[9px] font-medium text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 rounded px-1.5 py-0.5 transition-colors"
+              title="Thêm pallet"
+            >
+              <QrCode className="h-2.5 w-2.5" /> Quét
+            </button>
+          )}
+        </div>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px] font-medium">{matName}</span>

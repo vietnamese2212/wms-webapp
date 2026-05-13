@@ -2,7 +2,7 @@ import { useRef, useState, useMemo, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
-import { Upload, Search, Truck, CheckCircle2, AlertTriangle, CalendarDays, X, Bookmark, Info, Plus, Trash2, PenSquare } from 'lucide-react'
+import { Upload, Search, Truck, CheckCircle2, AlertTriangle, CalendarDays, X, Bookmark, Info, Plus, Trash2, PenSquare, QrCode } from 'lucide-react'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
@@ -326,6 +326,7 @@ export default function Outbound() {
                   onEdit={e => { e.stopPropagation(); setEditingGDOId(gdo.id) }}
                   onDelete={e => handleDelete(gdo, e)}
                   onAssign={e => { e.stopPropagation(); assignGDO({ id: gdo.id }) }}
+                  onScan={e => { e.stopPropagation(); navigate(`/wms/outbound/${gdo.id}`) }}
                 />
               ))}
             </TableBody>
@@ -353,12 +354,13 @@ export default function Outbound() {
 
 // ─── GDO Row ──────────────────────────────────────────────────
 
-function GDORow({ gdo, onClick, onEdit, onDelete, onAssign }: {
+function GDORow({ gdo, onClick, onEdit, onDelete, onAssign, onScan }: {
   gdo: GDO
   onClick: () => void
   onEdit: (e: React.MouseEvent) => void
   onDelete: (e: React.MouseEvent) => void
   onAssign: (e: React.MouseEvent) => void
+  onScan: (e: React.MouseEvent) => void
 }) {
   const { pin, unpin, isPinned } = useActiveVehiclesStore()
   const pinned    = isPinned(gdo.id)
@@ -382,16 +384,23 @@ function GDORow({ gdo, onClick, onEdit, onDelete, onAssign }: {
 
       {/* Actions */}
       <TableCell className="px-1.5 py-1 whitespace-nowrap" onClick={e => e.stopPropagation()}>
-        {isPending && (
-          <div className="flex items-center gap-1">
-            <button onClick={onEdit} title="Sửa đơn" className="p-0.5 rounded text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors">
-              <PenSquare className="h-3 w-3" />
+        <div className="flex items-center gap-1">
+          {isPending && (
+            <>
+              <button onClick={onEdit} title="Sửa đơn" className="p-0.5 rounded text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors">
+                <PenSquare className="h-3 w-3" />
+              </button>
+              <button onClick={onDelete} title="Xóa đơn" className="p-0.5 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors">
+                <Trash2 className="h-3 w-3" />
+              </button>
+            </>
+          )}
+          {gdo.status === 'IN_PROGRESS' && (
+            <button onClick={onScan} title="Quét pallet" className="p-0.5 rounded text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors">
+              <QrCode className="h-3 w-3" />
             </button>
-            <button onClick={onDelete} title="Xóa đơn" className="p-0.5 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors">
-              <Trash2 className="h-3 w-3" />
-            </button>
-          </div>
-        )}
+          )}
+        </div>
       </TableCell>
 
       <TableCell className="px-2 py-1 whitespace-nowrap">

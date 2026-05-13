@@ -618,31 +618,48 @@ function GDOFormBody({
             </Select>
           </div>
           <div className="space-y-1">
-            <label className="text-[10px] font-medium text-slate-500">Tên khách hàng <span className="text-red-500">*</span></label>
-            <Input className="h-8 text-xs" placeholder="Tên NPP / khách hàng…" value={customerName} onChange={e => setCustomerName(e.target.value)} />
+            <label className="text-[10px] font-medium text-slate-500">
+              Tên khách hàng {(!isMultiDO || mode === 'create') && <span className="text-red-500">*</span>}
+            </label>
+            {isMultiDO && mode === 'edit' ? (
+              <div className="min-h-[32px] text-[11px] px-2.5 py-1.5 border border-slate-100 rounded-md bg-slate-50 text-slate-600 leading-snug break-words">
+                {(gdo?.delivery_orders ?? []).map(d => d.distributor_name).filter(Boolean).join(' · ') || '—'}
+              </div>
+            ) : (
+              <Input className="h-8 text-xs" placeholder="Tên NPP / khách hàng…" value={customerName} onChange={e => setCustomerName(e.target.value)} />
+            )}
           </div>
           <div className="space-y-1">
             <label className="text-[10px] font-medium text-slate-500">ĐVVT <span className="text-red-500">*</span></label>
             <Input className="h-8 text-xs" placeholder="Đơn vị vận tải…" value={dvvt} onChange={e => setDvvt(e.target.value)} />
           </div>
           <div className="space-y-1 col-span-2">
-            <label className="text-[10px] font-medium text-slate-500">Loại xuất <span className="text-red-500">*</span></label>
-            <div className="flex gap-2">
-              {EXPORT_TYPES.map(t => (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => setExportType(t)}
-                  className={`flex-1 h-8 text-xs rounded-md border font-medium transition-colors ${
-                    exportType === t
-                      ? 'bg-blue-600 border-blue-600 text-white'
-                      : 'border-slate-200 text-slate-600 hover:border-blue-300 hover:text-blue-600'
-                  }`}
-                >
-                  {t}
-                </button>
-              ))}
-            </div>
+            <label className="text-[10px] font-medium text-slate-500">
+              Loại xuất {(!isMultiDO || mode === 'create') && <span className="text-red-500">*</span>}
+            </label>
+            {isMultiDO && mode === 'edit' ? (
+              <div className="flex gap-2 items-center">
+                {EXPORT_TYPES.map(t => (
+                  <div key={t} className={`flex-1 h-8 text-xs rounded-md border font-medium flex items-center justify-center ${
+                    exportType === t ? 'bg-blue-100 border-blue-300 text-blue-700' : 'border-slate-100 text-slate-200 bg-slate-50 text-slate-300'
+                  }`}>{t}</div>
+                ))}
+                {exportType && !EXPORT_TYPES.includes(exportType) && (
+                  <span className="text-[10px] text-slate-600 bg-slate-100 px-2 py-1 rounded shrink-0">{exportType}</span>
+                )}
+              </div>
+            ) : (
+              <div className="flex gap-2">
+                {EXPORT_TYPES.map(t => (
+                  <button key={t} type="button" onClick={() => setExportType(t)}
+                    className={`flex-1 h-8 text-xs rounded-md border font-medium transition-colors ${
+                      exportType === t ? 'bg-blue-600 border-blue-600 text-white' : 'border-slate-200 text-slate-600 hover:border-blue-300 hover:text-blue-600'
+                    }`}>
+                    {t}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
@@ -850,8 +867,11 @@ function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: string; d
     setDate(gdo.delivery_date)
     setWarehouseId(gdo.warehouse_id ?? '')
     setDvvt(gdo.dvvt ?? '')
-    setCustomerName(gdo.delivery_orders?.[0]?.distributor_name ?? gdo.distributor_names?.[0] ?? '')
-    setExportType(gdo.delivery_orders?.[0]?.items?.[0]?.export_type ?? gdo.export_type ?? '')
+    // distributor_name: single-DO → from first DO; multi-DO → displayed read-only separately
+    setCustomerName(gdo.delivery_orders?.[0]?.distributor_name ?? '')
+    // export_type: search all items across all DOs (not in GDO header)
+    const allItemsForFill = (gdo.delivery_orders ?? []).flatMap(d => d.items ?? [])
+    setExportType(allItemsForFill.find(i => i.export_type)?.export_type ?? '')
 
     // Build items from delivery_orders (single DO for manual)
     const allItems: ItemRow[] = (gdo.delivery_orders ?? []).flatMap(doRow =>
@@ -870,11 +890,12 @@ function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: string; d
   }, [gdo, initialized])
 
   function handleSubmit() {
-    if (!date)        return setError('Chọn ngày xuất')
-    if (!customerName.trim()) return setError('Nhập tên khách hàng')
-    if (!dvvt.trim()) return setError('Nhập đơn vị vận tải')
-    if (!exportType)  return setError('Chọn loại xuất')
     const isMultiDO = (gdo?.do_count ?? 0) > 1
+    if (!date) return setError('Chọn ngày xuất')
+    if (!dvvt.trim()) return setError('Nhập đơn vị vận tải')
+    // customer_name và export_type chỉ bắt buộc với single-DO (multi-DO thì backend skip)
+    if (!isMultiDO && !customerName.trim()) return setError('Nhập tên khách hàng')
+    if (!isMultiDO && !exportType) return setError('Chọn loại xuất')
     if (!isMultiDO) {
       for (const item of items) {
         if (!item.material_code.trim()) return setError('Chọn mã hàng cho tất cả dòng')

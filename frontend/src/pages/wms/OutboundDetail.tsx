@@ -658,7 +658,7 @@ export default function OutboundDetail() {
               )}
             </span>
             {gdo.dvvt && <span>{gdo.dvvt}</span>}
-            {npp && <span className="text-slate-500 truncate max-w-[160px]">{npp}</span>}
+            {npp && <span className="text-slate-500 break-words">{npp}</span>}
             <span className="flex items-center gap-1">
               <Package className="h-3 w-3 text-slate-400 shrink-0" />
               <span className="font-medium">{totalScanned}/{totalOrdered}</span> thùng

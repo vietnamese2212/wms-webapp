@@ -55,6 +55,9 @@ router.patch('/inventory/bulk-location',      inventory.bulkTransferLocation)
 router.patch('/inventory/bulk-material',      inventory.bulkTransferMaterial)
 router.patch('/inventory/:id/adjust',         inventory.adjustInventory)
 
+// Loose picking (nhặt lẻ)
+router.get('/loosepicking', outbound.listLoosePickingItems)
+
 // Outbound (chuyến xe / xuất kho)
 router.get('/outbound',                                       outbound.listGDOs)
 router.post('/outbound',                                      outbound.createGDO)

@@ -1046,12 +1046,12 @@ export async function getItemInventory(req: Request, res: Response) {
 export async function scanItem(req: Request, res: Response) {
   try {
     const { gdoId, itemId } = req.params
-    const { qr_code, employee_id, cartons_override } = req.body as { qr_code: string; employee_id?: string; cartons_override?: number }
+    const { qr_code, employee_id, cartons_override, loose_picking_mode } = req.body as { qr_code: string; employee_id?: string; cartons_override?: number; loose_picking_mode?: boolean }
     const qr = (qr_code ?? '').trim()
     if (!qr) return fail(res, 'qr_code là bắt buộc', 400)
 
     const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
-      .select('status').eq('id', gdoId).single()
+      .select('status, started_at').eq('id', gdoId).single()
     if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng — không thể quét', 400)
 
     const { data: item, error: itemErr } = await (supabase.from('OutboundItem') as any)
@@ -1134,29 +1134,34 @@ export async function scanItem(req: Request, res: Response) {
     await (supabase.from('OutboundItem') as any)
       .update({ cartons_scanned: new_scanned, status: new_item_status, updated_at: t }).eq('id', itemId)
 
-    const { data: siblingItems } = await (supabase.from('OutboundItem') as any)
-      .select('status').eq('do_id', item.do_id)
-    const doCompleted = (siblingItems ?? []).every((i: any) =>
-      i.id === itemId ? new_item_status === 'COMPLETED' : i.status === 'COMPLETED'
-    )
-    const { data: doRow } = await (supabase.from('OutboundDelivery') as any)
-      .update({ status: doCompleted ? 'COMPLETED' : 'IN_PROGRESS', updated_at: t })
-      .eq('id', item.do_id).select('gdo_id').single()
+    // Nhặt lẻ mode: skip DO/GDO cascade khi chưa bắt đầu (xe chưa tới)
+    const skipCascade = !!loose_picking_mode && !gdo?.started_at
 
-    if (doRow?.gdo_id) {
-      const { data: siblingDOs } = await (supabase.from('OutboundDelivery') as any)
-        .select('status').eq('gdo_id', doRow.gdo_id)
-      const gdoCompleted = (siblingDOs ?? []).every((d: any) =>
-        d.id === item.do_id ? doCompleted : d.status === 'COMPLETED'
+    if (!skipCascade) {
+      const { data: siblingItems } = await (supabase.from('OutboundItem') as any)
+        .select('status').eq('do_id', item.do_id)
+      const doCompleted = (siblingItems ?? []).every((i: any) =>
+        i.id === itemId ? new_item_status === 'COMPLETED' : i.status === 'COMPLETED'
       )
-      await (supabase.from('GroupDeliveryOrder') as any)
-        .update({
-          status:           gdoCompleted ? 'COMPLETED' : 'IN_PROGRESS',
-          last_scanned_at:  t,
-          ...(gdoCompleted ? { completed_at: t } : {}),
-          updated_at:       t,
-        })
-        .eq('id', doRow.gdo_id)
+      const { data: doRow } = await (supabase.from('OutboundDelivery') as any)
+        .update({ status: doCompleted ? 'COMPLETED' : 'IN_PROGRESS', updated_at: t })
+        .eq('id', item.do_id).select('gdo_id').single()
+
+      if (doRow?.gdo_id) {
+        const { data: siblingDOs } = await (supabase.from('OutboundDelivery') as any)
+          .select('status').eq('gdo_id', doRow.gdo_id)
+        const gdoCompleted = (siblingDOs ?? []).every((d: any) =>
+          d.id === item.do_id ? doCompleted : d.status === 'COMPLETED'
+        )
+        await (supabase.from('GroupDeliveryOrder') as any)
+          .update({
+            status:           gdoCompleted ? 'COMPLETED' : 'IN_PROGRESS',
+            last_scanned_at:  t,
+            ...(gdoCompleted ? { completed_at: t } : {}),
+            updated_at:       t,
+          })
+          .eq('id', doRow.gdo_id)
+      }
     }
 
     return ok(res, {
@@ -1243,6 +1248,52 @@ export async function deleteScanEntry(req: Request, res: Response) {
     }
 
     return ok(res, { success: true })
+  } catch (e) { return fail(res, String(e)) }
+}
+
+// ─── List loose picking items (nhặt lẻ) ──────────────────────
+
+export async function listLoosePickingItems(req: Request, res: Response) {
+  try {
+    const { warehouse_id, date } = req.query as { warehouse_id?: string; date?: string }
+
+    let gdoQ = (supabase.from('GroupDeliveryOrder') as any)
+      .select('id, group_code, delivery_date, planned_date, status, started_at, warehouse:Warehouse(id,code,name)')
+      .neq('status', 'CANCELLED')
+    if (warehouse_id) gdoQ = gdoQ.eq('warehouse_id', warehouse_id)
+    if (date)         gdoQ = gdoQ.eq('delivery_date', date)
+    const { data: gdos } = await gdoQ
+
+    if (!gdos?.length) return ok(res, [])
+
+    const gdoIds = (gdos as any[]).map((g: any) => g.id as string)
+    const { data: dos } = await (supabase.from('OutboundDelivery') as any)
+      .select('id, gdo_id').in('gdo_id', gdoIds)
+
+    const doIds = (dos ?? []).map((d: any) => d.id as string)
+    if (!doIds.length) return ok(res, [])
+
+    const { data: items } = await (supabase.from('OutboundItem') as any)
+      .select('*, material:Material(id,material_code,short_name)')
+      .in('do_id', doIds)
+      .gt('loose_picking', 0)
+      .neq('status', 'CANCELLED')
+      .order('id')
+
+    if (!items?.length) return ok(res, [])
+
+    const doToGdoId: Record<string, string> = {}
+    for (const d of (dos ?? [])) doToGdoId[d.id] = d.gdo_id
+    const gdoById: Record<string, any> = {}
+    for (const g of (gdos as any[])) gdoById[g.id] = g
+
+    const result = (items as any[]).map((item: any) => {
+      const gdoId = doToGdoId[item.do_id as string]
+      const gdo   = gdoId ? gdoById[gdoId] : null
+      return { ...item, gdo }
+    })
+
+    return ok(res, result)
   } catch (e) { return fail(res, String(e)) }
 }
 

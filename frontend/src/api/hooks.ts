@@ -704,6 +704,59 @@ export function useDeleteLookup() {
   })
 }
 
+// ─── Loose picking (nhặt lẻ) ─────────────────────────────────
+
+export type LoosePickingItem = {
+  id: string
+  do_id: string
+  material_id: string | null
+  material_code_raw: string | null
+  material: { id: string; material_code: string; short_name: string } | null
+  cartons_ordered: number
+  loose_picking: number
+  cartons_scanned: number
+  status: string
+  header_text: string | null
+  batch_required: string | null
+  date_required: number | null
+  gdo: {
+    id: string
+    group_code: string
+    delivery_date: string | null
+    planned_date: string | null
+    status: string
+    started_at: string | null
+    warehouse: { id: string; code: string; name: string }
+  } | null
+}
+
+export function useLoosePickingItems(params: { warehouse_id?: string; date?: string }) {
+  return useQuery({
+    queryKey: ['loosepicking', params],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/loosepicking', { params })
+      return data.data as LoosePickingItem[]
+    },
+    enabled: !!params.warehouse_id,
+  })
+}
+
+export function useScanLoosePickingItem() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ gdoId, itemId, ...body }: {
+      gdoId: string; itemId: string; qr_code: string; cartons_override?: number
+    }) => apiClient.post(`/wms/outbound/${gdoId}/items/${itemId}/scan`, {
+      ...body, loose_picking_mode: true,
+    }).then(r => r.data.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['loosepicking'] })
+      qc.invalidateQueries({ queryKey: ['gdos'] })
+      qc.invalidateQueries({ queryKey: ['gdo'] })
+    },
+  })
+}
+
 export function useCreateGDO() {
   const qc = useQueryClient()
   return useMutation({

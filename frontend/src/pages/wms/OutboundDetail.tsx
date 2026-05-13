@@ -6,7 +6,7 @@ import { vi } from 'date-fns/locale'
 import { formatDateTime } from '@/utils/formatters'
 import {
   ArrowLeft, CheckCircle2,
-  Truck, Package, ClipboardList, Play, Pause, ChevronRight, Bookmark, X, RotateCcw, Pencil,
+  Truck, Package, ClipboardList, Play, Pause, ChevronRight, Bookmark, X, RotateCcw, Pencil, QrCode,
 } from 'lucide-react'
 import { Button }  from '@/components/ui/button'
 import { Input }   from '@/components/ui/input'
@@ -338,9 +338,10 @@ function itemRowBg(item: OutboundItem): string {
 
 // ─── Items table ───────────────────────────────────────────────
 
-function ItemsTable({ doRecords, gdoId }: {
+function ItemsTable({ doRecords, gdoId, canScan }: {
   doRecords: OutboundDelivery[]
   gdoId: string
+  canScan: boolean
 }) {
   const navigate = useNavigate()
   const allItems = doRecords.flatMap(d =>
@@ -396,7 +397,18 @@ function ItemsTable({ doRecords, gdoId }: {
                   )}
                 </TableCell>
                 <TableCell className={`px-2 py-1 align-top text-right whitespace-nowrap`}>
-                  <span className={`text-[10px] font-semibold tabular-nums ${textCls}`}>{item.cartons_ordered}</span>
+                  <div className="flex flex-col items-end gap-0.5">
+                    <span className={`text-[10px] font-semibold tabular-nums ${textCls}`}>{item.cartons_ordered}</span>
+                    {canScan && item.status !== 'COMPLETED' && item.material_type !== 'POSM' && (
+                      <button
+                        onClick={e => { e.stopPropagation(); navigate(`/wms/outbound/${gdoId}/items/${item.id}?scan=1`) }}
+                        className="flex items-center gap-0.5 text-[9px] font-medium text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 rounded px-1.5 py-0.5 transition-colors"
+                        title="Quét pallet"
+                      >
+                        <QrCode className="h-2.5 w-2.5" /> Quét
+                      </button>
+                    )}
+                  </div>
                 </TableCell>
                 {hasBoxes && (
                   <TableCell className="px-2 py-1 align-top text-right">
@@ -725,7 +737,7 @@ export default function OutboundDetail() {
               <p className="text-sm">Chưa có DO nào</p>
             </div>
           ) : (
-            <ItemsTable doRecords={allDOs} gdoId={id!} />
+            <ItemsTable doRecords={allDOs} gdoId={id!} canScan={!!gdo.started_at && gdo.status !== 'PAUSED'} />
           )}
         </div>
       </div>

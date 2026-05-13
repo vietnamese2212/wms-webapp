@@ -1,5 +1,5 @@
-import { useRef, useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useRef, useState, useEffect } from 'react'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import type { AxiosError } from 'axios'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import {
@@ -230,6 +230,8 @@ function ConfirmDialog({
 export default function OutboundItemDetail() {
   const { gdoId, itemId } = useParams<{ gdoId: string; itemId: string }>()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const autoScan = searchParams.get('scan') === '1'
 
   const { data: gdo, isLoading } = useGDO(gdoId)
   const { mutate: manualComplete,  isPending: completing  } = useManualCompleteItem()
@@ -238,6 +240,18 @@ export default function OutboundItemDetail() {
 
   const [showScan, setShowScan] = useState(false)
   const [confirmScanId, setConfirmScanId] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!autoScan || !gdo) return
+    const allItems = (gdo.delivery_orders ?? []).flatMap(d => d.items)
+    const currentItem = allItems.find(i => i.id === itemId)
+    if (!currentItem) return
+    const canScanNow = !!gdo.started_at && gdo.status !== 'PAUSED'
+    if (canScanNow && currentItem.status !== 'COMPLETED') {
+      unlockAudio()
+      setShowScan(true)
+    }
+  }, [autoScan, gdo]) // eslint-disable-line
 
   if (isLoading || !gdo) {
     return (

@@ -2,7 +2,7 @@ import { useRef, useState, useMemo, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
-import { Upload, Search, Truck, CheckCircle2, AlertTriangle, CalendarDays, X, Bookmark, Info, Plus, Trash2, PenSquare, QrCode } from 'lucide-react'
+import { Upload, Search, Truck, CheckCircle2, AlertTriangle, CalendarDays, X, Bookmark, Info, Plus, Trash2, PenSquare } from 'lucide-react'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
@@ -326,7 +326,6 @@ export default function Outbound() {
                   onEdit={e => { e.stopPropagation(); setEditingGDOId(gdo.id) }}
                   onDelete={e => handleDelete(gdo, e)}
                   onAssign={e => { e.stopPropagation(); assignGDO({ id: gdo.id }) }}
-                  onScan={e => { e.stopPropagation(); navigate(`/wms/outbound/${gdo.id}`) }}
                 />
               ))}
             </TableBody>
@@ -354,13 +353,12 @@ export default function Outbound() {
 
 // ─── GDO Row ──────────────────────────────────────────────────
 
-function GDORow({ gdo, onClick, onEdit, onDelete, onAssign, onScan }: {
+function GDORow({ gdo, onClick, onEdit, onDelete, onAssign }: {
   gdo: GDO
   onClick: () => void
   onEdit: (e: React.MouseEvent) => void
   onDelete: (e: React.MouseEvent) => void
   onAssign: (e: React.MouseEvent) => void
-  onScan: (e: React.MouseEvent) => void
 }) {
   const { pin, unpin, isPinned } = useActiveVehiclesStore()
   const pinned    = isPinned(gdo.id)
@@ -394,11 +392,6 @@ function GDORow({ gdo, onClick, onEdit, onDelete, onAssign, onScan }: {
                 <Trash2 className="h-3 w-3" />
               </button>
             </>
-          )}
-          {gdo.status === 'IN_PROGRESS' && (
-            <button onClick={onScan} title="Quét pallet" className="p-0.5 rounded text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors">
-              <QrCode className="h-3 w-3" />
-            </button>
           )}
         </div>
       </TableCell>

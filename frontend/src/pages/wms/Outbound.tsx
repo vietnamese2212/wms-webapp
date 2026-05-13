@@ -383,15 +383,15 @@ function GDORow({ gdo, onClick, onEdit, onDelete, onAssign }: {
       {/* Actions */}
       <TableCell className="px-1.5 py-1 whitespace-nowrap" onClick={e => e.stopPropagation()}>
         <div className="flex items-center gap-1">
+          {(isPending || gdo.status === 'PAUSED') && (
+            <button onClick={onEdit} title="Sửa đơn" className="p-0.5 rounded text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors">
+              <PenSquare className="h-3 w-3" />
+            </button>
+          )}
           {isPending && (
-            <>
-              <button onClick={onEdit} title="Sửa đơn" className="p-0.5 rounded text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors">
-                <PenSquare className="h-3 w-3" />
-              </button>
-              <button onClick={onDelete} title="Xóa đơn" className="p-0.5 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors">
-                <Trash2 className="h-3 w-3" />
-              </button>
-            </>
+            <button onClick={onDelete} title="Xóa đơn" className="p-0.5 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors">
+              <Trash2 className="h-3 w-3" />
+            </button>
           )}
         </div>
       </TableCell>
@@ -530,11 +530,13 @@ type ItemRow = {
   category: string | null
   cartons: number
   min_cartons: number  // 0 for new items, cartons_scanned for existing
+  loose_picking: number
+  header_text: string
 }
 
 let _uid = 0
 const uid = () => String(++_uid)
-const makeItem = (): ItemRow => ({ id: uid(), material_code: '', mat_name: '', category: null, cartons: 0, min_cartons: 0 })
+const makeItem = (): ItemRow => ({ id: uid(), material_code: '', mat_name: '', category: null, cartons: 0, min_cartons: 0, loose_picking: 0, header_text: '' })
 
 // ─── Shared form UI ───────────────────────────────────────────
 
@@ -587,7 +589,7 @@ function GDOFormBody({
           <p className="text-[10px] text-slate-400 mt-0.5">
             {mode === 'create'
               ? <>Mã xe tự động: <span className="font-mono font-semibold text-slate-600">{codePreview}</span></>
-              : <>Trạng thái: <span className="font-semibold text-amber-600">PENDING</span> — có thể chỉnh sửa</>
+              : <>Trạng thái: <span className={`font-semibold ${gdo?.status === 'PAUSED' ? 'text-red-600' : 'text-amber-600'}`}>{gdo?.status ?? 'PENDING'}</span> — có thể chỉnh sửa</>
             }
           </p>
         </div>
@@ -656,42 +658,75 @@ function GDOFormBody({
             </div>
           )}
 
-          {!isMultiDO && items.map((item, idx) => (
-            <div key={item.id} className="border border-slate-200 rounded-lg p-2.5 space-y-2 bg-slate-50/50">
-              <div className="flex items-center justify-between">
-                <span className="text-[9px] font-medium text-slate-400">#{idx + 1}</span>
-                {(items.length > 1 && item.min_cartons === 0) && (
-                  <button onClick={() => setItems(rows => rows.filter(r => r.id !== item.id))} className="text-slate-300 hover:text-red-400" title="Xóa dòng">
-                    <Trash2 className="h-3 w-3" />
-                  </button>
-                )}
-                {item.min_cartons > 0 && (
-                  <span className="text-[9px] text-amber-600">Đã xuất {item.min_cartons} thùng</span>
-                )}
-              </div>
-              <MatPicker
-                value={item.material_code}
-                matName={item.mat_name}
-                onSelect={(code, name, category) => updateItem(item.id, { material_code: code, mat_name: name, category })}
-              />
-              <div className="flex items-center gap-2">
-                <label className="text-[10px] text-slate-500 shrink-0">Số thùng <span className="text-red-500">*</span></label>
-                <Input
-                  type="number"
-                  min={item.min_cartons || 1}
-                  className={`h-7 text-[10px] text-right flex-1 ${item.cartons > 0 && item.cartons < item.min_cartons ? 'border-red-400' : ''}`}
-                  value={item.cartons || ''}
-                  onChange={e => updateItem(item.id, { cartons: parseInt(e.target.value) || 0 })}
+          {!isMultiDO && items.map((item, idx) => {
+            const fullScanned = item.min_cartons > 0 && item.min_cartons >= item.cartons
+            const partScanned = item.min_cartons > 0 && item.min_cartons < item.cartons
+            const cartonsInvalid = item.cartons > 0 && item.cartons < item.min_cartons
+            const cardCls = fullScanned
+              ? 'bg-blue-50 border-blue-200'
+              : partScanned
+              ? 'bg-amber-50 border-amber-200'
+              : 'bg-slate-50/50 border-slate-200'
+            return (
+              <div key={item.id} className={`border rounded-lg p-2 space-y-1.5 ${cardCls}`}>
+                {/* Row 1: index + scan badge + delete */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[9px] font-semibold text-slate-400">#{idx + 1}</span>
+                    {item.min_cartons > 0 && (
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${fullScanned ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>
+                        Đã xuất {item.min_cartons} thùng
+                      </span>
+                    )}
+                    {item.category && (
+                      <span className="text-[9px] bg-white/70 text-slate-500 px-1.5 py-0.5 rounded border border-slate-200">{item.category}</span>
+                    )}
+                  </div>
+                  {items.length > 1 && item.min_cartons === 0 && (
+                    <button onClick={() => setItems(rows => rows.filter(r => r.id !== item.id))} className="text-slate-300 hover:text-red-400" title="Xóa dòng">
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  )}
+                </div>
+                {/* Row 2: material picker */}
+                <MatPicker
+                  value={item.material_code}
+                  matName={item.mat_name}
+                  onSelect={(code, name, category) => updateItem(item.id, { material_code: code, mat_name: name, category })}
                 />
-                {item.category && (
-                  <span className="text-[9px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded shrink-0">{item.category}</span>
+                {/* Row 3: cartons + loose picking */}
+                <div className="flex items-center gap-2">
+                  <label className="text-[10px] text-slate-500 shrink-0">Thùng <span className="text-red-500">*</span></label>
+                  <Input
+                    type="number" min={item.min_cartons || 1}
+                    className={`h-7 text-[10px] text-right w-20 ${cartonsInvalid ? 'border-red-400' : ''}`}
+                    value={item.cartons || ''}
+                    onChange={e => updateItem(item.id, { cartons: parseInt(e.target.value) || 0 })}
+                  />
+                  <label className="text-[10px] text-slate-500 shrink-0 ml-1">Nhặt lẻ</label>
+                  <Input
+                    type="number" min={0}
+                    className="h-7 text-[10px] text-right w-20"
+                    value={item.loose_picking || ''}
+                    onChange={e => updateItem(item.id, { loose_picking: parseInt(e.target.value) || 0 })}
+                  />
+                </div>
+                {/* Row 4: header text */}
+                <div className="flex items-center gap-1.5">
+                  <label className="text-[10px] text-slate-500 shrink-0">Ghi chú</label>
+                  <Input
+                    className="h-7 text-[10px] flex-1"
+                    placeholder="Header text (hiện màu đỏ khi quét)…"
+                    value={item.header_text}
+                    onChange={e => updateItem(item.id, { header_text: e.target.value })}
+                  />
+                </div>
+                {cartonsInvalid && (
+                  <p className="text-[9px] text-red-600">Tối thiểu {item.min_cartons} thùng (đã xuất)</p>
                 )}
               </div>
-              {item.cartons > 0 && item.cartons < item.min_cartons && (
-                <p className="text-[9px] text-red-600">Tối thiểu {item.min_cartons} thùng (đã xuất)</p>
-              )}
-            </div>
-          ))}
+            )
+          })}
 
           {!isMultiDO && (
             <button
@@ -763,7 +798,7 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
         dvvt: dvvt.trim(),
         customer_name: customerName.trim(),
         export_type: exportType,
-        items: items.map(i => ({ material_code: i.material_code, cartons_ordered: i.cartons })),
+        items: items.map(i => ({ material_code: i.material_code, cartons_ordered: i.cartons, loose_picking: i.loose_picking, header_text: i.header_text || undefined })),
       },
       {
         onSuccess: () => onClose(),
@@ -815,8 +850,8 @@ function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: string; d
     setDate(gdo.delivery_date)
     setWarehouseId(gdo.warehouse_id ?? '')
     setDvvt(gdo.dvvt ?? '')
-    setCustomerName(gdo.distributor_names?.[0] ?? '')
-    setExportType(gdo.export_type ?? '')
+    setCustomerName(gdo.delivery_orders?.[0]?.distributor_name ?? gdo.distributor_names?.[0] ?? '')
+    setExportType(gdo.delivery_orders?.[0]?.items?.[0]?.export_type ?? gdo.export_type ?? '')
 
     // Build items from delivery_orders (single DO for manual)
     const allItems: ItemRow[] = (gdo.delivery_orders ?? []).flatMap(doRow =>
@@ -827,6 +862,8 @@ function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: string; d
         category: item.material_type ?? null,
         cartons: item.cartons_ordered ?? 0,
         min_cartons: item.cartons_scanned ?? 0,
+        loose_picking: item.loose_picking ?? 0,
+        header_text: item.header_text ?? '',
       }))
     )
     setItems(allItems.length ? allItems : [makeItem()])
@@ -854,7 +891,7 @@ function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: string; d
         dvvt: dvvt.trim(),
         customer_name: customerName.trim(),
         export_type: exportType,
-        items: isMultiDO ? undefined as any : items.map(i => ({ material_code: i.material_code, cartons_ordered: i.cartons })),
+        items: isMultiDO ? undefined as any : items.map(i => ({ material_code: i.material_code, cartons_ordered: i.cartons, loose_picking: i.loose_picking, header_text: i.header_text || undefined })),
       },
       {
         onSuccess: () => onClose(),

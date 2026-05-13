@@ -274,13 +274,13 @@ export async function updateGDO(req: Request, res: Response) {
     const { delivery_date, warehouse_id, dvvt, customer_name, export_type, items } = req.body as {
       delivery_date?: string; warehouse_id?: string; dvvt?: string
       customer_name?: string; export_type?: string
-      items?: Array<{ material_code: string; cartons_ordered: number }>
+      items?: Array<{ material_code: string; cartons_ordered: number; loose_picking?: number; header_text?: string }>
     }
 
     const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
       .select('status').eq('id', req.params.id).single()
     if (!gdo) return fail(res, 'Không tìm thấy chuyến xe', 404)
-    if (gdo.status !== 'PENDING') return fail(res, 'Chỉ sửa được đơn ở trạng thái PENDING', 400)
+    if (!['PENDING', 'PAUSED'].includes(gdo.status)) return fail(res, 'Chỉ sửa được đơn ở trạng thái PENDING hoặc PAUSED', 400)
 
     const t = now()
 
@@ -349,7 +349,13 @@ export async function updateGDO(req: Request, res: Response) {
         const scanned = Number(ex.cartons_scanned)
         const newStatus = scanned >= item.cartons_ordered ? 'COMPLETED' : scanned > 0 ? 'IN_PROGRESS' : 'PENDING'
         await (supabase.from('OutboundItem') as any)
-          .update({ cartons_ordered: item.cartons_ordered, export_type: export_type ?? null, status: newStatus, updated_at: t })
+          .update({
+            cartons_ordered: item.cartons_ordered,
+            loose_picking: item.loose_picking ?? 0,
+            header_text: item.header_text ?? null,
+            export_type: export_type ?? null,
+            status: newStatus, updated_at: t,
+          })
           .eq('id', ex.id)
       } else {
         const matInfo = matMap.get(item.material_code)
@@ -360,7 +366,9 @@ export async function updateGDO(req: Request, res: Response) {
           material_id: matInfo?.id ?? null,
           material_code_raw: item.material_code,
           cartons_ordered: item.cartons_ordered,
-          boxes_display: 0, weight: null, pallets_estimated: 0, loose_picking: 0,
+          boxes_display: 0, weight: null, pallets_estimated: 0,
+          loose_picking: item.loose_picking ?? 0,
+          header_text: item.header_text ?? null,
           material_type, export_type: export_type ?? null, cartons_scanned: 0,
           status: isSpecial ? 'COMPLETED' : 'PENDING', updated_at: t,
         })

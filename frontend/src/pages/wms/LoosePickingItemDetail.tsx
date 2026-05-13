@@ -69,9 +69,12 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
   const [pendingCartons, setPendingCartons] = useState(1)
   const { mutate: scanItem, isPending } = useScanLoosePickingItem()
 
-  const matName   = item.material?.short_name ?? item.material_code_raw ?? '—'
-  const looseDone = Math.min(item.cartons_scanned, item.loose_picking)
-  const remaining = Math.max(0, item.loose_picking - looseDone)
+  const matName      = item.material?.short_name ?? item.material_code_raw ?? '—'
+  const looseScanned = (item.scan_entries ?? []).filter(s => s.is_loose_picking).reduce((sum, s) => sum + Number(s.cartons_scanned), 0)
+  const ov           = Math.max(0, (item.cartons_scanned - looseScanned) - (item.cartons_ordered - item.loose_picking))
+  const effectiveLoose = Math.max(0, item.loose_picking - ov)
+  const looseDone    = Math.min(looseScanned, effectiveLoose)
+  const remaining    = Math.max(0, effectiveLoose - looseDone)
 
   function handleScan(qr_code: string) {
     playBeep()
@@ -237,11 +240,13 @@ export default function LoosePickingItemDetail() {
 
   useEffect(() => {
     if (!autoScan || !gdo) return
-    const allItems  = (gdo.delivery_orders ?? []).flatMap(d => d.items)
-    const current   = allItems.find(i => i.id === itemId)
+    const allItems = (gdo.delivery_orders ?? []).flatMap(d => d.items)
+    const current  = allItems.find(i => i.id === itemId)
     if (!current) return
-    const looseDone = Math.min(current.cartons_scanned, current.loose_picking)
-    if (looseDone < current.loose_picking) {
+    const ls = (current.scan_entries ?? []).filter((s: any) => s.is_loose_picking).reduce((sum: number, s: any) => sum + Number(s.cartons_scanned), 0)
+    const ov = Math.max(0, (current.cartons_scanned - ls) - (current.cartons_ordered - current.loose_picking))
+    const el = Math.max(0, current.loose_picking - ov)
+    if (ls < el) {
       unlockAudio()
       setShowScan(true)
     }
@@ -267,11 +272,14 @@ export default function LoosePickingItemDetail() {
     )
   }
 
-  const matName   = item.material?.short_name ?? item.material_code_raw ?? '—'
-  const matCode   = item.material?.material_code ?? item.material_code_raw ?? '—'
-  const looseDone = Math.min(item.cartons_scanned, item.loose_picking)
-  const isDone    = looseDone >= item.loose_picking
-  const scans     = item.scan_entries ?? []
+  const matName      = item.material?.short_name ?? item.material_code_raw ?? '—'
+  const matCode      = item.material?.material_code ?? item.material_code_raw ?? '—'
+  const looseScanned = (item.scan_entries ?? []).filter(s => s.is_loose_picking).reduce((sum, s) => sum + Number(s.cartons_scanned), 0)
+  const ov           = Math.max(0, (item.cartons_scanned - looseScanned) - (item.cartons_ordered - item.loose_picking))
+  const effectiveLoose = Math.max(0, item.loose_picking - ov)
+  const looseDone    = Math.min(looseScanned, effectiveLoose)
+  const isDone       = looseDone >= effectiveLoose
+  const scans        = item.scan_entries ?? []
 
   function openScan() {
     unlockAudio()
@@ -335,14 +343,14 @@ export default function LoosePickingItemDetail() {
           {/* Row 2: name + progress */}
           <div className="space-y-1">
             <p className="text-sm font-medium text-slate-800 leading-tight">{matName}</p>
-            <ProgressBar scanned={looseDone} target={item.loose_picking} />
+            <ProgressBar scanned={looseDone} target={effectiveLoose} />
           </div>
 
           {/* Row 3: metadata */}
           <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-500">
             <span className="flex items-center gap-1">
               <Scissors className="h-3 w-3 text-slate-400 shrink-0" />
-              Nhặt lẻ: <span className="font-medium text-slate-700 ml-0.5">{item.loose_picking}</span>
+              Nhặt lẻ: <span className="font-medium text-slate-700 ml-0.5">{effectiveLoose}</span>{effectiveLoose < item.loose_picking && <span className="text-slate-400 ml-0.5">(gốc {item.loose_picking})</span>}
             </span>
             <span className="flex items-center gap-1">
               <Package className="h-3 w-3 text-slate-400 shrink-0" />

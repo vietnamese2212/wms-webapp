@@ -21,6 +21,14 @@ type GDOSummary = {
   pendingCount: number
 }
 
+// effective_loose = loose_picking - phần outbound đã "ăn vào" quota nhặt lẻ
+function itemLooseStats(i: LoosePickingItem) {
+  const ov       = Math.max(0, (i.cartons_scanned - i.loose_scanned) - (i.cartons_ordered - i.loose_picking))
+  const effective = Math.max(0, i.loose_picking - ov)
+  const done      = Math.min(i.loose_scanned, effective)
+  return { effective, done, remaining: Math.max(0, effective - done) }
+}
+
 function rowBg(s: GDOSummary): string {
   if (s.totalLoose > 0 && s.totalLooseDone >= s.totalLoose) return 'bg-blue-50 hover:bg-blue-100'
   if (s.totalLooseDone > 0)                                  return 'bg-amber-50 hover:bg-amber-100'
@@ -74,9 +82,9 @@ export default function LoosePicking() {
     }
     return [...map.values()]
       .map(({ gdo, items: gdoItems }) => {
-        const totalLoose    = gdoItems.reduce((s, i) => s + i.loose_picking, 0)
-        const totalLooseDone = gdoItems.reduce((s, i) => s + Math.min(i.cartons_scanned, i.loose_picking), 0)
-        const pendingCount  = gdoItems.filter(i => Math.min(i.cartons_scanned, i.loose_picking) < i.loose_picking).length
+        const totalLoose    = gdoItems.reduce((s, i) => s + itemLooseStats(i).effective, 0)
+        const totalLooseDone = gdoItems.reduce((s, i) => s + itemLooseStats(i).done, 0)
+        const pendingCount  = gdoItems.filter(i => itemLooseStats(i).remaining > 0).length
         return { gdo, items: gdoItems, totalLoose, totalLooseDone, pendingCount }
       })
       .sort((a, b) => {
@@ -98,7 +106,7 @@ export default function LoosePicking() {
     )
   }, [grouped, search])
 
-  const totalPending = items.filter(i => Math.min(i.cartons_scanned, i.loose_picking) < i.loose_picking).length
+  const totalPending = items.filter(i => itemLooseStats(i).remaining > 0).length
 
   const dateLabel = date
     ? format(parseISO(date), 'EEEE, dd-MM-yyyy', { locale: vi })

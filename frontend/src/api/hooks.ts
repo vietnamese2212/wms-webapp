@@ -715,6 +715,7 @@ export type LoosePickingItem = {
   cartons_ordered: number
   loose_picking: number
   cartons_scanned: number
+  loose_scanned: number
   status: string
   header_text: string | null
   batch_required: string | null

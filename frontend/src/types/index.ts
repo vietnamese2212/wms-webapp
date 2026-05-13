@@ -390,6 +390,7 @@ export interface OutboundScanEntry {
   inventory_entry_id: string | null
   pallet_code:        string
   cartons_scanned:    number
+  is_loose_picking:   boolean
   scanned_by:         string | null
   scanned_at:         string
 }

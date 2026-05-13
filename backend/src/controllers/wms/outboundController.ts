@@ -1104,11 +1104,26 @@ export async function scanItem(req: Request, res: Response) {
       .select('id').eq('item_id', itemId).eq('pallet_code', qr).maybeSingle()
     if (dupCheck) return fail(res, `Pallet "${qr}" đã được quét trong phiếu này`, 400)
 
-    const available        = Number(inv.cartons_remaining ?? inv.cartons_imported)
+    const available = Number(inv.cartons_remaining ?? inv.cartons_imported)
     if (available <= 0) return fail(res, `Pallet "${qr}" đã xuất hết số thùng`, 400)
     const remaining_on_item = Number(item.cartons_ordered) - Number(item.cartons_scanned)
     if (remaining_on_item <= 0) return fail(res, 'Mặt hàng đã đủ số lượng', 400)
-    const cap     = Math.min(available, remaining_on_item)
+
+    let cap = Math.min(available, remaining_on_item)
+
+    if (loose_picking_mode) {
+      const { data: looseEntries } = await (supabase.from('OutboundScanEntry') as any)
+        .select('cartons_scanned').eq('item_id', itemId).eq('is_loose_picking', true)
+      const loose_scanned = (looseEntries ?? []).reduce((s: number, e: any) => s + Number(e.cartons_scanned), 0)
+      const outbound_scanned = Number(item.cartons_scanned) - loose_scanned
+      const regular_quota    = Number(item.cartons_ordered) - Number(item.loose_picking)
+      const overshoot        = Math.max(0, outbound_scanned - regular_quota)
+      const effective_loose  = Math.max(0, Number(item.loose_picking) - overshoot)
+      const loose_remaining  = Math.max(0, effective_loose - loose_scanned)
+      if (loose_remaining <= 0) return fail(res, 'Mặt hàng đã đủ số lượng nhặt lẻ', 400)
+      cap = Math.min(cap, loose_remaining)
+    }
+
     const to_take = cartons_override ? Math.min(Math.max(1, Number(cartons_override)), cap) : cap
 
     const t = now()
@@ -1125,6 +1140,7 @@ export async function scanItem(req: Request, res: Response) {
     await (supabase.from('OutboundScanEntry') as any).insert({
       id: scanId, item_id: itemId, inventory_entry_id: inv.id,
       pallet_code: qr, cartons_scanned: to_take,
+      is_loose_picking: !!loose_picking_mode,
       scanned_by: employee_id ?? null, scanned_at: t,
       created_at: t, updated_at: t,
     })
@@ -1287,10 +1303,19 @@ export async function listLoosePickingItems(req: Request, res: Response) {
     const gdoById: Record<string, any> = {}
     for (const g of (gdos as any[])) gdoById[g.id] = g
 
+    // Tính loose_scanned (thùng thực sự quét qua chế độ nhặt lẻ) per item
+    const itemIds = (items as any[]).map((i: any) => i.id as string)
+    const { data: looseScans } = await (supabase.from('OutboundScanEntry') as any)
+      .select('item_id, cartons_scanned').in('item_id', itemIds).eq('is_loose_picking', true)
+    const looseScannedByItem: Record<string, number> = {}
+    for (const scan of (looseScans ?? [])) {
+      looseScannedByItem[scan.item_id] = (looseScannedByItem[scan.item_id] ?? 0) + Number(scan.cartons_scanned)
+    }
+
     const result = (items as any[]).map((item: any) => {
       const gdoId = doToGdoId[item.do_id as string]
       const gdo   = gdoId ? gdoById[gdoId] : null
-      return { ...item, gdo }
+      return { ...item, gdo, loose_scanned: looseScannedByItem[item.id] ?? 0 }
     })
 
     return ok(res, result)

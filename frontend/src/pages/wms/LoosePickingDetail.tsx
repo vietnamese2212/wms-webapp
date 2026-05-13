@@ -46,20 +46,16 @@ function ProgressBar({ scanned, target, compact = false }: { scanned: number; ta
   )
 }
 
-// ─── Row color by loose picking status ────────────────────────
+// ─── Tính tiến độ nhặt lẻ từ scan_entries ─────────────────────
 
-function itemTextCls(item: OutboundItem): string {
-  const looseDone = Math.min(item.cartons_scanned, item.loose_picking)
-  if (looseDone >= item.loose_picking) return 'text-blue-700'
-  if (item.cartons_scanned > 0) return 'text-amber-700'
-  return 'text-slate-400'
-}
-
-function itemRowBg(item: OutboundItem): string {
-  const looseDone = Math.min(item.cartons_scanned, item.loose_picking)
-  if (looseDone >= item.loose_picking) return 'bg-blue-50 hover:bg-blue-100'
-  if (item.cartons_scanned > 0) return 'bg-amber-50 hover:bg-amber-100'
-  return 'hover:bg-slate-50'
+function itemLooseProgress(item: OutboundItem) {
+  const looseScanned = (item.scan_entries ?? [])
+    .filter(s => s.is_loose_picking)
+    .reduce((sum, s) => sum + Number(s.cartons_scanned), 0)
+  const ov       = Math.max(0, (item.cartons_scanned - looseScanned) - (item.cartons_ordered - item.loose_picking))
+  const effective = Math.max(0, item.loose_picking - ov)
+  const done      = Math.min(looseScanned, effective)
+  return { effective, done, remaining: Math.max(0, effective - done), looseScanned }
 }
 
 // ─── Items table ───────────────────────────────────────────────
@@ -97,12 +93,12 @@ function ItemsTable({ doRecords, gdoId }: {
       </TableHeader>
       <TableBody>
         {allItems.map(item => {
-          const looseDone = Math.min(item.cartons_scanned, item.loose_picking)
-          const isDone    = looseDone >= item.loose_picking
-          const textCls   = itemTextCls(item)
-          const rowBg     = itemRowBg(item)
-          const matCode   = item.material?.material_code ?? item.material_code_raw ?? '—'
-          const matName   = item.material?.short_name ?? item.material_code_raw ?? '—'
+          const { effective, done: looseDone, looseScanned } = itemLooseProgress(item)
+          const isDone   = looseDone >= effective
+          const textCls  = isDone ? 'text-blue-700' : looseScanned > 0 ? 'text-amber-700' : 'text-slate-400'
+          const rowBg    = isDone ? 'bg-blue-50 hover:bg-blue-100' : looseScanned > 0 ? 'bg-amber-50 hover:bg-amber-100' : 'hover:bg-slate-50'
+          const matCode  = item.material?.material_code ?? item.material_code_raw ?? '—'
+          const matName  = item.material?.short_name ?? item.material_code_raw ?? '—'
 
           return (
             <TableRow
@@ -115,12 +111,12 @@ function ItemsTable({ doRecords, gdoId }: {
               </TableCell>
               <TableCell className="px-2 py-1 align-top">
                 <div className={`text-[10px] font-medium leading-tight ${textCls}`}>{matName}</div>
-                <ProgressBar compact scanned={looseDone} target={item.loose_picking} />
+                <ProgressBar compact scanned={looseDone} target={effective} />
               </TableCell>
               <TableCell className="px-2 py-1 align-top text-right whitespace-nowrap">
                 <div className="flex flex-col items-end gap-0.5">
                   <span className={`text-[10px] tabular-nums ${textCls}`}>
-                    <span className="font-semibold">{item.loose_picking}</span>
+                    <span className="font-semibold">{effective}</span>
                     <span className="text-slate-400"> / {item.cartons_ordered}</span>
                   </span>
                   {!isDone && (
@@ -165,8 +161,8 @@ export default function LoosePickingDetail() {
 
   const allDOs        = gdo.delivery_orders ?? []
   const allLooseItems = allDOs.flatMap(d => d.items.filter(i => i.loose_picking > 0))
-  const totalLoose    = allLooseItems.reduce((s, i) => s + i.loose_picking, 0)
-  const totalLooseDone = allLooseItems.reduce((s, i) => s + Math.min(i.cartons_scanned, i.loose_picking), 0)
+  const totalLoose    = allLooseItems.reduce((s, i) => s + itemLooseProgress(i).effective, 0)
+  const totalLooseDone = allLooseItems.reduce((s, i) => s + itemLooseProgress(i).done, 0)
 
   const npp = [...new Set(allDOs.map(d => d.distributor_name).filter(Boolean))].join(', ')
 

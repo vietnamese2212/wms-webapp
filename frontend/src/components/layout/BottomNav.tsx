@@ -1,12 +1,13 @@
 import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, Package, PackagePlus, UserCog, Settings } from 'lucide-react'
+import { LayoutDashboard, Package, PackagePlus, PackageMinus, Scissors, Settings } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const tabs = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard', end: true },
   { to: '/wms/inventory', icon: Package, label: 'Tồn kho', end: false },
   { to: '/wms/inbound', icon: PackagePlus, label: 'Nhập kho', end: false },
-  { to: '/masterdata/users', icon: UserCog, label: 'Người dùng', end: false },
+  { to: '/wms/outbound', icon: PackageMinus, label: 'Xuất kho', end: false },
+  { to: '/wms/loosepicking', icon: Scissors, label: 'Nhặt lẻ', end: false },
   { to: '/settings', icon: Settings, label: 'Cài đặt', end: false },
 ]
 

@@ -54,6 +54,19 @@ function parseArr(raw: string | undefined): string[] {
   return raw ? raw.split(',').filter(Boolean) : []
 }
 
+function calcPct(prodDate: string, shelfDays: number, now: number): number {
+  const totalMs = shelfDays * 86_400_000
+  const remaining = new Date(prodDate).getTime() + totalMs - now
+  return Math.max(0, Math.round((remaining / totalMs) * 100))
+}
+
+function matchDatePct(pct: number, range: string): boolean {
+  if (range === '80') return pct > 80
+  if (range === '60') return pct > 60 && pct <= 80
+  if (range === '30') return pct > 30 && pct <= 60
+  return false
+}
+
 export async function listInventory(req: Request, res: Response) {
   const q = req.query as Record<string, string>
   const status           = q.status
@@ -66,13 +79,14 @@ export async function listInventory(req: Request, res: Response) {
   const limit            = q.limit ?? '50'
 
   // Multi-value params (comma-separated)
-  const warehouseIds     = parseArr(q.warehouse_ids)
-  const categories       = parseArr(q.categories)
-  const filterLocations  = parseArr(q.filter_locations)
-  const filterCycles     = parseArr(q.filter_cycles)
-  const filterMachines   = parseArr(q.filter_machines)
+  const warehouseIds      = parseArr(q.warehouse_ids)
+  const categories        = parseArr(q.categories)
+  const filterLocations   = parseArr(q.filter_locations)
+  const filterCycles      = parseArr(q.filter_cycles)
+  const filterMachines    = parseArr(q.filter_machines)
   const filterMaterialIds = parseArr(q.filter_material_ids)
-  const qa_status_ids    = parseArr(q.qa_status_ids).length > 0 ? parseArr(q.qa_status_ids) : undefined
+  const qa_status_ids     = parseArr(q.qa_status_ids).length > 0 ? parseArr(q.qa_status_ids) : undefined
+  const datePctRanges     = parseArr(q.date_pct_ranges)
 
   const pageNum  = Math.max(1, parseInt(page) || 1)
   const limitNum = Math.min(200, Math.max(1, parseInt(limit) || 50))
@@ -114,17 +128,41 @@ export async function listInventory(req: Request, res: Response) {
     manufacturer_id, filterCycles, filterMachines, import_date_from, import_date_to,
   }
 
+  // Pre-filter by %date: fetch all IDs+dates with same filters, compute pct in JS
+  let datePctIds: string[] | null = null
+  if (datePctRanges.length > 0) {
+    const { data: preEntries } = await applyInventoryFilters(
+      (supabase.from('InventoryEntry') as any).select('id, production_date, material:Material(shelf_life_days)'),
+      filterParams
+    )
+    const now = Date.now()
+    datePctIds = (preEntries ?? [])
+      .filter((e: any) => {
+        const shelfDays = Number((e.material as any)?.shelf_life_days)
+        if (!e.production_date || !shelfDays || shelfDays <= 0) return false
+        const pct = calcPct(e.production_date as string, shelfDays, now)
+        return datePctRanges.some(r => matchDatePct(pct, r))
+      })
+      .map((e: any) => e.id as string)
+
+    if (datePctIds.length === 0)
+      return ok(res, { entries: [], total: 0, page: pageNum, limit: limitNum, total_cartons_remaining: 0 })
+  }
+
   // Main paginated query
-  const mainQ = applyInventoryFilters(
+  let mainQ = applyInventoryFilters(
     (supabase.from('InventoryEntry') as any).select(ENTRY_SELECT, { count: 'exact' }),
     filterParams
-  ).order('import_date', { ascending: false, nullsFirst: false }).range(offset, offset + limitNum - 1)
+  )
+  if (datePctIds !== null) mainQ = mainQ.in('id', datePctIds)
+  mainQ = mainQ.order('import_date', { ascending: false, nullsFirst: false }).range(offset, offset + limitNum - 1)
 
   // Aggregate query (no pagination — sum cartons_remaining across all matching entries)
-  const aggQ = applyInventoryFilters(
+  let aggQ = applyInventoryFilters(
     (supabase.from('InventoryEntry') as any).select('cartons_remaining'),
     filterParams
   )
+  if (datePctIds !== null) aggQ = aggQ.in('id', datePctIds)
 
   const [{ data, count, error }, { data: aggData }] = await Promise.all([mainQ, aggQ])
 

@@ -64,12 +64,6 @@ const DATE_PCT_OPTIONS = [
   { value: '30', label: '30–60%' },
 ]
 
-function filterByDatePct(pct: number, range: string): boolean {
-  if (range === '80') return pct > 80
-  if (range === '60') return pct > 60 && pct <= 80
-  if (range === '30') return pct > 30 && pct <= 60
-  return true
-}
 
 // ─── Action modals ────────────────────────────────────────────
 
@@ -410,30 +404,17 @@ export default function Inventory() {
     manufacturer_id:    f.manufacturerId || undefined,
     filter_cycles:      f.filterCycles.length > 0 ? f.filterCycles : undefined,
     filter_machines:    f.filterMachines.length > 0 ? f.filterMachines : undefined,
+    date_pct_ranges:    f.datePctRanges.length > 0 ? f.datePctRanges : undefined,
     page:               f.page,
     limit:              LIMIT,
   })
 
-  const entries           = data?.entries               ?? []
+  const displayEntries    = data?.entries               ?? []
   const total             = data?.total                 ?? 0
   const totalCartons      = data?.total_cartons_remaining ?? 0
   const totalPages        = Math.max(1, Math.ceil(total / LIMIT))
   const checkedCount      = checkedIds.size
   const checkedIdArr      = useMemo(() => [...checkedIds], [checkedIds])
-
-  // Client-side % date filter applied on current page
-  const displayEntries = useMemo(() => {
-    if (f.datePctRanges.length === 0) return entries
-    return entries.filter(e => {
-      const pct = calcDatePct(e.production_date, e.material?.shelf_life_days ?? null)
-      return pct !== null && f.datePctRanges.some(r => filterByDatePct(pct, r))
-    })
-  }, [entries, f.datePctRanges])
-
-  const displayTotal   = f.datePctRanges.length > 0 ? displayEntries.length : total
-  const displayCartons = f.datePctRanges.length > 0
-    ? displayEntries.reduce((sum, e) => sum + Number(e.cartons_remaining ?? e.cartons_imported ?? 0), 0)
-    : totalCartons
 
   // Derive pallet context for action modals (from first checked entry on current page)
   const firstCheckedEntry = useMemo(() =>
@@ -626,7 +607,7 @@ export default function Inventory() {
                 label="% Date"
                 options={datePctOpts}
                 selected={f.datePctRanges}
-                onChange={v => setInventory({ datePctRanges: v })}
+                onChange={v => setInventory({ datePctRanges: v, page: 1 })}
                 searchable={false}
                 width="min-w-[80px]"
               />
@@ -645,12 +626,12 @@ export default function Inventory() {
         <p className="text-xs text-slate-500">
           {isLoading ? 'Đang tải…' : (
             <>
-              <span className="font-medium text-slate-700">{displayTotal.toLocaleString()}</span>
+              <span className="font-medium text-slate-700">{total.toLocaleString()}</span>
               <span className="text-slate-400"> pallet</span>
-              {displayCartons > 0 && (
+              {totalCartons > 0 && (
                 <>
                   <span className="mx-1.5 text-slate-300">·</span>
-                  <span className="font-medium text-slate-700">{displayCartons.toLocaleString()}</span>
+                  <span className="font-medium text-slate-700">{totalCartons.toLocaleString()}</span>
                   <span className="text-slate-400"> thùng tồn</span>
                 </>
               )}
@@ -662,9 +643,6 @@ export default function Inventory() {
               )}
               {selected && checkedCount === 0 && (
                 <span className="ml-2 text-blue-600">· 1 đang xem</span>
-              )}
-              {f.datePctRanges.length > 0 && (
-                <span className="ml-2 text-amber-600 text-[10px]">(% date: trang hiện tại)</span>
               )}
             </>
           )}

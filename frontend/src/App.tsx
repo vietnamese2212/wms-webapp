@@ -9,7 +9,9 @@ import InboundDetail from '@/pages/wms/InboundDetail'
 import Outbound           from '@/pages/wms/Outbound'
 import OutboundDetail     from '@/pages/wms/OutboundDetail'
 import OutboundItemDetail from '@/pages/wms/OutboundItemDetail'
-import LoosePicking       from '@/pages/wms/LoosePicking'
+import LoosePicking           from '@/pages/wms/LoosePicking'
+import LoosePickingDetail     from '@/pages/wms/LoosePickingDetail'
+import LoosePickingItemDetail from '@/pages/wms/LoosePickingItemDetail'
 import Locations from '@/pages/wms/Locations'
 import Vehicles from '@/pages/tms/Vehicles'
 import Deliveries from '@/pages/tms/Deliveries'
@@ -44,6 +46,8 @@ export default function App() {
         <Route path="/wms/outbound/:id" element={<OutboundDetail />} />
         <Route path="/wms/outbound/:gdoId/items/:itemId" element={<OutboundItemDetail />} />
         <Route path="/wms/loosepicking" element={<LoosePicking />} />
+        <Route path="/wms/loosepicking/:id" element={<LoosePickingDetail />} />
+        <Route path="/wms/loosepicking/:gdoId/items/:itemId" element={<LoosePickingItemDetail />} />
         <Route path="/wms/locations" element={<Locations />} />
         <Route path="/tms/vehicles" element={<Vehicles />} />
         <Route path="/tms/deliveries" element={<Deliveries />} />

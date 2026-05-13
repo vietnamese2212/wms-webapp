@@ -19,6 +19,12 @@ import type { GDO } from '@/types'
 const TODAY = new Date().toISOString().slice(0, 10)
 const EXPORT_TYPES = ['Xe Container', 'Xe Pallet', 'Xe Xá']
 
+// So sánh không phân biệt hoa thường và dấu ("xe container"→"Xe Container", "xe xa"→"Xe Xá")
+const normalizeForMatch = (s: string) =>
+  s.normalize('NFD').replace(/\p{Mn}/gu, '').toLowerCase().trim()
+const canonicalExportType = (raw: string) =>
+  EXPORT_TYPES.find(t => normalizeForMatch(t) === normalizeForMatch(raw)) ?? raw
+
 // ─── Row background by status ─────────────────────────────────
 function gdoRowBg(gdo: GDO) {
   if (gdo.status === 'COMPLETED')  return 'bg-blue-50 hover:bg-blue-100'
@@ -869,9 +875,10 @@ function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: string; d
     setDvvt(gdo.dvvt ?? '')
     // distributor_name: single-DO → from first DO; multi-DO → displayed read-only separately
     setCustomerName(gdo.delivery_orders?.[0]?.distributor_name ?? '')
-    // export_type: search all items across all DOs (not in GDO header)
+    // export_type: tìm từ items, normalize để match "xe container"→"Xe Container", "xe xa"→"Xe Xá"
     const allItemsForFill = (gdo.delivery_orders ?? []).flatMap(d => d.items ?? [])
-    setExportType(allItemsForFill.find(i => i.export_type)?.export_type ?? '')
+    const rawExportType = allItemsForFill.find(i => i.export_type)?.export_type ?? ''
+    setExportType(canonicalExportType(rawExportType))
 
     // Build items from delivery_orders (single DO for manual, all DOs for multi-DO)
     const allItems: ItemRow[] = (gdo.delivery_orders ?? []).flatMap(doRow =>

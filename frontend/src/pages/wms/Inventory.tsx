@@ -427,19 +427,19 @@ export default function Inventory() {
   // Keep selected entry in sync when list refreshes
   useEffect(() => {
     if (!selected) return
-    const refreshed = entries.find(e => e.id === selected.id)
+    const refreshed = displayEntries.find(e => e.id === selected.id)
     if (refreshed) setSelected(refreshed)
-  }, [entries]) // eslint-disable-line
+  }, [displayEntries]) // eslint-disable-line
 
   // Clear checked IDs that are no longer in the current page
   useEffect(() => {
     if (checkedIds.size === 0) return
-    const pageIds = new Set(entries.map(e => e.id))
+    const pageIds = new Set(displayEntries.map(e => e.id))
     const stale = [...checkedIds].filter(id => !pageIds.has(id))
     if (stale.length > 0) {
       setCheckedIds(prev => { const next = new Set(prev); stale.forEach(id => next.delete(id)); return next })
     }
-  }, [entries]) // eslint-disable-line
+  }, [displayEntries]) // eslint-disable-line
 
   function resetFilters() {
     setInventory({

@@ -65,7 +65,7 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
   const scannerRef = useRef<QRScannerHandle>(null)
   const [feedback,       setFeedback]       = useState<FeedbackState>(null)
   const [pendingQR,      setPendingQR]      = useState<string | null>(null)
-  const [pendingCartons, setPendingCartons] = useState(1)
+  const [pendingCartons, setPendingCartons] = useState('')
   const { mutate: scanItem, isPending } = useScanOutboundItem()
 
   const matName   = item.material?.short_name ?? item.material_code_raw ?? '—'
@@ -75,14 +75,14 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
   function handleScan(qr_code: string) {
     playBeep()
     setPendingQR(qr_code)
-    setPendingCartons(remaining > 0 ? remaining : 1)
+    setPendingCartons(String(remaining > 0 ? remaining : 1))
     setFeedback(null)
   }
 
   function handleSave() {
     if (!pendingQR || isPending) return
     scanItem(
-      { gdoId, itemId: item.id, qr_code: pendingQR, cartons_override: pendingCartons },
+      { gdoId, itemId: item.id, qr_code: pendingQR, cartons_override: Math.max(1, parseInt(pendingCartons) || 1) },
       {
         onSuccess: (data) => {
           setPendingQR(null)
@@ -170,7 +170,7 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
                   type="number"
                   min={1}
                   value={pendingCartons}
-                  onChange={e => setPendingCartons(Math.max(1, parseInt(e.target.value) || 1))}
+                  onChange={e => setPendingCartons(e.target.value)}
                   className="h-9 text-center font-semibold text-base w-24"
                 />
                 <span className="text-sm text-slate-400">/ {remaining} cần xuất</span>

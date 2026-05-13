@@ -473,17 +473,26 @@ function GDORow({ gdo, onClick, onEdit, onDelete, onAssign }: {
 
 type MatOption = { id: string; material_code: string; short_name: string | null; category: string | null }
 
-function MatPicker({ value, matName, onSelect }: {
+function MatPicker({ value, matName, onSelect, disabled }: {
   value: string
   matName: string
   onSelect: (code: string, name: string, category: string | null) => void
+  disabled?: boolean
 }) {
   const [search, setSearch] = useState(value)
   const [open, setOpen] = useState(false)
-  const { data: mats = [] } = useMaterials({ search: search.length > 1 ? search : undefined })
+  const { data: mats = [] } = useMaterials({ search: !disabled && search.length > 1 ? search : undefined })
 
-  // Sync when value changes externally (edit mode pre-fill)
   useEffect(() => { setSearch(value) }, [value])
+
+  if (disabled) {
+    return (
+      <div className="flex-1 min-w-0">
+        <span className="text-[10px] font-mono font-semibold text-slate-700">{value}</span>
+        {matName && <span className="text-[9px] text-slate-500 ml-1.5">{matName}</span>}
+      </div>
+    )
+  }
 
   return (
     <div className="relative flex-1 min-w-0">
@@ -631,8 +640,12 @@ function GDOFormBody({
             )}
           </div>
           <div className="space-y-1">
-            <label className="text-[10px] font-medium text-slate-500">ĐVVT <span className="text-red-500">*</span></label>
-            <Input className="h-8 text-xs" placeholder="Đơn vị vận tải…" value={dvvt} onChange={e => setDvvt(e.target.value)} />
+            <label className="text-[10px] font-medium text-slate-500">ĐVVT {mode === 'create' && <span className="text-red-500">*</span>}</label>
+            {mode === 'edit' ? (
+              <div className="h-8 text-xs px-2.5 flex items-center border border-slate-100 rounded-md bg-slate-50 text-slate-600">{dvvt || '—'}</div>
+            ) : (
+              <Input className="h-8 text-xs" placeholder="Đơn vị vận tải…" value={dvvt} onChange={e => setDvvt(e.target.value)} />
+            )}
           </div>
           <div className="space-y-1 col-span-2">
             <label className="text-[10px] font-medium text-slate-500">
@@ -681,17 +694,18 @@ function GDOFormBody({
                       <span className="text-[9px] bg-white/70 text-slate-500 px-1.5 py-0.5 rounded border border-slate-200">{item.category}</span>
                     )}
                   </div>
-                  {!isMultiDO && items.length > 1 && item.min_cartons === 0 && (
+                  {items.length > 1 && item.min_cartons === 0 && (
                     <button onClick={() => setItems(rows => rows.filter(r => r.id !== item.id))} className="text-slate-300 hover:text-red-400" title="Xóa dòng">
                       <Trash2 className="h-3 w-3" />
                     </button>
                   )}
                 </div>
-                {/* Row 2: material picker */}
+                {/* Row 2: material picker — readonly nếu đã xuất */}
                 <MatPicker
                   value={item.material_code}
                   matName={item.mat_name}
                   onSelect={(code, name, category) => updateItem(item.id, { material_code: code, mat_name: name, category })}
+                  disabled={item.min_cartons > 0}
                 />
                 {/* Row 3: cartons + loose picking */}
                 <div className="flex items-center gap-2">
@@ -710,15 +724,19 @@ function GDOFormBody({
                     onChange={e => updateItem(item.id, { loose_picking: parseInt(e.target.value) || 0 })}
                   />
                 </div>
-                {/* Row 4: header text */}
+                {/* Row 4: header text — readonly nếu đã xuất */}
                 <div className="flex items-center gap-1.5">
                   <label className="text-[10px] text-slate-500 shrink-0">Ghi chú</label>
-                  <Input
-                    className="h-7 text-[10px] flex-1"
-                    placeholder="Header text (hiện màu đỏ khi quét)…"
-                    value={item.header_text}
-                    onChange={e => updateItem(item.id, { header_text: e.target.value })}
-                  />
+                  {item.min_cartons > 0 ? (
+                    <span className="text-[10px] text-slate-500 italic">{item.header_text || '—'}</span>
+                  ) : (
+                    <Input
+                      className="h-7 text-[10px] flex-1"
+                      placeholder="Header text (hiện màu đỏ khi quét)…"
+                      value={item.header_text}
+                      onChange={e => updateItem(item.id, { header_text: e.target.value })}
+                    />
+                  )}
                 </div>
                 {cartonsInvalid && (
                   <p className="text-[9px] text-red-600">Tối thiểu {item.min_cartons} thùng (đã xuất)</p>
@@ -875,8 +893,6 @@ function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: string; d
   function handleSubmit() {
     const isMultiDO = (gdo?.delivery_orders?.length ?? 0) > 1
     if (!date) return setError('Chọn ngày xuất')
-    if (!dvvt.trim()) return setError('Nhập đơn vị vận tải')
-    // customer_name và export_type chỉ bắt buộc với single-DO (multi-DO thì backend skip)
     if (!isMultiDO && !customerName.trim()) return setError('Nhập tên khách hàng')
     if (!exportType) return setError('Chọn loại xuất')
     for (const item of items) {

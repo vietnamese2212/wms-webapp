@@ -309,36 +309,47 @@ export async function updateGDO(req: Request, res: Response) {
       : { data: [] }
 
     if (isMultiDO) {
-      // Multi-DO: cập nhật items bằng db_id thực (không thêm/xóa)
+      // Multi-DO: match bằng db_id, cho phép xóa item chưa xuất
       const existingById = new Map<string, any>(
         (existingItems ?? []).map((i: any) => [i.id as string, i])
       )
+      const requestedDbIds = new Set(items.filter(i => i.db_id).map(i => i.db_id as string))
 
+      // Kiểm tra: không xóa item đã xuất
+      for (const [id, ex] of existingById) {
+        if (!requestedDbIds.has(id) && Number(ex.cartons_scanned) > 0) {
+          return fail(res, `Không thể xóa mã hàng "${ex.material_code_raw}" đã xuất ${ex.cartons_scanned} thùng`, 400)
+        }
+      }
+
+      // Kiểm tra số thùng < đã xuất
       for (const item of items) {
         if (!item.db_id) continue
         const ex = existingById.get(item.db_id)
-        if (!ex) continue
-        if (item.cartons_ordered < Number(ex.cartons_scanned)) {
+        if (ex && item.cartons_ordered < Number(ex.cartons_scanned)) {
           return fail(res, `Số thùng "${ex.material_code_raw}" (${item.cartons_ordered}) nhỏ hơn đã xuất (${ex.cartons_scanned})`, 400)
         }
       }
 
-      for (const item of items) {
-        if (!item.db_id) continue
-        const ex = existingById.get(item.db_id)
-        if (!ex) continue
-        const scanned = Number(ex.cartons_scanned)
-        const newStatus = scanned >= item.cartons_ordered ? 'COMPLETED' : scanned > 0 ? 'IN_PROGRESS' : 'PENDING'
-        await (supabase.from('OutboundItem') as any)
-          .update({
-            cartons_ordered: item.cartons_ordered,
-            loose_picking: item.loose_picking ?? 0,
-            header_text: item.header_text ?? null,
-            export_type: export_type ?? null,
-            status: newStatus, updated_at: t,
-          })
-          .eq('id', item.db_id)
+      // Xóa items bị loại bỏ (chưa xuất)
+      const toDeleteIds = [...existingById.keys()].filter(id => !requestedDbIds.has(id))
+      if (toDeleteIds.length) {
+        await (supabase.from('OutboundItem') as any).delete().in('id', toDeleteIds)
       }
+
+      // Cập nhật song song
+      await Promise.all(
+        items
+          .filter(item => item.db_id && existingById.has(item.db_id))
+          .map(item => {
+            const ex = existingById.get(item.db_id!)!
+            const scanned = Number(ex.cartons_scanned)
+            const newStatus = scanned >= item.cartons_ordered ? 'COMPLETED' : scanned > 0 ? 'IN_PROGRESS' : 'PENDING'
+            return (supabase.from('OutboundItem') as any)
+              .update({ cartons_ordered: item.cartons_ordered, loose_picking: item.loose_picking ?? 0, header_text: item.header_text ?? null, export_type: export_type ?? null, status: newStatus, updated_at: t })
+              .eq('id', item.db_id!)
+          })
+      )
     } else {
       // Single-DO: CRUD đầy đủ, match bằng material_code
       const doId = doList[0]?.id
@@ -381,37 +392,26 @@ export async function updateGDO(req: Request, res: Response) {
         matMap = new Map((mats ?? []).map((m: any) => [m.material_code as string, { id: m.id, category: m.category }]))
       }
 
+      // Phân loại update / insert, thực thi song song
+      const toUpdate: { id: string; fields: Record<string, unknown> }[] = []
+      const toInsert: Record<string, unknown>[] = []
       for (const item of items) {
         const ex = existingByCode.get(item.material_code)
         if (ex) {
           const scanned = Number(ex.cartons_scanned)
           const newStatus = scanned >= item.cartons_ordered ? 'COMPLETED' : scanned > 0 ? 'IN_PROGRESS' : 'PENDING'
-          await (supabase.from('OutboundItem') as any)
-            .update({
-              cartons_ordered: item.cartons_ordered,
-              loose_picking: item.loose_picking ?? 0,
-              header_text: item.header_text ?? null,
-              export_type: export_type ?? null,
-              status: newStatus, updated_at: t,
-            })
-            .eq('id', ex.id)
+          toUpdate.push({ id: ex.id, fields: { cartons_ordered: item.cartons_ordered, loose_picking: item.loose_picking ?? 0, header_text: item.header_text ?? null, export_type: export_type ?? null, status: newStatus, updated_at: t } })
         } else {
           const matInfo = matMap.get(item.material_code)
           const material_type = matInfo?.category ?? null
           const isSpecial = material_type === 'POSM' || material_type === 'Pallet Loscam'
-          await (supabase.from('OutboundItem') as any).insert({
-            id: randomUUID(), do_id: doId,
-            material_id: matInfo?.id ?? null,
-            material_code_raw: item.material_code,
-            cartons_ordered: item.cartons_ordered,
-            boxes_display: 0, weight: null, pallets_estimated: 0,
-            loose_picking: item.loose_picking ?? 0,
-            header_text: item.header_text ?? null,
-            material_type, export_type: export_type ?? null, cartons_scanned: 0,
-            status: isSpecial ? 'COMPLETED' : 'PENDING', updated_at: t,
-          })
+          toInsert.push({ id: randomUUID(), do_id: doId, material_id: matInfo?.id ?? null, material_code_raw: item.material_code, cartons_ordered: item.cartons_ordered, boxes_display: 0, weight: null, pallets_estimated: 0, loose_picking: item.loose_picking ?? 0, header_text: item.header_text ?? null, material_type, export_type: export_type ?? null, cartons_scanned: 0, status: isSpecial ? 'COMPLETED' : 'PENDING', updated_at: t })
         }
       }
+      await Promise.all([
+        ...toUpdate.map(({ id, fields }) => (supabase.from('OutboundItem') as any).update(fields).eq('id', id)),
+        ...(toInsert.length ? [(supabase.from('OutboundItem') as any).insert(toInsert)] : []),
+      ])
     }
 
     return ok(res, await fetchGDOFull(req.params.id))

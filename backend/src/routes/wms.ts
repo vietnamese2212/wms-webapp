@@ -3,6 +3,7 @@ import multer from 'multer'
 import * as inbound from '../controllers/wms/inboundController'
 import * as outbound from '../controllers/wms/outboundController'
 import * as inventory from '../controllers/wms/inventoryController'
+import * as lookup from '../controllers/wms/lookupController'
 import { inboundEmitter } from '../lib/events'
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } })
@@ -27,6 +28,10 @@ router.get('/events', (req, res) => {
     inboundEmitter.off('changed', send)
   })
 })
+
+// Lookup values (loại xuất, v.v.)
+router.get('/lookup',  lookup.listLookup)
+router.post('/lookup', lookup.addLookup)
 
 // Inbound orders (phiếu nhập kho)
 router.get('/inbound-orders',                           inbound.listOrders)

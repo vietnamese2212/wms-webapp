@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Input }  from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { useGDOs, useUploadGDOExcel, useWarehouses, useCreateGDO, useUpdateGDO, useDeleteGDO, useMaterials, useGDO, useAssignGDO } from '@/api/hooks'
+import { useGDOs, useUploadGDOExcel, useWarehouses, useCreateGDO, useUpdateGDO, useDeleteGDO, useMaterials, useGDO, useAssignGDO, useLookup, useAddLookup } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
@@ -17,13 +17,11 @@ import { formatTimestampTime } from '@/utils/formatters'
 import type { GDO } from '@/types'
 
 const TODAY = new Date().toISOString().slice(0, 10)
-const EXPORT_TYPES = ['Xe Container', 'Xe Pallet', 'Xe Xá']
-
 // So sánh không phân biệt hoa thường và dấu ("xe container"→"Xe Container", "xe xa"→"Xe Xá")
 const normalizeForMatch = (s: string) =>
   s.normalize('NFD').replace(/\p{Mn}/gu, '').toLowerCase().trim()
-const canonicalExportType = (raw: string) =>
-  EXPORT_TYPES.find(t => normalizeForMatch(t) === normalizeForMatch(raw)) ?? raw
+const canonicalExportType = (raw: string, types: string[]) =>
+  types.find(t => normalizeForMatch(t) === normalizeForMatch(raw)) ?? raw
 
 // ─── Row background by status ─────────────────────────────────
 function gdoRowBg(gdo: GDO) {
@@ -584,6 +582,10 @@ function GDOFormBody({
   onClose: () => void
 }) {
   const { data: warehouses = [] } = useWarehouses(true)
+  const { data: exportTypes = [] } = useLookup('export_type')
+  const { mutate: addLookup } = useAddLookup()
+  const [addingType, setAddingType] = useState(false)
+  const [newTypeName, setNewTypeName] = useState('')
   const isMultiDO = (gdo?.delivery_orders?.length ?? 0) > 1
 
   const TODAY_STR = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -657,15 +659,43 @@ function GDOFormBody({
             <label className="text-[10px] font-medium text-slate-500">
               Loại xuất <span className="text-red-500">*</span>
             </label>
-            <div className="flex gap-2">
-              {EXPORT_TYPES.map(t => (
+            <div className="flex flex-wrap gap-2">
+              {exportTypes.map(t => (
                 <button key={t} type="button" onClick={() => setExportType(t)}
-                  className={`flex-1 h-8 text-xs rounded-md border font-medium transition-colors ${
+                  className={`h-8 px-3 text-xs rounded-md border font-medium transition-colors ${
                     exportType === t ? 'bg-blue-600 border-blue-600 text-white' : 'border-slate-200 text-slate-600 hover:border-blue-300 hover:text-blue-600'
                   }`}>
                   {t}
                 </button>
               ))}
+              {addingType ? (
+                <div className="flex gap-1">
+                  <Input
+                    autoFocus
+                    className="h-8 w-32 text-xs"
+                    placeholder="Tên loại xuất…"
+                    value={newTypeName}
+                    onChange={e => setNewTypeName(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        if (!newTypeName.trim()) return
+                        addLookup({ type: 'export_type', value: newTypeName.trim() }, {
+                          onSuccess: () => { setExportType(newTypeName.trim()); setNewTypeName(''); setAddingType(false) },
+                        })
+                      }
+                      if (e.key === 'Escape') { setNewTypeName(''); setAddingType(false) }
+                    }}
+                  />
+                  <button type="button" onClick={() => { setNewTypeName(''); setAddingType(false) }}
+                    className="h-8 px-2 text-xs border border-slate-200 rounded-md text-slate-400 hover:text-slate-600">✕</button>
+                </div>
+              ) : (
+                <button type="button" onClick={() => setAddingType(true)}
+                  className="h-8 px-2 text-xs border border-dashed border-slate-300 rounded-md text-slate-400 hover:border-blue-400 hover:text-blue-500">
+                  + Thêm
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -854,6 +884,7 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
 
 function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: string; defaultWarehouseId: string; onClose: () => void }) {
   const { data: gdo, isLoading } = useGDO(gdoId)
+  const { data: exportTypes = [] } = useLookup('export_type')
 
   const [date, setDate]               = useState('')
   const [warehouseId, setWarehouseId] = useState(defaultWarehouseId)
@@ -866,9 +897,9 @@ function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: string; d
 
   const { mutate: updateGDO, isPending } = useUpdateGDO()
 
-  // Pre-fill once GDO loads
+  // Pre-fill once GDO loads (wait for exportTypes to normalize correctly)
   useEffect(() => {
-    if (!gdo || initialized) return
+    if (!gdo || initialized || exportTypes.length === 0) return
     setInitialized(true)
     setDate(gdo.delivery_date)
     setWarehouseId(gdo.warehouse_id ?? '')
@@ -878,7 +909,7 @@ function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: string; d
     // export_type: tìm từ items, normalize để match "xe container"→"Xe Container", "xe xa"→"Xe Xá"
     const allItemsForFill = (gdo.delivery_orders ?? []).flatMap(d => d.items ?? [])
     const rawExportType = allItemsForFill.find(i => i.export_type)?.export_type ?? ''
-    setExportType(canonicalExportType(rawExportType))
+    setExportType(canonicalExportType(rawExportType, exportTypes))
 
     // Build items from delivery_orders (single DO for manual, all DOs for multi-DO)
     const allItems: ItemRow[] = (gdo.delivery_orders ?? []).flatMap(doRow =>

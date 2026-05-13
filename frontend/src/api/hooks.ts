@@ -669,6 +669,27 @@ type GDOFormPayload = {
   items?: Array<{ db_id?: string; material_code: string; cartons_ordered: number; loose_picking?: number; header_text?: string }>
 }
 
+export function useLookup(type: string) {
+  return useQuery({
+    queryKey: ['lookup', type],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/lookup', { params: { type } })
+      return (data.data as { id: string; value: string; sort_order: number }[]).map(r => r.value)
+    },
+  })
+}
+
+export function useAddLookup() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ type, value }: { type: string; value: string }) => {
+      const { data } = await apiClient.post('/wms/lookup', { type, value })
+      return data.data
+    },
+    onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ['lookup', vars.type] }),
+  })
+}
+
 export function useCreateGDO() {
   const qc = useQueryClient()
   return useMutation({

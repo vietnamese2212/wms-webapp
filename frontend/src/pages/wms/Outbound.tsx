@@ -525,6 +525,7 @@ function MatPicker({ value, matName, onSelect }: {
 
 type ItemRow = {
   id: string
+  db_id?: string       // actual OutboundItem.id in DB (for existing items)
   material_code: string
   mat_name: string
   category: string | null
@@ -635,31 +636,18 @@ function GDOFormBody({
           </div>
           <div className="space-y-1 col-span-2">
             <label className="text-[10px] font-medium text-slate-500">
-              Loại xuất {(!isMultiDO || mode === 'create') && <span className="text-red-500">*</span>}
+              Loại xuất <span className="text-red-500">*</span>
             </label>
-            {isMultiDO && mode === 'edit' ? (
-              <div className="flex gap-2 items-center">
-                {EXPORT_TYPES.map(t => (
-                  <div key={t} className={`flex-1 h-8 text-xs rounded-md border font-medium flex items-center justify-center ${
-                    exportType === t ? 'bg-blue-100 border-blue-300 text-blue-700' : 'border-slate-100 text-slate-200 bg-slate-50 text-slate-300'
-                  }`}>{t}</div>
-                ))}
-                {exportType && !EXPORT_TYPES.includes(exportType) && (
-                  <span className="text-[10px] text-slate-600 bg-slate-100 px-2 py-1 rounded shrink-0">{exportType}</span>
-                )}
-              </div>
-            ) : (
-              <div className="flex gap-2">
-                {EXPORT_TYPES.map(t => (
-                  <button key={t} type="button" onClick={() => setExportType(t)}
-                    className={`flex-1 h-8 text-xs rounded-md border font-medium transition-colors ${
-                      exportType === t ? 'bg-blue-600 border-blue-600 text-white' : 'border-slate-200 text-slate-600 hover:border-blue-300 hover:text-blue-600'
-                    }`}>
-                    {t}
-                  </button>
-                ))}
-              </div>
-            )}
+            <div className="flex gap-2">
+              {EXPORT_TYPES.map(t => (
+                <button key={t} type="button" onClick={() => setExportType(t)}
+                  className={`flex-1 h-8 text-xs rounded-md border font-medium transition-colors ${
+                    exportType === t ? 'bg-blue-600 border-blue-600 text-white' : 'border-slate-200 text-slate-600 hover:border-blue-300 hover:text-blue-600'
+                  }`}>
+                  {t}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -669,13 +657,7 @@ function GDOFormBody({
         <div className="space-y-2">
           <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Danh sách hàng</p>
 
-          {isMultiDO && mode === 'edit' && (
-            <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-[11px] text-amber-700">
-              Đơn này có nhiều OD — chỉ cập nhật thông tin chung. Sửa chi tiết hàng hóa qua Upload Excel.
-            </div>
-          )}
-
-          {!isMultiDO && items.map((item, idx) => {
+          {items.map((item, idx) => {
             const fullScanned = item.min_cartons > 0 && item.min_cartons >= item.cartons
             const partScanned = item.min_cartons > 0 && item.min_cartons < item.cartons
             const cartonsInvalid = item.cartons > 0 && item.cartons < item.min_cartons
@@ -699,7 +681,7 @@ function GDOFormBody({
                       <span className="text-[9px] bg-white/70 text-slate-500 px-1.5 py-0.5 rounded border border-slate-200">{item.category}</span>
                     )}
                   </div>
-                  {items.length > 1 && item.min_cartons === 0 && (
+                  {!isMultiDO && items.length > 1 && item.min_cartons === 0 && (
                     <button onClick={() => setItems(rows => rows.filter(r => r.id !== item.id))} className="text-slate-300 hover:text-red-400" title="Xóa dòng">
                       <Trash2 className="h-3 w-3" />
                     </button>
@@ -873,10 +855,11 @@ function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: string; d
     const allItemsForFill = (gdo.delivery_orders ?? []).flatMap(d => d.items ?? [])
     setExportType(allItemsForFill.find(i => i.export_type)?.export_type ?? '')
 
-    // Build items from delivery_orders (single DO for manual)
+    // Build items from delivery_orders (single DO for manual, all DOs for multi-DO)
     const allItems: ItemRow[] = (gdo.delivery_orders ?? []).flatMap(doRow =>
       (doRow.items ?? []).map((item: any) => ({
         id: uid(),
+        db_id: item.id,
         material_code: item.material_code_raw ?? '',
         mat_name: item.material?.short_name ?? '',
         category: item.material_type ?? null,
@@ -895,13 +878,11 @@ function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: string; d
     if (!dvvt.trim()) return setError('Nhập đơn vị vận tải')
     // customer_name và export_type chỉ bắt buộc với single-DO (multi-DO thì backend skip)
     if (!isMultiDO && !customerName.trim()) return setError('Nhập tên khách hàng')
-    if (!isMultiDO && !exportType) return setError('Chọn loại xuất')
-    if (!isMultiDO) {
-      for (const item of items) {
-        if (!item.material_code.trim()) return setError('Chọn mã hàng cho tất cả dòng')
-        if (!item.cartons || item.cartons <= 0) return setError('Số thùng phải > 0')
-        if (item.cartons < item.min_cartons) return setError(`Số thùng không được nhỏ hơn đã xuất (${item.min_cartons})`)
-      }
+    if (!exportType) return setError('Chọn loại xuất')
+    for (const item of items) {
+      if (!item.material_code.trim()) return setError('Chọn mã hàng cho tất cả dòng')
+      if (!item.cartons || item.cartons <= 0) return setError('Số thùng phải > 0')
+      if (item.cartons < item.min_cartons) return setError(`Số thùng không được nhỏ hơn đã xuất (${item.min_cartons})`)
     }
     setError('')
     updateGDO(
@@ -912,7 +893,7 @@ function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: string; d
         dvvt: dvvt.trim(),
         customer_name: customerName.trim(),
         export_type: exportType,
-        items: isMultiDO ? undefined as any : items.map(i => ({ material_code: i.material_code, cartons_ordered: i.cartons, loose_picking: i.loose_picking, header_text: i.header_text || undefined })),
+        items: items.map(i => ({ db_id: i.db_id, material_code: i.material_code, cartons_ordered: i.cartons, loose_picking: i.loose_picking, header_text: i.header_text || undefined })),
       },
       {
         onSuccess: () => onClose(),

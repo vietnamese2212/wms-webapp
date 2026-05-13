@@ -666,7 +666,7 @@ type GDOFormPayload = {
   dvvt: string
   customer_name: string
   export_type: string
-  items: Array<{ material_code: string; cartons_ordered: number }>
+  items?: Array<{ db_id?: string; material_code: string; cartons_ordered: number; loose_picking?: number; header_text?: string }>
 }
 
 export function useCreateGDO() {

@@ -274,7 +274,7 @@ export async function updateGDO(req: Request, res: Response) {
     const { delivery_date, warehouse_id, dvvt, customer_name, export_type, items } = req.body as {
       delivery_date?: string; warehouse_id?: string; dvvt?: string
       customer_name?: string; export_type?: string
-      items?: Array<{ material_code: string; cartons_ordered: number; loose_picking?: number; header_text?: string }>
+      items?: Array<{ db_id?: string; material_code: string; cartons_ordered: number; loose_picking?: number; header_text?: string }>
     }
 
     const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
@@ -291,61 +291,42 @@ export async function updateGDO(req: Request, res: Response) {
     const { data: dos } = await (supabase.from('OutboundDelivery') as any)
       .select('id').eq('gdo_id', req.params.id)
     const doList = dos ?? []
+    const isMultiDO = doList.length > 1
 
-    if (doList.length !== 1) {
-      // Multi-DO (Excel): chỉ cập nhật header, không đụng items
-      return ok(res, await fetchGDOFull(req.params.id))
+    // Update customer_name chỉ cho single-DO (multi-DO có distributor_name riêng mỗi OD)
+    if (!isMultiDO && doList.length === 1) {
+      await (supabase.from('OutboundDelivery') as any)
+        .update({ distributor_name: customer_name ?? null, updated_at: t }).eq('id', doList[0].id)
     }
-
-    const doId = doList[0].id
-    await (supabase.from('OutboundDelivery') as any)
-      .update({ distributor_name: customer_name ?? null, updated_at: t }).eq('id', doId)
 
     if (!items) return ok(res, await fetchGDOFull(req.params.id))
 
-    const { data: existingItems } = await (supabase.from('OutboundItem') as any)
-      .select('id, material_code_raw, cartons_ordered, cartons_scanned').eq('do_id', doId)
+    // Lấy tất cả items của GDO (across all DOs)
+    const doIds = doList.map((d: any) => d.id as string)
+    const { data: existingItems } = doIds.length
+      ? await (supabase.from('OutboundItem') as any)
+          .select('id, do_id, material_code_raw, cartons_ordered, cartons_scanned').in('do_id', doIds)
+      : { data: [] }
 
-    const existingByCode = new Map<string, any>(
-      (existingItems ?? []).map((i: any) => [i.material_code_raw as string, i])
-    )
-    const newCodes = new Set(items.map(i => i.material_code))
+    if (isMultiDO) {
+      // Multi-DO: cập nhật items bằng db_id thực (không thêm/xóa)
+      const existingById = new Map<string, any>(
+        (existingItems ?? []).map((i: any) => [i.id as string, i])
+      )
 
-    // Kiểm tra xóa item có scan
-    for (const [code, ex] of existingByCode) {
-      if (!newCodes.has(code) && Number(ex.cartons_scanned) > 0) {
-        return fail(res, `Không thể xóa mã hàng "${code}" đã xuất ${ex.cartons_scanned} thùng`, 400)
+      for (const item of items) {
+        if (!item.db_id) continue
+        const ex = existingById.get(item.db_id)
+        if (!ex) continue
+        if (item.cartons_ordered < Number(ex.cartons_scanned)) {
+          return fail(res, `Số thùng "${ex.material_code_raw}" (${item.cartons_ordered}) nhỏ hơn đã xuất (${ex.cartons_scanned})`, 400)
+        }
       }
-    }
 
-    // Kiểm tra số thùng < đã xuất
-    for (const item of items) {
-      const ex = existingByCode.get(item.material_code)
-      if (ex && item.cartons_ordered < Number(ex.cartons_scanned)) {
-        return fail(res, `Số thùng "${item.material_code}" (${item.cartons_ordered}) nhỏ hơn đã xuất (${ex.cartons_scanned})`, 400)
-      }
-    }
-
-    // Xóa items bị loại bỏ
-    const toDeleteIds = (existingItems ?? [])
-      .filter((i: any) => !newCodes.has(i.material_code_raw as string))
-      .map((i: any) => i.id as string)
-    if (toDeleteIds.length) {
-      await (supabase.from('OutboundItem') as any).delete().in('id', toDeleteIds)
-    }
-
-    // Load material cho items mới
-    const newCodes2 = items.filter(i => !existingByCode.has(i.material_code)).map(i => i.material_code)
-    let matMap = new Map<string, { id: string; category: string | null }>()
-    if (newCodes2.length) {
-      const { data: mats } = await (supabase.from('Material') as any)
-        .select('id, material_code, category').in('material_code', newCodes2)
-      matMap = new Map((mats ?? []).map((m: any) => [m.material_code as string, { id: m.id, category: m.category }]))
-    }
-
-    for (const item of items) {
-      const ex = existingByCode.get(item.material_code)
-      if (ex) {
+      for (const item of items) {
+        if (!item.db_id) continue
+        const ex = existingById.get(item.db_id)
+        if (!ex) continue
         const scanned = Number(ex.cartons_scanned)
         const newStatus = scanned >= item.cartons_ordered ? 'COMPLETED' : scanned > 0 ? 'IN_PROGRESS' : 'PENDING'
         await (supabase.from('OutboundItem') as any)
@@ -356,22 +337,80 @@ export async function updateGDO(req: Request, res: Response) {
             export_type: export_type ?? null,
             status: newStatus, updated_at: t,
           })
-          .eq('id', ex.id)
-      } else {
-        const matInfo = matMap.get(item.material_code)
-        const material_type = matInfo?.category ?? null
-        const isSpecial = material_type === 'POSM' || material_type === 'Pallet Loscam'
-        await (supabase.from('OutboundItem') as any).insert({
-          id: randomUUID(), do_id: doId,
-          material_id: matInfo?.id ?? null,
-          material_code_raw: item.material_code,
-          cartons_ordered: item.cartons_ordered,
-          boxes_display: 0, weight: null, pallets_estimated: 0,
-          loose_picking: item.loose_picking ?? 0,
-          header_text: item.header_text ?? null,
-          material_type, export_type: export_type ?? null, cartons_scanned: 0,
-          status: isSpecial ? 'COMPLETED' : 'PENDING', updated_at: t,
-        })
+          .eq('id', item.db_id)
+      }
+    } else {
+      // Single-DO: CRUD đầy đủ, match bằng material_code
+      const doId = doList[0]?.id
+      if (!doId) return ok(res, await fetchGDOFull(req.params.id))
+
+      const existingByCode = new Map<string, any>(
+        (existingItems ?? []).map((i: any) => [i.material_code_raw as string, i])
+      )
+      const newCodes = new Set(items.map(i => i.material_code))
+
+      // Kiểm tra xóa item có scan
+      for (const [code, ex] of existingByCode) {
+        if (!newCodes.has(code) && Number(ex.cartons_scanned) > 0) {
+          return fail(res, `Không thể xóa mã hàng "${code}" đã xuất ${ex.cartons_scanned} thùng`, 400)
+        }
+      }
+
+      // Kiểm tra số thùng < đã xuất
+      for (const item of items) {
+        const ex = existingByCode.get(item.material_code)
+        if (ex && item.cartons_ordered < Number(ex.cartons_scanned)) {
+          return fail(res, `Số thùng "${item.material_code}" (${item.cartons_ordered}) nhỏ hơn đã xuất (${ex.cartons_scanned})`, 400)
+        }
+      }
+
+      // Xóa items bị loại bỏ
+      const toDeleteIds = (existingItems ?? [])
+        .filter((i: any) => !newCodes.has(i.material_code_raw as string))
+        .map((i: any) => i.id as string)
+      if (toDeleteIds.length) {
+        await (supabase.from('OutboundItem') as any).delete().in('id', toDeleteIds)
+      }
+
+      // Load material cho items mới
+      const newCodes2 = items.filter(i => !existingByCode.has(i.material_code)).map(i => i.material_code)
+      let matMap = new Map<string, { id: string; category: string | null }>()
+      if (newCodes2.length) {
+        const { data: mats } = await (supabase.from('Material') as any)
+          .select('id, material_code, category').in('material_code', newCodes2)
+        matMap = new Map((mats ?? []).map((m: any) => [m.material_code as string, { id: m.id, category: m.category }]))
+      }
+
+      for (const item of items) {
+        const ex = existingByCode.get(item.material_code)
+        if (ex) {
+          const scanned = Number(ex.cartons_scanned)
+          const newStatus = scanned >= item.cartons_ordered ? 'COMPLETED' : scanned > 0 ? 'IN_PROGRESS' : 'PENDING'
+          await (supabase.from('OutboundItem') as any)
+            .update({
+              cartons_ordered: item.cartons_ordered,
+              loose_picking: item.loose_picking ?? 0,
+              header_text: item.header_text ?? null,
+              export_type: export_type ?? null,
+              status: newStatus, updated_at: t,
+            })
+            .eq('id', ex.id)
+        } else {
+          const matInfo = matMap.get(item.material_code)
+          const material_type = matInfo?.category ?? null
+          const isSpecial = material_type === 'POSM' || material_type === 'Pallet Loscam'
+          await (supabase.from('OutboundItem') as any).insert({
+            id: randomUUID(), do_id: doId,
+            material_id: matInfo?.id ?? null,
+            material_code_raw: item.material_code,
+            cartons_ordered: item.cartons_ordered,
+            boxes_display: 0, weight: null, pallets_estimated: 0,
+            loose_picking: item.loose_picking ?? 0,
+            header_text: item.header_text ?? null,
+            material_type, export_type: export_type ?? null, cartons_scanned: 0,
+            status: isSpecial ? 'COMPLETED' : 'PENDING', updated_at: t,
+          })
+        }
       }
     }
 

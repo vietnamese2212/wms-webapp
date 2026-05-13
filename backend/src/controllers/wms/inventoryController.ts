@@ -61,9 +61,10 @@ function calcPct(prodDate: string, shelfDays: number, now: number): number {
 }
 
 function matchDatePct(pct: number, range: string): boolean {
-  if (range === '80') return pct > 80
-  if (range === '60') return pct > 60 && pct <= 80
-  if (range === '30') return pct > 30 && pct <= 60
+  if (range === '80')   return pct > 80
+  if (range === '60')   return pct > 60 && pct <= 80
+  if (range === '30')   return pct > 30 && pct <= 60
+  if (range === 'le30') return pct <= 30
   return false
 }
 

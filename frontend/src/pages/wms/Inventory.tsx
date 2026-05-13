@@ -59,9 +59,10 @@ const STATUS_CLS: Record<string, string> = {
 
 const LIMIT = 50
 const DATE_PCT_OPTIONS = [
-  { value: '80', label: '> 80%' },
-  { value: '60', label: '60–80%' },
-  { value: '30', label: '30–60%' },
+  { value: '80',   label: '> 80%'  },
+  { value: '60',   label: '60–80%' },
+  { value: '30',   label: '30–60%' },
+  { value: 'le30', label: '≤ 30%'  },
 ]
 
 

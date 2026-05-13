@@ -568,7 +568,7 @@ function GDOFormBody({
   onClose: () => void
 }) {
   const { data: warehouses = [] } = useWarehouses(true)
-  const isMultiDO = (gdo?.do_count ?? 0) > 1
+  const isMultiDO = (gdo?.delivery_orders?.length ?? 0) > 1
 
   const TODAY_STR = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   const [yr, mo, dy] = TODAY_STR.split('-')
@@ -890,7 +890,7 @@ function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: string; d
   }, [gdo, initialized])
 
   function handleSubmit() {
-    const isMultiDO = (gdo?.do_count ?? 0) > 1
+    const isMultiDO = (gdo?.delivery_orders?.length ?? 0) > 1
     if (!date) return setError('Chọn ngày xuất')
     if (!dvvt.trim()) return setError('Nhập đơn vị vận tải')
     // customer_name và export_type chỉ bắt buộc với single-DO (multi-DO thì backend skip)

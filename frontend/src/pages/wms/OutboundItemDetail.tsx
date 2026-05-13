@@ -116,6 +116,13 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
             </p>
           </div>
 
+          {/* Header text note — đỏ, wrap */}
+          {item.header_text && (
+            <p className="text-sm font-semibold text-red-600 leading-snug break-words border border-red-200 bg-red-50 rounded px-2 py-1.5">
+              {item.header_text}
+            </p>
+          )}
+
           {/* Camera with floating action buttons */}
           <div className="relative">
             <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} />
@@ -352,6 +359,14 @@ export default function OutboundItemDetail() {
               )}
               {item.loose_picking > 0 && (
                 <span className="ml-1">· nhặt lẻ <span className="font-medium text-slate-700">{item.loose_picking}</span></span>
+              )}
+              {!isDone && !isPOSM && !isLoscam && canScan && (
+                <button
+                  onClick={openScan}
+                  className="ml-1.5 flex items-center gap-0.5 text-[10px] font-medium text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 rounded px-1.5 py-0.5 transition-colors"
+                >
+                  <QrCode className="h-2.5 w-2.5" /> Quét pallet
+                </button>
               )}
             </span>
             {item.pallets_estimated > 0 && (

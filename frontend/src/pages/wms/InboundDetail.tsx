@@ -427,7 +427,18 @@ export default function InboundDetail() {
             <span className="flex items-center gap-1">
               <MapPin className="h-3 w-3 text-slate-400 shrink-0" />
               {order.location ? (
-                <span className="font-mono font-medium">{order.location.location_code}</span>
+                <>
+                  <span className="font-mono font-medium">{order.location.location_code}</span>
+                  {isOpen && (
+                    <button
+                      onClick={() => { unlockAudio(); setShowScan(true) }}
+                      className="ml-1 flex items-center gap-0.5 text-[10px] font-medium text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 rounded px-1.5 py-0.5 transition-colors"
+                      title="Thêm pallet"
+                    >
+                      <Plus className="h-2.5 w-2.5" /> Thêm pallet
+                    </button>
+                  )}
+                </>
               ) : isOpen ? (
                 <span className="text-amber-600 flex items-center gap-1">
                   <AlertTriangle className="h-3 w-3" />

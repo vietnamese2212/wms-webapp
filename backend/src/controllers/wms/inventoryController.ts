@@ -128,11 +128,13 @@ export async function listInventory(req: Request, res: Response) {
     manufacturer_id, filterCycles, filterMachines, import_date_from, import_date_to,
   }
 
-  // Pre-filter by %date: fetch all IDs+dates with same filters, compute pct in JS
+  // Pre-filter by %date: fetch ALL IDs (no pagination) with same filters, compute pct in JS
   let datePctIds: string[] | null = null
   if (datePctRanges.length > 0) {
     const { data: preEntries } = await applyInventoryFilters(
-      (supabase.from('InventoryEntry') as any).select('id, production_date, material:Material(shelf_life_days)'),
+      (supabase.from('InventoryEntry') as any)
+        .select('id, production_date, material:Material(shelf_life_days)')
+        .limit(100_000),
       filterParams
     )
     const now = Date.now()
@@ -149,13 +151,16 @@ export async function listInventory(req: Request, res: Response) {
       return ok(res, { entries: [], total: 0, page: pageNum, limit: limitNum, total_cartons_remaining: 0 })
   }
 
-  // Main paginated query
+  // Main paginated query — sort by import_date desc + id asc để đảm bảo thứ tự ổn định giữa các trang
   let mainQ = applyInventoryFilters(
     (supabase.from('InventoryEntry') as any).select(ENTRY_SELECT, { count: 'exact' }),
     filterParams
   )
   if (datePctIds !== null) mainQ = mainQ.in('id', datePctIds)
-  mainQ = mainQ.order('import_date', { ascending: false, nullsFirst: false }).range(offset, offset + limitNum - 1)
+  mainQ = mainQ
+    .order('import_date', { ascending: false, nullsFirst: false })
+    .order('id', { ascending: true })
+    .range(offset, offset + limitNum - 1)
 
   // Aggregate query (no pagination — sum cartons_remaining across all matching entries)
   let aggQ = applyInventoryFilters(

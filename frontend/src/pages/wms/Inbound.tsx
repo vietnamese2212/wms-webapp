@@ -30,6 +30,7 @@ interface LocationWithCapacity {
   location_code: string
   sub_code: string
   sub_type: string | null
+  category: string | null
   max_pallets: number
   used_slots: number
 }
@@ -90,10 +91,16 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
   )
 
   const allLocs     = locations as LocationWithCapacity[]
-  // Chỉ hiện loại kho nào thực sự có vị trí trong kho đã chọn
-  const availSubTypes = new Set(allLocs.map(l => l.sub_type).filter(Boolean))
-  const loaiKhoOpts   = LOAI_KHO_CONFIG.filter(c => availSubTypes.has(c.sub_type))
-  const filteredLocs  = subType ? allLocs.filter(l => l.sub_type === subType) : allLocs
+  // Chỉ hiện loại kho nào thực sự có vị trí — khớp theo sub_type (cũ) hoặc category (mới)
+  const availSubTypes   = new Set(allLocs.map(l => l.sub_type).filter(Boolean))
+  const availCategories = new Set(allLocs.map(l => l.category).filter(Boolean))
+  const loaiKhoOpts     = LOAI_KHO_CONFIG.filter(c =>
+    availSubTypes.has(c.sub_type) || availCategories.has(c.mat_category)
+  )
+  const selectedConfig = LOAI_KHO_CONFIG.find(c => c.sub_type === subType)
+  const filteredLocs   = subType && selectedConfig
+    ? allLocs.filter(l => l.sub_type === subType || l.category === selectedConfig.mat_category)
+    : allLocs
 
   const matCategory = LOAI_KHO_CONFIG.find(c => c.sub_type === subType)?.mat_category
   const { data: materials = [] } = useMaterials({ search: matSearch || undefined, category: matCategory })

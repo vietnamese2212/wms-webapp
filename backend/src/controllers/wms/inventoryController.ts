@@ -377,3 +377,14 @@ export async function bulkTransferMaterial(req: Request, res: Response) {
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
   return ok(res, { updated: ids.length, material_code: mat.material_code })
 }
+
+export async function getInventoryEntry(req: Request, res: Response) {
+  const { id } = req.params
+  const { data, error } = await (supabase.from('InventoryEntry') as any)
+    .select(ENTRY_SELECT)
+    .eq('id', id)
+    .maybeSingle()
+  if (error) return fail(res, error.message)
+  if (!data)  return fail(res, 'Không tìm thấy pallet', 404)
+  return ok(res, data)
+}

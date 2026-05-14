@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Fragment } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
@@ -6,7 +6,7 @@ import { vi } from 'date-fns/locale'
 import { formatDateTime } from '@/utils/formatters'
 import {
   ArrowLeft, CheckCircle2,
-  Truck, Package, ClipboardList, Play, Pause, ChevronRight, Bookmark, X, RotateCcw, Pencil, QrCode, Search,
+  Truck, Package, ClipboardList, Play, Pause, ChevronRight, ChevronDown, Bookmark, X, RotateCcw, Pencil, QrCode, Search,
 } from 'lucide-react'
 import { Button }  from '@/components/ui/button'
 import { Input }   from '@/components/ui/input'
@@ -20,6 +20,7 @@ import {
   useUnassignGDO, useUnstartGDO, useUncompleteGDO, useUpdateTransport,
   useItemInventory, type ItemInventoryEntry,
 } from '@/api/hooks'
+import { PalletDetailDialog } from '@/components/shared/PalletDetailDialog'
 import { useAuthStore } from '@/stores/authStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 import type { OutboundItem, OutboundDelivery, OutboundStatus, GDO } from '@/types'
@@ -343,93 +344,126 @@ function InventoryModal({ gdoId, itemId, matCode, matName, onClose }: {
   gdoId: string; itemId: string; matCode: string; matName: string; onClose: () => void
 }) {
   const { data: inventoryData = [], isLoading } = useItemInventory(gdoId, itemId)
+  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set())
+  const [detailId, setDetailId] = useState<string | null>(null)
+
   const sorted = [...inventoryData].sort((a: ItemInventoryEntry, b: ItemInventoryEntry) => {
     if (a.pct_date === null && b.pct_date === null) return 0
     if (a.pct_date === null) return 1
     if (b.pct_date === null) return -1
     return a.pct_date - b.pct_date
   })
-  const fmtProd = (d: string | null) => {
-    if (!d) return '—'
-    const s = d.slice(0, 10)
-    if (!/^\d{4}-\d{2}-\d{2}/.test(s)) return s
-    return `${s.slice(8, 10)}-${s.slice(5, 7)}-${s.slice(2, 4)}`
+
+  type AggRow = { key: string; pct_date: number | null; location_code: string | null; is_qa: boolean; cartons: number; entries: ItemInventoryEntry[] }
+  const aggRows: AggRow[] = (() => {
+    const map = new Map<string, AggRow>()
+    for (const e of sorted) {
+      const q = !!e.qa_status
+      const k = `${e.pct_date ?? 'n'}|${e.location_code ?? ''}|${q}`
+      const r = map.get(k)
+      if (r) { r.cartons += e.cartons_remaining ?? e.cartons_imported ?? 0; r.entries.push(e) }
+      else map.set(k, { key: k, pct_date: e.pct_date, location_code: e.location_code, is_qa: q, cartons: e.cartons_remaining ?? e.cartons_imported ?? 0, entries: [e] })
+    }
+    return [...map.values()].sort((a, b) => {
+      const pa = a.pct_date ?? Infinity, pb = b.pct_date ?? Infinity
+      return pa !== pb ? pa - pb : (a.is_qa ? 1 : -1)
+    })
+  })()
+
+  function toggle(key: string) {
+    setExpandedKeys(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n })
   }
 
   return (
-    <Dialog open onOpenChange={v => { if (!v) onClose() }}>
-      <DialogContent className="max-w-sm sm:max-w-md p-0">
-        <DialogHeader className="px-4 pt-4 pb-2 border-b">
-          <DialogTitle className="text-sm font-semibold">
-            <span className="font-mono">{matCode}</span> · {matName}
-          </DialogTitle>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Tồn kho theo %Date · lấy thấp trước · {sorted.length} pallet
-          </p>
-        </DialogHeader>
-        <div className="overflow-auto" style={{ maxHeight: '60vh' }}>
-          {isLoading ? (
-            <div className="p-4 space-y-2">
-              {[1,2,3].map(i => <div key={i} className="h-8 bg-slate-100 rounded animate-pulse" />)}
-            </div>
-          ) : sorted.length === 0 ? (
-            <div className="py-10 text-center text-slate-400 text-sm">Không còn tồn kho trong kho này</div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow className="bg-slate-50">
-                  <TableHead className="text-[9px] font-medium text-slate-500 px-3 py-1.5">%Date</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 px-3 py-1.5 text-right">Pallet</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 px-3 py-1.5 text-right">Thùng</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {(() => {
-                  type AR = { pct_date: number | null; pallets: number; cartons: number; is_qa: boolean }
-                  const map = new Map<string, AR>()
-                  for (const e of sorted) {
-                    const q = !!e.qa_status
-                    const k = `${e.pct_date ?? 'n'}-${q}`
-                    const r = map.get(k)
-                    if (r) { r.pallets++; r.cartons += e.cartons_remaining ?? e.cartons_imported ?? 0 }
-                    else map.set(k, { pct_date: e.pct_date, pallets: 1, cartons: e.cartons_remaining ?? e.cartons_imported ?? 0, is_qa: q })
-                  }
-                  return [...map.values()]
-                    .sort((a, b) => {
-                      const pa = a.pct_date ?? Infinity, pb = b.pct_date ?? Infinity
-                      return pa !== pb ? pa - pb : (a.is_qa ? 1 : -1)
-                    })
-                    .map(row => (
-                      <TableRow key={`${row.pct_date}-${row.is_qa}`} className={row.is_qa ? 'bg-purple-50 hover:bg-purple-100' : 'hover:bg-slate-50'}>
-                        <TableCell className="px-3 py-1.5">
-                          <div className="flex items-center gap-1.5">
-                            {row.pct_date !== null ? (
-                              <span className={`text-xs font-bold tabular-nums ${
-                                row.pct_date <= 30 ? 'text-red-600' : row.pct_date <= 60 ? 'text-amber-600' : 'text-green-700'
-                              }`}>{row.pct_date}%</span>
-                            ) : <span className="text-[10px] text-slate-400">Chưa có</span>}
-                            {row.is_qa && (
-                              <span className="text-[9px] font-medium text-purple-700 bg-purple-100 rounded px-1.5 py-0.5">QA giữ</span>
-                            )}
-                          </div>
-                        </TableCell>
-                        <TableCell className="px-3 py-1.5 text-right whitespace-nowrap">
-                          <span className={`text-[10px] font-semibold tabular-nums ${row.is_qa ? 'text-purple-700' : ''}`}>{row.pallets}</span>
-                          <span className="text-[9px] text-slate-400 ml-0.5">pl</span>
-                        </TableCell>
-                        <TableCell className="px-3 py-1.5 text-right whitespace-nowrap">
-                          <span className={`text-[10px] font-semibold tabular-nums ${row.is_qa ? 'text-purple-700' : ''}`}>{row.cartons}</span>
-                          <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                })()}
-              </TableBody>
-            </Table>
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
+    <>
+      {detailId && <PalletDetailDialog entryId={detailId} onClose={() => setDetailId(null)} />}
+      <Dialog open onOpenChange={v => { if (!v) onClose() }}>
+        <DialogContent className="max-w-sm sm:max-w-md p-0">
+          <DialogHeader className="px-4 pt-4 pb-2 border-b">
+            <DialogTitle className="text-sm font-semibold">
+              <span className="font-mono">{matCode}</span> · {matName}
+            </DialogTitle>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Tồn kho theo %Date · lấy thấp trước · {sorted.length} pallet
+            </p>
+          </DialogHeader>
+          <div className="overflow-auto" style={{ maxHeight: '60vh' }}>
+            {isLoading ? (
+              <div className="p-4 space-y-2">
+                {[1,2,3].map(i => <div key={i} className="h-8 bg-slate-100 rounded animate-pulse" />)}
+              </div>
+            ) : sorted.length === 0 ? (
+              <div className="py-10 text-center text-slate-400 text-sm">Không còn tồn kho trong kho này</div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-slate-50">
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-3 py-1.5">%Date</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-3 py-1.5">Vị trí</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-3 py-1.5 text-right">Thùng</TableHead>
+                    <TableHead className="w-6 px-2 py-1.5" />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {aggRows.map(row => {
+                    const expanded = expandedKeys.has(row.key)
+                    return (
+                      <Fragment key={row.key}>
+                        <TableRow
+                          className={`cursor-pointer ${row.is_qa ? 'bg-purple-50 hover:bg-purple-100' : 'hover:bg-slate-50'}`}
+                          onClick={() => toggle(row.key)}
+                        >
+                          <TableCell className="px-3 py-1.5">
+                            <div className="flex items-center gap-1.5">
+                              {row.pct_date !== null ? (
+                                <span className={`text-xs font-bold tabular-nums ${
+                                  row.pct_date <= 30 ? 'text-red-600' : row.pct_date <= 60 ? 'text-amber-600' : 'text-green-700'
+                                }`}>{row.pct_date}%</span>
+                              ) : <span className="text-[10px] text-slate-400">Chưa có</span>}
+                              {row.is_qa && (
+                                <span className="text-[9px] font-medium text-purple-700 bg-purple-100 rounded px-1.5 py-0.5">QA giữ</span>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell className="px-3 py-1.5">
+                            <span className="text-[10px] font-mono text-slate-600">{row.location_code ?? '—'}</span>
+                          </TableCell>
+                          <TableCell className="px-3 py-1.5 text-right whitespace-nowrap">
+                            <span className={`text-[10px] font-semibold tabular-nums ${row.is_qa ? 'text-purple-700' : ''}`}>{row.cartons}</span>
+                            <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
+                            <div className="text-[9px] text-slate-400">{row.entries.length} pl</div>
+                          </TableCell>
+                          <TableCell className="px-2 py-1.5 text-slate-400">
+                            {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                          </TableCell>
+                        </TableRow>
+                        {expanded && row.entries.map(e => (
+                          <TableRow key={e.id} className={row.is_qa ? 'bg-purple-50/60' : 'bg-slate-50'}>
+                            <TableCell className="px-3 py-1 pl-7" colSpan={2}>
+                              <button
+                                className="font-mono text-[10px] font-semibold text-blue-600 hover:underline text-left"
+                                onClick={ev => { ev.stopPropagation(); setDetailId(e.id) }}
+                              >
+                                {e.pallet_code}
+                              </button>
+                            </TableCell>
+                            <TableCell className="px-3 py-1 text-right whitespace-nowrap">
+                              <span className="text-[10px] font-semibold tabular-nums">{e.cartons_remaining ?? e.cartons_imported ?? 0}</span>
+                              <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
+                            </TableCell>
+                            <TableCell className="px-2 py-1" />
+                          </TableRow>
+                        ))}
+                      </Fragment>
+                    )
+                  })}
+                </TableBody>
+              </Table>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }
 

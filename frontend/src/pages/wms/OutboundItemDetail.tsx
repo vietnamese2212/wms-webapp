@@ -1,9 +1,9 @@
-import { useRef, useState, useEffect, useMemo } from 'react'
+import { useRef, useState, useEffect, useMemo, Fragment } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import type { AxiosError } from 'axios'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import {
-  ArrowLeft, QrCode, CheckCircle2, AlertTriangle, Package, Trash2, Pause,
+  ArrowLeft, QrCode, CheckCircle2, AlertTriangle, Package, Trash2, Pause, ChevronDown, ChevronRight,
 } from 'lucide-react'
 import { Button }  from '@/components/ui/button'
 import { Card }    from '@/components/ui/card'
@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { QRScanner } from '@/components/shared/QRScanner'
 import type { QRScannerHandle } from '@/components/shared/QRScanner'
 import { useGDO, useScanOutboundItem, useManualCompleteItem, useDeleteOutboundScanEntry, useItemInventory, type ItemInventoryEntry } from '@/api/hooks'
+import { PalletDetailDialog } from '@/components/shared/PalletDetailDialog'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 import { playBeep, unlockAudio } from '@/utils/audio'
 import type { OutboundItem, OutboundStatus } from '@/types'
@@ -239,9 +240,11 @@ export default function OutboundItemDetail() {
   const { data: inventoryData = [], isLoading: invLoading } = useItemInventory(gdoId, itemId)
   const { vehicles } = useActiveVehiclesStore()
 
-  const [showScan,      setShowScan]      = useState(false)
-  const [confirmScanId, setConfirmScanId] = useState<string | null>(null)
-  const [showInventory, setShowInventory] = useState(false)
+  const [showScan,         setShowScan]         = useState(false)
+  const [confirmScanId,    setConfirmScanId]    = useState<string | null>(null)
+  const [showInventory,    setShowInventory]    = useState(false)
+  const [expandedInvKeys,  setExpandedInvKeys]  = useState<Set<string>>(new Set())
+  const [detailEntryId,    setDetailEntryId]    = useState<string | null>(null)
 
   useEffect(() => {
     if (!autoScan || !gdo) return
@@ -290,11 +293,24 @@ export default function OutboundItemDetail() {
     [inventoryData]
   )
 
-  const fmtProdDate = (d: string | null) => {
-    if (!d) return '—'
-    const s = d.slice(0, 10)
-    if (!/^\d{4}-\d{2}-\d{2}/.test(s)) return s
-    return `${s.slice(8, 10)}-${s.slice(5, 7)}-${s.slice(2, 4)}`
+  type InvAggRow = { key: string; pct_date: number | null; location_code: string | null; is_qa: boolean; cartons: number; entries: ItemInventoryEntry[] }
+  const invAggRows = useMemo<InvAggRow[]>(() => {
+    const map = new Map<string, InvAggRow>()
+    for (const e of sortedInv) {
+      const q = !!e.qa_status
+      const k = `${e.pct_date ?? 'n'}|${e.location_code ?? ''}|${q}`
+      const r = map.get(k)
+      if (r) { r.cartons += e.cartons_remaining ?? e.cartons_imported ?? 0; r.entries.push(e) }
+      else map.set(k, { key: k, pct_date: e.pct_date, location_code: e.location_code, is_qa: q, cartons: e.cartons_remaining ?? e.cartons_imported ?? 0, entries: [e] })
+    }
+    return [...map.values()].sort((a, b) => {
+      const pa = a.pct_date ?? Infinity, pb = b.pct_date ?? Infinity
+      return pa !== pb ? pa - pb : (a.is_qa ? 1 : -1)
+    })
+  }, [sortedInv])
+
+  function toggleInv(key: string) {
+    setExpandedInvKeys(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n })
   }
   const isLoscam = item.material_type === 'Pallet Loscam' || (item.material_code_raw ?? '').includes('810000')
   const isDone   = item.status === 'COMPLETED'
@@ -456,6 +472,7 @@ export default function OutboundItemDetail() {
         {/* ── Inventory panel (expandable) ── */}
         {showInventory && (
           <div className="border-b bg-slate-50 px-3 py-2 shrink-0 overflow-y-auto" style={{ maxHeight: '42vh' }}>
+            {detailEntryId && <PalletDetailDialog entryId={detailEntryId} onClose={() => setDetailEntryId(null)} />}
             <p className="text-[9px] font-medium text-slate-500 mb-1.5">
               Tồn kho theo %Date · lấy thấp trước · {sortedInv.length} pallet
             </p>
@@ -466,32 +483,24 @@ export default function OutboundItemDetail() {
             ) : sortedInv.length === 0 ? (
               <p className="text-xs text-slate-400 py-2 text-center">Không còn tồn kho trong kho này</p>
             ) : (
-              <Table className="min-w-[280px]">
+              <Table className="min-w-[320px]">
                 <TableHeader>
                   <TableRow className="bg-slate-100">
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1">%Date</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1 text-right">Pallet</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1">Vị trí</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1 text-right">Thùng</TableHead>
+                    <TableHead className="w-5 px-1 py-1" />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {(() => {
-                    type AR = { pct_date: number | null; pallets: number; cartons: number; is_qa: boolean }
-                    const map = new Map<string, AR>()
-                    for (const e of sortedInv) {
-                      const q = !!e.qa_status
-                      const k = `${e.pct_date ?? 'n'}-${q}`
-                      const r = map.get(k)
-                      if (r) { r.pallets++; r.cartons += e.cartons_remaining ?? e.cartons_imported ?? 0 }
-                      else map.set(k, { pct_date: e.pct_date, pallets: 1, cartons: e.cartons_remaining ?? e.cartons_imported ?? 0, is_qa: q })
-                    }
-                    return [...map.values()]
-                      .sort((a, b) => {
-                        const pa = a.pct_date ?? Infinity, pb = b.pct_date ?? Infinity
-                        return pa !== pb ? pa - pb : (a.is_qa ? 1 : -1)
-                      })
-                      .map(row => (
-                        <TableRow key={`${row.pct_date}-${row.is_qa}`} className={row.is_qa ? 'bg-purple-50 hover:bg-purple-100' : 'hover:bg-slate-50'}>
+                  {invAggRows.map(row => {
+                    const expanded = expandedInvKeys.has(row.key)
+                    return (
+                      <Fragment key={row.key}>
+                        <TableRow
+                          className={`cursor-pointer ${row.is_qa ? 'bg-purple-50 hover:bg-purple-100' : 'hover:bg-slate-50'}`}
+                          onClick={() => toggleInv(row.key)}
+                        >
                           <TableCell className="px-2 py-1.5">
                             <div className="flex items-center gap-1.5">
                               {row.pct_date !== null ? (
@@ -504,17 +513,39 @@ export default function OutboundItemDetail() {
                               )}
                             </div>
                           </TableCell>
-                          <TableCell className="px-2 py-1.5 text-right whitespace-nowrap">
-                            <span className={`text-[10px] font-semibold tabular-nums ${row.is_qa ? 'text-purple-700' : ''}`}>{row.pallets}</span>
-                            <span className="text-[9px] text-slate-400 ml-0.5">pl</span>
+                          <TableCell className="px-2 py-1.5">
+                            <span className="text-[10px] font-mono text-slate-600">{row.location_code ?? '—'}</span>
                           </TableCell>
                           <TableCell className="px-2 py-1.5 text-right whitespace-nowrap">
                             <span className={`text-[10px] font-semibold tabular-nums ${row.is_qa ? 'text-purple-700' : ''}`}>{row.cartons}</span>
                             <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
+                            <div className="text-[9px] text-slate-400">{row.entries.length} pl</div>
+                          </TableCell>
+                          <TableCell className="px-1 py-1.5 text-slate-400">
+                            {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
                           </TableCell>
                         </TableRow>
-                      ))
-                  })()}</TableBody>
+                        {expanded && row.entries.map(e => (
+                          <TableRow key={e.id} className={row.is_qa ? 'bg-purple-50/60' : 'bg-slate-50'}>
+                            <TableCell className="px-2 py-1 pl-6" colSpan={2}>
+                              <button
+                                className="font-mono text-[10px] font-semibold text-blue-600 hover:underline text-left"
+                                onClick={ev => { ev.stopPropagation(); setDetailEntryId(e.id) }}
+                              >
+                                {e.pallet_code}
+                              </button>
+                            </TableCell>
+                            <TableCell className="px-2 py-1 text-right whitespace-nowrap">
+                              <span className="text-[10px] font-semibold tabular-nums">{e.cartons_remaining ?? e.cartons_imported ?? 0}</span>
+                              <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
+                            </TableCell>
+                            <TableCell className="px-1 py-1" />
+                          </TableRow>
+                        ))}
+                      </Fragment>
+                    )
+                  })}
+                </TableBody>
               </Table>
             )}
           </div>

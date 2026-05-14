@@ -50,6 +50,7 @@ router.get('/inbound-orders/:id/location-suggestions',  inbound.getLocationSugge
 // Inventory (tồn kho)
 router.get('/inventory/facets',               inventory.listFacets)
 router.get('/inventory',                      inventory.listInventory)
+router.get('/inventory/:id',                  inventory.getInventoryEntry)
 router.patch('/inventory/bulk-qa',            inventory.bulkUpdateQA)
 router.patch('/inventory/bulk-location',      inventory.bulkTransferLocation)
 router.patch('/inventory/bulk-material',      inventory.bulkTransferMaterial)

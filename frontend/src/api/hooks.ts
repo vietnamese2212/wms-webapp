@@ -939,6 +939,18 @@ export function useItemInventory(gdoId: string | undefined, itemId: string | und
   })
 }
 
+export function useInventoryEntry(id?: string | null) {
+  return useQuery({
+    queryKey: ['inventory-entry', id],
+    enabled: !!id,
+    queryFn: async () => {
+      const { data } = await apiClient.get(`/wms/inventory/${id}`)
+      return data.data as InventoryEntry
+    },
+    staleTime: 60_000,
+  })
+}
+
 export function useAssignGDO() {
   const qc = useQueryClient()
   return useMutation({

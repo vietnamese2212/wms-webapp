@@ -1033,9 +1033,9 @@ export async function getItemInventory(req: Request, res: Response) {
     const gdo  = gdoRes.data
 
     let q = (supabase.from('InventoryEntry') as any)
-      .select('id, pallet_code, cartons_imported, cartons_remaining, production_date, import_date, location:Location(location_code), material:Material!material_id(shelf_life_days)')
+      .select('id, pallet_code, cartons_imported, cartons_remaining, production_date, import_date, qa_status_id, qa_status:QAStatus(id,code,name), location:Location(location_code), material:Material!material_id(shelf_life_days)')
       .eq('material_id', item.material_id)
-      .in('status', ['IN_STOCK', 'PARTIAL'])
+      .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE'])
 
     if (gdo?.warehouse_id) {
       const { data: locs } = await (supabase.from('Location') as any)
@@ -1066,7 +1066,8 @@ export async function getItemInventory(req: Request, res: Response) {
         production_date:   e.production_date ?? null,
         import_date:       e.import_date ?? null,
         pct_date,
-        available: e.cartons_remaining ?? e.cartons_imported,
+        available:         e.cartons_remaining ?? e.cartons_imported,
+        qa_status:         e.qa_status_id ? (e.qa_status ?? null) : null,
       }
     }))
   } catch (e) { return fail(res, String(e)) }

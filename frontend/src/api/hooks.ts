@@ -924,6 +924,7 @@ export type ItemInventoryEntry = {
   import_date:       string | null
   pct_date:          number | null
   available:         number
+  qa_status:         { id: string; code: string; name: string } | null
 }
 
 export function useItemInventory(gdoId: string | undefined, itemId: string | undefined) {

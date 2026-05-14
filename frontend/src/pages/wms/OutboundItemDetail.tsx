@@ -466,41 +466,55 @@ export default function OutboundItemDetail() {
             ) : sortedInv.length === 0 ? (
               <p className="text-xs text-slate-400 py-2 text-center">Không còn tồn kho trong kho này</p>
             ) : (
-              <Table className="min-w-[420px]">
+              <Table className="min-w-[360px]">
                 <TableHeader>
                   <TableRow className="bg-slate-100">
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1">Vị trí</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1">Mã pallet</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1">NSX</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1 text-right">%Date</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1 text-right">Còn lại</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {sortedInv.map(e => (
-                    <TableRow key={e.id}>
-                      <TableCell className="px-2 py-1 font-mono text-[10px] font-semibold whitespace-nowrap">
-                        {e.location_code ?? '—'}
-                      </TableCell>
-                      <TableCell className="px-2 py-1 font-mono text-[10px] text-slate-600 whitespace-nowrap">
-                        {e.pallet_code}
-                      </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] tabular-nums whitespace-nowrap">
-                        {fmtProdDate(e.production_date)}
-                      </TableCell>
-                      <TableCell className="px-2 py-1 text-right whitespace-nowrap">
-                        {e.pct_date !== null ? (
-                          <span className={`text-[10px] font-semibold tabular-nums ${
-                            e.pct_date <= 30 ? 'text-red-600' : e.pct_date <= 60 ? 'text-amber-600' : 'text-green-700'
-                          }`}>{e.pct_date}%</span>
-                        ) : <span className="text-[10px] text-slate-300">—</span>}
-                      </TableCell>
-                      <TableCell className="px-2 py-1 text-right whitespace-nowrap">
-                        <span className="text-[10px] font-semibold tabular-nums">{e.cartons_remaining}</span>
-                        <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                  {sortedInv.map((e, idx) => {
+                    const isNewGroup = idx === 0 || sortedInv[idx - 1].pct_date !== e.pct_date
+                    const pctBg   = e.pct_date === null ? 'bg-slate-100' : e.pct_date <= 30 ? 'bg-red-50' : e.pct_date <= 60 ? 'bg-amber-50' : 'bg-green-50'
+                    const pctText = e.pct_date === null ? 'text-slate-500' : e.pct_date <= 30 ? 'text-red-700' : e.pct_date <= 60 ? 'text-amber-700' : 'text-green-700'
+                    const groupItems = isNewGroup ? sortedInv.filter(x => x.pct_date === e.pct_date) : []
+                    const groupCartons = groupItems.reduce((s, x) => s + (x.cartons_remaining ?? x.cartons_imported ?? 0), 0)
+                    return [
+                      isNewGroup ? (
+                        <TableRow key={`gh-${idx}`} className={`${pctBg} border-t-2 border-slate-200`}>
+                          <TableCell colSpan={4} className="px-2 py-0.5">
+                            <span className={`text-[9px] font-semibold ${pctText}`}>
+                              {e.pct_date !== null ? `%Date ${e.pct_date}%` : 'Chưa có %Date'}
+                              {' · '}{groupItems.length} pallet · {groupCartons} thùng
+                            </span>
+                          </TableCell>
+                        </TableRow>
+                      ) : null,
+                      <TableRow key={e.id}>
+                        <TableCell className="px-2 py-1 font-mono text-[10px] font-semibold whitespace-nowrap">
+                          {e.location_code ?? '—'}
+                        </TableCell>
+                        <TableCell className="px-2 py-1 font-mono text-[10px] text-slate-600 whitespace-nowrap">
+                          <span className="flex items-center gap-1.5">
+                            {e.qa_status && (
+                              <span className="inline-block h-2 w-2 rounded-full bg-purple-500 shrink-0" title={e.qa_status.name} />
+                            )}
+                            {e.pallet_code}
+                          </span>
+                        </TableCell>
+                        <TableCell className="px-2 py-1 text-[10px] tabular-nums whitespace-nowrap">
+                          {fmtProdDate(e.production_date)}
+                        </TableCell>
+                        <TableCell className="px-2 py-1 text-right whitespace-nowrap">
+                          <span className="text-[10px] font-semibold tabular-nums">{e.cartons_remaining ?? e.cartons_imported}</span>
+                          <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
+                        </TableCell>
+                      </TableRow>
+                    ]
+                  })}
                 </TableBody>
               </Table>
             )}

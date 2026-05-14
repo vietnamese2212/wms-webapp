@@ -654,8 +654,13 @@ function ItemsTable({ doRecords, gdoId, canScan, expandedItemIds, toggleExpand }
                                   </>
                                 )}
                                 {isOldDate && <span className="text-red-400">NSX cũ</span>}
-                                {isSubOptimal && (
-                                  <span className="not-italic text-orange-500" title={`Bỏ qua date cũ hơn: ${se.best_available_date}`}>⚠</span>
+                                {se.best_available_date && (
+                                  <>
+                                    <span className="text-slate-300 not-italic">|</span>
+                                    <span className={`not-italic ${isSubOptimal ? 'text-orange-500' : 'text-slate-400'}`}>
+                                      {isSubOptimal ? '⚠ ' : '✓ '}{se.best_available_date}
+                                    </span>
+                                  </>
                                 )}
                               </span>
                             )

@@ -116,6 +116,7 @@ export function useCreateLocation() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['locations-real'] })
       qc.invalidateQueries({ queryKey: ['sub-groups'] })
+      qc.invalidateQueries({ queryKey: ['warehouses'] })
     },
   })
 }
@@ -137,6 +138,7 @@ export function useDeleteLocation() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['locations-real'] })
       qc.invalidateQueries({ queryKey: ['sub-groups'] })
+      qc.invalidateQueries({ queryKey: ['warehouses'] })
     },
   })
 }

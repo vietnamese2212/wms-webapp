@@ -99,6 +99,15 @@ export function useCreateWarehouse() {
   })
 }
 
+export function useDeleteWarehouse() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiClient.delete(`/masterdata/warehouses/${id}`).then((r) => r.data.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouses'] }),
+  })
+}
+
 export function useCreateLocation() {
   const qc = useQueryClient()
   return useMutation({
@@ -114,7 +123,7 @@ export function useCreateLocation() {
 export function useUpdateLocation() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; sub_name?: string; sub_type?: string; category?: string; max_pallets?: number }) =>
+    mutationFn: ({ id, ...body }: { id: string; sub_name?: string; sub_type?: string; category?: string; max_pallets?: number; is_active?: boolean }) =>
       apiClient.put(`/masterdata/locations/${id}`, body).then((r) => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['locations-real'] }),
   })

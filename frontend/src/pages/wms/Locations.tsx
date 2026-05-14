@@ -8,7 +8,11 @@ import { Label }          from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
-import { useLocationsReal, useWarehouses, useCreateLocation, useUpdateLocation, useDeleteLocation, useCreateWarehouse } from '@/api/hooks'
+import {
+  useLocationsReal, useWarehouses,
+  useCreateLocation, useUpdateLocation, useDeleteLocation,
+  useCreateWarehouse, useDeleteWarehouse,
+} from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 
 const CATEGORY_OPTIONS = ['Thành phẩm', 'NVL', 'POSM']
@@ -28,39 +32,61 @@ interface RealLocation {
   warehouse:    { id: string; code: string; name: string }
 }
 
+interface WhWithCount {
+  id:        string
+  code:      string
+  name:      string
+  is_active: boolean
+  _count:    { locations: number }
+}
+
 const EMPTY_FORM    = { warehouse_id: '', category: '', sub_code: '', sub_name: '', row: '', shelf: '', max_pallets: '' }
 const EMPTY_WH_FORM = { code: '', name: '', address: '' }
 
 export default function Locations() {
   const user = useAuthStore(s => s.user)
-  const [warehouseId, setWarehouseId] = useState(user?.warehouse_id ?? '')
-  const [catFilter,   setCatFilter]   = useState('')
-  const [search,      setSearch]      = useState('')
+  const [warehouseId,  setWarehouseId]  = useState(user?.warehouse_id ?? '')
+  const [catFilter,    setCatFilter]    = useState('')
+  const [search,       setSearch]       = useState('')
+  const [showInactive, setShowInactive] = useState(false)
 
+  // Location add/edit dialog
   const [dialogMode,    setDialogMode]    = useState<'add' | 'edit' | null>(null)
   const [editing,       setEditing]       = useState<RealLocation | null>(null)
   const [form,          setForm]          = useState(EMPTY_FORM)
+  const [editIsActive,  setEditIsActive]  = useState(true)
   const [isNewSubCode,  setIsNewSubCode]  = useState(false)
   const [isNewCategory, setIsNewCategory] = useState(false)
   const [formError,     setFormError]     = useState('')
   const [deleteTarget,  setDeleteTarget]  = useState<RealLocation | null>(null)
 
-  const [whDialogOpen, setWhDialogOpen] = useState(false)
-  const [whForm,       setWhForm]       = useState(EMPTY_WH_FORM)
-  const [whError,      setWhError]      = useState('')
+  // Warehouse management dialog
+  const [whDialogOpen,   setWhDialogOpen]   = useState(false)
+  const [whForm,         setWhForm]         = useState(EMPTY_WH_FORM)
+  const [whError,        setWhError]        = useState('')
+  const [whDeleteTarget, setWhDeleteTarget] = useState<WhWithCount | null>(null)
 
-  const { data: warehouses = [] } = useWarehouses(true)
-  const { data: allRaw = [] }     = useLocationsReal()
-  const { data: raw = [], isLoading } = useLocationsReal(
+  // Data
+  const { data: activeWhRaw = [] }      = useWarehouses(true)
+  const { data: allWhRaw = [] }         = useWarehouses(false)
+  const { data: allRaw = [] }           = useLocationsReal()
+  const { data: raw = [], isLoading }   = useLocationsReal(
     warehouseId ? { warehouse_id: warehouseId } : undefined
   )
-  const locations    = (raw    as RealLocation[]).filter(l => l.is_active)
-  const allLocations = (allRaw as RealLocation[]).filter(l => l.is_active)
 
+  const warehouses   = activeWhRaw as WhWithCount[]
+  const allWh        = allWhRaw    as WhWithCount[]
+  const allLocations = (allRaw as RealLocation[]).filter(l => l.is_active)
+  const locations    = showInactive
+    ? (raw as RealLocation[])
+    : (raw as RealLocation[]).filter(l => l.is_active)
+
+  // Mutations
   const createLocation  = useCreateLocation()
   const updateLocation  = useUpdateLocation()
   const deleteLocation  = useDeleteLocation()
   const createWarehouse = useCreateWarehouse()
+  const deleteWarehouse = useDeleteWarehouse()
 
   // ── Table filter ─────────────────────────────────────────────
   const filtered = useMemo(() => {
@@ -71,9 +97,10 @@ export default function Locations() {
     })
   }, [locations, catFilter, search])
 
-  const totalSlots = filtered.reduce((s, l) => s + l.max_pallets, 0)
-  const usedSlots  = filtered.reduce((s, l) => s + l.used_slots,  0)
-  const fullCount  = filtered.filter(l => l.max_pallets > 0 && l.used_slots >= l.max_pallets).length
+  const activeFiltered = filtered.filter(l => l.is_active)
+  const totalSlots = activeFiltered.reduce((s, l) => s + l.max_pallets, 0)
+  const usedSlots  = activeFiltered.reduce((s, l) => s + l.used_slots,  0)
+  const fullCount  = activeFiltered.filter(l => l.max_pallets > 0 && l.used_slots >= l.max_pallets).length
 
   // ── Form cascaded options ────────────────────────────────────
   const formWhlocs = useMemo(() =>
@@ -92,12 +119,12 @@ export default function Locations() {
   }, [formWhlocs, form.category])
 
   // ── Location code preview ────────────────────────────────────
-  const selectedWh = (warehouses as { id: string; code: string; name: string }[]).find(w => w.id === form.warehouse_id)
+  const selectedWh = warehouses.find(w => w.id === form.warehouse_id)
   const locationPreview = selectedWh && form.sub_code && form.row
     ? [selectedWh.code, form.sub_code, form.row, form.shelf].filter(Boolean).join('_')
     : null
 
-  // ── Handlers ─────────────────────────────────────────────────
+  // ── Handlers: location ───────────────────────────────────────
   function setField(k: keyof typeof EMPTY_FORM, v: string) {
     setForm(f => ({ ...f, [k]: v }))
   }
@@ -105,6 +132,7 @@ export default function Locations() {
   function openAdd() {
     setEditing(null)
     setForm({ ...EMPTY_FORM, warehouse_id: warehouseId, category: catFilter })
+    setEditIsActive(true)
     setIsNewSubCode(false)
     setIsNewCategory(false)
     setFormError('')
@@ -122,6 +150,7 @@ export default function Locations() {
       shelf:        loc.shelf,
       max_pallets:  String(loc.max_pallets),
     })
+    setEditIsActive(loc.is_active)
     setIsNewSubCode(false)
     setIsNewCategory(false)
     setFormError('')
@@ -157,6 +186,7 @@ export default function Locations() {
           sub_name:    form.sub_name.trim() || undefined,
           category:    form.category || undefined,
           max_pallets: form.max_pallets ? Number(form.max_pallets) : undefined,
+          is_active:   editIsActive,
         })
       }
       closeDialog()
@@ -176,6 +206,14 @@ export default function Locations() {
     }
   }
 
+  // ── Handlers: warehouse ──────────────────────────────────────
+  function openWhDialog() {
+    setWhForm(EMPTY_WH_FORM)
+    setWhError('')
+    setWhDeleteTarget(null)
+    setWhDialogOpen(true)
+  }
+
   async function handleCreateWarehouse() {
     setWhError('')
     if (!whForm.code.trim() || !whForm.name.trim()) {
@@ -188,7 +226,6 @@ export default function Locations() {
         name:    whForm.name.trim(),
         address: whForm.address.trim() || undefined,
       })
-      // Nếu đang mở form thêm vị trí, tự chọn kho mới vào form
       if (dialogMode === 'add') {
         setField('warehouse_id', (wh as { id: string }).id)
         setField('category', '')
@@ -196,8 +233,20 @@ export default function Locations() {
         setIsNewSubCode(false)
         setIsNewCategory(false)
       }
-      setWhDialogOpen(false)
       setWhForm(EMPTY_WH_FORM)
+      setWhDialogOpen(false)
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
+      setWhError(msg ?? 'Có lỗi xảy ra')
+    }
+  }
+
+  async function handleDeleteWarehouse() {
+    if (!whDeleteTarget) return
+    setWhError('')
+    try {
+      await deleteWarehouse.mutateAsync(whDeleteTarget.id)
+      setWhDeleteTarget(null)
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
       setWhError(msg ?? 'Có lỗi xảy ra')
@@ -216,10 +265,8 @@ export default function Locations() {
             Vị trí kho
           </h1>
           <div className="flex gap-2">
-            <Button variant="outline" size="sm"
-              onClick={() => { setWhForm(EMPTY_WH_FORM); setWhError(''); setWhDialogOpen(true) }}
-              className="gap-1">
-              <Building2 className="h-4 w-4" /> Thêm Kho
+            <Button variant="outline" size="sm" onClick={openWhDialog} className="gap-1">
+              <Building2 className="h-4 w-4" /> Quản lý Kho
             </Button>
             <Button size="sm" onClick={openAdd} className="gap-1">
               <Plus className="h-4 w-4" /> Thêm vị trí
@@ -235,7 +282,7 @@ export default function Locations() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="__all__">Tất cả kho</SelectItem>
-              {(warehouses as { id: string; name: string }[]).map(w => (
+              {warehouses.map(w => (
                 <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
               ))}
             </SelectContent>
@@ -258,11 +305,21 @@ export default function Locations() {
             <Input className="pl-8 h-8 text-sm" placeholder="Tìm mã vị trí…"
               value={search} onChange={e => setSearch(e.target.value)} />
           </div>
+
+          <button
+            onClick={() => setShowInactive(v => !v)}
+            className={`h-8 px-3 text-xs rounded border whitespace-nowrap ${
+              showInactive
+                ? 'bg-amber-50 border-amber-300 text-amber-700'
+                : 'border-slate-200 text-slate-500 hover:bg-slate-50'
+            }`}>
+            {showInactive ? 'Ẩn đã xóa' : 'Hiện đã xóa'}
+          </button>
         </div>
 
         {/* Summary */}
         <p className="text-xs text-slate-500 -mt-1">
-          <span className="font-medium text-slate-700">{filtered.length}</span> vị trí
+          <span className="font-medium text-slate-700">{activeFiltered.length}</span> vị trí
           {' '}·{' '}
           <span className="font-medium text-slate-700">{usedSlots}</span>
           <span className="text-slate-400">/{totalSlots}</span> pallet đang dùng
@@ -294,12 +351,12 @@ export default function Locations() {
             </TableHeader>
             <TableBody>
               {filtered.map(loc => {
-                const isFull    = loc.max_pallets > 0 && loc.used_slots >= loc.max_pallets
-                const isPartial = loc.used_slots > 0 && !isFull
-                const rowCls = isFull
-                  ? 'bg-blue-50 hover:bg-blue-100'
-                  : isPartial
-                  ? 'bg-amber-50 hover:bg-amber-100'
+                const isFull    = loc.is_active && loc.max_pallets > 0 && loc.used_slots >= loc.max_pallets
+                const isPartial = loc.is_active && loc.used_slots > 0 && !isFull
+                const rowCls = !loc.is_active
+                  ? 'opacity-50 hover:opacity-80 bg-slate-50'
+                  : isFull    ? 'bg-blue-50 hover:bg-blue-100'
+                  : isPartial ? 'bg-amber-50 hover:bg-amber-100'
                   : 'hover:bg-slate-50'
                 const showSubName = loc.sub_name && loc.sub_name !== loc.sub_code
                 return (
@@ -327,26 +384,35 @@ export default function Locations() {
                       <span className="text-slate-400">/{loc.max_pallets}</span>
                     </TableCell>
                     <TableCell className="px-2 py-1">
-                      <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${
-                        isFull    ? 'bg-blue-100 text-blue-700'
-                        : isPartial ? 'bg-amber-100 text-amber-700'
-                        : 'bg-slate-100 text-slate-500'
-                      }`}>
-                        {isFull ? 'Đầy' : isPartial ? 'Còn chỗ' : 'Trống'}
-                      </span>
+                      {!loc.is_active ? (
+                        <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-slate-200 text-slate-500">
+                          Đã xóa
+                        </span>
+                      ) : (
+                        <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${
+                          isFull    ? 'bg-blue-100 text-blue-700'
+                          : isPartial ? 'bg-amber-100 text-amber-700'
+                          : 'bg-slate-100 text-slate-500'
+                        }`}>
+                          {isFull ? 'Đầy' : isPartial ? 'Còn chỗ' : 'Trống'}
+                        </span>
+                      )}
                     </TableCell>
                     <TableCell className="px-2 py-1">
                       <div className="flex gap-1 justify-end">
                         <button onClick={() => openEdit(loc)}
-                          className="p-1 rounded hover:bg-white/80 text-slate-400 hover:text-slate-700">
+                          className="p-1 rounded hover:bg-white/80 text-slate-400 hover:text-slate-700"
+                          title={loc.is_active ? 'Sửa' : 'Kích hoạt lại'}>
                           <Pencil className="h-3.5 w-3.5" />
                         </button>
-                        <button onClick={() => setDeleteTarget(loc)}
-                          className="p-1 rounded hover:bg-white/80 text-slate-400 hover:text-red-500 disabled:opacity-30 disabled:cursor-not-allowed"
-                          disabled={loc.used_slots > 0}
-                          title={loc.used_slots > 0 ? 'Vị trí đang có hàng, không thể xóa' : 'Xóa vị trí'}>
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
+                        {loc.is_active && (
+                          <button onClick={() => setDeleteTarget(loc)}
+                            className="p-1 rounded hover:bg-white/80 text-slate-400 hover:text-red-500 disabled:opacity-30 disabled:cursor-not-allowed"
+                            disabled={loc.used_slots > 0}
+                            title={loc.used_slots > 0 ? 'Vị trí đang có hàng, không thể xóa' : 'Xóa vị trí'}>
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -365,7 +431,7 @@ export default function Locations() {
           </DialogHeader>
 
           <div className="space-y-3 py-1">
-            {/* ── Edit: hiển thị thông tin read-only ── */}
+            {/* ── Edit: thông tin read-only ── */}
             {dialogMode === 'edit' && editing && (
               <div className="bg-slate-50 rounded px-3 py-2 space-y-0.5">
                 <p className="text-[10px] text-slate-500">Vị trí · {editing.warehouse.name}</p>
@@ -390,7 +456,7 @@ export default function Locations() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__none__">Chọn kho</SelectItem>
-                    {(warehouses as { id: string; name: string }[]).map(w => (
+                    {warehouses.map(w => (
                       <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
                     ))}
                   </SelectContent>
@@ -405,8 +471,7 @@ export default function Locations() {
                 <Select value={form.category || '__none__'}
                   onValueChange={v => {
                     if (v === '__new_cat__') {
-                      setIsNewCategory(true)
-                      setField('category', '')
+                      setIsNewCategory(true); setField('category', '')
                     } else {
                       setField('category', v === '__none__' ? '' : v)
                       if (dialogMode === 'add') { setField('sub_code', ''); setIsNewSubCode(false) }
@@ -425,7 +490,7 @@ export default function Locations() {
                 </Select>
               ) : (
                 <div className="flex gap-1.5 mt-1">
-                  <Input className="h-8 text-sm flex-1" placeholder="VD: Nguyên vật liệu thô"
+                  <Input className="h-8 text-sm flex-1" placeholder="VD: Bao bì"
                     autoFocus value={form.category}
                     onChange={e => setField('category', e.target.value)} />
                   <button onClick={() => { setIsNewCategory(false); setField('category', '') }}
@@ -471,6 +536,16 @@ export default function Locations() {
               </div>
             )}
 
+            {/* ── Tên khu vực (edit) ── */}
+            {dialogMode === 'edit' && (
+              <div>
+                <Label className="text-xs">Tên khu vực <span className="text-slate-400">(tuỳ chọn)</span></Label>
+                <Input className="h-8 text-sm mt-1" placeholder="VD: Nguyên liệu 1"
+                  value={form.sub_name} onChange={e => setField('sub_name', e.target.value)} />
+                <p className="text-[10px] text-slate-400 mt-0.5">Tên hiển thị — không thay đổi mã vị trí</p>
+              </div>
+            )}
+
             {/* ── Vị trí + Tầng (chỉ add) ── */}
             {dialogMode === 'add' && (
               <div className="flex gap-2">
@@ -502,6 +577,23 @@ export default function Locations() {
                 value={form.max_pallets} onChange={e => setField('max_pallets', e.target.value)} />
             </div>
 
+            {/* ── Trạng thái (chỉ edit) ── */}
+            {dialogMode === 'edit' && (
+              <div className="flex items-center justify-between pt-1 border-t">
+                <Label className="text-xs">Trạng thái vị trí</Label>
+                <button
+                  type="button"
+                  onClick={() => setEditIsActive(v => !v)}
+                  className={`text-xs px-3 py-1 rounded-full font-medium transition-colors ${
+                    editIsActive
+                      ? 'bg-green-100 text-green-700 hover:bg-red-50 hover:text-red-600'
+                      : 'bg-slate-100 text-slate-500 hover:bg-green-50 hover:text-green-600'
+                  }`}>
+                  {editIsActive ? 'Đang hoạt động — nhấn để vô hiệu hoá' : 'Đã vô hiệu hoá — nhấn để kích hoạt lại'}
+                </button>
+              </div>
+            )}
+
             {formError && (
               <p className="text-xs text-red-500 bg-red-50 border border-red-200 rounded px-2 py-1.5">{formError}</p>
             )}
@@ -516,35 +608,89 @@ export default function Locations() {
         </DialogContent>
       </Dialog>
 
-      {/* Add Warehouse Dialog */}
-      <Dialog open={whDialogOpen} onOpenChange={open => !open && setWhDialogOpen(false)}>
+      {/* Warehouse Management Dialog */}
+      <Dialog open={whDialogOpen} onOpenChange={open => { if (!open) { setWhDialogOpen(false); setWhDeleteTarget(null) } }}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>Thêm Kho mới</DialogTitle>
+            <DialogTitle>Quản lý Kho</DialogTitle>
           </DialogHeader>
-          <div className="space-y-3 py-1">
-            <div>
-              <Label className="text-xs">Mã kho <span className="text-red-500">*</span></Label>
-              <Input className="h-8 text-sm mt-1 uppercase" placeholder="VD: BV"
-                value={whForm.code} onChange={e => setWhForm(f => ({ ...f, code: e.target.value }))} />
-              <p className="text-[10px] text-slate-400 mt-0.5">Dùng làm prefix trong mã vị trí, VD: BV_NVL1_01</p>
+
+          {/* Danh sách kho hiện tại */}
+          <div className="space-y-1 max-h-52 overflow-y-auto pr-1">
+            {allWh.length === 0 && (
+              <p className="text-xs text-slate-400 text-center py-3">Chưa có kho nào</p>
+            )}
+            {allWh.map(w => (
+              <div key={w.id} className={`flex items-center gap-2 px-2.5 py-1.5 rounded ${w.is_active ? 'bg-slate-50' : 'bg-slate-100 opacity-60'}`}>
+                <span className="font-mono text-[10px] font-semibold text-slate-400 w-8 shrink-0">{w.code}</span>
+                <span className="flex-1 text-sm">{w.name}</span>
+                <span className="text-[10px] text-slate-400 shrink-0">{w._count.locations} vị trí</span>
+                {!w.is_active && (
+                  <span className="text-[9px] bg-slate-200 text-slate-500 px-1.5 py-0.5 rounded-full shrink-0">Tắt</span>
+                )}
+                {w.is_active && (
+                  whDeleteTarget?.id === w.id ? (
+                    <div className="flex gap-1 shrink-0">
+                      <button onClick={handleDeleteWarehouse} disabled={deleteWarehouse.isPending}
+                        className="text-[10px] text-red-600 hover:text-red-700 font-medium px-1.5">
+                        {deleteWarehouse.isPending ? '…' : w._count.locations > 0 ? 'Vô hiệu hoá' : 'Xóa'}
+                      </button>
+                      <button onClick={() => setWhDeleteTarget(null)}
+                        className="text-[10px] text-slate-400 hover:text-slate-600 px-1">Hủy</button>
+                    </div>
+                  ) : (
+                    <button onClick={() => { setWhError(''); setWhDeleteTarget(w) }}
+                      className="p-1 text-slate-300 hover:text-red-400 shrink-0"
+                      title={w._count.locations > 0 ? 'Vô hiệu hoá kho' : 'Xóa kho'}>
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  )
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* Cảnh báo confirm */}
+          {whDeleteTarget && (
+            <div className={`text-[11px] rounded px-2.5 py-2 border ${
+              whDeleteTarget._count.locations > 0
+                ? 'bg-amber-50 border-amber-200 text-amber-800'
+                : 'bg-red-50 border-red-200 text-red-700'
+            }`}>
+              {whDeleteTarget._count.locations > 0
+                ? `Kho "${whDeleteTarget.name}" có ${whDeleteTarget._count.locations} vị trí → sẽ bị vô hiệu hoá, dữ liệu vẫn giữ nguyên.`
+                : `Kho "${whDeleteTarget.name}" chưa có vị trí → sẽ bị xóa vĩnh viễn.`}
             </div>
-            <div>
-              <Label className="text-xs">Tên kho <span className="text-red-500">*</span></Label>
-              <Input className="h-8 text-sm mt-1" placeholder="VD: Kho Ba Vì"
-                value={whForm.name} onChange={e => setWhForm(f => ({ ...f, name: e.target.value }))} />
+          )}
+
+          {whError && (
+            <p className="text-xs text-red-500 bg-red-50 border border-red-200 rounded px-2 py-1.5">{whError}</p>
+          )}
+
+          {/* Form thêm kho mới */}
+          <div className="border-t pt-3 space-y-2.5">
+            <p className="text-xs font-medium text-slate-600">Thêm kho mới</p>
+            <div className="flex gap-2">
+              <div className="w-20 shrink-0">
+                <Label className="text-xs">Mã kho <span className="text-red-500">*</span></Label>
+                <Input className="h-8 text-sm mt-1 uppercase" placeholder="BV"
+                  value={whForm.code} onChange={e => setWhForm(f => ({ ...f, code: e.target.value }))} />
+              </div>
+              <div className="flex-1">
+                <Label className="text-xs">Tên kho <span className="text-red-500">*</span></Label>
+                <Input className="h-8 text-sm mt-1" placeholder="Kho Ba Vì"
+                  value={whForm.name} onChange={e => setWhForm(f => ({ ...f, name: e.target.value }))} />
+              </div>
             </div>
             <div>
               <Label className="text-xs">Địa chỉ <span className="text-slate-400">(tuỳ chọn)</span></Label>
-              <Input className="h-8 text-sm mt-1" placeholder="VD: Ba Vì, Hà Nội"
+              <Input className="h-8 text-sm mt-1" placeholder="Ba Vì, Hà Nội"
                 value={whForm.address} onChange={e => setWhForm(f => ({ ...f, address: e.target.value }))} />
             </div>
-            {whError && (
-              <p className="text-xs text-red-500 bg-red-50 border border-red-200 rounded px-2 py-1.5">{whError}</p>
-            )}
           </div>
+
           <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setWhDialogOpen(false)}>Hủy</Button>
+            <Button variant="outline" size="sm" onClick={() => { setWhDialogOpen(false); setWhDeleteTarget(null) }}>Đóng</Button>
             <Button size="sm" onClick={handleCreateWarehouse} disabled={createWarehouse.isPending}>
               {createWarehouse.isPending ? 'Đang lưu…' : 'Tạo kho'}
             </Button>
@@ -552,7 +698,7 @@ export default function Locations() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation */}
+      {/* Delete Location Confirmation */}
       <Dialog open={deleteTarget !== null} onOpenChange={open => !open && setDeleteTarget(null)}>
         <DialogContent className="max-w-sm">
           <DialogHeader>

@@ -87,10 +87,30 @@ export async function updateWarehouse(req: Request, res: Response) {
 
 export async function deleteWarehouse(req: Request, res: Response) {
   try {
-    const { data, error } = await supabase
-      .from('Warehouse').update({ is_active: false, updated_at: new Date().toISOString() }).eq('id', req.params.id).select().maybeSingle()
-    if (error) throw error
-    if (!data) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy kho')
-    ok(res, data)
+    const id = req.params.id
+
+    // Kiểm tra có location nào chưa (kể cả đã soft-delete)
+    const [locRes, piRes] = await Promise.all([
+      supabase.from('Location').select('*', { count: 'exact', head: true }).eq('warehouse_id', id),
+      supabase.from('ProductionImport').select('*', { count: 'exact', head: true }).eq('warehouse_id', id),
+    ])
+    if (locRes.error) throw locRes.error
+    if (piRes.error)  throw piRes.error
+
+    const hasRefs = (locRes.count ?? 0) > 0 || (piRes.count ?? 0) > 0
+
+    if (!hasRefs) {
+      // Không có dữ liệu liên quan → xóa vĩnh viễn
+      const { error } = await supabase.from('Warehouse').delete().eq('id', id)
+      if (error) throw error
+      return ok(res, { deleted: true })
+    } else {
+      // Có location/phiếu nhập → vô hiệu hoá để giữ lịch sử
+      const { data, error } = await supabase
+        .from('Warehouse').update({ is_active: false, updated_at: new Date().toISOString() }).eq('id', id).select().maybeSingle()
+      if (error) throw error
+      if (!data) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy kho')
+      return ok(res, { deleted: false, ...data })
+    }
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }

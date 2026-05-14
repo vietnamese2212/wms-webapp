@@ -111,6 +111,27 @@ export function useCreateLocation() {
   })
 }
 
+export function useUpdateLocation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string; sub_name?: string; sub_type?: string; max_pallets?: number }) =>
+      apiClient.put(`/masterdata/locations/${id}`, body).then((r) => r.data.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['locations-real'] }),
+  })
+}
+
+export function useDeleteLocation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiClient.delete(`/masterdata/locations/${id}`).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['locations-real'] })
+      qc.invalidateQueries({ queryKey: ['sub-groups'] })
+    },
+  })
+}
+
 export function useCreateMaterial() {
   const qc = useQueryClient()
   return useMutation({

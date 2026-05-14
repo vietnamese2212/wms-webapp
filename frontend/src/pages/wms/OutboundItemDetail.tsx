@@ -612,13 +612,22 @@ export default function OutboundItemDetail() {
                   </TableHeader>
                   <TableBody>
                     {scans.map(se => {
-                    const isOldDate = maxProdDate !== null && se.production_date !== null && se.production_date !== maxProdDate
+                    const isOldDate    = maxProdDate !== null && se.production_date !== null && se.production_date !== maxProdDate
+                    const isSubOptimal = se.best_available_date !== null && se.production_date !== null && se.production_date > se.best_available_date
                     return (
                       <TableRow key={se.id}>
                         <TableCell className="px-2 py-1.5 font-mono text-xs font-medium">
                           <span className={isOldDate ? 'text-red-600' : ''}>{se.pallet_code}</span>
                           {isOldDate && (
                             <span className="ml-1 text-[9px] text-red-400 font-normal">NSX cũ</span>
+                          )}
+                          {isSubOptimal && (
+                            <span
+                              className="ml-1 text-[9px] text-orange-500 font-normal"
+                              title={`Có date cũ hơn lúc quét: ${se.best_available_date}`}
+                            >
+                              ⚠ best: {se.best_available_date}
+                            </span>
                           )}
                         </TableCell>
                         <TableCell className="px-2 py-1.5 text-right tabular-nums text-xs font-semibold">

@@ -385,15 +385,16 @@ export interface InventoryEntry {
 export type OutboundStatus = 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED' | 'PAUSED'
 
 export interface OutboundScanEntry {
-  id:                 string
-  item_id:            string
-  inventory_entry_id: string | null
-  pallet_code:        string
-  cartons_scanned:    number
-  is_loose_picking:   boolean
-  scanned_by:         string | null
-  scanned_at:         string
-  production_date:    string | null
+  id:                   string
+  item_id:              string
+  inventory_entry_id:   string | null
+  pallet_code:          string
+  cartons_scanned:      number
+  is_loose_picking:     boolean
+  scanned_by:           string | null
+  scanned_at:           string
+  production_date:      string | null
+  best_available_date:  string | null  // production_date tốt nhất trong kho lúc quét (cũ nhất, không QA)
 }
 
 export interface OutboundItem {

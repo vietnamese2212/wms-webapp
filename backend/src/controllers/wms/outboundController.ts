@@ -1083,7 +1083,7 @@ export async function scanItem(req: Request, res: Response) {
     if (!qr) return fail(res, 'qr_code là bắt buộc', 400)
 
     const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
-      .select('status, started_at').eq('id', gdoId).single()
+      .select('status, started_at, warehouse_id').eq('id', gdoId).single()
     if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng — không thể quét', 400)
 
     const { data: item, error: itemErr } = await (supabase.from('OutboundItem') as any)
@@ -1158,6 +1158,21 @@ export async function scanItem(req: Request, res: Response) {
 
     const to_take = cartons_override ? Math.min(Math.max(1, Number(cartons_override)), cap) : cap
 
+    // Tìm production_date tốt nhất (cũ nhất, không bị QA) trong kho lúc này
+    let best_available_date: string | null = null
+    if (inv.material_id && gdo?.warehouse_id) {
+      const { data: bestEntries } = await (supabase.from('InventoryEntry') as any)
+        .select('production_date, location!inner(warehouse_id)')
+        .eq('material_id', inv.material_id)
+        .eq('location.warehouse_id', gdo.warehouse_id)
+        .in('status', ['IN_STOCK', 'PARTIAL'])
+        .is('qa_status_id', null)
+        .not('production_date', 'is', null)
+        .gt('cartons_remaining', 0)
+      const dates = (bestEntries ?? []).map((e: any) => e.production_date as string).filter(Boolean)
+      if (dates.length > 0) best_available_date = dates.reduce((a: string, b: string) => a < b ? a : b)
+    }
+
     const t = now()
 
     if (to_take >= available) {
@@ -1173,6 +1188,7 @@ export async function scanItem(req: Request, res: Response) {
       id: scanId, item_id: itemId, inventory_entry_id: inv.id,
       pallet_code: qr, cartons_scanned: to_take,
       production_date: inv.production_date ?? null,
+      best_available_date,
       is_loose_picking: !!loose_picking_mode,
       scanned_by: employee_id ?? null, scanned_at: t,
       created_at: t, updated_at: t,

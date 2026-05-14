@@ -637,13 +637,18 @@ function ItemsTable({ doRecords, gdoId, canScan, expandedItemIds, toggleExpand }
                       ) : (
                         <div className="flex flex-wrap gap-1">
                           {scans.map(se => {
-                            const isOldDate = maxProdDate !== null && se.production_date !== null && se.production_date !== maxProdDate
+                            const isOldDate   = maxProdDate !== null && se.production_date !== null && se.production_date !== maxProdDate
+                            const isSubOptimal = se.best_available_date !== null && se.production_date !== null && se.production_date > se.best_available_date
                             return (
-                              <span key={se.id} className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] ${
-                                isOldDate
-                                  ? 'bg-red-50 border-red-200 text-red-700'
-                                  : 'bg-white border-slate-200 text-slate-700'
-                              }`}>
+                              <span
+                                key={se.id}
+                                title={se.best_available_date ? `Date tốt nhất lúc quét: ${se.best_available_date}` : undefined}
+                                className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] ${
+                                  isOldDate
+                                    ? 'bg-red-50 border-red-200 text-red-700'
+                                    : 'bg-white border-slate-200 text-slate-700'
+                                }`}
+                              >
                                 <span className="font-mono font-semibold">{se.pallet_code}</span>
                                 <span className="text-slate-300">·</span>
                                 <span className="tabular-nums font-semibold">{se.cartons_scanned}<span className="font-normal text-slate-400 ml-0.5">th</span></span>
@@ -654,6 +659,9 @@ function ItemsTable({ doRecords, gdoId, canScan, expandedItemIds, toggleExpand }
                                   </>
                                 )}
                                 {isOldDate && <span className="text-red-400 font-medium">NSX cũ</span>}
+                                {isSubOptimal && (
+                                  <span className="text-orange-500 font-bold" title={`Bỏ qua date cũ hơn: ${se.best_available_date}`}>⚠</span>
+                                )}
                               </span>
                             )
                           })}

@@ -99,6 +99,15 @@ export function useCreateWarehouse() {
   })
 }
 
+export function useUpdateWarehouse() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string; name?: string; address?: string; is_active?: boolean }) =>
+      apiClient.put(`/masterdata/warehouses/${id}`, body).then((r) => r.data.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouses'] }),
+  })
+}
+
 export function useDeleteWarehouse() {
   const qc = useQueryClient()
   return useMutation({

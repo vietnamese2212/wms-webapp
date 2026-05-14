@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import {
   useLocationsReal, useWarehouses,
   useCreateLocation, useUpdateLocation, useDeleteLocation,
-  useCreateWarehouse, useDeleteWarehouse,
+  useCreateWarehouse, useUpdateWarehouse, useDeleteWarehouse,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 
@@ -61,10 +61,11 @@ export default function Locations() {
   const [deleteTarget,  setDeleteTarget]  = useState<RealLocation | null>(null)
 
   // Warehouse management dialog
-  const [whDialogOpen,   setWhDialogOpen]   = useState(false)
-  const [whForm,         setWhForm]         = useState(EMPTY_WH_FORM)
-  const [whError,        setWhError]        = useState('')
-  const [whDeleteTarget, setWhDeleteTarget] = useState<WhWithCount | null>(null)
+  const [whDialogOpen,      setWhDialogOpen]      = useState(false)
+  const [whForm,            setWhForm]            = useState(EMPTY_WH_FORM)
+  const [whError,           setWhError]           = useState('')
+  const [whDeleteTarget,    setWhDeleteTarget]    = useState<WhWithCount | null>(null)
+  const [whReactivateTarget, setWhReactivateTarget] = useState<WhWithCount | null>(null)
 
   // Data
   const { data: activeWhRaw = [] }      = useWarehouses(true)
@@ -86,6 +87,7 @@ export default function Locations() {
   const updateLocation  = useUpdateLocation()
   const deleteLocation  = useDeleteLocation()
   const createWarehouse = useCreateWarehouse()
+  const updateWarehouse = useUpdateWarehouse()
   const deleteWarehouse = useDeleteWarehouse()
 
   // ── Table filter ─────────────────────────────────────────────
@@ -247,6 +249,18 @@ export default function Locations() {
     try {
       await deleteWarehouse.mutateAsync(whDeleteTarget.id)
       setWhDeleteTarget(null)
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
+      setWhError(msg ?? 'Có lỗi xảy ra')
+    }
+  }
+
+  async function handleReactivateWarehouse() {
+    if (!whReactivateTarget) return
+    setWhError('')
+    try {
+      await updateWarehouse.mutateAsync({ id: whReactivateTarget.id, is_active: true })
+      setWhReactivateTarget(null)
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
       setWhError(msg ?? 'Có lỗi xảy ra')
@@ -609,7 +623,7 @@ export default function Locations() {
       </Dialog>
 
       {/* Warehouse Management Dialog */}
-      <Dialog open={whDialogOpen} onOpenChange={open => { if (!open) { setWhDialogOpen(false); setWhDeleteTarget(null) } }}>
+      <Dialog open={whDialogOpen} onOpenChange={open => { if (!open) { setWhDialogOpen(false); setWhDeleteTarget(null); setWhReactivateTarget(null) } }}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle>Quản lý Kho</DialogTitle>
@@ -626,7 +640,21 @@ export default function Locations() {
                 <span className="flex-1 text-sm">{w.name}</span>
                 <span className="text-[10px] text-slate-400 shrink-0">{w._count.locations} vị trí</span>
                 {!w.is_active && (
-                  <span className="text-[9px] bg-slate-200 text-slate-500 px-1.5 py-0.5 rounded-full shrink-0">Tắt</span>
+                  whReactivateTarget?.id === w.id ? (
+                    <div className="flex gap-1 shrink-0">
+                      <button onClick={handleReactivateWarehouse} disabled={updateWarehouse.isPending}
+                        className="text-[10px] text-green-600 hover:text-green-700 font-medium px-1.5">
+                        {updateWarehouse.isPending ? '…' : 'Lưu'}
+                      </button>
+                      <button onClick={() => setWhReactivateTarget(null)}
+                        className="text-[10px] text-slate-400 hover:text-slate-600 px-1">Hủy</button>
+                    </div>
+                  ) : (
+                    <button onClick={() => { setWhError(''); setWhDeleteTarget(null); setWhReactivateTarget(w) }}
+                      className="text-[10px] text-slate-400 hover:text-green-600 underline underline-offset-2 shrink-0 whitespace-nowrap">
+                      Kích hoạt lại
+                    </button>
+                  )
                 )}
                 {w.is_active && (
                   whDeleteTarget?.id === w.id ? (
@@ -660,6 +688,11 @@ export default function Locations() {
               {whDeleteTarget._count.locations > 0
                 ? `Kho "${whDeleteTarget.name}" có ${whDeleteTarget._count.locations} vị trí → sẽ bị vô hiệu hoá, dữ liệu vẫn giữ nguyên.`
                 : `Kho "${whDeleteTarget.name}" chưa có vị trí → sẽ bị xóa vĩnh viễn.`}
+            </div>
+          )}
+          {whReactivateTarget && (
+            <div className="text-[11px] rounded px-2.5 py-2 border bg-green-50 border-green-200 text-green-800">
+              Kích hoạt lại kho "{whReactivateTarget.name}"? Kho sẽ hoạt động trở lại.
             </div>
           )}
 

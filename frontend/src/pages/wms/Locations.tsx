@@ -11,11 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { useLocationsReal, useWarehouses, useCreateLocation, useUpdateLocation, useDeleteLocation } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 
-const SUB_TYPE_LABELS: Record<string, string> = {
-  THANH_PHAM:    'Thành phẩm',
-  NGUYEN_LIEU:   'Nguyên liệu',
-  BAN_THANH_PHAM:'Bán thành phẩm',
-}
+const CATEGORY_OPTIONS = ['Thành phẩm', 'NVL', 'POSM']
 
 interface RealLocation {
   id:           string
@@ -23,6 +19,7 @@ interface RealLocation {
   sub_code:     string
   sub_name:     string | null
   sub_type:     string | null
+  category:     string | null
   row:          string
   shelf:        string
   max_pallets:  number
@@ -31,12 +28,12 @@ interface RealLocation {
   warehouse:    { id: string; code: string; name: string }
 }
 
-const EMPTY_FORM = { warehouse_id: '', sub_code: '', sub_name: '', sub_type: '', row: '', shelf: '', max_pallets: '' }
+const EMPTY_FORM = { warehouse_id: '', sub_code: '', sub_name: '', category: '', row: '', shelf: '', max_pallets: '' }
 
 export default function Locations() {
   const user = useAuthStore(s => s.user)
   const [warehouseId, setWarehouseId] = useState(user?.warehouse_id ?? '')
-  const [subType,     setSubType]     = useState('')
+  const [catFilter,   setCatFilter]   = useState('')
   const [search,      setSearch]      = useState('')
 
   const [dialogMode,   setDialogMode]   = useState<'add' | 'edit' | null>(null)
@@ -55,18 +52,13 @@ export default function Locations() {
   const updateLocation = useUpdateLocation()
   const deleteLocation = useDeleteLocation()
 
-  const subTypeOpts = useMemo(() => {
-    const all = locations.map(l => l.sub_type).filter(Boolean) as string[]
-    return [...new Set(all)]
-  }, [locations])
-
   const filtered = useMemo(() => {
     return locations.filter(l => {
-      if (subType && l.sub_type !== subType) return false
+      if (catFilter && l.category !== catFilter) return false
       if (search && !l.location_code.toLowerCase().includes(search.toLowerCase())) return false
       return true
     })
-  }, [locations, subType, search])
+  }, [locations, catFilter, search])
 
   const totalSlots = filtered.reduce((s, l) => s + l.max_pallets, 0)
   const usedSlots  = filtered.reduce((s, l) => s + l.used_slots,  0)
@@ -89,7 +81,7 @@ export default function Locations() {
       warehouse_id: loc.warehouse.id,
       sub_code:     loc.sub_code,
       sub_name:     loc.sub_name ?? '',
-      sub_type:     loc.sub_type ?? '',
+      category:     loc.category ?? '',
       row:          loc.row,
       shelf:        loc.shelf,
       max_pallets:  String(loc.max_pallets),
@@ -103,14 +95,14 @@ export default function Locations() {
     try {
       if (dialogMode === 'add') {
         if (!form.warehouse_id || !form.sub_code || !form.row || !form.shelf) {
-          setFormError('Kho, mã khu, hàng và cột là bắt buộc')
+          setFormError('Kho, khu vực, hàng và cột là bắt buộc')
           return
         }
         await createLocation.mutateAsync({
           warehouse_id: form.warehouse_id,
           sub_code:     form.sub_code.trim().toUpperCase(),
           sub_name:     form.sub_name.trim() || undefined,
-          sub_type:     form.sub_type || undefined,
+          category:     form.category || undefined,
           row:          form.row.trim(),
           shelf:        form.shelf.trim(),
           max_pallets:  form.max_pallets ? Number(form.max_pallets) : undefined,
@@ -119,7 +111,7 @@ export default function Locations() {
         await updateLocation.mutateAsync({
           id:          editing.id,
           sub_name:    form.sub_name.trim() || undefined,
-          sub_type:    form.sub_type || undefined,
+          category:    form.category || undefined,
           max_pallets: form.max_pallets ? Number(form.max_pallets) : undefined,
         })
       }
@@ -158,7 +150,7 @@ export default function Locations() {
 
         {/* Filters */}
         <div className="flex gap-2 flex-wrap items-center">
-          <Select value={warehouseId || '__all__'} onValueChange={v => { setWarehouseId(v === '__all__' ? '' : v); setSubType('') }}>
+          <Select value={warehouseId || '__all__'} onValueChange={v => { setWarehouseId(v === '__all__' ? '' : v); setCatFilter('') }}>
             <SelectTrigger className="h-8 text-sm w-[130px]">
               <SelectValue placeholder="Tất cả kho" />
             </SelectTrigger>
@@ -170,14 +162,14 @@ export default function Locations() {
             </SelectContent>
           </Select>
 
-          <Select value={subType || '__all__'} onValueChange={v => setSubType(v === '__all__' ? '' : v)} disabled={subTypeOpts.length === 0}>
-            <SelectTrigger className="h-8 text-sm w-[140px]">
-              <SelectValue placeholder="Tất cả loại" />
+          <Select value={catFilter || '__all__'} onValueChange={v => setCatFilter(v === '__all__' ? '' : v)}>
+            <SelectTrigger className="h-8 text-sm w-[130px]">
+              <SelectValue placeholder="Loại kho" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="__all__">Tất cả loại</SelectItem>
-              {subTypeOpts.map(st => (
-                <SelectItem key={st} value={st}>{SUB_TYPE_LABELS[st] ?? st}</SelectItem>
+              {CATEGORY_OPTIONS.map(c => (
+                <SelectItem key={c} value={c}>{c}</SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -211,11 +203,11 @@ export default function Locations() {
           <Table className="min-w-full">
             <TableHeader>
               <TableRow className="bg-slate-50">
-                <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Mã vị trí</TableHead>
-                <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Khu vực</TableHead>
-                <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Loại kho</TableHead>
                 <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Kho</TableHead>
-                <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right">Sức chứa</TableHead>
+                <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Loại kho</TableHead>
+                <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Khu vực kho</TableHead>
+                <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Vị trí</TableHead>
+                <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right">Sức chứa tối đa</TableHead>
                 <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right">Đang dùng</TableHead>
                 <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Trạng thái</TableHead>
                 <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 w-16"></TableHead>
@@ -232,21 +224,21 @@ export default function Locations() {
                   : 'hover:bg-slate-50'
                 return (
                   <TableRow key={loc.id} className={rowCls}>
-                    <TableCell className="px-2 py-1">
-                      <span className="font-mono font-semibold text-[10px]">{loc.location_code}</span>
-                    </TableCell>
-                    <TableCell className="px-2 py-1 text-[10px]">
-                      <span className="font-medium">{loc.sub_code}</span>
-                      {loc.sub_name && <span className="ml-1 text-slate-400">{loc.sub_name}</span>}
-                    </TableCell>
-                    <TableCell className="px-2 py-1 text-[10px] text-slate-600">
-                      {loc.sub_type ? (SUB_TYPE_LABELS[loc.sub_type] ?? loc.sub_type) : '—'}
-                    </TableCell>
                     <TableCell className="px-2 py-1 text-[10px] text-slate-600">
                       {loc.warehouse?.name ?? '—'}
                     </TableCell>
-                    <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums">
-                      {loc.max_pallets} <span className="text-slate-400">pl</span>
+                    <TableCell className="px-2 py-1 text-[10px] text-slate-600">
+                      {loc.category ?? <span className="text-slate-400">—</span>}
+                    </TableCell>
+                    <TableCell className="px-2 py-1 text-[10px]">
+                      <span className="font-semibold">{loc.sub_code}</span>
+                      {loc.sub_name && <span className="ml-1 text-slate-400">{loc.sub_name}</span>}
+                    </TableCell>
+                    <TableCell className="px-2 py-1">
+                      <span className="font-mono font-semibold text-[10px]">{loc.location_code}</span>
+                    </TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums font-semibold">
+                      {loc.max_pallets} <span className="text-slate-400 font-normal">pl</span>
                     </TableCell>
                     <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums">
                       <span className={isFull ? 'text-blue-600 font-semibold' : isPartial ? 'text-amber-600 font-semibold' : 'text-slate-400'}>
@@ -294,9 +286,10 @@ export default function Locations() {
 
           <div className="space-y-3 py-1">
             {dialogMode === 'edit' && editing && (
-              <div>
-                <p className="text-[10px] text-slate-500 mb-0.5">Mã vị trí</p>
+              <div className="bg-slate-50 rounded px-3 py-2 space-y-1">
+                <p className="text-[10px] text-slate-500">Vị trí</p>
                 <p className="font-mono font-semibold text-sm">{editing.location_code}</p>
+                <p className="text-[10px] text-slate-500">{editing.warehouse.name}</p>
               </div>
             )}
 
@@ -319,13 +312,13 @@ export default function Locations() {
 
                 <div className="flex gap-2">
                   <div className="flex-1">
-                    <Label className="text-xs">Mã khu <span className="text-red-500">*</span></Label>
-                    <Input className="h-8 text-sm mt-1 uppercase" placeholder="VD: A1"
+                    <Label className="text-xs">Khu vực <span className="text-red-500">*</span></Label>
+                    <Input className="h-8 text-sm mt-1 uppercase" placeholder="VD: TP1"
                       value={form.sub_code} onChange={e => setField('sub_code', e.target.value)} />
                   </div>
                   <div className="flex-1">
                     <Label className="text-xs">Tên khu</Label>
-                    <Input className="h-8 text-sm mt-1" placeholder="VD: Khu A"
+                    <Input className="h-8 text-sm mt-1" placeholder="VD: Khu TP 1"
                       value={form.sub_name} onChange={e => setField('sub_name', e.target.value)} />
                   </div>
                 </div>
@@ -348,28 +341,28 @@ export default function Locations() {
             {dialogMode === 'edit' && (
               <div>
                 <Label className="text-xs">Tên khu</Label>
-                <Input className="h-8 text-sm mt-1" placeholder="VD: Khu A"
+                <Input className="h-8 text-sm mt-1" placeholder="VD: Khu TP 1"
                   value={form.sub_name} onChange={e => setField('sub_name', e.target.value)} />
               </div>
             )}
 
             <div>
               <Label className="text-xs">Loại kho</Label>
-              <Select value={form.sub_type || '__none__'} onValueChange={v => setField('sub_type', v === '__none__' ? '' : v)}>
+              <Select value={form.category || '__none__'} onValueChange={v => setField('category', v === '__none__' ? '' : v)}>
                 <SelectTrigger className="h-8 text-sm mt-1">
-                  <SelectValue placeholder="Không phân loại" />
+                  <SelectValue placeholder="Chưa phân loại" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="__none__">Không phân loại</SelectItem>
-                  {Object.entries(SUB_TYPE_LABELS).map(([k, v]) => (
-                    <SelectItem key={k} value={k}>{v}</SelectItem>
+                  <SelectItem value="__none__">Chưa phân loại</SelectItem>
+                  {CATEGORY_OPTIONS.map(c => (
+                    <SelectItem key={c} value={c}>{c}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
 
             <div>
-              <Label className="text-xs">Sức chứa (pallet)</Label>
+              <Label className="text-xs">Sức chứa Pallet tối đa</Label>
               <Input className="h-8 text-sm mt-1" type="number" min="0" placeholder="VD: 4"
                 value={form.max_pallets} onChange={e => setField('max_pallets', e.target.value)} />
             </div>

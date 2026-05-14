@@ -1023,18 +1023,28 @@ export async function uploadExcel(req: Request, res: Response) {
 export async function getItemInventory(req: Request, res: Response) {
   try {
     const { gdoId, itemId } = req.params
-    const { data: item } = await (supabase.from('OutboundItem') as any)
-      .select('material_id').eq('id', itemId).single()
-    if (!item) return fail(res, 'Không tìm thấy mặt hàng', 404)
 
-    const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
-      .select('warehouse_id').eq('id', gdoId).single()
+    const [itemRes, gdoRes] = await Promise.all([
+      (supabase.from('OutboundItem') as any).select('material_id').eq('id', itemId).single(),
+      (supabase.from('GroupDeliveryOrder') as any).select('warehouse_id').eq('id', gdoId).single(),
+    ])
+    if (!itemRes.data) return fail(res, 'Không tìm thấy mặt hàng', 404)
+    const item = itemRes.data
+    const gdo  = gdoRes.data
 
     let q = (supabase.from('InventoryEntry') as any)
       .select('id, pallet_code, cartons_imported, cartons_remaining, production_date, import_date, location:Location(location_code), material:Material!material_id(shelf_life_days)')
       .eq('material_id', item.material_id)
-      .gt('cartons_remaining', 0)
-    if (gdo?.warehouse_id) q = q.eq('warehouse_id', gdo.warehouse_id)
+      .in('status', ['IN_STOCK', 'PARTIAL'])
+
+    if (gdo?.warehouse_id) {
+      const { data: locs } = await (supabase.from('Location') as any)
+        .select('id').eq('warehouse_id', gdo.warehouse_id)
+      const locIds = (locs ?? []).map((l: any) => l.id as string)
+      if (!locIds.length) return ok(res, [])
+      q = q.in('location_id', locIds)
+    }
+
     const { data, error } = await q.order('created_at')
     if (error) return fail(res, error.message)
 

@@ -6,7 +6,7 @@ import { vi } from 'date-fns/locale'
 import { formatDateTime } from '@/utils/formatters'
 import {
   ArrowLeft, CheckCircle2,
-  Truck, Package, ClipboardList, Play, Pause, ChevronRight, Bookmark, X, RotateCcw, Pencil, QrCode,
+  Truck, Package, ClipboardList, Play, Pause, ChevronRight, Bookmark, X, RotateCcw, Pencil, QrCode, Search,
 } from 'lucide-react'
 import { Button }  from '@/components/ui/button'
 import { Input }   from '@/components/ui/input'
@@ -458,6 +458,7 @@ function ItemsTable({ doRecords, gdoId, canScan }: {
             <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Mã hàng</TableHead>
             <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Tên hàng</TableHead>
             <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Thùng</TableHead>
+            <TableHead className="text-[9px] font-medium text-slate-500 px-1 py-1.5 text-center w-8">Kho</TableHead>
             {hasBoxes         && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Hộp</TableHead>}
             {hasLoosePicking  && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Nhặt lẻ</TableHead>}
             {hasBatchRequired && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Batch</TableHead>}
@@ -504,14 +505,16 @@ function ItemsTable({ doRecords, gdoId, canScan }: {
                         <QrCode className="h-2.5 w-2.5" /> Quét
                       </button>
                     )}
-                    <button
-                      onClick={e => { e.stopPropagation(); setInventoryItemId(item.id) }}
-                      className="flex items-center gap-0.5 text-[9px] font-medium text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded px-1.5 py-0.5 transition-colors"
-                      title="Xem tồn kho"
-                    >
-                      <Package className="h-2.5 w-2.5" /> Kho
-                    </button>
                   </div>
+                </TableCell>
+                <TableCell className="px-1 py-1 align-middle text-center">
+                  <button
+                    onClick={e => { e.stopPropagation(); setInventoryItemId(item.id) }}
+                    className="flex items-center justify-center h-7 w-7 mx-auto rounded text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+                    title="Xem tồn kho"
+                  >
+                    <Search className="h-5 w-5" />
+                  </button>
                 </TableCell>
                 {hasBoxes && (
                   <TableCell className="px-2 py-1 align-top text-right">

@@ -4,7 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 
 function buildLocationCode(warehouseCode: string, subCode: string, row: string, shelf: string) {
-  return `${warehouseCode}_${subCode}_${row}_${shelf}`
+  return [warehouseCode, subCode, row, shelf].filter(Boolean).join('_')
 }
 
 export async function listLocations(req: Request, res: Response) {

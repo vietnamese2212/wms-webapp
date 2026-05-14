@@ -28,7 +28,7 @@ interface RealLocation {
   warehouse:    { id: string; code: string; name: string }
 }
 
-const EMPTY_FORM = { warehouse_id: '', sub_code: '', sub_name: '', category: '', row: '', shelf: '', max_pallets: '' }
+const EMPTY_FORM = { warehouse_id: '', category: '', sub_code: '', sub_name: '', row: '', shelf: '', max_pallets: '' }
 
 export default function Locations() {
   const user = useAuthStore(s => s.user)
@@ -36,22 +36,27 @@ export default function Locations() {
   const [catFilter,   setCatFilter]   = useState('')
   const [search,      setSearch]      = useState('')
 
-  const [dialogMode,   setDialogMode]   = useState<'add' | 'edit' | null>(null)
-  const [editing,      setEditing]      = useState<RealLocation | null>(null)
-  const [form,         setForm]         = useState(EMPTY_FORM)
-  const [formError,    setFormError]    = useState('')
-  const [deleteTarget, setDeleteTarget] = useState<RealLocation | null>(null)
+  const [dialogMode,    setDialogMode]    = useState<'add' | 'edit' | null>(null)
+  const [editing,       setEditing]       = useState<RealLocation | null>(null)
+  const [form,          setForm]          = useState(EMPTY_FORM)
+  const [isNewSubCode,  setIsNewSubCode]  = useState(false)
+  const [formError,     setFormError]     = useState('')
+  const [deleteTarget,  setDeleteTarget]  = useState<RealLocation | null>(null)
 
   const { data: warehouses = [] } = useWarehouses(true)
+  // load all locations (no warehouse filter) để có đủ options cho form
+  const { data: allRaw = [] } = useLocationsReal()
   const { data: raw = [], isLoading } = useLocationsReal(
     warehouseId ? { warehouse_id: warehouseId } : undefined
   )
   const locations = (raw as RealLocation[]).filter(l => l.is_active)
+  const allLocations = (allRaw as RealLocation[]).filter(l => l.is_active)
 
   const createLocation = useCreateLocation()
   const updateLocation = useUpdateLocation()
   const deleteLocation = useDeleteLocation()
 
+  // ── Table filter ─────────────────────────────────────────────
   const filtered = useMemo(() => {
     return locations.filter(l => {
       if (catFilter && l.category !== catFilter) return false
@@ -64,13 +69,38 @@ export default function Locations() {
   const usedSlots  = filtered.reduce((s, l) => s + l.used_slots,  0)
   const fullCount  = filtered.filter(l => l.max_pallets > 0 && l.used_slots >= l.max_pallets).length
 
+  // ── Form cascaded options ────────────────────────────────────
+  const formWhlocs = useMemo(() =>
+    allLocations.filter(l => l.warehouse.id === form.warehouse_id),
+    [allLocations, form.warehouse_id]
+  )
+  const formCatOpts = useMemo(() => {
+    const cats = formWhlocs.map(l => l.category).filter(Boolean) as string[]
+    const existing = [...new Set(cats)]
+    return [...new Set([...existing, ...CATEGORY_OPTIONS])]
+  }, [formWhlocs])
+  const formSubCodeOpts = useMemo(() => {
+    const locs = form.category
+      ? formWhlocs.filter(l => l.category === form.category)
+      : formWhlocs
+    return [...new Set(locs.map(l => l.sub_code))]
+  }, [formWhlocs, form.category])
+
+  // ── Location code preview ────────────────────────────────────
+  const selectedWh = (warehouses as { id: string; code: string; name: string }[]).find(w => w.id === form.warehouse_id)
+  const locationPreview = selectedWh && form.sub_code && form.row
+    ? [selectedWh.code, form.sub_code, form.row, form.shelf].filter(Boolean).join('_')
+    : null
+
+  // ── Handlers ─────────────────────────────────────────────────
   function setField(k: keyof typeof EMPTY_FORM, v: string) {
     setForm(f => ({ ...f, [k]: v }))
   }
 
   function openAdd() {
     setEditing(null)
-    setForm({ ...EMPTY_FORM, warehouse_id: warehouseId })
+    setForm({ ...EMPTY_FORM, warehouse_id: warehouseId, category: catFilter })
+    setIsNewSubCode(false)
     setFormError('')
     setDialogMode('add')
   }
@@ -79,23 +109,29 @@ export default function Locations() {
     setEditing(loc)
     setForm({
       warehouse_id: loc.warehouse.id,
+      category:     loc.category ?? '',
       sub_code:     loc.sub_code,
       sub_name:     loc.sub_name ?? '',
-      category:     loc.category ?? '',
       row:          loc.row,
       shelf:        loc.shelf,
       max_pallets:  String(loc.max_pallets),
     })
+    setIsNewSubCode(false)
     setFormError('')
     setDialogMode('edit')
+  }
+
+  function closeDialog() {
+    setDialogMode(null)
+    setIsNewSubCode(false)
   }
 
   async function handleSave() {
     setFormError('')
     try {
       if (dialogMode === 'add') {
-        if (!form.warehouse_id || !form.sub_code || !form.row || !form.shelf) {
-          setFormError('Kho, khu vực, hàng và cột là bắt buộc')
+        if (!form.warehouse_id || !form.sub_code || !form.row) {
+          setFormError('Kho, khu vực và vị trí là bắt buộc')
           return
         }
         await createLocation.mutateAsync({
@@ -115,7 +151,7 @@ export default function Locations() {
           max_pallets: form.max_pallets ? Number(form.max_pallets) : undefined,
         })
       }
-      setDialogMode(null)
+      closeDialog()
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
       setFormError(msg ?? 'Có lỗi xảy ra')
@@ -222,6 +258,8 @@ export default function Locations() {
                   : isPartial
                   ? 'bg-amber-50 hover:bg-amber-100'
                   : 'hover:bg-slate-50'
+                // chỉ hiển thị sub_name nếu khác sub_code
+                const showSubName = loc.sub_name && loc.sub_name !== loc.sub_code
                 return (
                   <TableRow key={loc.id} className={rowCls}>
                     <TableCell className="px-2 py-1 text-[10px] text-slate-600">
@@ -232,7 +270,7 @@ export default function Locations() {
                     </TableCell>
                     <TableCell className="px-2 py-1 text-[10px]">
                       <span className="font-semibold">{loc.sub_code}</span>
-                      {loc.sub_name && <span className="ml-1 text-slate-400">{loc.sub_name}</span>}
+                      {showSubName && <span className="ml-1 text-slate-400">{loc.sub_name}</span>}
                     </TableCell>
                     <TableCell className="px-2 py-1">
                       <span className="font-mono font-semibold text-[10px]">{loc.location_code}</span>
@@ -278,89 +316,126 @@ export default function Locations() {
       </div>
 
       {/* Add / Edit Dialog */}
-      <Dialog open={dialogMode !== null} onOpenChange={open => !open && setDialogMode(null)}>
+      <Dialog open={dialogMode !== null} onOpenChange={open => !open && closeDialog()}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle>{dialogMode === 'add' ? 'Thêm vị trí' : 'Sửa vị trí'}</DialogTitle>
           </DialogHeader>
 
           <div className="space-y-3 py-1">
+            {/* ── Edit: hiển thị thông tin read-only ── */}
             {dialogMode === 'edit' && editing && (
-              <div className="bg-slate-50 rounded px-3 py-2 space-y-1">
-                <p className="text-[10px] text-slate-500">Vị trí</p>
+              <div className="bg-slate-50 rounded px-3 py-2 space-y-0.5">
+                <p className="text-[10px] text-slate-500">Vị trí · {editing.warehouse.name}</p>
                 <p className="font-mono font-semibold text-sm">{editing.location_code}</p>
-                <p className="text-[10px] text-slate-500">{editing.warehouse.name}</p>
               </div>
             )}
 
+            {/* ── Kho (chỉ add) ── */}
             {dialogMode === 'add' && (
-              <>
-                <div>
-                  <Label className="text-xs">Kho <span className="text-red-500">*</span></Label>
-                  <Select value={form.warehouse_id || '__none__'} onValueChange={v => setField('warehouse_id', v === '__none__' ? '' : v)}>
-                    <SelectTrigger className="h-8 text-sm mt-1">
-                      <SelectValue placeholder="Chọn kho" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__none__">Chọn kho</SelectItem>
-                      {(warehouses as { id: string; name: string }[]).map(w => (
-                        <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="flex gap-2">
-                  <div className="flex-1">
-                    <Label className="text-xs">Khu vực <span className="text-red-500">*</span></Label>
-                    <Input className="h-8 text-sm mt-1 uppercase" placeholder="VD: TP1"
-                      value={form.sub_code} onChange={e => setField('sub_code', e.target.value)} />
-                  </div>
-                  <div className="flex-1">
-                    <Label className="text-xs">Tên khu</Label>
-                    <Input className="h-8 text-sm mt-1" placeholder="VD: Khu TP 1"
-                      value={form.sub_name} onChange={e => setField('sub_name', e.target.value)} />
-                  </div>
-                </div>
-
-                <div className="flex gap-2">
-                  <div className="flex-1">
-                    <Label className="text-xs">Hàng <span className="text-red-500">*</span></Label>
-                    <Input className="h-8 text-sm mt-1" placeholder="VD: 01"
-                      value={form.row} onChange={e => setField('row', e.target.value)} />
-                  </div>
-                  <div className="flex-1">
-                    <Label className="text-xs">Cột <span className="text-red-500">*</span></Label>
-                    <Input className="h-8 text-sm mt-1" placeholder="VD: 01"
-                      value={form.shelf} onChange={e => setField('shelf', e.target.value)} />
-                  </div>
-                </div>
-              </>
-            )}
-
-            {dialogMode === 'edit' && (
               <div>
-                <Label className="text-xs">Tên khu</Label>
-                <Input className="h-8 text-sm mt-1" placeholder="VD: Khu TP 1"
-                  value={form.sub_name} onChange={e => setField('sub_name', e.target.value)} />
+                <Label className="text-xs">Kho <span className="text-red-500">*</span></Label>
+                <Select value={form.warehouse_id || '__none__'}
+                  onValueChange={v => {
+                    setField('warehouse_id', v === '__none__' ? '' : v)
+                    setField('category', '')
+                    setField('sub_code', '')
+                    setIsNewSubCode(false)
+                  }}>
+                  <SelectTrigger className="h-8 text-sm mt-1">
+                    <SelectValue placeholder="Chọn kho" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">Chọn kho</SelectItem>
+                    {(warehouses as { id: string; name: string }[]).map(w => (
+                      <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             )}
 
+            {/* ── Loại kho ── */}
             <div>
               <Label className="text-xs">Loại kho</Label>
-              <Select value={form.category || '__none__'} onValueChange={v => setField('category', v === '__none__' ? '' : v)}>
+              <Select value={form.category || '__none__'}
+                onValueChange={v => {
+                  setField('category', v === '__none__' ? '' : v)
+                  if (dialogMode === 'add') { setField('sub_code', ''); setIsNewSubCode(false) }
+                }}>
                 <SelectTrigger className="h-8 text-sm mt-1">
                   <SelectValue placeholder="Chưa phân loại" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__none__">Chưa phân loại</SelectItem>
-                  {CATEGORY_OPTIONS.map(c => (
+                  {formCatOpts.map(c => (
                     <SelectItem key={c} value={c}>{c}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
 
+            {/* ── Khu vực kho (chỉ add) ── */}
+            {dialogMode === 'add' && (
+              <div>
+                <Label className="text-xs">Khu vực kho <span className="text-red-500">*</span></Label>
+                {!isNewSubCode ? (
+                  <Select value={form.sub_code || '__none__'}
+                    onValueChange={v => {
+                      if (v === '__new__') { setIsNewSubCode(true); setField('sub_code', '') }
+                      else setField('sub_code', v === '__none__' ? '' : v)
+                    }}>
+                    <SelectTrigger className="h-8 text-sm mt-1">
+                      <SelectValue placeholder="Chọn khu vực" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">Chọn khu vực</SelectItem>
+                      {formSubCodeOpts.map(sc => (
+                        <SelectItem key={sc} value={sc}>{sc}</SelectItem>
+                      ))}
+                      <SelectItem value="__new__">+ Tạo khu vực mới</SelectItem>
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <div className="flex gap-1.5 mt-1">
+                    <Input className="h-8 text-sm flex-1 uppercase" placeholder="VD: NVL2"
+                      autoFocus
+                      value={form.sub_code}
+                      onChange={e => setField('sub_code', e.target.value)} />
+                    <button onClick={() => { setIsNewSubCode(false); setField('sub_code', '') }}
+                      className="text-xs text-slate-400 hover:text-slate-700 px-2">
+                      ← Chọn có sẵn
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── Vị trí + Tầng (chỉ add) ── */}
+            {dialogMode === 'add' && (
+              <div className="flex gap-2">
+                <div className="flex-1">
+                  <Label className="text-xs">Vị trí <span className="text-red-500">*</span></Label>
+                  <Input className="h-8 text-sm mt-1" placeholder="VD: 01"
+                    value={form.row} onChange={e => setField('row', e.target.value)} />
+                </div>
+                <div className="flex-1">
+                  <Label className="text-xs">Tầng <span className="text-slate-400">(tuỳ chọn)</span></Label>
+                  <Input className="h-8 text-sm mt-1" placeholder="VD: T1"
+                    value={form.shelf} onChange={e => setField('shelf', e.target.value)} />
+                </div>
+              </div>
+            )}
+
+            {/* ── Preview mã vị trí ── */}
+            {dialogMode === 'add' && locationPreview && (
+              <div className="bg-blue-50 border border-blue-200 rounded px-3 py-2">
+                <p className="text-[10px] text-blue-500 mb-0.5">Mã vị trí sẽ là</p>
+                <p className="font-mono font-semibold text-sm text-blue-700">{locationPreview}</p>
+              </div>
+            )}
+
+            {/* ── Sức chứa tối đa ── */}
             <div>
               <Label className="text-xs">Sức chứa Pallet tối đa</Label>
               <Input className="h-8 text-sm mt-1" type="number" min="0" placeholder="VD: 4"
@@ -373,7 +448,7 @@ export default function Locations() {
           </div>
 
           <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setDialogMode(null)}>Hủy</Button>
+            <Button variant="outline" size="sm" onClick={closeDialog}>Hủy</Button>
             <Button size="sm" onClick={handleSave} disabled={isSaving}>
               {isSaving ? 'Đang lưu…' : 'Lưu'}
             </Button>

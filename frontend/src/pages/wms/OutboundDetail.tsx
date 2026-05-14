@@ -469,14 +469,15 @@ function InventoryModal({ gdoId, itemId, matCode, matName, onClose }: {
 
 // ─── Items table ───────────────────────────────────────────────
 
-function ItemsTable({ doRecords, gdoId, canScan }: {
+function ItemsTable({ doRecords, gdoId, canScan, expandedItemIds, toggleExpand }: {
   doRecords: OutboundDelivery[]
   gdoId: string
   canScan: boolean
+  expandedItemIds: Set<string>
+  toggleExpand: (id: string) => void
 }) {
   const navigate = useNavigate()
   const [inventoryItemId, setInventoryItemId] = useState<string | null>(null)
-  const [expandedItemIds, setExpandedItemIds] = useState<Set<string>>(new Set())
   const allItems = doRecords.flatMap(d =>
     d.items.map(i => ({ ...i, delivery_code: d.delivery_code, distributor_name: d.distributor_name }))
   )
@@ -487,14 +488,9 @@ function ItemsTable({ doRecords, gdoId, canScan }: {
   const hasBoxes         = allItems.some(i => i.boxes_display > 0)
   const hasLoosePicking  = allItems.some(i => i.loose_picking > 0)
   const hasCsResp        = allItems.some(i => i.cs_responsible)
-  // 6 cột cố định + các cột tùy chọn
   const totalCols = 6 + [hasBoxes, hasLoosePicking, hasBatchRequired, hasDateRequired, hasCsResp].filter(Boolean).length
 
   const inventoryItem = inventoryItemId ? allItems.find(i => i.id === inventoryItemId) : null
-
-  function toggleExpand(itemId: string) {
-    setExpandedItemIds(prev => { const n = new Set(prev); n.has(itemId) ? n.delete(itemId) : n.add(itemId); return n })
-  }
 
   return (
     <>
@@ -624,44 +620,43 @@ function ItemsTable({ doRecords, gdoId, canScan }: {
                 </TableCell>
               </TableRow>
               {expanded && (
-                <TableRow>
-                  <TableCell colSpan={totalCols} className="px-0 py-0 bg-slate-50 border-b">
-                    <div className="px-4 py-2 space-y-1.5">
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={totalCols} className="px-0 py-0 border-b-2 border-slate-200">
+                    <div className={`pl-3 pr-3 py-2 space-y-1.5 border-l-[3px] ${
+                      item.status === 'COMPLETED'   ? 'border-l-blue-300 bg-blue-50/40' :
+                      item.status === 'IN_PROGRESS' ? 'border-l-amber-300 bg-amber-50/40' :
+                      'border-l-slate-300 bg-slate-50/60'
+                    }`}>
                       {item.header_text && (
-                        <div className="text-xs font-medium text-slate-700 bg-blue-50 border border-blue-100 rounded px-2 py-1 leading-snug">
+                        <div className="text-[11px] font-medium text-slate-700 bg-blue-50 border border-blue-100 rounded px-2 py-1 leading-snug">
                           {item.header_text}
                         </div>
                       )}
                       {scans.length === 0 ? (
                         <p className="text-[10px] text-slate-400 italic">Chưa có pallet nào được quét</p>
                       ) : (
-                        <div className="overflow-x-auto">
-                          <table className="min-w-[240px]">
-                            <thead>
-                              <tr className="border-b border-slate-200">
-                                <th className="text-left px-1.5 pb-0.5 text-[9px] font-medium text-slate-500">Mã pallet</th>
-                                <th className="text-right px-1.5 pb-0.5 text-[9px] font-medium text-slate-500">Thùng</th>
-                                <th className="text-left px-1.5 pb-0.5 text-[9px] font-medium text-slate-500">Giờ quét</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {scans.map(se => {
-                                const isOldDate = maxProdDate !== null && se.production_date !== null && se.production_date !== maxProdDate
-                                return (
-                                  <tr key={se.id} className="border-b border-slate-100">
-                                    <td className="px-1.5 py-0.5 font-mono text-[10px] font-semibold">
-                                      <span className={isOldDate ? 'text-red-600' : ''}>{se.pallet_code}</span>
-                                      {isOldDate && <span className="ml-1 text-[9px] text-red-400 font-normal">NSX cũ</span>}
-                                    </td>
-                                    <td className="px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-right">{se.cartons_scanned}</td>
-                                    <td className="px-1.5 py-0.5 text-[10px] text-slate-500">
-                                      {se.scanned_at ? formatTimestampTime(se.scanned_at, false) : '—'}
-                                    </td>
-                                  </tr>
-                                )
-                              })}
-                            </tbody>
-                          </table>
+                        <div className="flex flex-wrap gap-1">
+                          {scans.map(se => {
+                            const isOldDate = maxProdDate !== null && se.production_date !== null && se.production_date !== maxProdDate
+                            return (
+                              <span key={se.id} className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] ${
+                                isOldDate
+                                  ? 'bg-red-50 border-red-200 text-red-700'
+                                  : 'bg-white border-slate-200 text-slate-700'
+                              }`}>
+                                <span className="font-mono font-semibold">{se.pallet_code}</span>
+                                <span className="text-slate-300">·</span>
+                                <span className="tabular-nums font-semibold">{se.cartons_scanned}<span className="font-normal text-slate-400 ml-0.5">th</span></span>
+                                {se.scanned_at && (
+                                  <>
+                                    <span className="text-slate-300">·</span>
+                                    <span className={isOldDate ? 'text-red-400' : 'text-slate-400'}>{formatTimestampTime(se.scanned_at, false)}</span>
+                                  </>
+                                )}
+                                {isOldDate && <span className="text-red-400 font-medium">NSX cũ</span>}
+                              </span>
+                            )
+                          })}
                         </div>
                       )}
                     </div>
@@ -702,6 +697,11 @@ export default function OutboundDetail() {
   const [pendingConfirm, setPendingConfirm] = useState<{
     title: string; message: string; onConfirm: () => void
   } | null>(null)
+  const [expandedItemIds, setExpandedItemIds] = useState<Set<string>>(new Set())
+
+  function toggleExpandItem(itemId: string) {
+    setExpandedItemIds(prev => { const n = new Set(prev); n.has(itemId) ? n.delete(itemId) : n.add(itemId); return n })
+  }
 
   function doUndo(mutateFn: (id: string, opts: { onError: (e: unknown) => void }) => void) {
     setUndoErr(null)
@@ -738,6 +738,15 @@ export default function OutboundDetail() {
   // Workflow state
   const canStart       = !!gdo.assigned_at && !gdo.started_at
   const hasScanEntries = allItems.some(i => i.cartons_scanned > 0)
+
+  const hasAnyExpanded = expandedItemIds.size > 0
+  function toggleExpandAll() {
+    if (hasAnyExpanded) {
+      setExpandedItemIds(new Set())
+    } else {
+      setExpandedItemIds(new Set(allItems.map(i => i.id)))
+    }
+  }
 
   return (
     <>
@@ -831,6 +840,16 @@ export default function OutboundDetail() {
                   onClick={() => patchGDO({ id: gdo.id, status: 'IN_PROGRESS' })}>
                   <Play className="h-3 w-3" />
                   {patching ? '…' : 'Tiếp tục'}
+                </Button>
+              )}
+              {hasScanEntries && (
+                <Button size="sm" variant="outline"
+                  className="h-7 text-xs gap-1 px-2 border-slate-200 text-slate-500 hover:bg-slate-50"
+                  onClick={toggleExpandAll}
+                  title={hasAnyExpanded ? 'Thu gọn tất cả' : 'Xem pallet đã quét'}
+                >
+                  <ChevronDown className={`h-3 w-3 transition-transform ${hasAnyExpanded ? 'rotate-180' : ''}`} />
+                  {hasAnyExpanded ? 'Thu gọn' : 'Pallet'}
                 </Button>
               )}
 
@@ -955,7 +974,13 @@ export default function OutboundDetail() {
               <p className="text-sm">Chưa có DO nào</p>
             </div>
           ) : (
-            <ItemsTable doRecords={allDOs} gdoId={id!} canScan={!!gdo.started_at && gdo.status !== 'PAUSED'} />
+            <ItemsTable
+              doRecords={allDOs}
+              gdoId={id!}
+              canScan={!!gdo.started_at && gdo.status !== 'PAUSED'}
+              expandedItemIds={expandedItemIds}
+              toggleExpand={toggleExpandItem}
+            />
           )}
         </div>
       </div>

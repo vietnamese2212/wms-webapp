@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { MapPin, Search, Plus, Pencil, Trash2, Building2 } from 'lucide-react'
+import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { TableSkeleton }  from '@/components/shared/TableSkeleton'
 import { EmptyState }     from '@/components/shared/EmptyState'
 import { Input }          from '@/components/ui/input'
@@ -48,7 +49,7 @@ export default function Locations() {
   const [warehouseId,  setWarehouseId]  = useState(user?.warehouse_id ?? '')
   const [catFilter,    setCatFilter]    = useState('')
   const [search,       setSearch]       = useState('')
-  const [showInactive, setShowInactive] = useState(false)
+  const [statusFilter, setStatusFilter] = useState<string[]>([])
 
   // Location add/edit dialog
   const [dialogMode,    setDialogMode]    = useState<'add' | 'edit' | null>(null)
@@ -78,6 +79,7 @@ export default function Locations() {
   const warehouses   = activeWhRaw as WhWithCount[]
   const allWh        = allWhRaw    as WhWithCount[]
   const allLocations = (allRaw as RealLocation[]).filter(l => l.is_active)
+  const showInactive = statusFilter.includes('inactive')
   const locations    = showInactive
     ? (raw as RealLocation[])
     : (raw as RealLocation[]).filter(l => l.is_active)
@@ -320,15 +322,13 @@ export default function Locations() {
               value={search} onChange={e => setSearch(e.target.value)} />
           </div>
 
-          <button
-            onClick={() => setShowInactive(v => !v)}
-            className={`h-8 px-3 text-xs rounded border whitespace-nowrap ${
-              showInactive
-                ? 'bg-amber-50 border-amber-300 text-amber-700'
-                : 'border-slate-200 text-slate-500 hover:bg-slate-50'
-            }`}>
-            {showInactive ? 'Ẩn đã xóa' : 'Hiện đã xóa'}
-          </button>
+          <MultiSelectFilter
+            label="Trạng thái"
+            options={[{ value: 'inactive', label: 'Đã xóa' }]}
+            selected={statusFilter}
+            onChange={setStatusFilter}
+            searchable={false}
+          />
         </div>
 
         {/* Summary */}

@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
-import { formatDateTime } from '@/utils/formatters'
+import { formatDateTime, formatTimestampTime } from '@/utils/formatters'
 import {
   ArrowLeft, CheckCircle2,
   Truck, Package, ClipboardList, Play, Pause, ChevronRight, ChevronDown, Bookmark, X, RotateCcw, Pencil, QrCode, Search,
@@ -476,6 +476,7 @@ function ItemsTable({ doRecords, gdoId, canScan }: {
 }) {
   const navigate = useNavigate()
   const [inventoryItemId, setInventoryItemId] = useState<string | null>(null)
+  const [expandedItemIds, setExpandedItemIds] = useState<Set<string>>(new Set())
   const allItems = doRecords.flatMap(d =>
     d.items.map(i => ({ ...i, delivery_code: d.delivery_code, distributor_name: d.distributor_name }))
   )
@@ -486,8 +487,14 @@ function ItemsTable({ doRecords, gdoId, canScan }: {
   const hasBoxes         = allItems.some(i => i.boxes_display > 0)
   const hasLoosePicking  = allItems.some(i => i.loose_picking > 0)
   const hasCsResp        = allItems.some(i => i.cs_responsible)
+  // 6 cột cố định + các cột tùy chọn
+  const totalCols = 6 + [hasBoxes, hasLoosePicking, hasBatchRequired, hasDateRequired, hasCsResp].filter(Boolean).length
 
   const inventoryItem = inventoryItemId ? allItems.find(i => i.id === inventoryItemId) : null
+
+  function toggleExpand(itemId: string) {
+    setExpandedItemIds(prev => { const n = new Set(prev); n.has(itemId) ? n.delete(itemId) : n.add(itemId); return n })
+  }
 
   return (
     <>
@@ -522,10 +529,14 @@ function ItemsTable({ doRecords, gdoId, canScan }: {
             const rowBg   = itemRowBg(item)
             const matCode = item.material?.material_code ?? item.material_code_raw ?? '—'
             const matName = item.material?.short_name ?? item.material_code_raw ?? '—'
+            const expanded = expandedItemIds.has(item.id)
+            const scans = item.scan_entries ?? []
+            const prodDates = scans.map(s => s.production_date).filter(Boolean) as string[]
+            const maxProdDate = prodDates.length > 0 ? prodDates.reduce((a, b) => a > b ? a : b) : null
 
             return (
+              <Fragment key={item.id}>
               <TableRow
-                key={item.id}
                 className={`cursor-pointer transition-colors ${rowBg}`}
                 onClick={() => navigate(`/wms/outbound/${gdoId}/items/${item.id}`)}
               >
@@ -603,9 +614,61 @@ function ItemsTable({ doRecords, gdoId, canScan }: {
                   <span className="text-[10px] text-slate-500 font-mono">{item.delivery_code}</span>
                 </TableCell>
                 <TableCell className="px-1 py-1 align-top">
-                  <ChevronRight className="h-3 w-3 text-slate-300" />
+                  <button
+                    onClick={e => { e.stopPropagation(); toggleExpand(item.id) }}
+                    className="p-0.5 rounded text-slate-300 hover:text-slate-600 transition-colors"
+                    title={expanded ? 'Thu gọn' : 'Xem pallet đã quét'}
+                  >
+                    {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                  </button>
                 </TableCell>
               </TableRow>
+              {expanded && (
+                <TableRow>
+                  <TableCell colSpan={totalCols} className="px-0 py-0 bg-slate-50 border-b">
+                    <div className="px-4 py-2 space-y-1.5">
+                      {item.header_text && (
+                        <div className="text-xs font-medium text-slate-700 bg-blue-50 border border-blue-100 rounded px-2 py-1 leading-snug">
+                          {item.header_text}
+                        </div>
+                      )}
+                      {scans.length === 0 ? (
+                        <p className="text-[10px] text-slate-400 italic">Chưa có pallet nào được quét</p>
+                      ) : (
+                        <div className="overflow-x-auto">
+                          <table className="min-w-[240px]">
+                            <thead>
+                              <tr className="border-b border-slate-200">
+                                <th className="text-left px-1.5 pb-0.5 text-[9px] font-medium text-slate-500">Mã pallet</th>
+                                <th className="text-right px-1.5 pb-0.5 text-[9px] font-medium text-slate-500">Thùng</th>
+                                <th className="text-left px-1.5 pb-0.5 text-[9px] font-medium text-slate-500">Giờ quét</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {scans.map(se => {
+                                const isOldDate = maxProdDate !== null && se.production_date !== null && se.production_date !== maxProdDate
+                                return (
+                                  <tr key={se.id} className="border-b border-slate-100">
+                                    <td className="px-1.5 py-0.5 font-mono text-[10px] font-semibold">
+                                      <span className={isOldDate ? 'text-red-600' : ''}>{se.pallet_code}</span>
+                                      {isOldDate && <span className="ml-1 text-[9px] text-red-400 font-normal">NSX cũ</span>}
+                                    </td>
+                                    <td className="px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-right">{se.cartons_scanned}</td>
+                                    <td className="px-1.5 py-0.5 text-[10px] text-slate-500">
+                                      {se.scanned_at ? formatTimestampTime(se.scanned_at, false) : '—'}
+                                    </td>
+                                  </tr>
+                                )
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  </TableCell>
+                </TableRow>
+              )}
+              </Fragment>
             )
           })}
         </TableBody>

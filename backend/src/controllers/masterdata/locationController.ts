@@ -125,7 +125,7 @@ export async function createLocation(req: Request, res: Response) {
       wh.code,
       String(sub_code).trim().toUpperCase(),
       String(row).trim(),
-      String(shelf).trim()
+      String(shelf ?? '').trim()
     )
 
     const { category } = req.body

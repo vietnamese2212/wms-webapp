@@ -113,8 +113,8 @@ export async function getLocation(req: Request, res: Response) {
 export async function createLocation(req: Request, res: Response) {
   try {
     const { warehouse_id, sub_code, sub_name, sub_type, row, shelf, max_pallets } = req.body
-    if (!warehouse_id || !sub_code || !row || !shelf)
-      return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu warehouse_id, sub_code, row hoặc shelf')
+    if (!warehouse_id || !sub_code || !row)
+      return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu warehouse_id, sub_code hoặc row')
 
     const { data: wh, error: whErr } = await supabase
       .from('Warehouse').select('code').eq('id', warehouse_id).maybeSingle()
@@ -141,7 +141,7 @@ export async function createLocation(req: Request, res: Response) {
         category: category ?? null,
         location_code,
         row: String(row).trim(),
-        shelf: String(shelf).trim(),
+        shelf: String(shelf ?? '').trim(),
         max_pallets: max_pallets ? Number(max_pallets) : 1,
         updated_at: new Date().toISOString(),
       })

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { MapPin, Search, Plus, Pencil, Trash2 } from 'lucide-react'
+import { MapPin, Search, Plus, Pencil, Trash2, Building2 } from 'lucide-react'
 import { TableSkeleton }  from '@/components/shared/TableSkeleton'
 import { EmptyState }     from '@/components/shared/EmptyState'
 import { Input }          from '@/components/ui/input'
@@ -8,7 +8,7 @@ import { Label }          from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
-import { useLocationsReal, useWarehouses, useCreateLocation, useUpdateLocation, useDeleteLocation } from '@/api/hooks'
+import { useLocationsReal, useWarehouses, useCreateLocation, useUpdateLocation, useDeleteLocation, useCreateWarehouse } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 
 const CATEGORY_OPTIONS = ['Thành phẩm', 'NVL', 'POSM']
@@ -28,7 +28,8 @@ interface RealLocation {
   warehouse:    { id: string; code: string; name: string }
 }
 
-const EMPTY_FORM = { warehouse_id: '', category: '', sub_code: '', sub_name: '', row: '', shelf: '', max_pallets: '' }
+const EMPTY_FORM    = { warehouse_id: '', category: '', sub_code: '', sub_name: '', row: '', shelf: '', max_pallets: '' }
+const EMPTY_WH_FORM = { code: '', name: '', address: '' }
 
 export default function Locations() {
   const user = useAuthStore(s => s.user)
@@ -40,21 +41,26 @@ export default function Locations() {
   const [editing,       setEditing]       = useState<RealLocation | null>(null)
   const [form,          setForm]          = useState(EMPTY_FORM)
   const [isNewSubCode,  setIsNewSubCode]  = useState(false)
+  const [isNewCategory, setIsNewCategory] = useState(false)
   const [formError,     setFormError]     = useState('')
   const [deleteTarget,  setDeleteTarget]  = useState<RealLocation | null>(null)
 
+  const [whDialogOpen, setWhDialogOpen] = useState(false)
+  const [whForm,       setWhForm]       = useState(EMPTY_WH_FORM)
+  const [whError,      setWhError]      = useState('')
+
   const { data: warehouses = [] } = useWarehouses(true)
-  // load all locations (no warehouse filter) để có đủ options cho form
-  const { data: allRaw = [] } = useLocationsReal()
+  const { data: allRaw = [] }     = useLocationsReal()
   const { data: raw = [], isLoading } = useLocationsReal(
     warehouseId ? { warehouse_id: warehouseId } : undefined
   )
-  const locations = (raw as RealLocation[]).filter(l => l.is_active)
+  const locations    = (raw    as RealLocation[]).filter(l => l.is_active)
   const allLocations = (allRaw as RealLocation[]).filter(l => l.is_active)
 
-  const createLocation = useCreateLocation()
-  const updateLocation = useUpdateLocation()
-  const deleteLocation = useDeleteLocation()
+  const createLocation  = useCreateLocation()
+  const updateLocation  = useUpdateLocation()
+  const deleteLocation  = useDeleteLocation()
+  const createWarehouse = useCreateWarehouse()
 
   // ── Table filter ─────────────────────────────────────────────
   const filtered = useMemo(() => {
@@ -76,8 +82,7 @@ export default function Locations() {
   )
   const formCatOpts = useMemo(() => {
     const cats = formWhlocs.map(l => l.category).filter(Boolean) as string[]
-    const existing = [...new Set(cats)]
-    return [...new Set([...existing, ...CATEGORY_OPTIONS])]
+    return [...new Set([...new Set(cats), ...CATEGORY_OPTIONS])]
   }, [formWhlocs])
   const formSubCodeOpts = useMemo(() => {
     const locs = form.category
@@ -101,6 +106,7 @@ export default function Locations() {
     setEditing(null)
     setForm({ ...EMPTY_FORM, warehouse_id: warehouseId, category: catFilter })
     setIsNewSubCode(false)
+    setIsNewCategory(false)
     setFormError('')
     setDialogMode('add')
   }
@@ -117,6 +123,7 @@ export default function Locations() {
       max_pallets:  String(loc.max_pallets),
     })
     setIsNewSubCode(false)
+    setIsNewCategory(false)
     setFormError('')
     setDialogMode('edit')
   }
@@ -124,6 +131,7 @@ export default function Locations() {
   function closeDialog() {
     setDialogMode(null)
     setIsNewSubCode(false)
+    setIsNewCategory(false)
   }
 
   async function handleSave() {
@@ -140,7 +148,7 @@ export default function Locations() {
           sub_name:     form.sub_name.trim() || undefined,
           category:     form.category || undefined,
           row:          form.row.trim(),
-          shelf:        form.shelf.trim(),
+          shelf:        form.shelf.trim() || undefined,
           max_pallets:  form.max_pallets ? Number(form.max_pallets) : undefined,
         })
       } else if (editing) {
@@ -168,6 +176,34 @@ export default function Locations() {
     }
   }
 
+  async function handleCreateWarehouse() {
+    setWhError('')
+    if (!whForm.code.trim() || !whForm.name.trim()) {
+      setWhError('Mã kho và tên kho là bắt buộc')
+      return
+    }
+    try {
+      const wh = await createWarehouse.mutateAsync({
+        code:    whForm.code.trim().toUpperCase(),
+        name:    whForm.name.trim(),
+        address: whForm.address.trim() || undefined,
+      })
+      // Nếu đang mở form thêm vị trí, tự chọn kho mới vào form
+      if (dialogMode === 'add') {
+        setField('warehouse_id', (wh as { id: string }).id)
+        setField('category', '')
+        setField('sub_code', '')
+        setIsNewSubCode(false)
+        setIsNewCategory(false)
+      }
+      setWhDialogOpen(false)
+      setWhForm(EMPTY_WH_FORM)
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
+      setWhError(msg ?? 'Có lỗi xảy ra')
+    }
+  }
+
   const isSaving = createLocation.isPending || updateLocation.isPending
 
   return (
@@ -179,9 +215,16 @@ export default function Locations() {
             <MapPin className="h-5 w-5 text-slate-500" />
             Vị trí kho
           </h1>
-          <Button size="sm" onClick={openAdd} className="gap-1">
-            <Plus className="h-4 w-4" /> Thêm vị trí
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm"
+              onClick={() => { setWhForm(EMPTY_WH_FORM); setWhError(''); setWhDialogOpen(true) }}
+              className="gap-1">
+              <Building2 className="h-4 w-4" /> Thêm Kho
+            </Button>
+            <Button size="sm" onClick={openAdd} className="gap-1">
+              <Plus className="h-4 w-4" /> Thêm vị trí
+            </Button>
+          </div>
         </div>
 
         {/* Filters */}
@@ -258,7 +301,6 @@ export default function Locations() {
                   : isPartial
                   ? 'bg-amber-50 hover:bg-amber-100'
                   : 'hover:bg-slate-50'
-                // chỉ hiển thị sub_name nếu khác sub_code
                 const showSubName = loc.sub_name && loc.sub_name !== loc.sub_code
                 return (
                   <TableRow key={loc.id} className={rowCls}>
@@ -341,6 +383,7 @@ export default function Locations() {
                     setField('category', '')
                     setField('sub_code', '')
                     setIsNewSubCode(false)
+                    setIsNewCategory(false)
                   }}>
                   <SelectTrigger className="h-8 text-sm mt-1">
                     <SelectValue placeholder="Chọn kho" />
@@ -358,21 +401,39 @@ export default function Locations() {
             {/* ── Loại kho ── */}
             <div>
               <Label className="text-xs">Loại kho</Label>
-              <Select value={form.category || '__none__'}
-                onValueChange={v => {
-                  setField('category', v === '__none__' ? '' : v)
-                  if (dialogMode === 'add') { setField('sub_code', ''); setIsNewSubCode(false) }
-                }}>
-                <SelectTrigger className="h-8 text-sm mt-1">
-                  <SelectValue placeholder="Chưa phân loại" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">Chưa phân loại</SelectItem>
-                  {formCatOpts.map(c => (
-                    <SelectItem key={c} value={c}>{c}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {!isNewCategory ? (
+                <Select value={form.category || '__none__'}
+                  onValueChange={v => {
+                    if (v === '__new_cat__') {
+                      setIsNewCategory(true)
+                      setField('category', '')
+                    } else {
+                      setField('category', v === '__none__' ? '' : v)
+                      if (dialogMode === 'add') { setField('sub_code', ''); setIsNewSubCode(false) }
+                    }
+                  }}>
+                  <SelectTrigger className="h-8 text-sm mt-1">
+                    <SelectValue placeholder="Chưa phân loại" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">Chưa phân loại</SelectItem>
+                    {formCatOpts.map(c => (
+                      <SelectItem key={c} value={c}>{c}</SelectItem>
+                    ))}
+                    <SelectItem value="__new_cat__">+ Thêm loại kho mới</SelectItem>
+                  </SelectContent>
+                </Select>
+              ) : (
+                <div className="flex gap-1.5 mt-1">
+                  <Input className="h-8 text-sm flex-1" placeholder="VD: Nguyên vật liệu thô"
+                    autoFocus value={form.category}
+                    onChange={e => setField('category', e.target.value)} />
+                  <button onClick={() => { setIsNewCategory(false); setField('category', '') }}
+                    className="text-xs text-slate-400 hover:text-slate-700 px-2 whitespace-nowrap">
+                    ← Chọn có sẵn
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* ── Khu vực kho (chỉ add) ── */}
@@ -399,11 +460,10 @@ export default function Locations() {
                 ) : (
                   <div className="flex gap-1.5 mt-1">
                     <Input className="h-8 text-sm flex-1 uppercase" placeholder="VD: NVL2"
-                      autoFocus
-                      value={form.sub_code}
+                      autoFocus value={form.sub_code}
                       onChange={e => setField('sub_code', e.target.value)} />
                     <button onClick={() => { setIsNewSubCode(false); setField('sub_code', '') }}
-                      className="text-xs text-slate-400 hover:text-slate-700 px-2">
+                      className="text-xs text-slate-400 hover:text-slate-700 px-2 whitespace-nowrap">
                       ← Chọn có sẵn
                     </button>
                   </div>
@@ -451,6 +511,42 @@ export default function Locations() {
             <Button variant="outline" size="sm" onClick={closeDialog}>Hủy</Button>
             <Button size="sm" onClick={handleSave} disabled={isSaving}>
               {isSaving ? 'Đang lưu…' : 'Lưu'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Warehouse Dialog */}
+      <Dialog open={whDialogOpen} onOpenChange={open => !open && setWhDialogOpen(false)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Thêm Kho mới</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-1">
+            <div>
+              <Label className="text-xs">Mã kho <span className="text-red-500">*</span></Label>
+              <Input className="h-8 text-sm mt-1 uppercase" placeholder="VD: BV"
+                value={whForm.code} onChange={e => setWhForm(f => ({ ...f, code: e.target.value }))} />
+              <p className="text-[10px] text-slate-400 mt-0.5">Dùng làm prefix trong mã vị trí, VD: BV_NVL1_01</p>
+            </div>
+            <div>
+              <Label className="text-xs">Tên kho <span className="text-red-500">*</span></Label>
+              <Input className="h-8 text-sm mt-1" placeholder="VD: Kho Ba Vì"
+                value={whForm.name} onChange={e => setWhForm(f => ({ ...f, name: e.target.value }))} />
+            </div>
+            <div>
+              <Label className="text-xs">Địa chỉ <span className="text-slate-400">(tuỳ chọn)</span></Label>
+              <Input className="h-8 text-sm mt-1" placeholder="VD: Ba Vì, Hà Nội"
+                value={whForm.address} onChange={e => setWhForm(f => ({ ...f, address: e.target.value }))} />
+            </div>
+            {whError && (
+              <p className="text-xs text-red-500 bg-red-50 border border-red-200 rounded px-2 py-1.5">{whError}</p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setWhDialogOpen(false)}>Hủy</Button>
+            <Button size="sm" onClick={handleCreateWarehouse} disabled={createWarehouse.isPending}>
+              {createWarehouse.isPending ? 'Đang lưu…' : 'Tạo kho'}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -102,7 +102,7 @@ export function useCreateWarehouse() {
 export function useCreateLocation() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { warehouse_id: string; sub_code: string; sub_name?: string; sub_type?: string; category?: string; row: string; shelf: string; max_pallets?: number }) =>
+    mutationFn: (body: { warehouse_id: string; sub_code: string; sub_name?: string; sub_type?: string; category?: string; row: string; shelf?: string; max_pallets?: number }) =>
       apiClient.post('/masterdata/locations', body).then((r) => r.data.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['locations-real'] })

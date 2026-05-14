@@ -393,6 +393,7 @@ export interface OutboundScanEntry {
   is_loose_picking:   boolean
   scanned_by:         string | null
   scanned_at:         string
+  production_date:    string | null
 }
 
 export interface OutboundItem {

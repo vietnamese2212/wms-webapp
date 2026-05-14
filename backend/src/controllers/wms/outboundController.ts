@@ -1022,22 +1022,43 @@ export async function uploadExcel(req: Request, res: Response) {
 
 export async function getItemInventory(req: Request, res: Response) {
   try {
-    const { itemId } = req.params
+    const { gdoId, itemId } = req.params
     const { data: item } = await (supabase.from('OutboundItem') as any)
       .select('material_id').eq('id', itemId).single()
     if (!item) return fail(res, 'Không tìm thấy mặt hàng', 404)
 
-    const { data, error } = await (supabase.from('InventoryEntry') as any)
-      .select('id, pallet_code, cartons_imported, cartons_remaining, status, qa_status_id, location:Location(location_code), qa_status:QAStatus(code,name)')
+    const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
+      .select('warehouse_id').eq('id', gdoId).single()
+
+    let q = (supabase.from('InventoryEntry') as any)
+      .select('id, pallet_code, cartons_imported, cartons_remaining, production_date, import_date, location:Location(location_code), material:Material!material_id(shelf_life_days)')
       .eq('material_id', item.material_id)
       .gt('cartons_remaining', 0)
-      .order('created_at')
+    if (gdo?.warehouse_id) q = q.eq('warehouse_id', gdo.warehouse_id)
+    const { data, error } = await q.order('created_at')
     if (error) return fail(res, error.message)
 
-    return ok(res, (data ?? []).map((e: any) => ({
-      ...e,
-      available: e.cartons_remaining ?? e.cartons_imported,
-    })))
+    const now = Date.now()
+    return ok(res, (data ?? []).map((e: any) => {
+      const shelfDays = e.material?.shelf_life_days ? Number(e.material.shelf_life_days) : 0
+      let pct_date: number | null = null
+      if (shelfDays > 0 && e.production_date) {
+        const totalMs  = shelfDays * 86_400_000
+        const remaining = new Date(e.production_date).getTime() + totalMs - now
+        pct_date = Math.max(0, Math.round((remaining / totalMs) * 100))
+      }
+      return {
+        id:                e.id,
+        pallet_code:       e.pallet_code,
+        cartons_remaining: e.cartons_remaining,
+        cartons_imported:  e.cartons_imported,
+        location_code:     e.location?.location_code ?? null,
+        production_date:   e.production_date ?? null,
+        import_date:       e.import_date ?? null,
+        pct_date,
+        available: e.cartons_remaining ?? e.cartons_imported,
+      }
+    }))
   } catch (e) { return fail(res, String(e)) }
 }
 
@@ -1140,6 +1161,7 @@ export async function scanItem(req: Request, res: Response) {
     await (supabase.from('OutboundScanEntry') as any).insert({
       id: scanId, item_id: itemId, inventory_entry_id: inv.id,
       pallet_code: qr, cartons_scanned: to_take,
+      production_date: inv.production_date ?? null,
       is_loose_picking: !!loose_picking_mode,
       scanned_by: employee_id ?? null, scanned_at: t,
       created_at: t, updated_at: t,

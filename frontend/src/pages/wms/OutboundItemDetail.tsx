@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect } from 'react'
+import { useRef, useState, useEffect, useMemo } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import type { AxiosError } from 'axios'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
@@ -12,7 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { QRScanner } from '@/components/shared/QRScanner'
 import type { QRScannerHandle } from '@/components/shared/QRScanner'
-import { useGDO, useScanOutboundItem, useManualCompleteItem, useDeleteOutboundScanEntry } from '@/api/hooks'
+import { useGDO, useScanOutboundItem, useManualCompleteItem, useDeleteOutboundScanEntry, useItemInventory, type ItemInventoryEntry } from '@/api/hooks'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 import { playBeep, unlockAudio } from '@/utils/audio'
 import type { OutboundItem, OutboundStatus } from '@/types'
@@ -236,10 +236,12 @@ export default function OutboundItemDetail() {
   const { data: gdo, isLoading } = useGDO(gdoId)
   const { mutate: manualComplete,  isPending: completing  } = useManualCompleteItem()
   const { mutate: deleteScanEntry, isPending: deleting    } = useDeleteOutboundScanEntry()
+  const { data: inventoryData = [], isLoading: invLoading } = useItemInventory(gdoId, itemId)
   const { vehicles } = useActiveVehiclesStore()
 
-  const [showScan, setShowScan] = useState(false)
+  const [showScan,      setShowScan]      = useState(false)
   const [confirmScanId, setConfirmScanId] = useState<string | null>(null)
+  const [showInventory, setShowInventory] = useState(false)
 
   useEffect(() => {
     if (!autoScan || !gdo) return
@@ -276,9 +278,33 @@ export default function OutboundItemDetail() {
   const matName  = item.material?.short_name ?? item.material_code_raw ?? '—'
   const matCode  = item.material?.material_code ?? item.material_code_raw ?? '—'
   const isPOSM   = item.material_type === 'POSM'
+
+  // Inventory panel: sort ascending pct_date (smallest = hết hạn sớm nhất = ưu tiên lấy trước)
+  const sortedInv = useMemo<ItemInventoryEntry[]>(() =>
+    [...inventoryData].sort((a, b) => {
+      if (a.pct_date === null && b.pct_date === null) return 0
+      if (a.pct_date === null) return 1
+      if (b.pct_date === null) return -1
+      return a.pct_date - b.pct_date
+    }),
+    [inventoryData]
+  )
+
+  const fmtProdDate = (d: string | null) => {
+    if (!d) return '—'
+    const s = d.slice(0, 10)
+    if (!/^\d{4}-\d{2}-\d{2}/.test(s)) return s
+    return `${s.slice(8, 10)}-${s.slice(5, 7)}-${s.slice(2, 4)}`
+  }
   const isLoscam = item.material_type === 'Pallet Loscam' || (item.material_code_raw ?? '').includes('810000')
   const isDone   = item.status === 'COMPLETED'
   const scans    = item.scan_entries ?? []
+
+  // Red highlight: pallet không phải NSX mới nhất trong danh sách đã quét
+  const maxProdDate = useMemo(() => {
+    const dates = scans.map(s => s.production_date).filter(Boolean) as string[]
+    return dates.length > 0 ? dates.reduce((a, b) => (a > b ? a : b)) : null
+  }, [scans])
 
   // Workflow: can only scan if GDO has been started and not paused
   const isPaused = gdo.status === 'PAUSED'
@@ -337,24 +363,38 @@ export default function OutboundItemDetail() {
               <Badge status={item.status} />
             </div>
 
-            {!isDone && (
-              <div className="shrink-0">
-                {isPOSM ? (
-                  <span className="text-xs text-slate-400 italic">Tự bypass</span>
-                ) : isLoscam ? (
-                  <Button size="sm" variant="outline" className="h-7 text-xs" disabled={completing || isPaused}
-                    onClick={() => manualComplete({ gdoId: gdoId!, itemId: item.id })}>
-                    {completing ? '…' : 'Lưu thủ công'}
-                  </Button>
-                ) : canScan ? (
-                  <Button size="sm" className="h-7 text-xs gap-1" onClick={openScan}>
-                    <QrCode className="h-3.5 w-3.5" /> Quét pallet
-                  </Button>
-                ) : (
-                  <span className="text-xs text-slate-400 italic hidden sm:inline">Chưa bắt đầu</span>
-                )}
-              </div>
-            )}
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                onClick={() => setShowInventory(v => !v)}
+                className={`flex items-center gap-1 h-7 px-2 rounded border text-xs font-medium transition-colors ${
+                  showInventory
+                    ? 'bg-blue-50 border-blue-200 text-blue-700'
+                    : 'border-slate-200 text-slate-500 hover:bg-slate-50'
+                }`}
+                title="Xem tồn kho trong kho"
+              >
+                <Package className="h-3.5 w-3.5" />
+                Tồn kho{inventoryData.length > 0 ? ` (${inventoryData.length})` : ''}
+              </button>
+              {!isDone && (
+                <>
+                  {isPOSM ? (
+                    <span className="text-xs text-slate-400 italic">Tự bypass</span>
+                  ) : isLoscam ? (
+                    <Button size="sm" variant="outline" className="h-7 text-xs" disabled={completing || isPaused}
+                      onClick={() => manualComplete({ gdoId: gdoId!, itemId: item.id })}>
+                      {completing ? '…' : 'Lưu thủ công'}
+                    </Button>
+                  ) : canScan ? (
+                    <Button size="sm" className="h-7 text-xs gap-1" onClick={openScan}>
+                      <QrCode className="h-3.5 w-3.5" /> Quét pallet
+                    </Button>
+                  ) : (
+                    <span className="text-xs text-slate-400 italic hidden sm:inline">Chưa bắt đầu</span>
+                  )}
+                </>
+              )}
+            </div>
           </div>
 
           {/* Row 2: material name + progress */}
@@ -412,6 +452,60 @@ export default function OutboundItemDetail() {
             </div>
           )}
         </div>
+
+        {/* ── Inventory panel (expandable) ── */}
+        {showInventory && (
+          <div className="border-b bg-slate-50 px-3 py-2 shrink-0 overflow-y-auto" style={{ maxHeight: '42vh' }}>
+            <p className="text-[9px] font-medium text-slate-500 mb-1.5">
+              Tồn kho trong kho · sort %Date tăng dần (lấy trước → sau)
+            </p>
+            {invLoading ? (
+              <div className="space-y-1.5">
+                {[1,2,3].map(i => <div key={i} className="h-7 bg-slate-200 rounded animate-pulse" />)}
+              </div>
+            ) : sortedInv.length === 0 ? (
+              <p className="text-xs text-slate-400 py-2 text-center">Không còn tồn kho trong kho này</p>
+            ) : (
+              <Table className="min-w-[420px]">
+                <TableHeader>
+                  <TableRow className="bg-slate-100">
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1">Vị trí</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1">Mã pallet</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1">NSX</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1 text-right">%Date</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1 text-right">Còn lại</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {sortedInv.map(e => (
+                    <TableRow key={e.id}>
+                      <TableCell className="px-2 py-1 font-mono text-[10px] font-semibold whitespace-nowrap">
+                        {e.location_code ?? '—'}
+                      </TableCell>
+                      <TableCell className="px-2 py-1 font-mono text-[10px] text-slate-600 whitespace-nowrap">
+                        {e.pallet_code}
+                      </TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] tabular-nums whitespace-nowrap">
+                        {fmtProdDate(e.production_date)}
+                      </TableCell>
+                      <TableCell className="px-2 py-1 text-right whitespace-nowrap">
+                        {e.pct_date !== null ? (
+                          <span className={`text-[10px] font-semibold tabular-nums ${
+                            e.pct_date <= 30 ? 'text-red-600' : e.pct_date <= 60 ? 'text-amber-600' : 'text-green-700'
+                          }`}>{e.pct_date}%</span>
+                        ) : <span className="text-[10px] text-slate-300">—</span>}
+                      </TableCell>
+                      <TableCell className="px-2 py-1 text-right whitespace-nowrap">
+                        <span className="text-[10px] font-semibold tabular-nums">{e.cartons_remaining}</span>
+                        <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </div>
+        )}
 
         {/* Quick-switch bar — nằm ngoài header để không gây scroll */}
         {vehicles.length > 0 && (
@@ -473,10 +567,15 @@ export default function OutboundItemDetail() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {scans.map(se => (
+                    {scans.map(se => {
+                    const isOldDate = maxProdDate !== null && se.production_date !== null && se.production_date !== maxProdDate
+                    return (
                       <TableRow key={se.id}>
                         <TableCell className="px-2 py-1.5 font-mono text-xs font-medium">
-                          {se.pallet_code}
+                          <span className={isOldDate ? 'text-red-600' : ''}>{se.pallet_code}</span>
+                          {isOldDate && (
+                            <span className="ml-1 text-[9px] text-red-400 font-normal">NSX cũ</span>
+                          )}
                         </TableCell>
                         <TableCell className="px-2 py-1.5 text-right tabular-nums text-xs font-semibold">
                           {se.cartons_scanned}
@@ -498,7 +597,8 @@ export default function OutboundItemDetail() {
                           </button>
                         </TableCell>
                       </TableRow>
-                    ))}
+                    )
+                  })}
                   </TableBody>
                 </Table>
             )}

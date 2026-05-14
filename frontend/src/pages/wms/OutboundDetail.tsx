@@ -18,6 +18,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import {
   useGDO, useAssignGDO, useStartGDO, useWarehouseEmployees, usePatchGDO,
   useUnassignGDO, useUnstartGDO, useUncompleteGDO, useUpdateTransport,
+  useItemInventory, type ItemInventoryEntry,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
@@ -336,6 +337,88 @@ function itemRowBg(item: OutboundItem): string {
   return 'hover:bg-slate-50'
 }
 
+// ─── Inventory modal per item ──────────────────────────────────
+
+function InventoryModal({ gdoId, itemId, matCode, matName, onClose }: {
+  gdoId: string; itemId: string; matCode: string; matName: string; onClose: () => void
+}) {
+  const { data: inventoryData = [], isLoading } = useItemInventory(gdoId, itemId)
+  const sorted = [...inventoryData].sort((a: ItemInventoryEntry, b: ItemInventoryEntry) => {
+    if (a.pct_date === null && b.pct_date === null) return 0
+    if (a.pct_date === null) return 1
+    if (b.pct_date === null) return -1
+    return a.pct_date - b.pct_date
+  })
+  const fmtProd = (d: string | null) => {
+    if (!d) return '—'
+    const s = d.slice(0, 10)
+    if (!/^\d{4}-\d{2}-\d{2}/.test(s)) return s
+    return `${s.slice(8, 10)}-${s.slice(5, 7)}-${s.slice(2, 4)}`
+  }
+
+  return (
+    <Dialog open onOpenChange={v => { if (!v) onClose() }}>
+      <DialogContent className="max-w-sm sm:max-w-md p-0">
+        <DialogHeader className="px-4 pt-4 pb-2 border-b">
+          <DialogTitle className="text-sm font-semibold">
+            <span className="font-mono">{matCode}</span> · {matName}
+          </DialogTitle>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Tồn kho trong kho · sort %Date tăng dần (lấy trước → sau) · {sorted.length} pallet
+          </p>
+        </DialogHeader>
+        <div className="overflow-auto" style={{ maxHeight: '60vh' }}>
+          {isLoading ? (
+            <div className="p-4 space-y-2">
+              {[1,2,3].map(i => <div key={i} className="h-8 bg-slate-100 rounded animate-pulse" />)}
+            </div>
+          ) : sorted.length === 0 ? (
+            <div className="py-10 text-center text-slate-400 text-sm">Không còn tồn kho trong kho này</div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-slate-50">
+                  <TableHead className="text-[9px] font-medium text-slate-500 px-3 py-1.5">Vị trí</TableHead>
+                  <TableHead className="text-[9px] font-medium text-slate-500 px-3 py-1.5">Mã pallet</TableHead>
+                  <TableHead className="text-[9px] font-medium text-slate-500 px-3 py-1.5">NSX</TableHead>
+                  <TableHead className="text-[9px] font-medium text-slate-500 px-3 py-1.5 text-right">%Date</TableHead>
+                  <TableHead className="text-[9px] font-medium text-slate-500 px-3 py-1.5 text-right">Còn lại</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {sorted.map((e: ItemInventoryEntry) => (
+                  <TableRow key={e.id}>
+                    <TableCell className="px-3 py-1 font-mono text-[10px] font-semibold whitespace-nowrap">
+                      {e.location_code ?? '—'}
+                    </TableCell>
+                    <TableCell className="px-3 py-1 font-mono text-[10px] text-slate-600 whitespace-nowrap">
+                      {e.pallet_code}
+                    </TableCell>
+                    <TableCell className="px-3 py-1 text-[10px] tabular-nums whitespace-nowrap">
+                      {fmtProd(e.production_date)}
+                    </TableCell>
+                    <TableCell className="px-3 py-1 text-right whitespace-nowrap">
+                      {e.pct_date !== null ? (
+                        <span className={`text-[10px] font-semibold tabular-nums ${
+                          e.pct_date <= 30 ? 'text-red-600' : e.pct_date <= 60 ? 'text-amber-600' : 'text-green-700'
+                        }`}>{e.pct_date}%</span>
+                      ) : <span className="text-[10px] text-slate-300">—</span>}
+                    </TableCell>
+                    <TableCell className="px-3 py-1 text-right whitespace-nowrap">
+                      <span className="text-[10px] font-semibold tabular-nums">{e.cartons_remaining}</span>
+                      <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 // ─── Items table ───────────────────────────────────────────────
 
 function ItemsTable({ doRecords, gdoId, canScan }: {
@@ -344,6 +427,7 @@ function ItemsTable({ doRecords, gdoId, canScan }: {
   canScan: boolean
 }) {
   const navigate = useNavigate()
+  const [inventoryItemId, setInventoryItemId] = useState<string | null>(null)
   const allItems = doRecords.flatMap(d =>
     d.items.map(i => ({ ...i, delivery_code: d.delivery_code, distributor_name: d.distributor_name }))
   )
@@ -355,7 +439,19 @@ function ItemsTable({ doRecords, gdoId, canScan }: {
   const hasLoosePicking  = allItems.some(i => i.loose_picking > 0)
   const hasCsResp        = allItems.some(i => i.cs_responsible)
 
+  const inventoryItem = inventoryItemId ? allItems.find(i => i.id === inventoryItemId) : null
+
   return (
+    <>
+    {inventoryItem && (
+      <InventoryModal
+        gdoId={gdoId}
+        itemId={inventoryItem.id}
+        matCode={inventoryItem.material?.material_code ?? inventoryItem.material_code_raw ?? '—'}
+        matName={inventoryItem.material?.short_name ?? inventoryItem.material_code_raw ?? '—'}
+        onClose={() => setInventoryItemId(null)}
+      />
+    )}
     <Table className="min-w-full">
         <TableHeader>
           <TableRow className="bg-slate-50">
@@ -408,6 +504,13 @@ function ItemsTable({ doRecords, gdoId, canScan }: {
                         <QrCode className="h-2.5 w-2.5" /> Quét
                       </button>
                     )}
+                    <button
+                      onClick={e => { e.stopPropagation(); setInventoryItemId(item.id) }}
+                      className="flex items-center gap-0.5 text-[9px] font-medium text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded px-1.5 py-0.5 transition-colors"
+                      title="Xem tồn kho"
+                    >
+                      <Package className="h-2.5 w-2.5" /> Kho
+                    </button>
                   </div>
                 </TableCell>
                 {hasBoxes && (
@@ -456,6 +559,7 @@ function ItemsTable({ doRecords, gdoId, canScan }: {
           })}
         </TableBody>
     </Table>
+    </>
   )
 }
 

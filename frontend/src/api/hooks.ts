@@ -914,6 +914,30 @@ export function useDeleteOutboundScanEntry() {
   })
 }
 
+export type ItemInventoryEntry = {
+  id:                string
+  pallet_code:       string
+  cartons_remaining: number
+  cartons_imported:  number
+  location_code:     string | null
+  production_date:   string | null
+  import_date:       string | null
+  pct_date:          number | null
+  available:         number
+}
+
+export function useItemInventory(gdoId: string | undefined, itemId: string | undefined) {
+  return useQuery({
+    queryKey: ['item-inventory', gdoId, itemId],
+    queryFn: async () => {
+      const { data } = await apiClient.get(`/wms/outbound/${gdoId}/items/${itemId}/inventory`)
+      return data.data as ItemInventoryEntry[]
+    },
+    enabled: !!gdoId && !!itemId,
+    staleTime: 30_000,
+  })
+}
+
 export function useAssignGDO() {
   const qc = useQueryClient()
   return useMutation({

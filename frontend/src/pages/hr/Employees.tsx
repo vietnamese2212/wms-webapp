@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Search, Plus, Users, Phone, Mail } from 'lucide-react'
+import { Plus, Users, Phone, Mail } from 'lucide-react'
+import { SearchInput } from '@/components/shared/SearchInput'
 import { PageHeader } from '@/components/shared/PageHeader'
 import { EmployeeStatusBadge } from '@/components/shared/StatusBadge'
 import { CardsSkeleton } from '@/components/shared/TableSkeleton'
@@ -66,15 +67,7 @@ export default function Employees() {
 
       <div className="p-6 space-y-4">
         <div className="flex flex-col sm:flex-row gap-3">
-          <div className="relative flex-1 max-w-sm">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Tìm tên, mã NV, SĐT..."
-              className="pl-9"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-          </div>
+          <SearchInput value={search} onChange={setSearch} placeholder="Tìm tên, mã NV, SĐT..." className="flex-1 max-w-sm" />
           <Select value={deptFilter} onValueChange={setDeptFilter}>
             <SelectTrigger className="w-full sm:w-44">
               <SelectValue placeholder="Phòng ban" />

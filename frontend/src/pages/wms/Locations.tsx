@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
-import { MapPin, Search, Plus, Pencil, Trash2, Building2 } from 'lucide-react'
+import { MapPin, Plus, Pencil, Trash2, Building2 } from 'lucide-react'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
+import { SearchInput } from '@/components/shared/SearchInput'
 import { TableSkeleton }  from '@/components/shared/TableSkeleton'
 import { EmptyState }     from '@/components/shared/EmptyState'
 import { Input }          from '@/components/ui/input'
@@ -316,11 +317,7 @@ export default function Locations() {
             </SelectContent>
           </Select>
 
-          <div className="relative flex-1 min-w-[120px]">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-            <Input className="pl-8 h-8 text-sm" placeholder="Tìm mã vị trí…"
-              value={search} onChange={e => setSearch(e.target.value)} />
-          </div>
+          <SearchInput value={search} onChange={setSearch} placeholder="Tìm mã vị trí…" className="flex-1 min-w-[120px]" />
 
           <MultiSelectFilter
             label="Trạng thái"

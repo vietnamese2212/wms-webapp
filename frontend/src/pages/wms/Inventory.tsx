@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Package, Search, X, SlidersHorizontal, ChevronRight, Filter, Check } from 'lucide-react'
+import { Package, X, SlidersHorizontal, ChevronRight, Filter, Check } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Label } from '@/components/ui/label'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
+import { SearchInput } from '@/components/shared/SearchInput'
 import {
   useInventoryEntries, useInventoryFacets, useWarehouses, useQAStatuses, useAdjustInventory,
   useLocationsReal, useMaterials, useMaterialCategories,
@@ -486,7 +487,7 @@ export default function Inventory() {
     <div className="flex flex-col h-full">
       {/* ── Filter header ── */}
       <div className="border-b bg-white px-4 py-2 shrink-0 space-y-1.5">
-        {/* Row 1: Title + Kho + Loại kho + Search + Filter toggle */}
+        {/* Row 1: Title + Kho + Loại kho + Filter toggle */}
         <div className="flex items-center gap-2">
           <h1 className="text-xl font-semibold flex items-center gap-2 shrink-0">
             <Package className="h-5 w-5 text-slate-500" />
@@ -513,13 +514,7 @@ export default function Inventory() {
             width="min-w-[90px]"
           />
 
-          {/* Pallet search */}
-          <div className="relative flex-1 min-w-0">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-            <Input className="pl-8 h-8 text-sm" placeholder="Tìm mã pallet…"
-              value={f.search}
-              onChange={e => setInventory({ search: e.target.value, page: 1 })} />
-          </div>
+          <div className="flex-1" />
 
           {/* Filter toggle */}
           <button
@@ -539,6 +534,14 @@ export default function Inventory() {
             )}
           </button>
         </div>
+
+        {/* Row 2: Search (hàng riêng để không bị đè trên mobile) */}
+        <SearchInput
+          value={f.search}
+          onChange={v => setInventory({ search: v, page: 1 })}
+          placeholder="Tìm mã pallet…"
+          className="w-full"
+        />
 
         {/* Collapsible filter panel */}
         {showFilters && (

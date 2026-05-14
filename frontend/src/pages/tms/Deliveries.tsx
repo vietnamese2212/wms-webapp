@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Plus, Search, Navigation, MapPin, Package, User } from 'lucide-react'
+import { Plus, Navigation, MapPin, Package, User } from 'lucide-react'
+import { SearchInput } from '@/components/shared/SearchInput'
 import { PageHeader } from '@/components/shared/PageHeader'
 import { DeliveryStatusBadge } from '@/components/shared/StatusBadge'
 import { TableSkeleton } from '@/components/shared/TableSkeleton'
@@ -70,15 +71,7 @@ export default function Deliveries() {
 
       <div className="p-6 space-y-4">
         <div className="flex flex-col sm:flex-row gap-3">
-          <div className="relative flex-1 max-w-sm">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Tìm mã đơn, khách hàng..."
-              className="pl-9"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-          </div>
+          <SearchInput value={search} onChange={setSearch} placeholder="Tìm mã đơn, khách hàng..." className="flex-1 max-w-sm" />
           <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as DeliveryStatus | 'ALL')}>
             <SelectTrigger className="w-full sm:w-44">
               <SelectValue placeholder="Trạng thái" />

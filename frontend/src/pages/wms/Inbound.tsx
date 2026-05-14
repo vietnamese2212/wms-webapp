@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Search, PackagePlus, CalendarDays, X, ChevronDown, User, MapPin, Filter, QrCode } from 'lucide-react'
+import { Plus, PackagePlus, CalendarDays, X, ChevronDown, User, MapPin, Filter, QrCode } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
@@ -20,6 +20,7 @@ import {
   useEmployeeRecords, useMaterialCategories,
 } from '@/api/hooks'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
+import { SearchInput } from '@/components/shared/SearchInput'
 import type { InboundOrder } from '@/types'
 import { unlockAudio } from '@/utils/audio'
 
@@ -582,11 +583,7 @@ export default function Inbound() {
             <PackagePlus className="h-5 w-5 text-slate-500" />
             Nhập kho
           </h1>
-          <div className="relative flex-1 min-w-[100px]">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-            <Input className="pl-8 h-8 text-sm" placeholder="Tìm mã phiếu, hàng hóa…"
-              value={f.search} onChange={e => setInbound({ search: e.target.value })} />
-          </div>
+          <SearchInput value={f.search} onChange={v => setInbound({ search: v })} placeholder="Tìm mã phiếu, hàng hóa…" className="flex-1 min-w-[100px]" />
           <button
             className={`flex items-center gap-1 h-8 px-2.5 rounded-md border text-xs font-medium transition-colors shrink-0 ${
               showFilters || activeFilterCount > 0

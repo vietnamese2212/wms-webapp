@@ -2,8 +2,8 @@ import { useState, useMemo, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
-import { CalendarDays, Search, Scissors, X } from 'lucide-react'
-import { Input } from '@/components/ui/input'
+import { CalendarDays, Scissors, X } from 'lucide-react'
+import { SearchInput } from '@/components/shared/SearchInput'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useLoosePickingItems, useWarehouses, type LoosePickingItem } from '@/api/hooks'
@@ -154,11 +154,7 @@ export default function LoosePicking() {
               </button>
             )}
           </div>
-          <div className="relative flex-1">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-            <Input className="pl-8 h-8 text-sm" placeholder="Tìm số xe, mã hàng…"
-              value={search} onChange={e => setSearch(e.target.value)} />
-          </div>
+          <SearchInput value={search} onChange={setSearch} placeholder="Tìm số xe, mã hàng…" className="flex-1" />
         </div>
 
         {/* Warehouse filter + summary */}

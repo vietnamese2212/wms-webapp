@@ -2,8 +2,9 @@ import { useRef, useState, useMemo, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
-import { Upload, Search, Truck, CheckCircle2, AlertTriangle, CalendarDays, X, Bookmark, Info, Plus, Trash2, PenSquare } from 'lucide-react'
+import { Upload, Truck, CheckCircle2, AlertTriangle, CalendarDays, X, Bookmark, Info, Plus, Trash2, PenSquare } from 'lucide-react'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
+import { SearchInput } from '@/components/shared/SearchInput'
 import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
 import { Input }  from '@/components/ui/input'
@@ -247,11 +248,7 @@ export default function Outbound() {
               </button>
             )}
           </div>
-          <div className="relative flex-1">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-            <Input className="pl-8 h-8 text-sm" placeholder="Tìm số xe…" value={f.search}
-              onChange={e => setOutbound({ search: e.target.value })} />
-          </div>
+          <SearchInput value={f.search} onChange={v => setOutbound({ search: v })} placeholder="Tìm số xe…" className="flex-1" />
         </div>
 
         {/* Row 2: Filters */}

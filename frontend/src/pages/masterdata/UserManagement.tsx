@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import type { AxiosError } from 'axios'
-import { Plus, Search, Pencil, ShieldCheck, Building2, User2 } from 'lucide-react'
+import { Plus, Pencil, ShieldCheck, Building2, User2 } from 'lucide-react'
+import { SearchInput } from '@/components/shared/SearchInput'
 import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
 import { Label }    from '@/components/ui/label'
@@ -316,15 +317,7 @@ export default function UserManagement() {
 
       {/* Filters */}
       <div className="flex gap-2 flex-wrap">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
-          <Input
-            className="pl-8 h-8 text-sm"
-            placeholder="Tìm tên, mã, email…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
-        </div>
+        <SearchInput value={search} onChange={setSearch} placeholder="Tìm tên, mã, email…" className="flex-1 min-w-[200px]" />
         <Select value={filterDept} onValueChange={setFilterDept}>
           <SelectTrigger className="h-8 text-sm w-[180px]">
             <Building2 className="h-3.5 w-3.5 mr-1.5 text-slate-400 shrink-0" />

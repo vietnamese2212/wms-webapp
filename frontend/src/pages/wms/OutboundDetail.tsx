@@ -364,7 +364,7 @@ function InventoryModal({ gdoId, itemId, matCode, matName, onClose }: {
             <span className="font-mono">{matCode}</span> · {matName}
           </DialogTitle>
           <p className="text-xs text-slate-500 mt-0.5">
-            Tồn kho trong kho · sort %Date tăng dần (lấy trước → sau) · {sorted.length} pallet
+            Tồn kho theo %Date · lấy thấp trước · {sorted.length} pallet
           </p>
         </DialogHeader>
         <div className="overflow-auto" style={{ maxHeight: '60vh' }}>
@@ -378,40 +378,52 @@ function InventoryModal({ gdoId, itemId, matCode, matName, onClose }: {
             <Table>
               <TableHeader>
                 <TableRow className="bg-slate-50">
-                  <TableHead className="text-[9px] font-medium text-slate-500 px-3 py-1.5">Vị trí</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 px-3 py-1.5">Mã pallet</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 px-3 py-1.5">NSX</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 px-3 py-1.5 text-right">%Date</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 px-3 py-1.5 text-right">Còn lại</TableHead>
+                  <TableHead className="text-[9px] font-medium text-slate-500 px-3 py-1.5">%Date</TableHead>
+                  <TableHead className="text-[9px] font-medium text-slate-500 px-3 py-1.5 text-right">Pallet</TableHead>
+                  <TableHead className="text-[9px] font-medium text-slate-500 px-3 py-1.5 text-right">Thùng</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {sorted.map((e: ItemInventoryEntry) => (
-                  <TableRow key={e.id} className={e.qa_status ? 'bg-purple-50 hover:bg-purple-100' : ''}>
-                    <TableCell className="px-3 py-1 font-mono text-[10px] font-semibold whitespace-nowrap">
-                      {e.location_code ?? '—'}
-                    </TableCell>
-                    <TableCell className="px-3 py-1 font-mono text-[10px] whitespace-nowrap">
-                      <span className={e.qa_status ? 'text-purple-700 font-semibold' : 'text-slate-600'}>
-                        {e.pallet_code}
-                      </span>
-                    </TableCell>
-                    <TableCell className="px-3 py-1 text-[10px] tabular-nums whitespace-nowrap">
-                      {fmtProd(e.production_date)}
-                    </TableCell>
-                    <TableCell className="px-3 py-1 text-right whitespace-nowrap">
-                      {e.pct_date !== null ? (
-                        <span className={`text-[10px] font-semibold tabular-nums ${
-                          e.pct_date <= 30 ? 'text-red-600' : e.pct_date <= 60 ? 'text-amber-600' : 'text-green-700'
-                        }`}>{e.pct_date}%</span>
-                      ) : <span className="text-[10px] text-slate-300">—</span>}
-                    </TableCell>
-                    <TableCell className="px-3 py-1 text-right whitespace-nowrap">
-                      <span className="text-[10px] font-semibold tabular-nums">{e.cartons_remaining ?? e.cartons_imported}</span>
-                      <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {(() => {
+                  type AR = { pct_date: number | null; pallets: number; cartons: number; is_qa: boolean }
+                  const map = new Map<string, AR>()
+                  for (const e of sorted) {
+                    const q = !!e.qa_status
+                    const k = `${e.pct_date ?? 'n'}-${q}`
+                    const r = map.get(k)
+                    if (r) { r.pallets++; r.cartons += e.cartons_remaining ?? e.cartons_imported ?? 0 }
+                    else map.set(k, { pct_date: e.pct_date, pallets: 1, cartons: e.cartons_remaining ?? e.cartons_imported ?? 0, is_qa: q })
+                  }
+                  return [...map.values()]
+                    .sort((a, b) => {
+                      const pa = a.pct_date ?? Infinity, pb = b.pct_date ?? Infinity
+                      return pa !== pb ? pa - pb : (a.is_qa ? 1 : -1)
+                    })
+                    .map(row => (
+                      <TableRow key={`${row.pct_date}-${row.is_qa}`} className={row.is_qa ? 'bg-purple-50 hover:bg-purple-100' : 'hover:bg-slate-50'}>
+                        <TableCell className="px-3 py-1.5">
+                          <div className="flex items-center gap-1.5">
+                            {row.pct_date !== null ? (
+                              <span className={`text-xs font-bold tabular-nums ${
+                                row.pct_date <= 30 ? 'text-red-600' : row.pct_date <= 60 ? 'text-amber-600' : 'text-green-700'
+                              }`}>{row.pct_date}%</span>
+                            ) : <span className="text-[10px] text-slate-400">Chưa có</span>}
+                            {row.is_qa && (
+                              <span className="text-[9px] font-medium text-purple-700 bg-purple-100 rounded px-1.5 py-0.5">QA giữ</span>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell className="px-3 py-1.5 text-right whitespace-nowrap">
+                          <span className={`text-[10px] font-semibold tabular-nums ${row.is_qa ? 'text-purple-700' : ''}`}>{row.pallets}</span>
+                          <span className="text-[9px] text-slate-400 ml-0.5">pl</span>
+                        </TableCell>
+                        <TableCell className="px-3 py-1.5 text-right whitespace-nowrap">
+                          <span className={`text-[10px] font-semibold tabular-nums ${row.is_qa ? 'text-purple-700' : ''}`}>{row.cartons}</span>
+                          <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                })()}
               </TableBody>
             </Table>
           )}

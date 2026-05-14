@@ -621,46 +621,41 @@ function ItemsTable({ doRecords, gdoId, canScan, expandedItemIds, toggleExpand }
               </TableRow>
               {expanded && (
                 <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={totalCols} className="px-0 py-0 border-b-2 border-slate-200">
-                    <div className={`pl-3 pr-3 py-2 space-y-1.5 border-l-[3px] ${
-                      item.status === 'COMPLETED'   ? 'border-l-blue-300 bg-blue-50/40' :
-                      item.status === 'IN_PROGRESS' ? 'border-l-amber-300 bg-amber-50/40' :
-                      'border-l-slate-300 bg-slate-50/60'
-                    }`}>
+                  <TableCell className="px-0 py-0 border-b border-slate-100" />
+                  <TableCell colSpan={totalCols - 1} className="px-0 py-0 border-b border-slate-100">
+                    <div className="pl-3 pr-3 py-1.5 space-y-1 border-l-2 border-slate-200">
                       {item.header_text && (
-                        <div className="text-[11px] font-medium text-slate-700 bg-blue-50 border border-blue-100 rounded px-2 py-1 leading-snug">
-                          {item.header_text}
-                        </div>
+                        <p className="text-[11px] italic text-slate-500 leading-snug">{item.header_text}</p>
                       )}
                       {scans.length === 0 ? (
-                        <p className="text-[10px] text-slate-400 italic">Chưa có pallet nào được quét</p>
+                        <p className="text-[10px] italic text-slate-400">Chưa có pallet nào được quét</p>
                       ) : (
                         <div className="flex flex-wrap gap-1">
                           {scans.map(se => {
-                            const isOldDate   = maxProdDate !== null && se.production_date !== null && se.production_date !== maxProdDate
+                            const isOldDate    = maxProdDate !== null && se.production_date !== null && se.production_date !== maxProdDate
                             const isSubOptimal = se.best_available_date !== null && se.production_date !== null && se.production_date > se.best_available_date
                             return (
                               <span
                                 key={se.id}
                                 title={se.best_available_date ? `Date tốt nhất lúc quét: ${se.best_available_date}` : undefined}
-                                className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] ${
+                                className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] italic ${
                                   isOldDate
-                                    ? 'bg-red-50 border-red-200 text-red-700'
-                                    : 'bg-white border-slate-200 text-slate-700'
+                                    ? 'border-red-200 text-red-600'
+                                    : 'border-slate-200 text-slate-600'
                                 }`}
                               >
-                                <span className="font-mono font-semibold">{se.pallet_code}</span>
+                                <span className="font-mono not-italic">{se.pallet_code}</span>
                                 <span className="text-slate-300">·</span>
-                                <span className="tabular-nums font-semibold">{se.cartons_scanned}<span className="font-normal text-slate-400 ml-0.5">th</span></span>
+                                <span className="tabular-nums">{se.cartons_scanned}<span className="text-slate-400 ml-0.5">th</span></span>
                                 {se.scanned_at && (
                                   <>
                                     <span className="text-slate-300">·</span>
                                     <span className={isOldDate ? 'text-red-400' : 'text-slate-400'}>{formatTimestampTime(se.scanned_at, false)}</span>
                                   </>
                                 )}
-                                {isOldDate && <span className="text-red-400 font-medium">NSX cũ</span>}
+                                {isOldDate && <span className="text-red-400">NSX cũ</span>}
                                 {isSubOptimal && (
-                                  <span className="text-orange-500 font-bold" title={`Bỏ qua date cũ hơn: ${se.best_available_date}`}>⚠</span>
+                                  <span className="not-italic text-orange-500" title={`Bỏ qua date cũ hơn: ${se.best_available_date}`}>⚠</span>
                                 )}
                               </span>
                             )

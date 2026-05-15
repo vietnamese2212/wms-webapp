@@ -627,9 +627,11 @@ export default function OutboundItemDetail() {
                   <TableHeader>
                     <TableRow>
                       <TableHead className="px-2 py-1 text-[9px] font-medium text-slate-500">Mã pallet</TableHead>
-                      <TableHead className="px-2 py-1 text-[9px] font-medium text-slate-500 whitespace-nowrap">NSX tốt nhất</TableHead>
                       <TableHead className="px-2 py-1 text-[9px] font-medium text-slate-500 text-right">Thùng</TableHead>
-                      <TableHead className="px-2 py-1 text-[9px] font-medium text-slate-500 whitespace-nowrap">Quét lúc</TableHead>
+                      <TableHead className="px-2 py-1 text-[9px] font-medium text-slate-500 whitespace-nowrap">Date</TableHead>
+                      <TableHead className="px-2 py-1 text-[9px] font-medium text-slate-500 whitespace-nowrap">Date cũ nhất</TableHead>
+                      <TableHead className="px-2 py-1 text-[9px] font-medium text-slate-500 whitespace-nowrap">Người quét</TableHead>
+                      <TableHead className="px-2 py-1 text-[9px] font-medium text-slate-500 whitespace-nowrap">Thời gian quét</TableHead>
                       <TableHead className="px-1 py-1 w-10" />
                     </TableRow>
                   </TableHeader>
@@ -642,24 +644,30 @@ export default function OutboundItemDetail() {
                           <div className={`font-mono text-[10px] font-semibold ${isSubOptimal ? 'text-red-600' : 'text-slate-700'}`}>
                             {se.pallet_code}
                           </div>
-                          {se.production_date && (
-                            <div className="text-[9px] text-slate-400 mt-0.5">NSX: {se.production_date}</div>
-                          )}
-                        </TableCell>
-                        <TableCell className="px-2 py-1.5 whitespace-nowrap">
-                          {se.best_available_date ? (
-                            <div className={`text-[10px] font-mono font-semibold ${isSubOptimal ? 'text-orange-600' : 'text-slate-500'}`}>
-                              {isSubOptimal ? '⚠ ' : '✓ '}{se.best_available_date}
-                            </div>
-                          ) : (
-                            <span className="text-[10px] text-slate-300">—</span>
-                          )}
                         </TableCell>
                         <TableCell className="px-2 py-1.5 text-right tabular-nums text-[10px] font-semibold">
                           {se.cartons_scanned}
                         </TableCell>
-                        <TableCell className="px-2 py-1.5 text-[10px] text-slate-500 whitespace-nowrap tabular-nums">
-                          {se.scanned_at ? `${formatTimestampDate(se.scanned_at, true)} ${formatTimestampTime(se.scanned_at, false)}` : '—'}
+                        <TableCell className="px-2 py-1.5 whitespace-nowrap">
+                          <span className="text-[10px] font-mono tabular-nums text-slate-600">
+                            {se.production_date ?? '—'}
+                          </span>
+                        </TableCell>
+                        <TableCell className="px-2 py-1.5 whitespace-nowrap">
+                          {se.best_available_date ? (
+                            <span className={`text-[10px] font-mono tabular-nums ${isSubOptimal ? 'text-orange-600 font-semibold' : 'text-slate-500'}`}>
+                              {isSubOptimal ? '⚠ ' : ''}{se.best_available_date}
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-slate-300">—</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="px-2 py-1.5">
+                          <span className="text-[10px] text-slate-500">{se.scanned_by ?? '—'}</span>
+                        </TableCell>
+                        <TableCell className="px-2 py-1.5 whitespace-nowrap tabular-nums">
+                          <div className="text-[10px] text-slate-500">{se.scanned_at ? formatTimestampDate(se.scanned_at, true) : '—'}</div>
+                          <div className="text-[9px] text-slate-400">{se.scanned_at ? formatTimestampTime(se.scanned_at) : ''}</div>
                         </TableCell>
                         <TableCell className="px-1 py-2">
                           <button

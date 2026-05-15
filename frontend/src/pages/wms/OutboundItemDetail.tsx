@@ -274,6 +274,8 @@ export default function OutboundItemDetail() {
   const [showInventory,    setShowInventory]    = useState(false)
   const [expandedInvKeys,  setExpandedInvKeys]  = useState<Set<string>>(new Set())
   const [detailEntryId,    setDetailEntryId]    = useState<string | null>(null)
+  const [showLoscamDialog, setShowLoscamDialog] = useState(false)
+  const [loscamCartons,    setLoscamCartons]    = useState('')
 
   useEffect(() => {
     if (!autoScan || !gdo) return
@@ -387,6 +389,38 @@ export default function OutboundItemDetail() {
         loading={deleting}
       />
 
+      <Dialog open={showLoscamDialog} onOpenChange={v => { if (!v) setShowLoscamDialog(false) }}>
+        <DialogContent className="sm:max-w-xs">
+          <DialogHeader><DialogTitle className="text-base">Xác nhận Pallet Loscam</DialogTitle></DialogHeader>
+          <div className="space-y-3 py-1">
+            <div className="space-y-1.5">
+              <p className="text-xs text-slate-500">Số thùng thực xuất</p>
+              <Input
+                type="number" min={0}
+                value={loscamCartons}
+                onChange={e => setLoscamCartons(e.target.value)}
+                className="text-center font-semibold text-lg h-11"
+                autoFocus
+              />
+              <p className="text-xs text-slate-400 text-center">Kế hoạch: {item.cartons_ordered} thùng</p>
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" size="sm" onClick={() => setShowLoscamDialog(false)} disabled={completing}>Hủy</Button>
+            <Button size="sm" disabled={completing || isPaused}
+              onClick={() => {
+                const c = Math.max(0, parseInt(loscamCartons) || 0)
+                manualComplete(
+                  { gdoId: gdoId!, itemId: item.id, cartons: c },
+                  { onSettled: () => setShowLoscamDialog(false) }
+                )
+              }}>
+              {completing ? '…' : 'Xác nhận'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <div className="flex flex-col h-full min-h-0">
 
         {/* ── Header: ~30% ── */}
@@ -423,9 +457,9 @@ export default function OutboundItemDetail() {
                   {isPOSM ? (
                     <span className="text-xs text-slate-400 italic">Tự bypass</span>
                   ) : isLoscam ? (
-                    <Button size="sm" variant="outline" className="h-7 text-xs" disabled={completing || isPaused}
-                      onClick={() => manualComplete({ gdoId: gdoId!, itemId: item.id })}>
-                      {completing ? '…' : 'Lưu thủ công'}
+                    <Button size="sm" variant="outline" className="h-7 text-xs" disabled={isPaused}
+                      onClick={() => { setLoscamCartons(String(item.cartons_ordered)); setShowLoscamDialog(true) }}>
+                      Lưu thủ công
                     </Button>
                   ) : canScan ? (
                     <Button size="sm" className="h-7 text-xs gap-1" onClick={openScan}>

@@ -899,8 +899,8 @@ export function useScanOutboundItem() {
 export function useManualCompleteItem() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ gdoId, itemId }: { gdoId: string; itemId: string }) =>
-      apiClient.post(`/wms/outbound/${gdoId}/items/${itemId}/manual-complete`).then(r => r.data.data),
+    mutationFn: ({ gdoId, itemId, cartons }: { gdoId: string; itemId: string; cartons?: number }) =>
+      apiClient.post(`/wms/outbound/${gdoId}/items/${itemId}/manual-complete`, cartons != null ? { cartons } : {}).then(r => r.data.data),
     onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ['gdo', v.gdoId] }),
   })
 }

@@ -98,7 +98,7 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
   function handleSave() {
     if (!checkResult || saving) return
     scanItem(
-      { gdoId, itemId: item.id, qr_code: checkResult.pallet_code, cartons_override: Math.max(1, parseInt(pendingCartons) || 1), employee_id: user?.name ?? undefined },
+      { gdoId, itemId: item.id, qr_code: checkResult.pallet_code, cartons_override: Math.max(1, parseInt(pendingCartons) || 1), employee_id: user?.id ?? undefined },
       {
         onSuccess: (data) => {
           setCheckResult(null)
@@ -190,11 +190,11 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
                     {checkResult.pallet_code}
                   </p>
                   {checkResult.production_date && (
-                    <p className="text-[10px] text-slate-500 mt-0.5">NSX: {checkResult.production_date}</p>
+                    <p className="text-[10px] text-slate-500 mt-0.5">NSX: {formatTimestampDate(checkResult.production_date)}</p>
                   )}
                   {isSubOptimal && checkResult.best_available_date && (
                     <p className="text-[10px] text-orange-600 font-medium mt-0.5">
-                      ⚠ Trong kho còn NSX {checkResult.best_available_date} (cũ hơn — nên ưu tiên lấy trước)
+                      ⚠ Trong kho còn NSX {formatTimestampDate(checkResult.best_available_date)} (cũ hơn — nên ưu tiên lấy trước)
                     </p>
                   )}
                 </div>

@@ -522,7 +522,7 @@ function MatPicker({ value, matName, onSelect, disabled }: {
       )}
       {open && search.length > 1 && mats.length > 0 && (
         <div className="absolute top-full left-0 right-0 bg-white border rounded shadow-lg z-50 max-h-48 overflow-y-auto">
-          {(mats as MatOption[]).slice(0, 12).map(m => (
+          {(mats as MatOption[]).map(m => (
             <button
               key={m.id}
               className="w-full text-left px-2 py-1.5 hover:bg-blue-50 border-b border-slate-50 last:border-0"

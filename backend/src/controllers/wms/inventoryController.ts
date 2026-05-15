@@ -132,11 +132,13 @@ export async function listInventory(req: Request, res: Response) {
   // Pre-filter by %date: fetch ALL IDs (no pagination) with same filters, compute pct in JS
   let datePctIds: string[] | null = null
   if (datePctRanges.length > 0) {
+    // Always restrict pre-filter to active stock — %date on EXPORTED entries is meaningless
+    // and would inflate row count beyond the 100k limit unnecessarily
     const { data: preEntries } = await applyInventoryFilters(
       (supabase.from('InventoryEntry') as any)
         .select('id, production_date, material:Material(shelf_life_days)')
         .limit(100_000),
-      filterParams
+      { ...filterParams, status: '' }
     )
     const now = Date.now()
     datePctIds = (preEntries ?? [])

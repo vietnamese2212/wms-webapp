@@ -1,13 +1,16 @@
-import { useState, Fragment } from 'react'
+import { useState, useEffect, Fragment } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
 import {
-  ArrowLeft, Package, ChevronRight, ChevronDown, QrCode, Scissors, Truck,
+  ArrowLeft, Package, ChevronRight, ChevronDown, QrCode, Scissors, Truck, Search, Bookmark,
 } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { useGDO } from '@/api/hooks'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { useGDO, useItemInventory, type ItemInventoryEntry } from '@/api/hooks'
 import { useActiveLoosePickingStore } from '@/stores/activeLoosePickingStore'
+import { PalletDetailDialog } from '@/components/shared/PalletDetailDialog'
 import type { OutboundItem, OutboundDelivery, OutboundStatus } from '@/types'
 
 // ─── Status badge ──────────────────────────────────────────────
@@ -56,6 +59,135 @@ function itemLooseProgress(item: OutboundItem) {
   return { effective, done, remaining: Math.max(0, effective - done), looseScanned }
 }
 
+// ─── Inventory modal per item ──────────────────────────────────
+
+function InventoryModal({ gdoId, itemId, matCode, matName, onClose }: {
+  gdoId: string; itemId: string; matCode: string; matName: string; onClose: () => void
+}) {
+  const { data: inventoryData = [], isLoading } = useItemInventory(gdoId, itemId)
+  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set())
+  const [detailId, setDetailId] = useState<string | null>(null)
+
+  const sorted = [...inventoryData].sort((a: ItemInventoryEntry, b: ItemInventoryEntry) => {
+    if (a.pct_date === null && b.pct_date === null) return 0
+    if (a.pct_date === null) return 1
+    if (b.pct_date === null) return -1
+    return a.pct_date - b.pct_date
+  })
+
+  type AggRow = { key: string; pct_date: number | null; location_code: string | null; is_qa: boolean; cartons: number; entries: ItemInventoryEntry[] }
+  const aggRows: AggRow[] = (() => {
+    const map = new Map<string, AggRow>()
+    for (const e of sorted) {
+      const q = !!e.qa_status
+      const k = `${e.pct_date ?? 'n'}|${e.location_code ?? ''}|${q}`
+      const r = map.get(k)
+      if (r) { r.cartons += e.cartons_remaining ?? e.cartons_imported ?? 0; r.entries.push(e) }
+      else map.set(k, { key: k, pct_date: e.pct_date, location_code: e.location_code, is_qa: q, cartons: e.cartons_remaining ?? e.cartons_imported ?? 0, entries: [e] })
+    }
+    return [...map.values()].sort((a, b) => {
+      const pa = a.pct_date ?? Infinity, pb = b.pct_date ?? Infinity
+      return pa !== pb ? pa - pb : (a.is_qa ? 1 : -1)
+    })
+  })()
+
+  function toggle(key: string) {
+    setExpandedKeys(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n })
+  }
+
+  return (
+    <>
+      {detailId && <PalletDetailDialog entryId={detailId} onClose={() => setDetailId(null)} />}
+      <Dialog open onOpenChange={v => { if (!v) onClose() }}>
+        <DialogContent className="max-w-sm sm:max-w-md p-0">
+          <DialogHeader className="px-4 pt-4 pb-2 border-b">
+            <DialogTitle className="text-sm font-semibold">
+              <span className="font-mono">{matCode}</span> · {matName}
+            </DialogTitle>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Tồn kho theo %Date · lấy thấp trước · {sorted.length} pallet
+            </p>
+          </DialogHeader>
+          <div className="overflow-auto" style={{ maxHeight: '60vh' }}>
+            {isLoading ? (
+              <div className="p-4 space-y-2">
+                {[1,2,3].map(i => <div key={i} className="h-8 bg-slate-100 rounded animate-pulse" />)}
+              </div>
+            ) : sorted.length === 0 ? (
+              <div className="py-10 text-center text-slate-400 text-sm">Không còn tồn kho trong kho này</div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-slate-50">
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-3 py-1.5">%Date</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-3 py-1.5">Vị trí</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-3 py-1.5 text-right">Thùng</TableHead>
+                    <TableHead className="w-6 px-2 py-1.5" />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {aggRows.map(row => {
+                    const expanded = expandedKeys.has(row.key)
+                    return (
+                      <Fragment key={row.key}>
+                        <TableRow
+                          className={`cursor-pointer ${row.is_qa ? 'bg-purple-50 hover:bg-purple-100' : 'hover:bg-slate-50'}`}
+                          onClick={() => toggle(row.key)}
+                        >
+                          <TableCell className="px-3 py-1.5">
+                            <div className="flex items-center gap-1.5">
+                              {row.pct_date !== null ? (
+                                <span className={`text-xs font-bold tabular-nums ${
+                                  row.pct_date <= 30 ? 'text-red-600' : row.pct_date <= 60 ? 'text-amber-600' : 'text-green-700'
+                                }`}>{row.pct_date}%</span>
+                              ) : <span className="text-[10px] text-slate-400">Chưa có</span>}
+                              {row.is_qa && (
+                                <span className="text-[9px] font-medium text-purple-700 bg-purple-100 rounded px-1.5 py-0.5">QA giữ</span>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell className="px-3 py-1.5">
+                            <span className="text-[10px] font-mono text-slate-600">{row.location_code ?? '—'}</span>
+                          </TableCell>
+                          <TableCell className="px-3 py-1.5 text-right whitespace-nowrap">
+                            <span className={`text-[10px] font-semibold tabular-nums ${row.is_qa ? 'text-purple-700' : ''}`}>{row.cartons}</span>
+                            <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
+                            <div className="text-[9px] text-slate-400">{row.entries.length} pl</div>
+                          </TableCell>
+                          <TableCell className="px-2 py-1.5 text-slate-400">
+                            {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                          </TableCell>
+                        </TableRow>
+                        {expanded && row.entries.map(e => (
+                          <TableRow key={e.id} className={row.is_qa ? 'bg-purple-50/60' : 'bg-slate-50'}>
+                            <TableCell className="px-3 py-1 pl-7" colSpan={2}>
+                              <button
+                                className="font-mono text-[10px] font-semibold text-blue-600 hover:underline text-left"
+                                onClick={ev => { ev.stopPropagation(); setDetailId(e.id) }}
+                              >
+                                {e.pallet_code}
+                              </button>
+                            </TableCell>
+                            <TableCell className="px-3 py-1 text-right whitespace-nowrap">
+                              <span className="text-[10px] font-semibold tabular-nums">{e.cartons_remaining ?? e.cartons_imported ?? 0}</span>
+                              <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
+                            </TableCell>
+                            <TableCell className="px-2 py-1" />
+                          </TableRow>
+                        ))}
+                      </Fragment>
+                    )
+                  })}
+                </TableBody>
+              </Table>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
+  )
+}
+
 // ─── Items table ───────────────────────────────────────────────
 
 function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand }: {
@@ -65,11 +197,15 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand }: {
   toggleExpand: (id: string) => void
 }) {
   const navigate = useNavigate()
+  const [inventoryItemId, setInventoryItemId] = useState<string | null>(null)
+
   const allItems = doRecords.flatMap(d =>
     d.items
       .filter(i => i.loose_picking > 0)
       .map(i => ({ ...i, delivery_code: d.delivery_code, distributor_name: d.distributor_name }))
   )
+
+  const inventoryItem = inventoryItemId ? allItems.find(i => i.id === inventoryItemId) : null
 
   if (allItems.length === 0) {
     return (
@@ -81,127 +217,148 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand }: {
   }
 
   return (
-    <Table className="min-w-full">
-      <TableHeader>
-        <TableRow className="bg-slate-50">
-          <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Mã hàng</TableHead>
-          <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Tên hàng</TableHead>
-          <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Lẻ / Tổng</TableHead>
-          <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Số DO</TableHead>
-          <TableHead className="w-5 px-1 py-1.5" />
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {allItems.map(item => {
-          const { effective, done: looseDone, looseScanned } = itemLooseProgress(item)
-          const isDone   = looseDone >= effective
-          const textCls  = isDone ? 'text-blue-700' : looseScanned > 0 ? 'text-amber-700' : 'text-slate-400'
-          const bgCls    = isDone ? 'bg-blue-50 hover:bg-blue-100' : looseScanned > 0 ? 'bg-amber-50 hover:bg-amber-100' : 'hover:bg-slate-50'
-          const matCode  = item.material?.material_code ?? item.material_code_raw ?? '—'
-          const matName  = item.material?.short_name ?? item.material_code_raw ?? '—'
-          const looseScanEntries = (item.scan_entries ?? []).filter(s => s.is_loose_picking)
-          const expanded = expandedItemIds.has(item.id)
+    <>
+      {inventoryItem && (
+        <InventoryModal
+          gdoId={gdoId}
+          itemId={inventoryItem.id}
+          matCode={inventoryItem.material?.material_code ?? inventoryItem.material_code_raw ?? '—'}
+          matName={inventoryItem.material?.short_name ?? inventoryItem.material_code_raw ?? '—'}
+          onClose={() => setInventoryItemId(null)}
+        />
+      )}
+      <Table className="min-w-full">
+        <TableHeader>
+          <TableRow className="bg-slate-50">
+            <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Mã hàng</TableHead>
+            <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Tên hàng</TableHead>
+            <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Lẻ / Tổng</TableHead>
+            <TableHead className="text-[9px] font-medium text-slate-500 px-1 py-1.5 text-center w-8">Kho</TableHead>
+            <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Số DO</TableHead>
+            <TableHead className="w-5 px-1 py-1.5" />
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {allItems.map(item => {
+            const { effective, done: looseDone, looseScanned } = itemLooseProgress(item)
+            const isDone   = looseDone >= effective
+            const textCls  = isDone ? 'text-blue-700' : looseScanned > 0 ? 'text-amber-700' : 'text-slate-400'
+            const bgCls    = isDone ? 'bg-blue-50 hover:bg-blue-100' : looseScanned > 0 ? 'bg-amber-50 hover:bg-amber-100' : 'hover:bg-slate-50'
+            const matCode  = item.material?.material_code ?? item.material_code_raw ?? '—'
+            const matName  = item.material?.short_name ?? item.material_code_raw ?? '—'
+            const looseScanEntries = (item.scan_entries ?? []).filter(s => s.is_loose_picking)
+            const expanded = expandedItemIds.has(item.id)
 
-          return (
-            <Fragment key={item.id}>
-              <TableRow
-                className={`cursor-pointer transition-colors ${bgCls}`}
-                onClick={() => navigate(`/wms/loosepicking/${gdoId}/items/${item.id}`)}
-              >
-                <TableCell className="px-2 py-1 align-top whitespace-nowrap">
-                  <div className={`text-[10px] font-mono font-semibold ${textCls}`}>{matCode}</div>
-                </TableCell>
-                <TableCell className="px-2 py-1 align-top">
-                  <div className={`text-[10px] font-medium leading-tight ${textCls}`}>{matName}</div>
-                  <ProgressBar compact scanned={looseDone} target={effective} />
-                  {looseScanEntries.length > 0 && (
-                    <div className="text-[9px] text-slate-400 mt-0.5">{looseScanEntries.length} pallet đã quét</div>
-                  )}
-                </TableCell>
-                <TableCell className="px-2 py-1 align-top text-right whitespace-nowrap">
-                  <div className="flex flex-col items-end gap-0.5">
-                    <span className={`text-[10px] tabular-nums ${textCls}`}>
-                      <span className="font-semibold">{effective}</span>
-                      <span className="text-slate-400"> / {item.cartons_ordered}</span>
-                    </span>
-                    {!isDone && (
-                      <button
-                        onClick={e => { e.stopPropagation(); navigate(`/wms/loosepicking/${gdoId}/items/${item.id}?scan=1`) }}
-                        className="flex items-center gap-0.5 text-[9px] font-medium text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 rounded px-1.5 py-0.5 transition-colors"
-                      >
-                        <QrCode className="h-2.5 w-2.5" /> Quét
-                      </button>
+            return (
+              <Fragment key={item.id}>
+                <TableRow
+                  className={`cursor-pointer transition-colors ${bgCls}`}
+                  onClick={() => navigate(`/wms/loosepicking/${gdoId}/items/${item.id}`)}
+                >
+                  <TableCell className="px-2 py-1 align-top whitespace-nowrap">
+                    <div className={`text-[10px] font-mono font-semibold ${textCls}`}>{matCode}</div>
+                  </TableCell>
+                  <TableCell className="px-2 py-1 align-top">
+                    <div className={`text-[10px] font-medium leading-tight ${textCls}`}>{matName}</div>
+                    <ProgressBar compact scanned={looseDone} target={effective} />
+                    {looseScanEntries.length > 0 && (
+                      <div className="text-[9px] text-slate-400 mt-0.5">{looseScanEntries.length} pallet đã quét</div>
                     )}
-                  </div>
-                </TableCell>
-                <TableCell className="px-2 py-1 align-top whitespace-nowrap">
-                  <span className="text-[10px] text-slate-500 font-mono">{item.delivery_code}</span>
-                </TableCell>
-                <TableCell className="px-1 py-1 align-top">
-                  {looseScanEntries.length > 0 && (
-                    <button
-                      onClick={e => { e.stopPropagation(); toggleExpand(item.id) }}
-                      className="p-0.5 rounded text-slate-300 hover:text-slate-600 transition-colors"
-                      title={expanded ? 'Thu gọn' : 'Xem pallet đã quét'}
-                    >
-                      {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-                    </button>
-                  )}
-                </TableCell>
-              </TableRow>
-
-              {expanded && (
-                <TableRow className="hover:bg-transparent">
-                  <TableCell className="px-0 py-0 border-b border-slate-100" />
-                  <TableCell colSpan={4} className="px-0 py-0 border-b border-slate-100">
-                    <div className="pl-3 pr-3 py-1.5 border-l-2 border-slate-200">
-                      <table className="w-full border-collapse">
-                        <thead>
-                          <tr>
-                            <th className="text-left text-[9px] text-slate-400 font-medium pb-0.5 pr-3">Mã pallet</th>
-                            <th className="text-right text-[9px] text-slate-400 font-medium pb-0.5 pr-3">Thùng</th>
-                            <th className="text-left text-[9px] text-slate-400 font-medium pb-0.5 pr-3">NSX</th>
-                            <th className="text-left text-[9px] text-slate-400 font-medium pb-0.5">Date cũ nhất</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {looseScanEntries.map(se => {
-                            const isSubOptimal = !!(se.best_available_date && se.production_date && se.production_date > se.best_available_date)
-                            const fmtDate = (d: string) => { try { return format(parseISO(d), 'dd-MM-yyyy') } catch { return d } }
-                            return (
-                              <tr key={se.id}>
-                                <td className="pr-3 py-0.5">
-                                  <span className={`font-mono text-[10px] font-semibold ${isSubOptimal ? 'text-red-600' : 'text-slate-400'}`}>
-                                    {se.pallet_code}
-                                  </span>
-                                </td>
-                                <td className="pr-3 py-0.5 text-right">
-                                  <span className="text-[10px] tabular-nums text-slate-400">{se.cartons_scanned}<span className="text-slate-300 ml-0.5">th</span></span>
-                                </td>
-                                <td className="pr-3 py-0.5">
-                                  <span className="text-[10px] font-mono text-slate-400">{se.production_date ? fmtDate(se.production_date) : '—'}</span>
-                                </td>
-                                <td className="py-0.5">
-                                  {se.best_available_date ? (
-                                    <span className={`text-[10px] font-mono ${isSubOptimal ? 'text-orange-600 font-semibold' : 'text-slate-300'}`}>
-                                      {isSubOptimal ? '⚠ ' : ''}{fmtDate(se.best_available_date)}
-                                    </span>
-                                  ) : <span className="text-[10px] text-slate-300">—</span>}
-                                </td>
-                              </tr>
-                            )
-                          })}
-                        </tbody>
-                      </table>
+                  </TableCell>
+                  <TableCell className="px-2 py-1 align-top text-right whitespace-nowrap">
+                    <div className="flex flex-col items-end gap-0.5">
+                      <span className={`text-[10px] tabular-nums ${textCls}`}>
+                        <span className="font-semibold">{effective}</span>
+                        <span className="text-slate-400"> / {item.cartons_ordered}</span>
+                      </span>
+                      {!isDone && (
+                        <button
+                          onClick={e => { e.stopPropagation(); navigate(`/wms/loosepicking/${gdoId}/items/${item.id}?scan=1`) }}
+                          className="flex items-center gap-0.5 text-[9px] font-medium text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 rounded px-1.5 py-0.5 transition-colors"
+                        >
+                          <QrCode className="h-2.5 w-2.5" /> Quét
+                        </button>
+                      )}
                     </div>
                   </TableCell>
+                  <TableCell className="px-1 py-1 align-middle text-center">
+                    <button
+                      onClick={e => { e.stopPropagation(); setInventoryItemId(item.id) }}
+                      className="flex items-center justify-center h-7 w-7 mx-auto rounded text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+                      title="Xem tồn kho"
+                    >
+                      <Search className="h-5 w-5" />
+                    </button>
+                  </TableCell>
+                  <TableCell className="px-2 py-1 align-top whitespace-nowrap">
+                    <span className="text-[10px] text-slate-500 font-mono">{item.delivery_code}</span>
+                  </TableCell>
+                  <TableCell className="px-1 py-1 align-top">
+                    {looseScanEntries.length > 0 && (
+                      <button
+                        onClick={e => { e.stopPropagation(); toggleExpand(item.id) }}
+                        className="p-0.5 rounded text-slate-300 hover:text-slate-600 transition-colors"
+                        title={expanded ? 'Thu gọn' : 'Xem pallet đã quét'}
+                      >
+                        {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                      </button>
+                    )}
+                  </TableCell>
                 </TableRow>
-              )}
-            </Fragment>
-          )
-        })}
-      </TableBody>
-    </Table>
+
+                {expanded && (
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell className="px-0 py-0 border-b border-slate-100" />
+                    <TableCell colSpan={5} className="px-0 py-0 border-b border-slate-100">
+                      <div className="pl-3 pr-3 py-1.5 border-l-2 border-slate-200">
+                        <table className="w-full border-collapse">
+                          <thead>
+                            <tr>
+                              <th className="text-left text-[9px] text-slate-400 font-medium pb-0.5 pr-3">Mã pallet</th>
+                              <th className="text-right text-[9px] text-slate-400 font-medium pb-0.5 pr-3">Thùng</th>
+                              <th className="text-left text-[9px] text-slate-400 font-medium pb-0.5 pr-3">Date</th>
+                              <th className="text-left text-[9px] text-slate-400 font-medium pb-0.5">Date cũ nhất</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {looseScanEntries.map(se => {
+                              const isSubOptimal = !!(se.best_available_date && se.production_date && se.production_date > se.best_available_date)
+                              const fmtDate = (d: string) => { try { return format(parseISO(d), 'dd-MM-yyyy') } catch { return d } }
+                              return (
+                                <tr key={se.id}>
+                                  <td className="pr-3 py-0.5">
+                                    <span className={`font-mono text-[10px] font-semibold ${isSubOptimal ? 'text-red-600' : 'text-slate-400'}`}>
+                                      {se.pallet_code}
+                                    </span>
+                                  </td>
+                                  <td className="pr-3 py-0.5 text-right">
+                                    <span className="text-[10px] tabular-nums text-slate-400">{se.cartons_scanned}<span className="text-slate-300 ml-0.5">th</span></span>
+                                  </td>
+                                  <td className="pr-3 py-0.5">
+                                    <span className="text-[10px] font-mono text-slate-400">{se.production_date ? fmtDate(se.production_date) : '—'}</span>
+                                  </td>
+                                  <td className="py-0.5">
+                                    {se.best_available_date ? (
+                                      <span className={`text-[10px] font-mono ${isSubOptimal ? 'text-orange-600 font-semibold' : 'text-slate-300'}`}>
+                                        {isSubOptimal ? '⚠ ' : ''}{fmtDate(se.best_available_date)}
+                                      </span>
+                                    ) : <span className="text-[10px] text-slate-300">—</span>}
+                                  </td>
+                                </tr>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                )}
+              </Fragment>
+            )
+          })}
+        </TableBody>
+      </Table>
+    </>
   )
 }
 
@@ -210,7 +367,8 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand }: {
 export default function LoosePickingDetail() {
   const { id }   = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const { vehicles } = useActiveLoosePickingStore()
+  const { vehicles, pin, unpin, isPinned, update } = useActiveLoosePickingStore()
+  const pinned = isPinned(id ?? '')
 
   const { data: gdo, isLoading } = useGDO(id)
   const [expandedItemIds, setExpandedItemIds] = useState<Set<string>>(new Set())
@@ -218,6 +376,10 @@ export default function LoosePickingDetail() {
   function toggleExpand(itemId: string) {
     setExpandedItemIds(prev => { const n = new Set(prev); n.has(itemId) ? n.delete(itemId) : n.add(itemId); return n })
   }
+
+  useEffect(() => {
+    if (gdo) update(gdo.id, gdo.status)
+  }, [gdo?.status, gdo?.id])
 
   if (isLoading || !gdo) {
     return (
@@ -232,7 +394,21 @@ export default function LoosePickingDetail() {
   const totalLoose    = allLooseItems.reduce((s, i) => s + itemLooseProgress(i).effective, 0)
   const totalLooseDone = allLooseItems.reduce((s, i) => s + itemLooseProgress(i).done, 0)
 
-  const npp  = [...new Set(allDOs.map(d => d.distributor_name).filter(Boolean))].join(', ')
+  const npp = [...new Set(allDOs.map(d => d.distributor_name).filter(Boolean))].join(', ')
+
+  const hasScanEntries = allLooseItems.some(i => (i.scan_entries ?? []).some(s => s.is_loose_picking))
+  const hasAnyExpanded = expandedItemIds.size > 0
+  function toggleExpandAll() {
+    if (hasAnyExpanded) {
+      setExpandedItemIds(new Set())
+    } else {
+      setExpandedItemIds(new Set(
+        allLooseItems
+          .filter(i => (i.scan_entries ?? []).some(s => s.is_loose_picking))
+          .map(i => i.id)
+      ))
+    }
+  }
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -240,24 +416,48 @@ export default function LoosePickingDetail() {
       {/* ── Header ── */}
       <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5 overflow-y-auto" style={{ maxHeight: '22vh' }}>
 
-        <div className="flex items-center gap-1.5">
-          <button onClick={() => navigate('/wms/loosepicking')}
-            className="p-1 rounded hover:bg-slate-100 text-slate-500 shrink-0">
-            <ArrowLeft className="h-4 w-4" />
-          </button>
-          <Scissors className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-          <span className="font-mono font-semibold text-sm">{gdo.group_code}</span>
-          <Badge status={gdo.status} />
+        {/* Row 1: back + code + status + actions */}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <button onClick={() => navigate('/wms/loosepicking')}
+              className="p-1 rounded hover:bg-slate-100 text-slate-500 shrink-0">
+              <ArrowLeft className="h-4 w-4" />
+            </button>
+            <Scissors className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+            <span className="font-mono font-semibold text-sm">{gdo.group_code}</span>
+            <Badge status={gdo.status} />
+            <button
+              onClick={() => pinned
+                ? unpin(gdo.id)
+                : pin({ id: gdo.id, group_code: gdo.group_code, status: gdo.status })
+              }
+              className={`p-1 rounded transition-colors shrink-0 ${pinned ? 'text-amber-500' : 'text-slate-300 hover:text-slate-500'}`}
+              title={pinned ? 'Bỏ đánh dấu đang làm' : 'Đánh dấu đang làm xe này'}
+            >
+              <Bookmark className="h-3.5 w-3.5" fill={pinned ? 'currentColor' : 'none'} />
+            </button>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {hasScanEntries && (
+              <Button size="sm" variant="outline"
+                className="h-7 text-xs gap-1 px-2 border-slate-200 text-slate-500 hover:bg-slate-50"
+                onClick={toggleExpandAll}
+                title={hasAnyExpanded ? 'Thu gọn tất cả' : 'Xem pallet đã quét'}
+              >
+                <ChevronDown className={`h-3 w-3 transition-transform ${hasAnyExpanded ? 'rotate-180' : ''}`} />
+                {hasAnyExpanded ? 'Thu gọn' : 'Pallet'}
+              </Button>
+            )}
+          </div>
         </div>
 
+        {/* Row 2: GDO info */}
         <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-600">
           <span className="flex items-center gap-1">
             <Truck className="h-3 w-3 text-slate-400 shrink-0" />
             <span className="font-medium">{format(parseISO(gdo.delivery_date), 'dd-MM-yy', { locale: vi })}</span>
           </span>
-          {gdo.dvvt && (
-            <span className="text-slate-500">{gdo.dvvt}</span>
-          )}
+          {gdo.dvvt && <span className="text-slate-500">{gdo.dvvt}</span>}
           {npp && <span className="text-slate-500 break-words">{npp}</span>}
           <span className="flex items-center gap-1">
             <Package className="h-3 w-3 text-slate-400 shrink-0" />
@@ -271,7 +471,7 @@ export default function LoosePickingDetail() {
 
       {/* ── Quick-switch bar ── */}
       {vehicles.length > 0 && (
-        <div className="border-b bg-white px-4 py-1.5 shrink-0 flex flex-wrap items-center gap-1">
+        <div className="border-b bg-white px-3 py-1.5 shrink-0 flex flex-wrap items-center gap-1">
           <span className="text-[9px] text-slate-400 shrink-0">Đang làm:</span>
           {vehicles.map(v => (
             <button

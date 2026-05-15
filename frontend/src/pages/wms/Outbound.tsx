@@ -163,8 +163,19 @@ export default function Outbound() {
         },
         onError: (err) => {
           setPostUploadLoading(false)
-          const msg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi upload file'
-          setUploadErr(msg)
+          const axErr = err as AxiosError<{ error: { message: string }; validation_errors?: { group_code: string; errors: string[] }[] }>
+          const data = axErr?.response?.data
+          const ve = data?.validation_errors
+          if (ve?.length) {
+            const lines = [data.error.message, '']
+            for (const { group_code, errors } of ve) {
+              lines.push(`Số xe: ${group_code}`)
+              for (const e of errors) lines.push(`  • ${e}`)
+            }
+            setUploadErr(lines.join('\n'))
+          } else {
+            setUploadErr(data?.error?.message ?? 'Lỗi upload file')
+          }
         },
       }
     )
@@ -220,8 +231,9 @@ export default function Outbound() {
           </div>
         )}
         {uploadErr && (
-          <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700 flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4 shrink-0" />{uploadErr}
+          <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700 flex gap-2">
+            <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+            <pre className="whitespace-pre-wrap font-sans">{uploadErr}</pre>
           </div>
         )}
 

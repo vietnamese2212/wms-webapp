@@ -25,6 +25,15 @@ function parseDecimal(val: any): number {
   return isNaN(n) ? 0 : n
 }
 
+function validateGroupCode(gc: string): string | null {
+  const parts = gc.split('_')
+  if (parts.length < 3)                        return 'Số xe phải có định dạng ddmmyy_Kho_STT (vd: 150526_BV_01)'
+  if (!/^\d{6}$/.test(parts[0]))               return 'Phần đầu Số xe phải là 6 chữ số ddmmyy'
+  if (!/^\d+$/.test(parts[parts.length - 1]))  return 'Phần cuối Số xe phải là số thứ tự (01, 02…)'
+  if (!parsePlannedDate(gc))                   return 'Ngày trong Số xe không hợp lệ (ddmmyy phải là ngày thực)'
+  return null
+}
+
 function parseExcelDate(val: any): string | null {
   if (!val) return null
   if (typeof val === 'number') {
@@ -852,66 +861,73 @@ export async function uploadExcel(req: Request, res: Response) {
       }
     }
 
-    // ── First pass: validate all vehicles, build insert lists ──
-    // Deletions happen AFTER this loop so a failed vehicle never loses its old data.
+    // ── Phase 1: pre-validate ALL vehicles, block entire upload on any error ──
+
+    const validationErrors: { group_code: string; errors: string[] }[] = []
+
+    for (const [group_code, groupRows] of byVehicle) {
+      const errs: string[] = []
+
+      const fmtErr = validateGroupCode(group_code)
+      if (fmtErr) errs.push(fmtErr)
+
+      if (!parseExcelDate(groupRows[0]['Ngày xuất']))
+        errs.push(`Ngày xuất không hợp lệ: "${groupRows[0]['Ngày xuất'] ?? ''}"`)
+
+      const kho_xuat_v = String(groupRows[0]['Kho xuất'] ?? groupRows[0]['Kho xuat'] ?? '').trim()
+      if (kho_xuat_v && !warehouseByKey.has(kho_xuat_v.toLowerCase()))
+        errs.push(`Kho xuất "${kho_xuat_v}" không có trong hệ thống`)
+      else if (!kho_xuat_v && !warehouse_id)
+        errs.push('Thiếu cột Kho xuất')
+
+      const unknownMatsV = [...new Set(
+        groupRows.filter(r => String(r['Material'] ?? '').trim()).map(r => String(r['Material']).trim())
+      )].filter(c => !matMap.has(c))
+      if (unknownMatsV.length) errs.push(`Mã hàng chưa có trong hệ thống: ${unknownMatsV.join(', ')}`)
+
+      if (groupRows.some(r => !String(r['Material'] ?? '').trim()))
+        errs.push('Có dòng trống cột Material')
+
+      if (blockedMap.has(group_code)) {
+        const status = blockedMap.get(group_code)!
+        errs.push(status === 'COMPLETED'
+          ? 'Đã hoàn thành — không thể ghi đè'
+          : 'Đang xuất — chỉ upload được khi PAUSED')
+      }
+
+      if (errs.length) validationErrors.push({ group_code, errors: errs })
+    }
+
+    if (validationErrors.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_FAILED', message: `File có ${validationErrors.length} chuyến xe lỗi — không upload` },
+        validation_errors: validationErrors,
+      })
+    }
+
+    // ── Phase 2: build insert lists (all vehicles already validated) ──
 
     const created:  any[] = []
-    const gdoInserts:  any[] = []   // new GDO rows (pendingSimple + new)
-    const doInserts:   any[] = []   // all new DO rows
-    const itemInserts: any[] = []   // all new Item rows
-    const toReplaceIds:   string[] = [] // pendingSimple IDs → cascade delete
-    const toPreserveIds:  string[] = [] // pendingPreserve IDs → delete DOs only, update GDO
+    const gdoInserts:  any[] = []
+    const doInserts:   any[] = []
+    const itemInserts: any[] = []
+    const toReplaceIds:   string[] = []
+    const toPreserveIds:  string[] = []
     const preserveGDOUpdates: { id: string; fields: Record<string, unknown> }[] = []
 
     for (const [group_code, groupRows] of byVehicle) {
-      // Blocked: IN_PROGRESS or COMPLETED
-      if (blockedMap.has(group_code)) {
-        const status = blockedMap.get(group_code)!
-        const reason = status === 'COMPLETED'
-          ? 'Đã hoàn thành — không thể ghi đè'
-          : 'Đang xuất — chỉ upload được khi chuyến tạm dừng (PAUSED)'
-        created.push({ group_code, skipped: true, reason, existing_status: status })
-        continue
-      }
-
-      const delivery_date = parseExcelDate(groupRows[0]['Ngày xuất'])
-      if (!delivery_date) {
-        created.push({ group_code, skipped: true, reason: `Ngày xuất không hợp lệ hoặc trống: "${groupRows[0]['Ngày xuất'] ?? ''}"` })
-        continue
-      }
-
-      // planned_date phải parse được từ tiền tố ddmmyy_ của group_code — sai format → chặn
-      const planned_date = parsePlannedDate(group_code)
-      if (!planned_date) {
-        created.push({ group_code, skipped: true, reason: 'Mã xe không có tiền tố ngày ddmmyy_ hợp lệ — không thể xác định ngày kế hoạch' })
-        continue
-      }
+      const delivery_date = parseExcelDate(groupRows[0]['Ngày xuất'])!
+      const planned_date  = parsePlannedDate(group_code)!
 
       const dvvt     = String(groupRows[0]['DVVT']     ?? groupRows[0]['Đơn vị']  ?? '').trim() || null
       const kho_xuat = String(groupRows[0]['Kho xuất'] ?? groupRows[0]['Kho xuat'] ?? '').trim()
       const loaiKhoSet = [...new Set(groupRows.map(r => String(r['Loại kho'] ?? r['Loai kho'] ?? '').trim()).filter(Boolean))]
       const loai_kho = loaiKhoSet.length ? loaiKhoSet.join('+') : null
 
-      let resolved_warehouse_id = warehouse_id ?? null
-      if (kho_xuat) {
-        const found = warehouseByKey.get(kho_xuat.toLowerCase())
-        if (!found) {
-          created.push({ group_code, skipped: true, reason: `Không tìm thấy kho "${kho_xuat}"` })
-          continue
-        }
-        resolved_warehouse_id = found
-      } else if (!resolved_warehouse_id) {
-        created.push({ group_code, skipped: true, reason: 'Thiếu thông tin kho xuất' })
-        continue
-      }
-
-      const unknownMats = [...new Set(
-        groupRows.filter(r => String(r['Material'] ?? '').trim()).map(r => String(r['Material']).trim())
-      )].filter(c => !matMap.has(c))
-      if (unknownMats.length) {
-        created.push({ group_code, skipped: true, reason: `Mã hàng không tìm thấy: ${unknownMats.join(', ')}` })
-        continue
-      }
+      const resolved_warehouse_id = kho_xuat
+        ? warehouseByKey.get(kho_xuat.toLowerCase())!
+        : (warehouse_id ?? null)
 
       const byDelivery = new Map<string, Record<string, any>[]>()
       for (const row of groupRows) {

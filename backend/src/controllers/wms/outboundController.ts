@@ -1170,16 +1170,21 @@ export async function checkScanItem(req: Request, res: Response) {
 
     let best_available_date: string | null = null
     if (inv.material_id && gdo?.warehouse_id) {
-      const { data: bestEntries } = await (supabase.from('InventoryEntry') as any)
-        .select('production_date, location!inner(warehouse_id)')
-        .eq('material_id', inv.material_id)
-        .eq('location.warehouse_id', gdo.warehouse_id)
-        .in('status', ['IN_STOCK', 'PARTIAL'])
-        .is('qa_status_id', null)
-        .not('production_date', 'is', null)
-        .or('cartons_remaining.gt.0,cartons_remaining.is.null')
-      const dates = (bestEntries ?? []).map((e: any) => e.production_date as string).filter(Boolean)
-      if (dates.length > 0) best_available_date = dates.reduce((a: string, b: string) => a < b ? a : b)
+      const { data: locs } = await (supabase.from('Location') as any)
+        .select('id').eq('warehouse_id', gdo.warehouse_id)
+      const locIds = (locs ?? []).map((l: any) => l.id as string)
+      if (locIds.length > 0) {
+        const { data: bestEntries } = await (supabase.from('InventoryEntry') as any)
+          .select('production_date')
+          .eq('material_id', inv.material_id)
+          .in('location_id', locIds)
+          .in('status', ['IN_STOCK', 'PARTIAL'])
+          .is('qa_status_id', null)
+          .not('production_date', 'is', null)
+          .or('cartons_remaining.gt.0,cartons_remaining.is.null')
+        const dates = (bestEntries ?? []).map((e: any) => e.production_date as string).filter(Boolean)
+        if (dates.length > 0) best_available_date = dates.reduce((a: string, b: string) => a < b ? a : b)
+      }
     }
 
     return res.json({
@@ -1281,16 +1286,21 @@ export async function scanItem(req: Request, res: Response) {
     // Tìm production_date tốt nhất (cũ nhất, không bị QA) trong kho lúc này
     let best_available_date: string | null = null
     if (inv.material_id && gdo?.warehouse_id) {
-      const { data: bestEntries } = await (supabase.from('InventoryEntry') as any)
-        .select('production_date, location!inner(warehouse_id)')
-        .eq('material_id', inv.material_id)
-        .eq('location.warehouse_id', gdo.warehouse_id)
-        .in('status', ['IN_STOCK', 'PARTIAL'])
-        .is('qa_status_id', null)
-        .not('production_date', 'is', null)
-        .or('cartons_remaining.gt.0,cartons_remaining.is.null')
-      const dates = (bestEntries ?? []).map((e: any) => e.production_date as string).filter(Boolean)
-      if (dates.length > 0) best_available_date = dates.reduce((a: string, b: string) => a < b ? a : b)
+      const { data: locs } = await (supabase.from('Location') as any)
+        .select('id').eq('warehouse_id', gdo.warehouse_id)
+      const locIds = (locs ?? []).map((l: any) => l.id as string)
+      if (locIds.length > 0) {
+        const { data: bestEntries } = await (supabase.from('InventoryEntry') as any)
+          .select('production_date')
+          .eq('material_id', inv.material_id)
+          .in('location_id', locIds)
+          .in('status', ['IN_STOCK', 'PARTIAL'])
+          .is('qa_status_id', null)
+          .not('production_date', 'is', null)
+          .or('cartons_remaining.gt.0,cartons_remaining.is.null')
+        const dates = (bestEntries ?? []).map((e: any) => e.production_date as string).filter(Boolean)
+        if (dates.length > 0) best_available_date = dates.reduce((a: string, b: string) => a < b ? a : b)
+      }
     }
 
     const t = now()

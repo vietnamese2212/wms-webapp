@@ -186,14 +186,52 @@ export async function listFacets(req: Request, res: Response) {
   const warehouseIds = parseArr(q.warehouse_ids)
   const categories   = parseArr(q.categories)
 
-  const { data, error } = await (supabase as any).rpc('get_inventory_facets', {
-    p_warehouse_ids: warehouseIds.length > 0 ? warehouseIds.join(',') : null,
-    p_categories:    categories.length > 0   ? categories.join(',')    : null,
-  })
+  // Materials: query Material table directly (5-10k rows, always complete)
+  let matQ = (supabase.from('Material') as any)
+    .select('id, material_code, short_name')
+    .order('material_code')
+  if (categories.length === 1)    matQ = matQ.eq('category', categories[0])
+  else if (categories.length > 1) matQ = matQ.in('category', categories)
 
+  // Locations: query Location table directly (small, always complete)
+  let locQ = (supabase.from('Location') as any)
+    .select('id, location_code')
+    .order('location_code')
+  if (warehouseIds.length === 1)    locQ = locQ.eq('warehouse_id', warehouseIds[0])
+  else if (warehouseIds.length > 1) locQ = locQ.in('warehouse_id', warehouseIds)
+
+  const [{ data: matData }, { data: locData }] = await Promise.all([matQ, locQ])
+
+  // Cycles & machines: no reference table — query InventoryEntry scalar-only (no joins)
+  // Distinct values are few (< 50), so a sample easily covers them all
+  const locIds = (locData ?? []).map((l: any) => l.id as string)
+  const matIds = (matData ?? []).map((m: any) => m.id as string)
+
+  let invQ = (supabase.from('InventoryEntry') as any)
+    .select('cycle, machine_code')
+    .in('status', ['IN_STOCK', 'PARTIAL'])
+    .limit(10000)
+  if (warehouseIds.length > 0) {
+    if (locIds.length === 0) return ok(res, { cycles: [], machines: [], locations: [], materials: [] })
+    invQ = invQ.in('location_id', locIds)
+  }
+  if (categories.length > 0) {
+    if (matIds.length === 0) return ok(res, { cycles: [], machines: [], locations: [], materials: [] })
+    invQ = invQ.in('material_id', matIds)
+  }
+
+  const { data: invData, error } = await invQ
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
 
-  return ok(res, data ?? { cycles: [], machines: [], locations: [], materials: [] })
+  const cycles   = [...new Set((invData ?? []).map((e: any) => e.cycle).filter(Boolean))].sort() as string[]
+  const machines = [...new Set((invData ?? []).map((e: any) => e.machine_code).filter(Boolean))].sort() as string[]
+
+  const materials = ((matData ?? []) as any[])
+    .map((m: any) => ({ id: m.id as string, code: m.material_code as string, name: (m.short_name ?? null) as string | null }))
+  const locations = ((locData ?? []) as any[])
+    .map((l: any) => ({ id: l.id as string, code: l.location_code as string }))
+
+  return ok(res, { cycles, machines, locations, materials })
 }
 
 const ACTIVE_STATUSES = ['IN_STOCK', 'PARTIAL', 'EXPORTED']

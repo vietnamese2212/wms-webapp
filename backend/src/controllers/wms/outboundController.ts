@@ -1456,7 +1456,7 @@ export async function listLoosePickingItems(req: Request, res: Response) {
     const { warehouse_id, date } = req.query as { warehouse_id?: string; date?: string }
 
     let gdoQ = (supabase.from('GroupDeliveryOrder') as any)
-      .select('id, group_code, delivery_date, planned_date, status, started_at, warehouse:Warehouse(id,code,name)')
+      .select('id, group_code, delivery_date, planned_date, status, started_at, dvvt, warehouse:Warehouse(id,code,name)')
       .neq('status', 'CANCELLED')
     if (warehouse_id) gdoQ = gdoQ.eq('warehouse_id', warehouse_id)
     if (date)         gdoQ = gdoQ.eq('delivery_date', date)
@@ -1466,7 +1466,7 @@ export async function listLoosePickingItems(req: Request, res: Response) {
 
     const gdoIds = (gdos as any[]).map((g: any) => g.id as string)
     const { data: dos } = await (supabase.from('OutboundDelivery') as any)
-      .select('id, gdo_id').in('gdo_id', gdoIds)
+      .select('id, gdo_id, distributor_name').in('gdo_id', gdoIds)
 
     const doIds = (dos ?? []).map((d: any) => d.id as string)
     if (!doIds.length) return ok(res, [])
@@ -1485,6 +1485,13 @@ export async function listLoosePickingItems(req: Request, res: Response) {
     const gdoById: Record<string, any> = {}
     for (const g of (gdos as any[])) gdoById[g.id] = g
 
+    const nppByGdo: Record<string, string[]> = {}
+    for (const d of (dos ?? [])) {
+      if (!nppByGdo[d.gdo_id]) nppByGdo[d.gdo_id] = []
+      if (d.distributor_name && !nppByGdo[d.gdo_id].includes(d.distributor_name))
+        nppByGdo[d.gdo_id].push(d.distributor_name)
+    }
+
     // Tính loose_scanned (thùng thực sự quét qua chế độ nhặt lẻ) per item
     const itemIds = (items as any[]).map((i: any) => i.id as string)
     const { data: looseScans } = await (supabase.from('OutboundScanEntry') as any)
@@ -1495,8 +1502,9 @@ export async function listLoosePickingItems(req: Request, res: Response) {
     }
 
     const result = (items as any[]).map((item: any) => {
-      const gdoId = doToGdoId[item.do_id as string]
-      const gdo   = gdoId ? gdoById[gdoId] : null
+      const gdoId  = doToGdoId[item.do_id as string]
+      const gdoRaw = gdoId ? gdoById[gdoId] : null
+      const gdo    = gdoRaw ? { ...gdoRaw, distributor_names: nppByGdo[gdoId] ?? [] } : null
       return { ...item, gdo, loose_scanned: looseScannedByItem[item.id] ?? 0 }
     })
 

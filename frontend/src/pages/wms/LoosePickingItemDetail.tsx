@@ -1,18 +1,19 @@
 import { useRef, useState, useEffect } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import type { AxiosError } from 'axios'
+import { format, parseISO } from 'date-fns'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import {
-  ArrowLeft, QrCode, CheckCircle2, AlertTriangle, Package, Trash2, Scissors,
+  ArrowLeft, QrCode, CheckCircle2, AlertTriangle, Package, Scissors,
 } from 'lucide-react'
 import { Button }  from '@/components/ui/button'
 import { Card }    from '@/components/ui/card'
 import { Input }   from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { QRScanner } from '@/components/shared/QRScanner'
 import type { QRScannerHandle } from '@/components/shared/QRScanner'
-import { useGDO, useScanLoosePickingItem, useDeleteOutboundScanEntry } from '@/api/hooks'
+import { useGDO, useScanLoosePickingItem, useCheckOutboundScan, type CheckOutboundScanResult } from '@/api/hooks'
+import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 import { playBeep, unlockAudio } from '@/utils/audio'
 import type { OutboundItem, OutboundStatus } from '@/types'
 
@@ -65,9 +66,10 @@ interface ScanDialogProps {
 function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
   const scannerRef = useRef<QRScannerHandle>(null)
   const [feedback,       setFeedback]       = useState<FeedbackState>(null)
-  const [pendingQR,      setPendingQR]      = useState<string | null>(null)
+  const [checkResult,    setCheckResult]    = useState<CheckOutboundScanResult | null>(null)
   const [pendingCartons, setPendingCartons] = useState('')
-  const { mutate: scanItem, isPending } = useScanLoosePickingItem()
+  const { mutate: checkScan, isPending: checking } = useCheckOutboundScan()
+  const { mutate: scanItem,  isPending: saving    } = useScanLoosePickingItem()
 
   const matName      = item.material?.short_name ?? item.material_code_raw ?? '—'
   const looseScanned = (item.scan_entries ?? []).filter(s => s.is_loose_picking).reduce((sum, s) => sum + Number(s.cartons_scanned), 0)
@@ -78,23 +80,16 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
 
   function handleScan(qr_code: string) {
     playBeep()
-    setPendingQR(qr_code)
-    setPendingCartons(String(remaining > 0 ? remaining : 1))
+    setCheckResult(null)
     setFeedback(null)
-  }
-
-  function handleSave() {
-    if (!pendingQR || isPending) return
-    scanItem(
-      { gdoId, itemId: item.id, qr_code: pendingQR, cartons_override: Math.max(1, parseInt(pendingCartons) || 1) },
+    checkScan(
+      { gdoId, itemId: item.id, qr_code },
       {
-        onSuccess: (data: any) => {
-          setPendingQR(null)
-          setFeedback({ type: 'success', msg: `✓ ${data.scan_entry.pallet_code} · ${data.scan_entry.cartons_scanned} thùng` })
-          setTimeout(() => { scannerRef.current?.resume(); setFeedback(null) }, 1500)
+        onSuccess: (data) => {
+          setCheckResult(data)
+          setPendingCartons(String(data.suggested_cartons > 0 ? Math.min(data.suggested_cartons, remaining) : 1))
         },
         onError: (err) => {
-          setPendingQR(null)
           const msg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
           setFeedback({ type: 'error', msg })
         },
@@ -102,10 +97,33 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
     )
   }
 
-  function dismissPending() {
+  function handleSave() {
+    if (!checkResult || saving) return
+    scanItem(
+      { gdoId, itemId: item.id, qr_code: checkResult.pallet_code, cartons_override: Math.max(1, parseInt(pendingCartons) || 1) },
+      {
+        onSuccess: (data: any) => {
+          setCheckResult(null)
+          setFeedback({ type: 'success', msg: `✓ ${data.scan_entry.pallet_code} · ${data.scan_entry.cartons_scanned} thùng` })
+          setTimeout(() => { scannerRef.current?.resume(); setFeedback(null) }, 1500)
+        },
+        onError: (err) => {
+          setCheckResult(null)
+          const msg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
+          setFeedback({ type: 'error', msg })
+        },
+      }
+    )
+  }
+
+  function handleRetry() {
     setFeedback(null)
+    setCheckResult(null)
     scannerRef.current?.resume()
   }
+
+  const isSubOptimal = !!(checkResult?.production_date && checkResult?.best_available_date &&
+    checkResult.production_date > checkResult.best_available_date)
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col">
@@ -114,7 +132,7 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
         <div className="p-4 space-y-3">
           <div>
             <p className="font-semibold text-lg text-slate-800">{matName}</p>
-            <p className="text-lg text-slate-500">
+            <p className="text-sm text-slate-500">
               {item.material?.material_code ?? item.material_code_raw}
               {' · '}còn <strong>{remaining}</strong> thùng nhặt lẻ cần chuẩn bị
             </p>
@@ -129,38 +147,58 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
           <div className="relative">
             <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} />
 
+            {checking && (
+              <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10
+                             bg-white/90 rounded-full px-4 py-2 text-sm text-slate-600 shadow-lg">
+                Đang kiểm tra…
+              </div>
+            )}
+
             {feedback !== null && (
               <button
                 className="absolute left-1/2 top-[8%] -translate-x-1/2 -translate-y-1/2 z-10
                            bg-white/90 hover:bg-white text-slate-700 border border-slate-300
                            rounded-full px-4 py-1.5 text-sm font-medium shadow-lg transition-all"
-                onClick={dismissPending}
+                onClick={handleRetry}
               >
                 Quét tiếp
               </button>
             )}
 
-            {pendingQR && (
+            {checkResult && !saving && (
               <button
                 className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10
                            bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white
-                           rounded-full px-6 py-2.5 text-sm font-semibold shadow-xl transition-all
-                           disabled:opacity-60"
+                           rounded-full px-6 py-2.5 text-sm font-semibold shadow-xl transition-all"
                 onClick={handleSave}
-                disabled={isPending}
               >
-                {isPending ? '…' : 'Lưu'}
+                Lưu
               </button>
+            )}
+            {saving && (
+              <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10
+                             bg-blue-500 text-white rounded-full px-6 py-2.5 text-sm font-semibold shadow-xl opacity-70">
+                …
+              </div>
             )}
           </div>
 
-          {pendingQR && !feedback && (
+          {checkResult && !feedback && (
             <div className="space-y-2">
-              <div className="rounded-lg bg-green-50 border border-green-200 px-3 py-2.5 flex items-center gap-2">
-                <CheckCircle2 className="h-4 w-4 text-green-600 shrink-0" />
-                <div className="min-w-0">
-                  <p className="text-lg font-medium text-green-800">Sẵn sàng lưu</p>
-                  <p className="font-mono text-[10px] text-green-500 truncate">{pendingQR}</p>
+              <div className={`rounded-lg border px-3 py-2.5 flex items-start gap-2 ${isSubOptimal ? 'bg-orange-50 border-orange-200' : 'bg-green-50 border-green-200'}`}>
+                <CheckCircle2 className={`h-4 w-4 shrink-0 mt-0.5 ${isSubOptimal ? 'text-orange-500' : 'text-green-600'}`} />
+                <div className="min-w-0 flex-1">
+                  <p className={`text-sm font-semibold font-mono ${isSubOptimal ? 'text-red-600' : 'text-green-800'}`}>
+                    {checkResult.pallet_code}
+                  </p>
+                  {checkResult.production_date && (
+                    <p className="text-[10px] text-slate-500 mt-0.5">NSX: {formatTimestampDate(checkResult.production_date)}</p>
+                  )}
+                  {isSubOptimal && checkResult.best_available_date && (
+                    <p className="text-[10px] text-orange-600 font-medium mt-0.5">
+                      ⚠ Trong kho còn NSX {formatTimestampDate(checkResult.best_available_date)} (cũ hơn — nên ưu tiên lấy trước)
+                    </p>
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-3">
@@ -177,50 +215,21 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
             </div>
           )}
 
+          {feedback?.type === 'error' && (
+            <div className="rounded-lg bg-red-50 border border-red-200 p-2.5 text-sm text-red-700 flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />{feedback.msg}
+            </div>
+          )}
           {feedback?.type === 'success' && (
-            <div className="rounded-lg bg-green-50 border border-green-200 p-2.5 text-lg text-green-800 flex items-center gap-2">
+            <div className="rounded-lg bg-green-50 border border-green-200 p-2.5 text-sm text-green-800 flex items-center gap-2">
               <CheckCircle2 className="h-4 w-4 shrink-0" />{feedback.msg}
             </div>
           )}
-          {feedback?.type === 'error' && (
-            <div className="space-y-2">
-              <div className="rounded-lg bg-red-50 border border-red-200 p-2.5 text-lg text-red-700 flex items-start gap-2">
-                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />{feedback.msg}
-              </div>
-              <Button variant="outline" size="sm" className="w-full"
-                onClick={() => { setFeedback(null); scannerRef.current?.resume() }}>
-                Quét tiếp
-              </Button>
-            </div>
-          )}
-          <Button variant="outline" className="w-full" onClick={onClose} disabled={isPending}>Đóng</Button>
+
+          <Button variant="outline" className="w-full" onClick={onClose} disabled={saving}>Đóng</Button>
         </div>
       </div>
     </div>
-  )
-}
-
-// ─── Confirm dialog ────────────────────────────────────────────
-
-function ConfirmDialog({
-  open, title, message, onConfirm, onCancel, loading,
-}: {
-  open: boolean; title: string; message: string
-  onConfirm: () => void; onCancel: () => void; loading?: boolean
-}) {
-  return (
-    <Dialog open={open} onOpenChange={v => { if (!v) onCancel() }}>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader><DialogTitle>{title}</DialogTitle></DialogHeader>
-        <p className="text-sm text-slate-600 py-1">{message}</p>
-        <DialogFooter className="gap-2">
-          <Button variant="outline" onClick={onCancel} disabled={loading}>Không</Button>
-          <Button className="bg-red-600 hover:bg-red-700 text-white" onClick={onConfirm} disabled={loading}>
-            {loading ? 'Đang xử lý…' : 'Xác nhận'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   )
 }
 
@@ -231,12 +240,10 @@ export default function LoosePickingItemDetail() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const autoScan = searchParams.get('scan') === '1'
+  const { vehicles } = useActiveVehiclesStore()
 
   const { data: gdo, isLoading } = useGDO(gdoId)
-  const { mutate: deleteScanEntry, isPending: deleting } = useDeleteOutboundScanEntry()
-
-  const [showScan,      setShowScan]      = useState(false)
-  const [confirmScanId, setConfirmScanId] = useState<string | null>(null)
+  const [showScan, setShowScan] = useState(false)
 
   useEffect(() => {
     if (!autoScan || !gdo) return
@@ -279,39 +286,18 @@ export default function LoosePickingItemDetail() {
   const effectiveLoose = Math.max(0, item.loose_picking - ov)
   const looseDone    = Math.min(looseScanned, effectiveLoose)
   const isDone       = looseDone >= effectiveLoose
-  const scans        = item.scan_entries ?? []
+  const scans        = (item.scan_entries ?? []).filter(s => s.is_loose_picking)
 
   function openScan() {
     unlockAudio()
     setShowScan(true)
   }
 
-  function handleDeleteScan() {
-    if (!confirmScanId) return
-    deleteScanEntry(
-      { gdoId: gdoId!, itemId: item!.id, scanId: confirmScanId },
-      { onSettled: () => setConfirmScanId(null) }
-    )
-  }
-
-  const confirmScan = scans.find(s => s.id === confirmScanId)
-
   return (
     <>
       {showScan && (
         <ScanDialog item={item} gdoId={gdoId!} onClose={() => setShowScan(false)} />
       )}
-
-      <ConfirmDialog
-        open={!!confirmScanId}
-        title="Hủy pallet đã quét"
-        message={confirmScan
-          ? `Xác nhận hủy pallet "${confirmScan.pallet_code}" (${confirmScan.cartons_scanned} thùng)? Tồn kho sẽ được hoàn lại.`
-          : ''}
-        onConfirm={handleDeleteScan}
-        onCancel={() => setConfirmScanId(null)}
-        loading={deleting}
-      />
 
       <div className="flex flex-col h-full min-h-0">
 
@@ -350,7 +336,8 @@ export default function LoosePickingItemDetail() {
           <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-500">
             <span className="flex items-center gap-1">
               <Scissors className="h-3 w-3 text-slate-400 shrink-0" />
-              Nhặt lẻ: <span className="font-medium text-slate-700 ml-0.5">{effectiveLoose}</span>{effectiveLoose < item.loose_picking && <span className="text-slate-400 ml-0.5">(gốc {item.loose_picking})</span>}
+              Nhặt lẻ: <span className="font-medium text-slate-700 ml-0.5">{effectiveLoose}</span>
+              {effectiveLoose < item.loose_picking && <span className="text-slate-400 ml-0.5">(gốc {item.loose_picking})</span>}
             </span>
             <span className="flex items-center gap-1">
               <Package className="h-3 w-3 text-slate-400 shrink-0" />
@@ -364,7 +351,6 @@ export default function LoosePickingItemDetail() {
             )}
           </div>
 
-          {/* Header text */}
           {item.header_text && (
             <div className="text-xs font-medium text-slate-700 bg-blue-50 border border-blue-100 rounded px-2 py-1 leading-snug">
               {item.header_text}
@@ -372,12 +358,38 @@ export default function LoosePickingItemDetail() {
           )}
         </div>
 
+        {/* ── Quick-switch bar ── */}
+        {vehicles.length > 0 && (
+          <div className="border-b bg-white px-4 py-1.5 shrink-0 flex flex-wrap items-center gap-1">
+            <span className="text-[9px] text-slate-400 shrink-0">Đang làm:</span>
+            {vehicles.map(v => (
+              <button
+                key={v.id}
+                onClick={() => navigate(`/wms/loosepicking/${v.id}`)}
+                className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium whitespace-nowrap border transition-colors ${
+                  v.id === gdoId
+                    ? 'bg-amber-100 text-amber-800 border-amber-300'
+                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                }`}
+              >
+                <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${
+                  v.status === 'IN_PROGRESS' ? 'bg-amber-500'
+                  : v.status === 'COMPLETED'  ? 'bg-green-500'
+                  : v.status === 'PAUSED'     ? 'bg-red-500'
+                  : 'bg-slate-300'
+                }`} />
+                {v.group_code}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* ── Scan list ── */}
         <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
           <div className="p-3">
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-sm font-semibold text-slate-700">
-                Pallet đã quét
+                Pallet đã quét (nhặt lẻ)
                 <span className="ml-2 text-xs font-normal text-slate-400">{scans.length} pallet</span>
               </h2>
             </div>
@@ -394,42 +406,50 @@ export default function LoosePickingItemDetail() {
                   )}
                 </div>
               ) : (
-                <Table>
+                <Table className="min-w-[520px]">
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="px-3 py-1 text-[11px]">Mã pallet</TableHead>
-                      <TableHead className="px-3 py-1 text-[11px] text-right">Thùng</TableHead>
-                      <TableHead className="px-3 py-1 text-[11px] hidden sm:table-cell whitespace-nowrap">Ngày</TableHead>
-                      <TableHead className="px-3 py-1 text-[11px] hidden sm:table-cell whitespace-nowrap">Giờ</TableHead>
-                      <TableHead className="px-1 py-1 w-10" />
+                      <TableHead className="px-2 py-1 text-[9px] font-medium text-slate-500">Mã pallet</TableHead>
+                      <TableHead className="px-2 py-1 text-[9px] font-medium text-slate-500 text-right">Thùng</TableHead>
+                      <TableHead className="px-2 py-1 text-[9px] font-medium text-slate-500 whitespace-nowrap">NSX</TableHead>
+                      <TableHead className="px-2 py-1 text-[9px] font-medium text-slate-500 whitespace-nowrap">Date cũ nhất</TableHead>
+                      <TableHead className="px-2 py-1 text-[9px] font-medium text-slate-500 whitespace-nowrap">Thời gian quét</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {scans.map(se => (
-                      <TableRow key={se.id}>
-                        <TableCell className="px-2 py-1.5 font-mono text-xs font-medium">
-                          {se.pallet_code}
-                        </TableCell>
-                        <TableCell className="px-2 py-1.5 text-right tabular-nums text-xs font-semibold">
-                          {se.cartons_scanned}
-                        </TableCell>
-                        <TableCell className="px-2 py-1.5 hidden sm:table-cell text-xs text-slate-500 whitespace-nowrap">
-                          {se.scanned_at ? formatTimestampDate(se.scanned_at, true) : '—'}
-                        </TableCell>
-                        <TableCell className="px-2 py-1.5 hidden sm:table-cell text-xs text-slate-500 tabular-nums">
-                          {se.scanned_at ? formatTimestampTime(se.scanned_at, false) : '—'}
-                        </TableCell>
-                        <TableCell className="px-1 py-2">
-                          <button
-                            className="p-1 rounded transition-colors text-slate-300 hover:text-red-500 hover:bg-red-50"
-                            title="Hủy pallet này"
-                            onClick={() => setConfirmScanId(se.id)}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    {scans.map(se => {
+                      const isSubOptimal = !!(se.best_available_date && se.production_date && se.production_date > se.best_available_date)
+                      return (
+                        <TableRow key={se.id}>
+                          <TableCell className="px-2 py-1.5">
+                            <div className={`font-mono text-[10px] font-semibold ${isSubOptimal ? 'text-red-600' : 'text-slate-700'}`}>
+                              {se.pallet_code}
+                            </div>
+                          </TableCell>
+                          <TableCell className="px-2 py-1.5 text-right tabular-nums text-[10px] font-semibold">
+                            {se.cartons_scanned}
+                          </TableCell>
+                          <TableCell className="px-2 py-1.5 whitespace-nowrap">
+                            <span className="text-[10px] font-mono tabular-nums text-slate-600">
+                              {se.production_date ? format(parseISO(se.production_date), 'dd-MM-yyyy') : '—'}
+                            </span>
+                          </TableCell>
+                          <TableCell className="px-2 py-1.5 whitespace-nowrap">
+                            {se.best_available_date ? (
+                              <span className={`text-[10px] font-mono tabular-nums ${isSubOptimal ? 'text-orange-600 font-semibold' : 'text-slate-500'}`}>
+                                {isSubOptimal ? '⚠ ' : ''}{format(parseISO(se.best_available_date), 'dd-MM-yyyy')}
+                              </span>
+                            ) : (
+                              <span className="text-[10px] text-slate-300">—</span>
+                            )}
+                          </TableCell>
+                          <TableCell className="px-2 py-1.5 whitespace-nowrap tabular-nums">
+                            <div className="text-[10px] text-slate-500">{se.scanned_at ? formatTimestampDate(se.scanned_at, true) : '—'}</div>
+                            <div className="text-[9px] text-slate-400">{se.scanned_at ? formatTimestampTime(se.scanned_at) : ''}</div>
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
                   </TableBody>
                 </Table>
               )}

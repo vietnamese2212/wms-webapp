@@ -2,13 +2,14 @@ import { useState, useMemo, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
-import { CalendarDays, Scissors, X } from 'lucide-react'
+import { CalendarDays, Scissors, X, Bookmark } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useLoosePickingItems, useWarehouses, type LoosePickingItem } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
+import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 
 const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
@@ -22,7 +23,6 @@ type GDOSummary = {
   pendingCount: number
 }
 
-// effective_loose = loose_picking - phần outbound đã "ăn vào" quota nhặt lẻ
 function itemLooseStats(i: LoosePickingItem) {
   const ov       = Math.max(0, (i.cartons_scanned - i.loose_scanned) - (i.cartons_ordered - i.loose_picking))
   const effective = Math.max(0, i.loose_picking - ov)
@@ -57,6 +57,7 @@ function pickingStatusInfo(s: GDOSummary): { label: string; cls: string } {
 export default function LoosePicking() {
   const user     = useAuthStore(s => s.user)
   const navigate = useNavigate()
+  const { pin, unpin, isPinned } = useActiveVehiclesStore()
 
   const [warehouseId, setWarehouseId] = useState<string>('')
   const [date,        setDate]        = useState<string>(TODAY)
@@ -73,7 +74,6 @@ export default function LoosePicking() {
     date:         date        || undefined,
   })
 
-  // Group by GDO, sort delivery_date asc then group_code
   const grouped = useMemo((): GDOSummary[] => {
     const map = new Map<string, { gdo: LoosePickingItem['gdo']; items: LoosePickingItem[] }>()
     for (const item of items) {
@@ -100,6 +100,7 @@ export default function LoosePicking() {
     const q = search.trim().toLowerCase()
     return grouped.filter(s =>
       s.gdo?.group_code?.toLowerCase().includes(q) ||
+      s.gdo?.distributor_names?.some(n => n.toLowerCase().includes(q)) ||
       s.items.some(i =>
         (i.material?.material_code ?? i.material_code_raw ?? '').toLowerCase().includes(q) ||
         (i.material?.short_name ?? '').toLowerCase().includes(q)
@@ -119,7 +120,6 @@ export default function LoosePicking() {
       {/* ── Header ── */}
       <div className="border-b bg-white px-4 py-3 shrink-0 space-y-2">
 
-        {/* Title */}
         <div className="flex items-center gap-2">
           <h1 className="text-xl font-semibold flex items-center gap-2">
             <Scissors className="h-5 w-5 text-slate-500" />
@@ -132,7 +132,6 @@ export default function LoosePicking() {
           )}
         </div>
 
-        {/* Date + Search */}
         <div className="flex gap-2">
           <div className="relative flex items-center gap-1.5">
             <CalendarDays className="absolute left-2.5 h-4 w-4 text-slate-400 pointer-events-none" />
@@ -155,10 +154,9 @@ export default function LoosePicking() {
               </button>
             )}
           </div>
-          <SearchInput value={search} onChange={setSearch} placeholder="Tìm số xe, mã hàng…" className="flex-1" />
+          <SearchInput value={search} onChange={setSearch} placeholder="Tìm số xe, NPP, mã hàng…" className="flex-1" />
         </div>
 
-        {/* Warehouse filter + summary */}
         <div className="flex gap-2 flex-wrap items-center">
           <Select value={warehouseId || '__all__'} onValueChange={v => setWarehouseId(v === '__all__' ? '' : v)}>
             <SelectTrigger className="h-7 text-xs w-[130px]">
@@ -202,17 +200,20 @@ export default function LoosePicking() {
             </p>
           </div>
         ) : (
-          <Table className="min-w-[720px]">
+          <Table className="min-w-[900px]">
             <TableHeader>
               <TableRow className="bg-slate-50">
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Ngày xuất</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Số xe</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">NPP</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">ĐVVT</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Kho xuất</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 text-right whitespace-nowrap px-2 py-1.5">Mặt hàng</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 text-right whitespace-nowrap px-2 py-1.5">Nhặt lẻ</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5 min-w-[80px]">Tiến độ</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">T.T. đơn</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">T.T. nhặt lẻ</TableHead>
+                <TableHead className="w-8 px-1 py-1.5" />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -223,18 +224,27 @@ export default function LoosePicking() {
                 const dateStr  = s.gdo?.delivery_date
                   ? format(parseISO(s.gdo.delivery_date), 'dd-MM-yy', { locale: vi })
                   : '—'
+                const gdoId  = s.gdo?.id ?? ''
+                const pinned = isPinned(gdoId)
+                const npp    = s.gdo?.distributor_names?.join(', ') ?? ''
 
                 return (
                   <TableRow
-                    key={s.gdo?.id ?? '__unknown__'}
+                    key={gdoId || '__unknown__'}
                     className={`cursor-pointer transition-colors ${rowBg(s)}`}
-                    onClick={() => s.gdo?.id && navigate(`/wms/loosepicking/${s.gdo.id}`)}
+                    onClick={() => gdoId && navigate(`/wms/loosepicking/${gdoId}`)}
                   >
                     <TableCell className="px-2 py-1 whitespace-nowrap">
                       <span className="text-[10px] font-medium tabular-nums">{dateStr}</span>
                     </TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap">
                       <span className="text-[10px] font-mono font-semibold">{s.gdo?.group_code ?? '—'}</span>
+                    </TableCell>
+                    <TableCell className="px-2 py-1 max-w-[140px]">
+                      <span className="text-[10px] text-slate-600 line-clamp-2 leading-tight">{npp || '—'}</span>
+                    </TableCell>
+                    <TableCell className="px-2 py-1 whitespace-nowrap">
+                      <span className="text-[10px] text-slate-600">{s.gdo?.dvvt ?? '—'}</span>
                     </TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap">
                       <span className="text-[10px] text-slate-700">{s.gdo?.warehouse?.name ?? '—'}</span>
@@ -266,6 +276,21 @@ export default function LoosePicking() {
                     </TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap">
                       <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${pCls}`}>{pLabel}</span>
+                    </TableCell>
+                    <TableCell className="px-1 py-1">
+                      <button
+                        onClick={e => {
+                          e.stopPropagation()
+                          if (!s.gdo) return
+                          pinned
+                            ? unpin(s.gdo.id)
+                            : pin({ id: s.gdo.id, group_code: s.gdo.group_code, status: s.gdo.status })
+                        }}
+                        className={`p-1 rounded transition-colors ${pinned ? 'text-amber-500' : 'text-slate-300 hover:text-slate-500'}`}
+                        title={pinned ? 'Bỏ đánh dấu đang làm' : 'Đánh dấu đang làm'}
+                      >
+                        <Bookmark className="h-3.5 w-3.5" fill={pinned ? 'currentColor' : 'none'} />
+                      </button>
                     </TableCell>
                   </TableRow>
                 )

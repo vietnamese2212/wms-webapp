@@ -258,31 +258,11 @@ export default function OutboundItemDetail() {
     }
   }, [autoScan, gdo]) // eslint-disable-line
 
-  if (isLoading || !gdo) {
-    return (
-      <div className="p-4 space-y-3">
-        {[1, 2, 3].map(i => <div key={i} className="h-16 rounded-xl bg-slate-100 animate-pulse" />)}
-      </div>
-    )
-  }
+  // All useMemo hooks must be above early returns (Rules of Hooks)
+  const scans = gdo
+    ? (gdo.delivery_orders ?? []).flatMap(d => d.items).find(i => i.id === itemId)?.scan_entries ?? []
+    : []
 
-  const allItems = (gdo.delivery_orders ?? []).flatMap(d => d.items)
-  const item     = allItems.find(i => i.id === itemId)
-
-  if (!item) {
-    return (
-      <div className="p-6 text-center text-slate-500">
-        Không tìm thấy mã hàng.{' '}
-        <Button variant="link" onClick={() => navigate(`/wms/outbound/${gdoId}`)}>Quay lại</Button>
-      </div>
-    )
-  }
-
-  const matName  = item.material?.short_name ?? item.material_code_raw ?? '—'
-  const matCode  = item.material?.material_code ?? item.material_code_raw ?? '—'
-  const isPOSM   = item.material_type === 'POSM'
-
-  // Inventory panel: sort ascending pct_date (smallest = hết hạn sớm nhất = ưu tiên lấy trước)
   const sortedInv = useMemo<ItemInventoryEntry[]>(() =>
     [...inventoryData].sort((a, b) => {
       if (a.pct_date === null && b.pct_date === null) return 0
@@ -309,18 +289,40 @@ export default function OutboundItemDetail() {
     })
   }, [sortedInv])
 
+  const maxProdDate = useMemo(() => {
+    const dates = scans.map(s => s.production_date).filter(Boolean) as string[]
+    return dates.length > 0 ? dates.reduce((a, b) => (a > b ? a : b)) : null
+  }, [scans])
+
+  if (isLoading || !gdo) {
+    return (
+      <div className="p-4 space-y-3">
+        {[1, 2, 3].map(i => <div key={i} className="h-16 rounded-xl bg-slate-100 animate-pulse" />)}
+      </div>
+    )
+  }
+
+  const allItems = (gdo.delivery_orders ?? []).flatMap(d => d.items)
+  const item     = allItems.find(i => i.id === itemId)
+
+  if (!item) {
+    return (
+      <div className="p-6 text-center text-slate-500">
+        Không tìm thấy mã hàng.{' '}
+        <Button variant="link" onClick={() => navigate(`/wms/outbound/${gdoId}`)}>Quay lại</Button>
+      </div>
+    )
+  }
+
+  const matName  = item.material?.short_name ?? item.material_code_raw ?? '—'
+  const matCode  = item.material?.material_code ?? item.material_code_raw ?? '—'
+  const isPOSM   = item.material_type === 'POSM'
+
   function toggleInv(key: string) {
     setExpandedInvKeys(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n })
   }
   const isLoscam = item.material_type === 'Pallet Loscam' || (item.material_code_raw ?? '').includes('810000')
   const isDone   = item.status === 'COMPLETED'
-  const scans    = item.scan_entries ?? []
-
-  // Red highlight: pallet không phải NSX mới nhất trong danh sách đã quét
-  const maxProdDate = useMemo(() => {
-    const dates = scans.map(s => s.production_date).filter(Boolean) as string[]
-    return dates.length > 0 ? dates.reduce((a, b) => (a > b ? a : b)) : null
-  }, [scans])
 
   // Workflow: can only scan if GDO has been started and not paused
   const isPaused = gdo.status === 'PAUSED'

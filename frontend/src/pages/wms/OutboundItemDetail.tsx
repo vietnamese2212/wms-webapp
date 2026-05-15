@@ -452,24 +452,20 @@ export default function OutboundItemDetail() {
                 <Package className="h-3.5 w-3.5" />
                 Tồn kho{inventoryData.length > 0 ? ` (${inventoryData.length})` : ''}
               </button>
-              {!isDone && (
-                <>
-                  {isPOSM ? (
-                    <span className="text-xs text-slate-400 italic">Tự bypass</span>
-                  ) : isLoscam ? (
-                    <Button size="sm" variant="outline" className="h-7 text-xs" disabled={isPaused}
-                      onClick={() => { setLoscamCartons(String(item.cartons_ordered)); setShowLoscamDialog(true) }}>
-                      Lưu thủ công
-                    </Button>
-                  ) : canScan ? (
-                    <Button size="sm" className="h-7 text-xs gap-1" onClick={openScan}>
-                      <QrCode className="h-3.5 w-3.5" /> Quét pallet
-                    </Button>
-                  ) : (
-                    <span className="text-xs text-slate-400 italic hidden sm:inline">Chưa bắt đầu</span>
-                  )}
-                </>
-              )}
+              {isPOSM ? (
+                !isDone && <span className="text-xs text-slate-400 italic">Tự bypass</span>
+              ) : isLoscam ? (
+                <Button size="sm" variant="outline" className="h-7 text-xs" disabled={isPaused}
+                  onClick={() => { setLoscamCartons(String(isDone ? item.cartons_scanned : item.cartons_ordered)); setShowLoscamDialog(true) }}>
+                  {isDone ? 'Sửa số lượng' : 'Lưu thủ công'}
+                </Button>
+              ) : !isDone && (canScan ? (
+                <Button size="sm" className="h-7 text-xs gap-1" onClick={openScan}>
+                  <QrCode className="h-3.5 w-3.5" /> Quét pallet
+                </Button>
+              ) : (
+                <span className="text-xs text-slate-400 italic hidden sm:inline">Chưa bắt đầu</span>
+              ))}
             </div>
           </div>
 

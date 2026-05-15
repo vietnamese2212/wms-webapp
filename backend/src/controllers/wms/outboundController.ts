@@ -1510,14 +1510,13 @@ export async function manualCompleteItem(req: Request, res: Response) {
   try {
     const { gdoId, itemId } = req.params
 
-    const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
-      .select('status').eq('id', gdoId).single()
-    if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng — không thể cập nhật', 400)
-
     const { cartons } = req.body as { cartons?: number }
 
-    const { data: item } = await (supabase.from('OutboundItem') as any)
-      .select('*').eq('id', itemId).single()
+    const [{ data: gdo }, { data: item }] = await Promise.all([
+      (supabase.from('GroupDeliveryOrder') as any).select('status').eq('id', gdoId).single(),
+      (supabase.from('OutboundItem') as any).select('*').eq('id', itemId).single(),
+    ])
+    if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng — không thể cập nhật', 400)
     if (!item) return fail(res, 'Không tìm thấy mặt hàng', 404)
 
     const ctn = (cartons != null && Number(cartons) >= 0) ? Math.round(Number(cartons)) : Number(item.cartons_ordered)

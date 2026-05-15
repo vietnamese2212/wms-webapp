@@ -203,6 +203,7 @@ export default function LoosePicking() {
           <Table className="min-w-[900px]">
             <TableHeader>
               <TableRow className="bg-slate-50">
+                <TableHead className="w-8 px-1 py-1.5" />
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Ngày xuất</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Số xe</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">NPP</TableHead>
@@ -213,7 +214,6 @@ export default function LoosePicking() {
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5 min-w-[80px]">Tiến độ</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">T.T. đơn</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">T.T. nhặt lẻ</TableHead>
-                <TableHead className="w-8 px-1 py-1.5" />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -234,6 +234,21 @@ export default function LoosePicking() {
                     className={`cursor-pointer transition-colors ${rowBg(s)}`}
                     onClick={() => gdoId && navigate(`/wms/loosepicking/${gdoId}`)}
                   >
+                    <TableCell className="px-1 py-1">
+                      <button
+                        onClick={e => {
+                          e.stopPropagation()
+                          if (!s.gdo) return
+                          pinned
+                            ? unpin(s.gdo.id)
+                            : pin({ id: s.gdo.id, group_code: s.gdo.group_code, status: s.gdo.status })
+                        }}
+                        className={`p-1 rounded transition-colors ${pinned ? 'text-amber-500' : 'text-slate-300 hover:text-slate-500'}`}
+                        title={pinned ? 'Bỏ đánh dấu đang làm' : 'Đánh dấu đang làm'}
+                      >
+                        <Bookmark className="h-3.5 w-3.5" fill={pinned ? 'currentColor' : 'none'} />
+                      </button>
+                    </TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap">
                       <span className="text-[10px] font-medium tabular-nums">{dateStr}</span>
                     </TableCell>
@@ -276,21 +291,6 @@ export default function LoosePicking() {
                     </TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap">
                       <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${pCls}`}>{pLabel}</span>
-                    </TableCell>
-                    <TableCell className="px-1 py-1">
-                      <button
-                        onClick={e => {
-                          e.stopPropagation()
-                          if (!s.gdo) return
-                          pinned
-                            ? unpin(s.gdo.id)
-                            : pin({ id: s.gdo.id, group_code: s.gdo.group_code, status: s.gdo.status })
-                        }}
-                        className={`p-1 rounded transition-colors ${pinned ? 'text-amber-500' : 'text-slate-300 hover:text-slate-500'}`}
-                        title={pinned ? 'Bỏ đánh dấu đang làm' : 'Đánh dấu đang làm'}
-                      >
-                        <Bookmark className="h-3.5 w-3.5" fill={pinned ? 'currentColor' : 'none'} />
-                      </button>
                     </TableCell>
                   </TableRow>
                 )

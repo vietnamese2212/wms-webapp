@@ -227,7 +227,7 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand }: {
           onClose={() => setInventoryItemId(null)}
         />
       )}
-      <Table className="min-w-full">
+      <Table className="min-w-[480px]">
         <TableHeader>
           <TableRow className="bg-slate-50">
             <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Mã hàng</TableHead>
@@ -242,7 +242,7 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand }: {
           {allItems.map(item => {
             const { effective, done: looseDone, looseScanned } = itemLooseProgress(item)
             const isDone   = looseDone >= effective
-            const textCls  = isDone ? 'text-blue-700' : looseScanned > 0 ? 'text-amber-700' : 'text-slate-400'
+            const textCls  = isDone ? 'text-blue-700' : looseScanned > 0 ? 'text-amber-700' : 'text-slate-700'
             const bgCls    = isDone ? 'bg-blue-50 hover:bg-blue-100' : looseScanned > 0 ? 'bg-amber-50 hover:bg-amber-100' : 'hover:bg-slate-50'
             const matCode  = item.material?.material_code ?? item.material_code_raw ?? '—'
             const matName  = item.material?.short_name ?? item.material_code_raw ?? '—'
@@ -310,8 +310,11 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand }: {
                   <TableRow className="hover:bg-transparent">
                     <TableCell className="px-0 py-0 border-b border-slate-100" />
                     <TableCell colSpan={5} className="px-0 py-0 border-b border-slate-100">
-                      <div className="pl-3 pr-3 py-1.5 border-l-2 border-slate-200">
-                        <table className="w-full border-collapse">
+                      <div className="pl-3 pr-3 py-1.5 space-y-1 border-l-2 border-slate-200">
+                        {item.header_text && (
+                          <p className="text-[11px] italic text-slate-500 leading-snug">{item.header_text}</p>
+                        )}
+                        <table className="w-full border-collapse whitespace-nowrap">
                           <thead>
                             <tr>
                               <th className="text-left text-[9px] text-slate-400 font-medium pb-0.5 pr-3">Mã pallet</th>

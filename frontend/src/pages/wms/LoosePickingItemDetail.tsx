@@ -1,10 +1,10 @@
-import { useRef, useState, useEffect } from 'react'
+import { useRef, useState, useEffect, useMemo, Fragment } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import {
-  ArrowLeft, QrCode, CheckCircle2, AlertTriangle, Package, Scissors,
+  ArrowLeft, QrCode, CheckCircle2, AlertTriangle, Package, Scissors, ChevronDown, ChevronRight,
 } from 'lucide-react'
 import { Button }  from '@/components/ui/button'
 import { Card }    from '@/components/ui/card'
@@ -12,7 +12,8 @@ import { Input }   from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { QRScanner } from '@/components/shared/QRScanner'
 import type { QRScannerHandle } from '@/components/shared/QRScanner'
-import { useGDO, useScanLoosePickingItem, useCheckOutboundScan, type CheckOutboundScanResult } from '@/api/hooks'
+import { useGDO, useScanLoosePickingItem, useCheckOutboundScan, useItemInventory, type CheckOutboundScanResult, type ItemInventoryEntry } from '@/api/hooks'
+import { PalletDetailDialog } from '@/components/shared/PalletDetailDialog'
 import { useActiveLoosePickingStore } from '@/stores/activeLoosePickingStore'
 import { playBeep, unlockAudio } from '@/utils/audio'
 import type { OutboundItem, OutboundStatus } from '@/types'
@@ -243,7 +244,11 @@ export default function LoosePickingItemDetail() {
   const { vehicles } = useActiveLoosePickingStore()
 
   const { data: gdo, isLoading } = useGDO(gdoId)
-  const [showScan, setShowScan] = useState(false)
+  const { data: inventoryData = [], isLoading: invLoading } = useItemInventory(gdoId, itemId)
+  const [showScan,          setShowScan]          = useState(false)
+  const [showInventory,     setShowInventory]     = useState(false)
+  const [expandedInvKeys,   setExpandedInvKeys]   = useState<Set<string>>(new Set())
+  const [detailEntryId,     setDetailEntryId]     = useState<string | null>(null)
 
   useEffect(() => {
     if (!autoScan || !gdo) return
@@ -258,6 +263,36 @@ export default function LoosePickingItemDetail() {
       setShowScan(true)
     }
   }, [autoScan, gdo]) // eslint-disable-line
+
+  const sortedInv = useMemo<ItemInventoryEntry[]>(() =>
+    [...inventoryData].sort((a, b) => {
+      if (a.pct_date === null && b.pct_date === null) return 0
+      if (a.pct_date === null) return 1
+      if (b.pct_date === null) return -1
+      return a.pct_date - b.pct_date
+    }),
+    [inventoryData]
+  )
+
+  type InvAggRow = { key: string; pct_date: number | null; location_code: string | null; is_qa: boolean; cartons: number; entries: ItemInventoryEntry[] }
+  const invAggRows = useMemo<InvAggRow[]>(() => {
+    const map = new Map<string, InvAggRow>()
+    for (const e of sortedInv) {
+      const q = !!e.qa_status
+      const k = `${e.pct_date ?? 'n'}|${e.location_code ?? ''}|${q}`
+      const r = map.get(k)
+      if (r) { r.cartons += e.cartons_remaining ?? e.cartons_imported ?? 0; r.entries.push(e) }
+      else map.set(k, { key: k, pct_date: e.pct_date, location_code: e.location_code, is_qa: q, cartons: e.cartons_remaining ?? e.cartons_imported ?? 0, entries: [e] })
+    }
+    return [...map.values()].sort((a, b) => {
+      const pa = a.pct_date ?? Infinity, pb = b.pct_date ?? Infinity
+      return pa !== pb ? pa - pb : (a.is_qa ? 1 : -1)
+    })
+  }, [sortedInv])
+
+  function toggleInv(key: string) {
+    setExpandedInvKeys(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n })
+  }
 
   if (isLoading || !gdo) {
     return (
@@ -317,13 +352,25 @@ export default function LoosePickingItemDetail() {
               <Badge status={item.status} />
             </div>
 
-            {!isDone && (
-              <div className="shrink-0">
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                onClick={() => setShowInventory(v => !v)}
+                className={`flex items-center gap-1 h-7 px-2 rounded border text-xs font-medium transition-colors ${
+                  showInventory
+                    ? 'bg-blue-50 border-blue-200 text-blue-700'
+                    : 'border-slate-200 text-slate-500 hover:bg-slate-50'
+                }`}
+                title="Xem tồn kho trong kho"
+              >
+                <Package className="h-3.5 w-3.5" />
+                Tồn kho{inventoryData.length > 0 ? ` (${inventoryData.length})` : ''}
+              </button>
+              {!isDone && (
                 <Button size="sm" className="h-7 text-xs gap-1" onClick={openScan}>
                   <QrCode className="h-3.5 w-3.5" /> Quét pallet
                 </Button>
-              </div>
-            )}
+              )}
+            </div>
           </div>
 
           {/* Row 2: name + progress */}
@@ -357,6 +404,88 @@ export default function LoosePickingItemDetail() {
             </div>
           )}
         </div>
+
+        {/* ── Inventory panel (expandable) ── */}
+        {showInventory && (
+          <div className="border-b bg-slate-50 px-3 py-2 shrink-0 overflow-y-auto" style={{ maxHeight: '42vh' }}>
+            {detailEntryId && <PalletDetailDialog entryId={detailEntryId} onClose={() => setDetailEntryId(null)} />}
+            <p className="text-[9px] font-medium text-slate-500 mb-1.5">
+              Tồn kho theo %Date · lấy thấp trước · {sortedInv.length} pallet
+            </p>
+            {invLoading ? (
+              <div className="space-y-1.5">
+                {[1,2,3].map(i => <div key={i} className="h-7 bg-slate-200 rounded animate-pulse" />)}
+              </div>
+            ) : sortedInv.length === 0 ? (
+              <p className="text-xs text-slate-400 py-2 text-center">Không còn tồn kho trong kho này</p>
+            ) : (
+              <Table className="min-w-[320px]">
+                <TableHeader>
+                  <TableRow className="bg-slate-100">
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1">%Date</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1">Vị trí</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1 text-right">Thùng</TableHead>
+                    <TableHead className="w-5 px-1 py-1" />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {invAggRows.map(row => {
+                    const expanded = expandedInvKeys.has(row.key)
+                    return (
+                      <Fragment key={row.key}>
+                        <TableRow
+                          className={`cursor-pointer ${row.is_qa ? 'bg-purple-50 hover:bg-purple-100' : 'hover:bg-slate-50'}`}
+                          onClick={() => toggleInv(row.key)}
+                        >
+                          <TableCell className="px-2 py-1.5">
+                            <div className="flex items-center gap-1.5">
+                              {row.pct_date !== null ? (
+                                <span className={`text-xs font-bold tabular-nums ${
+                                  row.pct_date <= 30 ? 'text-red-600' : row.pct_date <= 60 ? 'text-amber-600' : 'text-green-700'
+                                }`}>{row.pct_date}%</span>
+                              ) : <span className="text-[10px] text-slate-400">Chưa có</span>}
+                              {row.is_qa && (
+                                <span className="text-[9px] font-medium text-purple-700 bg-purple-100 rounded px-1.5 py-0.5">QA giữ</span>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell className="px-2 py-1.5">
+                            <span className="text-[10px] font-mono text-slate-600">{row.location_code ?? '—'}</span>
+                          </TableCell>
+                          <TableCell className="px-2 py-1.5 text-right whitespace-nowrap">
+                            <span className={`text-[10px] font-semibold tabular-nums ${row.is_qa ? 'text-purple-700' : ''}`}>{row.cartons}</span>
+                            <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
+                            <div className="text-[9px] text-slate-400">{row.entries.length} pl</div>
+                          </TableCell>
+                          <TableCell className="px-1 py-1.5 text-slate-400">
+                            {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                          </TableCell>
+                        </TableRow>
+                        {expanded && row.entries.map(e => (
+                          <TableRow key={e.id} className={row.is_qa ? 'bg-purple-50/60' : 'bg-slate-50'}>
+                            <TableCell className="px-2 py-1 pl-6" colSpan={2}>
+                              <button
+                                className="font-mono text-[10px] font-semibold text-blue-600 hover:underline text-left"
+                                onClick={ev => { ev.stopPropagation(); setDetailEntryId(e.id) }}
+                              >
+                                {e.pallet_code}
+                              </button>
+                            </TableCell>
+                            <TableCell className="px-2 py-1 text-right whitespace-nowrap">
+                              <span className="text-[10px] font-semibold tabular-nums">{e.cartons_remaining ?? e.cartons_imported ?? 0}</span>
+                              <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
+                            </TableCell>
+                            <TableCell className="px-1 py-1" />
+                          </TableRow>
+                        ))}
+                      </Fragment>
+                    )
+                  })}
+                </TableBody>
+              </Table>
+            )}
+          </div>
+        )}
 
         {/* ── Quick-switch bar ── */}
         {vehicles.length > 0 && (

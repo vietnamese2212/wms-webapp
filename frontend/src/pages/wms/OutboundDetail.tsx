@@ -608,13 +608,15 @@ function ItemsTable({ doRecords, gdoId, canScan, expandedItemIds, toggleExpand }
                   <span className="text-[10px] text-slate-500 font-mono">{item.delivery_code}</span>
                 </TableCell>
                 <TableCell className="px-1 py-1 align-top">
-                  <button
-                    onClick={e => { e.stopPropagation(); toggleExpand(item.id) }}
-                    className="p-0.5 rounded text-slate-300 hover:text-slate-600 transition-colors"
-                    title={expanded ? 'Thu gọn' : 'Xem pallet đã quét'}
-                  >
-                    {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-                  </button>
+                  {scans.length > 0 && (
+                    <button
+                      onClick={e => { e.stopPropagation(); toggleExpand(item.id) }}
+                      className="p-0.5 rounded text-slate-300 hover:text-slate-600 transition-colors"
+                      title={expanded ? 'Thu gọn' : 'Xem pallet đã quét'}
+                    >
+                      {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                    </button>
+                  )}
                 </TableCell>
               </TableRow>
               {expanded && (
@@ -752,7 +754,7 @@ export default function OutboundDetail() {
     if (hasAnyExpanded) {
       setExpandedItemIds(new Set())
     } else {
-      setExpandedItemIds(new Set(allItems.map(i => i.id)))
+      setExpandedItemIds(new Set(allItems.filter(i => (i.scan_entries?.length ?? 0) > 0).map(i => i.id)))
     }
   }
 

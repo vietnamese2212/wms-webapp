@@ -167,7 +167,7 @@ export default function Outbound() {
           const data = axErr?.response?.data
           const ve = data?.validation_errors
           if (ve?.length) {
-            const lines = [data.error.message, '']
+            const lines = [data!.error.message, '']
             for (const { group_code, errors } of ve) {
               lines.push(`Số xe: ${group_code}`)
               for (const e of errors) lines.push(`  • ${e}`)

@@ -186,63 +186,14 @@ export async function listFacets(req: Request, res: Response) {
   const warehouseIds = parseArr(q.warehouse_ids)
   const categories   = parseArr(q.categories)
 
-  let locationFilter: string[] | null = null
-  if (warehouseIds.length > 0) {
-    let locQ = (supabase.from('Location') as any).select('id')
-    if (warehouseIds.length === 1) locQ = locQ.eq('warehouse_id', warehouseIds[0])
-    else locQ = locQ.in('warehouse_id', warehouseIds)
-    const { data: locs } = await locQ
-    locationFilter = (locs ?? []).map((l: any) => l.id as string)
-    if (locationFilter.length === 0)
-      return ok(res, { cycles: [], machines: [], locations: [], materials: [] })
-  }
+  const { data, error } = await (supabase as any).rpc('get_inventory_facets', {
+    p_warehouse_ids: warehouseIds.length > 0 ? warehouseIds.join(',') : null,
+    p_categories:    categories.length > 0   ? categories.join(',')    : null,
+  })
 
-  let materialFilter: string[] | null = null
-  if (categories.length > 0) {
-    let matQ = (supabase.from('Material') as any).select('id')
-    if (categories.length === 1) matQ = matQ.eq('category', categories[0])
-    else matQ = matQ.in('category', categories)
-    const { data: mats } = await matQ
-    materialFilter = (mats ?? []).map((m: any) => m.id as string)
-    if (materialFilter.length === 0)
-      return ok(res, { cycles: [], machines: [], locations: [], materials: [] })
-  }
-
-  // Step 1: fetch only scalar fields — no joins, high limit (no risk of cutting off materials)
-  let invQ = (supabase.from('InventoryEntry') as any)
-    .select('cycle, machine_code, location_id, material_id')
-    .in('status', ['IN_STOCK', 'PARTIAL'])
-    .limit(100000)
-
-  if (locationFilter) invQ = invQ.in('location_id', locationFilter)
-  if (materialFilter) invQ = invQ.in('material_id', materialFilter)
-
-  const { data: entries, error } = await invQ
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
 
-  const cycles   = [...new Set((entries ?? []).map((e: any) => e.cycle).filter(Boolean))].sort() as string[]
-  const machines = [...new Set((entries ?? []).map((e: any) => e.machine_code).filter(Boolean))].sort() as string[]
-  const matIds   = [...new Set((entries ?? []).map((e: any) => e.material_id).filter(Boolean))] as string[]
-  const locIds   = [...new Set((entries ?? []).map((e: any) => e.location_id).filter(Boolean))] as string[]
-
-  // Step 2: batch-fetch Material and Location details by ID
-  const [{ data: matDetails }, { data: locDetails }] = await Promise.all([
-    matIds.length > 0
-      ? (supabase.from('Material') as any).select('id, material_code, short_name').in('id', matIds)
-      : Promise.resolve({ data: [] }),
-    locIds.length > 0
-      ? (supabase.from('Location') as any).select('id, location_code').in('id', locIds)
-      : Promise.resolve({ data: [] }),
-  ])
-
-  const materials = ((matDetails ?? []) as any[])
-    .map((m: any) => ({ id: m.id as string, code: m.material_code as string, name: (m.short_name ?? null) as string | null }))
-    .sort((a, b) => a.code.localeCompare(b.code))
-  const locations = ((locDetails ?? []) as any[])
-    .map((l: any) => ({ id: l.id as string, code: l.location_code as string }))
-    .sort((a, b) => a.code.localeCompare(b.code))
-
-  return ok(res, { cycles, machines, locations, materials })
+  return ok(res, data ?? { cycles: [], machines: [], locations: [], materials: [] })
 }
 
 const ACTIVE_STATUSES = ['IN_STOCK', 'PARTIAL', 'EXPORTED']

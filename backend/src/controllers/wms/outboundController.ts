@@ -337,6 +337,21 @@ export async function updateGDO(req: Request, res: Response) {
         await (supabase.from('OutboundItem') as any).delete().in('id', toDeleteIds)
       }
 
+      // Load material cho các item chưa xuất mà đổi mã hàng
+      const changedMatCodes = items
+        .filter(item => item.db_id && existingById.has(item.db_id))
+        .filter(item => {
+          const ex = existingById.get(item.db_id!)!
+          return Number(ex.cartons_scanned) === 0 && ex.material_code_raw !== item.material_code
+        })
+        .map(item => item.material_code)
+      let changedMatMap = new Map<string, { id: string; category: string | null }>()
+      if (changedMatCodes.length) {
+        const { data: mats } = await (supabase.from('Material') as any)
+          .select('id, material_code, category').in('material_code', changedMatCodes)
+        changedMatMap = new Map((mats ?? []).map((m: any) => [m.material_code as string, { id: m.id, category: m.category }]))
+      }
+
       // Cập nhật song song
       await Promise.all(
         items
@@ -345,9 +360,14 @@ export async function updateGDO(req: Request, res: Response) {
             const ex = existingById.get(item.db_id!)!
             const scanned = Number(ex.cartons_scanned)
             const newStatus = scanned >= item.cartons_ordered ? 'COMPLETED' : scanned > 0 ? 'IN_PROGRESS' : 'PENDING'
-            return (supabase.from('OutboundItem') as any)
-              .update({ cartons_ordered: item.cartons_ordered, loose_picking: item.loose_picking ?? 0, header_text: item.header_text ?? null, export_type: export_type ?? null, status: newStatus, updated_at: t })
-              .eq('id', item.db_id!)
+            const fields: Record<string, unknown> = { cartons_ordered: item.cartons_ordered, loose_picking: item.loose_picking ?? 0, header_text: item.header_text ?? null, export_type: export_type ?? null, status: newStatus, updated_at: t }
+            if (scanned === 0 && ex.material_code_raw !== item.material_code) {
+              const matInfo = changedMatMap.get(item.material_code)
+              fields.material_code_raw = item.material_code
+              fields.material_id       = matInfo?.id ?? null
+              fields.material_type     = matInfo?.category ?? null
+            }
+            return (supabase.from('OutboundItem') as any).update(fields).eq('id', item.db_id!)
           })
       )
     } else {

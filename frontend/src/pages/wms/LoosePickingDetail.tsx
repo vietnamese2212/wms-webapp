@@ -308,12 +308,13 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand }: {
 
                 {expanded && (
                   <TableRow className="hover:bg-transparent">
-                    <TableCell className="px-0 py-0 border-b border-slate-100" />
+                    <TableCell className="px-2 py-1.5 align-top border-b border-slate-100">
+                      {item.header_text && (
+                        <p className="text-[9px] text-red-600 leading-snug">{item.header_text}</p>
+                      )}
+                    </TableCell>
                     <TableCell colSpan={5} className="px-0 py-0 border-b border-slate-100">
-                      <div className="pl-3 pr-3 py-1.5 space-y-1 border-l-2 border-slate-200">
-                        {item.header_text && (
-                          <p className="text-[11px] italic text-slate-500 leading-snug">{item.header_text}</p>
-                        )}
+                      <div className="pl-3 pr-3 py-1.5 border-l-2 border-slate-200">
                         <table className="w-full border-collapse whitespace-nowrap">
                           <thead>
                             <tr>

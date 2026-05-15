@@ -7,7 +7,7 @@ import {
 } from 'lucide-react'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useGDO } from '@/api/hooks'
-import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
+import { useActiveLoosePickingStore } from '@/stores/activeLoosePickingStore'
 import type { OutboundItem, OutboundDelivery, OutboundStatus } from '@/types'
 
 // ─── Status badge ──────────────────────────────────────────────
@@ -210,7 +210,7 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand }: {
 export default function LoosePickingDetail() {
   const { id }   = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const { vehicles } = useActiveVehiclesStore()
+  const { vehicles } = useActiveLoosePickingStore()
 
   const { data: gdo, isLoading } = useGDO(id)
   const [expandedItemIds, setExpandedItemIds] = useState<Set<string>>(new Set())

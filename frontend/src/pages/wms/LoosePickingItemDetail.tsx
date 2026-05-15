@@ -13,7 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { QRScanner } from '@/components/shared/QRScanner'
 import type { QRScannerHandle } from '@/components/shared/QRScanner'
 import { useGDO, useScanLoosePickingItem, useCheckOutboundScan, type CheckOutboundScanResult } from '@/api/hooks'
-import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
+import { useActiveLoosePickingStore } from '@/stores/activeLoosePickingStore'
 import { playBeep, unlockAudio } from '@/utils/audio'
 import type { OutboundItem, OutboundStatus } from '@/types'
 
@@ -240,7 +240,7 @@ export default function LoosePickingItemDetail() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const autoScan = searchParams.get('scan') === '1'
-  const { vehicles } = useActiveVehiclesStore()
+  const { vehicles } = useActiveLoosePickingStore()
 
   const { data: gdo, isLoading } = useGDO(gdoId)
   const [showScan, setShowScan] = useState(false)

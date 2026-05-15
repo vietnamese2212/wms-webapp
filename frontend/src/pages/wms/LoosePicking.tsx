@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useLoosePickingItems, useWarehouses, type LoosePickingItem } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
-import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
+import { useActiveLoosePickingStore } from '@/stores/activeLoosePickingStore'
 
 const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
@@ -57,7 +57,7 @@ function pickingStatusInfo(s: GDOSummary): { label: string; cls: string } {
 export default function LoosePicking() {
   const user     = useAuthStore(s => s.user)
   const navigate = useNavigate()
-  const { pin, unpin, isPinned } = useActiveVehiclesStore()
+  const { pin, unpin, isPinned } = useActiveLoosePickingStore()
 
   const [warehouseId, setWarehouseId] = useState<string>('')
   const [date,        setDate]        = useState<string>(TODAY)

@@ -5,6 +5,7 @@ import { vi } from 'date-fns/locale'
 import { CalendarDays, Scissors, X, Bookmark } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { SearchInput } from '@/components/shared/SearchInput'
+import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useLoosePickingItems, useWarehouses, type LoosePickingItem } from '@/api/hooks'
@@ -59,9 +60,11 @@ export default function LoosePicking() {
   const navigate = useNavigate()
   const { pin, unpin, isPinned } = useActiveLoosePickingStore()
 
-  const [warehouseId, setWarehouseId] = useState<string>('')
-  const [date,        setDate]        = useState<string>(TODAY)
-  const [search,      setSearch]      = useState('')
+  const [warehouseId,  setWarehouseId]  = useState<string>('')
+  const [date,         setDate]         = useState<string>(TODAY)
+  const [search,       setSearch]       = useState('')
+  const [filterDvvts,  setFilterDvvts]  = useState<string[]>([])
+  const [filterNpps,   setFilterNpps]   = useState<string[]>([])
 
   const { data: warehouses = [] } = useWarehouses(true)
 
@@ -96,17 +99,26 @@ export default function LoosePicking() {
   }, [items])
 
   const filtered = useMemo(() => {
-    if (!search.trim()) return grouped
-    const q = search.trim().toLowerCase()
-    return grouped.filter(s =>
-      s.gdo?.group_code?.toLowerCase().includes(q) ||
-      s.gdo?.distributor_names?.some(n => n.toLowerCase().includes(q)) ||
-      s.items.some(i =>
-        (i.material?.material_code ?? i.material_code_raw ?? '').toLowerCase().includes(q) ||
-        (i.material?.short_name ?? '').toLowerCase().includes(q)
-      )
-    )
-  }, [grouped, search])
+    return grouped.filter(s => {
+      if (filterDvvts.length > 0 && !filterDvvts.includes(s.gdo?.dvvt ?? '')) return false
+      if (filterNpps.length  > 0 && !(s.gdo?.distributor_names ?? []).some(n => filterNpps.includes(n))) return false
+      if (search.trim()) {
+        const q = search.trim().toLowerCase()
+        if (
+          !s.gdo?.group_code?.toLowerCase().includes(q) &&
+          !s.gdo?.distributor_names?.some(n => n.toLowerCase().includes(q)) &&
+          !s.items.some(i =>
+            (i.material?.material_code ?? i.material_code_raw ?? '').toLowerCase().includes(q) ||
+            (i.material?.short_name ?? '').toLowerCase().includes(q)
+          )
+        ) return false
+      }
+      return true
+    })
+  }, [grouped, search, filterDvvts, filterNpps])
+
+  const dvvtOptions = useMemo(() => [...new Set(grouped.map(s => s.gdo?.dvvt).filter(Boolean))] as string[], [grouped])
+  const nppOptions  = useMemo(() => [...new Set(grouped.flatMap(s => s.gdo?.distributor_names ?? []).filter(Boolean))], [grouped])
 
   const totalPending = items.filter(i => itemLooseStats(i).remaining > 0).length
 
@@ -167,6 +179,8 @@ export default function LoosePicking() {
               {(warehouses as any[]).map((w: any) => <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>)}
             </SelectContent>
           </Select>
+          <MultiSelectFilter label="ĐVVT" options={dvvtOptions.map(d => ({ value: d, label: d }))} selected={filterDvvts} onChange={setFilterDvvts} />
+          <MultiSelectFilter label="NPP" options={nppOptions.map(n => ({ value: n, label: n }))} selected={filterNpps} onChange={setFilterNpps} width="min-w-[140px]" />
         </div>
 
         <p className="text-xs text-slate-500 -mt-1">

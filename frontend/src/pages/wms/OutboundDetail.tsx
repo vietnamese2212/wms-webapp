@@ -329,7 +329,7 @@ function itemTextCls(item: OutboundItem): string {
   if (item.cartons_ordered === 0) return ''
   if (item.cartons_scanned >= item.cartons_ordered) return 'text-blue-700'
   if (item.cartons_scanned > 0) return 'text-amber-700'
-  return 'text-slate-400'
+  return 'text-slate-700'
 }
 
 function itemRowBg(item: OutboundItem): string {
@@ -644,19 +644,19 @@ function ItemsTable({ doRecords, gdoId, canScan, expandedItemIds, toggleExpand }
                               return (
                                 <tr key={se.id}>
                                   <td className="pr-3 py-0.5">
-                                    <span className={`font-mono text-[10px] font-semibold ${isSubOptimal ? 'text-red-600' : 'text-slate-700'}`}>
+                                    <span className={`font-mono text-[10px] font-semibold ${isSubOptimal ? 'text-red-600' : 'text-slate-400'}`}>
                                       {se.pallet_code}
                                     </span>
                                   </td>
                                   <td className="pr-3 py-0.5 text-right">
-                                    <span className="text-[10px] tabular-nums text-slate-600">{se.cartons_scanned}<span className="text-slate-400 ml-0.5">th</span></span>
+                                    <span className="text-[10px] tabular-nums text-slate-400">{se.cartons_scanned}<span className="text-slate-300 ml-0.5">th</span></span>
                                   </td>
                                   <td className="pr-3 py-0.5">
-                                    <span className="text-[10px] font-mono text-slate-500">{se.production_date ? fmtDate(se.production_date) : '—'}</span>
+                                    <span className="text-[10px] font-mono text-slate-400">{se.production_date ? fmtDate(se.production_date) : '—'}</span>
                                   </td>
                                   <td className="py-0.5">
                                     {se.best_available_date ? (
-                                      <span className={`text-[10px] font-mono ${isSubOptimal ? 'text-orange-600 font-semibold' : 'text-slate-400'}`}>
+                                      <span className={`text-[10px] font-mono ${isSubOptimal ? 'text-orange-600 font-semibold' : 'text-slate-300'}`}>
                                         {isSubOptimal ? '⚠ ' : ''}{fmtDate(se.best_available_date)}
                                       </span>
                                     ) : <span className="text-[10px] text-slate-300">—</span>}

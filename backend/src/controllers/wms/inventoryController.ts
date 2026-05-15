@@ -208,10 +208,11 @@ export async function listFacets(req: Request, res: Response) {
       return ok(res, { cycles: [], machines: [], locations: [], materials: [] })
   }
 
+  // Step 1: fetch only scalar fields — no joins, high limit (no risk of cutting off materials)
   let invQ = (supabase.from('InventoryEntry') as any)
-    .select('cycle, machine_code, location_id, material_id, location:Location(location_code), material:Material(material_code, short_name)')
+    .select('cycle, machine_code, location_id, material_id')
     .in('status', ['IN_STOCK', 'PARTIAL'])
-    .limit(5000)
+    .limit(100000)
 
   if (locationFilter) invQ = invQ.in('location_id', locationFilter)
   if (materialFilter) invQ = invQ.in('material_id', materialFilter)
@@ -221,20 +222,24 @@ export async function listFacets(req: Request, res: Response) {
 
   const cycles   = [...new Set((entries ?? []).map((e: any) => e.cycle).filter(Boolean))].sort() as string[]
   const machines = [...new Set((entries ?? []).map((e: any) => e.machine_code).filter(Boolean))].sort() as string[]
+  const matIds   = [...new Set((entries ?? []).map((e: any) => e.material_id).filter(Boolean))] as string[]
+  const locIds   = [...new Set((entries ?? []).map((e: any) => e.location_id).filter(Boolean))] as string[]
 
-  const locationMap = new Map<string, string>()
-  const materialMap = new Map<string, { code: string; name: string | null }>()
+  // Step 2: batch-fetch Material and Location details by ID
+  const [{ data: matDetails }, { data: locDetails }] = await Promise.all([
+    matIds.length > 0
+      ? (supabase.from('Material') as any).select('id, material_code, short_name').in('id', matIds)
+      : Promise.resolve({ data: [] }),
+    locIds.length > 0
+      ? (supabase.from('Location') as any).select('id, location_code').in('id', locIds)
+      : Promise.resolve({ data: [] }),
+  ])
 
-  for (const e of (entries ?? [])) {
-    if (e.location && !locationMap.has(e.location_id))
-      locationMap.set(e.location_id, e.location.location_code)
-    if (e.material && !materialMap.has(e.material_id))
-      materialMap.set(e.material_id, { code: e.material.material_code, name: e.material.short_name })
-  }
-
-  const locations = [...locationMap.entries()].map(([id, code]) => ({ id, code }))
+  const materials = ((matDetails ?? []) as any[])
+    .map((m: any) => ({ id: m.id as string, code: m.material_code as string, name: (m.short_name ?? null) as string | null }))
     .sort((a, b) => a.code.localeCompare(b.code))
-  const materials = [...materialMap.entries()].map(([id, v]) => ({ id, code: v.code, name: v.name }))
+  const locations = ((locDetails ?? []) as any[])
+    .map((l: any) => ({ id: l.id as string, code: l.location_code as string }))
     .sort((a, b) => a.code.localeCompare(b.code))
 
   return ok(res, { cycles, machines, locations, materials })

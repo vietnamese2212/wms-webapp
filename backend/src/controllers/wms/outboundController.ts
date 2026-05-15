@@ -1118,21 +1118,21 @@ export async function scanItem(req: Request, res: Response) {
     const qr = (qr_code ?? '').trim()
     if (!qr) return fail(res, 'qr_code là bắt buộc', 400)
 
-    const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
-      .select('status, started_at, warehouse_id').eq('id', gdoId).single()
+    const [
+      { data: gdo },
+      { data: item, error: itemErr },
+      { data: inv },
+      { data: dupCheck },
+    ] = await Promise.all([
+      (supabase.from('GroupDeliveryOrder') as any).select('status, started_at, warehouse_id').eq('id', gdoId).single(),
+      (supabase.from('OutboundItem') as any).select('*').eq('id', itemId).single(),
+      (supabase.from('InventoryEntry') as any).select('*, qa_status:QAStatus(code,name)').eq('pallet_code', qr).maybeSingle(),
+      (supabase.from('OutboundScanEntry') as any).select('id').eq('item_id', itemId).eq('pallet_code', qr).maybeSingle(),
+    ])
     if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng — không thể quét', 400)
-
-    const { data: item, error: itemErr } = await (supabase.from('OutboundItem') as any)
-      .select('*').eq('id', itemId).single()
     if (itemErr || !item) return fail(res, 'Không tìm thấy mặt hàng', 404)
     if (item.status === 'COMPLETED') return fail(res, 'Mặt hàng này đã xuất đủ số lượng', 400)
-
-    const { data: inv } = await (supabase.from('InventoryEntry') as any)
-      .select('*, qa_status:QAStatus(code,name)')
-      .eq('pallet_code', qr)
-      .maybeSingle()
     if (!inv) return fail(res, `Pallet "${qr}" chưa được nhập kho — kiểm tra lại phiếu nhập inbound`, 404)
-
     if (inv.qa_status_id && inv.qa_status?.code !== 'OK') {
       return fail(res, `Pallet bị giữ QA: ${inv.qa_status?.name ?? inv.qa_status_id} — không được xuất`, 400)
     }
@@ -1168,8 +1168,6 @@ export async function scanItem(req: Request, res: Response) {
       return fail(res, `Sai mã hàng — pallet "${inv.material_id}" không khớp với phiếu "${item.material_id}"`, 400)
     }
 
-    const { data: dupCheck } = await (supabase.from('OutboundScanEntry') as any)
-      .select('id').eq('item_id', itemId).eq('pallet_code', qr).maybeSingle()
     if (dupCheck) return fail(res, `Pallet "${qr}" đã được quét trong phiếu này`, 400)
 
     const available = Number(inv.cartons_remaining ?? inv.cartons_imported)
@@ -1224,18 +1222,14 @@ export async function scanItem(req: Request, res: Response) {
     })
     if (insertErr) return fail(res, `Lỗi lưu scan entry: ${insertErr.message}`, 500)
 
-    if (to_take >= available) {
-      await (supabase.from('InventoryEntry') as any)
-        .update({ status: 'EXPORTED', cartons_remaining: 0, updated_at: t }).eq('id', inv.id)
-    } else {
-      await (supabase.from('InventoryEntry') as any)
-        .update({ status: 'PARTIAL', cartons_remaining: available - to_take, updated_at: t }).eq('id', inv.id)
-    }
-
-    const new_scanned    = Number(item.cartons_scanned) + to_take
+    const new_scanned     = Number(item.cartons_scanned) + to_take
     const new_item_status = new_scanned >= Number(item.cartons_ordered) ? 'COMPLETED' : 'IN_PROGRESS'
-    await (supabase.from('OutboundItem') as any)
-      .update({ cartons_scanned: new_scanned, status: new_item_status, updated_at: t }).eq('id', itemId)
+    await Promise.all([
+      to_take >= available
+        ? (supabase.from('InventoryEntry') as any).update({ status: 'EXPORTED', cartons_remaining: 0, updated_at: t }).eq('id', inv.id)
+        : (supabase.from('InventoryEntry') as any).update({ status: 'PARTIAL', cartons_remaining: available - to_take, updated_at: t }).eq('id', inv.id),
+      (supabase.from('OutboundItem') as any).update({ cartons_scanned: new_scanned, status: new_item_status, updated_at: t }).eq('id', itemId),
+    ])
 
     // Nhặt lẻ mode: skip DO/GDO cascade khi chưa bắt đầu (xe chưa tới)
     const skipCascade = !!loose_picking_mode && !gdo?.started_at

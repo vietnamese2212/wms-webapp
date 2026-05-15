@@ -281,6 +281,80 @@ export async function cancelOrder(req: Request, res: Response) {
 
 // ─── Scan QR → create InventoryEntry ────────────────────────
 
+// ─── Check scan validity (no save) ──────────────────────────
+
+export async function checkScanQR(req: Request, res: Response) {
+  try {
+    const { id: order_id } = req.params
+    const { qr_code, location_id, stack_layer = 1 } = req.body as { qr_code: string; location_id: string; stack_layer?: number }
+
+    if (!qr_code)     return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu qr_code')
+    if (!location_id) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu location_id')
+
+    const { data: order } = await supabase
+      .from('ProductionImport')
+      .select('id, status, material_id, warehouse_id, material:Material(material_code, cartons_per_pallet), warehouse:Warehouse(id, nmsx_code)')
+      .eq('id', order_id).maybeSingle()
+    if (!order)                  return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
+    if (order.status !== 'OPEN') return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập không còn ở trạng thái mở')
+    if (!order.material_id)      return fail(res, 400, 'NO_MATERIAL', 'Phiếu nhập chưa có hàng hóa')
+
+    const parsed = parseInboundQR(qr_code)
+    if (!parsed.is_valid) return fail(res, 400, 'INVALID_QR', parsed.error ?? 'QR không hợp lệ')
+
+    const warehouseNmsxCode = (order.warehouse as { nmsx_code?: string | null } | null)?.nmsx_code
+    if (warehouseNmsxCode && parsed.manufacturer_code) {
+      if (parsed.manufacturer_code.toUpperCase() !== warehouseNmsxCode.toUpperCase()) {
+        return fail(res, 400, 'WAREHOUSE_MISMATCH',
+          `Mã kho trên QR "${parsed.manufacturer_code}" không khớp kho hiện tại (cần mã "${warehouseNmsxCode}")`)
+      }
+    }
+
+    const [matResult, dupResult, locResult] = await Promise.all([
+      supabase.from('Material').select('id, material_code, cartons_per_pallet').eq('material_code', parsed.material_code).maybeSingle(),
+      supabase.from('InventoryEntry').select('id').eq('pallet_code', parsed.pallet_code).maybeSingle(),
+      supabase.from('Location').select('id, location_code, max_pallets, is_active').eq('id', location_id).maybeSingle(),
+    ])
+
+    const material      = matResult.data
+    const existingPallet = dupResult.data
+    const location      = locResult.data
+
+    if (!material) return fail(res, 400, 'MATERIAL_NOT_FOUND', `Mã hàng "${parsed.material_code}" từ QR không tồn tại trong hệ thống`)
+    if (material.id !== order.material_id) {
+      const orderMat = order.material as { material_code?: string } | null
+      return fail(res, 400, 'MATERIAL_MISMATCH', `Hàng hóa không khớp: QR có "${parsed.material_code}" nhưng phiếu nhập yêu cầu "${orderMat?.material_code}"`)
+    }
+    if (existingPallet) return fail(res, 409, 'DUPLICATE_PALLET', `Pallet "${parsed.pallet_code}" đã được nhập kho`)
+    if (!location)      return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy vị trí kho')
+    if (!location.is_active) return fail(res, 400, 'LOCATION_INACTIVE', 'Vị trí kho không hoạt động')
+
+    const stackLayerNum = Number(stack_layer)
+    if (stackLayerNum === 1) {
+      const { count: usedSlots } = await supabase
+        .from('InventoryEntry').select('*', { count: 'exact', head: true })
+        .eq('location_id', location_id).eq('stack_layer', 1).eq('status', 'IN_STOCK')
+      if ((usedSlots ?? 0) >= location.max_pallets) {
+        return fail(res, 422, 'LOCATION_FULL',
+          `Vị trí ${location.location_code} đã đầy (${usedSlots}/${location.max_pallets} pallet). Chọn tầng chồng hoặc vị trí khác.`)
+      }
+    } else {
+      const { data: baseArr } = await supabase.from('InventoryEntry').select('id')
+        .eq('location_id', location_id).eq('stack_layer', stackLayerNum - 1).eq('status', 'IN_STOCK').limit(1)
+      if (!baseArr?.[0]) {
+        return fail(res, 422, 'NO_BASE_LAYER', `Không có pallet tầng ${stackLayerNum - 1} tại vị trí này để chồng lên`)
+      }
+    }
+
+    const mat = material as { cartons_per_pallet?: number | null }
+    return ok(res, {
+      pallet_code:       parsed.pallet_code,
+      production_date:   parsed.production_date ?? null,
+      suggested_cartons: mat.cartons_per_pallet ?? 0,
+    })
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+}
+
 export async function scanQR(req: Request, res: Response) {
   try {
     const { id: order_id } = req.params

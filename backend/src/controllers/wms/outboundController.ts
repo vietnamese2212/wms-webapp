@@ -1109,6 +1109,92 @@ export async function getItemInventory(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
+// ─── Check scan validity (no save) ───────────────────────────
+
+export async function checkScanItem(req: Request, res: Response) {
+  try {
+    const { gdoId, itemId } = req.params
+    const { qr_code } = req.body as { qr_code: string }
+    const qr = (qr_code ?? '').trim()
+    if (!qr) return fail(res, 'qr_code là bắt buộc', 400)
+
+    const [
+      { data: gdo },
+      { data: item, error: itemErr },
+      { data: inv },
+      { data: dupCheck },
+    ] = await Promise.all([
+      (supabase.from('GroupDeliveryOrder') as any).select('status, warehouse_id').eq('id', gdoId).single(),
+      (supabase.from('OutboundItem') as any).select('*').eq('id', itemId).single(),
+      (supabase.from('InventoryEntry') as any).select('*, qa_status:QAStatus(code,name)').eq('pallet_code', qr).maybeSingle(),
+      (supabase.from('OutboundScanEntry') as any).select('id').eq('item_id', itemId).eq('pallet_code', qr).maybeSingle(),
+    ])
+
+    if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng — không thể quét', 400)
+    if (itemErr || !item) return fail(res, 'Không tìm thấy mặt hàng', 404)
+    if (item.status === 'COMPLETED') return fail(res, 'Mặt hàng này đã xuất đủ số lượng', 400)
+    if (!inv) return fail(res, `Pallet "${qr}" chưa được nhập kho — kiểm tra lại phiếu nhập inbound`, 404)
+    if (inv.qa_status_id && inv.qa_status?.code !== 'OK') {
+      return fail(res, `Pallet bị giữ QA: ${inv.qa_status?.name ?? inv.qa_status_id} — không được xuất`, 400)
+    }
+    if (dupCheck) return fail(res, `Pallet "${qr}" đã được quét trong phiếu này`, 400)
+
+    const available = Number(inv.cartons_remaining ?? inv.cartons_imported)
+    if (available <= 0) return fail(res, `Pallet "${qr}" đã xuất hết số thùng`, 400)
+
+    const remaining_on_item = Number(item.cartons_ordered) - Number(item.cartons_scanned)
+    if (remaining_on_item <= 0) return fail(res, 'Mặt hàng đã đủ số lượng', 400)
+
+    if (item.material_id && inv.material_id !== item.material_id) {
+      return fail(res, `Sai mã hàng — pallet không khớp với phiếu`, 400)
+    }
+
+    const dateReqPct = Number(item.date_required ?? 0)
+    if (dateReqPct > 0) {
+      const matId = item.material_id ?? inv.material_id
+      const { data: mat } = matId
+        ? await (supabase.from('Material') as any).select('shelf_life_days').eq('id', matId).single()
+        : { data: null }
+      const shelfLifeDays = mat?.shelf_life_days ? Number(mat.shelf_life_days) : 0
+      if (!shelfLifeDays) return fail(res, `Mặt hàng chưa có Shelf Life — không thể kiểm tra %Date`, 400)
+      const prodDate = inv.production_date ? new Date(inv.production_date) : null
+      if (!prodDate || isNaN(prodDate.getTime())) return fail(res, `Pallet "${qr}" không có NSX — không thể kiểm tra %Date`, 400)
+      const today = new Date()
+      const expiryMs = prodDate.getTime() + shelfLifeDays * 86_400_000
+      const remainDays = (expiryMs - today.getTime()) / 86_400_000
+      const remainPct = (remainDays / shelfLifeDays) * 100
+      if (remainPct < dateReqPct) {
+        return fail(res, `%Date còn lại: ${Math.floor(remainPct)}% < yêu cầu ${dateReqPct}% (NSX ${inv.production_date}, HSD ${shelfLifeDays} ngày)`, 400)
+      }
+    }
+
+    let best_available_date: string | null = null
+    if (inv.material_id && gdo?.warehouse_id) {
+      const { data: bestEntries } = await (supabase.from('InventoryEntry') as any)
+        .select('production_date, location!inner(warehouse_id)')
+        .eq('material_id', inv.material_id)
+        .eq('location.warehouse_id', gdo.warehouse_id)
+        .in('status', ['IN_STOCK', 'PARTIAL'])
+        .is('qa_status_id', null)
+        .not('production_date', 'is', null)
+        .gt('cartons_remaining', 0)
+      const dates = (bestEntries ?? []).map((e: any) => e.production_date as string).filter(Boolean)
+      if (dates.length > 0) best_available_date = dates.reduce((a: string, b: string) => a < b ? a : b)
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        pallet_code:       qr,
+        production_date:   inv.production_date ?? null,
+        best_available_date,
+        available_cartons: available,
+        suggested_cartons: Math.min(available, remaining_on_item),
+      },
+    })
+  } catch (e) { return fail(res, String(e)) }
+}
+
 // ─── Scan QR for an item ──────────────────────────────────────
 
 export async function scanItem(req: Request, res: Response) {

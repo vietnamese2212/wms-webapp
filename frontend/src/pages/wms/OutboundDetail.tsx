@@ -527,8 +527,6 @@ function ItemsTable({ doRecords, gdoId, canScan, expandedItemIds, toggleExpand }
             const matName = item.material?.short_name ?? item.material_code_raw ?? '—'
             const expanded = expandedItemIds.has(item.id)
             const scans = item.scan_entries ?? []
-            const prodDates = scans.map(s => s.production_date).filter(Boolean) as string[]
-            const maxProdDate = prodDates.length > 0 ? prodDates.reduce((a, b) => a > b ? a : b) : null
 
             return (
               <Fragment key={item.id}>
@@ -632,32 +630,23 @@ function ItemsTable({ doRecords, gdoId, canScan, expandedItemIds, toggleExpand }
                       ) : (
                         <div className="flex flex-wrap gap-1">
                           {scans.map(se => {
-                            const isOldDate    = maxProdDate !== null && se.production_date !== null && se.production_date !== maxProdDate
-                            const isSubOptimal = se.best_available_date !== null && se.production_date !== null && se.production_date > se.best_available_date
+                            const isSubOptimal = !!(se.best_available_date && se.production_date && se.production_date > se.best_available_date)
                             return (
                               <span
                                 key={se.id}
-                                title={se.best_available_date ? `Date tốt nhất lúc quét: ${se.best_available_date}` : undefined}
                                 className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] italic ${
-                                  isOldDate
-                                    ? 'border-red-200 text-red-600'
-                                    : 'border-slate-200 text-slate-600'
+                                  isSubOptimal ? 'border-red-200 bg-red-50' : 'border-slate-200'
                                 }`}
                               >
-                                <span className="font-mono not-italic">{se.pallet_code}</span>
+                                <span className={`font-mono not-italic font-semibold ${isSubOptimal ? 'text-red-600' : 'text-slate-700'}`}>
+                                  {se.pallet_code}
+                                </span>
                                 <span className="text-slate-300">·</span>
-                                <span className="tabular-nums">{se.cartons_scanned}<span className="text-slate-400 ml-0.5">th</span></span>
-                                {se.scanned_at && (
-                                  <>
-                                    <span className="text-slate-300">·</span>
-                                    <span className={isOldDate ? 'text-red-400' : 'text-slate-400'}>{formatTimestampTime(se.scanned_at, false)}</span>
-                                  </>
-                                )}
-                                {isOldDate && <span className="text-red-400">NSX cũ</span>}
+                                <span className="tabular-nums text-slate-600">{se.cartons_scanned}<span className="text-slate-400 ml-0.5">th</span></span>
                                 {se.best_available_date && (
                                   <>
                                     <span className="text-slate-300 not-italic">|</span>
-                                    <span className={`not-italic ${isSubOptimal ? 'text-orange-500' : 'text-slate-400'}`}>
+                                    <span className={`not-italic font-mono ${isSubOptimal ? 'text-orange-500 font-semibold' : 'text-slate-400'}`}>
                                       {isSubOptimal ? '⚠ ' : '✓ '}{se.best_available_date}
                                     </span>
                                   </>

@@ -927,6 +927,31 @@ export type ItemInventoryEntry = {
   qa_status:         { id: string; code: string; name: string } | null
 }
 
+export type CheckOutboundScanResult = {
+  pallet_code:       string
+  production_date:   string | null
+  best_available_date: string | null
+  available_cartons: number
+  suggested_cartons: number
+}
+
+export function useCheckOutboundScan() {
+  return useMutation({
+    mutationFn: ({ gdoId, itemId, qr_code }: { gdoId: string; itemId: string; qr_code: string }) =>
+      apiClient.post(`/wms/outbound/${gdoId}/items/${itemId}/check-scan`, { qr_code }).then(r => r.data.data as CheckOutboundScanResult),
+  })
+}
+
+export function useCheckInboundScan() {
+  return useMutation({
+    mutationFn: ({ orderId, qr_code, location_id, stack_layer }: {
+      orderId: string; qr_code: string; location_id: string; stack_layer: number
+    }) =>
+      apiClient.post(`/wms/inbound-orders/${orderId}/check-scan`, { qr_code, location_id, stack_layer })
+        .then(r => r.data.data as { pallet_code: string; production_date: string | null; suggested_cartons: number }),
+  })
+}
+
 export function useItemInventory(gdoId: string | undefined, itemId: string | undefined) {
   return useQuery({
     queryKey: ['item-inventory', gdoId, itemId],

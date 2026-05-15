@@ -22,6 +22,7 @@ import {
   useInboundOrder, useCancelInboundOrder,
   useScanPallet, useDeletePalletEntry, useDeletePalletEntries,
   useLocationsReal, useUpdateInboundOrder, useEmployeeRecords,
+  useCheckInboundScan,
 } from '@/api/hooks'
 import { useAuthStore }            from '@/stores/authStore'
 import { inboundOrderStatusLabel, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
@@ -115,24 +116,44 @@ interface ScanDialogProps {
 
 function ScanDialog({ order, onClose, employeeId }: ScanDialogProps) {
   const scannerRef = useRef<QRScannerHandle>(null)
-  const { mutate: scanPallet, isPending } = useScanPallet()
+  const { mutate: scanPallet,  isPending: saving        } = useScanPallet()
+  const { mutate: checkScan,   isPending: serverChecking } = useCheckInboundScan()
 
   const defaultCartons = order.material?.cartons_per_pallet?.toString() ?? '0'
-  const [cartons,    setCartons]    = useState(defaultCartons)
-  const [stackLayer, setStackLayer] = useState('1')
-  const [feedback,   setFeedback]   = useState<FeedbackState | null>(null)
-  const [pendingQR,  setPendingQR]  = useState<string | null>(null)
-  const [validation, setValidation] = useState<ValidationResult | null>(null)
+  const [cartons,          setCartons]          = useState(defaultCartons)
+  const [stackLayer,       setStackLayer]       = useState('1')
+  const [feedback,         setFeedback]         = useState<FeedbackState | null>(null)
+  const [pendingQR,        setPendingQR]        = useState<string | null>(null)
+  const [validation,       setValidation]       = useState<ValidationResult | null>(null)
+  const [serverCheckOk,    setServerCheckOk]    = useState(false)
 
   function handleScan(raw: string) {
     playBeep()
     setPendingQR(raw)
-    setValidation(validateQR(raw, order))
     setFeedback(null)
+    setServerCheckOk(false)
+
+    const val = validateQR(raw, order)
+    setValidation(val)
+    if (!val.ok) return
+
+    const locationId = order.location_id
+    if (!locationId) return
+
+    checkScan(
+      { orderId: order.id, qr_code: raw, location_id: locationId, stack_layer: Number(stackLayer) },
+      {
+        onSuccess: () => setServerCheckOk(true),
+        onError: (err) => {
+          const msg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
+          setValidation({ ok: false, msg })
+        },
+      }
+    )
   }
 
   function handleSave() {
-    if (!pendingQR || !validation?.ok) return
+    if (!pendingQR || !serverCheckOk || saving) return
     const locationId = order.location_id
     if (!locationId) {
       setFeedback({ type: 'error', msg: 'Chưa chọn vị trí. Đóng và chọn vị trí trước.' })
@@ -144,6 +165,7 @@ function ScanDialog({ order, onClose, employeeId }: ScanDialogProps) {
         onSuccess: (data) => {
           setPendingQR(null)
           setValidation(null)
+          setServerCheckOk(false)
           setFeedback({
             type: 'success',
             msg: `✓ ${data.entry.pallet_code} · ${data.entry.cartons_imported} thùng · ${data.entry.location?.location_code ?? ''}`,
@@ -153,6 +175,7 @@ function ScanDialog({ order, onClose, employeeId }: ScanDialogProps) {
         onError: (err) => {
           setPendingQR(null)
           setValidation(null)
+          setServerCheckOk(false)
           const msg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
           setFeedback({ type: 'error', msg })
         },
@@ -164,10 +187,11 @@ function ScanDialog({ order, onClose, employeeId }: ScanDialogProps) {
     setPendingQR(null)
     setValidation(null)
     setFeedback(null)
+    setServerCheckOk(false)
     scannerRef.current?.resume()
   }
 
-  const canSave = !!pendingQR && validation?.ok === true && !isPending
+  const canSave = !!pendingQR && serverCheckOk && !saving && !serverChecking
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col">
@@ -189,29 +213,35 @@ function ScanDialog({ order, onClose, employeeId }: ScanDialogProps) {
           <div className="relative">
             <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} />
 
-            {/* "Quét tiếp": only shown when validation fails (can't save, must rescan) */}
+            {/* "Quét tiếp": shown on error */}
             {pendingQR && validation?.ok === false && (
               <button
                 className="absolute left-1/2 top-[8%] -translate-x-1/2 -translate-y-1/2 z-10
                            bg-white/90 hover:bg-white text-slate-700 border border-slate-300
-                           rounded-full px-4 py-1.5 text-sm font-medium shadow-lg
-                           transition-all"
+                           rounded-full px-4 py-1.5 text-sm font-medium shadow-lg transition-all"
                 onClick={dismissPending}
               >
                 Quét tiếp
               </button>
             )}
 
-            {/* "Lưu": center of camera, shown when validation passes */}
+            {/* "Đang xác thực": server check in progress */}
+            {serverChecking && (
+              <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10
+                             bg-white/90 rounded-full px-4 py-2 text-sm text-slate-600 shadow-lg">
+                Đang xác thực…
+              </div>
+            )}
+
+            {/* "Lưu": shown when server check passed */}
             {canSave && (
               <button
                 className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10
                            bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white
-                           rounded-full px-6 py-2.5 text-sm font-semibold shadow-xl
-                           transition-all"
+                           rounded-full px-6 py-2.5 text-sm font-semibold shadow-xl transition-all"
                 onClick={handleSave}
               >
-                {isPending ? '…' : 'Lưu'}
+                {saving ? '…' : 'Lưu'}
               </button>
             )}
           </div>
@@ -222,7 +252,9 @@ function ScanDialog({ order, onClose, employeeId }: ScanDialogProps) {
               <div className="rounded-lg bg-green-50 border border-green-200 px-3 py-2.5 flex items-center gap-2">
                 <CheckCircle2 className="h-4 w-4 text-green-600 shrink-0" />
                 <div className="min-w-0">
-                  <p className="text-sm font-medium text-green-800">{validation.msg}</p>
+                  <p className="text-sm font-medium text-green-800">
+                    {serverChecking ? 'Đang kiểm tra vị trí…' : validation.msg}
+                  </p>
                   <p className="font-mono text-[10px] text-green-500 truncate">{pendingQR}</p>
                 </div>
               </div>
@@ -240,7 +272,7 @@ function ScanDialog({ order, onClose, employeeId }: ScanDialogProps) {
           {feedback && <ScanFeedback state={feedback} />}
 
           {/* Close dialog */}
-          <Button variant="outline" className="w-full" disabled={isPending} onClick={onClose}>
+          <Button variant="outline" className="w-full" disabled={saving} onClick={onClose}>
             Huỷ
           </Button>
 

@@ -12,7 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { QRScanner } from '@/components/shared/QRScanner'
 import type { QRScannerHandle } from '@/components/shared/QRScanner'
-import { useGDO, useScanOutboundItem, useManualCompleteItem, useDeleteOutboundScanEntry, useItemInventory, type ItemInventoryEntry } from '@/api/hooks'
+import { useGDO, useScanOutboundItem, useManualCompleteItem, useDeleteOutboundScanEntry, useItemInventory, useCheckOutboundScan, type ItemInventoryEntry, type CheckOutboundScanResult } from '@/api/hooks'
 import { PalletDetailDialog } from '@/components/shared/PalletDetailDialog'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 import { playBeep, unlockAudio } from '@/utils/audio'
@@ -65,33 +65,26 @@ interface ScanDialogProps {
 function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
   const scannerRef = useRef<QRScannerHandle>(null)
   const [feedback,       setFeedback]       = useState<FeedbackState>(null)
-  const [pendingQR,      setPendingQR]      = useState<string | null>(null)
+  const [checkResult,    setCheckResult]    = useState<CheckOutboundScanResult | null>(null)
   const [pendingCartons, setPendingCartons] = useState('')
-  const { mutate: scanItem, isPending } = useScanOutboundItem()
+  const { mutate: checkScan, isPending: checking } = useCheckOutboundScan()
+  const { mutate: scanItem,  isPending: saving    } = useScanOutboundItem()
 
   const matName   = item.material?.short_name ?? item.material_code_raw ?? '—'
   const remaining = Math.max(0, item.cartons_ordered - item.cartons_scanned)
 
-  // Camera pauses automatically after decode (QRScanner calls scanner.pause)
   function handleScan(qr_code: string) {
     playBeep()
-    setPendingQR(qr_code)
-    setPendingCartons(String(remaining > 0 ? remaining : 1))
+    setCheckResult(null)
     setFeedback(null)
-  }
-
-  function handleSave() {
-    if (!pendingQR || isPending) return
-    scanItem(
-      { gdoId, itemId: item.id, qr_code: pendingQR, cartons_override: Math.max(1, parseInt(pendingCartons) || 1) },
+    checkScan(
+      { gdoId, itemId: item.id, qr_code },
       {
         onSuccess: (data) => {
-          setPendingQR(null)
-          setFeedback({ type: 'success', msg: `✓ ${data.scan_entry.pallet_code} · ${data.scan_entry.cartons_scanned} thùng` })
-          setTimeout(() => { scannerRef.current?.resume(); setFeedback(null) }, 1500)
+          setCheckResult(data)
+          setPendingCartons(String(data.suggested_cartons > 0 ? data.suggested_cartons : 1))
         },
         onError: (err) => {
-          setPendingQR(null)
           const msg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
           setFeedback({ type: 'error', msg })
         },
@@ -99,10 +92,33 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
     )
   }
 
-  function dismissPending() {
+  function handleSave() {
+    if (!checkResult || saving) return
+    scanItem(
+      { gdoId, itemId: item.id, qr_code: checkResult.pallet_code, cartons_override: Math.max(1, parseInt(pendingCartons) || 1) },
+      {
+        onSuccess: (data) => {
+          setCheckResult(null)
+          setFeedback({ type: 'success', msg: `✓ ${data.scan_entry.pallet_code} · ${data.scan_entry.cartons_scanned} thùng` })
+          setTimeout(() => { scannerRef.current?.resume(); setFeedback(null) }, 1500)
+        },
+        onError: (err) => {
+          setCheckResult(null)
+          const msg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
+          setFeedback({ type: 'error', msg })
+        },
+      }
+    )
+  }
+
+  function handleRetry() {
     setFeedback(null)
+    setCheckResult(null)
     scannerRef.current?.resume()
   }
+
+  const isSubOptimal = !!(checkResult?.production_date && checkResult?.best_available_date &&
+    checkResult.production_date > checkResult.best_available_date)
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col">
@@ -111,58 +127,73 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
         <div className="p-4 space-y-3">
           <div>
             <p className="font-semibold text-lg text-slate-800">{matName}</p>
-            <p className="text-lg text-slate-500">
+            <p className="text-sm text-slate-500">
               {item.material?.material_code ?? item.material_code_raw}
               {' · '}còn <strong>{remaining}</strong> thùng cần xuất
             </p>
           </div>
 
-          {/* Header text note — đỏ, wrap */}
           {item.header_text && (
             <p className="text-sm font-semibold text-red-600 leading-snug break-words border border-red-200 bg-red-50 rounded px-2 py-1.5">
               {item.header_text}
             </p>
           )}
 
-          {/* Camera with floating action buttons */}
           <div className="relative">
             <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} />
 
-            {/* "Quét tiếp": chỉ hiện sau khi lưu xong hoặc báo lỗi */}
+            {checking && (
+              <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10
+                             bg-white/90 rounded-full px-4 py-2 text-sm text-slate-600 shadow-lg">
+                Đang kiểm tra…
+              </div>
+            )}
+
             {feedback !== null && (
               <button
                 className="absolute left-1/2 top-[8%] -translate-x-1/2 -translate-y-1/2 z-10
                            bg-white/90 hover:bg-white text-slate-700 border border-slate-300
                            rounded-full px-4 py-1.5 text-sm font-medium shadow-lg transition-all"
-                onClick={dismissPending}
+                onClick={handleRetry}
               >
                 Quét tiếp
               </button>
             )}
 
-            {/* "Lưu": center of camera, confirm scan */}
-            {pendingQR && (
+            {checkResult && !saving && (
               <button
                 className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10
                            bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white
-                           rounded-full px-6 py-2.5 text-sm font-semibold shadow-xl transition-all
-                           disabled:opacity-60"
+                           rounded-full px-6 py-2.5 text-sm font-semibold shadow-xl transition-all"
                 onClick={handleSave}
-                disabled={isPending}
               >
-                {isPending ? '…' : 'Lưu'}
+                Lưu
               </button>
+            )}
+            {saving && (
+              <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10
+                             bg-blue-500 text-white rounded-full px-6 py-2.5 text-sm font-semibold shadow-xl opacity-70">
+                …
+              </div>
             )}
           </div>
 
-          {/* Pending QR preview + carton count */}
-          {pendingQR && !feedback && (
+          {checkResult && !feedback && (
             <div className="space-y-2">
-              <div className="rounded-lg bg-green-50 border border-green-200 px-3 py-2.5 flex items-center gap-2">
-                <CheckCircle2 className="h-4 w-4 text-green-600 shrink-0" />
-                <div className="min-w-0">
-                  <p className="text-lg font-medium text-green-800">Sẵn sàng lưu</p>
-                  <p className="font-mono text-[10px] text-green-500 truncate">{pendingQR}</p>
+              <div className={`rounded-lg border px-3 py-2.5 flex items-start gap-2 ${isSubOptimal ? 'bg-orange-50 border-orange-200' : 'bg-green-50 border-green-200'}`}>
+                <CheckCircle2 className={`h-4 w-4 shrink-0 mt-0.5 ${isSubOptimal ? 'text-orange-500' : 'text-green-600'}`} />
+                <div className="min-w-0 flex-1">
+                  <p className={`text-sm font-semibold font-mono ${isSubOptimal ? 'text-red-600' : 'text-green-800'}`}>
+                    {checkResult.pallet_code}
+                  </p>
+                  {checkResult.production_date && (
+                    <p className="text-[10px] text-slate-500 mt-0.5">NSX: {checkResult.production_date}</p>
+                  )}
+                  {isSubOptimal && checkResult.best_available_date && (
+                    <p className="text-[10px] text-orange-600 font-medium mt-0.5">
+                      ⚠ Trong kho còn NSX {checkResult.best_available_date} (cũ hơn — nên ưu tiên lấy trước)
+                    </p>
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-3">
@@ -179,23 +210,18 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
             </div>
           )}
 
+          {feedback?.type === 'error' && (
+            <div className="rounded-lg bg-red-50 border border-red-200 p-2.5 text-sm text-red-700 flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />{feedback.msg}
+            </div>
+          )}
           {feedback?.type === 'success' && (
-            <div className="rounded-lg bg-green-50 border border-green-200 p-2.5 text-lg text-green-800 flex items-center gap-2">
+            <div className="rounded-lg bg-green-50 border border-green-200 p-2.5 text-sm text-green-800 flex items-center gap-2">
               <CheckCircle2 className="h-4 w-4 shrink-0" />{feedback.msg}
             </div>
           )}
-          {feedback?.type === 'error' && (
-            <div className="space-y-2">
-              <div className="rounded-lg bg-red-50 border border-red-200 p-2.5 text-lg text-red-700 flex items-start gap-2">
-                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />{feedback.msg}
-              </div>
-              <Button variant="outline" size="sm" className="w-full"
-                onClick={() => { setFeedback(null); scannerRef.current?.resume() }}>
-                Quét tiếp
-              </Button>
-            </div>
-          )}
-          <Button variant="outline" className="w-full" onClick={onClose} disabled={isPending}>Đóng</Button>
+
+          <Button variant="outline" className="w-full" onClick={onClose} disabled={saving}>Đóng</Button>
         </div>
       </div>
     </div>
@@ -288,11 +314,6 @@ export default function OutboundItemDetail() {
       return pa !== pb ? pa - pb : (a.is_qa ? 1 : -1)
     })
   }, [sortedInv])
-
-  const maxProdDate = useMemo(() => {
-    const dates = scans.map(s => s.production_date).filter(Boolean) as string[]
-    return dates.length > 0 ? dates.reduce((a, b) => (a > b ? a : b)) : null
-  }, [scans])
 
   if (isLoading || !gdo) {
     return (
@@ -605,38 +626,40 @@ export default function OutboundItemDetail() {
               <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="px-3 py-1 text-[11px]">Mã pallet</TableHead>
-                      <TableHead className="px-3 py-1 text-[11px] text-right">Thùng</TableHead>
-                      <TableHead className="px-3 py-1 text-[11px] hidden sm:table-cell whitespace-nowrap">Ngày</TableHead>
-                      <TableHead className="px-3 py-1 text-[11px] hidden sm:table-cell whitespace-nowrap">Giờ</TableHead>
+                      <TableHead className="px-2 py-1 text-[9px] font-medium text-slate-500">Mã pallet</TableHead>
+                      <TableHead className="px-2 py-1 text-[9px] font-medium text-slate-500 whitespace-nowrap">NSX tốt nhất</TableHead>
+                      <TableHead className="px-2 py-1 text-[9px] font-medium text-slate-500 text-right">Thùng</TableHead>
+                      <TableHead className="px-2 py-1 text-[9px] font-medium text-slate-500 whitespace-nowrap">Quét lúc</TableHead>
                       <TableHead className="px-1 py-1 w-10" />
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {scans.map(se => {
-                    const isOldDate    = maxProdDate !== null && se.production_date !== null && se.production_date !== maxProdDate
-                    const isSubOptimal = se.best_available_date !== null && se.production_date !== null && se.production_date > se.best_available_date
+                    const isSubOptimal = !!(se.best_available_date && se.production_date && se.production_date > se.best_available_date)
                     return (
                       <TableRow key={se.id}>
                         <TableCell className="px-2 py-1.5">
-                          <div className="font-mono text-xs font-medium">
-                            <span className={isOldDate ? 'text-red-600' : ''}>{se.pallet_code}</span>
-                            {isOldDate && <span className="ml-1 text-[9px] text-red-400 font-normal">NSX cũ</span>}
+                          <div className={`font-mono text-[10px] font-semibold ${isSubOptimal ? 'text-red-600' : 'text-slate-700'}`}>
+                            {se.pallet_code}
                           </div>
-                          {se.best_available_date && (
-                            <div className={`text-[9px] font-normal mt-0.5 ${isSubOptimal ? 'text-orange-500' : 'text-slate-400'}`}>
-                              {isSubOptimal ? '⚠' : '✓'} best: {se.best_available_date}
-                            </div>
+                          {se.production_date && (
+                            <div className="text-[9px] text-slate-400 mt-0.5">NSX: {se.production_date}</div>
                           )}
                         </TableCell>
-                        <TableCell className="px-2 py-1.5 text-right tabular-nums text-xs font-semibold">
+                        <TableCell className="px-2 py-1.5 whitespace-nowrap">
+                          {se.best_available_date ? (
+                            <div className={`text-[10px] font-mono font-semibold ${isSubOptimal ? 'text-orange-600' : 'text-slate-500'}`}>
+                              {isSubOptimal ? '⚠ ' : '✓ '}{se.best_available_date}
+                            </div>
+                          ) : (
+                            <span className="text-[10px] text-slate-300">—</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="px-2 py-1.5 text-right tabular-nums text-[10px] font-semibold">
                           {se.cartons_scanned}
                         </TableCell>
-                        <TableCell className="px-2 py-1.5 hidden sm:table-cell text-xs text-slate-500 whitespace-nowrap">
-                          {se.scanned_at ? formatTimestampDate(se.scanned_at, true) : '—'}
-                        </TableCell>
-                        <TableCell className="px-2 py-1.5 hidden sm:table-cell text-xs text-slate-500 tabular-nums">
-                          {se.scanned_at ? formatTimestampTime(se.scanned_at, false) : '—'}
+                        <TableCell className="px-2 py-1.5 text-[10px] text-slate-500 whitespace-nowrap tabular-nums">
+                          {se.scanned_at ? `${formatTimestampDate(se.scanned_at, true)} ${formatTimestampTime(se.scanned_at, false)}` : '—'}
                         </TableCell>
                         <TableCell className="px-1 py-2">
                           <button

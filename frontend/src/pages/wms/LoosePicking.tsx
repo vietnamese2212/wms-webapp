@@ -60,11 +60,13 @@ export default function LoosePicking() {
   const navigate = useNavigate()
   const { pin, unpin, isPinned } = useActiveLoosePickingStore()
 
-  const [warehouseId,  setWarehouseId]  = useState<string>('')
-  const [date,         setDate]         = useState<string>(TODAY)
-  const [search,       setSearch]       = useState('')
-  const [filterDvvts,  setFilterDvvts]  = useState<string[]>([])
-  const [filterNpps,   setFilterNpps]   = useState<string[]>([])
+  const [warehouseId,         setWarehouseId]         = useState<string>('')
+  const [date,                setDate]                = useState<string>(TODAY)
+  const [search,              setSearch]              = useState('')
+  const [filterDvvts,         setFilterDvvts]         = useState<string[]>([])
+  const [filterNpps,          setFilterNpps]          = useState<string[]>([])
+  const [filterWarehouseTypes, setFilterWarehouseTypes] = useState<string[]>([])
+  const [filterTypes,         setFilterTypes]         = useState<string[]>([])
 
   const { data: warehouses = [] } = useWarehouses(true)
 
@@ -100,8 +102,10 @@ export default function LoosePicking() {
 
   const filtered = useMemo(() => {
     return grouped.filter(s => {
-      if (filterDvvts.length > 0 && !filterDvvts.includes(s.gdo?.dvvt ?? '')) return false
-      if (filterNpps.length  > 0 && !(s.gdo?.distributor_names ?? []).some(n => filterNpps.includes(n))) return false
+      if (filterWarehouseTypes.length > 0 && !filterWarehouseTypes.includes(s.gdo?.warehouse_type ?? '')) return false
+      if (filterTypes.length          > 0 && !filterTypes.includes(s.gdo?.export_type ?? ''))             return false
+      if (filterDvvts.length          > 0 && !filterDvvts.includes(s.gdo?.dvvt ?? ''))                   return false
+      if (filterNpps.length           > 0 && !(s.gdo?.distributor_names ?? []).some(n => filterNpps.includes(n))) return false
       if (search.trim()) {
         const q = search.trim().toLowerCase()
         if (
@@ -117,8 +121,10 @@ export default function LoosePicking() {
     })
   }, [grouped, search, filterDvvts, filterNpps])
 
-  const dvvtOptions = useMemo(() => [...new Set(grouped.map(s => s.gdo?.dvvt).filter(Boolean))] as string[], [grouped])
-  const nppOptions  = useMemo(() => [...new Set(grouped.flatMap(s => s.gdo?.distributor_names ?? []).filter(Boolean))], [grouped])
+  const dvvtOptions         = useMemo(() => [...new Set(grouped.map(s => s.gdo?.dvvt).filter(Boolean))] as string[], [grouped])
+  const nppOptions          = useMemo(() => [...new Set(grouped.flatMap(s => s.gdo?.distributor_names ?? []).filter(Boolean))], [grouped])
+  const warehouseTypeOpts   = useMemo(() => [...new Set(grouped.map(s => s.gdo?.warehouse_type).filter(Boolean))] as string[], [grouped])
+  const typeOptions         = useMemo(() => [...new Set(grouped.map(s => s.gdo?.export_type).filter(Boolean))] as string[], [grouped])
 
   const totalPending = items.filter(i => itemLooseStats(i).remaining > 0).length
 
@@ -179,6 +185,8 @@ export default function LoosePicking() {
               {(warehouses as any[]).map((w: any) => <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>)}
             </SelectContent>
           </Select>
+          <MultiSelectFilter label="Loại kho" options={warehouseTypeOpts.map(t => ({ value: t, label: t }))} selected={filterWarehouseTypes} onChange={setFilterWarehouseTypes} />
+          <MultiSelectFilter label="Loại xuất" options={typeOptions.map(t => ({ value: t, label: t }))} selected={filterTypes} onChange={setFilterTypes} />
           <MultiSelectFilter label="ĐVVT" options={dvvtOptions.map(d => ({ value: d, label: d }))} selected={filterDvvts} onChange={setFilterDvvts} />
           <MultiSelectFilter label="NPP" options={nppOptions.map(n => ({ value: n, label: n }))} selected={filterNpps} onChange={setFilterNpps} width="min-w-[140px]" />
         </div>

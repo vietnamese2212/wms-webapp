@@ -769,6 +769,8 @@ export type LoosePickingItem = {
     status: string
     started_at: string | null
     dvvt: string | null
+    warehouse_type: string | null
+    export_type: string | null
     distributor_names: string[]
     warehouse: { id: string; code: string; name: string }
   } | null

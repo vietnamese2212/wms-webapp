@@ -1456,7 +1456,7 @@ export async function listLoosePickingItems(req: Request, res: Response) {
     const { warehouse_id, date } = req.query as { warehouse_id?: string; date?: string }
 
     let gdoQ = (supabase.from('GroupDeliveryOrder') as any)
-      .select('id, group_code, delivery_date, planned_date, status, started_at, dvvt, warehouse:Warehouse(id,code,name)')
+      .select('id, group_code, delivery_date, planned_date, status, started_at, dvvt, warehouse_type, warehouse:Warehouse(id,code,name)')
       .neq('status', 'CANCELLED')
     if (warehouse_id) gdoQ = gdoQ.eq('warehouse_id', warehouse_id)
     if (date)         gdoQ = gdoQ.eq('delivery_date', date)
@@ -1501,10 +1501,16 @@ export async function listLoosePickingItems(req: Request, res: Response) {
       looseScannedByItem[scan.item_id] = (looseScannedByItem[scan.item_id] ?? 0) + Number(scan.cartons_scanned)
     }
 
+    const exportTypeByGdo: Record<string, string | null> = {}
+    for (const item of (items as any[])) {
+      const gId = doToGdoId[item.do_id]
+      if (gId && !exportTypeByGdo[gId] && item.export_type) exportTypeByGdo[gId] = item.export_type
+    }
+
     const result = (items as any[]).map((item: any) => {
       const gdoId  = doToGdoId[item.do_id as string]
       const gdoRaw = gdoId ? gdoById[gdoId] : null
-      const gdo    = gdoRaw ? { ...gdoRaw, distributor_names: nppByGdo[gdoId] ?? [] } : null
+      const gdo    = gdoRaw ? { ...gdoRaw, distributor_names: nppByGdo[gdoId] ?? [], export_type: exportTypeByGdo[gdoId] ?? null } : null
       return { ...item, gdo, loose_scanned: looseScannedByItem[item.id] ?? 0 }
     })
 

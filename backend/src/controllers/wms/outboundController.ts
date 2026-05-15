@@ -1177,7 +1177,7 @@ export async function checkScanItem(req: Request, res: Response) {
         .in('status', ['IN_STOCK', 'PARTIAL'])
         .is('qa_status_id', null)
         .not('production_date', 'is', null)
-        .gt('cartons_remaining', 0)
+        .or('cartons_remaining.gt.0,cartons_remaining.is.null')
       const dates = (bestEntries ?? []).map((e: any) => e.production_date as string).filter(Boolean)
       if (dates.length > 0) best_available_date = dates.reduce((a: string, b: string) => a < b ? a : b)
     }
@@ -1288,7 +1288,7 @@ export async function scanItem(req: Request, res: Response) {
         .in('status', ['IN_STOCK', 'PARTIAL'])
         .is('qa_status_id', null)
         .not('production_date', 'is', null)
-        .gt('cartons_remaining', 0)
+        .or('cartons_remaining.gt.0,cartons_remaining.is.null')
       const dates = (bestEntries ?? []).map((e: any) => e.production_date as string).filter(Boolean)
       if (dates.length > 0) best_available_date = dates.reduce((a: string, b: string) => a < b ? a : b)
     }

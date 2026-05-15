@@ -628,33 +628,44 @@ function ItemsTable({ doRecords, gdoId, canScan, expandedItemIds, toggleExpand }
                       {scans.length === 0 ? (
                         <p className="text-[10px] italic text-slate-400">Chưa có pallet nào được quét</p>
                       ) : (
-                        <div className="flex flex-wrap gap-1">
-                          {scans.map(se => {
-                            const isSubOptimal = !!(se.best_available_date && se.production_date && se.production_date > se.best_available_date)
-                            return (
-                              <span
-                                key={se.id}
-                                className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] italic ${
-                                  isSubOptimal ? 'border-red-200 bg-red-50' : 'border-slate-200'
-                                }`}
-                              >
-                                <span className={`font-mono not-italic font-semibold ${isSubOptimal ? 'text-red-600' : 'text-slate-700'}`}>
-                                  {se.pallet_code}
-                                </span>
-                                <span className="text-slate-300">·</span>
-                                <span className="tabular-nums text-slate-600">{se.cartons_scanned}<span className="text-slate-400 ml-0.5">th</span></span>
-                                {se.best_available_date && (
-                                  <>
-                                    <span className="text-slate-300 not-italic">|</span>
-                                    <span className={`not-italic font-mono ${isSubOptimal ? 'text-orange-500 font-semibold' : 'text-slate-400'}`}>
-                                      {isSubOptimal ? '⚠ ' : '✓ '}{se.best_available_date}
+                        <table className="w-full border-collapse">
+                          <thead>
+                            <tr>
+                              <th className="text-left text-[9px] text-slate-400 font-medium pb-0.5 pr-3">Mã pallet</th>
+                              <th className="text-right text-[9px] text-slate-400 font-medium pb-0.5 pr-3">Thùng</th>
+                              <th className="text-left text-[9px] text-slate-400 font-medium pb-0.5 pr-3">Date</th>
+                              <th className="text-left text-[9px] text-slate-400 font-medium pb-0.5">Date cũ nhất</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {scans.map(se => {
+                              const isSubOptimal = !!(se.best_available_date && se.production_date && se.production_date > se.best_available_date)
+                              const fmtDate = (d: string) => { try { return format(parseISO(d), 'dd-MM-yyyy') } catch { return d } }
+                              return (
+                                <tr key={se.id}>
+                                  <td className="pr-3 py-0.5">
+                                    <span className={`font-mono text-[10px] font-semibold ${isSubOptimal ? 'text-red-600' : 'text-slate-700'}`}>
+                                      {se.pallet_code}
                                     </span>
-                                  </>
-                                )}
-                              </span>
-                            )
-                          })}
-                        </div>
+                                  </td>
+                                  <td className="pr-3 py-0.5 text-right">
+                                    <span className="text-[10px] tabular-nums text-slate-600">{se.cartons_scanned}<span className="text-slate-400 ml-0.5">th</span></span>
+                                  </td>
+                                  <td className="pr-3 py-0.5">
+                                    <span className="text-[10px] font-mono text-slate-500">{se.production_date ? fmtDate(se.production_date) : '—'}</span>
+                                  </td>
+                                  <td className="py-0.5">
+                                    {se.best_available_date ? (
+                                      <span className={`text-[10px] font-mono ${isSubOptimal ? 'text-orange-600 font-semibold' : 'text-slate-400'}`}>
+                                        {isSubOptimal ? '⚠ ' : ''}{fmtDate(se.best_available_date)}
+                                      </span>
+                                    ) : <span className="text-[10px] text-slate-300">—</span>}
+                                  </td>
+                                </tr>
+                              )
+                            })}
+                          </tbody>
+                        </table>
                       )}
                     </div>
                   </TableCell>

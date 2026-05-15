@@ -1,6 +1,7 @@
 import { useRef, useState, useEffect, useMemo, Fragment } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import type { AxiosError } from 'axios'
+import { format, parseISO } from 'date-fns'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import {
   ArrowLeft, QrCode, CheckCircle2, AlertTriangle, Package, Trash2, Pause, ChevronDown, ChevronRight,
@@ -14,6 +15,7 @@ import { QRScanner } from '@/components/shared/QRScanner'
 import type { QRScannerHandle } from '@/components/shared/QRScanner'
 import { useGDO, useScanOutboundItem, useManualCompleteItem, useDeleteOutboundScanEntry, useItemInventory, useCheckOutboundScan, type ItemInventoryEntry, type CheckOutboundScanResult } from '@/api/hooks'
 import { PalletDetailDialog } from '@/components/shared/PalletDetailDialog'
+import { useAuthStore } from '@/stores/authStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 import { playBeep, unlockAudio } from '@/utils/audio'
 import type { OutboundItem, OutboundStatus } from '@/types'
@@ -64,6 +66,7 @@ interface ScanDialogProps {
 
 function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
   const scannerRef = useRef<QRScannerHandle>(null)
+  const user = useAuthStore(s => s.user)
   const [feedback,       setFeedback]       = useState<FeedbackState>(null)
   const [checkResult,    setCheckResult]    = useState<CheckOutboundScanResult | null>(null)
   const [pendingCartons, setPendingCartons] = useState('')
@@ -95,7 +98,7 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
   function handleSave() {
     if (!checkResult || saving) return
     scanItem(
-      { gdoId, itemId: item.id, qr_code: checkResult.pallet_code, cartons_override: Math.max(1, parseInt(pendingCartons) || 1) },
+      { gdoId, itemId: item.id, qr_code: checkResult.pallet_code, cartons_override: Math.max(1, parseInt(pendingCartons) || 1), employee_id: user?.name ?? undefined },
       {
         onSuccess: (data) => {
           setCheckResult(null)
@@ -611,7 +614,7 @@ export default function OutboundItemDetail() {
             </h2>
           </div>
 
-          <Card>
+          <Card className="overflow-hidden">
             {scans.length === 0 ? (
               <div className="flex flex-col items-center gap-2 py-12 text-slate-400">
                 <QrCode className="h-10 w-10 opacity-30" />
@@ -650,13 +653,13 @@ export default function OutboundItemDetail() {
                         </TableCell>
                         <TableCell className="px-2 py-1.5 whitespace-nowrap">
                           <span className="text-[10px] font-mono tabular-nums text-slate-600">
-                            {se.production_date ?? '—'}
+                            {se.production_date ? format(parseISO(se.production_date), 'dd-MM-yyyy') : '—'}
                           </span>
                         </TableCell>
                         <TableCell className="px-2 py-1.5 whitespace-nowrap">
                           {se.best_available_date ? (
                             <span className={`text-[10px] font-mono tabular-nums ${isSubOptimal ? 'text-orange-600 font-semibold' : 'text-slate-500'}`}>
-                              {isSubOptimal ? '⚠ ' : ''}{se.best_available_date}
+                              {isSubOptimal ? '⚠ ' : ''}{format(parseISO(se.best_available_date), 'dd-MM-yyyy')}
                             </span>
                           ) : (
                             <span className="text-[10px] text-slate-300">—</span>

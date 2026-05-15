@@ -109,7 +109,7 @@ export default function Outbound() {
     if (a.delivery_date !== b.delivery_date)
       return b.delivery_date.localeCompare(a.delivery_date)
     const ta = a.export_type ?? '', tb = b.export_type ?? ''
-    if (ta !== tb) return ta.localeCompare(tb)
+    if (ta !== tb) return tb.localeCompare(ta)
     return naturalSortCode(a.group_code, b.group_code)
   }), [filtered])
 

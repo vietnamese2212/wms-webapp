@@ -1211,16 +1211,9 @@ export async function scanItem(req: Request, res: Response) {
 
     const t = now()
 
-    if (to_take >= available) {
-      await (supabase.from('InventoryEntry') as any)
-        .update({ status: 'EXPORTED', cartons_remaining: 0, updated_at: t }).eq('id', inv.id)
-    } else {
-      await (supabase.from('InventoryEntry') as any)
-        .update({ status: 'PARTIAL', cartons_remaining: available - to_take, updated_at: t }).eq('id', inv.id)
-    }
-
+    // Insert scan entry TRƯỚC khi thay đổi inventory — nếu lỗi thì không có gì bị ảnh hưởng
     const scanId = randomUUID()
-    await (supabase.from('OutboundScanEntry') as any).insert({
+    const { error: insertErr } = await (supabase.from('OutboundScanEntry') as any).insert({
       id: scanId, item_id: itemId, inventory_entry_id: inv.id,
       pallet_code: qr, cartons_scanned: to_take,
       production_date: inv.production_date ?? null,
@@ -1229,6 +1222,15 @@ export async function scanItem(req: Request, res: Response) {
       scanned_by: employee_id ?? null, scanned_at: t,
       created_at: t, updated_at: t,
     })
+    if (insertErr) return fail(res, `Lỗi lưu scan entry: ${insertErr.message}`, 500)
+
+    if (to_take >= available) {
+      await (supabase.from('InventoryEntry') as any)
+        .update({ status: 'EXPORTED', cartons_remaining: 0, updated_at: t }).eq('id', inv.id)
+    } else {
+      await (supabase.from('InventoryEntry') as any)
+        .update({ status: 'PARTIAL', cartons_remaining: available - to_take, updated_at: t }).eq('id', inv.id)
+    }
 
     const new_scanned    = Number(item.cartons_scanned) + to_take
     const new_item_status = new_scanned >= Number(item.cartons_ordered) ? 'COMPLETED' : 'IN_PROGRESS'

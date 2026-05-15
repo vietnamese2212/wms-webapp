@@ -614,7 +614,7 @@ export default function OutboundItemDetail() {
             </h2>
           </div>
 
-          <Card className="overflow-hidden">
+          <Card>
             {scans.length === 0 ? (
               <div className="flex flex-col items-center gap-2 py-12 text-slate-400">
                 <QrCode className="h-10 w-10 opacity-30" />
@@ -626,7 +626,7 @@ export default function OutboundItemDetail() {
                 )}
               </div>
             ) : (
-              <Table>
+              <Table className="min-w-[520px]">
                   <TableHeader>
                     <TableRow>
                       <TableHead className="px-2 py-1 text-[9px] font-medium text-slate-500">Mã pallet</TableHead>

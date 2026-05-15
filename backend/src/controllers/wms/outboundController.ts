@@ -1214,12 +1214,17 @@ export async function scanItem(req: Request, res: Response) {
       { data: item, error: itemErr },
       { data: inv },
       { data: dupCheck },
+      { data: empCheck },
     ] = await Promise.all([
       (supabase.from('GroupDeliveryOrder') as any).select('status, started_at, warehouse_id').eq('id', gdoId).single(),
       (supabase.from('OutboundItem') as any).select('*').eq('id', itemId).single(),
       (supabase.from('InventoryEntry') as any).select('*, qa_status:QAStatus(code,name)').eq('pallet_code', qr).maybeSingle(),
       (supabase.from('OutboundScanEntry') as any).select('id').eq('item_id', itemId).eq('pallet_code', qr).maybeSingle(),
+      employee_id
+        ? (supabase.from('Employee') as any).select('id').eq('id', employee_id).maybeSingle()
+        : Promise.resolve({ data: null }),
     ])
+    const resolved_employee_id = empCheck ? employee_id : null
     if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng — không thể quét', 400)
     if (itemErr || !item) return fail(res, 'Không tìm thấy mặt hàng', 404)
     if (item.status === 'COMPLETED') return fail(res, 'Mặt hàng này đã xuất đủ số lượng', 400)
@@ -1313,7 +1318,7 @@ export async function scanItem(req: Request, res: Response) {
       production_date: inv.production_date ?? null,
       best_available_date,
       is_loose_picking: !!loose_picking_mode,
-      scanned_by: employee_id ?? null, scanned_at: t,
+      scanned_by: resolved_employee_id, scanned_at: t,
       created_at: t, updated_at: t,
     })
     if (insertErr) return fail(res, `Lỗi lưu scan entry: ${insertErr.message}`, 500)

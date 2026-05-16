@@ -26,19 +26,17 @@ function isCheckedToday(e: StocktakeEntryRow, todayVN: string, todayStart: strin
 }
 
 // ─── Stat Card ───────────────────────────────────────────────────
-function StatCard({ label, value, sub, active, color, onClick }: {
-  label: string; value: number; sub?: string
-  active: boolean; color: string; onClick: () => void
+function StatCard({ label, value, active, color, onClick }: {
+  label: string; value: number; active: boolean; color: string; onClick: () => void
 }) {
   return (
     <button
       onClick={onClick}
-      className={`flex-1 min-w-0 rounded-xl border px-3 py-2.5 text-left transition-all
+      className={`flex-1 min-w-0 rounded-lg border px-2 py-1.5 text-left transition-all
         ${active ? `${color} shadow-sm` : 'bg-white border-slate-200 hover:bg-slate-50'}`}
     >
-      <p className={`text-[10px] font-medium truncate ${active ? 'opacity-80' : 'text-slate-500'}`}>{label}</p>
-      <p className={`text-xl font-bold tabular-nums leading-tight ${active ? '' : 'text-slate-800'}`}>{value}</p>
-      {sub && <p className={`text-[9px] mt-0.5 ${active ? 'opacity-70' : 'text-slate-400'}`}>{sub}</p>}
+      <p className={`text-[9px] font-medium truncate ${active ? 'opacity-75' : 'text-slate-500'}`}>{label}</p>
+      <p className={`text-base font-bold tabular-nums leading-tight ${active ? '' : 'text-slate-800'}`}>{value}</p>
     </button>
   )
 }
@@ -56,7 +54,7 @@ const STATUS_CLS: Record<string, string> = {
 
 function calcPct(prodDate: string | null, shelfDays: number | null): number | null {
   if (!prodDate || !shelfDays || shelfDays <= 0) return null
-  const totalMs  = shelfDays * 86_400_000
+  const totalMs   = shelfDays * 86_400_000
   const remaining = new Date(prodDate).getTime() + totalMs - Date.now()
   return Math.max(0, Math.round((remaining / totalMs) * 100))
 }
@@ -74,14 +72,24 @@ function DR({ label, value, mono, bold, cls }: {
   )
 }
 
+function Sec({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide mb-1">{title}</p>
+      {children}
+    </div>
+  )
+}
+
 function DetailPanel({ entryId, onClose }: { entryId: string; onClose: () => void }) {
   const { data: entry, isLoading } = useInventoryEntry(entryId)
   const remaining = entry ? (entry.cartons_remaining ?? entry.cartons_imported) : 0
   const exported  = entry ? Math.max(0, Number(entry.cartons_imported) - Number(remaining)) : 0
   const pct       = entry ? calcPct(entry.production_date ?? null, entry.material?.shelf_life_days ?? null) : null
+  const diff      = entry ? parseDiff(entry.stocktake_flag_note ?? null) : null
 
   return (
-    <div className="w-64 shrink-0 border-l bg-white flex flex-col overflow-hidden">
+    <div className="w-60 shrink-0 border-l bg-white flex flex-col overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b bg-slate-50 shrink-0">
         <p className="font-mono text-[10px] font-semibold text-slate-700 truncate flex-1">
@@ -106,8 +114,40 @@ function DetailPanel({ entryId, onClose }: { entryId: string; onClose: () => voi
               {STATUS_LABEL[entry.status] ?? entry.status}
             </span>
 
-            <div>
-              <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Thông tin hàng</p>
+            {/* Kiểm kê — đặt lên đầu vì đây là thông tin quan trọng nhất ở trang này */}
+            <Sec title="Kiểm kê vị trí">
+              {entry.stocktake_flagged ? (
+                <div className="mb-1">
+                  <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-red-600 bg-red-100 rounded-full px-1.5 py-0.5">
+                    <Flag className="h-2.5 w-2.5" /> Chênh lệch
+                  </span>
+                </div>
+              ) : entry.stocktake_at ? (
+                <div className="mb-1">
+                  <span className="text-[9px] font-semibold text-green-600 bg-green-100 rounded-full px-1.5 py-0.5">
+                    Đã kiểm
+                  </span>
+                </div>
+              ) : null}
+              <DR label="Người check"
+                value={entry.stocktake_by_emp?.name ?? '—'}
+                cls={entry.stocktake_by_emp ? 'text-slate-700 font-semibold' : undefined} />
+              <DR label="Thời gian check"
+                value={entry.stocktake_at
+                  ? `${formatTimestampDate(entry.stocktake_at, true)} ${formatTimestampTime(entry.stocktake_at)}`
+                  : '—'} />
+              {diff && (
+                <>
+                  <DR label="Tồn thực tế" value={`${diff.actual} thùng`} bold />
+                  <DR label="Tồn app"     value={`${diff.app} thùng`} />
+                  <DR label="Chênh lệch"
+                    value={`${diff.diff > 0 ? '+' : ''}${diff.diff} thùng`}
+                    cls={diff.diff < 0 ? 'text-red-600 font-semibold' : diff.diff > 0 ? 'text-amber-600 font-semibold' : 'text-slate-400'} />
+                </>
+              )}
+            </Sec>
+
+            <Sec title="Thông tin hàng">
               <DR label="Kho"      value={entry.location?.warehouse?.name ?? '—'} />
               <DR label="Vị trí"   value={entry.location?.location_code  ?? '—'} mono />
               <DR label="Mã hàng"  value={entry.material?.material_code  ?? '—'} mono />
@@ -115,10 +155,9 @@ function DetailPanel({ entryId, onClose }: { entryId: string; onClose: () => voi
               {entry.qa_status && (
                 <DR label="QA" value={`${entry.qa_status.code} – ${entry.qa_status.name}`} />
               )}
-            </div>
+            </Sec>
 
-            <div>
-              <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Số lượng</p>
+            <Sec title="Số lượng">
               <DR label="Nhập" value={`${entry.cartons_imported} thùng`} />
               {exported > 0 && <DR label="Xuất" value={`${exported} thùng`} />}
               <DR label="Tồn"  value={`${remaining} thùng`} bold />
@@ -127,10 +166,9 @@ function DetailPanel({ entryId, onClose }: { entryId: string; onClose: () => voi
                   value={`${Number(entry.adjustment_qty) > 0 ? '+' : ''}${entry.adjustment_qty}`}
                   cls={Number(entry.adjustment_qty) > 0 ? 'text-green-600' : 'text-red-600'} />
               )}
-            </div>
+            </Sec>
 
-            <div>
-              <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Ngày / Hạn dùng</p>
+            <Sec title="Ngày / Hạn dùng">
               <DR label="NSX" value={entry.production_date ? formatDate(entry.production_date) : '—'} />
               {entry.material?.shelf_life_days != null && (
                 <DR label="HSD" value={`${entry.material.shelf_life_days} ngày`} />
@@ -139,23 +177,21 @@ function DetailPanel({ entryId, onClose }: { entryId: string; onClose: () => voi
                 <DR label="%Date" value={`${pct}%`}
                   cls={pct >= 70 ? 'text-green-600 font-semibold' : pct >= 40 ? 'text-amber-600 font-semibold' : 'text-red-600 font-semibold'} />
               )}
-            </div>
+            </Sec>
 
             {(entry.manufacturer || entry.cycle || entry.machine_code) && (
-              <div>
-                <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Sản xuất</p>
+              <Sec title="Sản xuất">
                 {entry.manufacturer && <DR label="NMSX"   value={entry.manufacturer.code} mono />}
                 {entry.cycle        && <DR label="Chu kỳ" value={entry.cycle} mono />}
                 {entry.machine_code && <DR label="Máy"    value={entry.machine_code} mono />}
-              </div>
+              </Sec>
             )}
 
-            <div>
-              <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Nhập kho</p>
+            <Sec title="Nhập kho">
               <DR label="Ngày nhập"  value={entry.import_date ? formatDate(entry.import_date) : '—'} />
               <DR label="Giờ nhập"   value={entry.created_at  ? formatTimestampTime(entry.created_at) : '—'} />
               <DR label="Người nhập" value={entry.created_by_emp?.name ?? '—'} />
-            </div>
+            </Sec>
           </>
         )}
       </div>
@@ -196,26 +232,28 @@ export default function StocktakeDashboard() {
   const todayVN    = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   const todayStart = new Date(`${todayVN}T00:00:00+07:00`).toISOString()
 
-  function rowColor(e: StocktakeEntryRow): string {
-    if (e.stocktake_flagged)                    return 'bg-red-50 hover:bg-red-100'
-    if (isCheckedToday(e, todayVN, todayStart)) return 'bg-green-50 hover:bg-green-100'
-    return 'hover:bg-slate-50'
+  function rowBg(e: StocktakeEntryRow): string {
+    const sel = selectedId === e.id
+    if (e.stocktake_flagged) return sel ? 'bg-red-100'   : 'bg-red-50 hover:bg-red-100'
+    if (isCheckedToday(e, todayVN, todayStart)) return sel ? 'bg-green-100' : 'bg-green-50 hover:bg-green-100'
+    return sel ? 'bg-blue-50' : 'hover:bg-slate-50'
   }
 
   return (
     <div className="flex flex-col h-full">
-      {/* Filters */}
-      <div className="border-b bg-white px-3 py-2 shrink-0 space-y-2">
-        <div className="flex items-center gap-1.5">
-          <BarChart2 className="h-4 w-4 text-blue-600 shrink-0" />
-          <p className="text-sm font-semibold text-slate-700">Tổng hợp kiểm kê</p>
-        </div>
-
+      {/* Filters — compact, ~70% kích thước cũ */}
+      <div className="border-b bg-white px-3 py-1.5 shrink-0 space-y-1.5">
+        {/* Row 1: title + filters */}
         <div className="flex gap-1.5 flex-wrap items-center">
+          <div className="flex items-center gap-1 shrink-0">
+            <BarChart2 className="h-3.5 w-3.5 text-blue-600" />
+            <span className="text-xs font-semibold text-slate-700">Tổng hợp KK</span>
+          </div>
+
           <Select value={warehouseId || '__none__'} onValueChange={v => {
             setWarehouseId(v === '__none__' ? '' : v); setLocationId('')
           }}>
-            <SelectTrigger className="h-7 text-xs w-[110px]"><SelectValue placeholder="Kho…" /></SelectTrigger>
+            <SelectTrigger className="h-6 text-[11px] w-[100px]"><SelectValue placeholder="Kho…" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="__none__" className="text-xs">Tất cả kho</SelectItem>
               {(warehouses as any[]).map((w: any) => (
@@ -227,7 +265,7 @@ export default function StocktakeDashboard() {
           <Select value={category || '__all__'} onValueChange={v => {
             setCategory(v === '__all__' ? '' : v); setLocationId('')
           }}>
-            <SelectTrigger className="h-7 text-xs w-[100px]"><SelectValue placeholder="Loại…" /></SelectTrigger>
+            <SelectTrigger className="h-6 text-[11px] w-[90px]"><SelectValue placeholder="Loại…" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="__all__" className="text-xs">Tất cả</SelectItem>
               {(categories as string[]).map(c => (
@@ -239,7 +277,7 @@ export default function StocktakeDashboard() {
           <Select value={locationId || '__none__'} onValueChange={v => {
             setLocationId(v === '__none__' ? '' : v); setView('problem'); setSelectedId(null)
           }} disabled={!warehouseId}>
-            <SelectTrigger className="h-7 text-xs w-[130px]"><SelectValue placeholder="Vị trí…" /></SelectTrigger>
+            <SelectTrigger className="h-6 text-[11px] w-[120px]"><SelectValue placeholder="Vị trí…" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="__none__" className="text-xs">Chọn vị trí…</SelectItem>
               {filteredLocations.map((l: any) => (
@@ -250,23 +288,23 @@ export default function StocktakeDashboard() {
             </SelectContent>
           </Select>
 
-          <label className="flex items-center gap-1.5 cursor-pointer select-none">
+          <label className="flex items-center gap-1 cursor-pointer select-none">
             <input type="checkbox" checked={requiresOnly} onChange={e => {
               setRequiresOnly(e.target.checked); setLocationId('')
-            }} className="h-3.5 w-3.5 cursor-pointer" />
-            <span className="text-xs text-slate-600 flex items-center gap-1">
-              <Flag className="h-3 w-3 text-red-500" /> Chỉ vị trí cần check
+            }} className="h-3 w-3 cursor-pointer" />
+            <span className="text-[11px] text-slate-600 flex items-center gap-0.5">
+              <Flag className="h-2.5 w-2.5 text-red-500" /> Cần check
             </span>
           </label>
         </div>
 
-        {/* Stat cards */}
+        {/* Row 2: stat cards — chỉ hiện khi đã chọn vị trí */}
         {locationId && (
           <div className="flex gap-1.5">
             <StatCard label="Tổng Pallet" value={stats.total}
               active={view === 'all'} color="bg-slate-100 text-slate-700 border-slate-300"
               onClick={() => setView('all')} />
-            <StatCard label="Đã kiểm" value={stats.checked} sub="hôm nay"
+            <StatCard label="Đã kiểm" value={stats.checked}
               active={view === 'checked'} color="bg-green-100 text-green-700 border-green-300"
               onClick={() => setView('checked')} />
             <StatCard label="Chưa kiểm" value={stats.unchecked}
@@ -288,7 +326,7 @@ export default function StocktakeDashboard() {
           </div>
         ) : (
           <>
-            {/* Table area — overflow-auto để sticky header hoạt động */}
+            {/* Table — overflow-auto cho cả scroll dọc lẫn ngang + sticky header */}
             <div className="flex-1 min-w-0 overflow-auto pb-20 lg:pb-4">
               <Table className="min-w-[720px]">
                 <TableHeader>
@@ -319,84 +357,56 @@ export default function StocktakeDashboard() {
                     const diff    = parseDiff(e.stocktake_flag_note)
                     const checked = isCheckedToday(e, todayVN, todayStart)
                     return (
-                      <TableRow key={e.id} className={`transition-colors ${rowColor(e)}`}>
-                        {/* Mã pallet — clickable */}
+                      <TableRow
+                        key={e.id}
+                        className={`cursor-pointer transition-colors ${rowBg(e)}`}
+                        onClick={() => setSelectedId(prev => prev === e.id ? null : e.id)}
+                      >
                         <TableCell className="px-2 py-1">
-                          <button
-                            className="font-mono text-[10px] font-semibold text-blue-600 hover:underline text-left"
-                            onClick={() => setSelectedId(prev => prev === e.id ? null : e.id)}
-                          >
+                          <span className="font-mono text-[10px] font-semibold text-blue-600">
                             {e.pallet_code}
-                          </button>
+                          </span>
                         </TableCell>
-
-                        {/* Tên hàng */}
                         <TableCell className="px-2 py-1 max-w-[140px]">
                           <span className="text-[10px] text-slate-600 truncate block">
                             {e.material?.short_name ?? e.material?.material_code ?? '—'}
                           </span>
                         </TableCell>
-
-                        {/* Tồn App */}
                         <TableCell className="px-2 py-1 text-right">
                           <span className="text-[10px] font-semibold tabular-nums">{e.cartons_remaining}</span>
                         </TableCell>
-
-                        {/* Tồn thực tế */}
                         <TableCell className="px-2 py-1 text-right">
-                          {diff ? (
-                            <span className="text-[10px] tabular-nums font-semibold text-slate-700">{diff.actual}</span>
-                          ) : (
-                            <span className="text-[10px] text-slate-300">—</span>
-                          )}
+                          {diff
+                            ? <span className="text-[10px] tabular-nums font-semibold text-slate-700">{diff.actual}</span>
+                            : <span className="text-[10px] text-slate-300">—</span>}
                         </TableCell>
-
-                        {/* Chênh lệch */}
                         <TableCell className="px-2 py-1 text-right">
-                          {diff ? (
-                            <span className={`text-[10px] font-semibold tabular-nums ${diff.diff < 0 ? 'text-red-600' : diff.diff > 0 ? 'text-amber-600' : 'text-slate-400'}`}>
-                              {diff.diff > 0 ? '+' : ''}{diff.diff}
-                            </span>
-                          ) : (
-                            <span className="text-[10px] text-slate-300">—</span>
-                          )}
+                          {diff
+                            ? <span className={`text-[10px] font-semibold tabular-nums ${diff.diff < 0 ? 'text-red-600' : diff.diff > 0 ? 'text-amber-600' : 'text-slate-400'}`}>
+                                {diff.diff > 0 ? '+' : ''}{diff.diff}
+                              </span>
+                            : <span className="text-[10px] text-slate-300">—</span>}
                         </TableCell>
-
-                        {/* Người kiểm */}
                         <TableCell className="px-2 py-1">
                           <span className="text-[10px] text-slate-500">{e.stocktake_by_emp?.name ?? '—'}</span>
                         </TableCell>
-
-                        {/* Thời gian kiểm */}
                         <TableCell className="px-2 py-1 whitespace-nowrap">
-                          {e.stocktake_at ? (
-                            <span className="text-[10px] text-slate-500">
-                              {formatTimestampDate(e.stocktake_at, true)} {formatTimestampTime(e.stocktake_at)}
-                            </span>
-                          ) : (
-                            <span className="text-[10px] text-slate-300">—</span>
-                          )}
+                          {e.stocktake_at
+                            ? <span className="text-[10px] text-slate-500">
+                                {formatTimestampDate(e.stocktake_at, true)} {formatTimestampTime(e.stocktake_at)}
+                              </span>
+                            : <span className="text-[10px] text-slate-300">—</span>}
                         </TableCell>
-
-                        {/* Trạng thái */}
                         <TableCell className="px-2 py-1">
-                          {e.stocktake_flagged ? (
-                            <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-red-600 bg-red-100 rounded-full px-1.5 py-0.5">
-                              <Flag className="h-2.5 w-2.5" /> Chênh lệch
-                            </span>
-                          ) : checked ? (
-                            <span className="text-[9px] font-semibold text-green-600 bg-green-100 rounded-full px-1.5 py-0.5">
-                              Đã kiểm
-                            </span>
-                          ) : (
-                            <span className="text-[9px] text-slate-400 bg-slate-100 rounded-full px-1.5 py-0.5">
-                              Chưa kiểm
-                            </span>
-                          )}
+                          {e.stocktake_flagged
+                            ? <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-red-600 bg-red-100 rounded-full px-1.5 py-0.5">
+                                <Flag className="h-2.5 w-2.5" /> Chênh lệch
+                              </span>
+                            : checked
+                              ? <span className="text-[9px] font-semibold text-green-600 bg-green-100 rounded-full px-1.5 py-0.5">Đã kiểm</span>
+                              : <span className="text-[9px] text-slate-400 bg-slate-100 rounded-full px-1.5 py-0.5">Chưa kiểm</span>}
                         </TableCell>
-
-                        {/* Bỏ cờ */}
-                        <TableCell className="px-2 py-1">
+                        <TableCell className="px-2 py-1" onClick={ev => ev.stopPropagation()}>
                           {e.stocktake_flagged && (
                             <Button size="sm" variant="outline"
                               className="h-5 text-[9px] px-1.5 border-red-200 text-red-600 hover:bg-red-50 flex items-center gap-0.5"

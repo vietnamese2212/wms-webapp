@@ -83,13 +83,21 @@ async function fetchGDOFull(id: string) {
   const itemIds = (items ?? []).map((i: any) => i.id)
   const { data: scans } = itemIds.length
     ? await (supabase.from('OutboundScanEntry') as any)
-        .select('*, inventory_entry:InventoryEntry(pct_date)').in('item_id', itemIds)
+        .select('*').in('item_id', itemIds)
     : { data: [] }
+
+  // Lấy pct_date từ InventoryEntry bằng query riêng (tránh JOIN — FK không được khai báo explicit)
+  const invIds = [...new Set((scans ?? []).map((s: any) => s.inventory_entry_id).filter(Boolean))] as string[]
+  const { data: invPctRows } = invIds.length
+    ? await (supabase.from('InventoryEntry') as any).select('id, pct_date').in('id', invIds)
+    : { data: [] }
+  const invPctMap = new Map<string, number | null>()
+  for (const e of (invPctRows ?? [])) invPctMap.set(e.id, e.pct_date ?? null)
 
   const scansByItem = new Map<string, any[]>()
   for (const s of (scans ?? [])) {
     const list = scansByItem.get(s.item_id) ?? []
-    list.push({ ...s, pct_date: s.inventory_entry?.pct_date ?? null, inventory_entry: undefined })
+    list.push({ ...s, pct_date: s.inventory_entry_id ? (invPctMap.get(s.inventory_entry_id) ?? null) : null })
     scansByItem.set(s.item_id, list)
   }
 

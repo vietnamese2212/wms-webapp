@@ -2,6 +2,7 @@
 -- - best_available_date (Date cũ nhất)
 -- - delivery_date = ngày quét (xuất thường) hoặc ngày check (nhặt lẻ)
 -- - thêm loose_confirmed_at, loose_confirmed_by_name
+-- - chỉ hiện nhặt lẻ khi đã loose_confirmed = true
 -- Phải DROP trước vì đổi return type
 -- Apply: Supabase Dashboard → SQL Editor → Run
 
@@ -143,6 +144,7 @@ AS $$
     AND (p_machine_codes IS NULL OR ie.machine_code = ANY(string_to_array(p_machine_codes, ',')))
     AND (p_cycles        IS NULL OR ie.cycle         = ANY(string_to_array(p_cycles, ',')))
     AND (p_scanner_name  IS NULL OR e.name           ILIKE '%' || p_scanner_name  || '%')
+    AND (NOT ose.is_loose_picking OR ose.loose_confirmed = true)
   ORDER BY ose.scanned_at DESC
   LIMIT  p_limit
   OFFSET p_offset

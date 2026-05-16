@@ -695,6 +695,8 @@ export default function Inventory() {
                       <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Nhập</TableHead>
                       <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Xuất</TableHead>
                       <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Tồn</TableHead>
+                      <TableHead className="text-[9px] font-medium text-purple-500 px-2 py-1.5 text-right whitespace-nowrap">Nhặt lẻ</TableHead>
+                      <TableHead className="text-[9px] font-medium text-blue-500 px-2 py-1.5 text-right whitespace-nowrap">Khả dụng</TableHead>
                       <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Date</TableHead>
                       <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">%Date</TableHead>
                       <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">QA</TableHead>
@@ -848,9 +850,16 @@ function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick }: {
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         <span className="text-[10px] font-semibold tabular-nums">{remaining}</span>
         <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
-        {e.status === 'LOOSE_PICKING' && (e.cartons_reserved ?? 0) > 0 && (
-          <div className="text-[9px] text-purple-600 tabular-nums">({e.cartons_reserved} nhặt lẻ)</div>
-        )}
+      </TableCell>
+      <TableCell className="px-2 py-1 text-right whitespace-nowrap">
+        {(e.cartons_reserved ?? 0) > 0
+          ? <span className="text-[10px] font-semibold tabular-nums text-purple-600">{e.cartons_reserved}</span>
+          : <span className="text-[10px] text-slate-300">—</span>}
+      </TableCell>
+      <TableCell className="px-2 py-1 text-right whitespace-nowrap">
+        <span className="text-[10px] font-semibold tabular-nums text-blue-700">
+          {Math.max(0, Number(remaining) - Number(e.cartons_reserved ?? 0))}
+        </span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px] tabular-nums text-slate-600">{prodDateStr}</span>

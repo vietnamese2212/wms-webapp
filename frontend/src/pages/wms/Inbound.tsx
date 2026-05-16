@@ -139,7 +139,7 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
     : (selectedMat ? `${selectedMat.material_code} – ${selectedMat.short_name ?? selectedMat.material_description}` : matSearch)
 
   function handleSubmit() {
-    if (!warehouseId || !subType || !materialId || !locationId) return
+    if (!warehouseId || !subType || !materialId || !locationId || !shiftId || !importDate) return
     createOrder(
       {
         warehouse_id: warehouseId,
@@ -275,7 +275,7 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
           {/* Ca nhập + Ngày nhập */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
-              <Label>Ca nhập</Label>
+              <Label>Ca nhập <span className="text-red-500">*</span></Label>
               <Select value={shiftId} onValueChange={setShiftId}>
                 <SelectTrigger><SelectValue placeholder="Chọn ca" /></SelectTrigger>
                 <SelectContent>
@@ -286,7 +286,7 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
               </Select>
             </div>
             <div className="space-y-2">
-              <Label>Ngày nhập</Label>
+              <Label>Ngày nhập <span className="text-red-500">*</span></Label>
               <Input
                 type="date"
                 value={importDate}

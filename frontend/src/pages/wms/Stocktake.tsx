@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
+import { QRScanner } from '@/components/shared/QRScanner'
 import { useWarehouses, useLocationsReal, useMaterialCategories } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { MapPin, AlertTriangle, CheckCircle2, Flag, Search } from 'lucide-react'
+import { MapPin, AlertTriangle, CheckCircle2, Flag, QrCode } from 'lucide-react'
 import { apiClient } from '@/api/client'
 import { useQueryClient } from '@tanstack/react-query'
 
@@ -33,9 +34,9 @@ function loadFilters(defaultWarehouseId: string) {
     if (s) {
       const p = JSON.parse(s) as Record<string, unknown>
       return {
-        warehouseId:  typeof p.warehouseId  === 'string'  ? p.warehouseId  : defaultWarehouseId,
-        category:     typeof p.category     === 'string'  ? p.category     : '',
-        locationId:   typeof p.locationId   === 'string'  ? p.locationId   : '',
+        warehouseId:  typeof p.warehouseId  === 'string' ? p.warehouseId  : defaultWarehouseId,
+        category:     typeof p.category     === 'string' ? p.category     : '',
+        locationId:   typeof p.locationId   === 'string' ? p.locationId   : '',
         requiresOnly: Boolean(p.requiresOnly),
       }
     }
@@ -54,13 +55,14 @@ export default function Stocktake() {
   const [locationId,   setLocationId]   = useState(init.locationId)
   const [requiresOnly, setRequiresOnly] = useState(init.requiresOnly)
 
-  const [resultState, setResultState] = useState<ResultState>({ mode: 'none' })
-  const [updateLoc,   setUpdateLoc]   = useState(false)
-  const [showQty,     setShowQty]     = useState(false)
-  const [physCount,   setPhysCount]   = useState('')
-  const [saving,      setSaving]      = useState(false)
-  const [inputVal,    setInputVal]    = useState('')
-  const [searching,   setSearching]   = useState(false)
+  const [resultState,  setResultState]  = useState<ResultState>({ mode: 'none' })
+  const [scannerOpen,  setScannerOpen]  = useState(false)
+  const [updateLoc,    setUpdateLoc]    = useState(false)
+  const [showQty,      setShowQty]      = useState(false)
+  const [physCount,    setPhysCount]    = useState('')
+  const [saving,       setSaving]       = useState(false)
+  const [inputVal,     setInputVal]     = useState('')
+  const [searching,    setSearching]    = useState(false)
 
   useEffect(() => {
     sessionStorage.setItem(FILTERS_KEY, JSON.stringify({ warehouseId, category, locationId, requiresOnly }))
@@ -95,6 +97,7 @@ export default function Stocktake() {
     const palletCode = code.trim()
     if (!palletCode) return
     setSearching(true)
+    setScannerOpen(false)
     setResultState({ mode: 'none' })
     try {
       const { data } = await apiClient.post('/wms/inventory/stocktake-check', { qr_code: palletCode })
@@ -114,6 +117,11 @@ export default function Stocktake() {
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     handleSearch(inputVal)
+  }
+
+  function handleQRScan(code: string) {
+    setInputVal(code)
+    handleSearch(code)
   }
 
   async function handleSave() {
@@ -179,6 +187,7 @@ export default function Stocktake() {
             setLocationId(v === '__none__' ? '' : v)
             setResultState({ mode: 'none' })
             setInputVal('')
+            setScannerOpen(false)
           }} disabled={!warehouseId}>
             <SelectTrigger className="h-7 text-xs w-[130px]"><SelectValue placeholder="Vị trí…" /></SelectTrigger>
             <SelectContent>
@@ -213,26 +222,39 @@ export default function Stocktake() {
           </div>
         ) : (
           <>
-            {/* Scan input — luôn hiện khi đã chọn vị trí */}
-            <form onSubmit={handleSubmit} className="space-y-1">
+            {/* Input + scan button */}
+            <form onSubmit={handleSubmit}>
               <div className="flex gap-2">
                 <Input
                   ref={inputRef}
                   value={inputVal}
                   onChange={e => setInputVal(e.target.value)}
-                  placeholder="Quét hoặc nhập mã pallet…"
+                  placeholder="Nhập mã pallet…"
                   className="font-mono text-sm h-9"
                   disabled={searching || saving}
                 />
-                <Button type="submit" size="sm" className="h-9 px-3 shrink-0"
-                  disabled={!inputVal.trim() || searching || saving}>
-                  <Search className="h-4 w-4" />
+                <Button
+                  type="button"
+                  variant={scannerOpen ? 'default' : 'outline'}
+                  size="sm"
+                  className="h-9 px-3 shrink-0"
+                  onClick={() => setScannerOpen(o => !o)}
+                  disabled={searching || saving}
+                >
+                  <QrCode className="h-4 w-4" />
                 </Button>
               </div>
-              <p className="text-[11px] text-slate-400">Nhập mã pallet → Enter để tìm</p>
             </form>
 
-            {/* Success banner */}
+            {/* Camera scanner */}
+            {scannerOpen && (
+              <QRScanner
+                onScan={handleQRScan}
+                onClose={() => setScannerOpen(false)}
+              />
+            )}
+
+            {/* Success */}
             {resultState.mode === 'success' && (
               <div className="rounded-xl border border-green-200 bg-green-50 p-3 flex items-center gap-2">
                 <CheckCircle2 className="h-4 w-4 text-green-600 shrink-0" />

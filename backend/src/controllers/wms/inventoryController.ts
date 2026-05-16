@@ -490,20 +490,27 @@ export async function stocktakeSummary(req: Request, res: Response) {
 }
 
 export async function stocktakeEntries(req: Request, res: Response) {
-  const { warehouse_id, category, view = 'problem' } = req.query as Record<string, string>
+  const { warehouse_id, category, location_id, view = 'problem' } = req.query as Record<string, string>
   // view: 'all' | 'flagged' | 'unchecked' | 'checked' | 'problem' (flagged + unchecked)
 
-  let locQuery = (supabase.from('Location') as any).select('id').eq('is_active', true)
-  if (warehouse_id) locQuery = locQuery.eq('warehouse_id', warehouse_id)
-  if (category)     locQuery = locQuery.or(`category.eq.${category},category.is.null`)
-  const { data: locs, error: locErr } = await locQuery
-  if (locErr) return fail(res, 500, 'DB_ERROR', locErr.message)
-  if (!locs?.length) return ok(res, { stats: { total: 0, checked: 0, unchecked: 0, flagged: 0 }, entries: [] })
+  // Resolve location IDs to query against
+  let resolvedLocationIds: string[]
+  if (location_id) {
+    resolvedLocationIds = [location_id]
+  } else {
+    let locQuery = (supabase.from('Location') as any).select('id').eq('is_active', true)
+    if (warehouse_id) locQuery = locQuery.eq('warehouse_id', warehouse_id)
+    if (category)     locQuery = locQuery.or(`category.eq.${category},category.is.null`)
+    const { data: locs, error: locErr } = await locQuery
+    if (locErr) return fail(res, 500, 'DB_ERROR', locErr.message)
+    if (!locs?.length) return ok(res, { stats: { total: 0, checked: 0, unchecked: 0, flagged: 0 }, entries: [] })
+    resolvedLocationIds = (locs as { id: string }[]).map(l => l.id)
+  }
 
-  const locationIds = (locs as { id: string }[]).map(l => l.id)
   const todayVN    = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   const todayStart = new Date(`${todayVN}T00:00:00+07:00`).toISOString()
 
+  // Use range(0, 9999) to bypass Supabase default 1000-row limit
   const { data: entries, error: entErr } = await (supabase.from('InventoryEntry') as any)
     .select(`
       id, pallet_code, cartons_remaining, import_date,
@@ -512,8 +519,9 @@ export async function stocktakeEntries(req: Request, res: Response) {
       material:Material(material_code, short_name),
       stocktake_by_emp:Employee!stocktake_by(id, name)
     `)
-    .in('location_id', locationIds)
+    .in('location_id', resolvedLocationIds)
     .in('status', ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'])
+    .range(0, 9999)
   if (entErr) return fail(res, 500, 'DB_ERROR', entErr.message)
 
   type E = { id: string; import_date: string; stocktake_at: string | null; stocktake_flagged: boolean }

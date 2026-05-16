@@ -6,7 +6,7 @@ import { vi } from 'date-fns/locale'
 import { formatDateTime, formatTimestampTime } from '@/utils/formatters'
 import {
   ArrowLeft, CheckCircle2,
-  Truck, Package, ClipboardList, Play, Pause, ChevronRight, ChevronDown, Bookmark, X, RotateCcw, Pencil, QrCode, Search,
+  Truck, Package, ClipboardList, Play, Pause, ChevronRight, ChevronDown, Bookmark, X, RotateCcw, Pencil, QrCode, Search, PenSquare, Trash2,
 } from 'lucide-react'
 import { Button }  from '@/components/ui/button'
 import { Input }   from '@/components/ui/input'
@@ -18,8 +18,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import {
   useGDO, useAssignGDO, useStartGDO, useWarehouseEmployees, usePatchGDO,
   useUnassignGDO, useUnstartGDO, useUncompleteGDO, useUpdateTransport,
-  useItemInventory, type ItemInventoryEntry,
+  useItemInventory, useDeleteGDO, type ItemInventoryEntry,
 } from '@/api/hooks'
+import { EditGDOModal } from './Outbound'
 import { PalletDetailDialog } from '@/components/shared/PalletDetailDialog'
 import { useAuthStore } from '@/stores/authStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
@@ -693,6 +694,7 @@ export default function OutboundDetail() {
   const { data: gdo, isLoading } = useGDO(id)
   const { mutate: assignGDO,    isPending: assigning   } = useAssignGDO()
   const { mutate: patchGDO,     isPending: patching    } = usePatchGDO()
+  const { mutate: deleteGDO } = useDeleteGDO()
   const { mutate: unassignGDO,  isPending: unassigning } = useUnassignGDO()
   const { mutate: unstartGDO,   isPending: unstarting  } = useUnstartGDO()
   const { mutate: uncompleteGDO, isPending: uncompleting } = useUncompleteGDO()
@@ -704,6 +706,7 @@ export default function OutboundDetail() {
 
   const [showStart,         setShowStart]         = useState(false)
   const [showEditTransport, setShowEditTransport] = useState(false)
+  const [showEditGDO,       setShowEditGDO]       = useState(false)
   const [undoErr,           setUndoErr]           = useState<string | null>(null)
   const [pendingConfirm, setPendingConfirm] = useState<{
     title: string; message: string; onConfirm: () => void
@@ -720,6 +723,18 @@ export default function OutboundDetail() {
       onError: (e) => {
         const msg = (e as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
         setUndoErr(msg)
+      },
+    })
+  }
+
+  function handleDelete() {
+    if (!gdo) return
+    if (!confirm(`Xóa đơn "${gdo.group_code}"?\nHành động này không thể hoàn tác.`)) return
+    deleteGDO(gdo.id, {
+      onSuccess: () => navigate('/wms/outbound'),
+      onError: (err) => {
+        const msg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi xóa đơn'
+        alert(msg)
       },
     })
   }
@@ -766,6 +781,13 @@ export default function OutboundDetail() {
       )}
       {showEditTransport && (
         <EditTransportDialog open={showEditTransport} gdo={gdo} onClose={() => setShowEditTransport(false)} />
+      )}
+      {showEditGDO && (
+        <EditGDOModal
+          gdoId={gdo.id}
+          defaultWarehouseId={gdo.warehouse_id ?? ''}
+          onClose={() => setShowEditGDO(false)}
+        />
       )}
       {pendingConfirm && (
         <Dialog open onOpenChange={v => { if (!v) setPendingConfirm(null) }}>
@@ -851,6 +873,20 @@ export default function OutboundDetail() {
                   onClick={() => patchGDO({ id: gdo.id, status: 'IN_PROGRESS' })}>
                   <Play className="h-3 w-3" />
                   {patching ? '…' : 'Tiếp tục'}
+                </Button>
+              )}
+              {(gdo.status === 'PENDING' || gdo.status === 'PAUSED') && (
+                <Button size="sm" variant="outline"
+                  className="h-7 text-xs gap-1 px-2"
+                  onClick={() => setShowEditGDO(true)}>
+                  <PenSquare className="h-3 w-3" /> Sửa
+                </Button>
+              )}
+              {gdo.status === 'PENDING' && (
+                <Button size="sm" variant="outline"
+                  className="h-7 text-xs gap-1 px-2 border-red-200 text-red-600 hover:bg-red-50"
+                  onClick={handleDelete}>
+                  <Trash2 className="h-3 w-3" /> Xóa
                 </Button>
               )}
               {hasScanEntries && (

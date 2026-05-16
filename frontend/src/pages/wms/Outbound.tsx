@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Input }  from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { useGDOs, useUploadGDOExcel, useWarehouses, useCreateGDO, useUpdateGDO, useDeleteGDO, useMaterials, useGDO, useAssignGDO, useLookup, useAddLookup, useDeleteLookup } from '@/api/hooks'
+import { useGDOs, useUploadGDOExcel, useWarehouses, useCreateGDO, useUpdateGDO, useMaterials, useGDO, useAssignGDO, useLookup, useAddLookup, useDeleteLookup } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
@@ -64,7 +64,6 @@ export default function Outbound() {
   const [uploadWarn,      setUploadWarn]      = useState<string | null>(null)
   const [postUploadLoading, setPostUploadLoading] = useState(false)
   const [showCreate,  setShowCreate]  = useState(false)
-  const [editingGDOId, setEditingGDOId] = useState<string | null>(null)
 
   const { data: warehouses = [] } = useWarehouses(true)
 
@@ -80,7 +79,6 @@ export default function Outbound() {
     date:   f.date   || undefined,
   })
   const { mutate: uploadExcel, isPending: uploading } = useUploadGDOExcel()
-  const { mutate: deleteGDO } = useDeleteGDO()
   const { mutate: assignGDO } = useAssignGDO()
 
   useEffect(() => {
@@ -180,17 +178,6 @@ export default function Outbound() {
       }
     )
     e.target.value = ''
-  }
-
-  function handleDelete(gdo: GDO, e: React.MouseEvent) {
-    e.stopPropagation()
-    if (!confirm(`Xóa đơn "${gdo.group_code}"?\nHành động này không thể hoàn tác.`)) return
-    deleteGDO(gdo.id, {
-      onError: (err) => {
-        const msg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi xóa đơn'
-        alert(msg)
-      },
-    })
   }
 
   const dateLabel = f.date
@@ -310,7 +297,6 @@ export default function Outbound() {
             <TableHeader>
               <TableRow className="bg-slate-50">
                 <TableHead className="px-1.5 py-1.5 w-7" />
-                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5 w-16">Thao tác</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Ngày xuất</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Số xe</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Tên NPP</TableHead>
@@ -336,8 +322,6 @@ export default function Outbound() {
                   key={gdo.id}
                   gdo={gdo}
                   onClick={() => navigate(`/wms/outbound/${gdo.id}`)}
-                  onEdit={e => { e.stopPropagation(); setEditingGDOId(gdo.id) }}
-                  onDelete={e => handleDelete(gdo, e)}
                   onAssign={e => { e.stopPropagation(); assignGDO({ id: gdo.id }) }}
                 />
               ))}
@@ -353,24 +337,15 @@ export default function Outbound() {
           onClose={() => setShowCreate(false)}
         />
       )}
-      {editingGDOId && (
-        <EditGDOModal
-          gdoId={editingGDOId}
-          defaultWarehouseId={f.warehouseId || user?.warehouse_id || ''}
-          onClose={() => setEditingGDOId(null)}
-        />
-      )}
     </div>
   )
 }
 
 // ─── GDO Row ──────────────────────────────────────────────────
 
-function GDORow({ gdo, onClick, onEdit, onDelete, onAssign }: {
+function GDORow({ gdo, onClick, onAssign }: {
   gdo: GDO
   onClick: () => void
-  onEdit: (e: React.MouseEvent) => void
-  onDelete: (e: React.MouseEvent) => void
   onAssign: (e: React.MouseEvent) => void
 }) {
   const { pin, unpin, isPinned } = useActiveVehiclesStore()
@@ -391,22 +366,6 @@ function GDORow({ gdo, onClick, onEdit, onDelete, onAssign }: {
         >
           <Bookmark className="h-3 w-3" fill={pinned ? 'currentColor' : 'none'} />
         </button>
-      </TableCell>
-
-      {/* Actions */}
-      <TableCell className="px-1.5 py-1 whitespace-nowrap" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center gap-1">
-          {(isPending || gdo.status === 'PAUSED') && (
-            <button onClick={onEdit} title="Sửa đơn" className="p-0.5 rounded text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors">
-              <PenSquare className="h-3 w-3" />
-            </button>
-          )}
-          {isPending && (
-            <button onClick={onDelete} title="Xóa đơn" className="p-0.5 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors">
-              <Trash2 className="h-3 w-3" />
-            </button>
-          )}
-        </div>
       </TableCell>
 
       <TableCell className="px-2 py-1 whitespace-nowrap">
@@ -902,7 +861,7 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
 
 // ─── Edit modal ───────────────────────────────────────────────
 
-function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: string; defaultWarehouseId: string; onClose: () => void }) {
+export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: string; defaultWarehouseId: string; onClose: () => void }) {
   const { data: gdo, isLoading } = useGDO(gdoId)
   const { data: exportTypes = [] } = useLookup('export_type')
 

@@ -60,9 +60,8 @@ function DateBtn({ value, placeholder, onChange }: { value: string; placeholder:
 function FmtTs({ ts }: { ts: string | null }) {
   if (!ts) return <span className="text-slate-300">—</span>
   return (
-    <span className="tabular-nums">
-      <span className="block">{formatTimestampDate(ts, true)}</span>
-      <span className="block text-slate-400">{formatTimestampTime(ts, false)}</span>
+    <span className="tabular-nums whitespace-nowrap">
+      {formatTimestampDate(ts, true)} {formatTimestampTime(ts)}
     </span>
   )
 }
@@ -446,7 +445,7 @@ export default function OutboundScanLog() {
         ) : rows.length === 0 ? (
           <EmptyState title="Không có dữ liệu scan trong khoảng thời gian này" />
         ) : (
-          <Table className="min-w-[2800px]">
+          <Table className="min-w-[3400px]">
             <TableHeader>
               <TableRow>
                 <TableHead className="min-w-[58px]  text-[9px]">Ngày xuất</TableHead>
@@ -468,18 +467,18 @@ export default function OutboundScanLog() {
                 <TableHead className="min-w-[52px]  text-[9px]">Chu kỳ</TableHead>
                 <TableHead className="min-w-[58px]  text-[9px]">Ngày nhập</TableHead>
                 <TableHead className="min-w-[110px] text-[9px]">Ghi chú</TableHead>
-                <TableHead className="min-w-[72px]  text-[9px]">Người quét</TableHead>
-                <TableHead className="min-w-[68px]  text-[9px]">TG quét</TableHead>
-                <TableHead className="min-w-[68px]  text-[9px]">TG check NL</TableHead>
-                <TableHead className="min-w-[72px]  text-[9px]">Người check NL</TableHead>
-                <TableHead className="min-w-[72px]  text-[9px]">Biển số</TableHead>
-                <TableHead className="min-w-[72px]  text-[9px]">Số cont</TableHead>
-                <TableHead className="min-w-[80px]  text-[9px]">Lái xe nâng</TableHead>
-                <TableHead className="min-w-[72px]  text-[9px]">Bốc xếp</TableHead>
-                <TableHead className="min-w-[62px]  text-[9px]">TG giao đơn</TableHead>
-                <TableHead className="min-w-[62px]  text-[9px]">TG bắt đầu</TableHead>
-                <TableHead className="min-w-[62px]  text-[9px]">TG quét xong</TableHead>
-                <TableHead className="min-w-[62px]  text-[9px]">TG hoàn thành</TableHead>
+                <TableHead className="min-w-[80px]  text-[9px]">Người quét</TableHead>
+                <TableHead className="min-w-[120px] text-[9px]">TG quét</TableHead>
+                <TableHead className="min-w-[120px] text-[9px]">TG check NL</TableHead>
+                <TableHead className="min-w-[90px]  text-[9px]">Người check NL</TableHead>
+                <TableHead className="min-w-[80px]  text-[9px]">Biển số</TableHead>
+                <TableHead className="min-w-[90px]  text-[9px]">Số cont</TableHead>
+                <TableHead className="min-w-[90px]  text-[9px]">Lái xe nâng</TableHead>
+                <TableHead className="min-w-[80px]  text-[9px]">Bốc xếp</TableHead>
+                <TableHead className="min-w-[120px] text-[9px]">TG giao đơn</TableHead>
+                <TableHead className="min-w-[120px] text-[9px]">TG bắt đầu</TableHead>
+                <TableHead className="min-w-[120px] text-[9px]">TG quét xong</TableHead>
+                <TableHead className="min-w-[120px] text-[9px]">TG hoàn thành</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -488,61 +487,61 @@ export default function OutboundScanLog() {
                 const pct        = calcPctAtScan(row.production_date, row.shelf_life_days, row.scanned_at)
                 return (
                   <TableRow key={row.id}>
-                    <TableCell className="px-2 py-1 text-[10px]">
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
                       {row.delivery_date ? formatDate(row.delivery_date) : <span className="text-slate-300">—</span>}
                     </TableCell>
-                    <TableCell className="px-2 py-1 text-[10px]">{row.warehouse_name}</TableCell>
-                    <TableCell className="px-2 py-1 text-[10px]">{row.material_category ?? <span className="text-slate-300">—</span>}</TableCell>
-                    <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold">{row.group_code}</TableCell>
-                    <TableCell className="px-2 py-1 text-[10px]">{row.distributor_name ?? <span className="text-slate-300">—</span>}</TableCell>
-                    <TableCell className="px-2 py-1 text-[10px] font-mono">{row.delivery_code ?? <span className="text-slate-300">—</span>}</TableCell>
-                    <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold">{row.pallet_code}</TableCell>
-                    <TableCell className="px-2 py-1 text-[10px] font-mono">
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{row.warehouse_name}</TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{row.material_category ?? <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">{row.group_code}</TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{row.distributor_name ?? <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] font-mono whitespace-nowrap">{row.delivery_code ?? <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">{row.pallet_code}</TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] font-mono whitespace-nowrap">
                       {row.material_code ?? row.material_code_raw ?? <span className="text-slate-300">—</span>}
                     </TableCell>
-                    <TableCell className="px-2 py-1 text-[10px]">{row.material_name ?? <span className="text-slate-300">—</span>}</TableCell>
-                    <TableCell className="px-2 py-1 text-[10px] font-semibold tabular-nums text-right">
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{row.material_name ?? <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] font-semibold tabular-nums text-right whitespace-nowrap">
                       {row.cartons_scanned}
                     </TableCell>
-                    <TableCell className="px-2 py-1 text-[10px]">
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
                       {row.production_date ? formatDate(row.production_date) : <span className="text-slate-300">—</span>}
                     </TableCell>
-                    <TableCell className="px-2 py-1 text-[10px]">
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
                       {expiryDate ? formatDate(expiryDate) : <span className="text-slate-300">—</span>}
                     </TableCell>
-                    <TableCell className="px-2 py-1 text-[10px]">
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
                       {row.best_available_date ? formatDate(row.best_available_date) : <span className="text-slate-300">—</span>}
                     </TableCell>
-                    <TableCell className="px-2 py-1 text-[10px] text-right">
+                    <TableCell className="px-2 py-1 text-[10px] text-right whitespace-nowrap">
                       {pct !== null
                         ? <span className={datePctCls(pct)}>{pct}%</span>
                         : <span className="text-slate-300">—</span>}
                     </TableCell>
-                    <TableCell className="px-2 py-1 text-[10px] font-mono">{row.location_code ?? <span className="text-slate-300">—</span>}</TableCell>
-                    <TableCell className="px-2 py-1 text-[10px]">{row.machine_code ?? <span className="text-slate-300">—</span>}</TableCell>
-                    <TableCell className="px-2 py-1 text-[10px]">{row.cycle ?? <span className="text-slate-300">—</span>}</TableCell>
-                    <TableCell className="px-2 py-1 text-[10px]">
+                    <TableCell className="px-2 py-1 text-[10px] font-mono whitespace-nowrap">{row.location_code ?? <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{row.machine_code ?? <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{row.cycle ?? <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
                       {row.import_date ? formatTimestampDate(row.import_date, true) : <span className="text-slate-300">—</span>}
                     </TableCell>
-                    <TableCell className="px-2 py-1 text-[10px] max-w-[110px] truncate" title={row.header_text ?? ''}>
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
                       {row.header_text ?? <span className="text-slate-300">—</span>}
                     </TableCell>
-                    <TableCell className="px-2 py-1 text-[10px]">{row.scanner_name ?? <span className="text-slate-300">—</span>}</TableCell>
-                    <TableCell className="px-2 py-1 text-[10px]"><FmtTs ts={row.scanned_at} /></TableCell>
-                    <TableCell className="px-2 py-1 text-[10px]">
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{row.scanner_name ?? <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap"><FmtTs ts={row.scanned_at} /></TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
                       {row.is_loose_picking ? <FmtTs ts={row.loose_confirmed_at} /> : <span className="text-slate-300">—</span>}
                     </TableCell>
-                    <TableCell className="px-2 py-1 text-[10px]">
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
                       {row.is_loose_picking ? (row.loose_confirmed_by_name ?? <span className="text-slate-300">—</span>) : <span className="text-slate-300">—</span>}
                     </TableCell>
-                    <TableCell className="px-2 py-1 text-[10px]">{row.license_plate ?? <span className="text-slate-300">—</span>}</TableCell>
-                    <TableCell className="px-2 py-1 text-[10px] font-mono">{row.container_number ?? <span className="text-slate-300">—</span>}</TableCell>
-                    <TableCell className="px-2 py-1 text-[10px]">{row.forklift_driver_names ?? <span className="text-slate-300">—</span>}</TableCell>
-                    <TableCell className="px-2 py-1 text-[10px]">{row.loader_name ?? <span className="text-slate-300">—</span>}</TableCell>
-                    <TableCell className="px-2 py-1 text-[10px]"><FmtTs ts={row.assigned_at} /></TableCell>
-                    <TableCell className="px-2 py-1 text-[10px]"><FmtTs ts={row.started_at} /></TableCell>
-                    <TableCell className="px-2 py-1 text-[10px]"><FmtTs ts={row.last_scanned_at} /></TableCell>
-                    <TableCell className="px-2 py-1 text-[10px]"><FmtTs ts={row.completed_at} /></TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{row.license_plate ?? <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] font-mono whitespace-nowrap">{row.container_number ?? <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{row.forklift_driver_names ?? <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{row.loader_name ?? <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap"><FmtTs ts={row.assigned_at} /></TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap"><FmtTs ts={row.started_at} /></TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap"><FmtTs ts={row.last_scanned_at} /></TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap"><FmtTs ts={row.completed_at} /></TableCell>
                   </TableRow>
                 )
               })}

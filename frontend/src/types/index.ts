@@ -396,6 +396,7 @@ export interface OutboundScanEntry {
   loose_confirmed_at:   string | null
   scanned_by:           string | null
   scanned_at:           string
+  pct_date:             number | null
   production_date:      string | null
   best_available_date:  string | null  // production_date tốt nhất trong kho lúc quét (cũ nhất, không QA)
 }

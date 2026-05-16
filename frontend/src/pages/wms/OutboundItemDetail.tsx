@@ -711,6 +711,7 @@ export default function OutboundItemDetail() {
                       <TableHead className="px-2 py-1 text-[9px] font-medium text-slate-500">Mã pallet</TableHead>
                       <TableHead className="px-2 py-1 text-[9px] font-medium text-slate-500 text-right">Thùng</TableHead>
                       <TableHead className="px-2 py-1 text-[9px] font-medium text-slate-500 whitespace-nowrap">Loại</TableHead>
+                      <TableHead className="px-2 py-1 text-[9px] font-medium text-slate-500 whitespace-nowrap">%Date</TableHead>
                       <TableHead className="px-2 py-1 text-[9px] font-medium text-slate-500 whitespace-nowrap">Date</TableHead>
                       <TableHead className="px-2 py-1 text-[9px] font-medium text-slate-500 whitespace-nowrap">Date cũ nhất</TableHead>
                       <TableHead className="px-2 py-1 text-[9px] font-medium text-slate-500 whitespace-nowrap">Người quét</TableHead>
@@ -737,6 +738,13 @@ export default function OutboundItemDetail() {
                               ? <span className="text-[9px] font-medium text-green-700 bg-green-100 rounded px-1.5 py-0.5">✓ Lẻ</span>
                               : <span className="text-[9px] font-medium text-purple-700 bg-purple-100 rounded px-1.5 py-0.5">Lẻ</span>
                           ) : null}
+                        </TableCell>
+                        <TableCell className="px-2 py-1.5 whitespace-nowrap">
+                          {se.pct_date !== null ? (
+                            <span className={`text-[10px] font-bold tabular-nums ${
+                              se.pct_date <= 30 ? 'text-red-600' : se.pct_date <= 60 ? 'text-amber-600' : 'text-green-700'
+                            }`}>{se.pct_date}%</span>
+                          ) : <span className="text-[10px] text-slate-300">—</span>}
                         </TableCell>
                         <TableCell className="px-2 py-1.5 whitespace-nowrap">
                           <span className="text-[10px] font-mono tabular-nums text-slate-600">

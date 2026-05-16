@@ -83,13 +83,13 @@ async function fetchGDOFull(id: string) {
   const itemIds = (items ?? []).map((i: any) => i.id)
   const { data: scans } = itemIds.length
     ? await (supabase.from('OutboundScanEntry') as any)
-        .select('*').in('item_id', itemIds)
+        .select('*, inventory_entry:InventoryEntry(pct_date)').in('item_id', itemIds)
     : { data: [] }
 
   const scansByItem = new Map<string, any[]>()
   for (const s of (scans ?? [])) {
     const list = scansByItem.get(s.item_id) ?? []
-    list.push(s)
+    list.push({ ...s, pct_date: s.inventory_entry?.pct_date ?? null, inventory_entry: undefined })
     scansByItem.set(s.item_id, list)
   }
 

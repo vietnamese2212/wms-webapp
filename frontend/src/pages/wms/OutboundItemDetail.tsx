@@ -474,7 +474,7 @@ export default function OutboundItemDetail() {
             </div>
 
             <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
-              {item.loose_picking > 0 && looseUnconfirmedCount > 0 && (
+              {!!gdo.started_at && item.loose_picking > 0 && looseUnconfirmedCount > 0 && (
                 <button
                   onClick={() => setConfirmLooseOpen(true)}
                   disabled={confirming || isPaused}

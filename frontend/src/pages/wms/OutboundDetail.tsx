@@ -49,15 +49,24 @@ function Badge({ status }: { status: string }) {
 
 // ─── Progress bar ──────────────────────────────────────────────
 
-function ProgressBar({ scanned, ordered, compact = false }: { scanned: number; ordered: number; compact?: boolean }) {
-  const pct = ordered > 0 ? Math.min(100, (scanned / ordered) * 100) : 0
-  const cls = pct >= 100 ? 'bg-green-500' : pct > 0 ? 'bg-amber-500' : 'bg-slate-200'
+function ProgressBar({ scanned, ordered, compact = false, looseUnconfirmed = 0 }: { scanned: number; ordered: number; compact?: boolean; looseUnconfirmed?: number }) {
+  const confirmed    = scanned - looseUnconfirmed
+  const confirmedPct = ordered > 0 ? Math.min(100, (confirmed / ordered) * 100) : 0
+  const loosePct     = ordered > 0 ? Math.min(100 - confirmedPct, (looseUnconfirmed / ordered) * 100) : 0
+  const totalPct     = confirmedPct + loosePct
+  const confirmedCls = totalPct >= 100 && looseUnconfirmed === 0 ? 'bg-green-500'
+    : confirmedPct > 0 ? 'bg-amber-500' : ''
   return (
     <div className="flex items-center gap-2">
-      <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-        <div className={`h-full rounded-full transition-all ${cls}`} style={{ width: `${pct}%` }} />
+      <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden flex">
+        {confirmedPct > 0 && (
+          <div className={`h-full transition-all ${confirmedCls}`} style={{ width: `${confirmedPct}%` }} />
+        )}
+        {loosePct > 0 && (
+          <div className="h-full bg-purple-500 transition-all" style={{ width: `${loosePct}%` }} />
+        )}
       </div>
-      <span className={`${compact ? 'text-xs' : 'text-lg'} tabular-nums font-medium ${pct >= 100 ? 'text-green-700 font-semibold' : 'text-slate-600'}`}>
+      <span className={`${compact ? 'text-xs' : 'text-lg'} tabular-nums font-medium ${totalPct >= 100 && looseUnconfirmed === 0 ? 'text-green-700 font-semibold' : 'text-slate-600'}`}>
         {scanned}/{ordered}
       </span>
     </div>
@@ -528,6 +537,9 @@ function ItemsTable({ doRecords, gdoId, canScan, expandedItemIds, toggleExpand }
             const matName = item.material?.short_name ?? item.material_code_raw ?? '—'
             const expanded = expandedItemIds.has(item.id)
             const scans = item.scan_entries ?? []
+            const looseUnconfirmed = scans
+              .filter(s => s.is_loose_picking && !s.loose_confirmed)
+              .reduce((sum, s) => sum + s.cartons_scanned, 0)
 
             return (
               <Fragment key={item.id}>
@@ -541,7 +553,7 @@ function ItemsTable({ doRecords, gdoId, canScan, expandedItemIds, toggleExpand }
                 <TableCell className={`px-2 py-1 align-top`}>
                   <div className={`text-[10px] font-medium leading-tight ${textCls}`}>{matName}</div>
                   {item.material_type !== 'POSM' && (
-                    <ProgressBar compact scanned={item.cartons_scanned} ordered={item.cartons_ordered} />
+                    <ProgressBar compact scanned={item.cartons_scanned} ordered={item.cartons_ordered} looseUnconfirmed={looseUnconfirmed} />
                   )}
                   {(item.scan_entries?.length ?? 0) > 0 && (
                     <div className="text-[9px] text-slate-400 mt-0.5">{item.scan_entries.length} pallet</div>

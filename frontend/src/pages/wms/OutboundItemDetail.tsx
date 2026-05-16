@@ -331,8 +331,8 @@ export default function OutboundItemDetail() {
       const q = !!e.qa_status
       const k = `${e.pct_date ?? 'n'}|${e.location_code ?? ''}|${q}`
       const r = map.get(k)
-      if (r) { r.cartons += e.cartons_remaining ?? e.cartons_imported ?? 0; r.entries.push(e) }
-      else map.set(k, { key: k, pct_date: e.pct_date, location_code: e.location_code, is_qa: q, cartons: e.cartons_remaining ?? e.cartons_imported ?? 0, entries: [e] })
+      if (r) { r.cartons += e.available; r.entries.push(e) }
+      else map.set(k, { key: k, pct_date: e.pct_date, location_code: e.location_code, is_qa: q, cartons: e.available, entries: [e] })
     }
     return [...map.values()].sort((a, b) => {
       const pa = a.pct_date ?? Infinity, pb = b.pct_date ?? Infinity
@@ -587,7 +587,7 @@ export default function OutboundItemDetail() {
                   <TableRow className="bg-slate-100">
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1">%Date</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1">Vị trí</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1 text-right">Thùng</TableHead>
+                    <TableHead className="text-[9px] font-medium text-blue-500 px-2 py-1 text-right">Khả dụng</TableHead>
                     <TableHead className="w-5 px-1 py-1" />
                   </TableRow>
                 </TableHeader>
@@ -635,7 +635,7 @@ export default function OutboundItemDetail() {
                               </button>
                             </TableCell>
                             <TableCell className="px-2 py-1 text-right whitespace-nowrap">
-                              <span className="text-[10px] font-semibold tabular-nums">{e.cartons_remaining ?? e.cartons_imported ?? 0}</span>
+                              <span className="text-[10px] font-semibold tabular-nums text-blue-700">{e.available}</span>
                               <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
                             </TableCell>
                             <TableCell className="px-1 py-1" />

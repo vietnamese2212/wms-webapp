@@ -135,7 +135,7 @@ export default function OutboundScanLog() {
   const rows       = data?.rows  ?? []
   const total      = data?.total ?? 0
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
-  const isLargeResult = canFetch && !isLoading && total > 10_000
+  const isBlocked = canFetch && !isLoading && total > 200_000
 
   function applyFilters() {
     if (!draft.warehouses.length) {
@@ -379,7 +379,7 @@ export default function OutboundScanLog() {
                 </>
             }
           </p>
-          {totalPages > 1 && (
+          {!isBlocked && totalPages > 1 && (
             <div className="flex items-center gap-1 shrink-0">
               <button
                 className="h-6 w-6 flex items-center justify-center rounded border border-slate-200 hover:bg-slate-50 disabled:opacity-40"
@@ -397,14 +397,6 @@ export default function OutboundScanLog() {
             </div>
           )}
         </div>
-
-        {/* Large result warning */}
-        {isLargeResult && (
-          <div className="flex items-center gap-1.5 rounded-md bg-amber-50 border border-amber-200 px-2.5 py-1.5 text-xs text-amber-700">
-            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-            Kết quả lớn ({total.toLocaleString()} bản ghi, {totalPages} trang). Hãy thu hẹp bộ lọc để cải thiện tốc độ.
-          </div>
-        )}
       </div>
 
       {/* QR Scanner Dialog */}
@@ -437,6 +429,16 @@ export default function OutboundScanLog() {
           <TableSkeleton cols={10} rows={12} />
         ) : isError ? (
           <div className="p-6 text-center text-sm text-red-500">Lỗi tải dữ liệu. Vui lòng thử lại.</div>
+        ) : isBlocked ? (
+          <div className="p-8 flex flex-col items-center gap-3 text-center">
+            <AlertTriangle className="h-10 w-10 text-red-400" />
+            <p className="text-sm font-semibold text-red-600">
+              Kết quả quá lớn: {total.toLocaleString()} bản ghi
+            </p>
+            <p className="text-xs text-slate-500 max-w-sm">
+              Vượt ngưỡng cho phép 200,000 bản ghi. Vui lòng thu hẹp khoảng thời gian hoặc thêm bộ lọc (Kho, Mã hàng, Máy, Chu kỳ…) rồi nhấn <span className="font-semibold">Áp dụng</span> lại.
+            </p>
+          </div>
         ) : rows.length === 0 ? (
           <EmptyState title="Không có dữ liệu scan trong khoảng thời gian này" />
         ) : (

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { MapPin, Plus, Pencil, Trash2, Building2 } from 'lucide-react'
+import { MapPin, Plus, Pencil, Trash2, Building2, Flag } from 'lucide-react'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { TableSkeleton }  from '@/components/shared/TableSkeleton'
@@ -52,6 +52,7 @@ export default function Locations() {
   const [catFilter,    setCatFilter]    = useState('')
   const [search,       setSearch]       = useState('')
   const [statusFilter, setStatusFilter] = useState<string[]>([])
+  const [flagFilter,   setFlagFilter]   = useState(false)
 
   // Location add/edit dialog
   const [dialogMode,    setDialogMode]    = useState<'add' | 'edit' | null>(null)
@@ -100,9 +101,10 @@ export default function Locations() {
     return locations.filter(l => {
       if (catFilter && l.category !== catFilter) return false
       if (search && !l.location_code.toLowerCase().includes(search.toLowerCase())) return false
+      if (flagFilter && !l.requires_stocktake) return false
       return true
     })
-  }, [locations, catFilter, search])
+  }, [locations, catFilter, search, flagFilter])
 
   const activeFiltered = filtered.filter(l => l.is_active)
   const totalSlots = activeFiltered.reduce((s, l) => s + l.max_pallets, 0)
@@ -330,6 +332,14 @@ export default function Locations() {
             onChange={setStatusFilter}
             searchable={false}
           />
+
+          <label className="flex items-center gap-1.5 cursor-pointer select-none">
+            <input type="checkbox" checked={flagFilter} onChange={e => setFlagFilter(e.target.checked)}
+              className="h-3.5 w-3.5 cursor-pointer" />
+            <span className="text-sm text-slate-600 flex items-center gap-1">
+              <Flag className="h-3.5 w-3.5 text-red-500" /> Cần check hàng ngày
+            </span>
+          </label>
         </div>
 
         {/* Summary */}
@@ -388,6 +398,9 @@ export default function Locations() {
                     </TableCell>
                     <TableCell className="px-2 py-1">
                       <span className="font-mono font-semibold text-[10px]">{loc.location_code}</span>
+                      {loc.requires_stocktake && (
+                        <Flag className="inline-block ml-1 h-3 w-3 text-red-500 shrink-0" style={{ verticalAlign: 'middle' }} />
+                      )}
                     </TableCell>
                     <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums font-semibold">
                       {loc.max_pallets} <span className="text-slate-400 font-normal">pl</span>

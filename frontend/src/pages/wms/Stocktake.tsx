@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useWarehouses, useLocationsReal, useMaterialCategories } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -19,22 +19,42 @@ interface StocktakeEntryData {
   material:           { material_code: string; short_name: string | null } | null
 }
 
-type PageState =
-  | { mode: 'idle' }
-  | { mode: 'scanning' }
+type ResultState =
+  | { mode: 'none' }
   | { mode: 'result'; entry: StocktakeEntryData }
   | { mode: 'success' }
   | { mode: 'error'; message: string }
+
+const FILTERS_KEY = 'stocktake_filters_v1'
+
+function loadFilters(defaultWarehouseId: string) {
+  try {
+    const s = sessionStorage.getItem(FILTERS_KEY)
+    if (s) {
+      const p = JSON.parse(s) as Record<string, unknown>
+      return {
+        warehouseId:  typeof p.warehouseId  === 'string'  ? p.warehouseId  : defaultWarehouseId,
+        category:     typeof p.category     === 'string'  ? p.category     : '',
+        locationId:   typeof p.locationId   === 'string'  ? p.locationId   : '',
+        requiresOnly: Boolean(p.requiresOnly),
+      }
+    }
+  } catch {}
+  return { warehouseId: defaultWarehouseId, category: '', locationId: '', requiresOnly: false }
+}
 
 export default function Stocktake() {
   const user = useAuthStore(s => s.user)
   const qc   = useQueryClient()
   const inputRef = useRef<HTMLInputElement>(null)
 
-  const [warehouseId, setWarehouseId] = useState(user?.warehouse_id ?? '')
-  const [category,    setCategory]    = useState('')
-  const [locationId,  setLocationId]  = useState('')
-  const [pageState,   setPageState]   = useState<PageState>({ mode: 'idle' })
+  const init = loadFilters(user?.warehouse_id ?? '')
+  const [warehouseId,  setWarehouseId]  = useState(init.warehouseId)
+  const [category,     setCategory]     = useState(init.category)
+  const [locationId,   setLocationId]   = useState(init.locationId)
+  const [requiresOnly, setRequiresOnly] = useState(init.requiresOnly)
+
+  const [resultState, setResultState] = useState<ResultState>({ mode: 'none' })
   const [updateLoc,   setUpdateLoc]   = useState(false)
   const [showQty,     setShowQty]     = useState(false)
   const [physCount,   setPhysCount]   = useState('')
@@ -42,16 +62,28 @@ export default function Stocktake() {
   const [inputVal,    setInputVal]    = useState('')
   const [searching,   setSearching]   = useState(false)
 
+  useEffect(() => {
+    sessionStorage.setItem(FILTERS_KEY, JSON.stringify({ warehouseId, category, locationId, requiresOnly }))
+  }, [warehouseId, category, locationId, requiresOnly])
+
+  useEffect(() => {
+    if (locationId) setTimeout(() => inputRef.current?.focus(), 80)
+  }, [locationId])
+
   const { data: warehouses = [] } = useWarehouses(true)
   const { data: categories = [] } = useMaterialCategories()
   const { data: locations  = [] } = useLocationsReal(
     warehouseId ? { warehouse_id: warehouseId, category: category || undefined } : undefined
   )
 
+  const filteredLocations = requiresOnly
+    ? (locations as any[]).filter((l: any) => l.requires_stocktake)
+    : (locations as any[])
+
   const selectedLoc = (locations as any[]).find((l: any) => l.id === locationId)
 
-  function startScanning() {
-    setPageState({ mode: 'scanning' })
+  function clearResult() {
+    setResultState({ mode: 'none' })
     setUpdateLoc(false)
     setShowQty(false)
     setPhysCount('')
@@ -63,15 +95,17 @@ export default function Stocktake() {
     const palletCode = code.trim()
     if (!palletCode) return
     setSearching(true)
+    setResultState({ mode: 'none' })
     try {
       const { data } = await apiClient.post('/wms/inventory/stocktake-check', { qr_code: palletCode })
       const entry: StocktakeEntryData = data.data.entry
       setUpdateLoc(!!locationId && entry.location_id !== locationId)
       setShowQty(false)
       setPhysCount('')
-      setPageState({ mode: 'result', entry })
+      setResultState({ mode: 'result', entry })
     } catch (e: any) {
-      setPageState({ mode: 'error', message: e?.response?.data?.error?.message ?? 'Không tìm thấy pallet' })
+      setResultState({ mode: 'error', message: e?.response?.data?.error?.message ?? 'Không tìm thấy pallet' })
+      setTimeout(() => inputRef.current?.focus(), 50)
     } finally {
       setSearching(false)
     }
@@ -83,25 +117,25 @@ export default function Stocktake() {
   }
 
   async function handleSave() {
-    if (pageState.mode !== 'result') return
+    if (resultState.mode !== 'result') return
     setSaving(true)
     const body: Record<string, unknown> = { employee_id: user?.id }
-    if (updateLoc && locationId)        body.new_location_id = locationId
-    if (showQty && physCount !== '')    body.physical_count  = Number(physCount)
+    if (updateLoc && locationId)     body.new_location_id = locationId
+    if (showQty && physCount !== '') body.physical_count  = Number(physCount)
     try {
-      await apiClient.post(`/wms/inventory/${pageState.entry.id}/stocktake`, body)
+      await apiClient.post(`/wms/inventory/${resultState.entry.id}/stocktake`, body)
       qc.invalidateQueries({ queryKey: ['inventory-entries'] })
       qc.invalidateQueries({ queryKey: ['stocktake-summary'] })
-      setPageState({ mode: 'success' })
-      setTimeout(startScanning, 1500)
+      setResultState({ mode: 'success' })
+      setTimeout(clearResult, 1500)
     } catch (e: any) {
-      setPageState({ mode: 'error', message: e?.response?.data?.error?.message ?? 'Lỗi khi lưu' })
+      setResultState({ mode: 'error', message: e?.response?.data?.error?.message ?? 'Lỗi khi lưu' })
     } finally {
       setSaving(false)
     }
   }
 
-  const entry       = pageState.mode === 'result' ? pageState.entry : null
+  const entry       = resultState.mode === 'result' ? resultState.entry : null
   const locMismatch = !!entry && !!locationId && entry.location_id !== locationId
 
   return (
@@ -112,11 +146,12 @@ export default function Stocktake() {
           <MapPin className="h-4 w-4 text-blue-600 shrink-0" />
           <p className="text-sm font-semibold text-slate-700">Check vị trí</p>
         </div>
-        <div className="flex gap-1.5 flex-wrap">
+        <div className="flex gap-1.5 flex-wrap items-center">
           <Select value={warehouseId || '__none__'} onValueChange={v => {
             setWarehouseId(v === '__none__' ? '' : v)
             setLocationId('')
-            setPageState({ mode: 'idle' })
+            setResultState({ mode: 'none' })
+            setInputVal('')
           }}>
             <SelectTrigger className="h-7 text-xs w-[110px]"><SelectValue placeholder="Kho…" /></SelectTrigger>
             <SelectContent>
@@ -129,7 +164,8 @@ export default function Stocktake() {
           <Select value={category || '__all__'} onValueChange={v => {
             setCategory(v === '__all__' ? '' : v)
             setLocationId('')
-            setPageState({ mode: 'idle' })
+            setResultState({ mode: 'none' })
+            setInputVal('')
           }}>
             <SelectTrigger className="h-7 text-xs w-[100px]"><SelectValue placeholder="Loại…" /></SelectTrigger>
             <SelectContent>
@@ -141,16 +177,30 @@ export default function Stocktake() {
           </Select>
           <Select value={locationId || '__none__'} onValueChange={v => {
             setLocationId(v === '__none__' ? '' : v)
-            setPageState({ mode: 'idle' })
+            setResultState({ mode: 'none' })
+            setInputVal('')
           }} disabled={!warehouseId}>
             <SelectTrigger className="h-7 text-xs w-[130px]"><SelectValue placeholder="Vị trí…" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="__none__" className="text-xs">Chọn vị trí…</SelectItem>
-              {(locations as any[]).map((l: any) => (
-                <SelectItem key={l.id} value={l.id} className="text-xs">{l.location_code}</SelectItem>
+              {filteredLocations.map((l: any) => (
+                <SelectItem key={l.id} value={l.id} className="text-xs">
+                  {l.location_code}{l.requires_stocktake ? ' 🚩' : ''}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
+          <label className="flex items-center gap-1.5 cursor-pointer select-none">
+            <input type="checkbox" checked={requiresOnly} onChange={e => {
+              setRequiresOnly(e.target.checked)
+              setLocationId('')
+              setResultState({ mode: 'none' })
+              setInputVal('')
+            }} className="h-3.5 w-3.5 cursor-pointer" />
+            <span className="text-xs text-slate-600 flex items-center gap-1">
+              <Flag className="h-3 w-3 text-red-500" /> Chỉ vị trí cần check
+            </span>
+          </label>
         </div>
       </div>
 
@@ -163,53 +213,43 @@ export default function Stocktake() {
           </div>
         ) : (
           <>
-            {pageState.mode === 'idle' && (
-              <Button className="w-full" onClick={startScanning}>
-                🔍 Bắt đầu quét
-              </Button>
-            )}
+            {/* Scan input — luôn hiện khi đã chọn vị trí */}
+            <form onSubmit={handleSubmit} className="space-y-1">
+              <div className="flex gap-2">
+                <Input
+                  ref={inputRef}
+                  value={inputVal}
+                  onChange={e => setInputVal(e.target.value)}
+                  placeholder="Quét hoặc nhập mã pallet…"
+                  className="font-mono text-sm h-9"
+                  disabled={searching || saving}
+                />
+                <Button type="submit" size="sm" className="h-9 px-3 shrink-0"
+                  disabled={!inputVal.trim() || searching || saving}>
+                  <Search className="h-4 w-4" />
+                </Button>
+              </div>
+              <p className="text-[11px] text-slate-400">Nhập mã pallet → Enter để tìm</p>
+            </form>
 
-            {pageState.mode === 'scanning' && (
-              <form onSubmit={handleSubmit} className="space-y-1.5">
-                <div className="flex gap-2">
-                  <Input
-                    ref={inputRef}
-                    value={inputVal}
-                    onChange={e => setInputVal(e.target.value)}
-                    placeholder="Quét hoặc nhập mã pallet…"
-                    className="font-mono text-sm h-9"
-                    autoFocus
-                    disabled={searching}
-                  />
-                  <Button type="submit" size="sm" className="h-9 px-3" disabled={!inputVal.trim() || searching}>
-                    <Search className="h-4 w-4" />
-                  </Button>
-                </div>
-                <p className="text-xs text-slate-400">Nhấn Enter hoặc bấm 🔍 để tìm</p>
-                <button type="button" className="text-xs text-slate-400 hover:text-slate-600 underline underline-offset-2"
-                  onClick={() => setPageState({ mode: 'idle' })}>
-                  Dừng quét
-                </button>
-              </form>
-            )}
-
-            {pageState.mode === 'success' && (
-              <div className="rounded-xl border border-green-200 bg-green-50 p-4 flex items-center gap-3">
-                <CheckCircle2 className="h-5 w-5 text-green-600 shrink-0" />
-                <p className="text-sm font-medium text-green-700">Đã lưu — đang chuyển sang quét tiếp…</p>
+            {/* Success banner */}
+            {resultState.mode === 'success' && (
+              <div className="rounded-xl border border-green-200 bg-green-50 p-3 flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 text-green-600 shrink-0" />
+                <p className="text-sm font-medium text-green-700">Đã lưu — quét pallet tiếp theo…</p>
               </div>
             )}
 
-            {pageState.mode === 'error' && (
-              <div className="rounded-xl border border-red-200 bg-red-50 p-4 space-y-2">
-                <p className="text-xs text-red-700">{pageState.message}</p>
-                <Button size="sm" variant="outline" onClick={startScanning}>Quét tiếp</Button>
+            {/* Error */}
+            {resultState.mode === 'error' && (
+              <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2">
+                <p className="text-xs text-red-700">{resultState.message}</p>
               </div>
             )}
 
-            {pageState.mode === 'result' && entry && (
+            {/* Result card */}
+            {resultState.mode === 'result' && entry && (
               <div className="rounded-xl border bg-white shadow-sm overflow-hidden">
-                {/* Header */}
                 <div className="px-3 py-2 bg-slate-50 border-b">
                   <p className="text-[10px] font-mono font-semibold text-slate-700 break-all">{entry.pallet_code}</p>
                   <p className="text-xs text-slate-600 mt-0.5">
@@ -218,14 +258,11 @@ export default function Stocktake() {
                 </div>
 
                 <div className="px-3 py-2.5 space-y-3">
-                  {/* Stats */}
                   <div className="text-xs text-slate-600">
                     Tồn app: <strong className="tabular-nums">{entry.cartons_remaining}</strong>
                     <span className="text-slate-400 ml-1">thùng</span>
-                    <span className="ml-3 text-slate-400">{entry.status}</span>
                   </div>
 
-                  {/* Location comparison */}
                   <div className="text-xs space-y-1">
                     <div className="flex items-center gap-2">
                       <span className="text-slate-400 shrink-0 w-20">Vị trí app:</span>
@@ -240,7 +277,6 @@ export default function Stocktake() {
                     </div>
                   </div>
 
-                  {/* Update location toggle */}
                   {locMismatch && (
                     <label className="flex items-center gap-2 cursor-pointer select-none border border-amber-200 bg-amber-50 rounded-lg px-3 py-2">
                       <input type="checkbox" checked={updateLoc} onChange={e => setUpdateLoc(e.target.checked)}
@@ -251,10 +287,8 @@ export default function Stocktake() {
                     </label>
                   )}
 
-                  {/* Qty mismatch */}
                   {!showQty ? (
-                    <button
-                      className="text-xs text-slate-500 hover:text-red-600 underline underline-offset-2"
+                    <button className="text-xs text-slate-500 hover:text-red-600 underline underline-offset-2"
                       onClick={() => setShowQty(true)}>
                       Không khớp tồn?
                     </button>
@@ -282,10 +316,8 @@ export default function Stocktake() {
                   )}
                 </div>
 
-                {/* Actions */}
                 <div className="px-3 py-2 border-t flex gap-2">
-                  <Button variant="outline" size="sm" className="flex-1"
-                    onClick={startScanning}>
+                  <Button variant="outline" size="sm" className="flex-1" onClick={clearResult}>
                     Bỏ qua
                   </Button>
                   <Button size="sm" className="flex-1 bg-green-600 hover:bg-green-700"

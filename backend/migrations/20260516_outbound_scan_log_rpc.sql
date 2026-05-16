@@ -75,15 +75,15 @@ AS $$
     l.location_code,
     e.name   AS scanner_name,
     COUNT(*) OVER() AS total_count
-  FROM outbound_scan_entries ose
-  JOIN outbound_items       oi  ON oi.id  = ose.item_id
-  JOIN outbound_deliveries  od  ON od.id  = oi.do_id
-  JOIN group_delivery_orders gdo ON gdo.id = od.gdo_id
-  JOIN warehouses            w   ON w.id   = gdo.warehouse_id
-  LEFT JOIN materials         m   ON m.id   = oi.material_id
-  LEFT JOIN inventory_entries ie  ON ie.id  = ose.inventory_entry_id
-  LEFT JOIN locations         l   ON l.id   = ie.location_id
-  LEFT JOIN employees         e   ON e.id   = ose.scanned_by
+  FROM "OutboundScanEntry"   ose
+  JOIN "OutboundItem"        oi  ON oi.id  = ose.item_id
+  JOIN "OutboundDelivery"    od  ON od.id  = oi.do_id
+  JOIN "GroupDeliveryOrder"  gdo ON gdo.id = od.gdo_id
+  JOIN "Warehouse"           w   ON w.id   = gdo.warehouse_id
+  LEFT JOIN "Material"       m   ON m.id   = oi.material_id
+  LEFT JOIN "InventoryEntry" ie  ON ie.id  = ose.inventory_entry_id
+  LEFT JOIN "Location"       l   ON l.id   = ie.location_id
+  LEFT JOIN "Employee"       e   ON e.id   = ose.scanned_by
   WHERE
     (p_from_date    IS NULL OR gdo.delivery_date >= p_from_date::date)
     AND (p_to_date      IS NULL OR gdo.delivery_date <= p_to_date::date)
@@ -93,8 +93,8 @@ AS $$
     AND (p_delivery_code IS NULL OR od.delivery_code   ILIKE '%' || p_delivery_code || '%')
     AND (
       p_material IS NULL
-      OR m.material_code  ILIKE '%' || p_material || '%'
-      OR m.short_name     ILIKE '%' || p_material || '%'
+      OR m.material_code      ILIKE '%' || p_material || '%'
+      OR m.short_name         ILIKE '%' || p_material || '%'
       OR oi.material_code_raw ILIKE '%' || p_material || '%'
     )
     AND (p_scanner_name IS NULL OR e.name ILIKE '%' || p_scanner_name || '%')

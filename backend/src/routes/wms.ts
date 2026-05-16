@@ -51,6 +51,7 @@ router.get('/inbound-orders/:id/location-suggestions',  inbound.getLocationSugge
 // Inventory (tồn kho)
 router.get('/inventory/facets',                   inventory.listFacets)
 router.get('/inventory/stocktake-summary',         inventory.stocktakeSummary)   // phải trước /:id
+router.get('/inventory/stocktake-entries',         inventory.stocktakeEntries)   // phải trước /:id
 router.get('/inventory',                          inventory.listInventory)
 router.get('/inventory/:id',                      inventory.getInventoryEntry)
 router.post('/inventory/stocktake-check',          inventory.stocktakeCheck)     // phải trước /:id/stocktake

@@ -583,6 +583,39 @@ export function useUnflagEntry() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['inventory-entries'] })
       qc.invalidateQueries({ queryKey: ['stocktake-summary'] })
+      qc.invalidateQueries({ queryKey: ['stocktake-entries'] })
+    },
+  })
+}
+
+export interface StocktakeEntryRow {
+  id:                  string
+  pallet_code:         string
+  cartons_remaining:   number
+  import_date:         string
+  stocktake_flagged:   boolean
+  stocktake_flag_note: string | null
+  stocktake_at:        string | null
+  location:            { id: string; location_code: string } | null
+  material:            { material_code: string; short_name: string | null } | null
+  stocktake_by_emp:    { id: string; name: string } | null
+}
+
+export interface StocktakeEntriesResult {
+  stats:   { total: number; checked: number; unchecked: number; flagged: number }
+  entries: StocktakeEntryRow[]
+}
+
+export function useStocktakeEntries(params: { warehouse_id?: string; category?: string; view?: string }) {
+  return useQuery({
+    queryKey: ['stocktake-entries', params],
+    queryFn: async () => {
+      const q: Record<string, string> = {}
+      if (params.warehouse_id) q.warehouse_id = params.warehouse_id
+      if (params.category)     q.category     = params.category
+      if (params.view)         q.view         = params.view
+      const { data } = await apiClient.get('/wms/inventory/stocktake-entries', { params: q })
+      return data.data as StocktakeEntriesResult
     },
   })
 }

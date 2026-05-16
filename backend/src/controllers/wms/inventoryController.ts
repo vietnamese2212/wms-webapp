@@ -489,6 +489,60 @@ export async function stocktakeSummary(req: Request, res: Response) {
   return ok(res, result)
 }
 
+export async function stocktakeEntries(req: Request, res: Response) {
+  const { warehouse_id, category, view = 'problem' } = req.query as Record<string, string>
+  // view: 'all' | 'flagged' | 'unchecked' | 'checked' | 'problem' (flagged + unchecked)
+
+  let locQuery = (supabase.from('Location') as any).select('id').eq('is_active', true)
+  if (warehouse_id) locQuery = locQuery.eq('warehouse_id', warehouse_id)
+  if (category)     locQuery = locQuery.or(`category.eq.${category},category.is.null`)
+  const { data: locs, error: locErr } = await locQuery
+  if (locErr) return fail(res, 500, 'DB_ERROR', locErr.message)
+  if (!locs?.length) return ok(res, { stats: { total: 0, checked: 0, unchecked: 0, flagged: 0 }, entries: [] })
+
+  const locationIds = (locs as { id: string }[]).map(l => l.id)
+  const todayVN    = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+  const todayStart = new Date(`${todayVN}T00:00:00+07:00`).toISOString()
+
+  const { data: entries, error: entErr } = await (supabase.from('InventoryEntry') as any)
+    .select(`
+      id, pallet_code, cartons_remaining, import_date,
+      stocktake_flagged, stocktake_flag_note, stocktake_at,
+      location:Location(id, location_code),
+      material:Material(material_code, short_name),
+      stocktake_by_emp:Employee!stocktake_by(id, name)
+    `)
+    .in('location_id', locationIds)
+    .in('status', ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'])
+  if (entErr) return fail(res, 500, 'DB_ERROR', entErr.message)
+
+  type E = { id: string; import_date: string; stocktake_at: string | null; stocktake_flagged: boolean }
+  const all = (entries ?? []) as E[]
+
+  const isChecked = (e: E) => !!(e.stocktake_at && e.stocktake_at >= todayStart) || e.import_date === todayVN
+
+  const total    = all.length
+  const checked  = all.filter(isChecked).length
+  const unchecked = total - checked
+  const flagged  = all.filter(e => e.stocktake_flagged).length
+
+  let filtered: E[]
+  if (view === 'flagged')   filtered = all.filter(e => e.stocktake_flagged)
+  else if (view === 'unchecked') filtered = all.filter(e => !isChecked(e))
+  else if (view === 'checked')   filtered = all.filter(isChecked)
+  else if (view === 'problem')   filtered = all.filter(e => e.stocktake_flagged || !isChecked(e))
+  else                           filtered = all
+
+  filtered.sort((a, b) => {
+    if (a.stocktake_flagged !== b.stocktake_flagged) return a.stocktake_flagged ? -1 : 1
+    const aOk = isChecked(a), bOk = isChecked(b)
+    if (aOk !== bOk) return aOk ? 1 : -1
+    return 0
+  })
+
+  return ok(res, { stats: { total, checked, unchecked, flagged }, entries: filtered })
+}
+
 export async function unflagEntry(req: Request, res: Response) {
   const now = new Date().toISOString()
   const { error } = await (supabase.from('InventoryEntry') as any)

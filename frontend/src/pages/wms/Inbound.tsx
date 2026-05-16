@@ -835,12 +835,12 @@ function InboundRow({ order, onClick, onScan }: { order: InboundOrder; onClick: 
         {isRowToday && <span className="ml-1 text-[9px] text-blue-600 font-medium">· Hôm nay</span>}
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center justify-between gap-1.5 min-w-[80px]">
           <span className="text-[10px] font-mono text-slate-600">{order.location?.location_code ?? '—'}</span>
           {onScan && (
             <button
               onClick={onScan}
-              className="flex items-center gap-0.5 text-[9px] font-medium text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 rounded px-1.5 py-0.5 transition-colors"
+              className="flex items-center gap-0.5 text-[9px] font-medium text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 rounded px-1.5 py-0.5 transition-colors shrink-0"
               title="Thêm pallet"
             >
               <QrCode className="h-2.5 w-2.5" /> Quét

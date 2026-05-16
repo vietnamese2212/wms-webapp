@@ -83,6 +83,7 @@ export async function listOrders(req: Request, res: Response) {
 
     if (warehouse_id)      query = query.eq('warehouse_id', warehouse_id)
     if (status)            query = query.eq('status', status)
+    else                   query = query.neq('status', 'CANCELLED')
     if (material_id)       query = query.eq('material_id', material_id)
     if (shift_id)          query = query.eq('shift_id', shift_id)
 
@@ -265,6 +266,12 @@ export async function cancelOrder(req: Request, res: Response) {
       .from('ProductionImport').select('status').eq('id', req.params.id).maybeSingle()
     if (!existing) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (existing.status === 'COMPLETED') return fail(res, 400, 'ALREADY_COMPLETED', 'Phiếu nhập đã hoàn thành, không thể hủy')
+    if (existing.status === 'CANCELLED') return fail(res, 400, 'ALREADY_CANCELLED', 'Phiếu nhập đã bị hủy')
+
+    const { count: entriesCount } = await supabase
+      .from('InventoryEntry').select('id', { count: 'exact', head: true }).eq('import_order_id', req.params.id)
+    if (entriesCount && entriesCount > 0)
+      return fail(res, 400, 'HAS_ENTRIES', 'Phiếu đã có pallet nhập, xóa hết pallet trước khi hủy')
 
     const { data: updated, error } = await supabase
       .from('ProductionImport')

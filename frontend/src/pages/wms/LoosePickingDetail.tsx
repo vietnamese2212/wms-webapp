@@ -320,6 +320,7 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand }: {
                             <tr>
                               <th className="text-left text-[9px] text-slate-400 font-medium pb-0.5 pr-3">Mã pallet</th>
                               <th className="text-right text-[9px] text-slate-400 font-medium pb-0.5 pr-3">Thùng</th>
+                              <th className="text-left text-[9px] text-slate-400 font-medium pb-0.5 pr-3">%Date</th>
                               <th className="text-left text-[9px] text-slate-400 font-medium pb-0.5 pr-3">Date</th>
                               <th className="text-left text-[9px] text-slate-400 font-medium pb-0.5">Date cũ nhất</th>
                             </tr>
@@ -337,6 +338,13 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand }: {
                                   </td>
                                   <td className="pr-3 py-0.5 text-right">
                                     <span className="text-[10px] tabular-nums text-slate-400">{se.cartons_scanned}<span className="text-slate-300 ml-0.5">th</span></span>
+                                  </td>
+                                  <td className="pr-3 py-0.5">
+                                    {se.pct_date !== null && se.pct_date !== undefined ? (
+                                      <span className={`text-[10px] font-bold tabular-nums ${
+                                        se.pct_date <= 30 ? 'text-red-600' : se.pct_date <= 60 ? 'text-amber-600' : 'text-green-700'
+                                      }`}>{se.pct_date}%</span>
+                                    ) : <span className="text-[10px] text-slate-300">—</span>}
                                   </td>
                                   <td className="pr-3 py-0.5">
                                     <span className="text-[10px] font-mono text-slate-400">{se.production_date ? fmtDate(se.production_date) : '—'}</span>

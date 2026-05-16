@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useMemo, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useLoosePickingItems, useWarehouses, type LoosePickingItem } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
+import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useActiveLoosePickingStore } from '@/stores/activeLoosePickingStore'
 
 const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -59,24 +60,17 @@ export default function LoosePicking() {
   const user     = useAuthStore(s => s.user)
   const navigate = useNavigate()
   const { pin, unpin, isPinned } = useActiveLoosePickingStore()
-
-  const [warehouseId,         setWarehouseId]         = useState<string>('')
-  const [date,                setDate]                = useState<string>(TODAY)
-  const [search,              setSearch]              = useState('')
-  const [filterDvvts,         setFilterDvvts]         = useState<string[]>([])
-  const [filterNpps,          setFilterNpps]          = useState<string[]>([])
-  const [filterWarehouseTypes, setFilterWarehouseTypes] = useState<string[]>([])
-  const [filterTypes,         setFilterTypes]         = useState<string[]>([])
+  const { loosePicking: f, setLoosePicking } = useWmsFilterStore()
 
   const { data: warehouses = [] } = useWarehouses(true)
 
   useEffect(() => {
-    if (!warehouseId && user?.warehouse_id) setWarehouseId(user.warehouse_id)
+    if (!f.warehouseId && user?.warehouse_id) setLoosePicking({ warehouseId: user.warehouse_id })
   }, [user?.warehouse_id]) // eslint-disable-line
 
   const { data: items = [], isLoading } = useLoosePickingItems({
-    warehouse_id: warehouseId || undefined,
-    date:         date        || undefined,
+    warehouse_id: f.warehouseId || undefined,
+    date:         f.date        || undefined,
   })
 
   const grouped = useMemo((): GDOSummary[] => {
@@ -100,14 +94,19 @@ export default function LoosePicking() {
       })
   }, [items])
 
+  const filterWarehouseTypes = f.filterWarehouseTypes ?? []
+  const filterTypes          = f.filterTypes          ?? []
+  const filterDvvts          = f.filterDvvts          ?? []
+  const filterNpps           = f.filterNpps           ?? []
+
   const filtered = useMemo(() => {
     return grouped.filter(s => {
       if (filterWarehouseTypes.length > 0 && !filterWarehouseTypes.includes(s.gdo?.warehouse_type ?? '')) return false
       if (filterTypes.length          > 0 && !filterTypes.includes(s.gdo?.export_type ?? ''))             return false
       if (filterDvvts.length          > 0 && !filterDvvts.includes(s.gdo?.dvvt ?? ''))                   return false
       if (filterNpps.length           > 0 && !(s.gdo?.distributor_names ?? []).some(n => filterNpps.includes(n))) return false
-      if (search.trim()) {
-        const q = search.trim().toLowerCase()
+      if (f.search.trim()) {
+        const q = f.search.trim().toLowerCase()
         if (
           !s.gdo?.group_code?.toLowerCase().includes(q) &&
           !s.gdo?.distributor_names?.some(n => n.toLowerCase().includes(q)) &&
@@ -119,7 +118,7 @@ export default function LoosePicking() {
       }
       return true
     })
-  }, [grouped, search, filterDvvts, filterNpps])
+  }, [grouped, f.search, filterDvvts, filterNpps, filterWarehouseTypes, filterTypes])
 
   const dvvtOptions         = useMemo(() => [...new Set(grouped.map(s => s.gdo?.dvvt).filter(Boolean))] as string[], [grouped])
   const nppOptions          = useMemo(() => [...new Set(grouped.flatMap(s => s.gdo?.distributor_names ?? []).filter(Boolean))], [grouped])
@@ -128,8 +127,8 @@ export default function LoosePicking() {
 
   const totalPending = items.filter(i => itemLooseStats(i).remaining > 0).length
 
-  const dateLabel = date
-    ? format(parseISO(date), 'EEEE, dd-MM-yyyy', { locale: vi })
+  const dateLabel = f.date
+    ? format(parseISO(f.date), 'EEEE, dd-MM-yyyy', { locale: vi })
     : 'Tất cả ngày'
 
   return (
@@ -156,27 +155,27 @@ export default function LoosePicking() {
             <Input
               type="date"
               className="pl-8 h-8 text-sm w-[160px]"
-              value={date}
-              onChange={e => setDate(e.target.value)}
+              value={f.date}
+              onChange={e => setLoosePicking({ date: e.target.value })}
             />
-            {date && date !== TODAY && (
+            {f.date && f.date !== TODAY && (
               <button className="ml-1 text-xs text-slate-400 hover:text-slate-700 underline whitespace-nowrap"
-                onClick={() => setDate(TODAY)}>
+                onClick={() => setLoosePicking({ date: TODAY })}>
                 Hôm nay
               </button>
             )}
-            {date && (
+            {f.date && (
               <button className="p-0.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-600"
-                title="Xem tất cả ngày" onClick={() => setDate('')}>
+                title="Xem tất cả ngày" onClick={() => setLoosePicking({ date: '' })}>
                 <X className="h-3.5 w-3.5" />
               </button>
             )}
           </div>
-          <SearchInput value={search} onChange={setSearch} placeholder="Tìm số xe, NPP, mã hàng…" className="flex-1" />
+          <SearchInput value={f.search} onChange={v => setLoosePicking({ search: v })} placeholder="Tìm số xe, NPP, mã hàng…" className="flex-1" />
         </div>
 
         <div className="flex gap-2 flex-wrap items-center">
-          <Select value={warehouseId || '__all__'} onValueChange={v => setWarehouseId(v === '__all__' ? '' : v)}>
+          <Select value={f.warehouseId || '__all__'} onValueChange={v => setLoosePicking({ warehouseId: v === '__all__' ? '' : v })}>
             <SelectTrigger className="h-7 text-xs w-[130px]">
               <SelectValue placeholder="Kho xuất" />
             </SelectTrigger>
@@ -185,17 +184,17 @@ export default function LoosePicking() {
               {(warehouses as any[]).map((w: any) => <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>)}
             </SelectContent>
           </Select>
-          <MultiSelectFilter label="Loại kho" options={warehouseTypeOpts.map(t => ({ value: t, label: t }))} selected={filterWarehouseTypes} onChange={setFilterWarehouseTypes} />
-          <MultiSelectFilter label="Loại xuất" options={typeOptions.map(t => ({ value: t, label: t }))} selected={filterTypes} onChange={setFilterTypes} />
-          <MultiSelectFilter label="ĐVVT" options={dvvtOptions.map(d => ({ value: d, label: d }))} selected={filterDvvts} onChange={setFilterDvvts} />
-          <MultiSelectFilter label="NPP" options={nppOptions.map(n => ({ value: n, label: n }))} selected={filterNpps} onChange={setFilterNpps} width="min-w-[140px]" />
+          <MultiSelectFilter label="Loại kho" options={warehouseTypeOpts.map(t => ({ value: t, label: t }))} selected={filterWarehouseTypes} onChange={v => setLoosePicking({ filterWarehouseTypes: v })} />
+          <MultiSelectFilter label="Loại xuất" options={typeOptions.map(t => ({ value: t, label: t }))} selected={filterTypes} onChange={v => setLoosePicking({ filterTypes: v })} />
+          <MultiSelectFilter label="ĐVVT" options={dvvtOptions.map(d => ({ value: d, label: d }))} selected={filterDvvts} onChange={v => setLoosePicking({ filterDvvts: v })} />
+          <MultiSelectFilter label="NPP" options={nppOptions.map(n => ({ value: n, label: n }))} selected={filterNpps} onChange={v => setLoosePicking({ filterNpps: v })} width="min-w-[140px]" />
         </div>
 
         <p className="text-xs text-slate-500 -mt-1">
-          {date ? (
+          {f.date ? (
             <>
               <span className="font-medium text-slate-700">{dateLabel}</span>
-              {date === TODAY && <span className="ml-1.5 text-blue-600 font-medium">· Hôm nay</span>}
+              {f.date === TODAY && <span className="ml-1.5 text-blue-600 font-medium">· Hôm nay</span>}
             </>
           ) : (
             <span className="italic">Hiển thị tất cả ngày</span>
@@ -214,10 +213,10 @@ export default function LoosePicking() {
           <div className="flex flex-col items-center gap-2 py-16 text-slate-400">
             <Scissors className="h-10 w-10 opacity-30" />
             <p className="text-sm">
-              {search
+              {f.search
                 ? 'Không tìm thấy chuyến xe'
-                : date
-                ? `Không có nhặt lẻ ngày ${format(parseISO(date), 'dd-MM-yyyy')}`
+                : f.date
+                ? `Không có nhặt lẻ ngày ${format(parseISO(f.date), 'dd-MM-yyyy')}`
                 : 'Không có nhặt lẻ'}
             </p>
           </div>

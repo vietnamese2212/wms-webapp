@@ -90,18 +90,26 @@ export default function Outbound() {
   const nppOptions        = useMemo(() => [...new Set(gdos.flatMap(g => g.distributor_names ?? []).filter(Boolean))], [gdos])
   const warehouseTypeOpts = useMemo(() => [...new Set(gdos.map(g => g.warehouse_type).filter(Boolean))] as string[], [gdos])
 
-  const filterTypes         = f.filterTypes         ?? []
-  const filterDvvts         = f.filterDvvts         ?? []
-  const filterNpps          = f.filterNpps          ?? []
+  const filterTypes          = f.filterTypes          ?? []
+  const filterDvvts          = f.filterDvvts          ?? []
+  const filterNpps           = f.filterNpps           ?? []
   const filterWarehouseTypes = f.filterWarehouseTypes ?? []
+  const filterStatuses       = f.filterStatuses       ?? []
+
+  const statusOptions = useMemo(() => {
+    const labels = new Set<string>()
+    for (const g of gdos) { const { label } = gdoStatusInfo(g); if (label !== '—') labels.add(label) }
+    return [...labels].map(l => ({ value: l, label: l }))
+  }, [gdos])
 
   const filtered = useMemo(() => gdos.filter(g => {
     if (filterTypes.length          > 0 && !filterTypes.includes(g.export_type ?? ''))                              return false
     if (filterDvvts.length          > 0 && !filterDvvts.includes(g.dvvt ?? ''))                                     return false
     if (filterNpps.length           > 0 && !(g.distributor_names ?? []).some(n => filterNpps.includes(n)))          return false
     if (filterWarehouseTypes.length > 0 && !filterWarehouseTypes.includes(g.warehouse_type ?? ''))                  return false
+    if (filterStatuses.length       > 0 && !filterStatuses.includes(gdoStatusInfo(g).label))                        return false
     return true
-  }), [gdos, filterTypes, filterDvvts, filterNpps, filterWarehouseTypes])
+  }), [gdos, filterTypes, filterDvvts, filterNpps, filterWarehouseTypes, filterStatuses])
 
   const sorted = useMemo(() => [...filtered].sort((a, b) => {
     if (a.delivery_date !== b.delivery_date)
@@ -265,6 +273,7 @@ export default function Outbound() {
           <MultiSelectFilter label="Loại xuất" options={typeOptions.map(t => ({ value: t, label: t }))} selected={filterTypes} onChange={v => setOutbound({ filterTypes: v })} />
           <MultiSelectFilter label="ĐVVT" options={dvvtOptions.map(d => ({ value: d, label: d }))} selected={filterDvvts} onChange={v => setOutbound({ filterDvvts: v })} />
           <MultiSelectFilter label="NPP" options={nppOptions.map(n => ({ value: n, label: n }))} selected={filterNpps} onChange={v => setOutbound({ filterNpps: v })} width="min-w-[140px]" />
+          <MultiSelectFilter label="Tình trạng" options={statusOptions} selected={filterStatuses} onChange={v => setOutbound({ filterStatuses: v })} />
         </div>
 
         <p className="text-xs text-slate-500 -mt-1">

@@ -14,6 +14,7 @@ import {
 } from '@/api/hooks'
 import type { ScanLogParams } from '@/api/hooks'
 import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
+import { useWmsFilterStore, type ScanLogApplied } from '@/stores/wmsFilterStore'
 
 const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 const PAGE_SIZE = 500
@@ -101,11 +102,14 @@ export default function OutboundScanLog() {
   const [page, setPage]                 = useState(1)
   const [dateError, setDateError]       = useState('')
   const [showScanner, setShowScanner]   = useState(false)
-  const [draft, setDraft]               = useState<DraftFilters>(EMPTY_DRAFT)
-  const [applied, setApplied]           = useState<ScanLogParams>({
-    from_date: TODAY, to_date: TODAY,
-  })
   const scannerRef = useRef<QRScannerHandle>(null)
+
+  const { scanLogDraft: draft, scanLogApplied: applied, setScanLogDraft, setScanLogApplied } = useWmsFilterStore()
+
+  // Aliases so existing call sites need no change
+  type DraftUpdater = Partial<DraftFilters> | ((d: DraftFilters) => DraftFilters)
+  const setDraft = (f: DraftUpdater) => typeof f === 'function' ? setScanLogDraft(f(draft)) : setScanLogDraft(f)
+  const setApplied = (f: ScanLogApplied) => setScanLogApplied(f)
 
   const { data: warehousesData } = useWarehouses()
   const { data: categoriesData } = useMaterialCategories()

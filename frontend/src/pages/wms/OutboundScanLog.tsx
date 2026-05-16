@@ -17,7 +17,6 @@ import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/fo
 
 const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 const PAGE_SIZE = 500
-const MAX_DAYS  = 90
 
 // ─── Helpers ──────────────────────────────────────────────────
 
@@ -147,18 +146,9 @@ export default function OutboundScanLog() {
       setDateError('Vui lòng chọn Loại hàng')
       return
     }
-    if (draft.from_date && draft.to_date) {
-      const from = new Date(draft.from_date)
-      const to   = new Date(draft.to_date)
-      if (to < from) {
-        setDateError('Ngày bắt đầu phải trước ngày kết thúc')
-        return
-      }
-      const diffDays = Math.round((to.getTime() - from.getTime()) / 86_400_000)
-      if (diffDays > MAX_DAYS) {
-        setDateError(`Khoảng thời gian tối đa ${MAX_DAYS} ngày`)
-        return
-      }
+    if (draft.from_date && draft.to_date && new Date(draft.to_date) < new Date(draft.from_date)) {
+      setDateError('Ngày bắt đầu phải trước ngày kết thúc')
+      return
     }
     setDateError('')
     setApplied({

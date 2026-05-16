@@ -1,14 +1,15 @@
 import { useState } from 'react'
 import {
   useWarehouses, useMaterialCategories, useLocationsReal,
-  useUnflagEntry, useStocktakeEntries, type StocktakeEntryRow,
+  useUnflagEntry, useStocktakeEntries, useInventoryEntry,
+  type StocktakeEntryRow,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
 import { BarChart2, Flag, MapPin, X } from 'lucide-react'
-import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
+import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 
 type View = 'problem' | 'flagged' | 'unchecked' | 'checked' | 'all'
 
@@ -25,9 +26,7 @@ function isCheckedToday(e: StocktakeEntryRow, todayVN: string, todayStart: strin
 }
 
 // ─── Stat Card ───────────────────────────────────────────────────
-function StatCard({
-  label, value, sub, active, color, onClick,
-}: {
+function StatCard({ label, value, sub, active, color, onClick }: {
   label: string; value: number; sub?: string
   active: boolean; color: string; onClick: () => void
 }) {
@@ -44,6 +43,126 @@ function StatCard({
   )
 }
 
+// ─── Side Detail Panel ───────────────────────────────────────────
+const STATUS_LABEL: Record<string, string> = {
+  IN_STOCK: 'Còn hàng', PARTIAL: 'Xuất 1 phần', EXPORTED: 'Đã xuất',
+  TRANSFERRED: 'Đã chuyển', QUARANTINE: 'Cách ly', CANCELLED: 'Đã hủy',
+}
+const STATUS_CLS: Record<string, string> = {
+  IN_STOCK: 'bg-green-100 text-green-700', PARTIAL: 'bg-amber-100 text-amber-700',
+  EXPORTED: 'bg-blue-100 text-blue-700', TRANSFERRED: 'bg-slate-100 text-slate-600',
+  QUARANTINE: 'bg-red-100 text-red-700', CANCELLED: 'bg-gray-100 text-gray-500',
+}
+
+function calcPct(prodDate: string | null, shelfDays: number | null): number | null {
+  if (!prodDate || !shelfDays || shelfDays <= 0) return null
+  const totalMs  = shelfDays * 86_400_000
+  const remaining = new Date(prodDate).getTime() + totalMs - Date.now()
+  return Math.max(0, Math.round((remaining / totalMs) * 100))
+}
+
+function DR({ label, value, mono, bold, cls }: {
+  label: string; value: string; mono?: boolean; bold?: boolean; cls?: string
+}) {
+  return (
+    <div className="flex justify-between gap-2 py-0.5">
+      <span className="text-slate-400 shrink-0 text-[11px]">{label}</span>
+      <span className={`text-right text-[11px] truncate ${mono ? 'font-mono' : ''} ${bold ? 'font-semibold' : ''} ${cls ?? 'text-slate-700'}`}>
+        {value}
+      </span>
+    </div>
+  )
+}
+
+function DetailPanel({ entryId, onClose }: { entryId: string; onClose: () => void }) {
+  const { data: entry, isLoading } = useInventoryEntry(entryId)
+  const remaining = entry ? (entry.cartons_remaining ?? entry.cartons_imported) : 0
+  const exported  = entry ? Math.max(0, Number(entry.cartons_imported) - Number(remaining)) : 0
+  const pct       = entry ? calcPct(entry.production_date ?? null, entry.material?.shelf_life_days ?? null) : null
+
+  return (
+    <div className="w-64 shrink-0 border-l bg-white flex flex-col overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center justify-between px-3 py-2 border-b bg-slate-50 shrink-0">
+        <p className="font-mono text-[10px] font-semibold text-slate-700 truncate flex-1">
+          {isLoading ? '…' : (entry?.pallet_code ?? '—')}
+        </p>
+        <button onClick={onClose} className="ml-2 text-slate-400 hover:text-slate-700 shrink-0">
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      {/* Content */}
+      <div className="flex-1 overflow-y-auto p-3 space-y-3">
+        {isLoading ? (
+          <div className="space-y-2">
+            {[1,2,3,4,5].map(i => <div key={i} className="h-4 bg-slate-100 rounded animate-pulse" />)}
+          </div>
+        ) : !entry ? (
+          <p className="text-xs text-slate-400 text-center py-4">Không tìm thấy</p>
+        ) : (
+          <>
+            <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-medium ${STATUS_CLS[entry.status] ?? 'bg-gray-100 text-gray-500'}`}>
+              {STATUS_LABEL[entry.status] ?? entry.status}
+            </span>
+
+            <div>
+              <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Thông tin hàng</p>
+              <DR label="Kho"      value={entry.location?.warehouse?.name ?? '—'} />
+              <DR label="Vị trí"   value={entry.location?.location_code  ?? '—'} mono />
+              <DR label="Mã hàng"  value={entry.material?.material_code  ?? '—'} mono />
+              <DR label="Tên hàng" value={entry.material?.short_name     ?? '—'} />
+              {entry.qa_status && (
+                <DR label="QA" value={`${entry.qa_status.code} – ${entry.qa_status.name}`} />
+              )}
+            </div>
+
+            <div>
+              <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Số lượng</p>
+              <DR label="Nhập" value={`${entry.cartons_imported} thùng`} />
+              {exported > 0 && <DR label="Xuất" value={`${exported} thùng`} />}
+              <DR label="Tồn"  value={`${remaining} thùng`} bold />
+              {entry.adjustment_qty != null && Number(entry.adjustment_qty) !== 0 && (
+                <DR label="Điều chỉnh"
+                  value={`${Number(entry.adjustment_qty) > 0 ? '+' : ''}${entry.adjustment_qty}`}
+                  cls={Number(entry.adjustment_qty) > 0 ? 'text-green-600' : 'text-red-600'} />
+              )}
+            </div>
+
+            <div>
+              <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Ngày / Hạn dùng</p>
+              <DR label="NSX" value={entry.production_date ? formatDate(entry.production_date) : '—'} />
+              {entry.material?.shelf_life_days != null && (
+                <DR label="HSD" value={`${entry.material.shelf_life_days} ngày`} />
+              )}
+              {pct !== null && (
+                <DR label="%Date" value={`${pct}%`}
+                  cls={pct >= 70 ? 'text-green-600 font-semibold' : pct >= 40 ? 'text-amber-600 font-semibold' : 'text-red-600 font-semibold'} />
+              )}
+            </div>
+
+            {(entry.manufacturer || entry.cycle || entry.machine_code) && (
+              <div>
+                <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Sản xuất</p>
+                {entry.manufacturer && <DR label="NMSX"   value={entry.manufacturer.code} mono />}
+                {entry.cycle        && <DR label="Chu kỳ" value={entry.cycle} mono />}
+                {entry.machine_code && <DR label="Máy"    value={entry.machine_code} mono />}
+              </div>
+            )}
+
+            <div>
+              <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Nhập kho</p>
+              <DR label="Ngày nhập"  value={entry.import_date ? formatDate(entry.import_date) : '—'} />
+              <DR label="Giờ nhập"   value={entry.created_at  ? formatTimestampTime(entry.created_at) : '—'} />
+              <DR label="Người nhập" value={entry.created_by_emp?.name ?? '—'} />
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ─── Main ────────────────────────────────────────────────────────
 export default function StocktakeDashboard() {
   const user = useAuthStore(s => s.user)
@@ -53,6 +172,7 @@ export default function StocktakeDashboard() {
   const [locationId,   setLocationId]   = useState('')
   const [requiresOnly, setRequiresOnly] = useState(false)
   const [view,         setView]         = useState<View>('problem')
+  const [selectedId,   setSelectedId]   = useState<string | null>(null)
 
   const unflag = useUnflagEntry()
   const { data: warehouses = [] } = useWarehouses(true)
@@ -77,8 +197,8 @@ export default function StocktakeDashboard() {
   const todayStart = new Date(`${todayVN}T00:00:00+07:00`).toISOString()
 
   function rowColor(e: StocktakeEntryRow): string {
-    if (e.stocktake_flagged)                        return 'bg-red-50 hover:bg-red-100'
-    if (isCheckedToday(e, todayVN, todayStart))     return 'bg-green-50 hover:bg-green-100'
+    if (e.stocktake_flagged)                    return 'bg-red-50 hover:bg-red-100'
+    if (isCheckedToday(e, todayVN, todayStart)) return 'bg-green-50 hover:bg-green-100'
     return 'hover:bg-slate-50'
   }
 
@@ -92,10 +212,8 @@ export default function StocktakeDashboard() {
         </div>
 
         <div className="flex gap-1.5 flex-wrap items-center">
-          {/* Kho */}
           <Select value={warehouseId || '__none__'} onValueChange={v => {
-            setWarehouseId(v === '__none__' ? '' : v)
-            setLocationId('')
+            setWarehouseId(v === '__none__' ? '' : v); setLocationId('')
           }}>
             <SelectTrigger className="h-7 text-xs w-[110px]"><SelectValue placeholder="Kho…" /></SelectTrigger>
             <SelectContent>
@@ -106,10 +224,8 @@ export default function StocktakeDashboard() {
             </SelectContent>
           </Select>
 
-          {/* Loại */}
           <Select value={category || '__all__'} onValueChange={v => {
-            setCategory(v === '__all__' ? '' : v)
-            setLocationId('')
+            setCategory(v === '__all__' ? '' : v); setLocationId('')
           }}>
             <SelectTrigger className="h-7 text-xs w-[100px]"><SelectValue placeholder="Loại…" /></SelectTrigger>
             <SelectContent>
@@ -120,10 +236,8 @@ export default function StocktakeDashboard() {
             </SelectContent>
           </Select>
 
-          {/* Vị trí */}
           <Select value={locationId || '__none__'} onValueChange={v => {
-            setLocationId(v === '__none__' ? '' : v)
-            setView('problem')
+            setLocationId(v === '__none__' ? '' : v); setView('problem'); setSelectedId(null)
           }} disabled={!warehouseId}>
             <SelectTrigger className="h-7 text-xs w-[130px]"><SelectValue placeholder="Vị trí…" /></SelectTrigger>
             <SelectContent>
@@ -136,11 +250,9 @@ export default function StocktakeDashboard() {
             </SelectContent>
           </Select>
 
-          {/* Cần check hàng ngày */}
           <label className="flex items-center gap-1.5 cursor-pointer select-none">
             <input type="checkbox" checked={requiresOnly} onChange={e => {
-              setRequiresOnly(e.target.checked)
-              setLocationId('')
+              setRequiresOnly(e.target.checked); setLocationId('')
             }} className="h-3.5 w-3.5 cursor-pointer" />
             <span className="text-xs text-slate-600 flex items-center gap-1">
               <Flag className="h-3 w-3 text-red-500" /> Chỉ vị trí cần check
@@ -148,148 +260,165 @@ export default function StocktakeDashboard() {
           </label>
         </div>
 
-        {/* Stat cards — chỉ hiện khi đã chọn vị trí */}
+        {/* Stat cards */}
         {locationId && (
           <div className="flex gap-1.5">
-            <StatCard
-              label="Tổng Pallet" value={stats.total}
+            <StatCard label="Tổng Pallet" value={stats.total}
               active={view === 'all'} color="bg-slate-100 text-slate-700 border-slate-300"
-              onClick={() => setView('all')}
-            />
-            <StatCard
-              label="Đã kiểm" value={stats.checked} sub="hôm nay"
+              onClick={() => setView('all')} />
+            <StatCard label="Đã kiểm" value={stats.checked} sub="hôm nay"
               active={view === 'checked'} color="bg-green-100 text-green-700 border-green-300"
-              onClick={() => setView('checked')}
-            />
-            <StatCard
-              label="Chưa kiểm" value={stats.unchecked}
+              onClick={() => setView('checked')} />
+            <StatCard label="Chưa kiểm" value={stats.unchecked}
               active={view === 'unchecked'} color="bg-amber-100 text-amber-700 border-amber-300"
-              onClick={() => setView('unchecked')}
-            />
-            <StatCard
-              label="Chênh lệch" value={stats.flagged}
+              onClick={() => setView('unchecked')} />
+            <StatCard label="Chênh lệch" value={stats.flagged}
               active={view === 'flagged'} color="bg-red-100 text-red-700 border-red-300"
-              onClick={() => setView('flagged')}
-            />
+              onClick={() => setView('flagged')} />
           </div>
         )}
       </div>
 
-      {/* Body */}
-      <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+      {/* Content */}
+      <div className="flex flex-1 min-h-0">
         {!locationId ? (
-          <div className="flex flex-col items-center justify-center h-40 text-slate-400">
+          <div className="flex-1 flex flex-col items-center justify-center text-slate-400">
             <MapPin className="h-8 w-8 mb-2 opacity-40" />
             <p className="text-sm">Chọn vị trí để xem tổng hợp</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <Table className="min-w-full">
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="text-[9px] px-2 py-1.5">Pallet</TableHead>
-                  <TableHead className="text-[9px] px-2 py-1.5">Vật tư</TableHead>
-                  <TableHead className="text-[9px] px-2 py-1.5 text-right">Tồn</TableHead>
-                  <TableHead className="text-[9px] px-2 py-1.5">Trạng thái</TableHead>
-                  <TableHead className="text-[9px] px-2 py-1.5 text-right">TT / App</TableHead>
-                  <TableHead className="text-[9px] px-2 py-1.5 text-right">Chênh</TableHead>
-                  <TableHead className="text-[9px] px-2 py-1.5">Kiểm lúc</TableHead>
-                  <TableHead className="text-[9px] px-2 py-1.5">Người kiểm</TableHead>
-                  <TableHead className="text-[9px] px-2 py-1.5"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {isFetching && entries.length === 0 ? (
+          <>
+            {/* Table area — overflow-auto để sticky header hoạt động */}
+            <div className="flex-1 min-w-0 overflow-auto pb-20 lg:pb-4">
+              <Table className="min-w-[720px]">
+                <TableHeader>
                   <TableRow>
-                    <TableCell colSpan={9} className="text-center text-xs text-slate-400 py-8">Đang tải…</TableCell>
+                    <TableHead className="text-[9px] px-2 py-1.5">Mã pallet</TableHead>
+                    <TableHead className="text-[9px] px-2 py-1.5">Tên hàng</TableHead>
+                    <TableHead className="text-[9px] px-2 py-1.5 text-right">Tồn App</TableHead>
+                    <TableHead className="text-[9px] px-2 py-1.5 text-right">Tồn thực tế</TableHead>
+                    <TableHead className="text-[9px] px-2 py-1.5 text-right">Chênh lệch</TableHead>
+                    <TableHead className="text-[9px] px-2 py-1.5">Người kiểm</TableHead>
+                    <TableHead className="text-[9px] px-2 py-1.5">Thời gian kiểm</TableHead>
+                    <TableHead className="text-[9px] px-2 py-1.5">Trạng thái</TableHead>
+                    <TableHead className="text-[9px] px-2 py-1.5">Bỏ cờ</TableHead>
                   </TableRow>
-                ) : entries.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={9} className="text-center text-xs text-slate-400 py-8">
-                      {view === 'problem' ? 'Không có pallet cần xử lý 🎉' : 'Không có dữ liệu'}
-                    </TableCell>
-                  </TableRow>
-                ) : entries.map(e => {
-                  const diff    = parseDiff(e.stocktake_flag_note)
-                  const checked = isCheckedToday(e, todayVN, todayStart)
-                  return (
-                    <TableRow key={e.id} className={`transition-colors ${rowColor(e)}`}>
-                      <TableCell className="px-2 py-1">
-                        <span className="font-mono text-[10px] font-semibold">{e.pallet_code}</span>
-                      </TableCell>
-                      <TableCell className="px-2 py-1">
-                        <span className="text-[10px] text-slate-600">
-                          {e.material?.short_name ?? e.material?.material_code ?? '—'}
-                        </span>
-                      </TableCell>
-                      <TableCell className="px-2 py-1 text-right">
-                        <span className="text-[10px] font-semibold tabular-nums">{e.cartons_remaining}</span>
-                      </TableCell>
-                      <TableCell className="px-2 py-1">
-                        {e.stocktake_flagged ? (
-                          <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-red-600 bg-red-100 rounded-full px-1.5 py-0.5">
-                            <Flag className="h-2.5 w-2.5" /> Chênh lệch
-                          </span>
-                        ) : checked ? (
-                          <span className="text-[9px] font-semibold text-green-600 bg-green-100 rounded-full px-1.5 py-0.5">
-                            Đã kiểm
-                          </span>
-                        ) : (
-                          <span className="text-[9px] text-slate-400 bg-slate-100 rounded-full px-1.5 py-0.5">
-                            Chưa kiểm
-                          </span>
-                        )}
-                      </TableCell>
-                      <TableCell className="px-2 py-1 text-right">
-                        {diff ? (
-                          <span className="text-[10px] tabular-nums text-slate-600">
-                            {diff.actual} / {diff.app}
-                          </span>
-                        ) : (
-                          <span className="text-[10px] text-slate-300">—</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="px-2 py-1 text-right">
-                        {diff ? (
-                          <span className={`text-[10px] font-semibold tabular-nums ${diff.diff < 0 ? 'text-red-600' : diff.diff > 0 ? 'text-amber-600' : 'text-slate-400'}`}>
-                            {diff.diff > 0 ? '+' : ''}{diff.diff}
-                          </span>
-                        ) : (
-                          <span className="text-[10px] text-slate-300">—</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="px-2 py-1 whitespace-nowrap">
-                        {e.stocktake_at ? (
-                          <span className="text-[10px] text-slate-500">
-                            {formatTimestampDate(e.stocktake_at, true)} {formatTimestampTime(e.stocktake_at)}
-                          </span>
-                        ) : (
-                          <span className="text-[10px] text-slate-300">—</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="px-2 py-1">
-                        <span className="text-[10px] text-slate-500">
-                          {e.stocktake_by_emp?.name ?? '—'}
-                        </span>
-                      </TableCell>
-                      <TableCell className="px-2 py-1">
-                        {e.stocktake_flagged && (
-                          <Button
-                            size="sm" variant="outline"
-                            className="h-5 text-[9px] px-1.5 border-red-200 text-red-600 hover:bg-red-50 flex items-center gap-0.5"
-                            disabled={unflag.isPending}
-                            onClick={() => unflag.mutate(e.id)}
-                          >
-                            <X className="h-2.5 w-2.5" /> Bỏ cờ
-                          </Button>
-                        )}
+                </TableHeader>
+                <TableBody>
+                  {isFetching && entries.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={9} className="text-center text-xs text-slate-400 py-8">Đang tải…</TableCell>
+                    </TableRow>
+                  ) : entries.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={9} className="text-center text-xs text-slate-400 py-8">
+                        {view === 'problem' ? 'Không có pallet cần xử lý 🎉' : 'Không có dữ liệu'}
                       </TableCell>
                     </TableRow>
-                  )
-                })}
-              </TableBody>
-            </Table>
-          </div>
+                  ) : entries.map(e => {
+                    const diff    = parseDiff(e.stocktake_flag_note)
+                    const checked = isCheckedToday(e, todayVN, todayStart)
+                    return (
+                      <TableRow key={e.id} className={`transition-colors ${rowColor(e)}`}>
+                        {/* Mã pallet — clickable */}
+                        <TableCell className="px-2 py-1">
+                          <button
+                            className="font-mono text-[10px] font-semibold text-blue-600 hover:underline text-left"
+                            onClick={() => setSelectedId(prev => prev === e.id ? null : e.id)}
+                          >
+                            {e.pallet_code}
+                          </button>
+                        </TableCell>
+
+                        {/* Tên hàng */}
+                        <TableCell className="px-2 py-1 max-w-[140px]">
+                          <span className="text-[10px] text-slate-600 truncate block">
+                            {e.material?.short_name ?? e.material?.material_code ?? '—'}
+                          </span>
+                        </TableCell>
+
+                        {/* Tồn App */}
+                        <TableCell className="px-2 py-1 text-right">
+                          <span className="text-[10px] font-semibold tabular-nums">{e.cartons_remaining}</span>
+                        </TableCell>
+
+                        {/* Tồn thực tế */}
+                        <TableCell className="px-2 py-1 text-right">
+                          {diff ? (
+                            <span className="text-[10px] tabular-nums font-semibold text-slate-700">{diff.actual}</span>
+                          ) : (
+                            <span className="text-[10px] text-slate-300">—</span>
+                          )}
+                        </TableCell>
+
+                        {/* Chênh lệch */}
+                        <TableCell className="px-2 py-1 text-right">
+                          {diff ? (
+                            <span className={`text-[10px] font-semibold tabular-nums ${diff.diff < 0 ? 'text-red-600' : diff.diff > 0 ? 'text-amber-600' : 'text-slate-400'}`}>
+                              {diff.diff > 0 ? '+' : ''}{diff.diff}
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-slate-300">—</span>
+                          )}
+                        </TableCell>
+
+                        {/* Người kiểm */}
+                        <TableCell className="px-2 py-1">
+                          <span className="text-[10px] text-slate-500">{e.stocktake_by_emp?.name ?? '—'}</span>
+                        </TableCell>
+
+                        {/* Thời gian kiểm */}
+                        <TableCell className="px-2 py-1 whitespace-nowrap">
+                          {e.stocktake_at ? (
+                            <span className="text-[10px] text-slate-500">
+                              {formatTimestampDate(e.stocktake_at, true)} {formatTimestampTime(e.stocktake_at)}
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-slate-300">—</span>
+                          )}
+                        </TableCell>
+
+                        {/* Trạng thái */}
+                        <TableCell className="px-2 py-1">
+                          {e.stocktake_flagged ? (
+                            <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-red-600 bg-red-100 rounded-full px-1.5 py-0.5">
+                              <Flag className="h-2.5 w-2.5" /> Chênh lệch
+                            </span>
+                          ) : checked ? (
+                            <span className="text-[9px] font-semibold text-green-600 bg-green-100 rounded-full px-1.5 py-0.5">
+                              Đã kiểm
+                            </span>
+                          ) : (
+                            <span className="text-[9px] text-slate-400 bg-slate-100 rounded-full px-1.5 py-0.5">
+                              Chưa kiểm
+                            </span>
+                          )}
+                        </TableCell>
+
+                        {/* Bỏ cờ */}
+                        <TableCell className="px-2 py-1">
+                          {e.stocktake_flagged && (
+                            <Button size="sm" variant="outline"
+                              className="h-5 text-[9px] px-1.5 border-red-200 text-red-600 hover:bg-red-50 flex items-center gap-0.5"
+                              disabled={unflag.isPending}
+                              onClick={() => unflag.mutate(e.id)}
+                            >
+                              <X className="h-2.5 w-2.5" /> Bỏ cờ
+                            </Button>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+
+            {/* Side detail panel */}
+            {selectedId && (
+              <DetailPanel entryId={selectedId} onClose={() => setSelectedId(null)} />
+            )}
+          </>
         )}
       </div>
     </div>

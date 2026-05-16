@@ -195,21 +195,19 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
           </div>
 
           {/* Loại kho – lọc cả vị trí lẫn danh sách hàng hóa theo cùng category */}
-          {loaiKhoOpts.length > 0 && (
-            <div className="space-y-2">
-              <Label>Loại kho <span className="text-red-500">*</span></Label>
-              <Select value={subType} onValueChange={v => { setSubType(v); setLocationId(''); setMaterialId(''); setMatSearch('') }} disabled={!warehouseId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Chọn loại kho" />
-                </SelectTrigger>
-                <SelectContent>
-                  {loaiKhoOpts.map(c => (
-                    <SelectItem key={c.sub_type} value={c.sub_type}>{c.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
+          <div className="space-y-2">
+            <Label>Loại kho <span className="text-red-500">*</span></Label>
+            <Select value={subType} onValueChange={v => { setSubType(v); setLocationId(''); setMaterialId(''); setMatSearch('') }} disabled={!warehouseId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Chọn loại kho" />
+              </SelectTrigger>
+              <SelectContent>
+                {LOAI_KHO_CONFIG.map(c => (
+                  <SelectItem key={c.sub_type} value={c.sub_type}>{c.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
 
           {/* Vị trí – lọc theo loại kho, color-coded by capacity */}
           <div className="space-y-2">

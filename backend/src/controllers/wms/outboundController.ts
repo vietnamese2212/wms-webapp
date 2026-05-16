@@ -1570,24 +1570,29 @@ export async function manualCompleteItem(req: Request, res: Response) {
 // ─── Scan log (lịch sử quét xuất kho) ───────────────────────────────────────
 export async function getScanLog(req: Request, res: Response) {
   const {
-    from_date, to_date, warehouse_id, group_code,
-    distributor, delivery_code, material, scanner_name,
-    page = '1', limit = '200',
+    from_date, to_date, warehouse_ids, material_category,
+    group_code, distributor, delivery_code,
+    pallet_code, material, machine_codes, cycles, scanner_name,
+    page = '1', limit = '500',
   } = req.query
 
   const pageNum  = Math.max(1, parseInt(String(page)))
-  const limitNum = Math.min(500, Math.max(1, parseInt(String(limit))))
+  const limitNum = Math.min(1000, Math.max(1, parseInt(String(limit))))
   const offset   = (pageNum - 1) * limitNum
 
   const { data, error } = await supabase.rpc('get_outbound_scan_log', {
-    p_from_date:     from_date     ? String(from_date)     : null,
-    p_to_date:       to_date       ? String(to_date)       : null,
-    p_warehouse_id:  warehouse_id  ? String(warehouse_id)  : null,
-    p_group_code:    group_code    ? String(group_code)    : null,
-    p_distributor:   distributor   ? String(distributor)   : null,
-    p_delivery_code: delivery_code ? String(delivery_code) : null,
-    p_material:      material      ? String(material)      : null,
-    p_scanner_name:  scanner_name  ? String(scanner_name)  : null,
+    p_from_date:         from_date         ? String(from_date)         : null,
+    p_to_date:           to_date           ? String(to_date)           : null,
+    p_warehouse_ids:     warehouse_ids     ? String(warehouse_ids)     : null,
+    p_material_category: material_category ? String(material_category) : null,
+    p_group_code:        group_code        ? String(group_code)        : null,
+    p_distributor:       distributor       ? String(distributor)       : null,
+    p_delivery_code:     delivery_code     ? String(delivery_code)     : null,
+    p_pallet_code:       pallet_code       ? String(pallet_code)       : null,
+    p_material:          material          ? String(material)          : null,
+    p_machine_codes:     machine_codes     ? String(machine_codes)     : null,
+    p_cycles:            cycles            ? String(cycles)            : null,
+    p_scanner_name:      scanner_name      ? String(scanner_name)      : null,
     p_limit:  limitNum,
     p_offset: offset,
   })
@@ -1596,4 +1601,14 @@ export async function getScanLog(req: Request, res: Response) {
 
   const total = (data as any[])?.[0]?.total_count ?? 0
   return ok(res, { rows: data ?? [], total, page: pageNum, limit: limitNum })
+}
+
+export async function getScanLogFacets(req: Request, res: Response) {
+  const { material_category } = req.query
+  const { data, error } = await supabase.rpc('get_scan_log_facets', {
+    p_material_category: material_category ? String(material_category) : null,
+  })
+  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  const row = (data as any[])?.[0] ?? {}
+  return ok(res, { machines: row.machines ?? [], cycles: row.cycles ?? [] })
 }

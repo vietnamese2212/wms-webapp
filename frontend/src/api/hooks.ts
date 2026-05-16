@@ -1101,6 +1101,8 @@ export type OutboundScanLogEntry = {
   material_code_raw: string | null
   material_code: string | null
   material_name: string | null
+  material_category: string | null
+  shelf_life_days: number | null
   cycle: string | null
   machine_code: string | null
   import_date: string | null
@@ -1112,11 +1114,15 @@ export type OutboundScanLogEntry = {
 export type ScanLogParams = {
   from_date?: string
   to_date?: string
-  warehouse_id?: string
+  warehouse_ids?: string       // comma-separated
+  material_category?: string
   group_code?: string
   distributor?: string
   delivery_code?: string
+  pallet_code?: string
   material?: string
+  machine_codes?: string       // comma-separated
+  cycles?: string              // comma-separated
   scanner_name?: string
   page?: number
   limit?: number
@@ -1131,5 +1137,19 @@ export function useOutboundScanLog(params: ScanLogParams, enabled = true) {
       return data.data as { rows: OutboundScanLogEntry[]; total: number; page: number; limit: number }
     },
     staleTime: 30_000,
+  })
+}
+
+export function useOutboundScanLogFacets(materialCategory?: string) {
+  return useQuery({
+    queryKey: ['scan-log-facets', materialCategory],
+    enabled: !!materialCategory,
+    staleTime: 5 * 60_000,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/outbound/scan-log/facets', {
+        params: { material_category: materialCategory },
+      })
+      return data.data as { machines: string[]; cycles: string[] }
+    },
   })
 }

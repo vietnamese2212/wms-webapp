@@ -36,8 +36,11 @@ export function parseInboundQR(raw: string): ParsedQR {
   const [dateStr, materialCode, cycle, machineCode, palletSeq, manufacturerCode] = parts
 
   // Parse date: ddmmyy → Date (with strict calendar validation)
+  if (!dateStr || dateStr.length !== 6) {
+    return { ...base, is_valid: false, error: `QR không có ngày hợp lệ — phần ngày cần đúng 6 ký tự ddmmyy (nhận được: "${dateStr ?? ''}")` }
+  }
   let production_date: Date | null = null
-  if (dateStr && dateStr.length === 6) {
+  {
     const day   = parseInt(dateStr.slice(0, 2), 10)
     const month = parseInt(dateStr.slice(2, 4), 10)
     const year  = 2000 + parseInt(dateStr.slice(4, 6), 10)

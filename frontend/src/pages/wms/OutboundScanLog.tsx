@@ -461,6 +461,7 @@ export default function OutboundScanLog() {
                 <TableHead className="min-w-[50px]  text-[9px] text-right">Thùng</TableHead>
                 <TableHead className="min-w-[58px]  text-[9px]">NSX</TableHead>
                 <TableHead className="min-w-[58px]  text-[9px]">HSD</TableHead>
+                <TableHead className="min-w-[58px]  text-[9px]">Date cũ nhất</TableHead>
                 <TableHead className="min-w-[52px]  text-[9px] text-right">% Date</TableHead>
                 <TableHead className="min-w-[70px]  text-[9px]">Vị trí</TableHead>
                 <TableHead className="min-w-[50px]  text-[9px]">Máy</TableHead>
@@ -506,6 +507,9 @@ export default function OutboundScanLog() {
                     </TableCell>
                     <TableCell className="px-2 py-1 text-[10px]">
                       {expiryDate ? formatDate(expiryDate) : <span className="text-slate-300">—</span>}
+                    </TableCell>
+                    <TableCell className="px-2 py-1 text-[10px]">
+                      {row.best_available_date ? formatDate(row.best_available_date) : <span className="text-slate-300">—</span>}
                     </TableCell>
                     <TableCell className="px-2 py-1 text-[10px] text-right">
                       {pct !== null

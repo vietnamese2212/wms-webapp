@@ -1092,6 +1092,7 @@ export type OutboundScanLogEntry = {
   pallet_code: string
   cartons_scanned: number
   production_date: string | null
+  best_available_date: string | null
   scanned_at: string
   is_loose_picking: boolean
   group_code: string

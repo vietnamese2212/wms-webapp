@@ -5,19 +5,23 @@ import { useAuthStore } from '@/stores/authStore'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { MapPin, AlertTriangle, CheckCircle2, Flag, QrCode } from 'lucide-react'
+import { MapPin, AlertTriangle, CheckCircle2, Flag, QrCode, Clock, UserRound } from 'lucide-react'
 import { apiClient } from '@/api/client'
 import { useQueryClient } from '@tanstack/react-query'
+import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 
 interface StocktakeEntryData {
-  id:                 string
-  pallet_code:        string
-  cartons_remaining:  number
-  location_id:        string
-  status:             string
-  stocktake_flagged:  boolean
-  location:           { id: string; location_code: string } | null
-  material:           { material_code: string; short_name: string | null } | null
+  id:                string
+  pallet_code:       string
+  cartons_remaining: number
+  location_id:       string
+  status:            string
+  stocktake_flagged: boolean
+  stocktake_at:      string | null
+  location:          { id: string; location_code: string } | null
+  material:          { material_code: string; short_name: string | null } | null
+  qa_status:         { id: string; code: string; name: string } | null
+  stocktake_by_emp:  { id: string; name: string } | null
 }
 
 type ResultState =
@@ -42,6 +46,15 @@ function loadFilters(defaultWarehouseId: string) {
     }
   } catch {}
   return { warehouseId: defaultWarehouseId, category: '', locationId: '', requiresOnly: false }
+}
+
+function qaColor(code: string | undefined): string {
+  if (!code) return 'bg-slate-100 text-slate-600'
+  const c = code.toUpperCase()
+  if (c.includes('OK') || c === 'PASS') return 'bg-green-100 text-green-700'
+  if (c.includes('HOLD'))               return 'bg-amber-100 text-amber-700'
+  if (c.includes('REJ') || c === 'NG') return 'bg-red-100 text-red-700'
+  return 'bg-blue-100 text-blue-700'
 }
 
 export default function Stocktake() {
@@ -272,6 +285,8 @@ export default function Stocktake() {
             {/* Result card */}
             {resultState.mode === 'result' && entry && (
               <div className="rounded-xl border bg-white shadow-sm overflow-hidden">
+
+                {/* Header */}
                 <div className="px-3 py-2 bg-slate-50 border-b">
                   <p className="text-[10px] font-mono font-semibold text-slate-700 break-all">{entry.pallet_code}</p>
                   <p className="text-xs text-slate-600 mt-0.5">
@@ -279,12 +294,29 @@ export default function Stocktake() {
                   </p>
                 </div>
 
-                <div className="px-3 py-2.5 space-y-3">
-                  <div className="text-xs text-slate-600">
-                    Tồn app: <strong className="tabular-nums">{entry.cartons_remaining}</strong>
-                    <span className="text-slate-400 ml-1">thùng</span>
+                {/* Qty + QA */}
+                <div className="px-3 py-3 flex items-center justify-between border-b">
+                  <div>
+                    <p className="text-[10px] text-slate-400 mb-0.5">Tồn app</p>
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-3xl font-bold tabular-nums text-slate-800">
+                        {entry.cartons_remaining}
+                      </span>
+                      <span className="text-xs text-slate-400">thùng</span>
+                    </div>
                   </div>
+                  {entry.qa_status && (
+                    <div className="text-right">
+                      <p className="text-[10px] text-slate-400 mb-1">QA</p>
+                      <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${qaColor(entry.qa_status.code)}`}>
+                        {entry.qa_status.name ?? entry.qa_status.code}
+                      </span>
+                    </div>
+                  )}
+                </div>
 
+                {/* Location section */}
+                <div className="px-3 py-2.5 space-y-2 border-b">
                   <div className="text-xs space-y-1">
                     <div className="flex items-center gap-2">
                       <span className="text-slate-400 shrink-0 w-20">Vị trí app:</span>
@@ -308,44 +340,68 @@ export default function Stocktake() {
                       </span>
                     </label>
                   )}
-
-                  {!showQty ? (
-                    <button className="text-xs text-slate-500 hover:text-red-600 underline underline-offset-2"
-                      onClick={() => setShowQty(true)}>
-                      Không khớp tồn?
-                    </button>
-                  ) : (
-                    <div className="border border-red-100 bg-red-50 rounded-lg p-2.5 space-y-2">
-                      <p className="text-[10px] text-red-700 font-medium flex items-center gap-1">
-                        <Flag className="h-3 w-3" /> Đánh dấu không khớp tồn
-                      </p>
-                      <div className="flex items-center gap-2">
-                        <Input
-                          type="number" min="0"
-                          value={physCount}
-                          onChange={ev => setPhysCount(ev.target.value)}
-                          placeholder="Số thực tế"
-                          className="h-7 text-sm w-24"
-                          autoFocus
-                        />
-                        <span className="text-xs text-slate-400">thùng (app: {entry.cartons_remaining})</span>
-                      </div>
-                      <button className="text-[10px] text-slate-400 hover:text-slate-600"
-                        onClick={() => { setShowQty(false); setPhysCount('') }}>
-                        Huỷ
-                      </button>
-                    </div>
-                  )}
                 </div>
 
-                <div className="px-3 py-2 border-t flex gap-2">
-                  <Button variant="outline" size="sm" className="flex-1" onClick={clearResult}>
+                {/* Last stocktake info */}
+                {(entry.stocktake_at || entry.stocktake_by_emp) && (
+                  <div className="px-3 py-2 border-b bg-slate-50/50 flex flex-wrap gap-x-4 gap-y-1">
+                    {entry.stocktake_at && (
+                      <div className="flex items-center gap-1 text-[10px] text-slate-500">
+                        <Clock className="h-3 w-3 shrink-0" />
+                        <span>{formatTimestampDate(entry.stocktake_at, true)} {formatTimestampTime(entry.stocktake_at)}</span>
+                      </div>
+                    )}
+                    {entry.stocktake_by_emp && (
+                      <div className="flex items-center gap-1 text-[10px] text-slate-500">
+                        <UserRound className="h-3 w-3 shrink-0" />
+                        <span>{entry.stocktake_by_emp.name}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Qty mismatch input */}
+                {showQty && (
+                  <div className="px-3 py-2.5 border-b bg-red-50">
+                    <p className="text-[10px] text-red-700 font-medium flex items-center gap-1 mb-2">
+                      <Flag className="h-3 w-3" /> Số lượng thực tế
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        type="number" min="0"
+                        value={physCount}
+                        onChange={ev => setPhysCount(ev.target.value)}
+                        placeholder="Nhập số thực tế"
+                        className="h-7 text-sm w-28"
+                        autoFocus
+                      />
+                      <span className="text-xs text-slate-400">thùng (app: {entry.cartons_remaining})</span>
+                    </div>
+                    {physCount !== '' && Number(physCount) !== entry.cartons_remaining && (
+                      <p className="text-[10px] text-red-600 mt-1 font-medium">
+                        Chênh: {Number(physCount) - entry.cartons_remaining > 0 ? '+' : ''}{Number(physCount) - entry.cartons_remaining} thùng
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* Action buttons */}
+                <div className="px-3 py-2 flex gap-2">
+                  <Button variant="outline" size="sm" className="flex-1 text-xs" onClick={clearResult} disabled={saving}>
                     Bỏ qua
                   </Button>
-                  <Button size="sm" className="flex-1 bg-green-600 hover:bg-green-700"
+                  <Button
+                    variant="outline" size="sm"
+                    className={`flex-1 text-xs ${showQty ? 'border-amber-400 bg-amber-50 text-amber-700 hover:bg-amber-100' : 'text-amber-600 border-amber-300 hover:bg-amber-50'}`}
+                    onClick={() => { setShowQty(v => !v); if (showQty) setPhysCount('') }}
+                    disabled={saving}
+                  >
+                    Không khớp
+                  </Button>
+                  <Button size="sm" className="flex-1 text-xs bg-green-600 hover:bg-green-700"
                     disabled={saving}
                     onClick={handleSave}>
-                    {saving ? '…' : (showQty && physCount !== '' ? 'Lưu & Đánh dấu' : 'Xác nhận đã kiểm')}
+                    {saving ? '…' : (showQty && physCount !== '' ? 'Lưu & Đánh dấu' : 'Lưu')}
                   </Button>
                 </div>
               </div>

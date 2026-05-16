@@ -4,4 +4,6 @@ ALTER TABLE "Location"
 
 ALTER TABLE "InventoryEntry"
   ADD COLUMN IF NOT EXISTS stocktake_flagged   BOOLEAN DEFAULT false,
-  ADD COLUMN IF NOT EXISTS stocktake_flag_note TEXT;
+  ADD COLUMN IF NOT EXISTS stocktake_flag_note TEXT,
+  ADD COLUMN IF NOT EXISTS stocktake_at        TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS stocktake_by        UUID REFERENCES "Employee"(id);

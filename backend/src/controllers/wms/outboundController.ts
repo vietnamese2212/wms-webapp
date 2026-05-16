@@ -75,7 +75,7 @@ async function fetchGDOFull(id: string) {
 
   const { data: items } = doIds.length
     ? await (supabase.from('OutboundItem') as any)
-        .select('*, material:Material(id,material_code,short_name,custom_short_name,cartons_per_pallet,weight_kg)')
+        .select('*, material:Material(id,material_code,short_name,custom_short_name,cartons_per_pallet,weight_kg,shelf_life_days)')
         .in('do_id', doIds)
         .order('id')
     : { data: [] }
@@ -86,18 +86,24 @@ async function fetchGDOFull(id: string) {
         .select('*').in('item_id', itemIds)
     : { data: [] }
 
-  // Lấy pct_date từ InventoryEntry bằng query riêng (tránh JOIN — FK không được khai báo explicit)
-  const invIds = [...new Set((scans ?? []).map((s: any) => s.inventory_entry_id).filter(Boolean))] as string[]
-  const { data: invPctRows } = invIds.length
-    ? await (supabase.from('InventoryEntry') as any).select('id, pct_date').in('id', invIds)
-    : { data: [] }
-  const invPctMap = new Map<string, number | null>()
-  for (const e of (invPctRows ?? [])) invPctMap.set(e.id, e.pct_date ?? null)
+  // Map item_id → shelf_life_days để tính pct_date cho từng scan entry
+  const itemShelfMap = new Map<string, number>()
+  for (const item of (items ?? [])) {
+    itemShelfMap.set(item.id, item.material?.shelf_life_days ? Number(item.material.shelf_life_days) : 0)
+  }
+  const nowMs = Date.now()
 
   const scansByItem = new Map<string, any[]>()
   for (const s of (scans ?? [])) {
+    const shelfDays = itemShelfMap.get(s.item_id) ?? 0
+    let pct_date: number | null = null
+    if (shelfDays > 0 && s.production_date) {
+      const totalMs = shelfDays * 86_400_000
+      const remaining = new Date(s.production_date).getTime() + totalMs - nowMs
+      pct_date = Math.max(0, Math.round((remaining / totalMs) * 100))
+    }
     const list = scansByItem.get(s.item_id) ?? []
-    list.push({ ...s, pct_date: s.inventory_entry_id ? (invPctMap.get(s.inventory_entry_id) ?? null) : null })
+    list.push({ ...s, pct_date })
     scansByItem.set(s.item_id, list)
   }
 
@@ -1521,9 +1527,10 @@ export async function confirmLoosePickingItem(req: Request, res: Response) {
       .select('*').eq('id', itemId).single()
     if (!item) return fail(res, 'Không tìm thấy mặt hàng', 404)
 
-    const { data: looseEntries } = await (supabase.from('OutboundScanEntry') as any)
+    const { data: looseEntries, error: looseErr } = await (supabase.from('OutboundScanEntry') as any)
       .select('*').eq('item_id', itemId).eq('is_loose_picking', true).eq('loose_confirmed', false)
-    if (!looseEntries?.length) return fail(res, 'Không có nhặt lẻ cần xác nhận', 400)
+    if (looseErr) return fail(res, `Lỗi DB: ${looseErr.message}`, 500)
+    if (!looseEntries?.length) return fail(res, 'Không có nhặt lẻ chờ xác nhận', 400)
 
     const t = now()
 

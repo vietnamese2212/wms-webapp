@@ -248,16 +248,21 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
 // ─── Confirm dialog ────────────────────────────────────────────
 
 function ConfirmDialog({
-  open, title, message, onConfirm, onCancel, loading,
+  open, title, message, onConfirm, onCancel, loading, error,
 }: {
   open: boolean; title: string; message: string
-  onConfirm: () => void; onCancel: () => void; loading?: boolean
+  onConfirm: () => void; onCancel: () => void; loading?: boolean; error?: string | null
 }) {
   return (
     <Dialog open={open} onOpenChange={v => { if (!v) onCancel() }}>
       <DialogContent className="sm:max-w-sm">
         <DialogHeader><DialogTitle>{title}</DialogTitle></DialogHeader>
         <p className="text-sm text-slate-600 py-1">{message}</p>
+        {error && (
+          <div className="rounded bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700 flex items-start gap-1.5">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />{error}
+          </div>
+        )}
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={onCancel} disabled={loading}>Không</Button>
           <Button className="bg-red-600 hover:bg-red-700 text-white" onClick={onConfirm} disabled={loading}>
@@ -288,6 +293,7 @@ export default function OutboundItemDetail() {
   const [confirmScanId,    setConfirmScanId]    = useState<string | null>(null)
   const [showInventory,    setShowInventory]    = useState(false)
   const [confirmLooseOpen, setConfirmLooseOpen] = useState(false)
+  const [looseError,       setLooseError]       = useState<string | null>(null)
   const [expandedInvKeys,  setExpandedInvKeys]  = useState<Set<string>>(new Set())
   const [detailEntryId,    setDetailEntryId]    = useState<string | null>(null)
   const [showLoscamDialog, setShowLoscamDialog] = useState(false)
@@ -418,13 +424,21 @@ export default function OutboundItemDetail() {
         title="Xác nhận nhặt lẻ"
         message={`Xác nhận đã kiểm tra ${looseUnconfirmedCount} thùng nhặt lẻ cho mã này? Tồn kho sẽ được trừ ngay.`}
         onConfirm={() => {
+          setLooseError(null)
           confirmLoose(
             { gdoId: gdoId!, itemId: item.id },
-            { onSettled: () => setConfirmLooseOpen(false) }
+            {
+              onSuccess: () => setConfirmLooseOpen(false),
+              onError: (err) => {
+                const msg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi xác nhận nhặt lẻ'
+                setLooseError(msg)
+              },
+            }
           )
         }}
-        onCancel={() => setConfirmLooseOpen(false)}
+        onCancel={() => { setConfirmLooseOpen(false); setLooseError(null) }}
         loading={confirming}
+        error={looseError}
       />
 
       <Dialog open={showLoscamDialog} onOpenChange={v => { if (!v) setShowLoscamDialog(false) }}>

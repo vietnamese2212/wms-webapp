@@ -293,8 +293,11 @@ export default function OutboundItemDetail() {
   const [showLoscamDialog, setShowLoscamDialog] = useState(false)
   const [loscamCartons,    setLoscamCartons]    = useState('')
 
+  // Ref để auto-open scan chỉ chạy 1 lần khi trang load lần đầu (tránh tái kích hoạt sau mỗi lần delete/confirm)
+  const hasAutoScanned = useRef(false)
+
   useEffect(() => {
-    if (!autoScan || !gdo) return
+    if (!autoScan || !gdo || hasAutoScanned.current) return
     const allItems = (gdo.delivery_orders ?? []).flatMap(d => d.items)
     const currentItem = allItems.find(i => i.id === itemId)
     if (!currentItem) return
@@ -302,6 +305,7 @@ export default function OutboundItemDetail() {
     if (canScanNow && currentItem.status !== 'COMPLETED') {
       unlockAudio()
       setShowScan(true)
+      hasAutoScanned.current = true
     }
   }, [autoScan, gdo]) // eslint-disable-line
 
@@ -469,20 +473,11 @@ export default function OutboundItemDetail() {
               >
                 <ArrowLeft className="h-4 w-4" />
               </button>
-              <span className="font-mono font-semibold text-sm">{matCode}</span>
+              <span className="font-mono font-semibold text-sm truncate">{matCode}</span>
               <Badge status={item.status} />
             </div>
 
-            <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
-              {!!gdo.started_at && item.loose_picking > 0 && looseUnconfirmedCount > 0 && (
-                <button
-                  onClick={() => setConfirmLooseOpen(true)}
-                  disabled={confirming || isPaused}
-                  className="flex items-center gap-1 h-7 px-2 rounded border text-xs font-medium transition-colors bg-purple-50 border-purple-300 text-purple-700 hover:bg-purple-100 disabled:opacity-50"
-                >
-                  Check nhặt lẻ ({looseUnconfirmedCount})
-                </button>
-              )}
+            <div className="flex items-center gap-1.5 shrink-0">
               <button
                 onClick={() => setShowInventory(v => !v)}
                 className={`flex items-center gap-1 h-7 px-2 rounded border text-xs font-medium transition-colors ${
@@ -511,6 +506,17 @@ export default function OutboundItemDetail() {
               ))}
             </div>
           </div>
+
+          {/* Row 1b: Check nhặt lẻ — hàng riêng để không che code/badge trên mobile */}
+          {!!gdo.started_at && item.loose_picking > 0 && looseUnconfirmedCount > 0 && (
+            <button
+              onClick={() => setConfirmLooseOpen(true)}
+              disabled={confirming || isPaused}
+              className="w-full flex items-center justify-center gap-1.5 h-8 px-3 rounded border text-xs font-medium transition-colors bg-purple-50 border-purple-300 text-purple-700 hover:bg-purple-100 disabled:opacity-50"
+            >
+              {confirming ? 'Đang xử lý…' : `Check nhặt lẻ (${looseUnconfirmedCount} thùng)`}
+            </button>
+          )}
 
           {/* Row 2: material name + progress */}
           <div className="space-y-1">

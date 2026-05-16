@@ -255,8 +255,10 @@ export default function LoosePickingItemDetail() {
   const [expandedInvKeys,   setExpandedInvKeys]   = useState<Set<string>>(new Set())
   const [detailEntryId,     setDetailEntryId]     = useState<string | null>(null)
 
+  const hasAutoScanned = useRef(false)
+
   useEffect(() => {
-    if (!autoScan || !gdo) return
+    if (!autoScan || !gdo || hasAutoScanned.current) return
     const allItems = (gdo.delivery_orders ?? []).flatMap(d => d.items)
     const current  = allItems.find(i => i.id === itemId)
     if (!current) return
@@ -266,6 +268,7 @@ export default function LoosePickingItemDetail() {
     if (ls < el) {
       unlockAudio()
       setShowScan(true)
+      hasAutoScanned.current = true
     }
   }, [autoScan, gdo]) // eslint-disable-line
 

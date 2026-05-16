@@ -95,12 +95,18 @@ async function fetchGDOFull(id: string) {
 
   const scansByItem = new Map<string, any[]>()
   for (const s of (scans ?? [])) {
-    const shelfDays = itemShelfMap.get(s.item_id) ?? 0
-    let pct_date: number | null = null
-    if (shelfDays > 0 && s.production_date) {
-      const totalMs = shelfDays * 86_400_000
-      const remaining = new Date(s.production_date).getTime() + totalMs - nowMs
-      pct_date = Math.max(0, Math.round((remaining / totalMs) * 100))
+    // Ưu tiên pct_date đã lưu (cứng tại thời điểm quét); fallback tính động cho entries cũ chưa có
+    let pct_date: number | null
+    if (s.pct_date !== null && s.pct_date !== undefined) {
+      pct_date = s.pct_date
+    } else {
+      const shelfDays = itemShelfMap.get(s.item_id) ?? 0
+      pct_date = null
+      if (shelfDays > 0 && s.production_date) {
+        const totalMs = shelfDays * 86_400_000
+        const remaining = new Date(s.production_date).getTime() + totalMs - nowMs
+        pct_date = Math.max(0, Math.round((remaining / totalMs) * 100))
+      }
     }
     const list = scansByItem.get(s.item_id) ?? []
     list.push({ ...s, pct_date })
@@ -1249,14 +1255,16 @@ export async function scanItem(req: Request, res: Response) {
       return fail(res, `Pallet bị giữ QA: ${inv.qa_status?.name ?? inv.qa_status_id} — không được xuất`, 400)
     }
 
+    // Fetch shelf_life_days — dùng để validate %Date (nếu có yêu cầu) và lưu pct_date vào scan entry
+    const matId = item.material_id ?? inv.material_id
+    const { data: shelfMat } = matId
+      ? await (supabase.from('Material') as any).select('shelf_life_days').eq('id', matId).single()
+      : { data: null }
+    const shelfLifeDays = shelfMat?.shelf_life_days ? Number(shelfMat.shelf_life_days) : 0
+
     // Kiểm tra % shelf life còn lại nếu item có yêu cầu
     const dateReqPct = Number(item.date_required ?? 0)
     if (dateReqPct > 0) {
-      const matId = item.material_id ?? inv.material_id
-      const { data: mat } = matId
-        ? await (supabase.from('Material') as any).select('shelf_life_days').eq('id', matId).single()
-        : { data: null }
-      const shelfLifeDays = mat?.shelf_life_days ? Number(mat.shelf_life_days) : 0
       if (!shelfLifeDays) {
         return fail(res, `Mặt hàng chưa có Shelf Life — không thể kiểm tra %Date`, 400)
       }
@@ -1324,6 +1332,14 @@ export async function scanItem(req: Request, res: Response) {
       }
     }
 
+    // Tính pct_date tại thời điểm quét — khóa cứng, không thay đổi theo thời gian
+    let pct_date: number | null = null
+    if (shelfLifeDays > 0 && inv.production_date) {
+      const totalMs = shelfLifeDays * 86_400_000
+      const remaining = new Date(inv.production_date).getTime() + totalMs - Date.now()
+      pct_date = Math.max(0, Math.round((remaining / totalMs) * 100))
+    }
+
     const t = now()
 
     // Insert scan entry TRƯỚC khi thay đổi inventory — nếu lỗi thì không có gì bị ảnh hưởng
@@ -1333,6 +1349,7 @@ export async function scanItem(req: Request, res: Response) {
       pallet_code: qr, cartons_scanned: to_take,
       production_date: inv.production_date ?? null,
       best_available_date,
+      pct_date,
       is_loose_picking: !!loose_picking_mode,
       scanned_by: resolved_employee_id, scanned_at: t,
       created_at: t, updated_at: t,

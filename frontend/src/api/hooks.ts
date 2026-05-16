@@ -57,9 +57,10 @@ export function useManufacturers() {
   })
 }
 
-export function useMaterials(params?: { search?: string; manufacturer_id?: string; category?: string }) {
+export function useMaterials(params?: { search?: string; manufacturer_id?: string; category?: string }, enabled = true) {
   return useQuery({
     queryKey: ['materials', params],
+    enabled,
     queryFn: async () => {
       const { data } = await apiClient.get('/masterdata/materials', { params })
       return data.data as import('@/types').Material[]

@@ -1,20 +1,23 @@
-import { useState, useMemo } from 'react'
-import { ClipboardList, Filter, X, CalendarDays, ChevronLeft, ChevronRight } from 'lucide-react'
-import { Input } from '@/components/ui/input'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { useState, useMemo, useRef } from 'react'
+import {
+  ClipboardList, Filter, X, CalendarDays, ChevronLeft, ChevronRight, QrCode, AlertTriangle,
+} from 'lucide-react'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { TableSkeleton } from '@/components/shared/TableSkeleton'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
+import { QRScanner } from '@/components/shared/QRScanner'
+import type { QRScannerHandle } from '@/components/shared/QRScanner'
 import {
-  useOutboundScanLog, useOutboundScanLogFacets, useWarehouses, useMaterialCategories,
+  useOutboundScanLog, useOutboundScanLogFacets, useWarehouses, useMaterialCategories, useMaterials,
 } from '@/api/hooks'
 import type { ScanLogParams } from '@/api/hooks'
 import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 
 const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 const PAGE_SIZE = 500
-const MAX_DAYS = 31
+const MAX_DAYS  = 90
 
 // ─── Helpers ──────────────────────────────────────────────────
 
@@ -31,7 +34,7 @@ function calcPctAtScan(prodDate: string | null, shelfDays: number | null, scanne
   const prod = new Date(prodDate)
   const scan = new Date(scannedAt)
   if (isNaN(prod.getTime()) || isNaN(scan.getTime())) return null
-  const totalMs = shelfDays * 86_400_000
+  const totalMs  = shelfDays * 86_400_000
   const remaining = prod.getTime() + totalMs - scan.getTime()
   return Math.max(0, Math.round((remaining / totalMs) * 100))
 }
@@ -69,13 +72,13 @@ function FmtTs({ ts }: { ts: string | null }) {
 type DraftFilters = {
   from_date: string
   to_date: string
-  material_category: string
   warehouses: string[]
+  material_category: string
   group_code: string
   distributor: string
   delivery_code: string
   pallet_code: string
-  material: string
+  materials: string[]
   machines: string[]
   cycles: string[]
   scanner_name: string
@@ -83,10 +86,11 @@ type DraftFilters = {
 
 const EMPTY_DRAFT: DraftFilters = {
   from_date: TODAY, to_date: TODAY,
-  material_category: '',
   warehouses: [],
+  material_category: '',
   group_code: '', distributor: '', delivery_code: '',
-  pallet_code: '', material: '',
+  pallet_code: '',
+  materials: [],
   machines: [], cycles: [],
   scanner_name: '',
 }
@@ -94,50 +98,65 @@ const EMPTY_DRAFT: DraftFilters = {
 // ─── Page ──────────────────────────────────────────────────────
 
 export default function OutboundScanLog() {
-  const [showFilters, setShowFilters] = useState(true)
-  const [page, setPage]               = useState(1)
-  const [dateError, setDateError]     = useState('')
-  const [draft, setDraft]             = useState<DraftFilters>(EMPTY_DRAFT)
-  const [applied, setApplied]         = useState<ScanLogParams>({
+  const [showFilters, setShowFilters]   = useState(true)
+  const [page, setPage]                 = useState(1)
+  const [dateError, setDateError]       = useState('')
+  const [showScanner, setShowScanner]   = useState(false)
+  const [draft, setDraft]               = useState<DraftFilters>(EMPTY_DRAFT)
+  const [applied, setApplied]           = useState<ScanLogParams>({
     from_date: TODAY, to_date: TODAY,
   })
+  const scannerRef = useRef<QRScannerHandle>(null)
 
-  const { data: warehousesData }  = useWarehouses()
-  const { data: categoriesData }  = useMaterialCategories()
+  const { data: warehousesData } = useWarehouses()
+  const { data: categoriesData } = useMaterialCategories()
   const warehouses  = (warehousesData as { id: string; name: string }[] | undefined) ?? []
   const categories  = categoriesData ?? []
 
   const { data: facets } = useOutboundScanLogFacets(draft.material_category || undefined)
-  const machineOpts = useMemo(() => (facets?.machines ?? []).map(m => ({ value: m, label: m })), [facets])
-  const cycleOpts   = useMemo(() => (facets?.cycles   ?? []).map(c => ({ value: c, label: c })), [facets])
+  const { data: materialsData } = useMaterials(
+    { category: draft.material_category },
+    !!draft.material_category,
+  )
+  const materials = materialsData ?? []
+
   const warehouseOpts = useMemo(() => warehouses.map(w => ({ value: w.id, label: w.name })), [warehouses])
+  const materialOpts  = useMemo(() =>
+    materials.map(m => ({
+      value: m.id,
+      label: `${m.material_code}${m.short_name ? ' – ' + m.short_name : ''}`,
+    })), [materials])
+  const machineOpts   = useMemo(() => (facets?.machines ?? []).map(m => ({ value: m, label: m })), [facets])
+  const cycleOpts     = useMemo(() => (facets?.cycles   ?? []).map(c => ({ value: c, label: c })), [facets])
 
-  // Query only fires when material_category is selected
-  const canFetch = !!applied.material_category
+  const canFetch = !!applied.material_category && !!applied.warehouse_ids
 
-  const params: ScanLogParams = {
-    ...applied,
-    page,
-    limit: PAGE_SIZE,
-  }
-
+  const params: ScanLogParams = { ...applied, page, limit: PAGE_SIZE }
   const { data, isLoading, isError } = useOutboundScanLog(params, canFetch)
   const rows       = data?.rows  ?? []
   const total      = data?.total ?? 0
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  const isLargeResult = canFetch && !isLoading && total > 10_000
 
   function applyFilters() {
-    // Date range validation
+    if (!draft.warehouses.length) {
+      setDateError('Vui lòng chọn ít nhất 1 Kho')
+      return
+    }
+    if (!draft.material_category) {
+      setDateError('Vui lòng chọn Loại hàng')
+      return
+    }
     if (draft.from_date && draft.to_date) {
-      const diffDays = Math.round(
-        (new Date(draft.to_date).getTime() - new Date(draft.from_date).getTime()) / 86_400_000
-      )
-      if (diffDays < 0) {
+      const from = new Date(draft.from_date)
+      const to   = new Date(draft.to_date)
+      if (to < from) {
         setDateError('Ngày bắt đầu phải trước ngày kết thúc')
         return
       }
+      const diffDays = Math.round((to.getTime() - from.getTime()) / 86_400_000)
       if (diffDays > MAX_DAYS) {
-        setDateError(`Khoảng thời gian tối đa ${MAX_DAYS} ngày (khoảng ~${MAX_DAYS * 6_000} bản ghi/loại hàng)`)
+        setDateError(`Khoảng thời gian tối đa ${MAX_DAYS} ngày`)
         return
       }
     }
@@ -151,9 +170,9 @@ export default function OutboundScanLog() {
       distributor:       draft.distributor   || undefined,
       delivery_code:     draft.delivery_code || undefined,
       pallet_code:       draft.pallet_code   || undefined,
-      material:          draft.material      || undefined,
-      machine_codes:     draft.machines.length > 0 ? draft.machines.join(',') : undefined,
-      cycles:            draft.cycles.length > 0   ? draft.cycles.join(',')   : undefined,
+      material:          draft.materials.length > 0 ? draft.materials.join(',') : undefined,
+      machine_codes:     draft.machines.length > 0  ? draft.machines.join(',')  : undefined,
+      cycles:            draft.cycles.length > 0    ? draft.cycles.join(',')    : undefined,
       scanner_name:      draft.scanner_name  || undefined,
     })
     setPage(1)
@@ -166,7 +185,11 @@ export default function OutboundScanLog() {
     setPage(1)
   }
 
-  // Active filter count (excluding dates which are always present)
+  function handlePalletScan(raw: string) {
+    setDraft(d => ({ ...d, pallet_code: raw.trim() }))
+    setShowScanner(false)
+  }
+
   const activeCount = [
     applied.warehouse_ids,
     applied.material_category,
@@ -216,8 +239,38 @@ export default function OutboundScanLog() {
         {/* Collapsible filter panel */}
         {showFilters && (
           <div className="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2.5 space-y-2">
-            {/* Row 1: Ngày + Loại hàng (mandatory) */}
+
+            {/* Row 1: Kho (bắt buộc) + Loại hàng (bắt buộc) + Date range */}
             <div className="flex items-center gap-2 flex-wrap">
+              {/* Kho — multi-select, bắt buộc */}
+              <div className="flex items-center gap-1">
+                <span className="text-[10px] text-red-500 font-medium shrink-0">*</span>
+                <MultiSelectFilter
+                  label="Kho"
+                  options={warehouseOpts}
+                  selected={draft.warehouses}
+                  onChange={v => setDraft(d => ({ ...d, warehouses: v }))}
+                  searchable
+                />
+              </div>
+
+              {/* Loại hàng — single select mandatory */}
+              <div className="flex items-center gap-1">
+                <span className="text-[10px] text-red-500 font-medium shrink-0">*</span>
+                <MultiSelectFilter
+                  label="Loại hàng"
+                  options={(categories as string[]).map(c => ({ value: c, label: c }))}
+                  selected={draft.material_category ? [draft.material_category] : []}
+                  onChange={v => {
+                    const cat = v[v.length - 1] ?? ''
+                    setDraft(d => ({ ...d, material_category: cat, materials: [], machines: [], cycles: [] }))
+                  }}
+                  searchable={false}
+                />
+              </div>
+
+              <span className="text-slate-300 text-xs mx-1">|</span>
+
               <CalendarDays className="h-3.5 w-3.5 text-blue-400 shrink-0" />
               <DateBtn value={draft.from_date} placeholder="Từ ngày" onChange={v => { setDraft(d => ({ ...d, from_date: v })); setDateError('') }} />
               <span className="text-blue-300 text-xs">–</span>
@@ -228,59 +281,60 @@ export default function OutboundScanLog() {
                   Hôm nay
                 </button>
               )}
-
-              <span className="text-slate-300 text-xs mx-1">|</span>
-
-              {/* Loại hàng — bắt buộc */}
-              <div className="flex items-center gap-1">
-                <span className="text-[10px] text-red-500 font-medium shrink-0">*</span>
-                <Select
-                  value={draft.material_category || '__none__'}
-                  onValueChange={v => setDraft(d => ({ ...d, material_category: v === '__none__' ? '' : v, machines: [], cycles: [] }))}
-                >
-                  <SelectTrigger className={`h-7 text-xs w-[130px] bg-white ${!draft.material_category ? 'border-red-300' : ''}`}>
-                    <SelectValue placeholder="Chọn loại hàng…" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__"><span className="text-slate-400 italic">Chọn loại hàng…</span></SelectItem>
-                    {categories.map(c => (
-                      <SelectItem key={c} value={c}>{c}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Kho — multi-select */}
-              <MultiSelectFilter
-                label="Kho"
-                options={warehouseOpts}
-                selected={draft.warehouses}
-                onChange={v => setDraft(d => ({ ...d, warehouses: v }))}
-                searchable
-              />
             </div>
 
             {dateError && (
               <p className="text-[10px] text-red-500 font-medium">{dateError}</p>
             )}
 
-            {/* Row 2: Mã pallet / Số xe / NPP / Số DO */}
+            {/* Row 2: Mã pallet (QR) / Số xe / NPP / Số DO */}
             <div className="flex gap-2 flex-wrap items-center">
-              <Input className="h-7 text-xs w-[120px] bg-white" placeholder="Mã pallet…"
-                value={draft.pallet_code} onChange={e => setDraft(d => ({ ...d, pallet_code: e.target.value }))} />
-              <Input className="h-7 text-xs w-[110px] bg-white" placeholder="Số xe…"
-                value={draft.group_code} onChange={e => setDraft(d => ({ ...d, group_code: e.target.value }))} />
-              <Input className="h-7 text-xs w-[130px] bg-white" placeholder="NPP…"
-                value={draft.distributor} onChange={e => setDraft(d => ({ ...d, distributor: e.target.value }))} />
-              <Input className="h-7 text-xs w-[110px] bg-white" placeholder="Số DO…"
-                value={draft.delivery_code} onChange={e => setDraft(d => ({ ...d, delivery_code: e.target.value }))} />
+              {/* Mã pallet with QR scan button */}
+              <div className="flex items-center gap-1">
+                <input
+                  className="h-7 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-400 w-[120px]"
+                  placeholder="Mã pallet…"
+                  value={draft.pallet_code}
+                  onChange={e => setDraft(d => ({ ...d, pallet_code: e.target.value }))}
+                />
+                <button
+                  type="button"
+                  className="h-7 w-7 flex items-center justify-center rounded-md border border-slate-200 bg-white hover:bg-slate-50 transition-colors"
+                  title="Quét QR pallet"
+                  onClick={() => setShowScanner(true)}
+                >
+                  <QrCode className="h-3.5 w-3.5 text-slate-500" />
+                </button>
+              </div>
+              <input
+                className="h-7 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-400 w-[110px]"
+                placeholder="Số xe…"
+                value={draft.group_code}
+                onChange={e => setDraft(d => ({ ...d, group_code: e.target.value }))}
+              />
+              <input
+                className="h-7 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-400 w-[130px]"
+                placeholder="NPP…"
+                value={draft.distributor}
+                onChange={e => setDraft(d => ({ ...d, distributor: e.target.value }))}
+              />
+              <input
+                className="h-7 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-400 w-[110px]"
+                placeholder="Số DO…"
+                value={draft.delivery_code}
+                onChange={e => setDraft(d => ({ ...d, delivery_code: e.target.value }))}
+              />
             </div>
 
-            {/* Row 3: Mã hàng / Máy / Chu kỳ / Người quét + actions */}
+            {/* Row 3: Mã hàng / Máy / Chu kỳ / Người quét + Actions */}
             <div className="flex gap-2 flex-wrap items-center">
-              <Input className="h-7 text-xs w-[160px] bg-white" placeholder="Mã / Tên hàng…"
-                value={draft.material} onChange={e => setDraft(d => ({ ...d, material: e.target.value }))} />
-
+              <MultiSelectFilter
+                label="Mã / Tên hàng"
+                options={materialOpts}
+                selected={draft.materials}
+                onChange={v => setDraft(d => ({ ...d, materials: v }))}
+                searchable
+              />
               <MultiSelectFilter
                 label="Máy"
                 options={machineOpts}
@@ -295,16 +349,19 @@ export default function OutboundScanLog() {
                 onChange={v => setDraft(d => ({ ...d, cycles: v }))}
                 searchable={false}
               />
-
-              <Input className="h-7 text-xs w-[120px] bg-white" placeholder="Người quét…"
-                value={draft.scanner_name} onChange={e => setDraft(d => ({ ...d, scanner_name: e.target.value }))} />
+              <input
+                className="h-7 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-400 w-[120px]"
+                placeholder="Người quét…"
+                value={draft.scanner_name}
+                onChange={e => setDraft(d => ({ ...d, scanner_name: e.target.value }))}
+              />
 
               <div className="flex-1" />
               <button
                 className="h-7 px-3 rounded-md bg-blue-600 text-white text-xs font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
                 onClick={applyFilters}
-                disabled={!draft.material_category}
-                title={!draft.material_category ? 'Vui lòng chọn Loại hàng trước' : ''}
+                disabled={!draft.material_category || !draft.warehouses.length}
+                title={(!draft.warehouses.length || !draft.material_category) ? 'Vui lòng chọn Kho và Loại hàng' : ''}
               >
                 Áp dụng
               </button>
@@ -321,16 +378,16 @@ export default function OutboundScanLog() {
         {/* Summary bar */}
         <div className="flex items-center gap-3 -mt-0.5">
           <p className="text-xs text-slate-500 flex-1">
-            {applied.material_category
-              ? <span className="font-medium text-slate-700">{applied.material_category}</span>
-              : <span className="text-amber-600 font-medium">Chọn Loại hàng để xem dữ liệu</span>
+            {(!applied.material_category || !applied.warehouse_ids)
+              ? <span className="text-amber-600 font-medium">Chọn Kho và Loại hàng để xem dữ liệu</span>
+              : <>
+                  <span className="font-medium text-slate-700">{applied.material_category}</span>
+                  {dateLabel && <span className="ml-2 text-slate-500">· {dateLabel}</span>}
+                  {!isLoading && (
+                    <span className="ml-2 text-slate-400">· {total.toLocaleString()} bản ghi</span>
+                  )}
+                </>
             }
-            {applied.material_category && dateLabel && (
-              <span className="ml-2 text-slate-500">· {dateLabel}</span>
-            )}
-            {!isLoading && canFetch && (
-              <span className="ml-2 text-slate-400">· {total.toLocaleString()} bản ghi</span>
-            )}
           </p>
           {totalPages > 1 && (
             <div className="flex items-center gap-1 shrink-0">
@@ -350,13 +407,41 @@ export default function OutboundScanLog() {
             </div>
           )}
         </div>
+
+        {/* Large result warning */}
+        {isLargeResult && (
+          <div className="flex items-center gap-1.5 rounded-md bg-amber-50 border border-amber-200 px-2.5 py-1.5 text-xs text-amber-700">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            Kết quả lớn ({total.toLocaleString()} bản ghi, {totalPages} trang). Hãy thu hẹp bộ lọc để cải thiện tốc độ.
+          </div>
+        )}
       </div>
+
+      {/* QR Scanner Dialog */}
+      <Dialog open={showScanner} onOpenChange={open => { if (!open) setShowScanner(false) }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-sm flex items-center gap-2">
+              <QrCode className="h-4 w-4" /> Quét QR mã pallet
+            </DialogTitle>
+          </DialogHeader>
+          {showScanner && (
+            <QRScanner
+              ref={scannerRef}
+              onScan={handlePalletScan}
+              onClose={() => setShowScanner(false)}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Table area — single overflow-auto container for sticky header + horizontal scroll */}
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
         {!canFetch ? (
           <div className="p-8 text-center text-sm text-slate-400">
-            Vui lòng chọn <span className="font-semibold text-slate-600">Loại hàng</span> và nhấn <span className="font-semibold text-slate-600">Áp dụng</span> để xem dữ liệu
+            Vui lòng chọn <span className="font-semibold text-slate-600">Kho</span> và{' '}
+            <span className="font-semibold text-slate-600">Loại hàng</span>, rồi nhấn{' '}
+            <span className="font-semibold text-slate-600">Áp dụng</span> để xem dữ liệu
           </div>
         ) : isLoading ? (
           <TableSkeleton cols={10} rows={12} />

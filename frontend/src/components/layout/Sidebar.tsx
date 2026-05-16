@@ -66,9 +66,15 @@ const navGroups: NavGroup[] = [
 
 function NavItemComponent({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
   const location = useLocation()
+  const allItems = navGroups.flatMap(g => g.items)
   const isActive = item.to === '/'
     ? location.pathname === '/'
-    : location.pathname.startsWith(item.to)
+    : location.pathname.startsWith(item.to) &&
+      !allItems.some(
+        other => other.to !== item.to &&
+          other.to.startsWith(item.to + '/') &&
+          location.pathname.startsWith(other.to)
+      )
   const Icon = item.icon
 
   const linkContent = (

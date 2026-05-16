@@ -134,7 +134,7 @@ export function useCreateLocation() {
 export function useUpdateLocation() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; sub_name?: string; sub_type?: string; category?: string; max_pallets?: number; is_active?: boolean }) =>
+    mutationFn: ({ id, ...body }: { id: string; sub_name?: string; sub_type?: string; category?: string; max_pallets?: number; is_active?: boolean; requires_stocktake?: boolean }) =>
       apiClient.put(`/masterdata/locations/${id}`, body).then((r) => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['locations-real'] }),
   })
@@ -529,6 +529,61 @@ export function useBulkUpdateProductionDate() {
       return data.data as { updated: number }
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['inventory-entries'] }) },
+  })
+}
+
+export interface StocktakeSummaryItem {
+  location_id:        string
+  location_code:      string
+  sub_code:           string
+  requires_stocktake: boolean
+  warehouse_name:     string
+  total:              number
+  checked:            number
+  unchecked:          number
+  flagged:            number
+}
+
+export function useStocktakeSummary(params: { warehouse_id?: string; category?: string; requires_stocktake_only?: boolean }) {
+  return useQuery({
+    queryKey: ['stocktake-summary', params],
+    queryFn: async () => {
+      const q: Record<string, string> = {}
+      if (params.warehouse_id)          q.warehouse_id           = params.warehouse_id
+      if (params.category)              q.category               = params.category
+      if (params.requires_stocktake_only) q.requires_stocktake_only = 'true'
+      const { data } = await apiClient.get('/wms/inventory/stocktake-summary', { params: q })
+      return data.data as StocktakeSummaryItem[]
+    },
+    enabled: true,
+  })
+}
+
+export function useStocktakeEntry() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ id, ...body }: { id: string; employee_id?: string; new_location_id?: string; physical_count?: number }) => {
+      const { data } = await apiClient.post(`/wms/inventory/${id}/stocktake`, body)
+      return data.data as { ok: boolean }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['inventory-entries'] })
+      qc.invalidateQueries({ queryKey: ['stocktake-summary'] })
+    },
+  })
+}
+
+export function useUnflagEntry() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { data } = await apiClient.patch(`/wms/inventory/${id}/unflag`)
+      return data.data as { ok: boolean }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['inventory-entries'] })
+      qc.invalidateQueries({ queryKey: ['stocktake-summary'] })
+    },
   })
 }
 

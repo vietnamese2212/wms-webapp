@@ -6,7 +6,8 @@ import { randomUUID } from 'crypto'
 const ENTRY_SELECT = `
   id, pallet_code, location_id, material_id, manufacturer_id, cycle, machine_code,
   pallet_sequence_no, qa_status_id, stack_layer, cartons_imported, cartons_remaining, cartons_reserved,
-  production_date, status, import_date, update_date, adjustment_qty, stocktake_at,
+  production_date, status, import_date, update_date, adjustment_qty,
+  stocktake_at, stocktake_flagged, stocktake_flag_note,
   created_at, updated_at,
   location:Location(id, location_code, sub_code, sub_name, sub_type, warehouse:Warehouse(id, name, code)),
   material:Material(id, material_code, short_name, shelf_life_days, category),
@@ -372,6 +373,132 @@ export async function bulkTransferMaterial(req: Request, res: Response) {
   const { error } = await (supabase.from('InventoryEntry') as any).update(patch).in('id', ids)
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
   return ok(res, { updated: ids.length, material_code: mat.material_code })
+}
+
+// ─── Stocktake (kiểm kê / check vị trí) ──────────────────────
+
+export async function stocktakeCheck(req: Request, res: Response) {
+  const { qr_code } = req.body as { qr_code: string }
+  if (!qr_code) return fail(res, 400, 'INVALID_INPUT', 'Thiếu qr_code')
+
+  const { parseQR } = await import('../../utils/qrParser')
+  const parsed = parseQR(qr_code)
+  if (!parsed.is_valid) return fail(res, 400, 'QR_INVALID', parsed.error ?? 'QR không hợp lệ')
+
+  const { data, error } = await (supabase.from('InventoryEntry') as any)
+    .select(ENTRY_SELECT)
+    .eq('pallet_code', parsed.pallet_code)
+    .in('status', ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'])
+    .maybeSingle()
+
+  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  if (!data) return fail(res, 404, 'NOT_FOUND', `Không tìm thấy pallet ${parsed.pallet_code} trong tồn kho`)
+  return ok(res, { entry: data, pallet_code: parsed.pallet_code })
+}
+
+export async function stocktakeEntry(req: Request, res: Response) {
+  const { id } = req.params
+  const { employee_id, new_location_id, physical_count } = req.body as {
+    employee_id?: string; new_location_id?: string; physical_count?: number
+  }
+
+  const { data: existing, error: fetchErr } = await (supabase.from('InventoryEntry') as any)
+    .select('id, location_id, cartons_remaining')
+    .eq('id', id).maybeSingle()
+
+  if (fetchErr) return fail(res, 500, 'DB_ERROR', fetchErr.message)
+  if (!existing) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy pallet')
+
+  const now    = new Date().toISOString()
+  const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+  const patch: Record<string, unknown> = { stocktake_at: now, updated_at: now, update_date: vnDate }
+
+  if (employee_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employee_id)) {
+    patch.stocktake_by = employee_id
+    patch.updated_by   = employee_id
+  }
+
+  if (new_location_id) patch.location_id = new_location_id
+
+  if (physical_count !== undefined && physical_count !== null) {
+    const appCount = Number(existing.cartons_remaining) ?? 0
+    if (Number(physical_count) !== appCount) {
+      patch.stocktake_flagged   = true
+      patch.stocktake_flag_note = `Thực tế: ${physical_count} / App: ${appCount}`
+    } else {
+      patch.stocktake_flagged   = false
+      patch.stocktake_flag_note = null
+    }
+  }
+
+  const { error } = await (supabase.from('InventoryEntry') as any).update(patch).eq('id', id)
+  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  return ok(res, { ok: true })
+}
+
+export async function stocktakeSummary(req: Request, res: Response) {
+  const { warehouse_id, category, requires_stocktake_only } = req.query as Record<string, string>
+
+  let locQuery = (supabase.from('Location') as any)
+    .select('id, location_code, sub_code, requires_stocktake, warehouse:Warehouse(name)')
+    .eq('is_active', true)
+  if (warehouse_id) locQuery = locQuery.eq('warehouse_id', warehouse_id)
+  if (category)     locQuery = locQuery.or(`category.eq.${category},category.is.null`)
+  if (requires_stocktake_only === 'true') locQuery = locQuery.eq('requires_stocktake', true)
+
+  const { data: locations, error: locError } = await locQuery
+  if (locError) return fail(res, 500, 'DB_ERROR', locError.message)
+  if (!locations || locations.length === 0) return ok(res, [])
+
+  const locationIds = (locations as { id: string }[]).map(l => l.id)
+  const todayVN    = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+  const todayStart = new Date(`${todayVN}T00:00:00+07:00`).toISOString()
+
+  const { data: entries, error: entError } = await (supabase.from('InventoryEntry') as any)
+    .select('id, location_id, stocktake_at, stocktake_flagged, import_date')
+    .in('location_id', locationIds)
+    .in('status', ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'])
+
+  if (entError) return fail(res, 500, 'DB_ERROR', entError.message)
+
+  type Stats = { total: number; checked: number; flagged: number }
+  const statsMap = new Map<string, Stats>()
+  for (const loc of locations as { id: string }[]) statsMap.set(loc.id, { total: 0, checked: 0, flagged: 0 })
+
+  for (const e of (entries ?? []) as { location_id: string; stocktake_at: string | null; stocktake_flagged: boolean; import_date: string }[]) {
+    const s = statsMap.get(e.location_id)
+    if (!s) continue
+    s.total++
+    if ((e.stocktake_at && e.stocktake_at >= todayStart) || e.import_date === todayVN) s.checked++
+    if (e.stocktake_flagged) s.flagged++
+  }
+
+  const result = (locations as { id: string; location_code: string; sub_code: string; requires_stocktake: boolean; warehouse: { name: string } | null }[])
+    .map(loc => {
+      const s = statsMap.get(loc.id) ?? { total: 0, checked: 0, flagged: 0 }
+      return {
+        location_id:        loc.id,
+        location_code:      loc.location_code,
+        sub_code:           loc.sub_code,
+        requires_stocktake: loc.requires_stocktake,
+        warehouse_name:     loc.warehouse?.name ?? '',
+        total:              s.total,
+        checked:            s.checked,
+        unchecked:          s.total - s.checked,
+        flagged:            s.flagged,
+      }
+    })
+
+  return ok(res, result)
+}
+
+export async function unflagEntry(req: Request, res: Response) {
+  const now = new Date().toISOString()
+  const { error } = await (supabase.from('InventoryEntry') as any)
+    .update({ stocktake_flagged: false, stocktake_flag_note: null, updated_at: now })
+    .eq('id', req.params.id)
+  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  return ok(res, { ok: true })
 }
 
 export async function bulkUpdateProductionDate(req: Request, res: Response) {

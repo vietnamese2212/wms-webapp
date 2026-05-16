@@ -2,7 +2,7 @@ import { NavLink, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard, Package, PackagePlus, PackageMinus, MapPin,
   Truck, Navigation, Users, Calendar, Settings, ChevronLeft, ChevronRight,
-  BarChart3, ClipboardList, UserCog, Scissors, ScanLine,
+  BarChart3, ClipboardList, UserCog, Scissors, ScanLine, ClipboardCheck, BarChart2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useUIStore } from '@/stores/uiStore'
@@ -39,7 +39,9 @@ const navGroups: NavGroup[] = [
       { to: '/wms/outbound', icon: PackageMinus, label: 'Xuất kho' },
       { to: '/wms/outbound/scan-log', icon: ScanLine, label: 'Lịch sử quét' },
       { to: '/wms/loosepicking', icon: Scissors, label: 'Nhặt lẻ' },
-      { to: '/wms/locations', icon: MapPin, label: 'Vị trí kho' },
+      { to: '/wms/locations',         icon: MapPin,          label: 'Vị trí kho' },
+      { to: '/wms/stocktake',         icon: ClipboardCheck,  label: 'Check vị trí' },
+      { to: '/wms/stocktake/summary', icon: BarChart2,        label: 'Tổng hợp KK' },
     ],
   },
   {

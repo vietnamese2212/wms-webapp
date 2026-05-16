@@ -158,13 +158,14 @@ export async function createLocation(req: Request, res: Response) {
 
 export async function updateLocation(req: Request, res: Response) {
   try {
-    const { sub_name, sub_type, max_pallets, is_active, category } = req.body
+    const { sub_name, sub_type, max_pallets, is_active, category, requires_stocktake } = req.body
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
-    if (sub_name !== undefined) patch.sub_name = sub_name ? String(sub_name).trim() : null
-    if (sub_type !== undefined) patch.sub_type = sub_type
-    if (category !== undefined) patch.category = category || null
-    if (max_pallets !== undefined) patch.max_pallets = Number(max_pallets)
-    if (is_active !== undefined) patch.is_active = Boolean(is_active)
+    if (sub_name !== undefined)          patch.sub_name          = sub_name ? String(sub_name).trim() : null
+    if (sub_type !== undefined)          patch.sub_type          = sub_type
+    if (category !== undefined)          patch.category          = category || null
+    if (max_pallets !== undefined)       patch.max_pallets       = Number(max_pallets)
+    if (is_active !== undefined)         patch.is_active         = Boolean(is_active)
+    if (requires_stocktake !== undefined) patch.requires_stocktake = Boolean(requires_stocktake)
 
     const { data, error } = await supabase
       .from('Location').update(patch).eq('id', req.params.id).select().maybeSingle()

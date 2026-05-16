@@ -13,7 +13,9 @@ import OutboundScanLog    from '@/pages/wms/OutboundScanLog'
 import LoosePicking           from '@/pages/wms/LoosePicking'
 import LoosePickingDetail     from '@/pages/wms/LoosePickingDetail'
 import LoosePickingItemDetail from '@/pages/wms/LoosePickingItemDetail'
-import Locations from '@/pages/wms/Locations'
+import Locations         from '@/pages/wms/Locations'
+import Stocktake         from '@/pages/wms/Stocktake'
+import StocktakeDashboard from '@/pages/wms/StocktakeDashboard'
 import Vehicles from '@/pages/tms/Vehicles'
 import Deliveries from '@/pages/tms/Deliveries'
 import Employees from '@/pages/hr/Employees'
@@ -50,7 +52,9 @@ export default function App() {
         <Route path="/wms/loosepicking" element={<LoosePicking />} />
         <Route path="/wms/loosepicking/:id" element={<LoosePickingDetail />} />
         <Route path="/wms/loosepicking/:gdoId/items/:itemId" element={<LoosePickingItemDetail />} />
-        <Route path="/wms/locations" element={<Locations />} />
+        <Route path="/wms/locations"          element={<Locations />} />
+        <Route path="/wms/stocktake"          element={<Stocktake />} />
+        <Route path="/wms/stocktake/summary"  element={<StocktakeDashboard />} />
         <Route path="/tms/vehicles" element={<Vehicles />} />
         <Route path="/tms/deliveries" element={<Deliveries />} />
         <Route path="/hr/employees" element={<Employees />} />

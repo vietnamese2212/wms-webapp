@@ -28,10 +28,11 @@ interface RealLocation {
   category:     string | null
   row:          string
   shelf:        string
-  max_pallets:  number
-  used_slots:   number
-  is_active:    boolean
-  warehouse:    { id: string; code: string; name: string }
+  max_pallets:        number
+  used_slots:         number
+  is_active:          boolean
+  requires_stocktake: boolean
+  warehouse:          { id: string; code: string; name: string }
 }
 
 interface WhWithCount {
@@ -56,7 +57,8 @@ export default function Locations() {
   const [dialogMode,    setDialogMode]    = useState<'add' | 'edit' | null>(null)
   const [editing,       setEditing]       = useState<RealLocation | null>(null)
   const [form,          setForm]          = useState(EMPTY_FORM)
-  const [editIsActive,  setEditIsActive]  = useState(true)
+  const [editIsActive,         setEditIsActive]         = useState(true)
+  const [editRequiresStocktake, setEditRequiresStocktake] = useState(false)
   const [isNewSubCode,  setIsNewSubCode]  = useState(false)
   const [isNewCategory, setIsNewCategory] = useState(false)
   const [formError,     setFormError]     = useState('')
@@ -156,6 +158,7 @@ export default function Locations() {
       max_pallets:  String(loc.max_pallets),
     })
     setEditIsActive(loc.is_active)
+    setEditRequiresStocktake(loc.requires_stocktake ?? false)
     setIsNewSubCode(false)
     setIsNewCategory(false)
     setFormError('')
@@ -187,11 +190,12 @@ export default function Locations() {
         })
       } else if (editing) {
         await updateLocation.mutateAsync({
-          id:          editing.id,
-          sub_name:    form.sub_name.trim() || undefined,
-          category:    form.category || undefined,
-          max_pallets: form.max_pallets ? Number(form.max_pallets) : undefined,
-          is_active:   editIsActive,
+          id:                 editing.id,
+          sub_name:           form.sub_name.trim() || undefined,
+          category:           form.category || undefined,
+          max_pallets:        form.max_pallets ? Number(form.max_pallets) : undefined,
+          is_active:          editIsActive,
+          requires_stocktake: editRequiresStocktake,
         })
       }
       closeDialog()
@@ -588,20 +592,31 @@ export default function Locations() {
                 value={form.max_pallets} onChange={e => setField('max_pallets', e.target.value)} />
             </div>
 
-            {/* ── Trạng thái (chỉ edit) ── */}
+            {/* ── Trạng thái + Kiểm kê hàng ngày (chỉ edit) ── */}
             {dialogMode === 'edit' && (
-              <div className="flex items-center justify-between pt-1 border-t">
-                <Label className="text-xs">Trạng thái vị trí</Label>
-                <button
-                  type="button"
-                  onClick={() => setEditIsActive(v => !v)}
-                  className={`text-xs px-3 py-1 rounded-full font-medium transition-colors ${
-                    editIsActive
-                      ? 'bg-green-100 text-green-700 hover:bg-red-50 hover:text-red-600'
-                      : 'bg-slate-100 text-slate-500 hover:bg-green-50 hover:text-green-600'
-                  }`}>
-                  {editIsActive ? 'Đang hoạt động — nhấn để vô hiệu hoá' : 'Đã vô hiệu hoá — nhấn để kích hoạt lại'}
-                </button>
+              <div className="space-y-2 pt-1 border-t">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs">Trạng thái vị trí</Label>
+                  <button
+                    type="button"
+                    onClick={() => setEditIsActive(v => !v)}
+                    className={`text-xs px-3 py-1 rounded-full font-medium transition-colors ${
+                      editIsActive
+                        ? 'bg-green-100 text-green-700 hover:bg-red-50 hover:text-red-600'
+                        : 'bg-slate-100 text-slate-500 hover:bg-green-50 hover:text-green-600'
+                    }`}>
+                    {editIsActive ? 'Đang hoạt động — nhấn để vô hiệu hoá' : 'Đã vô hiệu hoá — nhấn để kích hoạt lại'}
+                  </button>
+                </div>
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={editRequiresStocktake}
+                    onChange={e => setEditRequiresStocktake(e.target.checked)}
+                    className="h-3.5 w-3.5 cursor-pointer"
+                  />
+                  <span className="text-xs text-slate-600">Cần kiểm kê hàng ngày</span>
+                </label>
               </div>
             )}
 

@@ -5,7 +5,7 @@ import { randomUUID } from 'crypto'
 
 const ENTRY_SELECT = `
   id, pallet_code, location_id, material_id, manufacturer_id, cycle, machine_code,
-  pallet_sequence_no, qa_status_id, stack_layer, cartons_imported, cartons_remaining,
+  pallet_sequence_no, qa_status_id, stack_layer, cartons_imported, cartons_remaining, cartons_reserved,
   production_date, status, import_date, update_date, adjustment_qty, stocktake_at,
   created_at, updated_at,
   location:Location(id, location_code, sub_code, sub_name, sub_type, warehouse:Warehouse(id, name, code)),
@@ -31,7 +31,7 @@ interface FilterParams {
 }
 
 function applyInventoryFilters(q: any, p: FilterParams): any {
-  if (!p.status || p.status === '') q = q.in('status', ['IN_STOCK', 'PARTIAL'])
+  if (!p.status || p.status === '') q = q.in('status', ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'])
   else if (p.status !== 'ALL')       q = q.eq('status', p.status)
 
   if (p.locationFilter)                              q = q.in('location_id', p.locationFilter)

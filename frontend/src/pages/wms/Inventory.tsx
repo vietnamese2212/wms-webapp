@@ -42,6 +42,7 @@ function datePctCls(pct: number): string {
 function entryRowBg(e: InventoryEntry, selected: boolean, checked: boolean): string {
   if (checked)   return 'bg-green-50 hover:bg-green-100'
   if (selected)  return 'bg-blue-100'
+  if (e.status === 'LOOSE_PICKING') return 'bg-purple-50 hover:bg-purple-100'
   if (e.status === 'PARTIAL')    return 'bg-amber-50 hover:bg-amber-100'
   if (e.status === 'QUARANTINE') return 'bg-red-50 hover:bg-red-100'
   if (e.status === 'EXPORTED' || e.status === 'TRANSFERRED') return 'bg-blue-50 hover:bg-blue-100'
@@ -51,11 +52,13 @@ function entryRowBg(e: InventoryEntry, selected: boolean, checked: boolean): str
 const STATUS_LABEL: Record<string, string> = {
   IN_STOCK: 'Còn hàng', PARTIAL: 'Xuất 1 phần', EXPORTED: 'Đã xuất',
   TRANSFERRED: 'Đã chuyển', QUARANTINE: 'Cách ly', CANCELLED: 'Đã hủy',
+  LOOSE_PICKING: 'Đang nhặt lẻ',
 }
 const STATUS_CLS: Record<string, string> = {
   IN_STOCK: 'bg-green-100 text-green-700', PARTIAL: 'bg-amber-100 text-amber-700',
   EXPORTED: 'bg-blue-100 text-blue-700', TRANSFERRED: 'bg-slate-100 text-slate-600',
   QUARANTINE: 'bg-red-100 text-red-700', CANCELLED: 'bg-gray-100 text-gray-500',
+  LOOSE_PICKING: 'bg-purple-100 text-purple-700',
 }
 
 const LIMIT = 50
@@ -845,6 +848,9 @@ function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick }: {
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         <span className="text-[10px] font-semibold tabular-nums">{remaining}</span>
         <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
+        {e.status === 'LOOSE_PICKING' && (e.cartons_reserved ?? 0) > 0 && (
+          <div className="text-[9px] text-purple-600 tabular-nums">({e.cartons_reserved} nhặt lẻ)</div>
+        )}
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px] tabular-nums text-slate-600">{prodDateStr}</span>
@@ -940,6 +946,14 @@ function DetailPanel({ entry: e, onClose }: { entry: InventoryEntry; onClose: ()
           <Row label="Nhập"       value={`${e.cartons_imported} thùng`} />
           <Row label="Xuất"       value={exported > 0 ? `${exported} thùng` : '—'} />
           <Row label="Tồn"        value={`${remaining} thùng`} bold />
+          {e.status === 'LOOSE_PICKING' && (e.cartons_reserved ?? 0) > 0 && (<>
+            <Row label="Nhặt lẻ (giữ)"
+              value={`${e.cartons_reserved} thùng`}
+              cls="text-purple-700 font-semibold" />
+            <Row label="Khả dụng"
+              value={`${Math.max(0, Number(remaining) - Number(e.cartons_reserved ?? 0))} thùng`}
+              bold cls="text-blue-700" />
+          </>)}
           <Row label="Điều chỉnh" value={e.adjustment_qty ? `${Number(e.adjustment_qty) > 0 ? '+' : ''}${e.adjustment_qty}` : '—'}
             cls={e.adjustment_qty ? (Number(e.adjustment_qty) > 0 ? 'text-green-600' : 'text-red-600') : ''} />
         </Section>

@@ -1074,3 +1074,62 @@ export function useWarehouseEmployees(warehouse_id?: string | null) {
     },
   })
 }
+
+// ─── Outbound scan log (lịch sử quét xuất kho) ──────────────────────────────
+
+export type OutboundScanLogEntry = {
+  id: string
+  pallet_code: string
+  cartons_scanned: number
+  production_date: string | null
+  scanned_at: string
+  is_loose_picking: boolean
+  group_code: string
+  delivery_date: string | null
+  license_plate: string | null
+  container_number: string | null
+  forklift_driver_names: string | null
+  loader_name: string | null
+  assigned_at: string | null
+  started_at: string | null
+  last_scanned_at: string | null
+  completed_at: string | null
+  warehouse_name: string
+  delivery_code: string | null
+  distributor_name: string | null
+  header_text: string | null
+  material_code_raw: string | null
+  material_code: string | null
+  material_name: string | null
+  cycle: string | null
+  machine_code: string | null
+  import_date: string | null
+  location_code: string | null
+  scanner_name: string | null
+  total_count: number
+}
+
+export type ScanLogParams = {
+  from_date?: string
+  to_date?: string
+  warehouse_id?: string
+  group_code?: string
+  distributor?: string
+  delivery_code?: string
+  material?: string
+  scanner_name?: string
+  page?: number
+  limit?: number
+}
+
+export function useOutboundScanLog(params: ScanLogParams, enabled = true) {
+  return useQuery({
+    queryKey: ['outbound-scan-log', params],
+    enabled,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/outbound/scan-log', { params })
+      return data.data as { rows: OutboundScanLogEntry[]; total: number; page: number; limit: number }
+    },
+    staleTime: 30_000,
+  })
+}

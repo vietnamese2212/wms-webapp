@@ -9,6 +9,7 @@ import InboundDetail from '@/pages/wms/InboundDetail'
 import Outbound           from '@/pages/wms/Outbound'
 import OutboundDetail     from '@/pages/wms/OutboundDetail'
 import OutboundItemDetail from '@/pages/wms/OutboundItemDetail'
+import OutboundScanLog    from '@/pages/wms/OutboundScanLog'
 import LoosePicking           from '@/pages/wms/LoosePicking'
 import LoosePickingDetail     from '@/pages/wms/LoosePickingDetail'
 import LoosePickingItemDetail from '@/pages/wms/LoosePickingItemDetail'
@@ -43,6 +44,7 @@ export default function App() {
         <Route path="/wms/inbound" element={<Inbound />} />
         <Route path="/wms/inbound/:id" element={<InboundDetail />} />
         <Route path="/wms/outbound" element={<Outbound />} />
+        <Route path="/wms/outbound/scan-log" element={<OutboundScanLog />} />
         <Route path="/wms/outbound/:id" element={<OutboundDetail />} />
         <Route path="/wms/outbound/:gdoId/items/:itemId" element={<OutboundItemDetail />} />
         <Route path="/wms/loosepicking" element={<LoosePicking />} />

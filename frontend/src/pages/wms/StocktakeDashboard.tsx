@@ -35,7 +35,7 @@ function StatCard({ label, value, active, color, onClick }: {
       className={`flex-1 min-w-0 rounded-lg border px-2 py-1.5 text-left transition-all
         ${active ? `${color} shadow-sm` : 'bg-white border-slate-200 hover:bg-slate-50'}`}
     >
-      <p className={`text-[9px] font-medium truncate ${active ? 'opacity-75' : 'text-slate-500'}`}>{label}</p>
+      <p className={`text-[9px] font-medium ${active ? 'opacity-75' : 'text-slate-500'}`}>{label}</p>
       <p className={`text-base font-bold tabular-nums leading-tight ${active ? '' : 'text-slate-800'}`}>{value}</p>
     </button>
   )
@@ -65,7 +65,7 @@ function DR({ label, value, mono, bold, cls }: {
   return (
     <div className="flex justify-between gap-2 py-0.5">
       <span className="text-slate-400 shrink-0 text-[11px]">{label}</span>
-      <span className={`text-right text-[11px] truncate ${mono ? 'font-mono' : ''} ${bold ? 'font-semibold' : ''} ${cls ?? 'text-slate-700'}`}>
+      <span className={`text-right text-[11px] break-all ${mono ? 'font-mono' : ''} ${bold ? 'font-semibold' : ''} ${cls ?? 'text-slate-700'}`}>
         {value}
       </span>
     </div>
@@ -89,7 +89,7 @@ function DetailPanel({ entryId, onClose }: { entryId: string; onClose: () => voi
   const diff      = entry ? parseDiff(entry.stocktake_flag_note ?? null) : null
 
   return (
-    <div className="w-60 shrink-0 border-l bg-white flex flex-col overflow-hidden">
+    <div className="w-72 shrink-0 border-l bg-white flex flex-col overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b bg-slate-50 shrink-0">
         <p className="font-mono text-[10px] font-semibold text-slate-700 truncate flex-1">
@@ -367,8 +367,8 @@ export default function StocktakeDashboard() {
                             {e.pallet_code}
                           </span>
                         </TableCell>
-                        <TableCell className="px-2 py-1 max-w-[140px]">
-                          <span className="text-[10px] text-slate-600 truncate block">
+                        <TableCell className="px-2 py-1">
+                          <span className="text-[10px] text-slate-600">
                             {e.material?.short_name ?? e.material?.material_code ?? '—'}
                           </span>
                         </TableCell>

@@ -828,6 +828,20 @@ export default function OutboundDetail() {
               </button>
             </div>
             <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+              {(gdo.status === 'PENDING' || gdo.status === 'PAUSED') && (
+                <Button size="sm" variant="outline"
+                  className="h-7 text-xs gap-1 px-2"
+                  onClick={() => setShowEditGDO(true)}>
+                  <PenSquare className="h-3 w-3" /> Sửa
+                </Button>
+              )}
+              {gdo.status === 'PENDING' && (
+                <Button size="sm" variant="outline"
+                  className="h-7 text-xs gap-1 px-2 border-red-200 text-red-600 hover:bg-red-50"
+                  onClick={handleDelete}>
+                  <Trash2 className="h-3 w-3" /> Xóa
+                </Button>
+              )}
               {/* ── Forward actions ── */}
               {!gdo.assigned_at && (
                 <Button size="sm" variant="outline" className="h-7 text-xs gap-1 px-2" disabled={assigning}
@@ -873,20 +887,6 @@ export default function OutboundDetail() {
                   onClick={() => patchGDO({ id: gdo.id, status: 'IN_PROGRESS' })}>
                   <Play className="h-3 w-3" />
                   {patching ? '…' : 'Tiếp tục'}
-                </Button>
-              )}
-              {(gdo.status === 'PENDING' || gdo.status === 'PAUSED') && (
-                <Button size="sm" variant="outline"
-                  className="h-7 text-xs gap-1 px-2"
-                  onClick={() => setShowEditGDO(true)}>
-                  <PenSquare className="h-3 w-3" /> Sửa
-                </Button>
-              )}
-              {gdo.status === 'PENDING' && (
-                <Button size="sm" variant="outline"
-                  className="h-7 text-xs gap-1 px-2 border-red-200 text-red-600 hover:bg-red-50"
-                  onClick={handleDelete}>
-                  <Trash2 className="h-3 w-3" /> Xóa
                 </Button>
               )}
               {hasScanEntries && (

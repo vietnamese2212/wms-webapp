@@ -940,6 +940,15 @@ export type CheckOutboundScanResult = {
   suggested_cartons: number
 }
 
+export function useConfirmLoosePickingItem() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ gdoId, itemId }: { gdoId: string; itemId: string }) =>
+      apiClient.post(`/wms/outbound/${gdoId}/items/${itemId}/confirm-loose`).then(r => r.data.data),
+    onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ['gdo', v.gdoId] }),
+  })
+}
+
 export function useCheckOutboundScan() {
   return useMutation({
     mutationFn: ({ gdoId, itemId, qr_code }: { gdoId: string; itemId: string; qr_code: string }) =>

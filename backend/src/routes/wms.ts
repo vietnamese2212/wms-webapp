@@ -81,6 +81,7 @@ router.post('/outbound/:gdoId/items/:itemId/check-scan',            outbound.che
 router.post('/outbound/:gdoId/items/:itemId/scan',                  outbound.scanItem)
 router.delete('/outbound/:gdoId/items/:itemId/scans/:scanId',       outbound.deleteScanEntry)
 router.post('/outbound/:gdoId/items/:itemId/manual-complete',       outbound.manualCompleteItem)
+router.post('/outbound/:gdoId/items/:itemId/confirm-loose',         outbound.confirmLoosePickingItem)
 router.get('/outbound/:gdoId/items/:itemId/inventory',              outbound.getItemInventory)
 
 export default router

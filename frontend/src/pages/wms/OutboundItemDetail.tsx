@@ -13,7 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { QRScanner } from '@/components/shared/QRScanner'
 import type { QRScannerHandle } from '@/components/shared/QRScanner'
-import { useGDO, useScanOutboundItem, useManualCompleteItem, useDeleteOutboundScanEntry, useItemInventory, useCheckOutboundScan, type ItemInventoryEntry, type CheckOutboundScanResult } from '@/api/hooks'
+import { useGDO, useScanOutboundItem, useManualCompleteItem, useDeleteOutboundScanEntry, useItemInventory, useCheckOutboundScan, useConfirmLoosePickingItem, type ItemInventoryEntry, type CheckOutboundScanResult } from '@/api/hooks'
 import { PalletDetailDialog } from '@/components/shared/PalletDetailDialog'
 import { useAuthStore } from '@/stores/authStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
@@ -41,15 +41,24 @@ function Badge({ status }: { status: string }) {
   )
 }
 
-function ProgressBar({ scanned, ordered }: { scanned: number; ordered: number }) {
-  const pct = ordered > 0 ? Math.min(100, (scanned / ordered) * 100) : 0
-  const cls = pct >= 100 ? 'bg-green-500' : pct > 0 ? 'bg-amber-500' : 'bg-slate-200'
+function ProgressBar({ scanned, ordered, looseUnconfirmed = 0 }: { scanned: number; ordered: number; looseUnconfirmed?: number }) {
+  const confirmed     = scanned - looseUnconfirmed
+  const confirmedPct  = ordered > 0 ? Math.min(100, (confirmed / ordered) * 100) : 0
+  const loosePct      = ordered > 0 ? Math.min(100 - confirmedPct, (looseUnconfirmed / ordered) * 100) : 0
+  const totalPct      = confirmedPct + loosePct
+  const confirmedCls  = totalPct >= 100 && looseUnconfirmed === 0 ? 'bg-green-500'
+    : confirmedPct > 0 ? 'bg-amber-500' : ''
   return (
     <div className="flex items-center gap-2">
-      <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-        <div className={`h-full rounded-full transition-all ${cls}`} style={{ width: `${pct}%` }} />
+      <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden flex">
+        {confirmedPct > 0 && (
+          <div className={`h-full transition-all ${confirmedCls}`} style={{ width: `${confirmedPct}%` }} />
+        )}
+        {loosePct > 0 && (
+          <div className="h-full bg-purple-500 transition-all" style={{ width: `${loosePct}%` }} />
+        )}
       </div>
-      <span className={`text-sm tabular-nums font-medium ${pct >= 100 ? 'text-green-700 font-semibold' : 'text-slate-600'}`}>
+      <span className={`text-sm tabular-nums font-medium ${totalPct >= 100 && looseUnconfirmed === 0 ? 'text-green-700 font-semibold' : 'text-slate-600'}`}>
         {scanned}/{ordered} thùng
       </span>
     </div>
@@ -269,14 +278,16 @@ export default function OutboundItemDetail() {
   const autoScan = searchParams.get('scan') === '1'
 
   const { data: gdo, isLoading } = useGDO(gdoId)
-  const { mutate: manualComplete,  isPending: completing  } = useManualCompleteItem()
-  const { mutate: deleteScanEntry, isPending: deleting    } = useDeleteOutboundScanEntry()
+  const { mutate: manualComplete,      isPending: completing    } = useManualCompleteItem()
+  const { mutate: deleteScanEntry,     isPending: deleting      } = useDeleteOutboundScanEntry()
+  const { mutate: confirmLoose,        isPending: confirming    } = useConfirmLoosePickingItem()
   const { data: inventoryData = [], isLoading: invLoading } = useItemInventory(gdoId, itemId)
   const { vehicles } = useActiveVehiclesStore()
 
   const [showScan,         setShowScan]         = useState(false)
   const [confirmScanId,    setConfirmScanId]    = useState<string | null>(null)
   const [showInventory,    setShowInventory]    = useState(false)
+  const [confirmLooseOpen, setConfirmLooseOpen] = useState(false)
   const [expandedInvKeys,  setExpandedInvKeys]  = useState<Set<string>>(new Set())
   const [detailEntryId,    setDetailEntryId]    = useState<string | null>(null)
   const [showLoscamDialog, setShowLoscamDialog] = useState(false)
@@ -298,6 +309,10 @@ export default function OutboundItemDetail() {
   const scans = gdo
     ? (gdo.delivery_orders ?? []).flatMap(d => d.items).find(i => i.id === itemId)?.scan_entries ?? []
     : []
+
+  const looseUnconfirmedCount = scans
+    .filter(s => s.is_loose_picking && !s.loose_confirmed)
+    .reduce((sum, s) => sum + s.cartons_scanned, 0)
 
   const sortedInv = useMemo<ItemInventoryEntry[]>(() =>
     [...inventoryData].sort((a, b) => {
@@ -394,6 +409,20 @@ export default function OutboundItemDetail() {
         loading={deleting}
       />
 
+      <ConfirmDialog
+        open={confirmLooseOpen}
+        title="Xác nhận nhặt lẻ"
+        message={`Xác nhận đã kiểm tra ${looseUnconfirmedCount} thùng nhặt lẻ cho mã này? Tồn kho sẽ được trừ ngay.`}
+        onConfirm={() => {
+          confirmLoose(
+            { gdoId: gdoId!, itemId: item.id },
+            { onSettled: () => setConfirmLooseOpen(false) }
+          )
+        }}
+        onCancel={() => setConfirmLooseOpen(false)}
+        loading={confirming}
+      />
+
       <Dialog open={showLoscamDialog} onOpenChange={v => { if (!v) setShowLoscamDialog(false) }}>
         <DialogContent className="sm:max-w-xs">
           <DialogHeader><DialogTitle className="text-base">Xác nhận Pallet Loscam</DialogTitle></DialogHeader>
@@ -444,7 +473,16 @@ export default function OutboundItemDetail() {
               <Badge status={item.status} />
             </div>
 
-            <div className="flex items-center gap-1.5 shrink-0">
+            <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+              {item.loose_picking > 0 && looseUnconfirmedCount > 0 && (
+                <button
+                  onClick={() => setConfirmLooseOpen(true)}
+                  disabled={confirming || isPaused}
+                  className="flex items-center gap-1 h-7 px-2 rounded border text-xs font-medium transition-colors bg-purple-50 border-purple-300 text-purple-700 hover:bg-purple-100 disabled:opacity-50"
+                >
+                  Check nhặt lẻ ({looseUnconfirmedCount})
+                </button>
+              )}
               <button
                 onClick={() => setShowInventory(v => !v)}
                 className={`flex items-center gap-1 h-7 px-2 rounded border text-xs font-medium transition-colors ${
@@ -477,7 +515,7 @@ export default function OutboundItemDetail() {
           {/* Row 2: material name + progress */}
           <div className="space-y-1">
             <p className="text-sm font-medium text-slate-800 leading-tight">{matName}</p>
-            {!isPOSM && <ProgressBar scanned={item.cartons_scanned} ordered={item.cartons_ordered} />}
+            {!isPOSM && <ProgressBar scanned={item.cartons_scanned} ordered={item.cartons_ordered} looseUnconfirmed={looseUnconfirmedCount} />}
           </div>
 
           {/* Row 3: số lượng + meta nhỏ */}
@@ -666,6 +704,7 @@ export default function OutboundItemDetail() {
                     <TableRow>
                       <TableHead className="px-2 py-1 text-[9px] font-medium text-slate-500">Mã pallet</TableHead>
                       <TableHead className="px-2 py-1 text-[9px] font-medium text-slate-500 text-right">Thùng</TableHead>
+                      <TableHead className="px-2 py-1 text-[9px] font-medium text-slate-500 whitespace-nowrap">Loại</TableHead>
                       <TableHead className="px-2 py-1 text-[9px] font-medium text-slate-500 whitespace-nowrap">Date</TableHead>
                       <TableHead className="px-2 py-1 text-[9px] font-medium text-slate-500 whitespace-nowrap">Date cũ nhất</TableHead>
                       <TableHead className="px-2 py-1 text-[9px] font-medium text-slate-500 whitespace-nowrap">Người quét</TableHead>
@@ -677,7 +716,7 @@ export default function OutboundItemDetail() {
                     {scans.map(se => {
                     const isSubOptimal = !!(se.best_available_date && se.production_date && se.production_date > se.best_available_date)
                     return (
-                      <TableRow key={se.id}>
+                      <TableRow key={se.id} className={se.is_loose_picking && !se.loose_confirmed ? 'bg-purple-50' : ''}>
                         <TableCell className="px-2 py-1.5">
                           <div className={`font-mono text-[10px] font-semibold ${isSubOptimal ? 'text-red-600' : 'text-slate-700'}`}>
                             {se.pallet_code}
@@ -685,6 +724,13 @@ export default function OutboundItemDetail() {
                         </TableCell>
                         <TableCell className="px-2 py-1.5 text-right tabular-nums text-[10px] font-semibold">
                           {se.cartons_scanned}
+                        </TableCell>
+                        <TableCell className="px-2 py-1.5 whitespace-nowrap">
+                          {se.is_loose_picking ? (
+                            se.loose_confirmed
+                              ? <span className="text-[9px] font-medium text-green-700 bg-green-100 rounded px-1.5 py-0.5">✓ Lẻ</span>
+                              : <span className="text-[9px] font-medium text-purple-700 bg-purple-100 rounded px-1.5 py-0.5">Lẻ</span>
+                          ) : null}
                         </TableCell>
                         <TableCell className="px-2 py-1.5 whitespace-nowrap">
                           <span className="text-[10px] font-mono tabular-nums text-slate-600">

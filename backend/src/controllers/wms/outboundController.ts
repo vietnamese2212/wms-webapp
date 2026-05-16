@@ -1069,9 +1069,9 @@ export async function getItemInventory(req: Request, res: Response) {
     const gdo  = gdoRes.data
 
     let q = (supabase.from('InventoryEntry') as any)
-      .select('id, pallet_code, cartons_imported, cartons_remaining, production_date, import_date, qa_status_id, qa_status:QAStatus(id,code,name), location:Location(location_code), material:Material!material_id(shelf_life_days)')
+      .select('id, pallet_code, cartons_imported, cartons_remaining, cartons_reserved, production_date, import_date, qa_status_id, qa_status:QAStatus(id,code,name), location:Location(location_code), material:Material!material_id(shelf_life_days)')
       .eq('material_id', item.material_id)
-      .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE'])
+      .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING'])
 
     if (gdo?.warehouse_id) {
       const { data: locs } = await (supabase.from('Location') as any)
@@ -1093,16 +1093,18 @@ export async function getItemInventory(req: Request, res: Response) {
         const remaining = new Date(e.production_date).getTime() + totalMs - now
         pct_date = Math.max(0, Math.round((remaining / totalMs) * 100))
       }
+      const reserved = Number(e.cartons_reserved ?? 0)
       return {
         id:                e.id,
         pallet_code:       e.pallet_code,
         cartons_remaining: e.cartons_remaining,
         cartons_imported:  e.cartons_imported,
+        cartons_reserved:  reserved,
         location_code:     e.location?.location_code ?? null,
         production_date:   e.production_date ?? null,
         import_date:       e.import_date ?? null,
         pct_date,
-        available:         e.cartons_remaining ?? e.cartons_imported,
+        available:         Math.max(0, (e.cartons_remaining ?? e.cartons_imported) - reserved),
         qa_status:         e.qa_status_id ? (e.qa_status ?? null) : null,
       }
     }))
@@ -1139,7 +1141,7 @@ export async function checkScanItem(req: Request, res: Response) {
     }
     if (dupCheck) return fail(res, `Pallet "${qr}" đã được quét trong phiếu này`, 400)
 
-    const available = Number(inv.cartons_remaining ?? inv.cartons_imported)
+    const available = Number(inv.cartons_remaining ?? inv.cartons_imported) - Number(inv.cartons_reserved ?? 0)
     if (available <= 0) return fail(res, `Pallet "${qr}" đã xuất hết số thùng`, 400)
 
     const remaining_on_item = Number(item.cartons_ordered) - Number(item.cartons_scanned)
@@ -1266,7 +1268,7 @@ export async function scanItem(req: Request, res: Response) {
 
     if (dupCheck) return fail(res, `Pallet "${qr}" đã được quét trong phiếu này`, 400)
 
-    const available = Number(inv.cartons_remaining ?? inv.cartons_imported)
+    const available = Number(inv.cartons_remaining ?? inv.cartons_imported) - Number(inv.cartons_reserved ?? 0)
     if (available <= 0) return fail(res, `Pallet "${qr}" đã xuất hết số thùng`, 400)
     const remaining_on_item = Number(item.cartons_ordered) - Number(item.cartons_scanned)
     if (remaining_on_item <= 0) return fail(res, 'Mặt hàng đã đủ số lượng', 400)
@@ -1323,14 +1325,39 @@ export async function scanItem(req: Request, res: Response) {
     })
     if (insertErr) return fail(res, `Lỗi lưu scan entry: ${insertErr.message}`, 500)
 
-    const new_scanned     = Number(item.cartons_scanned) + to_take
-    const new_item_status = new_scanned >= Number(item.cartons_ordered) ? 'COMPLETED' : 'IN_PROGRESS'
-    await Promise.all([
-      to_take >= available
-        ? (supabase.from('InventoryEntry') as any).update({ status: 'EXPORTED', cartons_remaining: 0, updated_at: t }).eq('id', inv.id)
-        : (supabase.from('InventoryEntry') as any).update({ status: 'PARTIAL', cartons_remaining: available - to_take, updated_at: t }).eq('id', inv.id),
-      (supabase.from('OutboundItem') as any).update({ cartons_scanned: new_scanned, status: new_item_status, updated_at: t }).eq('id', itemId),
-    ])
+    const new_scanned = Number(item.cartons_scanned) + to_take
+
+    // Loose picking: giữ hàng (reserve) thay vì xuất ngay; item không tự COMPLETE
+    let new_item_status: string
+    if (loose_picking_mode) {
+      new_item_status = 'IN_PROGRESS'
+      const new_reserved = Number(inv.cartons_reserved ?? 0) + to_take
+      await Promise.all([
+        (supabase.from('InventoryEntry') as any)
+          .update({ status: 'LOOSE_PICKING', cartons_reserved: new_reserved, updated_at: t })
+          .eq('id', inv.id),
+        (supabase.from('OutboundItem') as any)
+          .update({ cartons_scanned: new_scanned, status: new_item_status, updated_at: t })
+          .eq('id', itemId),
+      ])
+    } else {
+      // Kiểm tra có nhặt lẻ chưa xác nhận không trước khi COMPLETE item
+      let wouldComplete = new_scanned >= Number(item.cartons_ordered)
+      if (wouldComplete) {
+        const { data: unconfirmedLoose } = await (supabase.from('OutboundScanEntry') as any)
+          .select('id').eq('item_id', itemId).eq('is_loose_picking', true).eq('loose_confirmed', false)
+        if ((unconfirmedLoose ?? []).length > 0) wouldComplete = false
+      }
+      new_item_status = wouldComplete ? 'COMPLETED' : 'IN_PROGRESS'
+      await Promise.all([
+        to_take >= available
+          ? (supabase.from('InventoryEntry') as any).update({ status: 'EXPORTED', cartons_remaining: 0, updated_at: t }).eq('id', inv.id)
+          : (supabase.from('InventoryEntry') as any).update({ status: 'PARTIAL', cartons_remaining: available - to_take, updated_at: t }).eq('id', inv.id),
+        (supabase.from('OutboundItem') as any)
+          .update({ cartons_scanned: new_scanned, status: new_item_status, updated_at: t })
+          .eq('id', itemId),
+      ])
+    }
 
     // Nhặt lẻ mode: skip DO/GDO cascade khi chưa bắt đầu (xe chưa tới)
     const skipCascade = !!loose_picking_mode && !gdo?.started_at
@@ -1385,17 +1412,40 @@ export async function deleteScanEntry(req: Request, res: Response) {
 
     const t = now()
 
-    // Restore inventory
+    // Restore inventory — xử lý khác nhau cho nhặt lẻ chưa xác nhận vs đã xác nhận vs thường
     if (scan.inventory_entry_id) {
       const { data: inv } = await (supabase.from('InventoryEntry') as any)
-        .select('cartons_remaining, cartons_imported').eq('id', scan.inventory_entry_id).single()
+        .select('cartons_remaining, cartons_imported, cartons_reserved').eq('id', scan.inventory_entry_id).single()
       if (inv) {
-        const restored  = Number(inv.cartons_remaining ?? 0) + Number(scan.cartons_scanned)
-        const maxImport = Number(inv.cartons_imported)
-        const invStatus = restored >= maxImport ? 'IN_STOCK' : 'PARTIAL'
-        await (supabase.from('InventoryEntry') as any)
-          .update({ cartons_remaining: restored, status: invStatus, updated_at: t })
-          .eq('id', scan.inventory_entry_id)
+        if (scan.is_loose_picking && !scan.loose_confirmed) {
+          // Chưa xác nhận: chỉ giảm reserved, không thay đổi remaining
+          const newReserved = Math.max(0, Number(inv.cartons_reserved ?? 0) - Number(scan.cartons_scanned))
+          const newStatus = newReserved > 0 ? 'LOOSE_PICKING'
+            : Number(inv.cartons_remaining ?? 0) < Number(inv.cartons_imported) ? 'PARTIAL'
+            : 'IN_STOCK'
+          await (supabase.from('InventoryEntry') as any)
+            .update({ cartons_reserved: newReserved, status: newStatus, updated_at: t })
+            .eq('id', scan.inventory_entry_id)
+        } else if (scan.is_loose_picking && scan.loose_confirmed) {
+          // Đã xác nhận: khôi phục remaining và giảm reserved
+          const restored   = Number(inv.cartons_remaining ?? 0) + Number(scan.cartons_scanned)
+          const newReserved = Math.max(0, Number(inv.cartons_reserved ?? 0) - Number(scan.cartons_scanned))
+          const maxImport  = Number(inv.cartons_imported)
+          const newStatus  = newReserved > 0 ? 'LOOSE_PICKING'
+            : restored >= maxImport ? 'IN_STOCK'
+            : 'PARTIAL'
+          await (supabase.from('InventoryEntry') as any)
+            .update({ cartons_remaining: restored, cartons_reserved: newReserved, status: newStatus, updated_at: t })
+            .eq('id', scan.inventory_entry_id)
+        } else {
+          // Scan thường: khôi phục remaining
+          const restored  = Number(inv.cartons_remaining ?? 0) + Number(scan.cartons_scanned)
+          const maxImport = Number(inv.cartons_imported)
+          const invStatus = restored >= maxImport ? 'IN_STOCK' : 'PARTIAL'
+          await (supabase.from('InventoryEntry') as any)
+            .update({ cartons_remaining: restored, status: invStatus, updated_at: t })
+            .eq('id', scan.inventory_entry_id)
+        }
       }
     }
 
@@ -1446,6 +1496,95 @@ export async function deleteScanEntry(req: Request, res: Response) {
     }
 
     return ok(res, { success: true })
+  } catch (e) { return fail(res, String(e)) }
+}
+
+// ─── Confirm loose picking entries for an item ────────────────
+
+export async function confirmLoosePickingItem(req: Request, res: Response) {
+  try {
+    const { gdoId, itemId } = req.params
+
+    const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
+      .select('status, started_at').eq('id', gdoId).single()
+    if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng', 400)
+
+    const { data: item } = await (supabase.from('OutboundItem') as any)
+      .select('*').eq('id', itemId).single()
+    if (!item) return fail(res, 'Không tìm thấy mặt hàng', 404)
+
+    const { data: looseEntries } = await (supabase.from('OutboundScanEntry') as any)
+      .select('*').eq('item_id', itemId).eq('is_loose_picking', true).eq('loose_confirmed', false)
+    if (!looseEntries?.length) return fail(res, 'Không có nhặt lẻ cần xác nhận', 400)
+
+    const t = now()
+
+    // Group by inventory_entry_id → tổng thùng cần deduct
+    const invDeduct = new Map<string, number>()
+    for (const entry of looseEntries) {
+      if (entry.inventory_entry_id) {
+        invDeduct.set(entry.inventory_entry_id, (invDeduct.get(entry.inventory_entry_id) ?? 0) + Number(entry.cartons_scanned))
+      }
+    }
+
+    // Cập nhật từng InventoryEntry: giảm remaining và reserved
+    for (const [invId, amount] of invDeduct) {
+      const { data: inv } = await (supabase.from('InventoryEntry') as any)
+        .select('cartons_remaining, cartons_imported, cartons_reserved').eq('id', invId).single()
+      if (!inv) continue
+      const newRemaining = Math.max(0, Number(inv.cartons_remaining ?? 0) - amount)
+      const newReserved  = Math.max(0, Number(inv.cartons_reserved  ?? 0) - amount)
+      const maxImport    = Number(inv.cartons_imported)
+      const newStatus    = newReserved > 0 ? 'LOOSE_PICKING'
+        : newRemaining === 0 ? 'EXPORTED'
+        : newRemaining < maxImport ? 'PARTIAL'
+        : 'IN_STOCK'
+      await (supabase.from('InventoryEntry') as any)
+        .update({ cartons_remaining: newRemaining, cartons_reserved: newReserved, status: newStatus, updated_at: t })
+        .eq('id', invId)
+    }
+
+    // Đánh dấu các loose entries là đã xác nhận
+    const looseIds = (looseEntries as any[]).map((e: any) => e.id as string)
+    await (supabase.from('OutboundScanEntry') as any)
+      .update({ loose_confirmed: true, loose_confirmed_at: t, updated_at: t })
+      .in('id', looseIds)
+
+    // Re-check item completion
+    const newCartons = Number(item.cartons_scanned)
+    const newItemStatus = newCartons >= Number(item.cartons_ordered) ? 'COMPLETED' : 'IN_PROGRESS'
+    await (supabase.from('OutboundItem') as any)
+      .update({ status: newItemStatus, updated_at: t }).eq('id', itemId)
+
+    // Cascade DO → GDO (chỉ khi xe đã bắt đầu)
+    if (gdo?.started_at) {
+      const { data: siblingItems } = await (supabase.from('OutboundItem') as any)
+        .select('id, status').eq('do_id', item.do_id)
+      const doCompleted = (siblingItems ?? []).every((i: any) =>
+        i.id === itemId ? newItemStatus === 'COMPLETED' : i.status === 'COMPLETED'
+      )
+      const { data: doRow } = await (supabase.from('OutboundDelivery') as any)
+        .update({ status: doCompleted ? 'COMPLETED' : 'IN_PROGRESS', updated_at: t })
+        .eq('id', item.do_id).select('gdo_id').single()
+
+      if (doRow?.gdo_id) {
+        const { data: siblingDOs } = await (supabase.from('OutboundDelivery') as any)
+          .select('status').eq('gdo_id', doRow.gdo_id)
+        const gdoCompleted = (siblingDOs ?? []).every((d: any) =>
+          d.id === item.do_id ? doCompleted : d.status === 'COMPLETED'
+        )
+        await (supabase.from('GroupDeliveryOrder') as any)
+          .update({
+            status:          gdoCompleted ? 'COMPLETED' : 'IN_PROGRESS',
+            last_scanned_at: t,
+            ...(gdoCompleted ? { completed_at: t } : {}),
+            updated_at:      t,
+          })
+          .eq('id', doRow.gdo_id)
+      }
+    }
+
+    return ok(res, { confirmed: looseIds.length })
   } catch (e) { return fail(res, String(e)) }
 }
 

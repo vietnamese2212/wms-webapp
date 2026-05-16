@@ -349,7 +349,7 @@ export interface ApiError {
 }
 
 // WMS – Inventory
-export type InventoryStatus = 'IN_STOCK' | 'PARTIAL' | 'EXPORTED' | 'TRANSFERRED' | 'QUARANTINE' | 'CANCELLED'
+export type InventoryStatus = 'IN_STOCK' | 'PARTIAL' | 'EXPORTED' | 'TRANSFERRED' | 'QUARANTINE' | 'CANCELLED' | 'LOOSE_PICKING'
 
 export interface InventoryEntry {
   id:                 string
@@ -364,6 +364,7 @@ export interface InventoryEntry {
   stack_layer:        number
   cartons_imported:   number
   cartons_remaining:  number | null
+  cartons_reserved:   number | null
   production_date:    string | null
   status:             InventoryStatus | string
   import_date:        string | null
@@ -391,6 +392,8 @@ export interface OutboundScanEntry {
   pallet_code:          string
   cartons_scanned:      number
   is_loose_picking:     boolean
+  loose_confirmed:      boolean
+  loose_confirmed_at:   string | null
   scanned_by:           string | null
   scanned_at:           string
   production_date:      string | null

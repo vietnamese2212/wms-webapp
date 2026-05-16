@@ -814,9 +814,10 @@ function statusColors(order: InboundOrder) {
   const used = order.location_used_slots ?? 0
   const max  = order.location?.max_pallets ?? 0
   const full = max > 0 && used >= max
-  if (full)     return { bg: 'bg-blue-50',  hover: 'hover:bg-blue-100',  text: 'text-blue-700'  }
-  if (used > 0) return { bg: 'bg-amber-50', hover: 'hover:bg-amber-100', text: 'text-amber-600' }
-  return               { bg: '',            hover: 'hover:bg-slate-50',  text: 'text-slate-400' }
+  const hasEntries = (order._count?.inventory_entries ?? 0) > 0
+  if (full)        return { bg: 'bg-blue-50',  hover: 'hover:bg-blue-100',  text: 'text-blue-700'  }
+  if (hasEntries)  return { bg: 'bg-amber-50', hover: 'hover:bg-amber-100', text: 'text-amber-600' }
+  return                  { bg: '',            hover: 'hover:bg-slate-50',  text: 'text-slate-400' }
 }
 
 function InboundRow({ order, onClick, onScan }: { order: InboundOrder; onClick: () => void; onScan?: (e: React.MouseEvent) => void }) {

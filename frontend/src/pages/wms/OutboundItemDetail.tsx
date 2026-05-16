@@ -282,6 +282,7 @@ export default function OutboundItemDetail() {
   const [searchParams] = useSearchParams()
   const autoScan = searchParams.get('scan') === '1'
 
+  const user = useAuthStore(s => s.user)
   const { data: gdo, isLoading } = useGDO(gdoId)
   const { mutate: manualComplete,      isPending: completing    } = useManualCompleteItem()
   const { mutate: deleteScanEntry,     isPending: deleting      } = useDeleteOutboundScanEntry()
@@ -426,7 +427,7 @@ export default function OutboundItemDetail() {
         onConfirm={() => {
           setLooseError(null)
           confirmLoose(
-            { gdoId: gdoId!, itemId: item.id },
+            { gdoId: gdoId!, itemId: item.id, employee_id: user?.id ?? undefined },
             {
               onSuccess: () => setConfirmLooseOpen(false),
               onError: (err) => {

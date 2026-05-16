@@ -1,6 +1,7 @@
 -- get_outbound_scan_log v4
--- Thêm best_available_date (Date cũ nhất)
--- Đổi delivery_date → ngày hoàn thành thực tế (COALESCE completed_at, last_scanned_at)
+-- - best_available_date (Date cũ nhất)
+-- - delivery_date = ngày quét (xuất thường) hoặc ngày check (nhặt lẻ)
+-- - thêm loose_confirmed_at, loose_confirmed_by_name
 -- Phải DROP trước vì đổi return type
 -- Apply: Supabase Dashboard → SQL Editor → Run
 
@@ -23,38 +24,40 @@ CREATE OR REPLACE FUNCTION get_outbound_scan_log(
   p_offset            int     DEFAULT 0
 )
 RETURNS TABLE (
-  id                    text,
-  pallet_code           text,
-  cartons_scanned       numeric,
-  production_date       text,
-  best_available_date   text,
-  scanned_at            timestamptz,
-  is_loose_picking      boolean,
-  group_code            text,
-  delivery_date         date,
-  license_plate         text,
-  container_number      text,
-  forklift_driver_names text,
-  loader_name           text,
-  assigned_at           timestamptz,
-  started_at            timestamptz,
-  last_scanned_at       timestamptz,
-  completed_at          timestamptz,
-  warehouse_name        text,
-  delivery_code         text,
-  distributor_name      text,
-  header_text           text,
-  material_code_raw     text,
-  material_code         text,
-  material_name         text,
-  material_category     text,
-  shelf_life_days       int,
-  cycle                 text,
-  machine_code          text,
-  import_date           timestamptz,
-  location_code         text,
-  scanner_name          text,
-  total_count           bigint
+  id                       text,
+  pallet_code              text,
+  cartons_scanned          numeric,
+  production_date          text,
+  best_available_date      text,
+  scanned_at               timestamptz,
+  is_loose_picking         boolean,
+  loose_confirmed_at       timestamptz,
+  loose_confirmed_by_name  text,
+  group_code               text,
+  delivery_date            date,
+  license_plate            text,
+  container_number         text,
+  forklift_driver_names    text,
+  loader_name              text,
+  assigned_at              timestamptz,
+  started_at               timestamptz,
+  last_scanned_at          timestamptz,
+  completed_at             timestamptz,
+  warehouse_name           text,
+  delivery_code            text,
+  distributor_name         text,
+  header_text              text,
+  material_code_raw        text,
+  material_code            text,
+  material_name            text,
+  material_category        text,
+  shelf_life_days          int,
+  cycle                    text,
+  machine_code             text,
+  import_date              timestamptz,
+  location_code            text,
+  scanner_name             text,
+  total_count              bigint
 )
 LANGUAGE sql STABLE
 AS $$
@@ -66,9 +69,16 @@ AS $$
     ose.best_available_date,
     ose.scanned_at,
     ose.is_loose_picking,
+    ose.loose_confirmed_at,
+    ec.name                AS loose_confirmed_by_name,
     gdo.group_code,
-    -- Ngày xuất = ngày đơn hoàn thành thực tế (không phải ngày kế hoạch từ Excel)
-    (COALESCE(gdo.completed_at, gdo.last_scanned_at) AT TIME ZONE 'Asia/Ho_Chi_Minh')::date AS delivery_date,
+    -- Ngày xuất: nhặt lẻ → ngày check xong; xuất thường → ngày quét pallet
+    CASE
+      WHEN ose.is_loose_picking
+        THEN (ose.loose_confirmed_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date
+      ELSE
+        (ose.scanned_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date
+    END                    AS delivery_date,
     gdo.license_plate,
     gdo.container_number,
     gdo.forklift_driver_names,
@@ -77,21 +87,21 @@ AS $$
     gdo.started_at,
     gdo.last_scanned_at,
     gdo.completed_at,
-    w.name            AS warehouse_name,
+    w.name                 AS warehouse_name,
     od.delivery_code,
     od.distributor_name,
     oi.header_text,
     oi.material_code_raw,
     m.material_code,
-    m.short_name      AS material_name,
-    m.category        AS material_category,
+    m.short_name           AS material_name,
+    m.category             AS material_category,
     m.shelf_life_days,
     ie.cycle,
     ie.machine_code,
     ie.import_date,
     l.location_code,
-    e.name            AS scanner_name,
-    COUNT(*) OVER()   AS total_count
+    e.name                 AS scanner_name,
+    COUNT(*) OVER()        AS total_count
   FROM "OutboundScanEntry"   ose
   JOIN "OutboundItem"        oi  ON oi.id  = ose.item_id
   JOIN "OutboundDelivery"    od  ON od.id  = oi.do_id
@@ -101,9 +111,18 @@ AS $$
   LEFT JOIN "InventoryEntry" ie  ON ie.id  = ose.inventory_entry_id
   LEFT JOIN "Location"       l   ON l.id   = ie.location_id
   LEFT JOIN "Employee"       e   ON e.id   = ose.scanned_by
+  LEFT JOIN "Employee"       ec  ON ec.id  = ose.loose_confirmed_by
   WHERE
-    (p_from_date         IS NULL OR (COALESCE(gdo.completed_at, gdo.last_scanned_at) AT TIME ZONE 'Asia/Ho_Chi_Minh')::date >= p_from_date::date)
-    AND (p_to_date           IS NULL OR (COALESCE(gdo.completed_at, gdo.last_scanned_at) AT TIME ZONE 'Asia/Ho_Chi_Minh')::date <= p_to_date::date)
+    (p_from_date IS NULL OR
+      CASE WHEN ose.is_loose_picking
+        THEN (ose.loose_confirmed_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date
+        ELSE (ose.scanned_at         AT TIME ZONE 'Asia/Ho_Chi_Minh')::date
+      END >= p_from_date::date)
+    AND (p_to_date IS NULL OR
+      CASE WHEN ose.is_loose_picking
+        THEN (ose.loose_confirmed_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date
+        ELSE (ose.scanned_at         AT TIME ZONE 'Asia/Ho_Chi_Minh')::date
+      END <= p_to_date::date)
     AND (p_warehouse_ids     IS NULL OR gdo.warehouse_id  = ANY(string_to_array(p_warehouse_ids, ',')))
     AND (p_material_category IS NULL OR m.category        = p_material_category)
     AND (p_group_code        IS NULL OR gdo.group_code      ILIKE '%' || p_group_code    || '%')

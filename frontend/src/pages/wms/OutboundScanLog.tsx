@@ -470,6 +470,8 @@ export default function OutboundScanLog() {
                 <TableHead className="min-w-[110px] text-[9px]">Ghi chú</TableHead>
                 <TableHead className="min-w-[72px]  text-[9px]">Người quét</TableHead>
                 <TableHead className="min-w-[68px]  text-[9px]">TG quét</TableHead>
+                <TableHead className="min-w-[68px]  text-[9px]">TG check NL</TableHead>
+                <TableHead className="min-w-[72px]  text-[9px]">Người check NL</TableHead>
                 <TableHead className="min-w-[72px]  text-[9px]">Biển số</TableHead>
                 <TableHead className="min-w-[72px]  text-[9px]">Số cont</TableHead>
                 <TableHead className="min-w-[80px]  text-[9px]">Lái xe nâng</TableHead>
@@ -527,6 +529,12 @@ export default function OutboundScanLog() {
                     </TableCell>
                     <TableCell className="px-2 py-1 text-[10px]">{row.scanner_name ?? <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className="px-2 py-1 text-[10px]"><FmtTs ts={row.scanned_at} /></TableCell>
+                    <TableCell className="px-2 py-1 text-[10px]">
+                      {row.is_loose_picking ? <FmtTs ts={row.loose_confirmed_at} /> : <span className="text-slate-300">—</span>}
+                    </TableCell>
+                    <TableCell className="px-2 py-1 text-[10px]">
+                      {row.is_loose_picking ? (row.loose_confirmed_by_name ?? <span className="text-slate-300">—</span>) : <span className="text-slate-300">—</span>}
+                    </TableCell>
                     <TableCell className="px-2 py-1 text-[10px]">{row.license_plate ?? <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className="px-2 py-1 text-[10px] font-mono">{row.container_number ?? <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className="px-2 py-1 text-[10px]">{row.forklift_driver_names ?? <span className="text-slate-300">—</span>}</TableCell>

@@ -1534,17 +1534,21 @@ export async function deleteScanEntry(req: Request, res: Response) {
 export async function confirmLoosePickingItem(req: Request, res: Response) {
   try {
     const { gdoId, itemId } = req.params
+    const { employee_id } = req.body as { employee_id?: string }
 
-    const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
-      .select('status, started_at').eq('id', gdoId).single()
+    const [{ data: gdo }, { data: item }, { data: looseEntries, error: looseErr }, { data: empCheck }] =
+      await Promise.all([
+        (supabase.from('GroupDeliveryOrder') as any).select('status, started_at').eq('id', gdoId).single(),
+        (supabase.from('OutboundItem') as any).select('*').eq('id', itemId).single(),
+        (supabase.from('OutboundScanEntry') as any).select('*').eq('item_id', itemId).eq('is_loose_picking', true).eq('loose_confirmed', false),
+        employee_id
+          ? (supabase.from('Employee') as any).select('id').eq('id', employee_id).maybeSingle()
+          : Promise.resolve({ data: null }),
+      ])
+    const confirmed_by = empCheck ? employee_id : null
+
     if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng', 400)
-
-    const { data: item } = await (supabase.from('OutboundItem') as any)
-      .select('*').eq('id', itemId).single()
     if (!item) return fail(res, 'Không tìm thấy mặt hàng', 404)
-
-    const { data: looseEntries, error: looseErr } = await (supabase.from('OutboundScanEntry') as any)
-      .select('*').eq('item_id', itemId).eq('is_loose_picking', true).eq('loose_confirmed', false)
     if (looseErr) return fail(res, `Lỗi DB: ${looseErr.message}`, 500)
     if (!looseEntries?.length) return fail(res, 'Không có nhặt lẻ chờ xác nhận', 400)
 
@@ -1578,7 +1582,7 @@ export async function confirmLoosePickingItem(req: Request, res: Response) {
     // Đánh dấu các loose entries là đã xác nhận
     const looseIds = (looseEntries as any[]).map((e: any) => e.id as string)
     await (supabase.from('OutboundScanEntry') as any)
-      .update({ loose_confirmed: true, loose_confirmed_at: t, updated_at: t })
+      .update({ loose_confirmed: true, loose_confirmed_at: t, loose_confirmed_by: confirmed_by, updated_at: t })
       .in('id', looseIds)
 
     // Re-check item completion

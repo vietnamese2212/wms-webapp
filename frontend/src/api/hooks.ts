@@ -943,8 +943,8 @@ export type CheckOutboundScanResult = {
 export function useConfirmLoosePickingItem() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ gdoId, itemId }: { gdoId: string; itemId: string }) =>
-      apiClient.post(`/wms/outbound/${gdoId}/items/${itemId}/confirm-loose`).then(r => r.data.data),
+    mutationFn: ({ gdoId, itemId, employee_id }: { gdoId: string; itemId: string; employee_id?: string }) =>
+      apiClient.post(`/wms/outbound/${gdoId}/items/${itemId}/confirm-loose`, { employee_id }).then(r => r.data.data),
     onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ['gdo', v.gdoId] }),
   })
 }
@@ -1095,6 +1095,8 @@ export type OutboundScanLogEntry = {
   best_available_date: string | null
   scanned_at: string
   is_loose_picking: boolean
+  loose_confirmed_at: string | null
+  loose_confirmed_by_name: string | null
   group_code: string
   delivery_date: string | null
   license_plate: string | null

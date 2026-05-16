@@ -548,6 +548,7 @@ export default function LoosePickingItemDetail() {
                     <TableRow>
                       <TableHead className="px-2 py-1 text-[9px] font-medium text-slate-500">Mã pallet</TableHead>
                       <TableHead className="px-2 py-1 text-[9px] font-medium text-slate-500 text-right">Thùng</TableHead>
+                      <TableHead className="px-2 py-1 text-[9px] font-medium text-slate-500 whitespace-nowrap">%Date</TableHead>
                       <TableHead className="px-2 py-1 text-[9px] font-medium text-slate-500 whitespace-nowrap">NSX</TableHead>
                       <TableHead className="px-2 py-1 text-[9px] font-medium text-slate-500 whitespace-nowrap">Date cũ nhất</TableHead>
                       <TableHead className="px-2 py-1 text-[9px] font-medium text-slate-500 whitespace-nowrap">Thời gian quét</TableHead>
@@ -565,6 +566,13 @@ export default function LoosePickingItemDetail() {
                           </TableCell>
                           <TableCell className="px-2 py-1.5 text-right tabular-nums text-[10px] font-semibold">
                             {se.cartons_scanned}
+                          </TableCell>
+                          <TableCell className="px-2 py-1.5 whitespace-nowrap">
+                            {se.pct_date !== null ? (
+                              <span className={`text-[10px] font-bold tabular-nums ${
+                                se.pct_date <= 30 ? 'text-red-600' : se.pct_date <= 60 ? 'text-amber-600' : 'text-green-700'
+                              }`}>{se.pct_date}%</span>
+                            ) : <span className="text-[10px] text-slate-300">—</span>}
                           </TableCell>
                           <TableCell className="px-2 py-1.5 whitespace-nowrap">
                             <span className="text-[10px] font-mono tabular-nums text-slate-600">

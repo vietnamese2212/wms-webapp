@@ -374,6 +374,29 @@ export async function bulkTransferMaterial(req: Request, res: Response) {
   return ok(res, { updated: ids.length, material_code: mat.material_code })
 }
 
+export async function bulkUpdateProductionDate(req: Request, res: Response) {
+  const { ids, production_date, employee_id } = req.body as {
+    ids: string[]; production_date: string; employee_id?: string
+  }
+  if (!Array.isArray(ids) || ids.length === 0)
+    return fail(res, 400, 'INVALID_INPUT', 'Cần ít nhất 1 pallet')
+  if (!production_date)
+    return fail(res, 400, 'INVALID_INPUT', 'Thiếu ngày sản xuất')
+  const d = new Date(production_date)
+  if (isNaN(d.getTime()))
+    return fail(res, 400, 'INVALID_INPUT', 'Ngày sản xuất không hợp lệ')
+
+  const now    = new Date().toISOString()
+  const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+
+  const patch: Record<string, unknown> = { production_date, updated_at: now, update_date: vnDate }
+  if (employee_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employee_id)) patch.updated_by = employee_id
+
+  const { error } = await (supabase.from('InventoryEntry') as any).update(patch).in('id', ids)
+  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  return ok(res, { updated: ids.length })
+}
+
 export async function getInventoryEntry(req: Request, res: Response) {
   const { id } = req.params
   const { data, error } = await (supabase.from('InventoryEntry') as any)

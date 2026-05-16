@@ -11,6 +11,7 @@ import {
   useInventoryEntries, useInventoryFacets, useWarehouses, useQAStatuses, useAdjustInventory,
   useLocationsReal, useMaterials, useMaterialCategories,
   useBulkUpdateInventoryQA, useBulkTransferLocation, useBulkTransferMaterial,
+  useBulkUpdateProductionDate,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
@@ -372,6 +373,75 @@ function MaterialPanel({ ids, category, onClose }: {
   )
 }
 
+function ProductionDatePanel({ ids, onClose }: { ids: string[]; onClose: () => void }) {
+  const user = useAuthStore(s => s.user)
+  const [date, setDate]           = useState('')
+  const [error, setError]         = useState('')
+  const [confirming, setConfirming] = useState(false)
+  const { mutate, isPending }     = useBulkUpdateProductionDate()
+
+  function reset() { setDate(''); setError(''); setConfirming(false) }
+
+  function handleSubmit() {
+    setError('')
+    mutate(
+      { ids, production_date: date, employee_id: user?.id },
+      {
+        onSuccess: () => { reset(); onClose() },
+        onError: (e: any) => setError(e?.response?.data?.error?.message ?? 'Lỗi không xác định'),
+      }
+    )
+  }
+
+  return (
+    <div className="w-72 shrink-0 border-l bg-white overflow-y-auto flex flex-col">
+      <div className="flex items-center justify-between px-3 py-2 border-b bg-slate-50 shrink-0">
+        <p className="text-xs font-semibold text-slate-700">Sửa ngày sản xuất</p>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-slate-500">{ids.length} pallet</span>
+          <button onClick={() => { reset(); onClose() }} className="text-slate-400 hover:text-slate-700">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+      <div className="p-3 space-y-3 text-xs flex-1">
+        {error && (
+          <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</div>
+        )}
+        {confirming ? (
+          <div className="space-y-3">
+            <div className="border border-amber-200 bg-amber-50 rounded-lg p-3 space-y-2">
+              <p className="text-xs font-semibold text-amber-800">Xác nhận đổi ngày SX?</p>
+              <div className="text-[10px] text-amber-700 space-y-0.5">
+                <p><span className="text-slate-500">Số pallet:</span> <strong>{ids.length}</strong></p>
+                <p><span className="text-slate-500">Ngày mới:</span> <strong className="font-mono">{date}</strong></p>
+              </div>
+              <p className="text-[10px] text-amber-600">Thao tác này sẽ đổi ngày SX của tất cả pallet đã chọn.</p>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" className="flex-1" onClick={() => setConfirming(false)}>Quay lại</Button>
+              <Button className="flex-1 bg-amber-600 hover:bg-amber-700" disabled={isPending} onClick={handleSubmit}>
+                {isPending ? '…' : 'Xác nhận đổi'}
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div>
+              <Label className="text-xs">Ngày sản xuất mới</Label>
+              <Input type="date" value={date} onChange={e => setDate(e.target.value)} className="h-8 text-sm mt-1" autoFocus />
+            </div>
+            <div className="flex gap-2 pt-1">
+              <Button variant="outline" className="flex-1" onClick={() => { reset(); onClose() }}>Huỷ</Button>
+              <Button className="flex-1" disabled={!date} onClick={() => setConfirming(true)}>Tiếp theo</Button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ─── Main component ───────────────────────────────────────────
 
 export default function Inventory() {
@@ -381,7 +451,7 @@ export default function Inventory() {
   const [selected,     setSelected]     = useState<InventoryEntry | null>(null)
   const [checkedIds,   setCheckedIds]   = useState<Set<string>>(new Set())
   const [showFilters,  setShowFilters]  = useState(false)
-  const [actionModal,  setActionModal]  = useState<'qa' | 'location' | 'material' | null>(null)
+  const [actionModal,  setActionModal]  = useState<'qa' | 'location' | 'material' | 'production-date' | null>(null)
 
   const { data: warehouses   = [] } = useWarehouses(true)
   const { data: qaStatuses   = [] } = useQAStatuses()
@@ -746,6 +816,8 @@ export default function Inventory() {
           <LocationPanel ids={checkedIdArr} warehouseId={actionWarehouseId} category={actionCategory} onClose={closeActionModal} />
         ) : actionModal === 'material' ? (
           <MaterialPanel ids={checkedIdArr} category={actionCategory} onClose={closeActionModal} />
+        ) : actionModal === 'production-date' ? (
+          <ProductionDatePanel ids={checkedIdArr} onClose={closeActionModal} />
         ) : selected ? (
           <DetailPanel entry={selected} onClose={() => setSelected(null)} />
         ) : null}
@@ -772,6 +844,11 @@ export default function Inventory() {
             className="flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-slate-700 hover:bg-slate-600 transition-colors"
             onClick={() => setActionModal('material')}>
             Mã hàng
+          </button>
+          <button
+            className="flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-slate-700 hover:bg-slate-600 transition-colors"
+            onClick={() => setActionModal('production-date')}>
+            Ngày SX
           </button>
           <div className="w-px h-4 bg-slate-600" />
           <button

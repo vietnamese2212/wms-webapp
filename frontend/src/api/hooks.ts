@@ -521,6 +521,17 @@ export function useBulkTransferMaterial() {
   })
 }
 
+export function useBulkUpdateProductionDate() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ ids, production_date, employee_id }: { ids: string[]; production_date: string; employee_id?: string }) => {
+      const { data } = await apiClient.patch('/wms/inventory/bulk-production-date', { ids, production_date, employee_id })
+      return data.data as { updated: number }
+    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['inventory-entries'] }) },
+  })
+}
+
 // WMS (mock — legacy, không dùng nữa)
 export function useInventory() {
   return useQuery({

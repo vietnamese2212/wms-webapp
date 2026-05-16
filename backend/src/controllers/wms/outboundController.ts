@@ -1413,7 +1413,6 @@ export async function scanItem(req: Request, res: Response) {
           .update({
             status:           gdoCompleted ? 'COMPLETED' : 'IN_PROGRESS',
             last_scanned_at:  t,
-            ...(gdoCompleted ? { completed_at: t } : {}),
             updated_at:       t,
           })
           .eq('id', doRow.gdo_id)
@@ -1609,7 +1608,6 @@ export async function confirmLoosePickingItem(req: Request, res: Response) {
           .update({
             status:          gdoCompleted ? 'COMPLETED' : 'IN_PROGRESS',
             last_scanned_at: t,
-            ...(gdoCompleted ? { completed_at: t } : {}),
             updated_at:      t,
           })
           .eq('id', doRow.gdo_id)
@@ -1728,7 +1726,6 @@ export async function manualCompleteItem(req: Request, res: Response) {
       await (supabase.from('GroupDeliveryOrder') as any)
         .update({
           status:     gdoCompleted ? 'COMPLETED' : 'IN_PROGRESS',
-          ...(gdoCompleted ? { completed_at: t } : {}),
           updated_at: t,
         })
         .eq('id', doRow.gdo_id)

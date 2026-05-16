@@ -1,6 +1,10 @@
 -- get_outbound_scan_log v4
--- Thêm best_available_date (Date cũ nhất) vào kết quả trả về
+-- Thêm best_available_date (Date cũ nhất)
+-- Đổi delivery_date → ngày hoàn thành thực tế (COALESCE completed_at, last_scanned_at)
+-- Phải DROP trước vì đổi return type
 -- Apply: Supabase Dashboard → SQL Editor → Run
+
+DROP FUNCTION IF EXISTS get_outbound_scan_log(text,text,text,text,text,text,text,text,text,text,text,text,integer,integer);
 
 CREATE OR REPLACE FUNCTION get_outbound_scan_log(
   p_from_date         text    DEFAULT NULL,
@@ -63,7 +67,8 @@ AS $$
     ose.scanned_at,
     ose.is_loose_picking,
     gdo.group_code,
-    gdo.delivery_date,
+    -- Ngày xuất = ngày đơn hoàn thành thực tế (không phải ngày kế hoạch từ Excel)
+    (COALESCE(gdo.completed_at, gdo.last_scanned_at) AT TIME ZONE 'Asia/Ho_Chi_Minh')::date AS delivery_date,
     gdo.license_plate,
     gdo.container_number,
     gdo.forklift_driver_names,
@@ -97,8 +102,8 @@ AS $$
   LEFT JOIN "Location"       l   ON l.id   = ie.location_id
   LEFT JOIN "Employee"       e   ON e.id   = ose.scanned_by
   WHERE
-    (p_from_date         IS NULL OR gdo.delivery_date >= p_from_date::date)
-    AND (p_to_date           IS NULL OR gdo.delivery_date <= p_to_date::date)
+    (p_from_date         IS NULL OR (COALESCE(gdo.completed_at, gdo.last_scanned_at) AT TIME ZONE 'Asia/Ho_Chi_Minh')::date >= p_from_date::date)
+    AND (p_to_date           IS NULL OR (COALESCE(gdo.completed_at, gdo.last_scanned_at) AT TIME ZONE 'Asia/Ho_Chi_Minh')::date <= p_to_date::date)
     AND (p_warehouse_ids     IS NULL OR gdo.warehouse_id  = ANY(string_to_array(p_warehouse_ids, ',')))
     AND (p_material_category IS NULL OR m.category        = p_material_category)
     AND (p_group_code        IS NULL OR gdo.group_code      ILIKE '%' || p_group_code    || '%')

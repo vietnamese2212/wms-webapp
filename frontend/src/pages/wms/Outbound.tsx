@@ -905,7 +905,7 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
       }))
     )
     setItems(allItems.length ? allItems : [makeItem()])
-  }, [gdo, initialized])
+  }, [gdo, initialized, exportTypes])
 
   function handleSubmit() {
     const isMultiDO = (gdo?.delivery_orders?.length ?? 0) > 1

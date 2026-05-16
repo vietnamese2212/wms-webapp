@@ -105,8 +105,13 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
       {
         onSuccess: (data: any) => {
           setCheckResult(null)
-          setFeedback({ type: 'success', msg: `✓ ${data.scan_entry.pallet_code} · ${data.scan_entry.cartons_scanned} thùng` })
-          setTimeout(() => { scannerRef.current?.resume(); setFeedback(null) }, 1500)
+          const scannedNow = Number(data.scan_entry.cartons_scanned)
+          const isNowComplete = scannedNow >= remaining
+          setFeedback({ type: 'success', msg: `✓ ${data.scan_entry.pallet_code} · ${scannedNow} thùng` })
+          setTimeout(() => {
+            if (isNowComplete) { onClose() }
+            else { scannerRef.current?.resume(); setFeedback(null) }
+          }, 1500)
         },
         onError: (err) => {
           setCheckResult(null)

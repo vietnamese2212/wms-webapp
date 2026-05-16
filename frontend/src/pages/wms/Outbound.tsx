@@ -418,7 +418,7 @@ function GDORow({ gdo, onClick, onAssign }: {
         <span className="text-[10px] tabular-nums text-slate-600">{fTime(gdo.started_at)}</span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
-        <span className="text-[10px] tabular-nums text-slate-600">{fTime(gdo.last_scanned_at)}</span>
+        <span className="text-[10px] tabular-nums text-slate-600">{fTime(gdo.completed_at)}</span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px] tabular-nums text-slate-600">{fTime(gdo.completed_at)}</span>

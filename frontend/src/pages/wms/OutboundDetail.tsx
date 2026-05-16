@@ -826,6 +826,9 @@ export default function OutboundDetail() {
               >
                 <Bookmark className="h-3.5 w-3.5" fill={pinned ? 'currentColor' : 'none'} />
               </button>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+              {/* ── Edit / Delete ── */}
               {(gdo.status === 'PENDING' || gdo.status === 'PAUSED') && (
                 <Button size="sm" variant="outline"
                   className="h-7 text-xs gap-1 px-2"
@@ -840,8 +843,6 @@ export default function OutboundDetail() {
                   <Trash2 className="h-3 w-3" /> Xóa
                 </Button>
               )}
-            </div>
-            <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
               {/* ── Forward actions ── */}
               {!gdo.assigned_at && (
                 <Button size="sm" variant="outline" className="h-7 text-xs gap-1 px-2" disabled={assigning}

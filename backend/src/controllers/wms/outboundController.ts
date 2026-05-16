@@ -462,7 +462,7 @@ export async function patchGDO(req: Request, res: Response) {
     }
 
     const { error } = await (supabase.from('GroupDeliveryOrder') as any)
-      .update({ delivery_date, status, updated_at: now() })
+      .update({ delivery_date, status, ...(status === 'COMPLETED' ? { completed_at: now() } : {}), updated_at: now() })
       .eq('id', req.params.id)
     if (error) return fail(res, error.message)
     const result = await fetchGDOFull(req.params.id)

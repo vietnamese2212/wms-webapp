@@ -39,3 +39,6 @@ vite.config.ts.timestamp-*
 *.tsbuildinfo
 
 .vercel
+
+# Claude Code local settings
+.claude/settings.local.json

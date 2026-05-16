@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   useWarehouses, useMaterialCategories, useLocationsReal,
   useUnflagEntry, useStocktakeEntries, useInventoryEntry,
@@ -199,16 +199,41 @@ function DetailPanel({ entryId, onClose }: { entryId: string; onClose: () => voi
   )
 }
 
+// ─── Filter persistence ───────────────────────────────────────────
+const SUMMARY_FILTERS_KEY = 'stocktake_summary_filters_v1'
+
+function loadSummaryFilters(defaultWarehouseId: string) {
+  try {
+    const s = sessionStorage.getItem(SUMMARY_FILTERS_KEY)
+    if (s) {
+      const p = JSON.parse(s) as Record<string, unknown>
+      return {
+        warehouseId:  typeof p.warehouseId  === 'string' ? p.warehouseId  : defaultWarehouseId,
+        category:     typeof p.category     === 'string' ? p.category     : '',
+        locationId:   typeof p.locationId   === 'string' ? p.locationId   : '',
+        requiresOnly: Boolean(p.requiresOnly),
+        view:         typeof p.view         === 'string' ? p.view as View : 'problem' as View,
+      }
+    }
+  } catch {}
+  return { warehouseId: defaultWarehouseId, category: '', locationId: '', requiresOnly: false, view: 'problem' as View }
+}
+
 // ─── Main ────────────────────────────────────────────────────────
 export default function StocktakeDashboard() {
   const user = useAuthStore(s => s.user)
 
-  const [warehouseId,  setWarehouseId]  = useState(user?.warehouse_id ?? '')
-  const [category,     setCategory]     = useState('')
-  const [locationId,   setLocationId]   = useState('')
-  const [requiresOnly, setRequiresOnly] = useState(false)
-  const [view,         setView]         = useState<View>('problem')
+  const init = loadSummaryFilters(user?.warehouse_id ?? '')
+  const [warehouseId,  setWarehouseId]  = useState(init.warehouseId)
+  const [category,     setCategory]     = useState(init.category)
+  const [locationId,   setLocationId]   = useState(init.locationId)
+  const [requiresOnly, setRequiresOnly] = useState(init.requiresOnly)
+  const [view,         setView]         = useState<View>(init.view)
   const [selectedId,   setSelectedId]   = useState<string | null>(null)
+
+  useEffect(() => {
+    sessionStorage.setItem(SUMMARY_FILTERS_KEY, JSON.stringify({ warehouseId, category, locationId, requiresOnly, view }))
+  }, [warehouseId, category, locationId, requiresOnly, view])
 
   const unflag = useUnflagEntry()
   const { data: warehouses = [] } = useWarehouses(true)

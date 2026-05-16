@@ -1,12 +1,10 @@
 import { useRef, useState } from 'react'
-import { QRScanner } from '@/components/shared/QRScanner'
-import type { QRScannerHandle } from '@/components/shared/QRScanner'
 import { useWarehouses, useLocationsReal, useMaterialCategories } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { MapPin, AlertTriangle, CheckCircle2, Flag } from 'lucide-react'
+import { MapPin, AlertTriangle, CheckCircle2, Flag, Search } from 'lucide-react'
 import { apiClient } from '@/api/client'
 import { useQueryClient } from '@tanstack/react-query'
 
@@ -31,7 +29,7 @@ type PageState =
 export default function Stocktake() {
   const user = useAuthStore(s => s.user)
   const qc   = useQueryClient()
-  const scannerRef = useRef<QRScannerHandle>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
 
   const [warehouseId, setWarehouseId] = useState(user?.warehouse_id ?? '')
   const [category,    setCategory]    = useState('')
@@ -41,6 +39,8 @@ export default function Stocktake() {
   const [showQty,     setShowQty]     = useState(false)
   const [physCount,   setPhysCount]   = useState('')
   const [saving,      setSaving]      = useState(false)
+  const [inputVal,    setInputVal]    = useState('')
+  const [searching,   setSearching]   = useState(false)
 
   const { data: warehouses = [] } = useWarehouses(true)
   const { data: categories = [] } = useMaterialCategories()
@@ -50,24 +50,36 @@ export default function Stocktake() {
 
   const selectedLoc = (locations as any[]).find((l: any) => l.id === locationId)
 
-  function resetToScan() {
+  function startScanning() {
     setPageState({ mode: 'scanning' })
     setUpdateLoc(false)
     setShowQty(false)
     setPhysCount('')
+    setInputVal('')
+    setTimeout(() => inputRef.current?.focus(), 50)
   }
 
-  async function handleScan(qrCode: string) {
+  async function handleSearch(code: string) {
+    const palletCode = code.trim()
+    if (!palletCode) return
+    setSearching(true)
     try {
-      const { data } = await apiClient.post('/wms/inventory/stocktake-check', { qr_code: qrCode })
+      const { data } = await apiClient.post('/wms/inventory/stocktake-check', { qr_code: palletCode })
       const entry: StocktakeEntryData = data.data.entry
       setUpdateLoc(!!locationId && entry.location_id !== locationId)
       setShowQty(false)
       setPhysCount('')
       setPageState({ mode: 'result', entry })
     } catch (e: any) {
-      setPageState({ mode: 'error', message: e?.response?.data?.error?.message ?? 'Lỗi khi đọc QR' })
+      setPageState({ mode: 'error', message: e?.response?.data?.error?.message ?? 'Không tìm thấy pallet' })
+    } finally {
+      setSearching(false)
     }
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    handleSearch(inputVal)
   }
 
   async function handleSave() {
@@ -81,7 +93,7 @@ export default function Stocktake() {
       qc.invalidateQueries({ queryKey: ['inventory-entries'] })
       qc.invalidateQueries({ queryKey: ['stocktake-summary'] })
       setPageState({ mode: 'success' })
-      setTimeout(resetToScan, 1500)
+      setTimeout(startScanning, 1500)
     } catch (e: any) {
       setPageState({ mode: 'error', message: e?.response?.data?.error?.message ?? 'Lỗi khi lưu' })
     } finally {
@@ -152,13 +164,33 @@ export default function Stocktake() {
         ) : (
           <>
             {pageState.mode === 'idle' && (
-              <Button className="w-full" onClick={() => setPageState({ mode: 'scanning' })}>
-                📷 Bắt đầu quét
+              <Button className="w-full" onClick={startScanning}>
+                🔍 Bắt đầu quét
               </Button>
             )}
 
             {pageState.mode === 'scanning' && (
-              <QRScanner ref={scannerRef} onScan={handleScan} onClose={() => setPageState({ mode: 'idle' })} />
+              <form onSubmit={handleSubmit} className="space-y-1.5">
+                <div className="flex gap-2">
+                  <Input
+                    ref={inputRef}
+                    value={inputVal}
+                    onChange={e => setInputVal(e.target.value)}
+                    placeholder="Quét hoặc nhập mã pallet…"
+                    className="font-mono text-sm h-9"
+                    autoFocus
+                    disabled={searching}
+                  />
+                  <Button type="submit" size="sm" className="h-9 px-3" disabled={!inputVal.trim() || searching}>
+                    <Search className="h-4 w-4" />
+                  </Button>
+                </div>
+                <p className="text-xs text-slate-400">Nhấn Enter hoặc bấm 🔍 để tìm</p>
+                <button type="button" className="text-xs text-slate-400 hover:text-slate-600 underline underline-offset-2"
+                  onClick={() => setPageState({ mode: 'idle' })}>
+                  Dừng quét
+                </button>
+              </form>
             )}
 
             {pageState.mode === 'success' && (
@@ -171,7 +203,7 @@ export default function Stocktake() {
             {pageState.mode === 'error' && (
               <div className="rounded-xl border border-red-200 bg-red-50 p-4 space-y-2">
                 <p className="text-xs text-red-700">{pageState.message}</p>
-                <Button size="sm" variant="outline" onClick={() => setPageState({ mode: 'scanning' })}>Quét tiếp</Button>
+                <Button size="sm" variant="outline" onClick={startScanning}>Quét tiếp</Button>
               </div>
             )}
 
@@ -253,7 +285,7 @@ export default function Stocktake() {
                 {/* Actions */}
                 <div className="px-3 py-2 border-t flex gap-2">
                   <Button variant="outline" size="sm" className="flex-1"
-                    onClick={() => setPageState({ mode: 'scanning' })}>
+                    onClick={startScanning}>
                     Bỏ qua
                   </Button>
                   <Button size="sm" className="flex-1 bg-green-600 hover:bg-green-700"

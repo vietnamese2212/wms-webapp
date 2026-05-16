@@ -379,21 +379,18 @@ export async function bulkTransferMaterial(req: Request, res: Response) {
 
 export async function stocktakeCheck(req: Request, res: Response) {
   const { qr_code } = req.body as { qr_code: string }
-  if (!qr_code) return fail(res, 400, 'INVALID_INPUT', 'Thiếu qr_code')
-
-  const { parseQR } = await import('../../utils/qrParser')
-  const parsed = parseQR(qr_code)
-  if (!parsed.is_valid) return fail(res, 400, 'QR_INVALID', parsed.error ?? 'QR không hợp lệ')
+  const palletCode = qr_code?.trim()
+  if (!palletCode) return fail(res, 400, 'INVALID_INPUT', 'Thiếu mã pallet')
 
   const { data, error } = await (supabase.from('InventoryEntry') as any)
     .select(ENTRY_SELECT)
-    .eq('pallet_code', parsed.pallet_code)
+    .eq('pallet_code', palletCode)
     .in('status', ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'])
     .maybeSingle()
 
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
-  if (!data) return fail(res, 404, 'NOT_FOUND', `Không tìm thấy pallet ${parsed.pallet_code} trong tồn kho`)
-  return ok(res, { entry: data, pallet_code: parsed.pallet_code })
+  if (!data) return fail(res, 404, 'NOT_FOUND', `Không tìm thấy pallet "${palletCode}" trong tồn kho`)
+  return ok(res, { entry: data, pallet_code: palletCode })
 }
 
 export async function stocktakeEntry(req: Request, res: Response) {

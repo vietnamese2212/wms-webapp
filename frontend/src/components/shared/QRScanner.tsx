@@ -11,10 +11,13 @@ export interface QRScannerHandle {
   resume: () => void
 }
 
-const MIN_ZOOM  = 1
-const MAX_ZOOM  = 4
-const SCAN_FPS  = 15
-const ZOOM_KEY  = 'qr_scanner_zoom'
+const MIN_ZOOM = 1
+const MAX_ZOOM = 4
+const SCAN_FPS = 15
+const ZOOM_KEY = 'qr_scanner_zoom'
+// Cap canvas at 1080p — QR decode doesn't need 4K, and 4K costs 4× the GPU work
+const CANVAS_MAX_W = 1920
+const CANVAS_MAX_H = 1080
 
 function loadZoom(): number {
   try {
@@ -29,6 +32,7 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
     const videoRef     = useRef<HTMLVideoElement>(null)
     const containerRef = useRef<HTMLDivElement>(null)
     const rafRef       = useRef<number | null>(null)
+    const loopFnRef    = useRef<((now: number) => void) | null>(null)
     const scanBusyRef  = useRef(false)
     const pausedRef    = useRef(false)
     const zoomRef      = useRef(loadZoom())
@@ -39,8 +43,14 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
     const pinchStartDist = useRef<number | null>(null)
     const pinchStartZoom = useRef(1)
 
+    // resume() restarts RAF only if loop is defined and not already running
     useImperativeHandle(ref, () => ({
-      resume: () => { pausedRef.current = false },
+      resume: () => {
+        pausedRef.current = false
+        if (loopFnRef.current && !rafRef.current) {
+          rafRef.current = requestAnimationFrame(loopFnRef.current)
+        }
+      },
     }))
 
     function updateZoom(raw: number) {
@@ -50,7 +60,7 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
       try { sessionStorage.setItem(ZOOM_KEY, String(z)) } catch {}
     }
 
-    // Block native page-scroll while pinching inside the scanner box
+    // Block native page-scroll while pinching
     useEffect(() => {
       const el = containerRef.current
       if (!el) return
@@ -59,12 +69,23 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
       return () => el.removeEventListener('touchmove', block)
     }, [])
 
+    // Pause RAF when tab/app goes to background; resume when visible again
+    useEffect(() => {
+      const onVisibility = () => {
+        if (document.hidden) {
+          if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null }
+        } else if (!pausedRef.current && loopFnRef.current && !rafRef.current) {
+          rafRef.current = requestAnimationFrame(loopFnRef.current)
+        }
+      }
+      document.addEventListener('visibilitychange', onVisibility)
+      return () => document.removeEventListener('visibilitychange', onVisibility)
+    }, [])
+
     useEffect(() => {
       const video = videoRef.current
       if (!video) return
 
-      // Off-screen canvas: each frame we draw a cropped+upscaled center region.
-      // This gives the QR decoder more pixels on the QR code — same as iPhone digital zoom.
       const canvas = document.createElement('canvas')
       const ctx    = canvas.getContext('2d', { willReadFrequently: true })
       if (!ctx) return
@@ -76,8 +97,6 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
       async function setup() {
         if (!video) return
         try {
-          // Create QR decode worker once and reuse — scanImage creates a new worker each
-          // call by default, which means it never finishes initialising at 15fps.
           engine = await QrScanner.createQrEngine()
 
           stream = await navigator.mediaDevices.getUserMedia({
@@ -96,8 +115,14 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
 
           await video.play()
 
-          canvas.width  = video.videoWidth  || 1280
-          canvas.height = video.videoHeight || 960
+          // Cap canvas at 1080p regardless of camera resolution
+          const vw = video.videoWidth  || 1280
+          const vh = video.videoHeight || 960
+          const scale = Math.min(1, CANVAS_MAX_W / vw, CANVAS_MAX_H / vh)
+          canvas.width  = Math.round(vw * scale)
+          canvas.height = Math.round(vh * scale)
+
+          loopFnRef.current = loop
           rafRef.current = requestAnimationFrame(loop)
         } catch {
           setError('Không thể mở camera. Kiểm tra quyền truy cập camera.')
@@ -105,24 +130,37 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
       }
 
       function loop(now: number) {
-        rafRef.current = requestAnimationFrame(loop)
+        // Clear ref first — will be re-set below only if we should keep running
+        rafRef.current = null
 
         if (!video || !ctx || !engine) return
+        // Stop RAF completely when paused — resume() will restart it
         if (pausedRef.current) return
+
+        rafRef.current = requestAnimationFrame(loop)
+
         if (scanBusyRef.current) return
         if (now - lastScanRef.current < interval) return
         if (video.readyState < 2) return
 
         lastScanRef.current = now
 
-        // Crop center (1/zoom) of the video frame, upscale to full canvas.
-        // Gives the decoder more pixels on the QR code at range.
+        // Crop center 1/zoom of video, upscale to canvas → more pixels on QR at range
         const z  = zoomRef.current
-        const vw = video.videoWidth
-        const vh = video.videoHeight
-        const sw = vw / z
-        const sh = vh / z
-        ctx.drawImage(video, (vw - sw) / 2, (vh - sh) / 2, sw, sh, 0, 0, vw, vh)
+        const cw = canvas.width
+        const ch = canvas.height
+        const sw = cw / z
+        const sh = ch / z
+        // Source from video scaled to canvas coords
+        const scaleX = video.videoWidth  / cw
+        const scaleY = video.videoHeight / ch
+        ctx.drawImage(
+          video,
+          (video.videoWidth  - sw * scaleX) / 2,
+          (video.videoHeight - sh * scaleY) / 2,
+          sw * scaleX, sh * scaleY,
+          0, 0, cw, ch,
+        )
 
         scanBusyRef.current = true
         QrScanner.scanImage(canvas, { qrEngine: engine, returnDetailedScanResult: true })
@@ -139,7 +177,8 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
       setup()
 
       return () => {
-        if (rafRef.current) cancelAnimationFrame(rafRef.current)
+        if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null }
+        loopFnRef.current = null
         stream?.getTracks().forEach(t => t.stop())
         video.srcObject = null
         if (engine instanceof Worker) engine.terminate()
@@ -177,7 +216,6 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
         >
-          {/* Video shows full FOV; CSS scale gives visual zoom feedback */}
           <video
             ref={videoRef}
             className="absolute inset-0 w-full h-full object-cover"

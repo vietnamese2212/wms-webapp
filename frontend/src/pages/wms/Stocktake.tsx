@@ -62,7 +62,15 @@ export default function Stocktake() {
   const qc   = useQueryClient()
   const inputRef = useRef<HTMLInputElement>(null)
 
-  const init = loadFilters(user?.warehouse_id ?? '')
+  const normCatFe = (c: string) => c === 'TP' ? 'Thành phẩm' : c === 'BAO_BI' ? 'Bao bì' : c
+  const allowedStockWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
+    ? new Set(user.warehouse_ids)
+    : null
+  const allowedStockCats = user?.allowed_categories?.length
+    ? user.allowed_categories.map(normCatFe)
+    : null
+
+  const init = loadFilters(user?.warehouse_ids?.[0] ?? user?.warehouse_id ?? '')
   const [warehouseId,  setWarehouseId]  = useState(init.warehouseId)
   const [category,     setCategory]     = useState(init.category)
   const [locationId,   setLocationId]   = useState(init.locationId)
@@ -177,7 +185,7 @@ export default function Stocktake() {
             <SelectTrigger className="h-7 text-xs w-[110px]"><SelectValue placeholder="Kho…" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="__none__" className="text-xs">Chọn kho…</SelectItem>
-              {(warehouses as any[]).map((w: any) => (
+              {(warehouses as any[]).filter((w: any) => !allowedStockWhIds || allowedStockWhIds.has(w.id)).map((w: any) => (
                 <SelectItem key={w.id} value={w.id} className="text-xs">{w.name}</SelectItem>
               ))}
             </SelectContent>
@@ -191,7 +199,7 @@ export default function Stocktake() {
             <SelectTrigger className="h-7 text-xs w-[100px]"><SelectValue placeholder="Loại…" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="__all__" className="text-xs">Tất cả</SelectItem>
-              {(categories as string[]).map(c => (
+              {(categories as string[]).filter(c => !allowedStockCats || allowedStockCats.includes(c)).map(c => (
                 <SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>
               ))}
             </SelectContent>

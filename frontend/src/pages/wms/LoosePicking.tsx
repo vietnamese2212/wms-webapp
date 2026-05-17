@@ -65,8 +65,15 @@ export default function LoosePicking() {
   const { data: warehouses = [] } = useWarehouses(true)
 
   useEffect(() => {
-    if (!f.warehouseId && user?.warehouse_id) setLoosePicking({ warehouseId: user.warehouse_id })
+    if (!f.warehouseId) {
+      const defaultId = user?.warehouse_ids?.[0] ?? user?.warehouse_id ?? ''
+      if (defaultId) setLoosePicking({ warehouseId: defaultId })
+    }
   }, [user?.warehouse_id]) // eslint-disable-line
+
+  const looseAllowedWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
+    ? new Set(user.warehouse_ids)
+    : null
 
   const { data: items = [], isLoading } = useLoosePickingItems({
     warehouse_id: f.warehouseId || undefined,
@@ -181,7 +188,7 @@ export default function LoosePicking() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="__all__">Tất cả kho</SelectItem>
-              {(warehouses as any[]).map((w: any) => <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>)}
+              {(warehouses as any[]).filter((w: any) => !looseAllowedWhIds || looseAllowedWhIds.has(w.id)).map((w: any) => <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>)}
             </SelectContent>
           </Select>
           <MultiSelectFilter label="Loại kho" options={warehouseTypeOpts.map(t => ({ value: t, label: t }))} selected={filterWarehouseTypes} onChange={v => setLoosePicking({ filterWarehouseTypes: v })} />

@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from 'react'
+import { useState, useMemo, useRef, useEffect } from 'react'
 import {
   ClipboardList, Filter, X, CalendarDays, ChevronLeft, ChevronRight, QrCode, AlertTriangle,
 } from 'lucide-react'
@@ -15,6 +15,7 @@ import {
 import type { ScanLogParams } from '@/api/hooks'
 import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { useWmsFilterStore, type ScanLogApplied } from '@/stores/wmsFilterStore'
+import { useAuthStore } from '@/stores/authStore'
 
 const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 const PAGE_SIZE = 500
@@ -103,6 +104,7 @@ export default function OutboundScanLog() {
   const [showScanner, setShowScanner]   = useState(false)
   const scannerRef = useRef<QRScannerHandle>(null)
 
+  const user = useAuthStore(s => s.user)
   const { scanLogDraft: draft, scanLogApplied: applied, setScanLogDraft, setScanLogApplied } = useWmsFilterStore()
 
   // Aliases so existing call sites need no change
@@ -122,7 +124,29 @@ export default function OutboundScanLog() {
   )
   const materials = materialsData ?? []
 
-  const warehouseOpts = useMemo(() => warehouses.map(w => ({ value: w.id, label: w.name })), [warehouses])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (draft.warehouses.length === 0 && user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length) {
+      setScanLogDraft({ warehouses: user.warehouse_ids })
+    }
+  }, [user?.warehouse_id]) // eslint-disable-line
+
+  const warehouseOpts = useMemo(() => {
+    const allowed = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
+      ? new Set(user.warehouse_ids)
+      : null
+    return warehouses
+      .filter(w => !allowed || allowed.has(w.id))
+      .map(w => ({ value: w.id, label: w.name }))
+  }, [warehouses, user?.warehouse_ids, user?.warehouse_scope]) // eslint-disable-line
+
+  const categoryOpts = useMemo(() => {
+    const normCat = (c: string) => c === 'TP' ? 'Thành phẩm' : c === 'BAO_BI' ? 'Bao bì' : c
+    const allowed = user?.allowed_categories?.length ? user.allowed_categories.map(normCat) : null
+    return (categories as string[])
+      .filter(c => !allowed || allowed.includes(c))
+      .map(c => ({ value: c, label: c }))
+  }, [categories, user?.allowed_categories]) // eslint-disable-line
   const materialOpts  = useMemo(() =>
     materials.map(m => ({
       value: m.id,
@@ -252,7 +276,7 @@ export default function OutboundScanLog() {
                 <span className="text-[10px] text-red-500 font-medium shrink-0">*</span>
                 <MultiSelectFilter
                   label="Loại hàng"
-                  options={(categories as string[]).map(c => ({ value: c, label: c }))}
+                  options={categoryOpts}
                   selected={draft.material_category ? [draft.material_category] : []}
                   onChange={v => {
                     const cat = v[v.length - 1] ?? ''

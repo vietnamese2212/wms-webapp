@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Package, X, SlidersHorizontal, ChevronRight, Filter, Check } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -468,6 +468,18 @@ export default function Inventory() {
       setInventory({ warehouseIds: [user.warehouse_id] })
     }
   }, [user?.warehouse_id]) // eslint-disable-line
+
+  // Auto-set default category filter = all DB categories except 'Bao bì'
+  // Only runs once per mount when categories data first arrives and nothing is selected
+  const categoryDefaultApplied = useRef(false)
+  useEffect(() => {
+    if (categories.length > 0 && !categoryDefaultApplied.current) {
+      categoryDefaultApplied.current = true
+      if (f.materialCategories.length === 0) {
+        setInventory({ materialCategories: categories.filter(c => c !== 'Bao bì'), page: 1 })
+      }
+    }
+  }, [categories]) // eslint-disable-line
 
   const { data, isLoading } = useInventoryEntries({
     warehouse_ids:      f.warehouseIds.length > 0 ? f.warehouseIds : undefined,

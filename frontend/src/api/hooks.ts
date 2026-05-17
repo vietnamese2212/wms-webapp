@@ -755,11 +755,14 @@ export function useUpdateEmployee() {
       id: string; name?: string; phone?: string; email?: string
       department_id?: string; job_title_id?: string
       action_level?: string; allowed_categories?: string[]; warehouse_scope?: string
-      is_active?: boolean
+      is_active?: boolean; warehouse_ids?: string[]
     }) => apiClient.patch(`/masterdata/employees/${id}`, body).then(r => r.data.data),
-    onSuccess: (_d, v) => {
-      qc.invalidateQueries({ queryKey: ['employee-records'] })
-      qc.invalidateQueries({ queryKey: ['employee-record', v.id] })
+    onSuccess: (updated: EmployeeRecord, v) => {
+      // Cập nhật cache ngay lập tức thay vì refetch toàn bộ
+      qc.setQueriesData<EmployeeRecord[]>(
+        { queryKey: ['employee-records'] },
+        old => old?.map(e => e.id === v.id ? updated : e)
+      )
     },
   })
 }

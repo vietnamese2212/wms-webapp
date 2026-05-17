@@ -12,6 +12,7 @@ export interface User {
   department?: string
   warehouse_id?: string
   warehouse_name?: string
+  job_title_name?: string | null
   // Permission system fields
   action_level?:       ActionLevel
   allowed_categories?: string[]

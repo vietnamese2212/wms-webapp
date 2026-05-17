@@ -112,8 +112,8 @@ export default function Settings() {
                 <Input value={user?.department ?? ''} disabled className="bg-muted" />
               </div>
               <div className="space-y-2">
-                <Label>Vai trò</Label>
-                <Input value={user?.action_level ? actionLevelLabel[user.action_level] : ''} disabled className="bg-muted" />
+                <Label>Chức danh</Label>
+                <Input value={user?.job_title_name ?? ''} disabled className="bg-muted" />
               </div>
             </div>
             <div className="flex justify-end">

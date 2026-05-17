@@ -22,7 +22,7 @@ loadEnv('.env.seed')
 loadEnv('.env')
 
 // ── Thay đổi thông tin admin ở đây ──────────────────────────────────────────
-const ADMIN_EMAIL    = 'admin@wms.vn'
+const ADMIN_EMAIL    = 'admin'
 const ADMIN_PASSWORD = 'Admin@123'
 const ADMIN_NAME     = 'Admin'
 const ADMIN_CODE     = 'ADM001'

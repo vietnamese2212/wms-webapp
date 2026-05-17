@@ -55,15 +55,15 @@ export default function Login() {
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
+                <Label htmlFor="email">Tên đăng nhập</Label>
                 <Input
                   id="email"
-                  type="email"
-                  placeholder="email@congty.vn"
+                  type="text"
+                  placeholder="Email hoặc tên đăng nhập"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
-                  autoComplete="email"
+                  autoComplete="username"
                 />
               </div>
               <div className="space-y-2">

@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Package, PackagePlus, PackageMinus, MapPin,
-  Truck, Navigation, Users, Calendar, Settings, BarChart3, Scissors, ScanLine,
+  Truck, Navigation, Calendar, Settings, BarChart3, Scissors, ScanLine,
   ClipboardCheck, BarChart2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -38,7 +38,6 @@ const navGroups = [
   {
     label: 'Nhân sự (HR)',
     items: [
-      { to: '/hr/employees', icon: Users, label: 'Nhân viên' },
       { to: '/hr/schedule', icon: Calendar, label: 'Lịch làm việc' },
     ],
   },

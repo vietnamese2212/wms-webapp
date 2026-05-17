@@ -19,7 +19,6 @@ import Stocktake         from '@/pages/wms/Stocktake'
 import StocktakeDashboard from '@/pages/wms/StocktakeDashboard'
 import Vehicles from '@/pages/tms/Vehicles'
 import Deliveries from '@/pages/tms/Deliveries'
-import Employees from '@/pages/hr/Employees'
 import Schedule from '@/pages/hr/Schedule'
 import UserManagement from '@/pages/masterdata/UserManagement'
 import Settings from '@/pages/Settings'
@@ -86,8 +85,7 @@ export default function App() {
         <Route path="/tms/deliveries" element={<Deliveries />} />
 
         {/* HR */}
-        <Route path="/hr/employees" element={<Employees />} />
-        <Route path="/hr/schedule"  element={<Schedule />} />
+        <Route path="/hr/schedule" element={<Schedule />} />
 
         {/* Masterdata — chỉ có quyền employees */}
         <Route

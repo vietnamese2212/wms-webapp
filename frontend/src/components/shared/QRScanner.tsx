@@ -73,6 +73,7 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
       let stream: MediaStream | null = null
 
       async function setup() {
+        if (!video) return
         try {
           stream = await navigator.mediaDevices.getUserMedia({
             video: { facingMode: 'environment' },
@@ -80,8 +81,8 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
           video.srcObject = stream
 
           await new Promise<void>((resolve, reject) => {
-            video.onloadedmetadata = () => resolve()
-            video.onerror = reject
+            video!.onloadedmetadata = () => resolve()
+            video!.onerror = reject
           })
 
           await video.play()
@@ -97,6 +98,7 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
       function loop(now: number) {
         rafRef.current = requestAnimationFrame(loop)
 
+        if (!video || !ctx) return
         if (pausedRef.current) return
         if (scanBusyRef.current) return
         if (now - lastScanRef.current < interval) return

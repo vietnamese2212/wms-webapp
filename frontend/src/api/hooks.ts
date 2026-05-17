@@ -784,6 +784,15 @@ export function useCreateDepartment() {
   })
 }
 
+export function useUpdateDepartment() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string; name?: string; code?: string; is_active?: boolean }) =>
+      apiClient.put(`/masterdata/departments/${id}`, body).then(r => r.data.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['departments'] }),
+  })
+}
+
 export function useCreateJobTitle() {
   const qc = useQueryClient()
   return useMutation({

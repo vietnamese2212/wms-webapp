@@ -565,6 +565,10 @@ function GDOFormBody({
   onSubmit: () => void
   onClose: () => void
 }) {
+  const formUser = useAuthStore(s => s.user)
+  const formAllowedWhIds = formUser?.warehouse_scope !== 'NATIONAL' && formUser?.warehouse_ids?.length
+    ? new Set(formUser.warehouse_ids)
+    : null
   const { data: warehouses = [] } = useWarehouses(true)
   const { data: exportTypes = [] } = useLookup('export_type')
   const { mutate: addLookup } = useAddLookup()
@@ -617,7 +621,7 @@ function GDOFormBody({
               <SelectContent>
                 <SelectItem value="__none__">— Không chọn</SelectItem>
                 {(warehouses as any[])
-                  .filter((w: any) => !outboundAllowedWhIds || outboundAllowedWhIds.has(w.id))
+                  .filter((w: any) => !formAllowedWhIds || formAllowedWhIds.has(w.id))
                   .map((w: any) => <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>)}
               </SelectContent>
             </Select>

@@ -476,7 +476,7 @@ export default function Inventory() {
     if (categories.length > 0 && !categoryDefaultApplied.current) {
       categoryDefaultApplied.current = true
       if (f.materialCategories.length === 0) {
-        setInventory({ materialCategories: categories.filter(c => c !== 'Bao bì'), page: 1 })
+        setInventory({ materialCategories: [...categories], page: 1 })
       }
     }
   }, [categories]) // eslint-disable-line

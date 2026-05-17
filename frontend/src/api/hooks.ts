@@ -720,6 +720,7 @@ export function useEmployeeRecords(params?: { department_id?: string; search?: s
       const { data } = await apiClient.get('/masterdata/employees', { params })
       return data.data as EmployeeRecord[]
     },
+    staleTime: 0,
   })
 }
 

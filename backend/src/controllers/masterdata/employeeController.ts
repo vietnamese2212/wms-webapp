@@ -221,7 +221,7 @@ export async function setPassword(req: Request, res: Response) {
     const hash = await bcrypt.hash(password, 10)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (supabase.from('Employee') as any)
-      .update({ password_hash: hash, updated_at: new Date().toISOString() })
+      .update({ password: hash, updated_at: new Date().toISOString() })
       .eq('id', id)
     if (error) return fail(res, error.message)
 

@@ -59,17 +59,17 @@ export async function login(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: emps } = await (supabase.from('Employee') as any)
-      .select('id, name, email, role, action_level, warehouse_scope, warehouse_id, allowed_categories, password_hash, is_active')
+      .select('id, name, email, role, action_level, warehouse_scope, warehouse_id, allowed_categories, password, is_active')
       .ilike('email', email.trim())
       .limit(1)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const emp = (emps as any[])?.[0]
-    if (!emp)             return fail(res, 'Email hoặc mật khẩu không đúng', 401)
-    if (!emp.is_active)   return fail(res, 'Tài khoản đã bị vô hiệu hóa. Liên hệ quản trị viên.', 401)
-    if (!emp.password_hash) return fail(res, 'Tài khoản chưa được đặt mật khẩu. Liên hệ quản trị viên.', 401)
+    if (!emp)           return fail(res, 'Tên đăng nhập hoặc mật khẩu không đúng', 401)
+    if (!emp.is_active) return fail(res, 'Tài khoản đã bị vô hiệu hóa. Liên hệ quản trị viên.', 401)
+    if (!emp.password)  return fail(res, 'Tài khoản chưa được đặt mật khẩu. Liên hệ quản trị viên.', 401)
 
-    const valid = await bcrypt.compare(password, emp.password_hash)
+    const valid = await bcrypt.compare(password, emp.password)
     if (!valid) return fail(res, 'Email hoặc mật khẩu không đúng', 401)
 
     const warehouseIds = await getWarehouseIds(emp.id)
@@ -131,20 +131,20 @@ export async function changePassword(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: emps } = await (supabase.from('Employee') as any)
-      .select('id, password_hash').eq('id', userId).limit(1)
+      .select('id, password').eq('id', userId).limit(1)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const emp = (emps as any[])?.[0]
-    if (!emp)               return fail(res, 'Không tìm thấy tài khoản', 404)
-    if (!emp.password_hash) return fail(res, 'Tài khoản chưa có mật khẩu. Liên hệ quản trị viên.', 400)
+    if (!emp)          return fail(res, 'Không tìm thấy tài khoản', 404)
+    if (!emp.password) return fail(res, 'Tài khoản chưa có mật khẩu. Liên hệ quản trị viên.', 400)
 
-    const valid = await bcrypt.compare(old_password, emp.password_hash)
+    const valid = await bcrypt.compare(old_password, emp.password)
     if (!valid) return fail(res, 'Mật khẩu hiện tại không đúng', 401)
 
     const hash = await bcrypt.hash(new_password, 10)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (supabase.from('Employee') as any)
-      .update({ password_hash: hash, updated_at: new Date().toISOString() })
+      .update({ password: hash, updated_at: new Date().toISOString() })
       .eq('id', userId)
 
     return ok(res, { message: 'Đổi mật khẩu thành công' })

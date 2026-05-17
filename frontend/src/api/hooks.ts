@@ -801,8 +801,9 @@ export function useCreateJobTitle() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (body: {
-      name: string; department_id: string; action_level: string
+      name: string; department_id: string; action_level?: string
       allowed_categories?: string[]; warehouse_scope?: string
+      module_permissions?: Record<string, string[]>
     }) => apiClient.post('/masterdata/job-titles', body).then(r => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['job-titles'] }),
   })
@@ -814,6 +815,7 @@ export function useUpdateJobTitle() {
     mutationFn: ({ id, ...body }: {
       id: string; name?: string; action_level?: string
       allowed_categories?: string[]; warehouse_scope?: string; is_active?: boolean
+      module_permissions?: Record<string, string[]>
     }) => apiClient.put(`/masterdata/job-titles/${id}`, body).then(r => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['job-titles'] }),
   })

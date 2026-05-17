@@ -4,6 +4,7 @@ import jwt from 'jsonwebtoken'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import type { JwtPayload } from '../../middlewares/auth'
+import { ALL_PERMISSIONS } from '../../config/permissions'
 
 const JWT_SECRET = () => process.env.JWT_SECRET ?? 'dev-secret-change-in-production'
 const JWT_EXPIRY = '7d'
@@ -19,7 +20,7 @@ async function getWarehouseIds(employeeId: string): Promise<string[]> {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function buildToken(emp: any, warehouseIds: string[]): string {
+function buildToken(emp: any, warehouseIds: string[], modulePerms: Record<string, string[]>): string {
   const payload: JwtPayload = {
     sub:                emp.id,
     name:               emp.name,
@@ -30,12 +31,13 @@ function buildToken(emp: any, warehouseIds: string[]): string {
     warehouse_id:       emp.warehouse_id ?? null,
     allowed_categories: emp.allowed_categories ?? [],
     warehouse_ids:      warehouseIds,
+    module_permissions: modulePerms,
   }
   return jwt.sign(payload, JWT_SECRET(), { expiresIn: JWT_EXPIRY })
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function buildUserObj(emp: any, warehouseIds: string[], warehouseName?: string) {
+function buildUserObj(emp: any, warehouseIds: string[], modulePerms: Record<string, string[]>, warehouseName?: string) {
   return {
     id:                 emp.id,
     name:               emp.name,
@@ -47,6 +49,7 @@ function buildUserObj(emp: any, warehouseIds: string[], warehouseName?: string) 
     warehouse_name:     warehouseName ?? null,
     allowed_categories: emp.allowed_categories ?? [],
     warehouse_ids:      warehouseIds,
+    module_permissions: modulePerms,
   }
 }
 
@@ -59,7 +62,7 @@ export async function login(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: emps } = await (supabase.from('Employee') as any)
-      .select('id, name, email, role, action_level, warehouse_scope, warehouse_id, allowed_categories, password, is_active')
+      .select('id, name, email, role, action_level, warehouse_scope, warehouse_id, allowed_categories, password, is_active, module_permissions, job_title_id')
       .ilike('email', email.trim())
       .limit(1)
 
@@ -72,6 +75,25 @@ export async function login(req: Request, res: Response) {
     const valid = await bcrypt.compare(password, emp.password)
     if (!valid) return fail(res, 'Email hoặc mật khẩu không đúng', 401)
 
+    // Resolve module_permissions: employee override > job_title > action_level fallback
+    let modulePerms: Record<string, string[]> = {}
+    if (emp.module_permissions && Object.keys(emp.module_permissions).length > 0) {
+      modulePerms = emp.module_permissions
+    } else if (emp.job_title_id) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: jt } = await (supabase.from('JobTitle') as any)
+        .select('module_permissions')
+        .eq('id', emp.job_title_id)
+        .single()
+      if (jt?.module_permissions && Object.keys(jt.module_permissions).length > 0) {
+        modulePerms = jt.module_permissions
+      }
+    }
+    // Fallback: NATIONAL_MANAGER gets all permissions
+    if (Object.keys(modulePerms).length === 0 && emp.action_level === 'NATIONAL_MANAGER') {
+      modulePerms = ALL_PERMISSIONS as Record<string, string[]>
+    }
+
     const warehouseIds = await getWarehouseIds(emp.id)
 
     // Fetch warehouse name for display
@@ -83,8 +105,8 @@ export async function login(req: Request, res: Response) {
       warehouseName = wh?.name
     }
 
-    const token = buildToken(emp, warehouseIds)
-    return ok(res, { token, user: buildUserObj(emp, warehouseIds, warehouseName) })
+    const token = buildToken(emp, warehouseIds, modulePerms)
+    return ok(res, { token, user: buildUserObj(emp, warehouseIds, modulePerms, warehouseName) })
   } catch (e) { return fail(res, String(e)) }
 }
 
@@ -97,12 +119,15 @@ export async function me(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: emps } = await (supabase.from('Employee') as any)
-      .select('id, name, email, role, action_level, warehouse_scope, warehouse_id, allowed_categories, is_active')
+      .select('id, name, email, role, action_level, warehouse_scope, warehouse_id, allowed_categories, is_active, module_permissions, job_title_id')
       .eq('id', userId).limit(1)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const emp = (emps as any[])?.[0]
     if (!emp || !emp.is_active) return fail(res, 'Tài khoản không tồn tại hoặc đã bị vô hiệu hóa', 401)
+
+    // module_permissions already in JWT; re-derive from DB for freshness
+    const modulePerms: Record<string, string[]> = req.user?.module_permissions ?? {}
 
     const warehouseIds = await getWarehouseIds(emp.id)
 
@@ -114,7 +139,7 @@ export async function me(req: Request, res: Response) {
       warehouseName = wh?.name
     }
 
-    return ok(res, buildUserObj(emp, warehouseIds, warehouseName))
+    return ok(res, buildUserObj(emp, warehouseIds, modulePerms, warehouseName))
   } catch (e) { return fail(res, String(e)) }
 }
 

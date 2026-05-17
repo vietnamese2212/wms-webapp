@@ -12,11 +12,13 @@ import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/comp
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { roleLabel } from '@/utils/formatters'
+import { canAccess, type ModuleKey, type ModulePermissions } from '@/config/permissions'
 
 interface NavItem {
   to: string
   icon: React.ElementType
   label: string
+  module?: ModuleKey
 }
 
 interface NavGroup {
@@ -34,34 +36,34 @@ const navGroups: NavGroup[] = [
   {
     label: 'Kho vận (WMS)',
     items: [
-      { to: '/wms/inventory', icon: Package, label: 'Tồn kho' },
-      { to: '/wms/inbound', icon: PackagePlus, label: 'Nhập kho' },
-      { to: '/wms/outbound', icon: PackageMinus, label: 'Xuất kho' },
-      { to: '/wms/outbound/scan-log', icon: ScanLine, label: 'Lịch sử quét' },
-      { to: '/wms/loosepicking', icon: Scissors, label: 'Nhặt lẻ' },
-      { to: '/wms/locations',         icon: MapPin,          label: 'Vị trí kho' },
-      { to: '/wms/stocktake',         icon: ClipboardCheck,  label: 'Check vị trí' },
-      { to: '/wms/stocktake/summary', icon: BarChart2,        label: 'Tổng hợp KK' },
+      { to: '/wms/inventory',         icon: Package,        label: 'Tồn kho',       module: 'inventory' },
+      { to: '/wms/inbound',           icon: PackagePlus,    label: 'Nhập kho',       module: 'inbound' },
+      { to: '/wms/outbound',          icon: PackageMinus,   label: 'Xuất kho',       module: 'outbound' },
+      { to: '/wms/outbound/scan-log', icon: ScanLine,       label: 'Lịch sử quét',   module: 'outbound' },
+      { to: '/wms/loosepicking',      icon: Scissors,       label: 'Nhặt lẻ',        module: 'loosepicking' },
+      { to: '/wms/locations',         icon: MapPin,         label: 'Vị trí kho',     module: 'locations' },
+      { to: '/wms/stocktake',         icon: ClipboardCheck, label: 'Check vị trí',   module: 'stocktake' },
+      { to: '/wms/stocktake/summary', icon: BarChart2,      label: 'Tổng hợp KK',    module: 'stocktake' },
     ],
   },
   {
     label: 'Vận tải (TMS)',
     items: [
-      { to: '/tms/vehicles', icon: Truck, label: 'Xe & Tài xế' },
-      { to: '/tms/deliveries', icon: Navigation, label: 'Giao hàng' },
+      { to: '/tms/vehicles',   icon: Truck,      label: 'Xe & Tài xế', module: 'vehicles' },
+      { to: '/tms/deliveries', icon: Navigation, label: 'Giao hàng',   module: 'deliveries' },
     ],
   },
   {
     label: 'Nhân sự (HR)',
     items: [
-      { to: '/hr/employees', icon: Users, label: 'Nhân viên' },
-      { to: '/hr/schedule', icon: Calendar, label: 'Lịch làm việc' },
+      { to: '/hr/employees', icon: Users,    label: 'Nhân viên' },
+      { to: '/hr/schedule',  icon: Calendar, label: 'Lịch làm việc' },
     ],
   },
   {
     label: 'Quản trị',
     items: [
-      { to: '/masterdata/users', icon: UserCog, label: 'Quản lý người dùng' },
+      { to: '/masterdata/users', icon: UserCog, label: 'Quản lý người dùng', module: 'employees' },
     ],
   },
 ]
@@ -114,6 +116,7 @@ function NavItemComponent({ item, collapsed }: { item: NavItem; collapsed: boole
 export function Sidebar() {
   const { sidebarCollapsed, toggleSidebar } = useUIStore()
   const { user } = useAuthStore()
+  const modulePerms = user?.module_permissions as ModulePermissions | null ?? null
 
   const initials = user?.name
     .split(' ')
@@ -152,7 +155,12 @@ export function Sidebar() {
         {/* Navigation */}
         <ScrollArea className="flex-1 py-4">
           <nav className="space-y-6 px-2">
-            {navGroups.map((group) => (
+            {navGroups.map((group) => {
+              const visibleItems = group.items.filter(item =>
+                !item.module || canAccess(modulePerms, item.module)
+              )
+              if (visibleItems.length === 0) return null
+              return (
               <div key={group.label}>
                 {!sidebarCollapsed && (
                   <p className="mb-1.5 px-3 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/70">
@@ -161,12 +169,13 @@ export function Sidebar() {
                 )}
                 {sidebarCollapsed && <Separator className="mb-2" />}
                 <div className="space-y-0.5">
-                  {group.items.map((item) => (
+                  {visibleItems.map((item) => (
                     <NavItemComponent key={item.to} item={item} collapsed={sidebarCollapsed} />
                   ))}
                 </div>
               </div>
-            ))}
+              )
+            })}
           </nav>
         </ScrollArea>
 

@@ -1,8 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { Shell } from '@/components/layout/Shell'
 import { useAuthStore } from '@/stores/authStore'
-import { can, type ModuleKey, type ActionKey } from '@/config/permissions'
-import type { ActionLevel } from '@/types'
+import { canAccess, type ModuleKey, type ModulePermissions } from '@/config/permissions'
 
 import Dashboard from '@/pages/Dashboard'
 import Inventory from '@/pages/wms/Inventory'
@@ -34,15 +33,13 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
 function PermissionRoute({
   module,
-  action = 'view',
   children,
 }: {
   module: ModuleKey
-  action?: ActionKey
   children: React.ReactNode
 }) {
-  const level = useAuthStore((s) => s.user?.action_level as ActionLevel | undefined)
-  if (!can(level, module, action)) return <Navigate to="/" replace />
+  const perms = useAuthStore((s) => s.user?.module_permissions as ModulePermissions | null ?? null)
+  if (!canAccess(perms, module)) return <Navigate to="/" replace />
   return <>{children}</>
 }
 
@@ -92,11 +89,11 @@ export default function App() {
         <Route path="/hr/employees" element={<Employees />} />
         <Route path="/hr/schedule"  element={<Schedule />} />
 
-        {/* Masterdata — chỉ SITE_MANAGER+ */}
+        {/* Masterdata — chỉ có quyền employees */}
         <Route
           path="/masterdata/users"
           element={
-            <PermissionRoute module="employees" action="view">
+            <PermissionRoute module="employees">
               <UserManagement />
             </PermissionRoute>
           }

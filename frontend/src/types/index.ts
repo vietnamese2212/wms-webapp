@@ -3,6 +3,7 @@ export type Role = 'ADMIN' | 'OWN' | 'WAREHOUSE_MANAGER' | 'WAREHOUSE_STAFF' | '
 export type ActionLevel = 'NATIONAL_MANAGER' | 'SITE_MANAGER' | 'SUPERVISOR' | 'OPERATOR' | 'STAFF' | 'VIEWER'
 export type AppModule   = 'inbound' | 'outbound' | 'inventory' | 'reports' | 'admin'
 export type Category    = 'TP' | 'NVL' | 'POSM' | 'BAO_BI'
+export type ModulePermissions = Partial<Record<string, string[]>>
 
 export interface User {
   id: string
@@ -19,6 +20,7 @@ export interface User {
   warehouse_scope?:    'NATIONAL' | 'ASSIGNED'
   warehouse_ids?:      string[]
   allowed_modules?:    AppModule[]
+  module_permissions?: ModulePermissions
 }
 
 // ─── Permission masterdata ────────────────────────────────────────────────────
@@ -40,6 +42,7 @@ export interface JobTitle {
   warehouse_scope:    'NATIONAL' | 'ASSIGNED'
   is_active:          boolean
   department?:        Pick<Department, 'id' | 'name' | 'code'>
+  module_permissions?: ModulePermissions
 }
 
 export interface EmployeeRecord {

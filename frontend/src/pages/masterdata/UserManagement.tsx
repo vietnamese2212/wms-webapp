@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import type { AxiosError } from 'axios'
-import { Plus, Pencil, ShieldCheck, Building2, User2, KeyRound, Check, Minus, Briefcase } from 'lucide-react'
+import { Plus, Pencil, ShieldCheck, Building2, User2, KeyRound, Check, Briefcase } from 'lucide-react'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
@@ -18,8 +18,8 @@ import {
   useCreateJobTitle, useUpdateJobTitle,
 } from '@/api/hooks'
 import { apiClient } from '@/api/client'
-import { MODULES, LEVEL_PERMISSIONS, type ModuleKey, type ActionKey } from '@/config/permissions'
-import type { EmployeeRecord, Department, JobTitle, ActionLevel, Category } from '@/types'
+import { MODULES, type ModuleKey } from '@/config/permissions'
+import type { EmployeeRecord, Department, JobTitle, ActionLevel, Category, ModulePermissions } from '@/types'
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -46,52 +46,6 @@ const CATEGORY_COLOR: Record<Category, string> = {
   BAO_BI: 'bg-slate-100 text-slate-600',
 }
 const ALL_CATEGORIES: Category[] = ['TP', 'NVL', 'POSM', 'BAO_BI']
-const ACTION_ICONS: Record<ActionKey, string> = { view: 'Xem', create: 'Thêm', edit: 'Sửa', delete: 'Xóa' }
-const ALL_ACTIONS: ActionKey[] = ['view', 'create', 'edit', 'delete']
-const MODULE_KEYS = Object.keys(MODULES) as ModuleKey[]
-
-// ─── Permission hint ──────────────────────────────────────────────────────────
-
-function PermissionHint({ level }: { level: ActionLevel }) {
-  const perms = LEVEL_PERMISSIONS[level]
-  return (
-    <div className="mt-2 rounded-lg border border-blue-100 bg-blue-50 p-2 text-[10px]">
-      <p className="font-semibold text-blue-700 mb-1.5">
-        Quyền của cấp <span className="italic">{ACTION_LEVEL_LABEL[level]}</span>:
-      </p>
-      <div className="overflow-x-auto">
-        <table className="w-full">
-          <thead>
-            <tr>
-              <th className="text-left pr-2 font-normal text-slate-500 pb-1">Module</th>
-              {ALL_ACTIONS.map(a => (
-                <th key={a} className="text-center w-10 font-normal text-slate-500 pb-1">{ACTION_ICONS[a]}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {MODULE_KEYS.map(mod => {
-              const allowed = perms[mod] ?? []
-              if (allowed.length === 0) return null
-              return (
-                <tr key={mod} className="border-t border-blue-100">
-                  <td className="pr-2 py-0.5 text-slate-600">{MODULES[mod].label}</td>
-                  {ALL_ACTIONS.map(a => (
-                    <td key={a} className="text-center py-0.5">
-                      {allowed.includes(a)
-                        ? <Check className="h-3 w-3 text-green-500 mx-auto" />
-                        : <Minus className="h-2.5 w-2.5 text-slate-200 mx-auto" />}
-                    </td>
-                  ))}
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  )
-}
 
 // ─── Set password dialog ──────────────────────────────────────────────────────
 
@@ -309,7 +263,6 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
                   ))}
                 </SelectContent>
               </Select>
-              <PermissionHint level={actionLevel} />
             </div>
 
             <div className="space-y-1">
@@ -444,12 +397,10 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
   const isEdit = !!jt
   const { data: departments = [] } = useDepartments()
 
-  const [name,        setName]        = useState(jt?.name               ?? '')
-  const [deptId,      setDeptId]      = useState(jt?.department_id      ?? '')
-  const [actionLevel, setActionLevel] = useState<ActionLevel>(jt?.action_level ?? 'STAFF')
-  const [categories,  setCategories]  = useState<Category[]>(jt?.allowed_categories ?? [])
-  const [scope,       setScope]       = useState<'NATIONAL'|'ASSIGNED'>(jt?.warehouse_scope ?? 'ASSIGNED')
-  const [isActive,    setIsActive]    = useState(jt?.is_active ?? true)
+  const [name,       setName]       = useState(jt?.name          ?? '')
+  const [deptId,     setDeptId]     = useState(jt?.department_id ?? '')
+  const [isActive,   setIsActive]   = useState(jt?.is_active     ?? true)
+  const [modulePerms, setModulePerms] = useState<ModulePermissions>(jt?.module_permissions ?? {})
 
   const { mutate: create, isPending: creating, error: createErr } = useCreateJobTitle()
   const { mutate: update, isPending: updating, error: updateErr } = useUpdateJobTitle()
@@ -458,17 +409,22 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
   const apiError = ((createErr ?? updateErr) as AxiosError<{ error: { message: string } }>)
     ?.response?.data?.error?.message
 
-  function toggleCategory(cat: Category) {
-    setCategories(prev => prev.includes(cat) ? prev.filter(c => c !== cat) : [...prev, cat])
+  function toggleAction(mod: ModuleKey, action: string) {
+    setModulePerms(prev => {
+      const current = (prev[mod] ?? []) as string[]
+      const next = current.includes(action)
+        ? current.filter(a => a !== action)
+        : [...current, action]
+      if (next.length === 0) {
+        const { [mod]: _, ...rest } = prev
+        return rest
+      }
+      return { ...prev, [mod]: next }
+    })
   }
 
   function handleSubmit() {
-    const payload = {
-      name, department_id: deptId,
-      action_level: actionLevel,
-      allowed_categories: categories,
-      warehouse_scope: scope,
-    }
+    const payload = { name, department_id: deptId, module_permissions: modulePerms }
     if (isEdit) {
       update({ id: jt.id, ...payload, is_active: isActive }, { onSuccess: onClose })
     } else {
@@ -478,7 +434,7 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
 
   return (
     <Dialog open={open} onOpenChange={v => { if (!v) onClose() }}>
-      <DialogContent className="sm:max-w-md max-h-[90dvh] overflow-y-auto">
+      <DialogContent className="sm:max-w-lg max-h-[90dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{isEdit ? 'Sửa chức danh' : 'Thêm chức danh'}</DialogTitle>
         </DialogHeader>
@@ -503,45 +459,40 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
             </Select>
           </div>
 
-          <div className="rounded-lg border border-slate-200 p-3 space-y-3 bg-slate-50">
+          <div className="space-y-2">
             <p className="text-xs font-medium text-slate-600 flex items-center gap-1">
-              <ShieldCheck className="h-3.5 w-3.5" /> Phân quyền mặc định
+              <ShieldCheck className="h-3.5 w-3.5" /> Phân quyền module
             </p>
-            <div className="space-y-1">
-              <Label className="text-xs">Cấp quyền</Label>
-              <Select value={actionLevel} onValueChange={v => setActionLevel(v as ActionLevel)}>
-                <SelectTrigger className="bg-white"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {(Object.keys(ACTION_LEVEL_LABEL) as ActionLevel[]).map(lvl => (
-                    <SelectItem key={lvl} value={lvl}>{ACTION_LEVEL_LABEL[lvl]}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <PermissionHint level={actionLevel} />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Loại hàng được phép</Label>
-              <div className="flex gap-2 flex-wrap">
-                {ALL_CATEGORIES.map(cat => (
-                  <button key={cat} type="button" onClick={() => toggleCategory(cat)}
-                    className={`px-3 py-1 rounded-full text-xs font-medium border transition-all
-                      ${categories.includes(cat)
-                        ? CATEGORY_COLOR[cat] + ' border-transparent'
-                        : 'bg-white text-slate-400 border-slate-200 hover:border-slate-300'}`}>
-                    {cat}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Phạm vi kho</Label>
-              <Select value={scope} onValueChange={v => setScope(v as 'NATIONAL'|'ASSIGNED')}>
-                <SelectTrigger className="bg-white"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="NATIONAL">Toàn quốc (tất cả kho)</SelectItem>
-                  <SelectItem value="ASSIGNED">Kho được chỉ định</SelectItem>
-                </SelectContent>
-              </Select>
+            <div className="space-y-3 max-h-[400px] overflow-y-auto">
+              {(Object.entries(MODULES) as [ModuleKey, typeof MODULES[ModuleKey]][]).map(([modKey, modDef]) => {
+                const grantedActions = (modulePerms[modKey] ?? []) as string[]
+                const hasAny = grantedActions.length > 0
+                return (
+                  <div key={modKey} className={`rounded-lg border p-3 ${hasAny ? 'border-blue-200 bg-blue-50/50' : 'border-slate-200'}`}>
+                    <p className={`text-xs font-semibold mb-2 ${hasAny ? 'text-blue-700' : 'text-slate-500'}`}>
+                      {modDef.label}
+                    </p>
+                    <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+                      {(Object.entries(modDef.actions) as [string, string][]).map(([actionKey, actionLabel]) => {
+                        const checked = grantedActions.includes(actionKey)
+                        return (
+                          <label key={actionKey} className="flex items-center gap-1.5 cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => toggleAction(modKey, actionKey)}
+                              className="h-3.5 w-3.5 rounded accent-blue-600"
+                            />
+                            <span className={`text-xs ${checked ? 'text-slate-700 font-medium' : 'text-slate-400'}`}>
+                              {actionLabel}
+                            </span>
+                          </label>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           </div>
 

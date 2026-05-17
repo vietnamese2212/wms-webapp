@@ -14,6 +14,7 @@ import {
   useBulkUpdateProductionDate,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
+import { can } from '@/config/permissions'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import type { InventoryEntry } from '@/types'
@@ -830,26 +831,34 @@ export default function Inventory() {
           flex items-center gap-3 text-sm whitespace-nowrap">
           <span className="text-slate-300 text-xs font-medium">{checkedCount} pallet</span>
           <div className="w-px h-4 bg-slate-600" />
-          <button
-            className="flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-slate-700 hover:bg-slate-600 transition-colors"
-            onClick={() => setActionModal('qa')}>
-            QA Status
-          </button>
-          <button
-            className="flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-slate-700 hover:bg-slate-600 transition-colors"
-            onClick={() => setActionModal('location')}>
-            Vị trí
-          </button>
-          <button
-            className="flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-slate-700 hover:bg-slate-600 transition-colors"
-            onClick={() => setActionModal('material')}>
-            Mã hàng
-          </button>
-          <button
-            className="flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-slate-700 hover:bg-slate-600 transition-colors"
-            onClick={() => setActionModal('production-date')}>
-            Ngày SX
-          </button>
+          {can(user?.module_permissions, 'inventory', 'qa_update') && (
+            <button
+              className="flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-slate-700 hover:bg-slate-600 transition-colors"
+              onClick={() => setActionModal('qa')}>
+              QA Status
+            </button>
+          )}
+          {can(user?.module_permissions, 'inventory', 'move_location') && (
+            <button
+              className="flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-slate-700 hover:bg-slate-600 transition-colors"
+              onClick={() => setActionModal('location')}>
+              Vị trí
+            </button>
+          )}
+          {can(user?.module_permissions, 'inventory', 'recode') && (
+            <button
+              className="flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-slate-700 hover:bg-slate-600 transition-colors"
+              onClick={() => setActionModal('material')}>
+              Mã hàng
+            </button>
+          )}
+          {can(user?.module_permissions, 'inventory', 'update_prod_date') && (
+            <button
+              className="flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-slate-700 hover:bg-slate-600 transition-colors"
+              onClick={() => setActionModal('production-date')}>
+              Ngày SX
+            </button>
+          )}
           <div className="w-px h-4 bg-slate-600" />
           <button
             className="text-slate-400 hover:text-white transition-colors"

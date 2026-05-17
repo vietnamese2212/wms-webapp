@@ -96,6 +96,13 @@ export async function listInventory(req: Request, res: Response) {
   const effectiveCategories = scopeCategories.length > 0
     ? (categories.length > 0 ? categories.filter(c => scopeCategories.includes(c)) : scopeCategories)
     : categories
+
+  // Empty intersection → user's scope and UI filter don't overlap → return empty immediately
+  if (scopeWarehouses.length > 0 && warehouseIds.length > 0 && effectiveWarehouseIds.length === 0)
+    return ok(res, { entries: [], total: 0, page: pageNum, limit: limitNum, total_cartons_remaining: 0 })
+  if (scopeCategories.length > 0 && categories.length > 0 && effectiveCategories.length === 0)
+    return ok(res, { entries: [], total: 0, page: pageNum, limit: limitNum, total_cartons_remaining: 0 })
+
   const filterLocations   = parseArr(q.filter_locations)
   const filterCycles      = parseArr(q.filter_cycles)
   const filterMachines    = parseArr(q.filter_machines)

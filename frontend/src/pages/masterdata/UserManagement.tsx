@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import type { AxiosError } from 'axios'
-import { Plus, Pencil, ShieldCheck, Building2, User2, KeyRound, Check, Briefcase } from 'lucide-react'
+import { Plus, Pencil, ShieldCheck, Building2, User2, KeyRound, Check, Briefcase, Copy, CheckCheck } from 'lucide-react'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
@@ -164,6 +164,15 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
   const apiError = ((createErr ?? updateErr) as AxiosError<{ error: { message: string } }>)
     ?.response?.data?.error?.message
 
+  const [createdInfo, setCreatedInfo] = useState<{ name: string; login: string; password: string } | null>(null)
+  const [copied, setCopied] = useState(false)
+
+  function copyPassword(pwd: string) {
+    navigator.clipboard.writeText(pwd)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
   function toggleCategory(cat: Category) {
     setCategories(prev => prev.includes(cat) ? prev.filter(c => c !== cat) : [...prev, cat])
   }
@@ -185,8 +194,62 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
     if (isEdit) {
       update({ id: emp.id, ...payload, is_active: isActive }, { onSuccess: onClose })
     } else {
-      create(payload, { onSuccess: onClose })
+      create(payload, {
+        onSuccess: (result: EmployeeRecord & { temp_password?: string }) => {
+          setCreatedInfo({
+            name: result.name,
+            login: result.email ?? result.employee_code,
+            password: result.temp_password ?? '',
+          })
+        },
+      })
     }
+  }
+
+  if (createdInfo) {
+    return (
+      <Dialog open={open} onOpenChange={v => { if (!v) onClose() }}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-green-700">
+              <Check className="h-5 w-5" /> Tạo tài khoản thành công
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <p className="text-sm text-slate-600">
+              Tài khoản <span className="font-semibold text-slate-800">{createdInfo.name}</span> đã được tạo.
+              Cấp thông tin đăng nhập dưới đây cho nhân viên:
+            </p>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 divide-y divide-slate-200">
+              <div className="flex items-center justify-between px-3 py-2.5">
+                <span className="text-xs text-slate-500">Tên đăng nhập</span>
+                <span className="text-sm font-mono font-semibold text-slate-800">{createdInfo.login}</span>
+              </div>
+              <div className="flex items-center justify-between px-3 py-2.5">
+                <span className="text-xs text-slate-500">Mật khẩu tạm</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-mono font-semibold text-slate-800 tracking-widest">
+                    {createdInfo.password}
+                  </span>
+                  <button
+                    onClick={() => copyPassword(createdInfo.password)}
+                    className="rounded p-1 text-slate-400 hover:bg-slate-200 hover:text-slate-700 transition-colors"
+                  >
+                    {copied ? <CheckCheck className="h-3.5 w-3.5 text-green-600" /> : <Copy className="h-3.5 w-3.5" />}
+                  </button>
+                </div>
+              </div>
+            </div>
+            <p className="text-[11px] text-slate-400">
+              Nhân viên nên đổi mật khẩu sau lần đăng nhập đầu tiên.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button onClick={onClose}>Đóng</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    )
   }
 
   return (

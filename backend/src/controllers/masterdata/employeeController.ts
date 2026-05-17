@@ -4,6 +4,23 @@ import bcrypt from 'bcrypt'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 
+function generateTempPassword(): string {
+  const upper  = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
+  const lower  = 'abcdefghjkmnpqrstuvwxyz'
+  const digits = '23456789'
+  const pool   = upper + lower + digits
+  const chars  = [
+    upper[Math.floor(Math.random() * upper.length)],
+    digits[Math.floor(Math.random() * digits.length)],
+    ...Array.from({ length: 6 }, () => pool[Math.floor(Math.random() * pool.length)]),
+  ]
+  for (let i = chars.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [chars[i], chars[j]] = [chars[j], chars[i]]
+  }
+  return chars.join('')
+}
+
 interface EmpRow {
   id: string; name: string; employee_code: string; email: string | null; phone: string | null
   role: string; department: string | null; department_id: string | null; job_title_id: string | null
@@ -141,6 +158,9 @@ export async function createEmployee(req: Request, res: Response) {
     }
 
     const empId = randomUUID()
+    const tempPassword = generateTempPassword()
+    const hashedPw = await bcrypt.hash(tempPassword, 10)
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (supabase.from('Employee') as any).insert({
       id: empId, name, employee_code,
@@ -150,6 +170,7 @@ export async function createEmployee(req: Request, res: Response) {
       action_level:  finalActionLevel  || 'VIEWER',
       allowed_categories: finalCategories ?? [],
       warehouse_scope: finalScope ?? 'ASSIGNED',
+      password: hashedPw,
       is_active: true,
       updated_at: new Date().toISOString(),
     })
@@ -165,7 +186,7 @@ export async function createEmployee(req: Request, res: Response) {
     }
 
     const rows = await fetchFull({ ids: [empId] })
-    return ok(res, rows[0], 201)
+    return ok(res, { ...rows[0], temp_password: tempPassword }, 201)
   } catch (e) { return fail(res, String(e)) }
 }
 

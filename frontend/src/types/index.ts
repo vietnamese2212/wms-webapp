@@ -1,5 +1,4 @@
 // Auth
-export type Role = 'ADMIN' | 'OWN' | 'WAREHOUSE_MANAGER' | 'WAREHOUSE_STAFF' | 'DRIVER' | 'HR_MANAGER'
 export type ActionLevel = 'NATIONAL_MANAGER' | 'SITE_MANAGER' | 'SUPERVISOR' | 'OPERATOR' | 'STAFF' | 'VIEWER'
 export type AppModule   = 'inbound' | 'outbound' | 'inventory' | 'reports' | 'admin'
 export type Category    = 'TP' | 'NVL' | 'POSM' | 'BAO_BI'
@@ -9,7 +8,6 @@ export interface User {
   id: string
   name: string
   email: string
-  role: Role
   avatar?: string
   department?: string
   warehouse_id?: string
@@ -51,7 +49,6 @@ export interface EmployeeRecord {
   employee_code:      string
   email:              string | null
   phone:              string | null
-  role:               Role
   department:         string | null       // legacy text field
   department_id:      string | null
   job_title_id:       string | null
@@ -173,7 +170,6 @@ export interface Employee {
   id: string
   name: string
   employeeCode: string
-  role: Role
   department: string
   phone: string
   email: string

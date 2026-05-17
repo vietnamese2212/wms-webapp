@@ -126,14 +126,14 @@ export const mockDeliveries: DeliveryOrder[] = [
 ]
 
 export const mockEmployees: Employee[] = [
-  { id: 'E001', name: 'Nguyễn Văn Quản Lý', employeeCode: 'NV001', role: 'WAREHOUSE_MANAGER', department: 'Kho vận', phone: '0901234567', email: 'ql@wms.vn', qrCode: 'QR-E001', status: 'ACTIVE', joinDate: '2021-03-01' },
-  { id: 'E002', name: 'Trần Văn Kho', employeeCode: 'NV002', role: 'WAREHOUSE_STAFF', department: 'Kho vận', phone: '0912345678', email: 'tvk@wms.vn', qrCode: 'QR-E002', status: 'ACTIVE', joinDate: '2022-01-15' },
-  { id: 'E003', name: 'Lê Thị Hoa', employeeCode: 'NV003', role: 'WAREHOUSE_STAFF', department: 'Kho vận', phone: '0923456789', email: 'lth@wms.vn', qrCode: 'QR-E003', status: 'ACTIVE', joinDate: '2022-06-01' },
-  { id: 'E004', name: 'Phạm Đức Minh', employeeCode: 'NV004', role: 'WAREHOUSE_STAFF', department: 'Kho vận', phone: '0934567890', email: 'pdm@wms.vn', qrCode: 'QR-E004', status: 'ON_LEAVE', joinDate: '2023-02-10' },
-  { id: 'E005', name: 'Hoàng Thị Lan', employeeCode: 'NV005', role: 'HR_MANAGER', department: 'Nhân sự', phone: '0945678901', email: 'htl@wms.vn', qrCode: 'QR-E005', status: 'ACTIVE', joinDate: '2020-11-01' },
-  { id: 'E006', name: 'Nguyễn Tài Xế A', employeeCode: 'NV006', role: 'DRIVER', department: 'Vận tải', phone: '0912345678', email: 'nta@wms.vn', qrCode: 'QR-E006', status: 'ACTIVE', joinDate: '2022-03-15' },
-  { id: 'E007', name: 'Trần Tài Xế B', employeeCode: 'NV007', role: 'DRIVER', department: 'Vận tải', phone: '0987654321', email: 'ttb@wms.vn', qrCode: 'QR-E007', status: 'ACTIVE', joinDate: '2021-09-01' },
-  { id: 'E008', name: 'Võ Văn Phụ Kho', employeeCode: 'NV008', role: 'WAREHOUSE_STAFF', department: 'Kho vận', phone: '0956789012', email: 'vvpk@wms.vn', qrCode: 'QR-E008', status: 'ACTIVE', joinDate: '2023-08-20' },
+  { id: 'E001', name: 'Nguyễn Văn Quản Lý', employeeCode: 'NV001', department: 'Kho vận', phone: '0901234567', email: 'ql@wms.vn', qrCode: 'QR-E001', status: 'ACTIVE', joinDate: '2021-03-01' },
+  { id: 'E002', name: 'Trần Văn Kho', employeeCode: 'NV002', department: 'Kho vận', phone: '0912345678', email: 'tvk@wms.vn', qrCode: 'QR-E002', status: 'ACTIVE', joinDate: '2022-01-15' },
+  { id: 'E003', name: 'Lê Thị Hoa', employeeCode: 'NV003', department: 'Kho vận', phone: '0923456789', email: 'lth@wms.vn', qrCode: 'QR-E003', status: 'ACTIVE', joinDate: '2022-06-01' },
+  { id: 'E004', name: 'Phạm Đức Minh', employeeCode: 'NV004', department: 'Kho vận', phone: '0934567890', email: 'pdm@wms.vn', qrCode: 'QR-E004', status: 'ON_LEAVE', joinDate: '2023-02-10' },
+  { id: 'E005', name: 'Hoàng Thị Lan', employeeCode: 'NV005', department: 'Nhân sự', phone: '0945678901', email: 'htl@wms.vn', qrCode: 'QR-E005', status: 'ACTIVE', joinDate: '2020-11-01' },
+  { id: 'E006', name: 'Nguyễn Tài Xế A', employeeCode: 'NV006', department: 'Vận tải', phone: '0912345678', email: 'nta@wms.vn', qrCode: 'QR-E006', status: 'ACTIVE', joinDate: '2022-03-15' },
+  { id: 'E007', name: 'Trần Tài Xế B', employeeCode: 'NV007', department: 'Vận tải', phone: '0987654321', email: 'ttb@wms.vn', qrCode: 'QR-E007', status: 'ACTIVE', joinDate: '2021-09-01' },
+  { id: 'E008', name: 'Võ Văn Phụ Kho', employeeCode: 'NV008', department: 'Kho vận', phone: '0956789012', email: 'vvpk@wms.vn', qrCode: 'QR-E008', status: 'ACTIVE', joinDate: '2023-08-20' },
 ]
 
 export const mockShifts: Shift[] = [

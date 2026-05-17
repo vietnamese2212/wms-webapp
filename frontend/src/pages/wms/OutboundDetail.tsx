@@ -24,6 +24,7 @@ import { EditGDOModal } from './Outbound'
 import { PalletDetailDialog } from '@/components/shared/PalletDetailDialog'
 import { useAuthStore } from '@/stores/authStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
+import { can, type ModulePermissions } from '@/config/permissions'
 import type { OutboundItem, OutboundDelivery, OutboundStatus, GDO } from '@/types'
 
 // ─── Status badge ──────────────────────────────────────────────
@@ -721,8 +722,9 @@ export default function OutboundDetail() {
   const { vehicles, pin, unpin, isPinned, update } = useActiveVehiclesStore()
   const pinned = isPinned(id ?? '')
 
-  const canManage = user?.role === 'ADMIN' || user?.role === 'WAREHOUSE_MANAGER'
-  const canManagePause = canManage
+  const perms = user?.module_permissions as ModulePermissions | null ?? null
+  const canManage = can(perms, 'outbound', 'complete') || can(perms, 'outbound', 'cancel')
+  const canManagePause = can(perms, 'outbound', 'start')
 
   const [showStart,         setShowStart]         = useState(false)
   const [showEditTransport, setShowEditTransport] = useState(false)

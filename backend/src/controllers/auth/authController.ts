@@ -25,7 +25,6 @@ function buildToken(emp: any, warehouseIds: string[], modulePerms: Record<string
     sub:                emp.id,
     name:               emp.name,
     email:              emp.email ?? null,
-    role:               emp.role ?? 'WAREHOUSE_STAFF',
     action_level:       emp.action_level ?? 'VIEWER',
     warehouse_scope:    emp.warehouse_scope ?? 'ASSIGNED',
     warehouse_id:       emp.warehouse_id ?? null,
@@ -42,7 +41,6 @@ function buildUserObj(emp: any, warehouseIds: string[], modulePerms: Record<stri
     id:                 emp.id,
     name:               emp.name,
     email:              emp.email ?? null,
-    role:               emp.role ?? 'WAREHOUSE_STAFF',
     action_level:       emp.action_level ?? 'VIEWER',
     warehouse_scope:    emp.warehouse_scope ?? 'ASSIGNED',
     warehouse_id:       emp.warehouse_id ?? null,
@@ -97,9 +95,7 @@ export async function login(req: Request, res: Response) {
     } else if (jtData?.module_permissions && Object.keys(jtData.module_permissions).length > 0) {
       modulePerms = jtData.module_permissions
     }
-    if (Object.keys(modulePerms).length === 0 && emp.role === 'ADMIN') {
-      modulePerms = ALL_PERMISSIONS as Record<string, string[]>
-    }
+
 
     const token = buildToken(emp, warehouseIds, modulePerms)
     return ok(res, { token, user: buildUserObj(emp, warehouseIds, modulePerms, whData?.name) })

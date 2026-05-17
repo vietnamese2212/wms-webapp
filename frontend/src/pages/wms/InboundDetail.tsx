@@ -349,13 +349,6 @@ export default function InboundDetail() {
 
   function canDeleteEntry(entry: PalletEntry): boolean {
     if (!isOpen) return false
-    const role = user?.role ?? ''
-    if (role === 'OWN') return true
-    if (role === 'ADMIN' || role === 'WAREHOUSE_MANAGER') {
-      // can delete only from their assigned warehouse
-      return !user?.warehouse_id || user.warehouse_id === order.warehouse_id
-    }
-    // other roles: must be the importer + within 2 days
     if (!user?.id || entry.created_by_emp?.id !== user.id) return false
     const importDate = new Date(entry.import_date ?? entry.created_at)
     return (Date.now() - importDate.getTime()) / 86_400_000 <= 2

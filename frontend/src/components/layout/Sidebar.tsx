@@ -11,7 +11,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
-import { roleLabel } from '@/utils/formatters'
+import { actionLevelLabel } from '@/utils/formatters'
 import { canAccess, type ModuleKey, type ModulePermissions } from '@/config/permissions'
 
 interface NavItem {
@@ -202,7 +202,7 @@ export function Sidebar() {
               </Avatar>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-xs font-medium text-foreground">{user.name}</p>
-                <p className="truncate text-[10px] text-muted-foreground">{roleLabel[user.role]}</p>
+                <p className="truncate text-[10px] text-muted-foreground">{user.action_level ? actionLevelLabel[user.action_level] : ''}</p>
               </div>
             </div>
           )}

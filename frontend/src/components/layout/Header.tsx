@@ -11,7 +11,7 @@ import {
 } from '@/components/ui/sheet'
 import { useUIStore } from '@/stores/uiStore'
 import { useAuthStore } from '@/stores/authStore'
-import { roleLabel } from '@/utils/formatters'
+import { actionLevelLabel } from '@/utils/formatters'
 import { MobileNav } from './MobileNav'
 import { Badge } from '@/components/ui/badge'
 
@@ -117,7 +117,7 @@ export function Header() {
               <div className="hidden sm:flex flex-col items-start">
                 <span className="text-xs font-medium leading-none">{user?.name}</span>
                 <span className="text-[10px] text-muted-foreground leading-none mt-0.5">
-                  {user?.role ? roleLabel[user.role] : ''}
+                  {user?.action_level ? actionLevelLabel[user.action_level] : ''}
                 </span>
               </div>
             </Button>

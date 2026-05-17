@@ -29,7 +29,7 @@ interface EmpRow {
 }
 
 const EMP_BASE = [
-  'id', 'name', 'employee_code', 'email', 'phone', 'role',
+  'id', 'name', 'employee_code', 'email', 'phone',
   'department', 'department_id', 'job_title_id',
   'action_level', 'allowed_categories', 'warehouse_scope',
   'warehouse_id', 'is_active', 'created_at',
@@ -166,7 +166,6 @@ export async function createEmployee(req: Request, res: Response) {
     const { error } = await (supabase.from('Employee') as any).insert({
       id: empId, name, employee_code,
       email: email || null, phone: phone || null,
-      role: 'WAREHOUSE_STAFF',
       department_id: department_id || null,
       job_title_id:  job_title_id  || null,
       action_level:  finalActionLevel  || 'VIEWER',

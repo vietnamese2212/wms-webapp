@@ -12,7 +12,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { useUIStore } from '@/stores/uiStore'
 import { useAuthStore } from '@/stores/authStore'
-import { roleLabel } from '@/utils/formatters'
+import { actionLevelLabel } from '@/utils/formatters'
 import { cn } from '@/lib/utils'
 import { toast } from '@/components/ui/use-toast'
 import { apiClient } from '@/api/client'
@@ -94,7 +94,7 @@ export default function Settings() {
               </Avatar>
               <div>
                 <p className="font-semibold">{user?.name}</p>
-                <Badge variant="info" className="mt-1">{user?.role ? roleLabel[user.role] : ''}</Badge>
+                <Badge variant="info" className="mt-1">{user?.action_level ? actionLevelLabel[user.action_level] : ''}</Badge>
               </div>
             </div>
             <Separator />
@@ -113,7 +113,7 @@ export default function Settings() {
               </div>
               <div className="space-y-2">
                 <Label>Vai trò</Label>
-                <Input value={user?.role ? roleLabel[user.role] : ''} disabled className="bg-muted" />
+                <Input value={user?.action_level ? actionLevelLabel[user.action_level] : ''} disabled className="bg-muted" />
               </div>
             </div>
             <div className="flex justify-end">

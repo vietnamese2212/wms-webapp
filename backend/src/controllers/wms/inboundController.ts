@@ -555,21 +555,10 @@ async function checkDeletePermission(
 ): Promise<{ allowed: boolean; reason?: string }> {
   if (!employee_id) return { allowed: true } // no auth yet → allow
   const { data: emp } = await supabase
-    .from('Employee').select('id, role, warehouse_id').eq('id', employee_id).maybeSingle()
+    .from('Employee').select('id, warehouse_id').eq('id', employee_id).maybeSingle()
   if (!emp) return { allowed: true }
 
-  // OWN: can delete from any warehouse
-  if (emp.role === 'OWN') return { allowed: true }
-
-  // ADMIN / WAREHOUSE_MANAGER: can delete only from their assigned warehouse
-  if (emp.role === 'ADMIN' || emp.role === 'WAREHOUSE_MANAGER') {
-    if (emp.warehouse_id && order_warehouse_id && emp.warehouse_id !== order_warehouse_id) {
-      return { allowed: false, reason: 'Bạn chỉ có thể xóa pallet tại kho của mình' }
-    }
-    return { allowed: true }
-  }
-
-  // Other roles: must be the importer + within 2 days
+  // Must be the importer + within 2 days
   const now = Date.now()
   for (const entry of entries) {
     if (entry.created_by !== employee_id) {

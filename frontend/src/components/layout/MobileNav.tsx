@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/authStore'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Separator } from '@/components/ui/separator'
-import { roleLabel } from '@/utils/formatters'
+import { actionLevelLabel } from '@/utils/formatters'
 import { canAccess, type ModuleKey, type ModulePermissions } from '@/config/permissions'
 
 const navGroups: { label: string; items: { to: string; icon: React.ElementType; label: string; module?: ModuleKey }[] }[] = [
@@ -130,7 +130,7 @@ export function MobileNav() {
             </Avatar>
             <div className="min-w-0">
               <p className="truncate text-sm font-medium">{user.name}</p>
-              <p className="truncate text-xs text-muted-foreground">{roleLabel[user.role]}</p>
+              <p className="truncate text-xs text-muted-foreground">{user.action_level ? actionLevelLabel[user.action_level] : ''}</p>
             </div>
           </div>
         )}

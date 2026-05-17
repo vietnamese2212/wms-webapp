@@ -108,13 +108,13 @@ export const overtimeStatusLabel: Record<OvertimeStatus, string> = {
   REJECTED: 'Từ chối',
 }
 
-export const roleLabel: Record<string, string> = {
-  ADMIN: 'Quản trị viên',
-  OWN: 'Chủ doanh nghiệp',
-  WAREHOUSE_MANAGER: 'Quản lý kho',
-  WAREHOUSE_STAFF: 'Nhân viên kho',
-  DRIVER: 'Tài xế',
-  HR_MANAGER: 'Quản lý HR',
+export const actionLevelLabel: Record<string, string> = {
+  NATIONAL_MANAGER: 'Quản lý toàn quốc',
+  SITE_MANAGER:     'Quản lý địa điểm',
+  SUPERVISOR:       'Giám sát',
+  OPERATOR:         'Vận hành',
+  STAFF:            'Nhân viên',
+  VIEWER:           'Người xem',
 }
 
 export function getLocationCode(location: { zone: string; row: string; shelf: string; bin: string }) {

@@ -40,12 +40,12 @@ export async function createDepartment(req: Request, res: Response) {
 export async function updateDepartment(req: Request, res: Response) {
   try {
     const { id } = req.params
-    const { name, allowed_modules, is_active } = req.body as {
-      name?: string; allowed_modules?: string[]; is_active?: boolean
+    const { name, code, allowed_modules, is_active } = req.body as {
+      name?: string; code?: string; allowed_modules?: string[]; is_active?: boolean
     }
     const { data, error } = await supabase
       .from('Department')
-      .update({ name, allowed_modules, is_active, updated_at: new Date().toISOString() })
+      .update({ name, code: code?.toUpperCase(), allowed_modules, is_active, updated_at: new Date().toISOString() })
       .eq('id', id)
       .select(DEPT_SELECT)
       .single()

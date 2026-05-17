@@ -1,20 +1,25 @@
 /**
  * Tạo tài khoản admin đầu tiên.
  * Chạy một lần: npx ts-node src/seed-admin.ts
- *
- * Yêu cầu: backend/.env phải có SUPABASE_URL và SUPABASE_SERVICE_ROLE_KEY
  */
 import bcrypt from 'bcrypt'
 import { randomUUID } from 'crypto'
 import { createClient } from '@supabase/supabase-js'
-import dotenv from 'dotenv'
+import { existsSync, readFileSync } from 'fs'
+import { resolve } from 'path'
 
-dotenv.config()
+// Load .env.seed (production creds) hoặc .env local
+function loadEnv(filename: string) {
+  const p = resolve(__dirname, '..', filename)
+  if (!existsSync(p)) return
+  for (const line of readFileSync(p, 'utf8').split('\n')) {
+    const m = line.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/)
+    if (m && !process.env[m[1]]) process.env[m[1]] = m[2].trim()
+  }
+}
 
-const supabase = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-)
+loadEnv('.env.seed')
+loadEnv('.env')
 
 // ── Thay đổi thông tin admin ở đây ──────────────────────────────────────────
 const ADMIN_EMAIL    = 'admin@wms.vn'
@@ -22,6 +27,16 @@ const ADMIN_PASSWORD = 'Admin@123'
 const ADMIN_NAME     = 'Admin'
 const ADMIN_CODE     = 'ADM001'
 // ────────────────────────────────────────────────────────────────────────────
+
+const supabaseUrl = process.env.SUPABASE_URL
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+
+if (!supabaseUrl || !supabaseKey) {
+  console.error('Thiếu SUPABASE_URL hoặc SUPABASE_SERVICE_ROLE_KEY trong .env.seed / .env')
+  process.exit(1)
+}
+
+const supabase = createClient(supabaseUrl, supabaseKey)
 
 async function run() {
   console.log('Seeding admin account…')

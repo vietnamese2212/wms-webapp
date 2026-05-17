@@ -5,6 +5,7 @@ import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
 import { useAuthStore }        from '@/stores/authStore'
+import { can, type ModulePermissions } from '@/config/permissions'
 import { useWmsFilterStore }  from '@/stores/wmsFilterStore'
 import { TableSkeleton }       from '@/components/shared/TableSkeleton'
 import { EmptyState }          from '@/components/shared/EmptyState'
@@ -55,7 +56,8 @@ type MatItem = { id: string; material_code: string; short_name: string | null; m
 function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const navigate  = useNavigate()
   const user      = useAuthStore((s) => s.user)
-  const canPickWarehouse = !user?.warehouse_id
+  // NATIONAL scope → can pick any warehouse; ASSIGNED with single warehouse → fixed
+  const canPickWarehouse = user?.warehouse_scope === 'NATIONAL' || !user?.warehouse_id
   const dialogAllowedWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
     ? new Set(user.warehouse_ids)
     : null
@@ -76,7 +78,7 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
   // Reset all fields each time the dialog opens
   useEffect(() => {
     if (open) {
-      setWarehouseId(user?.warehouse_id ?? '')
+      setWarehouseId(user?.warehouse_id ?? user?.warehouse_ids?.[0] ?? '')
       setSubType('')
       setMaterialId('')
       setMatSearch('')
@@ -86,7 +88,7 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
       setImportDate(format(new Date(), 'yyyy-MM-dd'))
       setNotes('')
     }
-  }, [open, user?.warehouse_id])
+  }, [open, user?.warehouse_id, user?.warehouse_ids])
 
   const { data: warehouses = [] } = useWarehouses(true)
   const { data: shifts     = [] } = useImportShifts()
@@ -463,6 +465,7 @@ function DateBtn({ value, placeholder, onChange }: { value: string; placeholder:
 export default function Inbound() {
   const navigate  = useNavigate()
   const user      = useAuthStore(s => s.user)
+  const perms     = user?.module_permissions as ModulePermissions | null ?? null
   const { inbound: f, setInbound } = useWmsFilterStore()
   const [showNew,     setShowNew]     = useState(false)
   const [locOpen,     setLocOpen]     = useState(false)
@@ -481,8 +484,8 @@ export default function Inbound() {
     ? user.allowed_categories.map(normCatFe)
     : null
 
-  // Resolve effective warehouse: store override → user's warehouse
-  const effectiveWarehouseId = f.warehouseId || user?.warehouse_id || undefined
+  // Resolve effective warehouse: store override → user's single warehouse → first of assigned warehouses
+  const effectiveWarehouseId = f.warehouseId || user?.warehouse_id || user?.warehouse_ids?.[0] || undefined
 
   const { data: serverOrders = [], isLoading } = useInboundOrders({
     warehouse_id:      effectiveWarehouseId,
@@ -612,9 +615,11 @@ export default function Inbound() {
               </span>
             )}
           </button>
-          <Button size="sm" className="gap-1.5 shrink-0" onClick={() => setShowNew(true)}>
-            <Plus className="h-4 w-4" /> Tạo phiếu nhập
-          </Button>
+          {can(perms, 'inbound', 'create') && (
+            <Button size="sm" className="gap-1.5 shrink-0" onClick={() => setShowNew(true)}>
+              <Plus className="h-4 w-4" /> Tạo phiếu nhập
+            </Button>
+          )}
         </div>
 
         {/* Collapsible filter panel */}

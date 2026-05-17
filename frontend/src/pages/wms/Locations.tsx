@@ -16,6 +16,7 @@ import {
   useCreateWarehouse, useUpdateWarehouse, useDeleteWarehouse,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
+import { can, type ModulePermissions } from '@/config/permissions'
 
 const CATEGORY_OPTIONS = ['Thành phẩm', 'NVL', 'POSM']
 
@@ -47,7 +48,8 @@ const EMPTY_FORM    = { warehouse_id: '', category: '', sub_code: '', sub_name: 
 const EMPTY_WH_FORM = { code: '', name: '', address: '' }
 
 export default function Locations() {
-  const user = useAuthStore(s => s.user)
+  const user  = useAuthStore(s => s.user)
+  const perms = user?.module_permissions as ModulePermissions | null ?? null
   const [warehouseId,  setWarehouseId]  = useState(user?.warehouse_id ?? user?.warehouse_ids?.[0] ?? '')
   const [catFilter,    setCatFilter]    = useState('')
   const [search,       setSearch]       = useState('')
@@ -295,12 +297,16 @@ export default function Locations() {
             Vị trí kho
           </h1>
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={openWhDialog} className="gap-1">
-              <Building2 className="h-4 w-4" /> Quản lý Kho
-            </Button>
-            <Button size="sm" onClick={openAdd} className="gap-1">
-              <Plus className="h-4 w-4" /> Thêm vị trí
-            </Button>
+            {can(perms, 'locations', 'create') && (
+              <Button variant="outline" size="sm" onClick={openWhDialog} className="gap-1">
+                <Building2 className="h-4 w-4" /> Quản lý Kho
+              </Button>
+            )}
+            {can(perms, 'locations', 'create') && (
+              <Button size="sm" onClick={openAdd} className="gap-1">
+                <Plus className="h-4 w-4" /> Thêm vị trí
+              </Button>
+            )}
           </div>
         </div>
 
@@ -437,12 +443,14 @@ export default function Locations() {
                     </TableCell>
                     <TableCell className="px-2 py-1">
                       <div className="flex gap-1 justify-end">
-                        <button onClick={() => openEdit(loc)}
-                          className="p-1 rounded hover:bg-white/80 text-slate-400 hover:text-slate-700"
-                          title={loc.is_active ? 'Sửa' : 'Kích hoạt lại'}>
-                          <Pencil className="h-3.5 w-3.5" />
-                        </button>
-                        {loc.is_active && (
+                        {can(perms, 'locations', 'edit') && (
+                          <button onClick={() => openEdit(loc)}
+                            className="p-1 rounded hover:bg-white/80 text-slate-400 hover:text-slate-700"
+                            title={loc.is_active ? 'Sửa' : 'Kích hoạt lại'}>
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                        {loc.is_active && can(perms, 'locations', 'delete') && (
                           <button onClick={() => setDeleteTarget(loc)}
                             className="p-1 rounded hover:bg-white/80 text-slate-400 hover:text-red-500 disabled:opacity-30 disabled:cursor-not-allowed"
                             disabled={loc.used_slots > 0}

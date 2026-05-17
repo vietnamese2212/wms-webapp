@@ -25,6 +25,7 @@ import {
   useCheckInboundScan,
 } from '@/api/hooks'
 import { useAuthStore }            from '@/stores/authStore'
+import { can, type ModulePermissions } from '@/config/permissions'
 import { inboundOrderStatusLabel, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { playBeep, unlockAudio }   from '@/utils/audio'
 import type { InboundOrder, InboundOrderStatus, PalletEntry } from '@/types'
@@ -313,7 +314,8 @@ export default function InboundDetail() {
     order?.warehouse_id ? { warehouse_id: order.warehouse_id } : undefined
   )
 
-  const user = useAuthStore(s => s.user)
+  const user  = useAuthStore(s => s.user)
+  const perms = user?.module_permissions as ModulePermissions | null ?? null
 
   // Khớp user hiện tại với Employee record để gửi employee_id khi scan
   const { data: allEmployees = [] } = useEmployeeRecords({ is_active: 'true' })
@@ -349,6 +351,7 @@ export default function InboundDetail() {
 
   function canDeleteEntry(entry: PalletEntry): boolean {
     if (!isOpen) return false
+    if (!can(perms, 'inbound', 'delete')) return false
     if (!user?.id || entry.created_by_emp?.id !== user.id) return false
     const importDate = new Date(entry.import_date ?? entry.created_at)
     return (Date.now() - importDate.getTime()) / 86_400_000 <= 2
@@ -534,7 +537,7 @@ export default function InboundDetail() {
                   <Trash2 className="h-3.5 w-3.5" /> Xóa ({selectedIds.size})
                 </Button>
               )}
-              {isOpen && (
+              {isOpen && can(perms, 'inbound', 'scan') && (
                 <Button
                   size="sm"
                   className="h-8 gap-1.5"
@@ -556,7 +559,7 @@ export default function InboundDetail() {
               <div className="flex flex-col items-center gap-2 py-12 text-slate-400">
                 <QrCode className="h-10 w-10 opacity-30" />
                 <p className="text-sm">Chưa có pallet nào được quét</p>
-                {isOpen && (
+                {isOpen && can(perms, 'inbound', 'scan') && (
                   <Button
                     size="sm" variant="outline"
                     disabled={!order.location_id}

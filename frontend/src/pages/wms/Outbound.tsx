@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useGDOs, useUploadGDOExcel, useWarehouses, useCreateGDO, useUpdateGDO, useMaterials, useGDO, useAssignGDO, useLookup, useAddLookup, useDeleteLookup } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
+import { can, type ModulePermissions } from '@/config/permissions'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 import { formatTimestampTime } from '@/utils/formatters'
@@ -56,6 +57,7 @@ function fTime(ts: string | null | undefined): string {
 export default function Outbound() {
   const navigate = useNavigate()
   const user     = useAuthStore(s => s.user)
+  const perms    = user?.module_permissions as ModulePermissions | null ?? null
   const fileRef  = useRef<HTMLInputElement>(null)
 
   const { outbound: f, setOutbound } = useWmsFilterStore()
@@ -207,14 +209,18 @@ export default function Outbound() {
             Xuất kho
           </h1>
           <div className="flex gap-2">
-            <Button size="sm" variant="outline" onClick={() => setShowCreate(true)} className="gap-1.5">
-              <PenSquare className="h-4 w-4" />
-              Tạo đơn
-            </Button>
-            <Button size="sm" disabled={uploading} onClick={() => fileRef.current?.click()} className="gap-1.5">
-              <Upload className="h-4 w-4" />
-              {uploading ? 'Đang xử lý…' : 'Upload Excel'}
-            </Button>
+            {can(perms, 'outbound', 'create') && (
+              <Button size="sm" variant="outline" onClick={() => setShowCreate(true)} className="gap-1.5">
+                <PenSquare className="h-4 w-4" />
+                Tạo đơn
+              </Button>
+            )}
+            {can(perms, 'outbound', 'create') && (
+              <Button size="sm" disabled={uploading} onClick={() => fileRef.current?.click()} className="gap-1.5">
+                <Upload className="h-4 w-4" />
+                {uploading ? 'Đang xử lý…' : 'Upload Excel'}
+              </Button>
+            )}
           </div>
           <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFileChange} />
         </div>

@@ -56,37 +56,37 @@ export default function App() {
       >
         <Route path="/" element={<Dashboard />} />
 
-        {/* WMS — inventory (VIEWER+) */}
-        <Route path="/wms/inventory" element={<Inventory />} />
+        {/* WMS — inventory */}
+        <Route path="/wms/inventory" element={<PermissionRoute module="inventory"><Inventory /></PermissionRoute>} />
 
         {/* WMS — inbound */}
-        <Route path="/wms/inbound" element={<Inbound />} />
-        <Route path="/wms/inbound/:id" element={<InboundDetail />} />
+        <Route path="/wms/inbound"    element={<PermissionRoute module="inbound"><Inbound /></PermissionRoute>} />
+        <Route path="/wms/inbound/:id" element={<PermissionRoute module="inbound"><InboundDetail /></PermissionRoute>} />
 
         {/* WMS — outbound */}
-        <Route path="/wms/outbound" element={<Outbound />} />
-        <Route path="/wms/outbound/scan-log" element={<OutboundScanLog />} />
-        <Route path="/wms/outbound/:id" element={<OutboundDetail />} />
-        <Route path="/wms/outbound/:gdoId/items/:itemId" element={<OutboundItemDetail />} />
+        <Route path="/wms/outbound"                         element={<PermissionRoute module="outbound"><Outbound /></PermissionRoute>} />
+        <Route path="/wms/outbound/scan-log"                element={<PermissionRoute module="scanlog"><OutboundScanLog /></PermissionRoute>} />
+        <Route path="/wms/outbound/:id"                     element={<PermissionRoute module="outbound"><OutboundDetail /></PermissionRoute>} />
+        <Route path="/wms/outbound/:gdoId/items/:itemId"    element={<PermissionRoute module="outbound"><OutboundItemDetail /></PermissionRoute>} />
 
         {/* WMS — loose picking */}
-        <Route path="/wms/loosepicking" element={<LoosePicking />} />
-        <Route path="/wms/loosepicking/:id" element={<LoosePickingDetail />} />
-        <Route path="/wms/loosepicking/:gdoId/items/:itemId" element={<LoosePickingItemDetail />} />
+        <Route path="/wms/loosepicking"                          element={<PermissionRoute module="loosepicking"><LoosePicking /></PermissionRoute>} />
+        <Route path="/wms/loosepicking/:id"                      element={<PermissionRoute module="loosepicking"><LoosePickingDetail /></PermissionRoute>} />
+        <Route path="/wms/loosepicking/:gdoId/items/:itemId"     element={<PermissionRoute module="loosepicking"><LoosePickingItemDetail /></PermissionRoute>} />
 
         {/* WMS — locations */}
-        <Route path="/wms/locations" element={<Locations />} />
+        <Route path="/wms/locations" element={<PermissionRoute module="locations"><Locations /></PermissionRoute>} />
 
         {/* WMS — stocktake */}
-        <Route path="/wms/stocktake"         element={<Stocktake />} />
-        <Route path="/wms/stocktake/summary" element={<StocktakeDashboard />} />
+        <Route path="/wms/stocktake"         element={<PermissionRoute module="stocktake"><Stocktake /></PermissionRoute>} />
+        <Route path="/wms/stocktake/summary" element={<PermissionRoute module="stocktake"><StocktakeDashboard /></PermissionRoute>} />
 
         {/* TMS */}
-        <Route path="/tms/vehicles"   element={<Vehicles />} />
-        <Route path="/tms/deliveries" element={<Deliveries />} />
+        <Route path="/tms/vehicles"   element={<PermissionRoute module="vehicles"><Vehicles /></PermissionRoute>} />
+        <Route path="/tms/deliveries" element={<PermissionRoute module="deliveries"><Deliveries /></PermissionRoute>} />
 
         {/* HR */}
-        <Route path="/hr/schedule" element={<Schedule />} />
+        <Route path="/hr/schedule" element={<PermissionRoute module="schedule"><Schedule /></PermissionRoute>} />
 
         {/* Masterdata — chỉ chức danh có quyền employees mới được vào */}
         <Route

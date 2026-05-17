@@ -424,7 +424,10 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
   }
 
   function handleSubmit() {
-    const payload = { name, department_id: deptId, module_permissions: modulePerms }
+    const cleanPerms = Object.fromEntries(
+      Object.entries(modulePerms).filter((e): e is [string, string[]] => e[1] !== undefined)
+    )
+    const payload = { name, department_id: deptId, module_permissions: cleanPerms }
     if (isEdit) {
       update({ id: jt.id, ...payload, is_active: isActive }, { onSuccess: onClose })
     } else {

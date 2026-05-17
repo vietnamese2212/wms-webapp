@@ -56,6 +56,9 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
   const navigate  = useNavigate()
   const user      = useAuthStore((s) => s.user)
   const canPickWarehouse = !user?.warehouse_id
+  const dialogAllowedWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
+    ? new Set(user.warehouse_ids)
+    : null
 
   const [warehouseId, setWarehouseId] = useState('')
   const [subType,     setSubType]     = useState('')
@@ -182,9 +185,11 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
               <Select value={warehouseId} onValueChange={v => { setWarehouseId(v); setSubType(''); setLocationId(''); setMaterialId(''); setMatSearch('') }}>
                 <SelectTrigger><SelectValue placeholder="Chọn kho" /></SelectTrigger>
                 <SelectContent>
-                  {(warehouses as { id: string; name: string; code: string }[]).map((w) => (
-                    <SelectItem key={w.id} value={w.id}>{w.name} ({w.code})</SelectItem>
-                  ))}
+                  {(warehouses as { id: string; name: string; code: string }[])
+                    .filter(w => !dialogAllowedWhIds || dialogAllowedWhIds.has(w.id))
+                    .map((w) => (
+                      <SelectItem key={w.id} value={w.id}>{w.name} ({w.code})</SelectItem>
+                    ))}
                 </SelectContent>
               </Select>
             ) : (
@@ -467,6 +472,15 @@ export default function Inbound() {
   const { data: warehouses = [] } = useWarehouses(true)
   const { data: categories = [] } = useMaterialCategories()
 
+  // Compute allowed warehouses + categories from user's scope
+  const normCatFe = (c: string) => c === 'TP' ? 'Thành phẩm' : c === 'BAO_BI' ? 'Bao bì' : c
+  const inboundAllowedWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
+    ? new Set(user.warehouse_ids)
+    : null
+  const inboundAllowedCats = user?.allowed_categories?.length
+    ? user.allowed_categories.map(normCatFe)
+    : null
+
   // Resolve effective warehouse: store override → user's warehouse
   const effectiveWarehouseId = f.warehouseId || user?.warehouse_id || undefined
 
@@ -634,9 +648,11 @@ export default function Inbound() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__all__">Tất cả kho</SelectItem>
-                  {(warehouses as { id: string; name: string }[]).map(w => (
-                    <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
-                  ))}
+                  {(warehouses as { id: string; name: string }[])
+                    .filter(w => !inboundAllowedWhIds || inboundAllowedWhIds.has(w.id))
+                    .map(w => (
+                      <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
+                    ))}
                 </SelectContent>
               </Select>
 
@@ -647,9 +663,11 @@ export default function Inbound() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__all__">Tất cả loại</SelectItem>
-                  {(categories as string[]).map(c => (
-                    <SelectItem key={c} value={c}>{c}</SelectItem>
-                  ))}
+                  {(categories as string[])
+                    .filter(c => !inboundAllowedCats || inboundAllowedCats.includes(c))
+                    .map(c => (
+                      <SelectItem key={c} value={c}>{c}</SelectItem>
+                    ))}
                 </SelectContent>
               </Select>
 

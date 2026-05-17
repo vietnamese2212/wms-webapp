@@ -134,10 +134,25 @@ async function fetchGDOFull(id: string) {
 export async function listGDOs(req: Request, res: Response) {
   try {
     const { warehouse_id, status, date, search } = req.query as Record<string, string>
+    const scopeWarehouseIds = req.user?.warehouse_scope !== 'NATIONAL'
+      ? (req.user?.warehouse_ids ?? [])
+      : []
+
     let q = (supabase.from('GroupDeliveryOrder') as any)
       .select('*, warehouse:Warehouse(id,code,name), forklift_driver:Employee!forklift_driver_id(id,name)')
       .order('delivery_date', { ascending: false })
-    if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
+
+    if (scopeWarehouseIds.length > 0) {
+      const effective = warehouse_id
+        ? scopeWarehouseIds.filter(id => id === warehouse_id)
+        : scopeWarehouseIds
+      if (effective.length === 0) return ok(res, [])
+      effective.length === 1
+        ? q = q.eq('warehouse_id', effective[0])
+        : q = q.in('warehouse_id', effective)
+    } else {
+      if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
+    }
     if (status)       q = q.eq('status', status)
     if (date)         q = q.eq('delivery_date', date)
     if (search)       q = q.ilike('group_code', `%${search}%`)

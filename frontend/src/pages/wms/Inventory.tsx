@@ -466,10 +466,13 @@ export default function Inventory() {
   const normCatFe = (c: string) => c === 'TP' ? 'Thành phẩm' : c === 'BAO_BI' ? 'Bao bì' : c
   const userAllowedCats = (user?.allowed_categories ?? []).map(normCatFe)
 
-  // Auto-set warehouse from auth
+  // Auto-set warehouse from auth (prefer warehouse_ids array over single warehouse_id)
   useEffect(() => {
-    if (f.warehouseIds.length === 0 && user?.warehouse_id) {
-      setInventory({ warehouseIds: [user.warehouse_id] })
+    if (f.warehouseIds.length === 0) {
+      const defaultIds = user?.warehouse_ids?.length ? user.warehouse_ids
+        : user?.warehouse_id ? [user.warehouse_id]
+        : []
+      if (defaultIds.length > 0) setInventory({ warehouseIds: defaultIds })
     }
   }, [user?.warehouse_id]) // eslint-disable-line
 
@@ -563,7 +566,12 @@ export default function Inventory() {
   ].filter(Boolean).length
 
   // MultiSelectFilter option lists
-  const warehouseOpts  = (warehouses as any[]).map((w: any) => ({ value: w.id, label: w.name }))
+  const allowedWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
+    ? new Set(user.warehouse_ids)
+    : null
+  const warehouseOpts = (warehouses as any[])
+    .filter((w: any) => !allowedWhIds || allowedWhIds.has(w.id))
+    .map((w: any) => ({ value: w.id, label: w.name }))
   // Merge DB categories with user's allowed categories so user can always toggle their scope even if no data yet
   const allCategoryVals = [...new Set([...(categories as string[]), ...userAllowedCats])].sort()
   const categoryOpts   = allCategoryVals.map(c => ({ value: c, label: c }))

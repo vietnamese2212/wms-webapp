@@ -67,9 +67,14 @@ export default function Outbound() {
 
   const { data: warehouses = [] } = useWarehouses(true)
 
+  const outboundAllowedWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
+    ? new Set(user.warehouse_ids)
+    : null
+
   useEffect(() => {
-    if (!f.warehouseId && user?.warehouse_id) {
-      setOutbound({ warehouseId: user.warehouse_id })
+    if (!f.warehouseId) {
+      const defaultId = user?.warehouse_ids?.[0] ?? user?.warehouse_id ?? ''
+      if (defaultId) setOutbound({ warehouseId: defaultId })
     }
   }, [user?.warehouse_id]) // eslint-disable-line
 
@@ -266,7 +271,9 @@ export default function Outbound() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="__all__">Tất cả kho</SelectItem>
-              {(warehouses as any[]).map((w: any) => <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>)}
+              {(warehouses as any[])
+                .filter((w: any) => !outboundAllowedWhIds || outboundAllowedWhIds.has(w.id))
+                .map((w: any) => <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>)}
             </SelectContent>
           </Select>
           <MultiSelectFilter label="Loại kho" options={warehouseTypeOpts.map(t => ({ value: t, label: t }))} selected={filterWarehouseTypes} onChange={v => setOutbound({ filterWarehouseTypes: v })} />
@@ -609,7 +616,9 @@ function GDOFormBody({
               <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Chọn kho…" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="__none__">— Không chọn</SelectItem>
-                {(warehouses as any[]).map((w: any) => <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>)}
+                {(warehouses as any[])
+                  .filter((w: any) => !outboundAllowedWhIds || outboundAllowedWhIds.has(w.id))
+                  .map((w: any) => <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>

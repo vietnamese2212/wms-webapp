@@ -697,7 +697,7 @@ export default function UserManagement() {
                           <div className="flex gap-1 flex-wrap">
                             {(emp.allowed_categories ?? []).map(cat => (
                               <span key={cat} className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium
-                                ${CATEGORY_COLOR[cat as Category] ?? 'bg-slate-100 text-slate-600'}`}>{cat}</span>
+                                ${CATEGORY_COLOR[cat] ?? 'bg-slate-100 text-slate-600'}`}>{cat}</span>
                             ))}
                           </div>
                         </TableCell>
@@ -849,7 +849,7 @@ export default function UserManagement() {
                           <div className="flex gap-1 flex-wrap">
                             {(jt.allowed_categories ?? []).map(cat => (
                               <span key={cat} className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium
-                                ${CATEGORY_COLOR[cat as Category] ?? 'bg-slate-100 text-slate-600'}`}>{cat}</span>
+                                ${CATEGORY_COLOR[cat] ?? 'bg-slate-100 text-slate-600'}`}>{cat}</span>
                             ))}
                           </div>
                         </TableCell>

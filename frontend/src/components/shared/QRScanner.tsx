@@ -75,8 +75,14 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
       async function setup() {
         if (!video) return
         try {
+          // Request highest resolution the device/browser will allow.
+          // iOS Safari caps at 1080p for web; better than the default ~480p–720p.
           stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: 'environment' },
+            video: {
+              facingMode: 'environment',
+              width:  { ideal: 3840 },
+              height: { ideal: 2160 },
+            },
           })
           video.srcObject = stream
 

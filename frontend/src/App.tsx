@@ -1,6 +1,8 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { Shell } from '@/components/layout/Shell'
 import { useAuthStore } from '@/stores/authStore'
+import { can, type ModuleKey, type ActionKey } from '@/config/permissions'
+import type { ActionLevel } from '@/types'
 
 import Dashboard from '@/pages/Dashboard'
 import Inventory from '@/pages/wms/Inventory'
@@ -30,6 +32,20 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+function PermissionRoute({
+  module,
+  action = 'view',
+  children,
+}: {
+  module: ModuleKey
+  action?: ActionKey
+  children: React.ReactNode
+}) {
+  const level = useAuthStore((s) => s.user?.action_level as ActionLevel | undefined)
+  if (!can(level, module, action)) return <Navigate to="/" replace />
+  return <>{children}</>
+}
+
 export default function App() {
   return (
     <Routes>
@@ -42,24 +58,50 @@ export default function App() {
         }
       >
         <Route path="/" element={<Dashboard />} />
+
+        {/* WMS — inventory (VIEWER+) */}
         <Route path="/wms/inventory" element={<Inventory />} />
+
+        {/* WMS — inbound */}
         <Route path="/wms/inbound" element={<Inbound />} />
         <Route path="/wms/inbound/:id" element={<InboundDetail />} />
+
+        {/* WMS — outbound */}
         <Route path="/wms/outbound" element={<Outbound />} />
         <Route path="/wms/outbound/scan-log" element={<OutboundScanLog />} />
         <Route path="/wms/outbound/:id" element={<OutboundDetail />} />
         <Route path="/wms/outbound/:gdoId/items/:itemId" element={<OutboundItemDetail />} />
+
+        {/* WMS — loose picking */}
         <Route path="/wms/loosepicking" element={<LoosePicking />} />
         <Route path="/wms/loosepicking/:id" element={<LoosePickingDetail />} />
         <Route path="/wms/loosepicking/:gdoId/items/:itemId" element={<LoosePickingItemDetail />} />
-        <Route path="/wms/locations"          element={<Locations />} />
-        <Route path="/wms/stocktake"          element={<Stocktake />} />
-        <Route path="/wms/stocktake/summary"  element={<StocktakeDashboard />} />
-        <Route path="/tms/vehicles" element={<Vehicles />} />
+
+        {/* WMS — locations */}
+        <Route path="/wms/locations" element={<Locations />} />
+
+        {/* WMS — stocktake */}
+        <Route path="/wms/stocktake"         element={<Stocktake />} />
+        <Route path="/wms/stocktake/summary" element={<StocktakeDashboard />} />
+
+        {/* TMS */}
+        <Route path="/tms/vehicles"   element={<Vehicles />} />
         <Route path="/tms/deliveries" element={<Deliveries />} />
+
+        {/* HR */}
         <Route path="/hr/employees" element={<Employees />} />
-        <Route path="/hr/schedule" element={<Schedule />} />
-        <Route path="/masterdata/users" element={<UserManagement />} />
+        <Route path="/hr/schedule"  element={<Schedule />} />
+
+        {/* Masterdata — chỉ SITE_MANAGER+ */}
+        <Route
+          path="/masterdata/users"
+          element={
+            <PermissionRoute module="employees" action="view">
+              <UserManagement />
+            </PermissionRoute>
+          }
+        />
+
         <Route path="/settings" element={<Settings />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

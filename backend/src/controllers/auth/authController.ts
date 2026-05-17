@@ -1,0 +1,152 @@
+import { Request, Response } from 'express'
+import bcrypt from 'bcrypt'
+import jwt from 'jsonwebtoken'
+import { supabase } from '../../lib/supabase'
+import { ok, fail } from '../../utils/response'
+import type { JwtPayload } from '../../middlewares/auth'
+
+const JWT_SECRET = () => process.env.JWT_SECRET ?? 'dev-secret-change-in-production'
+const JWT_EXPIRY = '7d'
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function getWarehouseIds(employeeId: string): Promise<string[]> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data } = await (supabase.from('UserWarehouseAccess') as any)
+    .select('warehouse_id')
+    .eq('employee_id', employeeId)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return ((data ?? []) as any[]).map((r: { warehouse_id: string }) => r.warehouse_id)
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function buildToken(emp: any, warehouseIds: string[]): string {
+  const payload: JwtPayload = {
+    sub:                emp.id,
+    name:               emp.name,
+    email:              emp.email ?? null,
+    role:               emp.role ?? 'WAREHOUSE_STAFF',
+    action_level:       emp.action_level ?? 'VIEWER',
+    warehouse_scope:    emp.warehouse_scope ?? 'ASSIGNED',
+    warehouse_id:       emp.warehouse_id ?? null,
+    allowed_categories: emp.allowed_categories ?? [],
+    warehouse_ids:      warehouseIds,
+  }
+  return jwt.sign(payload, JWT_SECRET(), { expiresIn: JWT_EXPIRY })
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function buildUserObj(emp: any, warehouseIds: string[], warehouseName?: string) {
+  return {
+    id:                 emp.id,
+    name:               emp.name,
+    email:              emp.email ?? null,
+    role:               emp.role ?? 'WAREHOUSE_STAFF',
+    action_level:       emp.action_level ?? 'VIEWER',
+    warehouse_scope:    emp.warehouse_scope ?? 'ASSIGNED',
+    warehouse_id:       emp.warehouse_id ?? null,
+    warehouse_name:     warehouseName ?? null,
+    allowed_categories: emp.allowed_categories ?? [],
+    warehouse_ids:      warehouseIds,
+  }
+}
+
+// ─── POST /api/auth/login ──────────────────────────────────────────────────
+
+export async function login(req: Request, res: Response) {
+  try {
+    const { email, password } = req.body as { email?: string; password?: string }
+    if (!email || !password) return fail(res, 'Email và mật khẩu là bắt buộc', 400)
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: emps } = await (supabase.from('Employee') as any)
+      .select('id, name, email, role, action_level, warehouse_scope, warehouse_id, allowed_categories, password_hash, is_active')
+      .ilike('email', email.trim())
+      .limit(1)
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const emp = (emps as any[])?.[0]
+    if (!emp)             return fail(res, 'Email hoặc mật khẩu không đúng', 401)
+    if (!emp.is_active)   return fail(res, 'Tài khoản đã bị vô hiệu hóa. Liên hệ quản trị viên.', 401)
+    if (!emp.password_hash) return fail(res, 'Tài khoản chưa được đặt mật khẩu. Liên hệ quản trị viên.', 401)
+
+    const valid = await bcrypt.compare(password, emp.password_hash)
+    if (!valid) return fail(res, 'Email hoặc mật khẩu không đúng', 401)
+
+    const warehouseIds = await getWarehouseIds(emp.id)
+
+    // Fetch warehouse name for display
+    let warehouseName: string | undefined
+    if (emp.warehouse_id) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: wh } = await (supabase.from('Warehouse') as any)
+        .select('name').eq('id', emp.warehouse_id).single()
+      warehouseName = wh?.name
+    }
+
+    const token = buildToken(emp, warehouseIds)
+    return ok(res, { token, user: buildUserObj(emp, warehouseIds, warehouseName) })
+  } catch (e) { return fail(res, String(e)) }
+}
+
+// ─── GET /api/auth/me ──────────────────────────────────────────────────────
+
+export async function me(req: Request, res: Response) {
+  try {
+    const userId = req.user?.sub
+    if (!userId) return fail(res, 'Unauthorized', 401)
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: emps } = await (supabase.from('Employee') as any)
+      .select('id, name, email, role, action_level, warehouse_scope, warehouse_id, allowed_categories, is_active')
+      .eq('id', userId).limit(1)
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const emp = (emps as any[])?.[0]
+    if (!emp || !emp.is_active) return fail(res, 'Tài khoản không tồn tại hoặc đã bị vô hiệu hóa', 401)
+
+    const warehouseIds = await getWarehouseIds(emp.id)
+
+    let warehouseName: string | undefined
+    if (emp.warehouse_id) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: wh } = await (supabase.from('Warehouse') as any)
+        .select('name').eq('id', emp.warehouse_id).single()
+      warehouseName = wh?.name
+    }
+
+    return ok(res, buildUserObj(emp, warehouseIds, warehouseName))
+  } catch (e) { return fail(res, String(e)) }
+}
+
+// ─── POST /api/auth/change-password ─────────────────────────────────────────
+
+export async function changePassword(req: Request, res: Response) {
+  try {
+    const userId = req.user?.sub
+    if (!userId) return fail(res, 'Unauthorized', 401)
+
+    const { old_password, new_password } = req.body as { old_password?: string; new_password?: string }
+    if (!old_password || !new_password) return fail(res, 'Thiếu thông tin', 400)
+    if (new_password.length < 6) return fail(res, 'Mật khẩu mới phải có ít nhất 6 ký tự', 400)
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: emps } = await (supabase.from('Employee') as any)
+      .select('id, password_hash').eq('id', userId).limit(1)
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const emp = (emps as any[])?.[0]
+    if (!emp)               return fail(res, 'Không tìm thấy tài khoản', 404)
+    if (!emp.password_hash) return fail(res, 'Tài khoản chưa có mật khẩu. Liên hệ quản trị viên.', 400)
+
+    const valid = await bcrypt.compare(old_password, emp.password_hash)
+    if (!valid) return fail(res, 'Mật khẩu hiện tại không đúng', 401)
+
+    const hash = await bcrypt.hash(new_password, 10)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase.from('Employee') as any)
+      .update({ password_hash: hash, updated_at: new Date().toISOString() })
+      .eq('id', userId)
+
+    return ok(res, { message: 'Đổi mật khẩu thành công' })
+  } catch (e) { return fail(res, String(e)) }
+}

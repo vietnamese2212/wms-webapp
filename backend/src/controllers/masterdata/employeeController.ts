@@ -1,5 +1,6 @@
 import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
+import bcrypt from 'bcrypt'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 
@@ -206,6 +207,25 @@ export async function updateEmployee(req: Request, res: Response) {
 
     const rows = await fetchFull({ ids: [id] })
     return ok(res, rows[0])
+  } catch (e) { return fail(res, String(e)) }
+}
+
+// ─── Set password (admin only) ────────────────────────────────────────────────
+
+export async function setPassword(req: Request, res: Response) {
+  try {
+    const { id } = req.params
+    const { password } = req.body as { password?: string }
+    if (!password || password.length < 6) return fail(res, 'Mật khẩu phải có ít nhất 6 ký tự', 400)
+
+    const hash = await bcrypt.hash(password, 10)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (supabase.from('Employee') as any)
+      .update({ password_hash: hash, updated_at: new Date().toISOString() })
+      .eq('id', id)
+    if (error) return fail(res, error.message)
+
+    return ok(res, { message: 'Đặt mật khẩu thành công' })
   } catch (e) { return fail(res, String(e)) }
 }
 

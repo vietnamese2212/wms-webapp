@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import type { AxiosError } from 'axios'
-import { Plus, Pencil, ShieldCheck, Building2, User2 } from 'lucide-react'
+import { Plus, Pencil, ShieldCheck, Building2, User2, KeyRound, Check, Minus } from 'lucide-react'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
@@ -14,6 +14,8 @@ import {
   useDepartments, useJobTitles, useEmployeeRecords,
   useCreateEmployee, useUpdateEmployee, useWarehouses,
 } from '@/api/hooks'
+import { apiClient } from '@/api/client'
+import { MODULES, LEVEL_PERMISSIONS, type ModuleKey, type ActionKey } from '@/config/permissions'
 import type { EmployeeRecord, ActionLevel, Category } from '@/types'
 
 // ─── Config ───────────────────────────────────────────────────────────────────
@@ -41,6 +43,143 @@ const CATEGORY_COLOR: Record<Category, string> = {
   BAO_BI: 'bg-slate-100 text-slate-600',
 }
 const ALL_CATEGORIES: Category[] = ['TP', 'NVL', 'POSM', 'BAO_BI']
+
+const ACTION_ICONS: Record<ActionKey, string> = {
+  view:   'Xem',
+  create: 'Thêm',
+  edit:   'Sửa',
+  delete: 'Xóa',
+}
+const ALL_ACTIONS: ActionKey[] = ['view', 'create', 'edit', 'delete']
+const MODULE_KEYS = Object.keys(MODULES) as ModuleKey[]
+
+// ─── Permission hint panel ────────────────────────────────────────────────────
+
+function PermissionHint({ level }: { level: ActionLevel }) {
+  const perms = LEVEL_PERMISSIONS[level]
+  return (
+    <div className="mt-2 rounded-lg border border-blue-100 bg-blue-50 p-2 text-[10px]">
+      <p className="font-semibold text-blue-700 mb-1.5">
+        Quyền của cấp <span className="italic">{ACTION_LEVEL_LABEL[level]}</span>:
+      </p>
+      <div className="overflow-x-auto">
+        <table className="w-full">
+          <thead>
+            <tr>
+              <th className="text-left pr-2 font-normal text-slate-500 pb-1">Module</th>
+              {ALL_ACTIONS.map(a => (
+                <th key={a} className="text-center w-10 font-normal text-slate-500 pb-1">{ACTION_ICONS[a]}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {MODULE_KEYS.map(mod => {
+              const allowed = perms[mod] ?? []
+              if (allowed.length === 0) return null
+              return (
+                <tr key={mod} className="border-t border-blue-100">
+                  <td className="pr-2 py-0.5 text-slate-600">{MODULES[mod].label}</td>
+                  {ALL_ACTIONS.map(a => (
+                    <td key={a} className="text-center py-0.5">
+                      {allowed.includes(a)
+                        ? <Check className="h-3 w-3 text-green-500 mx-auto" />
+                        : <Minus className="h-2.5 w-2.5 text-slate-200 mx-auto" />}
+                    </td>
+                  ))}
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+// ─── Set password dialog ──────────────────────────────────────────────────────
+
+function SetPasswordDialog({ emp, open, onClose }: { emp: EmployeeRecord; open: boolean; onClose: () => void }) {
+  const [password,  setPassword]  = useState('')
+  const [confirm,   setConfirm]   = useState('')
+  const [saving,    setSaving]    = useState(false)
+  const [error,     setError]     = useState('')
+  const [success,   setSuccess]   = useState(false)
+
+  function reset() { setPassword(''); setConfirm(''); setError(''); setSuccess(false) }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setError('')
+    if (password.length < 6) { setError('Mật khẩu phải có ít nhất 6 ký tự'); return }
+    if (password !== confirm) { setError('Xác nhận mật khẩu không khớp'); return }
+    setSaving(true)
+    try {
+      await apiClient.patch(`/masterdata/employees/${emp.id}/set-password`, { password })
+      setSuccess(true)
+    } catch (err) {
+      const msg = (err as AxiosError<{ error: { message: string } }>)
+        ?.response?.data?.error?.message ?? 'Lỗi đặt mật khẩu'
+      setError(msg)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={v => { if (!v) { reset(); onClose() } }}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <KeyRound className="h-4 w-4 text-slate-500" />
+            Đặt mật khẩu — {emp.name}
+          </DialogTitle>
+        </DialogHeader>
+        {success ? (
+          <div className="py-4 text-center space-y-3">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-green-100 mx-auto">
+              <Check className="h-6 w-6 text-green-600" />
+            </div>
+            <p className="text-sm text-slate-700">Đặt mật khẩu thành công!</p>
+            <p className="text-xs text-slate-500">Nhân viên có thể đăng nhập bằng email và mật khẩu mới.</p>
+            <Button size="sm" onClick={() => { reset(); onClose() }}>Đóng</Button>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-3 py-1">
+            <div className="space-y-1">
+              <Label className="text-xs">Mật khẩu mới</Label>
+              <Input
+                type="password"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                placeholder="Tối thiểu 6 ký tự"
+                autoComplete="new-password"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Xác nhận mật khẩu</Label>
+              <Input
+                type="password"
+                value={confirm}
+                onChange={e => setConfirm(e.target.value)}
+                placeholder="Nhập lại mật khẩu"
+                autoComplete="new-password"
+              />
+            </div>
+            {error && (
+              <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{error}</p>
+            )}
+            <DialogFooter>
+              <Button type="button" variant="outline" size="sm" onClick={() => { reset(); onClose() }}>Huỷ</Button>
+              <Button type="submit" size="sm" disabled={saving || !password || !confirm}>
+                {saving ? 'Đang lưu…' : 'Đặt mật khẩu'}
+              </Button>
+            </DialogFooter>
+          </form>
+        )}
+      </DialogContent>
+    </Dialog>
+  )
+}
 
 // ─── Employee form dialog ─────────────────────────────────────────────────────
 
@@ -143,7 +282,7 @@ function EmployeeFormDialog({ emp, open, onClose }: EmpFormProps) {
               <Input value={empCode} onChange={e => setEmpCode(e.target.value)} placeholder="NV001" />
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">Email</Label>
+              <Label className="text-xs">Email (dùng để đăng nhập)</Label>
               <Input type="email" value={email} onChange={e => setEmail(e.target.value)} />
             </div>
             <div className="space-y-1">
@@ -185,7 +324,7 @@ function EmployeeFormDialog({ emp, open, onClose }: EmpFormProps) {
               <span className="font-normal text-slate-400">(tự điền từ chức danh, override được)</span>
             </p>
 
-            {/* Action level */}
+            {/* Action level + hint */}
             <div className="space-y-1">
               <Label className="text-xs">Cấp quyền</Label>
               <Select value={actionLevel} onValueChange={v => setActionLevel(v as ActionLevel)}>
@@ -196,6 +335,8 @@ function EmployeeFormDialog({ emp, open, onClose }: EmpFormProps) {
                   ))}
                 </SelectContent>
               </Select>
+              {/* Permission matrix hint — hiện khi admin chọn cấp quyền */}
+              <PermissionHint level={actionLevel} />
             </div>
 
             {/* Categories */}
@@ -286,8 +427,9 @@ function EmployeeFormDialog({ emp, open, onClose }: EmpFormProps) {
 export default function UserManagement() {
   const [search,      setSearch]      = useState('')
   const [filterDept,  setFilterDept]  = useState('__all__')
-  const [editingEmp,  setEditingEmp]  = useState<EmployeeRecord | null | 'new'>('new' as never)
+  const [editingEmp,  setEditingEmp]  = useState<EmployeeRecord | null>(null)
   const [showDialog,  setShowDialog]  = useState(false)
+  const [pwdEmp,      setPwdEmp]      = useState<EmployeeRecord | null>(null)
 
   const { data: departments = [] } = useDepartments()
   const { data: employees = [], isLoading, isError, error } = useEmployeeRecords({
@@ -362,7 +504,7 @@ export default function UserManagement() {
                   <TableHead className="px-3 py-2 text-xs">Loại hàng</TableHead>
                   <TableHead className="px-3 py-2 text-xs">Kho</TableHead>
                   <TableHead className="px-3 py-2 text-xs">Trạng thái</TableHead>
-                  <TableHead className="px-3 py-2 w-10" />
+                  <TableHead className="px-3 py-2 w-16" />
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -416,12 +558,22 @@ export default function UserManagement() {
                       </Badge>
                     </TableCell>
                     <TableCell className="px-2 py-2">
-                      <button
-                        className="text-slate-400 hover:text-blue-500 transition-colors p-1"
-                        onClick={() => openEdit(emp)}
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button
+                          title="Đặt mật khẩu"
+                          className="text-slate-400 hover:text-amber-500 transition-colors p-1"
+                          onClick={() => setPwdEmp(emp)}
+                        >
+                          <KeyRound className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          title="Sửa thông tin"
+                          className="text-slate-400 hover:text-blue-500 transition-colors p-1"
+                          onClick={() => openEdit(emp)}
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -433,9 +585,17 @@ export default function UserManagement() {
 
       {showDialog && (
         <EmployeeFormDialog
-          emp={editingEmp as EmployeeRecord | null}
+          emp={editingEmp}
           open={showDialog}
           onClose={() => setShowDialog(false)}
+        />
+      )}
+
+      {pwdEmp && (
+        <SetPasswordDialog
+          emp={pwdEmp}
+          open={!!pwdEmp}
+          onClose={() => setPwdEmp(null)}
         />
       )}
     </div>

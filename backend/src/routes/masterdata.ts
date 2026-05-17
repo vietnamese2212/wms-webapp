@@ -62,7 +62,8 @@ router.put('/job-titles/:id',       department.updateJobTitle)
 router.get('/employees',            employee.listEmployees)      // ?department_id=&search=&is_active=
 router.post('/employees',           employee.createEmployee)
 router.get('/employees/:id',        employee.getEmployee)
-router.patch('/employees/:id',      employee.updateEmployee)
-router.put('/employees/:id/warehouses', employee.setWarehouseAccess)
+router.patch('/employees/:id',              employee.updateEmployee)
+router.patch('/employees/:id/set-password', employee.setPassword)
+router.put('/employees/:id/warehouses',     employee.setWarehouseAccess)
 
 export default router

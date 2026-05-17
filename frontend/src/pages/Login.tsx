@@ -6,28 +6,31 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { useAuthStore } from '@/stores/authStore'
+import type { AxiosError } from 'axios'
 
 export default function Login() {
-  const [email, setEmail] = useState('admin@wms.vn')
-  const [password, setPassword] = useState('password123')
-  const [showPwd, setShowPwd] = useState(false)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
+  const [email,    setEmail]    = useState('')
+  const [password, setPassword] = useState('')
+  const [showPwd,  setShowPwd]  = useState(false)
+  const [loading,  setLoading]  = useState(false)
+  const [error,    setError]    = useState('')
   const { login } = useAuthStore()
-  const navigate = useNavigate()
+  const navigate  = useNavigate()
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError('')
     setLoading(true)
-    await new Promise((r) => setTimeout(r, 800))
-    if (email && password) {
-      login({ id: '1', name: 'Nguyễn Văn Quản Lý', email, role: 'WAREHOUSE_MANAGER', department: 'Kho vận' }, 'mock-jwt-token')
+    try {
+      await login(email, password)
       navigate('/', { replace: true })
-    } else {
-      setError('Vui lòng nhập đầy đủ thông tin.')
+    } catch (err) {
+      const msg = (err as AxiosError<{ error: { message: string } }>)
+        ?.response?.data?.error?.message ?? 'Đăng nhập thất bại. Kiểm tra lại email và mật khẩu.'
+      setError(msg)
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   return (
@@ -56,7 +59,7 @@ export default function Login() {
                 <Input
                   id="email"
                   type="email"
-                  placeholder="email@wms.vn"
+                  placeholder="email@congty.vn"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
@@ -98,7 +101,7 @@ export default function Login() {
         </Card>
 
         <p className="text-center text-xs text-muted-foreground">
-          Demo: admin@wms.vn / bất kỳ mật khẩu
+          Tài khoản do quản trị viên cấp. Liên hệ admin nếu quên mật khẩu.
         </p>
       </div>
     </div>

@@ -75,38 +75,34 @@ export async function login(req: Request, res: Response) {
     const valid = await bcrypt.compare(password, emp.password)
     if (!valid) return fail(res, 'Email hoặc mật khẩu không đúng', 401)
 
-    // Resolve module_permissions: employee override > job_title > action_level fallback
+    // Run all 3 independent post-auth queries in parallel (saves 2 sequential round-trips)
+    const needJobTitle = (!emp.module_permissions || Object.keys(emp.module_permissions).length === 0) && !!emp.job_title_id
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const [warehouseIds, jtData, whData] = await Promise.all([
+      getWarehouseIds(emp.id),
+      needJobTitle
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ? (supabase.from('JobTitle') as any).select('module_permissions').eq('id', emp.job_title_id).single().then((r: any) => r.data)
+        : Promise.resolve(null),
+      emp.warehouse_id
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ? (supabase.from('Warehouse') as any).select('name').eq('id', emp.warehouse_id).single().then((r: any) => r.data)
+        : Promise.resolve(null),
+    ])
+
+    // Resolve module_permissions: employee override > job_title > ADMIN fallback
     let modulePerms: Record<string, string[]> = {}
     if (emp.module_permissions && Object.keys(emp.module_permissions).length > 0) {
       modulePerms = emp.module_permissions
-    } else if (emp.job_title_id) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: jt } = await (supabase.from('JobTitle') as any)
-        .select('module_permissions')
-        .eq('id', emp.job_title_id)
-        .single()
-      if (jt?.module_permissions && Object.keys(jt.module_permissions).length > 0) {
-        modulePerms = jt.module_permissions
-      }
+    } else if (jtData?.module_permissions && Object.keys(jtData.module_permissions).length > 0) {
+      modulePerms = jtData.module_permissions
     }
-    // Fallback: ADMIN role → toàn quyền
     if (Object.keys(modulePerms).length === 0 && emp.role === 'ADMIN') {
       modulePerms = ALL_PERMISSIONS as Record<string, string[]>
     }
 
-    const warehouseIds = await getWarehouseIds(emp.id)
-
-    // Fetch warehouse name for display
-    let warehouseName: string | undefined
-    if (emp.warehouse_id) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: wh } = await (supabase.from('Warehouse') as any)
-        .select('name').eq('id', emp.warehouse_id).single()
-      warehouseName = wh?.name
-    }
-
     const token = buildToken(emp, warehouseIds, modulePerms)
-    return ok(res, { token, user: buildUserObj(emp, warehouseIds, modulePerms, warehouseName) })
+    return ok(res, { token, user: buildUserObj(emp, warehouseIds, modulePerms, whData?.name) })
   } catch (e) { return fail(res, String(e)) }
 }
 
@@ -126,20 +122,19 @@ export async function me(req: Request, res: Response) {
     const emp = (emps as any[])?.[0]
     if (!emp || !emp.is_active) return fail(res, 'Tài khoản không tồn tại hoặc đã bị vô hiệu hóa', 401)
 
-    // module_permissions already in JWT; re-derive from DB for freshness
     const modulePerms: Record<string, string[]> = req.user?.module_permissions ?? {}
 
-    const warehouseIds = await getWarehouseIds(emp.id)
+    // Run both independent queries in parallel
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const [warehouseIds, whData] = await Promise.all([
+      getWarehouseIds(emp.id),
+      emp.warehouse_id
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ? (supabase.from('Warehouse') as any).select('name').eq('id', emp.warehouse_id).single().then((r: any) => r.data)
+        : Promise.resolve(null),
+    ])
 
-    let warehouseName: string | undefined
-    if (emp.warehouse_id) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: wh } = await (supabase.from('Warehouse') as any)
-        .select('name').eq('id', emp.warehouse_id).single()
-      warehouseName = wh?.name
-    }
-
-    return ok(res, buildUserObj(emp, warehouseIds, modulePerms, warehouseName))
+    return ok(res, buildUserObj(emp, warehouseIds, modulePerms, whData?.name))
   } catch (e) { return fail(res, String(e)) }
 }
 

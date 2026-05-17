@@ -89,8 +89,9 @@ export async function login(req: Request, res: Response) {
         modulePerms = jt.module_permissions
       }
     }
-    // Fallback: NATIONAL_MANAGER gets all permissions
-    if (Object.keys(modulePerms).length === 0 && emp.action_level === 'NATIONAL_MANAGER') {
+    // Fallback: ADMIN role hoặc NATIONAL_MANAGER action_level → toàn quyền
+    if (Object.keys(modulePerms).length === 0 &&
+        (emp.role === 'ADMIN' || emp.action_level === 'NATIONAL_MANAGER')) {
       modulePerms = ALL_PERMISSIONS as Record<string, string[]>
     }
 

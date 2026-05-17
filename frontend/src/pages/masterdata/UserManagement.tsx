@@ -472,9 +472,31 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
                 const hasAny = grantedActions.length > 0
                 return (
                   <div key={modKey} className={`rounded-lg border p-3 ${hasAny ? 'border-blue-200 bg-blue-50/50' : 'border-slate-200'}`}>
-                    <p className={`text-xs font-semibold mb-2 ${hasAny ? 'text-blue-700' : 'text-slate-500'}`}>
-                      {modDef.label}
-                    </p>
+                    <div className="flex items-center justify-between mb-2">
+                      <p className={`text-xs font-semibold ${hasAny ? 'text-blue-700' : 'text-slate-500'}`}>
+                        {modDef.label}
+                      </p>
+                      {(() => {
+                        const allActions = Object.keys(modDef.actions)
+                        const isAll = allActions.every(a => grantedActions.includes(a))
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => setModulePerms(prev => ({
+                              ...prev,
+                              [modKey]: isAll ? undefined : allActions,
+                            }))}
+                            className={`text-[10px] px-2 py-0.5 rounded font-medium transition-colors ${
+                              isAll
+                                ? 'bg-blue-600 text-white hover:bg-blue-700'
+                                : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                            }`}
+                          >
+                            Tất cả
+                          </button>
+                        )
+                      })()}
+                    </div>
                     <div className="flex flex-wrap gap-x-4 gap-y-1.5">
                       {(Object.entries(modDef.actions) as [string, string][]).map(([actionKey, actionLabel]) => {
                         const checked = grantedActions.includes(actionKey)

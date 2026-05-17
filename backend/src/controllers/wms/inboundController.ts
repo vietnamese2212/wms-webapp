@@ -103,7 +103,8 @@ export async function listOrders(req: Request, res: Response) {
     if (shift_id)    query = query.eq('shift_id', shift_id)
 
     // Enforce user's category scope + optional query-param category filter
-    const scopeCategories = req.user?.allowed_categories ?? []
+    const normCat = (c: string) => c === 'TP' ? 'Thành phẩm' : c === 'BAO_BI' ? 'Bao bì' : c
+    const scopeCategories = (req.user?.allowed_categories ?? []).map(normCat)
     const effectiveCategories = scopeCategories.length > 0
       ? (material_category ? scopeCategories.filter(c => c === material_category) : scopeCategories)
       : (material_category ? [material_category] : [])

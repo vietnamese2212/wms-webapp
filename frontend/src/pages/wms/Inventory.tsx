@@ -462,6 +462,10 @@ export default function Inventory() {
     categories:    f.materialCategories.length > 0 ? f.materialCategories : undefined,
   })
 
+  // Normalize old JWT abbreviations (TP→Thành phẩm, BAO_BI→Bao bì)
+  const normCatFe = (c: string) => c === 'TP' ? 'Thành phẩm' : c === 'BAO_BI' ? 'Bao bì' : c
+  const userAllowedCats = (user?.allowed_categories ?? []).map(normCatFe)
+
   // Auto-set warehouse from auth
   useEffect(() => {
     if (f.warehouseIds.length === 0 && user?.warehouse_id) {
@@ -469,15 +473,18 @@ export default function Inventory() {
     }
   }, [user?.warehouse_id]) // eslint-disable-line
 
-  // Auto-set default category filter = all DB categories except 'Bao bì'
-  // Only runs once per mount when categories data first arrives and nothing is selected
+  // Auto-set default category filter once when DB categories load and nothing is selected
   const categoryDefaultApplied = useRef(false)
   useEffect(() => {
     if (categories.length > 0 && !categoryDefaultApplied.current) {
       categoryDefaultApplied.current = true
       if (f.materialCategories.length === 0) {
-        const merged = [...new Set(['Thành phẩm', 'NVL', 'POSM', ...categories])]
-        setInventory({ materialCategories: merged, page: 1 })
+        const dbCats = categories as string[]
+        // Restrict default to categories the user is allowed to see (if scope is set)
+        const defaultCats = userAllowedCats.length > 0
+          ? dbCats.filter(c => userAllowedCats.includes(c))
+          : dbCats
+        setInventory({ materialCategories: [...new Set(defaultCats)], page: 1 })
       }
     }
   }, [categories]) // eslint-disable-line
@@ -557,7 +564,9 @@ export default function Inventory() {
 
   // MultiSelectFilter option lists
   const warehouseOpts  = (warehouses as any[]).map((w: any) => ({ value: w.id, label: w.name }))
-  const categoryOpts   = (categories as string[]).map(c => ({ value: c, label: c }))
+  // Merge DB categories with user's allowed categories so user can always toggle their scope even if no data yet
+  const allCategoryVals = [...new Set([...(categories as string[]), ...userAllowedCats])].sort()
+  const categoryOpts   = allCategoryVals.map(c => ({ value: c, label: c }))
   const qaOpts         = (qaStatuses as any[]).map((q: any) => ({ value: q.id, label: `${q.code} – ${q.name}` }))
   const locationOpts   = (facets?.locations ?? []).map(l => ({ value: l.code, label: l.code }))
   const materialOpts   = (facets?.materials ?? []).map(m => ({ value: m.id, label: m.name ? `${m.code} – ${m.name}` : m.code }))

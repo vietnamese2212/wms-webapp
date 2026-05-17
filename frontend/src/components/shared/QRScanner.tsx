@@ -71,12 +71,15 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
 
       const interval = 1000 / SCAN_FPS
       let stream: MediaStream | null = null
+      let engine: Awaited<ReturnType<typeof QrScanner.createQrEngine>> | null = null
 
       async function setup() {
         if (!video) return
         try {
-          // Request highest resolution the device/browser will allow.
-          // iOS Safari caps at 1080p for web; better than the default ~480p–720p.
+          // Create QR decode worker once and reuse — scanImage creates a new worker each
+          // call by default, which means it never finishes initialising at 15fps.
+          engine = await QrScanner.createQrEngine()
+
           stream = await navigator.mediaDevices.getUserMedia({
             video: {
               facingMode: 'environment',
@@ -86,9 +89,9 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
           })
           video.srcObject = stream
 
-          await new Promise<void>((resolve, reject) => {
+          await new Promise<void>(resolve => {
+            if (video!.readyState >= 1) { resolve(); return }
             video!.onloadedmetadata = () => resolve()
-            video!.onerror = reject
           })
 
           await video.play()
@@ -104,7 +107,7 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
       function loop(now: number) {
         rafRef.current = requestAnimationFrame(loop)
 
-        if (!video || !ctx) return
+        if (!video || !ctx || !engine) return
         if (pausedRef.current) return
         if (scanBusyRef.current) return
         if (now - lastScanRef.current < interval) return
@@ -112,8 +115,8 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
 
         lastScanRef.current = now
 
-        // Crop center (1/zoom) of the video frame, then draw it upscaled to full canvas.
-        // At zoom 2×: QR code occupies 2× more pixels → decoder can read it at longer range.
+        // Crop center (1/zoom) of the video frame, upscale to full canvas.
+        // Gives the decoder more pixels on the QR code at range.
         const z  = zoomRef.current
         const vw = video.videoWidth
         const vh = video.videoHeight
@@ -122,7 +125,7 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
         ctx.drawImage(video, (vw - sw) / 2, (vh - sh) / 2, sw, sh, 0, 0, vw, vh)
 
         scanBusyRef.current = true
-        QrScanner.scanImage(canvas, { returnDetailedScanResult: true })
+        QrScanner.scanImage(canvas, { qrEngine: engine, returnDetailedScanResult: true })
           .then(result => {
             if (!pausedRef.current) {
               pausedRef.current = true
@@ -139,6 +142,7 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
         if (rafRef.current) cancelAnimationFrame(rafRef.current)
         stream?.getTracks().forEach(t => t.stop())
         video.srcObject = null
+        if (engine instanceof Worker) engine.terminate()
       }
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])

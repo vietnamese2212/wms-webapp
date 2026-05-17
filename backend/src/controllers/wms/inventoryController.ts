@@ -477,10 +477,26 @@ export async function stocktakeEntry(req: Request, res: Response) {
 export async function stocktakeSummary(req: Request, res: Response) {
   const { warehouse_id, category, requires_stocktake_only } = req.query as Record<string, string>
 
+  const scopeWhIds = req.user?.warehouse_scope !== 'NATIONAL'
+    ? (req.user?.warehouse_ids ?? [])
+    : []
+
   let locQuery = (supabase.from('Location') as any)
     .select('id, location_code, sub_code, requires_stocktake, warehouse:Warehouse(name)')
     .eq('is_active', true)
-  if (warehouse_id) locQuery = locQuery.eq('warehouse_id', warehouse_id)
+
+  if (scopeWhIds.length > 0) {
+    const effective = warehouse_id
+      ? scopeWhIds.filter(id => id === warehouse_id)
+      : scopeWhIds
+    if (effective.length === 0) return ok(res, [])
+    effective.length === 1
+      ? (locQuery = locQuery.eq('warehouse_id', effective[0]))
+      : (locQuery = locQuery.in('warehouse_id', effective))
+  } else {
+    if (warehouse_id) locQuery = locQuery.eq('warehouse_id', warehouse_id)
+  }
+
   if (category)     locQuery = locQuery.or(`category.eq.${category},category.is.null`)
   if (requires_stocktake_only === 'true') locQuery = locQuery.eq('requires_stocktake', true)
 
@@ -534,13 +550,29 @@ export async function stocktakeEntries(req: Request, res: Response) {
   const { warehouse_id, category, location_id, view = 'problem' } = req.query as Record<string, string>
   // view: 'all' | 'flagged' | 'unchecked' | 'checked' | 'problem' (flagged + unchecked)
 
+  const scopeWhIds = req.user?.warehouse_scope !== 'NATIONAL'
+    ? (req.user?.warehouse_ids ?? [])
+    : []
+
   // Resolve location IDs to query against
   let resolvedLocationIds: string[]
   if (location_id) {
     resolvedLocationIds = [location_id]
   } else {
     let locQuery = (supabase.from('Location') as any).select('id').eq('is_active', true)
-    if (warehouse_id) locQuery = locQuery.eq('warehouse_id', warehouse_id)
+
+    if (scopeWhIds.length > 0) {
+      const effective = warehouse_id
+        ? scopeWhIds.filter(id => id === warehouse_id)
+        : scopeWhIds
+      if (effective.length === 0) return ok(res, { stats: { total: 0, checked: 0, unchecked: 0, flagged: 0 }, entries: [] })
+      effective.length === 1
+        ? (locQuery = locQuery.eq('warehouse_id', effective[0]))
+        : (locQuery = locQuery.in('warehouse_id', effective))
+    } else {
+      if (warehouse_id) locQuery = locQuery.eq('warehouse_id', warehouse_id)
+    }
+
     if (category)     locQuery = locQuery.or(`category.eq.${category},category.is.null`)
     const { data: locs, error: locErr } = await locQuery
     if (locErr) return fail(res, 500, 'DB_ERROR', locErr.message)

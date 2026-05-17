@@ -1643,11 +1643,27 @@ export async function listLoosePickingItems(req: Request, res: Response) {
   try {
     const { warehouse_id, date } = req.query as { warehouse_id?: string; date?: string }
 
+    const scopeWhIds = req.user?.warehouse_scope !== 'NATIONAL'
+      ? (req.user?.warehouse_ids ?? [])
+      : []
+
     let gdoQ = (supabase.from('GroupDeliveryOrder') as any)
       .select('id, group_code, delivery_date, planned_date, status, started_at, dvvt, warehouse_type, warehouse:Warehouse(id,code,name)')
       .neq('status', 'CANCELLED')
-    if (warehouse_id) gdoQ = gdoQ.eq('warehouse_id', warehouse_id)
-    if (date)         gdoQ = gdoQ.eq('delivery_date', date)
+
+    if (scopeWhIds.length > 0) {
+      const effective = warehouse_id
+        ? scopeWhIds.filter(id => id === warehouse_id)
+        : scopeWhIds
+      if (effective.length === 0) return ok(res, [])
+      effective.length === 1
+        ? (gdoQ = gdoQ.eq('warehouse_id', effective[0]))
+        : (gdoQ = gdoQ.in('warehouse_id', effective))
+    } else {
+      if (warehouse_id) gdoQ = gdoQ.eq('warehouse_id', warehouse_id)
+    }
+
+    if (date) gdoQ = gdoQ.eq('delivery_date', date)
     const { data: gdos } = await gdoQ
 
     if (!gdos?.length) return ok(res, [])
@@ -1767,10 +1783,26 @@ export async function getScanLog(req: Request, res: Response) {
   const limitNum = Math.min(1000, Math.max(1, parseInt(String(limit))))
   const offset   = (pageNum - 1) * limitNum
 
+  // Enforce warehouse scope from JWT
+  const scopeWhIds = req.user?.warehouse_scope !== 'NATIONAL'
+    ? (req.user?.warehouse_ids ?? [])
+    : []
+  let effectiveWarehouseIds: string | null = null
+  if (scopeWhIds.length > 0) {
+    const requested = warehouse_ids ? String(warehouse_ids).split(',').filter(Boolean) : []
+    const effective = requested.length > 0
+      ? requested.filter(id => scopeWhIds.includes(id))
+      : scopeWhIds
+    if (effective.length === 0) return ok(res, { rows: [], total: 0, page: pageNum, limit: limitNum })
+    effectiveWarehouseIds = effective.join(',')
+  } else {
+    effectiveWarehouseIds = warehouse_ids ? String(warehouse_ids) : null
+  }
+
   const { data, error } = await supabase.rpc('get_outbound_scan_log', {
     p_from_date:         from_date         ? String(from_date)         : null,
     p_to_date:           to_date           ? String(to_date)           : null,
-    p_warehouse_ids:     warehouse_ids     ? String(warehouse_ids)     : null,
+    p_warehouse_ids:     effectiveWarehouseIds,
     p_material_category: material_category ? String(material_category) : null,
     p_group_code:        group_code        ? String(group_code)        : null,
     p_distributor:       distributor       ? String(distributor)       : null,

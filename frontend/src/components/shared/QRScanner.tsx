@@ -66,8 +66,8 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
 
     return (
       <div className="flex flex-col gap-3">
-        <div className="relative rounded-xl overflow-hidden border border-slate-200 bg-slate-900">
-          <video ref={videoRef} className="w-full" playsInline muted />
+        <div className="relative rounded-xl overflow-hidden border border-slate-200 bg-slate-900 aspect-[4/3]">
+          <video ref={videoRef} className="absolute inset-0 w-full h-full object-cover" playsInline muted />
 
           {!error && (
             <div className="absolute inset-0 pointer-events-none flex items-center justify-center">

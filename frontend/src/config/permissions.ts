@@ -96,6 +96,14 @@ export const MODULES = {
       edit:   'Sửa',
     },
   },
+  schedule: {
+    label: 'Lịch làm việc',
+    actions: {
+      view:   'Xem lịch',
+      create: 'Tạo lịch',
+      approve:'Duyệt / Từ chối',
+    },
+  },
 } as const
 
 export type ModuleKey = keyof typeof MODULES

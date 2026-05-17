@@ -2,15 +2,16 @@ import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Package, PackagePlus, PackageMinus, MapPin,
   Truck, Navigation, Calendar, Settings, BarChart3, Scissors, ScanLine,
-  ClipboardCheck, BarChart2,
+  ClipboardCheck, BarChart2, UserCog,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/authStore'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Separator } from '@/components/ui/separator'
 import { roleLabel } from '@/utils/formatters'
+import { canAccess, type ModuleKey, type ModulePermissions } from '@/config/permissions'
 
-const navGroups = [
+const navGroups: { label: string; items: { to: string; icon: React.ElementType; label: string; module?: ModuleKey }[] }[] = [
   {
     label: 'Tổng quan',
     items: [{ to: '/', icon: LayoutDashboard, label: 'Dashboard' }],
@@ -18,33 +19,40 @@ const navGroups = [
   {
     label: 'Kho vận (WMS)',
     items: [
-      { to: '/wms/inventory', icon: Package, label: 'Tồn kho' },
-      { to: '/wms/inbound', icon: PackagePlus, label: 'Nhập kho' },
-      { to: '/wms/outbound', icon: PackageMinus, label: 'Xuất kho' },
-      { to: '/wms/loosepicking', icon: Scissors, label: 'Nhặt lẻ' },
-      { to: '/wms/outbound/scan-log',  icon: ScanLine,       label: 'Lịch sử quét' },
-      { to: '/wms/locations',          icon: MapPin,         label: 'Vị trí kho' },
-      { to: '/wms/stocktake',          icon: ClipboardCheck, label: 'Check vị trí' },
-      { to: '/wms/stocktake/summary',  icon: BarChart2,      label: 'Tổng hợp KK' },
+      { to: '/wms/inventory',         icon: Package,        label: 'Tồn kho',     module: 'inventory' },
+      { to: '/wms/inbound',           icon: PackagePlus,    label: 'Nhập kho',     module: 'inbound' },
+      { to: '/wms/outbound',          icon: PackageMinus,   label: 'Xuất kho',     module: 'outbound' },
+      { to: '/wms/loosepicking',      icon: Scissors,       label: 'Nhặt lẻ',      module: 'loosepicking' },
+      { to: '/wms/outbound/scan-log', icon: ScanLine,       label: 'Lịch sử quét', module: 'scanlog' },
+      { to: '/wms/locations',         icon: MapPin,         label: 'Vị trí kho',   module: 'locations' },
+      { to: '/wms/stocktake',         icon: ClipboardCheck, label: 'Check vị trí', module: 'stocktake' },
+      { to: '/wms/stocktake/summary', icon: BarChart2,      label: 'Tổng hợp KK',  module: 'stocktake' },
     ],
   },
   {
     label: 'Vận tải (TMS)',
     items: [
-      { to: '/tms/vehicles', icon: Truck, label: 'Xe & Tài xế' },
-      { to: '/tms/deliveries', icon: Navigation, label: 'Giao hàng' },
+      { to: '/tms/vehicles',   icon: Truck,      label: 'Xe & Tài xế', module: 'vehicles' },
+      { to: '/tms/deliveries', icon: Navigation, label: 'Giao hàng',   module: 'deliveries' },
     ],
   },
   {
     label: 'Nhân sự (HR)',
     items: [
-      { to: '/hr/schedule', icon: Calendar, label: 'Lịch làm việc' },
+      { to: '/hr/schedule', icon: Calendar, label: 'Lịch làm việc', module: 'schedule' },
+    ],
+  },
+  {
+    label: 'Quản trị',
+    items: [
+      { to: '/masterdata/users', icon: UserCog, label: 'Quản lý người dùng', module: 'employees' },
     ],
   },
 ]
 
 export function MobileNav() {
   const { user } = useAuthStore()
+  const modulePerms = user?.module_permissions as ModulePermissions | null ?? null
   const initials = user?.name.split(' ').slice(-2).map((n) => n[0]).join('').toUpperCase() ?? 'U'
 
   return (
@@ -62,13 +70,18 @@ export function MobileNav() {
 
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto py-4 px-4 space-y-6">
-        {navGroups.map((group) => (
+        {navGroups.map((group) => {
+          const visibleItems = group.items.filter(item =>
+            !item.module || canAccess(modulePerms, item.module)
+          )
+          if (visibleItems.length === 0) return null
+          return (
           <div key={group.label}>
             <p className="mb-1.5 px-3 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/70">
               {group.label}
             </p>
             <div className="space-y-0.5">
-              {group.items.map((item) => {
+              {visibleItems.map((item) => {
                 const Icon = item.icon
                 return (
                   <NavLink
@@ -91,7 +104,8 @@ export function MobileNav() {
               })}
             </div>
           </div>
-        ))}
+          )
+        })}
       </nav>
 
       {/* Footer */}

@@ -56,7 +56,7 @@ const navGroups: NavGroup[] = [
   {
     label: 'Nhân sự (HR)',
     items: [
-      { to: '/hr/schedule', icon: Calendar, label: 'Lịch làm việc' },
+      { to: '/hr/schedule', icon: Calendar, label: 'Lịch làm việc', module: 'schedule' },
     ],
   },
   {

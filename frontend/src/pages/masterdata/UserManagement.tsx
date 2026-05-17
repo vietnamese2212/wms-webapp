@@ -130,6 +130,7 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
 
   // True chỉ khi user chủ động chọn chức danh — tránh ghi đè giá trị đang sửa khi jobTitles load
   const userChangedJobTitle = useRef(false)
+  const deptIdMounted = useRef(false)
 
   useEffect(() => {
     if (!jobTitleId || !userChangedJobTitle.current) return
@@ -141,6 +142,7 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
   }, [jobTitleId, jobTitles])
 
   useEffect(() => {
+    if (!deptIdMounted.current) { deptIdMounted.current = true; return }
     setJobTitleId('')
     userChangedJobTitle.current = false
   }, [deptId])

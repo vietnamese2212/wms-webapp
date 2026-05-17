@@ -97,12 +97,6 @@ export async function listInventory(req: Request, res: Response) {
     ? (categories.length > 0 ? categories.filter(c => scopeCategories.includes(c)) : scopeCategories)
     : categories
 
-  // Empty intersection → user's scope and UI filter don't overlap → return empty immediately
-  if (scopeWarehouses.length > 0 && warehouseIds.length > 0 && effectiveWarehouseIds.length === 0)
-    return ok(res, { entries: [], total: 0, page: pageNum, limit: limitNum, total_cartons_remaining: 0 })
-  if (scopeCategories.length > 0 && categories.length > 0 && effectiveCategories.length === 0)
-    return ok(res, { entries: [], total: 0, page: pageNum, limit: limitNum, total_cartons_remaining: 0 })
-
   const filterLocations   = parseArr(q.filter_locations)
   const filterCycles      = parseArr(q.filter_cycles)
   const filterMachines    = parseArr(q.filter_machines)
@@ -114,33 +108,57 @@ export async function listInventory(req: Request, res: Response) {
   const limitNum = Math.min(200, Math.max(1, parseInt(limit) || 50))
   const offset   = (pageNum - 1) * limitNum
 
-  // Resolve location_ids for warehouse / location_code filters
-  let locationFilter: string[] | null = null
-  if (effectiveWarehouseIds.length || filterLocations.length) {
-    let locQ = (supabase.from('Location') as any).select('id')
-    if (effectiveWarehouseIds.length === 1)     locQ = locQ.eq('warehouse_id', effectiveWarehouseIds[0])
-    else if (effectiveWarehouseIds.length > 1)  locQ = locQ.in('warehouse_id', effectiveWarehouseIds)
-    if (filterLocations.length === 1)  locQ = locQ.eq('location_code', filterLocations[0])
-    else if (filterLocations.length > 1) locQ = locQ.in('location_code', filterLocations)
+  // Empty intersection → user's scope and UI filter don't overlap → return empty immediately
+  if (scopeWarehouses.length > 0 && warehouseIds.length > 0 && effectiveWarehouseIds.length === 0)
+    return ok(res, { entries: [], total: 0, page: pageNum, limit: limitNum, total_cartons_remaining: 0 })
+  if (scopeCategories.length > 0 && categories.length > 0 && effectiveCategories.length === 0)
+    return ok(res, { entries: [], total: 0, page: pageNum, limit: limitNum, total_cartons_remaining: 0 })
 
-    const { data: locs, error: locErr } = await locQ
-    if (locErr) return fail(res, 500, 'DB_ERROR', locErr.message)
-    locationFilter = (locs ?? []).map((l: any) => l.id as string)
+  const needLocFilter = effectiveWarehouseIds.length > 0 || filterLocations.length > 0
+  const needMatFilter = !!(material_search) || effectiveCategories.length > 0 || filterMaterialIds.length > 0
+
+  // Resolve location_ids and material_ids in parallel — they are independent queries
+  const [locResult, matResult] = await Promise.all([
+    needLocFilter ? (async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let locQ = (supabase.from('Location') as any).select('id')
+      if (effectiveWarehouseIds.length === 1)    locQ = locQ.eq('warehouse_id', effectiveWarehouseIds[0])
+      else if (effectiveWarehouseIds.length > 1) locQ = locQ.in('warehouse_id', effectiveWarehouseIds)
+      if (filterLocations.length === 1)          locQ = locQ.eq('location_code', filterLocations[0])
+      else if (filterLocations.length > 1)       locQ = locQ.in('location_code', filterLocations)
+      return await locQ
+    })() : Promise.resolve({ data: null, error: null }),
+
+    needMatFilter ? (async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let matQ = (supabase.from('Material') as any).select('id')
+      if (material_search)                        matQ = matQ.or(`material_code.ilike.%${material_search}%,short_name.ilike.%${material_search}%`)
+      if (effectiveCategories.length === 1)       matQ = matQ.eq('category', effectiveCategories[0])
+      else if (effectiveCategories.length > 1)    matQ = matQ.in('category', effectiveCategories)
+      if (filterMaterialIds.length > 0)           matQ = matQ.in('id', filterMaterialIds)
+      return await matQ
+    })() : Promise.resolve({ data: null, error: null }),
+  ])
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  if ((locResult as any).error) return fail(res, 500, 'DB_ERROR', (locResult as any).error.message)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  if ((matResult as any).error) return fail(res, 500, 'DB_ERROR', (matResult as any).error.message)
+
+  let locationFilter: string[] | null = null
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  if ((locResult as any).data !== null) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    locationFilter = ((locResult as any).data ?? []).map((l: any) => l.id as string)
     if (locationFilter.length === 0)
       return ok(res, { entries: [], total: 0, page: pageNum, limit: limitNum, total_cartons_remaining: 0 })
   }
 
-  // Resolve material_ids for material search + category + explicit IDs
   let materialFilter: string[] | null = null
-  if (material_search || effectiveCategories.length || filterMaterialIds.length) {
-    let matQ = (supabase.from('Material') as any).select('id')
-    if (material_search)                        matQ = matQ.or(`material_code.ilike.%${material_search}%,short_name.ilike.%${material_search}%`)
-    if (effectiveCategories.length === 1)       matQ = matQ.eq('category', effectiveCategories[0])
-    else if (effectiveCategories.length > 1)    matQ = matQ.in('category', effectiveCategories)
-    if (filterMaterialIds.length > 0)           matQ = matQ.in('id', filterMaterialIds)
-    const { data: mats, error: matErr } = await matQ
-    if (matErr) return fail(res, 500, 'DB_ERROR', matErr.message)
-    materialFilter = (mats ?? []).map((m: any) => m.id as string)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  if ((matResult as any).data !== null) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    materialFilter = ((matResult as any).data ?? []).map((m: any) => m.id as string)
     if (materialFilter.length === 0)
       return ok(res, { entries: [], total: 0, page: pageNum, limit: limitNum, total_cartons_remaining: 0 })
   }
@@ -186,9 +204,11 @@ export async function listInventory(req: Request, res: Response) {
     .order('id', { ascending: true })
     .range(offset, offset + limitNum - 1)
 
-  // Aggregate query (no pagination — sum cartons_remaining across all matching entries)
+  // Aggregate: use SQL SUM() instead of fetching all rows and summing in JS
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let aggQ = applyInventoryFilters(
-    (supabase.from('InventoryEntry') as any).select('cartons_remaining'),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (supabase.from('InventoryEntry') as any).select('cartons_remaining.sum()'),
     filterParams
   )
   if (datePctIds !== null) aggQ = aggQ.in('id', datePctIds)
@@ -197,9 +217,8 @@ export async function listInventory(req: Request, res: Response) {
 
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
 
-  const total_cartons_remaining = (aggData ?? []).reduce(
-    (s: number, e: any) => s + (Number(e.cartons_remaining) || 0), 0
-  )
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const total_cartons_remaining = Number((aggData as any[])?.[0]?.sum ?? 0)
 
   return ok(res, { entries: data ?? [], total: count ?? 0, page: pageNum, limit: limitNum, total_cartons_remaining })
 }

@@ -433,8 +433,7 @@ export function useInventoryEntries(params?: {
 }) {
   return useQuery({
     queryKey: ['inventory-entries', params],
-    staleTime: 0,
-    refetchOnWindowFocus: true,
+    staleTime: 30_000,
     queryFn: async () => {
       const { warehouse_ids, categories, filter_locations, filter_material_ids, qa_status_ids, filter_cycles, filter_machines, date_pct_ranges, ...rest } = params ?? {}
       const { data } = await apiClient.get('/wms/inventory', {

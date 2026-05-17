@@ -162,9 +162,11 @@ export async function createEmployee(req: Request, res: Response) {
     const hashedPw = await bcrypt.hash(tempPassword, 10)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const now = new Date().toISOString()
     const { error } = await (supabase.from('Employee') as any).insert({
       id: empId, name, employee_code,
       email: email || null, phone: phone || null,
+      role: 'WAREHOUSE_STAFF',
       department_id: department_id || null,
       job_title_id:  job_title_id  || null,
       action_level:  finalActionLevel  || 'VIEWER',
@@ -172,7 +174,8 @@ export async function createEmployee(req: Request, res: Response) {
       warehouse_scope: finalScope ?? 'ASSIGNED',
       password: hashedPw,
       is_active: true,
-      updated_at: new Date().toISOString(),
+      created_at: now,
+      updated_at: now,
     })
     if (error) return fail(res, error.message)
 

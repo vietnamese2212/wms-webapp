@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Moon, Sun, Monitor, Bell, Shield, Globe, Save, User } from 'lucide-react'
+import type { AxiosError } from 'axios'
+import { Moon, Sun, Monitor, Bell, Shield, Globe, Save, User, KeyRound } from 'lucide-react'
 import { PageHeader } from '@/components/shared/PageHeader'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -14,6 +15,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { roleLabel } from '@/utils/formatters'
 import { cn } from '@/lib/utils'
 import { toast } from '@/components/ui/use-toast'
+import { apiClient } from '@/api/client'
 
 type Theme = 'light' | 'dark' | 'system'
 
@@ -29,6 +31,34 @@ export default function Settings() {
 
   const [name, setName] = useState(user?.name ?? '')
   const [email, setEmail] = useState(user?.email ?? '')
+
+  const [oldPwd,  setOldPwd]  = useState('')
+  const [newPwd,  setNewPwd]  = useState('')
+  const [confPwd, setConfPwd] = useState('')
+  const [pwdSaving, setPwdSaving] = useState(false)
+  const [pwdError,  setPwdError]  = useState('')
+  const [pwdOk,     setPwdOk]    = useState(false)
+
+  async function handleChangePwd() {
+    setPwdError('')
+    setPwdOk(false)
+    if (newPwd.length < 6)  { setPwdError('Mật khẩu mới phải có ít nhất 6 ký tự'); return }
+    if (newPwd !== confPwd) { setPwdError('Xác nhận mật khẩu không khớp'); return }
+    setPwdSaving(true)
+    try {
+      await apiClient.post('/auth/change-password', { old_password: oldPwd, new_password: newPwd })
+      setOldPwd(''); setNewPwd(''); setConfPwd('')
+      setPwdOk(true)
+      toast({ title: 'Đổi mật khẩu thành công', variant: 'success' })
+    } catch (err) {
+      const msg = (err as AxiosError<{ error: { message: string } }>)
+        ?.response?.data?.error?.message ?? 'Lỗi đổi mật khẩu'
+      setPwdError(msg)
+    } finally {
+      setPwdSaving(false)
+    }
+  }
+
   const [notifications, setNotifications] = useState({
     lowStock: true,
     inboundComplete: true,
@@ -86,14 +116,52 @@ export default function Settings() {
                 <Input value={user?.role ? roleLabel[user.role] : ''} disabled className="bg-muted" />
               </div>
             </div>
-            <div className="space-y-2">
-              <Label>Mật khẩu mới</Label>
-              <Input type="password" placeholder="Để trống nếu không đổi" />
-            </div>
             <div className="flex justify-end">
               <Button onClick={handleSaveProfile}>
                 <Save className="h-4 w-4 mr-2" />
                 Lưu thay đổi
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Change password */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <KeyRound className="h-4 w-4" />
+              Đổi mật khẩu
+            </CardTitle>
+            <CardDescription>Nhập mật khẩu hiện tại và mật khẩu mới để cập nhật</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {pwdError && (
+              <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{pwdError}</div>
+            )}
+            {pwdOk && (
+              <div className="rounded-md bg-green-50 border border-green-200 px-3 py-2 text-sm text-green-700">Đổi mật khẩu thành công!</div>
+            )}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">Mật khẩu hiện tại</Label>
+                <Input type="password" value={oldPwd} onChange={e => { setOldPwd(e.target.value); setPwdError(''); setPwdOk(false) }}
+                  placeholder="••••••••" autoComplete="current-password" />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Mật khẩu mới</Label>
+                <Input type="password" value={newPwd} onChange={e => { setNewPwd(e.target.value); setPwdError(''); setPwdOk(false) }}
+                  placeholder="Tối thiểu 6 ký tự" autoComplete="new-password" />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Xác nhận mật khẩu mới</Label>
+                <Input type="password" value={confPwd} onChange={e => { setConfPwd(e.target.value); setPwdError(''); setPwdOk(false) }}
+                  placeholder="Nhập lại mật khẩu mới" autoComplete="new-password" />
+              </div>
+            </div>
+            <div className="flex justify-end">
+              <Button size="sm" onClick={handleChangePwd}
+                disabled={pwdSaving || !oldPwd || !newPwd || !confPwd}>
+                {pwdSaving ? 'Đang lưu…' : 'Đổi mật khẩu'}
               </Button>
             </div>
           </CardContent>

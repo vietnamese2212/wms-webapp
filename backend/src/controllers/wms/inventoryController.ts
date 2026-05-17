@@ -92,7 +92,9 @@ export async function listInventory(req: Request, res: Response) {
     ? (warehouseIds.length > 0 ? warehouseIds.filter(id => scopeWarehouses.includes(id)) : scopeWarehouses)
     : warehouseIds
 
-  const scopeCategories = req.user?.allowed_categories ?? []
+  // Normalize old abbreviations from stale JWT (TP→Thành phẩm, BAO_BI→Bao bì)
+  const normCat = (c: string) => c === 'TP' ? 'Thành phẩm' : c === 'BAO_BI' ? 'Bao bì' : c
+  const scopeCategories = (req.user?.allowed_categories ?? []).map(normCat)
   const effectiveCategories = scopeCategories.length > 0
     ? (categories.length > 0 ? categories.filter(c => scopeCategories.includes(c)) : scopeCategories)
     : categories

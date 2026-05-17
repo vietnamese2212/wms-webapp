@@ -19,26 +19,10 @@ import {
 } from '@/api/hooks'
 import { apiClient } from '@/api/client'
 import { MODULES, type ModuleKey } from '@/config/permissions'
-import type { EmployeeRecord, Department, JobTitle, ActionLevel, Category, ModulePermissions } from '@/types'
+import type { EmployeeRecord, Department, JobTitle, Category, ModulePermissions } from '@/types'
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
-const ACTION_LEVEL_LABEL: Record<ActionLevel, string> = {
-  NATIONAL_MANAGER: 'QL toàn quốc',
-  SITE_MANAGER:     'QL site',
-  SUPERVISOR:       'Giám sát',
-  OPERATOR:         'Thủ kho',
-  STAFF:            'Nhân viên',
-  VIEWER:           'Xem',
-}
-const ACTION_LEVEL_COLOR: Record<ActionLevel, string> = {
-  NATIONAL_MANAGER: 'bg-blue-100 text-blue-800',
-  SITE_MANAGER:     'bg-indigo-100 text-indigo-800',
-  SUPERVISOR:       'bg-amber-100 text-amber-800',
-  OPERATOR:         'bg-green-100 text-green-800',
-  STAFF:            'bg-slate-100 text-slate-700',
-  VIEWER:           'bg-slate-50 text-slate-500',
-}
 const CATEGORY_COLOR: Record<Category, string> = {
   TP:     'bg-emerald-100 text-emerald-700',
   NVL:    'bg-blue-100 text-blue-700',
@@ -137,7 +121,6 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
   const [email,        setEmail]        = useState(emp?.email         ?? '')
   const [phone,        setPhone]        = useState(emp?.phone         ?? '')
   const [jobTitleId,   setJobTitleId]   = useState(emp?.job_title_id  ?? '')
-  const [actionLevel,  setActionLevel]  = useState<ActionLevel>(emp?.action_level ?? 'STAFF')
   const [categories,   setCategories]   = useState<Category[]>(emp?.allowed_categories ?? [])
   const [scope,        setScope]        = useState<'NATIONAL'|'ASSIGNED'>(emp?.warehouse_scope ?? 'ASSIGNED')
   const [warehouseIds, setWarehouseIds] = useState<string[]>(
@@ -149,7 +132,6 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
     if (!jobTitleId) return
     const jt = jobTitles.find(j => j.id === jobTitleId)
     if (jt) {
-      setActionLevel(jt.action_level)
       setCategories(jt.allowed_categories)
       setScope(jt.warehouse_scope)
     }
@@ -186,7 +168,6 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
       email: email || undefined, phone: phone || undefined,
       department_id: deptId || undefined,
       job_title_id: jobTitleId || undefined,
-      action_level: actionLevel,
       allowed_categories: categories,
       warehouse_scope: scope,
       warehouse_ids: scope === 'ASSIGNED' ? warehouseIds : [],
@@ -312,21 +293,9 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
 
           <div className="rounded-lg border border-slate-200 p-3 space-y-3 bg-slate-50">
             <p className="text-xs font-medium text-slate-600 flex items-center gap-1">
-              <ShieldCheck className="h-3.5 w-3.5" /> Phân quyền
-              <span className="font-normal text-slate-400">(tự điền từ chức danh, override được)</span>
+              <ShieldCheck className="h-3.5 w-3.5" /> Phạm vi dữ liệu
+              <span className="font-normal text-slate-400">(tự điền từ chức danh)</span>
             </p>
-
-            <div className="space-y-1">
-              <Label className="text-xs">Cấp quyền</Label>
-              <Select value={actionLevel} onValueChange={v => setActionLevel(v as ActionLevel)}>
-                <SelectTrigger className="bg-white"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {(Object.keys(ACTION_LEVEL_LABEL) as ActionLevel[]).map(lvl => (
-                    <SelectItem key={lvl} value={lvl}>{ACTION_LEVEL_LABEL[lvl]}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
 
             <div className="space-y-1">
               <Label className="text-xs">Loại hàng được phép</Label>
@@ -698,7 +667,6 @@ export default function UserManagement() {
                     <TableRow>
                       <TableHead className="px-3 py-2 text-xs">Nhân viên</TableHead>
                       <TableHead className="px-3 py-2 text-xs">Phòng ban / Chức danh</TableHead>
-                      <TableHead className="px-3 py-2 text-xs">Cấp quyền</TableHead>
                       <TableHead className="px-3 py-2 text-xs">Loại hàng</TableHead>
                       <TableHead className="px-3 py-2 text-xs">Kho</TableHead>
                       <TableHead className="px-3 py-2 text-xs">Trạng thái</TableHead>
@@ -715,13 +683,6 @@ export default function UserManagement() {
                         <TableCell className="px-3 py-2">
                           <p className="text-slate-700">{emp.dept?.name ?? emp.department ?? '—'}</p>
                           <p className="text-xs text-slate-400">{emp.job_title?.name ?? '—'}</p>
-                        </TableCell>
-                        <TableCell className="px-3 py-2">
-                          {emp.action_level ? (
-                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${ACTION_LEVEL_COLOR[emp.action_level]}`}>
-                              {ACTION_LEVEL_LABEL[emp.action_level]}
-                            </span>
-                          ) : <span className="text-slate-300">—</span>}
                         </TableCell>
                         <TableCell className="px-3 py-2">
                           <div className="flex gap-1 flex-wrap">
@@ -864,7 +825,6 @@ export default function UserManagement() {
                     <TableRow>
                       <TableHead className="px-3 py-2 text-xs">Chức danh</TableHead>
                       <TableHead className="px-3 py-2 text-xs">Phòng ban</TableHead>
-                      <TableHead className="px-3 py-2 text-xs">Cấp quyền</TableHead>
                       <TableHead className="px-3 py-2 text-xs">Loại hàng</TableHead>
                       <TableHead className="px-3 py-2 text-xs">Phạm vi</TableHead>
                       <TableHead className="px-3 py-2 text-xs">Trạng thái</TableHead>
@@ -876,13 +836,6 @@ export default function UserManagement() {
                       <TableRow key={jt.id} className="text-sm">
                         <TableCell className="px-3 py-2 font-medium text-slate-800">{jt.name}</TableCell>
                         <TableCell className="px-3 py-2 text-slate-600 text-xs">{jt.department?.name ?? '—'}</TableCell>
-                        <TableCell className="px-3 py-2">
-                          {jt.action_level ? (
-                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${ACTION_LEVEL_COLOR[jt.action_level]}`}>
-                              {ACTION_LEVEL_LABEL[jt.action_level]}
-                            </span>
-                          ) : <span className="text-slate-300">—</span>}
-                        </TableCell>
                         <TableCell className="px-3 py-2">
                           <div className="flex gap-1 flex-wrap">
                             {(jt.allowed_categories ?? []).map(cat => (

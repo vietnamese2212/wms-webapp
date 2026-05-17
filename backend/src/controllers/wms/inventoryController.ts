@@ -83,6 +83,19 @@ export async function listInventory(req: Request, res: Response) {
   // Multi-value params (comma-separated)
   const warehouseIds      = parseArr(q.warehouse_ids)
   const categories        = parseArr(q.categories)
+
+  // Enforce user's warehouse + category scope from JWT
+  const scopeWarehouses = req.user?.warehouse_scope !== 'NATIONAL'
+    ? (req.user?.warehouse_ids ?? [])
+    : []
+  const effectiveWarehouseIds = scopeWarehouses.length > 0
+    ? (warehouseIds.length > 0 ? warehouseIds.filter(id => scopeWarehouses.includes(id)) : scopeWarehouses)
+    : warehouseIds
+
+  const scopeCategories = req.user?.allowed_categories ?? []
+  const effectiveCategories = scopeCategories.length > 0
+    ? (categories.length > 0 ? categories.filter(c => scopeCategories.includes(c)) : scopeCategories)
+    : categories
   const filterLocations   = parseArr(q.filter_locations)
   const filterCycles      = parseArr(q.filter_cycles)
   const filterMachines    = parseArr(q.filter_machines)
@@ -96,10 +109,10 @@ export async function listInventory(req: Request, res: Response) {
 
   // Resolve location_ids for warehouse / location_code filters
   let locationFilter: string[] | null = null
-  if (warehouseIds.length || filterLocations.length) {
+  if (effectiveWarehouseIds.length || filterLocations.length) {
     let locQ = (supabase.from('Location') as any).select('id')
-    if (warehouseIds.length === 1)     locQ = locQ.eq('warehouse_id', warehouseIds[0])
-    else if (warehouseIds.length > 1)  locQ = locQ.in('warehouse_id', warehouseIds)
+    if (effectiveWarehouseIds.length === 1)     locQ = locQ.eq('warehouse_id', effectiveWarehouseIds[0])
+    else if (effectiveWarehouseIds.length > 1)  locQ = locQ.in('warehouse_id', effectiveWarehouseIds)
     if (filterLocations.length === 1)  locQ = locQ.eq('location_code', filterLocations[0])
     else if (filterLocations.length > 1) locQ = locQ.in('location_code', filterLocations)
 
@@ -112,12 +125,12 @@ export async function listInventory(req: Request, res: Response) {
 
   // Resolve material_ids for material search + category + explicit IDs
   let materialFilter: string[] | null = null
-  if (material_search || categories.length || filterMaterialIds.length) {
+  if (material_search || effectiveCategories.length || filterMaterialIds.length) {
     let matQ = (supabase.from('Material') as any).select('id')
-    if (material_search)               matQ = matQ.or(`material_code.ilike.%${material_search}%,short_name.ilike.%${material_search}%`)
-    if (categories.length === 1)       matQ = matQ.eq('category', categories[0])
-    else if (categories.length > 1)    matQ = matQ.in('category', categories)
-    if (filterMaterialIds.length > 0)  matQ = matQ.in('id', filterMaterialIds)
+    if (material_search)                        matQ = matQ.or(`material_code.ilike.%${material_search}%,short_name.ilike.%${material_search}%`)
+    if (effectiveCategories.length === 1)       matQ = matQ.eq('category', effectiveCategories[0])
+    else if (effectiveCategories.length > 1)    matQ = matQ.in('category', effectiveCategories)
+    if (filterMaterialIds.length > 0)           matQ = matQ.in('id', filterMaterialIds)
     const { data: mats, error: matErr } = await matQ
     if (matErr) return fail(res, 500, 'DB_ERROR', matErr.message)
     materialFilter = (mats ?? []).map((m: any) => m.id as string)

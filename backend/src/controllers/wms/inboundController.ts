@@ -81,16 +81,35 @@ export async function listOrders(req: Request, res: Response) {
       .order('import_date', { ascending: false })
       .order('created_at',  { ascending: false })
 
-    if (warehouse_id)      query = query.eq('warehouse_id', warehouse_id)
-    if (status)            query = query.eq('status', status)
-    else                   query = query.neq('status', 'CANCELLED')
-    if (material_id)       query = query.eq('material_id', material_id)
-    if (shift_id)          query = query.eq('shift_id', shift_id)
+    // Enforce user's warehouse scope from JWT
+    const scopeWarehouses = req.user?.warehouse_scope !== 'NATIONAL'
+      ? (req.user?.warehouse_ids ?? [])
+      : []
+    if (scopeWarehouses.length > 0) {
+      const effective = warehouse_id
+        ? scopeWarehouses.filter(id => id === warehouse_id)
+        : scopeWarehouses
+      if (effective.length === 0) { ok(res, []); return }
+      query = effective.length === 1
+        ? query.eq('warehouse_id', effective[0])
+        : query.in('warehouse_id', effective)
+    } else if (warehouse_id) {
+      query = query.eq('warehouse_id', warehouse_id)
+    }
 
-    // Filter by material category (Loại kho: TP / NVL / POSM / BAO_BI)
-    if (material_category) {
+    if (status)      query = query.eq('status', status)
+    else             query = query.neq('status', 'CANCELLED')
+    if (material_id) query = query.eq('material_id', material_id)
+    if (shift_id)    query = query.eq('shift_id', shift_id)
+
+    // Enforce user's category scope + optional query-param category filter
+    const scopeCategories = req.user?.allowed_categories ?? []
+    const effectiveCategories = scopeCategories.length > 0
+      ? (material_category ? scopeCategories.filter(c => c === material_category) : scopeCategories)
+      : (material_category ? [material_category] : [])
+    if (effectiveCategories.length > 0) {
       const { data: catMats } = await supabase
-        .from('Material').select('id').eq('category', material_category)
+        .from('Material').select('id').in('category', effectiveCategories)
       const catMatIds = (catMats ?? []).map((m: { id: string }) => m.id)
       if (catMatIds.length === 0) { ok(res, []); return }
       query = query.in('material_id', catMatIds)

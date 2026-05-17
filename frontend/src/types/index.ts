@@ -16,7 +16,7 @@ export interface User {
   warehouse_name?: string
   // Permission system fields
   action_level?:       ActionLevel
-  allowed_categories?: Category[]
+  allowed_categories?: string[]
   warehouse_scope?:    'NATIONAL' | 'ASSIGNED'
   warehouse_ids?:      string[]
   allowed_modules?:    AppModule[]
@@ -38,7 +38,7 @@ export interface JobTitle {
   name:               string
   department_id:      string
   action_level:       ActionLevel
-  allowed_categories: Category[]
+  allowed_categories: string[]
   warehouse_scope:    'NATIONAL' | 'ASSIGNED'
   is_active:          boolean
   department?:        Pick<Department, 'id' | 'name' | 'code'>
@@ -56,7 +56,7 @@ export interface EmployeeRecord {
   department_id:      string | null
   job_title_id:       string | null
   action_level:       ActionLevel | null
-  allowed_categories: Category[]
+  allowed_categories: string[]
   warehouse_scope:    'NATIONAL' | 'ASSIGNED'
   warehouse_id:       string | null       // legacy single warehouse
   is_active:          boolean

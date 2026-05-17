@@ -16,20 +16,20 @@ import {
   useCreateEmployee, useUpdateEmployee, useWarehouses,
   useCreateDepartment, useUpdateDepartment,
   useCreateJobTitle, useUpdateJobTitle,
+  useMaterialCategories,
 } from '@/api/hooks'
 import { apiClient } from '@/api/client'
 import { MODULES, type ModuleKey } from '@/config/permissions'
-import type { EmployeeRecord, Department, JobTitle, Category, ModulePermissions } from '@/types'
+import type { EmployeeRecord, Department, JobTitle, ModulePermissions } from '@/types'
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
-const CATEGORY_COLOR: Record<Category, string> = {
-  TP:     'bg-emerald-100 text-emerald-700',
-  NVL:    'bg-blue-100 text-blue-700',
-  POSM:   'bg-orange-100 text-orange-700',
-  BAO_BI: 'bg-slate-100 text-slate-600',
+const CATEGORY_COLOR: Record<string, string> = {
+  'Thành phẩm': 'bg-emerald-100 text-emerald-700',
+  'Nguyên vật liệu': 'bg-blue-100 text-blue-700',
+  'POSM':       'bg-orange-100 text-orange-700',
+  'Bao bì':     'bg-slate-100 text-slate-600',
 }
-const ALL_CATEGORIES: Category[] = ['TP', 'NVL', 'POSM', 'BAO_BI']
 
 // ─── Set password dialog ──────────────────────────────────────────────────────
 
@@ -115,13 +115,14 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
   const [deptId, setDeptId]   = useState(emp?.department_id ?? '')
   const { data: jobTitles = [] } = useJobTitles(deptId || undefined)
   const { data: warehouses = [] } = useWarehouses()
+  const { data: categoryOptions = [] } = useMaterialCategories()
 
   const [name,         setName]         = useState(emp?.name          ?? '')
   const [empCode,      setEmpCode]      = useState(emp?.employee_code ?? '')
   const [email,        setEmail]        = useState(emp?.email         ?? '')
   const [phone,        setPhone]        = useState(emp?.phone         ?? '')
   const [jobTitleId,   setJobTitleId]   = useState(emp?.job_title_id  ?? '')
-  const [categories,   setCategories]   = useState<Category[]>(emp?.allowed_categories ?? [])
+  const [categories,   setCategories]   = useState<string[]>(emp?.allowed_categories ?? [])
   const [scope,        setScope]        = useState<'NATIONAL'|'ASSIGNED'>(emp?.warehouse_scope ?? 'ASSIGNED')
   const [warehouseIds, setWarehouseIds] = useState<string[]>(
     emp?.warehouse_access?.map(w => w.warehouse_id) ?? []
@@ -163,7 +164,7 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
     setTimeout(() => setCopied(false), 2000)
   }
 
-  function toggleCategory(cat: Category) {
+  function toggleCategory(cat: string) {
     setCategories(prev => prev.includes(cat) ? prev.filter(c => c !== cat) : [...prev, cat])
   }
   function toggleWarehouse(wid: string) {
@@ -308,11 +309,11 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
             <div className="space-y-1">
               <Label className="text-xs">Loại hàng được phép</Label>
               <div className="flex gap-2 flex-wrap">
-                {ALL_CATEGORIES.map(cat => (
+                {categoryOptions.map(cat => (
                   <button key={cat} type="button" onClick={() => toggleCategory(cat)}
                     className={`px-3 py-1 rounded-full text-xs font-medium border transition-all
                       ${categories.includes(cat)
-                        ? CATEGORY_COLOR[cat] + ' border-transparent'
+                        ? (CATEGORY_COLOR[cat] ?? 'bg-emerald-100 text-emerald-700') + ' border-transparent'
                         : 'bg-white text-slate-400 border-slate-200 hover:border-slate-300'}`}>
                     {cat}
                   </button>

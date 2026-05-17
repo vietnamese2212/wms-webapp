@@ -116,7 +116,6 @@ export function Sidebar() {
   const { sidebarCollapsed, toggleSidebar } = useUIStore()
   const { user } = useAuthStore()
   const modulePerms = user?.module_permissions as ModulePermissions | null ?? null
-  const isAdmin = user?.role === 'ADMIN' || user?.role === 'OWN'
 
   const initials = user?.name
     .split(' ')
@@ -156,10 +155,9 @@ export function Sidebar() {
         <ScrollArea className="flex-1 py-4">
           <nav className="space-y-6 px-2">
             {navGroups.map((group) => {
-              const visibleItems = group.items.filter(item => {
-                if (item.to === '/masterdata/users' && !isAdmin) return false
-                return !item.module || canAccess(modulePerms, item.module)
-              })
+              const visibleItems = group.items.filter(item =>
+                !item.module || canAccess(modulePerms, item.module)
+              )
               if (visibleItems.length === 0) return null
               return (
               <div key={group.label}>

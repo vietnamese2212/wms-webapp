@@ -42,11 +42,6 @@ function PermissionRoute({
   return <>{children}</>
 }
 
-function AdminRoute({ children }: { children: React.ReactNode }) {
-  const user = useAuthStore((s) => s.user)
-  if (!user || (user.role !== 'ADMIN' && user.role !== 'OWN')) return <Navigate to="/" replace />
-  return <>{children}</>
-}
 
 export default function App() {
   return (
@@ -93,13 +88,13 @@ export default function App() {
         {/* HR */}
         <Route path="/hr/schedule" element={<Schedule />} />
 
-        {/* Masterdata — chỉ ADMIN / OWN mới được vào */}
+        {/* Masterdata — chỉ chức danh có quyền employees mới được vào */}
         <Route
           path="/masterdata/users"
           element={
-            <AdminRoute>
+            <PermissionRoute module="employees">
               <UserManagement />
-            </AdminRoute>
+            </PermissionRoute>
           }
         />
 

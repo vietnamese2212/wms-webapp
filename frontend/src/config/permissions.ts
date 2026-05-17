@@ -130,3 +130,7 @@ export function canAccess(
   if (!perms) return false
   return (perms[module]?.length ?? 0) > 0
 }
+
+export function isAdmin(name?: string | null): boolean {
+  return name === 'Admin'
+}

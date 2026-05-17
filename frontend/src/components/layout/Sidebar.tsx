@@ -11,14 +11,14 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
-import { actionLevelLabel } from '@/utils/formatters'
-import { canAccess, type ModuleKey, type ModulePermissions } from '@/config/permissions'
+import { canAccess, isAdmin, type ModuleKey, type ModulePermissions } from '@/config/permissions'
 
 interface NavItem {
   to: string
   icon: React.ElementType
   label: string
   module?: ModuleKey
+  adminOnly?: boolean
 }
 
 interface NavGroup {
@@ -62,7 +62,7 @@ const navGroups: NavGroup[] = [
   {
     label: 'Quản trị',
     items: [
-      { to: '/masterdata/users', icon: UserCog, label: 'Quản lý người dùng', module: 'employees' },
+      { to: '/masterdata/users', icon: UserCog, label: 'Quản lý người dùng', adminOnly: true },
     ],
   },
 ]
@@ -116,6 +116,7 @@ export function Sidebar() {
   const { sidebarCollapsed, toggleSidebar } = useUIStore()
   const { user } = useAuthStore()
   const modulePerms = user?.module_permissions as ModulePermissions | null ?? null
+  const admin = isAdmin(user?.name)
 
   const initials = user?.name
     .split(' ')
@@ -155,9 +156,11 @@ export function Sidebar() {
         <ScrollArea className="flex-1 py-4">
           <nav className="space-y-6 px-2">
             {navGroups.map((group) => {
-              const visibleItems = group.items.filter(item =>
-                !item.module || canAccess(modulePerms, item.module)
-              )
+              const visibleItems = group.items.filter(item => {
+                if (item.adminOnly) return admin
+                if (!item.module) return true
+                return admin || canAccess(modulePerms, item.module)
+              })
               if (visibleItems.length === 0) return null
               return (
               <div key={group.label}>
@@ -202,7 +205,7 @@ export function Sidebar() {
               </Avatar>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-xs font-medium text-foreground">{user.name}</p>
-                <p className="truncate text-[10px] text-muted-foreground">{user.action_level ? actionLevelLabel[user.action_level] : ''}</p>
+                <p className="truncate text-[10px] text-muted-foreground">{user.job_title_name ?? ''}</p>
               </div>
             </div>
           )}

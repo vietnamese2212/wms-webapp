@@ -1,7 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { Shell } from '@/components/layout/Shell'
 import { useAuthStore } from '@/stores/authStore'
-import { canAccess, type ModuleKey, type ModulePermissions } from '@/config/permissions'
+import { canAccess, isAdmin, type ModuleKey, type ModulePermissions } from '@/config/permissions'
 
 import Dashboard from '@/pages/Dashboard'
 import Inventory from '@/pages/wms/Inventory'
@@ -37,8 +37,9 @@ function PermissionRoute({
   module: ModuleKey
   children: React.ReactNode
 }) {
-  const perms = useAuthStore((s) => s.user?.module_permissions as ModulePermissions | null ?? null)
-  if (!canAccess(perms, module)) return <Navigate to="/" replace />
+  const user = useAuthStore((s) => s.user)
+  const perms = user?.module_permissions as ModulePermissions | null ?? null
+  if (!isAdmin(user?.name) && !canAccess(perms, module)) return <Navigate to="/" replace />
   return <>{children}</>
 }
 

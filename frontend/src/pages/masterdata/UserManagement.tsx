@@ -115,7 +115,8 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
   const [deptId, setDeptId]   = useState(emp?.department_id ?? '')
   const { data: jobTitles = [] } = useJobTitles(deptId || undefined)
   const { data: warehouses = [] } = useWarehouses()
-  const { data: categoryOptions = [] } = useMaterialCategories()
+  const { data: dbCategories = [] } = useMaterialCategories()
+  const categoryOptions = [...new Set(['Thành phẩm', 'NVL', 'POSM', ...dbCategories])]
 
   const [name,         setName]         = useState(emp?.name          ?? '')
   const [empCode,      setEmpCode]      = useState(emp?.employee_code ?? '')

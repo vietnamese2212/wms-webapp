@@ -39,7 +39,7 @@ const navGroups: NavGroup[] = [
       { to: '/wms/inventory',         icon: Package,        label: 'Tồn kho',       module: 'inventory' },
       { to: '/wms/inbound',           icon: PackagePlus,    label: 'Nhập kho',       module: 'inbound' },
       { to: '/wms/outbound',          icon: PackageMinus,   label: 'Xuất kho',       module: 'outbound' },
-      { to: '/wms/outbound/scan-log', icon: ScanLine,       label: 'Lịch sử quét',   module: 'outbound' },
+      { to: '/wms/outbound/scan-log', icon: ScanLine,       label: 'Lịch sử quét',   module: 'scanlog' },
       { to: '/wms/loosepicking',      icon: Scissors,       label: 'Nhặt lẻ',        module: 'loosepicking' },
       { to: '/wms/locations',         icon: MapPin,         label: 'Vị trí kho',     module: 'locations' },
       { to: '/wms/stocktake',         icon: ClipboardCheck, label: 'Check vị trí',   module: 'stocktake' },

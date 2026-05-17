@@ -6,11 +6,13 @@ export const MODULES = {
   inventory: {
     label: 'Tồn kho',
     actions: {
-      view:          'Xem danh sách',
-      adjust:        'Điều chỉnh tồn',
-      move_location: 'Chuyển vị trí',
-      recode:        'Chuyển mã',
-      export:        'Xuất Excel',
+      view:            'Xem danh sách',
+      adjust:          'Điều chỉnh tồn',
+      move_location:   'Chuyển vị trí',
+      recode:          'Chuyển mã',
+      qa_update:       'Cập nhật QA Status',
+      update_prod_date:'Cập nhật ngày SX',
+      export:          'Xuất Excel',
     },
   },
   inbound: {
@@ -32,6 +34,12 @@ export const MODULES = {
       assign:   'Giao đơn',
       complete: 'Hoàn thành',
       cancel:   'Huỷ đơn',
+    },
+  },
+  scanlog: {
+    label: 'Lịch sử quét',
+    actions: {
+      view: 'Xem lịch sử quét',
     },
   },
   loosepicking: {

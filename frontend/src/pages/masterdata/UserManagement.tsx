@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import type { AxiosError } from 'axios'
 import { Plus, Pencil, ShieldCheck, Building2, User2, KeyRound, Check, Briefcase, Copy, CheckCheck } from 'lucide-react'
 import { SearchInput } from '@/components/shared/SearchInput'
@@ -128,8 +128,11 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
   )
   const [isActive, setIsActive] = useState(emp?.is_active ?? true)
 
+  // True chỉ khi user chủ động chọn chức danh — tránh ghi đè giá trị đang sửa khi jobTitles load
+  const userChangedJobTitle = useRef(false)
+
   useEffect(() => {
-    if (!jobTitleId) return
+    if (!jobTitleId || !userChangedJobTitle.current) return
     const jt = jobTitles.find(j => j.id === jobTitleId)
     if (jt) {
       setCategories(jt.allowed_categories)
@@ -137,7 +140,10 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
     }
   }, [jobTitleId, jobTitles])
 
-  useEffect(() => { setJobTitleId('') }, [deptId])
+  useEffect(() => {
+    setJobTitleId('')
+    userChangedJobTitle.current = false
+  }, [deptId])
 
   const { mutate: create, isPending: creating, error: createErr } = useCreateEmployee()
   const { mutate: update, isPending: updating, error: updateErr } = useUpdateEmployee()
@@ -279,7 +285,7 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Chức danh (template)</Label>
-              <Select value={jobTitleId || '__none__'} onValueChange={v => setJobTitleId(v === '__none__' ? '' : v)} disabled={!deptId}>
+              <Select value={jobTitleId || '__none__'} onValueChange={v => { userChangedJobTitle.current = true; setJobTitleId(v === '__none__' ? '' : v) }} disabled={!deptId}>
                 <SelectTrigger><SelectValue placeholder="Chọn chức danh" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__none__">— Không chọn —</SelectItem>

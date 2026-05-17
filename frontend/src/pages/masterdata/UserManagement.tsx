@@ -301,11 +301,6 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
           </div>
 
           <div className="rounded-lg border border-slate-200 p-3 space-y-3 bg-slate-50">
-            <p className="text-xs font-medium text-slate-600 flex items-center gap-1">
-              <ShieldCheck className="h-3.5 w-3.5" /> Phạm vi dữ liệu
-              <span className="font-normal text-slate-400">(tự điền từ chức danh)</span>
-            </p>
-
             <div className="space-y-1">
               <Label className="text-xs">Loại hàng được phép</Label>
               <div className="flex gap-2 flex-wrap">

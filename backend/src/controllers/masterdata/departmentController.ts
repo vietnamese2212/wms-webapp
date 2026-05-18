@@ -4,7 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 
 const DEPT_SELECT = 'id, name, code, allowed_modules, is_active, created_at, updated_at'
-const JT_SELECT   = 'id, name, department_id, action_level, allowed_categories, warehouse_scope, is_active, module_permissions, department:Department(id,name,code)'
+const JT_SELECT   = 'id, name, department_id, allowed_categories, warehouse_scope, is_active, module_permissions, department:Department(id,name,code)'
 
 // ─── Departments ──────────────────────────────────────────────────────────────
 
@@ -69,10 +69,9 @@ export async function listJobTitles(req: Request, res: Response) {
 
 export async function createJobTitle(req: Request, res: Response) {
   try {
-    const { name, department_id, action_level = 'STAFF', allowed_categories, warehouse_scope, module_permissions } = req.body as {
+    const { name, department_id, allowed_categories, warehouse_scope, module_permissions } = req.body as {
       name: string
       department_id: string
-      action_level?: string
       allowed_categories?: string[]
       warehouse_scope?: string
       module_permissions?: Record<string, string[]>
@@ -83,7 +82,7 @@ export async function createJobTitle(req: Request, res: Response) {
       .from('JobTitle')
       .insert({
         id: randomUUID(),
-        name, department_id, action_level,
+        name, department_id,
         allowed_categories: allowed_categories ?? ['TP','NVL','POSM','BAO_BI'],
         warehouse_scope: warehouse_scope ?? 'ASSIGNED',
         module_permissions: module_permissions ?? {},
@@ -99,14 +98,14 @@ export async function createJobTitle(req: Request, res: Response) {
 export async function updateJobTitle(req: Request, res: Response) {
   try {
     const { id } = req.params
-    const { name, action_level, allowed_categories, warehouse_scope, is_active, module_permissions } = req.body as {
-      name?: string; action_level?: string; allowed_categories?: string[]
+    const { name, allowed_categories, warehouse_scope, is_active, module_permissions } = req.body as {
+      name?: string; allowed_categories?: string[]
       warehouse_scope?: string; is_active?: boolean
       module_permissions?: Record<string, string[]>
     }
     const { data, error } = await supabase
       .from('JobTitle')
-      .update({ name, action_level, allowed_categories, warehouse_scope, is_active, module_permissions, updated_at: new Date().toISOString() })
+      .update({ name, allowed_categories, warehouse_scope, is_active, module_permissions, updated_at: new Date().toISOString() })
       .eq('id', id)
       .select(JT_SELECT)
       .single()

@@ -740,7 +740,7 @@ export function useCreateEmployee() {
     mutationFn: (body: {
       name: string; employee_code: string; email?: string; phone?: string
       department_id?: string; job_title_id?: string
-      action_level?: string; allowed_categories?: string[]; warehouse_scope?: string
+      allowed_categories?: string[]; warehouse_scope?: string
       warehouse_ids?: string[]
     }) => apiClient.post('/masterdata/employees', body).then(r => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['employee-records'] }),
@@ -753,7 +753,7 @@ export function useUpdateEmployee() {
     mutationFn: ({ id, ...body }: {
       id: string; name?: string; phone?: string; email?: string
       department_id?: string; job_title_id?: string
-      action_level?: string; allowed_categories?: string[]; warehouse_scope?: string
+      allowed_categories?: string[]; warehouse_scope?: string
       is_active?: boolean; warehouse_ids?: string[]
     }) => apiClient.patch(`/masterdata/employees/${id}`, body).then(r => r.data.data),
     onSuccess: (updated: EmployeeRecord, v) => {
@@ -800,7 +800,7 @@ export function useCreateJobTitle() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (body: {
-      name: string; department_id: string; action_level?: string
+      name: string; department_id: string
       allowed_categories?: string[]; warehouse_scope?: string
       module_permissions?: Record<string, string[]>
     }) => apiClient.post('/masterdata/job-titles', body).then(r => r.data.data),
@@ -812,7 +812,7 @@ export function useUpdateJobTitle() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ id, ...body }: {
-      id: string; name?: string; action_level?: string
+      id: string; name?: string
       allowed_categories?: string[]; warehouse_scope?: string; is_active?: boolean
       module_permissions?: Record<string, string[]>
     }) => apiClient.put(`/masterdata/job-titles/${id}`, body).then(r => r.data.data),

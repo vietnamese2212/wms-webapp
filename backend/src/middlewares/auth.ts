@@ -5,7 +5,6 @@ export interface JwtPayload {
   sub:                string
   name:               string
   email:              string | null
-  action_level:       string
   warehouse_scope:    string
   warehouse_id:       string | null
   allowed_categories: string[]

@@ -56,7 +56,6 @@ async function run() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (supabase.from('Employee') as any).update({
       password_hash:      hash,
-      action_level:       'NATIONAL_MANAGER',
       warehouse_scope:    'NATIONAL',
       allowed_categories: ['TP', 'NVL', 'POSM', 'BAO_BI'],
       is_active:          true,
@@ -73,7 +72,6 @@ async function run() {
       employee_code:      ADMIN_CODE,
       email:              ADMIN_EMAIL,
       password_hash:      hash,
-      action_level:       'NATIONAL_MANAGER',
       warehouse_scope:    'NATIONAL',
       allowed_categories: ['TP', 'NVL', 'POSM', 'BAO_BI'],
       is_active:          true,

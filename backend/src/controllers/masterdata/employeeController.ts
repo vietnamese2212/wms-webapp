@@ -24,14 +24,14 @@ function generateTempPassword(): string {
 interface EmpRow {
   id: string; name: string; employee_code: string; email: string | null; phone: string | null
   role: string; department: string | null; department_id: string | null; job_title_id: string | null
-  action_level: string | null; allowed_categories: string[] | null; warehouse_scope: string | null
+  allowed_categories: string[] | null; warehouse_scope: string | null
   warehouse_id: string | null; is_active: boolean; created_at: string
 }
 
 const EMP_BASE = [
   'id', 'name', 'employee_code', 'email', 'phone',
   'department', 'department_id', 'job_title_id',
-  'action_level', 'allowed_categories', 'warehouse_scope',
+  'allowed_categories', 'warehouse_scope',
   'warehouse_id', 'is_active', 'created_at',
 ].join(', ')
 
@@ -66,8 +66,8 @@ async function fetchFull(opts: {
   const jtIds = [...new Set(emps.map(e => e.job_title_id).filter((x): x is string => !!x))]
   const { data: jts } = jtIds.length
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ? await (supabase.from('JobTitle') as any).select('id, name, action_level, allowed_categories, warehouse_scope').in('id', jtIds)
-    : { data: [] as { id: string; name: string; action_level: string; allowed_categories: string[]; warehouse_scope: string }[] }
+    ? await (supabase.from('JobTitle') as any).select('id, name, allowed_categories, warehouse_scope').in('id', jtIds)
+    : { data: [] as { id: string; name: string; allowed_categories: string[]; warehouse_scope: string }[] }
 
   // ── Warehouse access ───────────────────────────────────────────────────────
   const empIds = emps.map(e => e.id)
@@ -83,7 +83,7 @@ async function fetchFull(opts: {
 
   // ── Merge ──────────────────────────────────────────────────────────────────
   const deptMap = new Map(((depts ?? []) as { id: string; name: string; code: string }[]).map(d => [d.id, d]))
-  const jtMap   = new Map(((jts   ?? []) as { id: string; name: string; action_level: string; allowed_categories: string[]; warehouse_scope: string }[]).map(j => [j.id, j]))
+  const jtMap   = new Map(((jts   ?? []) as { id: string; name: string; allowed_categories: string[]; warehouse_scope: string }[]).map(j => [j.id, j]))
   const whMap   = new Map(((whs   ?? []) as { id: string; code: string; name: string }[]).map(w => [w.id, w]))
 
   const waByEmp = new Map<string, { warehouse_id: string; warehouse: { id: string; code: string; name: string } | null }[]>()
@@ -130,30 +130,28 @@ export async function createEmployee(req: Request, res: Response) {
     const {
       name, employee_code, email, phone,
       department_id, job_title_id,
-      action_level, allowed_categories, warehouse_scope,
+      allowed_categories, warehouse_scope,
       warehouse_ids = [],
     } = req.body as {
       name: string; employee_code: string; email?: string; phone?: string
       department_id?: string; job_title_id?: string
-      action_level?: string; allowed_categories?: string[]; warehouse_scope?: string
+      allowed_categories?: string[]; warehouse_scope?: string
       warehouse_ids?: string[]
     }
 
     if (!name || !employee_code) return fail(res, 'name và employee_code là bắt buộc', 400)
 
-    let finalActionLevel = action_level
-    let finalCategories  = allowed_categories
-    let finalScope       = warehouse_scope
+    let finalCategories = allowed_categories
+    let finalScope      = warehouse_scope
 
-    if (job_title_id && (!finalActionLevel || !finalCategories)) {
+    if (job_title_id && !finalCategories) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: jt } = await (supabase.from('JobTitle') as any)
-        .select('action_level, allowed_categories, warehouse_scope')
+        .select('allowed_categories, warehouse_scope')
         .eq('id', job_title_id).single()
       if (jt) {
-        finalActionLevel = finalActionLevel ?? jt.action_level
-        finalCategories  = finalCategories  ?? jt.allowed_categories
-        finalScope       = finalScope       ?? jt.warehouse_scope
+        finalCategories = finalCategories ?? jt.allowed_categories
+        finalScope      = finalScope      ?? jt.warehouse_scope
       }
     }
 
@@ -168,7 +166,6 @@ export async function createEmployee(req: Request, res: Response) {
       email: email || null, phone: phone || null,
       department_id: department_id || null,
       job_title_id:  job_title_id  || null,
-      action_level:  finalActionLevel  || 'VIEWER',
       allowed_categories: finalCategories ?? [],
       warehouse_scope: finalScope ?? 'ASSIGNED',
       password: hashedPw,
@@ -200,20 +197,20 @@ export async function updateEmployee(req: Request, res: Response) {
     const {
       name, phone, email,
       department_id, job_title_id,
-      action_level, allowed_categories, warehouse_scope,
+      allowed_categories, warehouse_scope,
       warehouse_ids,
       is_active,
     } = req.body as {
       name?: string; phone?: string; email?: string
       department_id?: string; job_title_id?: string
-      action_level?: string; allowed_categories?: string[]; warehouse_scope?: string
+      allowed_categories?: string[]; warehouse_scope?: string
       warehouse_ids?: string[]
       is_active?: boolean
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (supabase.from('Employee') as any)
-      .update({ name, phone, email, department_id, job_title_id, action_level, allowed_categories, warehouse_scope, is_active, updated_at: new Date().toISOString() })
+      .update({ name, phone, email, department_id, job_title_id, allowed_categories, warehouse_scope, is_active, updated_at: new Date().toISOString() })
       .eq('id', id)
     if (error) return fail(res, error.message)
 

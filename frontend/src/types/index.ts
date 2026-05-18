@@ -1,5 +1,4 @@
 // Auth
-export type ActionLevel = 'NATIONAL_MANAGER' | 'SITE_MANAGER' | 'SUPERVISOR' | 'OPERATOR' | 'STAFF' | 'VIEWER'
 export type AppModule   = 'inbound' | 'outbound' | 'inventory' | 'reports' | 'admin'
 export type Category    = 'TP' | 'NVL' | 'POSM' | 'BAO_BI'
 export type ModulePermissions = Partial<Record<string, string[]>>
@@ -14,7 +13,6 @@ export interface User {
   warehouse_name?: string
   job_title_name?: string | null
   // Permission system fields
-  action_level?:       ActionLevel
   allowed_categories?: string[]
   warehouse_scope?:    'NATIONAL' | 'ASSIGNED'
   warehouse_ids?:      string[]
@@ -36,7 +34,6 @@ export interface JobTitle {
   id:                 string
   name:               string
   department_id:      string
-  action_level:       ActionLevel
   allowed_categories: string[]
   warehouse_scope:    'NATIONAL' | 'ASSIGNED'
   is_active:          boolean
@@ -53,14 +50,13 @@ export interface EmployeeRecord {
   department:         string | null       // legacy text field
   department_id:      string | null
   job_title_id:       string | null
-  action_level:       ActionLevel | null
   allowed_categories: string[]
   warehouse_scope:    'NATIONAL' | 'ASSIGNED'
   warehouse_id:       string | null       // legacy single warehouse
   is_active:          boolean
   created_at:         string
   dept?:              Pick<Department, 'id' | 'name' | 'code'> | null
-  job_title?:         Pick<JobTitle, 'id' | 'name' | 'action_level' | 'allowed_categories' | 'warehouse_scope'> | null
+  job_title?:         Pick<JobTitle, 'id' | 'name' | 'allowed_categories' | 'warehouse_scope'> | null
   warehouse_access?:  { warehouse_id: string; warehouse: { id: string; code: string; name: string } }[]
 }
 

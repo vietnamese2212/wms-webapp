@@ -25,7 +25,6 @@ function buildToken(emp: any, warehouseIds: string[], modulePerms: Record<string
     sub:                emp.id,
     name:               emp.name,
     email:              emp.email ?? null,
-    action_level:       emp.action_level ?? 'VIEWER',
     warehouse_scope:    emp.warehouse_scope ?? 'ASSIGNED',
     warehouse_id:       emp.warehouse_id ?? null,
     allowed_categories: emp.allowed_categories ?? [],
@@ -41,7 +40,6 @@ function buildUserObj(emp: any, warehouseIds: string[], modulePerms: Record<stri
     id:                 emp.id,
     name:               emp.name,
     email:              emp.email ?? null,
-    action_level:       emp.action_level ?? 'VIEWER',
     warehouse_scope:    emp.warehouse_scope ?? 'ASSIGNED',
     warehouse_id:       emp.warehouse_id ?? null,
     warehouse_name:     warehouseName ?? null,
@@ -61,7 +59,7 @@ export async function login(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: emps } = await (supabase.from('Employee') as any)
-      .select('id, name, email, role, action_level, warehouse_scope, warehouse_id, allowed_categories, password, is_active, module_permissions, job_title_id')
+      .select('id, name, email, role, warehouse_scope, warehouse_id, allowed_categories, password, is_active, module_permissions, job_title_id')
       .ilike('email', email.trim())
       .limit(1)
 
@@ -112,7 +110,7 @@ export async function me(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: emps } = await (supabase.from('Employee') as any)
-      .select('id, name, email, role, action_level, warehouse_scope, warehouse_id, allowed_categories, is_active, module_permissions, job_title_id')
+      .select('id, name, email, role, warehouse_scope, warehouse_id, allowed_categories, is_active, module_permissions, job_title_id')
       .eq('id', userId).limit(1)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

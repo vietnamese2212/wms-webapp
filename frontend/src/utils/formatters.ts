@@ -108,15 +108,6 @@ export const overtimeStatusLabel: Record<OvertimeStatus, string> = {
   REJECTED: 'Từ chối',
 }
 
-export const actionLevelLabel: Record<string, string> = {
-  NATIONAL_MANAGER: 'Quản lý toàn quốc',
-  SITE_MANAGER:     'Quản lý địa điểm',
-  SUPERVISOR:       'Giám sát',
-  OPERATOR:         'Vận hành',
-  STAFF:            'Nhân viên',
-  VIEWER:           'Người xem',
-}
-
 export function getLocationCode(location: { zone: string; row: string; shelf: string; bin: string }) {
   return `${location.zone}-${location.row}.${location.shelf}.${location.bin}`
 }

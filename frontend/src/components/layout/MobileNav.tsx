@@ -8,10 +8,9 @@ import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/authStore'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Separator } from '@/components/ui/separator'
-import { actionLevelLabel } from '@/utils/formatters'
-import { canAccess, type ModuleKey, type ModulePermissions } from '@/config/permissions'
+import { canAccess, isAdmin, type ModuleKey, type ModulePermissions } from '@/config/permissions'
 
-const navGroups: { label: string; items: { to: string; icon: React.ElementType; label: string; module?: ModuleKey }[] }[] = [
+const navGroups: { label: string; items: { to: string; icon: React.ElementType; label: string; module?: ModuleKey; adminOnly?: boolean }[] }[] = [
   {
     label: 'Tổng quan',
     items: [{ to: '/', icon: LayoutDashboard, label: 'Dashboard' }],
@@ -45,7 +44,7 @@ const navGroups: { label: string; items: { to: string; icon: React.ElementType; 
   {
     label: 'Quản trị',
     items: [
-      { to: '/masterdata/users', icon: UserCog, label: 'Quản lý người dùng', module: 'employees' },
+      { to: '/masterdata/users', icon: UserCog, label: 'Quản lý người dùng', adminOnly: true },
     ],
   },
 ]
@@ -53,6 +52,7 @@ const navGroups: { label: string; items: { to: string; icon: React.ElementType; 
 export function MobileNav() {
   const { user } = useAuthStore()
   const modulePerms = user?.module_permissions as ModulePermissions | null ?? null
+  const admin = isAdmin(user?.name)
   const initials = user?.name.split(' ').slice(-2).map((n) => n[0]).join('').toUpperCase() ?? 'U'
 
   return (
@@ -71,9 +71,11 @@ export function MobileNav() {
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto py-4 px-4 space-y-6">
         {navGroups.map((group) => {
-          const visibleItems = group.items.filter(item =>
-            !item.module || canAccess(modulePerms, item.module)
-          )
+          const visibleItems = group.items.filter(item => {
+            if (item.adminOnly) return admin
+            if (!item.module) return true
+            return admin || canAccess(modulePerms, item.module)
+          })
           if (visibleItems.length === 0) return null
           return (
           <div key={group.label}>
@@ -130,7 +132,7 @@ export function MobileNav() {
             </Avatar>
             <div className="min-w-0">
               <p className="truncate text-sm font-medium">{user.name}</p>
-              <p className="truncate text-xs text-muted-foreground">{user.action_level ? actionLevelLabel[user.action_level] : ''}</p>
+              <p className="truncate text-xs text-muted-foreground">{user.job_title_name ?? ''}</p>
             </div>
           </div>
         )}

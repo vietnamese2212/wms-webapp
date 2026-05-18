@@ -7,11 +7,17 @@ import { BottomNav } from './BottomNav'
 import { Toaster } from '@/components/ui/toaster'
 import { apiClient } from '@/api/client'
 import { connectRealtimeEvents } from '@/api/realtimeEvents'
+import { useAuthStore } from '@/stores/authStore'
 
 export function Shell() {
   const qc = useQueryClient()
+  const refreshUser = useAuthStore(s => s.refreshUser)
 
   useEffect(() => {
+    // Refresh user permissions from DB on every app load so permission
+    // changes made by admin take effect without requiring a re-login.
+    refreshUser()
+
     // Warm up serverless function + DB connection on app load.
     // Cold start can take 3-5s; this ping fires early so subsequent
     // data requests (when user navigates) land on a warm runtime.
@@ -27,7 +33,7 @@ export function Shell() {
 
     // Connect to SSE for real-time sync (no-op if VITE_API_URL is not set)
     connectRealtimeEvents()
-  }, [qc])
+  }, [qc, refreshUser])
 
   return (
     <div className="flex h-[100dvh] overflow-hidden bg-background">

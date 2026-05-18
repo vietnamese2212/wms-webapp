@@ -10,6 +10,7 @@ interface AuthState {
   login: (email: string, password: string) => Promise<void>
   logout: () => void
   updateUser: (partial: Partial<User>) => void
+  refreshUser: () => Promise<void>
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -31,6 +32,16 @@ export const useAuthStore = create<AuthState>()(
         set((state) => ({
           user: state.user ? { ...state.user, ...partial } : null,
         })),
+
+      refreshUser: async () => {
+        try {
+          const res = await apiClient.get('/auth/me')
+          const user = res.data.data as User
+          set({ user })
+        } catch {
+          set({ user: null, isAuthenticated: false, token: null })
+        }
+      },
     }),
     { name: 'wms-auth' }
   )

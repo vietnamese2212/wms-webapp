@@ -110,27 +110,35 @@ export async function me(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: emps } = await (supabase.from('Employee') as any)
-      .select('id, name, email, role, warehouse_scope, warehouse_id, allowed_categories, is_active, module_permissions, job_title_id')
+      .select('id, name, email, warehouse_scope, warehouse_id, allowed_categories, is_active, module_permissions, job_title_id')
       .eq('id', userId).limit(1)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const emp = (emps as any[])?.[0]
     if (!emp || !emp.is_active) return fail(res, 'Tài khoản không tồn tại hoặc đã bị vô hiệu hóa', 401)
 
-    const modulePerms: Record<string, string[]> = req.user?.module_permissions ?? {}
-
+    // Re-resolve permissions fresh from DB (same as login) so permission changes take effect on next refresh
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const [warehouseIds, whData, jtData] = await Promise.all([
+    const [warehouseIds, jtData, whData] = await Promise.all([
       getWarehouseIds(emp.id),
+      emp.job_title_id
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ? (supabase.from('JobTitle') as any).select('module_permissions, name').eq('id', emp.job_title_id).single().then((r: any) => r.data)
+        : Promise.resolve(null),
       emp.warehouse_id
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         ? (supabase.from('Warehouse') as any).select('name').eq('id', emp.warehouse_id).single().then((r: any) => r.data)
         : Promise.resolve(null),
-      emp.job_title_id
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ? (supabase.from('JobTitle') as any).select('name').eq('id', emp.job_title_id).single().then((r: any) => r.data)
-        : Promise.resolve(null),
     ])
+
+    let modulePerms: Record<string, string[]> = {}
+    if (emp.name === 'Admin') {
+      modulePerms = ALL_PERMISSIONS as Record<string, string[]>
+    } else if (emp.module_permissions && Object.keys(emp.module_permissions).length > 0) {
+      modulePerms = emp.module_permissions
+    } else if (jtData?.module_permissions && Object.keys(jtData.module_permissions).length > 0) {
+      modulePerms = jtData.module_permissions
+    }
 
     return ok(res, buildUserObj(emp, warehouseIds, modulePerms, whData?.name, jtData?.name))
   } catch (e) { return fail(res, String(e)) }

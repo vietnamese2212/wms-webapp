@@ -789,7 +789,7 @@ export default function Inbound() {
             icon={PackagePlus}
             title="Chưa có phiếu nhập"
             description={hasClientFilters ? 'Không có kết quả phù hợp với bộ lọc' : hasDate ? 'Không có phiếu nhập trong khoảng thời gian đã chọn' : 'Tạo phiếu nhập kho để bắt đầu quét hàng vào kho.'}
-            action={!hasClientFilters ? (
+            action={!hasClientFilters && can(perms, 'inbound', 'create') ? (
               <Button onClick={() => setShowNew(true)}>
                 <Plus className="h-4 w-4 mr-2" /> Tạo phiếu nhập
               </Button>
@@ -817,7 +817,7 @@ export default function Inbound() {
                       key={order.id}
                       order={order}
                       onClick={() => navigate(`/wms/inbound/${order.id}`)}
-                      onScan={order.status === 'OPEN' && !!order.location_id
+                      onScan={order.status === 'OPEN' && !!order.location_id && can(perms, 'inbound', 'scan')
                         ? (e) => { e.stopPropagation(); unlockAudio(); navigate(`/wms/inbound/${order.id}?scan=1`) }
                         : undefined}
                     />

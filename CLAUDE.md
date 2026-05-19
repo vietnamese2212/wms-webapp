@@ -100,6 +100,18 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 
 **Frontend:**
 - Lỗi API hiển thị inline (banner đỏ trong component), không chỉ `console.error`
+
+**Phân quyền — bắt buộc mọi nút action:**
+- Mọi `<Button>` hay element có `onClick` gọi API write (tạo/sửa/xóa/quét/giao/hoàn thành…) **phải** được bọc bởi `can(perms, module, action)`.
+- Pattern chuẩn:
+  ```tsx
+  const perms = user?.module_permissions as ModulePermissions | null ?? null
+  // ...
+  {can(perms, 'module_key', 'action_key') && <Button onClick={...}>...</Button>}
+  ```
+- `perms` lấy từ `useAuthStore(s => s.user)` — import `can, type ModulePermissions` từ `@/config/permissions`.
+- Khi thêm action mới: (1) thêm key vào `MODULES` trong `permissions.ts` → tự hiện trong UI phân quyền Chức danh; (2) gate nút frontend; (3) thêm `requirePerm('module', 'action')` trên route backend.
+- Backend enforce qua `requirePerm` middleware — frontend chỉ ẩn nút, không phải điểm bảo mật duy nhất.
 ---
 ## Tech Stack
 

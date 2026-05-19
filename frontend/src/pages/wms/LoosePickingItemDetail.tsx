@@ -15,6 +15,8 @@ import type { QRScannerHandle } from '@/components/shared/QRScanner'
 import { useGDO, useScanLoosePickingItem, useCheckOutboundScan, useItemInventory, type CheckOutboundScanResult, type ItemInventoryEntry } from '@/api/hooks'
 import { PalletDetailDialog } from '@/components/shared/PalletDetailDialog'
 import { useActiveLoosePickingStore } from '@/stores/activeLoosePickingStore'
+import { useAuthStore } from '@/stores/authStore'
+import { can, type ModulePermissions } from '@/config/permissions'
 import { playBeep, unlockAudio } from '@/utils/audio'
 import type { OutboundItem, OutboundStatus } from '@/types'
 
@@ -247,6 +249,8 @@ export default function LoosePickingItemDetail() {
   const [searchParams] = useSearchParams()
   const autoScan = searchParams.get('scan') === '1'
   const { vehicles } = useActiveLoosePickingStore()
+  const user  = useAuthStore(s => s.user)
+  const perms = user?.module_permissions as ModulePermissions | null ?? null
 
   const { data: gdo, isLoading } = useGDO(gdoId)
   const { data: inventoryData = [], isLoading: invLoading } = useItemInventory(gdoId, itemId)
@@ -259,6 +263,7 @@ export default function LoosePickingItemDetail() {
 
   useEffect(() => {
     if (!autoScan || !gdo || hasAutoScanned.current) return
+    if (!can(perms, 'loosepicking', 'scan')) return
     const allItems = (gdo.delivery_orders ?? []).flatMap(d => d.items)
     const current  = allItems.find(i => i.id === itemId)
     if (!current) return
@@ -373,7 +378,7 @@ export default function LoosePickingItemDetail() {
                 <Package className="h-3.5 w-3.5" />
                 Tồn kho{inventoryData.length > 0 ? ` (${inventoryData.length})` : ''}
               </button>
-              {!isDone && (
+              {!isDone && can(perms, 'loosepicking', 'scan') && (
                 <Button size="sm" className="h-7 text-xs gap-1" onClick={openScan}>
                   <QrCode className="h-3.5 w-3.5" /> Quét pallet
                 </Button>

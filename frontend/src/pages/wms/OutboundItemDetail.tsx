@@ -17,6 +17,7 @@ import { useGDO, useScanOutboundItem, useManualCompleteItem, useDeleteOutboundSc
 import { PalletDetailDialog } from '@/components/shared/PalletDetailDialog'
 import { useAuthStore } from '@/stores/authStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
+import { can, type ModulePermissions } from '@/config/permissions'
 import { playBeep, unlockAudio } from '@/utils/audio'
 import type { OutboundItem, OutboundStatus } from '@/types'
 
@@ -282,7 +283,8 @@ export default function OutboundItemDetail() {
   const [searchParams] = useSearchParams()
   const autoScan = searchParams.get('scan') === '1'
 
-  const user = useAuthStore(s => s.user)
+  const user  = useAuthStore(s => s.user)
+  const perms = user?.module_permissions as ModulePermissions | null ?? null
   const { data: gdo, isLoading } = useGDO(gdoId)
   const { mutate: manualComplete,      isPending: completing    } = useManualCompleteItem()
   const { mutate: deleteScanEntry,     isPending: deleting      } = useDeleteOutboundScanEntry()
@@ -381,9 +383,9 @@ export default function OutboundItemDetail() {
   const isLoscam = item.material_type === 'Pallet Loscam' || (item.material_code_raw ?? '').includes('810000')
   const isDone   = item.status === 'COMPLETED'
 
-  // Workflow: can only scan if GDO has been started and not paused
+  // Workflow: can only scan if GDO has been started and not paused, and user has scan permission
   const isPaused = gdo.status === 'PAUSED'
-  const canScan  = !!gdo.started_at && !isPaused
+  const canScan  = !!gdo.started_at && !isPaused && can(perms, 'outbound', 'scan')
   const notStartedMsg = !gdo.started_at
     ? (!gdo.assigned_at ? 'Cần Giao đơn → Bắt đầu trước khi quét' : 'Cần Bắt đầu xuất kho trước khi quét')
     : null
@@ -508,7 +510,7 @@ export default function OutboundItemDetail() {
               {isPOSM ? (
                 !isDone && <span className="text-xs text-slate-400 italic">Tự bypass</span>
               ) : isLoscam ? (
-                <Button size="sm" variant="outline" className="h-7 text-xs" disabled={isPaused}
+                can(perms, 'outbound', 'complete') && <Button size="sm" variant="outline" className="h-7 text-xs" disabled={isPaused}
                   onClick={() => { setLoscamCartons(String(isDone ? item.cartons_scanned : item.cartons_ordered)); setShowLoscamDialog(true) }}>
                   {isDone ? 'Sửa số lượng' : 'Lưu thủ công'}
                 </Button>
@@ -523,7 +525,7 @@ export default function OutboundItemDetail() {
           </div>
 
           {/* Row 1b: Check nhặt lẻ — hàng riêng để không che code/badge trên mobile */}
-          {!!gdo.started_at && item.loose_picking > 0 && looseUnconfirmedCount > 0 && (
+          {!!gdo.started_at && item.loose_picking > 0 && looseUnconfirmedCount > 0 && can(perms, 'outbound', 'complete') && (
             <button
               onClick={() => setConfirmLooseOpen(true)}
               disabled={confirming || isPaused}
@@ -783,14 +785,16 @@ export default function OutboundItemDetail() {
                           <div className="text-[9px] text-slate-400">{se.scanned_at ? formatTimestampTime(se.scanned_at) : ''}</div>
                         </TableCell>
                         <TableCell className="px-1 py-2">
-                          <button
-                            className={`p-1 rounded transition-colors ${isPaused ? 'text-slate-200 cursor-not-allowed' : 'text-slate-300 hover:text-red-500 hover:bg-red-50'}`}
-                            title={isPaused ? 'Chuyến đang tạm dừng' : 'Hủy pallet này'}
-                            disabled={isPaused}
-                            onClick={() => !isPaused && setConfirmScanId(se.id)}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
+                          {can(perms, 'outbound', 'scan') && (
+                            <button
+                              className={`p-1 rounded transition-colors ${isPaused ? 'text-slate-200 cursor-not-allowed' : 'text-slate-300 hover:text-red-500 hover:bg-red-50'}`}
+                              title={isPaused ? 'Chuyến đang tạm dừng' : 'Hủy pallet này'}
+                              disabled={isPaused}
+                              onClick={() => !isPaused && setConfirmScanId(se.id)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          )}
                         </TableCell>
                       </TableRow>
                     )

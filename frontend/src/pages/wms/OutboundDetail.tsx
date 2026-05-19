@@ -784,7 +784,7 @@ export default function OutboundDetail() {
   const npp = [...new Set(allDOs.map(d => d.distributor_name).filter(Boolean))].join(', ')
 
   // Workflow state
-  const canStart       = !!gdo.assigned_at && !gdo.started_at
+  const canStart       = !!gdo.assigned_at && !gdo.started_at && can(perms, 'outbound', 'start')
   const hasScanEntries = allItems.some(i => i.cartons_scanned > 0)
 
   const hasAnyExpanded = expandedItemIds.size > 0
@@ -858,7 +858,7 @@ export default function OutboundDetail() {
                   <PenSquare className="h-3 w-3" /> Sửa
                 </Button>
               )}
-              {gdo.status === 'PENDING' && (
+              {gdo.status === 'PENDING' && can(perms, 'outbound', 'cancel') && (
                 <Button size="sm" variant="outline"
                   className="h-7 text-xs gap-1 px-2 border-red-200 text-red-600 hover:bg-red-50"
                   onClick={handleDelete}>
@@ -866,7 +866,7 @@ export default function OutboundDetail() {
                 </Button>
               )}
               {/* ── Forward actions ── */}
-              {!gdo.assigned_at && (
+              {!gdo.assigned_at && can(perms, 'outbound', 'assign') && (
                 <Button size="sm" variant="outline" className="h-7 text-xs gap-1 px-2" disabled={assigning}
                   onClick={() => setPendingConfirm({
                     title: 'Giao đơn',
@@ -882,7 +882,7 @@ export default function OutboundDetail() {
                   <Play className="h-3 w-3" />Bắt đầu
                 </Button>
               )}
-              {gdo.status === 'IN_PROGRESS' && totalOrdered > 0 && totalScanned >= totalOrdered && (
+              {gdo.status === 'IN_PROGRESS' && totalOrdered > 0 && totalScanned >= totalOrdered && can(perms, 'outbound', 'complete') && (
                 <Button size="sm"
                   className="h-7 text-xs gap-1 px-2 bg-green-600 hover:bg-green-700"
                   disabled={patching}

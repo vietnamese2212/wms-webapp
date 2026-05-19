@@ -5,6 +5,7 @@ import {
   type StocktakeEntryRow,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
+import { can, type ModulePermissions } from '@/config/permissions'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
@@ -221,7 +222,8 @@ function loadSummaryFilters(defaultWarehouseId: string) {
 
 // ─── Main ────────────────────────────────────────────────────────
 export default function StocktakeDashboard() {
-  const user = useAuthStore(s => s.user)
+  const user  = useAuthStore(s => s.user)
+  const perms = user?.module_permissions as ModulePermissions | null ?? null
 
   const normCatFe = (c: string) => c === 'TP' ? 'Thành phẩm' : c === 'BAO_BI' ? 'Bao bì' : c
   const allowedDashWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
@@ -440,7 +442,7 @@ export default function StocktakeDashboard() {
                               : <span className="text-[9px] text-slate-400 bg-slate-100 rounded-full px-1.5 py-0.5">Chưa kiểm</span>}
                         </TableCell>
                         <TableCell className="px-2 py-1" onClick={ev => ev.stopPropagation()}>
-                          {e.stocktake_flagged && (
+                          {e.stocktake_flagged && can(perms, 'stocktake', 'complete') && (
                             <Button size="sm" variant="outline"
                               className="h-5 text-[9px] px-1.5 border-red-200 text-red-600 hover:bg-red-50 flex items-center gap-0.5"
                               disabled={unflag.isPending}

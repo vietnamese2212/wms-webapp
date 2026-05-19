@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { QRScanner } from '@/components/shared/QRScanner'
 import { useWarehouses, useLocationsReal, useMaterialCategories } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
+import { can, type ModulePermissions } from '@/config/permissions'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -58,8 +59,9 @@ function qaColor(code: string | undefined): string {
 }
 
 export default function Stocktake() {
-  const user = useAuthStore(s => s.user)
-  const qc   = useQueryClient()
+  const user  = useAuthStore(s => s.user)
+  const perms = user?.module_permissions as ModulePermissions | null ?? null
+  const qc    = useQueryClient()
   const inputRef = useRef<HTMLInputElement>(null)
 
   const normCatFe = (c: string) => c === 'TP' ? 'Thành phẩm' : c === 'BAO_BI' ? 'Bao bì' : c
@@ -406,11 +408,13 @@ export default function Stocktake() {
                   >
                     Không khớp
                   </Button>
-                  <Button size="sm" className="flex-1 text-xs bg-green-600 hover:bg-green-700"
-                    disabled={saving}
-                    onClick={handleSave}>
-                    {saving ? '…' : (showQty && physCount !== '' ? 'Lưu & Đánh dấu' : 'Lưu')}
-                  </Button>
+                  {can(perms, 'stocktake', 'scan') && (
+                    <Button size="sm" className="flex-1 text-xs bg-green-600 hover:bg-green-700"
+                      disabled={saving}
+                      onClick={handleSave}>
+                      {saving ? '…' : (showQty && physCount !== '' ? 'Lưu & Đánh dấu' : 'Lưu')}
+                    </Button>
+                  )}
                 </div>
               </div>
             )}

@@ -344,7 +344,7 @@ export default function Outbound() {
                   key={gdo.id}
                   gdo={gdo}
                   onClick={() => navigate(`/wms/outbound/${gdo.id}`)}
-                  onAssign={e => { e.stopPropagation(); assignGDO({ id: gdo.id }) }}
+                  onAssign={can(perms, 'outbound', 'assign') ? (e => { e.stopPropagation(); assignGDO({ id: gdo.id }) }) : undefined}
                 />
               ))}
             </TableBody>
@@ -368,7 +368,7 @@ export default function Outbound() {
 function GDORow({ gdo, onClick, onAssign }: {
   gdo: GDO
   onClick: () => void
-  onAssign: (e: React.MouseEvent) => void
+  onAssign?: (e: React.MouseEvent) => void
 }) {
   const { pin, unpin, isPinned } = useActiveVehiclesStore()
   const pinned    = isPinned(gdo.id)
@@ -424,7 +424,7 @@ function GDORow({ gdo, onClick, onAssign }: {
       <TableCell className="px-2 py-1 whitespace-nowrap" onClick={e => e.stopPropagation()}>
         {gdo.assigned_at ? (
           <span className="text-[10px] tabular-nums text-green-700 font-medium">{fTime(gdo.assigned_at)}</span>
-        ) : isPending ? (
+        ) : isPending && onAssign ? (
           <button
             onClick={onAssign}
             className="text-[9px] px-1.5 py-0.5 rounded bg-green-100 text-green-700 hover:bg-green-200 font-medium transition-colors"

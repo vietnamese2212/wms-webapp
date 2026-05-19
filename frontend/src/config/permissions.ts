@@ -128,7 +128,7 @@ export function canAccess(
   module: ModuleKey,
 ): boolean {
   if (!perms) return false
-  return (perms[module]?.length ?? 0) > 0
+  return can(perms, module, 'view')
 }
 
 export function isAdmin(name?: string | null): boolean {

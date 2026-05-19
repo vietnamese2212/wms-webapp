@@ -36,8 +36,8 @@ export const useAuthStore = create<AuthState>()(
       refreshUser: async () => {
         try {
           const res = await apiClient.get('/auth/me')
-          const user = res.data.data as User
-          set({ user })
+          const { user, token } = res.data.data as { user: User; token: string }
+          set({ user, token })
         } catch {
           set({ user: null, isAuthenticated: false, token: null })
         }

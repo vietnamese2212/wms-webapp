@@ -6,6 +6,7 @@ import * as material    from '../controllers/masterdata/materialController'
 import * as shiftQa     from '../controllers/masterdata/shiftQaController'
 import * as department  from '../controllers/masterdata/departmentController'
 import * as employee    from '../controllers/masterdata/employeeController'
+import { requirePerm } from '../middlewares/auth'
 
 const router = Router()
 
@@ -20,10 +21,10 @@ router.delete('/warehouses/:id', warehouse.deleteWarehouse)
 router.get('/locations/sub-groups',  location.listSubGroups)   // ?warehouse_id=xxx
 router.get('/locations/sub-types',   location.listSubTypes)    // distinct sub_type + label
 router.get('/locations',             location.listLocations)    // ?warehouse_id=&sub_code=
-router.post('/locations',            location.createLocation)
+router.post('/locations',            requirePerm('locations', 'create'), location.createLocation)
 router.get('/locations/:id',         location.getLocation)
-router.put('/locations/:id',         location.updateLocation)
-router.delete('/locations/:id',      location.deleteLocation)
+router.put('/locations/:id',         requirePerm('locations', 'edit'), location.updateLocation)
+router.delete('/locations/:id',      requirePerm('locations', 'delete'), location.deleteLocation)
 
 // Manufacturer
 router.get('/manufacturers',         manufacturer.listManufacturers)
@@ -59,11 +60,11 @@ router.post('/job-titles',          department.createJobTitle)
 router.put('/job-titles/:id',       department.updateJobTitle)
 
 // Employee (nhân sự + phân quyền)
-router.get('/employees',            employee.listEmployees)      // ?department_id=&search=&is_active=
-router.post('/employees',           employee.createEmployee)
-router.get('/employees/:id',        employee.getEmployee)
-router.patch('/employees/:id',              employee.updateEmployee)
-router.patch('/employees/:id/set-password', employee.setPassword)
-router.put('/employees/:id/warehouses',     employee.setWarehouseAccess)
+router.get('/employees',            requirePerm('employees', 'view'), employee.listEmployees)
+router.post('/employees',           requirePerm('employees', 'create'), employee.createEmployee)
+router.get('/employees/:id',        requirePerm('employees', 'view'), employee.getEmployee)
+router.patch('/employees/:id',              requirePerm('employees', 'edit'), employee.updateEmployee)
+router.patch('/employees/:id/set-password', requirePerm('employees', 'set_password'), employee.setPassword)
+router.put('/employees/:id/warehouses',     requirePerm('employees', 'edit'), employee.setWarehouseAccess)
 
 export default router

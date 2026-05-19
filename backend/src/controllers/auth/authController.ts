@@ -136,7 +136,8 @@ export async function me(req: Request, res: Response) {
       modulePerms = jtData.module_permissions
     }
 
-    return ok(res, buildUserObj(emp, warehouseIds, modulePerms, whData?.name, jtData?.name))
+    const token = buildToken(emp, warehouseIds, modulePerms)
+    return ok(res, { user: buildUserObj(emp, warehouseIds, modulePerms, whData?.name, jtData?.name), token })
   } catch (e) { return fail(res, String(e)) }
 }
 

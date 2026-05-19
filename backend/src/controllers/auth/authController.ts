@@ -86,12 +86,10 @@ export async function login(req: Request, res: Response) {
         : Promise.resolve(null),
     ])
 
-    // Resolve module_permissions: Admin gets all; employee override > job_title
+    // Resolve module_permissions: Admin gets all; always use job_title (no per-employee override)
     let modulePerms: Record<string, string[]> = {}
     if (emp.name === 'Admin') {
       modulePerms = ALL_PERMISSIONS as Record<string, string[]>
-    } else if (emp.module_permissions && Object.keys(emp.module_permissions).length > 0) {
-      modulePerms = emp.module_permissions
     } else if (jtData?.module_permissions && Object.keys(jtData.module_permissions).length > 0) {
       modulePerms = jtData.module_permissions
     }
@@ -134,8 +132,6 @@ export async function me(req: Request, res: Response) {
     let modulePerms: Record<string, string[]> = {}
     if (emp.name === 'Admin') {
       modulePerms = ALL_PERMISSIONS as Record<string, string[]>
-    } else if (emp.module_permissions && Object.keys(emp.module_permissions).length > 0) {
-      modulePerms = emp.module_permissions
     } else if (jtData?.module_permissions && Object.keys(jtData.module_permissions).length > 0) {
       modulePerms = jtData.module_permissions
     }

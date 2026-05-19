@@ -210,7 +210,7 @@ export async function updateEmployee(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (supabase.from('Employee') as any)
-      .update({ name, phone, email, department_id, job_title_id, allowed_categories, warehouse_scope, is_active, updated_at: new Date().toISOString() })
+      .update({ name, phone, email, department_id, job_title_id, allowed_categories, warehouse_scope, is_active, module_permissions: null, updated_at: new Date().toISOString() })
       .eq('id', id)
     if (error) return fail(res, error.message)
 

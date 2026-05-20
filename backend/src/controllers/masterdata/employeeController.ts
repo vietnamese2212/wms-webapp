@@ -168,6 +168,7 @@ export async function createEmployee(req: Request, res: Response) {
       job_title_id:  job_title_id  || null,
       allowed_categories: finalCategories ?? [],
       warehouse_scope: finalScope ?? 'ASSIGNED',
+      role: (finalScope ?? 'ASSIGNED') === 'NATIONAL' ? 'OWN' : 'WAREHOUSE_STAFF',
       password: hashedPw,
       is_active: true,
       created_at: now,

@@ -497,8 +497,8 @@ export default function Inbound() {
     ? user.allowed_categories.map(normCatFe)
     : null
 
-  // Resolve effective warehouse: store override → user's single warehouse → first of assigned warehouses
-  const effectiveWarehouseId = f.warehouseId || user?.warehouse_id || user?.warehouse_ids?.[0] || undefined
+  // Resolve effective warehouse: UI filter override → user's single fixed warehouse → let backend scope handle multi-warehouse
+  const effectiveWarehouseId = f.warehouseId || user?.warehouse_id || undefined
 
   const { data: serverOrders = [], isLoading } = useInboundOrders({
     warehouse_id:      effectiveWarehouseId,

@@ -4,7 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 
 const DEPT_SELECT = 'id, name, code, allowed_modules, is_active, created_at, updated_at'
-const JT_SELECT   = 'id, name, department_id, allowed_categories, warehouse_scope, is_active, module_permissions, department:Department(id,name,code)'
+const JT_SELECT   = 'id, name, department_id, is_active, module_permissions, department:Department(id,name,code)'
 
 // ─── Departments ──────────────────────────────────────────────────────────────
 
@@ -69,11 +69,9 @@ export async function listJobTitles(req: Request, res: Response) {
 
 export async function createJobTitle(req: Request, res: Response) {
   try {
-    const { name, department_id, allowed_categories, warehouse_scope, module_permissions } = req.body as {
+    const { name, department_id, module_permissions } = req.body as {
       name: string
       department_id: string
-      allowed_categories?: string[]
-      warehouse_scope?: string
       module_permissions?: Record<string, string[]>
     }
     if (!name || !department_id) return fail(res, 'name và department_id là bắt buộc', 400)
@@ -83,8 +81,6 @@ export async function createJobTitle(req: Request, res: Response) {
       .insert({
         id: randomUUID(),
         name, department_id,
-        allowed_categories: allowed_categories ?? ['Thành phẩm', 'NVL', 'POSM', 'Bao bì'],
-        warehouse_scope: warehouse_scope ?? 'ASSIGNED',
         module_permissions: module_permissions ?? {},
         updated_at: new Date().toISOString(),
       })
@@ -98,14 +94,13 @@ export async function createJobTitle(req: Request, res: Response) {
 export async function updateJobTitle(req: Request, res: Response) {
   try {
     const { id } = req.params
-    const { name, allowed_categories, warehouse_scope, is_active, module_permissions } = req.body as {
-      name?: string; allowed_categories?: string[]
-      warehouse_scope?: string; is_active?: boolean
+    const { name, is_active, module_permissions } = req.body as {
+      name?: string; is_active?: boolean
       module_permissions?: Record<string, string[]>
     }
     const { data, error } = await supabase
       .from('JobTitle')
-      .update({ name, allowed_categories, warehouse_scope, is_active, module_permissions, updated_at: new Date().toISOString() })
+      .update({ name, is_active, module_permissions, updated_at: new Date().toISOString() })
       .eq('id', id)
       .select(JT_SELECT)
       .single()

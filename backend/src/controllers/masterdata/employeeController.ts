@@ -66,8 +66,8 @@ async function fetchFull(opts: {
   const jtIds = [...new Set(emps.map(e => e.job_title_id).filter((x): x is string => !!x))]
   const { data: jts } = jtIds.length
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ? await (supabase.from('JobTitle') as any).select('id, name, allowed_categories, warehouse_scope').in('id', jtIds)
-    : { data: [] as { id: string; name: string; allowed_categories: string[]; warehouse_scope: string }[] }
+    ? await (supabase.from('JobTitle') as any).select('id, name').in('id', jtIds)
+    : { data: [] as { id: string; name: string }[] }
 
   // ── Warehouse access ───────────────────────────────────────────────────────
   const empIds = emps.map(e => e.id)
@@ -83,7 +83,7 @@ async function fetchFull(opts: {
 
   // ── Merge ──────────────────────────────────────────────────────────────────
   const deptMap = new Map(((depts ?? []) as { id: string; name: string; code: string }[]).map(d => [d.id, d]))
-  const jtMap   = new Map(((jts   ?? []) as { id: string; name: string; allowed_categories: string[]; warehouse_scope: string }[]).map(j => [j.id, j]))
+  const jtMap   = new Map(((jts   ?? []) as { id: string; name: string }[]).map(j => [j.id, j]))
   const whMap   = new Map(((whs   ?? []) as { id: string; code: string; name: string }[]).map(w => [w.id, w]))
 
   const waByEmp = new Map<string, { warehouse_id: string; warehouse: { id: string; code: string; name: string } | null }[]>()
@@ -141,20 +141,6 @@ export async function createEmployee(req: Request, res: Response) {
 
     if (!name || !employee_code) return fail(res, 'name và employee_code là bắt buộc', 400)
 
-    let finalCategories = allowed_categories
-    let finalScope      = warehouse_scope
-
-    if (job_title_id && !finalCategories) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: jt } = await (supabase.from('JobTitle') as any)
-        .select('allowed_categories, warehouse_scope')
-        .eq('id', job_title_id).single()
-      if (jt) {
-        finalCategories = finalCategories ?? jt.allowed_categories
-        finalScope      = finalScope      ?? jt.warehouse_scope
-      }
-    }
-
     const empId = randomUUID()
     const tempPassword = generateTempPassword()
     const hashedPw = await bcrypt.hash(tempPassword, 10)
@@ -166,8 +152,8 @@ export async function createEmployee(req: Request, res: Response) {
       email: email || null, phone: phone || null,
       department_id: department_id || null,
       job_title_id:  job_title_id  || null,
-      allowed_categories: finalCategories ?? [],
-      warehouse_scope: finalScope ?? 'ASSIGNED',
+      allowed_categories: allowed_categories ?? ['Thành phẩm', 'NVL', 'POSM', 'Bao bì'],
+      warehouse_scope: warehouse_scope ?? 'ASSIGNED',
       password: hashedPw,
       is_active: true,
       created_at: now,
@@ -208,9 +194,20 @@ export async function updateEmployee(req: Request, res: Response) {
       is_active?: boolean
     }
 
+    // Build update object explicitly — exclude undefined fields so Supabase doesn't overwrite them with null
+    const updates: Record<string, unknown> = { module_permissions: null, updated_at: new Date().toISOString() }
+    if (name              !== undefined) updates.name              = name
+    if (phone             !== undefined) updates.phone             = phone
+    if (email             !== undefined) updates.email             = email
+    if (department_id     !== undefined) updates.department_id     = department_id
+    if (job_title_id      !== undefined) updates.job_title_id      = job_title_id
+    if (allowed_categories !== undefined) updates.allowed_categories = allowed_categories
+    if (warehouse_scope   !== undefined) updates.warehouse_scope   = warehouse_scope
+    if (is_active         !== undefined) updates.is_active         = is_active
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (supabase.from('Employee') as any)
-      .update({ name, phone, email, department_id, job_title_id, allowed_categories, warehouse_scope, is_active, module_permissions: null, updated_at: new Date().toISOString() })
+      .update(updates)
       .eq('id', id)
     if (error) return fail(res, error.message)
 

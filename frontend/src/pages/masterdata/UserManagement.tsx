@@ -121,30 +121,18 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
   const [email,        setEmail]        = useState(emp?.email         ?? '')
   const [phone,        setPhone]        = useState(emp?.phone         ?? '')
   const [jobTitleId,   setJobTitleId]   = useState(emp?.job_title_id  ?? '')
-  const [categories,   setCategories]   = useState<string[]>(emp?.allowed_categories ?? [])
+  const [categories,   setCategories]   = useState<string[]>(emp?.allowed_categories ?? ['Thành phẩm', 'NVL', 'POSM', 'Bao bì'])
   const [scope,        setScope]        = useState<'NATIONAL'|'ASSIGNED'>(emp?.warehouse_scope ?? 'ASSIGNED')
   const [warehouseIds, setWarehouseIds] = useState<string[]>(
     emp?.warehouse_access?.map(w => w.warehouse_id) ?? []
   )
   const [isActive, setIsActive] = useState(emp?.is_active ?? true)
 
-  // True chỉ khi user chủ động chọn chức danh — tránh ghi đè giá trị đang sửa khi jobTitles load
-  const userChangedJobTitle = useRef(false)
   const deptIdMounted = useRef(false)
-
-  useEffect(() => {
-    if (!jobTitleId || !userChangedJobTitle.current) return
-    const jt = jobTitles.find(j => j.id === jobTitleId)
-    if (jt) {
-      setCategories(jt.allowed_categories)
-      setScope(jt.warehouse_scope)
-    }
-  }, [jobTitleId, jobTitles])
 
   useEffect(() => {
     if (!deptIdMounted.current) { deptIdMounted.current = true; return }
     setJobTitleId('')
-    userChangedJobTitle.current = false
   }, [deptId])
 
   const { mutate: create, isPending: creating, error: createErr } = useCreateEmployee()
@@ -287,7 +275,7 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Chức danh (template)</Label>
-              <Select value={jobTitleId || '__none__'} onValueChange={v => { userChangedJobTitle.current = true; setJobTitleId(v === '__none__' ? '' : v) }} disabled={!deptId}>
+              <Select value={jobTitleId || '__none__'} onValueChange={v => setJobTitleId(v === '__none__' ? '' : v)} disabled={!deptId}>
                 <SelectTrigger><SelectValue placeholder="Chọn chức danh" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__none__">— Không chọn —</SelectItem>
@@ -828,8 +816,6 @@ export default function UserManagement() {
                     <TableRow>
                       <TableHead className="px-3 py-2 text-xs">Chức danh</TableHead>
                       <TableHead className="px-3 py-2 text-xs">Phòng ban</TableHead>
-                      <TableHead className="px-3 py-2 text-xs">Loại hàng</TableHead>
-                      <TableHead className="px-3 py-2 text-xs">Phạm vi</TableHead>
                       <TableHead className="px-3 py-2 text-xs">Trạng thái</TableHead>
                       <TableHead className="px-3 py-2 w-12" />
                     </TableRow>
@@ -839,19 +825,6 @@ export default function UserManagement() {
                       <TableRow key={jt.id} className="text-sm">
                         <TableCell className="px-3 py-2 font-medium text-slate-800">{jt.name}</TableCell>
                         <TableCell className="px-3 py-2 text-slate-600 text-xs">{jt.department?.name ?? '—'}</TableCell>
-                        <TableCell className="px-3 py-2">
-                          <div className="flex gap-1 flex-wrap">
-                            {(jt.allowed_categories ?? []).map(cat => (
-                              <span key={cat} className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium
-                                ${CATEGORY_COLOR[cat] ?? 'bg-slate-100 text-slate-600'}`}>{cat}</span>
-                            ))}
-                          </div>
-                        </TableCell>
-                        <TableCell className="px-3 py-2 text-xs text-slate-600">
-                          {jt.warehouse_scope === 'NATIONAL' ? (
-                            <span className="text-blue-600 font-medium">Toàn quốc</span>
-                          ) : 'Kho cố định'}
-                        </TableCell>
                         <TableCell className="px-3 py-2">
                           <Badge variant={jt.is_active ? 'default' : 'secondary'} className="text-xs">
                             {jt.is_active ? 'Hoạt động' : 'Tạm dừng'}

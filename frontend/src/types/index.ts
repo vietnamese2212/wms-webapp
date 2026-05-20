@@ -34,8 +34,6 @@ export interface JobTitle {
   id:                 string
   name:               string
   department_id:      string
-  allowed_categories: string[]
-  warehouse_scope:    'NATIONAL' | 'ASSIGNED'
   is_active:          boolean
   department?:        Pick<Department, 'id' | 'name' | 'code'>
   module_permissions?: ModulePermissions
@@ -56,7 +54,7 @@ export interface EmployeeRecord {
   is_active:          boolean
   created_at:         string
   dept?:              Pick<Department, 'id' | 'name' | 'code'> | null
-  job_title?:         Pick<JobTitle, 'id' | 'name' | 'allowed_categories' | 'warehouse_scope'> | null
+  job_title?:         Pick<JobTitle, 'id' | 'name'> | null
   warehouse_access?:  { warehouse_id: string; warehouse: { id: string; code: string; name: string } }[]
 }
 

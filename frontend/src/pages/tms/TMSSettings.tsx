@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { AxiosError } from 'axios'
-import { Plus, Pencil, Trash2, Truck, Clock, Building2, Settings2 } from 'lucide-react'
+import { Plus, Pencil, Trash2, Truck, Clock, Building2, Settings2, Warehouse } from 'lucide-react'
 import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
 import { Label }    from '@/components/ui/label'
@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
+  useWarehouses,
   useVehicleTypes, useCreateVehicleType, useUpdateVehicleType,
   useSlotTemplates, useCreateSlotTemplate, useUpdateSlotTemplate, useDeleteSlotTemplate,
   useTransportCompanies, useCreateTransportCompany, useUpdateTransportCompany,
@@ -79,8 +80,9 @@ function VehicleTypeDialog({ vt, open, onClose }: { vt: TmsVehicleType | null; o
 
 // ─── SlotTemplate form ───────────────────────────────────────────────────────
 
-function SlotTemplateDialog({ st, open, onClose, vehicleTypes }: {
-  st: SlotTemplate | null; open: boolean; onClose: () => void; vehicleTypes: TmsVehicleType[]
+function SlotTemplateDialog({ st, open, onClose, vehicleTypes, warehouseId }: {
+  st: SlotTemplate | null; open: boolean; onClose: () => void
+  vehicleTypes: TmsVehicleType[]; warehouseId: string
 }) {
   const isEdit = !!st
   const [vtId,        setVtId]        = useState(st?.vehicle_type_id ?? '')
@@ -109,7 +111,7 @@ function SlotTemplateDialog({ st, open, onClose, vehicleTypes }: {
       update({ id: st.id, time_from: timeFrom, time_to: timeTo, max_vehicles: Number(maxVehicles), cargo_type: cargoType, is_active: isActive },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
     } else {
-      create({ vehicle_type_id: vtId, direction, cargo_type: cargoType, days_of_week: daysOfWeek, time_from: timeFrom, time_to: timeTo, max_vehicles: Number(maxVehicles) },
+      create({ warehouse_id: warehouseId, vehicle_type_id: vtId, direction, cargo_type: cargoType, days_of_week: daysOfWeek, time_from: timeFrom, time_to: timeTo, max_vehicles: Number(maxVehicles) },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
     }
   }
@@ -325,15 +327,20 @@ export default function TMSSettings() {
   const canSlots     = can(perms, 'tms', 'manage_slots')
   const canCompanies = can(perms, 'tms', 'manage_companies')
 
+  // Warehouse selector — context cho tab Khung giờ
+  const { data: warehouses = [] } = useWarehouses(true)
+  const [warehouseId, setWarehouseId] = useState('')
+
   // VehicleType
   const { data: vehicleTypes = [], isLoading: loadingVT } = useVehicleTypes()
   const [editingVT, setEditingVT] = useState<TmsVehicleType | null>(null)
   const [showVTDlg, setShowVTDlg] = useState(false)
 
-  // SlotTemplate
+  // SlotTemplate — chỉ load khi đã chọn kho
   const [filterVTId, setFilterVTId] = useState('__all__')
   const [filterDir,  setFilterDir]  = useState('__all__')
   const { data: templates = [], isLoading: loadingST } = useSlotTemplates({
+    warehouse_id:    warehouseId || undefined,
     vehicle_type_id: filterVTId === '__all__' ? undefined : filterVTId,
     direction:       filterDir  === '__all__' ? undefined : filterDir,
   })
@@ -354,14 +361,34 @@ export default function TMSSettings() {
   const [editingV, setEditingV] = useState<TmsVehicle | null>(null)
   const [showVDlg, setShowVDlg] = useState(false)
 
+  const selectedWarehouse = warehouses.find((w: any) => w.id === warehouseId)
+
   return (
     <div className="p-4 space-y-4 max-w-7xl mx-auto">
-      <div>
-        <h1 className="text-xl font-semibold text-slate-800 flex items-center gap-2">
-          <Settings2 className="h-5 w-5 text-slate-500" />
-          Cài đặt TMS
-        </h1>
-        <p className="text-xs text-slate-400 mt-0.5">Loại xe, khung giờ booking, ĐVVT và phương tiện</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-semibold text-slate-800 flex items-center gap-2">
+            <Settings2 className="h-5 w-5 text-slate-500" />
+            Cài đặt TMS
+          </h1>
+          <p className="text-xs text-slate-400 mt-0.5">Loại xe, khung giờ booking, ĐVVT và phương tiện</p>
+        </div>
+
+        {/* Warehouse selector — áp dụng cho tab Khung giờ */}
+        <div className="flex items-center gap-2 shrink-0">
+          <Warehouse className="h-4 w-4 text-slate-400" />
+          <Select value={warehouseId || '__none__'} onValueChange={v => setWarehouseId(v === '__none__' ? '' : v)}>
+            <SelectTrigger className="h-8 text-sm w-[200px]">
+              <SelectValue placeholder="Chọn kho…" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">— Chọn kho —</SelectItem>
+              {warehouses.map((w: any) => (
+                <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       <Tabs defaultValue="vehicle-types">
@@ -423,99 +450,112 @@ export default function TMSSettings() {
 
         {/* ── Tab: Khung giờ ── */}
         <TabsContent value="slot-templates" className="space-y-3">
-          <div className="flex items-center justify-between">
-            <p className="text-xs text-slate-500">{templates.length} template</p>
-            {canSlots && (
-              <Button size="sm" className="gap-1.5" onClick={() => { setEditingST(null); setShowSTDlg(true) }}>
-                <Plus className="h-4 w-4" /> Thêm khung giờ
-              </Button>
-            )}
-          </div>
-          <div className="flex gap-2 flex-wrap">
-            <Select value={filterVTId} onValueChange={setFilterVTId}>
-              <SelectTrigger className="h-8 text-sm w-[180px]">
-                <SelectValue placeholder="Tất cả loại xe" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">Tất cả loại xe</SelectItem>
-                {vehicleTypes.map(vt => <SelectItem key={vt.id} value={vt.id}>{vt.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            <Select value={filterDir} onValueChange={setFilterDir}>
-              <SelectTrigger className="h-8 text-sm w-[150px]"><SelectValue placeholder="Tất cả hướng" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">Tất cả hướng</SelectItem>
-                <SelectItem value="OUTBOUND">Xuất hàng</SelectItem>
-                <SelectItem value="INBOUND">Nhập hàng</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <Card>
-            {loadingST ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> : templates.length === 0 ? (
-              <div className="p-12 text-center text-slate-400 space-y-2">
-                <Clock className="h-10 w-10 mx-auto opacity-30" />
-                <p className="text-sm">Chưa có khung giờ nào</p>
-                {canSlots && <Button size="sm" variant="outline" onClick={() => { setEditingST(null); setShowSTDlg(true) }}>
-                  <Plus className="h-4 w-4 mr-1" /> Thêm khung giờ đầu tiên
-                </Button>}
+          {!warehouseId ? (
+            <div className="py-16 text-center text-slate-400 space-y-2">
+              <Warehouse className="h-10 w-10 mx-auto opacity-30" />
+              <p className="text-sm font-medium">Chọn kho để xem và cài đặt khung giờ</p>
+              <p className="text-xs">Mỗi kho có khung giờ và số xe tối đa riêng</p>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-slate-500">
+                  <span className="font-medium text-slate-700">{selectedWarehouse?.name}</span>
+                  {' '}· {templates.length} template
+                </p>
+                {canSlots && (
+                  <Button size="sm" className="gap-1.5" onClick={() => { setEditingST(null); setShowSTDlg(true) }}>
+                    <Plus className="h-4 w-4" /> Thêm khung giờ
+                  </Button>
+                )}
               </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="px-3 py-2 text-xs">Loại xe</TableHead>
-                      <TableHead className="px-3 py-2 text-xs">Hướng</TableHead>
-                      <TableHead className="px-3 py-2 text-xs">Loại hàng</TableHead>
-                      <TableHead className="px-3 py-2 text-xs">Thứ</TableHead>
-                      <TableHead className="px-3 py-2 text-xs">Khung giờ</TableHead>
-                      <TableHead className="px-3 py-2 text-xs text-right">Max xe</TableHead>
-                      <TableHead className="px-3 py-2 text-xs">Trạng thái</TableHead>
-                      {canSlots && <TableHead className="px-3 py-2 w-16" />}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {templates.map(st => (
-                      <TableRow key={st.id} className={`text-sm ${!st.is_active ? 'opacity-50' : ''}`}>
-                        <TableCell className="px-3 py-1.5 font-medium text-slate-700">{st.vehicle_type?.name ?? '—'}</TableCell>
-                        <TableCell className="px-3 py-1.5">
-                          <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${st.direction === 'OUTBOUND' ? 'bg-blue-50 text-blue-700' : 'bg-green-50 text-green-700'}`}>
-                            {st.direction === 'OUTBOUND' ? 'Xuất' : 'Nhập'}
-                          </span>
-                        </TableCell>
-                        <TableCell className="px-3 py-1.5 text-xs text-slate-500">{CARGO_LABEL[st.cargo_type] ?? st.cargo_type}</TableCell>
-                        <TableCell className="px-3 py-1.5 font-semibold text-xs text-slate-700">{DOW_LABEL[st.day_of_week] ?? st.day_of_week}</TableCell>
-                        <TableCell className="px-3 py-1.5 font-mono text-xs text-slate-700">
-                          {st.time_from?.slice(0,5)} – {st.time_to?.slice(0,5)}
-                        </TableCell>
-                        <TableCell className="px-3 py-1.5 text-right font-semibold tabular-nums">{st.max_vehicles}</TableCell>
-                        <TableCell className="px-3 py-1.5">
-                          <Badge variant={st.is_active ? 'default' : 'secondary'} className="text-xs">
-                            {st.is_active ? 'Hoạt động' : 'Tạm dừng'}
-                          </Badge>
-                        </TableCell>
-                        {canSlots && (
-                          <TableCell className="px-2 py-1.5">
-                            <div className="flex items-center gap-0.5">
-                              <button className="text-slate-400 hover:text-blue-500 p-1"
-                                onClick={() => { setEditingST(st); setShowSTDlg(true) }}>
-                                <Pencil className="h-3.5 w-3.5" />
-                              </button>
-                              <button className="text-slate-400 hover:text-red-500 p-1"
-                                disabled={deletingST}
-                                onClick={() => { if (confirm('Xóa template này?')) deleteST(st.id) }}>
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
-                            </div>
-                          </TableCell>
-                        )}
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+              <div className="flex gap-2 flex-wrap">
+                <Select value={filterVTId} onValueChange={setFilterVTId}>
+                  <SelectTrigger className="h-8 text-sm w-[180px]">
+                    <SelectValue placeholder="Tất cả loại xe" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all__">Tất cả loại xe</SelectItem>
+                    {vehicleTypes.map(vt => <SelectItem key={vt.id} value={vt.id}>{vt.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <Select value={filterDir} onValueChange={setFilterDir}>
+                  <SelectTrigger className="h-8 text-sm w-[150px]"><SelectValue placeholder="Tất cả hướng" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all__">Tất cả hướng</SelectItem>
+                    <SelectItem value="OUTBOUND">Xuất hàng</SelectItem>
+                    <SelectItem value="INBOUND">Nhập hàng</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
-            )}
-          </Card>
+              <Card>
+                {loadingST ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> : templates.length === 0 ? (
+                  <div className="p-12 text-center text-slate-400 space-y-2">
+                    <Clock className="h-10 w-10 mx-auto opacity-30" />
+                    <p className="text-sm">Chưa có khung giờ nào cho kho này</p>
+                    {canSlots && <Button size="sm" variant="outline" onClick={() => { setEditingST(null); setShowSTDlg(true) }}>
+                      <Plus className="h-4 w-4 mr-1" /> Thêm khung giờ đầu tiên
+                    </Button>}
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="px-3 py-2 text-xs">Loại xe</TableHead>
+                          <TableHead className="px-3 py-2 text-xs">Hướng</TableHead>
+                          <TableHead className="px-3 py-2 text-xs">Loại hàng</TableHead>
+                          <TableHead className="px-3 py-2 text-xs">Thứ</TableHead>
+                          <TableHead className="px-3 py-2 text-xs">Khung giờ</TableHead>
+                          <TableHead className="px-3 py-2 text-xs text-right">Max xe</TableHead>
+                          <TableHead className="px-3 py-2 text-xs">Trạng thái</TableHead>
+                          {canSlots && <TableHead className="px-3 py-2 w-16" />}
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {templates.map(st => (
+                          <TableRow key={st.id} className={`text-sm ${!st.is_active ? 'opacity-50' : ''}`}>
+                            <TableCell className="px-3 py-1.5 font-medium text-slate-700">{st.vehicle_type?.name ?? '—'}</TableCell>
+                            <TableCell className="px-3 py-1.5">
+                              <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${st.direction === 'OUTBOUND' ? 'bg-blue-50 text-blue-700' : 'bg-green-50 text-green-700'}`}>
+                                {st.direction === 'OUTBOUND' ? 'Xuất' : 'Nhập'}
+                              </span>
+                            </TableCell>
+                            <TableCell className="px-3 py-1.5 text-xs text-slate-500">{CARGO_LABEL[st.cargo_type] ?? st.cargo_type}</TableCell>
+                            <TableCell className="px-3 py-1.5 font-semibold text-xs text-slate-700">{DOW_LABEL[st.day_of_week] ?? st.day_of_week}</TableCell>
+                            <TableCell className="px-3 py-1.5 font-mono text-xs text-slate-700">
+                              {st.time_from?.slice(0,5)} – {st.time_to?.slice(0,5)}
+                            </TableCell>
+                            <TableCell className="px-3 py-1.5 text-right font-semibold tabular-nums">{st.max_vehicles}</TableCell>
+                            <TableCell className="px-3 py-1.5">
+                              <Badge variant={st.is_active ? 'default' : 'secondary'} className="text-xs">
+                                {st.is_active ? 'Hoạt động' : 'Tạm dừng'}
+                              </Badge>
+                            </TableCell>
+                            {canSlots && (
+                              <TableCell className="px-2 py-1.5">
+                                <div className="flex items-center gap-0.5">
+                                  <button className="text-slate-400 hover:text-blue-500 p-1"
+                                    onClick={() => { setEditingST(st); setShowSTDlg(true) }}>
+                                    <Pencil className="h-3.5 w-3.5" />
+                                  </button>
+                                  <button className="text-slate-400 hover:text-red-500 p-1"
+                                    disabled={deletingST}
+                                    onClick={() => { if (confirm('Xóa template này?')) deleteST(st.id) }}>
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </button>
+                                </div>
+                              </TableCell>
+                            )}
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </Card>
+            </>
+          )}
         </TabsContent>
 
         {/* ── Tab: ĐVVT / NCC ── */}
@@ -650,7 +690,7 @@ export default function TMSSettings() {
       </Tabs>
 
       {showVTDlg && <VehicleTypeDialog vt={editingVT} open={showVTDlg} onClose={() => setShowVTDlg(false)} />}
-      {showSTDlg && <SlotTemplateDialog st={editingST} open={showSTDlg} onClose={() => setShowSTDlg(false)} vehicleTypes={vehicleTypes} />}
+      {showSTDlg && warehouseId && <SlotTemplateDialog st={editingST} open={showSTDlg} onClose={() => setShowSTDlg(false)} vehicleTypes={vehicleTypes} warehouseId={warehouseId} />}
       {showCoDlg && <TransportCompanyDialog co={editingCo} open={showCoDlg} onClose={() => setShowCoDlg(false)} />}
       {showVDlg  && <VehicleDialog v={editingV} open={showVDlg} onClose={() => setShowVDlg(false)} companies={companies} vehicleTypes={vehicleTypes} />}
     </div>

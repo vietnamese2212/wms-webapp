@@ -9,22 +9,24 @@ interface SlotTemplateRow {
 }
 
 // POST /api/tms/slots/generate
-// Body: { dates: string[] }  — VD: ["2026-05-20", "2026-05-21"]
+// Body: { warehouse_id: string, dates: string[] }  — VD: ["2026-05-20", "2026-05-21"]
 // Idempotent: chỉ INSERT slot chưa có, bỏ qua slot đã tồn tại cho (template_id, date)
 export async function generateSlotsForDates(req: Request, res: Response) {
   try {
-    const { dates } = req.body as { dates?: string[] }
+    const { warehouse_id, dates } = req.body as { warehouse_id?: string; dates?: string[] }
+    if (!warehouse_id) return fail(res, 'warehouse_id là bắt buộc', 400)
     if (!dates?.length) return fail(res, 'dates là bắt buộc (mảng YYYY-MM-DD)', 400)
 
     // Validate định dạng ngày
     const validDates = dates.filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d))
     if (!validDates.length) return fail(res, 'Không có ngày hợp lệ (cần định dạng YYYY-MM-DD)', 400)
 
-    // Lấy tất cả template đang hoạt động
+    // Lấy template đang hoạt động của kho này
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: templates, error: tmplErr } = await (supabase.from('SlotTemplate') as any)
       .select('id, vehicle_type_id, direction, cargo_type, day_of_week, time_from, time_to, max_vehicles')
       .eq('is_active', true)
+      .eq('warehouse_id', warehouse_id)
     if (tmplErr) return fail(res, tmplErr.message)
     if (!templates?.length) return ok(res, { created: 0, message: 'Chưa có template nào được tạo' })
 
@@ -53,6 +55,7 @@ export async function generateSlotsForDates(req: Request, res: Response) {
         if (existingSet.has(`${tmpl.id}:${dateStr}`)) continue
         rows.push({
           id: randomUUID(), template_id: tmpl.id,
+          warehouse_id,
           vehicle_type_id: tmpl.vehicle_type_id, direction: tmpl.direction, cargo_type: tmpl.cargo_type,
           date: dateStr, time_from: tmpl.time_from, time_to: tmpl.time_to,
           max_vehicles: tmpl.max_vehicles, booked_count: 0, status: 'OPEN',

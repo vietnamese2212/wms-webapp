@@ -388,6 +388,7 @@ export interface TmsVehicleType {
 
 export interface SlotTemplate {
   id:              string
+  warehouse_id:    string
   vehicle_type_id: string
   vehicle_type?:   Pick<TmsVehicleType, 'id' | 'code' | 'name'>
   direction:       'OUTBOUND' | 'INBOUND'

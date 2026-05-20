@@ -608,17 +608,23 @@ export async function unstartGDO(req: Request, res: Response) {
       .select('started_at').eq('id', req.params.id).single()
     if (!gdo?.started_at) return fail(res, 'Đơn chưa được bắt đầu', 400)
 
-    // Kiểm tra chưa có QR nào được quét
+    // Kiểm tra chưa có QR nào được quét (bỏ qua POSM/Pallet Loscam và nhặt lẻ chưa confirm)
     const { data: doList } = await (supabase.from('OutboundDelivery') as any)
       .select('id').eq('gdo_id', req.params.id)
     const doIds = (doList ?? []).map((d: any) => d.id)
     if (doIds.length) {
       const { data: items } = await (supabase.from('OutboundItem') as any)
-        .select('id').in('do_id', doIds)
-      const itemIds = (items ?? []).map((i: any) => i.id)
-      if (itemIds.length) {
+        .select('id, material_type, material_code_raw').in('do_id', doIds)
+      // Chỉ kiểm tra item có thể scan thực sự (bỏ POSM, Pallet Loscam, 810000)
+      const blockableIds = (items ?? [])
+        .filter((i: any) => !isExcludedFromCount(i))
+        .map((i: any) => i.id as string)
+      if (blockableIds.length) {
+        // Chỉ đếm scan entries thực sự (không phải nhặt lẻ chưa confirm)
         const { count } = await (supabase.from('OutboundScanEntry') as any)
-          .select('id', { count: 'exact', head: true }).in('item_id', itemIds)
+          .select('id', { count: 'exact', head: true })
+          .in('item_id', blockableIds)
+          .or('is_loose_picking.eq.false,is_loose_picking.is.null,loose_confirmed.eq.true')
         if ((count ?? 0) > 0)
           return fail(res, 'Cần xóa hết QR đã quét trước khi gỡ bắt đầu', 400)
       }

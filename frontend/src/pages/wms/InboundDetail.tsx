@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import type { AxiosError }              from 'axios'
 import {
@@ -21,7 +21,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import {
   useInboundOrder, useCancelInboundOrder,
   useScanPallet, useDeletePalletEntry, useDeletePalletEntries,
-  useLocationsReal, useUpdateInboundOrder, useEmployeeRecords,
+  useLocationsReal, useUpdateInboundOrder,
   useCheckInboundScan,
 } from '@/api/hooks'
 import { useAuthStore }            from '@/stores/authStore'
@@ -317,13 +317,6 @@ export default function InboundDetail() {
   const user  = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
 
-  // Khớp user hiện tại với Employee record để gửi employee_id khi scan
-  const { data: allEmployees = [] } = useEmployeeRecords({ is_active: 'true' })
-  type EmpLookup = { id: string; name: string }
-  const currentEmpId = useMemo(
-    () => (allEmployees as EmpLookup[]).find(e => e.name.toLowerCase() === (user?.name ?? '').toLowerCase())?.id,
-    [allEmployees, user?.name]
-  )
 
   const { mutate: cancelOrder, isPending: cancelling } = useCancelInboundOrder()
   const { mutate: deleteEntry                           } = useDeletePalletEntry()
@@ -390,7 +383,7 @@ export default function InboundDetail() {
         <ScanDialog
           order={order}
           onClose={() => setShowScan(false)}
-          employeeId={currentEmpId}
+          employeeId={user?.id}
         />
       )}
 

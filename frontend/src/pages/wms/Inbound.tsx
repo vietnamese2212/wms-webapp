@@ -104,7 +104,7 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
   const availCategories = new Set(allLocs.map(l => l.category).filter(Boolean))
 
   // Hardcode 3 loại chuẩn; bổ sung dynamic từ category thực tế trong Location DB
-  const knownMatCats = new Set(LOAI_KHO_CONFIG.map(c => c.mat_category))
+  const knownMatCats = new Set<string>(LOAI_KHO_CONFIG.map(c => c.mat_category))
   const extraKhoConfig = [...availCategories]
     .filter((cat): cat is string => !!cat && !knownMatCats.has(cat))
     .map(cat => ({ sub_type: cat, label: cat, mat_category: cat }))

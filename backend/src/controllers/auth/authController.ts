@@ -59,7 +59,7 @@ export async function login(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: emps } = await (supabase.from('Employee') as any)
-      .select('id, name, email, warehouse_scope, warehouse_id, allowed_categories, password, is_active, module_permissions, job_title_id')
+      .select('id, name, employee_code, email, warehouse_scope, warehouse_id, allowed_categories, password, is_active, module_permissions, job_title_id')
       .ilike('email', email.trim())
       .limit(1)
 
@@ -86,9 +86,10 @@ export async function login(req: Request, res: Response) {
         : Promise.resolve(null),
     ])
 
-    // Resolve module_permissions: Admin gets all; always use job_title (no per-employee override)
+    // Resolve module_permissions: superadmin (employee_code=ADMIN hoặc name=Admin) gets all; else dùng job_title
     let modulePerms: Record<string, string[]> = {}
-    if (emp.name === 'Admin') {
+    const isSuperAdmin = emp.employee_code === 'ADMIN' || emp.name === 'Admin'
+    if (isSuperAdmin) {
       modulePerms = ALL_PERMISSIONS as Record<string, string[]>
     } else if (jtData?.module_permissions && Object.keys(jtData.module_permissions).length > 0) {
       modulePerms = jtData.module_permissions
@@ -108,7 +109,7 @@ export async function me(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: emps } = await (supabase.from('Employee') as any)
-      .select('id, name, email, warehouse_scope, warehouse_id, allowed_categories, is_active, module_permissions, job_title_id')
+      .select('id, name, employee_code, email, warehouse_scope, warehouse_id, allowed_categories, is_active, module_permissions, job_title_id')
       .eq('id', userId).limit(1)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -130,7 +131,8 @@ export async function me(req: Request, res: Response) {
     ])
 
     let modulePerms: Record<string, string[]> = {}
-    if (emp.name === 'Admin') {
+    const isSuperAdmin = emp.employee_code === 'ADMIN' || emp.name === 'Admin'
+    if (isSuperAdmin) {
       modulePerms = ALL_PERMISSIONS as Record<string, string[]>
     } else if (jtData?.module_permissions && Object.keys(jtData.module_permissions).length > 0) {
       modulePerms = jtData.module_permissions

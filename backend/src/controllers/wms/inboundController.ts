@@ -572,6 +572,24 @@ async function checkDeletePermission(
   return { allowed: true }
 }
 
+// Đảm bảo tồn kho chưa bị thay đổi (xuất/điều chỉnh/đặt trước)
+function checkInventoryUnchanged(
+  entries: { status: string; cartons_reserved: number | null; adjustment_qty: number | null }[]
+): { allowed: boolean; reason?: string } {
+  for (const e of entries) {
+    if (e.status !== 'IN_STOCK') {
+      return { allowed: false, reason: 'Pallet đã được xuất hoặc thay đổi trạng thái trong tồn kho, không thể xóa' }
+    }
+    if ((e.cartons_reserved ?? 0) > 0) {
+      return { allowed: false, reason: 'Pallet đang được đặt cho đơn xuất, không thể xóa' }
+    }
+    if (e.adjustment_qty != null && e.adjustment_qty !== 0) {
+      return { allowed: false, reason: 'Pallet đã được điều chỉnh tồn kho, không thể xóa' }
+    }
+  }
+  return { allowed: true }
+}
+
 // ─── Remove a single pallet entry ───────────────────────────
 
 export async function removeEntry(req: Request, res: Response) {
@@ -582,7 +600,7 @@ export async function removeEntry(req: Request, res: Response) {
     const [{ data: order }, { data: entry }] = await Promise.all([
       supabase.from('ProductionImport').select('status, warehouse_id').eq('id', order_id).maybeSingle(),
       supabase.from('InventoryEntry')
-        .select('id, import_order_id, created_by, import_date, created_at')
+        .select('id, import_order_id, created_by, import_date, created_at, status, cartons_reserved, adjustment_qty')
         .eq('id', entryId).maybeSingle(),
     ])
     if (!order)                              return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
@@ -592,6 +610,9 @@ export async function removeEntry(req: Request, res: Response) {
 
     const perm = await checkDeletePermission(employee_id, [entry], order.warehouse_id as string | null)
     if (!perm.allowed) return fail(res, 403, 'FORBIDDEN', perm.reason!)
+
+    const inv = checkInventoryUnchanged([entry])
+    if (!inv.allowed) return fail(res, 400, 'INVENTORY_CHANGED', inv.reason!)
 
     const { error } = await supabase.from('InventoryEntry').delete().eq('id', entryId)
     if (error) throw error
@@ -619,7 +640,7 @@ export async function removeEntries(req: Request, res: Response) {
 
     const { data: entries } = await supabase
       .from('InventoryEntry')
-      .select('id, import_order_id, created_by, import_date, created_at')
+      .select('id, import_order_id, created_by, import_date, created_at, status, cartons_reserved, adjustment_qty')
       .in('id', entry_ids)
     if (!entries?.length) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy pallet')
 
@@ -628,6 +649,9 @@ export async function removeEntries(req: Request, res: Response) {
 
     const perm = await checkDeletePermission(employee_id, entries, order.warehouse_id as string | null)
     if (!perm.allowed) return fail(res, 403, 'FORBIDDEN', perm.reason!)
+
+    const inv = checkInventoryUnchanged(entries)
+    if (!inv.allowed) return fail(res, 400, 'INVENTORY_CHANGED', inv.reason!)
 
     const { error } = await supabase
       .from('InventoryEntry').delete().in('id', entry_ids).eq('import_order_id', order_id)

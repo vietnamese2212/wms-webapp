@@ -251,6 +251,16 @@ export async function setPassword(req: Request, res: Response) {
 export async function deleteEmployee(req: Request, res: Response) {
   try {
     const { id } = req.params
+    // NULL out FK references that lack ON DELETE SET NULL
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase.from('GroupDeliveryOrder') as any).update({ forklift_driver_id: null }).eq('forklift_driver_id', id)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase.from('OutboundScanEntry') as any).update({ scanned_by: null }).eq('scanned_by', id)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase.from('OutboundScanEntry') as any).update({ loose_confirmed_by: null }).eq('loose_confirmed_by', id)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase.from('InventoryEntry') as any).update({ stocktake_by: null }).eq('stocktake_by', id)
+    // UserWarehouseAccess has ON DELETE CASCADE but delete explicitly
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (supabase.from('UserWarehouseAccess') as any).delete().eq('employee_id', id)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -6,7 +6,7 @@ import { queryClient } from './queryClient'
 // Add entries here when new modules with real API queries are built.
 const TABLE_QUERY_MAP: Record<string, string[][]> = {
   ProductionImport: [['inbound-orders'], ['inbound-order']],
-  InventoryEntry:   [['inbound-order'], ['locations-real']],
+  InventoryEntry:   [['inbound-order'], ['inventory-entries'], ['inventory-facets'], ['locations-real']],
   Location:         [['locations-real'], ['sub-groups']],
   Material:         [['materials']],
   Manufacturer:     [['manufacturers']],

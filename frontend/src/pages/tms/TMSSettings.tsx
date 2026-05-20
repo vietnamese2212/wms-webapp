@@ -11,7 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
-  useWarehouses,
+  useWarehouses, useMaterialCategories,
   useVehicleTypes, useCreateVehicleType, useUpdateVehicleType,
   useSlotTemplates, useCreateSlotTemplate, useUpdateSlotTemplate, useDeleteSlotTemplate,
   useTransportCompanies, useCreateTransportCompany, useUpdateTransportCompany,
@@ -22,8 +22,7 @@ import { useAuthStore } from '@/stores/authStore'
 import type { TmsVehicleType, SlotTemplate, TransportCompany, TmsVehicle } from '@/types'
 
 const DOW_LABEL: Record<number, string> = { 1:'T2', 2:'T3', 3:'T4', 4:'T5', 5:'T6', 6:'T7' }
-const CARGO_OPTIONS = ['ALL', 'TP', 'NVL', 'POSM']
-const CARGO_LABEL: Record<string, string> = { ALL:'Tất cả', TP:'Thành phẩm', NVL:'Nguyên vật liệu', POSM:'POSM' }
+const DEFAULT_CARGO = ['Thành phẩm', 'NVL', 'POSM']
 
 function apiMsg(err: unknown) {
   return (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? String(err)
@@ -80,9 +79,9 @@ function VehicleTypeDialog({ vt, open, onClose }: { vt: TmsVehicleType | null; o
 
 // ─── SlotTemplate form ───────────────────────────────────────────────────────
 
-function SlotTemplateDialog({ st, open, onClose, vehicleTypes, warehouseId }: {
+function SlotTemplateDialog({ st, open, onClose, vehicleTypes, warehouseId, cargoOptions }: {
   st: SlotTemplate | null; open: boolean; onClose: () => void
-  vehicleTypes: TmsVehicleType[]; warehouseId: string
+  vehicleTypes: TmsVehicleType[]; warehouseId: string; cargoOptions: string[]
 }) {
   const isEdit = !!st
   const [vtId,        setVtId]        = useState(st?.vehicle_type_id ?? '')
@@ -160,7 +159,8 @@ function SlotTemplateDialog({ st, open, onClose, vehicleTypes, warehouseId }: {
             <Select value={cargoType} onValueChange={setCargoType}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                {CARGO_OPTIONS.map(c => <SelectItem key={c} value={c}>{CARGO_LABEL[c]}</SelectItem>)}
+                <SelectItem value="ALL">Tất cả loại hàng</SelectItem>
+                {cargoOptions.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
@@ -330,6 +330,10 @@ export default function TMSSettings() {
   // Warehouse selector — context cho tab Khung giờ
   const { data: warehouses = [] } = useWarehouses(true)
   const [warehouseId, setWarehouseId] = useState('')
+
+  // Cargo options từ Material.category thực tế, fallback về default
+  const { data: dbCategories = [] } = useMaterialCategories()
+  const cargoOptions = [...new Set([...DEFAULT_CARGO, ...dbCategories])].sort()
 
   // VehicleType
   const { data: vehicleTypes = [], isLoading: loadingVT } = useVehicleTypes()
@@ -521,7 +525,7 @@ export default function TMSSettings() {
                                 {st.direction === 'OUTBOUND' ? 'Xuất' : 'Nhập'}
                               </span>
                             </TableCell>
-                            <TableCell className="px-3 py-1.5 text-xs text-slate-500">{CARGO_LABEL[st.cargo_type] ?? st.cargo_type}</TableCell>
+                            <TableCell className="px-3 py-1.5 text-xs text-slate-500">{st.cargo_type === 'ALL' ? 'Tất cả' : st.cargo_type}</TableCell>
                             <TableCell className="px-3 py-1.5 font-semibold text-xs text-slate-700">{DOW_LABEL[st.day_of_week] ?? st.day_of_week}</TableCell>
                             <TableCell className="px-3 py-1.5 font-mono text-xs text-slate-700">
                               {st.time_from?.slice(0,5)} – {st.time_to?.slice(0,5)}
@@ -690,7 +694,7 @@ export default function TMSSettings() {
       </Tabs>
 
       {showVTDlg && <VehicleTypeDialog vt={editingVT} open={showVTDlg} onClose={() => setShowVTDlg(false)} />}
-      {showSTDlg && warehouseId && <SlotTemplateDialog st={editingST} open={showSTDlg} onClose={() => setShowSTDlg(false)} vehicleTypes={vehicleTypes} warehouseId={warehouseId} />}
+      {showSTDlg && warehouseId && <SlotTemplateDialog st={editingST} open={showSTDlg} onClose={() => setShowSTDlg(false)} vehicleTypes={vehicleTypes} warehouseId={warehouseId} cargoOptions={cargoOptions} />}
       {showCoDlg && <TransportCompanyDialog co={editingCo} open={showCoDlg} onClose={() => setShowCoDlg(false)} />}
       {showVDlg  && <VehicleDialog v={editingV} open={showVDlg} onClose={() => setShowVDlg(false)} companies={companies} vehicleTypes={vehicleTypes} />}
     </div>

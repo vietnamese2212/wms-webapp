@@ -785,6 +785,10 @@ export default function OutboundDetail() {
   // Workflow state
   const canStart       = !!gdo.assigned_at && !gdo.started_at && can(perms, 'outbound', 'start')
   const hasScanEntries = allItems.some(i => i.cartons_scanned > 0)
+  // Nhặt lẻ chưa confirm không tính là scan cản trở gỡ bắt đầu
+  const hasBlockingScans = allItems.some(i =>
+    (i.scan_entries ?? []).some(s => !s.is_loose_picking || s.loose_confirmed)
+  )
 
   const hasAnyExpanded = expandedItemIds.size > 0
   function toggleExpandAll() {
@@ -935,8 +939,8 @@ export default function OutboundDetail() {
               {can(perms, 'outbound', 'unstart') && !!gdo.started_at && gdo.status !== 'COMPLETED' && gdo.status !== 'PAUSED' && (
                 <Button size="sm" variant="outline"
                   className="h-7 text-xs gap-1 px-2 border-slate-300 text-slate-500 hover:bg-slate-50 disabled:opacity-40"
-                  disabled={unstarting || hasScanEntries}
-                  title={hasScanEntries ? 'Xóa hết QR đã quét trước' : 'Gỡ bắt đầu'}
+                  disabled={unstarting || hasBlockingScans}
+                  title={hasBlockingScans ? 'Xóa hết QR đã quét trước' : 'Gỡ bắt đầu'}
                   onClick={() => doUndo((id, opts) => unstartGDO(id, opts))}>
                   <RotateCcw className="h-3 w-3" />
                   {unstarting ? '…' : 'Gỡ BĐ'}

@@ -232,7 +232,7 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
     const payload = {
       name, employee_code: empCode,
       email: email || undefined, phone: phone || undefined,
-      department_id: deptId || undefined,
+      department_id: deptId || null,
       job_title_id: jobTitleId || null,
       allowed_categories: categories,
       warehouse_scope: scope,

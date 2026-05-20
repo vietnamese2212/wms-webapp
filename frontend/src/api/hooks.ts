@@ -740,7 +740,7 @@ export function useCreateEmployee() {
   return useMutation({
     mutationFn: (body: {
       name: string; employee_code: string; email?: string; phone?: string
-      department_id?: string; job_title_id?: string
+      department_id?: string | null; job_title_id?: string | null
       allowed_categories?: string[]; warehouse_scope?: string
       warehouse_ids?: string[]
     }) => apiClient.post('/masterdata/employees', body).then(r => r.data.data),
@@ -753,7 +753,7 @@ export function useUpdateEmployee() {
   return useMutation({
     mutationFn: ({ id, ...body }: {
       id: string; name?: string; phone?: string; email?: string
-      department_id?: string; job_title_id?: string
+      department_id?: string | null; job_title_id?: string | null
       allowed_categories?: string[]; warehouse_scope?: string
       is_active?: boolean; warehouse_ids?: string[]
     }) => apiClient.patch(`/masterdata/employees/${id}`, body).then(r => r.data.data),

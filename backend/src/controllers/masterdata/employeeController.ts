@@ -23,14 +23,14 @@ function generateTempPassword(): string {
 
 interface EmpRow {
   id: string; name: string; employee_code: string; email: string | null; phone: string | null
-  department: string | null; department_id: string | null; job_title_id: string | null
+  department_id: string | null; job_title_id: string | null
   allowed_categories: string[] | null; warehouse_scope: string | null
   warehouse_id: string | null; is_active: boolean; created_at: string
 }
 
 const EMP_BASE = [
   'id', 'name', 'employee_code', 'email', 'phone',
-  'department', 'department_id', 'job_title_id',
+  'department_id', 'job_title_id',
   'allowed_categories', 'warehouse_scope',
   'warehouse_id', 'is_active', 'created_at',
 ].join(', ')
@@ -251,13 +251,23 @@ export async function setPassword(req: Request, res: Response) {
 export async function deleteEmployee(req: Request, res: Response) {
   try {
     const { id } = req.params
-    // Soft delete: giữ row trong DB (lịch sử vẫn có FK), chỉ ẩn khỏi danh sách
+
+    // Hard delete trước — nếu không có FK references nào thì xóa hẳn
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await (supabase.from('Employee') as any)
-      .update({ deleted_at: new Date().toISOString(), is_active: false, updated_at: new Date().toISOString() })
-      .eq('id', id)
-    if (error) return fail(res, error.message)
-    return ok(res, { message: 'Đã xóa nhân viên' })
+    const { error: hardErr } = await (supabase.from('Employee') as any).delete().eq('id', id)
+    if (!hardErr) return ok(res, { message: 'Đã xóa nhân viên', deleted: 'hard' })
+
+    // FK constraint (23503) → còn lịch sử, dùng soft delete
+    if (hardErr.code === '23503') {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error: softErr } = await (supabase.from('Employee') as any)
+        .update({ deleted_at: new Date().toISOString(), is_active: false, updated_at: new Date().toISOString() })
+        .eq('id', id)
+      if (softErr) return fail(res, softErr.message)
+      return ok(res, { message: 'Nhân viên có lịch sử hoạt động — đã ẩn khỏi danh sách', deleted: 'soft' })
+    }
+
+    return fail(res, hardErr.message)
   } catch (e) { return fail(res, String(e)) }
 }
 

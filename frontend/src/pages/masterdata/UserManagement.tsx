@@ -111,17 +111,40 @@ function SetPasswordDialog({ emp, open, onClose }: { emp: EmployeeRecord; open: 
 function ConfirmDeleteDialog({ emp, open, onClose }: { emp: EmployeeRecord; open: boolean; onClose: () => void }) {
   const { mutate: del, isPending } = useDeleteEmployee()
   const [error, setError] = useState<string | null>(null)
+  const [softDeleted, setSoftDeleted] = useState(false)
 
   function handleDelete() {
     setError(null)
     del(emp.id, {
-      onSuccess: onClose,
+      onSuccess: (res) => {
+        if (res?.deleted === 'soft') { setSoftDeleted(true) } else { onClose() }
+      },
       onError: (err) => {
         const msg = (err as AxiosError<{ error: { message: string } }>)
           ?.response?.data?.error?.message ?? 'Lỗi xóa nhân viên'
         setError(msg)
       },
     })
+  }
+
+  if (softDeleted) {
+    return (
+      <Dialog open={open} onOpenChange={v => { if (!v) onClose() }}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-amber-700">
+              <Trash2 className="h-4 w-4" /> Đã ẩn nhân viên
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-slate-600 py-2">
+            <span className="font-semibold">{emp.name}</span> có lịch sử hoạt động trong hệ thống nên được ẩn khỏi danh sách thay vì xóa hẳn. Dữ liệu lịch sử vẫn được giữ lại.
+          </p>
+          <DialogFooter>
+            <Button size="sm" onClick={onClose}>Đóng</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    )
   }
 
   return (
@@ -723,7 +746,7 @@ export default function UserManagement() {
                           <p className="text-xs text-slate-400">{emp.employee_code} · {emp.email ?? '—'}</p>
                         </TableCell>
                         <TableCell className="px-3 py-2">
-                          <p className="text-slate-700">{emp.dept?.name ?? emp.department ?? '—'}</p>
+                          <p className="text-slate-700">{emp.dept?.name ?? '—'}</p>
                           <p className="text-xs text-slate-400">{emp.job_title?.name ?? '—'}</p>
                         </TableCell>
                         <TableCell className="px-3 py-2">

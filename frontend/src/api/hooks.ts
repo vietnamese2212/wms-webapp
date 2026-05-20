@@ -769,7 +769,7 @@ export function useUpdateEmployee() {
 export function useDeleteEmployee() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (id: string) => apiClient.delete(`/masterdata/employees/${id}`).then(r => r.data),
+    mutationFn: (id: string) => apiClient.delete(`/masterdata/employees/${id}`).then(r => r.data.data as { message: string; deleted: 'hard' | 'soft' }),
     onSuccess: (_data, id) => {
       qc.setQueriesData<EmployeeRecord[]>(
         { queryKey: ['employee-records'] },

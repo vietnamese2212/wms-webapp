@@ -45,12 +45,11 @@ export interface EmployeeRecord {
   employee_code:      string
   email:              string | null
   phone:              string | null
-  department:         string | null       // legacy text field
   department_id:      string | null
   job_title_id:       string | null
   allowed_categories: string[]
   warehouse_scope:    'NATIONAL' | 'ASSIGNED'
-  warehouse_id:       string | null       // legacy single warehouse
+  warehouse_id:       string | null
   is_active:          boolean
   created_at:         string
   dept?:              Pick<Department, 'id' | 'name' | 'code'> | null

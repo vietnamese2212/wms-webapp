@@ -59,7 +59,7 @@ export async function login(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: emps } = await (supabase.from('Employee') as any)
-      .select('id, name, email, role, warehouse_scope, warehouse_id, allowed_categories, password, is_active, module_permissions, job_title_id')
+      .select('id, name, email, warehouse_scope, warehouse_id, allowed_categories, password, is_active, module_permissions, job_title_id')
       .ilike('email', email.trim())
       .limit(1)
 

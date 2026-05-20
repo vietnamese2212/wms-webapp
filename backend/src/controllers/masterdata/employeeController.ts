@@ -23,7 +23,7 @@ function generateTempPassword(): string {
 
 interface EmpRow {
   id: string; name: string; employee_code: string; email: string | null; phone: string | null
-  role: string; department: string | null; department_id: string | null; job_title_id: string | null
+  department: string | null; department_id: string | null; job_title_id: string | null
   allowed_categories: string[] | null; warehouse_scope: string | null
   warehouse_id: string | null; is_active: boolean; created_at: string
 }
@@ -168,7 +168,6 @@ export async function createEmployee(req: Request, res: Response) {
       job_title_id:  job_title_id  || null,
       allowed_categories: finalCategories ?? [],
       warehouse_scope: finalScope ?? 'ASSIGNED',
-      role: (finalScope ?? 'ASSIGNED') === 'NATIONAL' ? 'OWN' : 'WAREHOUSE_STAFF',
       password: hashedPw,
       is_active: true,
       created_at: now,

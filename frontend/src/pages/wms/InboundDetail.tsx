@@ -351,7 +351,7 @@ export default function InboundDetail() {
 
   function canDeleteEntry(entry: PalletEntry): boolean {
     if (!isOpen) return false
-    if (!can(perms, 'inbound', 'delete')) return false
+    if (!can(perms, 'inbound', 'delete_pallet')) return false
     if (!user?.id || entry.created_by_emp?.id !== user.id) return false
     const importDate = new Date(entry.import_date ?? entry.created_at)
     return (Date.now() - importDate.getTime()) / 86_400_000 <= 2
@@ -433,7 +433,7 @@ export default function InboundDetail() {
             </div>
 
             <div className="flex items-center gap-1.5 shrink-0">
-              {isOpen && (
+              {isOpen && can(perms, 'inbound', 'cancel') && (
                 <Button
                   size="sm" variant="outline"
                   className="h-7 text-xs px-2 text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700 disabled:opacity-40"

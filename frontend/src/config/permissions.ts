@@ -18,10 +18,11 @@ export const MODULES = {
   inbound: {
     label: 'Nhập kho',
     actions: {
-      view:   'Xem danh sách',
-      create: 'Tạo phiếu',
-      scan:   'Quét QR',
-      delete: 'Xóa phiếu',
+      view:         'Xem danh sách',
+      create:       'Tạo phiếu',
+      scan:         'Quét QR',
+      delete_pallet:'Xóa pallet',
+      cancel:       'Hủy phiếu',
     },
   },
   outbound: {

@@ -191,7 +191,7 @@ export async function updateEmployee(req: Request, res: Response) {
       is_active,
     } = req.body as {
       name?: string; phone?: string; email?: string
-      department_id?: string; job_title_id?: string
+      department_id?: string; job_title_id?: string | null
       allowed_categories?: string[]; warehouse_scope?: string
       warehouse_ids?: string[]
       is_active?: boolean

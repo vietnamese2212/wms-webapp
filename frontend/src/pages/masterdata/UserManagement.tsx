@@ -233,7 +233,7 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
       name, employee_code: empCode,
       email: email || undefined, phone: phone || undefined,
       department_id: deptId || undefined,
-      job_title_id: jobTitleId || undefined,
+      job_title_id: jobTitleId || null,
       allowed_categories: categories,
       warehouse_scope: scope,
       warehouse_ids: scope === 'ASSIGNED' ? warehouseIds : [],
@@ -345,7 +345,7 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Chức danh (template)</Label>
-              <Select value={jobTitleId || '__none__'} onValueChange={v => setJobTitleId(v === '__none__' ? '' : v)} disabled={!deptId}>
+              <Select value={jobTitleId || '__none__'} onValueChange={v => setJobTitleId(v === '__none__' ? '' : v)} disabled={!deptId && !jobTitleId}>
                 <SelectTrigger><SelectValue placeholder="Chọn chức danh" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__none__">— Không chọn —</SelectItem>

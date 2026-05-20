@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import type { AxiosError } from 'axios'
-import { Plus, Pencil, ShieldCheck, Building2, User2, KeyRound, Check, Briefcase, Copy, CheckCheck, Trash2, RotateCcw, EyeOff } from 'lucide-react'
+import { Plus, Pencil, ShieldCheck, Building2, User2, KeyRound, Check, Briefcase, Copy, CheckCheck, Trash2, RotateCcw } from 'lucide-react'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
@@ -642,7 +642,7 @@ export default function UserManagement() {
 
   const [search,       setSearch]       = useState('')
   const [filterDept,   setFilterDept]   = useState('__all__')
-  const [showDeleted,  setShowDeleted]  = useState(false)
+  const [statusFilter, setStatusFilter] = useState<'active' | 'hidden' | 'all'>('active')
   const [editingEmp,   setEditingEmp]   = useState<EmployeeRecord | null>(null)
   const [showEmpDlg,   setShowEmpDlg]   = useState(false)
   const [pwdEmp,       setPwdEmp]       = useState<EmployeeRecord | null>(null)
@@ -658,11 +658,14 @@ export default function UserManagement() {
 
   const { data: departments = [] } = useDepartments()
   const { data: jobTitles = [] }   = useJobTitles(filterDeptJt === '__all__' ? undefined : filterDeptJt)
-  const { data: employees = [], isLoading, isError, error } = useEmployeeRecords({
+  const { data: rawEmployees = [], isLoading, isError, error } = useEmployeeRecords({
     department_id: filterDept === '__all__' ? undefined : filterDept,
     search: search || undefined,
-    include_deleted: showDeleted || undefined,
+    include_deleted: statusFilter !== 'active' ? true : undefined,
   })
+  const employees = statusFilter === 'hidden'
+    ? rawEmployees.filter(e => !!e.deleted_at)
+    : rawEmployees
 
   return (
     <div className="p-4 space-y-4 max-w-7xl mx-auto">
@@ -690,24 +693,15 @@ export default function UserManagement() {
         <TabsContent value="employees" className="space-y-3">
           <div className="flex items-center justify-between">
             <p className="text-xs text-slate-500">
-              {employees.filter(e => !e.deleted_at).length} nhân viên
-              {showDeleted && employees.some(e => e.deleted_at) && (
-                <span className="ml-1 text-slate-400">· {employees.filter(e => e.deleted_at).length} đã ẩn</span>
-              )}
+              {statusFilter === 'hidden'
+                ? `${employees.length} đã ẩn`
+                : statusFilter === 'all'
+                  ? `${rawEmployees.filter(e => !e.deleted_at).length} nhân viên · ${rawEmployees.filter(e => !!e.deleted_at).length} đã ẩn`
+                  : `${employees.length} nhân viên`}
             </p>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setShowDeleted(v => !v)}
-                className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium border transition-colors
-                  ${showDeleted ? 'bg-amber-50 border-amber-300 text-amber-700' : 'border-slate-200 text-slate-500 hover:border-slate-300'}`}
-              >
-                <EyeOff className="h-3 w-3" />
-                {showDeleted ? 'Ẩn đã xóa' : 'Đã ẩn'}
-              </button>
-              <Button size="sm" className="gap-1.5" onClick={() => { setEditingEmp(null); setShowEmpDlg(true) }}>
-                <Plus className="h-4 w-4" /> Thêm nhân viên
-              </Button>
-            </div>
+            <Button size="sm" className="gap-1.5" onClick={() => { setEditingEmp(null); setShowEmpDlg(true) }}>
+              <Plus className="h-4 w-4" /> Thêm nhân viên
+            </Button>
           </div>
 
           <div className="flex gap-2 flex-wrap">
@@ -722,6 +716,16 @@ export default function UserManagement() {
                 {departments.map(d => (
                   <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
                 ))}
+              </SelectContent>
+            </Select>
+            <Select value={statusFilter} onValueChange={v => setStatusFilter(v as 'active' | 'hidden' | 'all')}>
+              <SelectTrigger className="h-8 text-sm w-[160px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="active">Đang hoạt động</SelectItem>
+                <SelectItem value="hidden">Đang ẩn</SelectItem>
+                <SelectItem value="all">Toàn bộ</SelectItem>
               </SelectContent>
             </Select>
           </div>

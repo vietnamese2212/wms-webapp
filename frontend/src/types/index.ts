@@ -378,6 +378,44 @@ export interface InventoryEntry {
   stocktake_by_emp:      { id: string; name: string } | null
 }
 
+// TMS – Delivery Slot & Booking
+export interface DeliverySlot {
+  id:              string
+  template_id:     string | null
+  warehouse_id:    string
+  vehicle_type_id: string
+  direction:       'OUTBOUND' | 'INBOUND'
+  cargo_type:      string
+  date:            string
+  time_from:       string
+  time_to:         string
+  max_vehicles:    number
+  booked_count:    number
+  status:          'OPEN' | 'FULL' | 'CLOSED'
+}
+
+export type BookingStatus = 'PENDING' | 'CONFIRMED' | 'ARRIVED' | 'DONE' | 'CANCELLED'
+
+export interface DeliveryBooking {
+  id:            string
+  date:          string
+  warehouse_id:  string
+  ncc_id:        string
+  ncc?:          Pick<TransportCompany, 'id' | 'code' | 'name'>
+  gdo_refs:      string | null
+  slot_id:       string | null
+  slot?:         Pick<DeliverySlot, 'id' | 'date' | 'time_from' | 'time_to' | 'direction' | 'cargo_type' | 'max_vehicles' | 'booked_count'> | null
+  license_plate: string | null
+  driver_name:   string | null
+  driver_phone:  string | null
+  notes:         string | null
+  status:        BookingStatus
+  created_by:    string | null
+  updated_by:    string | null
+  created_at:    string
+  updated_at:    string
+}
+
 // TMS – Foundation
 export interface TmsVehicleType {
   id:         string

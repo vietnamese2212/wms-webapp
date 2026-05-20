@@ -8,6 +8,27 @@ interface SlotTemplateRow {
   day_of_week: number; time_from: string; time_to: string; max_vehicles: number
 }
 
+// GET /api/tms/slots?date=YYYY-MM-DD&warehouse_id=...&direction=...
+export async function listSlots(req: Request, res: Response) {
+  try {
+    const { date, warehouse_id, direction } = req.query as Record<string, string>
+    if (!date || !warehouse_id) return fail(res, 'date và warehouse_id là bắt buộc', 400)
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let q = (supabase.from('DeliverySlot') as any)
+      .select('id, template_id, warehouse_id, vehicle_type_id, direction, cargo_type, date, time_from, time_to, max_vehicles, booked_count, status')
+      .eq('date', date)
+      .eq('warehouse_id', warehouse_id)
+      .order('time_from')
+
+    if (direction) q = q.eq('direction', direction)
+
+    const { data, error } = await q
+    if (error) return fail(res, error.message)
+    return ok(res, data)
+  } catch (e) { return fail(res, String(e)) }
+}
+
 // POST /api/tms/slots/generate
 // Body: { warehouse_id: string, dates: string[] }  — VD: ["2026-05-20", "2026-05-21"]
 // Idempotent: chỉ INSERT slot chưa có, bỏ qua slot đã tồn tại cho (template_id, date)

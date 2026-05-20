@@ -534,7 +534,8 @@ export async function updateEntry(req: Request, res: Response) {
     if (!entry)                              return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy pallet')
     if (entry.import_order_id !== order_id)  return fail(res, 400, 'ENTRY_NOT_IN_ORDER', 'Pallet không thuộc phiếu nhập này')
 
-    const perm = await checkDeletePermission(employee_id, [entry], order.warehouse_id as string | null)
+    const hasForceEdit = req.user?.module_permissions?.['inbound']?.includes('force_edit_pallet') ?? false
+    const perm = await checkDeletePermission(employee_id, [entry], order.warehouse_id as string | null, hasForceEdit)
     if (!perm.allowed) return fail(res, 403, 'FORBIDDEN', perm.reason!)
 
     const inv = checkInventoryUnchanged([entry])
@@ -559,12 +560,15 @@ export async function updateEntry(req: Request, res: Response) {
 async function checkDeletePermission(
   employee_id: string | undefined,
   entries: { created_by: string | null; import_date: string | null; created_at: string }[],
-  order_warehouse_id: string | null
+  order_warehouse_id: string | null,
+  forceAllowed = false
 ): Promise<{ allowed: boolean; reason?: string }> {
   if (!employee_id) return { allowed: true } // no auth yet → allow
   const { data: emp } = await supabase
     .from('Employee').select('id, warehouse_id').eq('id', employee_id).maybeSingle()
   if (!emp) return { allowed: true }
+
+  if (forceAllowed) return { allowed: true } // bypass creator/2-day check
 
   // Must be the importer + within 2 days
   const now = Date.now()
@@ -616,7 +620,8 @@ export async function removeEntry(req: Request, res: Response) {
     if (!entry)                              return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy pallet')
     if (entry.import_order_id !== order_id)  return fail(res, 400, 'ENTRY_NOT_IN_ORDER', 'Pallet không thuộc phiếu nhập này')
 
-    const perm = await checkDeletePermission(employee_id, [entry], order.warehouse_id as string | null)
+    const hasForceDelete = req.user?.module_permissions?.['inbound']?.includes('force_delete_pallet') ?? false
+    const perm = await checkDeletePermission(employee_id, [entry], order.warehouse_id as string | null, hasForceDelete)
     if (!perm.allowed) return fail(res, 403, 'FORBIDDEN', perm.reason!)
 
     const inv = checkInventoryUnchanged([entry])
@@ -655,7 +660,8 @@ export async function removeEntries(req: Request, res: Response) {
     const wrongOrder = entries.find(e => e.import_order_id !== order_id)
     if (wrongOrder) return fail(res, 400, 'ENTRY_NOT_IN_ORDER', 'Một số pallet không thuộc phiếu nhập này')
 
-    const perm = await checkDeletePermission(employee_id, entries, order.warehouse_id as string | null)
+    const hasForceDelete = req.user?.module_permissions?.['inbound']?.includes('force_delete_pallet') ?? false
+    const perm = await checkDeletePermission(employee_id, entries, order.warehouse_id as string | null, hasForceDelete)
     if (!perm.allowed) return fail(res, 403, 'FORBIDDEN', perm.reason!)
 
     const inv = checkInventoryUnchanged(entries)

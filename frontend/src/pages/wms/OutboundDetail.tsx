@@ -723,7 +723,6 @@ export default function OutboundDetail() {
   const pinned = isPinned(id ?? '')
 
   const perms = user?.module_permissions as ModulePermissions | null ?? null
-  const canManage = can(perms, 'outbound', 'complete') || can(perms, 'outbound', 'cancel')
   const canManagePause = can(perms, 'outbound', 'start')
 
   const [showStart,         setShowStart]         = useState(false)
@@ -923,8 +922,8 @@ export default function OutboundDetail() {
                 </Button>
               )}
 
-              {/* ── Undo actions (chỉ manager) ── */}
-              {canManage && gdo.status === 'COMPLETED' && (
+              {/* ── Undo actions ── */}
+              {can(perms, 'outbound', 'uncomplete') && gdo.status === 'COMPLETED' && (
                 <Button size="sm" variant="outline"
                   className="h-7 text-xs gap-1 px-2 border-slate-300 text-slate-500 hover:bg-slate-50"
                   disabled={uncompleting}
@@ -933,7 +932,7 @@ export default function OutboundDetail() {
                   {uncompleting ? '…' : 'Bỏ HT'}
                 </Button>
               )}
-              {canManage && !!gdo.started_at && gdo.status !== 'COMPLETED' && gdo.status !== 'PAUSED' && (
+              {can(perms, 'outbound', 'unstart') && !!gdo.started_at && gdo.status !== 'COMPLETED' && gdo.status !== 'PAUSED' && (
                 <Button size="sm" variant="outline"
                   className="h-7 text-xs gap-1 px-2 border-slate-300 text-slate-500 hover:bg-slate-50 disabled:opacity-40"
                   disabled={unstarting || hasScanEntries}
@@ -943,7 +942,7 @@ export default function OutboundDetail() {
                   {unstarting ? '…' : 'Gỡ BĐ'}
                 </Button>
               )}
-              {canManage && !!gdo.assigned_at && !gdo.started_at && (
+              {can(perms, 'outbound', 'unassign') && !!gdo.assigned_at && !gdo.started_at && (
                 <Button size="sm" variant="outline"
                   className="h-7 text-xs gap-1 px-2 border-slate-300 text-slate-500 hover:bg-slate-50"
                   disabled={unassigning}

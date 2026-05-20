@@ -5,7 +5,7 @@ import * as outbound from '../controllers/wms/outboundController'
 import * as inventory from '../controllers/wms/inventoryController'
 import * as lookup from '../controllers/wms/lookupController'
 import { inboundEmitter } from '../lib/events'
-import { requirePerm } from '../middlewares/auth'
+import { requirePerm, requireAnyPerm } from '../middlewares/auth'
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } })
 
@@ -44,9 +44,9 @@ router.post('/inbound-orders/:id/complete',             inbound.completeOrder)
 router.post('/inbound-orders/:id/cancel',               requirePerm('inbound', 'cancel'), inbound.cancelOrder)
 router.post('/inbound-orders/:id/check-scan',           inbound.checkScanQR)
 router.post('/inbound-orders/:id/scan',                 requirePerm('inbound', 'scan'), inbound.scanQR)
-router.patch('/inbound-orders/:id/entries/:entryId',    requirePerm('inbound', 'edit_pallet'), inbound.updateEntry)
-router.delete('/inbound-orders/:id/entries/:entryId',   requirePerm('inbound', 'delete_pallet'), inbound.removeEntry)
-router.delete('/inbound-orders/:id/entries',            requirePerm('inbound', 'delete_pallet'), inbound.removeEntries)
+router.patch('/inbound-orders/:id/entries/:entryId',    requireAnyPerm(['inbound', 'edit_pallet'], ['inbound', 'force_edit_pallet']), inbound.updateEntry)
+router.delete('/inbound-orders/:id/entries/:entryId',   requireAnyPerm(['inbound', 'delete_pallet'], ['inbound', 'force_delete_pallet']), inbound.removeEntry)
+router.delete('/inbound-orders/:id/entries',            requireAnyPerm(['inbound', 'delete_pallet'], ['inbound', 'force_delete_pallet']), inbound.removeEntries)
 router.get('/inbound-orders/:id/location-suggestions',  inbound.getLocationSuggestions)
 
 // Inventory (tồn kho)
@@ -79,11 +79,11 @@ router.put('/outbound/:id',                                   requirePerm('outbo
 router.patch('/outbound/:id',                                 outbound.patchGDO)
 router.delete('/outbound/:id',                                requirePerm('outbound', 'cancel'), outbound.deleteGDO)
 router.post('/outbound/:id/assign',                           requirePerm('outbound', 'assign'), outbound.assignGDO)
-router.post('/outbound/:id/unassign',                         requirePerm('outbound', 'assign'), outbound.unassignGDO)
+router.post('/outbound/:id/unassign',                         requirePerm('outbound', 'unassign'), outbound.unassignGDO)
 router.post('/outbound/:id/start',                            requirePerm('outbound', 'start'), outbound.startGDO)
 router.patch('/outbound/:id/transport',                       requirePerm('outbound', 'edit'), outbound.updateTransport)
-router.post('/outbound/:id/unstart',                          requirePerm('outbound', 'start'), outbound.unstartGDO)
-router.post('/outbound/:id/uncomplete',                       requirePerm('outbound', 'complete'), outbound.uncompleteGDO)
+router.post('/outbound/:id/unstart',                          requirePerm('outbound', 'unstart'), outbound.unstartGDO)
+router.post('/outbound/:id/uncomplete',                       requirePerm('outbound', 'uncomplete'), outbound.uncompleteGDO)
 router.post('/outbound/:gdoId/items/:itemId/check-scan',      outbound.checkScanItem)
 router.post('/outbound/:gdoId/items/:itemId/scan',            requirePerm('outbound', 'scan'), outbound.scanItem)
 router.delete('/outbound/:gdoId/items/:itemId/scans/:scanId', requirePerm('outbound', 'scan'), outbound.deleteScanEntry)

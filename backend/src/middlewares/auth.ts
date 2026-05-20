@@ -37,6 +37,21 @@ export function requirePerm(module: string, action: string) {
   }
 }
 
+export function requireAnyPerm(...checks: [string, string][]) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (req.user?.name === 'Admin') return next()
+    const perms = req.user?.module_permissions ?? {}
+    const allowed = checks.some(([module, action]) => perms[module]?.includes(action))
+    if (!allowed) {
+      return res.status(403).json({
+        success: false,
+        error: { code: 'FORBIDDEN', message: 'Bạn không có quyền thực hiện thao tác này' },
+      })
+    }
+    next()
+  }
+}
+
 export function verifyToken(req: Request, res: Response, next: NextFunction) {
   const header = req.headers.authorization
   if (!header?.startsWith('Bearer ')) {

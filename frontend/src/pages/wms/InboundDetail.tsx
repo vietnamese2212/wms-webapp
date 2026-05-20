@@ -346,8 +346,9 @@ export default function InboundDetail() {
 
   function canDeleteEntry(entry: PalletEntry): boolean {
     if (!isOpen) return false
-    if (!can(perms, 'inbound', 'delete_pallet')) return false
     if (entry.status !== 'IN_STOCK') return false
+    if (can(perms, 'inbound', 'force_delete_pallet')) return true
+    if (!can(perms, 'inbound', 'delete_pallet')) return false
     if (!user?.id || entry.created_by_emp?.id !== user.id) return false
     const importDate = new Date(entry.import_date ?? entry.created_at)
     return (Date.now() - importDate.getTime()) / 86_400_000 <= 2
@@ -355,8 +356,9 @@ export default function InboundDetail() {
 
   function canEditEntry(entry: PalletEntry): boolean {
     if (!isOpen) return false
-    if (!can(perms, 'inbound', 'edit_pallet')) return false
     if (entry.status !== 'IN_STOCK') return false
+    if (can(perms, 'inbound', 'force_edit_pallet')) return true
+    if (!can(perms, 'inbound', 'edit_pallet')) return false
     if (!user?.id || entry.created_by_emp?.id !== user.id) return false
     const importDate = new Date(entry.import_date ?? entry.created_at)
     return (Date.now() - importDate.getTime()) / 86_400_000 <= 2

@@ -127,9 +127,6 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 ```json
 { "success": true, "data": { ... } }
 { "success": false, "error": { "code": "NOT_FOUND", "message": "..." } }
-```
-Roles: `OWN` (chọn kho tự do) · `WAREHOUSE_MANAGER` / `WAREHOUSE_STAFF` (kho cố định).
-Mock user: `frontend/src/stores/authStore.ts` — `warehouse_name: 'Kho Ba Vì'` khi dev.
 ---
 
 ## QR Scanning

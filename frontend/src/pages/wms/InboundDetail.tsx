@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import type { AxiosError }              from 'axios'
 import {
-  ArrowLeft, Plus, CheckCircle2, XCircle, Trash2,
+  ArrowLeft, Plus, CheckCircle2, XCircle, Trash2, Pencil,
   MapPin, Package, AlertTriangle, QrCode,
   Clock, Calendar, User,
 } from 'lucide-react'
@@ -21,7 +21,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import {
   useInboundOrder, useCancelInboundOrder,
   useScanPallet, useDeletePalletEntry, useDeletePalletEntries,
-  useLocationsReal, useUpdateInboundOrder,
+  useLocationsReal, useUpdateInboundOrder, useUpdatePalletEntry,
   useCheckInboundScan,
 } from '@/api/hooks'
 import { useAuthStore }            from '@/stores/authStore'
@@ -322,8 +322,10 @@ export default function InboundDetail() {
   const { mutate: deleteEntry                           } = useDeletePalletEntry()
   const { mutate: deleteEntries                         } = useDeletePalletEntries()
   const { mutate: updateOrder                           } = useUpdateInboundOrder()
+  const { mutate: updateEntry, isPending: saving        } = useUpdatePalletEntry()
 
   const [showScan,    setShowScan]    = useState(false)
+  const [editState, setEditState] = useState<{ entry: PalletEntry; cartons: number; stack: number } | null>(null)
 
   // Auto-open scan khi navigate từ list với ?scan=1
   useEffect(() => {
@@ -345,6 +347,15 @@ export default function InboundDetail() {
   function canDeleteEntry(entry: PalletEntry): boolean {
     if (!isOpen) return false
     if (!can(perms, 'inbound', 'delete_pallet')) return false
+    if (entry.status !== 'IN_STOCK') return false
+    if (!user?.id || entry.created_by_emp?.id !== user.id) return false
+    const importDate = new Date(entry.import_date ?? entry.created_at)
+    return (Date.now() - importDate.getTime()) / 86_400_000 <= 2
+  }
+
+  function canEditEntry(entry: PalletEntry): boolean {
+    if (!isOpen) return false
+    if (!can(perms, 'inbound', 'edit_pallet')) return false
     if (entry.status !== 'IN_STOCK') return false
     if (!user?.id || entry.created_by_emp?.id !== user.id) return false
     const importDate = new Date(entry.import_date ?? entry.created_at)
@@ -386,6 +397,59 @@ export default function InboundDetail() {
           onClose={() => setShowScan(false)}
           employeeId={user?.id}
         />
+      )}
+
+      {/* ── Edit pallet dialog ── */}
+      {editState && (
+        <Dialog open onOpenChange={(v) => { if (!v) setEditState(null) }}>
+          <DialogContent className="sm:max-w-xs">
+            <DialogHeader>
+              <DialogTitle className="text-sm">Sửa pallet <span className="font-mono">{editState.entry.pallet_code}</span></DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3 py-1">
+              <div className="space-y-1">
+                <Label className="text-xs">Số thùng</Label>
+                <Input
+                  type="number" min={1}
+                  className="h-8 text-sm"
+                  value={editState.cartons}
+                  onChange={(e) => setEditState(s => s && ({ ...s, cartons: Number(e.target.value) }))}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Tầng chồng</Label>
+                <Input
+                  type="number" min={1}
+                  className="h-8 text-sm"
+                  value={editState.stack}
+                  onChange={(e) => setEditState(s => s && ({ ...s, stack: Number(e.target.value) }))}
+                />
+              </div>
+            </div>
+            <DialogFooter className="gap-2">
+              <Button variant="outline" size="sm" onClick={() => setEditState(null)}>Hủy</Button>
+              <Button
+                size="sm"
+                disabled={saving}
+                onClick={() => {
+                  if (!editState) return
+                  updateEntry(
+                    {
+                      orderId: order!.id,
+                      entryId: editState.entry.id,
+                      cartons_imported: editState.cartons,
+                      stack_layer: editState.stack,
+                      employee_id: user?.id,
+                    },
+                    { onSuccess: () => setEditState(null) }
+                  )
+                }}
+              >
+                {saving ? 'Đang lưu…' : 'Lưu'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       )}
 
       {/* ── Confirm dialog ── */}
@@ -641,19 +705,30 @@ export default function InboundDetail() {
                         </TableCell>
                         {isOpen && (
                           <TableCell className="px-1 py-1">
-                            {canDeleteEntry(entry) && (
-                              <button
-                                className="text-slate-400 hover:text-red-500 transition-colors p-0.5 flex"
-                                onClick={() => openConfirm(
-                                  'Xóa pallet',
-                                  `Xác nhận xóa pallet "${entry.pallet_code}"?`,
-                                  () => deleteEntry({ orderId: order.id, entryId: entry.id, employeeId: user?.id })
-                                )}
-                                title="Xóa"
-                              >
-                                <Trash2 className="h-3 w-3" />
-                              </button>
-                            )}
+                            <div className="flex items-center gap-0.5">
+                              {canEditEntry(entry) && (
+                                <button
+                                  className="text-slate-400 hover:text-blue-500 transition-colors p-0.5"
+                                  onClick={() => setEditState({ entry, cartons: entry.cartons_imported, stack: entry.stack_layer })}
+                                  title="Sửa"
+                                >
+                                  <Pencil className="h-3 w-3" />
+                                </button>
+                              )}
+                              {canDeleteEntry(entry) && (
+                                <button
+                                  className="text-slate-400 hover:text-red-500 transition-colors p-0.5"
+                                  onClick={() => openConfirm(
+                                    'Xóa pallet',
+                                    `Xác nhận xóa pallet "${entry.pallet_code}"?`,
+                                    () => deleteEntry({ orderId: order.id, entryId: entry.id, employeeId: user?.id })
+                                  )}
+                                  title="Xóa"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </button>
+                              )}
+                            </div>
                           </TableCell>
                         )}
                       </TableRow>

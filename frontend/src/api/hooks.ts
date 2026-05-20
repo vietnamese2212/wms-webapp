@@ -387,6 +387,7 @@ export function useUpdatePalletEntry() {
       entryId: string
       cartons_imported?: number
       stack_layer?: number
+      employee_id?: string
     }) => apiClient.patch(`/wms/inbound-orders/${orderId}/entries/${entryId}`, body).then((r) => r.data.data),
     onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ['inbound-order', v.orderId] }),
   })

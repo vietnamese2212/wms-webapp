@@ -521,16 +521,24 @@ export async function scanQR(req: Request, res: Response) {
 export async function updateEntry(req: Request, res: Response) {
   try {
     const { id: order_id, entryId } = req.params
-    const { cartons_imported, stack_layer } = req.body
+    const { cartons_imported, stack_layer, employee_id } = req.body
 
     const [{ data: order }, { data: entry }] = await Promise.all([
-      supabase.from('ProductionImport').select('status').eq('id', order_id).maybeSingle(),
-      supabase.from('InventoryEntry').select('id, import_order_id').eq('id', entryId).maybeSingle(),
+      supabase.from('ProductionImport').select('status, warehouse_id').eq('id', order_id).maybeSingle(),
+      supabase.from('InventoryEntry')
+        .select('id, import_order_id, created_by, import_date, created_at, status, cartons_reserved, adjustment_qty')
+        .eq('id', entryId).maybeSingle(),
     ])
     if (!order)                              return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (order.status !== 'OPEN')             return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập đã đóng')
     if (!entry)                              return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy pallet')
     if (entry.import_order_id !== order_id)  return fail(res, 400, 'ENTRY_NOT_IN_ORDER', 'Pallet không thuộc phiếu nhập này')
+
+    const perm = await checkDeletePermission(employee_id, [entry], order.warehouse_id as string | null)
+    if (!perm.allowed) return fail(res, 403, 'FORBIDDEN', perm.reason!)
+
+    const inv = checkInventoryUnchanged([entry])
+    if (!inv.allowed) return fail(res, 400, 'INVENTORY_CHANGED', inv.reason!)
 
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString(), update_date: vnDate() }
     if (cartons_imported !== undefined) patch.cartons_imported = Number(cartons_imported)

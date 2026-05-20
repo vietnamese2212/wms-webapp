@@ -21,6 +21,7 @@ export const MODULES = {
       view:         'Xem danh sách',
       create:       'Tạo phiếu',
       scan:         'Quét QR',
+      edit_pallet:  'Sửa pallet',
       delete_pallet:'Xóa pallet',
       cancel:       'Hủy phiếu',
     },

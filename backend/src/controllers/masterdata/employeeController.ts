@@ -44,7 +44,7 @@ async function fetchFull(opts: {
   search?: string
 }) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let q = (supabase.from('Employee') as any).select(EMP_BASE).order('name')
+  let q = (supabase.from('Employee') as any).select(EMP_BASE).is('deleted_at', null).order('name')
   if (opts.ids?.length)      q = q.in('id', opts.ids)
   if (opts.department_id)    q = q.eq('department_id', opts.department_id)
   if (opts.is_active !== undefined) q = q.eq('is_active', opts.is_active)
@@ -251,18 +251,12 @@ export async function setPassword(req: Request, res: Response) {
 export async function deleteEmployee(req: Request, res: Response) {
   try {
     const { id } = req.params
-    // UserWarehouseAccess có ON DELETE CASCADE — xóa trước để tránh constraint
+    // Soft delete: giữ row trong DB (lịch sử vẫn có FK), chỉ ẩn khỏi danh sách
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (supabase.from('UserWarehouseAccess') as any).delete().eq('employee_id', id)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await (supabase.from('Employee') as any).delete().eq('id', id)
-    if (error) {
-      // FK constraint → nhân viên có lịch sử, không cho xóa
-      if (error.code === '23503') {
-        return fail(res, 'Nhân viên đã có lịch sử hoạt động (scan, xuất kho…). Hãy vô hiệu hóa tài khoản thay vì xóa.', 409)
-      }
-      return fail(res, error.message)
-    }
+    const { error } = await (supabase.from('Employee') as any)
+      .update({ deleted_at: new Date().toISOString(), is_active: false, updated_at: new Date().toISOString() })
+      .eq('id', id)
+    if (error) return fail(res, error.message)
     return ok(res, { message: 'Đã xóa nhân viên' })
   } catch (e) { return fail(res, String(e)) }
 }

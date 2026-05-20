@@ -10,4 +10,5 @@ export const ALL_PERMISSIONS: Record<string, string[]> = {
   vehicles:     ['view', 'create', 'edit'],
   deliveries:   ['view', 'create', 'edit'],
   schedule:     ['view', 'create', 'approve'],
+  tms:          ['view', 'book', 'manage_booking', 'upload_outbound', 'upload_inbound', 'gate_log', 'manage_slots', 'manage_companies'],
 }

@@ -4,6 +4,7 @@ import dotenv from 'dotenv'
 import authRouter from './routes/auth'
 import masterdataRouter from './routes/masterdata'
 import wmsRouter from './routes/wms'
+import tmsRouter from './routes/tms'
 import { verifyToken } from './middlewares/auth'
 import { supabase } from './lib/supabase'
 
@@ -33,5 +34,6 @@ app.get('/api/health', async (_req, res) => {
 app.use('/api/auth',       authRouter)
 app.use('/api/masterdata', verifyToken, masterdataRouter)
 app.use('/api/wms',        verifyToken, wmsRouter)
+app.use('/api/tms',        verifyToken, tmsRouter)
 
 export default app

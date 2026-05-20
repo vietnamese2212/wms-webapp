@@ -5,7 +5,7 @@ import {
   mockLocations, mockOvertimeRequests,
 } from '@/utils/mockData'
 import { apiClient } from './client'
-import type { InboundOrder, Department, JobTitle, EmployeeRecord, GDO, InventoryEntry } from '@/types'
+import type { InboundOrder, Department, JobTitle, EmployeeRecord, GDO, InventoryEntry, TmsVehicleType, SlotTemplate, TransportCompany, TmsVehicle } from '@/types'
 
 const delay = (ms = 600) => new Promise((r) => setTimeout(r, ms))
 
@@ -1299,5 +1299,133 @@ export function useOutboundScanLogFacets(materialCategory?: string) {
       })
       return data.data as { machines: string[]; cycles: string[] }
     },
+  })
+}
+
+// ─── TMS ─────────────────────────────────────────────────────────────────────
+
+export function useVehicleTypes(onlyActive = false) {
+  return useQuery({
+    queryKey: ['tms-vehicle-types', onlyActive],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/tms/vehicle-types', {
+        params: onlyActive ? { is_active: 'true' } : {},
+      })
+      return data.data as TmsVehicleType[]
+    },
+  })
+}
+
+export function useCreateVehicleType() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { code: string; name: string }) =>
+      apiClient.post('/tms/vehicle-types', body).then(r => r.data.data as TmsVehicleType),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-vehicle-types'] }),
+  })
+}
+
+export function useUpdateVehicleType() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string; code?: string; name?: string; is_active?: boolean }) =>
+      apiClient.put(`/tms/vehicle-types/${id}`, body).then(r => r.data.data as TmsVehicleType),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-vehicle-types'] }),
+  })
+}
+
+export function useSlotTemplates(params?: { vehicle_type_id?: string; direction?: string }) {
+  return useQuery({
+    queryKey: ['tms-slot-templates', params],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/tms/slot-templates', { params })
+      return data.data as SlotTemplate[]
+    },
+  })
+}
+
+export function useCreateSlotTemplate() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: {
+      vehicle_type_id: string; direction: string; cargo_type?: string
+      days_of_week: number[]; time_from: string; time_to: string; max_vehicles: number
+    }) => apiClient.post('/tms/slot-templates', body).then(r => r.data.data as SlotTemplate[]),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-slot-templates'] }),
+  })
+}
+
+export function useUpdateSlotTemplate() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string; time_from?: string; time_to?: string; max_vehicles?: number; cargo_type?: string; is_active?: boolean }) =>
+      apiClient.put(`/tms/slot-templates/${id}`, body).then(r => r.data.data as SlotTemplate),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-slot-templates'] }),
+  })
+}
+
+export function useDeleteSlotTemplate() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.delete(`/tms/slot-templates/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-slot-templates'] }),
+  })
+}
+
+export function useTransportCompanies(onlyActive = false) {
+  return useQuery({
+    queryKey: ['tms-transport-companies', onlyActive],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/tms/transport-companies', {
+        params: onlyActive ? { is_active: 'true' } : {},
+      })
+      return data.data as TransportCompany[]
+    },
+  })
+}
+
+export function useCreateTransportCompany() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { code: string; name: string; contact_name?: string; contact_phone?: string }) =>
+      apiClient.post('/tms/transport-companies', body).then(r => r.data.data as TransportCompany),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-transport-companies'] }),
+  })
+}
+
+export function useUpdateTransportCompany() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string; code?: string; name?: string; contact_name?: string; contact_phone?: string; is_active?: boolean }) =>
+      apiClient.put(`/tms/transport-companies/${id}`, body).then(r => r.data.data as TransportCompany),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-transport-companies'] }),
+  })
+}
+
+export function useTmsVehicles(params?: { ncc_id?: string; is_active?: string }) {
+  return useQuery({
+    queryKey: ['tms-vehicles', params],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/tms/vehicles', { params })
+      return data.data as TmsVehicle[]
+    },
+  })
+}
+
+export function useCreateTmsVehicle() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { ncc_id: string; license_plate: string; vehicle_type_id: string }) =>
+      apiClient.post('/tms/vehicles', body).then(r => r.data.data as TmsVehicle),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-vehicles'] }),
+  })
+}
+
+export function useUpdateTmsVehicle() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string; ncc_id?: string; license_plate?: string; vehicle_type_id?: string; is_active?: boolean }) =>
+      apiClient.put(`/tms/vehicles/${id}`, body).then(r => r.data.data as TmsVehicle),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-vehicles'] }),
   })
 }

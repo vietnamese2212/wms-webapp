@@ -113,6 +113,19 @@ export const MODULES = {
       approve:'Duyệt / Từ chối',
     },
   },
+  tms: {
+    label: 'Vận tải (TMS)',
+    actions: {
+      view:              'Xem lịch & booking',
+      book:              'Đặt slot (ĐVVT/Lái xe)',
+      manage_booking:    'Quản lý booking (Điều vận)',
+      upload_outbound:   'Upload kế hoạch xuất',
+      upload_inbound:    'Upload kế hoạch nhập',
+      gate_log:          'Ghi nhận xe cổng (Bảo vệ)',
+      manage_slots:      'Quản lý loại xe & khung giờ',
+      manage_companies:  'Quản lý ĐVVT & xe',
+    },
+  },
 } as const
 
 export type ModuleKey = keyof typeof MODULES

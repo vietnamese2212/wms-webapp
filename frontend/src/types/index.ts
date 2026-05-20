@@ -378,6 +378,46 @@ export interface InventoryEntry {
   stocktake_by_emp:      { id: string; name: string } | null
 }
 
+// TMS – Foundation
+export interface TmsVehicleType {
+  id:         string
+  code:       string
+  name:       string
+  is_active:  boolean
+}
+
+export interface SlotTemplate {
+  id:              string
+  vehicle_type_id: string
+  vehicle_type?:   Pick<TmsVehicleType, 'id' | 'code' | 'name'>
+  direction:       'OUTBOUND' | 'INBOUND'
+  cargo_type:      string
+  day_of_week:     number   // 1=T2 … 6=T7
+  time_from:       string
+  time_to:         string
+  max_vehicles:    number
+  is_active:       boolean
+}
+
+export interface TransportCompany {
+  id:            string
+  code:          string
+  name:          string
+  contact_name:  string | null
+  contact_phone: string | null
+  is_active:     boolean
+}
+
+export interface TmsVehicle {
+  id:              string
+  ncc_id:          string
+  ncc?:            Pick<TransportCompany, 'id' | 'code' | 'name'>
+  license_plate:   string
+  vehicle_type_id: string
+  vehicle_type?:   Pick<TmsVehicleType, 'id' | 'code' | 'name'>
+  is_active:       boolean
+}
+
 // WMS – Outbound
 export type OutboundStatus = 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED' | 'PAUSED'
 

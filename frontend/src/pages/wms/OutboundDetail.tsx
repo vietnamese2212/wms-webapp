@@ -851,7 +851,7 @@ export default function OutboundDetail() {
             </div>
             <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
               {/* ── Edit / Delete ── */}
-              {(gdo.status === 'PENDING' || gdo.status === 'PAUSED') && (
+              {(gdo.status === 'PENDING' || gdo.status === 'PAUSED') && can(perms, 'outbound', 'edit') && (
                 <Button size="sm" variant="outline"
                   className="h-7 text-xs gap-1 px-2"
                   onClick={() => setShowEditGDO(true)}>
@@ -983,13 +983,15 @@ export default function OutboundDetail() {
                   {gdo.loader_name      && <span><strong>Bốc:</strong> {gdo.loader_name}</span>}
                   <span className="text-slate-400">{formatDateTime(gdo.started_at)}</span>
                 </div>
-                <button
-                  onClick={() => setShowEditTransport(true)}
-                  className="shrink-0 p-1 rounded hover:bg-blue-200 text-blue-600 transition-colors"
-                  title="Sửa thông tin xe"
-                >
-                  <Pencil className="h-3 w-3" />
-                </button>
+                {can(perms, 'outbound', 'edit') && (
+                  <button
+                    onClick={() => setShowEditTransport(true)}
+                    className="shrink-0 p-1 rounded hover:bg-blue-200 text-blue-600 transition-colors"
+                    title="Sửa thông tin xe"
+                  >
+                    <Pencil className="h-3 w-3" />
+                  </button>
+                )}
               </div>
             </Card>
           )}

@@ -29,6 +29,7 @@ export const MODULES = {
     actions: {
       view:     'Xem danh sách',
       create:   'Tạo đơn',
+      edit:     'Sửa đơn / xe',
       start:    'Bắt đầu',
       scan:     'Quét QR',
       assign:   'Giao đơn',

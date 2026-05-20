@@ -251,16 +251,45 @@ export async function setPassword(req: Request, res: Response) {
 
 // ─── Delete ───────────────────────────────────────────────────────────────────
 
+async function employeeHasHistory(id: string): Promise<boolean> {
+  // Các bảng dùng TEXT column (không phải FK constraint) — phải check thủ công
+  const checks = await Promise.all([
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (supabase.from('ProductionImport') as any)
+      .select('id', { count: 'exact', head: true })
+      .or(`imported_by.eq.${id},created_by.eq.${id}`),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (supabase.from('InventoryEntry') as any)
+      .select('id', { count: 'exact', head: true })
+      .eq('created_by', id),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (supabase.from('OutboundScanEntry') as any)
+      .select('id', { count: 'exact', head: true })
+      .eq('scanned_by', id),
+  ])
+  return checks.some(r => (r.count ?? 0) > 0)
+}
+
 export async function deleteEmployee(req: Request, res: Response) {
   try {
     const { id } = req.params
 
-    // Hard delete trước — nếu không có FK references nào thì xóa hẳn
+    const hasHistory = await employeeHasHistory(id)
+    if (hasHistory) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error: softErr } = await (supabase.from('Employee') as any)
+        .update({ deleted_at: new Date().toISOString(), is_active: false, updated_at: new Date().toISOString() })
+        .eq('id', id)
+      if (softErr) return fail(res, softErr.message)
+      return ok(res, { message: 'Nhân viên có lịch sử hoạt động — đã ẩn khỏi danh sách', deleted: 'soft' })
+    }
+
+    // Không có lịch sử → hard delete (FK constraint thực như UserWarehouseAccess sẽ cascade)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error: hardErr } = await (supabase.from('Employee') as any).delete().eq('id', id)
     if (!hardErr) return ok(res, { message: 'Đã xóa nhân viên', deleted: 'hard' })
 
-    // FK constraint (23503) → còn lịch sử, dùng soft delete
+    // Vẫn còn FK constraint DB-level khác (23503) → soft delete
     if (hardErr.code === '23503') {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { error: softErr } = await (supabase.from('Employee') as any)

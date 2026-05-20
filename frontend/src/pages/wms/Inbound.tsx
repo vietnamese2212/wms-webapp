@@ -102,19 +102,27 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
   // Chỉ hiện loại kho nào thực sự có vị trí — khớp theo sub_type (cũ) hoặc category (mới)
   const availSubTypes   = new Set(allLocs.map(l => l.sub_type).filter(Boolean))
   const availCategories = new Set(allLocs.map(l => l.category).filter(Boolean))
+
+  // Hardcode 3 loại chuẩn; bổ sung dynamic từ category thực tế trong Location DB
+  const knownMatCats = new Set(LOAI_KHO_CONFIG.map(c => c.mat_category))
+  const extraKhoConfig = [...availCategories]
+    .filter((cat): cat is string => !!cat && !knownMatCats.has(cat))
+    .map(cat => ({ sub_type: cat, label: cat, mat_category: cat }))
+  const allKhoConfig = [...LOAI_KHO_CONFIG, ...extraKhoConfig]
+
   const dialogAllowedMatCats = user?.allowed_categories?.length
     ? new Set(user.allowed_categories.map(normCatFe))
     : null
-  const loaiKhoOpts     = LOAI_KHO_CONFIG.filter(c =>
+  const loaiKhoOpts = allKhoConfig.filter(c =>
     (availSubTypes.has(c.sub_type) || availCategories.has(c.mat_category))
     && (!dialogAllowedMatCats || dialogAllowedMatCats.has(c.mat_category))
   )
-  const selectedConfig = LOAI_KHO_CONFIG.find(c => c.sub_type === subType)
+  const selectedConfig = allKhoConfig.find(c => c.sub_type === subType)
   const filteredLocs   = subType && selectedConfig
     ? allLocs.filter(l => l.sub_type === subType || l.category === selectedConfig.mat_category)
     : allLocs
 
-  const matCategory = LOAI_KHO_CONFIG.find(c => c.sub_type === subType)?.mat_category
+  const matCategory = allKhoConfig.find(c => c.sub_type === subType)?.mat_category
   const { data: materials = [] } = useMaterials({ search: matSearch || undefined, category: matCategory })
 
   // Người nhập: tự động khớp theo tên user đang đăng nhập

@@ -391,6 +391,7 @@ export interface OutboundScanEntry {
   loose_confirmed:      boolean
   loose_confirmed_at:   string | null
   scanned_by:           string | null
+  scanned_by_emp?:      { id: string; name: string } | null
   scanned_at:           string
   pct_date:             number | null
   production_date:      string | null

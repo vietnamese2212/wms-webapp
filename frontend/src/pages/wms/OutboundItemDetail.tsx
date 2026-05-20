@@ -778,7 +778,7 @@ export default function OutboundItemDetail() {
                           )}
                         </TableCell>
                         <TableCell className="px-2 py-1.5">
-                          <span className="text-[10px] text-slate-500">{se.scanned_by ?? '—'}</span>
+                          <span className="text-[10px] text-slate-500">{se.scanned_by_emp?.name ?? se.scanned_by ?? '—'}</span>
                         </TableCell>
                         <TableCell className="px-2 py-1.5 whitespace-nowrap tabular-nums">
                           <div className="text-[10px] text-slate-500">{se.scanned_at ? formatTimestampDate(se.scanned_at, true) : '—'}</div>

@@ -83,7 +83,7 @@ async function fetchGDOFull(id: string) {
   const itemIds = (items ?? []).map((i: any) => i.id)
   const { data: scans } = itemIds.length
     ? await (supabase.from('OutboundScanEntry') as any)
-        .select('*').in('item_id', itemIds)
+        .select('*, scanned_by_emp:Employee!scanned_by(id, name)').in('item_id', itemIds)
     : { data: [] }
 
   // Map item_id → shelf_life_days để tính pct_date cho từng scan entry

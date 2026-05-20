@@ -25,14 +25,14 @@ interface EmpRow {
   id: string; name: string; employee_code: string; email: string | null; phone: string | null
   department_id: string | null; job_title_id: string | null
   allowed_categories: string[] | null; warehouse_scope: string | null
-  warehouse_id: string | null; is_active: boolean; created_at: string
+  warehouse_id: string | null; is_active: boolean; created_at: string; deleted_at: string | null
 }
 
 const EMP_BASE = [
   'id', 'name', 'employee_code', 'email', 'phone',
   'department_id', 'job_title_id',
   'allowed_categories', 'warehouse_scope',
-  'warehouse_id', 'is_active', 'created_at',
+  'warehouse_id', 'is_active', 'created_at', 'deleted_at',
 ].join(', ')
 
 // Fetch employees và join dept / job_title / warehouse_access thủ công
@@ -42,9 +42,11 @@ async function fetchFull(opts: {
   department_id?: string
   is_active?: boolean
   search?: string
+  include_deleted?: boolean
 }) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let q = (supabase.from('Employee') as any).select(EMP_BASE).is('deleted_at', null).order('name')
+  let q = (supabase.from('Employee') as any).select(EMP_BASE).order('name')
+  if (!opts.include_deleted) q = q.is('deleted_at', null)
   if (opts.ids?.length)      q = q.in('id', opts.ids)
   if (opts.department_id)    q = q.eq('department_id', opts.department_id)
   if (opts.is_active !== undefined) q = q.eq('is_active', opts.is_active)
@@ -105,11 +107,12 @@ async function fetchFull(opts: {
 
 export async function listEmployees(req: Request, res: Response) {
   try {
-    const { department_id, is_active, search } = req.query as Record<string, string>
+    const { department_id, is_active, search, include_deleted } = req.query as Record<string, string>
     const data = await fetchFull({
       department_id: department_id || undefined,
       is_active: is_active !== undefined ? is_active === 'true' : undefined,
       search: search || undefined,
+      include_deleted: include_deleted === 'true',
     })
     return ok(res, data)
   } catch (e) { return fail(res, String(e)) }
@@ -268,6 +271,21 @@ export async function deleteEmployee(req: Request, res: Response) {
     }
 
     return fail(res, hardErr.message)
+  } catch (e) { return fail(res, String(e)) }
+}
+
+// ─── Restore (undo soft delete) ───────────────────────────────────────────────
+
+export async function restoreEmployee(req: Request, res: Response) {
+  try {
+    const { id } = req.params
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (supabase.from('Employee') as any)
+      .update({ deleted_at: null, is_active: true, updated_at: new Date().toISOString() })
+      .eq('id', id)
+    if (error) return fail(res, error.message)
+    const rows = await fetchFull({ ids: [id], include_deleted: true })
+    return ok(res, rows[0])
   } catch (e) { return fail(res, String(e)) }
 }
 

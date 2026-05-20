@@ -713,7 +713,7 @@ export function useJobTitles(departmentId?: string) {
   })
 }
 
-export function useEmployeeRecords(params?: { department_id?: string; search?: string; is_active?: string }) {
+export function useEmployeeRecords(params?: { department_id?: string; search?: string; is_active?: string; include_deleted?: boolean }) {
   return useQuery({
     queryKey: ['employee-records', params],
     queryFn: async () => {
@@ -771,12 +771,15 @@ export function useDeleteEmployee() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => apiClient.delete(`/masterdata/employees/${id}`).then(r => r.data.data as { message: string; deleted: 'hard' | 'soft' }),
-    onSuccess: (_data, id) => {
-      qc.setQueriesData<EmployeeRecord[]>(
-        { queryKey: ['employee-records'] },
-        old => old?.filter(e => e.id !== id)
-      )
-    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['employee-records'] }),
+  })
+}
+
+export function useRestoreEmployee() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.post(`/masterdata/employees/${id}/restore`).then(r => r.data.data as EmployeeRecord),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['employee-records'] }),
   })
 }
 

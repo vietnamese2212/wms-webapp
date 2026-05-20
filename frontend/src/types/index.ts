@@ -52,6 +52,7 @@ export interface EmployeeRecord {
   warehouse_id:       string | null
   is_active:          boolean
   created_at:         string
+  deleted_at?:        string | null
   dept?:              Pick<Department, 'id' | 'name' | 'code'> | null
   job_title?:         Pick<JobTitle, 'id' | 'name'> | null
   warehouse_access?:  { warehouse_id: string; warehouse: { id: string; code: string; name: string } }[]

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import type { AxiosError } from 'axios'
-import { Plus, Pencil, ShieldCheck, Building2, User2, KeyRound, Check, Briefcase, Copy, CheckCheck, Trash2 } from 'lucide-react'
+import { Plus, Pencil, ShieldCheck, Building2, User2, KeyRound, Check, Briefcase, Copy, CheckCheck, Trash2, RotateCcw, EyeOff } from 'lucide-react'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   useDepartments, useJobTitles, useEmployeeRecords,
-  useCreateEmployee, useUpdateEmployee, useDeleteEmployee, useWarehouses,
+  useCreateEmployee, useUpdateEmployee, useDeleteEmployee, useRestoreEmployee, useWarehouses,
   useCreateDepartment, useUpdateDepartment,
   useCreateJobTitle, useUpdateJobTitle,
 } from '@/api/hooks'
@@ -640,12 +640,14 @@ export default function UserManagement() {
   const user = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
 
-  const [search,     setSearch]     = useState('')
-  const [filterDept, setFilterDept] = useState('__all__')
-  const [editingEmp, setEditingEmp] = useState<EmployeeRecord | null>(null)
-  const [showEmpDlg, setShowEmpDlg] = useState(false)
-  const [pwdEmp,     setPwdEmp]     = useState<EmployeeRecord | null>(null)
+  const [search,       setSearch]       = useState('')
+  const [filterDept,   setFilterDept]   = useState('__all__')
+  const [showDeleted,  setShowDeleted]  = useState(false)
+  const [editingEmp,   setEditingEmp]   = useState<EmployeeRecord | null>(null)
+  const [showEmpDlg,   setShowEmpDlg]   = useState(false)
+  const [pwdEmp,       setPwdEmp]       = useState<EmployeeRecord | null>(null)
   const [confirmDeleteEmp, setConfirmDeleteEmp] = useState<EmployeeRecord | null>(null)
+  const { mutate: restore, isPending: restoring } = useRestoreEmployee()
 
   const [editingDept, setEditingDept] = useState<Department | null>(null)
   const [showDeptDlg, setShowDeptDlg] = useState(false)
@@ -659,6 +661,7 @@ export default function UserManagement() {
   const { data: employees = [], isLoading, isError, error } = useEmployeeRecords({
     department_id: filterDept === '__all__' ? undefined : filterDept,
     search: search || undefined,
+    include_deleted: showDeleted || undefined,
   })
 
   return (
@@ -686,10 +689,25 @@ export default function UserManagement() {
         {/* ── Tab: Nhân viên ── */}
         <TabsContent value="employees" className="space-y-3">
           <div className="flex items-center justify-between">
-            <p className="text-xs text-slate-500">{employees.length} nhân viên</p>
-            <Button size="sm" className="gap-1.5" onClick={() => { setEditingEmp(null); setShowEmpDlg(true) }}>
-              <Plus className="h-4 w-4" /> Thêm nhân viên
-            </Button>
+            <p className="text-xs text-slate-500">
+              {employees.filter(e => !e.deleted_at).length} nhân viên
+              {showDeleted && employees.some(e => e.deleted_at) && (
+                <span className="ml-1 text-slate-400">· {employees.filter(e => e.deleted_at).length} đã ẩn</span>
+              )}
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowDeleted(v => !v)}
+                className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium border transition-colors
+                  ${showDeleted ? 'bg-amber-50 border-amber-300 text-amber-700' : 'border-slate-200 text-slate-500 hover:border-slate-300'}`}
+              >
+                <EyeOff className="h-3 w-3" />
+                {showDeleted ? 'Ẩn đã xóa' : 'Đã ẩn'}
+              </button>
+              <Button size="sm" className="gap-1.5" onClick={() => { setEditingEmp(null); setShowEmpDlg(true) }}>
+                <Plus className="h-4 w-4" /> Thêm nhân viên
+              </Button>
+            </div>
           </div>
 
           <div className="flex gap-2 flex-wrap">
@@ -739,11 +757,14 @@ export default function UserManagement() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {employees.map(emp => (
-                      <TableRow key={emp.id} className="text-sm">
+                    {employees.map(emp => {
+                      const isDeleted = !!emp.deleted_at
+                      return (
+                      <TableRow key={emp.id} className={`text-sm ${isDeleted ? 'opacity-50 bg-slate-50' : ''}`}>
                         <TableCell className="px-3 py-2">
-                          <p className="font-medium text-slate-800">{emp.name}</p>
+                          <p className={`font-medium ${isDeleted ? 'line-through text-slate-400' : 'text-slate-800'}`}>{emp.name}</p>
                           <p className="text-xs text-slate-400">{emp.employee_code} · {emp.email ?? '—'}</p>
+                          {isDeleted && <p className="text-[10px] text-amber-600 mt-0.5">Ẩn {new Date(emp.deleted_at!).toLocaleDateString('vi-VN')}</p>}
                         </TableCell>
                         <TableCell className="px-3 py-2">
                           <p className="text-slate-700">{emp.dept?.name ?? '—'}</p>
@@ -774,33 +795,49 @@ export default function UserManagement() {
                           )}
                         </TableCell>
                         <TableCell className="px-3 py-2">
-                          <Badge variant={emp.is_active ? 'default' : 'secondary'} className="text-xs">
-                            {emp.is_active ? 'Hoạt động' : 'Tạm dừng'}
-                          </Badge>
+                          {isDeleted ? (
+                            <Badge variant="secondary" className="text-xs text-amber-700 bg-amber-50">Đã ẩn</Badge>
+                          ) : (
+                            <Badge variant={emp.is_active ? 'default' : 'secondary'} className="text-xs">
+                              {emp.is_active ? 'Hoạt động' : 'Tạm dừng'}
+                            </Badge>
+                          )}
                         </TableCell>
                         <TableCell className="px-2 py-2">
-                          <div className="flex items-center gap-1">
-                            <button title="Đặt mật khẩu"
-                              className="text-slate-400 hover:text-amber-500 transition-colors p-1"
-                              onClick={() => setPwdEmp(emp)}>
-                              <KeyRound className="h-3.5 w-3.5" />
-                            </button>
-                            <button title="Sửa thông tin"
-                              className="text-slate-400 hover:text-blue-500 transition-colors p-1"
-                              onClick={() => { setEditingEmp(emp); setShowEmpDlg(true) }}>
-                              <Pencil className="h-3.5 w-3.5" />
-                            </button>
-                            {can(perms, 'employees', 'delete') && emp.id !== user?.id && (
-                              <button title="Xóa nhân viên"
-                                className="text-slate-400 hover:text-red-500 transition-colors p-1"
-                                onClick={() => setConfirmDeleteEmp(emp)}>
-                                <Trash2 className="h-3.5 w-3.5" />
+                          {isDeleted ? (
+                            can(perms, 'employees', 'delete') && (
+                              <button title="Khôi phục"
+                                disabled={restoring}
+                                className="text-slate-400 hover:text-green-600 transition-colors p-1 disabled:opacity-50"
+                                onClick={() => restore(emp.id)}>
+                                <RotateCcw className="h-3.5 w-3.5" />
                               </button>
-                            )}
-                          </div>
+                            )
+                          ) : (
+                            <div className="flex items-center gap-1">
+                              <button title="Đặt mật khẩu"
+                                className="text-slate-400 hover:text-amber-500 transition-colors p-1"
+                                onClick={() => setPwdEmp(emp)}>
+                                <KeyRound className="h-3.5 w-3.5" />
+                              </button>
+                              <button title="Sửa thông tin"
+                                className="text-slate-400 hover:text-blue-500 transition-colors p-1"
+                                onClick={() => { setEditingEmp(emp); setShowEmpDlg(true) }}>
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                              {can(perms, 'employees', 'delete') && emp.id !== user?.id && (
+                                <button title="Xóa nhân viên"
+                                  className="text-slate-400 hover:text-red-500 transition-colors p-1"
+                                  onClick={() => setConfirmDeleteEmp(emp)}>
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          )}
                         </TableCell>
                       </TableRow>
-                    ))}
+                      )
+                    })}
                   </TableBody>
                 </Table>
               </div>

@@ -67,5 +67,6 @@ router.patch('/employees/:id',              requirePerm('employees', 'edit'), em
 router.patch('/employees/:id/set-password', requirePerm('employees', 'set_password'), employee.setPassword)
 router.put('/employees/:id/warehouses',     requirePerm('employees', 'edit'), employee.setWarehouseAccess)
 router.delete('/employees/:id',             requirePerm('employees', 'delete'), employee.deleteEmployee)
+router.post('/employees/:id/restore',       requirePerm('employees', 'delete'), employee.restoreEmployee)
 
 export default router

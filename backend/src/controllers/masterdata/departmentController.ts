@@ -83,7 +83,7 @@ export async function createJobTitle(req: Request, res: Response) {
       .insert({
         id: randomUUID(),
         name, department_id,
-        allowed_categories: allowed_categories ?? ['TP','NVL','POSM','BAO_BI'],
+        allowed_categories: allowed_categories ?? ['Thành phẩm', 'NVL', 'POSM', 'Bao bì'],
         warehouse_scope: warehouse_scope ?? 'ASSIGNED',
         module_permissions: module_permissions ?? {},
         updated_at: new Date().toISOString(),

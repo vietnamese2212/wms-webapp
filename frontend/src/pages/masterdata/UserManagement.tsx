@@ -16,7 +16,6 @@ import {
   useCreateEmployee, useUpdateEmployee, useWarehouses,
   useCreateDepartment, useUpdateDepartment,
   useCreateJobTitle, useUpdateJobTitle,
-  useMaterialCategories,
 } from '@/api/hooks'
 import { apiClient } from '@/api/client'
 import { MODULES, type ModuleKey } from '@/config/permissions'
@@ -115,8 +114,7 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
   const [deptId, setDeptId]   = useState(emp?.department_id ?? '')
   const { data: jobTitles = [] } = useJobTitles(deptId || undefined)
   const { data: warehouses = [] } = useWarehouses()
-  const { data: dbCategories = [] } = useMaterialCategories()
-  const categoryOptions = [...new Set(['Thành phẩm', 'NVL', 'POSM', 'Bao bì', ...dbCategories])]
+  const categoryOptions = ['Thành phẩm', 'NVL', 'POSM', 'Bao bì']
 
   const [name,         setName]         = useState(emp?.name          ?? '')
   const [empCode,      setEmpCode]      = useState(emp?.employee_code ?? '')

@@ -37,6 +37,8 @@ interface LocationWithCapacity {
   used_slots: number
 }
 
+const normCatFe = (c: string) => c === 'TP' ? 'Thành phẩm' : c === 'BAO_BI' ? 'Bao bì' : c
+
 // Bảng cấu hình Loại kho: sub_type (Location) ↔ label ↔ Material.category
 // Thêm entry mới ở đây khi có loại kho mới
 const LOAI_KHO_CONFIG = [
@@ -100,8 +102,12 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
   // Chỉ hiện loại kho nào thực sự có vị trí — khớp theo sub_type (cũ) hoặc category (mới)
   const availSubTypes   = new Set(allLocs.map(l => l.sub_type).filter(Boolean))
   const availCategories = new Set(allLocs.map(l => l.category).filter(Boolean))
+  const dialogAllowedMatCats = user?.allowed_categories?.length
+    ? new Set(user.allowed_categories.map(normCatFe))
+    : null
   const loaiKhoOpts     = LOAI_KHO_CONFIG.filter(c =>
-    availSubTypes.has(c.sub_type) || availCategories.has(c.mat_category)
+    (availSubTypes.has(c.sub_type) || availCategories.has(c.mat_category))
+    && (!dialogAllowedMatCats || dialogAllowedMatCats.has(c.mat_category))
   )
   const selectedConfig = LOAI_KHO_CONFIG.find(c => c.sub_type === subType)
   const filteredLocs   = subType && selectedConfig
@@ -209,7 +215,7 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
                 <SelectValue placeholder="Chọn loại kho" />
               </SelectTrigger>
               <SelectContent>
-                {LOAI_KHO_CONFIG.map(c => (
+                {loaiKhoOpts.map(c => (
                   <SelectItem key={c.sub_type} value={c.sub_type}>{c.label}</SelectItem>
                 ))}
               </SelectContent>
@@ -476,7 +482,6 @@ export default function Inbound() {
   const { data: categories = [] } = useMaterialCategories()
 
   // Compute allowed warehouses + categories from user's scope
-  const normCatFe = (c: string) => c === 'TP' ? 'Thành phẩm' : c === 'BAO_BI' ? 'Bao bì' : c
   const inboundAllowedWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
     ? new Set(user.warehouse_ids)
     : null

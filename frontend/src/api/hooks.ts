@@ -766,6 +766,19 @@ export function useUpdateEmployee() {
   })
 }
 
+export function useDeleteEmployee() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.delete(`/masterdata/employees/${id}`).then(r => r.data),
+    onSuccess: (_data, id) => {
+      qc.setQueriesData<EmployeeRecord[]>(
+        { queryKey: ['employee-records'] },
+        old => old?.filter(e => e.id !== id)
+      )
+    },
+  })
+}
+
 export function useSetEmployeeWarehouses() {
   const qc = useQueryClient()
   return useMutation({

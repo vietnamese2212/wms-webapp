@@ -79,6 +79,7 @@ export const MODULES = {
       create:       'Thêm nhân viên',
       edit:         'Sửa thông tin',
       set_password: 'Đặt mật khẩu',
+      delete:       'Xóa nhân viên',
     },
   },
   vehicles: {

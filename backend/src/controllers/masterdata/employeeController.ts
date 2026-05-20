@@ -246,6 +246,20 @@ export async function setPassword(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
+// ─── Delete ───────────────────────────────────────────────────────────────────
+
+export async function deleteEmployee(req: Request, res: Response) {
+  try {
+    const { id } = req.params
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase.from('UserWarehouseAccess') as any).delete().eq('employee_id', id)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (supabase.from('Employee') as any).delete().eq('id', id)
+    if (error) return fail(res, error.message)
+    return ok(res, { message: 'Đã xóa nhân viên' })
+  } catch (e) { return fail(res, String(e)) }
+}
+
 // ─── Warehouse access ─────────────────────────────────────────────────────────
 
 export async function setWarehouseAccess(req: Request, res: Response) {

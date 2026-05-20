@@ -52,14 +52,15 @@ async function run() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const found = (existing as any[])?.[0]
 
+  const now = new Date().toISOString()
   if (found) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (supabase.from('Employee') as any).update({
-      password_hash:      hash,
+      password:           hash,
       warehouse_scope:    'NATIONAL',
-      allowed_categories: ['TP', 'NVL', 'POSM', 'BAO_BI'],
+      allowed_categories: ['Thành phẩm', 'NVL', 'POSM', 'Bao bì'],
       is_active:          true,
-      updated_at:         new Date().toISOString(),
+      updated_at:         now,
     }).eq('id', found.id)
 
     if (error) { console.error('Lỗi update:', error.message); process.exit(1) }
@@ -71,11 +72,12 @@ async function run() {
       name:               ADMIN_NAME,
       employee_code:      ADMIN_CODE,
       email:              ADMIN_EMAIL,
-      password_hash:      hash,
+      password:           hash,
       warehouse_scope:    'NATIONAL',
-      allowed_categories: ['TP', 'NVL', 'POSM', 'BAO_BI'],
+      allowed_categories: ['Thành phẩm', 'NVL', 'POSM', 'Bao bì'],
       is_active:          true,
-      updated_at:         new Date().toISOString(),
+      created_at:         now,
+      updated_at:         now,
     })
 
     if (error) { console.error('Lỗi insert:', error.message); process.exit(1) }

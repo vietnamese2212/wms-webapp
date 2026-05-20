@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import type { AxiosError } from 'axios'
-import { Plus, Pencil, ShieldCheck, Building2, User2, KeyRound, Check, Briefcase, Copy, CheckCheck } from 'lucide-react'
+import { Plus, Pencil, ShieldCheck, Building2, User2, KeyRound, Check, Briefcase, Copy, CheckCheck, Trash2 } from 'lucide-react'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
@@ -13,13 +13,14 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   useDepartments, useJobTitles, useEmployeeRecords,
-  useCreateEmployee, useUpdateEmployee, useWarehouses,
+  useCreateEmployee, useUpdateEmployee, useDeleteEmployee, useWarehouses,
   useCreateDepartment, useUpdateDepartment,
   useCreateJobTitle, useUpdateJobTitle,
 } from '@/api/hooks'
 import { apiClient } from '@/api/client'
-import { MODULES, type ModuleKey } from '@/config/permissions'
-import type { EmployeeRecord, Department, JobTitle, ModulePermissions } from '@/types'
+import { MODULES, can, type ModuleKey, type ModulePermissions } from '@/config/permissions'
+import { useAuthStore } from '@/stores/authStore'
+import type { EmployeeRecord, Department, JobTitle } from '@/types'
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -100,6 +101,52 @@ function SetPasswordDialog({ emp, open, onClose }: { emp: EmployeeRecord; open: 
             </DialogFooter>
           </form>
         )}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ─── Confirm delete dialog ────────────────────────────────────────────────────
+
+function ConfirmDeleteDialog({ emp, open, onClose }: { emp: EmployeeRecord; open: boolean; onClose: () => void }) {
+  const { mutate: del, isPending } = useDeleteEmployee()
+  const [error, setError] = useState<string | null>(null)
+
+  function handleDelete() {
+    setError(null)
+    del(emp.id, {
+      onSuccess: onClose,
+      onError: (err) => {
+        const msg = (err as AxiosError<{ error: { message: string } }>)
+          ?.response?.data?.error?.message ?? 'Lỗi xóa nhân viên'
+        setError(msg)
+      },
+    })
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={v => { if (!v) onClose() }}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-red-700">
+            <Trash2 className="h-4 w-4" /> Xóa nhân viên
+          </DialogTitle>
+        </DialogHeader>
+        <div className="py-2 space-y-3">
+          <p className="text-sm text-slate-700">
+            Bạn có chắc muốn xóa <span className="font-semibold">{emp.name}</span> ({emp.employee_code})?
+            Hành động này không thể hoàn tác.
+          </p>
+          {error && (
+            <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{error}</p>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={onClose} disabled={isPending}>Hủy</Button>
+          <Button variant="destructive" size="sm" onClick={handleDelete} disabled={isPending}>
+            {isPending ? 'Đang xóa…' : 'Xóa'}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   )
@@ -567,11 +614,15 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function UserManagement() {
+  const user = useAuthStore(s => s.user)
+  const perms = user?.module_permissions as ModulePermissions | null ?? null
+
   const [search,     setSearch]     = useState('')
   const [filterDept, setFilterDept] = useState('__all__')
   const [editingEmp, setEditingEmp] = useState<EmployeeRecord | null>(null)
   const [showEmpDlg, setShowEmpDlg] = useState(false)
   const [pwdEmp,     setPwdEmp]     = useState<EmployeeRecord | null>(null)
+  const [confirmDeleteEmp, setConfirmDeleteEmp] = useState<EmployeeRecord | null>(null)
 
   const [editingDept, setEditingDept] = useState<Department | null>(null)
   const [showDeptDlg, setShowDeptDlg] = useState(false)
@@ -716,6 +767,13 @@ export default function UserManagement() {
                               onClick={() => { setEditingEmp(emp); setShowEmpDlg(true) }}>
                               <Pencil className="h-3.5 w-3.5" />
                             </button>
+                            {can(perms, 'employees', 'delete') && emp.id !== user?.id && (
+                              <button title="Xóa nhân viên"
+                                className="text-slate-400 hover:text-red-500 transition-colors p-1"
+                                onClick={() => setConfirmDeleteEmp(emp)}>
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            )}
                           </div>
                         </TableCell>
                       </TableRow>
@@ -857,6 +915,9 @@ export default function UserManagement() {
       )}
       {showJtDlg && (
         <JobTitleFormDialog jt={editingJt} open={showJtDlg} onClose={() => setShowJtDlg(false)} />
+      )}
+      {confirmDeleteEmp && (
+        <ConfirmDeleteDialog emp={confirmDeleteEmp} open={!!confirmDeleteEmp} onClose={() => setConfirmDeleteEmp(null)} />
       )}
     </div>
   )

@@ -93,11 +93,13 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
       const interval = 1000 / SCAN_FPS
       let stream: MediaStream | null = null
       let engine: Awaited<ReturnType<typeof QrScanner.createQrEngine>> | null = null
+      let destroyed = false
 
       async function setup() {
         if (!video) return
         try {
           engine = await QrScanner.createQrEngine()
+          if (destroyed) { if (engine instanceof Worker) engine.terminate(); return }
 
           stream = await navigator.mediaDevices.getUserMedia({
             video: {
@@ -106,6 +108,7 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
               height: { ideal: 2160 },
             },
           })
+          if (destroyed) { stream.getTracks().forEach(t => t.stop()); return }
           video.srcObject = stream
 
           await new Promise<void>(resolve => {
@@ -177,6 +180,7 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
       setup()
 
       return () => {
+        destroyed = true
         if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null }
         loopFnRef.current = null
         stream?.getTracks().forEach(t => t.stop())

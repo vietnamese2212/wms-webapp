@@ -46,19 +46,22 @@ function SlotPicker({ warehouseId, date, selectedSlotId, onSelect }: {
   warehouseId: string; date: string; selectedSlotId: string | null
   onSelect: (slot: DeliverySlot) => void
 }) {
-  const [ready, setReady] = useState(false)
-  const { mutate: generateSlots, isPending: isGenerating } = useGenerateSlots()
-  const { data: slots = [], isLoading, isFetching } = useDeliverySlots(ready ? { date, warehouse_id: warehouseId } : undefined)
+  const [generateDone, setGenerateDone] = useState(false)
+  const { mutate: generateSlots } = useGenerateSlots()
+  // Fetch slots ngay lập tức — song song với generate, không đợi generate xong
+  const { data: slots = [], isLoading, isFetching } = useDeliverySlots({ date, warehouse_id: warehouseId })
 
   useEffect(() => {
-    setReady(false)
+    setGenerateDone(false)
     generateSlots(
       { warehouse_id: warehouseId, dates: [date] },
-      { onSettled: () => setReady(true) },
+      { onSettled: () => setGenerateDone(true) },
     )
   }, [warehouseId, date])
 
-  if (!ready || isGenerating || isLoading || isFetching)
+  // Chỉ block UI khi chưa có slot nào để hiển thị VÀ còn đang in-flight
+  // Nếu cache đã có slots → hiện ngay, generate chạy nền
+  if (slots.length === 0 && (isLoading || isFetching || !generateDone))
     return <p className="text-xs text-slate-400 py-6 text-center">Đang tải khung giờ...</p>
 
   const allSlots = slots as DeliverySlot[]

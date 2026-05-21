@@ -12,7 +12,7 @@ import type { MSOpt } from '@/components/shared/MultiSelectFilter'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useAuthStore } from '@/stores/authStore'
 import {
-  useWarehouses, useMaterialCategories, useVehicleTypes,
+  useWarehouses, useMaterialCategories, useVehicleTypes, useTransportCompanies,
   useDeliverySlots, useGenerateSlots,
   useDeliveryBookings, useCreateBooking, useUpdateBooking, useDeleteBooking, useBulkCreateBookings,
 } from '@/api/hooks'
@@ -184,14 +184,14 @@ function DVVTFillDialog({ booking, onClose }: { booking: DeliveryBooking | null;
 // ── Create / Edit Dialog (Điều vận) ──────────────────────────────────────────
 
 type BookingFormData = {
-  date: string; warehouse_id: string; npp_name: string
+  date: string; warehouse_id: string; npp_name: string; ncc_id: string
   warehouse_type: string; vehicle_type: string
   box_count: string; pallet_count: string; tonnage: string
   gdo_refs: string; notes: string
 }
 
 const EMPTY_FORM = (date: string, warehouse_id: string): BookingFormData => ({
-  date, warehouse_id, npp_name: '',
+  date, warehouse_id, npp_name: '', ncc_id: '',
   warehouse_type: '', vehicle_type: '',
   box_count: '', pallet_count: '', tonnage: '',
   gdo_refs: '', notes: '',
@@ -204,6 +204,7 @@ function CreateEditDialog({ open, booking, onClose, defaultDate, defaultWarehous
   const { data: warehouses = [] } = useWarehouses(true)
   const { data: categories = [] } = useMaterialCategories()
   const { data: vehicleTypes = [] } = useVehicleTypes(true)
+  const { data: transportCompanies = [] } = useTransportCompanies(true)
   const createBooking = useCreateBooking()
   const updateBooking = useUpdateBooking()
   const isEdit = !!booking
@@ -220,6 +221,7 @@ function CreateEditDialog({ open, booking, onClose, defaultDate, defaultWarehous
         date: booking.date,
         warehouse_id: booking.warehouse_id,
         npp_name: booking.npp_name ?? '',
+        ncc_id: booking.ncc_id ?? '',
         warehouse_type: booking.warehouse_type ?? '',
         vehicle_type: booking.vehicle_type ?? '',
         box_count: booking.box_count != null ? String(booking.box_count) : '',
@@ -240,6 +242,7 @@ function CreateEditDialog({ open, booking, onClose, defaultDate, defaultWarehous
       date: form.date,
       warehouse_id: form.warehouse_id,
       npp_name: form.npp_name || undefined,
+      ncc_id: form.ncc_id || undefined,
       warehouse_type: form.warehouse_type || undefined,
       vehicle_type: form.vehicle_type || undefined,
       box_count: form.box_count ? Number(form.box_count) : null,
@@ -285,9 +288,23 @@ function CreateEditDialog({ open, booking, onClose, defaultDate, defaultWarehous
               </Select>
             </div>
           </div>
-          <div>
-            <Label className="text-xs">Tên NPP</Label>
-            <Input value={form.npp_name} onChange={e => set('npp_name')(e.target.value)} placeholder="Tên nhà phân phối" className="h-8 text-sm mt-1" />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs">Tên NPP</Label>
+              <Input value={form.npp_name} onChange={e => set('npp_name')(e.target.value)} placeholder="Tên nhà phân phối" className="h-8 text-sm mt-1" />
+            </div>
+            <div>
+              <Label className="text-xs">ĐVVT</Label>
+              <Select value={form.ncc_id || '__none__'} onValueChange={v => set('ncc_id')(v === '__none__' ? '' : v)}>
+                <SelectTrigger className="h-8 text-sm mt-1"><SelectValue placeholder="Chọn đơn vị vận tải" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">— Để trống —</SelectItem>
+                  {(transportCompanies as import('@/types').TransportCompany[]).map(c => (
+                    <SelectItem key={c.id} value={c.id}>{c.code} — {c.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>

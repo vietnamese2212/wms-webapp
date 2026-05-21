@@ -238,6 +238,7 @@ function CreateEditDialog({ open, booking, onClose, defaultDate, defaultWarehous
 
   const handleSubmit = async () => {
     if (!form.date || !form.warehouse_id) { setErr('Vui lòng chọn ngày và kho'); return }
+    if (!form.ncc_id) { setErr('Vui lòng chọn đơn vị vận tải (ĐVVT)'); return }
     const payload = {
       date: form.date,
       warehouse_id: form.warehouse_id,
@@ -296,9 +297,8 @@ function CreateEditDialog({ open, booking, onClose, defaultDate, defaultWarehous
             <div>
               <Label className="text-xs">ĐVVT</Label>
               <Select value={form.ncc_id || '__none__'} onValueChange={v => set('ncc_id')(v === '__none__' ? '' : v)}>
-                <SelectTrigger className="h-8 text-sm mt-1"><SelectValue placeholder="Chọn đơn vị vận tải" /></SelectTrigger>
+                <SelectTrigger className="h-8 text-sm mt-1"><SelectValue placeholder="Chọn ĐVVT *" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="__none__">— Để trống —</SelectItem>
                   {(transportCompanies as import('@/types').TransportCompany[]).map(c => (
                     <SelectItem key={c.id} value={c.id}>{c.code} — {c.name}</SelectItem>
                   ))}

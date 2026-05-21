@@ -1467,7 +1467,7 @@ export function useDeliveryBookings(params?: { date?: string; warehouse_id?: str
 }
 
 type BookingWriteBody = {
-  date?: string; warehouse_id?: string; npp_name?: string; ncc_id?: string
+  date?: string; warehouse_id?: string; npp_name?: string; ncc_id?: string | null
   gdo_refs?: string; notes?: string | null; status?: string
   box_count?: number | null; pallet_count?: number | null; tonnage?: number | null
   warehouse_type?: string; vehicle_type?: string

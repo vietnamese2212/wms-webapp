@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import * as XLSX from 'xlsx'
-import { Plus, Upload, Pencil, Truck, Trash2, Download } from 'lucide-react'
+import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -603,7 +603,8 @@ export default function TMSBookings() {
   const { data: bookings = [], isLoading } = useDeliveryBookings(
     warehouseId ? { date, warehouse_id: warehouseId } : undefined,
   )
-  const deleteBooking = useDeleteBooking()
+  const deleteBooking  = useDeleteBooking()
+  const updateBooking  = useUpdateBooking()
 
   // Options cho filter từ data thực
   const loaiKhoOptions = useMemo<MSOpt[]>(() =>
@@ -631,6 +632,24 @@ export default function TMSBookings() {
     try { await deleteBooking.mutateAsync(id) } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
       setDeleteErr(msg ?? 'Lỗi xóa chuyến')
+    }
+  }
+
+  const handleRelease = async (e: React.MouseEvent<HTMLButtonElement>, id: string) => {
+    e.stopPropagation()
+    setDeleteErr('')
+    try {
+      await updateBooking.mutateAsync({
+        id,
+        slot_id: null,
+        ncc_id: null,
+        license_plate: null,
+        driver_phone: null,
+        status: 'PENDING',
+      })
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
+      setDeleteErr(msg ?? 'Lỗi trả lại chuyến')
     }
   }
 
@@ -825,6 +844,15 @@ export default function TMSBookings() {
                             title="Sửa thông tin chuyến"
                           >
                             <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                        {canManage && b.status === 'CONFIRMED' && (
+                          <button
+                            onClick={(e: React.MouseEvent<HTMLButtonElement>) => handleRelease(e, b.id)}
+                            className="text-amber-400 hover:text-amber-600 p-1 rounded"
+                            title="Trả lại (hủy đăng ký ĐVVT)"
+                          >
+                            <RotateCcw className="h-3.5 w-3.5" />
                           </button>
                         )}
                         {canManage && b.status === 'PENDING' && (

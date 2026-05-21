@@ -121,7 +121,7 @@ export async function updateBooking(req: Request, res: Response) {
     const { id } = req.params
     const {
       slot_id, license_plate, driver_name, driver_phone,
-      date, warehouse_id, npp_name, gdo_refs, notes, status,
+      date, warehouse_id, npp_name, ncc_id: bodyNccId, gdo_refs, notes, status,
       box_count, pallet_count, tonnage, warehouse_type, vehicle_type,
     } = req.body
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -206,7 +206,9 @@ export async function updateBooking(req: Request, res: Response) {
     if (warehouse_type  !== undefined) updates.warehouse_type  = warehouse_type
     if (vehicle_type    !== undefined) updates.vehicle_type    = vehicle_type
 
-    // Khi ĐVVT lần đầu fill booking chưa có ĐVVT → ghi nhận ĐVVT này
+    // Điều vận (manage_booking, không có ncc_id) được phép set/clear ncc_id (ví dụ: release → null)
+    if (!userNccId && bodyNccId !== undefined) updates.ncc_id = bodyNccId || null
+    // ĐVVT lần đầu fill booking chưa có ĐVVT → ghi nhận ĐVVT này
     if (userNccId && !existing.ncc_id) updates.ncc_id = userNccId
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

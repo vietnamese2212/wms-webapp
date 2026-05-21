@@ -10,6 +10,7 @@ export interface JwtPayload {
   allowed_categories: string[]
   warehouse_ids:      string[]
   module_permissions: Record<string, string[]>
+  ncc_id:             string | null
 }
 
 declare global {

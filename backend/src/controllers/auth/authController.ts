@@ -30,6 +30,7 @@ function buildToken(emp: any, warehouseIds: string[], modulePerms: Record<string
     allowed_categories: emp.allowed_categories ?? [],
     warehouse_ids:      warehouseIds,
     module_permissions: modulePerms,
+    ncc_id:             emp.ncc_id ?? null,
   }
   return jwt.sign(payload, JWT_SECRET(), { expiresIn: JWT_EXPIRY })
 }
@@ -47,6 +48,7 @@ function buildUserObj(emp: any, warehouseIds: string[], modulePerms: Record<stri
     allowed_categories: emp.allowed_categories ?? [],
     warehouse_ids:      warehouseIds,
     module_permissions: modulePerms,
+    ncc_id:             emp.ncc_id ?? null,
   }
 }
 
@@ -59,7 +61,7 @@ export async function login(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: emps } = await (supabase.from('Employee') as any)
-      .select('id, name, employee_code, email, warehouse_scope, warehouse_id, allowed_categories, password, is_active, module_permissions, job_title_id')
+      .select('id, name, employee_code, email, warehouse_scope, warehouse_id, allowed_categories, password, is_active, module_permissions, job_title_id, ncc_id')
       .ilike('email', email.trim())
       .limit(1)
 
@@ -109,7 +111,7 @@ export async function me(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: emps } = await (supabase.from('Employee') as any)
-      .select('id, name, employee_code, email, warehouse_scope, warehouse_id, allowed_categories, is_active, module_permissions, job_title_id')
+      .select('id, name, employee_code, email, warehouse_scope, warehouse_id, allowed_categories, is_active, module_permissions, job_title_id, ncc_id')
       .eq('id', userId).limit(1)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

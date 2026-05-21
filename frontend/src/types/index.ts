@@ -397,23 +397,29 @@ export interface DeliverySlot {
 export type BookingStatus = 'PENDING' | 'CONFIRMED' | 'ARRIVED' | 'DONE' | 'CANCELLED'
 
 export interface DeliveryBooking {
-  id:            string
-  date:          string
-  warehouse_id:  string
-  ncc_id:        string
-  ncc?:          Pick<TransportCompany, 'id' | 'code' | 'name'>
-  gdo_refs:      string | null
-  slot_id:       string | null
-  slot?:         Pick<DeliverySlot, 'id' | 'date' | 'time_from' | 'time_to' | 'direction' | 'cargo_type' | 'max_vehicles' | 'booked_count'> | null
-  license_plate: string | null
-  driver_name:   string | null
-  driver_phone:  string | null
-  notes:         string | null
-  status:        BookingStatus
-  created_by:    string | null
-  updated_by:    string | null
-  created_at:    string
-  updated_at:    string
+  id:             string
+  date:           string
+  warehouse_id:   string
+  ncc_id:         string | null
+  ncc?:           Pick<TransportCompany, 'id' | 'code' | 'name'> | null
+  npp_name:       string | null
+  gdo_refs:       string | null
+  slot_id:        string | null
+  slot?:          Pick<DeliverySlot, 'id' | 'date' | 'time_from' | 'time_to' | 'direction' | 'cargo_type' | 'max_vehicles' | 'booked_count'> | null
+  license_plate:  string | null
+  driver_name:    string | null
+  driver_phone:   string | null
+  box_count:      number | null
+  pallet_count:   number | null
+  tonnage:        number | null
+  warehouse_type: string | null
+  vehicle_type:   string | null
+  notes:          string | null
+  status:         BookingStatus
+  created_by:     string | null
+  updated_by:     string | null
+  created_at:     string
+  updated_at:     string
 }
 
 // TMS – Foundation

@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react'
-import { Plus, Trash2 } from 'lucide-react'
+import React, { useState, useEffect, useRef } from 'react'
+import * as XLSX from 'xlsx'
+import { Plus, Upload, Pencil, Truck, Trash2, Download } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -9,9 +10,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useAuthStore } from '@/stores/authStore'
 import {
-  useWarehouses, useTransportCompanies,
+  useWarehouses,
   useDeliverySlots, useGenerateSlots,
-  useDeliveryBookings, useCreateBooking, useUpdateBooking, useDeleteBooking,
+  useDeliveryBookings, useCreateBooking, useUpdateBooking, useDeleteBooking, useBulkCreateBookings,
 } from '@/api/hooks'
 import { formatDate } from '@/utils/formatters'
 import type { DeliveryBooking, DeliverySlot } from '@/types'
@@ -52,10 +53,10 @@ function SlotPicker({ warehouseId, date, selectedSlotId, onSelect }: {
   if (!ready || isGenerating || isLoading)
     return <p className="text-xs text-slate-400 py-6 text-center">Đang tải khung giờ...</p>
   if (!slots.length)
-    return <p className="text-xs text-slate-400 py-6 text-center">Chưa có khung giờ cho ngày này — cài đặt trong TMS Settings</p>
+    return <p className="text-xs text-slate-400 py-6 text-center">Chưa có khung giờ cho ngày này</p>
 
   return (
-    <div className="space-y-1 max-h-52 overflow-y-auto pr-1">
+    <div className="space-y-1 max-h-48 overflow-y-auto pr-1">
       {slots.map(slot => {
         const full = slot.booked_count >= slot.max_vehicles
         const selected = slot.id === selectedSlotId
@@ -91,119 +92,20 @@ function SlotPicker({ warehouseId, date, selectedSlotId, onSelect }: {
   )
 }
 
-// ── Create Booking Dialog (Điều vận) ──────────────────────────────────────────
+// ── ĐVVT Fill Dialog (điền slot + biển số + SĐT) ─────────────────────────────
 
-function CreateBookingDialog({ open, onClose, defaultDate, defaultWarehouseId }: {
-  open: boolean; onClose: () => void; defaultDate: string; defaultWarehouseId: string
-}) {
-  const { data: warehouses = [] } = useWarehouses(true)
-  const { data: nccs = [] } = useTransportCompanies(true)
-  const createBooking = useCreateBooking()
-
-  const [date, setDate] = useState(defaultDate)
-  const [warehouseId, setWarehouseId] = useState(defaultWarehouseId)
-  const [nccId, setNccId] = useState('')
-  const [gdoRefs, setGdoRefs] = useState('')
-  const [notes, setNotes] = useState('')
-  const [err, setErr] = useState('')
-
-  useEffect(() => {
-    if (open) {
-      setDate(defaultDate); setWarehouseId(defaultWarehouseId)
-      setNccId(''); setGdoRefs(''); setNotes(''); setErr('')
-    }
-  }, [open])
-
-  const handleSubmit = async () => {
-    if (!date || !warehouseId || !nccId) { setErr('Vui lòng điền đủ thông tin bắt buộc'); return }
-    try {
-      await createBooking.mutateAsync({ date, warehouse_id: warehouseId, ncc_id: nccId, gdo_refs: gdoRefs || undefined, notes: notes || undefined })
-      onClose()
-    } catch (e: unknown) {
-      const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
-      setErr(msg ?? 'Lỗi tạo chuyến')
-    }
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={v => !v && onClose()}>
-      <DialogContent className="max-w-md">
-        <DialogHeader><DialogTitle>Thêm chuyến vận chuyển</DialogTitle></DialogHeader>
-        <div className="space-y-3 py-2">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label className="text-xs">Ngày *</Label>
-              <Input type="date" value={date} onChange={e => setDate(e.target.value)} className="h-8 text-sm mt-1" />
-            </div>
-            <div>
-              <Label className="text-xs">Kho *</Label>
-              <Select value={warehouseId || '__none__'} onValueChange={v => setWarehouseId(v === '__none__' ? '' : v)}>
-                <SelectTrigger className="h-8 text-sm mt-1"><SelectValue placeholder="Chọn kho" /></SelectTrigger>
-                <SelectContent>
-                  {(warehouses as { id: string; name: string }[]).map(w => (
-                    <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <div>
-            <Label className="text-xs">ĐVVT / NCC *</Label>
-            <Select value={nccId || '__none__'} onValueChange={v => setNccId(v === '__none__' ? '' : v)}>
-              <SelectTrigger className="h-8 text-sm mt-1"><SelectValue placeholder="Chọn ĐVVT" /></SelectTrigger>
-              <SelectContent>
-                {(nccs as { id: string; code: string; name: string }[]).map(n => (
-                  <SelectItem key={n.id} value={n.id}>{n.code} — {n.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label className="text-xs">Mã GDO (nhiều mã cách nhau bằng dấu phẩy)</Label>
-            <Input value={gdoRefs} onChange={e => setGdoRefs(e.target.value)} placeholder="GDO-001, GDO-002" className="h-8 text-sm mt-1" />
-          </div>
-          <div>
-            <Label className="text-xs">Ghi chú</Label>
-            <textarea value={notes} onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setNotes(e.target.value)} rows={2} className="flex w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring mt-1" />
-          </div>
-          {err && <p className="text-xs text-red-600">{err}</p>}
-        </div>
-        <DialogFooter>
-          <Button variant="outline" size="sm" onClick={onClose}>Hủy</Button>
-          <Button size="sm" onClick={handleSubmit} disabled={createBooking.isPending}>
-            {createBooking.isPending ? 'Đang lưu...' : 'Thêm chuyến'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-// ── Booking Detail Dialog (ĐVVT điền slot + xe) ───────────────────────────────
-
-function BookingDetailDialog({ booking, onClose, canBook, canManage }: {
-  booking: DeliveryBooking | null; onClose: () => void; canBook: boolean; canManage: boolean
-}) {
+function DVVTFillDialog({ booking, onClose }: { booking: DeliveryBooking | null; onClose: () => void }) {
   const updateBooking = useUpdateBooking()
-
   const [selectedSlot, setSelectedSlot] = useState<DeliverySlot | null>(null)
   const [licensePlate, setLicensePlate] = useState('')
-  const [driverName, setDriverName] = useState('')
   const [driverPhone, setDriverPhone] = useState('')
-  const [notes, setNotes] = useState('')
-  const [status, setStatus] = useState('')
   const [err, setErr] = useState('')
-
-  const isPending = booking?.status === 'PENDING'
 
   useEffect(() => {
     if (booking) {
       setSelectedSlot((booking.slot as DeliverySlot | null) ?? null)
       setLicensePlate(booking.license_plate ?? '')
-      setDriverName(booking.driver_name ?? '')
       setDriverPhone(booking.driver_phone ?? '')
-      setNotes(booking.notes ?? '')
-      setStatus(booking.status)
       setErr('')
     }
   }, [booking?.id])
@@ -211,17 +113,10 @@ function BookingDetailDialog({ booking, onClose, canBook, canManage }: {
   const handleSave = async () => {
     if (!booking) return
     const updates: Parameters<typeof updateBooking.mutateAsync>[0] = { id: booking.id }
-
-    if (canBook && isPending) {
-      if (selectedSlot?.id !== booking.slot_id) updates.slot_id = selectedSlot?.id ?? null
-      updates.license_plate = licensePlate || null
-      updates.driver_name   = driverName || null
-      updates.driver_phone  = driverPhone || null
-      updates.notes         = notes || null
-      if (selectedSlot && licensePlate && driverName) updates.status = 'CONFIRMED'
-    }
-    if (canManage && status !== booking.status) updates.status = status
-
+    if (selectedSlot?.id !== booking.slot_id) updates.slot_id = selectedSlot?.id ?? null
+    updates.license_plate = licensePlate || null
+    updates.driver_phone = driverPhone || null
+    if (selectedSlot && licensePlate) updates.status = 'CONFIRMED'
     try {
       await updateBooking.mutateAsync(updates)
       onClose()
@@ -232,109 +127,406 @@ function BookingDetailDialog({ booking, onClose, canBook, canManage }: {
   }
 
   if (!booking) return null
-  const canEdit = (canBook && isPending) || canManage
-
   return (
     <Dialog open={!!booking} onOpenChange={v => !v && onClose()}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Chi tiết chuyến</DialogTitle>
-          <div className="text-xs text-slate-500 space-y-0.5 mt-1">
-            <p><span className="font-medium">ĐVVT:</span> {booking.ncc?.code} — {booking.ncc?.name}</p>
-            <p><span className="font-medium">Ngày:</span> {formatDate(booking.date)}</p>
-            {booking.gdo_refs && <p><span className="font-medium">GDO:</span> {booking.gdo_refs}</p>}
-          </div>
+          <DialogTitle>Điền thông tin xe</DialogTitle>
+          <p className="text-xs text-slate-500 mt-1">{booking.npp_name ?? '—'} · {formatDate(booking.date)}</p>
         </DialogHeader>
-
-        <div className="space-y-4 py-2">
-          {/* Slot picker — chỉ khi PENDING + có quyền book */}
-          {canBook && isPending && (
+        <div className="space-y-3 py-2">
+          <div>
+            <Label className="text-xs font-medium mb-2 block">Chọn khung giờ *</Label>
+            <SlotPicker
+              warehouseId={booking.warehouse_id}
+              date={booking.date}
+              selectedSlotId={selectedSlot?.id ?? null}
+              onSelect={setSelectedSlot}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
             <div>
-              <Label className="text-xs font-medium mb-2 block">Chọn khung giờ *</Label>
-              <SlotPicker
-                warehouseId={booking.warehouse_id}
-                date={booking.date}
-                selectedSlotId={selectedSlot?.id ?? null}
-                onSelect={setSelectedSlot}
-              />
+              <Label className="text-xs">Biển số xe *</Label>
+              <Input value={licensePlate} onChange={e => setLicensePlate(e.target.value)} placeholder="51A-123.45" className="h-8 text-sm mt-1" />
             </div>
-          )}
-
-          {/* Slot đã chọn (read-only khi confirmed+) */}
-          {booking.slot && !isPending && (
-            <div className="bg-slate-50 rounded px-3 py-2 text-xs flex items-center gap-2">
-              <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${booking.slot.direction === 'OUTBOUND' ? 'bg-orange-100 text-orange-700' : 'bg-teal-100 text-teal-700'}`}>
-                {booking.slot.direction === 'OUTBOUND' ? 'Xuất' : 'Nhập'}
-              </span>
-              <span className="font-mono font-semibold">{booking.slot.time_from.slice(0, 5)}–{booking.slot.time_to.slice(0, 5)}</span>
-              <span className="text-slate-500">{booking.slot.cargo_type === 'ALL' ? 'Tất cả' : booking.slot.cargo_type}</span>
-            </div>
-          )}
-
-          {/* Vehicle info — ĐVVT điền */}
-          {canBook && isPending && (
-            <div className="space-y-2">
-              <div>
-                <Label className="text-xs">Biển số xe *</Label>
-                <Input value={licensePlate} onChange={e => setLicensePlate(e.target.value)} placeholder="51A-123.45" className="h-8 text-sm mt-1" />
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <Label className="text-xs">Tên tài xế *</Label>
-                  <Input value={driverName} onChange={e => setDriverName(e.target.value)} className="h-8 text-sm mt-1" />
-                </div>
-                <div>
-                  <Label className="text-xs">SĐT tài xế</Label>
-                  <Input value={driverPhone} onChange={e => setDriverPhone(e.target.value)} className="h-8 text-sm mt-1" />
-                </div>
-              </div>
-              <div>
-                <Label className="text-xs">Ghi chú</Label>
-                <textarea value={notes} onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setNotes(e.target.value)} rows={2} className="flex w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring mt-1" />
-              </div>
-            </div>
-          )}
-
-          {/* Vehicle info read-only khi confirmed+ */}
-          {!isPending && (booking.license_plate || booking.driver_name) && (
-            <div className="bg-slate-50 rounded px-3 py-2 text-xs space-y-1">
-              {booking.license_plate && (
-                <p><span className="text-slate-500">Biển số:</span> <span className="font-mono font-semibold ml-1">{booking.license_plate}</span></p>
-              )}
-              {booking.driver_name && (
-                <p><span className="text-slate-500">Tài xế:</span> {booking.driver_name}{booking.driver_phone && ` — ${booking.driver_phone}`}</p>
-              )}
-              {booking.notes && (
-                <p><span className="text-slate-500">Ghi chú:</span> {booking.notes}</p>
-              )}
-            </div>
-          )}
-
-          {/* Status thay đổi — Điều vận */}
-          {canManage && (
             <div>
-              <Label className="text-xs">Trạng thái</Label>
-              <Select value={status} onValueChange={setStatus}>
-                <SelectTrigger className="h-8 text-sm mt-1"><SelectValue /></SelectTrigger>
+              <Label className="text-xs">SĐT lái xe</Label>
+              <Input value={driverPhone} onChange={e => setDriverPhone(e.target.value)} placeholder="0912..." className="h-8 text-sm mt-1" />
+            </div>
+          </div>
+          {err && <p className="text-xs text-red-600">{err}</p>}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={onClose}>Hủy</Button>
+          <Button size="sm" onClick={handleSave} disabled={updateBooking.isPending}>
+            {updateBooking.isPending ? 'Đang lưu...' : 'Xác nhận'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ── Create / Edit Dialog (Điều vận) ──────────────────────────────────────────
+
+type BookingFormData = {
+  date: string; warehouse_id: string; npp_name: string
+  warehouse_type: string; vehicle_type: string
+  box_count: string; pallet_count: string; tonnage: string
+  gdo_refs: string; notes: string
+}
+
+const EMPTY_FORM = (date: string, warehouse_id: string): BookingFormData => ({
+  date, warehouse_id, npp_name: '',
+  warehouse_type: '', vehicle_type: '',
+  box_count: '', pallet_count: '', tonnage: '',
+  gdo_refs: '', notes: '',
+})
+
+function CreateEditDialog({ open, booking, onClose, defaultDate, defaultWarehouseId }: {
+  open: boolean; booking: DeliveryBooking | null; onClose: () => void
+  defaultDate: string; defaultWarehouseId: string
+}) {
+  const { data: warehouses = [] } = useWarehouses(true)
+  const createBooking = useCreateBooking()
+  const updateBooking = useUpdateBooking()
+  const isEdit = !!booking
+
+  const [form, setForm] = useState<BookingFormData>(EMPTY_FORM(defaultDate, defaultWarehouseId))
+  const [err, setErr] = useState('')
+
+  const set = (k: keyof BookingFormData) => (v: string) => setForm(f => ({ ...f, [k]: v }))
+
+  useEffect(() => {
+    if (!open) return
+    if (booking) {
+      setForm({
+        date: booking.date,
+        warehouse_id: booking.warehouse_id,
+        npp_name: booking.npp_name ?? '',
+        warehouse_type: booking.warehouse_type ?? '',
+        vehicle_type: booking.vehicle_type ?? '',
+        box_count: booking.box_count != null ? String(booking.box_count) : '',
+        pallet_count: booking.pallet_count != null ? String(booking.pallet_count) : '',
+        tonnage: booking.tonnage != null ? String(booking.tonnage) : '',
+        gdo_refs: booking.gdo_refs ?? '',
+        notes: booking.notes ?? '',
+      })
+    } else {
+      setForm(EMPTY_FORM(defaultDate, defaultWarehouseId))
+    }
+    setErr('')
+  }, [open, booking?.id])
+
+  const handleSubmit = async () => {
+    if (!form.date || !form.warehouse_id) { setErr('Vui lòng chọn ngày và kho'); return }
+    const payload = {
+      date: form.date,
+      warehouse_id: form.warehouse_id,
+      npp_name: form.npp_name || undefined,
+      warehouse_type: form.warehouse_type || undefined,
+      vehicle_type: form.vehicle_type || undefined,
+      box_count: form.box_count ? Number(form.box_count) : null,
+      pallet_count: form.pallet_count ? Number(form.pallet_count) : null,
+      tonnage: form.tonnage ? Number(form.tonnage) : null,
+      gdo_refs: form.gdo_refs || undefined,
+      notes: form.notes || undefined,
+    }
+    try {
+      if (isEdit && booking) {
+        await updateBooking.mutateAsync({ id: booking.id, ...payload })
+      } else {
+        await createBooking.mutateAsync(payload)
+      }
+      onClose()
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
+      setErr(msg ?? 'Lỗi lưu dữ liệu')
+    }
+  }
+
+  const isSaving = createBooking.isPending || updateBooking.isPending
+
+  return (
+    <Dialog open={open} onOpenChange={v => !v && onClose()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader><DialogTitle>{isEdit ? 'Sửa chuyến vận chuyển' : 'Thêm chuyến vận chuyển'}</DialogTitle></DialogHeader>
+        <div className="space-y-3 py-2">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs">Ngày *</Label>
+              <Input type="date" value={form.date} onChange={e => set('date')(e.target.value)} className="h-8 text-sm mt-1" />
+            </div>
+            <div>
+              <Label className="text-xs">Kho xuất *</Label>
+              <Select value={form.warehouse_id || '__none__'} onValueChange={v => set('warehouse_id')(v === '__none__' ? '' : v)}>
+                <SelectTrigger className="h-8 text-sm mt-1"><SelectValue placeholder="Chọn kho" /></SelectTrigger>
                 <SelectContent>
-                  {Object.entries(STATUS_CFG).map(([k, v]) => (
-                    <SelectItem key={k} value={k}>{v.label}</SelectItem>
+                  {(warehouses as { id: string; name: string }[]).map(w => (
+                    <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
-          )}
-
+          </div>
+          <div>
+            <Label className="text-xs">Tên NPP</Label>
+            <Input value={form.npp_name} onChange={e => set('npp_name')(e.target.value)} placeholder="Tên nhà phân phối" className="h-8 text-sm mt-1" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs">Loại kho</Label>
+              <Input value={form.warehouse_type} onChange={e => set('warehouse_type')(e.target.value)} placeholder="Khô, Lạnh, Đông..." className="h-8 text-sm mt-1" />
+            </div>
+            <div>
+              <Label className="text-xs">Loại xe</Label>
+              <Input value={form.vehicle_type} onChange={e => set('vehicle_type')(e.target.value)} placeholder="Pallet, Xá, SCA..." className="h-8 text-sm mt-1" />
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <div>
+              <Label className="text-xs">Số thùng</Label>
+              <Input type="number" min="0" value={form.box_count} onChange={e => set('box_count')(e.target.value)} className="h-8 text-sm mt-1" />
+            </div>
+            <div>
+              <Label className="text-xs">Số pallet</Label>
+              <Input type="number" min="0" value={form.pallet_count} onChange={e => set('pallet_count')(e.target.value)} className="h-8 text-sm mt-1" />
+            </div>
+            <div>
+              <Label className="text-xs">Số tấn</Label>
+              <Input type="number" min="0" step="0.001" value={form.tonnage} onChange={e => set('tonnage')(e.target.value)} className="h-8 text-sm mt-1" />
+            </div>
+          </div>
+          <div>
+            <Label className="text-xs">Mã GDO</Label>
+            <Input value={form.gdo_refs} onChange={e => set('gdo_refs')(e.target.value)} placeholder="GDO-001, GDO-002" className="h-8 text-sm mt-1" />
+          </div>
+          <div>
+            <Label className="text-xs">Ghi chú</Label>
+            <textarea
+              value={form.notes}
+              onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('notes')(e.target.value)}
+              rows={2}
+              className="flex w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring mt-1"
+            />
+          </div>
           {err && <p className="text-xs text-red-600">{err}</p>}
         </div>
-
         <DialogFooter>
-          <Button variant="outline" size="sm" onClick={onClose}>Đóng</Button>
-          {canEdit && (
-            <Button size="sm" onClick={handleSave} disabled={updateBooking.isPending}>
-              {updateBooking.isPending ? 'Đang lưu...' : 'Lưu'}
+          <Button variant="outline" size="sm" onClick={onClose}>Hủy</Button>
+          <Button size="sm" onClick={handleSubmit} disabled={isSaving}>
+            {isSaving ? 'Đang lưu...' : isEdit ? 'Cập nhật' : 'Thêm chuyến'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ── Excel Upload Dialog ───────────────────────────────────────────────────────
+
+type ImportRow = {
+  date: string | null; warehouse_id: string | null; warehouse_name: string
+  npp_name: string; warehouse_type: string; vehicle_type: string
+  box_count: number | null; pallet_count: number | null; tonnage: number | null
+  gdo_refs: string; notes: string; valid: boolean; error: string
+}
+
+const EXCEL_COL_MAP: Record<string, string> = {
+  'npp': 'npp_name', 'tên npp': 'npp_name', 'nhà phân phối': 'npp_name',
+  'kho': 'warehouse_name', 'kho xuất': 'warehouse_name',
+  'ngày': 'date', 'date': 'date',
+  'loại kho': 'warehouse_type', 'warehouse type': 'warehouse_type',
+  'loại xe': 'vehicle_type', 'vehicle type': 'vehicle_type',
+  'thùng': 'box_count', 'số thùng': 'box_count', 'box': 'box_count',
+  'pallet': 'pallet_count', 'số pallet': 'pallet_count',
+  'tấn': 'tonnage', 'số tấn': 'tonnage', 'ton': 'tonnage',
+  'gdo': 'gdo_refs', 'mã gdo': 'gdo_refs',
+  'ghi chú': 'notes', 'notes': 'notes',
+}
+
+function parseExcelDate(val: unknown): string | null {
+  if (!val) return null
+  if (val instanceof Date) return val.toISOString().slice(0, 10)
+  const s = String(val).trim()
+  const m = s.match(/^(\d{1,2})[/\-](\d{1,2})[/\-](\d{4})$/)
+  if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s
+  return null
+}
+
+function ExcelUploadDialog({ open, onClose, warehouses }: {
+  open: boolean; onClose: () => void
+  warehouses: { id: string; name: string }[]
+}) {
+  const bulkCreate = useBulkCreateBookings()
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [rows, setRows] = useState<ImportRow[]>([])
+  const [importing, setImporting] = useState(false)
+  const [result, setResult] = useState<{ inserted: number; skipped: number } | null>(null)
+  const [err, setErr] = useState('')
+
+  const whByName = Object.fromEntries(warehouses.map(w => [w.name.toLowerCase().trim(), w.id]))
+
+  const reset = () => { setRows([]); setResult(null); setErr('') }
+
+  useEffect(() => { if (open) reset() }, [open])
+
+  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = evt => {
+      try {
+        const wb = XLSX.read(evt.target?.result, { type: 'array', cellDates: true })
+        const ws = wb.Sheets[wb.SheetNames[0]]
+        const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' })
+
+        const parsed: ImportRow[] = raw.map(r => {
+          const norm: Record<string, unknown> = {}
+          for (const [k, v] of Object.entries(r)) {
+            const mapped = EXCEL_COL_MAP[k.trim().toLowerCase()]
+            if (mapped) norm[mapped] = v
+          }
+
+          const whName = String(norm.warehouse_name ?? '').trim()
+          const whId = whByName[whName.toLowerCase()] ?? null
+          const date = parseExcelDate(norm.date)
+          const errors: string[] = []
+          if (!date) errors.push('thiếu ngày')
+          if (whName && !whId) errors.push(`kho "${whName}" không tìm thấy`)
+          if (!whId && !whName) errors.push('thiếu kho')
+
+          return {
+            date, warehouse_id: whId, warehouse_name: whName,
+            npp_name: String(norm.npp_name ?? ''),
+            warehouse_type: String(norm.warehouse_type ?? ''),
+            vehicle_type: String(norm.vehicle_type ?? ''),
+            box_count: norm.box_count ? Number(norm.box_count) : null,
+            pallet_count: norm.pallet_count ? Number(norm.pallet_count) : null,
+            tonnage: norm.tonnage ? Number(norm.tonnage) : null,
+            gdo_refs: String(norm.gdo_refs ?? ''),
+            notes: String(norm.notes ?? ''),
+            valid: errors.length === 0,
+            error: errors.join(', '),
+          }
+        })
+
+        setRows(parsed)
+        setErr('')
+      } catch {
+        setErr('Không đọc được file. Vui lòng dùng định dạng .xlsx hoặc .xls')
+      }
+    }
+    reader.readAsArrayBuffer(file)
+    e.target.value = ''
+  }
+
+  const handleImport = async () => {
+    const valid = rows.filter(r => r.valid)
+    if (!valid.length) { setErr('Không có dòng hợp lệ'); return }
+    setImporting(true)
+    try {
+      const data = await bulkCreate.mutateAsync(valid.map(r => ({
+        date: r.date!, warehouse_id: r.warehouse_id!,
+        npp_name: r.npp_name || undefined,
+        warehouse_type: r.warehouse_type || undefined,
+        vehicle_type: r.vehicle_type || undefined,
+        box_count: r.box_count, pallet_count: r.pallet_count, tonnage: r.tonnage,
+        gdo_refs: r.gdo_refs || undefined,
+        notes: r.notes || undefined,
+      })))
+      setResult({ inserted: data.inserted, skipped: rows.length - valid.length })
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
+      setErr(msg ?? 'Lỗi import')
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  const downloadTemplate = () => {
+    const ws = XLSX.utils.aoa_to_sheet([
+      ['NPP', 'Kho', 'Ngày', 'Loại kho', 'Loại xe', 'Thùng', 'Pallet', 'Tấn', 'GDO', 'Ghi chú'],
+      ['Tên NPP mẫu', 'Kho Ba Vì', '21/05/2026', 'Khô', 'Pallet', 100, 5, 2.5, 'GDO-001', ''],
+    ])
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Import')
+    XLSX.writeFile(wb, 'mau_ke_hoach_vc.xlsx')
+  }
+
+  const validCount = rows.filter(r => r.valid).length
+
+  return (
+    <Dialog open={open} onOpenChange={v => !v && onClose()}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader><DialogTitle>Upload kế hoạch từ Excel</DialogTitle></DialogHeader>
+        <div className="space-y-3 py-2">
+          {result ? (
+            <div className="bg-green-50 border border-green-200 rounded p-4 text-sm text-green-800">
+              <p className="font-medium">Import thành công!</p>
+              <p>Đã thêm <strong>{result.inserted}</strong> chuyến.{result.skipped > 0 && ` Bỏ qua ${result.skipped} dòng lỗi.`}</p>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()}>
+                  <Upload className="h-3.5 w-3.5 mr-1" />Chọn file Excel
+                </Button>
+                <Button variant="outline" size="sm" onClick={downloadTemplate}>
+                  <Download className="h-3.5 w-3.5 mr-1" />Tải mẫu
+                </Button>
+                <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFile} />
+                {rows.length > 0 && (
+                  <span className="text-xs text-slate-500">
+                    {rows.length} dòng · <span className="text-green-600 font-medium">{validCount} hợp lệ</span>
+                    {rows.length - validCount > 0 && <> · <span className="text-red-600 font-medium">{rows.length - validCount} lỗi</span></>}
+                  </span>
+                )}
+              </div>
+
+              {rows.length > 0 && (
+                <div className="max-h-64 overflow-auto rounded border">
+                  <table className="min-w-full text-[10px]">
+                    <thead className="bg-slate-50 sticky top-0">
+                      <tr>
+                        {['#', 'NPP', 'Kho', 'Ngày', 'L.kho', 'L.xe', 'Thùng', 'Pallet', 'Tấn', 'Lỗi'].map(h => (
+                          <th key={h} className="px-2 py-1 text-left text-[9px] text-slate-500 font-medium whitespace-nowrap">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((r, i) => (
+                        <tr key={i} className={r.valid ? '' : 'bg-red-50'}>
+                          <td className="px-2 py-0.5 text-slate-400">{i + 1}</td>
+                          <td className="px-2 py-0.5 max-w-[100px] truncate">{r.npp_name || '—'}</td>
+                          <td className="px-2 py-0.5">{r.warehouse_name || '—'}</td>
+                          <td className="px-2 py-0.5 font-mono">{r.date || '—'}</td>
+                          <td className="px-2 py-0.5">{r.warehouse_type || '—'}</td>
+                          <td className="px-2 py-0.5">{r.vehicle_type || '—'}</td>
+                          <td className="px-2 py-0.5 tabular-nums">{r.box_count ?? '—'}</td>
+                          <td className="px-2 py-0.5 tabular-nums">{r.pallet_count ?? '—'}</td>
+                          <td className="px-2 py-0.5 tabular-nums">{r.tonnage ?? '—'}</td>
+                          <td className="px-2 py-0.5 text-red-500">{r.error}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {err && <p className="text-xs text-red-600">{err}</p>}
+            </>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={() => { reset(); onClose() }}>Đóng</Button>
+          {!result && validCount > 0 && (
+            <Button size="sm" onClick={handleImport} disabled={importing}>
+              {importing ? 'Đang import...' : `Import ${validCount} chuyến`}
             </Button>
           )}
+          {result && <Button size="sm" onClick={onClose}>Xong</Button>}
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -353,7 +545,9 @@ export default function TMSBookings() {
   const [date, setDate] = useState(today)
   const [warehouseId, setWarehouseId] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
-  const [detailBooking, setDetailBooking] = useState<DeliveryBooking | null>(null)
+  const [uploadOpen, setUploadOpen] = useState(false)
+  const [editBooking, setEditBooking] = useState<DeliveryBooking | null>(null)
+  const [dvvtBooking, setDvvtBooking] = useState<DeliveryBooking | null>(null)
   const [deleteErr, setDeleteErr] = useState('')
 
   const { data: warehouses = [] } = useWarehouses(true)
@@ -365,9 +559,7 @@ export default function TMSBookings() {
   const handleDelete = async (e: React.MouseEvent<HTMLButtonElement>, id: string) => {
     e.stopPropagation()
     setDeleteErr('')
-    try {
-      await deleteBooking.mutateAsync(id)
-    } catch (err: unknown) {
+    try { await deleteBooking.mutateAsync(id) } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
       setDeleteErr(msg ?? 'Lỗi xóa chuyến')
     }
@@ -386,19 +578,21 @@ export default function TMSBookings() {
       <div className="border-b bg-white px-4 py-3 shrink-0">
         <div className="flex items-center justify-between mb-3">
           <h1 className="text-xl font-semibold">Kế hoạch vận chuyển</h1>
-          {canManage && (
-            <Button size="sm" onClick={() => setCreateOpen(true)} disabled={!warehouseId}>
-              <Plus className="h-4 w-4 mr-1" />Thêm chuyến
-            </Button>
-          )}
+          <div className="flex items-center gap-2">
+            {canManage && (
+              <>
+                <Button variant="outline" size="sm" onClick={() => setUploadOpen(true)}>
+                  <Upload className="h-4 w-4 mr-1" />Upload Excel
+                </Button>
+                <Button size="sm" onClick={() => setCreateOpen(true)} disabled={!warehouseId}>
+                  <Plus className="h-4 w-4 mr-1" />Thêm chuyến
+                </Button>
+              </>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
-          <Input
-            type="date"
-            value={date}
-            onChange={e => setDate(e.target.value)}
-            className="h-8 text-sm w-40"
-          />
+          <Input type="date" value={date} onChange={e => setDate(e.target.value)} className="h-8 text-sm w-40" />
           <Select value={warehouseId || '__none__'} onValueChange={v => setWarehouseId(v === '__none__' ? '' : v)}>
             <SelectTrigger className="h-8 text-sm w-52"><SelectValue placeholder="— Chọn kho —" /></SelectTrigger>
             <SelectContent>
@@ -418,35 +612,41 @@ export default function TMSBookings() {
           <div className="py-24 text-center text-sm text-slate-400">Chọn kho để xem kế hoạch</div>
         ) : isLoading ? (
           <div className="py-24 text-center text-sm text-slate-400">Đang tải...</div>
-        ) : !bookings.length ? (
+        ) : !(bookings as DeliveryBooking[]).length ? (
           <div className="py-24 text-center text-sm text-slate-400">Chưa có chuyến nào cho ngày này</div>
         ) : (
           <div className="overflow-x-auto">
             <Table className="min-w-full">
               <TableHeader>
                 <TableRow>
-                  <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">ĐVVT</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">GDO</TableHead>
+                  <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Tên NPP</TableHead>
+                  <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Loại kho / xe</TableHead>
+                  <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Thùng / Pallet / Tấn</TableHead>
                   <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Khung giờ</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Biển số</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Tài xế / SĐT</TableHead>
+                  <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Biển số / SĐT</TableHead>
                   <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Trạng thái</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-8"></TableHead>
+                  <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-20"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {bookings.map(b => (
-                  <TableRow
-                    key={b.id}
-                    className={`cursor-pointer ${rowBg(b.status)}`}
-                    onClick={() => setDetailBooking(b)}
-                  >
-                    <TableCell className="px-2 py-1 text-[10px]">
-                      <span className="font-mono font-semibold">{b.ncc?.code ?? '—'}</span>
-                      <span className="text-slate-500 ml-1">{b.ncc?.name}</span>
+                {(bookings as DeliveryBooking[]).map(b => (
+                  <TableRow key={b.id} className={rowBg(b.status)}>
+                    <TableCell className="px-2 py-1 text-[10px] font-semibold max-w-[140px] truncate">
+                      {b.npp_name || <span className="text-slate-400 font-normal">—</span>}
                     </TableCell>
-                    <TableCell className="px-2 py-1 text-[10px] text-slate-500 max-w-[120px] truncate">
-                      {b.gdo_refs || '—'}
+                    <TableCell className="px-2 py-1 text-[10px]">
+                      {b.warehouse_type && <div>{b.warehouse_type}</div>}
+                      {b.vehicle_type && <div className="text-slate-400">{b.vehicle_type}</div>}
+                      {!b.warehouse_type && !b.vehicle_type && <span className="text-slate-400">—</span>}
+                    </TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] tabular-nums">
+                      {b.box_count != null || b.pallet_count != null || b.tonnage != null ? (
+                        <div className="space-y-0.5">
+                          {b.box_count != null && <div>{b.box_count}<span className="text-slate-400"> thùng</span></div>}
+                          {b.pallet_count != null && <div>{b.pallet_count}<span className="text-slate-400"> pl</span></div>}
+                          {b.tonnage != null && <div>{b.tonnage}<span className="text-slate-400"> tấn</span></div>}
+                        </div>
+                      ) : <span className="text-slate-400">—</span>}
                     </TableCell>
                     <TableCell className="px-2 py-1 text-[10px]">
                       {b.slot ? (
@@ -456,31 +656,49 @@ export default function TMSBookings() {
                           </span>
                           <span className="font-mono">{b.slot.time_from.slice(0, 5)}–{b.slot.time_to.slice(0, 5)}</span>
                         </span>
-                      ) : (
-                        <span className="text-amber-500">Chưa đặt</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold">
-                      {b.license_plate || <span className="text-slate-400 font-normal">—</span>}
+                      ) : <span className="text-amber-500">Chưa đặt</span>}
                     </TableCell>
                     <TableCell className="px-2 py-1 text-[10px]">
-                      {b.driver_name
-                        ? <>{b.driver_name}<br /><span className="text-slate-400">{b.driver_phone}</span></>
-                        : <span className="text-slate-400">—</span>}
+                      {b.license_plate ? (
+                        <>
+                          <div className="font-mono font-semibold">{b.license_plate}</div>
+                          {b.driver_phone && <div className="text-slate-400">{b.driver_phone}</div>}
+                        </>
+                      ) : <span className="text-slate-400">—</span>}
                     </TableCell>
                     <TableCell className="px-2 py-1">
                       <StatusBadge status={b.status} />
                     </TableCell>
                     <TableCell className="px-2 py-1">
-                      {canManage && b.status === 'PENDING' && (
-                        <button
-                          onClick={(e: React.MouseEvent<HTMLButtonElement>) => handleDelete(e, b.id)}
-                          className="text-red-400 hover:text-red-600 p-1 rounded"
-                          title="Xóa chuyến"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      )}
+                      <div className="flex items-center gap-0.5">
+                        {canBook && b.status === 'PENDING' && (
+                          <button
+                            onClick={e => { e.stopPropagation(); setDvvtBooking(b) }}
+                            className="text-blue-400 hover:text-blue-600 p-1 rounded"
+                            title="Điền thông tin xe"
+                          >
+                            <Truck className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                        {canManage && ['PENDING', 'CONFIRMED'].includes(b.status) && (
+                          <button
+                            onClick={e => { e.stopPropagation(); setEditBooking(b) }}
+                            className="text-slate-400 hover:text-slate-600 p-1 rounded"
+                            title="Sửa thông tin chuyến"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                        {canManage && b.status === 'PENDING' && (
+                          <button
+                            onClick={(e: React.MouseEvent<HTMLButtonElement>) => handleDelete(e, b.id)}
+                            className="text-red-400 hover:text-red-600 p-1 rounded"
+                            title="Xóa chuyến"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -490,17 +708,21 @@ export default function TMSBookings() {
         )}
       </div>
 
-      <CreateBookingDialog
-        open={createOpen}
-        onClose={() => setCreateOpen(false)}
+      <CreateEditDialog
+        open={createOpen || !!editBooking}
+        booking={editBooking}
+        onClose={() => { setCreateOpen(false); setEditBooking(null) }}
         defaultDate={date}
         defaultWarehouseId={warehouseId}
       />
-      <BookingDetailDialog
-        booking={detailBooking}
-        onClose={() => setDetailBooking(null)}
-        canBook={canBook}
-        canManage={canManage}
+      <DVVTFillDialog
+        booking={dvvtBooking}
+        onClose={() => setDvvtBooking(null)}
+      />
+      <ExcelUploadDialog
+        open={uploadOpen}
+        onClose={() => setUploadOpen(false)}
+        warehouses={warehouses as { id: string; name: string }[]}
       />
     </div>
   )

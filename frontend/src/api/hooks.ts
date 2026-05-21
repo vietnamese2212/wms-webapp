@@ -1455,7 +1455,7 @@ export function useGenerateSlots() {
 
 // ── TMS Delivery Bookings ─────────────────────────────────────────────────────
 
-export function useDeliveryBookings(params?: { date?: string; warehouse_id?: string; ncc_id?: string }) {
+export function useDeliveryBookings(params?: { date?: string; warehouse_id?: string }) {
   return useQuery({
     queryKey: ['tms-bookings', params],
     queryFn: async () => {
@@ -1466,10 +1466,19 @@ export function useDeliveryBookings(params?: { date?: string; warehouse_id?: str
   })
 }
 
+type BookingWriteBody = {
+  date?: string; warehouse_id?: string; npp_name?: string; ncc_id?: string
+  gdo_refs?: string; notes?: string | null; status?: string
+  box_count?: number | null; pallet_count?: number | null; tonnage?: number | null
+  warehouse_type?: string; vehicle_type?: string
+  slot_id?: string | null; license_plate?: string | null
+  driver_name?: string | null; driver_phone?: string | null
+}
+
 export function useCreateBooking() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { date: string; warehouse_id: string; ncc_id: string; gdo_refs?: string; notes?: string }) =>
+    mutationFn: (body: BookingWriteBody) =>
       apiClient.post('/tms/bookings', body).then(r => r.data.data as import('@/types').DeliveryBooking),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-bookings'] }),
   })
@@ -1478,11 +1487,8 @@ export function useCreateBooking() {
 export function useUpdateBooking() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: {
-      id: string; slot_id?: string | null; license_plate?: string | null
-      driver_name?: string | null; driver_phone?: string | null
-      gdo_refs?: string; notes?: string | null; status?: string
-    }) => apiClient.patch(`/tms/bookings/${id}`, body).then(r => r.data.data as import('@/types').DeliveryBooking),
+    mutationFn: ({ id, ...body }: BookingWriteBody & { id: string }) =>
+      apiClient.patch(`/tms/bookings/${id}`, body).then(r => r.data.data as import('@/types').DeliveryBooking),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['tms-bookings'] })
       qc.invalidateQueries({ queryKey: ['tms-delivery-slots'] })
@@ -1498,5 +1504,14 @@ export function useDeleteBooking() {
       qc.invalidateQueries({ queryKey: ['tms-bookings'] })
       qc.invalidateQueries({ queryKey: ['tms-delivery-slots'] })
     },
+  })
+}
+
+export function useBulkCreateBookings() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (bookings: BookingWriteBody[]) =>
+      apiClient.post('/tms/bookings/bulk', { bookings }).then(r => r.data.data as { inserted: number; skipped: number }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-bookings'] }),
   })
 }

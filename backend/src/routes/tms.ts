@@ -19,10 +19,11 @@ router.get('/slots',          requirePerm('tms', 'view'),           slot.listSlo
 router.post('/slots/generate', requirePerm('tms', 'manage_booking'), slot.generateSlotsForDates)
 
 // DeliveryBooking (Kế hoạch vận chuyển)
-router.get('/bookings',        requirePerm('tms', 'view'),           booking.listBookings)
-router.post('/bookings',       requirePerm('tms', 'manage_booking'), booking.createBooking)
-router.patch('/bookings/:id',  requirePerm('tms', 'book'),           booking.updateBooking)
-router.delete('/bookings/:id', requirePerm('tms', 'manage_booking'), booking.deleteBooking)
+router.get('/bookings',          requirePerm('tms', 'view'),           booking.listBookings)
+router.post('/bookings',         requirePerm('tms', 'manage_booking'), booking.createBooking)
+router.post('/bookings/bulk',    requirePerm('tms', 'manage_booking'), booking.bulkCreateBookings)
+router.patch('/bookings/:id',    requirePerm('tms', 'book'),           booking.updateBooking)
+router.delete('/bookings/:id',   requirePerm('tms', 'manage_booking'), booking.deleteBooking)
 
 // SlotTemplate (Khung giờ)
 router.get('/slot-templates',        requirePerm('tms', 'view'),         slotTemplate.listSlotTemplates)

@@ -676,26 +676,26 @@ export default function TMSBookings() {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="border-b bg-white px-4 py-3 shrink-0">
-        <div className="flex items-center justify-between mb-3">
-          <h1 className="text-xl font-semibold">Kế hoạch vận chuyển</h1>
-          <div className="flex items-center gap-2">
+      <div className="border-b bg-white px-3 py-2 shrink-0">
+        <div className="flex items-center justify-between mb-2">
+          <h1 className="text-base font-semibold md:text-xl">Kế hoạch vận chuyển</h1>
+          <div className="flex items-center gap-1.5">
             {canManage && (
               <>
-                <Button variant="outline" size="sm" onClick={() => setUploadOpen(true)}>
-                  <Upload className="h-4 w-4 mr-1" />Upload Excel
+                <Button variant="outline" size="sm" onClick={() => setUploadOpen(true)} className="h-8 px-2">
+                  <Upload className="h-3.5 w-3.5 shrink-0" /><span className="hidden sm:inline ml-1">Upload Excel</span>
                 </Button>
-                <Button size="sm" onClick={() => setCreateOpen(true)} disabled={!warehouseId}>
-                  <Plus className="h-4 w-4 mr-1" />Thêm chuyến
+                <Button size="sm" onClick={() => setCreateOpen(true)} disabled={!warehouseId} className="h-8 px-2">
+                  <Plus className="h-3.5 w-3.5 shrink-0" /><span className="hidden sm:inline ml-1">Thêm chuyến</span>
                 </Button>
               </>
             )}
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <Input type="date" value={date} onChange={e => setDate(e.target.value)} className="h-8 text-sm w-40" />
+          <Input type="date" value={date} onChange={e => setDate(e.target.value)} className="h-8 text-sm w-36" />
           <Select value={warehouseId || '__none__'} onValueChange={v => setWarehouseId(v === '__none__' ? '' : v)}>
-            <SelectTrigger className="h-8 text-sm w-52"><SelectValue placeholder="— Chọn kho —" /></SelectTrigger>
+            <SelectTrigger className="h-8 text-sm flex-1 min-w-[140px] max-w-[200px]"><SelectValue placeholder="— Chọn kho —" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="__none__">— Chọn kho —</SelectItem>
               {(warehouses as { id: string; name: string }[]).map(w => (
@@ -719,11 +719,11 @@ export default function TMSBookings() {
               />
             </>
           )}
-          {deleteErr && <p className="text-xs text-red-600">{deleteErr}</p>}
+          {deleteErr && <p className="text-xs text-red-600 w-full">{deleteErr}</p>}
         </div>
       </div>
 
-      {/* Table */}
+      {/* Content */}
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
         {!warehouseId ? (
           <div className="py-24 text-center text-sm text-slate-400">Chọn kho để xem kế hoạch</div>
@@ -732,145 +732,206 @@ export default function TMSBookings() {
         ) : !filtered.length ? (
           <div className="py-24 text-center text-sm text-slate-400">Chưa có chuyến nào cho ngày này</div>
         ) : (
-          <div className="overflow-x-auto">
-            <Table className="min-w-full">
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Tên NPP</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">ĐVVT</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Loại kho</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Loại xe</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right">Thùng</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right">Pallet</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right">Tấn</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Khung giờ</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Biển số</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">SĐT lái xe</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Trạng thái</TableHead>
-                  <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-14"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filtered.map(b => (
-                  <TableRow key={b.id} className={rowBg(b.status)}>
-                    {/* Tên NPP */}
-                    <TableCell className="px-2 py-1 text-[10px] font-semibold max-w-[140px] truncate">
-                      {b.npp_name || <span className="text-slate-400 font-normal">—</span>}
-                    </TableCell>
+          <>
+            {/* Mobile: card list */}
+            <div className="block md:hidden space-y-2 p-3">
+              {filtered.map(b => (
+                <div key={b.id} className={`rounded-lg border p-3 space-y-2 ${
+                  b.status === 'CONFIRMED' ? 'bg-green-50 border-green-200' :
+                  b.status === 'ARRIVED'   ? 'bg-blue-50 border-blue-200' :
+                  b.status === 'DONE'      ? 'bg-slate-50 border-slate-200' :
+                  'bg-white border-slate-200'
+                }`}>
+                  {/* Row 1: NPP + Status */}
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="text-sm font-semibold leading-tight">{b.npp_name || <span className="text-slate-400 font-normal">—</span>}</span>
+                    <StatusBadge status={b.status} />
+                  </div>
 
-                    {/* ĐVVT */}
-                    <TableCell className="px-2 py-1 text-[10px] max-w-[120px] truncate text-slate-500">
-                      {b.ncc?.name || <span className="text-slate-300">—</span>}
-                    </TableCell>
+                  {/* Row 2: ĐVVT + Loại kho/xe */}
+                  <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+                    {b.ncc?.name && <span className="text-xs text-slate-500">ĐVVT: <span className="font-medium text-slate-700">{b.ncc.name}</span></span>}
+                    {b.warehouse_type && <span className="text-xs text-slate-500">Kho: {b.warehouse_type}</span>}
+                    {b.vehicle_type && <span className="text-xs text-slate-500">Xe: {b.vehicle_type}</span>}
+                  </div>
 
-                    {/* Loại kho */}
-                    <TableCell className="px-2 py-1 text-[10px]">
-                      {b.warehouse_type || <span className="text-slate-400">—</span>}
-                    </TableCell>
+                  {/* Row 3: Slot + Biển số */}
+                  <div className="flex items-center gap-3">
+                    {b.slot ? (
+                      <span className="flex items-center gap-1 text-xs">
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${b.slot.direction === 'OUTBOUND' ? 'bg-orange-100 text-orange-700' : 'bg-teal-100 text-teal-700'}`}>
+                          {b.slot.direction === 'OUTBOUND' ? 'Xuất' : 'Nhập'}
+                        </span>
+                        <span className="font-mono font-semibold">{b.slot.time_from.slice(0, 5)}–{b.slot.time_to.slice(0, 5)}</span>
+                      </span>
+                    ) : (
+                      <span className="text-xs text-amber-500">Chưa đặt giờ</span>
+                    )}
+                    {b.license_plate && <span className="text-xs font-mono font-semibold text-slate-700">{b.license_plate}</span>}
+                    {b.driver_phone && <span className="text-xs text-slate-500">{b.driver_phone}</span>}
+                  </div>
 
-                    {/* Loại xe */}
-                    <TableCell className="px-2 py-1 text-[10px]">
-                      {b.vehicle_type || <span className="text-slate-400">—</span>}
-                    </TableCell>
+                  {/* Row 4: Số lượng (nếu có) */}
+                  {(b.box_count != null || b.pallet_count != null || b.tonnage != null) && (
+                    <div className="flex gap-3 text-xs text-slate-500">
+                      {b.box_count != null && <span><span className="font-semibold tabular-nums text-slate-700">{b.box_count}</span> thùng</span>}
+                      {b.pallet_count != null && <span><span className="font-semibold tabular-nums text-slate-700">{b.pallet_count}</span> pallet</span>}
+                      {b.tonnage != null && <span><span className="font-semibold tabular-nums text-slate-700">{b.tonnage}</span> tấn</span>}
+                    </div>
+                  )}
 
-                    {/* Thùng */}
-                    <TableCell className="px-2 py-1 text-[10px] tabular-nums text-right">
-                      {b.box_count != null
-                        ? <>{b.box_count}<span className="text-slate-400 text-[9px]"> thùng</span></>
-                        : <span className="text-slate-400">—</span>}
-                    </TableCell>
+                  {/* Row 5: Actions */}
+                  <div className="flex items-center gap-2 pt-1 border-t border-slate-100">
+                    {canFillTransport(b) && (
+                      <button
+                        onClick={e => { e.stopPropagation(); setDvvtBooking(b) }}
+                        className="flex items-center gap-1 text-xs text-blue-600 font-medium bg-blue-50 hover:bg-blue-100 px-2 py-1 rounded"
+                      >
+                        <Truck className="h-3.5 w-3.5" />
+                        {b.status === 'PENDING' ? 'Đăng ký xe' : 'Sửa khung giờ'}
+                      </button>
+                    )}
+                    {canEditBooking(b) && (
+                      <button
+                        onClick={e => { e.stopPropagation(); setEditBooking(b) }}
+                        className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />Sửa
+                      </button>
+                    )}
+                    {canManage && b.status === 'CONFIRMED' && (
+                      <button
+                        onClick={(e: React.MouseEvent<HTMLButtonElement>) => handleRelease(e, b.id)}
+                        className="flex items-center gap-1 text-xs text-amber-600 bg-amber-50 hover:bg-amber-100 px-2 py-1 rounded"
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" />Trả lại
+                      </button>
+                    )}
+                    {canManage && b.status === 'PENDING' && (
+                      <button
+                        onClick={(e: React.MouseEvent<HTMLButtonElement>) => handleDelete(e, b.id)}
+                        className="flex items-center gap-1 text-xs text-red-500 bg-red-50 hover:bg-red-100 px-2 py-1 rounded"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />Xóa
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
 
-                    {/* Pallet */}
-                    <TableCell className="px-2 py-1 text-[10px] tabular-nums text-right">
-                      {b.pallet_count != null
-                        ? <>{b.pallet_count}<span className="text-slate-400 text-[9px]"> pl</span></>
-                        : <span className="text-slate-400">—</span>}
-                    </TableCell>
-
-                    {/* Tấn */}
-                    <TableCell className="px-2 py-1 text-[10px] tabular-nums text-right">
-                      {b.tonnage != null
-                        ? <>{b.tonnage}<span className="text-slate-400 text-[9px]"> t</span></>
-                        : <span className="text-slate-400">—</span>}
-                    </TableCell>
-
-                    {/* Khung giờ + nút ĐVVT inline */}
-                    <TableCell className="px-2 py-1 text-[10px]">
-                      <div className="flex items-center gap-1">
-                        {b.slot ? (
-                          <span className="flex items-center gap-1">
-                            <span className={`px-1 rounded text-[9px] font-medium ${b.slot.direction === 'OUTBOUND' ? 'bg-orange-100 text-orange-700' : 'bg-teal-100 text-teal-700'}`}>
-                              {b.slot.direction === 'OUTBOUND' ? 'X' : 'N'}
-                            </span>
-                            <span className="font-mono">{b.slot.time_from.slice(0, 5)}–{b.slot.time_to.slice(0, 5)}</span>
-                          </span>
-                        ) : (
-                          <span className="text-amber-500">Chưa đặt</span>
-                        )}
-                        {canFillTransport(b) && (
-                          <button
-                            onClick={e => { e.stopPropagation(); setDvvtBooking(b) }}
-                            className="text-blue-400 hover:text-blue-600 p-0.5 rounded ml-1 shrink-0"
-                            title={b.status === 'PENDING' ? 'Đăng ký xe' : 'Sửa khung giờ'}
-                          >
-                            <Truck className="h-3.5 w-3.5" />
-                          </button>
-                        )}
-                      </div>
-                    </TableCell>
-
-                    {/* Biển số */}
-                    <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold">
-                      {b.license_plate || <span className="text-slate-400 font-normal">—</span>}
-                    </TableCell>
-
-                    {/* SĐT */}
-                    <TableCell className="px-2 py-1 text-[10px] text-slate-500">
-                      {b.driver_phone || <span className="text-slate-400">—</span>}
-                    </TableCell>
-
-                    {/* Trạng thái */}
-                    <TableCell className="px-2 py-1">
-                      <StatusBadge status={b.status} />
-                    </TableCell>
-
-                    {/* Actions: Pencil + Trash (Truck đã chuyển vào cột Khung giờ) */}
-                    <TableCell className="px-2 py-1">
-                      <div className="flex items-center gap-0.5">
-                        {canEditBooking(b) && (
-                          <button
-                            onClick={e => { e.stopPropagation(); setEditBooking(b) }}
-                            className="text-slate-400 hover:text-slate-600 p-1 rounded"
-                            title="Sửa thông tin chuyến"
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                          </button>
-                        )}
-                        {canManage && b.status === 'CONFIRMED' && (
-                          <button
-                            onClick={(e: React.MouseEvent<HTMLButtonElement>) => handleRelease(e, b.id)}
-                            className="text-amber-400 hover:text-amber-600 p-1 rounded"
-                            title="Trả lại (hủy đăng ký ĐVVT)"
-                          >
-                            <RotateCcw className="h-3.5 w-3.5" />
-                          </button>
-                        )}
-                        {canManage && b.status === 'PENDING' && (
-                          <button
-                            onClick={(e: React.MouseEvent<HTMLButtonElement>) => handleDelete(e, b.id)}
-                            className="text-red-400 hover:text-red-600 p-1 rounded"
-                            title="Xóa chuyến"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        )}
-                      </div>
-                    </TableCell>
+            {/* Desktop: table */}
+            <div className="hidden md:block overflow-x-auto">
+              <Table className="min-w-full">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Tên NPP</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">ĐVVT</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Loại kho</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Loại xe</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right">Thùng</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right">Pallet</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right">Tấn</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Khung giờ</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Biển số</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">SĐT lái xe</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Trạng thái</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-14"></TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
+                </TableHeader>
+                <TableBody>
+                  {filtered.map(b => (
+                    <TableRow key={b.id} className={rowBg(b.status)}>
+                      <TableCell className="px-2 py-1 text-[10px] font-semibold max-w-[140px] truncate">
+                        {b.npp_name || <span className="text-slate-400 font-normal">—</span>}
+                      </TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] max-w-[120px] truncate text-slate-500">
+                        {b.ncc?.name || <span className="text-slate-300">—</span>}
+                      </TableCell>
+                      <TableCell className="px-2 py-1 text-[10px]">
+                        {b.warehouse_type || <span className="text-slate-400">—</span>}
+                      </TableCell>
+                      <TableCell className="px-2 py-1 text-[10px]">
+                        {b.vehicle_type || <span className="text-slate-400">—</span>}
+                      </TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] tabular-nums text-right">
+                        {b.box_count != null ? <>{b.box_count}<span className="text-slate-400 text-[9px]"> thùng</span></> : <span className="text-slate-400">—</span>}
+                      </TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] tabular-nums text-right">
+                        {b.pallet_count != null ? <>{b.pallet_count}<span className="text-slate-400 text-[9px]"> pl</span></> : <span className="text-slate-400">—</span>}
+                      </TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] tabular-nums text-right">
+                        {b.tonnage != null ? <>{b.tonnage}<span className="text-slate-400 text-[9px]"> t</span></> : <span className="text-slate-400">—</span>}
+                      </TableCell>
+                      <TableCell className="px-2 py-1 text-[10px]">
+                        <div className="flex items-center gap-1">
+                          {b.slot ? (
+                            <span className="flex items-center gap-1">
+                              <span className={`px-1 rounded text-[9px] font-medium ${b.slot.direction === 'OUTBOUND' ? 'bg-orange-100 text-orange-700' : 'bg-teal-100 text-teal-700'}`}>
+                                {b.slot.direction === 'OUTBOUND' ? 'X' : 'N'}
+                              </span>
+                              <span className="font-mono">{b.slot.time_from.slice(0, 5)}–{b.slot.time_to.slice(0, 5)}</span>
+                            </span>
+                          ) : (
+                            <span className="text-amber-500">Chưa đặt</span>
+                          )}
+                          {canFillTransport(b) && (
+                            <button
+                              onClick={e => { e.stopPropagation(); setDvvtBooking(b) }}
+                              className="text-blue-400 hover:text-blue-600 p-0.5 rounded ml-1 shrink-0"
+                              title={b.status === 'PENDING' ? 'Đăng ký xe' : 'Sửa khung giờ'}
+                            >
+                              <Truck className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold">
+                        {b.license_plate || <span className="text-slate-400 font-normal">—</span>}
+                      </TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] text-slate-500">
+                        {b.driver_phone || <span className="text-slate-400">—</span>}
+                      </TableCell>
+                      <TableCell className="px-2 py-1">
+                        <StatusBadge status={b.status} />
+                      </TableCell>
+                      <TableCell className="px-2 py-1">
+                        <div className="flex items-center gap-0.5">
+                          {canEditBooking(b) && (
+                            <button
+                              onClick={e => { e.stopPropagation(); setEditBooking(b) }}
+                              className="text-slate-400 hover:text-slate-600 p-1 rounded"
+                              title="Sửa thông tin chuyến"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                          {canManage && b.status === 'CONFIRMED' && (
+                            <button
+                              onClick={(e: React.MouseEvent<HTMLButtonElement>) => handleRelease(e, b.id)}
+                              className="text-amber-400 hover:text-amber-600 p-1 rounded"
+                              title="Trả lại (hủy đăng ký ĐVVT)"
+                            >
+                              <RotateCcw className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                          {canManage && b.status === 'PENDING' && (
+                            <button
+                              onClick={(e: React.MouseEvent<HTMLButtonElement>) => handleDelete(e, b.id)}
+                              className="text-red-400 hover:text-red-600 p-1 rounded"
+                              title="Xóa chuyến"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </>
         )}
       </div>
 

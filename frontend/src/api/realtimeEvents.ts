@@ -11,6 +11,8 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   Material:         [['materials']],
   Manufacturer:     [['manufacturers']],
   Warehouse:        [['warehouses']],
+  DeliveryBooking:  [['tms-bookings']],
+  DeliverySlot:     [['tms-delivery-slots']],
 }
 
 let channel: RealtimeChannel | null = null

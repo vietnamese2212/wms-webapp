@@ -155,37 +155,31 @@ export async function updateBooking(req: Request, res: Response) {
       if (existing.slot_id) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data: oldSlot } = await (supabase.from('DeliverySlot') as any)
-          .select('booked_count, date, time_from').eq('id', existing.slot_id).single()
+          .select('date, time_from').eq('id', existing.slot_id).single()
         if (oldSlot) {
           // Kiểm tra giờ: không được đổi slot sau khi giờ cũ đã bắt đầu
           const slotStart = new Date(`${oldSlot.date}T${oldSlot.time_from}+07:00`).getTime()
           if (nowMs >= slotStart) {
             return fail(res, `Đã qua giờ ${String(oldSlot.time_from).slice(0, 5)}, không thể thay đổi khung giờ`, 400)
           }
-          if (oldSlot.booked_count > 0) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            await (supabase.from('DeliverySlot') as any)
-              .update({ booked_count: oldSlot.booked_count - 1, updated_at: now })
-              .eq('id', existing.slot_id)
-          }
+          // Atomic decrement — không race condition
+          await supabase.rpc('try_book_slot', { p_slot_id: existing.slot_id, p_delta: -1 })
         }
       }
 
       if (newSlotId) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data: newSlot } = await (supabase.from('DeliverySlot') as any)
-          .select('booked_count, max_vehicles, date, time_from').eq('id', newSlotId).single()
+          .select('date, time_from').eq('id', newSlotId).single()
         if (!newSlot) return fail(res, 'Slot không tồn tại', 404)
         // Không cho chọn slot đã qua giờ
         const newSlotStart = new Date(`${newSlot.date}T${newSlot.time_from}+07:00`).getTime()
         if (nowMs >= newSlotStart) {
           return fail(res, `Khung giờ ${String(newSlot.time_from).slice(0, 5)} đã qua, không thể đặt`, 400)
         }
-        if (newSlot.booked_count >= newSlot.max_vehicles) return fail(res, 'Slot đã hết chỗ', 409)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (supabase.from('DeliverySlot') as any)
-          .update({ booked_count: newSlot.booked_count + 1, updated_at: now })
-          .eq('id', newSlotId)
+        // Atomic increment — nếu slot đã đầy, function trả về false → báo lỗi
+        const { data: booked } = await supabase.rpc('try_book_slot', { p_slot_id: newSlotId, p_delta: 1 })
+        if (!booked) return fail(res, 'Slot đã hết chỗ', 409)
       }
     }
 
@@ -235,16 +229,7 @@ export async function deleteBooking(req: Request, res: Response) {
     if (existing.status !== 'PENDING') return fail(res, 'Chỉ có thể xóa booking đang PENDING', 400)
 
     if (existing.slot_id) {
-      const nowStr = new Date().toISOString()
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: slotRow } = await (supabase.from('DeliverySlot') as any)
-        .select('booked_count').eq('id', existing.slot_id).single()
-      if (slotRow && slotRow.booked_count > 0) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (supabase.from('DeliverySlot') as any)
-          .update({ booked_count: slotRow.booked_count - 1, updated_at: nowStr })
-          .eq('id', existing.slot_id)
-      }
+      await supabase.rpc('try_book_slot', { p_slot_id: existing.slot_id, p_delta: -1 })
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

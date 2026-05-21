@@ -48,7 +48,7 @@ function SlotPicker({ warehouseId, date, selectedSlotId, onSelect }: {
 }) {
   const [ready, setReady] = useState(false)
   const { mutate: generateSlots, isPending: isGenerating } = useGenerateSlots()
-  const { data: slots = [], isLoading } = useDeliverySlots(ready ? { date, warehouse_id: warehouseId } : undefined)
+  const { data: slots = [], isLoading, isFetching } = useDeliverySlots(ready ? { date, warehouse_id: warehouseId } : undefined)
 
   useEffect(() => {
     setReady(false)
@@ -58,33 +58,32 @@ function SlotPicker({ warehouseId, date, selectedSlotId, onSelect }: {
     )
   }, [warehouseId, date])
 
-  if (!ready || isGenerating || isLoading)
+  if (!ready || isGenerating || isLoading || isFetching)
     return <p className="text-xs text-slate-400 py-6 text-center">Đang tải khung giờ...</p>
 
-  // Ẩn các slot đã qua giờ (trừ slot đang được chọn)
-  const availableSlots = (slots as DeliverySlot[]).filter(
-    s => s.id === selectedSlotId || !isSlotTimePassed(date, s.time_from)
-  )
+  const allSlots = slots as DeliverySlot[]
 
-  if (!availableSlots.length)
-    return <p className="text-xs text-slate-400 py-6 text-center">Không còn khung giờ hợp lệ cho ngày này</p>
+  if (!allSlots.length)
+    return <p className="text-xs text-slate-400 py-6 text-center">Chưa có khung giờ nào được cấu hình cho ngày này.</p>
 
   return (
     <div className="space-y-1 max-h-48 overflow-y-auto pr-1">
-      {availableSlots.map(slot => {
+      {allSlots.map(slot => {
+        const past = isSlotTimePassed(date, slot.time_from)
         const full = slot.booked_count >= slot.max_vehicles
         const selected = slot.id === selectedSlotId
+        const disabled = !selected && (past || full)
         return (
           <button
             key={slot.id}
             type="button"
-            disabled={full && !selected}
+            disabled={disabled}
             onClick={() => onSelect(slot)}
             className={[
               'w-full text-left px-3 py-2 rounded border text-xs flex items-center justify-between transition-colors',
               selected
                 ? 'border-blue-500 bg-blue-50'
-                : full
+                : disabled
                   ? 'border-slate-200 bg-slate-50 opacity-50 cursor-not-allowed'
                   : 'border-slate-200 hover:border-blue-300 hover:bg-blue-50/50 cursor-pointer',
             ].join(' ')}
@@ -95,8 +94,9 @@ function SlotPicker({ warehouseId, date, selectedSlotId, onSelect }: {
               </span>
               <span className="font-mono font-semibold">{slot.time_from.slice(0, 5)}–{slot.time_to.slice(0, 5)}</span>
               <span className="text-slate-500">{slot.cargo_type === 'ALL' ? 'Tất cả' : slot.cargo_type}</span>
+              {past && !selected && <span className="text-[9px] text-slate-400">đã qua</span>}
             </span>
-            <span className={`font-semibold tabular-nums ${full ? 'text-red-500' : 'text-green-600'}`}>
+            <span className={`font-semibold tabular-nums ${full && !selected ? 'text-red-500' : past && !selected ? 'text-slate-400' : 'text-green-600'}`}>
               {slot.booked_count}/{slot.max_vehicles} xe
             </span>
           </button>

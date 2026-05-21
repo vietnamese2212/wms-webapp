@@ -20,8 +20,10 @@ const breadcrumbMap: Record<string, { label: string; parent?: string; parentPath
   '/wms/inbound': { label: 'Nhập kho', parent: 'Kho vận', parentPath: '/wms/inbound' },
   '/wms/outbound': { label: 'Xuất kho', parent: 'Kho vận', parentPath: '/wms/outbound' },
   '/wms/locations': { label: 'Vị trí kho', parent: 'Kho vận', parentPath: '/wms/locations' },
-  '/tms/vehicles': { label: 'Xe & Tài xế', parent: 'Vận tải', parentPath: '/tms/vehicles' },
-  '/tms/deliveries': { label: 'Giao hàng', parent: 'Vận tải', parentPath: '/tms/deliveries' },
+  '/tms/bookings':  { label: 'Kế hoạch VC',  parent: 'Vận tải', parentPath: '/tms/bookings' },
+  '/tms/settings':  { label: 'Cài đặt TMS', parent: 'Vận tải', parentPath: '/tms/settings' },
+  '/tms/vehicles':  { label: 'Xe & Tài xế', parent: 'Vận tải', parentPath: '/tms/vehicles' },
+  '/tms/deliveries':{ label: 'Giao hàng',   parent: 'Vận tải', parentPath: '/tms/deliveries' },
   '/hr/schedule': { label: 'Lịch làm việc', parent: 'Nhân sự', parentPath: '/hr/schedule' },
   '/settings': { label: 'Cài đặt' },
 }

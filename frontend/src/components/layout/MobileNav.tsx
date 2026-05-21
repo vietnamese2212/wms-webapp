@@ -1,8 +1,8 @@
 import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Package, PackagePlus, PackageMinus, MapPin,
-  Truck, Navigation, Calendar, Settings, BarChart3, Scissors, ScanLine,
-  ClipboardCheck, BarChart2, UserCog,
+  Truck, Navigation, Calendar, Settings, Settings2, BarChart3, Scissors, ScanLine,
+  ClipboardCheck, BarChart2, UserCog, ClipboardList,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/authStore'
@@ -31,8 +31,10 @@ const navGroups: { label: string; items: { to: string; icon: React.ElementType; 
   {
     label: 'Vận tải (TMS)',
     items: [
-      { to: '/tms/vehicles',   icon: Truck,      label: 'Xe & Tài xế', module: 'vehicles' },
-      { to: '/tms/deliveries', icon: Navigation, label: 'Giao hàng',   module: 'deliveries' },
+      { to: '/tms/bookings',   icon: ClipboardList, label: 'Kế hoạch VC',  module: 'tms' as ModuleKey },
+      { to: '/tms/settings',   icon: Settings2,     label: 'Cài đặt TMS',  module: 'tms' as ModuleKey },
+      { to: '/tms/vehicles',   icon: Truck,         label: 'Xe & Tài xế',  module: 'vehicles' },
+      { to: '/tms/deliveries', icon: Navigation,    label: 'Giao hàng',    module: 'deliveries' },
     ],
   },
   {

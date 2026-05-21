@@ -10,7 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useAuthStore } from '@/stores/authStore'
 import {
-  useWarehouses,
+  useWarehouses, useMaterialCategories, useVehicleTypes,
   useDeliverySlots, useGenerateSlots,
   useDeliveryBookings, useCreateBooking, useUpdateBooking, useDeleteBooking, useBulkCreateBookings,
 } from '@/api/hooks'
@@ -188,6 +188,8 @@ function CreateEditDialog({ open, booking, onClose, defaultDate, defaultWarehous
   defaultDate: string; defaultWarehouseId: string
 }) {
   const { data: warehouses = [] } = useWarehouses(true)
+  const { data: categories = [] } = useMaterialCategories()
+  const { data: vehicleTypes = [] } = useVehicleTypes(true)
   const createBooking = useCreateBooking()
   const updateBooking = useUpdateBooking()
   const isEdit = !!booking
@@ -276,11 +278,25 @@ function CreateEditDialog({ open, booking, onClose, defaultDate, defaultWarehous
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label className="text-xs">Loại kho</Label>
-              <Input value={form.warehouse_type} onChange={e => set('warehouse_type')(e.target.value)} placeholder="Khô, Lạnh, Đông..." className="h-8 text-sm mt-1" />
+              <Select value={form.warehouse_type || '__none__'} onValueChange={v => set('warehouse_type')(v === '__none__' ? '' : v)}>
+                <SelectTrigger className="h-8 text-sm mt-1"><SelectValue placeholder="Chọn loại kho" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">— Không chọn —</SelectItem>
+                  {(categories as string[]).map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <Label className="text-xs">Loại xe</Label>
-              <Input value={form.vehicle_type} onChange={e => set('vehicle_type')(e.target.value)} placeholder="Pallet, Xá, SCA..." className="h-8 text-sm mt-1" />
+              <Select value={form.vehicle_type || '__none__'} onValueChange={v => set('vehicle_type')(v === '__none__' ? '' : v)}>
+                <SelectTrigger className="h-8 text-sm mt-1"><SelectValue placeholder="Chọn loại xe" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">— Không chọn —</SelectItem>
+                  {(vehicleTypes as import('@/types').TmsVehicleType[]).map(vt => (
+                    <SelectItem key={vt.id} value={vt.name}>{vt.code} — {vt.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
           <div className="grid grid-cols-3 gap-2">

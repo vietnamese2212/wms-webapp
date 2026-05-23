@@ -89,18 +89,9 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
   const { data: zones = [] } = useWarehouseZones(warehouseId || undefined)
 
   const allLocs = locations as LocationWithCapacity[]
-  const availCats     = new Set(allLocs.map(l => l.category).filter(Boolean))
-  const availSubCodes = new Set(allLocs.map(l => l.sub_code).filter(Boolean))
-
-  const dialogAllowedMatCats = user?.allowed_categories?.length
-    ? new Set(user.allowed_categories.map(normCatFe))
-    : null
 
   const { data: allWhTypes = [] } = useWarehouseTypes()
-  // Show all configured warehouse types, filtered by user's allowed categories
-  const loaiKhoOpts = allWhTypes
-    .map(t => t.value)
-    .filter(v => !dialogAllowedMatCats || dialogAllowedMatCats.has(v))
+  const loaiKhoOpts = allWhTypes.map(t => t.value)
   // backward compat: also match location by sub_code if zone name matches subType
   const selectedZone = zones.find(z => z.name === subType)
   const filteredLocs = subType

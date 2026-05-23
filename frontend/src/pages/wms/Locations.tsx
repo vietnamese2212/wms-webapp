@@ -331,9 +331,9 @@ export default function Locations() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="__all__">Tất cả loại</SelectItem>
-              {CATEGORY_OPTIONS
-                .filter(c => !allowedLocCats || allowedLocCats.includes(c))
-                .map(c => (
+              {categoryOptions
+                .filter((c: string) => !allowedLocCats || allowedLocCats.includes(c))
+                .map((c: string) => (
                   <SelectItem key={c} value={c}>{c}</SelectItem>
                 ))}
             </SelectContent>

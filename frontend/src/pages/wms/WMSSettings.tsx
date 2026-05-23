@@ -41,12 +41,12 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
     if (!code.trim() || !name.trim()) { setErr('Mã và tên kho là bắt buộc'); return }
     if (isEdit) {
       update(
-        { id: wh.id, code: code.trim(), name: name.trim(), address: address.trim() || null, is_active: isActive },
+        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     } else {
       create(
-        { code: code.trim(), name: name.trim(), address: address.trim() || null },
+        { code: code.trim(), name: name.trim(), address: address.trim() || undefined },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     }

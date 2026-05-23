@@ -93,10 +93,11 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
 
 // ─── Zone Dialog ──────────────────────────────────────────────────────────────
 
-function ZoneDialog({ zone, warehouseId, open, onClose }: {
-  zone: WarehouseZone | null; warehouseId: string; open: boolean; onClose: () => void
+function ZoneDialog({ zone, warehouseId, warehouses, open, onClose }: {
+  zone: WarehouseZone | null; warehouseId: string; warehouses: WhRow[]; open: boolean; onClose: () => void
 }) {
   const isEdit = !!zone
+  const [selectedWhId, setSelectedWhId] = useState(zone?.warehouse_id ?? warehouseId)
   const [code, setCode] = useState(zone?.code ?? '')
   const [name, setName] = useState(zone?.name ?? '')
   const [isActive, setIsActive] = useState(zone?.is_active ?? true)
@@ -108,6 +109,7 @@ function ZoneDialog({ zone, warehouseId, open, onClose }: {
 
   function handleSubmit() {
     setErr('')
+    if (!isEdit && !selectedWhId) { setErr('Chọn kho là bắt buộc'); return }
     if (!code.trim() || !name.trim()) { setErr('Mã và tên khu vực là bắt buộc'); return }
     if (isEdit) {
       update(
@@ -116,7 +118,7 @@ function ZoneDialog({ zone, warehouseId, open, onClose }: {
       )
     } else {
       create(
-        { warehouse_id: warehouseId, code: code.trim(), name: name.trim() },
+        { warehouse_id: selectedWhId, code: code.trim(), name: name.trim() },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     }
@@ -128,6 +130,29 @@ function ZoneDialog({ zone, warehouseId, open, onClose }: {
         <DialogHeader><DialogTitle>{isEdit ? 'Sửa khu vực' : 'Thêm khu vực kho'}</DialogTitle></DialogHeader>
         <div className="space-y-3 py-1">
           {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
+          {isEdit ? (
+            <div className="space-y-1">
+              <Label className="text-xs">Kho</Label>
+              <p className="text-sm font-medium text-slate-700">
+                {warehouses.find(w => w.id === zone.warehouse_id)?.name ?? '—'}
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-1">
+              <Label className="text-xs">Kho *</Label>
+              <Select value={selectedWhId || '__none__'} onValueChange={v => setSelectedWhId(v === '__none__' ? '' : v)}>
+                <SelectTrigger className="h-8 text-sm">
+                  <SelectValue placeholder="Chọn kho" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">— Chọn kho</SelectItem>
+                  {warehouses.map(w => (
+                    <SelectItem key={w.id} value={w.id}>{w.name} ({w.code})</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           <div className="space-y-1">
             <Label className="text-xs">Mã khu vực *</Label>
             <Input value={code} onChange={e => setCode(e.target.value.toUpperCase())} placeholder="TP, NL, POSM…" disabled={isEdit} />
@@ -146,7 +171,7 @@ function ZoneDialog({ zone, warehouseId, open, onClose }: {
         </div>
         <DialogFooter>
           <Button variant="outline" size="sm" onClick={onClose}>Huỷ</Button>
-          <Button size="sm" onClick={handleSubmit} disabled={isPending || !code.trim() || !name.trim()}>
+          <Button size="sm" onClick={handleSubmit} disabled={isPending || !code.trim() || !name.trim() || (!isEdit && !selectedWhId)}>
             {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo'}
           </Button>
         </DialogFooter>
@@ -393,7 +418,7 @@ export default function WMSSettings() {
                 ))}
               </SelectContent>
             </Select>
-            {canManage && effectiveWhId && (
+            {canManage && (
               <Button size="sm" className="gap-1.5 ml-auto" onClick={() => { setEditingZone(null); setShowZoneDlg(true) }}>
                 <Plus className="h-4 w-4" /> Thêm khu vực
               </Button>
@@ -463,8 +488,8 @@ export default function WMSSettings() {
       {showTypeDlg && (
         <TypeDialog type={editingType} open={showTypeDlg} onClose={() => setShowTypeDlg(false)} />
       )}
-      {showZoneDlg && effectiveWhId && (
-        <ZoneDialog zone={editingZone} warehouseId={effectiveWhId} open={showZoneDlg} onClose={() => setShowZoneDlg(false)} />
+      {showZoneDlg && (
+        <ZoneDialog zone={editingZone} warehouseId={effectiveWhId} warehouses={activeWh} open={showZoneDlg} onClose={() => setShowZoneDlg(false)} />
       )}
     </div>
   )

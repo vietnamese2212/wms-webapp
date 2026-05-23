@@ -105,8 +105,8 @@ export default function Locations() {
   // ── Form cascaded options ────────────────────────────────────
   const formCatOpts = categoryOptions
   const filteredZones = useMemo(() =>
-    formZones.filter(z => z.is_active && (!form.category || z.name === form.category)),
-    [formZones, form.category]
+    formZones.filter(z => z.is_active),
+    [formZones]
   )
 
   // ── Location code preview ────────────────────────────────────
@@ -442,7 +442,6 @@ export default function Locations() {
                       const z = filteredZones.find(z => z.code === v)
                       setField('sub_code', v)
                       setField('sub_name', z?.name ?? '')
-                      if (!form.category && z) setField('category', z.name)
                     }
                   }}>
                   <SelectTrigger className="h-8 text-sm mt-1">

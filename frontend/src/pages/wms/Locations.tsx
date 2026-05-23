@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import {
-  useLocationsReal, useWarehouses, useWarehouseTypes,
+  useLocationsReal, useWarehouses, useWarehouseTypes, useWarehouseZones,
   useCreateLocation, useUpdateLocation, useDeleteLocation,
   useCreateWarehouse, useUpdateWarehouse, useDeleteWarehouse,
 } from '@/api/hooks'
@@ -61,8 +61,6 @@ export default function Locations() {
   const [form,          setForm]          = useState(EMPTY_FORM)
   const [editIsActive,         setEditIsActive]         = useState(true)
   const [editRequiresStocktake, setEditRequiresStocktake] = useState(false)
-  const [isNewSubCode,  setIsNewSubCode]  = useState(false)
-  const [isNewCategory, setIsNewCategory] = useState(false)
   const [formError,     setFormError]     = useState('')
   const [deleteTarget,  setDeleteTarget]  = useState<RealLocation | null>(null)
 
@@ -76,6 +74,7 @@ export default function Locations() {
   // Data
   const { data: whTypes = [] }          = useWarehouseTypes()
   const categoryOptions                  = whTypes.map(t => t.value)
+  const { data: formZones = [] }        = useWarehouseZones(form.warehouse_id || undefined)
   const { data: activeWhRaw = [] }      = useWarehouses(true)
   const { data: allWhRaw = [] }         = useWarehouses(false)
   const { data: allRaw = [] }           = useLocationsReal()
@@ -130,12 +129,10 @@ export default function Locations() {
     const cats = formWhlocs.map(l => l.category).filter(Boolean) as string[]
     return [...new Set([...cats, ...categoryOptions])]
   }, [formWhlocs, categoryOptions])
-  const formSubCodeOpts = useMemo(() => {
-    const locs = form.category
-      ? formWhlocs.filter(l => l.category === form.category)
-      : formWhlocs
-    return [...new Set(locs.map(l => l.sub_code))]
-  }, [formWhlocs, form.category])
+  const filteredZones = useMemo(() =>
+    formZones.filter(z => z.is_active && (!form.category || z.name === form.category)),
+    [formZones, form.category]
+  )
 
   // ── Location code preview ────────────────────────────────────
   const selectedWh = warehouses.find(w => w.id === form.warehouse_id)
@@ -152,8 +149,6 @@ export default function Locations() {
     setEditing(null)
     setForm({ ...EMPTY_FORM, warehouse_id: warehouseId, category: catFilter })
     setEditIsActive(true)
-    setIsNewSubCode(false)
-    setIsNewCategory(false)
     setFormError('')
     setDialogMode('add')
   }
@@ -171,16 +166,12 @@ export default function Locations() {
     })
     setEditIsActive(loc.is_active)
     setEditRequiresStocktake(loc.requires_stocktake ?? false)
-    setIsNewSubCode(false)
-    setIsNewCategory(false)
     setFormError('')
     setDialogMode('edit')
   }
 
   function closeDialog() {
     setDialogMode(null)
-    setIsNewSubCode(false)
-    setIsNewCategory(false)
   }
 
   async function handleSave() {
@@ -251,8 +242,6 @@ export default function Locations() {
         setField('warehouse_id', (wh as { id: string }).id)
         setField('category', '')
         setField('sub_code', '')
-        setIsNewSubCode(false)
-        setIsNewCategory(false)
       }
       setWhForm(EMPTY_WH_FORM)
       setWhDialogOpen(false)
@@ -494,8 +483,6 @@ export default function Locations() {
                     setField('warehouse_id', v === '__none__' ? '' : v)
                     setField('category', '')
                     setField('sub_code', '')
-                    setIsNewSubCode(false)
-                    setIsNewCategory(false)
                   }}>
                   <SelectTrigger className="h-8 text-sm mt-1">
                     <SelectValue placeholder="Chọn kho" />
@@ -513,37 +500,23 @@ export default function Locations() {
             {/* ── Loại kho ── */}
             <div>
               <Label className="text-xs">Loại kho</Label>
-              {!isNewCategory ? (
-                <Select value={form.category || '__none__'}
-                  onValueChange={v => {
-                    if (v === '__new_cat__') {
-                      setIsNewCategory(true); setField('category', '')
-                    } else {
-                      setField('category', v === '__none__' ? '' : v)
-                      if (dialogMode === 'add') { setField('sub_code', ''); setIsNewSubCode(false) }
-                    }
-                  }}>
-                  <SelectTrigger className="h-8 text-sm mt-1">
-                    <SelectValue placeholder="Chưa phân loại" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">Chưa phân loại</SelectItem>
-                    {formCatOpts.map(c => (
-                      <SelectItem key={c} value={c}>{c}</SelectItem>
-                    ))}
-                    <SelectItem value="__new_cat__">+ Thêm loại kho mới</SelectItem>
-                  </SelectContent>
-                </Select>
-              ) : (
-                <div className="flex gap-1.5 mt-1">
-                  <Input className="h-8 text-sm flex-1" placeholder="VD: Bao bì"
-                    autoFocus value={form.category}
-                    onChange={e => setField('category', e.target.value)} />
-                  <button onClick={() => { setIsNewCategory(false); setField('category', '') }}
-                    className="text-xs text-slate-400 hover:text-slate-700 px-2 whitespace-nowrap">
-                    ← Chọn có sẵn
-                  </button>
-                </div>
+              <Select value={form.category || '__none__'}
+                onValueChange={v => {
+                  setField('category', v === '__none__' ? '' : v)
+                  if (dialogMode === 'add') setField('sub_code', '')
+                }}>
+                <SelectTrigger className="h-8 text-sm mt-1">
+                  <SelectValue placeholder="Chưa phân loại" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">Chưa phân loại</SelectItem>
+                  {formCatOpts.map(c => (
+                    <SelectItem key={c} value={c}>{c}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {dialogMode === 'add' && (
+                <p className="text-[10px] text-slate-400 mt-0.5">Quản lý loại kho tại Cài đặt WMS → Loại kho</p>
               )}
             </div>
 
@@ -551,33 +524,28 @@ export default function Locations() {
             {dialogMode === 'add' && (
               <div>
                 <Label className="text-xs">Khu vực kho <span className="text-red-500">*</span></Label>
-                {!isNewSubCode ? (
-                  <Select value={form.sub_code || '__none__'}
-                    onValueChange={v => {
-                      if (v === '__new__') { setIsNewSubCode(true); setField('sub_code', '') }
-                      else setField('sub_code', v === '__none__' ? '' : v)
-                    }}>
-                    <SelectTrigger className="h-8 text-sm mt-1">
-                      <SelectValue placeholder="Chọn khu vực" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__none__">Chọn khu vực</SelectItem>
-                      {formSubCodeOpts.map(sc => (
-                        <SelectItem key={sc} value={sc}>{sc}</SelectItem>
-                      ))}
-                      <SelectItem value="__new__">+ Tạo khu vực mới</SelectItem>
-                    </SelectContent>
-                  </Select>
-                ) : (
-                  <div className="flex gap-1.5 mt-1">
-                    <Input className="h-8 text-sm flex-1 uppercase" placeholder="VD: NVL2"
-                      autoFocus value={form.sub_code}
-                      onChange={e => setField('sub_code', e.target.value)} />
-                    <button onClick={() => { setIsNewSubCode(false); setField('sub_code', '') }}
-                      className="text-xs text-slate-400 hover:text-slate-700 px-2 whitespace-nowrap">
-                      ← Chọn có sẵn
-                    </button>
-                  </div>
+                <Select value={form.sub_code || '__none__'}
+                  onValueChange={v => {
+                    if (v === '__none__') { setField('sub_code', ''); setField('sub_name', '') }
+                    else {
+                      const z = filteredZones.find(z => z.code === v)
+                      setField('sub_code', v)
+                      setField('sub_name', z?.name ?? '')
+                      if (!form.category && z) setField('category', z.name)
+                    }
+                  }}>
+                  <SelectTrigger className="h-8 text-sm mt-1">
+                    <SelectValue placeholder="Chọn khu vực" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">Chọn khu vực</SelectItem>
+                    {filteredZones.map(z => (
+                      <SelectItem key={z.code} value={z.code}>{z.code} — {z.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {form.warehouse_id && filteredZones.length === 0 && (
+                  <p className="text-[10px] text-amber-600 mt-0.5">Kho này chưa có khu vực. Tạo tại Cài đặt WMS → Khu vực kho.</p>
                 )}
               </div>
             )}

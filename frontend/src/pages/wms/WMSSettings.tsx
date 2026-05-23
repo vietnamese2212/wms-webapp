@@ -1,17 +1,20 @@
 import { useState } from 'react'
 import type { AxiosError } from 'axios'
-import { Plus, Pencil, Trash2, Warehouse, Tag, Settings2 } from 'lucide-react'
+import { Plus, Pencil, Trash2, Warehouse, Tag, Settings2, MapPin } from 'lucide-react'
 import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
 import { Label }    from '@/components/ui/label'
 import { Card }     from '@/components/ui/card'
 import { Badge }    from '@/components/ui/badge'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import {
   useWarehouses, useCreateWarehouse, useUpdateWarehouse, useDeleteWarehouse,
   useWarehouseTypes, useAddWarehouseType, useDeleteWarehouseType,
+  useWarehouseZones, useCreateWarehouseZone, useUpdateWarehouseZone, useDeleteWarehouseZone,
+  type WarehouseZone,
 } from '@/api/hooks'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useAuthStore } from '@/stores/authStore'
@@ -60,7 +63,7 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
           {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
           <div className="space-y-1">
             <Label className="text-xs">Mã kho *</Label>
-            <Input value={code} onChange={e => setCode(e.target.value.toUpperCase())} placeholder="BV, BB, HN…" />
+            <Input value={code} onChange={e => setCode(e.target.value.toUpperCase())} placeholder="BV, BB, HN…" disabled={isEdit} />
           </div>
           <div className="space-y-1">
             <Label className="text-xs">Tên kho *</Label>
@@ -74,6 +77,70 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
             <div className="flex items-center gap-2">
               <input id="wh-active" type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} className="h-4 w-4 rounded accent-blue-600" />
               <Label htmlFor="wh-active" className="text-sm cursor-pointer">Đang hoạt động</Label>
+            </div>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={onClose}>Huỷ</Button>
+          <Button size="sm" onClick={handleSubmit} disabled={isPending || !code.trim() || !name.trim()}>
+            {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ─── Zone Dialog ──────────────────────────────────────────────────────────────
+
+function ZoneDialog({ zone, warehouseId, open, onClose }: {
+  zone: WarehouseZone | null; warehouseId: string; open: boolean; onClose: () => void
+}) {
+  const isEdit = !!zone
+  const [code, setCode] = useState(zone?.code ?? '')
+  const [name, setName] = useState(zone?.name ?? '')
+  const [isActive, setIsActive] = useState(zone?.is_active ?? true)
+  const [err, setErr] = useState('')
+
+  const { mutate: create, isPending: creating } = useCreateWarehouseZone()
+  const { mutate: update, isPending: updating } = useUpdateWarehouseZone()
+  const isPending = creating || updating
+
+  function handleSubmit() {
+    setErr('')
+    if (!code.trim() || !name.trim()) { setErr('Mã và tên khu vực là bắt buộc'); return }
+    if (isEdit) {
+      update(
+        { id: zone.id, name: name.trim(), is_active: isActive },
+        { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
+      )
+    } else {
+      create(
+        { warehouse_id: warehouseId, code: code.trim(), name: name.trim() },
+        { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
+      )
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={v => { if (!v) onClose() }}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader><DialogTitle>{isEdit ? 'Sửa khu vực' : 'Thêm khu vực kho'}</DialogTitle></DialogHeader>
+        <div className="space-y-3 py-1">
+          {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
+          <div className="space-y-1">
+            <Label className="text-xs">Mã khu vực *</Label>
+            <Input value={code} onChange={e => setCode(e.target.value.toUpperCase())} placeholder="TP, NL, POSM…" disabled={isEdit} />
+            {!isEdit && <p className="text-[10px] text-slate-400">Mã ngắn, không dấu. VD: TP, NVL, POSM, BB</p>}
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Tên khu vực *</Label>
+            <Input value={name} onChange={e => setName(e.target.value)} placeholder="Thành phẩm, NVL, POSM, Bao bì…" />
+          </div>
+          {isEdit && (
+            <div className="flex items-center gap-2">
+              <input id="zone-active" type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} className="h-4 w-4 rounded accent-blue-600" />
+              <Label htmlFor="zone-active" className="text-sm cursor-pointer">Đang hoạt động</Label>
             </div>
           )}
         </div>
@@ -108,6 +175,15 @@ export default function WMSSettings() {
   const [newTypeName, setNewTypeName] = useState('')
   const [typeErr,     setTypeErr]     = useState('')
 
+  // Khu vực kho
+  const activeWh = (allWh as WhRow[]).filter(w => w.is_active)
+  const [selectedWhId, setSelectedWhId] = useState('')
+  const effectiveWhId = selectedWhId || activeWh[0]?.id || ''
+  const { data: zones = [], isLoading: loadingZones } = useWarehouseZones(effectiveWhId || undefined)
+  const { mutate: deleteZone, isPending: deletingZone } = useDeleteWarehouseZone()
+  const [editingZone, setEditingZone] = useState<WarehouseZone | null>(null)
+  const [showZoneDlg, setShowZoneDlg] = useState(false)
+
   function handleAddType() {
     setTypeErr('')
     const val = newTypeName.trim()
@@ -123,6 +199,11 @@ export default function WMSSettings() {
     deleteWh(wh.id, { onError: e => alert(apiMsg(e)) })
   }
 
+  function handleDeleteZone(z: WarehouseZone) {
+    if (!confirm(`Xóa khu vực "${z.code} – ${z.name}"?`)) return
+    deleteZone(z.id, { onError: e => alert(apiMsg(e)) })
+  }
+
   return (
     <div className="p-4 space-y-4 max-w-5xl mx-auto">
       <div>
@@ -130,13 +211,14 @@ export default function WMSSettings() {
           <Settings2 className="h-5 w-5 text-slate-500" />
           Cài đặt WMS
         </h1>
-        <p className="text-xs text-slate-400 mt-0.5">Kho, loại kho — master data dùng chung cho toàn hệ thống</p>
+        <p className="text-xs text-slate-400 mt-0.5">Kho, loại kho, khu vực kho — master data dùng chung cho toàn hệ thống</p>
       </div>
 
       <Tabs defaultValue="warehouses">
         <TabsList className="mb-2">
           <TabsTrigger value="warehouses" className="gap-1.5"><Warehouse className="h-3.5 w-3.5" /> Kho</TabsTrigger>
           <TabsTrigger value="types"      className="gap-1.5"><Tag      className="h-3.5 w-3.5" /> Loại kho</TabsTrigger>
+          <TabsTrigger value="zones"      className="gap-1.5"><MapPin   className="h-3.5 w-3.5" /> Khu vực kho</TabsTrigger>
         </TabsList>
 
         {/* ── Tab: Kho ── */}
@@ -262,10 +344,95 @@ export default function WMSSettings() {
             }
           </Card>
         </TabsContent>
+
+        {/* ── Tab: Khu vực kho ── */}
+        <TabsContent value="zones" className="space-y-3">
+          <p className="text-xs text-slate-500">
+            Khu vực kho phân chia vị trí vật lý trong từng kho — VD: Kho BV có khu TP (Thành phẩm), NVL, POSM.
+          </p>
+
+          {/* Chọn kho */}
+          <div className="flex items-center gap-2">
+            <Label className="text-xs shrink-0 text-slate-500">Kho:</Label>
+            <Select value={effectiveWhId} onValueChange={setSelectedWhId}>
+              <SelectTrigger className="h-8 text-sm w-48">
+                <SelectValue placeholder="Chọn kho" />
+              </SelectTrigger>
+              <SelectContent>
+                {activeWh.map(w => (
+                  <SelectItem key={w.id} value={w.id}>{w.name} ({w.code})</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {canManage && effectiveWhId && (
+              <Button size="sm" className="gap-1.5 ml-auto" onClick={() => { setEditingZone(null); setShowZoneDlg(true) }}>
+                <Plus className="h-4 w-4" /> Thêm khu vực
+              </Button>
+            )}
+          </div>
+
+          <Card>
+            {!effectiveWhId ? (
+              <div className="p-8 text-center text-sm text-slate-400">Chọn kho để xem khu vực</div>
+            ) : loadingZones ? (
+              <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div>
+            ) : zones.length === 0 ? (
+              <div className="p-12 text-center text-slate-400 space-y-2">
+                <MapPin className="h-10 w-10 mx-auto opacity-30" />
+                <p className="text-sm">Kho này chưa có khu vực nào</p>
+                {canManage && <p className="text-xs">Nhấn "Thêm khu vực" để tạo khu vực đầu tiên</p>}
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="px-3 py-2 text-xs">Mã khu vực</TableHead>
+                      <TableHead className="px-3 py-2 text-xs">Tên khu vực</TableHead>
+                      <TableHead className="px-3 py-2 text-xs">Trạng thái</TableHead>
+                      {canManage && <TableHead className="px-3 py-2 w-16" />}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {zones.map(z => (
+                      <TableRow key={z.id} className={`text-sm ${!z.is_active ? 'opacity-50' : ''}`}>
+                        <TableCell className="px-3 py-2 font-mono font-semibold text-[11px] text-slate-600">{z.code}</TableCell>
+                        <TableCell className="px-3 py-2 font-medium text-slate-800">{z.name}</TableCell>
+                        <TableCell className="px-3 py-2">
+                          <Badge variant={z.is_active ? 'default' : 'secondary'} className="text-xs">
+                            {z.is_active ? 'Hoạt động' : 'Tạm dừng'}
+                          </Badge>
+                        </TableCell>
+                        {canManage && (
+                          <TableCell className="px-2 py-2">
+                            <div className="flex items-center gap-0.5">
+                              <button className="text-slate-400 hover:text-blue-500 p-1 transition-colors"
+                                onClick={() => { setEditingZone(z); setShowZoneDlg(true) }}>
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                              <button className="text-slate-400 hover:text-red-500 p-1 transition-colors"
+                                disabled={deletingZone}
+                                onClick={() => handleDeleteZone(z)}>
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </TableCell>
+                        )}
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </Card>
+        </TabsContent>
       </Tabs>
 
       {showWhDlg && (
         <WarehouseDialog wh={editingWh} open={showWhDlg} onClose={() => setShowWhDlg(false)} />
+      )}
+      {showZoneDlg && effectiveWhId && (
+        <ZoneDialog zone={editingZone} warehouseId={effectiveWhId} open={showZoneDlg} onClose={() => setShowZoneDlg(false)} />
       )}
     </div>
   )

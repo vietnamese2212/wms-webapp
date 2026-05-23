@@ -443,6 +443,47 @@ export function useDeleteWarehouseType() {
   })
 }
 
+export type WarehouseZone = { id: string; warehouse_id: string; code: string; name: string; sort_order: number; is_active: boolean }
+
+export function useWarehouseZones(warehouseId?: string) {
+  return useQuery({
+    queryKey: ['warehouse-zones', warehouseId ?? 'all'],
+    staleTime: 5 * 60_000,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/zones', {
+        params: warehouseId ? { warehouse_id: warehouseId } : undefined,
+      })
+      return data.data as WarehouseZone[]
+    },
+  })
+}
+
+export function useCreateWarehouseZone() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { warehouse_id: string; code: string; name: string }) =>
+      apiClient.post('/wms/zones', body).then(r => r.data.data as WarehouseZone),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouse-zones'] }),
+  })
+}
+
+export function useUpdateWarehouseZone() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string; name?: string; is_active?: boolean }) =>
+      apiClient.put(`/wms/zones/${id}`, body).then(r => r.data.data as WarehouseZone),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouse-zones'] }),
+  })
+}
+
+export function useDeleteWarehouseZone() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.delete(`/wms/zones/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouse-zones'] }),
+  })
+}
+
 // WMS – Inventory (API thật)
 export function useInventoryEntries(params?: {
   warehouse_ids?: string[]

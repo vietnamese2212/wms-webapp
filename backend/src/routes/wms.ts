@@ -4,6 +4,7 @@ import * as inbound from '../controllers/wms/inboundController'
 import * as outbound from '../controllers/wms/outboundController'
 import * as inventory from '../controllers/wms/inventoryController'
 import * as lookup from '../controllers/wms/lookupController'
+import * as zone from '../controllers/wms/zoneController'
 import { inboundEmitter } from '../lib/events'
 import { requirePerm, requireAnyPerm } from '../middlewares/auth'
 
@@ -34,6 +35,12 @@ router.get('/events', (req, res) => {
 router.get('/lookup',        lookup.listLookup)
 router.post('/lookup',       lookup.addLookup)
 router.delete('/lookup/:id', lookup.deleteLookup)
+
+// Warehouse zones (khu vực kho)
+router.get('/zones',         zone.listZones)
+router.post('/zones',        requirePerm('wms_settings', 'manage'), zone.createZone)
+router.put('/zones/:id',     requirePerm('wms_settings', 'manage'), zone.updateZone)
+router.delete('/zones/:id',  requirePerm('wms_settings', 'manage'), zone.deleteZone)
 
 // Inbound orders (phiếu nhập kho)
 router.get('/inbound-orders',                           inbound.listOrders)

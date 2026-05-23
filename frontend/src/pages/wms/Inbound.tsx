@@ -18,7 +18,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import {
   useInboundOrders, useCreateInboundOrder,
   useWarehouses, useMaterials, useLocationsReal, useImportShifts,
-  useEmployeeRecords, useMaterialCategories,
+  useEmployeeRecords, useMaterialCategories, useWarehouseZones,
 } from '@/api/hooks'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { SearchInput } from '@/components/shared/SearchInput'
@@ -39,17 +39,6 @@ interface LocationWithCapacity {
 
 const normCatFe = (c: string) => c === 'TP' ? 'Thành phẩm' : c === 'BAO_BI' ? 'Bao bì' : c
 
-// Bảng cấu hình Loại kho: sub_type (Location) ↔ label ↔ Material.category
-// Thêm entry mới ở đây khi có loại kho mới
-const LOAI_KHO_CONFIG = [
-  { sub_type: 'THANH_PHAM',    label: 'Thành phẩm', mat_category: 'Thành phẩm' },
-  { sub_type: 'NGUYEN_LIEU',   label: 'NVL',         mat_category: 'NVL'        },
-  { sub_type: 'POSM',          label: 'POSM',         mat_category: 'POSM'       },
-] as const
-
-function subTypeLabel(st: string) {
-  return LOAI_KHO_CONFIG.find(c => c.sub_type === st)?.label ?? st
-}
 
 // ─── Create order dialog ─────────────────────────────────────
 
@@ -97,32 +86,28 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
   const { data: locations  = [] } = useLocationsReal(
     warehouseId ? { warehouse_id: warehouseId } : undefined
   )
+  const { data: zones = [] } = useWarehouseZones(warehouseId || undefined)
 
-  const allLocs     = locations as LocationWithCapacity[]
-  // Chỉ hiện loại kho nào thực sự có vị trí — khớp theo sub_type (cũ) hoặc category (mới)
-  const availSubTypes   = new Set(allLocs.map(l => l.sub_type).filter(Boolean))
-  const availCategories = new Set(allLocs.map(l => l.category).filter(Boolean))
-
-  // Hardcode 3 loại chuẩn; bổ sung dynamic từ category thực tế trong Location DB
-  const knownMatCats = new Set<string>(LOAI_KHO_CONFIG.map(c => c.mat_category))
-  const extraKhoConfig = [...availCategories]
-    .filter((cat): cat is string => !!cat && !knownMatCats.has(cat))
-    .map(cat => ({ sub_type: cat, label: cat, mat_category: cat }))
-  const allKhoConfig = [...LOAI_KHO_CONFIG, ...extraKhoConfig]
+  const allLocs = locations as LocationWithCapacity[]
+  const availCats     = new Set(allLocs.map(l => l.category).filter(Boolean))
+  const availSubCodes = new Set(allLocs.map(l => l.sub_code).filter(Boolean))
 
   const dialogAllowedMatCats = user?.allowed_categories?.length
     ? new Set(user.allowed_categories.map(normCatFe))
     : null
-  const loaiKhoOpts = allKhoConfig.filter(c =>
-    (availSubTypes.has(c.sub_type) || availCategories.has(c.mat_category))
-    && (!dialogAllowedMatCats || dialogAllowedMatCats.has(c.mat_category))
+
+  // subType stores zone.name (e.g. "Thành phẩm"); backward compat: also match by sub_code
+  const loaiKhoOpts = zones.filter(z =>
+    z.is_active &&
+    (availCats.has(z.name) || availSubCodes.has(z.code)) &&
+    (!dialogAllowedMatCats || dialogAllowedMatCats.has(z.name))
   )
-  const selectedConfig = allKhoConfig.find(c => c.sub_type === subType)
-  const filteredLocs   = subType && selectedConfig
-    ? allLocs.filter(l => l.sub_type === subType || l.category === selectedConfig.mat_category)
+  const selectedZone = zones.find(z => z.name === subType)
+  const filteredLocs = subType && selectedZone
+    ? allLocs.filter(l => l.category === subType || l.sub_code === selectedZone.code)
     : allLocs
 
-  const matCategory = allKhoConfig.find(c => c.sub_type === subType)?.mat_category
+  const matCategory = subType || undefined
   const { data: materials = [] } = useMaterials({ search: matSearch || undefined, category: matCategory })
 
   // Người nhập: tự động khớp theo tên user đang đăng nhập
@@ -223,8 +208,8 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
                 <SelectValue placeholder="Chọn loại kho" />
               </SelectTrigger>
               <SelectContent>
-                {loaiKhoOpts.map(c => (
-                  <SelectItem key={c.sub_type} value={c.sub_type}>{c.label}</SelectItem>
+                {loaiKhoOpts.map(z => (
+                  <SelectItem key={z.id} value={z.name}>{z.name}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -266,7 +251,7 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
             <Label>Material <span className="text-red-500">*</span></Label>
             <div ref={matRef} className="relative">
               <Input
-                placeholder={matCategory ? `Tìm hàng ${subTypeLabel(subType)}…` : 'Tìm mã hoặc tên hàng...'}
+                placeholder={subType ? `Tìm hàng ${subType}…` : 'Tìm mã hoặc tên hàng...'}
                 value={matInputValue}
                 onChange={(e) => { setMatSearch(e.target.value); setMaterialId(''); setMatOpen(true) }}
                 onFocus={() => setMatOpen(true)}

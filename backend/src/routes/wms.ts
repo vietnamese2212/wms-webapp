@@ -33,8 +33,9 @@ router.get('/events', (req, res) => {
 
 // Lookup values (loại xuất, v.v.)
 router.get('/lookup',        lookup.listLookup)
-router.post('/lookup',       lookup.addLookup)
-router.delete('/lookup/:id', lookup.deleteLookup)
+router.post('/lookup',       requirePerm('wms_settings', 'manage'), lookup.addLookup)
+router.put('/lookup/:id',    requirePerm('wms_settings', 'manage'), lookup.updateLookup)
+router.delete('/lookup/:id', requirePerm('wms_settings', 'manage'), lookup.deleteLookup)
 
 // Warehouse zones (khu vực kho)
 router.get('/zones',         zone.listZones)

@@ -435,6 +435,15 @@ export function useAddWarehouseType() {
   })
 }
 
+export function useUpdateWarehouseType() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, value }: { id: string; value: string }) =>
+      apiClient.put(`/wms/lookup/${id}`, { value }).then(r => r.data.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['lookup', 'warehouse_type'] }),
+  })
+}
+
 export function useDeleteWarehouseType() {
   const qc = useQueryClient()
   return useMutation({

@@ -48,6 +48,25 @@ export async function addLookup(req: Request, res: Response) {
   res.json({ success: true, data })
 }
 
+export async function updateLookup(req: Request, res: Response) {
+  const { id } = req.params
+  const { value } = req.body as { value?: string }
+  if (!value?.trim()) return fail(res, 'value là bắt buộc')
+
+  const { data, error } = await supabase
+    .from('LookupValue')
+    .update({ value: value.trim(), updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .select('id, value, sort_order')
+    .single()
+
+  if (error) {
+    if (error.code === '23505') return fail(res, `"${value.trim()}" đã tồn tại`)
+    return fail(res, error.message, 500)
+  }
+  res.json({ success: true, data })
+}
+
 export async function deleteLookup(req: Request, res: Response) {
   const { id } = req.params
   const { error } = await supabase.from('LookupValue').delete().eq('id', id)

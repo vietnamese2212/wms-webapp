@@ -12,7 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import {
   useWarehouses, useCreateWarehouse, useUpdateWarehouse, useDeleteWarehouse,
-  useWarehouseTypes, useAddWarehouseType, useDeleteWarehouseType,
+  useWarehouseTypes, useAddWarehouseType, useUpdateWarehouseType, useDeleteWarehouseType,
   useWarehouseZones, useCreateWarehouseZone, useUpdateWarehouseZone, useDeleteWarehouseZone,
   type WarehouseZone,
 } from '@/api/hooks'
@@ -155,6 +155,53 @@ function ZoneDialog({ zone, warehouseId, open, onClose }: {
   )
 }
 
+// ─── Type Dialog ─────────────────────────────────────────────────────────────
+
+function TypeDialog({ type, open, onClose }: {
+  type: { id: string; value: string } | null; open: boolean; onClose: () => void
+}) {
+  const isEdit = !!type
+  const [value, setValue] = useState(type?.value ?? '')
+  const [err, setErr] = useState('')
+
+  const { mutate: add,    isPending: adding    } = useAddWarehouseType()
+  const { mutate: update, isPending: updating  } = useUpdateWarehouseType()
+  const isPending = adding || updating
+
+  function handleSubmit() {
+    setErr('')
+    if (!value.trim()) { setErr('Tên loại kho là bắt buộc'); return }
+    if (isEdit) {
+      update({ id: type.id, value: value.trim() }, { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
+    } else {
+      add(value.trim(), { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={v => { if (!v) onClose() }}>
+      <DialogContent className="sm:max-w-xs">
+        <DialogHeader><DialogTitle>{isEdit ? 'Sửa loại kho' : 'Thêm loại kho'}</DialogTitle></DialogHeader>
+        <div className="space-y-3 py-1">
+          {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
+          <div className="space-y-1">
+            <Label className="text-xs">Tên loại kho *</Label>
+            <Input value={value} onChange={e => setValue(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') handleSubmit() }}
+              placeholder="Thành phẩm, NVL, POSM…" />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={onClose}>Huỷ</Button>
+          <Button size="sm" onClick={handleSubmit} disabled={isPending || !value.trim()}>
+            {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function WMSSettings() {
@@ -170,10 +217,9 @@ export default function WMSSettings() {
 
   // Loại kho
   const { data: warehouseTypes = [], isLoading: loadingTypes } = useWarehouseTypes()
-  const { mutate: addType,    isPending: addingType }    = useAddWarehouseType()
   const { mutate: deleteType, isPending: deletingType }  = useDeleteWarehouseType()
-  const [newTypeName, setNewTypeName] = useState('')
-  const [typeErr,     setTypeErr]     = useState('')
+  const [editingType, setEditingType] = useState<{ id: string; value: string } | null>(null)
+  const [showTypeDlg, setShowTypeDlg] = useState(false)
 
   // Khu vực kho
   const activeWh = (allWh as WhRow[]).filter(w => w.is_active)
@@ -183,16 +229,6 @@ export default function WMSSettings() {
   const { mutate: deleteZone, isPending: deletingZone } = useDeleteWarehouseZone()
   const [editingZone, setEditingZone] = useState<WarehouseZone | null>(null)
   const [showZoneDlg, setShowZoneDlg] = useState(false)
-
-  function handleAddType() {
-    setTypeErr('')
-    const val = newTypeName.trim()
-    if (!val) return
-    addType(val, {
-      onSuccess: () => setNewTypeName(''),
-      onError:   e  => setTypeErr(apiMsg(e)),
-    })
-  }
 
   function handleDeleteWh(wh: WhRow) {
     if (!confirm(`Xóa kho "${wh.name}"?\nChỉ xóa được kho chưa có vị trí nào.`)) return
@@ -281,28 +317,16 @@ export default function WMSSettings() {
 
         {/* ── Tab: Loại kho ── */}
         <TabsContent value="types" className="space-y-3">
-          <p className="text-xs text-slate-500">
-            Danh sách loại kho — dùng cho phân loại vị trí, mã hàng, phân quyền nhân viên và đăng ký vận chuyển TMS.
-          </p>
-
-          {canManage && (
-            <div className="flex gap-2 items-start">
-              <div className="flex-1 max-w-xs space-y-1">
-                {typeErr && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">{typeErr}</p>}
-                <Input
-                  value={newTypeName}
-                  onChange={e => setNewTypeName(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') handleAddType() }}
-                  placeholder="Tên loại kho mới…"
-                  className="h-8 text-sm"
-                />
-              </div>
-              <Button size="sm" className="gap-1.5 shrink-0" onClick={handleAddType}
-                disabled={addingType || !newTypeName.trim()}>
-                <Plus className="h-4 w-4" /> Thêm
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-slate-500">
+              Danh sách loại kho — dùng cho phân loại vị trí, mã hàng, phân quyền nhân viên và đăng ký vận chuyển TMS.
+            </p>
+            {canManage && (
+              <Button size="sm" className="gap-1.5 shrink-0" onClick={() => { setEditingType(null); setShowTypeDlg(true) }}>
+                <Plus className="h-4 w-4" /> Thêm loại kho
               </Button>
-            </div>
-          )}
+            )}
+          </div>
 
           <Card>
             {loadingTypes ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> :
@@ -310,7 +334,7 @@ export default function WMSSettings() {
                 <div className="p-12 text-center text-slate-400 space-y-2">
                   <Tag className="h-10 w-10 mx-auto opacity-30" />
                   <p className="text-sm">Chưa có loại kho nào</p>
-                  {canManage && <p className="text-xs">Nhập tên và nhấn "Thêm" để tạo loại kho đầu tiên</p>}
+                  {canManage && <p className="text-xs">Nhấn "Thêm loại kho" để tạo loại kho đầu tiên</p>}
                 </div>
               ) : (
                 <div className="overflow-x-auto">
@@ -318,7 +342,7 @@ export default function WMSSettings() {
                     <TableHeader>
                       <TableRow>
                         <TableHead className="px-3 py-2 text-xs">Tên loại kho</TableHead>
-                        {canManage && <TableHead className="px-3 py-2 w-12" />}
+                        {canManage && <TableHead className="px-3 py-2 w-16" />}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -327,12 +351,17 @@ export default function WMSSettings() {
                           <TableCell className="px-3 py-2 font-medium text-slate-800">{t.value}</TableCell>
                           {canManage && (
                             <TableCell className="px-2 py-2">
-                              <button
-                                className="text-slate-400 hover:text-red-500 p-1 transition-colors"
-                                disabled={deletingType}
-                                onClick={() => { if (confirm(`Xóa loại kho "${t.value}"?`)) deleteType(t.id) }}>
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
+                              <div className="flex items-center gap-0.5">
+                                <button className="text-slate-400 hover:text-blue-500 p-1 transition-colors"
+                                  onClick={() => { setEditingType(t); setShowTypeDlg(true) }}>
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </button>
+                                <button className="text-slate-400 hover:text-red-500 p-1 transition-colors"
+                                  disabled={deletingType}
+                                  onClick={() => { if (confirm(`Xóa loại kho "${t.value}"?`)) deleteType(t.id) }}>
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
                             </TableCell>
                           )}
                         </TableRow>
@@ -430,6 +459,9 @@ export default function WMSSettings() {
 
       {showWhDlg && (
         <WarehouseDialog wh={editingWh} open={showWhDlg} onClose={() => setShowWhDlg(false)} />
+      )}
+      {showTypeDlg && (
+        <TypeDialog type={editingType} open={showTypeDlg} onClose={() => setShowTypeDlg(false)} />
       )}
       {showZoneDlg && effectiveWhId && (
         <ZoneDialog zone={editingZone} warehouseId={effectiveWhId} open={showZoneDlg} onClose={() => setShowZoneDlg(false)} />

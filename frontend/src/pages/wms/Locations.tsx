@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { MapPin, Plus, Pencil, Trash2, Building2, Flag } from 'lucide-react'
+import { MapPin, Plus, Pencil, Trash2, Flag } from 'lucide-react'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { TableSkeleton }  from '@/components/shared/TableSkeleton'
@@ -13,7 +13,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import {
   useLocationsReal, useWarehouses, useWarehouseTypes, useWarehouseZones,
   useCreateLocation, useUpdateLocation, useDeleteLocation,
-  useCreateWarehouse, useUpdateWarehouse, useDeleteWarehouse,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -43,8 +42,7 @@ interface WhWithCount {
   _count:    { locations: number }
 }
 
-const EMPTY_FORM    = { warehouse_id: '', category: '', sub_code: '', sub_name: '', row: '', shelf: '', max_pallets: '' }
-const EMPTY_WH_FORM = { code: '', name: '', address: '' }
+const EMPTY_FORM = { warehouse_id: '', category: '', sub_code: '', sub_name: '', row: '', shelf: '', max_pallets: '' }
 
 export default function Locations() {
   const user  = useAuthStore(s => s.user)
@@ -64,19 +62,11 @@ export default function Locations() {
   const [formError,     setFormError]     = useState('')
   const [deleteTarget,  setDeleteTarget]  = useState<RealLocation | null>(null)
 
-  // Warehouse management dialog
-  const [whDialogOpen,      setWhDialogOpen]      = useState(false)
-  const [whForm,            setWhForm]            = useState(EMPTY_WH_FORM)
-  const [whError,           setWhError]           = useState('')
-  const [whDeleteTarget,    setWhDeleteTarget]    = useState<WhWithCount | null>(null)
-  const [whReactivateTarget, setWhReactivateTarget] = useState<WhWithCount | null>(null)
-
   // Data
   const { data: whTypes = [] }          = useWarehouseTypes()
   const categoryOptions                  = whTypes.map(t => t.value)
   const { data: formZones = [] }        = useWarehouseZones(form.warehouse_id || undefined)
   const { data: activeWhRaw = [] }      = useWarehouses(true)
-  const { data: allWhRaw = [] }         = useWarehouses(false)
   const { data: allRaw = [] }           = useLocationsReal()
   const { data: raw = [], isLoading }   = useLocationsReal(
     warehouseId ? { warehouse_id: warehouseId } : undefined
@@ -90,7 +80,6 @@ export default function Locations() {
     ? user.allowed_categories.map(normCatFe)
     : null
   const warehouses   = (activeWhRaw as WhWithCount[]).filter(w => !allowedLocWhIds || allowedLocWhIds.has(w.id))
-  const allWh        = allWhRaw    as WhWithCount[]
   const allLocations = (allRaw as RealLocation[]).filter(l => l.is_active)
   const showInactive = statusFilter.includes('inactive')
   const locations    = showInactive
@@ -101,9 +90,6 @@ export default function Locations() {
   const createLocation  = useCreateLocation()
   const updateLocation  = useUpdateLocation()
   const deleteLocation  = useDeleteLocation()
-  const createWarehouse = useCreateWarehouse()
-  const updateWarehouse = useUpdateWarehouse()
-  const deleteWarehouse = useDeleteWarehouse()
 
   // ── Table filter ─────────────────────────────────────────────
   const filtered = useMemo(() => {
@@ -218,63 +204,6 @@ export default function Locations() {
     }
   }
 
-  // ── Handlers: warehouse ──────────────────────────────────────
-  function openWhDialog() {
-    setWhForm(EMPTY_WH_FORM)
-    setWhError('')
-    setWhDeleteTarget(null)
-    setWhDialogOpen(true)
-  }
-
-  async function handleCreateWarehouse() {
-    setWhError('')
-    if (!whForm.code.trim() || !whForm.name.trim()) {
-      setWhError('Mã kho và tên kho là bắt buộc')
-      return
-    }
-    try {
-      const wh = await createWarehouse.mutateAsync({
-        code:    whForm.code.trim().toUpperCase(),
-        name:    whForm.name.trim(),
-        address: whForm.address.trim() || undefined,
-      })
-      if (dialogMode === 'add') {
-        setField('warehouse_id', (wh as { id: string }).id)
-        setField('category', '')
-        setField('sub_code', '')
-      }
-      setWhForm(EMPTY_WH_FORM)
-      setWhDialogOpen(false)
-    } catch (e: unknown) {
-      const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
-      setWhError(msg ?? 'Có lỗi xảy ra')
-    }
-  }
-
-  async function handleDeleteWarehouse() {
-    if (!whDeleteTarget) return
-    setWhError('')
-    try {
-      await deleteWarehouse.mutateAsync(whDeleteTarget.id)
-      setWhDeleteTarget(null)
-    } catch (e: unknown) {
-      const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
-      setWhError(msg ?? 'Có lỗi xảy ra')
-    }
-  }
-
-  async function handleReactivateWarehouse() {
-    if (!whReactivateTarget) return
-    setWhError('')
-    try {
-      await updateWarehouse.mutateAsync({ id: whReactivateTarget.id, is_active: true })
-      setWhReactivateTarget(null)
-    } catch (e: unknown) {
-      const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
-      setWhError(msg ?? 'Có lỗi xảy ra')
-    }
-  }
-
   const isSaving = createLocation.isPending || updateLocation.isPending
 
   return (
@@ -287,11 +216,6 @@ export default function Locations() {
             Vị trí kho
           </h1>
           <div className="flex gap-2">
-            {can(perms, 'locations', 'create') && (
-              <Button variant="outline" size="sm" onClick={openWhDialog} className="gap-1">
-                <Building2 className="h-4 w-4" /> Quản lý Kho
-              </Button>
-            )}
             {can(perms, 'locations', 'create') && (
               <Button size="sm" onClick={openAdd} className="gap-1">
                 <Plus className="h-4 w-4" /> Thêm vị trí
@@ -628,115 +552,6 @@ export default function Locations() {
             <Button variant="outline" size="sm" onClick={closeDialog}>Hủy</Button>
             <Button size="sm" onClick={handleSave} disabled={isSaving}>
               {isSaving ? 'Đang lưu…' : 'Lưu'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Warehouse Management Dialog */}
-      <Dialog open={whDialogOpen} onOpenChange={open => { if (!open) { setWhDialogOpen(false); setWhDeleteTarget(null); setWhReactivateTarget(null) } }}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Quản lý Kho</DialogTitle>
-          </DialogHeader>
-
-          {/* Danh sách kho hiện tại */}
-          <div className="space-y-1 max-h-52 overflow-y-auto pr-1">
-            {allWh.length === 0 && (
-              <p className="text-xs text-slate-400 text-center py-3">Chưa có kho nào</p>
-            )}
-            {allWh.map(w => (
-              <div key={w.id} className={`flex items-center gap-2 px-2.5 py-1.5 rounded ${w.is_active ? 'bg-slate-50' : 'bg-slate-100 opacity-60'}`}>
-                <span className="font-mono text-[10px] font-semibold text-slate-400 w-8 shrink-0">{w.code}</span>
-                <span className="flex-1 text-sm">{w.name}</span>
-                <span className="text-[10px] text-slate-400 shrink-0">{w._count.locations} vị trí</span>
-                {!w.is_active && (
-                  whReactivateTarget?.id === w.id ? (
-                    <div className="flex gap-1 shrink-0">
-                      <button onClick={handleReactivateWarehouse} disabled={updateWarehouse.isPending}
-                        className="text-[10px] text-green-600 hover:text-green-700 font-medium px-1.5">
-                        {updateWarehouse.isPending ? '…' : 'Lưu'}
-                      </button>
-                      <button onClick={() => setWhReactivateTarget(null)}
-                        className="text-[10px] text-slate-400 hover:text-slate-600 px-1">Hủy</button>
-                    </div>
-                  ) : (
-                    <button onClick={() => { setWhError(''); setWhDeleteTarget(null); setWhReactivateTarget(w) }}
-                      className="text-[10px] text-slate-400 hover:text-green-600 underline underline-offset-2 shrink-0 whitespace-nowrap">
-                      Kích hoạt lại
-                    </button>
-                  )
-                )}
-                {w.is_active && (
-                  whDeleteTarget?.id === w.id ? (
-                    <div className="flex gap-1 shrink-0">
-                      <button onClick={handleDeleteWarehouse} disabled={deleteWarehouse.isPending}
-                        className="text-[10px] text-red-600 hover:text-red-700 font-medium px-1.5">
-                        {deleteWarehouse.isPending ? '…' : w._count.locations > 0 ? 'Vô hiệu hoá' : 'Xóa'}
-                      </button>
-                      <button onClick={() => setWhDeleteTarget(null)}
-                        className="text-[10px] text-slate-400 hover:text-slate-600 px-1">Hủy</button>
-                    </div>
-                  ) : (
-                    <button onClick={() => { setWhError(''); setWhDeleteTarget(w) }}
-                      className="p-1 text-slate-300 hover:text-red-400 shrink-0"
-                      title={w._count.locations > 0 ? 'Vô hiệu hoá kho' : 'Xóa kho'}>
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  )
-                )}
-              </div>
-            ))}
-          </div>
-
-          {/* Cảnh báo confirm */}
-          {whDeleteTarget && (
-            <div className={`text-[11px] rounded px-2.5 py-2 border ${
-              whDeleteTarget._count.locations > 0
-                ? 'bg-amber-50 border-amber-200 text-amber-800'
-                : 'bg-red-50 border-red-200 text-red-700'
-            }`}>
-              {whDeleteTarget._count.locations > 0
-                ? `Kho "${whDeleteTarget.name}" có ${whDeleteTarget._count.locations} vị trí → sẽ bị vô hiệu hoá, dữ liệu vẫn giữ nguyên.`
-                : `Kho "${whDeleteTarget.name}" chưa có vị trí → sẽ bị xóa vĩnh viễn.`}
-            </div>
-          )}
-          {whReactivateTarget && (
-            <div className="text-[11px] rounded px-2.5 py-2 border bg-green-50 border-green-200 text-green-800">
-              Kích hoạt lại kho "{whReactivateTarget.name}"? Kho sẽ hoạt động trở lại.
-            </div>
-          )}
-
-          {whError && (
-            <p className="text-xs text-red-500 bg-red-50 border border-red-200 rounded px-2 py-1.5">{whError}</p>
-          )}
-
-          {/* Form thêm kho mới */}
-          <div className="border-t pt-3 space-y-2.5">
-            <p className="text-xs font-medium text-slate-600">Thêm kho mới</p>
-            <div className="flex gap-2">
-              <div className="w-20 shrink-0">
-                <Label className="text-xs">Mã kho <span className="text-red-500">*</span></Label>
-                <Input className="h-8 text-sm mt-1 uppercase" placeholder="BV"
-                  value={whForm.code} onChange={e => setWhForm(f => ({ ...f, code: e.target.value }))} />
-              </div>
-              <div className="flex-1">
-                <Label className="text-xs">Tên kho <span className="text-red-500">*</span></Label>
-                <Input className="h-8 text-sm mt-1" placeholder="Kho Ba Vì"
-                  value={whForm.name} onChange={e => setWhForm(f => ({ ...f, name: e.target.value }))} />
-              </div>
-            </div>
-            <div>
-              <Label className="text-xs">Địa chỉ <span className="text-slate-400">(tuỳ chọn)</span></Label>
-              <Input className="h-8 text-sm mt-1" placeholder="Ba Vì, Hà Nội"
-                value={whForm.address} onChange={e => setWhForm(f => ({ ...f, address: e.target.value }))} />
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => { setWhDialogOpen(false); setWhDeleteTarget(null) }}>Đóng</Button>
-            <Button size="sm" onClick={handleCreateWarehouse} disabled={createWarehouse.isPending}>
-              {createWarehouse.isPending ? 'Đang lưu…' : 'Tạo kho'}
             </Button>
           </DialogFooter>
         </DialogContent>

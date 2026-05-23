@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { QRScanner } from '@/components/shared/QRScanner'
-import { useWarehouses, useLocationsReal, useMaterialCategories } from '@/api/hooks'
+import { useWarehouses, useLocationsReal, useWarehouseTypes } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -96,7 +96,8 @@ export default function Stocktake() {
   }, [locationId])
 
   const { data: warehouses = [] } = useWarehouses(true)
-  const { data: categories = [] } = useMaterialCategories()
+  const { data: whTypes    = [] } = useWarehouseTypes()
+  const categories = whTypes.map(t => t.value)
   const { data: locations  = [] } = useLocationsReal(
     warehouseId ? { warehouse_id: warehouseId, category: category || undefined } : undefined
   )

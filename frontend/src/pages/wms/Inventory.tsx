@@ -9,7 +9,7 @@ import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { SearchInput } from '@/components/shared/SearchInput'
 import {
   useInventoryEntries, useInventoryFacets, useWarehouses, useQAStatuses, useAdjustInventory,
-  useLocationsReal, useMaterials, useMaterialCategories,
+  useLocationsReal, useMaterials, useWarehouseTypes,
   useBulkUpdateInventoryQA, useBulkTransferLocation, useBulkTransferMaterial,
   useBulkUpdateProductionDate,
 } from '@/api/hooks'
@@ -456,7 +456,8 @@ export default function Inventory() {
 
   const { data: warehouses   = [] } = useWarehouses(true)
   const { data: qaStatuses   = [] } = useQAStatuses()
-  const { data: categories   = [] } = useMaterialCategories()
+  const { data: whTypes      = [] } = useWarehouseTypes()
+  const categories = whTypes.map(t => t.value)
   const { data: facets } = useInventoryFacets({
     warehouse_ids: f.warehouseIds.length > 0 ? f.warehouseIds : undefined,
     categories:    f.materialCategories.length > 0 ? f.materialCategories : undefined,

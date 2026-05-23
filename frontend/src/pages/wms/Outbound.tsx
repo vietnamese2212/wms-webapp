@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Input }  from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { useGDOs, useUploadGDOExcel, useWarehouses, useCreateGDO, useUpdateGDO, useMaterials, useGDO, useAssignGDO, useLookup, useAddLookup, useDeleteLookup } from '@/api/hooks'
+import { useGDOs, useUploadGDOExcel, useWarehouses, useWarehouseTypes, useCreateGDO, useUpdateGDO, useMaterials, useGDO, useAssignGDO, useLookup, useAddLookup, useDeleteLookup } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
@@ -87,6 +87,7 @@ export default function Outbound() {
   })
   const { mutate: uploadExcel, isPending: uploading } = useUploadGDOExcel()
   const { mutate: assignGDO } = useAssignGDO()
+  const { data: whTypesData = [] } = useWarehouseTypes()
 
   useEffect(() => {
     if (postUploadLoading && !isFetching) setPostUploadLoading(false)
@@ -95,7 +96,7 @@ export default function Outbound() {
   const typeOptions       = useMemo(() => [...new Set(gdos.map(g => g.export_type).filter(Boolean))] as string[], [gdos])
   const dvvtOptions       = useMemo(() => [...new Set(gdos.map(g => g.dvvt).filter(Boolean))] as string[], [gdos])
   const nppOptions        = useMemo(() => [...new Set(gdos.flatMap(g => g.distributor_names ?? []).filter(Boolean))], [gdos])
-  const warehouseTypeOpts = useMemo(() => [...new Set(gdos.map(g => g.warehouse_type).filter(Boolean))] as string[], [gdos])
+  const warehouseTypeOpts = whTypesData.map(t => t.value)
 
   const filterTypes          = f.filterTypes          ?? []
   const filterDvvts          = f.filterDvvts          ?? []

@@ -69,28 +69,6 @@ export async function listSubGroups(req: Request, res: Response) {
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
-// GET /locations/sub-types — distinct sub_type + label từ tất cả Location active
-export async function listSubTypes(req: Request, res: Response) {
-  try {
-    const { data, error } = await (supabase as any)
-      .from('Location')
-      .select('sub_type, sub_name')
-      .not('sub_type', 'is', null)
-      .eq('is_active', true)
-      .order('sub_type')
-    if (error) throw error
-
-    // Deduplicate by sub_type, strip trailing number from sub_name for clean label
-    const seen = new Map<string, string>()
-    for (const loc of data ?? []) {
-      if (!loc.sub_type || seen.has(loc.sub_type)) continue
-      const label = (loc.sub_name ?? loc.sub_type).replace(/\s+\d+$/, '').trim()
-      seen.set(loc.sub_type, label)
-    }
-    ok(res, Array.from(seen.entries()).map(([sub_type, label]) => ({ sub_type, label })))
-  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
-}
-
 export async function getLocation(req: Request, res: Response) {
   try {
     const { data: loc, error } = await supabase

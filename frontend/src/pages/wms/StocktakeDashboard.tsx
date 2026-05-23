@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
-  useWarehouses, useMaterialCategories, useLocationsReal,
+  useWarehouses, useWarehouseTypes, useLocationsReal,
   useUnflagEntry, useStocktakeEntries, useInventoryEntry,
   type StocktakeEntryRow,
 } from '@/api/hooks'
@@ -247,7 +247,8 @@ export default function StocktakeDashboard() {
 
   const unflag = useUnflagEntry()
   const { data: warehouses = [] } = useWarehouses(true)
-  const { data: categories = [] } = useMaterialCategories()
+  const { data: whTypes    = [] } = useWarehouseTypes()
+  const categories = whTypes.map(t => t.value)
   const { data: locations  = [] } = useLocationsReal(
     warehouseId ? { warehouse_id: warehouseId, category: category || undefined } : undefined
   )

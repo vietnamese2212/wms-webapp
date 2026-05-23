@@ -10,7 +10,7 @@ import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { QRScanner } from '@/components/shared/QRScanner'
 import type { QRScannerHandle } from '@/components/shared/QRScanner'
 import {
-  useOutboundScanLog, useOutboundScanLogFacets, useWarehouses, useMaterialCategories, useMaterials,
+  useOutboundScanLog, useOutboundScanLogFacets, useWarehouses, useWarehouseTypes, useMaterials,
 } from '@/api/hooks'
 import type { ScanLogParams } from '@/api/hooks'
 import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
@@ -113,9 +113,9 @@ export default function OutboundScanLog() {
   const setApplied = (f: ScanLogApplied) => setScanLogApplied(f)
 
   const { data: warehousesData } = useWarehouses()
-  const { data: categoriesData } = useMaterialCategories()
+  const { data: whTypesData    } = useWarehouseTypes()
   const warehouses  = (warehousesData as { id: string; name: string }[] | undefined) ?? []
-  const categories  = categoriesData ?? []
+  const categories  = (whTypesData ?? []).map(t => t.value)
 
   const { data: facets } = useOutboundScanLogFacets(draft.material_category || undefined)
   const { data: materialsData } = useMaterials(

@@ -23,20 +23,6 @@ export function useWarehouses(onlyActive = false) {
   })
 }
 
-// Sub-groups = kho nhỏ (TP1, TP2...) lấy từ Location (không còn bảng SubWarehouse)
-export function useSubGroups(warehouseId?: string) {
-  return useQuery({
-    queryKey: ['sub-groups', warehouseId],
-    enabled: !!warehouseId,
-    queryFn: async () => {
-      const { data } = await apiClient.get('/masterdata/locations/sub-groups', {
-        params: { warehouse_id: warehouseId },
-      })
-      return data.data as any[]
-    },
-  })
-}
-
 export function useLocationsReal(params?: { warehouse_id?: string; sub_code?: string; category?: string }) {
   return useQuery({
     queryKey: ['locations-real', params],
@@ -121,11 +107,10 @@ export function useDeleteWarehouse() {
 export function useCreateLocation() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { warehouse_id: string; sub_code: string; sub_name?: string; sub_type?: string; category?: string; row: string; shelf?: string; max_pallets?: number }) =>
+    mutationFn: (body: { warehouse_id: string; sub_code: string; sub_name?: string; category?: string; row: string; shelf?: string; max_pallets?: number }) =>
       apiClient.post('/masterdata/locations', body).then((r) => r.data.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['locations-real'] })
-      qc.invalidateQueries({ queryKey: ['sub-groups'] })
       qc.invalidateQueries({ queryKey: ['warehouses'] })
     },
   })
@@ -134,7 +119,7 @@ export function useCreateLocation() {
 export function useUpdateLocation() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; sub_name?: string; sub_type?: string; category?: string; max_pallets?: number; is_active?: boolean; requires_stocktake?: boolean }) =>
+    mutationFn: ({ id, ...body }: { id: string; sub_name?: string; category?: string; max_pallets?: number; is_active?: boolean; requires_stocktake?: boolean }) =>
       apiClient.put(`/masterdata/locations/${id}`, body).then((r) => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['locations-real'] }),
   })
@@ -147,7 +132,6 @@ export function useDeleteLocation() {
       apiClient.delete(`/masterdata/locations/${id}`).then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['locations-real'] })
-      qc.invalidateQueries({ queryKey: ['sub-groups'] })
       qc.invalidateQueries({ queryKey: ['warehouses'] })
     },
   })
@@ -390,17 +374,6 @@ export function useUpdatePalletEntry() {
       employee_id?: string
     }) => apiClient.patch(`/wms/inbound-orders/${orderId}/entries/${entryId}`, body).then((r) => r.data.data),
     onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ['inbound-order', v.orderId] }),
-  })
-}
-
-export function useLocationSubTypes() {
-  return useQuery({
-    queryKey: ['location-sub-types'],
-    staleTime: 5 * 60_000,
-    queryFn: async () => {
-      const { data } = await apiClient.get('/masterdata/locations/sub-types')
-      return data.data as { sub_type: string; label: string }[]
-    },
   })
 }
 

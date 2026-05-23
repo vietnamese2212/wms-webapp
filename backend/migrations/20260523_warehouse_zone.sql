@@ -1,7 +1,7 @@
 -- Create WarehouseZone table for managing physical zones within a warehouse
 CREATE TABLE IF NOT EXISTS "WarehouseZone" (
   id           UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
-  warehouse_id UUID         NOT NULL REFERENCES "Warehouse"(id) ON DELETE CASCADE,
+  warehouse_id TEXT         NOT NULL REFERENCES "Warehouse"(id) ON DELETE CASCADE,
   code         VARCHAR(20)  NOT NULL,
   name         VARCHAR(100) NOT NULL,
   sort_order   INT          NOT NULL DEFAULT 0,

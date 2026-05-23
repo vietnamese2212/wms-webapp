@@ -18,7 +18,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import {
   useInboundOrders, useCreateInboundOrder,
   useWarehouses, useMaterials, useLocationsReal, useImportShifts,
-  useEmployeeRecords, useMaterialCategories, useWarehouseZones,
+  useEmployeeRecords, useWarehouseTypes, useWarehouseZones,
 } from '@/api/hooks'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { SearchInput } from '@/components/shared/SearchInput'
@@ -472,7 +472,8 @@ export default function Inbound() {
 
   const { data: shifts     = [] } = useImportShifts()
   const { data: warehouses = [] } = useWarehouses(true)
-  const { data: categories = [] } = useMaterialCategories()
+  const { data: whTypes = [] } = useWarehouseTypes()
+  const categories = whTypes.map(t => t.value)
 
   // Compute allowed warehouses + categories from user's scope
   const inboundAllowedWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length

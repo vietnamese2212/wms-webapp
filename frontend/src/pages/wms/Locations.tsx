@@ -11,14 +11,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import {
-  useLocationsReal, useWarehouses,
+  useLocationsReal, useWarehouses, useWarehouseTypes,
   useCreateLocation, useUpdateLocation, useDeleteLocation,
   useCreateWarehouse, useUpdateWarehouse, useDeleteWarehouse,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 
-const CATEGORY_OPTIONS = ['Thành phẩm', 'NVL', 'POSM']
 
 interface RealLocation {
   id:           string
@@ -75,6 +74,8 @@ export default function Locations() {
   const [whReactivateTarget, setWhReactivateTarget] = useState<WhWithCount | null>(null)
 
   // Data
+  const { data: whTypes = [] }          = useWarehouseTypes()
+  const categoryOptions                  = whTypes.map(t => t.value)
   const { data: activeWhRaw = [] }      = useWarehouses(true)
   const { data: allWhRaw = [] }         = useWarehouses(false)
   const { data: allRaw = [] }           = useLocationsReal()
@@ -127,8 +128,8 @@ export default function Locations() {
   )
   const formCatOpts = useMemo(() => {
     const cats = formWhlocs.map(l => l.category).filter(Boolean) as string[]
-    return [...new Set([...new Set(cats), ...CATEGORY_OPTIONS])]
-  }, [formWhlocs])
+    return [...new Set([...cats, ...categoryOptions])]
+  }, [formWhlocs, categoryOptions])
   const formSubCodeOpts = useMemo(() => {
     const locs = form.category
       ? formWhlocs.filter(l => l.category === form.category)

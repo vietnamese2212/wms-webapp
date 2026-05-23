@@ -415,6 +415,34 @@ export function useMaterialCategories() {
   })
 }
 
+export function useWarehouseTypes() {
+  return useQuery({
+    queryKey: ['lookup', 'warehouse_type'],
+    staleTime: 10 * 60_000,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/lookup', { params: { type: 'warehouse_type' } })
+      return data.data as { id: string; value: string; sort_order: number }[]
+    },
+  })
+}
+
+export function useAddWarehouseType() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (value: string) =>
+      apiClient.post('/wms/lookup', { type: 'warehouse_type', value }).then(r => r.data.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['lookup', 'warehouse_type'] }),
+  })
+}
+
+export function useDeleteWarehouseType() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.delete(`/wms/lookup/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['lookup', 'warehouse_type'] }),
+  })
+}
+
 // WMS – Inventory (API thật)
 export function useInventoryEntries(params?: {
   warehouse_ids?: string[]

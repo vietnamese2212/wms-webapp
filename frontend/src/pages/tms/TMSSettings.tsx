@@ -11,7 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
-  useWarehouses, useMaterialCategories,
+  useWarehouses, useWarehouseTypes,
   useVehicleTypes, useCreateVehicleType, useUpdateVehicleType,
   useSlotTemplates, useCreateSlotTemplate, useUpdateSlotTemplate, useDeleteSlotTemplate,
   useTransportCompanies, useCreateTransportCompany, useUpdateTransportCompany,
@@ -22,7 +22,6 @@ import { useAuthStore } from '@/stores/authStore'
 import type { TmsVehicleType, SlotTemplate, TransportCompany, TmsVehicle } from '@/types'
 
 const DOW_LABEL: Record<number, string> = { 1:'T2', 2:'T3', 3:'T4', 4:'T5', 5:'T6', 6:'T7' }
-const DEFAULT_CARGO = ['Thành phẩm', 'NVL', 'POSM']
 
 function apiMsg(err: unknown) {
   return (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? String(err)
@@ -331,9 +330,9 @@ export default function TMSSettings() {
   const { data: warehouses = [] } = useWarehouses(true)
   const [warehouseId, setWarehouseId] = useState('')
 
-  // Cargo options từ Material.category thực tế, fallback về default
-  const { data: dbCategories = [] } = useMaterialCategories()
-  const cargoOptions = [...new Set([...DEFAULT_CARGO, ...dbCategories])].sort()
+  // Cargo options từ LookupValue(warehouse_type) — master data tập trung
+  const { data: whTypes = [] } = useWarehouseTypes()
+  const cargoOptions = whTypes.map(t => t.value)
 
   // VehicleType
   const { data: vehicleTypes = [], isLoading: loadingVT } = useVehicleTypes()

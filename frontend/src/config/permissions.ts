@@ -113,6 +113,13 @@ export const MODULES = {
       approve:'Duyệt / Từ chối',
     },
   },
+  wms_settings: {
+    label: 'Cài đặt WMS',
+    actions: {
+      view:   'Xem cài đặt',
+      manage: 'Quản lý master data',
+    },
+  },
   tms: {
     label: 'Vận tải (TMS)',
     actions: {

@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   useDepartments, useJobTitles, useEmployeeRecords,
-  useCreateEmployee, useUpdateEmployee, useDeleteEmployee, useRestoreEmployee, useWarehouses,
+  useCreateEmployee, useUpdateEmployee, useDeleteEmployee, useRestoreEmployee, useWarehouses, useWarehouseTypes,
   useCreateDepartment, useUpdateDepartment,
   useCreateJobTitle, useUpdateJobTitle,
 } from '@/api/hooks'
@@ -183,27 +183,37 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
   const { data: departments = [] } = useDepartments()
   const [deptId, setDeptId]   = useState(emp?.department_id ?? '')
   const { data: jobTitles = [] } = useJobTitles(deptId || undefined)
-  const { data: warehouses = [] } = useWarehouses()
-  const categoryOptions = ['Thành phẩm', 'NVL', 'POSM', 'Bao bì']
+  const { data: warehouses = [] }     = useWarehouses()
+  const { data: whTypes = [] }        = useWarehouseTypes()
+  const categoryOptions                = whTypes.map(t => t.value)
 
   const [name,         setName]         = useState(emp?.name          ?? '')
   const [empCode,      setEmpCode]      = useState(emp?.employee_code ?? '')
   const [email,        setEmail]        = useState(emp?.email         ?? '')
   const [phone,        setPhone]        = useState(emp?.phone         ?? '')
   const [jobTitleId,   setJobTitleId]   = useState(emp?.job_title_id  ?? '')
-  const [categories,   setCategories]   = useState<string[]>(emp?.allowed_categories ?? ['Thành phẩm', 'NVL', 'POSM', 'Bao bì'])
+  const [categories,   setCategories]   = useState<string[]>(emp?.allowed_categories ?? [])
   const [scope,        setScope]        = useState<'NATIONAL'|'ASSIGNED'>(emp?.warehouse_scope ?? 'ASSIGNED')
   const [warehouseIds, setWarehouseIds] = useState<string[]>(
     emp?.warehouse_access?.map(w => w.warehouse_id) ?? []
   )
   const [isActive, setIsActive] = useState(emp?.is_active ?? true)
 
-  const deptIdMounted = useRef(false)
+  const deptIdMounted      = useRef(false)
+  const defaultCatApplied  = useRef(false)
 
   useEffect(() => {
     if (!deptIdMounted.current) { deptIdMounted.current = true; return }
     setJobTitleId('')
   }, [deptId])
+
+  // Khi tạo mới (không có emp), mặc định chọn tất cả loại kho
+  useEffect(() => {
+    if (!isEdit && !defaultCatApplied.current && categoryOptions.length > 0) {
+      defaultCatApplied.current = true
+      setCategories(categoryOptions)
+    }
+  }, [categoryOptions, isEdit])
 
   const { mutate: create, isPending: creating, error: createErr } = useCreateEmployee()
   const { mutate: update, isPending: updating, error: updateErr } = useUpdateEmployee()

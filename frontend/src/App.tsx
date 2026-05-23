@@ -19,6 +19,7 @@ import Stocktake         from '@/pages/wms/Stocktake'
 import StocktakeDashboard from '@/pages/wms/StocktakeDashboard'
 import Vehicles from '@/pages/tms/Vehicles'
 import Deliveries from '@/pages/tms/Deliveries'
+import WMSSettings from '@/pages/wms/WMSSettings'
 import TMSSettings from '@/pages/tms/TMSSettings'
 import TMSBookings from '@/pages/tms/TMSBookings'
 import Schedule from '@/pages/hr/Schedule'
@@ -83,6 +84,9 @@ export default function App() {
         {/* WMS — stocktake */}
         <Route path="/wms/stocktake"         element={<PermissionRoute module="stocktake"><Stocktake /></PermissionRoute>} />
         <Route path="/wms/stocktake/summary" element={<PermissionRoute module="stocktake"><StocktakeDashboard /></PermissionRoute>} />
+
+        {/* WMS — settings */}
+        <Route path="/wms/settings" element={<PermissionRoute module="wms_settings"><WMSSettings /></PermissionRoute>} />
 
         {/* TMS */}
         <Route path="/tms/bookings"   element={<PermissionRoute module="tms"><TMSBookings /></PermissionRoute>} />

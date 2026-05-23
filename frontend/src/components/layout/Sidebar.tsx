@@ -44,6 +44,7 @@ const navGroups: NavGroup[] = [
       { to: '/wms/locations',         icon: MapPin,         label: 'Vị trí kho',     module: 'locations' },
       { to: '/wms/stocktake',         icon: ClipboardCheck, label: 'Check vị trí',   module: 'stocktake' },
       { to: '/wms/stocktake/summary', icon: BarChart2,      label: 'Tổng hợp KK',    module: 'stocktake' },
+      { to: '/wms/settings',          icon: Settings2,      label: 'Cài đặt WMS',    module: 'wms_settings' as ModuleKey },
     ],
   },
   {

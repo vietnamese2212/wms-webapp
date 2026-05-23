@@ -72,12 +72,8 @@ export default function Locations() {
     warehouseId ? { warehouse_id: warehouseId } : undefined
   )
 
-  const normCatFe = (c: string) => c === 'TP' ? 'Thành phẩm' : c === 'BAO_BI' ? 'Bao bì' : c
   const allowedLocWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
     ? new Set(user.warehouse_ids)
-    : null
-  const allowedLocCats = user?.allowed_categories?.length
-    ? user.allowed_categories.map(normCatFe)
     : null
   const warehouses   = (activeWhRaw as WhWithCount[]).filter(w => !allowedLocWhIds || allowedLocWhIds.has(w.id))
   const allLocations = (allRaw as RealLocation[]).filter(l => l.is_active)
@@ -237,11 +233,9 @@ export default function Locations() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="__all__">Tất cả loại</SelectItem>
-              {categoryOptions
-                .filter((c: string) => !allowedLocCats || allowedLocCats.includes(c))
-                .map((c: string) => (
-                  <SelectItem key={c} value={c}>{c}</SelectItem>
-                ))}
+              {categoryOptions.map((c: string) => (
+                <SelectItem key={c} value={c}>{c}</SelectItem>
+              ))}
             </SelectContent>
           </Select>
 

@@ -862,11 +862,12 @@ export async function uploadExcel(req: Request, res: Response) {
     }
     if (!byVehicle.size) return fail(res, 'Không tìm thấy cột "Số xe" hoặc dữ liệu trống', 400)
 
-    // Pre-load warehouses, materials, and existing GDOs in parallel
+    // Pre-load warehouses, materials, warehouse types, and existing GDOs in parallel
     const allGroupCodes = [...byVehicle.keys()]
-    const [warehousesRes, materialsRes, existingRes] = await Promise.all([
+    const [warehousesRes, materialsRes, whTypesRes, existingRes] = await Promise.all([
       (supabase.from('Warehouse') as any).select('id, code, name').eq('is_active', true),
       (supabase.from('Material') as any).select('id, material_code'),
+      (supabase.from('LookupValue') as any).select('value').eq('type', 'warehouse_type').eq('is_active', true),
       (supabase.from('GroupDeliveryOrder') as any)
         .select('id, group_code, status, assigned_at, assigned_by')
         .in('group_code', allGroupCodes),
@@ -879,6 +880,9 @@ export async function uploadExcel(req: Request, res: Response) {
     }
     const matMap = new Map<string, string>(
       (materialsRes.data ?? []).map((m: any) => [m.material_code.trim(), m.id])
+    )
+    const validWhTypes = new Set<string>(
+      (whTypesRes.data ?? []).map((t: any) => String(t.value).trim())
     )
 
     // Classify existing GDOs
@@ -920,6 +924,15 @@ export async function uploadExcel(req: Request, res: Response) {
         errs.push(`Kho xuất "${kho_xuat_v}" không có trong hệ thống`)
       else if (!kho_xuat_v && !warehouse_id)
         errs.push('Thiếu cột Kho xuất')
+
+      const loaiKhoVals = [...new Set(
+        groupRows.map(r => String(r['Loại kho'] ?? r['Loai kho'] ?? '').trim()).filter(Boolean)
+      )]
+      const invalidWhTypes = loaiKhoVals.filter(v => !validWhTypes.has(v))
+      if (loaiKhoVals.length === 0)
+        errs.push('Thiếu cột Loại kho')
+      else if (invalidWhTypes.length)
+        errs.push(`Loại kho "${invalidWhTypes.join(', ')}" không có trong hệ thống`)
 
       const unknownMatsV = [...new Set(
         groupRows.filter(r => String(r['Material'] ?? '').trim()).map(r => String(r['Material']).trim())

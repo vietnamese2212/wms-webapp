@@ -64,12 +64,8 @@ export default function Stocktake() {
   const qc    = useQueryClient()
   const inputRef = useRef<HTMLInputElement>(null)
 
-  const normCatFe = (c: string) => c === 'TP' ? 'Thành phẩm' : c === 'BAO_BI' ? 'Bao bì' : c
   const allowedStockWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
     ? new Set(user.warehouse_ids)
-    : null
-  const allowedStockCats = user?.allowed_categories?.length
-    ? user.allowed_categories.map(normCatFe)
     : null
 
   const init = loadFilters(user?.warehouse_ids?.[0] ?? user?.warehouse_id ?? '')
@@ -202,7 +198,7 @@ export default function Stocktake() {
             <SelectTrigger className="h-7 text-xs w-[100px]"><SelectValue placeholder="Loại…" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="__all__" className="text-xs">Tất cả</SelectItem>
-              {(categories as string[]).filter(c => !allowedStockCats || allowedStockCats.includes(c)).map(c => (
+              {(categories as string[]).map(c => (
                 <SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>
               ))}
             </SelectContent>

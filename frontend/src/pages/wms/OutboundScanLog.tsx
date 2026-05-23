@@ -140,13 +140,9 @@ export default function OutboundScanLog() {
       .map(w => ({ value: w.id, label: w.name }))
   }, [warehouses, user?.warehouse_ids, user?.warehouse_scope]) // eslint-disable-line
 
-  const categoryOpts = useMemo(() => {
-    const normCat = (c: string) => c === 'TP' ? 'Thành phẩm' : c === 'BAO_BI' ? 'Bao bì' : c
-    const allowed = user?.allowed_categories?.length ? user.allowed_categories.map(normCat) : null
-    return (categories as string[])
-      .filter(c => !allowed || allowed.includes(c))
-      .map(c => ({ value: c, label: c }))
-  }, [categories, user?.allowed_categories]) // eslint-disable-line
+  const categoryOpts = useMemo(() =>
+    (categories as string[]).map(c => ({ value: c, label: c }))
+  , [categories])
   const materialOpts  = useMemo(() =>
     materials.map(m => ({
       value: m.id,

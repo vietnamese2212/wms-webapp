@@ -225,12 +225,8 @@ export default function StocktakeDashboard() {
   const user  = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
 
-  const normCatFe = (c: string) => c === 'TP' ? 'Thành phẩm' : c === 'BAO_BI' ? 'Bao bì' : c
   const allowedDashWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
     ? new Set(user.warehouse_ids)
-    : null
-  const allowedDashCats = user?.allowed_categories?.length
-    ? user.allowed_categories.map(normCatFe)
     : null
 
   const init = loadSummaryFilters(user?.warehouse_ids?.[0] ?? user?.warehouse_id ?? '')
@@ -304,7 +300,7 @@ export default function StocktakeDashboard() {
             <SelectTrigger className="h-6 text-[11px] w-[90px]"><SelectValue placeholder="Loại…" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="__all__" className="text-xs">Tất cả</SelectItem>
-              {(categories as string[]).filter(c => !allowedDashCats || allowedDashCats.includes(c)).map(c => (
+              {(categories as string[]).map(c => (
                 <SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>
               ))}
             </SelectContent>

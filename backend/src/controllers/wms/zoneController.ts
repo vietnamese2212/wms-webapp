@@ -11,7 +11,7 @@ export async function listZones(req: Request, res: Response) {
 
   let query = supabase
     .from('WarehouseZone')
-    .select('id, warehouse_id, code, name, sort_order, is_active')
+    .select('id, warehouse_id, code, name, category, sort_order, is_active')
     .order('sort_order')
     .order('created_at')
 
@@ -23,7 +23,7 @@ export async function listZones(req: Request, res: Response) {
 }
 
 export async function createZone(req: Request, res: Response) {
-  const { warehouse_id, code, name } = req.body as { warehouse_id?: string; code?: string; name?: string }
+  const { warehouse_id, code, name, category } = req.body as { warehouse_id?: string; code?: string; name?: string; category?: string }
   if (!warehouse_id || !code?.trim() || !name?.trim()) return fail(res, 'warehouse_id, code và name là bắt buộc')
 
   const t = new Date().toISOString()
@@ -44,10 +44,11 @@ export async function createZone(req: Request, res: Response) {
       warehouse_id,
       code:         code.trim().toUpperCase(),
       name:         name.trim(),
+      category:     category?.trim() || null,
       sort_order:   nextSort,
       updated_at:   t,
     })
-    .select('id, warehouse_id, code, name, sort_order, is_active')
+    .select('id, warehouse_id, code, name, category, sort_order, is_active')
     .single()
 
   if (error) {
@@ -59,17 +60,18 @@ export async function createZone(req: Request, res: Response) {
 
 export async function updateZone(req: Request, res: Response) {
   const { id } = req.params
-  const { name, is_active } = req.body as { name?: string; is_active?: boolean }
+  const { name, category, is_active } = req.body as { name?: string; category?: string | null; is_active?: boolean }
 
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() }
   if (name !== undefined) updates.name = name.trim()
+  if (category !== undefined) updates.category = category?.trim() || null
   if (is_active !== undefined) updates.is_active = is_active
 
   const { data, error } = await supabase
     .from('WarehouseZone')
     .update(updates)
     .eq('id', id)
-    .select('id, warehouse_id, code, name, sort_order, is_active')
+    .select('id, warehouse_id, code, name, category, sort_order, is_active')
     .single()
 
   if (error) return fail(res, error.message, 500)

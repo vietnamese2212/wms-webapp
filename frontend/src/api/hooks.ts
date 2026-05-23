@@ -425,7 +425,7 @@ export function useDeleteWarehouseType() {
   })
 }
 
-export type WarehouseZone = { id: string; warehouse_id: string; code: string; name: string; sort_order: number; is_active: boolean }
+export type WarehouseZone = { id: string; warehouse_id: string; code: string; name: string; category: string | null; sort_order: number; is_active: boolean }
 
 export function useWarehouseZones(warehouseId?: string) {
   return useQuery({
@@ -443,7 +443,7 @@ export function useWarehouseZones(warehouseId?: string) {
 export function useCreateWarehouseZone() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { warehouse_id: string; code: string; name: string }) =>
+    mutationFn: (body: { warehouse_id: string; code: string; name: string; category?: string }) =>
       apiClient.post('/wms/zones', body).then(r => r.data.data as WarehouseZone),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouse-zones'] }),
   })
@@ -452,7 +452,7 @@ export function useCreateWarehouseZone() {
 export function useUpdateWarehouseZone() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; name?: string; is_active?: boolean }) =>
+    mutationFn: ({ id, ...body }: { id: string; name?: string; category?: string | null; is_active?: boolean }) =>
       apiClient.put(`/wms/zones/${id}`, body).then(r => r.data.data as WarehouseZone),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouse-zones'] }),
   })

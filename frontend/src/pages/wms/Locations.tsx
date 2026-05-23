@@ -442,6 +442,7 @@ export default function Locations() {
                       const z = filteredZones.find(z => z.code === v)
                       setField('sub_code', v)
                       setField('sub_name', z?.name ?? '')
+                      if (z?.category) setField('category', z.category)
                     }
                   }}>
                   <SelectTrigger className="h-8 text-sm mt-1">

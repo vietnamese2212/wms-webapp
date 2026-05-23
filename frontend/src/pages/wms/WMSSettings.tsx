@@ -93,13 +93,15 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
 
 // ─── Zone Dialog ──────────────────────────────────────────────────────────────
 
-function ZoneDialog({ zone, warehouseId, warehouses, open, onClose }: {
-  zone: WarehouseZone | null; warehouseId: string; warehouses: WhRow[]; open: boolean; onClose: () => void
+function ZoneDialog({ zone, warehouseId, warehouses, warehouseTypes, open, onClose }: {
+  zone: WarehouseZone | null; warehouseId: string; warehouses: WhRow[]
+  warehouseTypes: { id: string; value: string }[]; open: boolean; onClose: () => void
 }) {
   const isEdit = !!zone
   const [selectedWhId, setSelectedWhId] = useState(zone?.warehouse_id ?? warehouseId)
-  const [code, setCode] = useState(zone?.code ?? '')
-  const [name, setName] = useState(zone?.name ?? '')
+  const [code,     setCode]     = useState(zone?.code ?? '')
+  const [name,     setName]     = useState(zone?.name ?? '')
+  const [category, setCategory] = useState(zone?.category ?? '')
   const [isActive, setIsActive] = useState(zone?.is_active ?? true)
   const [err, setErr] = useState('')
 
@@ -113,12 +115,12 @@ function ZoneDialog({ zone, warehouseId, warehouses, open, onClose }: {
     if (!code.trim() || !name.trim()) { setErr('Mã và tên khu vực là bắt buộc'); return }
     if (isEdit) {
       update(
-        { id: zone.id, name: name.trim(), is_active: isActive },
+        { id: zone.id, name: name.trim(), category: category || null, is_active: isActive },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     } else {
       create(
-        { warehouse_id: selectedWhId, code: code.trim(), name: name.trim() },
+        { warehouse_id: selectedWhId, code: code.trim(), name: name.trim(), category: category || undefined },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     }
@@ -130,6 +132,8 @@ function ZoneDialog({ zone, warehouseId, warehouses, open, onClose }: {
         <DialogHeader><DialogTitle>{isEdit ? 'Sửa khu vực' : 'Thêm khu vực kho'}</DialogTitle></DialogHeader>
         <div className="space-y-3 py-1">
           {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
+
+          {/* Kho */}
           {isEdit ? (
             <div className="space-y-1">
               <Label className="text-xs">Kho</Label>
@@ -153,6 +157,24 @@ function ZoneDialog({ zone, warehouseId, warehouses, open, onClose }: {
               </Select>
             </div>
           )}
+
+          {/* Loại kho */}
+          <div className="space-y-1">
+            <Label className="text-xs">Loại kho</Label>
+            <Select value={category || '__none__'} onValueChange={v => setCategory(v === '__none__' ? '' : v)}>
+              <SelectTrigger className="h-8 text-sm">
+                <SelectValue placeholder="Chưa gắn loại kho" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">— Chưa gắn loại kho</SelectItem>
+                {warehouseTypes.map(t => (
+                  <SelectItem key={t.id} value={t.value}>{t.value}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Mã + Tên */}
           <div className="space-y-1">
             <Label className="text-xs">Mã khu vực *</Label>
             <Input value={code} onChange={e => setCode(e.target.value.toUpperCase())} placeholder="TP, NL, POSM…" disabled={isEdit} />
@@ -160,8 +182,9 @@ function ZoneDialog({ zone, warehouseId, warehouses, open, onClose }: {
           </div>
           <div className="space-y-1">
             <Label className="text-xs">Tên khu vực *</Label>
-            <Input value={name} onChange={e => setName(e.target.value)} placeholder="Thành phẩm, NVL, POSM, Bao bì…" />
+            <Input value={name} onChange={e => setName(e.target.value)} placeholder="Khu Thành phẩm, Khu NVL…" />
           </div>
+
           {isEdit && (
             <div className="flex items-center gap-2">
               <input id="zone-active" type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} className="h-4 w-4 rounded accent-blue-600" />
@@ -443,6 +466,7 @@ export default function WMSSettings() {
                     <TableRow>
                       <TableHead className="px-3 py-2 text-xs">Mã khu vực</TableHead>
                       <TableHead className="px-3 py-2 text-xs">Tên khu vực</TableHead>
+                      <TableHead className="px-3 py-2 text-xs">Loại kho</TableHead>
                       <TableHead className="px-3 py-2 text-xs">Trạng thái</TableHead>
                       {canManage && <TableHead className="px-3 py-2 w-16" />}
                     </TableRow>
@@ -452,6 +476,7 @@ export default function WMSSettings() {
                       <TableRow key={z.id} className={`text-sm ${!z.is_active ? 'opacity-50' : ''}`}>
                         <TableCell className="px-3 py-2 font-mono font-semibold text-[11px] text-slate-600">{z.code}</TableCell>
                         <TableCell className="px-3 py-2 font-medium text-slate-800">{z.name}</TableCell>
+                        <TableCell className="px-3 py-2 text-xs text-slate-500">{z.category ?? <span className="text-slate-300">—</span>}</TableCell>
                         <TableCell className="px-3 py-2">
                           <Badge variant={z.is_active ? 'default' : 'secondary'} className="text-xs">
                             {z.is_active ? 'Hoạt động' : 'Tạm dừng'}
@@ -489,7 +514,7 @@ export default function WMSSettings() {
         <TypeDialog type={editingType} open={showTypeDlg} onClose={() => setShowTypeDlg(false)} />
       )}
       {showZoneDlg && (
-        <ZoneDialog zone={editingZone} warehouseId={effectiveWhId} warehouses={activeWh} open={showZoneDlg} onClose={() => setShowZoneDlg(false)} />
+        <ZoneDialog zone={editingZone} warehouseId={effectiveWhId} warehouses={activeWh} warehouseTypes={warehouseTypes} open={showZoneDlg} onClose={() => setShowZoneDlg(false)} />
       )}
     </div>
   )

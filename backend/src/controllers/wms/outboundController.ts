@@ -226,9 +226,9 @@ export async function getGDO(req: Request, res: Response) {
 
 export async function createGDO(req: Request, res: Response) {
   try {
-    const { delivery_date, warehouse_id, dvvt, customer_name, export_type, items } = req.body as {
+    const { delivery_date, warehouse_id, dvvt, customer_name, export_type, warehouse_type, items } = req.body as {
       delivery_date: string; warehouse_id?: string; dvvt?: string
-      customer_name?: string; export_type?: string
+      customer_name?: string; export_type?: string; warehouse_type?: string
       items?: Array<{ material_code: string; cartons_ordered: number }>
     }
     if (!delivery_date) return fail(res, 'delivery_date là bắt buộc', 400)
@@ -248,7 +248,7 @@ export async function createGDO(req: Request, res: Response) {
     const { error } = await (supabase.from('GroupDeliveryOrder') as any).insert({
       id: gdoId, group_code, planned_date: delivery_date, delivery_date,
       warehouse_id: warehouse_id ?? null, dvvt: dvvt ?? null,
-      warehouse_type: null, status: 'PENDING', updated_at: now(),
+      warehouse_type: warehouse_type ?? null, status: 'PENDING', updated_at: now(),
     })
     if (error) return fail(res, error.message)
 

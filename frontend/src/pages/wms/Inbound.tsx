@@ -96,15 +96,15 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
     ? new Set(user.allowed_categories.map(normCatFe))
     : null
 
-  // subType stores zone.name (e.g. "Thành phẩm"); backward compat: also match by sub_code
-  const loaiKhoOpts = zones.filter(z =>
-    z.is_active &&
-    (availCats.has(z.name) || availSubCodes.has(z.code)) &&
-    (!dialogAllowedMatCats || dialogAllowedMatCats.has(z.name))
-  )
+  const { data: allWhTypes = [] } = useWarehouseTypes()
+  // Show all configured warehouse types, filtered by user's allowed categories
+  const loaiKhoOpts = allWhTypes
+    .map(t => t.value)
+    .filter(v => !dialogAllowedMatCats || dialogAllowedMatCats.has(v))
+  // backward compat: also match location by sub_code if zone name matches subType
   const selectedZone = zones.find(z => z.name === subType)
-  const filteredLocs = subType && selectedZone
-    ? allLocs.filter(l => l.category === subType || l.sub_code === selectedZone.code)
+  const filteredLocs = subType
+    ? allLocs.filter(l => l.category === subType || (selectedZone && l.sub_code === selectedZone.code))
     : allLocs
 
   const matCategory = subType || undefined
@@ -208,8 +208,8 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
                 <SelectValue placeholder="Chọn loại kho" />
               </SelectTrigger>
               <SelectContent>
-                {loaiKhoOpts.map(z => (
-                  <SelectItem key={z.id} value={z.name}>{z.name}</SelectItem>
+                {loaiKhoOpts.map(v => (
+                  <SelectItem key={v} value={v}>{v}</SelectItem>
                 ))}
               </SelectContent>
             </Select>

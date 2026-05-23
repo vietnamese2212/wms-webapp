@@ -893,6 +893,7 @@ export function useUpdateJobTitle() {
 type GDOFormPayload = {
   delivery_date: string
   warehouse_id?: string
+  warehouse_type?: string
   dvvt: string
   customer_name: string
   export_type: string

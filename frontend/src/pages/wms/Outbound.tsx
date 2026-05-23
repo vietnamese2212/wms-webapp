@@ -550,6 +550,7 @@ function GDOFormBody({
   mode,
   date, setDate,
   warehouseId, setWarehouseId,
+  warehouseType, setWarehouseType,
   dvvt, setDvvt,
   customerName, setCustomerName,
   exportType, setExportType,
@@ -563,6 +564,7 @@ function GDOFormBody({
   mode: 'create' | 'edit'
   date: string; setDate: (v: string) => void
   warehouseId: string; setWarehouseId: (v: string) => void
+  warehouseType?: string; setWarehouseType?: (v: string) => void
   dvvt: string; setDvvt: (v: string) => void
   customerName: string; setCustomerName: (v: string) => void
   exportType: string; setExportType: (v: string) => void
@@ -578,6 +580,7 @@ function GDOFormBody({
     : null
   const { data: warehouses = [] } = useWarehouses(true)
   const { data: exportTypes = [] } = useLookup('export_type')
+  const { data: whTypesInForm = [] } = useWarehouseTypes()
   const { mutate: addLookup } = useAddLookup()
   const { mutate: deleteLookup } = useDeleteLookup()
   const [addingType, setAddingType] = useState(false)
@@ -633,6 +636,18 @@ function GDOFormBody({
               </SelectContent>
             </Select>
           </div>
+          {setWarehouseType !== undefined && (
+            <div className="space-y-1 col-span-2">
+              <label className="text-[10px] font-medium text-slate-500">Loại kho <span className="text-red-500">*</span></label>
+              <Select value={warehouseType || '__none__'} onValueChange={v => setWarehouseType(v === '__none__' ? '' : v)}>
+                <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Chọn loại kho…" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">— Chọn loại kho</SelectItem>
+                  {whTypesInForm.map(t => <SelectItem key={t.id} value={t.value}>{t.value}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           <div className="space-y-1">
             <label className="text-[10px] font-medium text-slate-500">
               Tên khách hàng {(!isMultiDO || mode === 'create') && <span className="text-red-500">*</span>}
@@ -834,6 +849,7 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
   const TODAY_STR = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   const [date, setDate]               = useState(TODAY_STR)
   const [warehouseId, setWarehouseId] = useState(defaultWarehouseId)
+  const [warehouseType, setWarehouseType] = useState('')
   const [dvvt, setDvvt]               = useState('')
   const [customerName, setCustomerName] = useState('')
   const [exportType, setExportType]   = useState('')
@@ -844,6 +860,7 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
 
   function handleSubmit() {
     if (!date)         return setError('Chọn ngày xuất')
+    if (!warehouseType) return setError('Chọn loại kho')
     if (!customerName.trim()) return setError('Nhập tên khách hàng')
     if (!dvvt.trim())  return setError('Nhập đơn vị vận tải')
     if (!exportType)   return setError('Chọn loại xuất')
@@ -856,6 +873,7 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
       {
         delivery_date: date,
         warehouse_id: warehouseId || undefined,
+        warehouse_type: warehouseType,
         dvvt: dvvt.trim(),
         customer_name: customerName.trim(),
         export_type: exportType,
@@ -877,6 +895,7 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
         mode="create"
         date={date} setDate={setDate}
         warehouseId={warehouseId} setWarehouseId={setWarehouseId}
+        warehouseType={warehouseType} setWarehouseType={setWarehouseType}
         dvvt={dvvt} setDvvt={setDvvt}
         customerName={customerName} setCustomerName={setCustomerName}
         exportType={exportType} setExportType={setExportType}

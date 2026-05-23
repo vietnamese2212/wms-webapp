@@ -574,8 +574,7 @@ export default function Inventory() {
     .filter((w: any) => !allowedWhIds || allowedWhIds.has(w.id))
     .map((w: any) => ({ value: w.id, label: w.name }))
   // Merge DB categories with user's allowed categories so user can always toggle their scope even if no data yet
-  const allCategoryVals = [...new Set([...(categories as string[]), ...userAllowedCats])].sort()
-  const categoryOpts   = allCategoryVals.map(c => ({ value: c, label: c }))
+  const categoryOpts   = (categories as string[]).map(c => ({ value: c, label: c }))
   const qaOpts         = (qaStatuses as any[]).map((q: any) => ({ value: q.id, label: `${q.code} – ${q.name}` }))
   const locationOpts   = (facets?.locations ?? []).map(l => ({ value: l.code, label: l.code }))
   const materialOpts   = (facets?.materials ?? []).map(m => ({ value: m.id, label: m.name ? `${m.code} – ${m.name}` : m.code }))

@@ -107,14 +107,7 @@ export default function Locations() {
   const fullCount  = activeFiltered.filter(l => l.max_pallets > 0 && l.used_slots >= l.max_pallets).length
 
   // ── Form cascaded options ────────────────────────────────────
-  const formWhlocs = useMemo(() =>
-    allLocations.filter(l => l.warehouse.id === form.warehouse_id),
-    [allLocations, form.warehouse_id]
-  )
-  const formCatOpts = useMemo(() => {
-    const cats = formWhlocs.map(l => l.category).filter(Boolean) as string[]
-    return [...new Set([...cats, ...categoryOptions])]
-  }, [formWhlocs, categoryOptions])
+  const formCatOpts = categoryOptions
   const filteredZones = useMemo(() =>
     formZones.filter(z => z.is_active && (!form.category || z.name === form.category)),
     [formZones, form.category]

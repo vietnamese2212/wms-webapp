@@ -527,8 +527,18 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
       })))
       setResult({ inserted: data.inserted, skipped: 0 })
     } catch (e: unknown) {
-      const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
-      setErr(msg ?? 'Lỗi import')
+      const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ?? 'Lỗi import'
+      // Đánh dấu đúng dòng bị lỗi trùng số xe với DB
+      const dupMatch = msg.match(/Số xe đã tồn tại trong hệ thống: (.+)/)
+      if (dupMatch) {
+        const dupCodes = new Set(dupMatch[1].split(',').map((c: string) => c.trim().toUpperCase()))
+        setRows(prev => prev.map(r =>
+          r.vehicle_code && dupCodes.has(r.vehicle_code.toUpperCase())
+            ? { ...r, valid: false, error: 'số xe đã tồn tại trong hệ thống' }
+            : r
+        ))
+      }
+      setErr(msg)
     } finally {
       setImporting(false)
     }

@@ -24,14 +24,36 @@ async function withRelations(vehicles: Record<string, unknown>[]) {
 
 export async function listVehicles(req: Request, res: Response) {
   try {
-    const { ncc_id, is_active } = req.query as Record<string, string>
+    const { ncc_id, is_active, unassigned } = req.query as Record<string, string>
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let q = (supabase.from('Vehicle') as any).select('*').order('license_plate')
-    if (ncc_id)             q = q.eq('ncc_id', ncc_id)
+    if (ncc_id)                  q = q.eq('ncc_id', ncc_id)
     if (is_active !== undefined) q = q.eq('is_active', is_active === 'true')
     const { data, error } = await q
     if (error) return fail(res, error.message)
-    return ok(res, await withRelations(data ?? []))
+
+    let vehicles = (data ?? []) as Record<string, unknown>[]
+
+    // Lọc xe chưa có tài khoản lái xe (chưa bị xóa mềm)
+    if (unassigned === 'true' && vehicles.length > 0) {
+      const plates = vehicles.map(v => v.license_plate as string)
+      const nccIds = [...new Set(vehicles.map(v => v.ncc_id as string))]
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: drivers } = await (supabase.from('Employee') as any)
+        .select('employee_code, ncc_id')
+        .in('employee_code', plates)
+        .in('ncc_id', nccIds)
+        .eq('is_driver', true)
+        .is('deleted_at', null)
+      if (drivers?.length) {
+        const assigned = new Set(
+          (drivers as { employee_code: string; ncc_id: string }[]).map(d => `${d.employee_code}|${d.ncc_id}`)
+        )
+        vehicles = vehicles.filter(v => !assigned.has(`${v.license_plate}|${v.ncc_id}`))
+      }
+    }
+
+    return ok(res, await withRelations(vehicles))
   } catch (e) { return fail(res, String(e)) }
 }
 

@@ -209,7 +209,7 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
   const isDispatcherRole = selectedDeptName === 'Đơn vị vận tải' && !!jobTitleId && !isDriverRole
 
   const { data: allVehicles = [] } = useTmsVehicles(
-    isDriverRole && nccId && !isEdit ? { ncc_id: nccId, is_active: 'true' } : undefined
+    isDriverRole && nccId && !isEdit ? { ncc_id: nccId, is_active: 'true', unassigned: 'true' } : undefined
   )
   const selectedVehicle = isDriverRole && !isEdit ? (allVehicles as TmsVehicle[]).find(v => v.id === driverVehicleId) ?? null : null
 

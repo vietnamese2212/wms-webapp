@@ -1457,7 +1457,7 @@ export function useUpdateTransportCompany() {
   })
 }
 
-export function useTmsVehicles(params?: { ncc_id?: string; is_active?: string }) {
+export function useTmsVehicles(params?: { ncc_id?: string; is_active?: string; unassigned?: string }) {
   return useQuery({
     queryKey: ['tms-vehicles', params],
     queryFn: async () => {

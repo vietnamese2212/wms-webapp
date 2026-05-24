@@ -702,59 +702,113 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
 
 // ── Slot Overview Dialog ──────────────────────────────────────────────────────
 
-function SlotOverviewDialog({ open, onClose, date, warehouseName, slots }: {
+function SlotOverviewDialog({ open, onClose, defaultDate, warehouseId, warehouseName }: {
   open: boolean; onClose: () => void
-  date: string; warehouseName: string; slots: DeliverySlot[]
+  defaultDate: string; warehouseId: string; warehouseName: string
 }) {
+  const [date, setDate] = useState(defaultDate)
+  const [vtFilter, setVtFilter] = useState<string[]>([])
+
+  useEffect(() => { if (open) { setDate(defaultDate); setVtFilter([]) } }, [open])
+
+  const { data: slotsData = [], isLoading } = useDeliverySlots(
+    open && warehouseId ? { date, warehouse_id: warehouseId } : undefined
+  )
+  const slots = slotsData as DeliverySlot[]
+
+  const vtOptions = useMemo<MSOpt[]>(() =>
+    [...new Map(slots.filter(s => s.vehicle_type?.name)
+      .map(s => [s.vehicle_type!.name, { value: s.vehicle_type!.name, label: s.vehicle_type!.name }])
+    ).values()],
+    [slots]
+  )
+
+  const filtered = useMemo(() =>
+    vtFilter.length ? slots.filter(s => s.vehicle_type?.name && vtFilter.includes(s.vehicle_type.name)) : slots,
+    [slots, vtFilter]
+  )
+
   return (
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
-      <DialogContent className="max-w-sm">
-        <DialogHeader>
-          <DialogTitle>Tình trạng khung giờ</DialogTitle>
-          <p className="text-xs text-slate-500 mt-0.5">{warehouseName} · {formatDate(date)}</p>
+      <DialogContent className="max-w-2xl flex flex-col" style={{ maxHeight: '85vh' }}>
+        <DialogHeader className="shrink-0">
+          <DialogTitle>Tình trạng khung giờ — {warehouseName}</DialogTitle>
         </DialogHeader>
-        <div className="space-y-1.5 py-1 max-h-80 overflow-y-auto">
-          {slots.length === 0 ? (
-            <p className="text-xs text-slate-400 text-center py-6">Chưa có khung giờ nào</p>
-          ) : slots.map(s => {
-            const pct = s.max_vehicles > 0 ? s.booked_count / s.max_vehicles : 0
-            const full = s.booked_count >= s.max_vehicles
-            return (
-              <div key={s.id} className="flex items-center gap-2 border rounded px-3 py-2">
-                <span className="font-mono font-semibold text-sm w-24 shrink-0">
-                  {s.time_from.slice(0, 5)}–{s.time_to.slice(0, 5)}
-                </span>
-                <div className="flex flex-col gap-0.5 shrink-0">
-                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                    s.cargo_type === 'ALL' ? 'bg-slate-100 text-slate-600' : 'bg-orange-100 text-orange-700'
-                  }`}>
-                    {s.cargo_type === 'ALL' ? 'Tất cả' : s.cargo_type}
-                  </span>
-                  {s.vehicle_type?.name && (
-                    <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-700">
-                      {s.vehicle_type.name}
-                    </span>
-                  )}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className={`text-xs font-semibold tabular-nums ${full ? 'text-red-600' : 'text-green-600'}`}>
-                      {s.booked_count}/{s.max_vehicles} xe
-                    </span>
-                    {full && <span className="text-[9px] text-red-500 font-medium">Đầy</span>}
-                  </div>
-                  <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                    <div
-                      className={`h-full rounded-full transition-all ${pct >= 1 ? 'bg-red-400' : pct >= 0.7 ? 'bg-amber-400' : 'bg-green-400'}`}
-                      style={{ width: `${Math.min(pct * 100, 100)}%` }}
-                    />
-                  </div>
-                </div>
-              </div>
-            )
-          })}
+
+        {/* Filters */}
+        <div className="flex items-center gap-2 flex-wrap shrink-0 pb-2 border-b">
+          <Input
+            type="date"
+            value={date}
+            onChange={e => setDate(e.target.value)}
+            className="h-8 text-sm w-36"
+          />
+          <MultiSelectFilter
+            label="Loại xe"
+            options={vtOptions}
+            selected={vtFilter}
+            onChange={setVtFilter}
+          />
+          {!isLoading && (
+            <span className="text-xs text-slate-400 ml-auto">
+              {filtered.length} khung giờ
+            </span>
+          )}
         </div>
-        <DialogFooter>
+
+        {/* Slot list */}
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          {isLoading ? (
+            <p className="text-xs text-slate-400 text-center py-10">Đang tải...</p>
+          ) : filtered.length === 0 ? (
+            <p className="text-xs text-slate-400 text-center py-10">Chưa có khung giờ nào</p>
+          ) : (
+            <div className="space-y-1.5 py-2">
+              {filtered.map(s => {
+                const pct = s.max_vehicles > 0 ? s.booked_count / s.max_vehicles : 0
+                const full = s.booked_count >= s.max_vehicles
+                return (
+                  <div key={s.id} className="flex items-center gap-3 border rounded px-3 py-2.5">
+                    <span className="font-mono font-semibold text-sm w-28 shrink-0">
+                      {s.time_from.slice(0, 5)}–{s.time_to.slice(0, 5)}
+                    </span>
+                    <div className="flex gap-1 shrink-0">
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                        s.cargo_type === 'ALL' ? 'bg-slate-100 text-slate-600' : 'bg-orange-100 text-orange-700'
+                      }`}>
+                        {s.cargo_type === 'ALL' ? 'Tất cả' : s.cargo_type}
+                      </span>
+                      {s.vehicle_type?.name && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-700">
+                          {s.vehicle_type.name}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className={`text-sm font-semibold tabular-nums ${full ? 'text-red-600' : 'text-green-600'}`}>
+                          {s.booked_count} / {s.max_vehicles} xe
+                        </span>
+                        {full && <span className="text-[10px] text-red-500 font-medium">Đầy</span>}
+                      </div>
+                      <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all ${pct >= 1 ? 'bg-red-400' : pct >= 0.7 ? 'bg-amber-400' : 'bg-green-400'}`}
+                          style={{ width: `${Math.min(pct * 100, 100)}%` }}
+                        />
+                      </div>
+                    </div>
+                    <span className="text-xs text-slate-400 tabular-nums shrink-0 w-10 text-right">
+                      {s.max_vehicles > 0 ? Math.round(pct * 100) : 0}%
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
+        <DialogFooter className="shrink-0 border-t pt-3">
           <Button variant="outline" size="sm" onClick={onClose}>Đóng</Button>
         </DialogFooter>
       </DialogContent>
@@ -1138,9 +1192,9 @@ export default function TMSBookings() {
       <SlotOverviewDialog
         open={slotOverviewOpen}
         onClose={() => setSlotOverviewOpen(false)}
-        date={date}
+        defaultDate={date}
+        warehouseId={warehouseId}
         warehouseName={warehouseName}
-        slots={slotsList as DeliverySlot[]}
       />
       <ExcelUploadDialog
         open={uploadOpen}

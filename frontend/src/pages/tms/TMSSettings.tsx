@@ -10,6 +10,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import {
   useWarehouses, useWarehouseTypes,
   useVehicleTypes, useCreateVehicleType, useUpdateVehicleType,
@@ -334,7 +335,7 @@ export default function TMSSettings() {
   const { data: warehouses = [] } = useWarehouses(true)
   const [warehouseId, setWarehouseId] = useState('')
 
-  // Cargo options từ LookupValue(warehouse_type) — master data tập trung
+  // Cargo options từ LookupValue(warehouse_type)
   const { data: whTypes = [] } = useWarehouseTypes()
   const cargoOptions = whTypes.map(t => t.value)
 
@@ -343,14 +344,16 @@ export default function TMSSettings() {
   const [editingVT, setEditingVT] = useState<TmsVehicleType | null>(null)
   const [showVTDlg, setShowVTDlg] = useState(false)
 
-  // SlotTemplate — chỉ load khi đã chọn kho
-  const [filterVTId, setFilterVTId] = useState('__all__')
-  const [filterDir,  setFilterDir]  = useState('__all__')
+  // SlotTemplate — chỉ load khi đã chọn kho, filter client-side
+  const [filterVTIds, setFilterVTIds] = useState<string[]>([])
+  const [filterDirs,  setFilterDirs]  = useState<string[]>([])
   const { data: templates = [], isLoading: loadingST } = useSlotTemplates({
-    warehouse_id:    warehouseId || undefined,
-    vehicle_type_id: filterVTId === '__all__' ? undefined : filterVTId,
-    direction:       filterDir  === '__all__' ? undefined : filterDir,
+    warehouse_id: warehouseId || undefined,
   })
+  const filteredTemplates = templates.filter(st =>
+    (filterVTIds.length === 0 || filterVTIds.includes(st.vehicle_type_id)) &&
+    (filterDirs.length  === 0 || filterDirs.includes(st.direction))
+  )
   const { mutate: deleteST, isPending: deletingST } = useDeleteSlotTemplate()
   const [editingST, setEditingST] = useState<SlotTemplate | null>(null)
   const [showSTDlg, setShowSTDlg] = useState(false)
@@ -361,20 +364,21 @@ export default function TMSSettings() {
   const [editingCo, setEditingCo] = useState<TransportCompany | null>(null)
   const [showCoDlg, setShowCoDlg] = useState(false)
 
-  // Vehicle
-  const [filterNcc, setFilterNcc] = useState('__all__')
-  const { data: vehicles = [], isLoading: loadingV } = useTmsVehicles({
-    ncc_id: filterNcc === '__all__' ? undefined : filterNcc,
-  })
+  // Vehicle — load tất cả, filter client-side
+  const [filterNccs, setFilterNccs] = useState<string[]>([])
+  const { data: vehicles = [], isLoading: loadingV } = useTmsVehicles({})
+  const filteredVehicles = filterNccs.length === 0
+    ? (vehicles as TmsVehicle[])
+    : (vehicles as TmsVehicle[]).filter(v => filterNccs.includes(v.ncc_id))
   const { mutate: deleteV, isPending: deletingV } = useDeleteTmsVehicle()
   const [editingV, setEditingV] = useState<TmsVehicle | null>(null)
   const [showVDlg, setShowVDlg] = useState(false)
 
-  const selectedWarehouse = warehouses.find((w: any) => w.id === warehouseId)
+  const selectedWarehouse = (warehouses as { id: string; name: string }[]).find(w => w.id === warehouseId)
 
   return (
     <div className="p-4 space-y-4 max-w-7xl mx-auto">
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold text-slate-800 flex items-center gap-2">
             <Settings2 className="h-5 w-5 text-slate-500" />
@@ -392,7 +396,7 @@ export default function TMSSettings() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="__none__">— Chọn kho —</SelectItem>
-              {warehouses.map((w: any) => (
+              {(warehouses as { id: string; name: string }[]).map(w => (
                 <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
               ))}
             </SelectContent>
@@ -401,12 +405,14 @@ export default function TMSSettings() {
       </div>
 
       <Tabs defaultValue="vehicle-types">
-        <TabsList className="mb-2">
-          <TabsTrigger value="vehicle-types"  className="gap-1.5"><Truck className="h-3.5 w-3.5" /> Loại xe</TabsTrigger>
-          <TabsTrigger value="slot-templates" className="gap-1.5"><Clock className="h-3.5 w-3.5" /> Khung giờ</TabsTrigger>
-          <TabsTrigger value="companies"      className="gap-1.5"><Building2 className="h-3.5 w-3.5" /> ĐVVT / NCC</TabsTrigger>
-          <TabsTrigger value="vehicles"       className="gap-1.5"><Truck className="h-3.5 w-3.5" /> Xe</TabsTrigger>
-        </TabsList>
+        <div className="overflow-x-auto mb-2">
+          <TabsList className="w-max">
+            <TabsTrigger value="vehicle-types"  className="gap-1.5"><Truck className="h-3.5 w-3.5" /> Loại xe</TabsTrigger>
+            <TabsTrigger value="slot-templates" className="gap-1.5"><Clock className="h-3.5 w-3.5" /> Khung giờ</TabsTrigger>
+            <TabsTrigger value="companies"      className="gap-1.5"><Building2 className="h-3.5 w-3.5" /> ĐVVT / NCC</TabsTrigger>
+            <TabsTrigger value="vehicles"       className="gap-1.5"><Truck className="h-3.5 w-3.5" /> Xe</TabsTrigger>
+          </TabsList>
+        </div>
 
         {/* ── Tab: Loại xe ── */}
         <TabsContent value="vehicle-types" className="space-y-3">
@@ -424,24 +430,24 @@ export default function TMSSettings() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="px-3 py-2 text-xs">Mã</TableHead>
-                      <TableHead className="px-3 py-2 text-xs">Tên loại xe</TableHead>
-                      <TableHead className="px-3 py-2 text-xs">Trạng thái</TableHead>
-                      {canSlots && <TableHead className="px-3 py-2 w-12" />}
+                      <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Mã</TableHead>
+                      <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Tên loại xe</TableHead>
+                      <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Trạng thái</TableHead>
+                      {canSlots && <TableHead className="px-2 py-1.5 w-12" />}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {vehicleTypes.map(vt => (
-                      <TableRow key={vt.id} className="text-sm">
-                        <TableCell className="px-3 py-2 font-mono font-semibold text-[11px] text-slate-600">{vt.code}</TableCell>
-                        <TableCell className="px-3 py-2 font-medium text-slate-800">{vt.name}</TableCell>
-                        <TableCell className="px-3 py-2">
-                          <Badge variant={vt.is_active ? 'default' : 'secondary'} className="text-xs">
+                      <TableRow key={vt.id}>
+                        <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-600">{vt.code}</TableCell>
+                        <TableCell className="px-2 py-1 text-[10px] font-medium text-slate-800">{vt.name}</TableCell>
+                        <TableCell className="px-2 py-1">
+                          <Badge variant={vt.is_active ? 'default' : 'secondary'} className="text-[10px]">
                             {vt.is_active ? 'Hoạt động' : 'Tạm dừng'}
                           </Badge>
                         </TableCell>
                         {canSlots && (
-                          <TableCell className="px-2 py-2">
+                          <TableCell className="px-2 py-1">
                             <button className="text-slate-400 hover:text-blue-500 transition-colors p-1"
                               onClick={() => { setEditingVT(vt); setShowVTDlg(true) }}>
                               <Pencil className="h-3.5 w-3.5" />
@@ -470,7 +476,7 @@ export default function TMSSettings() {
               <div className="flex items-center justify-between">
                 <p className="text-xs text-slate-500">
                   <span className="font-medium text-slate-700">{selectedWarehouse?.name}</span>
-                  {' '}· {templates.length} template
+                  {' '}· {filteredTemplates.length} template
                 </p>
                 {canSlots && (
                   <Button size="sm" className="gap-1.5" onClick={() => { setEditingST(null); setShowSTDlg(true) }}>
@@ -479,26 +485,25 @@ export default function TMSSettings() {
                 )}
               </div>
               <div className="flex gap-2 flex-wrap">
-                <Select value={filterVTId} onValueChange={setFilterVTId}>
-                  <SelectTrigger className="h-8 text-sm w-[180px]">
-                    <SelectValue placeholder="Tất cả loại xe" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__all__">Tất cả loại xe</SelectItem>
-                    {vehicleTypes.map(vt => <SelectItem key={vt.id} value={vt.id}>{vt.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                <Select value={filterDir} onValueChange={setFilterDir}>
-                  <SelectTrigger className="h-8 text-sm w-[150px]"><SelectValue placeholder="Tất cả hướng" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__all__">Tất cả hướng</SelectItem>
-                    <SelectItem value="OUTBOUND">Xuất hàng</SelectItem>
-                    <SelectItem value="INBOUND">Nhập hàng</SelectItem>
-                  </SelectContent>
-                </Select>
+                <MultiSelectFilter
+                  label="Loại xe"
+                  options={vehicleTypes.map(vt => ({ value: vt.id, label: vt.name }))}
+                  selected={filterVTIds}
+                  onChange={setFilterVTIds}
+                />
+                <MultiSelectFilter
+                  label="Hướng"
+                  options={[
+                    { value: 'OUTBOUND', label: 'Xuất hàng' },
+                    { value: 'INBOUND',  label: 'Nhập hàng' },
+                  ]}
+                  selected={filterDirs}
+                  onChange={setFilterDirs}
+                  searchable={false}
+                />
               </div>
               <Card>
-                {loadingST ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> : templates.length === 0 ? (
+                {loadingST ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> : filteredTemplates.length === 0 ? (
                   <div className="p-12 text-center text-slate-400 space-y-2">
                     <Clock className="h-10 w-10 mx-auto opacity-30" />
                     <p className="text-sm">Chưa có khung giờ nào cho kho này</p>
@@ -511,38 +516,38 @@ export default function TMSSettings() {
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead className="px-3 py-2 text-xs">Loại xe</TableHead>
-                          <TableHead className="px-3 py-2 text-xs">Hướng</TableHead>
-                          <TableHead className="px-3 py-2 text-xs">Loại hàng</TableHead>
-                          <TableHead className="px-3 py-2 text-xs">Thứ</TableHead>
-                          <TableHead className="px-3 py-2 text-xs">Khung giờ</TableHead>
-                          <TableHead className="px-3 py-2 text-xs text-right">Max xe</TableHead>
-                          <TableHead className="px-3 py-2 text-xs">Trạng thái</TableHead>
-                          {canSlots && <TableHead className="px-3 py-2 w-16" />}
+                          <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Loại xe</TableHead>
+                          <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Hướng</TableHead>
+                          <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Loại hàng</TableHead>
+                          <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Thứ</TableHead>
+                          <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Khung giờ</TableHead>
+                          <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right">Max xe</TableHead>
+                          <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Trạng thái</TableHead>
+                          {canSlots && <TableHead className="px-2 py-1.5 w-16" />}
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {templates.map(st => (
-                          <TableRow key={st.id} className={`text-sm ${!st.is_active ? 'opacity-50' : ''}`}>
-                            <TableCell className="px-3 py-1.5 font-medium text-slate-700">{st.vehicle_type?.name ?? '—'}</TableCell>
-                            <TableCell className="px-3 py-1.5">
-                              <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${st.direction === 'OUTBOUND' ? 'bg-blue-50 text-blue-700' : 'bg-green-50 text-green-700'}`}>
+                        {filteredTemplates.map(st => (
+                          <TableRow key={st.id} className={!st.is_active ? 'opacity-50' : ''}>
+                            <TableCell className="px-2 py-1 text-[10px] font-medium text-slate-700">{st.vehicle_type?.name ?? '—'}</TableCell>
+                            <TableCell className="px-2 py-1">
+                              <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${st.direction === 'OUTBOUND' ? 'bg-blue-50 text-blue-700' : 'bg-green-50 text-green-700'}`}>
                                 {st.direction === 'OUTBOUND' ? 'Xuất' : 'Nhập'}
                               </span>
                             </TableCell>
-                            <TableCell className="px-3 py-1.5 text-xs text-slate-500">{st.cargo_type === 'ALL' ? 'Tất cả' : st.cargo_type}</TableCell>
-                            <TableCell className="px-3 py-1.5 font-semibold text-xs text-slate-700">{DOW_LABEL[st.day_of_week] ?? st.day_of_week}</TableCell>
-                            <TableCell className="px-3 py-1.5 font-mono text-xs text-slate-700">
+                            <TableCell className="px-2 py-1 text-[10px] text-slate-500">{st.cargo_type === 'ALL' ? 'Tất cả' : st.cargo_type}</TableCell>
+                            <TableCell className="px-2 py-1 font-semibold text-[10px] text-slate-700">{DOW_LABEL[st.day_of_week] ?? st.day_of_week}</TableCell>
+                            <TableCell className="px-2 py-1 font-mono text-[10px] text-slate-700">
                               {st.time_from?.slice(0,5)} – {st.time_to?.slice(0,5)}
                             </TableCell>
-                            <TableCell className="px-3 py-1.5 text-right font-semibold tabular-nums">{st.max_vehicles}</TableCell>
-                            <TableCell className="px-3 py-1.5">
-                              <Badge variant={st.is_active ? 'default' : 'secondary'} className="text-xs">
+                            <TableCell className="px-2 py-1 text-right font-semibold tabular-nums text-[10px]">{st.max_vehicles}</TableCell>
+                            <TableCell className="px-2 py-1">
+                              <Badge variant={st.is_active ? 'default' : 'secondary'} className="text-[10px]">
                                 {st.is_active ? 'Hoạt động' : 'Tạm dừng'}
                               </Badge>
                             </TableCell>
                             {canSlots && (
-                              <TableCell className="px-2 py-1.5">
+                              <TableCell className="px-2 py-1">
                                 <div className="flex items-center gap-0.5">
                                   <button className="text-slate-400 hover:text-blue-500 p-1"
                                     onClick={() => { setEditingST(st); setShowSTDlg(true) }}>
@@ -591,28 +596,28 @@ export default function TMSSettings() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="px-3 py-2 text-xs">Mã</TableHead>
-                      <TableHead className="px-3 py-2 text-xs">Tên ĐVVT / NCC</TableHead>
-                      <TableHead className="px-3 py-2 text-xs">Người liên hệ</TableHead>
-                      <TableHead className="px-3 py-2 text-xs">SĐT</TableHead>
-                      <TableHead className="px-3 py-2 text-xs">Trạng thái</TableHead>
-                      {canCompanies && <TableHead className="px-3 py-2 w-12" />}
+                      <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Mã</TableHead>
+                      <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Tên ĐVVT / NCC</TableHead>
+                      <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Người liên hệ</TableHead>
+                      <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">SĐT</TableHead>
+                      <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Trạng thái</TableHead>
+                      {canCompanies && <TableHead className="px-2 py-1.5 w-16" />}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {companies.map(co => (
-                      <TableRow key={co.id} className="text-sm">
-                        <TableCell className="px-3 py-2 font-mono font-semibold text-[11px] text-slate-600">{co.code}</TableCell>
-                        <TableCell className="px-3 py-2 font-medium text-slate-800">{co.name}</TableCell>
-                        <TableCell className="px-3 py-2 text-slate-600">{co.contact_name ?? '—'}</TableCell>
-                        <TableCell className="px-3 py-2 text-slate-600">{co.contact_phone ?? '—'}</TableCell>
-                        <TableCell className="px-3 py-2">
-                          <Badge variant={co.is_active ? 'default' : 'secondary'} className="text-xs">
+                      <TableRow key={co.id}>
+                        <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-600">{co.code}</TableCell>
+                        <TableCell className="px-2 py-1 text-[10px] font-medium text-slate-800">{co.name}</TableCell>
+                        <TableCell className="px-2 py-1 text-[10px] text-slate-600">{co.contact_name ?? '—'}</TableCell>
+                        <TableCell className="px-2 py-1 text-[10px] text-slate-600">{co.contact_phone ?? '—'}</TableCell>
+                        <TableCell className="px-2 py-1">
+                          <Badge variant={co.is_active ? 'default' : 'secondary'} className="text-[10px]">
                             {co.is_active ? 'Hoạt động' : 'Tạm dừng'}
                           </Badge>
                         </TableCell>
                         {canCompanies && (
-                          <TableCell className="px-2 py-2">
+                          <TableCell className="px-2 py-1">
                             <div className="flex items-center gap-0.5">
                               <button className="text-slate-400 hover:text-blue-500 transition-colors p-1"
                                 onClick={() => { setEditingCo(co); setShowCoDlg(true) }}>
@@ -641,25 +646,21 @@ export default function TMSSettings() {
         {/* ── Tab: Xe ── */}
         <TabsContent value="vehicles" className="space-y-3">
           <div className="flex items-center justify-between">
-            <p className="text-xs text-slate-500">{vehicles.length} xe</p>
+            <p className="text-xs text-slate-500">{filteredVehicles.length} xe</p>
             {canCompanies && (
               <Button size="sm" className="gap-1.5" onClick={() => { setEditingV(null); setShowVDlg(true) }}>
                 <Plus className="h-4 w-4" /> Thêm xe
               </Button>
             )}
           </div>
-          <Select value={filterNcc} onValueChange={setFilterNcc}>
-            <SelectTrigger className="h-8 text-sm w-[220px]">
-              <Building2 className="h-3.5 w-3.5 mr-1.5 text-slate-400 shrink-0" />
-              <SelectValue placeholder="Tất cả ĐVVT" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">Tất cả ĐVVT</SelectItem>
-              {companies.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
-            </SelectContent>
-          </Select>
+          <MultiSelectFilter
+            label="ĐVVT / NCC"
+            options={companies.map(c => ({ value: c.id, label: c.name }))}
+            selected={filterNccs}
+            onChange={setFilterNccs}
+          />
           <Card>
-            {loadingV ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> : vehicles.length === 0 ? (
+            {loadingV ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> : filteredVehicles.length === 0 ? (
               <div className="p-12 text-center text-slate-400 space-y-2">
                 <Truck className="h-10 w-10 mx-auto opacity-30" />
                 <p className="text-sm">Chưa có xe nào</p>
@@ -672,26 +673,26 @@ export default function TMSSettings() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="px-3 py-2 text-xs">Biển số</TableHead>
-                      <TableHead className="px-3 py-2 text-xs">Loại xe</TableHead>
-                      <TableHead className="px-3 py-2 text-xs">ĐVVT / NCC</TableHead>
-                      <TableHead className="px-3 py-2 text-xs">Trạng thái</TableHead>
-                      {canCompanies && <TableHead className="px-3 py-2 w-12" />}
+                      <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Biển số</TableHead>
+                      <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Loại xe</TableHead>
+                      <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">ĐVVT / NCC</TableHead>
+                      <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Trạng thái</TableHead>
+                      {canCompanies && <TableHead className="px-2 py-1.5 w-16" />}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {vehicles.map(v => (
-                      <TableRow key={v.id} className={`text-sm ${!v.is_active ? 'opacity-50' : ''}`}>
-                        <TableCell className="px-3 py-2 font-mono font-semibold text-slate-800">{v.license_plate}</TableCell>
-                        <TableCell className="px-3 py-2 text-slate-700">{v.vehicle_type?.name ?? '—'}</TableCell>
-                        <TableCell className="px-3 py-2 text-slate-600">{v.ncc?.name ?? '—'}</TableCell>
-                        <TableCell className="px-3 py-2">
-                          <Badge variant={v.is_active ? 'default' : 'secondary'} className="text-xs">
+                    {filteredVehicles.map(v => (
+                      <TableRow key={v.id} className={!v.is_active ? 'opacity-50' : ''}>
+                        <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-800">{v.license_plate}</TableCell>
+                        <TableCell className="px-2 py-1 text-[10px] text-slate-700">{v.vehicle_type?.name ?? '—'}</TableCell>
+                        <TableCell className="px-2 py-1 text-[10px] text-slate-600">{v.ncc?.name ?? '—'}</TableCell>
+                        <TableCell className="px-2 py-1">
+                          <Badge variant={v.is_active ? 'default' : 'secondary'} className="text-[10px]">
                             {v.is_active ? 'Hoạt động' : 'Tạm dừng'}
                           </Badge>
                         </TableCell>
                         {canCompanies && (
-                          <TableCell className="px-2 py-2">
+                          <TableCell className="px-2 py-1">
                             <div className="flex items-center gap-0.5">
                               <button className="text-slate-400 hover:text-blue-500 transition-colors p-1"
                                 onClick={() => { setEditingV(v); setShowVDlg(true) }}>

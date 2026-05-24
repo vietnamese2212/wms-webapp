@@ -499,7 +499,7 @@ function MatPicker({ value, matName, onSelect, disabled }: {
         placeholder="Tìm mã / tên hàng…"
       />
       {matName && !open && (
-        <p className="text-[9px] text-slate-500 mt-0.5 truncate">{matName}</p>
+        <p className="text-[9px] text-slate-500 mt-0.5">{matName}</p>
       )}
       {open && search.length > 1 && mats.length > 0 && (
         <div className="absolute top-full left-0 right-0 bg-white border rounded shadow-lg z-50 max-h-48 overflow-y-auto">
@@ -732,8 +732,7 @@ function GDOFormBody({
               <thead>
                 <tr className="bg-slate-50">
                   <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-5">#</th>
-                  <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-32">Mã hàng</th>
-                  <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-20">Loại kho</th>
+                  <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left">Mã hàng</th>
                   <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right w-[72px]">Thùng</th>
                   <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right w-[72px]">Nhặt lẻ</th>
                   <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left min-w-[120px]">Ghi chú</th>
@@ -749,7 +748,7 @@ function GDOFormBody({
                   return (
                     <tr key={item.id} className={`border-t border-slate-100 ${rowCls}`}>
                       <td className="px-2 py-1.5 text-[9px] text-slate-400 align-middle">{idx + 1}</td>
-                      <td className="px-2 py-1 align-top w-32 max-w-[8rem]">
+                      <td className="px-2 py-1 align-top">
                         <MatPicker
                           value={item.material_code}
                           matName={item.mat_name}
@@ -760,11 +759,6 @@ function GDOFormBody({
                           <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium mt-0.5 inline-block ${fullScanned ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>
                             Đã xuất {item.min_cartons} thùng
                           </span>
-                        )}
-                      </td>
-                      <td className="px-2 py-1 align-middle">
-                        {item.category && (
-                          <span className="text-[9px] bg-white text-slate-500 px-1.5 py-0.5 rounded border border-slate-200 whitespace-nowrap">{item.category}</span>
                         )}
                       </td>
                       <td className="px-2 py-1 align-top">

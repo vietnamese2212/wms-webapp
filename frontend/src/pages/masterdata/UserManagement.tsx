@@ -208,6 +208,9 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
   const isDispatcherRole = selectedDeptName === 'Đơn vị vận tải' && !!jobTitleId && !isDriverRole
 
   const { data: allVehicles = [] } = useTmsVehicles(isDriverRole ? { is_active: 'true' } : undefined)
+  const selectedVehicleNcc = isDriverRole && empCode
+    ? (allVehicles as TmsVehicle[]).find(v => v.license_plate === empCode)?.ncc?.name ?? null
+    : null
 
   const deptIdMounted      = useRef(false)
   const defaultCatApplied  = useRef(false)
@@ -366,6 +369,12 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
               <Input value={phone} onChange={e => setPhone(e.target.value)} />
             </div>
           </div>
+
+          {selectedVehicleNcc && (
+            <p className="text-xs text-slate-500 -mt-1">
+              ĐVVT: <span className="font-medium text-slate-700">{selectedVehicleNcc}</span>
+            </p>
+          )}
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">

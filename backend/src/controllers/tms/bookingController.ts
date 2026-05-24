@@ -86,7 +86,22 @@ export async function bulkCreateBookings(req: Request, res: Response) {
     const now = new Date().toISOString()
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const rows = (bookings as any[])
+    const inputList = bookings as any[]
+
+    // Check trùng vehicle_code trong DB
+    const incomingCodes = inputList.map(b => b.vehicle_code).filter(Boolean) as string[]
+    if (incomingCodes.length) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: existing } = await (supabase.from('DeliveryBooking') as any)
+        .select('vehicle_code')
+        .in('vehicle_code', incomingCodes)
+      if (existing?.length) {
+        const dupes = (existing as { vehicle_code: string }[]).map(r => r.vehicle_code).join(', ')
+        return fail(res, `Số xe đã tồn tại trong hệ thống: ${dupes}`)
+      }
+    }
+
+    const rows = inputList
       .filter(b => b.date && b.warehouse_id)
       .map(b => ({
         id: randomUUID(),
@@ -100,6 +115,7 @@ export async function bulkCreateBookings(req: Request, res: Response) {
         tonnage: b.tonnage ?? null,
         warehouse_type: b.warehouse_type || null,
         vehicle_type: b.vehicle_type || null,
+        vehicle_code: b.vehicle_code || null,
         status: 'PENDING',
         created_by: user?.emp_id || null,
         updated_by: user?.emp_id || null,
@@ -110,8 +126,11 @@ export async function bulkCreateBookings(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await (supabase.from('DeliveryBooking') as any).insert(rows).select('id')
-    if (error) return fail(res, error.message)
-    return ok(res, { inserted: data.length, skipped: bookings.length - rows.length }, 201)
+    if (error) {
+      if (error.code === '23505') return fail(res, 'Số xe bị trùng, vui lòng kiểm tra lại file')
+      return fail(res, error.message)
+    }
+    return ok(res, { inserted: data.length, skipped: 0 }, 201)
   } catch (e) { return fail(res, String(e)) }
 }
 

@@ -379,6 +379,7 @@ type ImportRow = {
   date: string | null; warehouse_id: string | null; warehouse_name: string
   npp_name: string; warehouse_type: string; vehicle_type: string
   ncc_code: string; ncc_id: string | null
+  vehicle_code: string
   box_count: number | null; pallet_count: number | null; tonnage: number | null
   gdo_refs: string; notes: string; valid: boolean; error: string
 }
@@ -390,6 +391,7 @@ const EXCEL_COL_MAP: Record<string, string> = {
   'loại kho': 'warehouse_type', 'warehouse type': 'warehouse_type',
   'loại xe': 'vehicle_type', 'vehicle type': 'vehicle_type',
   'đvvt': 'ncc_code', 'dvvt': 'ncc_code', 'đơn vị vận tải': 'ncc_code', 'transport company': 'ncc_code',
+  'số xe': 'vehicle_code', 'so xe': 'vehicle_code', 'mã xe': 'vehicle_code',
   'thùng': 'box_count', 'số thùng': 'box_count', 'box': 'box_count',
   'pallet': 'pallet_count', 'số pallet': 'pallet_count',
   'tấn': 'tonnage', 'số tấn': 'tonnage', 'ton': 'tonnage',
@@ -440,6 +442,9 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
         const ws = wb.Sheets[wb.SheetNames[0]]
         const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' })
 
+        const VEHICLE_CODE_RE = /^\d{6}_[A-Za-z0-9]+_\d+$/
+        const seenCodes = new Set<string>()
+
         const parsed: ImportRow[] = raw.map(r => {
           const norm: Record<string, unknown> = {}
           for (const [k, v] of Object.entries(r)) {
@@ -447,13 +452,14 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
             if (mapped) norm[mapped] = v
           }
 
-          const whName = String(norm.warehouse_name ?? '').trim()
-          const whId = whByName[whName.toLowerCase()] ?? null
-          const date = parseExcelDate(norm.date)
-          const whType  = String(norm.warehouse_type ?? '').trim()
-          const vtName  = String(norm.vehicle_type ?? '').trim()
-          const nccCode = String(norm.ncc_code ?? '').trim()
-          const nccId   = nccCode ? (nccByCode[nccCode.toLowerCase()] ?? null) : null
+          const whName      = String(norm.warehouse_name ?? '').trim()
+          const whId        = whByName[whName.toLowerCase()] ?? null
+          const date        = parseExcelDate(norm.date)
+          const whType      = String(norm.warehouse_type ?? '').trim()
+          const vtName      = String(norm.vehicle_type ?? '').trim()
+          const nccCode     = String(norm.ncc_code ?? '').trim()
+          const nccId       = nccCode ? (nccByCode[nccCode.toLowerCase()] ?? null) : null
+          const vehicleCode = String(norm.vehicle_code ?? '').trim()
           const errors: string[] = []
           if (!date) errors.push('thiếu ngày')
           if (whName && !whId) errors.push(`kho "${whName}" không tìm thấy`)
@@ -461,6 +467,11 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
           if (whType && validWhTypes.size > 0 && !validWhTypes.has(whType.toLowerCase())) errors.push(`loại kho "${whType}" không hợp lệ`)
           if (vtName && validVtNames.size > 0 && !validVtNames.has(vtName.toLowerCase())) errors.push(`loại xe "${vtName}" không hợp lệ`)
           if (nccCode && !nccId) errors.push(`ĐVVT "${nccCode}" không tìm thấy`)
+          if (vehicleCode) {
+            if (!VEHICLE_CODE_RE.test(vehicleCode)) errors.push(`số xe "${vehicleCode}" sai định dạng (vd: 240526_BV_1)`)
+            else if (seenCodes.has(vehicleCode.toUpperCase())) errors.push(`số xe "${vehicleCode}" bị trùng trong file`)
+            else seenCodes.add(vehicleCode.toUpperCase())
+          }
 
           return {
             date, warehouse_id: whId, warehouse_name: whName,
@@ -468,6 +479,7 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
             warehouse_type: whType,
             vehicle_type: vtName,
             ncc_code: nccCode, ncc_id: nccId,
+            vehicle_code: vehicleCode,
             box_count: norm.box_count ? Number(norm.box_count) : null,
             pallet_count: norm.pallet_count ? Number(norm.pallet_count) : null,
             tonnage: norm.tonnage ? Number(norm.tonnage) : null,
@@ -499,6 +511,7 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
         ncc_id: r.ncc_id || undefined,
         warehouse_type: r.warehouse_type || undefined,
         vehicle_type: r.vehicle_type || undefined,
+        vehicle_code: r.vehicle_code || undefined,
         box_count: r.box_count, pallet_count: r.pallet_count, tonnage: r.tonnage,
         gdo_refs: r.gdo_refs || undefined,
         notes: r.notes || undefined,
@@ -514,8 +527,8 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
 
   const downloadTemplate = () => {
     const ws = XLSX.utils.aoa_to_sheet([
-      ['NPP', 'Kho', 'Ngày', 'Loại kho', 'Loại xe', 'ĐVVT', 'Thùng', 'Pallet', 'Tấn', 'GDO', 'Ghi chú'],
-      ['Tên NPP mẫu', 'Kho Ba Vì', '21/05/2026', 'Khô', 'Xe tải 5T', 'NCC001', 100, 5, 2.5, 'GDO-001', ''],
+      ['Số xe', 'NPP', 'Kho', 'Ngày', 'Loại kho', 'Loại xe', 'ĐVVT', 'Thùng', 'Pallet', 'Tấn', 'GDO', 'Ghi chú'],
+      ['240526_BV_1', 'Tên NPP mẫu', 'Kho Ba Vì', '21/05/2026', 'Khô', 'Xe tải 5T', 'NCC001', 100, 5, 2.5, 'GDO-001', ''],
     ])
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Import')
@@ -560,7 +573,7 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
                   <table className="min-w-full text-[10px]">
                     <thead className="bg-slate-50 sticky top-0">
                       <tr>
-                        {['#', 'NPP', 'Kho', 'Ngày', 'L.kho', 'L.xe', 'ĐVVT', 'Thùng', 'Pallet', 'Tấn', 'Lỗi'].map(h => (
+                        {['#', 'Số xe', 'NPP', 'Kho', 'Ngày', 'L.kho', 'L.xe', 'ĐVVT', 'Thùng', 'Pallet', 'Tấn', 'Lỗi'].map(h => (
                           <th key={h} className="px-2 py-1 text-left text-[9px] text-slate-500 font-medium whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
@@ -569,6 +582,7 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
                       {rows.map((r, i) => (
                         <tr key={i} className={r.valid ? '' : 'bg-red-50'}>
                           <td className="px-2 py-0.5 text-slate-400">{i + 1}</td>
+                          <td className="px-2 py-0.5 font-mono">{r.vehicle_code || '—'}</td>
                           <td className="px-2 py-0.5 max-w-[100px] truncate">{r.npp_name || '—'}</td>
                           <td className="px-2 py-0.5">{r.warehouse_name || '—'}</td>
                           <td className="px-2 py-0.5 font-mono">{r.date || '—'}</td>

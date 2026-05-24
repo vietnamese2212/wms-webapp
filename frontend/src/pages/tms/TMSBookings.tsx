@@ -12,7 +12,7 @@ import type { MSOpt } from '@/components/shared/MultiSelectFilter'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useAuthStore } from '@/stores/authStore'
 import {
-  useWarehouses, useMaterialCategories, useVehicleTypes, useTransportCompanies,
+  useWarehouses, useWarehouseTypes, useVehicleTypes, useTransportCompanies,
   useDeliverySlots, useGenerateSlots,
   useDeliveryBookings, useCreateBooking, useUpdateBooking, useDeleteBooking, useBulkCreateBookings,
 } from '@/api/hooks'
@@ -205,7 +205,7 @@ function CreateEditDialog({ open, booking, onClose, defaultDate, defaultWarehous
   defaultDate: string; defaultWarehouseId: string
 }) {
   const { data: warehouses = [] } = useWarehouses(true)
-  const { data: categories = [] } = useMaterialCategories()
+  const { data: whTypesData = [] } = useWarehouseTypes()
   const { data: vehicleTypes = [] } = useVehicleTypes(true)
   const { data: transportCompanies = [] } = useTransportCompanies(true)
   const createBooking = useCreateBooking()
@@ -316,7 +316,7 @@ function CreateEditDialog({ open, booking, onClose, defaultDate, defaultWarehous
                 <SelectTrigger className="h-8 text-sm mt-1"><SelectValue placeholder="Chọn loại kho" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__none__">— Không chọn —</SelectItem>
-                  {(categories as string[]).map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                  {whTypesData.map(t => <SelectItem key={t.id} value={t.value}>{t.value}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -405,9 +405,10 @@ function parseExcelDate(val: unknown): string | null {
   return null
 }
 
-function ExcelUploadDialog({ open, onClose, warehouses }: {
+function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes }: {
   open: boolean; onClose: () => void
   warehouses: { id: string; name: string }[]
+  warehouseTypes: string[]
 }) {
   const bulkCreate = useBulkCreateBookings()
   const fileRef = useRef<HTMLInputElement>(null)
@@ -417,6 +418,7 @@ function ExcelUploadDialog({ open, onClose, warehouses }: {
   const [err, setErr] = useState('')
 
   const whByName = Object.fromEntries(warehouses.map(w => [w.name.toLowerCase().trim(), w.id]))
+  const validWhTypes = new Set(warehouseTypes.map(t => t.toLowerCase().trim()))
 
   const reset = () => { setRows([]); setResult(null); setErr('') }
 
@@ -442,15 +444,17 @@ function ExcelUploadDialog({ open, onClose, warehouses }: {
           const whName = String(norm.warehouse_name ?? '').trim()
           const whId = whByName[whName.toLowerCase()] ?? null
           const date = parseExcelDate(norm.date)
+          const whType = String(norm.warehouse_type ?? '').trim()
           const errors: string[] = []
           if (!date) errors.push('thiếu ngày')
           if (whName && !whId) errors.push(`kho "${whName}" không tìm thấy`)
           if (!whId && !whName) errors.push('thiếu kho')
+          if (whType && validWhTypes.size > 0 && !validWhTypes.has(whType.toLowerCase())) errors.push(`loại kho "${whType}" không hợp lệ`)
 
           return {
             date, warehouse_id: whId, warehouse_name: whName,
             npp_name: String(norm.npp_name ?? ''),
-            warehouse_type: String(norm.warehouse_type ?? ''),
+            warehouse_type: whType,
             vehicle_type: String(norm.vehicle_type ?? ''),
             box_count: norm.box_count ? Number(norm.box_count) : null,
             pallet_count: norm.pallet_count ? Number(norm.pallet_count) : null,
@@ -603,6 +607,7 @@ export default function TMSBookings() {
   const [deleteErr, setDeleteErr] = useState('')
 
   const { data: warehouses = [] } = useWarehouses(true)
+  const { data: whTypesMain = [] } = useWarehouseTypes()
   const { data: bookings = [], isLoading } = useDeliveryBookings(
     warehouseId ? { date, warehouse_id: warehouseId } : undefined,
   )
@@ -953,6 +958,7 @@ export default function TMSBookings() {
         open={uploadOpen}
         onClose={() => setUploadOpen(false)}
         warehouses={warehouses as { id: string; name: string }[]}
+        warehouseTypes={whTypesMain.map(t => t.value)}
       />
     </div>
   )

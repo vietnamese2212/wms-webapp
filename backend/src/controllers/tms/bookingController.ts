@@ -42,7 +42,7 @@ export async function listBookings(req: Request, res: Response) {
 export async function createBooking(req: Request, res: Response) {
   try {
     const { date, warehouse_id, npp_name, ncc_id, gdo_refs, notes,
-            box_count, pallet_count, tonnage, warehouse_type, vehicle_type } = req.body
+            box_count, pallet_count, tonnage, warehouse_type, vehicle_type, vehicle_code } = req.body
     if (!date || !warehouse_id) return fail(res, 'date và warehouse_id là bắt buộc', 400)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -62,6 +62,7 @@ export async function createBooking(req: Request, res: Response) {
         tonnage: tonnage ?? null,
         warehouse_type: warehouse_type || null,
         vehicle_type: vehicle_type || null,
+        vehicle_code: vehicle_code || null,
         status: 'PENDING',
         created_by: user?.emp_id || null,
         updated_by: user?.emp_id || null,

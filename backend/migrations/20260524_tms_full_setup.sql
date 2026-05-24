@@ -14,12 +14,12 @@ CREATE TABLE IF NOT EXISTS "VehicleType" (
   CONSTRAINT "VehicleType_pkey" PRIMARY KEY (id)
 );
 
-INSERT INTO "VehicleType" (code, name) VALUES
-  ('PALLET',       'Xe pallet'),
-  ('SCA',          'Xe SCA'),
-  ('XA',           'Xe xá'),
-  ('CONTAINER',    'Xe container'),
-  ('CONTAINER_XK', 'Xe container XK')
+INSERT INTO "VehicleType" (id, code, name) VALUES
+  (gen_random_uuid(), 'PALLET',       'Xe pallet'),
+  (gen_random_uuid(), 'SCA',          'Xe SCA'),
+  (gen_random_uuid(), 'XA',           'Xe xá'),
+  (gen_random_uuid(), 'CONTAINER',    'Xe container'),
+  (gen_random_uuid(), 'CONTAINER_XK', 'Xe container XK')
 ON CONFLICT (code) DO NOTHING;
 
 -- 2. SlotTemplate

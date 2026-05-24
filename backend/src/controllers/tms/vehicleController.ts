@@ -44,7 +44,6 @@ export async function listVehicles(req: Request, res: Response) {
         .in('employee_code', plates)
         .in('ncc_id', nccIds)
         .eq('is_driver', true)
-        .is('deleted_at', null)
       if (drivers?.length) {
         const assigned = new Set(
           (drivers as { employee_code: string; ncc_id: string }[]).map(d => `${d.employee_code}|${d.ncc_id}`)

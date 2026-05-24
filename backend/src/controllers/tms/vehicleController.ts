@@ -60,15 +60,36 @@ export async function updateVehicle(req: Request, res: Response) {
     const { ncc_id, license_plate, vehicle_type_id, is_active } = req.body as {
       ncc_id?: string; license_plate?: string; vehicle_type_id?: string; is_active?: boolean
     }
+
+    // Lấy biển số cũ trước khi update (để cascade sang Employee)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: current } = await (supabase.from('Vehicle') as any)
+      .select('license_plate, ncc_id').eq('id', id).single()
+    const oldPlate = (current as { license_plate: string; ncc_id: string } | null)?.license_plate ?? null
+    const vehicleNccId = (current as { license_plate: string; ncc_id: string } | null)?.ncc_id ?? null
+
     const updates: Record<string, unknown> = { updated_at: new Date().toISOString() }
     if (ncc_id          !== undefined) updates.ncc_id          = ncc_id
     if (license_plate   !== undefined) updates.license_plate   = license_plate.toUpperCase().replace(/\s+/g, '')
     if (vehicle_type_id !== undefined) updates.vehicle_type_id = vehicle_type_id
     if (is_active       !== undefined) updates.is_active       = is_active
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await (supabase.from('Vehicle') as any)
       .update(updates).eq('id', id).select('*').single()
     if (error) return fail(res, error.message)
+
+    // Cascade biển số mới sang employee_code của lái xe gắn với xe này
+    const newPlate = updates.license_plate as string | undefined
+    if (newPlate && oldPlate && newPlate !== oldPlate && vehicleNccId) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (supabase.from('Employee') as any)
+        .update({ employee_code: newPlate, updated_at: new Date().toISOString() })
+        .eq('employee_code', oldPlate)
+        .eq('ncc_id', vehicleNccId)
+        .eq('is_driver', true)
+    }
+
     const [merged] = await withRelations([data])
     return ok(res, merged)
   } catch (e) { return fail(res, String(e)) }

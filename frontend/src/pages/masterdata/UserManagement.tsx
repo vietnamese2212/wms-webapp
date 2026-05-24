@@ -208,9 +208,10 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
   const isDriverRole     = selectedDeptName === 'Đơn vị vận tải' && selectedJtName === 'Lái xe'
   const isDispatcherRole = selectedDeptName === 'Đơn vị vận tải' && !!jobTitleId && !isDriverRole
 
-  const { data: allVehicles = [] } = useTmsVehicles(isDriverRole ? { is_active: 'true' } : undefined)
-  const selectedVehicle    = isDriverRole ? (allVehicles as TmsVehicle[]).find(v => v.id === driverVehicleId) ?? null : null
-  const selectedVehicleNcc = selectedVehicle?.ncc?.name ?? null
+  const { data: allVehicles = [] } = useTmsVehicles(
+    isDriverRole && nccId ? { ncc_id: nccId, is_active: 'true' } : undefined
+  )
+  const selectedVehicle = isDriverRole ? (allVehicles as TmsVehicle[]).find(v => v.id === driverVehicleId) ?? null : null
 
   // Khi edit driver, tìm vehicle.id từ plate + ncc_id
   useEffect(() => {
@@ -269,7 +270,7 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
       allowed_categories: categories,
       warehouse_scope: scope,
       warehouse_ids: scope === 'ASSIGNED' ? warehouseIds : [],
-      ncc_id: isDriverRole ? (selectedVehicle?.ncc_id ?? null) : isDispatcherRole ? (nccId || null) : null,
+      ncc_id: (isDriverRole || isDispatcherRole) ? (nccId || null) : null,
       is_driver: isDriverRole,
     }
     if (isEdit) {
@@ -353,14 +354,16 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
             <div className="space-y-1">
               <Label className="text-xs">{isDriverRole ? 'Biển số xe *' : 'Mã NV *'}</Label>
               {isDriverRole ? (
-                <Select value={driverVehicleId || '__none__'} onValueChange={v => setDriverVehicleId(v === '__none__' ? '' : v)}>
-                  <SelectTrigger><SelectValue placeholder="Chọn biển số xe" /></SelectTrigger>
+                <Select
+                  value={driverVehicleId || '__none__'}
+                  onValueChange={v => setDriverVehicleId(v === '__none__' ? '' : v)}
+                  disabled={!nccId}
+                >
+                  <SelectTrigger><SelectValue placeholder={nccId ? 'Chọn biển số xe' : 'Chọn ĐVVT trước'} /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__none__">— Chọn biển số xe —</SelectItem>
                     {(allVehicles as TmsVehicle[]).map(v => (
-                      <SelectItem key={v.id} value={v.id}>
-                        {v.license_plate}{v.ncc?.name ? ` — ${v.ncc.name}` : ''}
-                      </SelectItem>
+                      <SelectItem key={v.id} value={v.id}>{v.license_plate}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -377,12 +380,6 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
               <Input value={phone} onChange={e => setPhone(e.target.value)} />
             </div>
           </div>
-
-          {selectedVehicleNcc && (
-            <p className="text-xs text-slate-500 -mt-1">
-              ĐVVT: <span className="font-medium text-slate-700">{selectedVehicleNcc}</span>
-            </p>
-          )}
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
@@ -411,10 +408,14 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
             </div>
           </div>
 
-          {isDispatcherRole && (
+          {(isDriverRole || isDispatcherRole) && (
             <div className="space-y-1">
               <Label className="text-xs">Công ty vận tải (ĐVVT) *</Label>
-              <Select value={nccId || '__none__'} onValueChange={v => setNccId(v === '__none__' ? '' : v)}>
+              <Select value={nccId || '__none__'} onValueChange={v => {
+                const next = v === '__none__' ? '' : v
+                setNccId(next)
+                if (isDriverRole) setDriverVehicleId('')
+              }}>
                 <SelectTrigger><SelectValue placeholder="— Chọn công ty —" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__none__">— Chọn công ty —</SelectItem>
@@ -483,7 +484,7 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
 
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Huỷ</Button>
-          <Button onClick={handleSubmit} disabled={isPending || !name || !empCode}>
+          <Button onClick={handleSubmit} disabled={isPending || !name || (isDriverRole ? !driverVehicleId : !empCode)}>
             {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo nhân viên'}
           </Button>
         </DialogFooter>

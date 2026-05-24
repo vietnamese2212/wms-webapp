@@ -860,116 +860,7 @@ export default function TMSBookings() {
         ) : !filtered.length ? (
           <div className="py-24 text-center text-sm text-slate-400">Chưa có chuyến nào cho ngày này</div>
         ) : (
-          <>
-            {/* Mobile: card list */}
-            <div className="block md:hidden space-y-2 p-3">
-              {filtered.map(b => (
-                <div key={b.id} className={`rounded-lg border p-3 space-y-2 ${
-                  b.status === 'CONFIRMED' ? 'bg-green-50 border-green-200' :
-                  b.status === 'ARRIVED'   ? 'bg-blue-50 border-blue-200' :
-                  b.status === 'DONE'      ? 'bg-slate-50 border-slate-200' :
-                  'bg-white border-slate-200'
-                }`}>
-                  {/* Row 1: Số xe + Hướng + Status */}
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className="flex items-center gap-1.5 mb-0.5">
-                        {b.vehicle_code && <span className="text-[10px] font-mono text-slate-500">{b.vehicle_code}</span>}
-                        {b.direction && (
-                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${b.direction === 'OUTBOUND' ? 'bg-orange-100 text-orange-700' : 'bg-teal-100 text-teal-700'}`}>
-                            {b.direction === 'OUTBOUND' ? 'Xuất' : 'Nhập'}
-                          </span>
-                        )}
-                        {isNccUser && !warehouseId && (
-                          <span className="text-[10px] text-slate-400">
-                            {(warehouses as { id: string; name: string }[]).find(w => w.id === b.warehouse_id)?.name}
-                          </span>
-                        )}
-                      </div>
-                      <span className="text-sm font-semibold leading-tight">{b.npp_name || <span className="text-slate-400 font-normal">—</span>}</span>
-                    </div>
-                    <StatusBadge status={b.status} />
-                  </div>
-
-                  {/* Row 2: ĐVVT + Loại kho/xe */}
-                  <div className="flex flex-wrap gap-x-3 gap-y-0.5">
-                    {b.ncc?.name && <span className="text-xs text-slate-500">ĐVVT: <span className="font-medium text-slate-700">{b.ncc.name}</span></span>}
-                    {b.warehouse_type && <span className="text-xs text-slate-500">Kho: {b.warehouse_type}</span>}
-                    {b.vehicle_type && <span className="text-xs text-slate-500">Xe: {b.vehicle_type}</span>}
-                  </div>
-
-                  {/* Row 3: Slot + Biển số */}
-                  <div className="flex items-center gap-3">
-                    {b.slot ? (
-                      <span className="flex items-center gap-1 text-xs">
-                        <span className="font-mono font-semibold">{b.slot.time_from.slice(0, 5)}–{b.slot.time_to.slice(0, 5)}</span>
-                      </span>
-                    ) : (
-                      <span className="text-xs text-amber-500">Chưa đặt giờ</span>
-                    )}
-                    {b.license_plate && (
-                      <span className="flex items-center gap-0.5 text-xs font-mono font-semibold text-slate-700">
-                        {user?.employee_code && b.license_plate === user.employee_code && (
-                          <Star className="h-3 w-3 fill-yellow-400 text-yellow-400 shrink-0" />
-                        )}
-                        {b.license_plate}
-                      </span>
-                    )}
-                    {b.driver_phone && <span className="text-xs text-slate-500">{b.driver_phone}</span>}
-                  </div>
-
-                  {/* Row 4: Số lượng (nếu có) */}
-                  {(b.box_count != null || b.pallet_count != null || b.tonnage != null) && (
-                    <div className="flex gap-3 text-xs text-slate-500">
-                      {b.box_count != null && <span><span className="font-semibold tabular-nums text-slate-700">{b.box_count}</span> thùng</span>}
-                      {b.pallet_count != null && <span><span className="font-semibold tabular-nums text-slate-700">{b.pallet_count}</span> pallet</span>}
-                      {b.tonnage != null && <span><span className="font-semibold tabular-nums text-slate-700">{b.tonnage}</span> tấn</span>}
-                    </div>
-                  )}
-
-                  {/* Row 5: Actions */}
-                  <div className="flex items-center gap-2 pt-1 border-t border-slate-100">
-                    {canFillTransport(b) && (
-                      <button
-                        onClick={e => { e.stopPropagation(); setDvvtBooking(b) }}
-                        className="flex items-center gap-1 text-xs text-blue-600 font-medium bg-blue-50 hover:bg-blue-100 px-2 py-1 rounded"
-                      >
-                        <Truck className="h-3.5 w-3.5" />
-                        {b.status === 'PENDING' ? 'Đăng ký xe' : 'Sửa khung giờ'}
-                      </button>
-                    )}
-                    {canEditBooking(b) && (
-                      <button
-                        onClick={e => { e.stopPropagation(); setEditBooking(b) }}
-                        className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded"
-                      >
-                        <Pencil className="h-3.5 w-3.5" />Sửa
-                      </button>
-                    )}
-                    {canManage && b.status === 'CONFIRMED' && (
-                      <button
-                        onClick={(e: React.MouseEvent<HTMLButtonElement>) => handleRelease(e, b.id)}
-                        className="flex items-center gap-1 text-xs text-amber-600 bg-amber-50 hover:bg-amber-100 px-2 py-1 rounded"
-                      >
-                        <RotateCcw className="h-3.5 w-3.5" />Trả lại
-                      </button>
-                    )}
-                    {canManage && b.status === 'PENDING' && (
-                      <button
-                        onClick={(e: React.MouseEvent<HTMLButtonElement>) => handleDelete(e, b.id)}
-                        className="flex items-center gap-1 text-xs text-red-500 bg-red-50 hover:bg-red-100 px-2 py-1 rounded"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />Xóa
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* Desktop: table */}
-            <div className="hidden md:block overflow-x-auto">
-              <Table className="min-w-full">
+            <Table className="min-w-[900px]">
                 <TableHeader>
                   <TableRow>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Số xe</TableHead>
@@ -1097,8 +988,6 @@ export default function TMSBookings() {
                   ))}
                 </TableBody>
               </Table>
-            </div>
-          </>
         )}
       </div>
 

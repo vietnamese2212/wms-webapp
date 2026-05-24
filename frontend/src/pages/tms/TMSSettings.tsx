@@ -426,7 +426,7 @@ export default function TMSSettings() {
           </div>
           <Card>
             {loadingVT ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> : (
-              <div className="overflow-x-auto">
+              <div className="overflow-auto max-h-[60vh]">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -512,7 +512,7 @@ export default function TMSSettings() {
                     </Button>}
                   </div>
                 ) : (
-                  <div className="overflow-x-auto">
+                  <div className="overflow-auto max-h-[60vh]">
                     <Table>
                       <TableHeader>
                         <TableRow>
@@ -592,7 +592,7 @@ export default function TMSSettings() {
                 </Button>}
               </div>
             ) : (
-              <div className="overflow-x-auto">
+              <div className="overflow-auto max-h-[60vh]">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -669,7 +669,7 @@ export default function TMSSettings() {
                 </Button>}
               </div>
             ) : (
-              <div className="overflow-x-auto">
+              <div className="overflow-auto max-h-[60vh]">
                 <Table>
                   <TableHeader>
                     <TableRow>

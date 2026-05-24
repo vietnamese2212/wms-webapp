@@ -271,7 +271,7 @@ function VehicleDialog({ v, open, onClose, companies, vehicleTypes }: {
     setErr('')
     if (!nccId || !plate || !vtId) { setErr('Vui lòng điền đủ thông tin'); return }
     if (isEdit) {
-      update({ id: v.id, ncc_id: nccId, license_plate: plate, vehicle_type_id: vtId, is_active: isActive },
+      update({ id: v.id, ncc_id: nccId, vehicle_type_id: vtId, is_active: isActive },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
     } else {
       create({ ncc_id: nccId, license_plate: plate, vehicle_type_id: vtId },
@@ -295,7 +295,8 @@ function VehicleDialog({ v, open, onClose, companies, vehicleTypes }: {
             </Select>
           </div>
           <div className="space-y-1"><Label className="text-xs">Biển số xe *</Label>
-            <Input value={plate} onChange={e => setPlate(e.target.value.toUpperCase())} placeholder="51F-12345" /></div>
+            <Input value={plate} onChange={e => setPlate(e.target.value.toUpperCase())} placeholder="51F-12345"
+              disabled={isEdit} className={isEdit ? 'bg-slate-50 cursor-not-allowed' : ''} /></div>
           <div className="space-y-1"><Label className="text-xs">Loại xe *</Label>
             <Select value={vtId || '__none__'} onValueChange={val => setVtId(val === '__none__' ? '' : val)}>
               <SelectTrigger><SelectValue placeholder="Chọn loại xe" /></SelectTrigger>

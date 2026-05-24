@@ -724,89 +724,99 @@ function GDOFormBody({
 
         <hr className="border-slate-100" />
 
-        {/* Items */}
-        <div className="space-y-2">
-          <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Danh sách hàng</p>
-
-          {items.map((item, idx) => {
-            const fullScanned = item.min_cartons > 0 && item.min_cartons >= item.cartons
-            const partScanned = item.min_cartons > 0 && item.min_cartons < item.cartons
-            const cartonsInvalid = item.cartons > 0 && item.cartons < item.min_cartons
-            const cardCls = fullScanned
-              ? 'bg-blue-50 border-blue-200'
-              : partScanned
-              ? 'bg-amber-50 border-amber-200'
-              : 'bg-slate-50/50 border-slate-200'
-            return (
-              <div key={item.id} className={`border rounded-lg p-2 space-y-1.5 ${cardCls}`}>
-                {/* Row 1: index + scan badge + delete */}
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[9px] font-semibold text-slate-400">#{idx + 1}</span>
-                    {item.min_cartons > 0 && (
-                      <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${fullScanned ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>
-                        Đã xuất {item.min_cartons} thùng
-                      </span>
-                    )}
-                    {item.category && (
-                      <span className="text-[9px] bg-white/70 text-slate-500 px-1.5 py-0.5 rounded border border-slate-200">{item.category}</span>
-                    )}
-                  </div>
-                  {items.length > 1 && item.min_cartons === 0 && (
-                    <button onClick={() => setItems(rows => rows.filter(r => r.id !== item.id))} className="text-slate-300 hover:text-red-400" title="Xóa dòng">
-                      <Trash2 className="h-3 w-3" />
-                    </button>
-                  )}
-                </div>
-                {/* Row 2: material picker — readonly nếu đã xuất */}
-                <MatPicker
-                  value={item.material_code}
-                  matName={item.mat_name}
-                  onSelect={(code, name, category) => updateItem(item.id, { material_code: code, mat_name: name, category })}
-                  disabled={item.min_cartons > 0}
-                />
-                {/* Row 3: cartons + loose picking */}
-                <div className="flex items-center gap-2">
-                  <label className="text-[10px] text-slate-500 shrink-0">Thùng <span className="text-red-500">*</span></label>
-                  <Input
-                    type="number" min={item.min_cartons || 1}
-                    className={`h-7 text-[10px] text-right w-20 ${cartonsInvalid ? 'border-red-400' : ''}`}
-                    value={item.cartons || ''}
-                    onChange={e => updateItem(item.id, { cartons: parseInt(e.target.value) || 0 })}
-                  />
-                  <label className="text-[10px] text-slate-500 shrink-0 ml-1">Nhặt lẻ</label>
-                  <Input
-                    type="number" min={0}
-                    className="h-7 text-[10px] text-right w-20"
-                    value={item.loose_picking || ''}
-                    onChange={e => updateItem(item.id, { loose_picking: parseInt(e.target.value) || 0 })}
-                  />
-                </div>
-                {/* Row 4: header text — readonly nếu đã xuất */}
-                <div className="flex items-center gap-1.5">
-                  <label className="text-[10px] text-slate-500 shrink-0">Ghi chú</label>
-                  {item.min_cartons > 0 ? (
-                    <span className="text-[10px] text-slate-500 italic">{item.header_text || '—'}</span>
-                  ) : (
-                    <Input
-                      className="h-7 text-[10px] flex-1"
-                      placeholder="Header text (hiện màu đỏ khi quét)…"
-                      value={item.header_text}
-                      onChange={e => updateItem(item.id, { header_text: e.target.value })}
-                    />
-                  )}
-                </div>
-                {cartonsInvalid && (
-                  <p className="text-[9px] text-red-600">Tối thiểu {item.min_cartons} thùng (đã xuất)</p>
-                )}
-              </div>
-            )
-          })}
+        {/* Items — table layout */}
+        <div>
+          <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Danh sách hàng</p>
+          <div className="overflow-x-auto rounded-lg border border-slate-200">
+            <table className="min-w-full">
+              <thead>
+                <tr className="bg-slate-50">
+                  <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-5">#</th>
+                  <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left">Mã hàng</th>
+                  <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-20">Loại kho</th>
+                  <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right w-[72px]">Thùng</th>
+                  <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right w-[72px]">Nhặt lẻ</th>
+                  <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left">Ghi chú</th>
+                  <th className="px-1 py-1.5 w-5" />
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((item, idx) => {
+                  const fullScanned    = item.min_cartons > 0 && item.min_cartons >= item.cartons
+                  const partScanned    = item.min_cartons > 0 && item.min_cartons < item.cartons
+                  const cartonsInvalid = item.cartons > 0 && item.cartons < item.min_cartons
+                  const rowCls = fullScanned ? 'bg-blue-50' : partScanned ? 'bg-amber-50' : ''
+                  return (
+                    <tr key={item.id} className={`border-t border-slate-100 ${rowCls}`}>
+                      <td className="px-2 py-1.5 text-[9px] text-slate-400 align-middle">{idx + 1}</td>
+                      <td className="px-2 py-1 align-top">
+                        <MatPicker
+                          value={item.material_code}
+                          matName={item.mat_name}
+                          onSelect={(code, name, category) => updateItem(item.id, { material_code: code, mat_name: name, category })}
+                          disabled={item.min_cartons > 0}
+                        />
+                        {item.min_cartons > 0 && (
+                          <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium mt-0.5 inline-block ${fullScanned ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>
+                            Đã xuất {item.min_cartons} thùng
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-2 py-1 align-middle">
+                        {item.category && (
+                          <span className="text-[9px] bg-white text-slate-500 px-1.5 py-0.5 rounded border border-slate-200 whitespace-nowrap">{item.category}</span>
+                        )}
+                      </td>
+                      <td className="px-2 py-1 align-top">
+                        <Input
+                          type="number" min={item.min_cartons || 1}
+                          className={`h-7 text-[10px] text-right w-full ${cartonsInvalid ? 'border-red-400' : ''}`}
+                          value={item.cartons || ''}
+                          onChange={e => updateItem(item.id, { cartons: parseInt(e.target.value) || 0 })}
+                        />
+                        {cartonsInvalid && (
+                          <p className="text-[9px] text-red-600 mt-0.5 text-right">Min {item.min_cartons}</p>
+                        )}
+                      </td>
+                      <td className="px-2 py-1 align-top">
+                        <Input
+                          type="number" min={0}
+                          className="h-7 text-[10px] text-right w-full"
+                          value={item.loose_picking || ''}
+                          onChange={e => updateItem(item.id, { loose_picking: parseInt(e.target.value) || 0 })}
+                        />
+                      </td>
+                      <td className="px-2 py-1 align-top">
+                        {item.min_cartons > 0 ? (
+                          <span className="text-[10px] text-slate-500 italic leading-7 block">{item.header_text || '—'}</span>
+                        ) : (
+                          <Input
+                            className="h-7 text-[10px]"
+                            placeholder="Header text…"
+                            value={item.header_text}
+                            onChange={e => updateItem(item.id, { header_text: e.target.value })}
+                          />
+                        )}
+                      </td>
+                      <td className="px-1 py-1 align-middle">
+                        {items.length > 1 && item.min_cartons === 0 && (
+                          <button onClick={() => setItems(rows => rows.filter(r => r.id !== item.id))}
+                            className="text-slate-300 hover:text-red-400" title="Xóa dòng">
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
 
           {!isMultiDO && (
             <button
               onClick={() => setItems(rows => [...rows, makeItem()])}
-              className="flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-700 w-full justify-center border border-dashed border-blue-200 rounded-lg py-1.5 hover:border-blue-400"
+              className="flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-700 w-full justify-center border border-dashed border-blue-200 rounded-lg py-1.5 hover:border-blue-400 mt-2"
             >
               <Plus className="h-3 w-3" /> Thêm mặt hàng
             </button>

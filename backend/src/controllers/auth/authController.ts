@@ -41,6 +41,7 @@ function buildUserObj(emp: any, warehouseIds: string[], modulePerms: Record<stri
     id:                 emp.id,
     name:               emp.name,
     email:              emp.email ?? null,
+    employee_code:      emp.employee_code ?? null,
     warehouse_scope:    emp.warehouse_scope ?? 'ASSIGNED',
     warehouse_id:       emp.warehouse_id ?? null,
     warehouse_name:     warehouseName ?? null,

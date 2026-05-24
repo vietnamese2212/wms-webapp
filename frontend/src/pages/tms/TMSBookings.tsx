@@ -12,12 +12,12 @@ import type { MSOpt } from '@/components/shared/MultiSelectFilter'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useAuthStore } from '@/stores/authStore'
 import {
-  useWarehouses, useWarehouseTypes, useVehicleTypes, useTransportCompanies,
+  useWarehouses, useWarehouseTypes, useVehicleTypes, useTransportCompanies, useTmsVehicles,
   useDeliverySlots, useGenerateSlots,
   useDeliveryBookings, useCreateBooking, useUpdateBooking, useDeleteBooking, useBulkCreateBookings,
 } from '@/api/hooks'
 import { formatDate } from '@/utils/formatters'
-import type { DeliveryBooking, DeliverySlot, TmsVehicleType, TransportCompany } from '@/types'
+import type { DeliveryBooking, DeliverySlot, TmsVehicleType, TmsVehicle, TransportCompany } from '@/types'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -42,14 +42,17 @@ function StatusBadge({ status }: { status: string }) {
 
 // ── Slot Picker ───────────────────────────────────────────────────────────────
 
-function SlotPicker({ warehouseId, date, selectedSlotId, onSelect }: {
+function SlotPicker({ warehouseId, date, selectedSlotId, onSelect, direction, cargoType, vehicleTypeName }: {
   warehouseId: string; date: string; selectedSlotId: string | null
   onSelect: (slot: DeliverySlot) => void
+  direction?: 'OUTBOUND' | 'INBOUND' | null
+  cargoType?: string | null
+  vehicleTypeName?: string | null
 }) {
   const [generateDone, setGenerateDone] = useState(false)
   const { mutate: generateSlots } = useGenerateSlots()
-  // Fetch slots ngay lập tức — song song với generate, không đợi generate xong
   const { data: slots = [], isLoading, isFetching } = useDeliverySlots({ date, warehouse_id: warehouseId })
+  const { data: vehicleTypesData = [] } = useVehicleTypes(true)
 
   useEffect(() => {
     setGenerateDone(false)
@@ -59,8 +62,6 @@ function SlotPicker({ warehouseId, date, selectedSlotId, onSelect }: {
     )
   }, [warehouseId, date])
 
-  // Chỉ block UI khi chưa có slot nào để hiển thị VÀ còn đang in-flight
-  // Nếu cache đã có slots → hiện ngay, generate chạy nền
   if (slots.length === 0 && (isLoading || isFetching || !generateDone))
     return <p className="text-xs text-slate-400 py-6 text-center">Đang tải khung giờ...</p>
 
@@ -69,9 +70,24 @@ function SlotPicker({ warehouseId, date, selectedSlotId, onSelect }: {
   if (!allSlots.length)
     return <p className="text-xs text-slate-400 py-6 text-center">Chưa có khung giờ nào được cấu hình cho ngày này.</p>
 
+  // D: filter theo direction, cargo_type, vehicle_type
+  const filtered = allSlots.filter(slot => {
+    if (slot.id === selectedSlotId) return true
+    if (direction && slot.direction !== direction) return false
+    if (cargoType && slot.cargo_type !== 'ALL' && slot.cargo_type !== cargoType) return false
+    if (vehicleTypeName) {
+      const vt = (vehicleTypesData as TmsVehicleType[]).find(v => v.name === vehicleTypeName)
+      if (vt && slot.vehicle_type_id !== vt.id) return false
+    }
+    return true
+  })
+
   return (
     <div className="space-y-1 max-h-48 overflow-y-auto pr-1">
-      {allSlots.map(slot => {
+      {filtered.length === 0 && (
+        <p className="text-xs text-slate-400 py-4 text-center">Không có khung giờ phù hợp với loại kho/xe đã chọn.</p>
+      )}
+      {filtered.map(slot => {
         const past = isSlotTimePassed(date, slot.time_from)
         const full = slot.booked_count >= slot.max_vehicles
         const selected = slot.id === selectedSlotId
@@ -113,6 +129,16 @@ function SlotPicker({ warehouseId, date, selectedSlotId, onSelect }: {
 
 function DVVTFillDialog({ booking, onClose }: { booking: DeliveryBooking | null; onClose: () => void }) {
   const updateBooking = useUpdateBooking()
+  const user = useAuthStore(s => s.user)
+  const isNccUser = !!user?.ncc_id
+
+  // B: load vehicles của ĐVVT
+  const { data: nccVehicles = [] } = useTmsVehicles(
+    isNccUser && user?.ncc_id ? { ncc_id: user.ncc_id, is_active: 'true' } : undefined
+  )
+  // B: lái xe = employee_code khớp license_plate trong danh sách
+  const isDriver = isNccUser && (nccVehicles as TmsVehicle[]).some(v => v.license_plate === user?.employee_code)
+
   const [selectedSlot, setSelectedSlot] = useState<DeliverySlot | null>(null)
   const [licensePlate, setLicensePlate] = useState('')
   const [driverPhone, setDriverPhone] = useState('')
@@ -121,11 +147,11 @@ function DVVTFillDialog({ booking, onClose }: { booking: DeliveryBooking | null;
   useEffect(() => {
     if (booking) {
       setSelectedSlot((booking.slot as DeliverySlot | null) ?? null)
-      setLicensePlate(booking.license_plate ?? '')
+      setLicensePlate(isDriver ? (user?.employee_code ?? '') : (booking.license_plate ?? ''))
       setDriverPhone(booking.driver_phone ?? '')
       setErr('')
     }
-  }, [booking?.id])
+  }, [booking?.id, isDriver])
 
   const handleSave = async () => {
     if (!booking) return
@@ -159,12 +185,29 @@ function DVVTFillDialog({ booking, onClose }: { booking: DeliveryBooking | null;
               date={booking.date}
               selectedSlotId={selectedSlot?.id ?? null}
               onSelect={setSelectedSlot}
+              direction={booking.direction}
+              cargoType={booking.warehouse_type}
+              vehicleTypeName={booking.vehicle_type}
             />
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div>
               <Label className="text-xs">Biển số xe *</Label>
-              <Input value={licensePlate} onChange={e => setLicensePlate(e.target.value)} placeholder="51A-123.45" className="h-8 text-sm mt-1" />
+              {isDriver ? (
+                <Input value={licensePlate} disabled className="h-8 text-sm mt-1 bg-slate-50 font-mono" />
+              ) : isNccUser && (nccVehicles as TmsVehicle[]).length > 0 ? (
+                <Select value={licensePlate || '__none__'} onValueChange={v => setLicensePlate(v === '__none__' ? '' : v)}>
+                  <SelectTrigger className="h-8 text-sm mt-1"><SelectValue placeholder="Chọn biển số" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">— Chọn xe —</SelectItem>
+                    {(nccVehicles as TmsVehicle[]).map(v => (
+                      <SelectItem key={v.id} value={v.license_plate}>{v.license_plate}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Input value={licensePlate} onChange={e => setLicensePlate(e.target.value)} placeholder="51A-123.45" className="h-8 text-sm mt-1" />
+              )}
             </div>
             <div>
               <Label className="text-xs">SĐT lái xe</Label>
@@ -188,14 +231,16 @@ function DVVTFillDialog({ booking, onClose }: { booking: DeliveryBooking | null;
 
 type BookingFormData = {
   date: string; warehouse_id: string; npp_name: string; ncc_id: string
-  vehicle_code: string; warehouse_type: string; vehicle_type: string
+  vehicle_code: string; direction: 'OUTBOUND' | 'INBOUND' | ''
+  warehouse_type: string; vehicle_type: string
   box_count: string; pallet_count: string; tonnage: string
   gdo_refs: string; notes: string
 }
 
 const EMPTY_FORM = (date: string, warehouse_id: string): BookingFormData => ({
   date, warehouse_id, npp_name: '', ncc_id: '',
-  vehicle_code: '', warehouse_type: '', vehicle_type: '',
+  vehicle_code: '', direction: 'OUTBOUND',
+  warehouse_type: '', vehicle_type: '',
   box_count: '', pallet_count: '', tonnage: '',
   gdo_refs: '', notes: '',
 })
@@ -226,6 +271,7 @@ function CreateEditDialog({ open, booking, onClose, defaultDate, defaultWarehous
         npp_name: booking.npp_name ?? '',
         ncc_id: booking.ncc_id ?? '',
         vehicle_code: booking.vehicle_code ?? '',
+        direction: (booking.direction as 'OUTBOUND' | 'INBOUND') ?? 'OUTBOUND',
         warehouse_type: booking.warehouse_type ?? '',
         vehicle_type: booking.vehicle_type ?? '',
         box_count: booking.box_count != null ? String(booking.box_count) : '',
@@ -245,6 +291,7 @@ function CreateEditDialog({ open, booking, onClose, defaultDate, defaultWarehous
     if (!form.date || !form.warehouse_id) { setErr('Vui lòng chọn ngày và kho'); return }
     if (!form.vehicle_code) { setErr('Vui lòng nhập Số xe'); return }
     if (!VEHICLE_CODE_RE.test(form.vehicle_code)) { setErr('Số xe sai định dạng — ví dụ: 240526_BV_1'); return }
+    if (!form.direction) { setErr('Vui lòng chọn hướng vận chuyển (Xuất/Nhập)'); return }
     if (!form.ncc_id) { setErr('Vui lòng chọn đơn vị vận tải (ĐVVT)'); return }
     const payload = {
       date: form.date,
@@ -252,6 +299,7 @@ function CreateEditDialog({ open, booking, onClose, defaultDate, defaultWarehous
       npp_name: form.npp_name || undefined,
       ncc_id: form.ncc_id || undefined,
       ...(isEdit ? {} : { vehicle_code: form.vehicle_code }),
+      direction: form.direction || undefined,
       warehouse_type: form.warehouse_type || undefined,
       vehicle_type: form.vehicle_type || undefined,
       box_count: form.box_count ? Number(form.box_count) : null,
@@ -297,9 +345,21 @@ function CreateEditDialog({ open, booking, onClose, defaultDate, defaultWarehous
               </Select>
             </div>
           </div>
-          <div>
-            <Label className="text-xs">Số xe * <span className="text-slate-400 font-normal">(vd: 240526_BV_1)</span></Label>
-            <Input value={form.vehicle_code} onChange={e => set('vehicle_code')(e.target.value)} placeholder="ddmmyy_Kho_STT" className="h-8 text-sm mt-1 font-mono" disabled={isEdit} />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs">Số xe * <span className="text-slate-400 font-normal">(vd: 240526_BV_1)</span></Label>
+              <Input value={form.vehicle_code} onChange={e => set('vehicle_code')(e.target.value)} placeholder="ddmmyy_Kho_STT" className="h-8 text-sm mt-1 font-mono" disabled={isEdit} />
+            </div>
+            <div>
+              <Label className="text-xs">Hướng *</Label>
+              <Select value={form.direction || '__none__'} onValueChange={v => set('direction')(v === '__none__' ? '' : v as 'OUTBOUND' | 'INBOUND')}>
+                <SelectTrigger className="h-8 text-sm mt-1"><SelectValue placeholder="Xuất / Nhập" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="OUTBOUND">Xuất hàng</SelectItem>
+                  <SelectItem value="INBOUND">Nhập hàng</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -386,7 +446,7 @@ function CreateEditDialog({ open, booking, onClose, defaultDate, defaultWarehous
 
 type ImportRow = {
   date: string | null; warehouse_id: string | null; warehouse_name: string
-  npp_name: string; warehouse_type: string; vehicle_type: string
+  npp_name: string; direction: string; warehouse_type: string; vehicle_type: string
   ncc_code: string; ncc_id: string | null
   vehicle_code: string
   box_count: number | null; pallet_count: number | null; tonnage: number | null
@@ -397,6 +457,7 @@ const EXCEL_COL_MAP: Record<string, string> = {
   'npp': 'npp_name', 'tên npp': 'npp_name', 'nhà phân phối': 'npp_name',
   'kho': 'warehouse_name', 'kho xuất': 'warehouse_name',
   'ngày': 'date', 'date': 'date',
+  'hướng': 'direction', 'huong': 'direction', 'loại hướng': 'direction', 'direction': 'direction',
   'loại kho': 'warehouse_type', 'warehouse type': 'warehouse_type',
   'loại xe': 'vehicle_type', 'vehicle type': 'vehicle_type',
   'đvvt': 'ncc_code', 'dvvt': 'ncc_code', 'đơn vị vận tải': 'ncc_code', 'transport company': 'ncc_code',
@@ -406,6 +467,13 @@ const EXCEL_COL_MAP: Record<string, string> = {
   'tấn': 'tonnage', 'số tấn': 'tonnage', 'ton': 'tonnage',
   'gdo': 'gdo_refs', 'mã gdo': 'gdo_refs',
   'ghi chú': 'notes', 'notes': 'notes',
+}
+
+function parseDirection(val: unknown): string {
+  const s = String(val ?? '').trim().toLowerCase()
+  if (['xuất', 'xuat', 'x', 'outbound', 'out'].includes(s)) return 'OUTBOUND'
+  if (['nhập', 'nhap', 'n', 'inbound', 'in'].includes(s)) return 'INBOUND'
+  return ''
 }
 
 function parseExcelDate(val: unknown): string | null {
@@ -464,6 +532,7 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
           const whName      = String(norm.warehouse_name ?? '').trim()
           const whId        = whByName[whName.toLowerCase()] ?? null
           const date        = parseExcelDate(norm.date)
+          const direction   = parseDirection(norm.direction)
           const whType      = String(norm.warehouse_type ?? '').trim()
           const vtName      = String(norm.vehicle_type ?? '').trim()
           const nccCode     = String(norm.ncc_code ?? '').trim()
@@ -471,6 +540,7 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
           const vehicleCode = String(norm.vehicle_code ?? '').trim()
           const errors: string[] = []
           if (!date) errors.push('thiếu ngày')
+          if (!direction) errors.push('thiếu hướng (Xuất/Nhập)')
           if (whName && !whId) errors.push(`kho "${whName}" không tìm thấy`)
           if (!whId && !whName) errors.push('thiếu kho')
           if (whType && validWhTypes.size > 0 && !validWhTypes.has(whType.toLowerCase())) errors.push(`loại kho "${whType}" không hợp lệ`)
@@ -485,6 +555,7 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
           return {
             date, warehouse_id: whId, warehouse_name: whName,
             npp_name: String(norm.npp_name ?? ''),
+            direction,
             warehouse_type: whType,
             vehicle_type: vtName,
             ncc_code: nccCode, ncc_id: nccId,
@@ -518,6 +589,7 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
         date: r.date!, warehouse_id: r.warehouse_id!,
         npp_name: r.npp_name || undefined,
         ncc_id: r.ncc_id || undefined,
+        direction: r.direction || undefined,
         warehouse_type: r.warehouse_type || undefined,
         vehicle_type: r.vehicle_type || undefined,
         vehicle_code: r.vehicle_code || undefined,
@@ -546,8 +618,8 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
 
   const downloadTemplate = () => {
     const ws = XLSX.utils.aoa_to_sheet([
-      ['Số xe', 'NPP', 'Kho', 'Ngày', 'Loại kho', 'Loại xe', 'ĐVVT', 'Thùng', 'Pallet', 'Tấn', 'GDO', 'Ghi chú'],
-      ['240526_BV_1', 'Tên NPP mẫu', 'Kho Ba Vì', '21/05/2026', 'Khô', 'Xe tải 5T', 'NCC001', 100, 5, 2.5, 'GDO-001', ''],
+      ['Số xe', 'NPP', 'Kho', 'Ngày', 'Hướng', 'Loại kho', 'Loại xe', 'ĐVVT', 'Thùng', 'Pallet', 'Tấn', 'GDO', 'Ghi chú'],
+      ['240526_BV_1', 'Tên NPP mẫu', 'Kho Ba Vì', '21/05/2026', 'Xuất', 'Khô', 'Xe tải 5T', 'NCC001', 100, 5, 2.5, 'GDO-001', ''],
     ])
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Import')
@@ -592,7 +664,7 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
                   <table className="min-w-full text-[10px]">
                     <thead className="bg-slate-50 sticky top-0">
                       <tr>
-                        {['#', 'Số xe', 'NPP', 'Kho', 'Ngày', 'L.kho', 'L.xe', 'ĐVVT', 'Thùng', 'Pallet', 'Tấn', 'Lỗi'].map(h => (
+                        {['#', 'Số xe', 'NPP', 'Kho', 'Ngày', 'Hướng', 'L.kho', 'L.xe', 'ĐVVT', 'Thùng', 'Pallet', 'Tấn', 'Lỗi'].map(h => (
                           <th key={h} className="px-2 py-1 text-left text-[9px] text-slate-500 font-medium whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
@@ -605,6 +677,9 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
                           <td className="px-2 py-0.5 max-w-[100px] truncate">{r.npp_name || '—'}</td>
                           <td className="px-2 py-0.5">{r.warehouse_name || '—'}</td>
                           <td className="px-2 py-0.5 font-mono">{r.date || '—'}</td>
+                          <td className="px-2 py-0.5">
+                            {r.direction === 'OUTBOUND' ? <span className="text-orange-600">Xuất</span> : r.direction === 'INBOUND' ? <span className="text-teal-600">Nhập</span> : <span className="text-red-500">—</span>}
+                          </td>
                           <td className="px-2 py-0.5">{r.warehouse_type || '—'}</td>
                           <td className="px-2 py-0.5">{r.vehicle_type || '—'}</td>
                           <td className="px-2 py-0.5">{r.ncc_code || '—'}</td>
@@ -644,6 +719,7 @@ export default function TMSBookings() {
   const perms = (user?.module_permissions as ModulePermissions | null) ?? null
   const canManage = can(perms, 'tms', 'manage_booking')
   const canBook   = can(perms, 'tms', 'book')
+  const isNccUser = !!user?.ncc_id
 
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   const [date, setDate] = useState(today)
@@ -661,7 +737,7 @@ export default function TMSBookings() {
   const { data: vehicleTypesMain = [] }    = useVehicleTypes(true)
   const { data: transportCompaniesMain = [] } = useTransportCompanies(true)
   const { data: bookings = [], isLoading } = useDeliveryBookings(
-    warehouseId ? { date, warehouse_id: warehouseId } : undefined,
+    (warehouseId || isNccUser) ? { date, warehouse_id: warehouseId || undefined } : undefined,
   )
   const deleteBooking  = useDeleteBooking()
   const updateBooking  = useUpdateBooking()
@@ -757,7 +833,8 @@ export default function TMSBookings() {
           <Select value={warehouseId || '__none__'} onValueChange={v => setWarehouseId(v === '__none__' ? '' : v)}>
             <SelectTrigger className="h-8 text-sm flex-1 min-w-[140px] max-w-[200px]"><SelectValue placeholder="— Chọn kho —" /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="__none__">— Chọn kho —</SelectItem>
+              {isNccUser && <SelectItem value="__none__">— Tất cả kho —</SelectItem>}
+              {!isNccUser && <SelectItem value="__none__">— Chọn kho —</SelectItem>}
               {(warehouses as { id: string; name: string }[]).map(w => (
                 <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
               ))}
@@ -785,7 +862,7 @@ export default function TMSBookings() {
 
       {/* Content */}
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
-        {!warehouseId ? (
+        {!warehouseId && !isNccUser ? (
           <div className="py-24 text-center text-sm text-slate-400">Chọn kho để xem kế hoạch</div>
         ) : isLoading ? (
           <div className="py-24 text-center text-sm text-slate-400">Đang tải...</div>
@@ -802,10 +879,22 @@ export default function TMSBookings() {
                   b.status === 'DONE'      ? 'bg-slate-50 border-slate-200' :
                   'bg-white border-slate-200'
                 }`}>
-                  {/* Row 1: Số xe + Status */}
+                  {/* Row 1: Số xe + Hướng + Status */}
                   <div className="flex items-start justify-between gap-2">
                     <div>
-                      {b.vehicle_code && <span className="text-[10px] font-mono text-slate-500 block">{b.vehicle_code}</span>}
+                      <div className="flex items-center gap-1.5 mb-0.5">
+                        {b.vehicle_code && <span className="text-[10px] font-mono text-slate-500">{b.vehicle_code}</span>}
+                        {b.direction && (
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${b.direction === 'OUTBOUND' ? 'bg-orange-100 text-orange-700' : 'bg-teal-100 text-teal-700'}`}>
+                            {b.direction === 'OUTBOUND' ? 'Xuất' : 'Nhập'}
+                          </span>
+                        )}
+                        {isNccUser && !warehouseId && (
+                          <span className="text-[10px] text-slate-400">
+                            {(warehouses as { id: string; name: string }[]).find(w => w.id === b.warehouse_id)?.name}
+                          </span>
+                        )}
+                      </div>
                       <span className="text-sm font-semibold leading-tight">{b.npp_name || <span className="text-slate-400 font-normal">—</span>}</span>
                     </div>
                     <StatusBadge status={b.status} />
@@ -889,6 +978,8 @@ export default function TMSBookings() {
                 <TableHeader>
                   <TableRow>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Số xe</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Hướng</TableHead>
+                    {isNccUser && !warehouseId && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Kho</TableHead>}
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Tên NPP</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">ĐVVT</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Loại kho</TableHead>
@@ -909,6 +1000,18 @@ export default function TMSBookings() {
                       <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">
                         {b.vehicle_code || <span className="text-slate-400 font-normal">—</span>}
                       </TableCell>
+                      <TableCell className="px-2 py-1 text-[10px]">
+                        {b.direction ? (
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${b.direction === 'OUTBOUND' ? 'bg-orange-100 text-orange-700' : 'bg-teal-100 text-teal-700'}`}>
+                            {b.direction === 'OUTBOUND' ? 'Xuất' : 'Nhập'}
+                          </span>
+                        ) : <span className="text-slate-400">—</span>}
+                      </TableCell>
+                      {isNccUser && !warehouseId && (
+                        <TableCell className="px-2 py-1 text-[10px] text-slate-500">
+                          {(warehouses as { id: string; name: string }[]).find(w => w.id === b.warehouse_id)?.name ?? '—'}
+                        </TableCell>
+                      )}
                       <TableCell className="px-2 py-1 text-[10px] font-semibold max-w-[140px] truncate">
                         {b.npp_name || <span className="text-slate-400 font-normal">—</span>}
                       </TableCell>

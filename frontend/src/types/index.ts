@@ -52,6 +52,8 @@ export interface EmployeeRecord {
   warehouse_scope:    'NATIONAL' | 'ASSIGNED'
   warehouse_id:       string | null
   is_active:          boolean
+  ncc_id:             string | null
+  is_driver:          boolean
   created_at:         string
   deleted_at?:        string | null
   dept?:              Pick<Department, 'id' | 'name' | 'code'> | null
@@ -416,6 +418,7 @@ export interface DeliveryBooking {
   warehouse_type: string | null
   vehicle_type:   string | null
   vehicle_code:   string | null
+  direction:      'OUTBOUND' | 'INBOUND' | null
   notes:          string | null
   status:         BookingStatus
   created_by:     string | null

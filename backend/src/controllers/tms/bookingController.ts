@@ -13,17 +13,19 @@ const BOOKING_SELECT = `
 export async function listBookings(req: Request, res: Response) {
   try {
     const { date, warehouse_id, status } = req.query as Record<string, string>
-    if (!date || !warehouse_id) return fail(res, 'date và warehouse_id là bắt buộc', 400)
+    if (!date) return fail(res, 'date là bắt buộc', 400)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const userNccId: string | null = (req as any).user?.ncc_id ?? null
+    if (!warehouse_id && !userNccId) return fail(res, 'warehouse_id là bắt buộc', 400)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let q = (supabase.from('DeliveryBooking') as any)
       .select(BOOKING_SELECT)
       .eq('date', date)
-      .eq('warehouse_id', warehouse_id)
       .order('created_at')
+
+    if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
 
     if (userNccId) {
       // ĐVVT: thấy booking của mình + PENDING chưa có ĐVVT (open for self-selection)
@@ -42,7 +44,7 @@ export async function listBookings(req: Request, res: Response) {
 export async function createBooking(req: Request, res: Response) {
   try {
     const { date, warehouse_id, npp_name, ncc_id, gdo_refs, notes,
-            box_count, pallet_count, tonnage, warehouse_type, vehicle_type, vehicle_code } = req.body
+            box_count, pallet_count, tonnage, warehouse_type, vehicle_type, vehicle_code, direction } = req.body
     if (!date || !warehouse_id) return fail(res, 'date và warehouse_id là bắt buộc', 400)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -63,6 +65,7 @@ export async function createBooking(req: Request, res: Response) {
         warehouse_type: warehouse_type || null,
         vehicle_type: vehicle_type || null,
         vehicle_code: vehicle_code || null,
+        direction: direction || null,
         status: 'PENDING',
         created_by: user?.emp_id || null,
         updated_by: user?.emp_id || null,
@@ -117,6 +120,7 @@ export async function bulkCreateBookings(req: Request, res: Response) {
         warehouse_type: b.warehouse_type || null,
         vehicle_type: b.vehicle_type || null,
         vehicle_code: b.vehicle_code || null,
+        direction: b.direction || null,
         status: 'PENDING',
         created_by: user?.emp_id || null,
         updated_by: user?.emp_id || null,
@@ -142,7 +146,7 @@ export async function updateBooking(req: Request, res: Response) {
     const {
       slot_id, license_plate, driver_name, driver_phone,
       date, warehouse_id, npp_name, ncc_id: bodyNccId, gdo_refs, notes, status,
-      box_count, pallet_count, tonnage, warehouse_type, vehicle_type,
+      box_count, pallet_count, tonnage, warehouse_type, vehicle_type, direction,
     } = req.body
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const user = (req as any).user
@@ -219,6 +223,7 @@ export async function updateBooking(req: Request, res: Response) {
     if (tonnage         !== undefined) updates.tonnage         = tonnage
     if (warehouse_type  !== undefined) updates.warehouse_type  = warehouse_type
     if (vehicle_type    !== undefined) updates.vehicle_type    = vehicle_type
+    if (direction       !== undefined) updates.direction       = direction
 
     // Điều vận (manage_booking, không có ncc_id) được phép set/clear ncc_id (ví dụ: release → null)
     if (!userNccId && bodyNccId !== undefined) updates.ncc_id = bodyNccId || null

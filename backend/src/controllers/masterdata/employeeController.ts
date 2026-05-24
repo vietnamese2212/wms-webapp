@@ -26,6 +26,7 @@ interface EmpRow {
   department_id: string | null; job_title_id: string | null
   allowed_categories: string[] | null; warehouse_scope: string | null
   warehouse_id: string | null; is_active: boolean; created_at: string; deleted_at: string | null
+  ncc_id: string | null; is_driver: boolean
 }
 
 const EMP_BASE = [
@@ -33,6 +34,7 @@ const EMP_BASE = [
   'department_id', 'job_title_id',
   'allowed_categories', 'warehouse_scope',
   'warehouse_id', 'is_active', 'created_at', 'deleted_at',
+  'ncc_id', 'is_driver',
 ].join(', ')
 
 // Fetch employees và join dept / job_title / warehouse_access thủ công
@@ -135,11 +137,13 @@ export async function createEmployee(req: Request, res: Response) {
       department_id, job_title_id,
       allowed_categories, warehouse_scope,
       warehouse_ids = [],
+      ncc_id, is_driver = false,
     } = req.body as {
       name: string; employee_code: string; email?: string; phone?: string
       department_id?: string | null; job_title_id?: string | null
       allowed_categories?: string[]; warehouse_scope?: string
       warehouse_ids?: string[]
+      ncc_id?: string | null; is_driver?: boolean
     }
 
     if (!name || !employee_code) return fail(res, 'name và employee_code là bắt buộc', 400)
@@ -157,6 +161,8 @@ export async function createEmployee(req: Request, res: Response) {
       job_title_id:  job_title_id  || null,
       allowed_categories: allowed_categories ?? ['Thành phẩm', 'NVL', 'POSM', 'Bao bì'],
       warehouse_scope: warehouse_scope ?? 'ASSIGNED',
+      ncc_id: ncc_id || null,
+      is_driver: is_driver ?? false,
       password: hashedPw,
       is_active: true,
       created_at: now,
@@ -189,12 +195,14 @@ export async function updateEmployee(req: Request, res: Response) {
       allowed_categories, warehouse_scope,
       warehouse_ids,
       is_active,
+      ncc_id, is_driver,
     } = req.body as {
       name?: string; phone?: string; email?: string
       department_id?: string | null; job_title_id?: string | null
       allowed_categories?: string[]; warehouse_scope?: string
       warehouse_ids?: string[]
       is_active?: boolean
+      ncc_id?: string | null; is_driver?: boolean
     }
 
     // Build update object explicitly — exclude undefined fields so Supabase doesn't overwrite them with null
@@ -207,6 +215,8 @@ export async function updateEmployee(req: Request, res: Response) {
     if (allowed_categories !== undefined) updates.allowed_categories = allowed_categories
     if (warehouse_scope   !== undefined) updates.warehouse_scope   = warehouse_scope
     if (is_active         !== undefined) updates.is_active         = is_active
+    if (ncc_id            !== undefined) updates.ncc_id            = ncc_id
+    if (is_driver         !== undefined) updates.is_driver         = is_driver
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (supabase.from('Employee') as any)

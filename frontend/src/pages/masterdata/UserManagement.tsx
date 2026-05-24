@@ -16,6 +16,7 @@ import {
   useCreateEmployee, useUpdateEmployee, useDeleteEmployee, useRestoreEmployee, useWarehouses, useWarehouseTypes,
   useCreateDepartment, useUpdateDepartment,
   useCreateJobTitle, useUpdateJobTitle,
+  useTransportCompanies, useTmsVehicles,
 } from '@/api/hooks'
 import { apiClient } from '@/api/client'
 import { MODULES, can, type ModuleKey, type ModulePermissions } from '@/config/permissions'
@@ -186,6 +187,7 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
   const { data: warehouses = [] }     = useWarehouses()
   const { data: whTypes = [] }        = useWarehouseTypes()
   const categoryOptions                = whTypes.map(t => t.value)
+  const { data: transportCompanies = [] } = useTransportCompanies(true)
 
   const [name,         setName]         = useState(emp?.name          ?? '')
   const [empCode,      setEmpCode]      = useState(emp?.employee_code ?? '')
@@ -198,6 +200,12 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
     emp?.warehouse_access?.map(w => w.warehouse_id) ?? []
   )
   const [isActive, setIsActive] = useState(emp?.is_active ?? true)
+  const [nccId,    setNccId]    = useState(emp?.ncc_id ?? '')
+  const [isDriver, setIsDriver] = useState(emp?.is_driver ?? false)
+
+  const { data: nccVehicles = [] } = useTmsVehicles(
+    nccId ? { ncc_id: nccId, is_active: 'true' } : undefined
+  )
 
   const deptIdMounted      = useRef(false)
   const defaultCatApplied  = useRef(false)
@@ -247,6 +255,8 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
       allowed_categories: categories,
       warehouse_scope: scope,
       warehouse_ids: scope === 'ASSIGNED' ? warehouseIds : [],
+      ncc_id: nccId || null,
+      is_driver: isDriver,
     }
     if (isEdit) {
       update({ id: emp.id, ...payload, is_active: isActive }, { onSuccess: onClose })
@@ -327,8 +337,20 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
               <Input value={name} onChange={e => setName(e.target.value)} placeholder="Nguyễn Văn A" />
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">Mã nhân viên *</Label>
-              <Input value={empCode} onChange={e => setEmpCode(e.target.value)} placeholder="NV001" />
+              <Label className="text-xs">Mã NV / Biển số *</Label>
+              {isDriver && nccId ? (
+                <Select value={empCode || '__none__'} onValueChange={v => setEmpCode(v === '__none__' ? '' : v)}>
+                  <SelectTrigger><SelectValue placeholder="Chọn biển số xe" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">— Chọn biển số xe —</SelectItem>
+                    {(nccVehicles as import('@/types').TmsVehicle[]).map(v => (
+                      <SelectItem key={v.id} value={v.license_plate}>{v.license_plate}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Input value={empCode} onChange={e => setEmpCode(e.target.value)} placeholder="NV001" />
+              )}
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Tên đăng nhập</Label>
@@ -365,6 +387,33 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
                 </SelectContent>
               </Select>
             </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1 col-span-2">
+              <Label className="text-xs">Đơn vị vận tải (ĐVVT)</Label>
+              <Select value={nccId || '__none__'} onValueChange={v => {
+                const val = v === '__none__' ? '' : v
+                setNccId(val)
+                if (!val) setIsDriver(false)
+              }}>
+                <SelectTrigger><SelectValue placeholder="— Không thuộc ĐVVT —" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">— Không thuộc ĐVVT —</SelectItem>
+                  {(transportCompanies as { id: string; name: string }[]).map(tc => (
+                    <SelectItem key={tc.id} value={tc.id}>{tc.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {nccId && (
+              <div className="col-span-2 flex items-center gap-2">
+                <input id="is-driver" type="checkbox" checked={isDriver}
+                  onChange={e => setIsDriver(e.target.checked)}
+                  className="h-4 w-4 rounded accent-blue-600" />
+                <Label htmlFor="is-driver" className="text-sm cursor-pointer">Là lái xe (biển số xe = mã nhân viên, tự điền khi đặt lịch)</Label>
+              </div>
+            )}
           </div>
 
           <div className="rounded-lg border border-slate-200 p-3 space-y-3 bg-slate-50">

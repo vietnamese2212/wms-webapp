@@ -794,6 +794,7 @@ export function useCreateEmployee() {
       department_id?: string | null; job_title_id?: string | null
       allowed_categories?: string[]; warehouse_scope?: string
       warehouse_ids?: string[]
+      ncc_id?: string | null; is_driver?: boolean
     }) => apiClient.post('/masterdata/employees', body).then(r => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['employee-records'] }),
   })
@@ -807,6 +808,7 @@ export function useUpdateEmployee() {
       department_id?: string | null; job_title_id?: string | null
       allowed_categories?: string[]; warehouse_scope?: string
       is_active?: boolean; warehouse_ids?: string[]
+      ncc_id?: string | null; is_driver?: boolean
     }) => apiClient.patch(`/masterdata/employees/${id}`, body).then(r => r.data.data),
     onSuccess: (updated: EmployeeRecord, v) => {
       // Cập nhật cache ngay lập tức thay vì refetch toàn bộ
@@ -1514,7 +1516,7 @@ export function useDeliveryBookings(params?: { date?: string; warehouse_id?: str
       const { data } = await apiClient.get('/tms/bookings', { params })
       return data.data as import('@/types').DeliveryBooking[]
     },
-    enabled: !!params?.date && !!params?.warehouse_id,
+    enabled: !!params?.date,
   })
 }
 
@@ -1522,7 +1524,7 @@ type BookingWriteBody = {
   date?: string; warehouse_id?: string; npp_name?: string; ncc_id?: string | null
   gdo_refs?: string; notes?: string | null; status?: string
   box_count?: number | null; pallet_count?: number | null; tonnage?: number | null
-  warehouse_type?: string; vehicle_type?: string
+  warehouse_type?: string; vehicle_type?: string; direction?: string
   slot_id?: string | null; license_plate?: string | null
   driver_name?: string | null; driver_phone?: string | null
 }

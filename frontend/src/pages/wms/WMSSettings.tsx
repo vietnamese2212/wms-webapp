@@ -399,17 +399,11 @@ export default function WMSSettings() {
                           <TableCell className="px-3 py-2 font-medium text-slate-800">{t.value}</TableCell>
                           {canManage && (
                             <TableCell className="px-2 py-2">
-                              <div className="flex items-center gap-0.5">
-                                <button className="text-slate-400 hover:text-blue-500 p-1 transition-colors"
-                                  onClick={() => { setEditingType(t); setShowTypeDlg(true) }}>
-                                  <Pencil className="h-3.5 w-3.5" />
-                                </button>
-                                <button className="text-slate-400 hover:text-red-500 p-1 transition-colors"
-                                  disabled={deletingType}
-                                  onClick={() => { if (confirm(`Xóa loại kho "${t.value}"?`)) deleteType(t.id) }}>
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </button>
-                              </div>
+                              <button className="text-slate-400 hover:text-red-500 p-1 transition-colors"
+                                disabled={deletingType}
+                                onClick={() => { if (confirm(`Xóa loại kho "${t.value}"?`)) deleteType(t.id) }}>
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
                             </TableCell>
                           )}
                         </TableRow>

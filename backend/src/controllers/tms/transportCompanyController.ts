@@ -39,11 +39,10 @@ export async function createTransportCompany(req: Request, res: Response) {
 export async function updateTransportCompany(req: Request, res: Response) {
   try {
     const { id } = req.params
-    const { code, name, contact_name, contact_phone, is_active } = req.body as {
-      code?: string; name?: string; contact_name?: string; contact_phone?: string; is_active?: boolean
+    const { name, contact_name, contact_phone, is_active } = req.body as {
+      name?: string; contact_name?: string; contact_phone?: string; is_active?: boolean
     }
     const updates: Record<string, unknown> = { updated_at: new Date().toISOString() }
-    if (code          !== undefined) updates.code          = code.toUpperCase().trim()
     if (name          !== undefined) updates.name          = name.trim()
     if (contact_name  !== undefined) updates.contact_name  = contact_name?.trim() ?? null
     if (contact_phone !== undefined) updates.contact_phone = contact_phone?.trim() ?? null

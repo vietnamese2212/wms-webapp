@@ -32,10 +32,9 @@ export async function createVehicleType(req: Request, res: Response) {
 export async function updateVehicleType(req: Request, res: Response) {
   try {
     const { id } = req.params
-    const { code, name, is_active } = req.body as { code?: string; name?: string; is_active?: boolean }
+    const { code, is_active } = req.body as { code?: string; is_active?: boolean }
     const updates: Record<string, unknown> = { updated_at: new Date().toISOString() }
     if (code      !== undefined) updates.code      = code.toUpperCase().trim()
-    if (name      !== undefined) updates.name      = name.trim()
     if (is_active !== undefined) updates.is_active = is_active
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await (supabase.from('VehicleType') as any)

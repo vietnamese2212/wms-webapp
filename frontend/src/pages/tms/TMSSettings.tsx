@@ -44,7 +44,7 @@ function VehicleTypeDialog({ vt, open, onClose }: { vt: TmsVehicleType | null; o
     setErr('')
     if (!code || !name) { setErr('Mã và tên là bắt buộc'); return }
     if (isEdit) {
-      update({ id: vt.id, code, name, is_active: isActive }, { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
+      update({ id: vt.id, code, is_active: isActive }, { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
     } else {
       create({ code, name }, { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
     }
@@ -59,7 +59,8 @@ function VehicleTypeDialog({ vt, open, onClose }: { vt: TmsVehicleType | null; o
           <div className="space-y-1"><Label className="text-xs">Mã *</Label>
             <Input value={code} onChange={e => setCode(e.target.value.toUpperCase())} placeholder="PALLET, SCA, XA…" /></div>
           <div className="space-y-1"><Label className="text-xs">Tên *</Label>
-            <Input value={name} onChange={e => setName(e.target.value)} placeholder="Xe pallet, Xe SCA…" /></div>
+            <Input value={name} onChange={e => setName(e.target.value)} placeholder="Xe pallet, Xe SCA…"
+              disabled={isEdit} className={isEdit ? 'bg-slate-50 cursor-not-allowed' : ''} /></div>
           {isEdit && <div className="flex items-center gap-2">
             <input id="vt-active" type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} className="h-4 w-4 rounded accent-blue-600" />
             <Label htmlFor="vt-active" className="text-sm cursor-pointer">Đang hoạt động</Label>
@@ -207,11 +208,12 @@ function TransportCompanyDialog({ co, open, onClose }: { co: TransportCompany | 
   function handleSubmit() {
     setErr('')
     if (!code || !name) { setErr('Mã và tên là bắt buộc'); return }
-    const payload = { code, name, contact_name: contact || undefined, contact_phone: phone || undefined }
     if (isEdit) {
-      update({ id: co.id, ...payload, is_active: isActive }, { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
+      update({ id: co.id, name, contact_name: contact || undefined, contact_phone: phone || undefined, is_active: isActive },
+        { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
     } else {
-      create(payload, { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
+      create({ code, name, contact_name: contact || undefined, contact_phone: phone || undefined },
+        { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
     }
   }
 
@@ -223,7 +225,8 @@ function TransportCompanyDialog({ co, open, onClose }: { co: TransportCompany | 
           {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1"><Label className="text-xs">Mã *</Label>
-              <Input value={code} onChange={e => setCode(e.target.value.toUpperCase())} placeholder="DVVT01…" /></div>
+              <Input value={code} onChange={e => setCode(e.target.value.toUpperCase())} placeholder="DVVT01…"
+                disabled={isEdit} className={isEdit ? 'bg-slate-50 cursor-not-allowed' : ''} /></div>
             <div className="space-y-1"><Label className="text-xs">Tên ĐVVT *</Label>
               <Input value={name} onChange={e => setName(e.target.value)} placeholder="Công ty vận tải A…" /></div>
           </div>

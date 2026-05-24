@@ -89,6 +89,22 @@ export const MODULES = {
       delete:       'Xóa nhân viên',
     },
   },
+  deliveries: {
+    label: 'Giao hàng',
+    actions: {
+      view:   'Xem danh sách',
+      create: 'Tạo chuyến',
+      edit:   'Sửa',
+    },
+  },
+  schedule: {
+    label: 'Lịch làm việc',
+    actions: {
+      view:   'Xem lịch',
+      create: 'Tạo lịch',
+      approve:'Duyệt / Từ chối',
+    },
+  },
   wms_settings: {
     label: 'Cài đặt WMS',
     actions: {

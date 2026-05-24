@@ -201,6 +201,7 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
   )
   const [isActive, setIsActive] = useState(emp?.is_active ?? true)
   const [nccId,    setNccId]    = useState(emp?.ncc_id ?? '')
+  const [driverVehicleId, setDriverVehicleId] = useState<string>('')
 
   const selectedDeptName = departments.find(d => d.id === deptId)?.name ?? ''
   const selectedJtName   = jobTitles.find(jt => jt.id === jobTitleId)?.name ?? ''
@@ -208,9 +209,17 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
   const isDispatcherRole = selectedDeptName === 'Đơn vị vận tải' && !!jobTitleId && !isDriverRole
 
   const { data: allVehicles = [] } = useTmsVehicles(isDriverRole ? { is_active: 'true' } : undefined)
-  const selectedVehicleNcc = isDriverRole && empCode
-    ? (allVehicles as TmsVehicle[]).find(v => v.license_plate === empCode)?.ncc?.name ?? null
-    : null
+  const selectedVehicle    = isDriverRole ? (allVehicles as TmsVehicle[]).find(v => v.id === driverVehicleId) ?? null : null
+  const selectedVehicleNcc = selectedVehicle?.ncc?.name ?? null
+
+  // Khi edit driver, tìm vehicle.id từ plate + ncc_id
+  useEffect(() => {
+    if (!isDriverRole || !emp?.employee_code || allVehicles.length === 0) return
+    const v = (allVehicles as TmsVehicle[]).find(
+      v => v.license_plate === emp.employee_code && v.ncc_id === emp.ncc_id
+    )
+    if (v) setDriverVehicleId(v.id)
+  }, [isDriverRole, emp, allVehicles])
 
   const deptIdMounted      = useRef(false)
   const defaultCatApplied  = useRef(false)
@@ -252,11 +261,8 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
   }
 
   function handleSubmit() {
-    const selectedVehicle = isDriverRole
-      ? (allVehicles as TmsVehicle[]).find(v => v.license_plate === empCode)
-      : null
     const payload = {
-      name, employee_code: empCode,
+      name, employee_code: isDriverRole ? (selectedVehicle?.license_plate ?? empCode) : empCode,
       email: email || undefined, phone: phone || undefined,
       department_id: deptId || null,
       job_title_id: jobTitleId || null,
@@ -347,12 +353,14 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
             <div className="space-y-1">
               <Label className="text-xs">{isDriverRole ? 'Biển số xe *' : 'Mã NV *'}</Label>
               {isDriverRole ? (
-                <Select value={empCode || '__none__'} onValueChange={v => setEmpCode(v === '__none__' ? '' : v)}>
+                <Select value={driverVehicleId || '__none__'} onValueChange={v => setDriverVehicleId(v === '__none__' ? '' : v)}>
                   <SelectTrigger><SelectValue placeholder="Chọn biển số xe" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__none__">— Chọn biển số xe —</SelectItem>
                     {(allVehicles as TmsVehicle[]).map(v => (
-                      <SelectItem key={v.id} value={v.license_plate}>{v.license_plate}</SelectItem>
+                      <SelectItem key={v.id} value={v.id}>
+                        {v.license_plate}{v.ncc?.name ? ` — ${v.ncc.name}` : ''}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>

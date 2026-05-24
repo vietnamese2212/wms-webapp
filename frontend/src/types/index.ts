@@ -388,6 +388,7 @@ export interface DeliverySlot {
   template_id:     string | null
   warehouse_id:    string
   vehicle_type_id: string
+  vehicle_type?:   { id: string; code: string; name: string } | null
   cargo_type:      string
   date:            string
   time_from:       string

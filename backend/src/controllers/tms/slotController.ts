@@ -16,7 +16,7 @@ export async function listSlots(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let q = (supabase.from('DeliverySlot') as any)
-      .select('id, template_id, warehouse_id, vehicle_type_id, direction, cargo_type, date, time_from, time_to, max_vehicles, booked_count, status')
+      .select('id, template_id, warehouse_id, vehicle_type_id, vehicle_type:VehicleType(id, code, name), direction, cargo_type, date, time_from, time_to, max_vehicles, booked_count, status')
       .eq('date', date)
       .eq('warehouse_id', warehouse_id)
       .order('time_from')

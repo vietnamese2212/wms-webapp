@@ -42,10 +42,11 @@ function StatusBadge({ status }: { status: string }) {
 
 // ── Slot Picker ───────────────────────────────────────────────────────────────
 
-function SlotPicker({ warehouseId, date, selectedSlotId, onSelect, cargoType }: {
+function SlotPicker({ warehouseId, date, selectedSlotId, onSelect, cargoType, vehicleType }: {
   warehouseId: string; date: string; selectedSlotId: string | null
   onSelect: (slot: DeliverySlot) => void
   cargoType?: string | null
+  vehicleType?: string | null
 }) {
   const [generateDone, setGenerateDone] = useState(false)
   const { mutate: generateSlots } = useGenerateSlots()
@@ -67,10 +68,11 @@ function SlotPicker({ warehouseId, date, selectedSlotId, onSelect, cargoType }: 
   if (!allSlots.length)
     return <p className="text-xs text-slate-400 py-6 text-center">Chưa có khung giờ nào được cấu hình cho ngày này.</p>
 
-  // filter theo cargo_type — loại xe không khóa slot
+  // filter theo cargo_type và vehicle_type
   const filtered = allSlots.filter(slot => {
     if (slot.id === selectedSlotId) return true
     if (cargoType && slot.cargo_type !== 'ALL' && slot.cargo_type !== cargoType) return false
+    if (vehicleType && slot.vehicle_type?.name && slot.vehicle_type.name !== vehicleType) return false
     return true
   })
 
@@ -102,6 +104,9 @@ function SlotPicker({ warehouseId, date, selectedSlotId, onSelect, cargoType }: 
             <span className="flex items-center gap-2">
               <span className="font-mono font-semibold">{slot.time_from.slice(0, 5)}–{slot.time_to.slice(0, 5)}</span>
               <span className="text-slate-500">{slot.cargo_type === 'ALL' ? 'Tất cả' : slot.cargo_type}</span>
+              {slot.vehicle_type?.name && (
+                <span className="text-[9px] bg-blue-100 text-blue-700 px-1 rounded">{slot.vehicle_type.name}</span>
+              )}
               {past && !selected && <span className="text-[9px] text-slate-400">đã qua</span>}
             </span>
             <span className={`font-semibold tabular-nums ${full && !selected ? 'text-red-500' : past && !selected ? 'text-slate-400' : 'text-green-600'}`}>
@@ -172,6 +177,7 @@ function DVVTFillDialog({ booking, onClose }: { booking: DeliveryBooking | null;
               selectedSlotId={selectedSlot?.id ?? null}
               onSelect={setSelectedSlot}
               cargoType={booking.warehouse_type}
+              vehicleType={booking.vehicle_type}
             />
           </div>
           <div className="grid grid-cols-2 gap-2">
@@ -718,11 +724,18 @@ function SlotOverviewDialog({ open, onClose, date, warehouseName, slots }: {
                 <span className="font-mono font-semibold text-sm w-24 shrink-0">
                   {s.time_from.slice(0, 5)}–{s.time_to.slice(0, 5)}
                 </span>
-                <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0 ${
-                  s.cargo_type === 'ALL' ? 'bg-slate-100 text-slate-600' : 'bg-blue-100 text-blue-700'
-                }`}>
-                  {s.cargo_type === 'ALL' ? 'Tất cả' : s.cargo_type}
-                </span>
+                <div className="flex flex-col gap-0.5 shrink-0">
+                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                    s.cargo_type === 'ALL' ? 'bg-slate-100 text-slate-600' : 'bg-orange-100 text-orange-700'
+                  }`}>
+                    {s.cargo_type === 'ALL' ? 'Tất cả' : s.cargo_type}
+                  </span>
+                  {s.vehicle_type?.name && (
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-700">
+                      {s.vehicle_type.name}
+                    </span>
+                  )}
+                </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between mb-1">
                     <span className={`text-xs font-semibold tabular-nums ${full ? 'text-red-600' : 'text-green-600'}`}>
@@ -806,10 +819,12 @@ export default function TMSBookings() {
 
   // Options cho filter từ data thực
   const khungGioOptions = useMemo<MSOpt[]>(() => {
-    const slotOpts: MSOpt[] = (slotsList as DeliverySlot[]).map(s => ({
-      value: s.id,
-      label: `${s.time_from.slice(0, 5)}–${s.time_to.slice(0, 5)}${s.cargo_type !== 'ALL' ? ` (${s.cargo_type})` : ''}`,
-    }))
+    const slotOpts: MSOpt[] = (slotsList as DeliverySlot[]).map(s => {
+      const parts = [s.time_from.slice(0, 5) + '–' + s.time_to.slice(0, 5)]
+      if (s.cargo_type !== 'ALL') parts.push(s.cargo_type)
+      if (s.vehicle_type?.name) parts.push(s.vehicle_type.name)
+      return { value: s.id, label: parts.join(' · ') }
+    })
     return [{ value: '__chua_dat__', label: 'Chưa đặt' }, ...slotOpts]
   }, [slotsList])
   const huongOptions: MSOpt[] = [

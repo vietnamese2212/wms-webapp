@@ -119,11 +119,17 @@ function SlotPicker({ warehouseId, date, selectedSlotId, onSelect, cargoType }: 
 function DVVTFillDialog({ booking, onClose }: { booking: DeliveryBooking | null; onClose: () => void }) {
   const updateBooking = useUpdateBooking()
   const user = useAuthStore(s => s.user)
-  const isDriver  = user?.job_title_name === 'Lái xe'
+  const isDriver     = user?.job_title_name === 'Lái xe'
+  const driverPlate  = user?.employee_code ?? ''
+  // driver có plate → auto-fill; driver không có plate → select từ ĐVVT của họ
+  const driverHasPlate = isDriver && !!driverPlate
 
-  // load vehicles của ĐVVT gắn với booking — dùng để chọn biển số (trừ lái xe)
   const { data: nccVehicles = [] } = useTmsVehicles(
-    !isDriver && booking?.ncc_id ? { ncc_id: booking.ncc_id, is_active: 'true' } : undefined
+    isDriver && !driverHasPlate && user?.ncc_id
+      ? { ncc_id: user.ncc_id, is_active: 'true' }
+      : !isDriver && booking?.ncc_id
+        ? { ncc_id: booking.ncc_id, is_active: 'true' }
+        : undefined
   )
 
   const [selectedSlot, setSelectedSlot] = useState<DeliverySlot | null>(null)
@@ -134,11 +140,11 @@ function DVVTFillDialog({ booking, onClose }: { booking: DeliveryBooking | null;
   useEffect(() => {
     if (booking) {
       setSelectedSlot((booking.slot as DeliverySlot | null) ?? null)
-      setLicensePlate(isDriver ? (user?.employee_code ?? '') : (booking.license_plate ?? ''))
+      setLicensePlate(driverHasPlate ? driverPlate : (booking.license_plate ?? ''))
       setDriverPhone(booking.driver_phone ?? '')
       setErr('')
     }
-  }, [booking?.id, isDriver])
+  }, [booking?.id, driverHasPlate])
 
   const handleSave = async () => {
     if (!booking) return
@@ -178,7 +184,7 @@ function DVVTFillDialog({ booking, onClose }: { booking: DeliveryBooking | null;
           <div className="grid grid-cols-2 gap-2">
             <div>
               <Label className="text-xs">Biển số xe *</Label>
-              {isDriver ? (
+              {driverHasPlate ? (
                 <Input value={licensePlate} disabled className="h-8 text-sm mt-1 bg-slate-50 font-mono" />
               ) : (
                 <Select value={licensePlate || '__none__'} onValueChange={v => setLicensePlate(v === '__none__' ? '' : v)}>

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import * as XLSX from 'xlsx'
-import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw } from 'lucide-react'
+import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -119,17 +119,10 @@ function SlotPicker({ warehouseId, date, selectedSlotId, onSelect, cargoType }: 
 function DVVTFillDialog({ booking, onClose }: { booking: DeliveryBooking | null; onClose: () => void }) {
   const updateBooking = useUpdateBooking()
   const user = useAuthStore(s => s.user)
-  const isDriver     = user?.job_title_name === 'Lái xe'
-  const driverPlate  = user?.employee_code ?? ''
-  // driver có plate → auto-fill; driver không có plate → select từ ĐVVT của họ
-  const driverHasPlate = isDriver && !!driverPlate
+  const isDriver = user?.job_title_name === 'Lái xe'
 
   const { data: nccVehicles = [] } = useTmsVehicles(
-    isDriver && !driverHasPlate && user?.ncc_id
-      ? { ncc_id: user.ncc_id, is_active: 'true' }
-      : !isDriver && booking?.ncc_id
-        ? { ncc_id: booking.ncc_id, is_active: 'true' }
-        : undefined
+    !isDriver && booking?.ncc_id ? { ncc_id: booking.ncc_id, is_active: 'true' } : undefined
   )
 
   const [selectedSlot, setSelectedSlot] = useState<DeliverySlot | null>(null)
@@ -140,11 +133,11 @@ function DVVTFillDialog({ booking, onClose }: { booking: DeliveryBooking | null;
   useEffect(() => {
     if (booking) {
       setSelectedSlot((booking.slot as DeliverySlot | null) ?? null)
-      setLicensePlate(driverHasPlate ? driverPlate : (booking.license_plate ?? ''))
+      setLicensePlate(isDriver ? (user?.employee_code ?? '') : (booking.license_plate ?? ''))
       setDriverPhone(booking.driver_phone ?? '')
       setErr('')
     }
-  }, [booking?.id, driverHasPlate])
+  }, [booking?.id, isDriver])
 
   const handleSave = async () => {
     if (!booking) return
@@ -184,7 +177,7 @@ function DVVTFillDialog({ booking, onClose }: { booking: DeliveryBooking | null;
           <div className="grid grid-cols-2 gap-2">
             <div>
               <Label className="text-xs">Biển số xe *</Label>
-              {driverHasPlate ? (
+              {isDriver ? (
                 <Input value={licensePlate} disabled className="h-8 text-sm mt-1 bg-slate-50 font-mono" />
               ) : (
                 <Select value={licensePlate || '__none__'} onValueChange={v => setLicensePlate(v === '__none__' ? '' : v)}>
@@ -914,7 +907,14 @@ export default function TMSBookings() {
                     ) : (
                       <span className="text-xs text-amber-500">Chưa đặt giờ</span>
                     )}
-                    {b.license_plate && <span className="text-xs font-mono font-semibold text-slate-700">{b.license_plate}</span>}
+                    {b.license_plate && (
+                      <span className="flex items-center gap-0.5 text-xs font-mono font-semibold text-slate-700">
+                        {user?.employee_code && b.license_plate === user.employee_code && (
+                          <Star className="h-3 w-3 fill-yellow-400 text-yellow-400 shrink-0" />
+                        )}
+                        {b.license_plate}
+                      </span>
+                    )}
                     {b.driver_phone && <span className="text-xs text-slate-500">{b.driver_phone}</span>}
                   </div>
 
@@ -1047,7 +1047,14 @@ export default function TMSBookings() {
                         </div>
                       </TableCell>
                       <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold">
-                        {b.license_plate || <span className="text-slate-400 font-normal">—</span>}
+                        {b.license_plate ? (
+                          <span className="flex items-center gap-0.5">
+                            {user?.employee_code && b.license_plate === user.employee_code && (
+                              <Star className="h-3 w-3 fill-yellow-400 text-yellow-400 shrink-0" />
+                            )}
+                            {b.license_plate}
+                          </span>
+                        ) : <span className="text-slate-400 font-normal">—</span>}
                       </TableCell>
                       <TableCell className="px-2 py-1 text-[10px] text-slate-500">
                         {b.driver_phone || <span className="text-slate-400">—</span>}

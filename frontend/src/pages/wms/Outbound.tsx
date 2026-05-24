@@ -732,11 +732,11 @@ function GDOFormBody({
               <thead>
                 <tr className="bg-slate-50">
                   <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-5">#</th>
-                  <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left">Mã hàng</th>
+                  <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-32">Mã hàng</th>
                   <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-20">Loại kho</th>
                   <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right w-[72px]">Thùng</th>
                   <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right w-[72px]">Nhặt lẻ</th>
-                  <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left">Ghi chú</th>
+                  <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left min-w-[120px]">Ghi chú</th>
                   <th className="px-1 py-1.5 w-5" />
                 </tr>
               </thead>
@@ -749,7 +749,7 @@ function GDOFormBody({
                   return (
                     <tr key={item.id} className={`border-t border-slate-100 ${rowCls}`}>
                       <td className="px-2 py-1.5 text-[9px] text-slate-400 align-middle">{idx + 1}</td>
-                      <td className="px-2 py-1 align-top">
+                      <td className="px-2 py-1 align-top w-32 max-w-[8rem]">
                         <MatPicker
                           value={item.material_code}
                           matName={item.mat_name}

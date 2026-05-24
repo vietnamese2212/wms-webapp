@@ -248,6 +248,10 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
   const [createdInfo, setCreatedInfo] = useState<{ name: string; login: string; password: string } | null>(null)
   const [copied, setCopied] = useState(false)
 
+  const lockIdentity    = isEdit
+  const lockDriverPlate = isEdit && isDriverRole
+  const showRestOfForm  = isEdit || (!!deptId && !!jobTitleId)
+
   function copyPassword(pwd: string) {
     navigator.clipboard.writeText(pwd)
     setCopied(true)
@@ -262,9 +266,10 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
   }
 
   function handleSubmit() {
-    const payload = {
-      name, employee_code: isDriverRole ? (selectedVehicle?.license_plate ?? empCode) : empCode,
-      email: email || undefined, phone: phone || undefined,
+    const payload: Record<string, unknown> = {
+      name,
+      email: email || undefined,
+      phone: phone || undefined,
       department_id: deptId || null,
       job_title_id: jobTitleId || null,
       allowed_categories: categories,
@@ -273,10 +278,16 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
       ncc_id: (isDriverRole || isDispatcherRole) ? (nccId || null) : null,
       is_driver: isDriverRole,
     }
+    // Biển số khóa khi edit driver — không gửi employee_code (đổi qua TMS Settings)
+    if (!lockDriverPlate) {
+      payload.employee_code = isDriverRole ? (selectedVehicle?.license_plate ?? empCode) : empCode
+    }
     if (isEdit) {
-      update({ id: emp.id, ...payload, is_active: isActive }, { onSuccess: onClose })
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      update({ id: emp.id, ...(payload as any), is_active: isActive }, { onSuccess: onClose })
     } else {
-      create(payload, {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      create(payload as any, {
         onSuccess: (result: EmployeeRecord & { temp_password?: string }) => {
           setCreatedInfo({
             name: result.name,
@@ -346,41 +357,7 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
             <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{apiError}</div>
           )}
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <Label className="text-xs">Họ tên *</Label>
-              <Input value={name} onChange={e => setName(e.target.value)} placeholder="Nguyễn Văn A" />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">{isDriverRole ? 'Biển số xe *' : 'Mã NV *'}</Label>
-              {isDriverRole ? (
-                <Select
-                  value={driverVehicleId || '__none__'}
-                  onValueChange={v => setDriverVehicleId(v === '__none__' ? '' : v)}
-                  disabled={!nccId}
-                >
-                  <SelectTrigger><SelectValue placeholder={nccId ? 'Chọn biển số xe' : 'Chọn ĐVVT trước'} /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">— Chọn biển số xe —</SelectItem>
-                    {(allVehicles as TmsVehicle[]).map(v => (
-                      <SelectItem key={v.id} value={v.id}>{v.license_plate}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              ) : (
-                <Input value={empCode} onChange={e => setEmpCode(e.target.value)} placeholder="NV001" />
-              )}
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Tên đăng nhập</Label>
-              <Input type="text" value={email} onChange={e => setEmail(e.target.value)} placeholder="Email hoặc tên bất kỳ" />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">SĐT</Label>
-              <Input value={phone} onChange={e => setPhone(e.target.value)} />
-            </div>
-          </div>
-
+          {/* Phòng ban + Chức danh — luôn hiển thị đầu tiên */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
               <Label className="text-xs">Phòng ban</Label>
@@ -408,83 +385,138 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
             </div>
           </div>
 
-          {(isDriverRole || isDispatcherRole) && (
-            <div className="space-y-1">
-              <Label className="text-xs">Công ty vận tải (ĐVVT) *</Label>
-              <Select value={nccId || '__none__'} onValueChange={v => {
-                const next = v === '__none__' ? '' : v
-                setNccId(next)
-                if (isDriverRole) setDriverVehicleId('')
-              }}>
-                <SelectTrigger><SelectValue placeholder="— Chọn công ty —" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">— Chọn công ty —</SelectItem>
-                  {(transportCompanies as { id: string; name: string }[]).map(tc => (
-                    <SelectItem key={tc.id} value={tc.id}>{tc.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+          {!isEdit && !showRestOfForm && (
+            <p className="text-xs text-center text-slate-400 py-2">Chọn phòng ban và chức danh để tiếp tục</p>
           )}
 
-          <div className="rounded-lg border border-slate-200 p-3 space-y-3 bg-slate-50">
-            <div className="space-y-1">
-              <Label className="text-xs">Loại hàng được phép</Label>
-              <div className="flex gap-2 flex-wrap">
-                {categoryOptions.map(cat => (
-                  <button key={cat} type="button" onClick={() => toggleCategory(cat)}
-                    className={`px-3 py-1 rounded-full text-xs font-medium border transition-all
-                      ${categories.includes(cat)
-                        ? (CATEGORY_COLOR[cat] ?? 'bg-emerald-100 text-emerald-700') + ' border-transparent'
-                        : 'bg-white text-slate-400 border-slate-200 hover:border-slate-300'}`}>
-                    {cat}
-                  </button>
-                ))}
-              </div>
-            </div>
+          {showRestOfForm && (
+            <>
+              {(isDriverRole || isDispatcherRole) && (
+                <div className="space-y-1">
+                  <Label className="text-xs">Công ty vận tải (ĐVVT) *</Label>
+                  <Select value={nccId || '__none__'} onValueChange={v => {
+                    const next = v === '__none__' ? '' : v
+                    setNccId(next)
+                    if (isDriverRole) setDriverVehicleId('')
+                  }} disabled={lockDriverPlate}>
+                    <SelectTrigger><SelectValue placeholder="— Chọn công ty —" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">— Chọn công ty —</SelectItem>
+                      {(transportCompanies as { id: string; name: string }[]).map(tc => (
+                        <SelectItem key={tc.id} value={tc.id}>{tc.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {lockDriverPlate && (
+                    <p className="text-[10px] text-slate-400">Đổi biển số qua Cài đặt TMS → thông tin sẽ tự cập nhật</p>
+                  )}
+                </div>
+              )}
 
-            <div className="space-y-1">
-              <Label className="text-xs">Phạm vi kho</Label>
-              <Select value={scope} onValueChange={v => setScope(v as 'NATIONAL'|'ASSIGNED')}>
-                <SelectTrigger className="bg-white"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="NATIONAL">Toàn quốc (tất cả kho)</SelectItem>
-                  <SelectItem value="ASSIGNED">Kho được chỉ định</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            {scope === 'ASSIGNED' && (
-              <div className="space-y-1">
-                <Label className="text-xs">Kho được phép</Label>
-                <div className="flex gap-2 flex-wrap">
-                  {warehouses.map((w: { id: string; code: string; name: string }) => (
-                    <button key={w.id} type="button" onClick={() => toggleWarehouse(w.id)}
-                      className={`px-3 py-1 rounded-full text-xs font-medium border transition-all
-                        ${warehouseIds.includes(w.id)
-                          ? 'bg-blue-100 text-blue-800 border-transparent'
-                          : 'bg-white text-slate-400 border-slate-200 hover:border-slate-300'}`}>
-                      {w.name}
-                    </button>
-                  ))}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label className="text-xs">Họ tên *</Label>
+                  <Input value={name} onChange={e => setName(e.target.value)} placeholder="Nguyễn Văn A"
+                    disabled={lockIdentity} className={lockIdentity ? 'bg-slate-50 cursor-not-allowed' : ''} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">{isDriverRole ? 'Biển số xe *' : 'Mã NV *'}</Label>
+                  {isDriverRole ? (
+                    <Select
+                      value={driverVehicleId || '__none__'}
+                      onValueChange={v => setDriverVehicleId(v === '__none__' ? '' : v)}
+                      disabled={lockDriverPlate || !nccId}
+                    >
+                      <SelectTrigger><SelectValue placeholder={nccId ? 'Chọn biển số xe' : 'Chọn ĐVVT trước'} /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">— Chọn biển số xe —</SelectItem>
+                        {(allVehicles as TmsVehicle[]).map(v => (
+                          <SelectItem key={v.id} value={v.id}>{v.license_plate}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Input value={empCode} onChange={e => setEmpCode(e.target.value)} placeholder="NV001" />
+                  )}
+                  {lockDriverPlate && (
+                    <p className="text-[10px] text-slate-400">Đổi qua Cài đặt TMS</p>
+                  )}
                 </div>
               </div>
-            )}
-          </div>
 
-          {isEdit && (
-            <div className="flex items-center gap-2">
-              <input id="is-active" type="checkbox" checked={isActive}
-                onChange={e => setIsActive(e.target.checked)}
-                className="h-4 w-4 rounded accent-blue-600" />
-              <Label htmlFor="is-active" className="text-sm cursor-pointer">Tài khoản đang hoạt động</Label>
-            </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label className="text-xs">Tên đăng nhập</Label>
+                  <Input type="text" value={email} onChange={e => setEmail(e.target.value)}
+                    placeholder="Email hoặc tên bất kỳ"
+                    disabled={lockIdentity} className={lockIdentity ? 'bg-slate-50 cursor-not-allowed' : ''} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">SĐT</Label>
+                  <Input value={phone} onChange={e => setPhone(e.target.value)} />
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-slate-200 p-3 space-y-3 bg-slate-50">
+                <div className="space-y-1">
+                  <Label className="text-xs">Loại hàng được phép</Label>
+                  <div className="flex gap-2 flex-wrap">
+                    {categoryOptions.map(cat => (
+                      <button key={cat} type="button" onClick={() => toggleCategory(cat)}
+                        className={`px-3 py-1 rounded-full text-xs font-medium border transition-all
+                          ${categories.includes(cat)
+                            ? (CATEGORY_COLOR[cat] ?? 'bg-emerald-100 text-emerald-700') + ' border-transparent'
+                            : 'bg-white text-slate-400 border-slate-200 hover:border-slate-300'}`}>
+                        {cat}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-xs">Phạm vi kho</Label>
+                  <Select value={scope} onValueChange={v => setScope(v as 'NATIONAL'|'ASSIGNED')}>
+                    <SelectTrigger className="bg-white"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="NATIONAL">Toàn quốc (tất cả kho)</SelectItem>
+                      <SelectItem value="ASSIGNED">Kho được chỉ định</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {scope === 'ASSIGNED' && (
+                  <div className="space-y-1">
+                    <Label className="text-xs">Kho được phép</Label>
+                    <div className="flex gap-2 flex-wrap">
+                      {warehouses.map((w: { id: string; code: string; name: string }) => (
+                        <button key={w.id} type="button" onClick={() => toggleWarehouse(w.id)}
+                          className={`px-3 py-1 rounded-full text-xs font-medium border transition-all
+                            ${warehouseIds.includes(w.id)
+                              ? 'bg-blue-100 text-blue-800 border-transparent'
+                              : 'bg-white text-slate-400 border-slate-200 hover:border-slate-300'}`}>
+                          {w.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {isEdit && (
+                <div className="flex items-center gap-2">
+                  <input id="is-active" type="checkbox" checked={isActive}
+                    onChange={e => setIsActive(e.target.checked)}
+                    className="h-4 w-4 rounded accent-blue-600" />
+                  <Label htmlFor="is-active" className="text-sm cursor-pointer">Tài khoản đang hoạt động</Label>
+                </div>
+              )}
+            </>
           )}
         </div>
 
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Huỷ</Button>
-          <Button onClick={handleSubmit} disabled={isPending || !name || (isDriverRole ? !driverVehicleId : !empCode)}>
+          <Button onClick={handleSubmit} disabled={isPending || !showRestOfForm || !name || (isDriverRole ? !driverVehicleId : !empCode)}>
             {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo nhân viên'}
           </Button>
         </DialogFooter>

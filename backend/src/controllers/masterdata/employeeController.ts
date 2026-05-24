@@ -190,14 +190,14 @@ export async function updateEmployee(req: Request, res: Response) {
   try {
     const { id } = req.params
     const {
-      name, phone, email,
+      name, phone, email, employee_code,
       department_id, job_title_id,
       allowed_categories, warehouse_scope,
       warehouse_ids,
       is_active,
       ncc_id, is_driver,
     } = req.body as {
-      name?: string; phone?: string; email?: string
+      name?: string; phone?: string; email?: string; employee_code?: string
       department_id?: string | null; job_title_id?: string | null
       allowed_categories?: string[]; warehouse_scope?: string
       warehouse_ids?: string[]
@@ -210,6 +210,7 @@ export async function updateEmployee(req: Request, res: Response) {
     if (name              !== undefined) updates.name              = name
     if (phone             !== undefined) updates.phone             = phone
     if (email             !== undefined) updates.email             = email
+    if (employee_code     !== undefined) updates.employee_code     = employee_code
     if (department_id     !== undefined) updates.department_id     = department_id
     if (job_title_id      !== undefined) updates.job_title_id      = job_title_id
     if (allowed_categories !== undefined) updates.allowed_categories = allowed_categories

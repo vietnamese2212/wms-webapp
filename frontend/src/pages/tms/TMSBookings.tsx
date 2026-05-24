@@ -42,16 +42,14 @@ function StatusBadge({ status }: { status: string }) {
 
 // ── Slot Picker ───────────────────────────────────────────────────────────────
 
-function SlotPicker({ warehouseId, date, selectedSlotId, onSelect, cargoType, vehicleTypeName }: {
+function SlotPicker({ warehouseId, date, selectedSlotId, onSelect, cargoType }: {
   warehouseId: string; date: string; selectedSlotId: string | null
   onSelect: (slot: DeliverySlot) => void
   cargoType?: string | null
-  vehicleTypeName?: string | null
 }) {
   const [generateDone, setGenerateDone] = useState(false)
   const { mutate: generateSlots } = useGenerateSlots()
   const { data: slots = [], isLoading, isFetching } = useDeliverySlots({ date, warehouse_id: warehouseId })
-  const { data: vehicleTypesData = [] } = useVehicleTypes(true)
 
   useEffect(() => {
     setGenerateDone(false)
@@ -69,21 +67,17 @@ function SlotPicker({ warehouseId, date, selectedSlotId, onSelect, cargoType, ve
   if (!allSlots.length)
     return <p className="text-xs text-slate-400 py-6 text-center">Chưa có khung giờ nào được cấu hình cho ngày này.</p>
 
-  // D: filter theo cargo_type, vehicle_type (direction không lọc — slot dùng chung xuất/nhập)
+  // filter theo cargo_type — loại xe không khóa slot
   const filtered = allSlots.filter(slot => {
     if (slot.id === selectedSlotId) return true
     if (cargoType && slot.cargo_type !== 'ALL' && slot.cargo_type !== cargoType) return false
-    if (vehicleTypeName) {
-      const vt = (vehicleTypesData as TmsVehicleType[]).find(v => v.name === vehicleTypeName)
-      if (vt && slot.vehicle_type_id !== vt.id) return false
-    }
     return true
   })
 
   return (
     <div className="space-y-1 max-h-48 overflow-y-auto pr-1">
       {filtered.length === 0 && (
-        <p className="text-xs text-slate-400 py-4 text-center">Không có khung giờ phù hợp với loại kho/xe đã chọn.</p>
+        <p className="text-xs text-slate-400 py-4 text-center">Không có khung giờ phù hợp với loại kho đã chọn.</p>
       )}
       {filtered.map(slot => {
         const past = isSlotTimePassed(date, slot.time_from)
@@ -180,7 +174,6 @@ function DVVTFillDialog({ booking, onClose }: { booking: DeliveryBooking | null;
               selectedSlotId={selectedSlot?.id ?? null}
               onSelect={setSelectedSlot}
               cargoType={booking.warehouse_type}
-              vehicleTypeName={booking.vehicle_type}
             />
           </div>
           <div className="grid grid-cols-2 gap-2">

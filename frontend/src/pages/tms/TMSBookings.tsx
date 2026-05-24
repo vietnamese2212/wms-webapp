@@ -125,14 +125,13 @@ function SlotPicker({ warehouseId, date, selectedSlotId, onSelect, cargoType, ve
 function DVVTFillDialog({ booking, onClose }: { booking: DeliveryBooking | null; onClose: () => void }) {
   const updateBooking = useUpdateBooking()
   const user = useAuthStore(s => s.user)
-  const isNccUser = !!user?.ncc_id
+  const isNccUser = user?.department === 'Đơn vị vận tải'
+  const isDriver  = user?.job_title_name === 'Lái xe'
 
-  // B: load vehicles của ĐVVT
+  // dispatcher: load vehicles của NCC để chọn biển số
   const { data: nccVehicles = [] } = useTmsVehicles(
-    isNccUser && user?.ncc_id ? { ncc_id: user.ncc_id, is_active: 'true' } : undefined
+    isNccUser && !isDriver && user?.ncc_id ? { ncc_id: user.ncc_id, is_active: 'true' } : undefined
   )
-  // B: lái xe = employee_code khớp license_plate trong danh sách
-  const isDriver = isNccUser && (nccVehicles as TmsVehicle[]).some(v => v.license_plate === user?.employee_code)
 
   const [selectedSlot, setSelectedSlot] = useState<DeliverySlot | null>(null)
   const [licensePlate, setLicensePlate] = useState('')
@@ -713,7 +712,7 @@ export default function TMSBookings() {
   const perms = (user?.module_permissions as ModulePermissions | null) ?? null
   const canManage = can(perms, 'tms', 'manage_booking')
   const canBook   = can(perms, 'tms', 'book')
-  const isNccUser = !!user?.ncc_id
+  const isNccUser = user?.department === 'Đơn vị vận tải'
 
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   const [date, setDate] = useState(today)

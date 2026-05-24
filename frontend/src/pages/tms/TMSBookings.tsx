@@ -42,10 +42,9 @@ function StatusBadge({ status }: { status: string }) {
 
 // ── Slot Picker ───────────────────────────────────────────────────────────────
 
-function SlotPicker({ warehouseId, date, selectedSlotId, onSelect, direction, cargoType, vehicleTypeName }: {
+function SlotPicker({ warehouseId, date, selectedSlotId, onSelect, cargoType, vehicleTypeName }: {
   warehouseId: string; date: string; selectedSlotId: string | null
   onSelect: (slot: DeliverySlot) => void
-  direction?: 'OUTBOUND' | 'INBOUND' | null
   cargoType?: string | null
   vehicleTypeName?: string | null
 }) {
@@ -70,10 +69,9 @@ function SlotPicker({ warehouseId, date, selectedSlotId, onSelect, direction, ca
   if (!allSlots.length)
     return <p className="text-xs text-slate-400 py-6 text-center">Chưa có khung giờ nào được cấu hình cho ngày này.</p>
 
-  // D: filter theo direction, cargo_type, vehicle_type
+  // D: filter theo cargo_type, vehicle_type (direction không lọc — slot dùng chung xuất/nhập)
   const filtered = allSlots.filter(slot => {
     if (slot.id === selectedSlotId) return true
-    if (direction && slot.direction !== direction) return false
     if (cargoType && slot.cargo_type !== 'ALL' && slot.cargo_type !== cargoType) return false
     if (vehicleTypeName) {
       const vt = (vehicleTypesData as TmsVehicleType[]).find(v => v.name === vehicleTypeName)
@@ -108,9 +106,6 @@ function SlotPicker({ warehouseId, date, selectedSlotId, onSelect, direction, ca
             ].join(' ')}
           >
             <span className="flex items-center gap-2">
-              <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${slot.direction === 'OUTBOUND' ? 'bg-orange-100 text-orange-700' : 'bg-teal-100 text-teal-700'}`}>
-                {slot.direction === 'OUTBOUND' ? 'Xuất' : 'Nhập'}
-              </span>
               <span className="font-mono font-semibold">{slot.time_from.slice(0, 5)}–{slot.time_to.slice(0, 5)}</span>
               <span className="text-slate-500">{slot.cargo_type === 'ALL' ? 'Tất cả' : slot.cargo_type}</span>
               {past && !selected && <span className="text-[9px] text-slate-400">đã qua</span>}
@@ -185,7 +180,6 @@ function DVVTFillDialog({ booking, onClose }: { booking: DeliveryBooking | null;
               date={booking.date}
               selectedSlotId={selectedSlot?.id ?? null}
               onSelect={setSelectedSlot}
-              direction={booking.direction}
               cargoType={booking.warehouse_type}
               vehicleTypeName={booking.vehicle_type}
             />
@@ -911,9 +905,6 @@ export default function TMSBookings() {
                   <div className="flex items-center gap-3">
                     {b.slot ? (
                       <span className="flex items-center gap-1 text-xs">
-                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${b.slot.direction === 'OUTBOUND' ? 'bg-orange-100 text-orange-700' : 'bg-teal-100 text-teal-700'}`}>
-                          {b.slot.direction === 'OUTBOUND' ? 'Xuất' : 'Nhập'}
-                        </span>
                         <span className="font-mono font-semibold">{b.slot.time_from.slice(0, 5)}–{b.slot.time_to.slice(0, 5)}</span>
                       </span>
                     ) : (
@@ -1036,12 +1027,7 @@ export default function TMSBookings() {
                       <TableCell className="px-2 py-1 text-[10px]">
                         <div className="flex items-center gap-1">
                           {b.slot ? (
-                            <span className="flex items-center gap-1">
-                              <span className={`px-1 rounded text-[9px] font-medium ${b.slot.direction === 'OUTBOUND' ? 'bg-orange-100 text-orange-700' : 'bg-teal-100 text-teal-700'}`}>
-                                {b.slot.direction === 'OUTBOUND' ? 'X' : 'N'}
-                              </span>
-                              <span className="font-mono">{b.slot.time_from.slice(0, 5)}–{b.slot.time_to.slice(0, 5)}</span>
-                            </span>
+                            <span className="font-mono">{b.slot.time_from.slice(0, 5)}–{b.slot.time_to.slice(0, 5)}</span>
                           ) : (
                             <span className="text-amber-500">Chưa đặt</span>
                           )}

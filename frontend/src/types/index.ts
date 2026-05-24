@@ -388,7 +388,6 @@ export interface DeliverySlot {
   template_id:     string | null
   warehouse_id:    string
   vehicle_type_id: string
-  direction:       'OUTBOUND' | 'INBOUND'
   cargo_type:      string
   date:            string
   time_from:       string
@@ -409,7 +408,7 @@ export interface DeliveryBooking {
   npp_name:       string | null
   gdo_refs:       string | null
   slot_id:        string | null
-  slot?:          Pick<DeliverySlot, 'id' | 'date' | 'time_from' | 'time_to' | 'direction' | 'cargo_type' | 'max_vehicles' | 'booked_count'> | null
+  slot?:          Pick<DeliverySlot, 'id' | 'date' | 'time_from' | 'time_to' | 'cargo_type' | 'max_vehicles' | 'booked_count'> | null
   license_plate:  string | null
   driver_name:    string | null
   driver_phone:   string | null

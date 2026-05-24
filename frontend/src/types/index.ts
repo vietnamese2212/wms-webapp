@@ -415,6 +415,7 @@ export interface DeliveryBooking {
   tonnage:        number | null
   warehouse_type: string | null
   vehicle_type:   string | null
+  vehicle_code:   string | null
   notes:          string | null
   status:         BookingStatus
   created_by:     string | null

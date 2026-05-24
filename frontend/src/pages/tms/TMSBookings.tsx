@@ -188,14 +188,14 @@ function DVVTFillDialog({ booking, onClose }: { booking: DeliveryBooking | null;
 
 type BookingFormData = {
   date: string; warehouse_id: string; npp_name: string; ncc_id: string
-  warehouse_type: string; vehicle_type: string
+  vehicle_code: string; warehouse_type: string; vehicle_type: string
   box_count: string; pallet_count: string; tonnage: string
   gdo_refs: string; notes: string
 }
 
 const EMPTY_FORM = (date: string, warehouse_id: string): BookingFormData => ({
   date, warehouse_id, npp_name: '', ncc_id: '',
-  warehouse_type: '', vehicle_type: '',
+  vehicle_code: '', warehouse_type: '', vehicle_type: '',
   box_count: '', pallet_count: '', tonnage: '',
   gdo_refs: '', notes: '',
 })
@@ -225,6 +225,7 @@ function CreateEditDialog({ open, booking, onClose, defaultDate, defaultWarehous
         warehouse_id: booking.warehouse_id,
         npp_name: booking.npp_name ?? '',
         ncc_id: booking.ncc_id ?? '',
+        vehicle_code: booking.vehicle_code ?? '',
         warehouse_type: booking.warehouse_type ?? '',
         vehicle_type: booking.vehicle_type ?? '',
         box_count: booking.box_count != null ? String(booking.box_count) : '',
@@ -239,14 +240,18 @@ function CreateEditDialog({ open, booking, onClose, defaultDate, defaultWarehous
     setErr('')
   }, [open, booking?.id])
 
+  const VEHICLE_CODE_RE = /^\d{6}_[A-Za-z0-9]+_\d+$/
   const handleSubmit = async () => {
     if (!form.date || !form.warehouse_id) { setErr('Vui lòng chọn ngày và kho'); return }
+    if (!form.vehicle_code) { setErr('Vui lòng nhập Số xe'); return }
+    if (!VEHICLE_CODE_RE.test(form.vehicle_code)) { setErr('Số xe sai định dạng — ví dụ: 240526_BV_1'); return }
     if (!form.ncc_id) { setErr('Vui lòng chọn đơn vị vận tải (ĐVVT)'); return }
     const payload = {
       date: form.date,
       warehouse_id: form.warehouse_id,
       npp_name: form.npp_name || undefined,
       ncc_id: form.ncc_id || undefined,
+      ...(isEdit ? {} : { vehicle_code: form.vehicle_code }),
       warehouse_type: form.warehouse_type || undefined,
       vehicle_type: form.vehicle_type || undefined,
       box_count: form.box_count ? Number(form.box_count) : null,
@@ -291,6 +296,10 @@ function CreateEditDialog({ open, booking, onClose, defaultDate, defaultWarehous
                 </SelectContent>
               </Select>
             </div>
+          </div>
+          <div>
+            <Label className="text-xs">Số xe * <span className="text-slate-400 font-normal">(vd: 240526_BV_1)</span></Label>
+            <Input value={form.vehicle_code} onChange={e => set('vehicle_code')(e.target.value)} placeholder="ddmmyy_Kho_STT" className="h-8 text-sm mt-1 font-mono" disabled={isEdit} />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -783,9 +792,12 @@ export default function TMSBookings() {
                   b.status === 'DONE'      ? 'bg-slate-50 border-slate-200' :
                   'bg-white border-slate-200'
                 }`}>
-                  {/* Row 1: NPP + Status */}
+                  {/* Row 1: Số xe + Status */}
                   <div className="flex items-start justify-between gap-2">
-                    <span className="text-sm font-semibold leading-tight">{b.npp_name || <span className="text-slate-400 font-normal">—</span>}</span>
+                    <div>
+                      {b.vehicle_code && <span className="text-[10px] font-mono text-slate-500 block">{b.vehicle_code}</span>}
+                      <span className="text-sm font-semibold leading-tight">{b.npp_name || <span className="text-slate-400 font-normal">—</span>}</span>
+                    </div>
                     <StatusBadge status={b.status} />
                   </div>
 
@@ -866,6 +878,7 @@ export default function TMSBookings() {
               <Table className="min-w-full">
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Số xe</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Tên NPP</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">ĐVVT</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Loại kho</TableHead>
@@ -883,6 +896,9 @@ export default function TMSBookings() {
                 <TableBody>
                   {filtered.map(b => (
                     <TableRow key={b.id} className={rowBg(b.status)}>
+                      <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">
+                        {b.vehicle_code || <span className="text-slate-400 font-normal">—</span>}
+                      </TableCell>
                       <TableCell className="px-2 py-1 text-[10px] font-semibold max-w-[140px] truncate">
                         {b.npp_name || <span className="text-slate-400 font-normal">—</span>}
                       </TableCell>

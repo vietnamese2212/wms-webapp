@@ -17,7 +17,7 @@ import {
   useDeliveryBookings, useCreateBooking, useUpdateBooking, useDeleteBooking, useBulkCreateBookings,
 } from '@/api/hooks'
 import { formatDate } from '@/utils/formatters'
-import type { DeliveryBooking, DeliverySlot } from '@/types'
+import type { DeliveryBooking, DeliverySlot, TmsVehicleType, TransportCompany } from '@/types'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -378,6 +378,7 @@ function CreateEditDialog({ open, booking, onClose, defaultDate, defaultWarehous
 type ImportRow = {
   date: string | null; warehouse_id: string | null; warehouse_name: string
   npp_name: string; warehouse_type: string; vehicle_type: string
+  ncc_code: string; ncc_id: string | null
   box_count: number | null; pallet_count: number | null; tonnage: number | null
   gdo_refs: string; notes: string; valid: boolean; error: string
 }
@@ -388,6 +389,7 @@ const EXCEL_COL_MAP: Record<string, string> = {
   'ngày': 'date', 'date': 'date',
   'loại kho': 'warehouse_type', 'warehouse type': 'warehouse_type',
   'loại xe': 'vehicle_type', 'vehicle type': 'vehicle_type',
+  'đvvt': 'ncc_code', 'dvvt': 'ncc_code', 'đơn vị vận tải': 'ncc_code', 'transport company': 'ncc_code',
   'thùng': 'box_count', 'số thùng': 'box_count', 'box': 'box_count',
   'pallet': 'pallet_count', 'số pallet': 'pallet_count',
   'tấn': 'tonnage', 'số tấn': 'tonnage', 'ton': 'tonnage',
@@ -405,10 +407,12 @@ function parseExcelDate(val: unknown): string | null {
   return null
 }
 
-function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes }: {
+function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleTypes, transportCompanies }: {
   open: boolean; onClose: () => void
   warehouses: { id: string; name: string }[]
   warehouseTypes: string[]
+  vehicleTypes: TmsVehicleType[]
+  transportCompanies: TransportCompany[]
 }) {
   const bulkCreate = useBulkCreateBookings()
   const fileRef = useRef<HTMLInputElement>(null)
@@ -417,8 +421,10 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes }: {
   const [result, setResult] = useState<{ inserted: number; skipped: number } | null>(null)
   const [err, setErr] = useState('')
 
-  const whByName = Object.fromEntries(warehouses.map(w => [w.name.toLowerCase().trim(), w.id]))
+  const whByName     = Object.fromEntries(warehouses.map(w => [w.name.toLowerCase().trim(), w.id]))
   const validWhTypes = new Set(warehouseTypes.map(t => t.toLowerCase().trim()))
+  const validVtNames = new Set(vehicleTypes.map(vt => vt.name.toLowerCase().trim()))
+  const nccByCode    = Object.fromEntries(transportCompanies.map(c => [c.code.toLowerCase().trim(), c.id]))
 
   const reset = () => { setRows([]); setResult(null); setErr('') }
 
@@ -444,18 +450,24 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes }: {
           const whName = String(norm.warehouse_name ?? '').trim()
           const whId = whByName[whName.toLowerCase()] ?? null
           const date = parseExcelDate(norm.date)
-          const whType = String(norm.warehouse_type ?? '').trim()
+          const whType  = String(norm.warehouse_type ?? '').trim()
+          const vtName  = String(norm.vehicle_type ?? '').trim()
+          const nccCode = String(norm.ncc_code ?? '').trim()
+          const nccId   = nccCode ? (nccByCode[nccCode.toLowerCase()] ?? null) : null
           const errors: string[] = []
           if (!date) errors.push('thiếu ngày')
           if (whName && !whId) errors.push(`kho "${whName}" không tìm thấy`)
           if (!whId && !whName) errors.push('thiếu kho')
           if (whType && validWhTypes.size > 0 && !validWhTypes.has(whType.toLowerCase())) errors.push(`loại kho "${whType}" không hợp lệ`)
+          if (vtName && validVtNames.size > 0 && !validVtNames.has(vtName.toLowerCase())) errors.push(`loại xe "${vtName}" không hợp lệ`)
+          if (nccCode && !nccId) errors.push(`ĐVVT "${nccCode}" không tìm thấy`)
 
           return {
             date, warehouse_id: whId, warehouse_name: whName,
             npp_name: String(norm.npp_name ?? ''),
             warehouse_type: whType,
-            vehicle_type: String(norm.vehicle_type ?? ''),
+            vehicle_type: vtName,
+            ncc_code: nccCode, ncc_id: nccId,
             box_count: norm.box_count ? Number(norm.box_count) : null,
             pallet_count: norm.pallet_count ? Number(norm.pallet_count) : null,
             tonnage: norm.tonnage ? Number(norm.tonnage) : null,
@@ -477,20 +489,21 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes }: {
   }
 
   const handleImport = async () => {
-    const valid = rows.filter(r => r.valid)
-    if (!valid.length) { setErr('Không có dòng hợp lệ'); return }
+    if (!rows.length) { setErr('Chưa có dữ liệu'); return }
+    if (rows.some(r => !r.valid)) { setErr('File có dòng lỗi — vui lòng sửa và upload lại'); return }
     setImporting(true)
     try {
-      const data = await bulkCreate.mutateAsync(valid.map(r => ({
+      const data = await bulkCreate.mutateAsync(rows.map(r => ({
         date: r.date!, warehouse_id: r.warehouse_id!,
         npp_name: r.npp_name || undefined,
+        ncc_id: r.ncc_id || undefined,
         warehouse_type: r.warehouse_type || undefined,
         vehicle_type: r.vehicle_type || undefined,
         box_count: r.box_count, pallet_count: r.pallet_count, tonnage: r.tonnage,
         gdo_refs: r.gdo_refs || undefined,
         notes: r.notes || undefined,
       })))
-      setResult({ inserted: data.inserted, skipped: rows.length - valid.length })
+      setResult({ inserted: data.inserted, skipped: 0 })
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
       setErr(msg ?? 'Lỗi import')
@@ -501,15 +514,15 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes }: {
 
   const downloadTemplate = () => {
     const ws = XLSX.utils.aoa_to_sheet([
-      ['NPP', 'Kho', 'Ngày', 'Loại kho', 'Loại xe', 'Thùng', 'Pallet', 'Tấn', 'GDO', 'Ghi chú'],
-      ['Tên NPP mẫu', 'Kho Ba Vì', '21/05/2026', 'Khô', 'Pallet', 100, 5, 2.5, 'GDO-001', ''],
+      ['NPP', 'Kho', 'Ngày', 'Loại kho', 'Loại xe', 'ĐVVT', 'Thùng', 'Pallet', 'Tấn', 'GDO', 'Ghi chú'],
+      ['Tên NPP mẫu', 'Kho Ba Vì', '21/05/2026', 'Khô', 'Xe tải 5T', 'NCC001', 100, 5, 2.5, 'GDO-001', ''],
     ])
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Import')
     XLSX.writeFile(wb, 'mau_ke_hoach_vc.xlsx')
   }
 
-  const validCount = rows.filter(r => r.valid).length
+  const errorCount = rows.filter(r => !r.valid).length
 
   return (
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
@@ -533,8 +546,11 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes }: {
                 <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFile} />
                 {rows.length > 0 && (
                   <span className="text-xs text-slate-500">
-                    {rows.length} dòng · <span className="text-green-600 font-medium">{validCount} hợp lệ</span>
-                    {rows.length - validCount > 0 && <> · <span className="text-red-600 font-medium">{rows.length - validCount} lỗi</span></>}
+                    {rows.length} dòng
+                    {errorCount > 0
+                      ? <> · <span className="text-red-600 font-medium">{errorCount} lỗi — cần sửa trước khi import</span></>
+                      : <> · <span className="text-green-600 font-medium">Tất cả hợp lệ</span></>
+                    }
                   </span>
                 )}
               </div>
@@ -544,7 +560,7 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes }: {
                   <table className="min-w-full text-[10px]">
                     <thead className="bg-slate-50 sticky top-0">
                       <tr>
-                        {['#', 'NPP', 'Kho', 'Ngày', 'L.kho', 'L.xe', 'Thùng', 'Pallet', 'Tấn', 'Lỗi'].map(h => (
+                        {['#', 'NPP', 'Kho', 'Ngày', 'L.kho', 'L.xe', 'ĐVVT', 'Thùng', 'Pallet', 'Tấn', 'Lỗi'].map(h => (
                           <th key={h} className="px-2 py-1 text-left text-[9px] text-slate-500 font-medium whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
@@ -558,6 +574,7 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes }: {
                           <td className="px-2 py-0.5 font-mono">{r.date || '—'}</td>
                           <td className="px-2 py-0.5">{r.warehouse_type || '—'}</td>
                           <td className="px-2 py-0.5">{r.vehicle_type || '—'}</td>
+                          <td className="px-2 py-0.5">{r.ncc_code || '—'}</td>
                           <td className="px-2 py-0.5 tabular-nums">{r.box_count ?? '—'}</td>
                           <td className="px-2 py-0.5 tabular-nums">{r.pallet_count ?? '—'}</td>
                           <td className="px-2 py-0.5 tabular-nums">{r.tonnage ?? '—'}</td>
@@ -575,9 +592,9 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes }: {
         </div>
         <DialogFooter>
           <Button variant="outline" size="sm" onClick={() => { reset(); onClose() }}>Đóng</Button>
-          {!result && validCount > 0 && (
+          {!result && rows.length > 0 && errorCount === 0 && (
             <Button size="sm" onClick={handleImport} disabled={importing}>
-              {importing ? 'Đang import...' : `Import ${validCount} chuyến`}
+              {importing ? 'Đang import...' : `Import ${rows.length} chuyến`}
             </Button>
           )}
           {result && <Button size="sm" onClick={onClose}>Xong</Button>}
@@ -606,8 +623,10 @@ export default function TMSBookings() {
   const [dvvtBooking, setDvvtBooking] = useState<DeliveryBooking | null>(null)
   const [deleteErr, setDeleteErr] = useState('')
 
-  const { data: warehouses = [] } = useWarehouses(true)
-  const { data: whTypesMain = [] } = useWarehouseTypes()
+  const { data: warehouses = [] }          = useWarehouses(true)
+  const { data: whTypesMain = [] }         = useWarehouseTypes()
+  const { data: vehicleTypesMain = [] }    = useVehicleTypes(true)
+  const { data: transportCompaniesMain = [] } = useTransportCompanies(true)
   const { data: bookings = [], isLoading } = useDeliveryBookings(
     warehouseId ? { date, warehouse_id: warehouseId } : undefined,
   )
@@ -959,6 +978,8 @@ export default function TMSBookings() {
         onClose={() => setUploadOpen(false)}
         warehouses={warehouses as { id: string; name: string }[]}
         warehouseTypes={whTypesMain.map(t => t.value)}
+        vehicleTypes={vehicleTypesMain as TmsVehicleType[]}
+        transportCompanies={transportCompaniesMain as TransportCompany[]}
       />
     </div>
   )

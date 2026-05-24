@@ -13,6 +13,7 @@ export interface User {
   warehouse_name?: string
   job_title_name?: string | null
   ncc_id?: string | null
+  employee_code?: string | null
   // Permission system fields
   allowed_categories?: string[]
   warehouse_scope?:    'NATIONAL' | 'ASSIGNED'

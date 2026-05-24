@@ -32,13 +32,15 @@ router.put('/slot-templates/:id',    requirePerm('tms', 'manage_slots'), slotTem
 router.delete('/slot-templates/:id', requirePerm('tms', 'manage_slots'), slotTemplate.deleteSlotTemplate)
 
 // TransportCompany (ĐVVT / NCC)
-router.get('/transport-companies',     requirePerm('tms', 'view'),              transportCompany.listTransportCompanies)
-router.post('/transport-companies',    requirePerm('tms', 'manage_companies'),  transportCompany.createTransportCompany)
-router.put('/transport-companies/:id', requirePerm('tms', 'manage_companies'),  transportCompany.updateTransportCompany)
+router.get('/transport-companies',        requirePerm('tms', 'view'),              transportCompany.listTransportCompanies)
+router.post('/transport-companies',       requirePerm('tms', 'manage_companies'),  transportCompany.createTransportCompany)
+router.put('/transport-companies/:id',    requirePerm('tms', 'manage_companies'),  transportCompany.updateTransportCompany)
+router.delete('/transport-companies/:id', requirePerm('tms', 'manage_companies'),  transportCompany.deleteTransportCompany)
 
 // Vehicle (Xe)
-router.get('/vehicles',     requirePerm('tms', 'view'),             vehicle.listVehicles)
-router.post('/vehicles',    requirePerm('tms', 'manage_companies'), vehicle.createVehicle)
-router.put('/vehicles/:id', requirePerm('tms', 'manage_companies'), vehicle.updateVehicle)
+router.get('/vehicles',        requirePerm('tms', 'view'),             vehicle.listVehicles)
+router.post('/vehicles',       requirePerm('tms', 'manage_companies'), vehicle.createVehicle)
+router.put('/vehicles/:id',    requirePerm('tms', 'manage_companies'), vehicle.updateVehicle)
+router.delete('/vehicles/:id', requirePerm('tms', 'manage_companies'), vehicle.deleteVehicle)
 
 export default router

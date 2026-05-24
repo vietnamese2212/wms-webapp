@@ -14,8 +14,8 @@ import {
   useWarehouses, useWarehouseTypes,
   useVehicleTypes, useCreateVehicleType, useUpdateVehicleType,
   useSlotTemplates, useCreateSlotTemplate, useUpdateSlotTemplate, useDeleteSlotTemplate,
-  useTransportCompanies, useCreateTransportCompany, useUpdateTransportCompany,
-  useTmsVehicles, useCreateTmsVehicle, useUpdateTmsVehicle,
+  useTransportCompanies, useCreateTransportCompany, useUpdateTransportCompany, useDeleteTransportCompany,
+  useTmsVehicles, useCreateTmsVehicle, useUpdateTmsVehicle, useDeleteTmsVehicle,
 } from '@/api/hooks'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useAuthStore } from '@/stores/authStore'
@@ -357,6 +357,7 @@ export default function TMSSettings() {
 
   // TransportCompany
   const { data: companies = [], isLoading: loadingCo } = useTransportCompanies()
+  const { mutate: deleteCo, isPending: deletingCo } = useDeleteTransportCompany()
   const [editingCo, setEditingCo] = useState<TransportCompany | null>(null)
   const [showCoDlg, setShowCoDlg] = useState(false)
 
@@ -365,6 +366,7 @@ export default function TMSSettings() {
   const { data: vehicles = [], isLoading: loadingV } = useTmsVehicles({
     ncc_id: filterNcc === '__all__' ? undefined : filterNcc,
   })
+  const { mutate: deleteV, isPending: deletingV } = useDeleteTmsVehicle()
   const [editingV, setEditingV] = useState<TmsVehicle | null>(null)
   const [showVDlg, setShowVDlg] = useState(false)
 
@@ -611,10 +613,20 @@ export default function TMSSettings() {
                         </TableCell>
                         {canCompanies && (
                           <TableCell className="px-2 py-2">
-                            <button className="text-slate-400 hover:text-blue-500 transition-colors p-1"
-                              onClick={() => { setEditingCo(co); setShowCoDlg(true) }}>
-                              <Pencil className="h-3.5 w-3.5" />
-                            </button>
+                            <div className="flex items-center gap-0.5">
+                              <button className="text-slate-400 hover:text-blue-500 transition-colors p-1"
+                                onClick={() => { setEditingCo(co); setShowCoDlg(true) }}>
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                              <button className="text-slate-400 hover:text-red-500 transition-colors p-1"
+                                disabled={deletingCo}
+                                onClick={() => {
+                                  if (confirm(`Xóa ĐVVT "${co.name}"?\nTất cả xe và tài khoản lái xe liên kết sẽ bị xóa vĩnh viễn.`))
+                                    deleteCo(co.id, { onError: e => alert(apiMsg(e)) })
+                                }}>
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
                           </TableCell>
                         )}
                       </TableRow>
@@ -680,10 +692,20 @@ export default function TMSSettings() {
                         </TableCell>
                         {canCompanies && (
                           <TableCell className="px-2 py-2">
-                            <button className="text-slate-400 hover:text-blue-500 transition-colors p-1"
-                              onClick={() => { setEditingV(v); setShowVDlg(true) }}>
-                              <Pencil className="h-3.5 w-3.5" />
-                            </button>
+                            <div className="flex items-center gap-0.5">
+                              <button className="text-slate-400 hover:text-blue-500 transition-colors p-1"
+                                onClick={() => { setEditingV(v); setShowVDlg(true) }}>
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                              <button className="text-slate-400 hover:text-red-500 transition-colors p-1"
+                                disabled={deletingV}
+                                onClick={() => {
+                                  if (confirm(`Xóa xe "${v.license_plate}"?\nTài khoản lái xe liên kết (nếu có) sẽ bị xóa vĩnh viễn.`))
+                                    deleteV(v.id, { onError: e => alert(apiMsg(e)) })
+                                }}>
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
                           </TableCell>
                         )}
                       </TableRow>

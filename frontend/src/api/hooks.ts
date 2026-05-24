@@ -1485,6 +1485,29 @@ export function useUpdateTmsVehicle() {
   })
 }
 
+export function useDeleteTmsVehicle() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.delete(`/tms/vehicles/${id}`).then(r => r.data.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tms-vehicles'] })
+      qc.invalidateQueries({ queryKey: ['employees'] })
+    },
+  })
+}
+
+export function useDeleteTransportCompany() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.delete(`/tms/transport-companies/${id}`).then(r => r.data.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tms-transport-companies'] })
+      qc.invalidateQueries({ queryKey: ['tms-vehicles'] })
+      qc.invalidateQueries({ queryKey: ['employees'] })
+    },
+  })
+}
+
 // ── TMS Delivery Slots ────────────────────────────────────────────────────────
 
 export function useDeliverySlots(params?: { date?: string; warehouse_id?: string; direction?: string }) {

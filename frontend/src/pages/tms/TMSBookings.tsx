@@ -119,12 +119,11 @@ function SlotPicker({ warehouseId, date, selectedSlotId, onSelect, cargoType }: 
 function DVVTFillDialog({ booking, onClose }: { booking: DeliveryBooking | null; onClose: () => void }) {
   const updateBooking = useUpdateBooking()
   const user = useAuthStore(s => s.user)
-  const isNccUser = user?.department === 'Đơn vị vận tải'
   const isDriver  = user?.job_title_name === 'Lái xe'
 
-  // dispatcher: load vehicles của NCC để chọn biển số
+  // load vehicles của ĐVVT gắn với booking — dùng để chọn biển số (trừ lái xe)
   const { data: nccVehicles = [] } = useTmsVehicles(
-    isNccUser && !isDriver && user?.ncc_id ? { ncc_id: user.ncc_id, is_active: 'true' } : undefined
+    !isDriver && booking?.ncc_id ? { ncc_id: booking.ncc_id, is_active: 'true' } : undefined
   )
 
   const [selectedSlot, setSelectedSlot] = useState<DeliverySlot | null>(null)
@@ -181,7 +180,7 @@ function DVVTFillDialog({ booking, onClose }: { booking: DeliveryBooking | null;
               <Label className="text-xs">Biển số xe *</Label>
               {isDriver ? (
                 <Input value={licensePlate} disabled className="h-8 text-sm mt-1 bg-slate-50 font-mono" />
-              ) : isNccUser && (nccVehicles as TmsVehicle[]).length > 0 ? (
+              ) : (
                 <Select value={licensePlate || '__none__'} onValueChange={v => setLicensePlate(v === '__none__' ? '' : v)}>
                   <SelectTrigger className="h-8 text-sm mt-1"><SelectValue placeholder="Chọn biển số" /></SelectTrigger>
                   <SelectContent>
@@ -191,8 +190,6 @@ function DVVTFillDialog({ booking, onClose }: { booking: DeliveryBooking | null;
                     ))}
                   </SelectContent>
                 </Select>
-              ) : (
-                <Input value={licensePlate} onChange={e => setLicensePlate(e.target.value)} placeholder="51A-123.45" className="h-8 text-sm mt-1" />
               )}
             </div>
             <div>
@@ -708,10 +705,19 @@ export default function TMSBookings() {
   const isNccUser = user?.department === 'Đơn vị vận tải'
 
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
-  const [date, setDate] = useState(today)
-  const [warehouseId, setWarehouseId] = useState('')
-  const [loaiKhoFilter, setLoaiKhoFilter] = useState<string[]>([])
-  const [loaiXeFilter, setLoaiXeFilter]   = useState<string[]>([])
+  const [date, setDate] = useState(() => localStorage.getItem('tmsb_date') ?? today)
+  const [warehouseId, setWarehouseId] = useState(() => localStorage.getItem('tmsb_wh') ?? '')
+  const [loaiKhoFilter, setLoaiKhoFilter] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem('tmsb_loaikho') ?? '[]') } catch { return [] }
+  })
+  const [loaiXeFilter, setLoaiXeFilter] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem('tmsb_loaixe') ?? '[]') } catch { return [] }
+  })
+
+  useEffect(() => { localStorage.setItem('tmsb_date', date) }, [date])
+  useEffect(() => { localStorage.setItem('tmsb_wh', warehouseId) }, [warehouseId])
+  useEffect(() => { localStorage.setItem('tmsb_loaikho', JSON.stringify(loaiKhoFilter)) }, [loaiKhoFilter])
+  useEffect(() => { localStorage.setItem('tmsb_loaixe', JSON.stringify(loaiXeFilter)) }, [loaiXeFilter])
   const [createOpen, setCreateOpen] = useState(false)
   const [uploadOpen, setUploadOpen] = useState(false)
   const [editBooking, setEditBooking] = useState<DeliveryBooking | null>(null)

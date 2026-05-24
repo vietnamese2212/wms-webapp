@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import * as XLSX from 'xlsx'
-import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star } from 'lucide-react'
+import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -694,6 +694,61 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
   )
 }
 
+// ── Slot Overview Dialog ──────────────────────────────────────────────────────
+
+function SlotOverviewDialog({ open, onClose, date, warehouseName, slots }: {
+  open: boolean; onClose: () => void
+  date: string; warehouseName: string; slots: DeliverySlot[]
+}) {
+  return (
+    <Dialog open={open} onOpenChange={v => !v && onClose()}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Tình trạng khung giờ</DialogTitle>
+          <p className="text-xs text-slate-500 mt-0.5">{warehouseName} · {formatDate(date)}</p>
+        </DialogHeader>
+        <div className="space-y-1.5 py-1 max-h-80 overflow-y-auto">
+          {slots.length === 0 ? (
+            <p className="text-xs text-slate-400 text-center py-6">Chưa có khung giờ nào</p>
+          ) : slots.map(s => {
+            const pct = s.max_vehicles > 0 ? s.booked_count / s.max_vehicles : 0
+            const full = s.booked_count >= s.max_vehicles
+            return (
+              <div key={s.id} className="flex items-center gap-2 border rounded px-3 py-2">
+                <span className="font-mono font-semibold text-sm w-24 shrink-0">
+                  {s.time_from.slice(0, 5)}–{s.time_to.slice(0, 5)}
+                </span>
+                <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0 ${
+                  s.cargo_type === 'ALL' ? 'bg-slate-100 text-slate-600' : 'bg-blue-100 text-blue-700'
+                }`}>
+                  {s.cargo_type === 'ALL' ? 'Tất cả' : s.cargo_type}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className={`text-xs font-semibold tabular-nums ${full ? 'text-red-600' : 'text-green-600'}`}>
+                      {s.booked_count}/{s.max_vehicles} xe
+                    </span>
+                    {full && <span className="text-[9px] text-red-500 font-medium">Đầy</span>}
+                  </div>
+                  <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all ${pct >= 1 ? 'bg-red-400' : pct >= 0.7 ? 'bg-amber-400' : 'bg-green-400'}`}
+                      style={{ width: `${Math.min(pct * 100, 100)}%` }}
+                    />
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={onClose}>Đóng</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function TMSBookings() {
@@ -718,6 +773,10 @@ export default function TMSBookings() {
   const [dvvtFilter, setDvvtFilter] = useState<string[]>(() => {
     try { return JSON.parse(localStorage.getItem('tmsb_dvvt') ?? '[]') } catch { return [] }
   })
+  const [khungGioFilter, setKhungGioFilter] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem('tmsb_khungio') ?? '[]') } catch { return [] }
+  })
+  const [slotOverviewOpen, setSlotOverviewOpen] = useState(false)
 
   useEffect(() => { localStorage.setItem('tmsb_date', date) }, [date])
   useEffect(() => { localStorage.setItem('tmsb_wh', warehouseId) }, [warehouseId])
@@ -725,6 +784,7 @@ export default function TMSBookings() {
   useEffect(() => { localStorage.setItem('tmsb_loaixe', JSON.stringify(loaiXeFilter)) }, [loaiXeFilter])
   useEffect(() => { localStorage.setItem('tmsb_huong', JSON.stringify(huongFilter)) }, [huongFilter])
   useEffect(() => { localStorage.setItem('tmsb_dvvt', JSON.stringify(dvvtFilter)) }, [dvvtFilter])
+  useEffect(() => { localStorage.setItem('tmsb_khungio', JSON.stringify(khungGioFilter)) }, [khungGioFilter])
   const [createOpen, setCreateOpen] = useState(false)
   const [uploadOpen, setUploadOpen] = useState(false)
   const [editBooking, setEditBooking] = useState<DeliveryBooking | null>(null)
@@ -732,6 +792,7 @@ export default function TMSBookings() {
   const [deleteErr, setDeleteErr] = useState('')
 
   const { data: warehouses = [] }          = useWarehouses(true)
+  const { data: slotsList = [] }           = useDeliverySlots(warehouseId ? { date, warehouse_id: warehouseId } : undefined)
   const { data: whTypesMain = [] }         = useWarehouseTypes()
   const { data: vehicleTypesMain = [] }    = useVehicleTypes(true)
   const { data: transportCompaniesMain = [] } = useTransportCompanies(true)
@@ -741,7 +802,16 @@ export default function TMSBookings() {
   const deleteBooking  = useDeleteBooking()
   const updateBooking  = useUpdateBooking()
 
+  const warehouseName = (warehouses as { id: string; name: string }[]).find(w => w.id === warehouseId)?.name ?? warehouseId
+
   // Options cho filter từ data thực
+  const khungGioOptions = useMemo<MSOpt[]>(() => {
+    const slotOpts: MSOpt[] = (slotsList as DeliverySlot[]).map(s => ({
+      value: s.id,
+      label: `${s.time_from.slice(0, 5)}–${s.time_to.slice(0, 5)}${s.cargo_type !== 'ALL' ? ` (${s.cargo_type})` : ''}`,
+    }))
+    return [{ value: '__chua_dat__', label: 'Chưa đặt' }, ...slotOpts]
+  }, [slotsList])
   const huongOptions: MSOpt[] = [
     { value: 'OUTBOUND', label: 'Xuất' },
     { value: 'INBOUND', label: 'Nhập' },
@@ -767,12 +837,17 @@ export default function TMSBookings() {
   // Client-side filter
   const filtered = useMemo(() => {
     let list = bookings as DeliveryBooking[]
+    if (khungGioFilter.length) list = list.filter(b => {
+      if (!b.slot_id && khungGioFilter.includes('__chua_dat__')) return true
+      if (b.slot_id && khungGioFilter.includes(b.slot_id)) return true
+      return false
+    })
     if (huongFilter.length) list = list.filter(b => b.direction && huongFilter.includes(b.direction))
     if (dvvtFilter.length) list = list.filter(b => b.ncc_id && dvvtFilter.includes(b.ncc_id))
     if (loaiKhoFilter.length) list = list.filter(b => b.warehouse_type && loaiKhoFilter.includes(b.warehouse_type))
     if (loaiXeFilter.length) list = list.filter(b => b.vehicle_type && loaiXeFilter.includes(b.vehicle_type))
     return list
-  }, [bookings, huongFilter, dvvtFilter, loaiKhoFilter, loaiXeFilter])
+  }, [bookings, khungGioFilter, huongFilter, dvvtFilter, loaiKhoFilter, loaiXeFilter])
 
   const handleDelete = async (e: React.MouseEvent<HTMLButtonElement>, id: string) => {
     e.stopPropagation()
@@ -828,6 +903,11 @@ export default function TMSBookings() {
         <div className="flex items-center justify-between mb-2">
           <h1 className="text-base font-semibold md:text-xl">Kế hoạch vận chuyển</h1>
           <div className="flex items-center gap-1.5">
+            {warehouseId && (
+              <Button variant="outline" size="sm" onClick={() => setSlotOverviewOpen(true)} className="h-8 px-2">
+                <Eye className="h-3.5 w-3.5 shrink-0" /><span className="hidden sm:inline ml-1">Xem booking</span>
+              </Button>
+            )}
             {canManage && (
               <>
                 <Button variant="outline" size="sm" onClick={() => setUploadOpen(true)} className="h-8 px-2">
@@ -854,6 +934,12 @@ export default function TMSBookings() {
           </Select>
           {(warehouseId || isNccUser) && (
             <>
+              <MultiSelectFilter
+                label="Khung giờ"
+                options={khungGioOptions}
+                selected={khungGioFilter}
+                onChange={setKhungGioFilter}
+              />
               <MultiSelectFilter
                 label="Hướng"
                 options={huongOptions}
@@ -897,12 +983,13 @@ export default function TMSBookings() {
                 <TableHeader>
                   <TableRow>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Số xe</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Hướng</TableHead>
-                    {isNccUser && !warehouseId && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Kho</TableHead>}
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Tên NPP</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-10">Đặt giờ</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Khung giờ</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Biển số</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Tên NPP</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">ĐVVT</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Hướng</TableHead>
+                    {isNccUser && !warehouseId && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Kho</TableHead>}
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Loại kho</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Loại xe</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right">Thùng</TableHead>
@@ -910,7 +997,6 @@ export default function TMSBookings() {
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right">Tấn</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">SĐT lái xe</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Trạng thái</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-10">Đặt giờ</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-14"></TableHead>
                   </TableRow>
                 </TableHeader>
@@ -919,6 +1005,38 @@ export default function TMSBookings() {
                     <TableRow key={b.id} className={rowBg(b.status)}>
                       <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">
                         {b.vehicle_code || <span className="text-slate-400 font-normal">—</span>}
+                      </TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] font-semibold max-w-[140px] truncate">
+                        {b.npp_name || <span className="text-slate-400 font-normal">—</span>}
+                      </TableCell>
+                      <TableCell className="px-2 py-1">
+                        {canFillTransport(b) && (
+                          <button
+                            onClick={e => { e.stopPropagation(); setDvvtBooking(b) }}
+                            className="text-blue-400 hover:text-blue-600 p-1 rounded"
+                            title={b.status === 'PENDING' ? 'Đăng ký xe' : 'Sửa khung giờ'}
+                          >
+                            <Truck className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </TableCell>
+                      <TableCell className="px-2 py-1 text-[10px]">
+                        {b.slot && (
+                          <span className="font-mono">{b.slot.time_from.slice(0, 5)}–{b.slot.time_to.slice(0, 5)}</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold">
+                        {b.license_plate ? (
+                          <span className="flex items-center gap-0.5">
+                            {user?.employee_code && b.license_plate === user.employee_code && (
+                              <Star className="h-3 w-3 fill-yellow-400 text-yellow-400 shrink-0" />
+                            )}
+                            {b.license_plate}
+                          </span>
+                        ) : <span className="text-slate-400 font-normal">—</span>}
+                      </TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] max-w-[120px] truncate text-slate-500">
+                        {b.ncc?.name || <span className="text-slate-300">—</span>}
                       </TableCell>
                       <TableCell className="px-2 py-1 text-[10px]">
                         {b.direction ? (
@@ -932,29 +1050,6 @@ export default function TMSBookings() {
                           {(warehouses as { id: string; name: string }[]).find(w => w.id === b.warehouse_id)?.name ?? '—'}
                         </TableCell>
                       )}
-                      <TableCell className="px-2 py-1 text-[10px]">
-                        {b.slot ? (
-                          <span className="font-mono">{b.slot.time_from.slice(0, 5)}–{b.slot.time_to.slice(0, 5)}</span>
-                        ) : (
-                          <span className="text-amber-500">Chưa đặt</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold">
-                        {b.license_plate ? (
-                          <span className="flex items-center gap-0.5">
-                            {user?.employee_code && b.license_plate === user.employee_code && (
-                              <Star className="h-3 w-3 fill-yellow-400 text-yellow-400 shrink-0" />
-                            )}
-                            {b.license_plate}
-                          </span>
-                        ) : <span className="text-slate-400 font-normal">—</span>}
-                      </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] font-semibold max-w-[140px] truncate">
-                        {b.npp_name || <span className="text-slate-400 font-normal">—</span>}
-                      </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] max-w-[120px] truncate text-slate-500">
-                        {b.ncc?.name || <span className="text-slate-300">—</span>}
-                      </TableCell>
                       <TableCell className="px-2 py-1 text-[10px]">
                         {b.warehouse_type || <span className="text-slate-400">—</span>}
                       </TableCell>
@@ -975,17 +1070,6 @@ export default function TMSBookings() {
                       </TableCell>
                       <TableCell className="px-2 py-1">
                         <StatusBadge status={b.status} />
-                      </TableCell>
-                      <TableCell className="px-2 py-1">
-                        {canFillTransport(b) && (
-                          <button
-                            onClick={e => { e.stopPropagation(); setDvvtBooking(b) }}
-                            className="text-blue-400 hover:text-blue-600 p-1 rounded"
-                            title={b.status === 'PENDING' ? 'Đăng ký xe' : 'Sửa khung giờ'}
-                          >
-                            <Truck className="h-3.5 w-3.5" />
-                          </button>
-                        )}
                       </TableCell>
                       <TableCell className="px-2 py-1">
                         <div className="flex items-center gap-0.5">
@@ -1035,6 +1119,13 @@ export default function TMSBookings() {
       <DVVTFillDialog
         booking={dvvtBooking}
         onClose={() => setDvvtBooking(null)}
+      />
+      <SlotOverviewDialog
+        open={slotOverviewOpen}
+        onClose={() => setSlotOverviewOpen(false)}
+        date={date}
+        warehouseName={warehouseName}
+        slots={slotsList as DeliverySlot[]}
       />
       <ExcelUploadDialog
         open={uploadOpen}

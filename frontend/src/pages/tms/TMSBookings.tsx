@@ -712,11 +712,19 @@ export default function TMSBookings() {
   const [loaiXeFilter, setLoaiXeFilter] = useState<string[]>(() => {
     try { return JSON.parse(localStorage.getItem('tmsb_loaixe') ?? '[]') } catch { return [] }
   })
+  const [huongFilter, setHuongFilter] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem('tmsb_huong') ?? '[]') } catch { return [] }
+  })
+  const [dvvtFilter, setDvvtFilter] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem('tmsb_dvvt') ?? '[]') } catch { return [] }
+  })
 
   useEffect(() => { localStorage.setItem('tmsb_date', date) }, [date])
   useEffect(() => { localStorage.setItem('tmsb_wh', warehouseId) }, [warehouseId])
   useEffect(() => { localStorage.setItem('tmsb_loaikho', JSON.stringify(loaiKhoFilter)) }, [loaiKhoFilter])
   useEffect(() => { localStorage.setItem('tmsb_loaixe', JSON.stringify(loaiXeFilter)) }, [loaiXeFilter])
+  useEffect(() => { localStorage.setItem('tmsb_huong', JSON.stringify(huongFilter)) }, [huongFilter])
+  useEffect(() => { localStorage.setItem('tmsb_dvvt', JSON.stringify(dvvtFilter)) }, [dvvtFilter])
   const [createOpen, setCreateOpen] = useState(false)
   const [uploadOpen, setUploadOpen] = useState(false)
   const [editBooking, setEditBooking] = useState<DeliveryBooking | null>(null)
@@ -734,6 +742,17 @@ export default function TMSBookings() {
   const updateBooking  = useUpdateBooking()
 
   // Options cho filter từ data thực
+  const huongOptions: MSOpt[] = [
+    { value: 'OUTBOUND', label: 'Xuất' },
+    { value: 'INBOUND', label: 'Nhập' },
+  ]
+  const dvvtOptions = useMemo<MSOpt[]>(() =>
+    [...new Map((bookings as DeliveryBooking[])
+      .filter(b => b.ncc_id && b.ncc?.name)
+      .map(b => [b.ncc_id!, { value: b.ncc_id!, label: b.ncc!.name! }])
+    ).values()],
+    [bookings]
+  )
   const loaiKhoOptions = useMemo<MSOpt[]>(() =>
     [...new Set((bookings as DeliveryBooking[]).map(b => b.warehouse_type).filter((v): v is string => !!v))]
       .map(v => ({ value: v, label: v })),
@@ -748,10 +767,12 @@ export default function TMSBookings() {
   // Client-side filter
   const filtered = useMemo(() => {
     let list = bookings as DeliveryBooking[]
+    if (huongFilter.length) list = list.filter(b => b.direction && huongFilter.includes(b.direction))
+    if (dvvtFilter.length) list = list.filter(b => b.ncc_id && dvvtFilter.includes(b.ncc_id))
     if (loaiKhoFilter.length) list = list.filter(b => b.warehouse_type && loaiKhoFilter.includes(b.warehouse_type))
     if (loaiXeFilter.length) list = list.filter(b => b.vehicle_type && loaiXeFilter.includes(b.vehicle_type))
     return list
-  }, [bookings, loaiKhoFilter, loaiXeFilter])
+  }, [bookings, huongFilter, dvvtFilter, loaiKhoFilter, loaiXeFilter])
 
   const handleDelete = async (e: React.MouseEvent<HTMLButtonElement>, id: string) => {
     e.stopPropagation()
@@ -831,8 +852,20 @@ export default function TMSBookings() {
               ))}
             </SelectContent>
           </Select>
-          {warehouseId && (
+          {(warehouseId || isNccUser) && (
             <>
+              <MultiSelectFilter
+                label="Hướng"
+                options={huongOptions}
+                selected={huongFilter}
+                onChange={setHuongFilter}
+              />
+              <MultiSelectFilter
+                label="ĐVVT"
+                options={dvvtOptions}
+                selected={dvvtFilter}
+                onChange={setDvvtFilter}
+              />
               <MultiSelectFilter
                 label="Loại kho"
                 options={loaiKhoOptions}
@@ -866,6 +899,8 @@ export default function TMSBookings() {
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Số xe</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Hướng</TableHead>
                     {isNccUser && !warehouseId && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Kho</TableHead>}
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Khung giờ</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Biển số</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Tên NPP</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">ĐVVT</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Loại kho</TableHead>
@@ -873,10 +908,9 @@ export default function TMSBookings() {
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right">Thùng</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right">Pallet</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right">Tấn</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Khung giờ</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Biển số</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">SĐT lái xe</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Trạng thái</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-10">Đặt giờ</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-14"></TableHead>
                   </TableRow>
                 </TableHeader>
@@ -898,6 +932,23 @@ export default function TMSBookings() {
                           {(warehouses as { id: string; name: string }[]).find(w => w.id === b.warehouse_id)?.name ?? '—'}
                         </TableCell>
                       )}
+                      <TableCell className="px-2 py-1 text-[10px]">
+                        {b.slot ? (
+                          <span className="font-mono">{b.slot.time_from.slice(0, 5)}–{b.slot.time_to.slice(0, 5)}</span>
+                        ) : (
+                          <span className="text-amber-500">Chưa đặt</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold">
+                        {b.license_plate ? (
+                          <span className="flex items-center gap-0.5">
+                            {user?.employee_code && b.license_plate === user.employee_code && (
+                              <Star className="h-3 w-3 fill-yellow-400 text-yellow-400 shrink-0" />
+                            )}
+                            {b.license_plate}
+                          </span>
+                        ) : <span className="text-slate-400 font-normal">—</span>}
+                      </TableCell>
                       <TableCell className="px-2 py-1 text-[10px] font-semibold max-w-[140px] truncate">
                         {b.npp_name || <span className="text-slate-400 font-normal">—</span>}
                       </TableCell>
@@ -919,39 +970,22 @@ export default function TMSBookings() {
                       <TableCell className="px-2 py-1 text-[10px] tabular-nums text-right">
                         {b.tonnage != null ? <>{b.tonnage}<span className="text-slate-400 text-[9px]"> t</span></> : <span className="text-slate-400">—</span>}
                       </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px]">
-                        <div className="flex items-center gap-1">
-                          {b.slot ? (
-                            <span className="font-mono">{b.slot.time_from.slice(0, 5)}–{b.slot.time_to.slice(0, 5)}</span>
-                          ) : (
-                            <span className="text-amber-500">Chưa đặt</span>
-                          )}
-                          {canFillTransport(b) && (
-                            <button
-                              onClick={e => { e.stopPropagation(); setDvvtBooking(b) }}
-                              className="text-blue-400 hover:text-blue-600 p-0.5 rounded ml-1 shrink-0"
-                              title={b.status === 'PENDING' ? 'Đăng ký xe' : 'Sửa khung giờ'}
-                            >
-                              <Truck className="h-3.5 w-3.5" />
-                            </button>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold">
-                        {b.license_plate ? (
-                          <span className="flex items-center gap-0.5">
-                            {user?.employee_code && b.license_plate === user.employee_code && (
-                              <Star className="h-3 w-3 fill-yellow-400 text-yellow-400 shrink-0" />
-                            )}
-                            {b.license_plate}
-                          </span>
-                        ) : <span className="text-slate-400 font-normal">—</span>}
-                      </TableCell>
                       <TableCell className="px-2 py-1 text-[10px] text-slate-500">
                         {b.driver_phone || <span className="text-slate-400">—</span>}
                       </TableCell>
                       <TableCell className="px-2 py-1">
                         <StatusBadge status={b.status} />
+                      </TableCell>
+                      <TableCell className="px-2 py-1">
+                        {canFillTransport(b) && (
+                          <button
+                            onClick={e => { e.stopPropagation(); setDvvtBooking(b) }}
+                            className="text-blue-400 hover:text-blue-600 p-1 rounded"
+                            title={b.status === 'PENDING' ? 'Đăng ký xe' : 'Sửa khung giờ'}
+                          >
+                            <Truck className="h-3.5 w-3.5" />
+                          </button>
+                        )}
                       </TableCell>
                       <TableCell className="px-2 py-1">
                         <div className="flex items-center gap-0.5">

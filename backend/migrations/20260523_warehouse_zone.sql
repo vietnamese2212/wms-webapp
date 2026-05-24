@@ -12,6 +12,14 @@ CREATE TABLE IF NOT EXISTS "WarehouseZone" (
 );
 
 ALTER TABLE "WarehouseZone" ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "anon_select" ON "WarehouseZone";
 CREATE POLICY "anon_select" ON "WarehouseZone" FOR SELECT TO anon USING (true);
 
-ALTER PUBLICATION supabase_realtime ADD TABLE "WarehouseZone";
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime' AND tablename = 'WarehouseZone'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE "WarehouseZone";
+  END IF;
+END $$;

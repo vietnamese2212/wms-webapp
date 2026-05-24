@@ -33,7 +33,6 @@ const navGroups: { label: string; items: { to: string; icon: React.ElementType; 
     items: [
       { to: '/tms/bookings',   icon: ClipboardList, label: 'Kế hoạch VC',  module: 'tms' as ModuleKey },
       { to: '/tms/settings',   icon: Settings2,     label: 'Cài đặt TMS',  module: 'tms' as ModuleKey },
-      { to: '/tms/vehicles',   icon: Truck,         label: 'Xe & Tài xế',  module: 'vehicles' },
       { to: '/tms/deliveries', icon: Navigation,    label: 'Giao hàng',    module: 'deliveries' },
     ],
   },

@@ -1623,7 +1623,14 @@ export function useUpdateVehicleSlot() {
   return useMutation({
     mutationFn: ({ id, ...body }: VehicleSlotWriteBody & { id: string }) =>
       apiClient.patch(`/tms/vehicle-slots/${id}`, body).then(r => r.data.data as import('@/types').TmsVehicleSlot),
-    onSuccess: () => {
+    onSuccess: (updated) => {
+      // Patch booked_count trực tiếp từ server response — không chờ Realtime/refetch
+      if (updated.slot_id && updated.slot) {
+        qc.setQueriesData<import('@/types').DeliverySlot[]>(
+          { queryKey: ['tms-delivery-slots'] },
+          old => old?.map(s => s.id === updated.slot_id ? { ...s, booked_count: (updated.slot as import('@/types').DeliverySlot).booked_count } : s)
+        )
+      }
       qc.invalidateQueries({ queryKey: ['tms-orders'] })
       qc.invalidateQueries({ queryKey: ['tms-delivery-slots'] })
     },
@@ -1672,6 +1679,9 @@ export function useDeleteVehicleSlot() {
       return { snapshots }
     },
     onError: (_e, _v, ctx: any) => ctx?.snapshots.forEach(([k, d]: any) => qc.setQueryData(k, d)),
-    onSettled: () => qc.invalidateQueries({ queryKey: ['tms-orders'] }),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['tms-orders'] })
+      qc.invalidateQueries({ queryKey: ['tms-delivery-slots'] })
+    },
   })
 }

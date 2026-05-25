@@ -147,6 +147,8 @@ function BookSlotDialog({ vslot, order, onClose }: {
 
   const handleSave = async () => {
     if (!vslot || !order) return
+    if (!selectedSlot) { setErr('Vui lòng chọn khung giờ'); return }
+    if (!licensePlate) { setErr('Vui lòng nhập biển số xe'); return }
     const updates: Parameters<typeof updateSlot.mutateAsync>[0] = { id: vslot.id }
     if (selectedSlot?.id !== vslot.slot_id) updates.slot_id = selectedSlot?.id ?? null
     updates.license_plate = licensePlate || null

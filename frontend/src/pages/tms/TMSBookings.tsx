@@ -1112,7 +1112,7 @@ export default function TMSBookings() {
                         </button>
                       )}
                       {/* Thêm xe — chỉ dòng cuối của order, chỉ điều vận */}
-                      {isFirstSlot && canManage && order.vehicle_slots.length > 0 && order.vehicle_slots[order.vehicle_slots.length - 1].id === vslot.id && (
+                      {canManage && order.vehicle_slots.length > 0 && order.vehicle_slots[order.vehicle_slots.length - 1].id === vslot.id && (
                         <button
                           onClick={e => handleAddVehicleSlot(e, order.id)}
                           className="text-purple-400 hover:text-purple-600 p-1 rounded"

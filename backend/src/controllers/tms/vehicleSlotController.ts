@@ -3,6 +3,18 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 
+// Đếm số TmsVehicleSlot khác có cùng (slot_id, license_plate) — dùng để tránh double-count booked_count
+// khi 1 xe vật lý chạy nhiều đơn trong cùng khung giờ.
+async function countSameBooking(slotId: string, licensePlate: string, excludeId: string): Promise<number> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { count } = await (supabase.from('TmsVehicleSlot') as any)
+    .select('id', { count: 'exact', head: true })
+    .eq('slot_id', slotId)
+    .eq('license_plate', licensePlate)
+    .neq('id', excludeId)
+  return count ?? 0
+}
+
 // POST /api/tms/orders/:orderId/vehicle-slots  — thêm xe cho đơn (split delivery)
 export async function addVehicleSlot(req: Request, res: Response) {
   try {
@@ -36,7 +48,7 @@ export async function updateVehicleSlot(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: existing, error: fetchErr } = await (supabase.from('TmsVehicleSlot') as any)
-      .select('id, slot_id, status, order_id').eq('id', id).single()
+      .select('id, slot_id, status, order_id, license_plate').eq('id', id).single()
     if (fetchErr || !existing) return fail(res, 'Không tìm thấy vehicle slot', 404)
 
     // Không cho thay đổi slot sau ARRIVED/DONE
@@ -60,7 +72,12 @@ export async function updateVehicleSlot(req: Request, res: Response) {
           if (nowMs >= slotStart) {
             return fail(res, `Đã qua giờ ${String(oldSlot.time_from).slice(0, 5)}, không thể thay đổi khung giờ`, 400)
           }
-          await supabase.rpc('try_book_slot', { p_slot_id: existing.slot_id, p_delta: -1 })
+          // Chỉ decrement nếu không còn booking nào khác cùng (slot, biển số) — tránh giảm oan khi 1 xe nhiều đơn
+          const oldPlate = existing.license_plate as string | null
+          const othersInOldSlot = oldPlate ? await countSameBooking(existing.slot_id, oldPlate, id) : 0
+          if (!oldPlate || othersInOldSlot === 0) {
+            await supabase.rpc('try_book_slot', { p_slot_id: existing.slot_id, p_delta: -1 })
+          }
         }
       }
 
@@ -74,8 +91,14 @@ export async function updateVehicleSlot(req: Request, res: Response) {
         if (nowMs >= newSlotStart) {
           return fail(res, `Khung giờ ${String(newSlot.time_from).slice(0, 5)} đã qua, không thể đặt`, 400)
         }
-        const { data: booked } = await supabase.rpc('try_book_slot', { p_slot_id: newSlotId, p_delta: 1 })
-        if (!booked) return fail(res, 'Slot đã hết chỗ', 409)
+        // Biển số sẽ được set sau update — dùng giá trị incoming (nếu có) hoặc existing
+        const newPlate = license_plate !== undefined ? (license_plate || null) : (existing.license_plate as string | null)
+        const othersInNewSlot = newPlate ? await countSameBooking(newSlotId, newPlate, id) : 0
+        // Chỉ increment nếu xe này chưa được đếm trong slot (tránh double-count khi 1 xe nhiều đơn)
+        if (!newPlate || othersInNewSlot === 0) {
+          const { data: booked } = await supabase.rpc('try_book_slot', { p_slot_id: newSlotId, p_delta: 1 })
+          if (!booked) return fail(res, 'Slot đã hết chỗ', 409)
+        }
       }
     }
 
@@ -133,7 +156,7 @@ export async function releaseVehicleSlot(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: existing, error: fetchErr } = await (supabase.from('TmsVehicleSlot') as any)
-      .select('id, slot_id, status').eq('id', id).single()
+      .select('id, slot_id, status, license_plate').eq('id', id).single()
     if (fetchErr || !existing) return fail(res, 'Không tìm thấy vehicle slot', 404)
 
     if (existing.slot_id) {
@@ -145,7 +168,12 @@ export async function releaseVehicleSlot(req: Request, res: Response) {
         if (Date.now() >= slotStart) {
           return fail(res, 'Đã qua giờ, không thể trả lại khung giờ', 400)
         }
-        await supabase.rpc('try_book_slot', { p_slot_id: existing.slot_id, p_delta: -1 })
+        // Chỉ decrement nếu không còn đơn khác cùng (slot, biển số) — tránh giảm oan khi 1 xe nhiều đơn
+        const plate = existing.license_plate as string | null
+        const othersInSlot = plate ? await countSameBooking(existing.slot_id, plate, id) : 0
+        if (!plate || othersInSlot === 0) {
+          await supabase.rpc('try_book_slot', { p_slot_id: existing.slot_id, p_delta: -1 })
+        }
       }
     }
 

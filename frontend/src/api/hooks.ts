@@ -1598,7 +1598,23 @@ export function useAddVehicleSlot() {
   return useMutation({
     mutationFn: (orderId: string) =>
       apiClient.post(`/tms/orders/${orderId}/vehicle-slots`).then(r => r.data.data as import('@/types').TmsVehicleSlot),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-orders'] }),
+    onMutate: async (orderId: string) => {
+      await qc.cancelQueries({ queryKey: ['tms-orders'] })
+      const snapshots = qc.getQueriesData<import('@/types').TmsOrder[]>({ queryKey: ['tms-orders'] })
+      const tempSlot: import('@/types').TmsVehicleSlot = {
+        id: `_temp_${Date.now()}`, order_id: orderId,
+        slot_id: null, slot: null, license_plate: null,
+        driver_name: null, driver_phone: null, status: 'PENDING', booked_by: null,
+        created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      }
+      qc.setQueriesData<import('@/types').TmsOrder[]>(
+        { queryKey: ['tms-orders'] },
+        old => old?.map(o => o.id === orderId ? { ...o, vehicle_slots: [...o.vehicle_slots, tempSlot] } : o)
+      )
+      return { snapshots }
+    },
+    onError: (_e, _v, ctx: any) => ctx?.snapshots.forEach(([k, d]: any) => qc.setQueryData(k, d)),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['tms-orders'] }),
   })
 }
 
@@ -1619,7 +1635,23 @@ export function useReleaseVehicleSlot() {
   return useMutation({
     mutationFn: (id: string) =>
       apiClient.patch(`/tms/vehicle-slots/${id}/release`).then(r => r.data.data as import('@/types').TmsVehicleSlot),
-    onSuccess: () => {
+    onMutate: async (id: string) => {
+      await qc.cancelQueries({ queryKey: ['tms-orders'] })
+      const snapshots = qc.getQueriesData<import('@/types').TmsOrder[]>({ queryKey: ['tms-orders'] })
+      qc.setQueriesData<import('@/types').TmsOrder[]>(
+        { queryKey: ['tms-orders'] },
+        old => old?.map(o => ({
+          ...o,
+          vehicle_slots: o.vehicle_slots.map(vs => vs.id === id
+            ? { ...vs, slot_id: null, slot: null, license_plate: null, driver_phone: null, status: 'PENDING' }
+            : vs
+          ),
+        }))
+      )
+      return { snapshots }
+    },
+    onError: (_e, _v, ctx: any) => ctx?.snapshots.forEach(([k, d]: any) => qc.setQueryData(k, d)),
+    onSettled: () => {
       qc.invalidateQueries({ queryKey: ['tms-orders'] })
       qc.invalidateQueries({ queryKey: ['tms-delivery-slots'] })
     },
@@ -1630,6 +1662,16 @@ export function useDeleteVehicleSlot() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => apiClient.delete(`/tms/vehicle-slots/${id}`).then(() => id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-orders'] }),
+    onMutate: async (id: string) => {
+      await qc.cancelQueries({ queryKey: ['tms-orders'] })
+      const snapshots = qc.getQueriesData<import('@/types').TmsOrder[]>({ queryKey: ['tms-orders'] })
+      qc.setQueriesData<import('@/types').TmsOrder[]>(
+        { queryKey: ['tms-orders'] },
+        old => old?.map(o => ({ ...o, vehicle_slots: o.vehicle_slots.filter(vs => vs.id !== id) }))
+      )
+      return { snapshots }
+    },
+    onError: (_e, _v, ctx: any) => ctx?.snapshots.forEach(([k, d]: any) => qc.setQueryData(k, d)),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['tms-orders'] }),
   })
 }

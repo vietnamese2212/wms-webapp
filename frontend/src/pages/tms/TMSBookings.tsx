@@ -957,12 +957,15 @@ export default function TMSBookings() {
     }
   }
 
-  const handleDeleteVslot = async (e: React.MouseEvent, id: string) => {
+  // Xe phụ: trả lại = release (nếu đang BOOKED) rồi xóa luôn dòng
+  const handleReleaseAndDeleteVslot = async (e: React.MouseEvent, vslot: TmsVehicleSlot) => {
     e.stopPropagation(); setActionErr('')
-    try { await deleteVehicleSlot.mutateAsync(id) }
-    catch (err: unknown) {
+    try {
+      if (vslot.status === 'BOOKED') await releaseVehicleSlot.mutateAsync(vslot.id)
+      await deleteVehicleSlot.mutateAsync(vslot.id)
+    } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
-      setActionErr(msg ?? 'Lỗi xóa xe')
+      setActionErr(msg ?? 'Lỗi xóa xe phụ')
     }
   }
 
@@ -1047,12 +1050,12 @@ export default function TMSBookings() {
             </TableHeader>
             <TableBody>
               {tableRows.map(({ order, vslot, isFirstSlot }) => (
-                <TableRow key={`${order.id}-${vslot.id}`} className={rowBg(vslot.status)}>
+                <TableRow key={`${order.id}-${vslot.id}`} className={`${rowBg(vslot.status)} ${!isFirstSlot ? 'border-l-4 border-l-purple-300' : ''}`}>
                   {/* Mã đơn — chỉ hiện ở dòng đầu của mỗi order */}
                   <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">
                     {isFirstSlot
                       ? (order.order_code || <span className="text-slate-400 font-normal">—</span>)
-                      : <span className="text-slate-300 text-[9px]">↳ xe thêm</span>
+                      : <span className="inline-flex items-center gap-0.5 text-[9px] text-purple-500"><span>↳</span><span className="bg-purple-100 px-1 py-0.5 rounded font-medium">xe phụ</span></span>
                     }
                   </TableCell>
                   <TableCell className="px-2 py-1 text-[10px] font-semibold max-w-[140px] truncate">
@@ -1141,8 +1144,8 @@ export default function TMSBookings() {
                           <Pencil className="h-3.5 w-3.5" />
                         </button>
                       )}
-                      {/* Thêm xe — chỉ dòng cuối của order, chỉ điều vận */}
-                      {canManage && order.vehicle_slots.length > 0 && order.vehicle_slots[order.vehicle_slots.length - 1].id === vslot.id && (
+                      {/* Thêm xe — chỉ dòng cuối của order, chỉ điều vận, chỉ khi xe chính đã BOOKED */}
+                      {canManage && order.vehicle_slots.length > 0 && order.vehicle_slots[order.vehicle_slots.length - 1].id === vslot.id && order.vehicle_slots[0].status !== 'PENDING' && (
                         <button
                           onClick={e => handleAddVehicleSlot(e, order.id)}
                           className="text-purple-400 hover:text-purple-600 p-1 rounded"
@@ -1151,8 +1154,8 @@ export default function TMSBookings() {
                           <PlusCircle className="h-3.5 w-3.5" />
                         </button>
                       )}
-                      {/* Trả lại slot */}
-                      {vslot.id && canRelease(vslot) && (
+                      {/* Dòng chính: trả lại = chỉ reset thông tin, giữ dòng */}
+                      {vslot.id && isFirstSlot && canRelease(vslot) && (
                         <button
                           onClick={e => handleRelease(e, vslot.id)}
                           className="text-amber-400 hover:text-amber-600 p-1 rounded"
@@ -1161,14 +1164,14 @@ export default function TMSBookings() {
                           <RotateCcw className="h-3.5 w-3.5" />
                         </button>
                       )}
-                      {/* Xóa vehicle slot — chỉ khi là slot thêm (không phải slot đầu tiên) và PENDING */}
-                      {vslot.id && !isFirstSlot && vslot.status === 'PENDING' && canManage && (
+                      {/* Xe phụ: trả lại = release (nếu BOOKED) + xóa luôn dòng */}
+                      {vslot.id && !isFirstSlot && canManage && ['PENDING', 'BOOKED'].includes(vslot.status) && (!vslot.slot || !isSlotTimePassed(vslot.slot.date ?? '', vslot.slot.time_from ?? '')) && (
                         <button
-                          onClick={e => handleDeleteVslot(e, vslot.id)}
-                          className="text-red-400 hover:text-red-600 p-1 rounded"
-                          title="Xóa xe này"
+                          onClick={e => handleReleaseAndDeleteVslot(e, vslot)}
+                          className="text-amber-400 hover:text-amber-600 p-1 rounded"
+                          title="Trả lại & xóa xe phụ"
                         >
-                          <Trash2 className="h-3.5 w-3.5" />
+                          <RotateCcw className="h-3.5 w-3.5" />
                         </button>
                       )}
                       {/* Xóa đơn — chỉ dòng đầu, chỉ khi tất cả slots PENDING */}

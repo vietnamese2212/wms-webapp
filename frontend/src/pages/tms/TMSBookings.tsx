@@ -670,6 +670,18 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
 
 // ── Slot Overview Dialog ──────────────────────────────────────────────────────
 
+// Màu cho từng loại xe — đủ màu cho ~8 loại xe khác nhau, cycle nếu nhiều hơn
+const VT_COLORS = [
+  'bg-blue-100 text-blue-700',
+  'bg-purple-100 text-purple-700',
+  'bg-teal-100 text-teal-700',
+  'bg-rose-100 text-rose-700',
+  'bg-indigo-100 text-indigo-700',
+  'bg-emerald-100 text-emerald-700',
+  'bg-cyan-100 text-cyan-700',
+  'bg-violet-100 text-violet-700',
+]
+
 function SlotOverviewDialog({ open, onClose, defaultDate, warehouseId, warehouseName }: {
   open: boolean; onClose: () => void
   defaultDate: string; warehouseId: string; warehouseName: string
@@ -684,6 +696,12 @@ function SlotOverviewDialog({ open, onClose, defaultDate, warehouseId, warehouse
   )
   const slots = slotsData as DeliverySlot[]
 
+  // Map loại xe → màu cố định (theo thứ tự tên sorted)
+  const vtColorMap = useMemo<Record<string, string>>(() => {
+    const names = [...new Set(slots.filter(s => s.vehicle_type?.name).map(s => s.vehicle_type!.name))].sort()
+    return Object.fromEntries(names.map((n, i) => [n, VT_COLORS[i % VT_COLORS.length]]))
+  }, [slots])
+
   const vtOptions = useMemo<MSOpt[]>(() =>
     [...new Map(slots.filter(s => s.vehicle_type?.name)
       .map(s => [s.vehicle_type!.name, { value: s.vehicle_type!.name, label: s.vehicle_type!.name }])
@@ -696,6 +714,17 @@ function SlotOverviewDialog({ open, onClose, defaultDate, warehouseId, warehouse
     [slots, vtFilter]
   )
 
+  // Sort: Loại kho → Loại xe → Khung giờ
+  const sorted = useMemo(() => [...filtered].sort((a, b) => {
+    const ca = a.cargo_type === 'ALL' ? '' : a.cargo_type
+    const cb = b.cargo_type === 'ALL' ? '' : b.cargo_type
+    if (ca !== cb) return ca.localeCompare(cb)
+    const va = a.vehicle_type?.name ?? ''
+    const vb = b.vehicle_type?.name ?? ''
+    if (va !== vb) return va.localeCompare(vb)
+    return a.time_from.localeCompare(b.time_from)
+  }), [filtered])
+
   return (
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
       <DialogContent className="flex flex-col w-full sm:w-1/2 h-screen max-w-none max-h-none rounded-none m-0 p-0 top-0 left-0 translate-x-0 translate-y-0 sm:left-auto sm:right-0 [&>button:last-child]:hidden">
@@ -706,12 +735,12 @@ function SlotOverviewDialog({ open, onClose, defaultDate, warehouseId, warehouse
         <div className="shrink-0 flex items-center gap-2 px-3 py-1.5 border-b bg-white flex-wrap">
           <Input type="date" value={date} onChange={e => setDate(e.target.value)} className="h-7 text-xs w-32 shrink-0" />
           <MultiSelectFilter label="Loại xe" options={vtOptions} selected={vtFilter} onChange={setVtFilter} />
-          {!isLoading && <span className="text-[10px] text-slate-400 ml-auto">{filtered.length} khung giờ</span>}
+          {!isLoading && <span className="text-[10px] text-slate-400 ml-auto">{sorted.length} khung giờ</span>}
         </div>
         <div className="flex-1 min-h-0 overflow-auto">
           {isLoading ? (
             <p className="text-[10px] text-slate-400 text-center py-10">Đang tải...</p>
-          ) : filtered.length === 0 ? (
+          ) : sorted.length === 0 ? (
             <p className="text-[10px] text-slate-400 text-center py-10">Chưa có khung giờ nào</p>
           ) : (
             <table className="min-w-max w-full">
@@ -726,10 +755,11 @@ function SlotOverviewDialog({ open, onClose, defaultDate, warehouseId, warehouse
                 </tr>
               </thead>
               <tbody>
-                {filtered.map(s => {
+                {sorted.map(s => {
                   const pct = s.max_vehicles > 0 ? s.booked_count / s.max_vehicles : 0
                   const full = s.booked_count >= s.max_vehicles
                   const rowCls = full ? 'bg-red-50 hover:bg-red-100' : pct >= 0.7 ? 'bg-amber-50 hover:bg-amber-100' : 'hover:bg-slate-50'
+                  const vtColor = s.vehicle_type?.name ? (vtColorMap[s.vehicle_type.name] ?? 'bg-slate-100 text-slate-600') : ''
                   return (
                     <tr key={s.id} className={rowCls}>
                       <td className="px-2 py-1 whitespace-nowrap">
@@ -739,7 +769,7 @@ function SlotOverviewDialog({ open, onClose, defaultDate, warehouseId, warehouse
                       </td>
                       <td className="px-2 py-1 whitespace-nowrap">
                         {s.vehicle_type?.name && (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-700">{s.vehicle_type.name}</span>
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${vtColor}`}>{s.vehicle_type.name}</span>
                         )}
                       </td>
                       <td className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">{s.time_from.slice(0, 5)}–{s.time_to.slice(0, 5)}</td>

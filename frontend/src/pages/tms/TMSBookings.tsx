@@ -905,12 +905,12 @@ export default function TMSBookings() {
   }, [orders, huongFilter, dvvtFilter, loaiKhoFilter, loaiXeFilter, khungGioFilter])
 
   // Flatten orders → rows (1 row per vehicle slot, order info repeated for first slot only)
-  type TableRow = { order: TmsOrder; vslot: TmsVehicleSlot; isFirstSlot: boolean }
+  type TableRow = { order: TmsOrder; vslot: TmsVehicleSlot; isFirstSlot: boolean; slotIndex: number }
   const tableRows = useMemo<TableRow[]>(() =>
     filteredOrders.flatMap(order =>
       order.vehicle_slots.length > 0
-        ? order.vehicle_slots.map((vs, i) => ({ order, vslot: vs, isFirstSlot: i === 0 }))
-        : [{ order, vslot: { id: '', order_id: order.id, slot_id: null, slot: null, license_plate: null, driver_name: null, driver_phone: null, status: 'PENDING', booked_by: null, created_at: '', updated_at: '' } as TmsVehicleSlot, isFirstSlot: true }]
+        ? order.vehicle_slots.map((vs, i) => ({ order, vslot: vs, isFirstSlot: i === 0, slotIndex: i }))
+        : [{ order, vslot: { id: '', order_id: order.id, slot_id: null, slot: null, license_plate: null, driver_name: null, driver_phone: null, status: 'PENDING', booked_by: null, created_at: '', updated_at: '' } as TmsVehicleSlot, isFirstSlot: true, slotIndex: 0 }]
     ), [filteredOrders]
   )
 
@@ -1051,17 +1051,20 @@ export default function TMSBookings() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {tableRows.map(({ order, vslot, isFirstSlot }) => (
+              {tableRows.map(({ order, vslot, isFirstSlot, slotIndex }) => (
                 <TableRow key={`${order.id}-${vslot.id}`} className={`${rowBg(vslot.status)} ${!isFirstSlot ? 'border-l-4 border-l-purple-300' : ''}`}>
-                  {/* Mã đơn — chỉ hiện ở dòng đầu của mỗi order */}
+                  {/* Mã đơn — chỉ hiện ở dòng đầu của mỗi order, xe phụ để trống */}
                   <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">
-                    {isFirstSlot
-                      ? (order.order_code || <span className="text-slate-400 font-normal">—</span>)
-                      : <span className="inline-flex items-center gap-0.5 text-[9px] text-purple-500"><span>↳</span><span className="bg-purple-100 px-1 py-0.5 rounded font-medium">xe phụ</span></span>
-                    }
+                    {isFirstSlot ? (order.order_code || <span className="text-slate-400 font-normal">—</span>) : null}
                   </TableCell>
                   <TableCell className="px-2 py-1 text-[10px] font-semibold max-w-[140px] truncate">
-                    {isFirstSlot ? (order.npp_name || <span className="text-slate-400 font-normal">—</span>) : null}
+                    {isFirstSlot
+                      ? (order.npp_name || <span className="text-slate-400 font-normal">—</span>)
+                      : <span className="inline-flex items-center gap-1 text-[9px] text-purple-500 pl-3">
+                          <span>↳</span>
+                          <span className="font-medium">Xe phụ {slotIndex}</span>
+                        </span>
+                    }
                   </TableCell>
 
                   {/* Đặt giờ — luôn hiện cho mỗi vehicle slot */}

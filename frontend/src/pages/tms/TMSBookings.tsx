@@ -944,7 +944,6 @@ export default function TMSBookings() {
       await updateBooking.mutateAsync({
         id,
         slot_id: null,
-        ncc_id: null,
         license_plate: null,
         driver_phone: null,
         status: 'PENDING',

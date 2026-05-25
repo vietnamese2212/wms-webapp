@@ -3,15 +3,18 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 
-// Đếm số TmsVehicleSlot khác có cùng (slot_id, license_plate) — dùng để tránh double-count booked_count
-// khi 1 xe vật lý chạy nhiều đơn trong cùng khung giờ.
-async function countSameBooking(slotId: string, licensePlate: string, excludeId: string): Promise<number> {
+// Đếm số TmsVehicleSlot khác đơn có cùng (slot_id, license_plate) — dùng để tránh double-count booked_count
+// khi 1 xe vật lý chạy nhiều ĐƠN KHÁC NHAU trong cùng khung giờ (consolidation).
+// Xe phụ cùng đơn (excludeOrderId) KHÔNG bị loại — mỗi xe phụ luôn tính là 1 slot riêng.
+async function countSameBooking(slotId: string, licensePlate: string, excludeId: string, excludeOrderId?: string): Promise<number> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { count } = await (supabase.from('TmsVehicleSlot') as any)
+  let q = (supabase.from('TmsVehicleSlot') as any)
     .select('id', { count: 'exact', head: true })
     .eq('slot_id', slotId)
     .eq('license_plate', licensePlate)
     .neq('id', excludeId)
+  if (excludeOrderId) q = q.neq('order_id', excludeOrderId)
+  const { count } = await q
   return count ?? 0
 }
 
@@ -74,7 +77,7 @@ export async function updateVehicleSlot(req: Request, res: Response) {
           }
           // Chỉ decrement nếu không còn booking nào khác cùng (slot, biển số) — tránh giảm oan khi 1 xe nhiều đơn
           const oldPlate = existing.license_plate as string | null
-          const othersInOldSlot = oldPlate ? await countSameBooking(existing.slot_id, oldPlate, id) : 0
+          const othersInOldSlot = oldPlate ? await countSameBooking(existing.slot_id, oldPlate, id, existing.order_id as string) : 0
           if (!oldPlate || othersInOldSlot === 0) {
             await supabase.rpc('try_book_slot', { p_slot_id: existing.slot_id, p_delta: -1 })
           }
@@ -93,7 +96,7 @@ export async function updateVehicleSlot(req: Request, res: Response) {
         }
         // Biển số sẽ được set sau update — dùng giá trị incoming (nếu có) hoặc existing
         const newPlate = license_plate !== undefined ? (license_plate || null) : (existing.license_plate as string | null)
-        const othersInNewSlot = newPlate ? await countSameBooking(newSlotId, newPlate, id) : 0
+        const othersInNewSlot = newPlate ? await countSameBooking(newSlotId, newPlate, id, existing.order_id as string) : 0
         // Chỉ increment nếu xe này chưa được đếm trong slot (tránh double-count khi 1 xe nhiều đơn)
         if (!newPlate || othersInNewSlot === 0) {
           const { data: booked } = await supabase.rpc('try_book_slot', { p_slot_id: newSlotId, p_delta: 1 })
@@ -156,7 +159,7 @@ export async function releaseVehicleSlot(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: existing, error: fetchErr } = await (supabase.from('TmsVehicleSlot') as any)
-      .select('id, slot_id, status, license_plate').eq('id', id).single()
+      .select('id, slot_id, status, order_id, license_plate').eq('id', id).single()
     if (fetchErr || !existing) return fail(res, 'Không tìm thấy vehicle slot', 404)
 
     if (existing.slot_id) {
@@ -170,7 +173,7 @@ export async function releaseVehicleSlot(req: Request, res: Response) {
         }
         // Chỉ decrement nếu không còn đơn khác cùng (slot, biển số) — tránh giảm oan khi 1 xe nhiều đơn
         const plate = existing.license_plate as string | null
-        const othersInSlot = plate ? await countSameBooking(existing.slot_id, plate, id) : 0
+        const othersInSlot = plate ? await countSameBooking(existing.slot_id, plate, id, existing.order_id as string) : 0
         if (!plate || othersInSlot === 0) {
           await supabase.rpc('try_book_slot', { p_slot_id: existing.slot_id, p_delta: -1 })
         }

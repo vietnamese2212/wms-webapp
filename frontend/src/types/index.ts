@@ -453,7 +453,7 @@ export interface SlotTemplate {
   warehouse_id:    string
   vehicle_type_id: string
   vehicle_type?:   Pick<TmsVehicleType, 'id' | 'code' | 'name'>
-  direction:       'OUTBOUND' | 'INBOUND'
+  direction:       string | null
   cargo_type:      string
   day_of_week:     number   // 1=T2 … 6=T7
   time_from:       string

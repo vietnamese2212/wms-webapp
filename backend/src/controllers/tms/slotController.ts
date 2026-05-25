@@ -4,7 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 
 interface SlotTemplateRow {
-  id: string; vehicle_type_id: string; direction: string; cargo_type: string
+  id: string; vehicle_type_id: string; cargo_type: string
   day_of_week: number; time_from: string; time_to: string; max_vehicles: number
 }
 
@@ -45,7 +45,7 @@ export async function generateSlotsForDates(req: Request, res: Response) {
     // Lấy template đang hoạt động của kho này
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: templates, error: tmplErr } = await (supabase.from('SlotTemplate') as any)
-      .select('id, vehicle_type_id, direction, cargo_type, day_of_week, time_from, time_to, max_vehicles')
+      .select('id, vehicle_type_id, cargo_type, day_of_week, time_from, time_to, max_vehicles')
       .eq('is_active', true)
       .eq('warehouse_id', warehouse_id)
     if (tmplErr) return fail(res, tmplErr.message)
@@ -77,7 +77,7 @@ export async function generateSlotsForDates(req: Request, res: Response) {
         rows.push({
           id: randomUUID(), template_id: tmpl.id,
           warehouse_id,
-          vehicle_type_id: tmpl.vehicle_type_id, direction: tmpl.direction, cargo_type: tmpl.cargo_type,
+          vehicle_type_id: tmpl.vehicle_type_id, cargo_type: tmpl.cargo_type,
           date: dateStr, time_from: tmpl.time_from, time_to: tmpl.time_to,
           max_vehicles: tmpl.max_vehicles, booked_count: 0, status: 'OPEN',
           created_at: now, updated_at: now,

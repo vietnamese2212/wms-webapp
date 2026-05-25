@@ -86,7 +86,6 @@ function SlotTemplateDialog({ st, open, onClose, vehicleTypes, warehouseId, carg
 }) {
   const isEdit = !!st
   const [vtId,        setVtId]        = useState(st?.vehicle_type_id ?? '')
-  const [direction,   setDirection]   = useState(st?.direction ?? 'OUTBOUND')
   const [cargoType,   setCargoType]   = useState(st?.cargo_type ?? 'ALL')
   const [daysOfWeek,  setDaysOfWeek]  = useState<number[]>(isEdit ? [st.day_of_week] : [1,2,3,4,5,6])
   const [timeFrom,    setTimeFrom]    = useState(st?.time_from?.slice(0,5) ?? '')
@@ -111,7 +110,7 @@ function SlotTemplateDialog({ st, open, onClose, vehicleTypes, warehouseId, carg
       update({ id: st.id, time_from: timeFrom, time_to: timeTo, max_vehicles: Number(maxVehicles), cargo_type: cargoType, is_active: isActive },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
     } else {
-      create({ warehouse_id: warehouseId, vehicle_type_id: vtId, direction, cargo_type: cargoType, days_of_week: daysOfWeek, time_from: timeFrom, time_to: timeTo, max_vehicles: Number(maxVehicles) },
+      create({ warehouse_id: warehouseId, vehicle_type_id: vtId, cargo_type: cargoType, days_of_week: daysOfWeek, time_from: timeFrom, time_to: timeTo, max_vehicles: Number(maxVehicles) },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
     }
   }
@@ -130,15 +129,6 @@ function SlotTemplateDialog({ st, open, onClose, vehicleTypes, warehouseId, carg
                 <SelectContent>
                   <SelectItem value="__none__">— Chọn loại xe —</SelectItem>
                   {vehicleTypes.filter(v => v.is_active).map(v => <SelectItem key={v.id} value={v.id}>{v.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1"><Label className="text-xs">Hướng *</Label>
-              <Select value={direction} onValueChange={v => setDirection(v as 'OUTBOUND'|'INBOUND')}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="OUTBOUND">Xuất hàng</SelectItem>
-                  <SelectItem value="INBOUND">Nhập hàng</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -346,13 +336,11 @@ export default function TMSSettings() {
 
   // SlotTemplate — chỉ load khi đã chọn kho, filter client-side
   const [filterVTIds, setFilterVTIds] = useState<string[]>([])
-  const [filterDirs,  setFilterDirs]  = useState<string[]>([])
   const { data: templates = [], isLoading: loadingST } = useSlotTemplates({
     warehouse_id: warehouseId || undefined,
   })
   const filteredTemplates = templates.filter(st =>
-    (filterVTIds.length === 0 || filterVTIds.includes(st.vehicle_type_id)) &&
-    (filterDirs.length  === 0 || filterDirs.includes(st.direction))
+    filterVTIds.length === 0 || filterVTIds.includes(st.vehicle_type_id)
   )
   const { mutate: deleteST, isPending: deletingST } = useDeleteSlotTemplate()
   const [editingST, setEditingST] = useState<SlotTemplate | null>(null)
@@ -491,16 +479,6 @@ export default function TMSSettings() {
                   selected={filterVTIds}
                   onChange={setFilterVTIds}
                 />
-                <MultiSelectFilter
-                  label="Hướng"
-                  options={[
-                    { value: 'OUTBOUND', label: 'Xuất hàng' },
-                    { value: 'INBOUND',  label: 'Nhập hàng' },
-                  ]}
-                  selected={filterDirs}
-                  onChange={setFilterDirs}
-                  searchable={false}
-                />
               </div>
               <Card>
                 {loadingST ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> : filteredTemplates.length === 0 ? (
@@ -517,7 +495,6 @@ export default function TMSSettings() {
                       <TableHeader>
                         <TableRow>
                           <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Loại xe</TableHead>
-                          <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Hướng</TableHead>
                           <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Loại hàng</TableHead>
                           <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Thứ</TableHead>
                           <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Khung giờ</TableHead>
@@ -530,11 +507,6 @@ export default function TMSSettings() {
                         {filteredTemplates.map(st => (
                           <TableRow key={st.id} className={!st.is_active ? 'opacity-50' : ''}>
                             <TableCell className="px-2 py-1 text-[10px] font-medium text-slate-700">{st.vehicle_type?.name ?? '—'}</TableCell>
-                            <TableCell className="px-2 py-1">
-                              <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${st.direction === 'OUTBOUND' ? 'bg-blue-50 text-blue-700' : 'bg-green-50 text-green-700'}`}>
-                                {st.direction === 'OUTBOUND' ? 'Xuất' : 'Nhập'}
-                              </span>
-                            </TableCell>
                             <TableCell className="px-2 py-1 text-[10px] text-slate-500">{st.cargo_type === 'ALL' ? 'Tất cả' : st.cargo_type}</TableCell>
                             <TableCell className="px-2 py-1 font-semibold text-[10px] text-slate-700">{DOW_LABEL[st.day_of_week] ?? st.day_of_week}</TableCell>
                             <TableCell className="px-2 py-1 font-mono text-[10px] text-slate-700">

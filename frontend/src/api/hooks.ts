@@ -1388,7 +1388,7 @@ export function useUpdateVehicleType() {
   })
 }
 
-export function useSlotTemplates(params?: { warehouse_id?: string; vehicle_type_id?: string; direction?: string }) {
+export function useSlotTemplates(params?: { warehouse_id?: string; vehicle_type_id?: string }) {
   return useQuery({
     queryKey: ['tms-slot-templates', params],
     queryFn: async () => {
@@ -1403,7 +1403,7 @@ export function useCreateSlotTemplate() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (body: {
-      warehouse_id: string; vehicle_type_id: string; direction: string; cargo_type?: string
+      warehouse_id: string; vehicle_type_id: string; cargo_type?: string
       days_of_week: number[]; time_from: string; time_to: string; max_vehicles: number
     }) => apiClient.post('/tms/slot-templates', body).then(r => r.data.data as SlotTemplate[]),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-slot-templates'] }),

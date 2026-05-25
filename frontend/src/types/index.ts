@@ -410,6 +410,8 @@ export interface TmsVehicleSlot {
   driver_phone:  string | null
   status:        VehicleSlotStatus
   booked_by:     string | null
+  consolidation_group_id:    string | null
+  is_consolidation_primary:  boolean
   created_at:    string
   updated_at:    string
 }

@@ -44,14 +44,14 @@ export async function addVehicleSlot(req: Request, res: Response) {
 export async function updateVehicleSlot(req: Request, res: Response) {
   try {
     const { id } = req.params
-    const { slot_id, license_plate, driver_name, driver_phone, status } = req.body
+    const { slot_id, license_plate, driver_name, driver_phone, status, consolidation_order_ids } = req.body
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const user = (req as any).user
     const now = new Date().toISOString()
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: existing, error: fetchErr } = await (supabase.from('TmsVehicleSlot') as any)
-      .select('id, slot_id, status, order_id, license_plate').eq('id', id).single()
+      .select('id, slot_id, status, order_id, license_plate, consolidation_group_id, is_consolidation_primary').eq('id', id).single()
     if (fetchErr || !existing) return fail(res, 'Không tìm thấy vehicle slot', 404)
 
     // Không cho thay đổi slot sau ARRIVED/DONE
@@ -117,12 +117,42 @@ export async function updateVehicleSlot(req: Request, res: Response) {
         : (newSlotId ? 'BOOKED' : 'PENDING')
     }
 
+    // Consolidation: tạo group khi lần đầu book kèm đơn khác
+    let newGroupId: string | null = null
+    const orderIds = Array.isArray(consolidation_order_ids) ? consolidation_order_ids as string[] : []
+    if (orderIds.length > 0 && existing.status === 'PENDING') {
+      newGroupId = randomUUID()
+      updates.consolidation_group_id = newGroupId
+      updates.is_consolidation_primary = true
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await (supabase.from('TmsVehicleSlot') as any)
       .update(updates).eq('id', id)
       .select('*, slot:DeliverySlot!slot_id(id, date, time_from, time_to, direction, cargo_type, max_vehicles, booked_count)')
       .single()
     if (error) return fail(res, error.message)
+
+    // Áp dụng cùng slot+plate cho xe chính của các đơn chạy chung (không increment booked_count)
+    if (newGroupId && orderIds.length > 0) {
+      const finalSlotId = slot_id !== undefined ? slot_id : existing.slot_id
+      const finalPlate  = license_plate !== undefined ? (license_plate || null) : (existing.license_plate as string | null)
+      for (const orderId of orderIds) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: firstSlot } = await (supabase.from('TmsVehicleSlot') as any)
+          .select('id, status, consolidation_group_id')
+          .eq('order_id', orderId)
+          .order('created_at', { ascending: true })
+          .limit(1).single()
+        if (!firstSlot || firstSlot.status !== 'PENDING' || firstSlot.consolidation_group_id) continue
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (supabase.from('TmsVehicleSlot') as any).update({
+          slot_id: finalSlotId, license_plate: finalPlate, status: 'BOOKED',
+          consolidation_group_id: newGroupId, is_consolidation_primary: false, updated_at: now,
+        }).eq('id', firstSlot.id)
+      }
+    }
+
     return ok(res, data)
   } catch (e) { return fail(res, String(e)) }
 }
@@ -151,7 +181,7 @@ export async function deleteVehicleSlot(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
-// PATCH /api/tms/vehicle-slots/:id/release — trả lại: xoá slot+biển số+sdt, giữ ĐVVT
+// PATCH /api/tms/vehicle-slots/:id/release — trả lại: tách khỏi nhóm (nếu có), xoá slot+biển số+sdt
 export async function releaseVehicleSlot(req: Request, res: Response) {
   try {
     const { id } = req.params
@@ -159,7 +189,7 @@ export async function releaseVehicleSlot(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: existing, error: fetchErr } = await (supabase.from('TmsVehicleSlot') as any)
-      .select('id, slot_id, status, order_id, license_plate').eq('id', id).single()
+      .select('id, slot_id, status, order_id, license_plate, consolidation_group_id, is_consolidation_primary').eq('id', id).single()
     if (fetchErr || !existing) return fail(res, 'Không tìm thấy vehicle slot', 404)
 
     if (existing.slot_id) {
@@ -180,9 +210,38 @@ export async function releaseVehicleSlot(req: Request, res: Response) {
       }
     }
 
+    // Xử lý group consolidation: dòng này tách ra, các dòng còn lại giữ nguyên
+    const groupId = existing.consolidation_group_id as string | null
+    if (groupId) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: mates } = await (supabase.from('TmsVehicleSlot') as any)
+        .select('id, is_consolidation_primary')
+        .eq('consolidation_group_id', groupId)
+        .neq('id', id)
+      const mateList = (mates ?? []) as { id: string; is_consolidation_primary: boolean }[]
+
+      if (mateList.length === 1) {
+        // Nhóm chỉ còn 1 → giải thể nhóm, member còn lại vẫn giữ booking (standalone)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (supabase.from('TmsVehicleSlot') as any).update({
+          consolidation_group_id: null, is_consolidation_primary: false, updated_at: now,
+        }).eq('id', mateList[0].id)
+      } else if (mateList.length >= 2 && (existing.is_consolidation_primary as boolean)) {
+        // Primary tách ra → chỉ định member đầu tiên làm primary mới
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (supabase.from('TmsVehicleSlot') as any).update({
+          is_consolidation_primary: true, updated_at: now,
+        }).eq('id', mateList[0].id)
+      }
+      // else: secondary tách ra, group >= 2 còn lại → không thay đổi gì
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await (supabase.from('TmsVehicleSlot') as any)
-      .update({ slot_id: null, license_plate: null, driver_phone: null, status: 'PENDING', updated_at: now })
+      .update({
+        slot_id: null, license_plate: null, driver_phone: null, status: 'PENDING',
+        consolidation_group_id: null, is_consolidation_primary: false, updated_at: now,
+      })
       .eq('id', id)
       .select('*, slot:DeliverySlot!slot_id(id, date, time_from, time_to, direction, cargo_type, max_vehicles, booked_count)')
       .single()

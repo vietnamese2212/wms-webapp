@@ -1591,6 +1591,7 @@ export function useBulkCreateOrders() {
 type VehicleSlotWriteBody = {
   slot_id?: string | null; license_plate?: string | null
   driver_name?: string | null; driver_phone?: string | null; status?: string
+  consolidation_order_ids?: string[]
 }
 
 export function useAddVehicleSlot() {
@@ -1605,6 +1606,7 @@ export function useAddVehicleSlot() {
         id: `_temp_${Date.now()}`, order_id: orderId,
         slot_id: null, slot: null, license_plate: null,
         driver_name: null, driver_phone: null, status: 'PENDING', booked_by: null,
+        consolidation_group_id: null, is_consolidation_primary: false,
         created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
       }
       qc.setQueriesData<import('@/types').TmsOrder[]>(
@@ -1650,7 +1652,7 @@ export function useReleaseVehicleSlot() {
         old => old?.map(o => ({
           ...o,
           vehicle_slots: o.vehicle_slots.map(vs => vs.id === id
-            ? { ...vs, slot_id: null, slot: null, license_plate: null, driver_phone: null, status: 'PENDING' }
+            ? { ...vs, slot_id: null, slot: null, license_plate: null, driver_phone: null, status: 'PENDING', consolidation_group_id: null, is_consolidation_primary: false }
             : vs
           ),
         }))

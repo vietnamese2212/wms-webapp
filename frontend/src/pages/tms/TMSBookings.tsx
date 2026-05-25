@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import * as XLSX from 'xlsx'
-import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle } from 'lucide-react'
+import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, Link2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -118,10 +118,11 @@ function SlotPicker({ warehouseId, date, selectedSlotId, onSelect, cargoType, ve
 
 // ── ĐVVT Book Dialog (điền slot + biển số + SĐT cho 1 VehicleSlot) ──────────
 
-function BookSlotDialog({ vslot, order, onClose }: {
+function BookSlotDialog({ vslot, order, onClose, allOrders }: {
   vslot: TmsVehicleSlot | null
   order: TmsOrder | null
   onClose: () => void
+  allOrders: TmsOrder[]
 }) {
   const updateSlot = useUpdateVehicleSlot()
   const user = useAuthStore(s => s.user)
@@ -134,6 +135,7 @@ function BookSlotDialog({ vslot, order, onClose }: {
   const [selectedSlot, setSelectedSlot] = useState<DeliverySlot | null>(null)
   const [licensePlate, setLicensePlate] = useState('')
   const [driverPhone, setDriverPhone] = useState('')
+  const [consolidationOrderIds, setConsolidationOrderIds] = useState<string[]>([])
   const [err, setErr] = useState('')
 
   useEffect(() => {
@@ -141,9 +143,22 @@ function BookSlotDialog({ vslot, order, onClose }: {
       setSelectedSlot((vslot.slot as DeliverySlot | null) ?? null)
       setLicensePlate(isDriver ? (user?.employee_code ?? '') : (vslot.license_plate ?? ''))
       setDriverPhone(vslot.driver_phone ?? '')
+      setConsolidationOrderIds([])
       setErr('')
     }
   }, [vslot?.id, isDriver])
+
+  // Đơn cùng ĐVVT, cùng ngày, xe chính PENDING, chưa trong group nào
+  const consolidatableOrders = useMemo(() => {
+    if (isDriver || !order || vslot?.status !== 'PENDING') return []
+    return allOrders.filter(o =>
+      o.id !== order.id &&
+      o.ncc_id === order.ncc_id &&
+      o.date === order.date &&
+      o.vehicle_slots[0]?.status === 'PENDING' &&
+      !o.vehicle_slots[0]?.consolidation_group_id
+    )
+  }, [allOrders, order?.id, order?.ncc_id, order?.date, vslot?.status, isDriver])
 
   const handleSave = async () => {
     if (!vslot || !order) return
@@ -154,6 +169,9 @@ function BookSlotDialog({ vslot, order, onClose }: {
     updates.license_plate = licensePlate || null
     updates.driver_phone = driverPhone || null
     if (selectedSlot && licensePlate) updates.status = 'BOOKED'
+    if (consolidationOrderIds.length > 0 && vslot.status === 'PENDING') {
+      updates.consolidation_order_ids = consolidationOrderIds
+    }
     try {
       await updateSlot.mutateAsync(updates)
       onClose()
@@ -205,6 +223,30 @@ function BookSlotDialog({ vslot, order, onClose }: {
               <Input value={driverPhone} onChange={e => setDriverPhone(e.target.value)} placeholder="0912..." className="h-8 text-sm mt-1" />
             </div>
           </div>
+          {consolidatableOrders.length > 0 && (
+            <div>
+              <Label className="text-xs font-medium mb-1 block">
+                Xe này chở thêm đơn nào?
+                <span className="text-slate-400 font-normal ml-1">(1 xe – 1 slot, các đơn chọn sẽ tự nhận booking)</span>
+              </Label>
+              <div className="max-h-28 overflow-y-auto border rounded p-1.5 space-y-0.5 bg-slate-50">
+                {consolidatableOrders.map(o => (
+                  <label key={o.id} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-white px-1.5 py-1 rounded">
+                    <input
+                      type="checkbox"
+                      className="h-3.5 w-3.5 shrink-0"
+                      checked={consolidationOrderIds.includes(o.id)}
+                      onChange={e => setConsolidationOrderIds(prev =>
+                        e.target.checked ? [...prev, o.id] : prev.filter(id => id !== o.id)
+                      )}
+                    />
+                    <span className="font-mono font-semibold">{o.order_code}</span>
+                    {o.npp_name && <span className="text-slate-500 truncate">{o.npp_name}</span>}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
           {err && <p className="text-xs text-red-600">{err}</p>}
         </div>
         <DialogFooter>
@@ -904,14 +946,42 @@ export default function TMSBookings() {
     return list
   }, [orders, huongFilter, dvvtFilter, loaiKhoFilter, loaiXeFilter, khungGioFilter])
 
+  // Sắp xếp: nhóm consolidation gần nhau (primary trước, secondaries theo sau)
+  const sortedOrders = useMemo<TmsOrder[]>(() => {
+    const visited = new Set<string>()
+    const result: TmsOrder[] = []
+    for (const order of filteredOrders) {
+      if (visited.has(order.id)) continue
+      const xeChinhSlot = order.vehicle_slots[0]
+      if (xeChinhSlot?.consolidation_group_id && xeChinhSlot.is_consolidation_primary) {
+        // Primary: thêm mình + kéo tất cả secondary cùng group
+        result.push(order); visited.add(order.id)
+        for (const other of filteredOrders) {
+          if (visited.has(other.id)) continue
+          if (other.vehicle_slots[0]?.consolidation_group_id === xeChinhSlot.consolidation_group_id) {
+            result.push(other); visited.add(other.id)
+          }
+        }
+      } else if (!xeChinhSlot?.consolidation_group_id) {
+        result.push(order); visited.add(order.id)
+      }
+      // Secondary chưa visited sẽ bị skip (primary sẽ pull vào đúng vị trí)
+    }
+    // Fallback: secondary mà primary không có trong filteredOrders
+    for (const order of filteredOrders) {
+      if (!visited.has(order.id)) { result.push(order); visited.add(order.id) }
+    }
+    return result
+  }, [filteredOrders])
+
   // Flatten orders → rows (1 row per vehicle slot, order info repeated for first slot only)
   type TableRow = { order: TmsOrder; vslot: TmsVehicleSlot; isFirstSlot: boolean; slotIndex: number }
   const tableRows = useMemo<TableRow[]>(() =>
-    filteredOrders.flatMap(order =>
+    sortedOrders.flatMap(order =>
       order.vehicle_slots.length > 0
         ? order.vehicle_slots.map((vs, i) => ({ order, vslot: vs, isFirstSlot: i === 0, slotIndex: i }))
-        : [{ order, vslot: { id: '', order_id: order.id, slot_id: null, slot: null, license_plate: null, driver_name: null, driver_phone: null, status: 'PENDING', booked_by: null, created_at: '', updated_at: '' } as TmsVehicleSlot, isFirstSlot: true, slotIndex: 0 }]
-    ), [filteredOrders]
+        : [{ order, vslot: { id: '', order_id: order.id, slot_id: null, slot: null, license_plate: null, driver_name: null, driver_phone: null, status: 'PENDING', booked_by: null, consolidation_group_id: null, is_consolidation_primary: false, created_at: '', updated_at: '' } as TmsVehicleSlot, isFirstSlot: true, slotIndex: 0 }]
+    ), [sortedOrders]
   )
 
   const rowBg = (status: string) => {
@@ -1051,11 +1121,25 @@ export default function TMSBookings() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {tableRows.map(({ order, vslot, isFirstSlot, slotIndex }) => (
-                <TableRow key={`${order.id}-${vslot.id}`} className={`${rowBg(vslot.status)} ${!isFirstSlot ? 'border-l-4 border-l-purple-300' : ''}`}>
+              {tableRows.map(({ order, vslot, isFirstSlot, slotIndex }) => {
+                const isConsolidated = !!vslot.consolidation_group_id
+                const isCPrimary    = !!vslot.is_consolidation_primary
+                return (
+                <TableRow key={`${order.id}-${vslot.id}`} className={[
+                  rowBg(vslot.status),
+                  !isFirstSlot ? 'border-l-4 border-l-purple-300' : '',
+                  isFirstSlot && isConsolidated && !isCPrimary ? 'border-l-4 border-l-teal-400' : '',
+                ].filter(Boolean).join(' ')}>
                   {/* Mã đơn — chỉ hiện ở dòng đầu của mỗi order, xe phụ để trống */}
                   <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">
-                    {isFirstSlot ? (order.order_code || <span className="text-slate-400 font-normal">—</span>) : null}
+                    {isFirstSlot ? (
+                      <span className="inline-flex items-center gap-1">
+                        {isConsolidated && (
+                          <Link2 className={`h-3 w-3 shrink-0 ${isCPrimary ? 'text-teal-500' : 'text-teal-400'}`} />
+                        )}
+                        {order.order_code || <span className="text-slate-400 font-normal">—</span>}
+                      </span>
+                    ) : null}
                   </TableCell>
                   <TableCell className="px-2 py-1 text-[10px] font-semibold max-w-[140px] truncate">
                     {isFirstSlot
@@ -1192,7 +1276,8 @@ export default function TMSBookings() {
                     </div>
                   </TableCell>
                 </TableRow>
-              ))}
+                )
+              })}
             </TableBody>
           </Table>
         )}
@@ -1209,6 +1294,7 @@ export default function TMSBookings() {
         vslot={bookingSlot?.vslot ?? null}
         order={bookingSlot?.order ?? null}
         onClose={() => setBookingSlot(null)}
+        allOrders={orders as TmsOrder[]}
       />
       <SlotOverviewDialog
         open={slotOverviewOpen}

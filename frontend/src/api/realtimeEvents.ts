@@ -1,7 +1,7 @@
 import type { RealtimeChannel, RealtimePostgresChangesPayload } from '@supabase/supabase-js'
 import { supabaseClient } from '@/lib/supabase'
 import { queryClient } from './queryClient'
-import type { DeliveryBooking, DeliverySlot } from '@/types'
+import type { DeliverySlot, TmsOrder } from '@/types'
 
 // Maps table name → query keys to invalidate (fallback refetch).
 const TABLE_QUERY_MAP: Record<string, string[][]> = {
@@ -11,14 +11,15 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   Material:         [['materials']],
   Manufacturer:     [['manufacturers']],
   Warehouse:        [['warehouses']],
-  DeliveryBooking:  [['tms-bookings']],
+  TmsOrder:         [['tms-orders']],
+  TmsVehicleSlot:   [['tms-orders']],
   DeliverySlot:     [['tms-delivery-slots']],
 }
 
 type Payload = RealtimePostgresChangesPayload<Record<string, unknown>>
 
 // Patch DeliverySlot cache trực tiếp — cập nhật booked_count trong slot list VÀ trong
-// slot object embedded trong booking list (DeliveryBooking.slot.booked_count).
+// slot object embedded trong TmsOrder.vehicle_slots[].slot
 function patchSlotCache(payload: Payload) {
   if (payload.eventType !== 'UPDATE') return
   const updated = payload.new
@@ -37,63 +38,19 @@ function patchSlotCache(payload: Payload) {
     }
   )
 
-  // 2. Patch slot embedded trong tms-bookings
-  queryClient.setQueriesData<DeliveryBooking[]>(
-    { queryKey: ['tms-bookings'] },
+  // 2. Patch slot embedded trong TmsOrder.vehicle_slots[].slot
+  queryClient.setQueriesData<TmsOrder[]>(
+    { queryKey: ['tms-orders'] },
     (old) => {
       if (!Array.isArray(old)) return old
-      return old.map(b =>
-        b.slot_id === updated.id && b.slot
-          ? { ...b, slot: { ...b.slot, booked_count: updated.booked_count as number } }
-          : b
-      )
-    }
-  )
-}
-
-// Patch DeliveryBooking cache trực tiếp — cập nhật status/license_plate/slot_id/v.v.
-// không cần round-trip backend (~300-5000ms tùy cold start Vercel).
-function patchBookingsCache(payload: Payload) {
-  if (payload.eventType === 'INSERT') return  // INSERT cần join relations → để invalidate xử lý
-
-  queryClient.setQueriesData<DeliveryBooking[]>(
-    { queryKey: ['tms-bookings'] },
-    (old) => {
-      if (!Array.isArray(old)) return old
-
-      if (payload.eventType === 'DELETE') {
-        const deletedId = payload.old?.id as string | undefined
-        return deletedId ? old.filter(b => b.id !== deletedId) : old
-      }
-
-      // UPDATE
-      const u = payload.new
-      if (!u?.id) return old
-      return old.map(b => {
-        if (b.id !== u.id) return b
-        const slotChanged = u.slot_id !== b.slot_id
-        const nccChanged  = u.ncc_id  !== b.ncc_id
-        return {
-          ...b,
-          status:         u.status         as DeliveryBooking['status'],
-          slot_id:        u.slot_id        as string | null,
-          ncc_id:         u.ncc_id         as string | null,
-          license_plate:  u.license_plate  as string | null,
-          driver_name:    u.driver_name    as string | null,
-          driver_phone:   u.driver_phone   as string | null,
-          npp_name:       u.npp_name       as string | null,
-          gdo_refs:       u.gdo_refs       as string | null,
-          notes:          u.notes          as string | null,
-          box_count:      u.box_count      as number | null,
-          pallet_count:   u.pallet_count   as number | null,
-          tonnage:        u.tonnage        as number | null,
-          warehouse_type: u.warehouse_type as string | null,
-          vehicle_type:   u.vehicle_type   as string | null,
-          // Giữ nguyên joined objects nếu ID không đổi; xóa nếu đổi (background refetch sẽ fill lại)
-          slot: slotChanged ? null : b.slot,
-          ncc:  nccChanged  ? null : b.ncc,
-        }
-      })
+      return old.map(o => ({
+        ...o,
+        vehicle_slots: o.vehicle_slots.map(vs =>
+          vs.slot_id === updated.id && vs.slot
+            ? { ...vs, slot: { ...vs.slot, booked_count: updated.booked_count as number } }
+            : vs
+        ),
+      }))
     }
   )
 }
@@ -109,9 +66,7 @@ export function connectRealtimeEvents(): void {
       'postgres_changes',
       { event: '*', schema: 'public', table: '*' },
       (payload) => {
-        // Direct cache patch — near-instant (<150ms), không cần round-trip backend
-        if (payload.table === 'DeliverySlot')    patchSlotCache(payload)
-        if (payload.table === 'DeliveryBooking') patchBookingsCache(payload)
+        if (payload.table === 'DeliverySlot') patchSlotCache(payload)
 
         // Invalidate để eventual consistency (background refetch sau patch)
         const keys = TABLE_QUERY_MAP[payload.table]

@@ -2,7 +2,8 @@ import { Router } from 'express'
 import * as vehicleType      from '../controllers/tms/vehicleTypeController'
 import * as slotTemplate     from '../controllers/tms/slotTemplateController'
 import * as slot             from '../controllers/tms/slotController'
-import * as booking          from '../controllers/tms/bookingController'
+import * as order            from '../controllers/tms/orderController'
+import * as vehicleSlot      from '../controllers/tms/vehicleSlotController'
 import * as transportCompany from '../controllers/tms/transportCompanyController'
 import * as vehicle          from '../controllers/tms/vehicleController'
 import { requirePerm } from '../middlewares/auth'
@@ -15,15 +16,21 @@ router.post('/vehicle-types',    requirePerm('tms', 'manage_slots'),  vehicleTyp
 router.put('/vehicle-types/:id', requirePerm('tms', 'manage_slots'),  vehicleType.updateVehicleType)
 
 // DeliverySlot
-router.get('/slots',          requirePerm('tms', 'view'),           slot.listSlots)
-router.post('/slots/generate', requirePerm('tms', 'manage_booking'), slot.generateSlotsForDates)
+router.get('/slots',           requirePerm('tms', 'view'),            slot.listSlots)
+router.post('/slots/generate', requirePerm('tms', 'manage_booking'),  slot.generateSlotsForDates)
 
-// DeliveryBooking (Kế hoạch vận chuyển)
-router.get('/bookings',          requirePerm('tms', 'view'),           booking.listBookings)
-router.post('/bookings',         requirePerm('tms', 'manage_booking'), booking.createBooking)
-router.post('/bookings/bulk',    requirePerm('tms', 'manage_booking'), booking.bulkCreateBookings)
-router.patch('/bookings/:id',    requirePerm('tms', 'book'),           booking.updateBooking)
-router.delete('/bookings/:id',   requirePerm('tms', 'manage_booking'), booking.deleteBooking)
+// TmsOrder (Kế hoạch vận chuyển — điều vận tạo)
+router.get('/orders',              requirePerm('tms', 'view'),            order.listOrders)
+router.post('/orders',             requirePerm('tms', 'manage_booking'),  order.createOrder)
+router.post('/orders/bulk',        requirePerm('tms', 'manage_booking'),  order.bulkCreateOrders)
+router.patch('/orders/:id',        requirePerm('tms', 'manage_booking'),  order.updateOrder)
+router.delete('/orders/:id',       requirePerm('tms', 'manage_booking'),  order.deleteOrder)
+
+// TmsVehicleSlot (xe thực tế bốc đơn — ĐVVT book)
+router.post('/orders/:orderId/vehicle-slots',    requirePerm('tms', 'manage_booking'), vehicleSlot.addVehicleSlot)
+router.patch('/vehicle-slots/:id',               requirePerm('tms', 'book'),           vehicleSlot.updateVehicleSlot)
+router.patch('/vehicle-slots/:id/release',       requirePerm('tms', 'manage_booking'), vehicleSlot.releaseVehicleSlot)
+router.delete('/vehicle-slots/:id',              requirePerm('tms', 'manage_booking'), vehicleSlot.deleteVehicleSlot)
 
 // SlotTemplate (Khung giờ)
 router.get('/slot-templates',        requirePerm('tms', 'view'),         slotTemplate.listSlotTemplates)

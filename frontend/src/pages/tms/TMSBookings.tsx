@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import * as XLSX from 'xlsx'
-import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye } from 'lucide-react'
+import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -14,10 +14,11 @@ import { useAuthStore } from '@/stores/authStore'
 import {
   useWarehouses, useWarehouseTypes, useVehicleTypes, useTransportCompanies, useTmsVehicles,
   useDeliverySlots, useGenerateSlots,
-  useDeliveryBookings, useCreateBooking, useUpdateBooking, useDeleteBooking, useBulkCreateBookings,
+  useTmsOrders, useCreateOrder, useUpdateOrder, useDeleteOrder, useBulkCreateOrders,
+  useAddVehicleSlot, useUpdateVehicleSlot, useReleaseVehicleSlot, useDeleteVehicleSlot,
 } from '@/api/hooks'
 import { formatDate } from '@/utils/formatters'
-import type { DeliveryBooking, DeliverySlot, TmsVehicleType, TmsVehicle, TransportCompany } from '@/types'
+import type { TmsOrder, TmsVehicleSlot, DeliverySlot, TmsVehicleType, TmsVehicle, TransportCompany } from '@/types'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -27,16 +28,16 @@ function isSlotTimePassed(slotDate: string, timeFrom: string): boolean {
 
 // ── Status badge ─────────────────────────────────────────────────────────────
 
-const STATUS_CFG = {
-  PENDING:   { label: 'Chờ ĐVVT',    cls: 'bg-amber-100 text-amber-700' },
-  CONFIRMED: { label: 'Đã xác nhận', cls: 'bg-green-100 text-green-700' },
+const SLOT_STATUS_CFG = {
+  PENDING:   { label: 'Chờ book',     cls: 'bg-amber-100 text-amber-700' },
+  BOOKED:    { label: 'Đã đặt giờ',  cls: 'bg-green-100 text-green-700' },
   ARRIVED:   { label: 'Đã đến',      cls: 'bg-blue-100 text-blue-700' },
   DONE:      { label: 'Hoàn thành',  cls: 'bg-slate-100 text-slate-600' },
   CANCELLED: { label: 'Đã hủy',      cls: 'bg-red-100 text-red-600' },
 } as const
 
 function StatusBadge({ status }: { status: string }) {
-  const cfg = STATUS_CFG[status as keyof typeof STATUS_CFG] ?? { label: status, cls: 'bg-gray-100 text-gray-600' }
+  const cfg = SLOT_STATUS_CFG[status as keyof typeof SLOT_STATUS_CFG] ?? { label: status, cls: 'bg-gray-100 text-gray-600' }
   return <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium ${cfg.cls}`}>{cfg.label}</span>
 }
 
@@ -64,11 +65,9 @@ function SlotPicker({ warehouseId, date, selectedSlotId, onSelect, cargoType, ve
     return <p className="text-xs text-slate-400 py-6 text-center">Đang tải khung giờ...</p>
 
   const allSlots = slots as DeliverySlot[]
-
   if (!allSlots.length)
     return <p className="text-xs text-slate-400 py-6 text-center">Chưa có khung giờ nào được cấu hình cho ngày này.</p>
 
-  // filter theo cargo_type và vehicle_type
   const filtered = allSlots.filter(slot => {
     if (slot.id === selectedSlotId) return true
     if (cargoType && slot.cargo_type !== 'ALL' && slot.cargo_type !== cargoType) return false
@@ -79,7 +78,7 @@ function SlotPicker({ warehouseId, date, selectedSlotId, onSelect, cargoType, ve
   return (
     <div className="space-y-1 max-h-48 overflow-y-auto pr-1">
       {filtered.length === 0 && (
-        <p className="text-xs text-slate-400 py-4 text-center">Không có khung giờ phù hợp với loại kho đã chọn.</p>
+        <p className="text-xs text-slate-400 py-4 text-center">Không có khung giờ phù hợp với loại xe đã chọn.</p>
       )}
       {filtered.map(slot => {
         const past = isSlotTimePassed(date, slot.time_from)
@@ -94,11 +93,9 @@ function SlotPicker({ warehouseId, date, selectedSlotId, onSelect, cargoType, ve
             onClick={() => onSelect(slot)}
             className={[
               'w-full text-left px-3 py-2 rounded border text-xs flex items-center justify-between transition-colors',
-              selected
-                ? 'border-blue-500 bg-blue-50'
-                : disabled
-                  ? 'border-slate-200 bg-slate-50 opacity-50 cursor-not-allowed'
-                  : 'border-slate-200 hover:border-blue-300 hover:bg-blue-50/50 cursor-pointer',
+              selected ? 'border-blue-500 bg-blue-50'
+                : disabled ? 'border-slate-200 bg-slate-50 opacity-50 cursor-not-allowed'
+                : 'border-slate-200 hover:border-blue-300 hover:bg-blue-50/50 cursor-pointer',
             ].join(' ')}
           >
             <span className="flex items-center gap-2">
@@ -119,15 +116,19 @@ function SlotPicker({ warehouseId, date, selectedSlotId, onSelect, cargoType, ve
   )
 }
 
-// ── ĐVVT Fill Dialog (điền slot + biển số + SĐT) ─────────────────────────────
+// ── ĐVVT Book Dialog (điền slot + biển số + SĐT cho 1 VehicleSlot) ──────────
 
-function DVVTFillDialog({ booking, onClose }: { booking: DeliveryBooking | null; onClose: () => void }) {
-  const updateBooking = useUpdateBooking()
+function BookSlotDialog({ vslot, order, onClose }: {
+  vslot: TmsVehicleSlot | null
+  order: TmsOrder | null
+  onClose: () => void
+}) {
+  const updateSlot = useUpdateVehicleSlot()
   const user = useAuthStore(s => s.user)
   const isDriver = user?.job_title_name === 'Lái xe'
 
   const { data: nccVehicles = [] } = useTmsVehicles(
-    !isDriver && booking?.ncc_id ? { ncc_id: booking.ncc_id, is_active: 'true' } : undefined
+    !isDriver && order?.ncc_id ? { ncc_id: order.ncc_id, is_active: 'true' } : undefined
   )
 
   const [selectedSlot, setSelectedSlot] = useState<DeliverySlot | null>(null)
@@ -136,23 +137,23 @@ function DVVTFillDialog({ booking, onClose }: { booking: DeliveryBooking | null;
   const [err, setErr] = useState('')
 
   useEffect(() => {
-    if (booking) {
-      setSelectedSlot((booking.slot as DeliverySlot | null) ?? null)
-      setLicensePlate(isDriver ? (user?.employee_code ?? '') : (booking.license_plate ?? ''))
-      setDriverPhone(booking.driver_phone ?? '')
+    if (vslot) {
+      setSelectedSlot((vslot.slot as DeliverySlot | null) ?? null)
+      setLicensePlate(isDriver ? (user?.employee_code ?? '') : (vslot.license_plate ?? ''))
+      setDriverPhone(vslot.driver_phone ?? '')
       setErr('')
     }
-  }, [booking?.id, isDriver])
+  }, [vslot?.id, isDriver])
 
   const handleSave = async () => {
-    if (!booking) return
-    const updates: Parameters<typeof updateBooking.mutateAsync>[0] = { id: booking.id }
-    if (selectedSlot?.id !== booking.slot_id) updates.slot_id = selectedSlot?.id ?? null
+    if (!vslot || !order) return
+    const updates: Parameters<typeof updateSlot.mutateAsync>[0] = { id: vslot.id }
+    if (selectedSlot?.id !== vslot.slot_id) updates.slot_id = selectedSlot?.id ?? null
     updates.license_plate = licensePlate || null
     updates.driver_phone = driverPhone || null
-    if (selectedSlot && licensePlate) updates.status = 'CONFIRMED'
+    if (selectedSlot && licensePlate) updates.status = 'BOOKED'
     try {
-      await updateBooking.mutateAsync(updates)
+      await updateSlot.mutateAsync(updates)
       onClose()
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
@@ -160,24 +161,24 @@ function DVVTFillDialog({ booking, onClose }: { booking: DeliveryBooking | null;
     }
   }
 
-  if (!booking) return null
+  if (!vslot || !order) return null
   return (
-    <Dialog open={!!booking} onOpenChange={v => !v && onClose()}>
+    <Dialog open={!!vslot} onOpenChange={v => !v && onClose()}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>{booking.status === 'PENDING' ? 'Đăng ký xe' : 'Sửa khung giờ'}</DialogTitle>
-          <p className="text-xs text-slate-500 mt-1">{booking.npp_name ?? '—'} · {formatDate(booking.date)}</p>
+          <DialogTitle>{vslot.status === 'PENDING' ? 'Đặt khung giờ' : 'Sửa khung giờ'}</DialogTitle>
+          <p className="text-xs text-slate-500 mt-1">{order.npp_name ?? '—'} · {formatDate(order.date)}</p>
         </DialogHeader>
         <div className="space-y-3 py-2">
           <div>
             <Label className="text-xs font-medium mb-2 block">Chọn khung giờ *</Label>
             <SlotPicker
-              warehouseId={booking.warehouse_id}
-              date={booking.date}
+              warehouseId={order.warehouse_id}
+              date={order.date}
               selectedSlotId={selectedSlot?.id ?? null}
               onSelect={setSelectedSlot}
-              cargoType={booking.warehouse_type}
-              vehicleType={booking.vehicle_type}
+              cargoType={order.warehouse_type}
+              vehicleType={order.vehicle_type}
             />
           </div>
           <div className="grid grid-cols-2 gap-2">
@@ -206,8 +207,8 @@ function DVVTFillDialog({ booking, onClose }: { booking: DeliveryBooking | null;
         </div>
         <DialogFooter>
           <Button variant="outline" size="sm" onClick={onClose}>Hủy</Button>
-          <Button size="sm" onClick={handleSave} disabled={updateBooking.isPending}>
-            {updateBooking.isPending ? 'Đang lưu...' : 'Xác nhận'}
+          <Button size="sm" onClick={handleSave} disabled={updateSlot.isPending}>
+            {updateSlot.isPending ? 'Đang lưu...' : 'Xác nhận'}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -215,93 +216,83 @@ function DVVTFillDialog({ booking, onClose }: { booking: DeliveryBooking | null;
   )
 }
 
-// ── Create / Edit Dialog (Điều vận) ──────────────────────────────────────────
+// ── Create / Edit Order Dialog (Điều vận) ────────────────────────────────────
 
-type BookingFormData = {
+type OrderFormData = {
   date: string; warehouse_id: string; npp_name: string; ncc_id: string
-  vehicle_code: string; direction: 'OUTBOUND' | 'INBOUND' | ''
+  order_code: string; direction: 'OUTBOUND' | 'INBOUND' | ''
   warehouse_type: string; vehicle_type: string
-  box_count: string; pallet_count: string; tonnage: string
+  planned_boxes: string; planned_pallets: string; planned_tons: string
   gdo_refs: string; notes: string
 }
 
-const EMPTY_FORM = (date: string, warehouse_id: string): BookingFormData => ({
+const EMPTY_FORM = (date: string, warehouse_id: string): OrderFormData => ({
   date, warehouse_id, npp_name: '', ncc_id: '',
-  vehicle_code: '', direction: 'OUTBOUND',
+  order_code: '', direction: 'OUTBOUND',
   warehouse_type: '', vehicle_type: '',
-  box_count: '', pallet_count: '', tonnage: '',
+  planned_boxes: '', planned_pallets: '', planned_tons: '',
   gdo_refs: '', notes: '',
 })
 
-function CreateEditDialog({ open, booking, onClose, defaultDate, defaultWarehouseId }: {
-  open: boolean; booking: DeliveryBooking | null; onClose: () => void
+const ORDER_CODE_RE = /^\d{6}_[A-Za-z0-9]+_\d+$/
+
+function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseId }: {
+  open: boolean; order: TmsOrder | null; onClose: () => void
   defaultDate: string; defaultWarehouseId: string
 }) {
-  const { data: warehouses = [] } = useWarehouses(true)
-  const { data: whTypesData = [] } = useWarehouseTypes()
-  const { data: vehicleTypes = [] } = useVehicleTypes(true)
-  const { data: transportCompanies = [] } = useTransportCompanies(true)
-  const createBooking = useCreateBooking()
-  const updateBooking = useUpdateBooking()
-  const isEdit = !!booking
+  const { data: warehouses = [] }          = useWarehouses(true)
+  const { data: whTypesData = [] }         = useWarehouseTypes()
+  const { data: vehicleTypes = [] }        = useVehicleTypes(true)
+  const { data: transportCompanies = [] }  = useTransportCompanies(true)
+  const createOrder  = useCreateOrder()
+  const updateOrder  = useUpdateOrder()
+  const isEdit = !!order
 
-  const [form, setForm] = useState<BookingFormData>(EMPTY_FORM(defaultDate, defaultWarehouseId))
+  const [form, setForm] = useState<OrderFormData>(EMPTY_FORM(defaultDate, defaultWarehouseId))
   const [err, setErr] = useState('')
-
-  const set = (k: keyof BookingFormData) => (v: string) => setForm(f => ({ ...f, [k]: v }))
+  const set = (k: keyof OrderFormData) => (v: string) => setForm(f => ({ ...f, [k]: v }))
 
   useEffect(() => {
     if (!open) return
-    if (booking) {
+    if (order) {
       setForm({
-        date: booking.date,
-        warehouse_id: booking.warehouse_id,
-        npp_name: booking.npp_name ?? '',
-        ncc_id: booking.ncc_id ?? '',
-        vehicle_code: booking.vehicle_code ?? '',
-        direction: (booking.direction as 'OUTBOUND' | 'INBOUND') ?? 'OUTBOUND',
-        warehouse_type: booking.warehouse_type ?? '',
-        vehicle_type: booking.vehicle_type ?? '',
-        box_count: booking.box_count != null ? String(booking.box_count) : '',
-        pallet_count: booking.pallet_count != null ? String(booking.pallet_count) : '',
-        tonnage: booking.tonnage != null ? String(booking.tonnage) : '',
-        gdo_refs: booking.gdo_refs ?? '',
-        notes: booking.notes ?? '',
+        date: order.date, warehouse_id: order.warehouse_id,
+        npp_name: order.npp_name ?? '', ncc_id: order.ncc_id ?? '',
+        order_code: order.order_code,
+        direction: (order.direction as 'OUTBOUND' | 'INBOUND') ?? 'OUTBOUND',
+        warehouse_type: order.warehouse_type ?? '', vehicle_type: order.vehicle_type ?? '',
+        planned_boxes: order.planned_boxes != null ? String(order.planned_boxes) : '',
+        planned_pallets: order.planned_pallets != null ? String(order.planned_pallets) : '',
+        planned_tons: order.planned_tons != null ? String(order.planned_tons) : '',
+        gdo_refs: order.gdo_refs ?? '', notes: order.notes ?? '',
       })
     } else {
       setForm(EMPTY_FORM(defaultDate, defaultWarehouseId))
     }
     setErr('')
-  }, [open, booking?.id])
+  }, [open, order?.id])
 
-  const VEHICLE_CODE_RE = /^\d{6}_[A-Za-z0-9]+_\d+$/
   const handleSubmit = async () => {
     if (!form.date || !form.warehouse_id) { setErr('Vui lòng chọn ngày và kho'); return }
-    if (!form.vehicle_code) { setErr('Vui lòng nhập Số xe'); return }
-    if (!VEHICLE_CODE_RE.test(form.vehicle_code)) { setErr('Số xe sai định dạng — ví dụ: 240526_BV_1'); return }
-    if (!form.direction) { setErr('Vui lòng chọn hướng vận chuyển (Xuất/Nhập)'); return }
-    if (!form.ncc_id) { setErr('Vui lòng chọn đơn vị vận tải (ĐVVT)'); return }
+    if (!form.order_code) { setErr('Vui lòng nhập Mã đơn'); return }
+    if (!isEdit && !ORDER_CODE_RE.test(form.order_code)) { setErr('Mã đơn sai định dạng — ví dụ: 240526_BV_1'); return }
+    if (!form.direction) { setErr('Vui lòng chọn hướng vận chuyển'); return }
+    if (!form.ncc_id) { setErr('Vui lòng chọn ĐVVT'); return }
     const payload = {
-      date: form.date,
-      warehouse_id: form.warehouse_id,
-      npp_name: form.npp_name || undefined,
-      ncc_id: form.ncc_id || undefined,
-      ...(isEdit ? {} : { vehicle_code: form.vehicle_code }),
-      direction: form.direction || undefined,
-      warehouse_type: form.warehouse_type || undefined,
-      vehicle_type: form.vehicle_type || undefined,
-      box_count: form.box_count ? Number(form.box_count) : null,
-      pallet_count: form.pallet_count ? Number(form.pallet_count) : null,
-      tonnage: form.tonnage ? Number(form.tonnage) : null,
-      gdo_refs: form.gdo_refs || undefined,
-      notes: form.notes || undefined,
+      date: form.date, warehouse_id: form.warehouse_id,
+      npp_name: form.npp_name || null, ncc_id: form.ncc_id || null,
+      ...(!isEdit ? { order_code: form.order_code } : {}),
+      direction: form.direction || null,
+      warehouse_type: form.warehouse_type || null,
+      vehicle_type: form.vehicle_type || null,
+      planned_boxes: form.planned_boxes ? Number(form.planned_boxes) : null,
+      planned_pallets: form.planned_pallets ? Number(form.planned_pallets) : null,
+      planned_tons: form.planned_tons ? Number(form.planned_tons) : null,
+      gdo_refs: form.gdo_refs || null, notes: form.notes || null,
     }
     try {
-      if (isEdit && booking) {
-        await updateBooking.mutateAsync({ id: booking.id, ...payload })
-      } else {
-        await createBooking.mutateAsync(payload)
-      }
+      if (isEdit && order) await updateOrder.mutateAsync({ id: order.id, ...payload })
+      else await createOrder.mutateAsync(payload)
       onClose()
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
@@ -309,12 +300,12 @@ function CreateEditDialog({ open, booking, onClose, defaultDate, defaultWarehous
     }
   }
 
-  const isSaving = createBooking.isPending || updateBooking.isPending
+  const isSaving = createOrder.isPending || updateOrder.isPending
 
   return (
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
       <DialogContent className="max-w-lg">
-        <DialogHeader><DialogTitle>{isEdit ? 'Sửa chuyến vận chuyển' : 'Thêm chuyến vận chuyển'}</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>{isEdit ? 'Sửa đơn hàng' : 'Thêm đơn hàng'}</DialogTitle></DialogHeader>
         <div className="space-y-3 py-2">
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -322,7 +313,7 @@ function CreateEditDialog({ open, booking, onClose, defaultDate, defaultWarehous
               <Input type="date" value={form.date} onChange={e => set('date')(e.target.value)} className="h-8 text-sm mt-1" />
             </div>
             <div>
-              <Label className="text-xs">Kho xuất *</Label>
+              <Label className="text-xs">Kho *</Label>
               <Select value={form.warehouse_id || '__none__'} onValueChange={v => set('warehouse_id')(v === '__none__' ? '' : v)}>
                 <SelectTrigger className="h-8 text-sm mt-1"><SelectValue placeholder="Chọn kho" /></SelectTrigger>
                 <SelectContent>
@@ -335,8 +326,8 @@ function CreateEditDialog({ open, booking, onClose, defaultDate, defaultWarehous
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label className="text-xs">Số xe * <span className="text-slate-400 font-normal">(vd: 240526_BV_1)</span></Label>
-              <Input value={form.vehicle_code} onChange={e => set('vehicle_code')(e.target.value)} placeholder="ddmmyy_Kho_STT" className="h-8 text-sm mt-1 font-mono" disabled={isEdit} />
+              <Label className="text-xs">Mã đơn * <span className="text-slate-400 font-normal">(vd: 240526_BV_1)</span></Label>
+              <Input value={form.order_code} onChange={e => set('order_code')(e.target.value)} placeholder="ddmmyy_Kho_STT" className="h-8 text-sm mt-1 font-mono" disabled={isEdit} />
             </div>
             <div>
               <Label className="text-xs">Hướng *</Label>
@@ -355,11 +346,11 @@ function CreateEditDialog({ open, booking, onClose, defaultDate, defaultWarehous
               <Input value={form.npp_name} onChange={e => set('npp_name')(e.target.value)} placeholder="Tên nhà phân phối" className="h-8 text-sm mt-1" />
             </div>
             <div>
-              <Label className="text-xs">ĐVVT</Label>
+              <Label className="text-xs">ĐVVT *</Label>
               <Select value={form.ncc_id || '__none__'} onValueChange={v => set('ncc_id')(v === '__none__' ? '' : v)}>
-                <SelectTrigger className="h-8 text-sm mt-1"><SelectValue placeholder="Chọn ĐVVT *" /></SelectTrigger>
+                <SelectTrigger className="h-8 text-sm mt-1"><SelectValue placeholder="Chọn ĐVVT" /></SelectTrigger>
                 <SelectContent>
-                  {(transportCompanies as import('@/types').TransportCompany[]).map(c => (
+                  {(transportCompanies as TransportCompany[]).map(c => (
                     <SelectItem key={c.id} value={c.id}>{c.code} — {c.name}</SelectItem>
                   ))}
                 </SelectContent>
@@ -383,7 +374,7 @@ function CreateEditDialog({ open, booking, onClose, defaultDate, defaultWarehous
                 <SelectTrigger className="h-8 text-sm mt-1"><SelectValue placeholder="Chọn loại xe" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__none__">— Không chọn —</SelectItem>
-                  {(vehicleTypes as import('@/types').TmsVehicleType[]).map(vt => (
+                  {(vehicleTypes as TmsVehicleType[]).map(vt => (
                     <SelectItem key={vt.id} value={vt.name}>{vt.code} — {vt.name}</SelectItem>
                   ))}
                 </SelectContent>
@@ -393,15 +384,15 @@ function CreateEditDialog({ open, booking, onClose, defaultDate, defaultWarehous
           <div className="grid grid-cols-3 gap-2">
             <div>
               <Label className="text-xs">Số thùng</Label>
-              <Input type="number" min="0" value={form.box_count} onChange={e => set('box_count')(e.target.value)} className="h-8 text-sm mt-1" />
+              <Input type="number" min="0" value={form.planned_boxes} onChange={e => set('planned_boxes')(e.target.value)} className="h-8 text-sm mt-1" />
             </div>
             <div>
               <Label className="text-xs">Số pallet</Label>
-              <Input type="number" min="0" value={form.pallet_count} onChange={e => set('pallet_count')(e.target.value)} className="h-8 text-sm mt-1" />
+              <Input type="number" min="0" value={form.planned_pallets} onChange={e => set('planned_pallets')(e.target.value)} className="h-8 text-sm mt-1" />
             </div>
             <div>
               <Label className="text-xs">Số tấn</Label>
-              <Input type="number" min="0" step="0.001" value={form.tonnage} onChange={e => set('tonnage')(e.target.value)} className="h-8 text-sm mt-1" />
+              <Input type="number" min="0" step="0.001" value={form.planned_tons} onChange={e => set('planned_tons')(e.target.value)} className="h-8 text-sm mt-1" />
             </div>
           </div>
           <div>
@@ -422,7 +413,7 @@ function CreateEditDialog({ open, booking, onClose, defaultDate, defaultWarehous
         <DialogFooter>
           <Button variant="outline" size="sm" onClick={onClose}>Hủy</Button>
           <Button size="sm" onClick={handleSubmit} disabled={isSaving}>
-            {isSaving ? 'Đang lưu...' : isEdit ? 'Cập nhật' : 'Thêm chuyến'}
+            {isSaving ? 'Đang lưu...' : isEdit ? 'Cập nhật' : 'Thêm đơn'}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -436,8 +427,8 @@ type ImportRow = {
   date: string | null; warehouse_id: string | null; warehouse_name: string
   npp_name: string; direction: string; warehouse_type: string; vehicle_type: string
   ncc_code: string; ncc_id: string | null
-  vehicle_code: string
-  box_count: number | null; pallet_count: number | null; tonnage: number | null
+  order_code: string
+  planned_boxes: number | null; planned_pallets: number | null; planned_tons: number | null
   gdo_refs: string; notes: string; valid: boolean; error: string
 }
 
@@ -445,14 +436,14 @@ const EXCEL_COL_MAP: Record<string, string> = {
   'npp': 'npp_name', 'tên npp': 'npp_name', 'nhà phân phối': 'npp_name',
   'kho': 'warehouse_name', 'kho xuất': 'warehouse_name',
   'ngày': 'date', 'date': 'date',
-  'hướng': 'direction', 'huong': 'direction', 'loại hướng': 'direction', 'direction': 'direction',
+  'hướng': 'direction', 'huong': 'direction', 'direction': 'direction',
   'loại kho': 'warehouse_type', 'warehouse type': 'warehouse_type',
   'loại xe': 'vehicle_type', 'vehicle type': 'vehicle_type',
-  'đvvt': 'ncc_code', 'dvvt': 'ncc_code', 'đơn vị vận tải': 'ncc_code', 'transport company': 'ncc_code',
-  'số xe': 'vehicle_code', 'so xe': 'vehicle_code', 'mã xe': 'vehicle_code',
-  'thùng': 'box_count', 'số thùng': 'box_count', 'box': 'box_count',
-  'pallet': 'pallet_count', 'số pallet': 'pallet_count',
-  'tấn': 'tonnage', 'số tấn': 'tonnage', 'ton': 'tonnage',
+  'đvvt': 'ncc_code', 'dvvt': 'ncc_code', 'đơn vị vận tải': 'ncc_code',
+  'mã đơn': 'order_code', 'số xe': 'order_code', 'so xe': 'order_code',
+  'thùng': 'planned_boxes', 'số thùng': 'planned_boxes', 'box': 'planned_boxes',
+  'pallet': 'planned_pallets', 'số pallet': 'planned_pallets',
+  'tấn': 'planned_tons', 'số tấn': 'planned_tons', 'ton': 'planned_tons',
   'gdo': 'gdo_refs', 'mã gdo': 'gdo_refs',
   'ghi chú': 'notes', 'notes': 'notes',
 }
@@ -481,11 +472,11 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
   vehicleTypes: TmsVehicleType[]
   transportCompanies: TransportCompany[]
 }) {
-  const bulkCreate = useBulkCreateBookings()
+  const bulkCreate = useBulkCreateOrders()
   const fileRef = useRef<HTMLInputElement>(null)
   const [rows, setRows] = useState<ImportRow[]>([])
   const [importing, setImporting] = useState(false)
-  const [result, setResult] = useState<{ inserted: number; skipped: number } | null>(null)
+  const [result, setResult] = useState<{ inserted: number } | null>(null)
   const [err, setErr] = useState('')
 
   const whByName     = Object.fromEntries(warehouses.map(w => [w.name.toLowerCase().trim(), w.id]))
@@ -494,7 +485,6 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
   const nccByCode    = Object.fromEntries(transportCompanies.map(c => [c.code.toLowerCase().trim(), c.id]))
 
   const reset = () => { setRows([]); setResult(null); setErr('') }
-
   useEffect(() => { if (open) reset() }, [open])
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -506,8 +496,6 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
         const wb = XLSX.read(evt.target?.result, { type: 'array', cellDates: true })
         const ws = wb.Sheets[wb.SheetNames[0]]
         const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' })
-
-        const VEHICLE_CODE_RE = /^\d{6}_[A-Za-z0-9]+_\d+$/
         const seenCodes = new Set<string>()
 
         const parsed: ImportRow[] = raw.map(r => {
@@ -516,7 +504,6 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
             const mapped = EXCEL_COL_MAP[k.trim().toLowerCase()]
             if (mapped) norm[mapped] = v
           }
-
           const whName      = String(norm.warehouse_name ?? '').trim()
           const whId        = whByName[whName.toLowerCase()] ?? null
           const date        = parseExcelDate(norm.date)
@@ -525,7 +512,7 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
           const vtName      = String(norm.vehicle_type ?? '').trim()
           const nccCode     = String(norm.ncc_code ?? '').trim()
           const nccId       = nccCode ? (nccByCode[nccCode.toLowerCase()] ?? null) : null
-          const vehicleCode = String(norm.vehicle_code ?? '').trim()
+          const orderCode   = String(norm.order_code ?? '').trim()
           const errors: string[] = []
           if (!date) errors.push('thiếu ngày')
           if (!direction) errors.push('thiếu hướng (Xuất/Nhập)')
@@ -534,35 +521,25 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
           if (whType && validWhTypes.size > 0 && !validWhTypes.has(whType.toLowerCase())) errors.push(`loại kho "${whType}" không hợp lệ`)
           if (vtName && validVtNames.size > 0 && !validVtNames.has(vtName.toLowerCase())) errors.push(`loại xe "${vtName}" không hợp lệ`)
           if (nccCode && !nccId) errors.push(`ĐVVT "${nccCode}" không tìm thấy`)
-          if (vehicleCode) {
-            if (!VEHICLE_CODE_RE.test(vehicleCode)) errors.push(`số xe "${vehicleCode}" sai định dạng (vd: 240526_BV_1)`)
-            else if (seenCodes.has(vehicleCode.toUpperCase())) errors.push(`số xe "${vehicleCode}" bị trùng trong file`)
-            else seenCodes.add(vehicleCode.toUpperCase())
-          }
+          if (!orderCode) errors.push('thiếu mã đơn')
+          else if (!ORDER_CODE_RE.test(orderCode)) errors.push(`mã đơn "${orderCode}" sai định dạng (vd: 240526_BV_1)`)
+          else if (seenCodes.has(orderCode.toUpperCase())) errors.push(`mã đơn "${orderCode}" bị trùng trong file`)
+          else seenCodes.add(orderCode.toUpperCase())
 
           return {
             date, warehouse_id: whId, warehouse_name: whName,
-            npp_name: String(norm.npp_name ?? ''),
-            direction,
-            warehouse_type: whType,
-            vehicle_type: vtName,
-            ncc_code: nccCode, ncc_id: nccId,
-            vehicle_code: vehicleCode,
-            box_count: norm.box_count ? Number(norm.box_count) : null,
-            pallet_count: norm.pallet_count ? Number(norm.pallet_count) : null,
-            tonnage: norm.tonnage ? Number(norm.tonnage) : null,
-            gdo_refs: String(norm.gdo_refs ?? ''),
-            notes: String(norm.notes ?? ''),
-            valid: errors.length === 0,
-            error: errors.join(', '),
+            npp_name: String(norm.npp_name ?? ''), direction,
+            warehouse_type: whType, vehicle_type: vtName,
+            ncc_code: nccCode, ncc_id: nccId, order_code: orderCode,
+            planned_boxes: norm.planned_boxes ? Number(norm.planned_boxes) : null,
+            planned_pallets: norm.planned_pallets ? Number(norm.planned_pallets) : null,
+            planned_tons: norm.planned_tons ? Number(norm.planned_tons) : null,
+            gdo_refs: String(norm.gdo_refs ?? ''), notes: String(norm.notes ?? ''),
+            valid: errors.length === 0, error: errors.join(', '),
           }
         })
-
-        setRows(parsed)
-        setErr('')
-      } catch {
-        setErr('Không đọc được file. Vui lòng dùng định dạng .xlsx hoặc .xls')
-      }
+        setRows(parsed); setErr('')
+      } catch { setErr('Không đọc được file. Vui lòng dùng định dạng .xlsx hoặc .xls') }
     }
     reader.readAsArrayBuffer(file)
     e.target.value = ''
@@ -574,39 +551,31 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
     setImporting(true)
     try {
       const data = await bulkCreate.mutateAsync(rows.map(r => ({
-        date: r.date!, warehouse_id: r.warehouse_id!,
-        npp_name: r.npp_name || undefined,
-        ncc_id: r.ncc_id || undefined,
-        direction: r.direction || undefined,
-        warehouse_type: r.warehouse_type || undefined,
-        vehicle_type: r.vehicle_type || undefined,
-        vehicle_code: r.vehicle_code || undefined,
-        box_count: r.box_count, pallet_count: r.pallet_count, tonnage: r.tonnage,
-        gdo_refs: r.gdo_refs || undefined,
-        notes: r.notes || undefined,
+        order_code: r.order_code, date: r.date!, warehouse_id: r.warehouse_id!,
+        npp_name: r.npp_name || null, ncc_id: r.ncc_id || null,
+        direction: r.direction || null, warehouse_type: r.warehouse_type || null,
+        vehicle_type: r.vehicle_type || null,
+        planned_boxes: r.planned_boxes, planned_pallets: r.planned_pallets, planned_tons: r.planned_tons,
+        gdo_refs: r.gdo_refs || null, notes: r.notes || null,
       })))
-      setResult({ inserted: data.inserted, skipped: 0 })
+      setResult({ inserted: data.inserted })
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ?? 'Lỗi import'
-      // Đánh dấu đúng dòng bị lỗi trùng số xe với DB
-      const dupMatch = msg.match(/Số xe đã tồn tại trong hệ thống: (.+)/)
+      const dupMatch = msg.match(/Mã đơn đã tồn tại: (.+)/)
       if (dupMatch) {
         const dupCodes = new Set(dupMatch[1].split(',').map((c: string) => c.trim().toUpperCase()))
         setRows(prev => prev.map(r =>
-          r.vehicle_code && dupCodes.has(r.vehicle_code.toUpperCase())
-            ? { ...r, valid: false, error: 'số xe đã tồn tại trong hệ thống' }
-            : r
+          r.order_code && dupCodes.has(r.order_code.toUpperCase())
+            ? { ...r, valid: false, error: 'mã đơn đã tồn tại trong hệ thống' } : r
         ))
       }
       setErr(msg)
-    } finally {
-      setImporting(false)
-    }
+    } finally { setImporting(false) }
   }
 
   const downloadTemplate = () => {
     const ws = XLSX.utils.aoa_to_sheet([
-      ['Số xe', 'NPP', 'Kho', 'Ngày', 'Hướng', 'Loại kho', 'Loại xe', 'ĐVVT', 'Thùng', 'Pallet', 'Tấn', 'GDO', 'Ghi chú'],
+      ['Mã đơn', 'NPP', 'Kho', 'Ngày', 'Hướng', 'Loại kho', 'Loại xe', 'ĐVVT', 'Thùng', 'Pallet', 'Tấn', 'GDO', 'Ghi chú'],
       ['240526_BV_1', 'Tên NPP mẫu', 'Kho Ba Vì', '21/05/2026', 'Xuất', 'Khô', 'Xe tải 5T', 'NCC001', 100, 5, 2.5, 'GDO-001', ''],
     ])
     const wb = XLSX.utils.book_new()
@@ -624,7 +593,7 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
           {result ? (
             <div className="bg-green-50 border border-green-200 rounded p-4 text-sm text-green-800">
               <p className="font-medium">Import thành công!</p>
-              <p>Đã thêm <strong>{result.inserted}</strong> chuyến.{result.skipped > 0 && ` Bỏ qua ${result.skipped} dòng lỗi.`}</p>
+              <p>Đã thêm <strong>{result.inserted}</strong> đơn hàng.</p>
             </div>
           ) : (
             <>
@@ -640,19 +609,17 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
                   <span className="text-xs text-slate-500">
                     {rows.length} dòng
                     {errorCount > 0
-                      ? <> · <span className="text-red-600 font-medium">{errorCount} lỗi — cần sửa trước khi import</span></>
-                      : <> · <span className="text-green-600 font-medium">Tất cả hợp lệ</span></>
-                    }
+                      ? <> · <span className="text-red-600 font-medium">{errorCount} lỗi</span></>
+                      : <> · <span className="text-green-600 font-medium">Tất cả hợp lệ</span></>}
                   </span>
                 )}
               </div>
-
               {rows.length > 0 && (
                 <div className="max-h-64 overflow-auto rounded border">
                   <table className="min-w-full text-[10px]">
                     <thead className="bg-slate-50 sticky top-0">
                       <tr>
-                        {['#', 'Số xe', 'NPP', 'Kho', 'Ngày', 'Hướng', 'L.kho', 'L.xe', 'ĐVVT', 'Thùng', 'Pallet', 'Tấn', 'Lỗi'].map(h => (
+                        {['#', 'Mã đơn', 'NPP', 'Kho', 'Ngày', 'Hướng', 'L.kho', 'L.xe', 'ĐVVT', 'Thùng', 'Pallet', 'Tấn', 'Lỗi'].map(h => (
                           <th key={h} className="px-2 py-1 text-left text-[9px] text-slate-500 font-medium whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
@@ -661,19 +628,21 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
                       {rows.map((r, i) => (
                         <tr key={i} className={r.valid ? '' : 'bg-red-50'}>
                           <td className="px-2 py-0.5 text-slate-400">{i + 1}</td>
-                          <td className="px-2 py-0.5 font-mono">{r.vehicle_code || '—'}</td>
+                          <td className="px-2 py-0.5 font-mono">{r.order_code || '—'}</td>
                           <td className="px-2 py-0.5 max-w-[100px] truncate">{r.npp_name || '—'}</td>
                           <td className="px-2 py-0.5">{r.warehouse_name || '—'}</td>
                           <td className="px-2 py-0.5 font-mono">{r.date || '—'}</td>
                           <td className="px-2 py-0.5">
-                            {r.direction === 'OUTBOUND' ? <span className="text-orange-600">Xuất</span> : r.direction === 'INBOUND' ? <span className="text-teal-600">Nhập</span> : <span className="text-red-500">—</span>}
+                            {r.direction === 'OUTBOUND' ? <span className="text-orange-600">Xuất</span>
+                              : r.direction === 'INBOUND' ? <span className="text-teal-600">Nhập</span>
+                              : <span className="text-red-500">—</span>}
                           </td>
                           <td className="px-2 py-0.5">{r.warehouse_type || '—'}</td>
                           <td className="px-2 py-0.5">{r.vehicle_type || '—'}</td>
                           <td className="px-2 py-0.5">{r.ncc_code || '—'}</td>
-                          <td className="px-2 py-0.5 tabular-nums">{r.box_count ?? '—'}</td>
-                          <td className="px-2 py-0.5 tabular-nums">{r.pallet_count ?? '—'}</td>
-                          <td className="px-2 py-0.5 tabular-nums">{r.tonnage ?? '—'}</td>
+                          <td className="px-2 py-0.5 tabular-nums">{r.planned_boxes ?? '—'}</td>
+                          <td className="px-2 py-0.5 tabular-nums">{r.planned_pallets ?? '—'}</td>
+                          <td className="px-2 py-0.5 tabular-nums">{r.planned_tons ?? '—'}</td>
                           <td className="px-2 py-0.5 text-red-500">{r.error}</td>
                         </tr>
                       ))}
@@ -681,7 +650,6 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
                   </table>
                 </div>
               )}
-
               {err && <p className="text-xs text-red-600">{err}</p>}
             </>
           )}
@@ -690,7 +658,7 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
           <Button variant="outline" size="sm" onClick={() => { reset(); onClose() }}>Đóng</Button>
           {!result && rows.length > 0 && errorCount === 0 && (
             <Button size="sm" onClick={handleImport} disabled={importing}>
-              {importing ? 'Đang import...' : `Import ${rows.length} chuyến`}
+              {importing ? 'Đang import...' : `Import ${rows.length} đơn`}
             </Button>
           )}
           {result && <Button size="sm" onClick={onClose}>Xong</Button>}
@@ -731,31 +699,15 @@ function SlotOverviewDialog({ open, onClose, defaultDate, warehouseId, warehouse
   return (
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
       <DialogContent className="flex flex-col w-full sm:w-1/2 h-screen max-w-none max-h-none rounded-none m-0 p-0 top-0 left-0 translate-x-0 translate-y-0 sm:left-auto sm:right-0 [&>button:last-child]:hidden">
-        {/* Row 1: title + close */}
         <div className="shrink-0 flex items-center justify-between px-3 py-2 border-b bg-white">
           <span className="text-sm font-semibold truncate">Tình trạng khung giờ — {warehouseName}</span>
           <Button variant="ghost" size="sm" onClick={onClose} className="ml-3 h-7 w-7 p-0 shrink-0">✕</Button>
         </div>
-        {/* Row 2: filters */}
         <div className="shrink-0 flex items-center gap-2 px-3 py-1.5 border-b bg-white flex-wrap">
-          <Input
-            type="date"
-            value={date}
-            onChange={e => setDate(e.target.value)}
-            className="h-7 text-xs w-32 shrink-0"
-          />
-          <MultiSelectFilter
-            label="Loại xe"
-            options={vtOptions}
-            selected={vtFilter}
-            onChange={setVtFilter}
-          />
-          {!isLoading && (
-            <span className="text-[10px] text-slate-400 ml-auto">{filtered.length} khung giờ</span>
-          )}
+          <Input type="date" value={date} onChange={e => setDate(e.target.value)} className="h-7 text-xs w-32 shrink-0" />
+          <MultiSelectFilter label="Loại xe" options={vtOptions} selected={vtFilter} onChange={setVtFilter} />
+          {!isLoading && <span className="text-[10px] text-slate-400 ml-auto">{filtered.length} khung giờ</span>}
         </div>
-
-        {/* Table */}
         <div className="flex-1 min-h-0 overflow-auto">
           {isLoading ? (
             <p className="text-[10px] text-slate-400 text-center py-10">Đang tải...</p>
@@ -781,22 +733,16 @@ function SlotOverviewDialog({ open, onClose, defaultDate, warehouseId, warehouse
                   return (
                     <tr key={s.id} className={rowCls}>
                       <td className="px-2 py-1 whitespace-nowrap">
-                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                          s.cargo_type === 'ALL' ? 'bg-slate-100 text-slate-600' : 'bg-orange-100 text-orange-700'
-                        }`}>
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${s.cargo_type === 'ALL' ? 'bg-slate-100 text-slate-600' : 'bg-orange-100 text-orange-700'}`}>
                           {s.cargo_type === 'ALL' ? 'Tất cả' : s.cargo_type}
                         </span>
                       </td>
                       <td className="px-2 py-1 whitespace-nowrap">
                         {s.vehicle_type?.name && (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-700">
-                            {s.vehicle_type.name}
-                          </span>
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-700">{s.vehicle_type.name}</span>
                         )}
                       </td>
-                      <td className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">
-                        {s.time_from.slice(0, 5)}–{s.time_to.slice(0, 5)}
-                      </td>
+                      <td className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">{s.time_from.slice(0, 5)}–{s.time_to.slice(0, 5)}</td>
                       <td className="px-2 py-1 text-[10px] font-semibold tabular-nums text-right whitespace-nowrap">
                         <span className={full ? 'text-red-600' : 'text-green-600'}>{s.booked_count}</span>
                       </td>
@@ -804,14 +750,10 @@ function SlotOverviewDialog({ open, onClose, defaultDate, warehouseId, warehouse
                       <td className="px-2 py-1">
                         <div className="flex items-center gap-1">
                           <div className="w-16 h-1.5 bg-slate-200 rounded-full overflow-hidden shrink-0">
-                            <div
-                              className={`h-full rounded-full ${pct >= 1 ? 'bg-red-400' : pct >= 0.7 ? 'bg-amber-400' : 'bg-green-400'}`}
-                              style={{ width: `${Math.min(pct * 100, 100)}%` }}
-                            />
+                            <div className={`h-full rounded-full ${pct >= 1 ? 'bg-red-400' : pct >= 0.7 ? 'bg-amber-400' : 'bg-green-400'}`}
+                              style={{ width: `${Math.min(pct * 100, 100)}%` }} />
                           </div>
-                          <span className="text-[10px] tabular-nums text-slate-500 shrink-0">
-                            {s.max_vehicles > 0 ? Math.round(pct * 100) : 0}%
-                          </span>
+                          <span className="text-[10px] tabular-nums text-slate-500 shrink-0">{s.max_vehicles > 0 ? Math.round(pct * 100) : 0}%</span>
                         </div>
                       </td>
                     </tr>
@@ -862,26 +804,28 @@ export default function TMSBookings() {
   useEffect(() => { localStorage.setItem('tmsb_huong', JSON.stringify(huongFilter)) }, [huongFilter])
   useEffect(() => { localStorage.setItem('tmsb_dvvt', JSON.stringify(dvvtFilter)) }, [dvvtFilter])
   useEffect(() => { localStorage.setItem('tmsb_khungio', JSON.stringify(khungGioFilter)) }, [khungGioFilter])
+
   const [createOpen, setCreateOpen] = useState(false)
   const [uploadOpen, setUploadOpen] = useState(false)
-  const [editBooking, setEditBooking] = useState<DeliveryBooking | null>(null)
-  const [dvvtBooking, setDvvtBooking] = useState<DeliveryBooking | null>(null)
-  const [deleteErr, setDeleteErr] = useState('')
+  const [editOrder, setEditOrder] = useState<TmsOrder | null>(null)
+  const [bookingSlot, setBookingSlot] = useState<{ vslot: TmsVehicleSlot; order: TmsOrder } | null>(null)
+  const [actionErr, setActionErr] = useState('')
 
-  const { data: warehouses = [] }          = useWarehouses(true)
-  const { data: slotsList = [] }           = useDeliverySlots(warehouseId ? { date, warehouse_id: warehouseId } : undefined)
-  const { data: whTypesMain = [] }         = useWarehouseTypes()
-  const { data: vehicleTypesMain = [] }    = useVehicleTypes(true)
+  const { data: warehouses = [] }             = useWarehouses(true)
+  const { data: slotsList = [] }              = useDeliverySlots(warehouseId ? { date, warehouse_id: warehouseId } : undefined)
+  const { data: whTypesMain = [] }            = useWarehouseTypes()
+  const { data: vehicleTypesMain = [] }       = useVehicleTypes(true)
   const { data: transportCompaniesMain = [] } = useTransportCompanies(true)
-  const { data: bookings = [], isLoading } = useDeliveryBookings(
+  const { data: orders = [], isLoading }      = useTmsOrders(
     (warehouseId || isNccUser) ? { date, warehouse_id: warehouseId || undefined } : undefined,
   )
-  const deleteBooking  = useDeleteBooking()
-  const updateBooking  = useUpdateBooking()
+  const deleteOrder       = useDeleteOrder()
+  const addVehicleSlot    = useAddVehicleSlot()
+  const releaseVehicleSlot = useReleaseVehicleSlot()
+  const deleteVehicleSlot = useDeleteVehicleSlot()
 
   const warehouseName = (warehouses as { id: string; name: string }[]).find(w => w.id === warehouseId)?.name ?? warehouseId
 
-  // Options cho filter từ data thực
   const khungGioOptions = useMemo<MSOpt[]>(() => {
     const slotOpts: MSOpt[] = (slotsList as DeliverySlot[]).map(s => {
       const parts = [s.time_from.slice(0, 5) + '–' + s.time_to.slice(0, 5)]
@@ -891,88 +835,106 @@ export default function TMSBookings() {
     })
     return [{ value: '__chua_dat__', label: 'Chưa đặt' }, ...slotOpts]
   }, [slotsList])
+
   const huongOptions: MSOpt[] = [
     { value: 'OUTBOUND', label: 'Xuất' },
-    { value: 'INBOUND', label: 'Nhập' },
+    { value: 'INBOUND',  label: 'Nhập' },
   ]
   const dvvtOptions = useMemo<MSOpt[]>(() =>
-    [...new Map((bookings as DeliveryBooking[])
-      .filter(b => b.ncc_id && b.ncc?.name)
-      .map(b => [b.ncc_id!, { value: b.ncc_id!, label: b.ncc!.name! }])
-    ).values()],
-    [bookings]
+    [...new Map((orders as TmsOrder[])
+      .filter(o => o.ncc_id && o.ncc?.name)
+      .map(o => [o.ncc_id!, { value: o.ncc_id!, label: o.ncc!.name! }])
+    ).values()], [orders]
   )
   const loaiKhoOptions = useMemo<MSOpt[]>(() =>
-    [...new Set((bookings as DeliveryBooking[]).map(b => b.warehouse_type).filter((v): v is string => !!v))]
-      .map(v => ({ value: v, label: v })),
-    [bookings]
+    [...new Set((orders as TmsOrder[]).map(o => o.warehouse_type).filter((v): v is string => !!v))]
+      .map(v => ({ value: v, label: v })), [orders]
   )
   const loaiXeOptions = useMemo<MSOpt[]>(() =>
-    [...new Set((bookings as DeliveryBooking[]).map(b => b.vehicle_type).filter((v): v is string => !!v))]
-      .map(v => ({ value: v, label: v })),
-    [bookings]
+    [...new Set((orders as TmsOrder[]).map(o => o.vehicle_type).filter((v): v is string => !!v))]
+      .map(v => ({ value: v, label: v })), [orders]
   )
 
-  // Client-side filter
-  const filtered = useMemo(() => {
-    let list = bookings as DeliveryBooking[]
-    if (khungGioFilter.length) list = list.filter(b => {
-      if (!b.slot_id && khungGioFilter.includes('__chua_dat__')) return true
-      if (b.slot_id && khungGioFilter.includes(b.slot_id)) return true
-      return false
-    })
-    if (huongFilter.length) list = list.filter(b => b.direction && huongFilter.includes(b.direction))
-    if (dvvtFilter.length) list = list.filter(b => b.ncc_id && dvvtFilter.includes(b.ncc_id))
-    if (loaiKhoFilter.length) list = list.filter(b => b.warehouse_type && loaiKhoFilter.includes(b.warehouse_type))
-    if (loaiXeFilter.length) list = list.filter(b => b.vehicle_type && loaiXeFilter.includes(b.vehicle_type))
+  // Filter client-side trên orders
+  const filteredOrders = useMemo(() => {
+    let list = orders as TmsOrder[]
+    if (huongFilter.length)    list = list.filter(o => o.direction && huongFilter.includes(o.direction))
+    if (dvvtFilter.length)     list = list.filter(o => o.ncc_id && dvvtFilter.includes(o.ncc_id))
+    if (loaiKhoFilter.length)  list = list.filter(o => o.warehouse_type && loaiKhoFilter.includes(o.warehouse_type))
+    if (loaiXeFilter.length)   list = list.filter(o => o.vehicle_type && loaiXeFilter.includes(o.vehicle_type))
+    if (khungGioFilter.length) {
+      list = list.filter(o => o.vehicle_slots.some(vs => {
+        if (!vs.slot_id && khungGioFilter.includes('__chua_dat__')) return true
+        if (vs.slot_id && khungGioFilter.includes(vs.slot_id)) return true
+        return false
+      }))
+    }
     return list
-  }, [bookings, khungGioFilter, huongFilter, dvvtFilter, loaiKhoFilter, loaiXeFilter])
+  }, [orders, huongFilter, dvvtFilter, loaiKhoFilter, loaiXeFilter, khungGioFilter])
 
-  const handleDelete = async (e: React.MouseEvent<HTMLButtonElement>, id: string) => {
-    e.stopPropagation()
-    setDeleteErr('')
-    try { await deleteBooking.mutateAsync(id) } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
-      setDeleteErr(msg ?? 'Lỗi xóa chuyến')
-    }
-  }
-
-  const handleRelease = async (e: React.MouseEvent<HTMLButtonElement>, id: string) => {
-    e.stopPropagation()
-    setDeleteErr('')
-    try {
-      await updateBooking.mutateAsync({
-        id,
-        slot_id: null,
-        license_plate: null,
-        driver_phone: null,
-        status: 'PENDING',
-      })
-    } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
-      setDeleteErr(msg ?? 'Lỗi trả lại chuyến')
-    }
-  }
+  // Flatten orders → rows (1 row per vehicle slot, order info repeated for first slot only)
+  type TableRow = { order: TmsOrder; vslot: TmsVehicleSlot; isFirstSlot: boolean }
+  const tableRows = useMemo<TableRow[]>(() =>
+    filteredOrders.flatMap(order =>
+      order.vehicle_slots.length > 0
+        ? order.vehicle_slots.map((vs, i) => ({ order, vslot: vs, isFirstSlot: i === 0 }))
+        : [{ order, vslot: { id: '', order_id: order.id, slot_id: null, slot: null, license_plate: null, driver_name: null, driver_phone: null, status: 'PENDING', booked_by: null, created_at: '', updated_at: '' } as TmsVehicleSlot, isFirstSlot: true }]
+    ), [filteredOrders]
+  )
 
   const rowBg = (status: string) => {
-    if (status === 'CONFIRMED') return 'bg-green-50 hover:bg-green-100'
-    if (status === 'ARRIVED')   return 'bg-blue-50 hover:bg-blue-100'
-    if (status === 'DONE')      return 'bg-slate-50 hover:bg-slate-100'
+    if (status === 'BOOKED')  return 'bg-green-50 hover:bg-green-100'
+    if (status === 'ARRIVED') return 'bg-blue-50 hover:bg-blue-100'
+    if (status === 'DONE')    return 'bg-slate-50 hover:bg-slate-100'
     return 'hover:bg-slate-50'
   }
 
-  // Điều vận được sửa khi slot chưa bắt đầu (hoặc chưa có slot)
-  const canEditBooking = (b: DeliveryBooking) =>
-    canManage &&
-    ['PENDING', 'CONFIRMED'].includes(b.status) &&
-    (!b.slot || !isSlotTimePassed(b.date, b.slot.time_from))
+  const canEditOrder = (o: TmsOrder) =>
+    canManage && o.vehicle_slots.every(vs => vs.status === 'PENDING')
 
-  // ĐVVT được điền/sửa xe khi PENDING, hoặc CONFIRMED nhưng slot chưa bắt đầu
-  const canFillTransport = (b: DeliveryBooking) =>
-    canBook && (
-      b.status === 'PENDING' ||
-      (b.status === 'CONFIRMED' && !!b.slot && !isSlotTimePassed(b.date, b.slot.time_from))
-    )
+  const canBookSlot = (vs: TmsVehicleSlot) =>
+    canBook && ['PENDING','BOOKED'].includes(vs.status) &&
+    (!vs.slot || !isSlotTimePassed(vs.slot.date ?? '', vs.slot.time_from ?? ''))
+
+  const canRelease = (vs: TmsVehicleSlot) =>
+    canManage && vs.status === 'BOOKED' &&
+    (!vs.slot || !isSlotTimePassed(vs.slot.date ?? '', vs.slot.time_from ?? ''))
+
+  const handleDeleteOrder = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation(); setActionErr('')
+    try { await deleteOrder.mutateAsync(id) }
+    catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
+      setActionErr(msg ?? 'Lỗi xóa đơn')
+    }
+  }
+
+  const handleAddVehicleSlot = async (e: React.MouseEvent, orderId: string) => {
+    e.stopPropagation(); setActionErr('')
+    try { await addVehicleSlot.mutateAsync(orderId) }
+    catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
+      setActionErr(msg ?? 'Lỗi thêm xe')
+    }
+  }
+
+  const handleRelease = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation(); setActionErr('')
+    try { await releaseVehicleSlot.mutateAsync(id) }
+    catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
+      setActionErr(msg ?? 'Lỗi trả lại')
+    }
+  }
+
+  const handleDeleteVslot = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation(); setActionErr('')
+    try { await deleteVehicleSlot.mutateAsync(id) }
+    catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
+      setActionErr(msg ?? 'Lỗi xóa xe')
+    }
+  }
 
   return (
     <div className="flex flex-col h-full">
@@ -992,7 +954,7 @@ export default function TMSBookings() {
                   <Upload className="h-3.5 w-3.5 shrink-0" /><span className="hidden sm:inline ml-1">Upload Excel</span>
                 </Button>
                 <Button size="sm" onClick={() => setCreateOpen(true)} disabled={!warehouseId} className="h-8 px-2">
-                  <Plus className="h-3.5 w-3.5 shrink-0" /><span className="hidden sm:inline ml-1">Thêm chuyến</span>
+                  <Plus className="h-3.5 w-3.5 shrink-0" /><span className="hidden sm:inline ml-1">Thêm đơn</span>
                 </Button>
               </>
             )}
@@ -1012,39 +974,14 @@ export default function TMSBookings() {
           </Select>
           {(warehouseId || isNccUser) && (
             <>
-              <MultiSelectFilter
-                label="Khung giờ"
-                options={khungGioOptions}
-                selected={khungGioFilter}
-                onChange={setKhungGioFilter}
-              />
-              <MultiSelectFilter
-                label="Hướng"
-                options={huongOptions}
-                selected={huongFilter}
-                onChange={setHuongFilter}
-              />
-              <MultiSelectFilter
-                label="ĐVVT"
-                options={dvvtOptions}
-                selected={dvvtFilter}
-                onChange={setDvvtFilter}
-              />
-              <MultiSelectFilter
-                label="Loại kho"
-                options={loaiKhoOptions}
-                selected={loaiKhoFilter}
-                onChange={setLoaiKhoFilter}
-              />
-              <MultiSelectFilter
-                label="Loại xe"
-                options={loaiXeOptions}
-                selected={loaiXeFilter}
-                onChange={setLoaiXeFilter}
-              />
+              <MultiSelectFilter label="Khung giờ" options={khungGioOptions} selected={khungGioFilter} onChange={setKhungGioFilter} />
+              <MultiSelectFilter label="Hướng" options={huongOptions} selected={huongFilter} onChange={setHuongFilter} />
+              <MultiSelectFilter label="ĐVVT" options={dvvtOptions} selected={dvvtFilter} onChange={setDvvtFilter} />
+              <MultiSelectFilter label="Loại kho" options={loaiKhoOptions} selected={loaiKhoFilter} onChange={setLoaiKhoFilter} />
+              <MultiSelectFilter label="Loại xe" options={loaiXeOptions} selected={loaiXeFilter} onChange={setLoaiXeFilter} />
             </>
           )}
-          {deleteErr && <p className="text-xs text-red-600 w-full">{deleteErr}</p>}
+          {actionErr && <p className="text-xs text-red-600 w-full">{actionErr}</p>}
         </div>
       </div>
 
@@ -1054,149 +991,186 @@ export default function TMSBookings() {
           <div className="py-24 text-center text-sm text-slate-400">Chọn kho để xem kế hoạch</div>
         ) : isLoading ? (
           <div className="py-24 text-center text-sm text-slate-400">Đang tải...</div>
-        ) : !filtered.length ? (
-          <div className="py-24 text-center text-sm text-slate-400">Chưa có chuyến nào cho ngày này</div>
+        ) : !tableRows.length ? (
+          <div className="py-24 text-center text-sm text-slate-400">Chưa có đơn hàng nào cho ngày này</div>
         ) : (
-            <Table className="min-w-[900px]">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Số xe</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Tên NPP</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-10">Đặt giờ</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Khung giờ</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Biển số</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">ĐVVT</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Hướng</TableHead>
-                    {isNccUser && !warehouseId && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Kho</TableHead>}
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Loại kho</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Loại xe</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right">Thùng</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right">Pallet</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right">Tấn</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">SĐT lái xe</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Trạng thái</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-14"></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filtered.map(b => (
-                    <TableRow key={b.id} className={rowBg(b.status)}>
-                      <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">
-                        {b.vehicle_code || <span className="text-slate-400 font-normal">—</span>}
-                      </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] font-semibold max-w-[140px] truncate">
-                        {b.npp_name || <span className="text-slate-400 font-normal">—</span>}
-                      </TableCell>
-                      <TableCell className="px-2 py-1">
-                        {canFillTransport(b) && (
-                          <button
-                            onClick={e => { e.stopPropagation(); setDvvtBooking(b) }}
-                            className="text-blue-400 hover:text-blue-600 p-1 rounded"
-                            title={b.status === 'PENDING' ? 'Đăng ký xe' : 'Sửa khung giờ'}
-                          >
-                            <Truck className="h-3.5 w-3.5" />
-                          </button>
+          <Table className="min-w-[960px]">
+            <TableHeader>
+              <TableRow>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Mã đơn</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Tên NPP</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-10">Đặt giờ</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Khung giờ</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Biển số</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">ĐVVT</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Hướng</TableHead>
+                {isNccUser && !warehouseId && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Kho</TableHead>}
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Loại kho</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Loại xe</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right">Thùng</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right">Pallet</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right">Tấn</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">SĐT</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Trạng thái</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-16"></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {tableRows.map(({ order, vslot, isFirstSlot }) => (
+                <TableRow key={`${order.id}-${vslot.id}`} className={rowBg(vslot.status)}>
+                  {/* Mã đơn — chỉ hiện ở dòng đầu của mỗi order */}
+                  <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">
+                    {isFirstSlot
+                      ? (order.order_code || <span className="text-slate-400 font-normal">—</span>)
+                      : <span className="text-slate-300 text-[9px]">↳ xe thêm</span>
+                    }
+                  </TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] font-semibold max-w-[140px] truncate">
+                    {isFirstSlot ? (order.npp_name || <span className="text-slate-400 font-normal">—</span>) : null}
+                  </TableCell>
+
+                  {/* Đặt giờ — luôn hiện cho mỗi vehicle slot */}
+                  <TableCell className="px-2 py-1">
+                    {vslot.id && canBookSlot(vslot) && (
+                      <button
+                        onClick={e => { e.stopPropagation(); setBookingSlot({ vslot, order }) }}
+                        className="text-blue-400 hover:text-blue-600 p-1 rounded"
+                        title="Đặt khung giờ"
+                      >
+                        <Truck className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </TableCell>
+
+                  <TableCell className="px-2 py-1 text-[10px]">
+                    {vslot.slot && (
+                      <span className="font-mono">{vslot.slot.time_from.slice(0, 5)}–{vslot.slot.time_to.slice(0, 5)}</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold">
+                    {vslot.license_plate ? (
+                      <span className="flex items-center gap-0.5">
+                        {user?.employee_code && vslot.license_plate === user.employee_code && (
+                          <Star className="h-3 w-3 fill-yellow-400 text-yellow-400 shrink-0" />
                         )}
-                      </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px]">
-                        {b.slot && (
-                          <span className="font-mono">{b.slot.time_from.slice(0, 5)}–{b.slot.time_to.slice(0, 5)}</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold">
-                        {b.license_plate ? (
-                          <span className="flex items-center gap-0.5">
-                            {user?.employee_code && b.license_plate === user.employee_code && (
-                              <Star className="h-3 w-3 fill-yellow-400 text-yellow-400 shrink-0" />
-                            )}
-                            {b.license_plate}
-                          </span>
-                        ) : <span className="text-slate-400 font-normal">—</span>}
-                      </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] max-w-[120px] truncate text-slate-500">
-                        {b.ncc?.name || <span className="text-slate-300">—</span>}
-                      </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px]">
-                        {b.direction ? (
-                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${b.direction === 'OUTBOUND' ? 'bg-orange-100 text-orange-700' : 'bg-teal-100 text-teal-700'}`}>
-                            {b.direction === 'OUTBOUND' ? 'Xuất' : 'Nhập'}
-                          </span>
-                        ) : <span className="text-slate-400">—</span>}
-                      </TableCell>
-                      {isNccUser && !warehouseId && (
-                        <TableCell className="px-2 py-1 text-[10px] text-slate-500">
-                          {(warehouses as { id: string; name: string }[]).find(w => w.id === b.warehouse_id)?.name ?? '—'}
-                        </TableCell>
+                        {vslot.license_plate}
+                      </span>
+                    ) : <span className="text-slate-400 font-normal">—</span>}
+                  </TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] max-w-[120px] truncate text-slate-500">
+                    {isFirstSlot ? (order.ncc?.name || <span className="text-slate-300">—</span>) : null}
+                  </TableCell>
+                  <TableCell className="px-2 py-1 text-[10px]">
+                    {isFirstSlot && order.direction ? (
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${order.direction === 'OUTBOUND' ? 'bg-orange-100 text-orange-700' : 'bg-teal-100 text-teal-700'}`}>
+                        {order.direction === 'OUTBOUND' ? 'Xuất' : 'Nhập'}
+                      </span>
+                    ) : isFirstSlot ? <span className="text-slate-400">—</span> : null}
+                  </TableCell>
+                  {isNccUser && !warehouseId && (
+                    <TableCell className="px-2 py-1 text-[10px] text-slate-500">
+                      {isFirstSlot ? ((warehouses as { id: string; name: string }[]).find(w => w.id === order.warehouse_id)?.name ?? '—') : null}
+                    </TableCell>
+                  )}
+                  <TableCell className="px-2 py-1 text-[10px]">
+                    {isFirstSlot ? (order.warehouse_type || <span className="text-slate-400">—</span>) : null}
+                  </TableCell>
+                  <TableCell className="px-2 py-1 text-[10px]">
+                    {isFirstSlot ? (order.vehicle_type || <span className="text-slate-400">—</span>) : null}
+                  </TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] tabular-nums text-right">
+                    {isFirstSlot && order.planned_boxes != null
+                      ? <>{order.planned_boxes}<span className="text-slate-400 text-[9px]"> thùng</span></>
+                      : isFirstSlot ? <span className="text-slate-400">—</span> : null}
+                  </TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] tabular-nums text-right">
+                    {isFirstSlot && order.planned_pallets != null
+                      ? <>{order.planned_pallets}<span className="text-slate-400 text-[9px]"> pl</span></>
+                      : isFirstSlot ? <span className="text-slate-400">—</span> : null}
+                  </TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] tabular-nums text-right">
+                    {isFirstSlot && order.planned_tons != null
+                      ? <>{order.planned_tons}<span className="text-slate-400 text-[9px]"> t</span></>
+                      : isFirstSlot ? <span className="text-slate-400">—</span> : null}
+                  </TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] text-slate-500">
+                    {vslot.driver_phone || <span className="text-slate-400">—</span>}
+                  </TableCell>
+                  <TableCell className="px-2 py-1">
+                    <StatusBadge status={vslot.status} />
+                  </TableCell>
+                  <TableCell className="px-2 py-1">
+                    <div className="flex items-center gap-0.5">
+                      {/* Sửa đơn — chỉ dòng đầu */}
+                      {isFirstSlot && canEditOrder(order) && (
+                        <button
+                          onClick={e => { e.stopPropagation(); setEditOrder(order) }}
+                          className="text-slate-400 hover:text-slate-600 p-1 rounded"
+                          title="Sửa đơn hàng"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
                       )}
-                      <TableCell className="px-2 py-1 text-[10px]">
-                        {b.warehouse_type || <span className="text-slate-400">—</span>}
-                      </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px]">
-                        {b.vehicle_type || <span className="text-slate-400">—</span>}
-                      </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] tabular-nums text-right">
-                        {b.box_count != null ? <>{b.box_count}<span className="text-slate-400 text-[9px]"> thùng</span></> : <span className="text-slate-400">—</span>}
-                      </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] tabular-nums text-right">
-                        {b.pallet_count != null ? <>{b.pallet_count}<span className="text-slate-400 text-[9px]"> pl</span></> : <span className="text-slate-400">—</span>}
-                      </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] tabular-nums text-right">
-                        {b.tonnage != null ? <>{b.tonnage}<span className="text-slate-400 text-[9px]"> t</span></> : <span className="text-slate-400">—</span>}
-                      </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] text-slate-500">
-                        {b.driver_phone || <span className="text-slate-400">—</span>}
-                      </TableCell>
-                      <TableCell className="px-2 py-1">
-                        <StatusBadge status={b.status} />
-                      </TableCell>
-                      <TableCell className="px-2 py-1">
-                        <div className="flex items-center gap-0.5">
-                          {canEditBooking(b) && (
-                            <button
-                              onClick={e => { e.stopPropagation(); setEditBooking(b) }}
-                              className="text-slate-400 hover:text-slate-600 p-1 rounded"
-                              title="Sửa thông tin chuyến"
-                            >
-                              <Pencil className="h-3.5 w-3.5" />
-                            </button>
-                          )}
-                          {canManage && b.status === 'CONFIRMED' && (
-                            <button
-                              onClick={(e: React.MouseEvent<HTMLButtonElement>) => handleRelease(e, b.id)}
-                              className="text-amber-400 hover:text-amber-600 p-1 rounded"
-                              title="Trả lại (hủy đăng ký ĐVVT)"
-                            >
-                              <RotateCcw className="h-3.5 w-3.5" />
-                            </button>
-                          )}
-                          {canManage && b.status === 'PENDING' && (
-                            <button
-                              onClick={(e: React.MouseEvent<HTMLButtonElement>) => handleDelete(e, b.id)}
-                              className="text-red-400 hover:text-red-600 p-1 rounded"
-                              title="Xóa chuyến"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          )}
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                      {/* Thêm xe — chỉ dòng cuối của order, chỉ điều vận */}
+                      {isFirstSlot && canManage && order.vehicle_slots.length > 0 && order.vehicle_slots[order.vehicle_slots.length - 1].id === vslot.id && (
+                        <button
+                          onClick={e => handleAddVehicleSlot(e, order.id)}
+                          className="text-purple-400 hover:text-purple-600 p-1 rounded"
+                          title="Thêm xe (bốc cùng đơn)"
+                        >
+                          <PlusCircle className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                      {/* Trả lại slot */}
+                      {vslot.id && canRelease(vslot) && (
+                        <button
+                          onClick={e => handleRelease(e, vslot.id)}
+                          className="text-amber-400 hover:text-amber-600 p-1 rounded"
+                          title="Trả lại khung giờ"
+                        >
+                          <RotateCcw className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                      {/* Xóa vehicle slot — chỉ khi là slot thêm (không phải slot đầu tiên) và PENDING */}
+                      {vslot.id && !isFirstSlot && vslot.status === 'PENDING' && canManage && (
+                        <button
+                          onClick={e => handleDeleteVslot(e, vslot.id)}
+                          className="text-red-400 hover:text-red-600 p-1 rounded"
+                          title="Xóa xe này"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                      {/* Xóa đơn — chỉ dòng đầu, chỉ khi tất cả slots PENDING */}
+                      {isFirstSlot && canManage && order.vehicle_slots.every(vs => vs.status === 'PENDING') && (
+                        <button
+                          onClick={e => handleDeleteOrder(e, order.id)}
+                          className="text-red-400 hover:text-red-600 p-1 rounded"
+                          title="Xóa đơn hàng"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         )}
       </div>
 
       <CreateEditDialog
-        open={createOpen || !!editBooking}
-        booking={editBooking}
-        onClose={() => { setCreateOpen(false); setEditBooking(null) }}
+        open={createOpen || !!editOrder}
+        order={editOrder}
+        onClose={() => { setCreateOpen(false); setEditOrder(null) }}
         defaultDate={date}
         defaultWarehouseId={warehouseId}
       />
-      <DVVTFillDialog
-        booking={dvvtBooking}
-        onClose={() => setDvvtBooking(null)}
+      <BookSlotDialog
+        vslot={bookingSlot?.vslot ?? null}
+        order={bookingSlot?.order ?? null}
+        onClose={() => setBookingSlot(null)}
       />
       <SlotOverviewDialog
         open={slotOverviewOpen}

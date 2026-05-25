@@ -1530,65 +1530,106 @@ export function useGenerateSlots() {
   })
 }
 
-// ── TMS Delivery Bookings ─────────────────────────────────────────────────────
+// ── TMS Orders ───────────────────────────────────────────────────────────────
 
-export function useDeliveryBookings(params?: { date?: string; warehouse_id?: string }) {
+export function useTmsOrders(params?: { date?: string; warehouse_id?: string }) {
   return useQuery({
-    queryKey: ['tms-bookings', params],
+    queryKey: ['tms-orders', params],
     queryFn: async () => {
-      const { data } = await apiClient.get('/tms/bookings', { params })
-      return data.data as import('@/types').DeliveryBooking[]
+      const { data } = await apiClient.get('/tms/orders', { params })
+      return data.data as import('@/types').TmsOrder[]
     },
     enabled: !!params?.date,
   })
 }
 
-type BookingWriteBody = {
-  date?: string; warehouse_id?: string; npp_name?: string; ncc_id?: string | null
-  gdo_refs?: string; notes?: string | null; status?: string
-  box_count?: number | null; pallet_count?: number | null; tonnage?: number | null
-  warehouse_type?: string; vehicle_type?: string; direction?: string
+type OrderWriteBody = {
+  order_code?: string; date?: string; warehouse_id?: string
+  ncc_id?: string | null; npp_name?: string | null
+  vehicle_type?: string | null; direction?: string | null; warehouse_type?: string | null
+  planned_boxes?: number | null; planned_pallets?: number | null; planned_tons?: number | null
+  gdo_refs?: string | null; notes?: string | null; status?: string
+}
+
+export function useCreateOrder() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: OrderWriteBody) =>
+      apiClient.post('/tms/orders', body).then(r => r.data.data as import('@/types').TmsOrder),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-orders'] }),
+  })
+}
+
+export function useUpdateOrder() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: OrderWriteBody & { id: string }) =>
+      apiClient.patch(`/tms/orders/${id}`, body).then(r => r.data.data as import('@/types').TmsOrder),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-orders'] }),
+  })
+}
+
+export function useDeleteOrder() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.delete(`/tms/orders/${id}`).then(() => id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-orders'] }),
+  })
+}
+
+export function useBulkCreateOrders() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (orders: OrderWriteBody[]) =>
+      apiClient.post('/tms/orders/bulk', { orders }).then(r => r.data.data as { inserted: number }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-orders'] }),
+  })
+}
+
+// ── TMS Vehicle Slots ─────────────────────────────────────────────────────────
+
+type VehicleSlotWriteBody = {
   slot_id?: string | null; license_plate?: string | null
-  driver_name?: string | null; driver_phone?: string | null
+  driver_name?: string | null; driver_phone?: string | null; status?: string
 }
 
-export function useCreateBooking() {
+export function useAddVehicleSlot() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: BookingWriteBody) =>
-      apiClient.post('/tms/bookings', body).then(r => r.data.data as import('@/types').DeliveryBooking),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-bookings'] }),
+    mutationFn: (orderId: string) =>
+      apiClient.post(`/tms/orders/${orderId}/vehicle-slots`).then(r => r.data.data as import('@/types').TmsVehicleSlot),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-orders'] }),
   })
 }
 
-export function useUpdateBooking() {
+export function useUpdateVehicleSlot() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: BookingWriteBody & { id: string }) =>
-      apiClient.patch(`/tms/bookings/${id}`, body).then(r => r.data.data as import('@/types').DeliveryBooking),
+    mutationFn: ({ id, ...body }: VehicleSlotWriteBody & { id: string }) =>
+      apiClient.patch(`/tms/vehicle-slots/${id}`, body).then(r => r.data.data as import('@/types').TmsVehicleSlot),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['tms-bookings'] })
+      qc.invalidateQueries({ queryKey: ['tms-orders'] })
       qc.invalidateQueries({ queryKey: ['tms-delivery-slots'] })
     },
   })
 }
 
-export function useDeleteBooking() {
+export function useReleaseVehicleSlot() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (id: string) => apiClient.delete(`/tms/bookings/${id}`).then(() => id),
+    mutationFn: (id: string) =>
+      apiClient.patch(`/tms/vehicle-slots/${id}/release`).then(r => r.data.data as import('@/types').TmsVehicleSlot),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['tms-bookings'] })
+      qc.invalidateQueries({ queryKey: ['tms-orders'] })
       qc.invalidateQueries({ queryKey: ['tms-delivery-slots'] })
     },
   })
 }
 
-export function useBulkCreateBookings() {
+export function useDeleteVehicleSlot() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (bookings: BookingWriteBody[]) =>
-      apiClient.post('/tms/bookings/bulk', { bookings }).then(r => r.data.data as { inserted: number; skipped: number }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-bookings'] }),
+    mutationFn: (id: string) => apiClient.delete(`/tms/vehicle-slots/${id}`).then(() => id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-orders'] }),
   })
 }

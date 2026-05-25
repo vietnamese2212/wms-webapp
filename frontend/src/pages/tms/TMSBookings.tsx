@@ -730,7 +730,7 @@ function SlotOverviewDialog({ open, onClose, defaultDate, warehouseId, warehouse
 
   return (
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
-      <DialogContent className="flex flex-col w-full sm:w-1/2 h-screen max-w-none max-h-none rounded-none m-0 p-0 sm:ml-auto [&>button:last-child]:hidden">
+      <DialogContent className="flex flex-col w-full sm:w-1/2 h-screen max-w-none max-h-none rounded-none m-0 p-0 top-0 left-0 translate-x-0 translate-y-0 sm:left-auto sm:right-0 [&>button:last-child]:hidden">
         {/* Row 1: title + close */}
         <div className="shrink-0 flex items-center justify-between px-3 py-2 border-b bg-white">
           <span className="text-sm font-semibold truncate">Tình trạng khung giờ — {warehouseName}</span>

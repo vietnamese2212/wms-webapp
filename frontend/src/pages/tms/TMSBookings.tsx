@@ -730,15 +730,19 @@ function SlotOverviewDialog({ open, onClose, defaultDate, warehouseId, warehouse
 
   return (
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
-      <DialogContent className="flex flex-col w-1/2 h-screen max-w-none max-h-none rounded-none m-0 p-0 ml-auto">
-        {/* Header */}
-        <div className="shrink-0 border-b px-3 py-2 flex items-center gap-3 flex-wrap bg-white">
-          <span className="text-sm font-semibold">Tình trạng khung giờ — {warehouseName}</span>
+      <DialogContent className="flex flex-col w-full sm:w-1/2 h-screen max-w-none max-h-none rounded-none m-0 p-0 sm:ml-auto">
+        {/* Row 1: title + close */}
+        <div className="shrink-0 flex items-center justify-between px-3 py-2 border-b bg-white">
+          <span className="text-sm font-semibold truncate">Tình trạng khung giờ — {warehouseName}</span>
+          <Button variant="outline" size="sm" onClick={onClose} className="ml-3 h-7 text-xs px-2 shrink-0">Đóng</Button>
+        </div>
+        {/* Row 2: filters */}
+        <div className="shrink-0 flex items-center gap-2 px-3 py-1.5 border-b bg-white flex-wrap">
           <Input
             type="date"
             value={date}
             onChange={e => setDate(e.target.value)}
-            className="h-7 text-xs w-32"
+            className="h-7 text-xs w-32 shrink-0"
           />
           <MultiSelectFilter
             label="Loại xe"
@@ -747,9 +751,8 @@ function SlotOverviewDialog({ open, onClose, defaultDate, warehouseId, warehouse
             onChange={setVtFilter}
           />
           {!isLoading && (
-            <span className="text-[10px] text-slate-400">{filtered.length} khung giờ</span>
+            <span className="text-[10px] text-slate-400 ml-auto">{filtered.length} khung giờ</span>
           )}
-          <Button variant="outline" size="sm" onClick={onClose} className="ml-auto h-7 text-xs px-2">Đóng</Button>
         </div>
 
         {/* Table */}
@@ -759,16 +762,15 @@ function SlotOverviewDialog({ open, onClose, defaultDate, warehouseId, warehouse
           ) : filtered.length === 0 ? (
             <p className="text-[10px] text-slate-400 text-center py-10">Chưa có khung giờ nào</p>
           ) : (
-            <table className="min-w-full">
+            <table className="min-w-max w-full">
               <thead className="sticky top-0 z-10 bg-slate-50">
                 <tr>
+                  <th className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">Loại kho</th>
+                  <th className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">Loại xe</th>
                   <th className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">Khung giờ</th>
-                  <th className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500">Loại kho</th>
-                  <th className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500">Loại xe</th>
-                  <th className="px-2 py-1.5 text-right text-[9px] font-medium text-slate-500">Đã đặt</th>
-                  <th className="px-2 py-1.5 text-right text-[9px] font-medium text-slate-500">Tối đa</th>
-                  <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 w-32">Lấp đầy</th>
-                  <th className="px-2 py-1.5 text-right text-[9px] font-medium text-slate-500 w-10">%</th>
+                  <th className="px-2 py-1.5 text-right text-[9px] font-medium text-slate-500 whitespace-nowrap">Đã đặt</th>
+                  <th className="px-2 py-1.5 text-right text-[9px] font-medium text-slate-500 whitespace-nowrap">Tối đa</th>
+                  <th className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap w-24">Lấp đầy</th>
                 </tr>
               </thead>
               <tbody>
@@ -778,37 +780,39 @@ function SlotOverviewDialog({ open, onClose, defaultDate, warehouseId, warehouse
                   const rowCls = full ? 'bg-red-50 hover:bg-red-100' : pct >= 0.7 ? 'bg-amber-50 hover:bg-amber-100' : 'hover:bg-slate-50'
                   return (
                     <tr key={s.id} className={rowCls}>
-                      <td className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">
-                        {s.time_from.slice(0, 5)}–{s.time_to.slice(0, 5)}
-                      </td>
-                      <td className="px-2 py-1">
+                      <td className="px-2 py-1 whitespace-nowrap">
                         <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
                           s.cargo_type === 'ALL' ? 'bg-slate-100 text-slate-600' : 'bg-orange-100 text-orange-700'
                         }`}>
                           {s.cargo_type === 'ALL' ? 'Tất cả' : s.cargo_type}
                         </span>
                       </td>
-                      <td className="px-2 py-1">
+                      <td className="px-2 py-1 whitespace-nowrap">
                         {s.vehicle_type?.name && (
                           <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-700">
                             {s.vehicle_type.name}
                           </span>
                         )}
                       </td>
-                      <td className="px-2 py-1 text-[10px] font-semibold tabular-nums text-right">
+                      <td className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">
+                        {s.time_from.slice(0, 5)}–{s.time_to.slice(0, 5)}
+                      </td>
+                      <td className="px-2 py-1 text-[10px] font-semibold tabular-nums text-right whitespace-nowrap">
                         <span className={full ? 'text-red-600' : 'text-green-600'}>{s.booked_count}</span>
                       </td>
-                      <td className="px-2 py-1 text-[10px] tabular-nums text-right text-slate-500">{s.max_vehicles}</td>
+                      <td className="px-2 py-1 text-[10px] tabular-nums text-right text-slate-500 whitespace-nowrap">{s.max_vehicles}</td>
                       <td className="px-2 py-1">
-                        <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
-                          <div
-                            className={`h-full rounded-full ${pct >= 1 ? 'bg-red-400' : pct >= 0.7 ? 'bg-amber-400' : 'bg-green-400'}`}
-                            style={{ width: `${Math.min(pct * 100, 100)}%` }}
-                          />
+                        <div className="flex items-center gap-1">
+                          <div className="w-16 h-1.5 bg-slate-200 rounded-full overflow-hidden shrink-0">
+                            <div
+                              className={`h-full rounded-full ${pct >= 1 ? 'bg-red-400' : pct >= 0.7 ? 'bg-amber-400' : 'bg-green-400'}`}
+                              style={{ width: `${Math.min(pct * 100, 100)}%` }}
+                            />
+                          </div>
+                          <span className="text-[10px] tabular-nums text-slate-500 shrink-0">
+                            {s.max_vehicles > 0 ? Math.round(pct * 100) : 0}%
+                          </span>
                         </div>
-                      </td>
-                      <td className="px-2 py-1 text-[10px] tabular-nums text-right text-slate-500">
-                        {s.max_vehicles > 0 ? Math.round(pct * 100) : 0}%
                       </td>
                     </tr>
                   )

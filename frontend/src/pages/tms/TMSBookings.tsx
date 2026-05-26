@@ -1450,9 +1450,11 @@ export default function TMSBookings() {
                       ) : <span className="text-slate-400 font-normal">—</span>}
                     </TableCell>
                   )}
-                  <TableCell className="px-2 py-1 text-[10px] max-w-[120px] truncate text-slate-500">
-                    {order.ncc?.name || <span className="text-slate-300">—</span>}
-                  </TableCell>
+                  {stt !== null && (
+                    <TableCell rowSpan={sttRowspan > 1 ? sttRowspan : undefined} className="px-2 py-1 text-[10px] max-w-[120px] truncate text-slate-500 align-middle">
+                      {order.ncc?.name || <span className="text-slate-300">—</span>}
+                    </TableCell>
+                  )}
                   <TableCell className="px-2 py-1 w-6 text-center">
                     {order.priority && <span className="text-[10px] font-bold text-red-600">x</span>}
                   </TableCell>
@@ -1498,9 +1500,11 @@ export default function TMSBookings() {
                   <TableCell className="px-2 py-1 text-[10px] text-slate-500">
                     {vslot.driver_phone || <span className="text-slate-400">—</span>}
                   </TableCell>
-                  <TableCell className="px-2 py-1">
-                    <StatusBadge status={vslot.status} />
-                  </TableCell>
+                  {stt !== null && (
+                    <TableCell rowSpan={sttRowspan > 1 ? sttRowspan : undefined} className="px-2 py-1 align-middle">
+                      <StatusBadge status={groupStatus} />
+                    </TableCell>
+                  )}
                   <TableCell className="px-2 py-1">
                     {order.export_status && (
                       <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium ${

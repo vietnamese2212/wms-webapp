@@ -106,7 +106,7 @@ export async function updateVehicleSlot(req: Request, res: Response) {
       }
     }
 
-    const updates: Record<string, unknown> = { booked_by: user?.emp_id || null, updated_at: now }
+    const updates: Record<string, unknown> = { booked_by: user?.name || null, updated_at: now }
     if (slot_id       !== undefined) updates.slot_id       = slot_id
     if (license_plate !== undefined) updates.license_plate = license_plate || null
     if (driver_name   !== undefined) updates.driver_name   = driver_name || null

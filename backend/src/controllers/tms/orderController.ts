@@ -70,7 +70,7 @@ export async function createOrder(req: Request, res: Response) {
       gdo_refs: gdo_refs || null, notes: notes || null,
       priority: priority === true || priority === 'true',
       status: 'PENDING',
-      created_by: user?.emp_id || null, updated_by: user?.emp_id || null,
+      created_by: user?.name || null, updated_by: user?.name || null,
       created_at: now, updated_at: now,
     })
     if (ordErr) {
@@ -131,7 +131,7 @@ export async function bulkCreateOrders(req: Request, res: Response) {
         gdo_refs: o.gdo_refs || null, notes: o.notes || null,
         priority: o.priority === true || o.priority === 'true',
         status: 'PENDING',
-        created_by: user?.emp_id || null, updated_by: user?.emp_id || null,
+        created_by: user?.name || null, updated_by: user?.name || null,
         created_at: now, updated_at: now,
       }))
 
@@ -176,7 +176,7 @@ export async function updateOrder(req: Request, res: Response) {
       .select('id').eq('id', id).single()
     if (fetchErr || !existing) return fail(res, 'Không tìm thấy đơn hàng', 404)
 
-    const updates: Record<string, unknown> = { updated_by: user?.emp_id || null, updated_at: now }
+    const updates: Record<string, unknown> = { updated_by: user?.name || null, updated_at: now }
     if (date            !== undefined) updates.date            = date
     if (warehouse_id    !== undefined) updates.warehouse_id    = warehouse_id
     if (ncc_id          !== undefined) updates.ncc_id          = ncc_id || null
@@ -213,7 +213,7 @@ export async function bulkUpdateOrderDate(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (supabase.from('TmsOrder') as any)
-      .update({ date, updated_by: user?.emp_id || null, updated_at: now })
+      .update({ date, updated_by: user?.name || null, updated_at: now })
       .in('id', ids)
     if (error) return fail(res, error.message)
     return ok(res, { updated: ids.length })

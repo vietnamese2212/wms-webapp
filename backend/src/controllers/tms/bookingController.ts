@@ -67,8 +67,8 @@ export async function createBooking(req: Request, res: Response) {
         vehicle_code: vehicle_code || null,
         direction: direction || null,
         status: 'PENDING',
-        created_by: user?.emp_id || null,
-        updated_by: user?.emp_id || null,
+        created_by: user?.name || null,
+        updated_by: user?.name || null,
         created_at: now, updated_at: now,
       })
       .select(BOOKING_SELECT)
@@ -122,8 +122,8 @@ export async function bulkCreateBookings(req: Request, res: Response) {
         vehicle_code: b.vehicle_code || null,
         direction: b.direction || null,
         status: 'PENDING',
-        created_by: user?.emp_id || null,
-        updated_by: user?.emp_id || null,
+        created_by: user?.name || null,
+        updated_by: user?.name || null,
         created_at: now, updated_at: now,
       }))
 
@@ -207,7 +207,7 @@ export async function updateBooking(req: Request, res: Response) {
       }
     }
 
-    const updates: Record<string, unknown> = { updated_by: user?.emp_id || null, updated_at: now }
+    const updates: Record<string, unknown> = { updated_by: user?.name || null, updated_at: now }
     if (slot_id         !== undefined) updates.slot_id         = slot_id
     if (license_plate   !== undefined) updates.license_plate   = license_plate
     if (driver_name     !== undefined) updates.driver_name     = driver_name

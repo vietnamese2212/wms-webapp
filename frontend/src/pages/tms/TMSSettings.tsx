@@ -615,14 +615,16 @@ export default function TMSSettings() {
                                 onClick={() => { setEditingCo(co); setShowCoDlg(true) }}>
                                 <Pencil className="h-3.5 w-3.5" />
                               </button>
-                              <button className="text-slate-400 hover:text-red-500 transition-colors p-1"
-                                disabled={deletingCo}
-                                onClick={() => {
-                                  if (confirm(`Xóa ĐVVT "${co.name}"?\nTất cả xe và tài khoản lái xe liên kết sẽ bị xóa vĩnh viễn.`))
-                                    deleteCo(co.id, { onError: e => alert(apiMsg(e)) })
-                                }}>
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
+                              {!userNccId && (
+                                <button className="text-slate-400 hover:text-red-500 transition-colors p-1"
+                                  disabled={deletingCo}
+                                  onClick={() => {
+                                    if (confirm(`Xóa ĐVVT "${co.name}"?\nTất cả xe và tài khoản lái xe liên kết sẽ bị xóa vĩnh viễn.`))
+                                      deleteCo(co.id, { onError: e => alert(apiMsg(e)) })
+                                  }}>
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              )}
                             </div>
                           </TableCell>
                         )}

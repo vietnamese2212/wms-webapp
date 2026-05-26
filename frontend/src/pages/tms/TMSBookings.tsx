@@ -293,7 +293,7 @@ function BookSlotDialog({ vslot, order, onClose, allOrders }: {
         </div>
         <DialogFooter>
           <Button variant="outline" size="sm" onClick={onClose}>Hủy</Button>
-          <Button size="sm" onClick={handleSave} disabled={updateSlot.isPending}>
+          <Button size="sm" onClick={() => handleSave()} disabled={updateSlot.isPending}>
             {updateSlot.isPending ? 'Đang lưu...' : 'Xác nhận'}
           </Button>
         </DialogFooter>

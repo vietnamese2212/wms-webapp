@@ -17,7 +17,7 @@ import {
   useTmsOrders, useCreateOrder, useUpdateOrder, useDeleteOrder, useBulkCreateOrders, useBulkUpdateOrderDate,
   useAddVehicleSlot, useUpdateVehicleSlot, useReleaseVehicleSlot, useRevokeVehicleSlot, useDeleteVehicleSlot,
 } from '@/api/hooks'
-import { formatDate } from '@/utils/formatters'
+import { formatDate, formatDateTime } from '@/utils/formatters'
 import type { TmsOrder, TmsVehicleSlot, DeliverySlot, TmsVehicleType, TmsVehicle, TransportCompany } from '@/types'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -970,6 +970,117 @@ function ChangeDateDialog({ open, orderIds, currentDate, onClose }: {
   )
 }
 
+// ── Order Detail Dialog ───────────────────────────────────────────────────────
+
+function DR({ label, value, wide }: { label: string; value?: React.ReactNode | null; wide?: boolean }) {
+  return (
+    <div className={wide ? 'col-span-2' : ''}>
+      <span className="text-slate-500">{label}:</span>{' '}
+      <span className="font-medium text-slate-800">
+        {value ?? <span className="text-slate-400 font-normal">—</span>}
+      </span>
+    </div>
+  )
+}
+
+function OrderDetailDialog({ order, onClose, warehouses }: {
+  order: TmsOrder | null
+  onClose: () => void
+  warehouses: { id: string; name: string }[]
+}) {
+  if (!order) return null
+  const whName = warehouses.find(w => w.id === order.warehouse_id)?.name ?? order.warehouse_id
+
+  return (
+    <Dialog open={!!order} onOpenChange={v => !v && onClose()}>
+      <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="font-mono text-base">{order.order_code || 'Chi tiết đơn'}</DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-5 py-1 text-xs">
+          {/* Thông tin đơn hàng */}
+          <section>
+            <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-400 mb-2">Thông tin đơn hàng</p>
+            <div className="grid grid-cols-2 gap-x-6 gap-y-1.5">
+              <DR label="NPP" value={order.npp_name} />
+              <DR label="Ngày" value={<span className="font-mono">{formatDate(order.date)}</span>} />
+              <DR label="Hướng" value={
+                order.direction === 'OUTBOUND' ? <span className="text-orange-600 font-semibold">Xuất</span>
+                : order.direction === 'INBOUND'  ? <span className="text-teal-600 font-semibold">Nhập</span>
+                : null
+              } />
+              <DR label="ĐVVT" value={order.ncc?.name} />
+              <DR label="Kho" value={whName} />
+              <DR label="Loại kho" value={order.warehouse_type} />
+              <DR label="Loại xe" value={order.vehicle_type} />
+              <DR label="Ưu tiên" value={order.priority ? <span className="text-red-600 font-bold">Có</span> : '—'} />
+              <DR label="Thùng" value={order.planned_boxes != null ? `${order.planned_boxes} thùng` : null} />
+              <DR label="Pallet" value={order.planned_pallets != null ? `${order.planned_pallets} pl` : null} />
+              <DR label="Tấn" value={order.planned_tons != null ? `${order.planned_tons} t` : null} />
+              {order.export_status && <DR label="Tình trạng XH" value={order.export_status} />}
+              {order.gdo_refs  && <DR label="GDO Refs" value={order.gdo_refs}  wide />}
+              {order.notes     && <DR label="Ghi chú"  value={order.notes}     wide />}
+            </div>
+          </section>
+
+          {/* Audit */}
+          <section>
+            <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-400 mb-2">Tạo / Sửa đơn</p>
+            <div className="grid grid-cols-2 gap-x-6 gap-y-1.5">
+              <DR label="Người tạo" value={order.created_by ? <span className="font-mono">{order.created_by}</span> : null} />
+              <DR label="Giờ tạo"   value={order.created_at ? <span className="font-mono">{formatDateTime(order.created_at)}</span> : null} />
+              <DR label="Người sửa" value={order.updated_by ? <span className="font-mono">{order.updated_by}</span> : null} />
+              <DR label="Giờ sửa"   value={order.updated_at ? <span className="font-mono">{formatDateTime(order.updated_at)}</span> : null} />
+            </div>
+          </section>
+
+          {/* Vehicle slots */}
+          <section>
+            <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-400 mb-2">Xe đặt khung giờ ({order.vehicle_slots.length})</p>
+            <div className="rounded border overflow-hidden">
+              <table className="min-w-full">
+                <thead className="bg-slate-50">
+                  <tr>
+                    {['#', 'Khung giờ', 'Biển số', 'SĐT', 'Trạng thái', 'Đặt bởi', 'Cập nhật lúc'].map(h => (
+                      <th key={h} className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {order.vehicle_slots.map((vs, i) => (
+                    <tr key={vs.id} className="border-t border-slate-100">
+                      <td className="px-2 py-1.5 text-slate-400">{i + 1}</td>
+                      <td className="px-2 py-1.5 font-mono">
+                        {vs.slot
+                          ? `${vs.slot.time_from.slice(0, 5)}–${vs.slot.time_to.slice(0, 5)}`
+                          : <span className="text-slate-400">—</span>}
+                      </td>
+                      <td className="px-2 py-1.5 font-mono font-semibold">
+                        {vs.license_plate || <span className="text-slate-400 font-normal">—</span>}
+                      </td>
+                      <td className="px-2 py-1.5">{vs.driver_phone || <span className="text-slate-400">—</span>}</td>
+                      <td className="px-2 py-1.5"><StatusBadge status={vs.status} /></td>
+                      <td className="px-2 py-1.5 font-mono">
+                        {vs.booked_by || <span className="text-slate-400">—</span>}
+                      </td>
+                      <td className="px-2 py-1.5 font-mono text-slate-500">{formatDateTime(vs.updated_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={onClose}>Đóng</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function TMSBookings() {
@@ -1018,6 +1129,7 @@ export default function TMSBookings() {
   const [createOpen, setCreateOpen] = useState(false)
   const [uploadOpen, setUploadOpen] = useState(false)
   const [editOrder, setEditOrder] = useState<TmsOrder | null>(null)
+  const [detailOrder, setDetailOrder] = useState<TmsOrder | null>(null)
   const [bookingSlot, setBookingSlot] = useState<{ vslot: TmsVehicleSlot; order: TmsOrder } | null>(null)
   const [actionErr, setActionErr] = useState('')
   const [hoveredRow, setHoveredRow] = useState<string | null>(null)
@@ -1449,8 +1561,9 @@ export default function TMSBookings() {
                 <TableRow key={rowKey}
                   onMouseEnter={() => setHoveredRow(rowKey)}
                   onMouseLeave={() => setHoveredRow(null)}
+                  onClick={() => setDetailOrder(order)}
                   className={[
-                  'hover:bg-transparent',
+                  'hover:bg-transparent cursor-pointer',
                   // Left border: standalone slate | xe chính teal | xe phụ purple | đơn phụ teal-400
                   isPrimary
                     ? (slotIndex > 0 ? 'border-l-4 border-l-purple-400' : (isConsolidated ? 'border-l-4 border-l-teal-600' : 'border-l-4 border-l-slate-300'))
@@ -1703,6 +1816,11 @@ export default function TMSBookings() {
         orderIds={[...selectedOrderIds]}
         currentDate={date}
         onClose={() => { setChangeDateOpen(false); setSelectedOrderIds(new Set()) }}
+      />
+      <OrderDetailDialog
+        order={detailOrder}
+        onClose={() => setDetailOrder(null)}
+        warehouses={warehouses as { id: string; name: string }[]}
       />
     </div>
   )

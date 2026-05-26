@@ -9,7 +9,9 @@ const ORDER_SELECT = `
   vehicle_slots:TmsVehicleSlot(
     id, order_id, slot_id,
     slot:DeliverySlot!slot_id(id, date, time_from, time_to, direction, cargo_type, max_vehicles, booked_count),
-    license_plate, driver_name, driver_phone, status, booked_by, created_at, updated_at
+    license_plate, driver_name, driver_phone, status, booked_by,
+    consolidation_group_id, is_consolidation_primary,
+    created_at, updated_at
   )
 `
 

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import * as XLSX from 'xlsx'
-import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, CalendarDays, ShieldX } from 'lucide-react'
+import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, CalendarDays, ShieldX, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -1323,7 +1323,7 @@ export default function TMSBookings() {
           <Table className="min-w-[960px]">
             <TableHeader>
               <TableRow>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-8 text-center">STT</TableHead>
+                <TableHead className="px-1 py-1.5 w-6"></TableHead>
                 <TableHead className="px-2 py-1.5 w-8">
                   {checkableOrderIds.length > 0 && (
                     <input
@@ -1368,18 +1368,18 @@ export default function TMSBookings() {
                 return (
                 <TableRow key={`${order.id}-${vslot.id}-${slotIndex}`} className={[
                   groupBg,
-                  // Left border: xe chính teal | xe phụ (primary vehicle header) purple | đơn phụ (secondary order) teal-400
+                  // Left border: standalone slate | xe chính teal | xe phụ purple | đơn phụ teal-400
                   isPrimary
-                    ? (slotIndex > 0 ? 'border-l-4 border-l-purple-400' : (isConsolidated ? 'border-l-4 border-l-teal-600' : ''))
+                    ? (slotIndex > 0 ? 'border-l-4 border-l-purple-400' : (isConsolidated ? 'border-l-4 border-l-teal-600' : 'border-l-4 border-l-slate-300'))
                     : 'border-l-4 border-l-teal-400',
                   // Top border: dày khi vehicle group mới | mỏng khi đơn phụ sub-row
                   isPrimary && rowIndex > 0
-                    ? (slotIndex > 0 ? 'border-t border-t-purple-200' : (isConsolidated ? 'border-t-2 border-t-teal-300' : 'border-t-2 border-t-slate-300'))
-                    : !isPrimary ? 'border-t border-t-teal-100' : '',
+                    ? (slotIndex > 0 ? 'border-t-2 border-t-purple-300' : (isConsolidated ? 'border-t-2 border-t-teal-500' : 'border-t-2 border-t-slate-400'))
+                    : !isPrimary ? 'border-t border-t-slate-200' : '',
                 ].filter(Boolean).join(' ')}>
                   {stt !== null && (
-                    <TableCell rowSpan={sttRowspan} className="px-2 py-1 w-8 text-center text-[10px] font-semibold tabular-nums text-slate-400 align-middle border-r border-slate-100">
-                      {stt}
+                    <TableCell rowSpan={sttRowspan} className="px-1 py-1 w-6 text-center align-middle border-r border-slate-100">
+                      {!!vslot.slot_id && <ChevronRight className="h-3.5 w-3.5 text-red-500 mx-auto" />}
                     </TableCell>
                   )}
                   <TableCell className="px-2 py-1 w-8">

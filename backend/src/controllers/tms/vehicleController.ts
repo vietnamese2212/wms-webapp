@@ -24,10 +24,14 @@ async function withRelations(vehicles: Record<string, unknown>[]) {
 
 export async function listVehicles(req: Request, res: Response) {
   try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const userNccId: string | null = (req as any).user?.ncc_id ?? null
     const { ncc_id, is_active, unassigned } = req.query as Record<string, string>
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let q = (supabase.from('Vehicle') as any).select('*').order('license_plate')
-    if (ncc_id)                  q = q.eq('ncc_id', ncc_id)
+    // ĐVVT user: chỉ được xem xe của mình
+    if (userNccId)               q = q.eq('ncc_id', userNccId)
+    else if (ncc_id)             q = q.eq('ncc_id', ncc_id)
     if (is_active !== undefined) q = q.eq('is_active', is_active === 'true')
     const { data, error } = await q
     if (error) return fail(res, error.message)
@@ -58,16 +62,22 @@ export async function listVehicles(req: Request, res: Response) {
 
 export async function createVehicle(req: Request, res: Response) {
   try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const userNccId: string | null = (req as any).user?.ncc_id ?? null
     const { ncc_id, license_plate, vehicle_type_id } = req.body as {
       ncc_id: string; license_plate: string; vehicle_type_id: string
     }
-    if (!ncc_id || !license_plate || !vehicle_type_id)
+    // ĐVVT user: chỉ được thêm xe cho công ty của mình
+    if (userNccId && ncc_id && ncc_id !== userNccId)
+      return fail(res, 'Bạn chỉ được thêm xe cho ĐVVT của mình', 403)
+    const effectiveNccId = userNccId ?? ncc_id
+    if (!effectiveNccId || !license_plate || !vehicle_type_id)
       return fail(res, 'ncc_id, license_plate, vehicle_type_id là bắt buộc', 400)
     const now = new Date().toISOString()
     const plate = license_plate.toUpperCase().replace(/\s+/g, '')
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await (supabase.from('Vehicle') as any)
-      .insert({ id: randomUUID(), ncc_id, license_plate: plate, vehicle_type_id, is_active: true, created_at: now, updated_at: now })
+      .insert({ id: randomUUID(), ncc_id: effectiveNccId, license_plate: plate, vehicle_type_id, is_active: true, created_at: now, updated_at: now })
       .select('*').single()
     if (error) return fail(res, error.message)
     const [merged] = await withRelations([data])
@@ -77,6 +87,8 @@ export async function createVehicle(req: Request, res: Response) {
 
 export async function updateVehicle(req: Request, res: Response) {
   try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const userNccId: string | null = (req as any).user?.ncc_id ?? null
     const { id } = req.params
     const { ncc_id, vehicle_type_id, is_active } = req.body as {
       ncc_id?: string; vehicle_type_id?: string; is_active?: boolean
@@ -88,6 +100,10 @@ export async function updateVehicle(req: Request, res: Response) {
       .select('license_plate, ncc_id').eq('id', id).single()
     const currentPlate = (current as { license_plate: string; ncc_id: string } | null)?.license_plate ?? null
     const currentNccId = (current as { license_plate: string; ncc_id: string } | null)?.ncc_id ?? null
+
+    // ĐVVT user: chỉ được sửa xe của mình
+    if (userNccId && currentNccId && currentNccId !== userNccId)
+      return fail(res, 'Bạn không có quyền chỉnh sửa xe này', 403)
 
     const updates: Record<string, unknown> = { updated_at: new Date().toISOString() }
     if (ncc_id          !== undefined) updates.ncc_id          = ncc_id
@@ -120,6 +136,8 @@ export async function updateVehicle(req: Request, res: Response) {
 
 export async function deleteVehicle(req: Request, res: Response) {
   try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const userNccId: string | null = (req as any).user?.ncc_id ?? null
     const { id } = req.params
 
     // Lấy thông tin xe trước khi xóa
@@ -128,6 +146,10 @@ export async function deleteVehicle(req: Request, res: Response) {
       .select('license_plate, ncc_id').eq('id', id).single()
     const plate  = (vehicle as { license_plate: string; ncc_id: string } | null)?.license_plate ?? null
     const nccId  = (vehicle as { license_plate: string; ncc_id: string } | null)?.ncc_id       ?? null
+
+    // ĐVVT user: chỉ được xóa xe của mình
+    if (userNccId && nccId && nccId !== userNccId)
+      return fail(res, 'Bạn không có quyền xóa xe này', 403)
 
     // Hard-delete driver employee gắn với xe này
     if (plate && nccId) {

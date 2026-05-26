@@ -243,12 +243,13 @@ function TransportCompanyDialog({ co, open, onClose }: { co: TransportCompany | 
 
 // ─── Vehicle form ─────────────────────────────────────────────────────────────
 
-function VehicleDialog({ v, open, onClose, companies, vehicleTypes }: {
+function VehicleDialog({ v, open, onClose, companies, vehicleTypes, lockedNccId }: {
   v: TmsVehicle | null; open: boolean; onClose: () => void
   companies: TransportCompany[]; vehicleTypes: TmsVehicleType[]
+  lockedNccId?: string | null
 }) {
   const isEdit = !!v
-  const [nccId,    setNccId]    = useState(v?.ncc_id          ?? '')
+  const [nccId,    setNccId]    = useState(v?.ncc_id ?? lockedNccId ?? '')
   const [plate,    setPlate]    = useState(v?.license_plate    ?? '')
   const [vtId,     setVtId]     = useState(v?.vehicle_type_id  ?? '')
   const [isActive, setIsActive] = useState(v?.is_active ?? true)
@@ -277,13 +278,17 @@ function VehicleDialog({ v, open, onClose, companies, vehicleTypes }: {
         <div className="space-y-3 py-1">
           {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
           <div className="space-y-1"><Label className="text-xs">ĐVVT / NCC *</Label>
-            <Select value={nccId || '__none__'} onValueChange={val => setNccId(val === '__none__' ? '' : val)}>
-              <SelectTrigger><SelectValue placeholder="Chọn ĐVVT" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none__">— Chọn ĐVVT —</SelectItem>
-                {companies.filter(c => c.is_active).map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
+            {lockedNccId ? (
+              <Input value={companies.find(c => c.id === lockedNccId)?.name ?? lockedNccId} disabled className="bg-slate-50 cursor-not-allowed" />
+            ) : (
+              <Select value={nccId || '__none__'} onValueChange={val => setNccId(val === '__none__' ? '' : val)}>
+                <SelectTrigger><SelectValue placeholder="Chọn ĐVVT" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">— Chọn ĐVVT —</SelectItem>
+                  {companies.filter(c => c.is_active).map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            )}
           </div>
           <div className="space-y-1"><Label className="text-xs">Biển số xe *</Label>
             <Input value={plate} onChange={e => setPlate(e.target.value.toUpperCase())} placeholder="51F-12345"
@@ -318,6 +323,7 @@ function VehicleDialog({ v, open, onClose, companies, vehicleTypes }: {
 export default function TMSSettings() {
   const user = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
+  const userNccId = user?.ncc_id ?? null   // non-null = ĐVVT user
 
   // Quyền write từng tab
   const canVehicleTypes = can(perms, 'tms_vehicle_types', 'manage')
@@ -639,12 +645,14 @@ export default function TMSSettings() {
               </Button>
             )}
           </div>
-          <MultiSelectFilter
-            label="ĐVVT / NCC"
-            options={companies.map(c => ({ value: c.id, label: c.name }))}
-            selected={filterNccs}
-            onChange={setFilterNccs}
-          />
+          {!userNccId && (
+            <MultiSelectFilter
+              label="ĐVVT / NCC"
+              options={companies.map(c => ({ value: c.id, label: c.name }))}
+              selected={filterNccs}
+              onChange={setFilterNccs}
+            />
+          )}
           <Card>
             {loadingV ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> : filteredVehicles.length === 0 ? (
               <div className="p-12 text-center text-slate-400 space-y-2">
@@ -708,7 +716,7 @@ export default function TMSSettings() {
       {showVTDlg && <VehicleTypeDialog vt={editingVT} open={showVTDlg} onClose={() => setShowVTDlg(false)} />}
       {showSTDlg && warehouseId && <SlotTemplateDialog st={editingST} open={showSTDlg} onClose={() => setShowSTDlg(false)} vehicleTypes={vehicleTypes} warehouseId={warehouseId} cargoOptions={cargoOptions} />}
       {showCoDlg && <TransportCompanyDialog co={editingCo} open={showCoDlg} onClose={() => setShowCoDlg(false)} />}
-      {showVDlg  && <VehicleDialog v={editingV} open={showVDlg} onClose={() => setShowVDlg(false)} companies={companies} vehicleTypes={vehicleTypes} />}
+      {showVDlg  && <VehicleDialog v={editingV} open={showVDlg} onClose={() => setShowVDlg(false)} companies={companies} vehicleTypes={vehicleTypes} lockedNccId={userNccId} />}
     </div>
   )
 }

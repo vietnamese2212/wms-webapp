@@ -5,9 +5,13 @@ import { ok, fail } from '../../utils/response'
 
 export async function listTransportCompanies(req: Request, res: Response) {
   try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const userNccId: string | null = (req as any).user?.ncc_id ?? null
     const { is_active } = req.query as Record<string, string>
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let q = (supabase.from('TransportCompany') as any).select('*').order('name')
+    // ĐVVT user: chỉ thấy công ty của mình
+    if (userNccId) q = q.eq('id', userNccId)
     if (is_active !== undefined) q = q.eq('is_active', is_active === 'true')
     const { data, error } = await q
     if (error) return fail(res, error.message)
@@ -38,7 +42,12 @@ export async function createTransportCompany(req: Request, res: Response) {
 
 export async function updateTransportCompany(req: Request, res: Response) {
   try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const userNccId: string | null = (req as any).user?.ncc_id ?? null
     const { id } = req.params
+    // ĐVVT user: chỉ được sửa công ty của mình
+    if (userNccId && id !== userNccId)
+      return fail(res, 'Bạn không có quyền chỉnh sửa ĐVVT này', 403)
     const { name, contact_name, contact_phone, is_active } = req.body as {
       name?: string; contact_name?: string; contact_phone?: string; is_active?: boolean
     }
@@ -84,6 +93,10 @@ export async function updateTransportCompany(req: Request, res: Response) {
 
 export async function deleteTransportCompany(req: Request, res: Response) {
   try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const userNccId: string | null = (req as any).user?.ncc_id ?? null
+    // ĐVVT user không được xóa công ty (kể cả của mình)
+    if (userNccId) return fail(res, 'Không có quyền xóa ĐVVT', 403)
     const { id } = req.params
 
     // Lấy tất cả xe của ĐVVT

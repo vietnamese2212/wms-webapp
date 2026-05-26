@@ -877,8 +877,11 @@ function ChangeDateDialog({ open, orderIds, currentDate, onClose }: {
 
   useEffect(() => { if (open) { setNewDate(''); setErr('') } }, [open])
 
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+
   const handleSave = async () => {
     if (!newDate) { setErr('Vui lòng chọn ngày mới'); return }
+    if (newDate < today) { setErr('Không thể đổi sang ngày đã qua'); return }
     if (newDate === currentDate) { setErr('Ngày mới phải khác ngày hiện tại'); return }
     setSaving(true)
     try {
@@ -902,7 +905,7 @@ function ChangeDateDialog({ open, orderIds, currentDate, onClose }: {
         <div className="space-y-3 py-2">
           <div>
             <Label className="text-xs">Ngày mới *</Label>
-            <Input type="date" value={newDate} onChange={e => setNewDate(e.target.value)} className="h-8 text-sm mt-1" />
+            <Input type="date" value={newDate} min={today} onChange={e => setNewDate(e.target.value)} className="h-8 text-sm mt-1" />
           </div>
           {err && <p className="text-xs text-red-600">{err}</p>}
         </div>

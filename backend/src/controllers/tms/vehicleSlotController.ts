@@ -122,6 +122,22 @@ export async function updateVehicleSlot(req: Request, res: Response) {
     let newGroupId: string | null = null
     const orderIds = Array.isArray(consolidation_order_ids) ? consolidation_order_ids as string[] : []
     if (orderIds.length > 0) {
+      // Kiểm tra hướng: Xuất chỉ đi với Xuất, Nhập chỉ đi với Nhập
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: primaryOrder } = await (supabase.from('TmsOrder') as any)
+        .select('direction').eq('id', existing.order_id).single()
+      if (primaryOrder?.direction) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: secondaryOrders } = await (supabase.from('TmsOrder') as any)
+          .select('direction').in('id', orderIds)
+        const hasWrongDir = (secondaryOrders ?? []).some(
+          (o: { direction: string }) => o.direction !== primaryOrder.direction
+        )
+        if (hasWrongDir) {
+          const dirLabel = primaryOrder.direction === 'OUTBOUND' ? 'Xuất' : 'Nhập'
+          return fail(res, `Không thể gom đơn khác hướng: ${dirLabel} chỉ đi với ${dirLabel}`, 400)
+        }
+      }
       if (existing.status === 'PENDING') {
         newGroupId = randomUUID()
         updates.consolidation_group_id = newGroupId

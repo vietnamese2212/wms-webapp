@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import * as XLSX from 'xlsx'
-import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, Link2, CalendarDays, ShieldX } from 'lucide-react'
+import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, CalendarDays, ShieldX } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -154,6 +154,7 @@ function BookSlotDialog({ vslot, order, onClose, allOrders }: {
     const currentGroupId = vslot?.consolidation_group_id ?? null
     return allOrders.filter(o => {
       if (o.id === order.id || o.ncc_id !== order.ncc_id || o.date !== order.date) return false
+      if (o.direction !== order.direction) return false  // Xuất chỉ đi với Xuất, Nhập với Nhập
       const mainSlot = o.vehicle_slots.find(vs => vs.consolidation_group_id) ?? o.vehicle_slots[0]
       if (!mainSlot) return false
       if (currentGroupId && mainSlot.consolidation_group_id === currentGroupId) return false
@@ -1072,15 +1073,59 @@ export default function TMSBookings() {
     return [result, indexMap]
   }, [filteredOrders])
 
-  // Flatten orders → rows (1 row per vehicle slot, order info repeated for first slot only)
-  type TableRow = { order: TmsOrder; vslot: TmsVehicleSlot; isFirstSlot: boolean; slotIndex: number }
-  const tableRows = useMemo<TableRow[]>(() =>
-    sortedOrders.flatMap(order =>
-      order.vehicle_slots.length > 0
-        ? order.vehicle_slots.map((vs, i) => ({ order, vslot: vs, isFirstSlot: i === 0, slotIndex: i }))
-        : [{ order, vslot: { id: '', order_id: order.id, slot_id: null, slot: null, license_plate: null, driver_name: null, driver_phone: null, status: 'PENDING', booked_by: null, consolidation_group_id: null, is_consolidation_primary: false, created_at: '', updated_at: '' } as TmsVehicleSlot, isFirstSlot: true, slotIndex: 0 }]
-    ), [sortedOrders]
-  )
+  // Flatten orders → rows; consolidation group + xe phụ dùng chung 1 STT (rowspan)
+  type TableRow = {
+    order: TmsOrder; vslot: TmsVehicleSlot; isFirstSlot: boolean; slotIndex: number
+    stt: number | null   // null = covered by rowspan of previous STT cell
+    sttRowspan: number   // >0 only when stt !== null
+    isGroupFirst: boolean
+  }
+  const tableRows = useMemo<TableRow[]>(() => {
+    const rows: TableRow[] = []
+    let stt = 0
+    const conSlot = (o: TmsOrder) => o.vehicle_slots.find(vs => vs.consolidation_group_id) ?? o.vehicle_slots[0]
+    const emptyVs = (o: TmsOrder): TmsVehicleSlot => ({
+      id: '', order_id: o.id, slot_id: null, slot: null,
+      license_plate: null, driver_name: null, driver_phone: null,
+      status: 'PENDING', booked_by: null,
+      consolidation_group_id: null, is_consolidation_primary: false,
+      created_at: '', updated_at: '',
+    } as TmsVehicleSlot)
+    const seenGroupIds = new Set<string>()
+    let i = 0
+    while (i < sortedOrders.length) {
+      const order = sortedOrders[i]
+      const cs = conSlot(order)
+      const groupId = cs?.consolidation_group_id
+      let groupOrders: TmsOrder[]
+      if (groupId && cs.is_consolidation_primary && !seenGroupIds.has(groupId)) {
+        seenGroupIds.add(groupId)
+        groupOrders = [order]
+        let j = i + 1
+        while (j < sortedOrders.length && conSlot(sortedOrders[j])?.consolidation_group_id === groupId) {
+          groupOrders.push(sortedOrders[j]); j++
+        }
+        i = j
+      } else { groupOrders = [order]; i++ }
+      stt++
+      const totalRows = groupOrders.reduce((sum, o) => sum + Math.max(o.vehicle_slots.length, 1), 0)
+      let isFirstRow = true
+      for (const groupOrder of groupOrders) {
+        const slots = groupOrder.vehicle_slots.length > 0 ? groupOrder.vehicle_slots : [emptyVs(groupOrder)]
+        for (let si = 0; si < slots.length; si++) {
+          rows.push({
+            order: groupOrder, vslot: slots[si],
+            isFirstSlot: si === 0, slotIndex: si,
+            stt: isFirstRow ? stt : null,
+            sttRowspan: isFirstRow ? totalRows : 0,
+            isGroupFirst: isFirstRow,
+          })
+          isFirstRow = false
+        }
+      }
+    }
+    return rows
+  }, [sortedOrders])
 
   const rowBg = (status: string) => {
     if (status === 'BOOKED')  return 'bg-green-50 hover:bg-green-100'
@@ -1239,6 +1284,7 @@ export default function TMSBookings() {
           <Table className="min-w-[960px]">
             <TableHeader>
               <TableRow>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-8 text-center">STT</TableHead>
                 <TableHead className="px-2 py-1.5 w-8">
                   {checkableOrderIds.length > 0 && (
                     <input
@@ -1250,13 +1296,13 @@ export default function TMSBookings() {
                     />
                   )}
                 </TableHead>
-                <TableHead className="text-[9px] font-medium text-red-500 px-2 py-1.5 w-6">UT</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Mã đơn</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Tên NPP</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-10">Đặt giờ</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Khung giờ</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Biển số</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">ĐVVT</TableHead>
+                <TableHead className="text-[9px] font-medium text-red-500 px-2 py-1.5 w-6">UT</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Hướng</TableHead>
                 {isNccUser && !warehouseId && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Kho</TableHead>}
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Loại kho</TableHead>
@@ -1271,7 +1317,7 @@ export default function TMSBookings() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {tableRows.map(({ order, vslot, isFirstSlot, slotIndex }) => {
+              {tableRows.map(({ order, vslot, isFirstSlot, slotIndex, stt, sttRowspan, isGroupFirst }, rowIndex) => {
                 const isConsolidated = !!vslot.consolidation_group_id
                 const isCPrimary    = !!vslot.is_consolidation_primary
                 return (
@@ -1280,7 +1326,15 @@ export default function TMSBookings() {
                   isConsolidated
                     ? (isCPrimary && isFirstSlot ? 'border-l-4 border-l-teal-600' : 'border-l-4 border-l-teal-400')
                     : (!isFirstSlot ? 'border-l-4 border-l-purple-300' : ''),
+                  isGroupFirst && rowIndex > 0
+                    ? (isConsolidated ? 'border-t-2 border-t-teal-300' : 'border-t-2 border-t-slate-300')
+                    : (!isFirstSlot ? 'border-t border-t-purple-100' : ''),
                 ].filter(Boolean).join(' ')}>
+                  {stt !== null && (
+                    <TableCell rowSpan={sttRowspan} className="px-2 py-1 w-8 text-center text-[10px] font-semibold tabular-nums text-slate-400 align-middle border-r border-slate-100">
+                      {stt}
+                    </TableCell>
+                  )}
                   <TableCell className="px-2 py-1 w-8">
                     {isFirstSlot && checkableOrderIds.includes(order.id) && (
                       <input
@@ -1292,21 +1346,9 @@ export default function TMSBookings() {
                       />
                     )}
                   </TableCell>
-                  <TableCell className="px-2 py-1 w-6 text-center">
-                    {isFirstSlot && order.priority && (
-                      <span className="text-[10px] font-bold text-red-600">x</span>
-                    )}
-                  </TableCell>
                   {/* Mã đơn — chỉ hiện ở dòng đầu của mỗi order, xe phụ để trống */}
                   <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">
-                    {isFirstSlot ? (
-                      <span className="inline-flex items-center gap-1">
-                        {isConsolidated && (
-                          <Link2 className={`h-3 w-3 shrink-0 ${isCPrimary ? 'text-teal-500' : 'text-teal-400'}`} />
-                        )}
-                        {order.order_code || <span className="text-slate-400 font-normal">—</span>}
-                      </span>
-                    ) : null}
+                    {isFirstSlot ? (order.order_code || <span className="text-slate-400 font-normal">—</span>) : null}
                   </TableCell>
                   <TableCell className="px-2 py-1 text-[10px] font-semibold max-w-[140px] truncate">
                     {isFirstSlot
@@ -1355,6 +1397,11 @@ export default function TMSBookings() {
                   </TableCell>
                   <TableCell className="px-2 py-1 text-[10px] max-w-[120px] truncate text-slate-500">
                     {isFirstSlot ? (order.ncc?.name || <span className="text-slate-300">—</span>) : null}
+                  </TableCell>
+                  <TableCell className="px-2 py-1 w-6 text-center">
+                    {isFirstSlot && order.priority && (
+                      <span className="text-[10px] font-bold text-red-600">x</span>
+                    )}
                   </TableCell>
                   <TableCell className="px-2 py-1 text-[10px]">
                     {isFirstSlot && order.direction ? (

@@ -170,19 +170,29 @@ export async function updateVehicleSlot(req: Request, res: Response) {
     if (newGroupId && orderIds.length > 0) {
       const finalSlotId = slot_id !== undefined ? slot_id : existing.slot_id
       const finalPlate  = license_plate !== undefined ? (license_plate || null) : (existing.license_plate as string | null)
-      for (const orderId of orderIds) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: firstSlot } = await (supabase.from('TmsVehicleSlot') as any)
-          .select('id, status, consolidation_group_id')
-          .eq('order_id', orderId)
-          .order('created_at', { ascending: true })
-          .limit(1).single()
-        if (!firstSlot || firstSlot.status !== 'PENDING' || firstSlot.consolidation_group_id) continue
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (supabase.from('TmsVehicleSlot') as any).update({
-          slot_id: finalSlotId, license_plate: finalPlate, status: 'BOOKED',
-          consolidation_group_id: newGroupId, is_consolidation_primary: false, updated_at: now,
-        }).eq('id', firstSlot.id)
+
+      // Batch fetch tất cả firstSlot cùng lúc thay vì N queries tuần tự
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: candidateSlots } = await (supabase.from('TmsVehicleSlot') as any)
+        .select('id, order_id, status, consolidation_group_id')
+        .in('order_id', orderIds)
+        .eq('status', 'PENDING')
+        .is('consolidation_group_id', null)
+        .order('created_at', { ascending: true })
+
+      // Lấy slot đầu tiên (oldest) mỗi order
+      const seen = new Set<string>()
+      const eligible = ((candidateSlots ?? []) as { id: string; order_id: string; status: string; consolidation_group_id: string | null }[])
+        .filter(s => { if (seen.has(s.order_id)) return false; seen.add(s.order_id); return true })
+
+      if (eligible.length > 0) {
+        await Promise.all(eligible.map(s =>
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (supabase.from('TmsVehicleSlot') as any).update({
+            slot_id: finalSlotId, license_plate: finalPlate, status: 'BOOKED',
+            consolidation_group_id: newGroupId, is_consolidation_primary: false, updated_at: now,
+          }).eq('id', s.id)
+        ))
       }
     }
 

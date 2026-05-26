@@ -72,9 +72,8 @@ export function connectRealtimeEvents(): void {
         const keys = TABLE_QUERY_MAP[payload.table]
         if (keys) {
           keys.forEach((k) => queryClient.invalidateQueries({ queryKey: k }))
-        } else {
-          queryClient.invalidateQueries()
         }
+        // Bảng không có trong map → bỏ qua, không bust toàn bộ cache
       }
     )
     .subscribe((status) => {

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Plus, Navigation, MapPin, Package, User } from 'lucide-react'
+import { Navigation, MapPin, Package, User } from 'lucide-react'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { PageHeader } from '@/components/shared/PageHeader'
 import { DeliveryStatusBadge } from '@/components/shared/StatusBadge'
@@ -41,12 +41,6 @@ export default function Deliveries() {
         <PageHeader
           title="Giao hàng"
           description="Theo dõi lệnh vận chuyển và trạng thái giao hàng"
-          actions={
-            <Button size="sm">
-              <Plus className="h-4 w-4 mr-1" />
-              Tạo lệnh giao hàng
-            </Button>
-          }
         />
         <div className="flex flex-col sm:flex-row gap-2 mt-2">
           <SearchInput value={search} onChange={setSearch} placeholder="Tìm mã đơn, khách hàng..." className="flex-1 max-w-sm" />

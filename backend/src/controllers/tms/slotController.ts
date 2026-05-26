@@ -67,7 +67,8 @@ export async function generateSlotsForDates(req: Request, res: Response) {
 
     for (const dateStr of validDates) {
       // JS getDay(): 0=Sun, 1=Mon…6=Sat → ISODOW: 1=T2…6=T7
-      const jsDay = new Date(dateStr + 'T00:00:00').getDay()
+      // Force UTC+7 để tránh sai ngày khi server chạy ở UTC (Vercel)
+      const jsDay = new Date(dateStr + 'T00:00:00+07:00').getDay()
       if (jsDay === 0) continue // bỏ Chủ nhật
       const dow = jsDay // 1=T2…6=T7 (khớp với SlotTemplate.day_of_week)
 

@@ -1361,6 +1361,7 @@ export function useOutboundScanLogFacets(materialCategory?: string) {
 export function useVehicleTypes(onlyActive = false) {
   return useQuery({
     queryKey: ['tms-vehicle-types', onlyActive],
+    staleTime: 30 * 60_000,
     queryFn: async () => {
       const { data } = await apiClient.get('/tms/vehicle-types', {
         params: onlyActive ? { is_active: 'true' } : {},
@@ -1430,6 +1431,7 @@ export function useDeleteSlotTemplate() {
 export function useTransportCompanies(onlyActive = false) {
   return useQuery({
     queryKey: ['tms-transport-companies', onlyActive],
+    staleTime: 30 * 60_000,
     queryFn: async () => {
       const { data } = await apiClient.get('/tms/transport-companies', {
         params: onlyActive ? { is_active: 'true' } : {},
@@ -1460,6 +1462,7 @@ export function useUpdateTransportCompany() {
 export function useTmsVehicles(params?: { ncc_id?: string; is_active?: string; unassigned?: string }) {
   return useQuery({
     queryKey: ['tms-vehicles', params],
+    staleTime: 30 * 60_000,
     queryFn: async () => {
       const { data } = await apiClient.get('/tms/vehicles', { params })
       return data.data as TmsVehicle[]

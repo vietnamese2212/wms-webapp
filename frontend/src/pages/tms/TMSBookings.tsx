@@ -55,11 +55,19 @@ function SlotPicker({ warehouseId, date, selectedSlotId, onSelect, cargoType, ve
 
   useEffect(() => {
     setGenerateDone(false)
-    generateSlots(
-      { warehouse_id: warehouseId, dates: [date] },
-      { onSettled: () => setGenerateDone(true) },
-    )
   }, [warehouseId, date])
+
+  // Chỉ gọi generate khi fetch xong mà không có slot nào — tránh gọi thừa khi đã tồn tại
+  useEffect(() => {
+    if (!isLoading && !isFetching && slots.length === 0 && !generateDone) {
+      generateSlots(
+        { warehouse_id: warehouseId, dates: [date] },
+        { onSettled: () => setGenerateDone(true) },
+      )
+    } else if (!isLoading && !isFetching && slots.length > 0) {
+      setGenerateDone(true)
+    }
+  }, [isLoading, isFetching, slots.length, generateDone, warehouseId, date])
 
   if (slots.length === 0 && (isLoading || isFetching || !generateDone))
     return <p className="text-xs text-slate-400 py-6 text-center">Đang tải khung giờ...</p>

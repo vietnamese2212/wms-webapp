@@ -45,7 +45,7 @@ export async function createOrder(req: Request, res: Response) {
       order_code, date, warehouse_id, ncc_id, npp_name,
       vehicle_type, direction, warehouse_type,
       planned_boxes, planned_pallets, planned_tons,
-      gdo_refs, notes,
+      gdo_refs, notes, priority,
     } = req.body
     if (!date || !warehouse_id) return fail(res, 'date và warehouse_id là bắt buộc', 400)
     if (!order_code) return fail(res, 'order_code là bắt buộc', 400)
@@ -66,6 +66,7 @@ export async function createOrder(req: Request, res: Response) {
       planned_boxes: planned_boxes ?? null, planned_pallets: planned_pallets ?? null,
       planned_tons: planned_tons ?? null,
       gdo_refs: gdo_refs || null, notes: notes || null,
+      priority: priority === true || priority === 'true',
       status: 'PENDING',
       created_by: user?.emp_id || null, updated_by: user?.emp_id || null,
       created_at: now, updated_at: now,
@@ -126,6 +127,7 @@ export async function bulkCreateOrders(req: Request, res: Response) {
         planned_boxes: o.planned_boxes ?? null, planned_pallets: o.planned_pallets ?? null,
         planned_tons: o.planned_tons ?? null,
         gdo_refs: o.gdo_refs || null, notes: o.notes || null,
+        priority: o.priority === true || o.priority === 'true',
         status: 'PENDING',
         created_by: user?.emp_id || null, updated_by: user?.emp_id || null,
         created_at: now, updated_at: now,
@@ -160,7 +162,7 @@ export async function updateOrder(req: Request, res: Response) {
       date, warehouse_id, ncc_id, npp_name,
       vehicle_type, direction, warehouse_type,
       planned_boxes, planned_pallets, planned_tons,
-      gdo_refs, notes, status,
+      gdo_refs, notes, status, priority,
     } = req.body
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -186,6 +188,7 @@ export async function updateOrder(req: Request, res: Response) {
     if (gdo_refs        !== undefined) updates.gdo_refs        = gdo_refs || null
     if (notes           !== undefined) updates.notes           = notes || null
     if (status          !== undefined) updates.status          = status
+    if (priority        !== undefined) updates.priority        = priority === true || priority === 'true'
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await (supabase.from('TmsOrder') as any)

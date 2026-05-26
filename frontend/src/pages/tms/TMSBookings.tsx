@@ -267,7 +267,7 @@ type OrderFormData = {
   order_code: string; direction: 'OUTBOUND' | 'INBOUND' | ''
   warehouse_type: string; vehicle_type: string
   planned_boxes: string; planned_pallets: string; planned_tons: string
-  gdo_refs: string; notes: string
+  gdo_refs: string; notes: string; priority: boolean
 }
 
 const EMPTY_FORM = (date: string, warehouse_id: string): OrderFormData => ({
@@ -275,7 +275,7 @@ const EMPTY_FORM = (date: string, warehouse_id: string): OrderFormData => ({
   order_code: '', direction: 'OUTBOUND',
   warehouse_type: '', vehicle_type: '',
   planned_boxes: '', planned_pallets: '', planned_tons: '',
-  gdo_refs: '', notes: '',
+  gdo_refs: '', notes: '', priority: false,
 })
 
 const ORDER_CODE_RE = /^\d{6}_[A-Za-z0-9]+_\d+$/
@@ -309,6 +309,7 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
         planned_pallets: order.planned_pallets != null ? String(order.planned_pallets) : '',
         planned_tons: order.planned_tons != null ? String(order.planned_tons) : '',
         gdo_refs: order.gdo_refs ?? '', notes: order.notes ?? '',
+        priority: order.priority ?? false,
       })
     } else {
       setForm(EMPTY_FORM(defaultDate, defaultWarehouseId))
@@ -333,6 +334,7 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
       planned_pallets: form.planned_pallets ? Number(form.planned_pallets) : null,
       planned_tons: form.planned_tons ? Number(form.planned_tons) : null,
       gdo_refs: form.gdo_refs || null, notes: form.notes || null,
+      priority: form.priority,
     }
     try {
       if (isEdit && order) await updateOrder.mutateAsync({ id: order.id, ...payload })
@@ -452,6 +454,19 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
               className="flex w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring mt-1"
             />
           </div>
+          <div className="flex items-center gap-2">
+            <input
+              id="priority-check"
+              type="checkbox"
+              className="h-4 w-4 cursor-pointer accent-red-600"
+              checked={form.priority}
+              onChange={e => setForm(f => ({ ...f, priority: e.target.checked }))}
+            />
+            <Label htmlFor="priority-check" className="text-xs cursor-pointer">
+              Ưu tiên <span className="text-red-600 font-semibold">x</span>
+              <span className="text-slate-400 font-normal ml-1">— đơn ưu tiên xuất hàng</span>
+            </Label>
+          </div>
           {err && <p className="text-xs text-red-600">{err}</p>}
         </div>
         <DialogFooter>
@@ -473,7 +488,7 @@ type ImportRow = {
   ncc_code: string; ncc_id: string | null
   order_code: string
   planned_boxes: number | null; planned_pallets: number | null; planned_tons: number | null
-  gdo_refs: string; notes: string; valid: boolean; error: string
+  gdo_refs: string; notes: string; priority: boolean; valid: boolean; error: string
 }
 
 const EXCEL_COL_MAP: Record<string, string> = {
@@ -490,6 +505,11 @@ const EXCEL_COL_MAP: Record<string, string> = {
   'tấn': 'planned_tons', 'số tấn': 'planned_tons', 'ton': 'planned_tons',
   'gdo': 'gdo_refs', 'mã gdo': 'gdo_refs',
   'ghi chú': 'notes', 'notes': 'notes',
+  'ưu tiên': 'priority', 'uu tien': 'priority', 'priority': 'priority', 'ưutiên': 'priority',
+}
+
+function parsePriority(val: unknown): boolean {
+  return String(val ?? '').trim().toLowerCase() === 'x'
 }
 
 function parseDirection(val: unknown): string {
@@ -579,6 +599,7 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
             planned_pallets: norm.planned_pallets ? Number(norm.planned_pallets) : null,
             planned_tons: norm.planned_tons ? Number(norm.planned_tons) : null,
             gdo_refs: String(norm.gdo_refs ?? ''), notes: String(norm.notes ?? ''),
+            priority: parsePriority(norm.priority),
             valid: errors.length === 0, error: errors.join(', '),
           }
         })
@@ -601,6 +622,7 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
         vehicle_type: r.vehicle_type || null,
         planned_boxes: r.planned_boxes, planned_pallets: r.planned_pallets, planned_tons: r.planned_tons,
         gdo_refs: r.gdo_refs || null, notes: r.notes || null,
+        priority: r.priority,
       })))
       setResult({ inserted: data.inserted })
     } catch (e: unknown) {
@@ -619,8 +641,8 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
 
   const downloadTemplate = () => {
     const ws = XLSX.utils.aoa_to_sheet([
-      ['Mã đơn', 'NPP', 'Kho', 'Ngày', 'Hướng', 'Loại kho', 'Loại xe', 'ĐVVT', 'Thùng', 'Pallet', 'Tấn', 'GDO', 'Ghi chú'],
-      ['240526_BV_1', 'Tên NPP mẫu', 'Kho Ba Vì', '21/05/2026', 'Xuất', 'Khô', 'Xe tải 5T', 'NCC001', 100, 5, 2.5, 'GDO-001', ''],
+      ['Mã đơn', 'NPP', 'Kho', 'Ngày', 'Hướng', 'Loại kho', 'Loại xe', 'ĐVVT', 'Thùng', 'Pallet', 'Tấn', 'GDO', 'Ghi chú', 'Ưu tiên'],
+      ['240526_BV_1', 'Tên NPP mẫu', 'Kho Ba Vì', '21/05/2026', 'Xuất', 'Khô', 'Xe tải 5T', 'NCC001', 100, 5, 2.5, 'GDO-001', '', ''],
     ])
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Import')
@@ -663,7 +685,7 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
                   <table className="min-w-full text-[10px]">
                     <thead className="bg-slate-50 sticky top-0">
                       <tr>
-                        {['#', 'Mã đơn', 'NPP', 'Kho', 'Ngày', 'Hướng', 'L.kho', 'L.xe', 'ĐVVT', 'Thùng', 'Pallet', 'Tấn', 'Lỗi'].map(h => (
+                        {['#', 'Mã đơn', 'NPP', 'Kho', 'Ngày', 'Hướng', 'L.kho', 'L.xe', 'ĐVVT', 'Thùng', 'Pallet', 'Tấn', 'UT', 'Lỗi'].map(h => (
                           <th key={h} className="px-2 py-1 text-left text-[9px] text-slate-500 font-medium whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
@@ -687,6 +709,7 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
                           <td className="px-2 py-0.5 tabular-nums">{r.planned_boxes ?? '—'}</td>
                           <td className="px-2 py-0.5 tabular-nums">{r.planned_pallets ?? '—'}</td>
                           <td className="px-2 py-0.5 tabular-nums">{r.planned_tons ?? '—'}</td>
+                          <td className="px-2 py-0.5 text-red-600 font-semibold">{r.priority ? 'x' : ''}</td>
                           <td className="px-2 py-0.5 text-red-500">{r.error}</td>
                         </tr>
                       ))}
@@ -1208,6 +1231,7 @@ export default function TMSBookings() {
                     />
                   )}
                 </TableHead>
+                <TableHead className="text-[9px] font-medium text-red-500 px-2 py-1.5 w-6">UT</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Mã đơn</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Tên NPP</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-10">Đặt giờ</TableHead>
@@ -1223,6 +1247,7 @@ export default function TMSBookings() {
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right">Tấn</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">SĐT</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Trạng thái</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Tình trạng XH</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-16"></TableHead>
               </TableRow>
             </TableHeader>
@@ -1245,6 +1270,11 @@ export default function TMSBookings() {
                         onChange={() => toggleOrder(order.id)}
                         onClick={e => e.stopPropagation()}
                       />
+                    )}
+                  </TableCell>
+                  <TableCell className="px-2 py-1 w-6 text-center">
+                    {isFirstSlot && order.priority && (
+                      <span className="text-[10px] font-bold text-red-600">x</span>
                     )}
                   </TableCell>
                   {/* Mã đơn — chỉ hiện ở dòng đầu của mỗi order, xe phụ để trống */}
@@ -1337,6 +1367,16 @@ export default function TMSBookings() {
                   </TableCell>
                   <TableCell className="px-2 py-1">
                     <StatusBadge status={vslot.status} />
+                  </TableCell>
+                  <TableCell className="px-2 py-1">
+                    {isFirstSlot && order.export_status && (
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium ${
+                        order.export_status === 'Đăng ký'  ? 'bg-amber-100 text-amber-700'  :
+                        order.export_status === 'Đang xuất' ? 'bg-blue-100 text-blue-700'   :
+                        order.export_status === 'Đã xuất'   ? 'bg-green-100 text-green-700' :
+                        'bg-slate-100 text-slate-600'
+                      }`}>{order.export_status}</span>
+                    )}
                   </TableCell>
                   <TableCell className="px-2 py-1">
                     <div className="flex items-center gap-0.5">

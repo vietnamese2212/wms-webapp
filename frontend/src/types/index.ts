@@ -432,6 +432,8 @@ export interface TmsOrder {
   planned_tons:    number | null
   gdo_refs:        string | null
   notes:           string | null
+  priority:        boolean
+  export_status:   string | null
   status:          string
   created_by:      string | null
   updated_by:      string | null

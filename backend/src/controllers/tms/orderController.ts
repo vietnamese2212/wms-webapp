@@ -210,7 +210,6 @@ export async function bulkUpdateOrderDate(req: Request, res: Response) {
     const { error } = await (supabase.from('TmsOrder') as any)
       .update({ date, updated_by: user?.emp_id || null, updated_at: now })
       .in('id', ids)
-      .eq('status', 'PENDING')
     if (error) return fail(res, error.message)
     return ok(res, { updated: ids.length })
   } catch (e) { return fail(res, String(e)) }

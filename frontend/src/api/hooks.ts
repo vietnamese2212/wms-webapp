@@ -1591,7 +1591,19 @@ export function useBulkUpdateOrderDate() {
   return useMutation({
     mutationFn: ({ ids, date }: { ids: string[]; date: string }) =>
       apiClient.patch('/tms/orders/bulk-date', { ids, date }).then(r => r.data.data as { updated: number }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-orders'] }),
+    onMutate: async ({ ids }) => {
+      await qc.cancelQueries({ queryKey: ['tms-orders'] })
+      const snapshots = qc.getQueriesData<import('@/types').TmsOrder[]>({ queryKey: ['tms-orders'] })
+      const idSet = new Set(ids)
+      qc.setQueriesData<import('@/types').TmsOrder[]>(
+        { queryKey: ['tms-orders'] },
+        old => old?.filter(o => !idSet.has(o.id)) ?? old,
+      )
+      return { snapshots }
+    },
+    onError: (_e, _v, ctx: { snapshots: [unknown, unknown][] } | undefined) =>
+      ctx?.snapshots.forEach(([k, d]) => qc.setQueryData(k as Parameters<typeof qc.setQueryData>[0], d)),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['tms-orders'] }),
   })
 }
 

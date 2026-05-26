@@ -859,9 +859,7 @@ function ChangeDateDialog({ open, orderIds, currentDate, onClose }: {
     if (newDate === currentDate) { setErr('Ngày mới phải khác ngày hiện tại'); return }
     setSaving(true)
     try {
-      for (const id of orderIds) {
-        await updateOrder.mutateAsync({ id, date: newDate })
-      }
+      await Promise.all(orderIds.map(id => updateOrder.mutateAsync({ id, date: newDate })))
       onClose()
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message

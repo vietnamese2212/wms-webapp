@@ -965,7 +965,7 @@ export default function TMSBookings() {
   const [editOrder, setEditOrder] = useState<TmsOrder | null>(null)
   const [bookingSlot, setBookingSlot] = useState<{ vslot: TmsVehicleSlot; order: TmsOrder } | null>(null)
   const [actionErr, setActionErr] = useState('')
-  const [hoveredGroup, setHoveredGroup] = useState<number | null>(null)
+  const [hoveredRow, setHoveredRow] = useState<string | null>(null)
   const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set())
   const [changeDateOpen, setChangeDateOpen] = useState(false)
 
@@ -1074,6 +1074,8 @@ export default function TMSBookings() {
     stt: number | null       // stable STT from full order list
     sttRowspan: number
     vehicleGroupKey: number  // same for all rows in the same vehicle group (= primary stt)
+    rowKey: string           // unique key for this row (matches <TableRow key>)
+    spanRowKeys: string[]    // all row keys in this vehicle group (for merged-cell hover)
     isFirstOrderRow: boolean
     groupStatus: string      // primary slot's status (for group background)
     groupParity: number      // 0 or 1 based on stable STT, for alternating booked colors
@@ -1123,11 +1125,16 @@ export default function TMSBookings() {
         const isFirstOrderRow = !seenOrderIds.has(order.id)
         seenOrderIds.add(order.id)
 
+        const primaryRowKey = `${order.id}-${slot.id}-${si}`
+        const secRowKeys = secondaries.map(sec => `${sec.order.id}-${sec.slot.id}-0`)
+        const spanRowKeys = [primaryRowKey, ...secRowKeys]
+
         rows.push({
           order, vslot: slot, slotIndex: si,
           isPrimary: true, secIndex: 0,
           stt, sttRowspan: totalRows,
           vehicleGroupKey: stt,
+          rowKey: primaryRowKey, spanRowKeys,
           isFirstOrderRow, groupStatus, groupParity,
           showSlotCell: true,
           slotCellRowspan: shouldMergeSlot ? totalRows : 1,
@@ -1137,11 +1144,13 @@ export default function TMSBookings() {
         for (const sec of secondaries) {
           const isSecFirstOrderRow = !seenOrderIds.has(sec.order.id)
           seenOrderIds.add(sec.order.id)
+          const secRowKey = `${sec.order.id}-${sec.slot.id}-0`
           rows.push({
             order: sec.order, vslot: sec.slot, slotIndex: 0,
             isPrimary: false, secIndex: secIdx++,
             stt: null, sttRowspan: 0,
             vehicleGroupKey: stt,
+            rowKey: secRowKey, spanRowKeys,
             isFirstOrderRow: isSecFirstOrderRow,
             groupStatus, groupParity,
             showSlotCell: !shouldMergeSlot,
@@ -1156,11 +1165,13 @@ export default function TMSBookings() {
       if (seenOrderIds.has(order.id)) continue
       const slot = order.vehicle_slots[0] ?? emptySlot(order)
       const stt = stableVehicleStt.get(`${order.id}/0`) ?? 0
+      const orphanRowKey = `${order.id}-${slot.id}-0`
       rows.push({
         order, vslot: slot, slotIndex: 0,
         isPrimary: true, secIndex: 0,
         stt, sttRowspan: 1,
         vehicleGroupKey: stt,
+        rowKey: orphanRowKey, spanRowKeys: [orphanRowKey],
         isFirstOrderRow: true,
         groupStatus: slot.status, groupParity: stt % 2,
         showSlotCell: true, slotCellRowspan: 1,
@@ -1361,24 +1372,34 @@ export default function TMSBookings() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {tableRows.map(({ order, vslot, slotIndex, isPrimary, secIndex, stt, sttRowspan, vehicleGroupKey, isFirstOrderRow, groupStatus, groupParity, showSlotCell, slotCellRowspan }, rowIndex) => {
+              {tableRows.map(({ order, vslot, slotIndex, isPrimary, secIndex, stt, sttRowspan, rowKey, spanRowKeys, isFirstOrderRow, groupStatus, groupParity, showSlotCell, slotCellRowspan }, rowIndex) => {
                 const isConsolidated = !!vslot.consolidation_group_id
-                const isHovered = hoveredGroup === vehicleGroupKey
-                const groupBg = (() => {
-                  if (groupStatus === 'BOOKED') return groupParity === 0
-                    ? (isHovered ? 'bg-green-100' : 'bg-green-50')
-                    : (isHovered ? 'bg-sky-100' : 'bg-sky-50')
-                  if (groupStatus === 'ARRIVED') return isHovered ? 'bg-blue-100' : 'bg-blue-50'
-                  if (groupStatus === 'DONE') return isHovered ? 'bg-slate-100' : 'bg-slate-50'
-                  if (isConsolidated) return isHovered ? 'bg-teal-100' : 'bg-teal-50'
-                  return isHovered ? 'bg-slate-50' : ''
+                const isRowHovered   = hoveredRow === rowKey
+                const isGroupHovered = spanRowKeys.includes(hoveredRow ?? '')
+                const baseBg = (() => {
+                  if (groupStatus === 'BOOKED') return groupParity === 0 ? 'bg-green-50' : 'bg-sky-50'
+                  if (groupStatus === 'ARRIVED') return 'bg-blue-50'
+                  if (groupStatus === 'DONE') return 'bg-slate-50'
+                  if (isConsolidated) return 'bg-teal-50'
+                  return ''
                 })()
+                const hoverBg = (() => {
+                  if (groupStatus === 'BOOKED') return groupParity === 0 ? 'bg-green-100' : 'bg-sky-100'
+                  if (groupStatus === 'ARRIVED') return 'bg-blue-100'
+                  if (groupStatus === 'DONE') return 'bg-slate-100'
+                  if (isConsolidated) return 'bg-teal-100'
+                  return 'bg-slate-50'
+                })()
+                // Merged cells respond to any row in the group being hovered
+                const mCellBg = isGroupHovered ? hoverBg : baseBg
+                // Non-merged cells respond only to their own row being hovered
+                const rCellBg = isRowHovered ? hoverBg : baseBg
                 return (
-                <TableRow key={`${order.id}-${vslot.id}-${slotIndex}`}
-                  onMouseEnter={() => setHoveredGroup(vehicleGroupKey)}
-                  onMouseLeave={() => setHoveredGroup(null)}
+                <TableRow key={rowKey}
+                  onMouseEnter={() => setHoveredRow(rowKey)}
+                  onMouseLeave={() => setHoveredRow(null)}
                   className={[
-                  groupBg,
+                  'hover:bg-transparent',
                   // Left border: standalone slate | xe chính teal | xe phụ purple | đơn phụ teal-400
                   isPrimary
                     ? (slotIndex > 0 ? 'border-l-4 border-l-purple-400' : (isConsolidated ? 'border-l-4 border-l-teal-600' : 'border-l-4 border-l-slate-300'))
@@ -1389,11 +1410,11 @@ export default function TMSBookings() {
                     : !isPrimary ? 'border-t border-t-slate-200' : '',
                 ].filter(Boolean).join(' ')}>
                   {stt !== null && (
-                    <TableCell rowSpan={sttRowspan} className="px-1 py-1 w-6 text-center align-middle border-r border-slate-100">
+                    <TableCell rowSpan={sttRowspan} className={`px-1 py-1 w-6 text-center align-middle border-r border-slate-100 ${mCellBg}`}>
                       {!!vslot.slot_id && <ChevronRight className="h-3.5 w-3.5 text-red-500 mx-auto" />}
                     </TableCell>
                   )}
-                  <TableCell className="px-2 py-1 w-8">
+                  <TableCell className={`px-2 py-1 w-8 ${rCellBg}`}>
                     {isFirstOrderRow && checkableOrderIds.includes(order.id) && (
                       <input
                         type="checkbox"
@@ -1404,10 +1425,10 @@ export default function TMSBookings() {
                       />
                     )}
                   </TableCell>
-                  <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">
+                  <TableCell className={`px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap ${rCellBg}`}>
                     {order.order_code || <span className="text-slate-400 font-normal">—</span>}
                   </TableCell>
-                  <TableCell className="px-2 py-1 text-[10px] font-semibold max-w-[140px] truncate">
+                  <TableCell className={`px-2 py-1 text-[10px] font-semibold max-w-[140px] truncate ${rCellBg}`}>
                     {isPrimary
                       ? (slotIndex > 0
                           ? <span className="flex flex-col gap-0 pl-2">
@@ -1429,7 +1450,7 @@ export default function TMSBookings() {
                   </TableCell>
 
                   {/* Đặt giờ — luôn hiện cho mỗi vehicle slot */}
-                  <TableCell className="px-2 py-1">
+                  <TableCell className={`px-2 py-1 ${rCellBg}`}>
                     {vslot.id && !vslot.id.startsWith('_temp_') && canBookSlot(vslot) && (
                       <button
                         onClick={e => { e.stopPropagation(); setBookingSlot({ vslot, order }) }}
@@ -1442,7 +1463,7 @@ export default function TMSBookings() {
                   </TableCell>
 
                   {showSlotCell && (
-                    <TableCell rowSpan={slotCellRowspan > 1 ? slotCellRowspan : undefined} className="px-2 py-1 text-[10px] align-middle">
+                    <TableCell rowSpan={slotCellRowspan > 1 ? slotCellRowspan : undefined} className={`px-2 py-1 text-[10px] align-middle ${slotCellRowspan > 1 ? mCellBg : rCellBg}`}>
                       {vslot.slot && (
                         <span className="font-mono">{vslot.slot.time_from.slice(0, 5)}–{vslot.slot.time_to.slice(0, 5)}</span>
                       )}
@@ -1450,7 +1471,7 @@ export default function TMSBookings() {
                   )}
                   {/* Biển số — merge qua tất cả rows cùng vehicle group */}
                   {stt !== null && (
-                    <TableCell rowSpan={sttRowspan > 1 ? sttRowspan : undefined} className="px-2 py-1 text-[10px] font-mono font-semibold align-middle">
+                    <TableCell rowSpan={sttRowspan > 1 ? sttRowspan : undefined} className={`px-2 py-1 text-[10px] font-mono font-semibold align-middle ${mCellBg}`}>
                       {vslot.license_plate ? (
                         <span className="flex items-center gap-0.5">
                           {user?.employee_code && vslot.license_plate === user.employee_code && (
@@ -1462,16 +1483,16 @@ export default function TMSBookings() {
                     </TableCell>
                   )}
                   {stt !== null && (
-                    <TableCell rowSpan={sttRowspan > 1 ? sttRowspan : undefined} className="px-2 py-1 text-[10px] max-w-[120px] truncate text-slate-500 align-middle">
+                    <TableCell rowSpan={sttRowspan > 1 ? sttRowspan : undefined} className={`px-2 py-1 text-[10px] max-w-[120px] truncate text-slate-500 align-middle ${mCellBg}`}>
                       {order.ncc?.name || <span className="text-slate-300">—</span>}
                     </TableCell>
                   )}
-                  <TableCell className="px-2 py-1 w-6 text-center">
+                  <TableCell className={`px-2 py-1 w-6 text-center ${rCellBg}`}>
                     {order.priority && <span className="text-[10px] font-bold text-red-600">x</span>}
                   </TableCell>
                   {/* Hướng — merge qua tất cả rows cùng vehicle group */}
                   {stt !== null && (
-                    <TableCell rowSpan={sttRowspan > 1 ? sttRowspan : undefined} className="px-2 py-1 text-[10px] align-middle">
+                    <TableCell rowSpan={sttRowspan > 1 ? sttRowspan : undefined} className={`px-2 py-1 text-[10px] align-middle ${mCellBg}`}>
                       {order.direction ? (
                         <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${order.direction === 'OUTBOUND' ? 'bg-orange-100 text-orange-700' : 'bg-teal-100 text-teal-700'}`}>
                           {order.direction === 'OUTBOUND' ? 'Xuất' : 'Nhập'}
@@ -1480,43 +1501,43 @@ export default function TMSBookings() {
                     </TableCell>
                   )}
                   {isNccUser && !warehouseId && (
-                    <TableCell className="px-2 py-1 text-[10px] text-slate-500">
+                    <TableCell className={`px-2 py-1 text-[10px] text-slate-500 ${rCellBg}`}>
                       {(warehouses as { id: string; name: string }[]).find(w => w.id === order.warehouse_id)?.name ?? '—'}
                     </TableCell>
                   )}
                   {/* Loại kho — merge qua tất cả rows cùng vehicle group */}
                   {stt !== null && (
-                    <TableCell rowSpan={sttRowspan > 1 ? sttRowspan : undefined} className="px-2 py-1 text-[10px] align-middle">
+                    <TableCell rowSpan={sttRowspan > 1 ? sttRowspan : undefined} className={`px-2 py-1 text-[10px] align-middle ${mCellBg}`}>
                       {order.warehouse_type || <span className="text-slate-400">—</span>}
                     </TableCell>
                   )}
-                  <TableCell className="px-2 py-1 text-[10px]">
+                  <TableCell className={`px-2 py-1 text-[10px] ${rCellBg}`}>
                     {order.vehicle_type || <span className="text-slate-400">—</span>}
                   </TableCell>
-                  <TableCell className="px-2 py-1 text-[10px] tabular-nums text-right">
+                  <TableCell className={`px-2 py-1 text-[10px] tabular-nums text-right ${rCellBg}`}>
                     {order.planned_boxes != null
                       ? <>{order.planned_boxes}<span className="text-slate-400 text-[9px]"> thùng</span></>
                       : <span className="text-slate-400">—</span>}
                   </TableCell>
-                  <TableCell className="px-2 py-1 text-[10px] tabular-nums text-right">
+                  <TableCell className={`px-2 py-1 text-[10px] tabular-nums text-right ${rCellBg}`}>
                     {order.planned_pallets != null
                       ? <>{order.planned_pallets}<span className="text-slate-400 text-[9px]"> pl</span></>
                       : <span className="text-slate-400">—</span>}
                   </TableCell>
-                  <TableCell className="px-2 py-1 text-[10px] tabular-nums text-right">
+                  <TableCell className={`px-2 py-1 text-[10px] tabular-nums text-right ${rCellBg}`}>
                     {order.planned_tons != null
                       ? <>{order.planned_tons}<span className="text-slate-400 text-[9px]"> t</span></>
                       : <span className="text-slate-400">—</span>}
                   </TableCell>
-                  <TableCell className="px-2 py-1 text-[10px] text-slate-500">
+                  <TableCell className={`px-2 py-1 text-[10px] text-slate-500 ${rCellBg}`}>
                     {vslot.driver_phone || <span className="text-slate-400">—</span>}
                   </TableCell>
                   {stt !== null && (
-                    <TableCell rowSpan={sttRowspan > 1 ? sttRowspan : undefined} className="px-2 py-1 align-middle">
+                    <TableCell rowSpan={sttRowspan > 1 ? sttRowspan : undefined} className={`px-2 py-1 align-middle ${mCellBg}`}>
                       <StatusBadge status={groupStatus} />
                     </TableCell>
                   )}
-                  <TableCell className="px-2 py-1">
+                  <TableCell className={`px-2 py-1 ${rCellBg}`}>
                     {order.export_status && (
                       <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium ${
                         order.export_status === 'Đăng ký'  ? 'bg-amber-100 text-amber-700'  :
@@ -1526,7 +1547,7 @@ export default function TMSBookings() {
                       }`}>{order.export_status}</span>
                     )}
                   </TableCell>
-                  <TableCell className="px-2 py-1">
+                  <TableCell className={`px-2 py-1 ${rCellBg}`}>
                     <div className="flex items-center gap-0.5">
                       {/* Sửa đơn — lần xuất hiện đầu của mỗi order */}
                       {isFirstOrderRow && canEditOrder(order) && (

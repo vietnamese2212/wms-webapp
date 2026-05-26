@@ -1030,26 +1030,25 @@ export default function TMSBookings() {
 
   // Sắp xếp: nhóm consolidation gần nhau (primary trước, secondaries theo sau)
   const sortedOrders = useMemo<TmsOrder[]>(() => {
+    // Dùng find thay vì [0] — API không đảm bảo thứ tự vehicle_slots theo created_at
+    const conSlot = (o: TmsOrder) => o.vehicle_slots.find(vs => vs.consolidation_group_id) ?? o.vehicle_slots[0]
     const visited = new Set<string>()
     const result: TmsOrder[] = []
     for (const order of filteredOrders) {
       if (visited.has(order.id)) continue
-      const xeChinhSlot = order.vehicle_slots[0]
-      if (xeChinhSlot?.consolidation_group_id && xeChinhSlot.is_consolidation_primary) {
-        // Primary: thêm mình + kéo tất cả secondary cùng group
+      const cs = conSlot(order)
+      if (cs?.consolidation_group_id && cs.is_consolidation_primary) {
         result.push(order); visited.add(order.id)
         for (const other of filteredOrders) {
           if (visited.has(other.id)) continue
-          if (other.vehicle_slots[0]?.consolidation_group_id === xeChinhSlot.consolidation_group_id) {
+          if (conSlot(other)?.consolidation_group_id === cs.consolidation_group_id) {
             result.push(other); visited.add(other.id)
           }
         }
-      } else if (!xeChinhSlot?.consolidation_group_id) {
+      } else if (!cs?.consolidation_group_id) {
         result.push(order); visited.add(order.id)
       }
-      // Secondary chưa visited sẽ bị skip (primary sẽ pull vào đúng vị trí)
     }
-    // Fallback: secondary mà primary không có trong filteredOrders
     for (const order of filteredOrders) {
       if (!visited.has(order.id)) { result.push(order); visited.add(order.id) }
     }
@@ -1260,9 +1259,10 @@ export default function TMSBookings() {
                 const isCPrimary    = !!vslot.is_consolidation_primary
                 return (
                 <TableRow key={`${order.id}-${vslot.id}`} className={[
-                  rowBg(vslot.status),
-                  !isFirstSlot ? 'border-l-4 border-l-purple-300' : '',
-                  isFirstSlot && isConsolidated && !isCPrimary ? 'border-l-4 border-l-teal-400' : '',
+                  isConsolidated ? 'bg-teal-50 hover:bg-teal-100' : rowBg(vslot.status),
+                  isConsolidated
+                    ? (isCPrimary && isFirstSlot ? 'border-l-4 border-l-teal-600' : 'border-l-4 border-l-teal-400')
+                    : (!isFirstSlot ? 'border-l-4 border-l-purple-300' : ''),
                 ].filter(Boolean).join(' ')}>
                   <TableCell className="px-2 py-1 w-8">
                     {isFirstSlot && checkableOrderIds.includes(order.id) && (
@@ -1293,7 +1293,12 @@ export default function TMSBookings() {
                   </TableCell>
                   <TableCell className="px-2 py-1 text-[10px] font-semibold max-w-[140px] truncate">
                     {isFirstSlot
-                      ? (order.npp_name || <span className="text-slate-400 font-normal">—</span>)
+                      ? <span className="flex flex-col gap-0">
+                          <span className="truncate">{order.npp_name || <span className="text-slate-400 font-normal">—</span>}</span>
+                          {isConsolidated && !isCPrimary && (
+                            <span className="text-[9px] text-teal-600 font-medium">↑ cùng xe</span>
+                          )}
+                        </span>
                       : <span className="inline-flex items-center gap-1 text-[9px] text-purple-500 pl-3">
                           <span>↳</span>
                           <span className="font-medium">Xe phụ {slotIndex}</span>

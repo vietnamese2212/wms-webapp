@@ -112,6 +112,7 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
   {can(perms, 'module_key', 'action_key') && <Button onClick={...}>...</Button>}
   ```
 - `perms` lấy từ `useAuthStore(s => s.user)` — import `can, type ModulePermissions` từ `@/config/permissions`.
+- **Mỗi nút action = 1 permission riêng — không gộp.** Không dùng permission `manage` duy nhất để gate nhiều loại action khác nhau. Ví dụ: nút "Thêm", "Sửa", "Xóa" trong cùng module là 3 permission `create`, `edit`, `delete` riêng biệt — không gộp thành 1 `manage`.
 - Khi thêm action mới: (1) thêm key vào `MODULES` trong `frontend/src/config/permissions.ts`; (2) thêm vào `backend/src/config/permissions.ts` — **bắt buộc**, đây là nguồn `ALL_PERMISSIONS` admin nhận lúc login, thiếu thì admin không có quyền dù là superadmin; (3) gate nút frontend; (4) thêm `requirePerm('module', 'action')` trên route backend.
 - Backend enforce qua `requirePerm` middleware — frontend chỉ ẩn nút, không phải điểm bảo mật duy nhất.
 ---

@@ -975,8 +975,15 @@ function ChangeDateDialog({ open, orderIds, currentDate, onClose }: {
 export default function TMSBookings() {
   const user = useAuthStore(s => s.user)
   const perms = (user?.module_permissions as ModulePermissions | null) ?? null
-  const canManage = can(perms, 'tms_plan', 'manage')
-  const canBook   = can(perms, 'tms_plan', 'book')
+  const canCreate     = can(perms, 'tms_plan', 'create')
+  const canEdit       = can(perms, 'tms_plan', 'edit')
+  const canDelete     = can(perms, 'tms_plan', 'delete')
+  const canAddVehicle = can(perms, 'tms_plan', 'add_vehicle')
+  const canRelease    = can(perms, 'tms_plan', 'release')
+  const canChangeDate = can(perms, 'tms_plan', 'change_date')
+  const canBook       = can(perms, 'tms_plan', 'book')
+  const canRevoke     = can(perms, 'tms_plan', 'revoke')
+  const canUpload     = can(perms, 'tms_plan', 'upload_outbound') || can(perms, 'tms_plan', 'upload_inbound')
   const isNccUser = user?.department === 'Đơn vị vận tải'
 
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -1238,25 +1245,25 @@ export default function TMSBookings() {
   }
 
   const canEditOrder = (o: TmsOrder) =>
-    canManage && o.vehicle_slots.every(vs => vs.status === 'PENDING')
+    canEdit && o.vehicle_slots.every(vs => vs.status === 'PENDING')
 
   const canBookSlot = (vs: TmsVehicleSlot) =>
     canBook && ['PENDING','BOOKED'].includes(vs.status) &&
     (!vs.slot || !isSlotTimePassed(vs.slot.date ?? '', vs.slot.time_from ?? ''))
 
-  const canRelease = (vs: TmsVehicleSlot) =>
-    canManage && vs.status === 'BOOKED' &&
+  const canReleaseSlot = (vs: TmsVehicleSlot) =>
+    canRelease && vs.status === 'BOOKED' &&
     (!vs.slot || !isSlotTimePassed(vs.slot.date ?? '', vs.slot.time_from ?? ''))
 
   // Revoke: quyền đặc biệt, bỏ qua kiểm tra giờ — chỉ hiện khi Release không khả dụng
-  const canRevoke = (vs: TmsVehicleSlot) =>
-    can(perms, 'tms_plan', 'revoke') &&
+  const canRevokeSlot = (vs: TmsVehicleSlot) =>
+    canRevoke &&
     ['BOOKED', 'ARRIVED'].includes(vs.status) &&
-    !canRelease(vs)
+    !canReleaseSlot(vs)
 
   const checkableOrderIds = useMemo(() =>
-    canManage ? filteredOrders.filter(o => o.vehicle_slots.every(vs => vs.status === 'PENDING')).map(o => o.id) : [],
-    [filteredOrders, canManage]
+    canChangeDate ? filteredOrders.filter(o => o.vehicle_slots.every(vs => vs.status === 'PENDING')).map(o => o.id) : [],
+    [filteredOrders, canChangeDate]
   )
   const allChecked = checkableOrderIds.length > 0 && checkableOrderIds.every(id => selectedOrderIds.has(id))
   const someChecked = !allChecked && checkableOrderIds.some(id => selectedOrderIds.has(id))
@@ -1327,15 +1334,15 @@ export default function TMSBookings() {
                 <Eye className="h-3.5 w-3.5 shrink-0" /><span className="hidden sm:inline ml-1">Xem booking</span>
               </Button>
             )}
-            {canManage && (
-              <>
-                <Button variant="outline" size="sm" onClick={() => setUploadOpen(true)} className="h-8 px-2">
-                  <Upload className="h-3.5 w-3.5 shrink-0" /><span className="hidden sm:inline ml-1">Upload Excel</span>
-                </Button>
-                <Button size="sm" onClick={() => setCreateOpen(true)} disabled={!warehouseId} className="h-8 px-2">
-                  <Plus className="h-3.5 w-3.5 shrink-0" /><span className="hidden sm:inline ml-1">Thêm đơn</span>
-                </Button>
-              </>
+            {canUpload && (
+              <Button variant="outline" size="sm" onClick={() => setUploadOpen(true)} className="h-8 px-2">
+                <Upload className="h-3.5 w-3.5 shrink-0" /><span className="hidden sm:inline ml-1">Upload Excel</span>
+              </Button>
+            )}
+            {canCreate && (
+              <Button size="sm" onClick={() => setCreateOpen(true)} disabled={!warehouseId} className="h-8 px-2">
+                <Plus className="h-3.5 w-3.5 shrink-0" /><span className="hidden sm:inline ml-1">Thêm đơn</span>
+              </Button>
             )}
           </div>
         </div>
@@ -1360,7 +1367,7 @@ export default function TMSBookings() {
               <MultiSelectFilter label="Loại xe" options={loaiXeOptions} selected={loaiXeFilter} onChange={setLoaiXeFilter} />
             </>
           )}
-          {canManage && selectedOrderIds.size > 0 && (
+          {canChangeDate && selectedOrderIds.size > 0 && (
             <div className="flex items-center gap-2 w-full py-0.5">
               <span className="text-xs text-slate-600 font-medium">{selectedOrderIds.size} đơn đã chọn</span>
               <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => setChangeDateOpen(true)}>
@@ -1604,7 +1611,7 @@ export default function TMSBookings() {
                         </button>
                       )}
                       {/* Thêm xe phụ — dòng cuối của order, chỉ điều vận, chỉ khi xe chính đã BOOKED */}
-                      {isPrimary && canManage && order.vehicle_slots.length > 0 && order.vehicle_slots[order.vehicle_slots.length - 1].id === vslot.id && order.vehicle_slots[0].status !== 'PENDING' && (
+                      {isPrimary && canAddVehicle && order.vehicle_slots.length > 0 && order.vehicle_slots[order.vehicle_slots.length - 1].id === vslot.id && order.vehicle_slots[0].status !== 'PENDING' && (
                         <button
                           onClick={e => handleAddVehicleSlot(e, order.id)}
                           className="text-purple-400 hover:text-purple-600 p-1 rounded"
@@ -1614,7 +1621,7 @@ export default function TMSBookings() {
                         </button>
                       )}
                       {/* Trả lại — xe chính (slotIndex=0) và đơn phụ (!isPrimary) */}
-                      {vslot.id && (slotIndex === 0 || !isPrimary) && canRelease(vslot) && (
+                      {vslot.id && (slotIndex === 0 || !isPrimary) && canReleaseSlot(vslot) && (
                         <button
                           onClick={e => handleRelease(e, vslot.id)}
                           className="text-amber-400 hover:text-amber-600 p-1 rounded"
@@ -1624,7 +1631,7 @@ export default function TMSBookings() {
                         </button>
                       )}
                       {/* Revoke — quyền đặc biệt, bỏ qua giờ */}
-                      {vslot.id && (slotIndex === 0 || !isPrimary) && canRevoke(vslot) && (
+                      {vslot.id && (slotIndex === 0 || !isPrimary) && canRevokeSlot(vslot) && (
                         <button
                           onClick={e => handleRevoke(e, vslot.id)}
                           className="text-rose-400 hover:text-rose-600 p-1 rounded"
@@ -1634,7 +1641,7 @@ export default function TMSBookings() {
                         </button>
                       )}
                       {/* Xe phụ (slotIndex > 0): trả lại + xóa slot */}
-                      {vslot.id && isPrimary && slotIndex > 0 && canManage && ['PENDING', 'BOOKED'].includes(vslot.status) && (!vslot.slot || !isSlotTimePassed(vslot.slot.date ?? '', vslot.slot.time_from ?? '')) && (
+                      {vslot.id && isPrimary && slotIndex > 0 && canAddVehicle && ['PENDING', 'BOOKED'].includes(vslot.status) && (!vslot.slot || !isSlotTimePassed(vslot.slot.date ?? '', vslot.slot.time_from ?? '')) && (
                         <button
                           onClick={e => handleReleaseAndDeleteVslot(e, vslot)}
                           className="text-amber-400 hover:text-amber-600 p-1 rounded"
@@ -1644,7 +1651,7 @@ export default function TMSBookings() {
                         </button>
                       )}
                       {/* Xóa đơn — lần xuất hiện đầu, khi tất cả slots PENDING */}
-                      {isFirstOrderRow && canManage && order.vehicle_slots.every(vs => vs.status === 'PENDING') && (
+                      {isFirstOrderRow && canDelete && order.vehicle_slots.every(vs => vs.status === 'PENDING') && (
                         <button
                           onClick={e => handleDeleteOrder(e, order.id)}
                           className="text-red-400 hover:text-red-600 p-1 rounded"

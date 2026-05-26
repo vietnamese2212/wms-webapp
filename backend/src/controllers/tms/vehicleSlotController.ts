@@ -122,20 +122,28 @@ export async function updateVehicleSlot(req: Request, res: Response) {
     let newGroupId: string | null = null
     const orderIds = Array.isArray(consolidation_order_ids) ? consolidation_order_ids as string[] : []
     if (orderIds.length > 0) {
-      // Kiểm tra hướng: Xuất chỉ đi với Xuất, Nhập chỉ đi với Nhập
+      // Kiểm tra hướng và loại kho trước khi gom đơn
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: primaryOrder } = await (supabase.from('TmsOrder') as any)
-        .select('direction').eq('id', existing.order_id).single()
+        .select('direction, warehouse_type').eq('id', existing.order_id).single()
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: secondaryOrders } = await (supabase.from('TmsOrder') as any)
+        .select('direction, warehouse_type').in('id', orderIds)
       if (primaryOrder?.direction) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: secondaryOrders } = await (supabase.from('TmsOrder') as any)
-          .select('direction').in('id', orderIds)
         const hasWrongDir = (secondaryOrders ?? []).some(
           (o: { direction: string }) => o.direction !== primaryOrder.direction
         )
         if (hasWrongDir) {
           const dirLabel = primaryOrder.direction === 'OUTBOUND' ? 'Xuất' : 'Nhập'
           return fail(res, `Không thể gom đơn khác hướng: ${dirLabel} chỉ đi với ${dirLabel}`, 400)
+        }
+      }
+      if (primaryOrder?.warehouse_type) {
+        const hasWrongType = (secondaryOrders ?? []).some(
+          (o: { warehouse_type: string | null }) => o.warehouse_type && o.warehouse_type !== primaryOrder.warehouse_type
+        )
+        if (hasWrongType) {
+          return fail(res, `Không thể gom đơn khác loại kho: chỉ gom được các đơn cùng loại kho "${primaryOrder.warehouse_type}"`, 400)
         }
       }
       if (existing.status === 'PENDING') {

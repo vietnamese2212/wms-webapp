@@ -1044,15 +1044,37 @@ export default function TMSBookings() {
   }, [orders, huongFilter, dvvtFilter, loaiKhoFilter, loaiXeFilter, khungGioFilter])
 
 
+  // STT ổn định theo toàn kho (không nhảy khi filter) — pre-compute trên ALL orders
+  const stableVehicleStt = useMemo<Map<string, number>>(() => {
+    const map = new Map<string, number>()
+    let stt = 0
+    for (const o of (orders as TmsOrder[])) {
+      const slots = o.vehicle_slots.length > 0 ? o.vehicle_slots : [null as unknown as TmsVehicleSlot]
+      for (let si = 0; si < slots.length; si++) {
+        const s = slots[si]
+        if (s && s.consolidation_group_id && !s.is_consolidation_primary) continue
+        map.set(`${o.id}/${si}`, ++stt)
+      }
+    }
+    // Orphans (all slots are secondary)
+    for (const o of (orders as TmsOrder[])) {
+      if (o.vehicle_slots.some((_, si) => map.has(`${o.id}/${si}`))) continue
+      map.set(`${o.id}/0`, ++stt)
+    }
+    return map
+  }, [orders])
+
   // STT = 1 physical vehicle booking (primary/standalone slot). Secondary orders = sub-rows.
   type TableRow = {
     order: TmsOrder; vslot: TmsVehicleSlot
     slotIndex: number        // index of vslot in order.vehicle_slots (0 = xe chính, >0 = xe phụ)
     isPrimary: boolean       // true = vehicle group header; false = secondary order sub-row
     secIndex: number         // for !isPrimary: ordinal within vehicle group (1, 2, ...)
-    stt: number | null
+    stt: number | null       // stable STT from full order list
     sttRowspan: number
-    isFirstOrderRow: boolean // first row where this order appears (for checkbox/edit/delete)
+    isFirstOrderRow: boolean
+    groupStatus: string      // primary slot's status (for group background)
+    groupParity: number      // 0 or 1 based on stable STT, for alternating booked colors
     showSlotCell: boolean
     slotCellRowspan: number
   }
@@ -1070,7 +1092,6 @@ export default function TMSBookings() {
     }
 
     const rows: TableRow[] = []
-    let stt = 0
     const seenOrderIds = new Set<string>()
 
     const emptySlot = (o: TmsOrder): TmsVehicleSlot => ({
@@ -1085,10 +1106,12 @@ export default function TMSBookings() {
       const slots = order.vehicle_slots.length > 0 ? order.vehicle_slots : [emptySlot(order)]
       for (let si = 0; si < slots.length; si++) {
         const slot = slots[si]
-        // Secondary slots are sub-rows under their primary — skip here
         if (slot.consolidation_group_id && !slot.is_consolidation_primary) continue
 
-        stt++
+        const stt = stableVehicleStt.get(`${order.id}/${si}`) ?? 0
+        const groupParity = stt % 2
+        const groupStatus = slot.status
+
         const secondaries = slot.consolidation_group_id
           ? (secondsByGroupId.get(slot.consolidation_group_id) ?? [])
           : []
@@ -1102,7 +1125,7 @@ export default function TMSBookings() {
           order, vslot: slot, slotIndex: si,
           isPrimary: true, secIndex: 0,
           stt, sttRowspan: totalRows,
-          isFirstOrderRow,
+          isFirstOrderRow, groupStatus, groupParity,
           showSlotCell: true,
           slotCellRowspan: shouldMergeSlot ? totalRows : 1,
         })
@@ -1116,6 +1139,7 @@ export default function TMSBookings() {
             isPrimary: false, secIndex: secIdx++,
             stt: null, sttRowspan: 0,
             isFirstOrderRow: isSecFirstOrderRow,
+            groupStatus, groupParity,
             showSlotCell: !shouldMergeSlot,
             slotCellRowspan: shouldMergeSlot ? 0 : 1,
           })
@@ -1127,12 +1151,13 @@ export default function TMSBookings() {
     for (const order of filteredOrders) {
       if (seenOrderIds.has(order.id)) continue
       const slot = order.vehicle_slots[0] ?? emptySlot(order)
-      stt++
+      const stt = stableVehicleStt.get(`${order.id}/0`) ?? 0
       rows.push({
         order, vslot: slot, slotIndex: 0,
         isPrimary: true, secIndex: 0,
         stt, sttRowspan: 1,
         isFirstOrderRow: true,
+        groupStatus: slot.status, groupParity: stt % 2,
         showSlotCell: true, slotCellRowspan: 1,
       })
       seenOrderIds.add(order.id)
@@ -1331,11 +1356,18 @@ export default function TMSBookings() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {tableRows.map(({ order, vslot, slotIndex, isPrimary, secIndex, stt, sttRowspan, isFirstOrderRow, showSlotCell, slotCellRowspan }, rowIndex) => {
+              {tableRows.map(({ order, vslot, slotIndex, isPrimary, secIndex, stt, sttRowspan, isFirstOrderRow, groupStatus, groupParity, showSlotCell, slotCellRowspan }, rowIndex) => {
                 const isConsolidated = !!vslot.consolidation_group_id
+                const groupBg = (() => {
+                  if (groupStatus === 'BOOKED') return groupParity === 0 ? 'bg-green-50 hover:bg-green-100' : 'bg-sky-50 hover:bg-sky-100'
+                  if (groupStatus === 'ARRIVED') return 'bg-blue-50 hover:bg-blue-100'
+                  if (groupStatus === 'DONE') return 'bg-slate-50 hover:bg-slate-100'
+                  if (isConsolidated) return 'bg-teal-50 hover:bg-teal-100'
+                  return 'hover:bg-slate-50'
+                })()
                 return (
                 <TableRow key={`${order.id}-${vslot.id}-${slotIndex}`} className={[
-                  isConsolidated ? 'bg-teal-50 hover:bg-teal-100' : rowBg(vslot.status),
+                  groupBg,
                   // Left border: xe chính teal | xe phụ (primary vehicle header) purple | đơn phụ (secondary order) teal-400
                   isPrimary
                     ? (slotIndex > 0 ? 'border-l-4 border-l-purple-400' : (isConsolidated ? 'border-l-4 border-l-teal-600' : ''))
@@ -1405,37 +1437,46 @@ export default function TMSBookings() {
                       )}
                     </TableCell>
                   )}
-                  <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold">
-                    {vslot.license_plate ? (
-                      <span className="flex items-center gap-0.5">
-                        {user?.employee_code && vslot.license_plate === user.employee_code && (
-                          <Star className="h-3 w-3 fill-yellow-400 text-yellow-400 shrink-0" />
-                        )}
-                        {vslot.license_plate}
-                      </span>
-                    ) : <span className="text-slate-400 font-normal">—</span>}
-                  </TableCell>
+                  {/* Biển số — merge qua tất cả rows cùng vehicle group */}
+                  {stt !== null && (
+                    <TableCell rowSpan={sttRowspan > 1 ? sttRowspan : undefined} className="px-2 py-1 text-[10px] font-mono font-semibold align-middle">
+                      {vslot.license_plate ? (
+                        <span className="flex items-center gap-0.5">
+                          {user?.employee_code && vslot.license_plate === user.employee_code && (
+                            <Star className="h-3 w-3 fill-yellow-400 text-yellow-400 shrink-0" />
+                          )}
+                          {vslot.license_plate}
+                        </span>
+                      ) : <span className="text-slate-400 font-normal">—</span>}
+                    </TableCell>
+                  )}
                   <TableCell className="px-2 py-1 text-[10px] max-w-[120px] truncate text-slate-500">
                     {order.ncc?.name || <span className="text-slate-300">—</span>}
                   </TableCell>
                   <TableCell className="px-2 py-1 w-6 text-center">
                     {order.priority && <span className="text-[10px] font-bold text-red-600">x</span>}
                   </TableCell>
-                  <TableCell className="px-2 py-1 text-[10px]">
-                    {order.direction ? (
-                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${order.direction === 'OUTBOUND' ? 'bg-orange-100 text-orange-700' : 'bg-teal-100 text-teal-700'}`}>
-                        {order.direction === 'OUTBOUND' ? 'Xuất' : 'Nhập'}
-                      </span>
-                    ) : <span className="text-slate-400">—</span>}
-                  </TableCell>
+                  {/* Hướng — merge qua tất cả rows cùng vehicle group */}
+                  {stt !== null && (
+                    <TableCell rowSpan={sttRowspan > 1 ? sttRowspan : undefined} className="px-2 py-1 text-[10px] align-middle">
+                      {order.direction ? (
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${order.direction === 'OUTBOUND' ? 'bg-orange-100 text-orange-700' : 'bg-teal-100 text-teal-700'}`}>
+                          {order.direction === 'OUTBOUND' ? 'Xuất' : 'Nhập'}
+                        </span>
+                      ) : <span className="text-slate-400">—</span>}
+                    </TableCell>
+                  )}
                   {isNccUser && !warehouseId && (
                     <TableCell className="px-2 py-1 text-[10px] text-slate-500">
                       {(warehouses as { id: string; name: string }[]).find(w => w.id === order.warehouse_id)?.name ?? '—'}
                     </TableCell>
                   )}
-                  <TableCell className="px-2 py-1 text-[10px]">
-                    {order.warehouse_type || <span className="text-slate-400">—</span>}
-                  </TableCell>
+                  {/* Loại kho — merge qua tất cả rows cùng vehicle group */}
+                  {stt !== null && (
+                    <TableCell rowSpan={sttRowspan > 1 ? sttRowspan : undefined} className="px-2 py-1 text-[10px] align-middle">
+                      {order.warehouse_type || <span className="text-slate-400">—</span>}
+                    </TableCell>
+                  )}
                   <TableCell className="px-2 py-1 text-[10px]">
                     {order.vehicle_type || <span className="text-slate-400">—</span>}
                   </TableCell>

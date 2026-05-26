@@ -110,7 +110,7 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
   {can(perms, 'module_key', 'action_key') && <Button onClick={...}>...</Button>}
   ```
 - `perms` lấy từ `useAuthStore(s => s.user)` — import `can, type ModulePermissions` từ `@/config/permissions`.
-- Khi thêm action mới: (1) thêm key vào `MODULES` trong `permissions.ts` → tự hiện trong UI phân quyền Chức danh; (2) gate nút frontend; (3) thêm `requirePerm('module', 'action')` trên route backend.
+- Khi thêm action mới: (1) thêm key vào `MODULES` trong `frontend/src/config/permissions.ts`; (2) thêm vào `backend/src/config/permissions.ts` — **bắt buộc**, đây là nguồn `ALL_PERMISSIONS` admin nhận lúc login, thiếu thì admin không có quyền dù là superadmin; (3) gate nút frontend; (4) thêm `requirePerm('module', 'action')` trên route backend.
 - Backend enforce qua `requirePerm` middleware — frontend chỉ ẩn nút, không phải điểm bảo mật duy nhất.
 ---
 ## Tech Stack
@@ -153,7 +153,6 @@ PENDING / chưa xử lý     →  hover:bg-slate-50  (nền trắng)
 
 **Kiểu filter Excel** — mọi dropdown filter phải theo nguyên tắc:
 1. **Search contains** — ô tìm kiếm trong dropdown, không phân biệt hoa thường
-2. **Options từ data thực** — không hardcode; lấy từ API hoặc tính từ data hiện có
 3. **Multi-select + "Tất cả"** — dùng `MultiSelectFilter` từ `@/components/shared/MultiSelectFilter`
 4. **Checkbox vuông + dấu tích** — hiển thị trạng thái chọn từng item
 

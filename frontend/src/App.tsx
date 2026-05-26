@@ -1,7 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { Shell } from '@/components/layout/Shell'
 import { useAuthStore } from '@/stores/authStore'
-import { canAccess, isAdmin, type ModuleKey, type ModulePermissions } from '@/config/permissions'
+import { canAccess, canAccessAny, isAdmin, type ModuleKey, type ModulePermissions } from '@/config/permissions'
 
 import Dashboard from '@/pages/Dashboard'
 import Inventory from '@/pages/wms/Inventory'
@@ -36,12 +36,17 @@ function PermissionRoute({
   module,
   children,
 }: {
-  module: ModuleKey
+  module: ModuleKey | ModuleKey[]
   children: React.ReactNode
 }) {
   const user = useAuthStore((s) => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
-  if (!isAdmin(user?.name) && !canAccess(perms, module)) return <Navigate to="/" replace />
+  const allowed = isAdmin(user?.name) || (
+    Array.isArray(module)
+      ? canAccessAny(perms, ...module)
+      : canAccess(perms, module)
+  )
+  if (!allowed) return <Navigate to="/" replace />
   return <>{children}</>
 }
 
@@ -88,9 +93,9 @@ export default function App() {
         <Route path="/wms/settings" element={<PermissionRoute module="wms_settings"><WMSSettings /></PermissionRoute>} />
 
         {/* TMS */}
-        <Route path="/tms/bookings"   element={<PermissionRoute module="tms"><TMSBookings /></PermissionRoute>} />
+        <Route path="/tms/bookings"   element={<PermissionRoute module="tms_plan"><TMSBookings /></PermissionRoute>} />
         <Route path="/tms/deliveries" element={<PermissionRoute module="deliveries"><Deliveries /></PermissionRoute>} />
-        <Route path="/tms/settings"   element={<PermissionRoute module="tms"><TMSSettings /></PermissionRoute>} />
+        <Route path="/tms/settings"   element={<PermissionRoute module={['tms_vehicle_types', 'tms_slots', 'tms_companies', 'tms_vehicles']}><TMSSettings /></PermissionRoute>} />
 
         {/* HR */}
         <Route path="/hr/schedule" element={<PermissionRoute module="schedule"><Schedule /></PermissionRoute>} />

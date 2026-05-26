@@ -18,7 +18,7 @@ import {
   useTransportCompanies, useCreateTransportCompany, useUpdateTransportCompany, useDeleteTransportCompany,
   useTmsVehicles, useCreateTmsVehicle, useUpdateTmsVehicle, useDeleteTmsVehicle,
 } from '@/api/hooks'
-import { can, type ModulePermissions } from '@/config/permissions'
+import { can, canAccess, type ModulePermissions } from '@/config/permissions'
 import { useAuthStore } from '@/stores/authStore'
 import type { TmsVehicleType, SlotTemplate, TransportCompany, TmsVehicle } from '@/types'
 
@@ -318,8 +318,22 @@ function VehicleDialog({ v, open, onClose, companies, vehicleTypes }: {
 export default function TMSSettings() {
   const user = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
-  const canSlots     = can(perms, 'tms', 'manage_slots')
-  const canCompanies = can(perms, 'tms', 'manage_companies')
+
+  // Quyền write từng tab
+  const canVehicleTypes = can(perms, 'tms_vehicle_types', 'manage')
+  const canSlots        = can(perms, 'tms_slots',         'manage')
+  const canCompanies    = can(perms, 'tms_companies',     'manage')
+  const canVehicles     = can(perms, 'tms_vehicles',      'manage')
+
+  // Tab visibility theo quyền view
+  const showVtTab        = canAccess(perms, 'tms_vehicle_types')
+  const showSlotsTab     = canAccess(perms, 'tms_slots')
+  const showCompaniesTab = canAccess(perms, 'tms_companies')
+  const showVehiclesTab  = canAccess(perms, 'tms_vehicles')
+  const defaultTab = showVtTab ? 'vehicle-types'
+    : showSlotsTab     ? 'slot-templates'
+    : showCompaniesTab ? 'companies'
+    : 'vehicles'
 
   // Warehouse selector — context cho tab Khung giờ
   const { data: warehouses = [] } = useWarehouses(true)
@@ -392,13 +406,13 @@ export default function TMSSettings() {
         </div>
       </div>
 
-      <Tabs defaultValue="vehicle-types">
+      <Tabs defaultValue={defaultTab}>
         <div className="overflow-x-auto mb-2">
           <TabsList className="w-max">
-            <TabsTrigger value="vehicle-types"  className="gap-1.5"><Truck className="h-3.5 w-3.5" /> Loại xe</TabsTrigger>
-            <TabsTrigger value="slot-templates" className="gap-1.5"><Clock className="h-3.5 w-3.5" /> Khung giờ</TabsTrigger>
-            <TabsTrigger value="companies"      className="gap-1.5"><Building2 className="h-3.5 w-3.5" /> ĐVVT / NCC</TabsTrigger>
-            <TabsTrigger value="vehicles"       className="gap-1.5"><Truck className="h-3.5 w-3.5" /> Xe</TabsTrigger>
+            {showVtTab        && <TabsTrigger value="vehicle-types"  className="gap-1.5"><Truck className="h-3.5 w-3.5" /> Loại xe</TabsTrigger>}
+            {showSlotsTab     && <TabsTrigger value="slot-templates" className="gap-1.5"><Clock className="h-3.5 w-3.5" /> Khung giờ</TabsTrigger>}
+            {showCompaniesTab && <TabsTrigger value="companies"      className="gap-1.5"><Building2 className="h-3.5 w-3.5" /> ĐVVT / NCC</TabsTrigger>}
+            {showVehiclesTab  && <TabsTrigger value="vehicles"       className="gap-1.5"><Truck className="h-3.5 w-3.5" /> Xe</TabsTrigger>}
           </TabsList>
         </div>
 
@@ -406,7 +420,7 @@ export default function TMSSettings() {
         <TabsContent value="vehicle-types" className="space-y-3">
           <div className="flex items-center justify-between">
             <p className="text-xs text-slate-500">{vehicleTypes.length} loại xe</p>
-            {canSlots && (
+            {canVehicleTypes && (
               <Button size="sm" className="gap-1.5" onClick={() => { setEditingVT(null); setShowVTDlg(true) }}>
                 <Plus className="h-4 w-4" /> Thêm loại xe
               </Button>
@@ -421,7 +435,7 @@ export default function TMSSettings() {
                       <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Mã</TableHead>
                       <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Tên loại xe</TableHead>
                       <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Trạng thái</TableHead>
-                      {canSlots && <TableHead className="px-2 py-1.5 w-12" />}
+                      {canVehicleTypes && <TableHead className="px-2 py-1.5 w-12" />}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -434,7 +448,7 @@ export default function TMSSettings() {
                             {vt.is_active ? 'Hoạt động' : 'Tạm dừng'}
                           </Badge>
                         </TableCell>
-                        {canSlots && (
+                        {canVehicleTypes && (
                           <TableCell className="px-2 py-1">
                             <button className="text-slate-400 hover:text-blue-500 transition-colors p-1"
                               onClick={() => { setEditingVT(vt); setShowVTDlg(true) }}>
@@ -619,7 +633,7 @@ export default function TMSSettings() {
         <TabsContent value="vehicles" className="space-y-3">
           <div className="flex items-center justify-between">
             <p className="text-xs text-slate-500">{filteredVehicles.length} xe</p>
-            {canCompanies && (
+            {canVehicles && (
               <Button size="sm" className="gap-1.5" onClick={() => { setEditingV(null); setShowVDlg(true) }}>
                 <Plus className="h-4 w-4" /> Thêm xe
               </Button>
@@ -636,7 +650,7 @@ export default function TMSSettings() {
               <div className="p-12 text-center text-slate-400 space-y-2">
                 <Truck className="h-10 w-10 mx-auto opacity-30" />
                 <p className="text-sm">Chưa có xe nào</p>
-                {canCompanies && <Button size="sm" variant="outline" onClick={() => { setEditingV(null); setShowVDlg(true) }}>
+                {canVehicles && <Button size="sm" variant="outline" onClick={() => { setEditingV(null); setShowVDlg(true) }}>
                   <Plus className="h-4 w-4 mr-1" /> Thêm xe đầu tiên
                 </Button>}
               </div>
@@ -649,7 +663,7 @@ export default function TMSSettings() {
                       <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Loại xe</TableHead>
                       <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">ĐVVT / NCC</TableHead>
                       <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Trạng thái</TableHead>
-                      {canCompanies && <TableHead className="px-2 py-1.5 w-16" />}
+                      {canVehicles && <TableHead className="px-2 py-1.5 w-16" />}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -663,7 +677,7 @@ export default function TMSSettings() {
                             {v.is_active ? 'Hoạt động' : 'Tạm dừng'}
                           </Badge>
                         </TableCell>
-                        {canCompanies && (
+                        {canVehicles && (
                           <TableCell className="px-2 py-1">
                             <div className="flex items-center gap-0.5">
                               <button className="text-slate-400 hover:text-blue-500 transition-colors p-1"

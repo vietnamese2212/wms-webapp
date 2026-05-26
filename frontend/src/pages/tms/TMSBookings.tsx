@@ -975,8 +975,8 @@ function ChangeDateDialog({ open, orderIds, currentDate, onClose }: {
 export default function TMSBookings() {
   const user = useAuthStore(s => s.user)
   const perms = (user?.module_permissions as ModulePermissions | null) ?? null
-  const canManage = can(perms, 'tms', 'manage_booking')
-  const canBook   = can(perms, 'tms', 'book')
+  const canManage = can(perms, 'tms_plan', 'manage')
+  const canBook   = can(perms, 'tms_plan', 'book')
   const isNccUser = user?.department === 'Đơn vị vận tải'
 
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -1250,7 +1250,7 @@ export default function TMSBookings() {
 
   // Revoke: quyền đặc biệt, bỏ qua kiểm tra giờ — chỉ hiện khi Release không khả dụng
   const canRevoke = (vs: TmsVehicleSlot) =>
-    can(perms, 'tms', 'revoke') &&
+    can(perms, 'tms_plan', 'revoke') &&
     ['BOOKED', 'ARRIVED'].includes(vs.status) &&
     !canRelease(vs)
 

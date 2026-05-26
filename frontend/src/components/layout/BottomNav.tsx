@@ -10,7 +10,7 @@ const ALL_TABS: { to: string; icon: React.ElementType; label: string; end?: bool
   { to: '/wms/inbound',     icon: PackagePlus,     label: 'Nhập kho',  module: 'inbound' },
   { to: '/wms/outbound',    icon: PackageMinus,    label: 'Xuất kho',  module: 'outbound' },
   { to: '/wms/loosepicking',icon: Scissors,        label: 'Nhặt lẻ',  module: 'loosepicking' },
-  { to: '/tms/bookings',    icon: ClipboardList,   label: 'Kế hoạch',  module: 'tms' as ModuleKey },
+  { to: '/tms/bookings',    icon: ClipboardList,   label: 'Kế hoạch',  module: 'tms_plan' },
   { to: '/settings',        icon: Settings,        label: 'Cài đặt' },
 ]
 

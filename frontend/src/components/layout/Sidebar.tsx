@@ -11,13 +11,14 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
-import { canAccess, isAdmin, type ModuleKey, type ModulePermissions } from '@/config/permissions'
+import { canAccess, canAccessAny, isAdmin, type ModuleKey, type ModulePermissions } from '@/config/permissions'
 
 interface NavItem {
   to: string
   icon: React.ElementType
   label: string
   module?: ModuleKey
+  modules?: ModuleKey[]   // hiện nếu bất kỳ module nào trong list có view access
   adminOnly?: boolean
 }
 
@@ -50,8 +51,8 @@ const navGroups: NavGroup[] = [
   {
     label: 'Vận tải (TMS)',
     items: [
-      { to: '/tms/bookings',   icon: ClipboardList, label: 'Kế hoạch VC',  module: 'tms' as ModuleKey },
-      { to: '/tms/settings',   icon: Settings2,     label: 'Cài đặt TMS', module: 'tms' as ModuleKey },
+      { to: '/tms/bookings',   icon: ClipboardList, label: 'Kế hoạch VC',  module: 'tms_plan' },
+      { to: '/tms/settings',   icon: Settings2,     label: 'Cài đặt TMS', modules: ['tms_vehicle_types', 'tms_slots', 'tms_companies', 'tms_vehicles'] },
       { to: '/tms/deliveries', icon: Navigation,    label: 'Giao hàng',   module: 'deliveries' },
     ],
   },
@@ -160,6 +161,7 @@ export function Sidebar() {
             {navGroups.map((group) => {
               const visibleItems = group.items.filter(item => {
                 if (item.adminOnly) return admin
+                if (item.modules) return admin || canAccessAny(modulePerms, ...item.modules)
                 if (!item.module) return true
                 return admin || canAccess(modulePerms, item.module)
               })

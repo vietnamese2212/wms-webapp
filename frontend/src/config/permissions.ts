@@ -112,18 +112,44 @@ export const MODULES = {
       manage: 'Quản lý master data',
     },
   },
-  tms: {
-    label: 'Vận tải (TMS)',
+  tms_plan: {
+    label: 'Kế hoạch vận chuyển',
     actions: {
-      view:              'Xem lịch & booking',
-      book:              'Đặt slot (ĐVVT/Lái xe)',
-      manage_booking:    'Quản lý booking (Điều vận)',
-      revoke:            'Thu hồi booking (bỏ qua giờ)',
-      upload_outbound:   'Upload kế hoạch xuất',
-      upload_inbound:    'Upload kế hoạch nhập',
-      gate_log:          'Ghi nhận xe cổng (Bảo vệ)',
-      manage_slots:      'Quản lý loại xe & khung giờ',
-      manage_companies:  'Quản lý ĐVVT & xe',
+      view:            'Xem kế hoạch',
+      book:            'Đặt slot (ĐVVT/Lái xe)',
+      manage:          'Quản lý đơn (Điều vận)',
+      revoke:          'Thu hồi booking (bỏ qua giờ)',
+      upload_outbound: 'Upload kế hoạch xuất',
+      upload_inbound:  'Upload kế hoạch nhập',
+      gate_log:        'Ghi nhận xe cổng (Bảo vệ)',
+    },
+  },
+  tms_vehicle_types: {
+    label: 'TMS — Loại xe',
+    actions: {
+      view:   'Xem danh sách',
+      manage: 'Thêm / Sửa loại xe',
+    },
+  },
+  tms_slots: {
+    label: 'TMS — Khung giờ',
+    actions: {
+      view:   'Xem danh sách',
+      manage: 'Thêm / Sửa / Xóa khung giờ',
+    },
+  },
+  tms_companies: {
+    label: 'TMS — ĐVVT / NCC',
+    actions: {
+      view:   'Xem danh sách',
+      manage: 'Thêm / Sửa / Xóa ĐVVT',
+    },
+  },
+  tms_vehicles: {
+    label: 'TMS — Xe',
+    actions: {
+      view:   'Xem danh sách xe',
+      manage: 'Thêm / Sửa / Xóa xe',
     },
   },
 } as const
@@ -151,6 +177,13 @@ export function canAccess(
 ): boolean {
   if (!perms) return false
   return can(perms, module, 'view')
+}
+
+export function canAccessAny(
+  perms: ModulePermissions | null | undefined,
+  ...modules: ModuleKey[]
+): boolean {
+  return modules.some(m => canAccess(perms, m))
 }
 
 export function isAdmin(name?: string | null): boolean {

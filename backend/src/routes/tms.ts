@@ -6,50 +6,59 @@ import * as order            from '../controllers/tms/orderController'
 import * as vehicleSlot      from '../controllers/tms/vehicleSlotController'
 import * as transportCompany from '../controllers/tms/transportCompanyController'
 import * as vehicle          from '../controllers/tms/vehicleController'
-import { requirePerm } from '../middlewares/auth'
+import { requirePerm, requireAnyPerm } from '../middlewares/auth'
 
 const router = Router()
 
+// Helper: view bất kỳ module TMS — dùng cho GET masterdata được dùng chung nhiều tab
+const requireTmsView = requireAnyPerm(
+  ['tms_plan', 'view'],
+  ['tms_vehicle_types', 'view'],
+  ['tms_slots', 'view'],
+  ['tms_companies', 'view'],
+  ['tms_vehicles', 'view'],
+)
+
 // VehicleType (Loại xe)
-router.get('/vehicle-types',     requirePerm('tms', 'view'),          vehicleType.listVehicleTypes)
-router.post('/vehicle-types',    requirePerm('tms', 'manage_slots'),  vehicleType.createVehicleType)
-router.put('/vehicle-types/:id', requirePerm('tms', 'manage_slots'),  vehicleType.updateVehicleType)
+router.get('/vehicle-types',     requireTmsView,                               vehicleType.listVehicleTypes)
+router.post('/vehicle-types',    requirePerm('tms_vehicle_types', 'manage'),   vehicleType.createVehicleType)
+router.put('/vehicle-types/:id', requirePerm('tms_vehicle_types', 'manage'),   vehicleType.updateVehicleType)
 
 // DeliverySlot
-router.get('/slots',           requirePerm('tms', 'view'),            slot.listSlots)
-router.post('/slots/generate', requirePerm('tms', 'manage_booking'),  slot.generateSlotsForDates)
+router.get('/slots',           requirePerm('tms_plan', 'view'),                slot.listSlots)
+router.post('/slots/generate', requirePerm('tms_plan', 'manage'),              slot.generateSlotsForDates)
 
 // TmsOrder (Kế hoạch vận chuyển — điều vận tạo)
-router.get('/orders',              requirePerm('tms', 'view'),            order.listOrders)
-router.post('/orders',             requirePerm('tms', 'manage_booking'),  order.createOrder)
-router.post('/orders/bulk',        requirePerm('tms', 'manage_booking'),  order.bulkCreateOrders)
-router.patch('/orders/bulk-date',  requirePerm('tms', 'manage_booking'),  order.bulkUpdateOrderDate)
-router.patch('/orders/:id',        requirePerm('tms', 'manage_booking'),  order.updateOrder)
-router.delete('/orders/:id',       requirePerm('tms', 'manage_booking'),  order.deleteOrder)
+router.get('/orders',              requirePerm('tms_plan', 'view'),            order.listOrders)
+router.post('/orders',             requirePerm('tms_plan', 'manage'),          order.createOrder)
+router.post('/orders/bulk',        requirePerm('tms_plan', 'manage'),          order.bulkCreateOrders)
+router.patch('/orders/bulk-date',  requirePerm('tms_plan', 'manage'),          order.bulkUpdateOrderDate)
+router.patch('/orders/:id',        requirePerm('tms_plan', 'manage'),          order.updateOrder)
+router.delete('/orders/:id',       requirePerm('tms_plan', 'manage'),          order.deleteOrder)
 
 // TmsVehicleSlot (xe thực tế bốc đơn — ĐVVT book)
-router.post('/orders/:orderId/vehicle-slots',    requirePerm('tms', 'manage_booking'), vehicleSlot.addVehicleSlot)
-router.patch('/vehicle-slots/:id',               requirePerm('tms', 'book'),           vehicleSlot.updateVehicleSlot)
-router.patch('/vehicle-slots/:id/release',       requirePerm('tms', 'manage_booking'), vehicleSlot.releaseVehicleSlot)
-router.patch('/vehicle-slots/:id/revoke',        requirePerm('tms', 'revoke'),         vehicleSlot.revokeVehicleSlot)
-router.delete('/vehicle-slots/:id',              requirePerm('tms', 'manage_booking'), vehicleSlot.deleteVehicleSlot)
+router.post('/orders/:orderId/vehicle-slots',    requirePerm('tms_plan', 'manage'), vehicleSlot.addVehicleSlot)
+router.patch('/vehicle-slots/:id',               requirePerm('tms_plan', 'book'),   vehicleSlot.updateVehicleSlot)
+router.patch('/vehicle-slots/:id/release',       requirePerm('tms_plan', 'manage'), vehicleSlot.releaseVehicleSlot)
+router.patch('/vehicle-slots/:id/revoke',        requirePerm('tms_plan', 'revoke'), vehicleSlot.revokeVehicleSlot)
+router.delete('/vehicle-slots/:id',              requirePerm('tms_plan', 'manage'), vehicleSlot.deleteVehicleSlot)
 
 // SlotTemplate (Khung giờ)
-router.get('/slot-templates',        requirePerm('tms', 'view'),         slotTemplate.listSlotTemplates)
-router.post('/slot-templates',       requirePerm('tms', 'manage_slots'), slotTemplate.createSlotTemplate)
-router.put('/slot-templates/:id',    requirePerm('tms', 'manage_slots'), slotTemplate.updateSlotTemplate)
-router.delete('/slot-templates/:id', requirePerm('tms', 'manage_slots'), slotTemplate.deleteSlotTemplate)
+router.get('/slot-templates',        requirePerm('tms_slots', 'view'),         slotTemplate.listSlotTemplates)
+router.post('/slot-templates',       requirePerm('tms_slots', 'manage'),       slotTemplate.createSlotTemplate)
+router.put('/slot-templates/:id',    requirePerm('tms_slots', 'manage'),       slotTemplate.updateSlotTemplate)
+router.delete('/slot-templates/:id', requirePerm('tms_slots', 'manage'),       slotTemplate.deleteSlotTemplate)
 
 // TransportCompany (ĐVVT / NCC)
-router.get('/transport-companies',        requirePerm('tms', 'view'),              transportCompany.listTransportCompanies)
-router.post('/transport-companies',       requirePerm('tms', 'manage_companies'),  transportCompany.createTransportCompany)
-router.put('/transport-companies/:id',    requirePerm('tms', 'manage_companies'),  transportCompany.updateTransportCompany)
-router.delete('/transport-companies/:id', requirePerm('tms', 'manage_companies'),  transportCompany.deleteTransportCompany)
+router.get('/transport-companies',        requireAnyPerm(['tms_plan', 'view'], ['tms_companies', 'view'], ['tms_vehicles', 'view']), transportCompany.listTransportCompanies)
+router.post('/transport-companies',       requirePerm('tms_companies', 'manage'),  transportCompany.createTransportCompany)
+router.put('/transport-companies/:id',    requirePerm('tms_companies', 'manage'),  transportCompany.updateTransportCompany)
+router.delete('/transport-companies/:id', requirePerm('tms_companies', 'manage'),  transportCompany.deleteTransportCompany)
 
 // Vehicle (Xe)
-router.get('/vehicles',        requirePerm('tms', 'view'),             vehicle.listVehicles)
-router.post('/vehicles',       requirePerm('tms', 'manage_companies'), vehicle.createVehicle)
-router.put('/vehicles/:id',    requirePerm('tms', 'manage_companies'), vehicle.updateVehicle)
-router.delete('/vehicles/:id', requirePerm('tms', 'manage_companies'), vehicle.deleteVehicle)
+router.get('/vehicles',        requireAnyPerm(['tms_plan', 'view'], ['tms_vehicles', 'view']), vehicle.listVehicles)
+router.post('/vehicles',       requirePerm('tms_vehicles', 'manage'), vehicle.createVehicle)
+router.put('/vehicles/:id',    requirePerm('tms_vehicles', 'manage'), vehicle.updateVehicle)
+router.delete('/vehicles/:id', requirePerm('tms_vehicles', 'manage'), vehicle.deleteVehicle)
 
 export default router

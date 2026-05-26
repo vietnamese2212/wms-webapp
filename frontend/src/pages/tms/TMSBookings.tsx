@@ -1360,7 +1360,7 @@ export default function TMSBookings() {
               <MultiSelectFilter label="Loại xe" options={loaiXeOptions} selected={loaiXeFilter} onChange={setLoaiXeFilter} />
             </>
           )}
-          {selectedOrderIds.size > 0 && (
+          {canManage && selectedOrderIds.size > 0 && (
             <div className="flex items-center gap-2 w-full py-0.5">
               <span className="text-xs text-slate-600 font-medium">{selectedOrderIds.size} đơn đã chọn</span>
               <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => setChangeDateOpen(true)}>

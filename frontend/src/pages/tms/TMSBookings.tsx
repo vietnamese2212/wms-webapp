@@ -965,6 +965,7 @@ export default function TMSBookings() {
   const [editOrder, setEditOrder] = useState<TmsOrder | null>(null)
   const [bookingSlot, setBookingSlot] = useState<{ vslot: TmsVehicleSlot; order: TmsOrder } | null>(null)
   const [actionErr, setActionErr] = useState('')
+  const [hoveredGroup, setHoveredGroup] = useState<number | null>(null)
   const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set())
   const [changeDateOpen, setChangeDateOpen] = useState(false)
 
@@ -1072,6 +1073,7 @@ export default function TMSBookings() {
     secIndex: number         // for !isPrimary: ordinal within vehicle group (1, 2, ...)
     stt: number | null       // stable STT from full order list
     sttRowspan: number
+    vehicleGroupKey: number  // same for all rows in the same vehicle group (= primary stt)
     isFirstOrderRow: boolean
     groupStatus: string      // primary slot's status (for group background)
     groupParity: number      // 0 or 1 based on stable STT, for alternating booked colors
@@ -1125,6 +1127,7 @@ export default function TMSBookings() {
           order, vslot: slot, slotIndex: si,
           isPrimary: true, secIndex: 0,
           stt, sttRowspan: totalRows,
+          vehicleGroupKey: stt,
           isFirstOrderRow, groupStatus, groupParity,
           showSlotCell: true,
           slotCellRowspan: shouldMergeSlot ? totalRows : 1,
@@ -1138,6 +1141,7 @@ export default function TMSBookings() {
             order: sec.order, vslot: sec.slot, slotIndex: 0,
             isPrimary: false, secIndex: secIdx++,
             stt: null, sttRowspan: 0,
+            vehicleGroupKey: stt,
             isFirstOrderRow: isSecFirstOrderRow,
             groupStatus, groupParity,
             showSlotCell: !shouldMergeSlot,
@@ -1156,6 +1160,7 @@ export default function TMSBookings() {
         order, vslot: slot, slotIndex: 0,
         isPrimary: true, secIndex: 0,
         stt, sttRowspan: 1,
+        vehicleGroupKey: stt,
         isFirstOrderRow: true,
         groupStatus: slot.status, groupParity: stt % 2,
         showSlotCell: true, slotCellRowspan: 1,
@@ -1356,17 +1361,23 @@ export default function TMSBookings() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {tableRows.map(({ order, vslot, slotIndex, isPrimary, secIndex, stt, sttRowspan, isFirstOrderRow, groupStatus, groupParity, showSlotCell, slotCellRowspan }, rowIndex) => {
+              {tableRows.map(({ order, vslot, slotIndex, isPrimary, secIndex, stt, sttRowspan, vehicleGroupKey, isFirstOrderRow, groupStatus, groupParity, showSlotCell, slotCellRowspan }, rowIndex) => {
                 const isConsolidated = !!vslot.consolidation_group_id
+                const isHovered = hoveredGroup === vehicleGroupKey
                 const groupBg = (() => {
-                  if (groupStatus === 'BOOKED') return groupParity === 0 ? 'bg-green-50' : 'bg-sky-50'
-                  if (groupStatus === 'ARRIVED') return 'bg-blue-50'
-                  if (groupStatus === 'DONE') return 'bg-slate-50'
-                  if (isConsolidated) return 'bg-teal-50'
-                  return ''
+                  if (groupStatus === 'BOOKED') return groupParity === 0
+                    ? (isHovered ? 'bg-green-100' : 'bg-green-50')
+                    : (isHovered ? 'bg-sky-100' : 'bg-sky-50')
+                  if (groupStatus === 'ARRIVED') return isHovered ? 'bg-blue-100' : 'bg-blue-50'
+                  if (groupStatus === 'DONE') return isHovered ? 'bg-slate-100' : 'bg-slate-50'
+                  if (isConsolidated) return isHovered ? 'bg-teal-100' : 'bg-teal-50'
+                  return isHovered ? 'bg-slate-50' : ''
                 })()
                 return (
-                <TableRow key={`${order.id}-${vslot.id}-${slotIndex}`} className={[
+                <TableRow key={`${order.id}-${vslot.id}-${slotIndex}`}
+                  onMouseEnter={() => setHoveredGroup(vehicleGroupKey)}
+                  onMouseLeave={() => setHoveredGroup(null)}
+                  className={[
                   groupBg,
                   // Left border: standalone slate | xe chính teal | xe phụ purple | đơn phụ teal-400
                   isPrimary

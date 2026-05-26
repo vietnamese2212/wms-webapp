@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import * as XLSX from 'xlsx'
-import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, Link2, CalendarDays } from 'lucide-react'
+import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, Link2, CalendarDays, ShieldX } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -15,7 +15,7 @@ import {
   useWarehouses, useWarehouseTypes, useVehicleTypes, useTransportCompanies, useTmsVehicles,
   useDeliverySlots, useGenerateSlots,
   useTmsOrders, useCreateOrder, useUpdateOrder, useDeleteOrder, useBulkCreateOrders,
-  useAddVehicleSlot, useUpdateVehicleSlot, useReleaseVehicleSlot, useDeleteVehicleSlot,
+  useAddVehicleSlot, useUpdateVehicleSlot, useReleaseVehicleSlot, useRevokeVehicleSlot, useDeleteVehicleSlot,
 } from '@/api/hooks'
 import { formatDate } from '@/utils/formatters'
 import type { TmsOrder, TmsVehicleSlot, DeliverySlot, TmsVehicleType, TmsVehicle, TransportCompany } from '@/types'
@@ -950,10 +950,11 @@ export default function TMSBookings() {
   const { data: orders = [], isLoading }      = useTmsOrders(
     (warehouseId || isNccUser) ? { date, warehouse_id: warehouseId || undefined } : undefined,
   )
-  const deleteOrder       = useDeleteOrder()
-  const addVehicleSlot    = useAddVehicleSlot()
+  const deleteOrder        = useDeleteOrder()
+  const addVehicleSlot     = useAddVehicleSlot()
   const releaseVehicleSlot = useReleaseVehicleSlot()
-  const deleteVehicleSlot = useDeleteVehicleSlot()
+  const revokeVehicleSlot  = useRevokeVehicleSlot()
+  const deleteVehicleSlot  = useDeleteVehicleSlot()
 
   const warehouseName = (warehouses as { id: string; name: string }[]).find(w => w.id === warehouseId)?.name ?? warehouseId
 
@@ -1059,6 +1060,12 @@ export default function TMSBookings() {
     canManage && vs.status === 'BOOKED' &&
     (!vs.slot || !isSlotTimePassed(vs.slot.date ?? '', vs.slot.time_from ?? ''))
 
+  // Revoke: quyền đặc biệt, bỏ qua kiểm tra giờ — chỉ hiện khi Release không khả dụng
+  const canRevoke = (vs: TmsVehicleSlot) =>
+    can(perms, 'tms', 'revoke') &&
+    ['BOOKED', 'ARRIVED'].includes(vs.status) &&
+    !canRelease(vs)
+
   const checkableOrderIds = useMemo(() =>
     canManage ? sortedOrders.filter(o => o.vehicle_slots.every(vs => vs.status === 'PENDING')).map(o => o.id) : [],
     [sortedOrders, canManage]
@@ -1096,6 +1103,15 @@ export default function TMSBookings() {
     catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
       setActionErr(msg ?? 'Lỗi trả lại')
+    }
+  }
+
+  const handleRevoke = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation(); setActionErr('')
+    try { await revokeVehicleSlot.mutateAsync(id) }
+    catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
+      setActionErr(msg ?? 'Lỗi thu hồi booking')
     }
   }
 
@@ -1354,6 +1370,16 @@ export default function TMSBookings() {
                           title="Trả lại khung giờ"
                         >
                           <RotateCcw className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                      {/* Revoke — quyền đặc biệt, bỏ qua giờ */}
+                      {vslot.id && isFirstSlot && canRevoke(vslot) && (
+                        <button
+                          onClick={e => handleRevoke(e, vslot.id)}
+                          className="text-rose-400 hover:text-rose-600 p-1 rounded"
+                          title="Thu hồi booking (bỏ qua giờ)"
+                        >
+                          <ShieldX className="h-3.5 w-3.5" />
                         </button>
                       )}
                       {/* Xe phụ: trả lại = release (nếu BOOKED) + xóa luôn dòng */}

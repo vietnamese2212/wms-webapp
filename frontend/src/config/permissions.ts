@@ -118,6 +118,7 @@ export const MODULES = {
       view:              'Xem lịch & booking',
       book:              'Đặt slot (ĐVVT/Lái xe)',
       manage_booking:    'Quản lý booking (Điều vận)',
+      revoke:            'Thu hồi booking (bỏ qua giờ)',
       upload_outbound:   'Upload kế hoạch xuất',
       upload_inbound:    'Upload kế hoạch nhập',
       gate_log:          'Ghi nhận xe cổng (Bảo vệ)',

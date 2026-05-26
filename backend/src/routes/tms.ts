@@ -30,6 +30,7 @@ router.delete('/orders/:id',       requirePerm('tms', 'manage_booking'),  order.
 router.post('/orders/:orderId/vehicle-slots',    requirePerm('tms', 'manage_booking'), vehicleSlot.addVehicleSlot)
 router.patch('/vehicle-slots/:id',               requirePerm('tms', 'book'),           vehicleSlot.updateVehicleSlot)
 router.patch('/vehicle-slots/:id/release',       requirePerm('tms', 'manage_booking'), vehicleSlot.releaseVehicleSlot)
+router.patch('/vehicle-slots/:id/revoke',        requirePerm('tms', 'revoke'),         vehicleSlot.revokeVehicleSlot)
 router.delete('/vehicle-slots/:id',              requirePerm('tms', 'manage_booking'), vehicleSlot.deleteVehicleSlot)
 
 // SlotTemplate (Khung giờ)

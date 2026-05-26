@@ -148,17 +148,18 @@ function BookSlotDialog({ vslot, order, onClose, allOrders }: {
     }
   }, [vslot?.id, isDriver])
 
-  // Đơn cùng ĐVVT, cùng ngày, xe chính PENDING, chưa trong group nào
+  // Đơn cùng ĐVVT, cùng ngày, xe chính PENDING, chưa trong group này
   const consolidatableOrders = useMemo(() => {
-    if (isDriver || !order || vslot?.status !== 'PENDING') return []
-    return allOrders.filter(o =>
-      o.id !== order.id &&
-      o.ncc_id === order.ncc_id &&
-      o.date === order.date &&
-      o.vehicle_slots[0]?.status === 'PENDING' &&
-      !o.vehicle_slots[0]?.consolidation_group_id
-    )
-  }, [allOrders, order?.id, order?.ncc_id, order?.date, vslot?.status, isDriver])
+    if (isDriver || !order || !['PENDING', 'BOOKED', 'ARRIVED'].includes(vslot?.status ?? '')) return []
+    const currentGroupId = vslot?.consolidation_group_id ?? null
+    return allOrders.filter(o => {
+      if (o.id === order.id || o.ncc_id !== order.ncc_id || o.date !== order.date) return false
+      const mainSlot = o.vehicle_slots.find(vs => vs.consolidation_group_id) ?? o.vehicle_slots[0]
+      if (!mainSlot) return false
+      if (currentGroupId && mainSlot.consolidation_group_id === currentGroupId) return false
+      return mainSlot.status === 'PENDING' && !mainSlot.consolidation_group_id
+    })
+  }, [allOrders, order?.id, order?.ncc_id, order?.date, vslot?.status, vslot?.consolidation_group_id, isDriver])
 
   const handleSave = async () => {
     if (!vslot || !order) return
@@ -169,7 +170,7 @@ function BookSlotDialog({ vslot, order, onClose, allOrders }: {
     updates.license_plate = licensePlate || null
     updates.driver_phone = driverPhone || null
     if (selectedSlot && licensePlate) updates.status = 'BOOKED'
-    if (consolidationOrderIds.length > 0 && vslot.status === 'PENDING') {
+    if (consolidationOrderIds.length > 0) {
       updates.consolidation_order_ids = consolidationOrderIds
     }
     try {

@@ -118,13 +118,21 @@ export async function updateVehicleSlot(req: Request, res: Response) {
         : (newSlotId ? 'BOOKED' : 'PENDING')
     }
 
-    // Consolidation: tạo group khi lần đầu book kèm đơn khác
+    // Consolidation: tạo group mới (lần đầu) hoặc thêm đơn vào group hiện có (BOOKED)
     let newGroupId: string | null = null
     const orderIds = Array.isArray(consolidation_order_ids) ? consolidation_order_ids as string[] : []
-    if (orderIds.length > 0 && existing.status === 'PENDING') {
-      newGroupId = randomUUID()
-      updates.consolidation_group_id = newGroupId
-      updates.is_consolidation_primary = true
+    if (orderIds.length > 0) {
+      if (existing.status === 'PENDING') {
+        newGroupId = randomUUID()
+        updates.consolidation_group_id = newGroupId
+        updates.is_consolidation_primary = true
+      } else if (['BOOKED', 'ARRIVED'].includes(existing.status as string)) {
+        newGroupId = (existing.consolidation_group_id as string | null) ?? randomUUID()
+        if (!existing.consolidation_group_id) {
+          updates.consolidation_group_id = newGroupId
+          updates.is_consolidation_primary = true
+        }
+      }
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

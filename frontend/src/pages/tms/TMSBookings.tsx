@@ -1018,7 +1018,21 @@ export default function TMSBookings() {
     if (huongFilter.length)    list = list.filter(o => o.direction && huongFilter.includes(o.direction))
     if (dvvtFilter.length)     list = list.filter(o => o.ncc_id && dvvtFilter.includes(o.ncc_id))
     if (loaiKhoFilter.length)  list = list.filter(o => o.warehouse_type && loaiKhoFilter.includes(o.warehouse_type))
-    if (loaiXeFilter.length)   list = list.filter(o => o.vehicle_type && loaiXeFilter.includes(o.vehicle_type))
+    if (loaiXeFilter.length) {
+      // Include orders that match directly AND their consolidation partners (dù khác loại xe)
+      const directIds = new Set(list.filter(o => o.vehicle_type && loaiXeFilter.includes(o.vehicle_type)).map(o => o.id))
+      const partnerGroupIds = new Set<string>()
+      for (const o of list) {
+        if (!directIds.has(o.id)) continue
+        const cs = o.vehicle_slots.find(vs => vs.consolidation_group_id)
+        if (cs?.consolidation_group_id) partnerGroupIds.add(cs.consolidation_group_id)
+      }
+      list = list.filter(o => {
+        if (directIds.has(o.id)) return true
+        const cs = o.vehicle_slots.find(vs => vs.consolidation_group_id)
+        return !!(cs?.consolidation_group_id && partnerGroupIds.has(cs.consolidation_group_id))
+      })
+    }
     if (khungGioFilter.length) {
       list = list.filter(o => o.vehicle_slots.some(vs => {
         if (!vs.slot_id && khungGioFilter.includes('__chua_dat__')) return true
@@ -1029,21 +1043,23 @@ export default function TMSBookings() {
     return list
   }, [orders, huongFilter, dvvtFilter, loaiKhoFilter, loaiXeFilter, khungGioFilter])
 
-  // Sắp xếp: nhóm consolidation gần nhau (primary trước, secondaries theo sau)
-  const sortedOrders = useMemo<TmsOrder[]>(() => {
-    // Dùng find thay vì [0] — API không đảm bảo thứ tự vehicle_slots theo created_at
+  // Sắp xếp: nhóm consolidation gần nhau, trả về [sorted, indexMap]
+  // indexMap: orderId → vị trí trong nhóm (0 = đơn chính, 1 = đơn phụ 1, ...)
+  const [sortedOrders, consolidationIndexMap] = useMemo<[TmsOrder[], Map<string, number>]>(() => {
     const conSlot = (o: TmsOrder) => o.vehicle_slots.find(vs => vs.consolidation_group_id) ?? o.vehicle_slots[0]
     const visited = new Set<string>()
     const result: TmsOrder[] = []
+    const indexMap = new Map<string, number>()
     for (const order of filteredOrders) {
       if (visited.has(order.id)) continue
       const cs = conSlot(order)
       if (cs?.consolidation_group_id && cs.is_consolidation_primary) {
-        result.push(order); visited.add(order.id)
+        result.push(order); visited.add(order.id); indexMap.set(order.id, 0)
+        let secIdx = 1
         for (const other of filteredOrders) {
           if (visited.has(other.id)) continue
           if (conSlot(other)?.consolidation_group_id === cs.consolidation_group_id) {
-            result.push(other); visited.add(other.id)
+            result.push(other); visited.add(other.id); indexMap.set(other.id, secIdx++)
           }
         }
       } else if (!cs?.consolidation_group_id) {
@@ -1053,7 +1069,7 @@ export default function TMSBookings() {
     for (const order of filteredOrders) {
       if (!visited.has(order.id)) { result.push(order); visited.add(order.id) }
     }
-    return result
+    return [result, indexMap]
   }, [filteredOrders])
 
   // Flatten orders → rows (1 row per vehicle slot, order info repeated for first slot only)
@@ -1296,8 +1312,10 @@ export default function TMSBookings() {
                     {isFirstSlot
                       ? <span className="flex flex-col gap-0">
                           <span className="truncate">{order.npp_name || <span className="text-slate-400 font-normal">—</span>}</span>
-                          {isConsolidated && !isCPrimary && (
-                            <span className="text-[9px] text-teal-600 font-medium">↑ cùng xe</span>
+                          {isConsolidated && (
+                            <span className={`text-[9px] font-semibold ${isCPrimary ? 'text-teal-700' : 'text-teal-600'}`}>
+                              {isCPrimary ? '★ Đơn chính' : `↑ Đơn phụ ${consolidationIndexMap.get(order.id) ?? ''}`}
+                            </span>
                           )}
                         </span>
                       : <span className="inline-flex items-center gap-1 text-[9px] text-purple-500 pl-3">

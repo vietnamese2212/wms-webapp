@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import * as XLSX from 'xlsx'
-import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, Link2 } from 'lucide-react'
+import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, Link2, CalendarDays } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -842,6 +842,60 @@ function SlotOverviewDialog({ open, onClose, defaultDate, warehouseId, warehouse
   )
 }
 
+// ── Change Date Dialog (bulk) ─────────────────────────────────────────────────
+
+function ChangeDateDialog({ open, orderIds, currentDate, onClose }: {
+  open: boolean; orderIds: string[]; currentDate: string; onClose: () => void
+}) {
+  const updateOrder = useUpdateOrder()
+  const [newDate, setNewDate] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState('')
+
+  useEffect(() => { if (open) { setNewDate(''); setErr('') } }, [open])
+
+  const handleSave = async () => {
+    if (!newDate) { setErr('Vui lòng chọn ngày mới'); return }
+    if (newDate === currentDate) { setErr('Ngày mới phải khác ngày hiện tại'); return }
+    setSaving(true)
+    try {
+      for (const id of orderIds) {
+        await updateOrder.mutateAsync({ id, date: newDate })
+      }
+      onClose()
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
+      setErr(msg ?? 'Lỗi đổi ngày')
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={v => !v && onClose()}>
+      <DialogContent className="max-w-xs">
+        <DialogHeader>
+          <DialogTitle>Đổi ngày</DialogTitle>
+          <p className="text-xs text-slate-500 mt-1">
+            {orderIds.length} đơn · Ngày hiện tại: <span className="font-mono">{formatDate(currentDate)}</span>
+          </p>
+        </DialogHeader>
+        <div className="space-y-3 py-2">
+          <div>
+            <Label className="text-xs">Ngày mới *</Label>
+            <Input type="date" value={newDate} onChange={e => setNewDate(e.target.value)} className="h-8 text-sm mt-1" />
+          </div>
+          {err && <p className="text-xs text-red-600">{err}</p>}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={onClose}>Hủy</Button>
+          <Button size="sm" onClick={handleSave} disabled={saving}>
+            {saving ? 'Đang lưu...' : `Đổi ${orderIds.length} đơn`}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function TMSBookings() {
@@ -878,12 +932,15 @@ export default function TMSBookings() {
   useEffect(() => { localStorage.setItem('tmsb_huong', JSON.stringify(huongFilter)) }, [huongFilter])
   useEffect(() => { localStorage.setItem('tmsb_dvvt', JSON.stringify(dvvtFilter)) }, [dvvtFilter])
   useEffect(() => { localStorage.setItem('tmsb_khungio', JSON.stringify(khungGioFilter)) }, [khungGioFilter])
+  useEffect(() => { setSelectedOrderIds(new Set()) }, [date, warehouseId])
 
   const [createOpen, setCreateOpen] = useState(false)
   const [uploadOpen, setUploadOpen] = useState(false)
   const [editOrder, setEditOrder] = useState<TmsOrder | null>(null)
   const [bookingSlot, setBookingSlot] = useState<{ vslot: TmsVehicleSlot; order: TmsOrder } | null>(null)
   const [actionErr, setActionErr] = useState('')
+  const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set())
+  const [changeDateOpen, setChangeDateOpen] = useState(false)
 
   const { data: warehouses = [] }             = useWarehouses(true)
   const { data: slotsList = [] }              = useDeliverySlots(warehouseId ? { date, warehouse_id: warehouseId } : undefined)
@@ -1002,6 +1059,19 @@ export default function TMSBookings() {
     canManage && vs.status === 'BOOKED' &&
     (!vs.slot || !isSlotTimePassed(vs.slot.date ?? '', vs.slot.time_from ?? ''))
 
+  const checkableOrderIds = useMemo(() =>
+    canManage ? sortedOrders.filter(o => o.vehicle_slots.every(vs => vs.status === 'PENDING')).map(o => o.id) : [],
+    [sortedOrders, canManage]
+  )
+  const allChecked = checkableOrderIds.length > 0 && checkableOrderIds.every(id => selectedOrderIds.has(id))
+  const someChecked = !allChecked && checkableOrderIds.some(id => selectedOrderIds.has(id))
+  const toggleAll = () => setSelectedOrderIds(allChecked ? new Set() : new Set(checkableOrderIds))
+  const toggleOrder = (id: string) => setSelectedOrderIds(prev => {
+    const next = new Set(prev)
+    if (next.has(id)) next.delete(id); else next.add(id)
+    return next
+  })
+
   const handleDeleteOrder = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation(); setActionErr('')
     try { await deleteOrder.mutateAsync(id) }
@@ -1086,6 +1156,17 @@ export default function TMSBookings() {
               <MultiSelectFilter label="Loại xe" options={loaiXeOptions} selected={loaiXeFilter} onChange={setLoaiXeFilter} />
             </>
           )}
+          {selectedOrderIds.size > 0 && (
+            <div className="flex items-center gap-2 w-full py-0.5">
+              <span className="text-xs text-slate-600 font-medium">{selectedOrderIds.size} đơn đã chọn</span>
+              <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => setChangeDateOpen(true)}>
+                <CalendarDays className="h-3.5 w-3.5 mr-1" />Đổi ngày
+              </Button>
+              <button onClick={() => setSelectedOrderIds(new Set())} className="text-xs text-slate-400 hover:text-slate-600">
+                Bỏ chọn
+              </button>
+            </div>
+          )}
           {actionErr && <p className="text-xs text-red-600 w-full">{actionErr}</p>}
         </div>
       </div>
@@ -1102,6 +1183,17 @@ export default function TMSBookings() {
           <Table className="min-w-[960px]">
             <TableHeader>
               <TableRow>
+                <TableHead className="px-2 py-1.5 w-8">
+                  {checkableOrderIds.length > 0 && (
+                    <input
+                      type="checkbox"
+                      className="h-3.5 w-3.5 cursor-pointer"
+                      checked={allChecked}
+                      ref={el => { if (el) el.indeterminate = someChecked }}
+                      onChange={toggleAll}
+                    />
+                  )}
+                </TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Mã đơn</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Tên NPP</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-10">Đặt giờ</TableHead>
@@ -1130,6 +1222,17 @@ export default function TMSBookings() {
                   !isFirstSlot ? 'border-l-4 border-l-purple-300' : '',
                   isFirstSlot && isConsolidated && !isCPrimary ? 'border-l-4 border-l-teal-400' : '',
                 ].filter(Boolean).join(' ')}>
+                  <TableCell className="px-2 py-1 w-8">
+                    {isFirstSlot && checkableOrderIds.includes(order.id) && (
+                      <input
+                        type="checkbox"
+                        className="h-3.5 w-3.5 cursor-pointer"
+                        checked={selectedOrderIds.has(order.id)}
+                        onChange={() => toggleOrder(order.id)}
+                        onClick={e => e.stopPropagation()}
+                      />
+                    )}
+                  </TableCell>
                   {/* Mã đơn — chỉ hiện ở dòng đầu của mỗi order, xe phụ để trống */}
                   <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">
                     {isFirstSlot ? (
@@ -1310,6 +1413,12 @@ export default function TMSBookings() {
         warehouseTypes={whTypesMain.map(t => t.value)}
         vehicleTypes={vehicleTypesMain as TmsVehicleType[]}
         transportCompanies={transportCompaniesMain as TransportCompany[]}
+      />
+      <ChangeDateDialog
+        open={changeDateOpen}
+        orderIds={[...selectedOrderIds]}
+        currentDate={date}
+        onClose={() => { setChangeDateOpen(false); setSelectedOrderIds(new Set()) }}
       />
     </div>
   )

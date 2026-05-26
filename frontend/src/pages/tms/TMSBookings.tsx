@@ -1359,11 +1359,11 @@ export default function TMSBookings() {
               {tableRows.map(({ order, vslot, slotIndex, isPrimary, secIndex, stt, sttRowspan, isFirstOrderRow, groupStatus, groupParity, showSlotCell, slotCellRowspan }, rowIndex) => {
                 const isConsolidated = !!vslot.consolidation_group_id
                 const groupBg = (() => {
-                  if (groupStatus === 'BOOKED') return groupParity === 0 ? 'bg-green-50 hover:bg-green-100' : 'bg-sky-50 hover:bg-sky-100'
-                  if (groupStatus === 'ARRIVED') return 'bg-blue-50 hover:bg-blue-100'
-                  if (groupStatus === 'DONE') return 'bg-slate-50 hover:bg-slate-100'
-                  if (isConsolidated) return 'bg-teal-50 hover:bg-teal-100'
-                  return 'hover:bg-slate-50'
+                  if (groupStatus === 'BOOKED') return groupParity === 0 ? 'bg-green-50' : 'bg-sky-50'
+                  if (groupStatus === 'ARRIVED') return 'bg-blue-50'
+                  if (groupStatus === 'DONE') return 'bg-slate-50'
+                  if (isConsolidated) return 'bg-teal-50'
+                  return ''
                 })()
                 return (
                 <TableRow key={`${order.id}-${vslot.id}-${slotIndex}`} className={[

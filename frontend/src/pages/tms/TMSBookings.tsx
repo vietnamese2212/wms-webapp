@@ -136,6 +136,8 @@ function BookSlotDialog({ vslot, order, onClose, allOrders }: {
   const [licensePlate, setLicensePlate] = useState('')
   const [driverPhone, setDriverPhone] = useState('')
   const [consolidationOrderIds, setConsolidationOrderIds] = useState<string[]>([])
+  const [showConsolidate, setShowConsolidate] = useState(false)
+  const [vtConfirmPending, setVtConfirmPending] = useState(false)
   const [err, setErr] = useState('')
 
   useEffect(() => {
@@ -144,6 +146,8 @@ function BookSlotDialog({ vslot, order, onClose, allOrders }: {
       setLicensePlate(isDriver ? (user?.employee_code ?? '') : (vslot.license_plate ?? ''))
       setDriverPhone(vslot.driver_phone ?? '')
       setConsolidationOrderIds([])
+      setShowConsolidate(false)
+      setVtConfirmPending(false)
       setErr('')
     }
   }, [vslot?.id, isDriver])
@@ -162,18 +166,26 @@ function BookSlotDialog({ vslot, order, onClose, allOrders }: {
     })
   }, [allOrders, order?.id, order?.ncc_id, order?.date, vslot?.status, vslot?.consolidation_group_id, isDriver])
 
-  const handleSave = async () => {
+  const handleSave = async (skipVtCheck = false) => {
     if (!vslot || !order) return
     if (!selectedSlot) { setErr('Vui lòng chọn khung giờ'); return }
     if (!licensePlate) { setErr('Vui lòng nhập biển số xe'); return }
+
+    // Nếu có đơn gom mà loại xe khác nhau → yêu cầu confirm lần đầu
+    if (!skipVtCheck && consolidationOrderIds.length > 0 && order.vehicle_type) {
+      const hasMismatch = consolidatableOrders.some(o =>
+        consolidationOrderIds.includes(o.id) && o.vehicle_type && o.vehicle_type !== order.vehicle_type
+      )
+      if (hasMismatch) { setVtConfirmPending(true); return }
+    }
+    setVtConfirmPending(false)
+
     const updates: Parameters<typeof updateSlot.mutateAsync>[0] = { id: vslot.id }
     if (selectedSlot?.id !== vslot.slot_id) updates.slot_id = selectedSlot?.id ?? null
     updates.license_plate = licensePlate || null
     updates.driver_phone = driverPhone || null
     if (selectedSlot && licensePlate) updates.status = 'BOOKED'
-    if (consolidationOrderIds.length > 0) {
-      updates.consolidation_order_ids = consolidationOrderIds
-    }
+    if (consolidationOrderIds.length > 0) updates.consolidation_order_ids = consolidationOrderIds
     try {
       await updateSlot.mutateAsync(updates)
       onClose()
@@ -227,25 +239,53 @@ function BookSlotDialog({ vslot, order, onClose, allOrders }: {
           </div>
           {consolidatableOrders.length > 0 && (
             <div>
-              <Label className="text-xs font-medium mb-1 block">
-                Xe này chở thêm đơn nào?
-                <span className="text-slate-400 font-normal ml-1">(1 xe – 1 slot, các đơn chọn sẽ tự nhận booking)</span>
-              </Label>
-              <div className="max-h-28 overflow-y-auto border rounded p-1.5 space-y-0.5 bg-slate-50">
-                {consolidatableOrders.map(o => (
-                  <label key={o.id} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-white px-1.5 py-1 rounded">
-                    <input
-                      type="checkbox"
-                      className="h-3.5 w-3.5 shrink-0"
-                      checked={consolidationOrderIds.includes(o.id)}
-                      onChange={e => setConsolidationOrderIds(prev =>
-                        e.target.checked ? [...prev, o.id] : prev.filter(id => id !== o.id)
-                      )}
-                    />
-                    <span className="font-mono font-semibold">{o.order_code}</span>
-                    {o.npp_name && <span className="text-slate-500 truncate">{o.npp_name}</span>}
-                  </label>
-                ))}
+              <button
+                type="button"
+                onClick={() => setShowConsolidate(v => !v)}
+                className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1"
+              >
+                <span>{showConsolidate ? '▾' : '▸'}</span>
+                Xe này chở thêm đơn?
+                {consolidationOrderIds.length > 0 && (
+                  <span className="ml-1 bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-medium">
+                    {consolidationOrderIds.length} đơn
+                  </span>
+                )}
+              </button>
+              {showConsolidate && (
+                <div className="mt-1.5 max-h-36 overflow-y-auto border rounded p-1.5 space-y-0.5 bg-slate-50">
+                  {consolidatableOrders.map(o => {
+                    const vtDiff = !!order.vehicle_type && !!o.vehicle_type && o.vehicle_type !== order.vehicle_type
+                    return (
+                      <label key={o.id} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-white px-1.5 py-1 rounded">
+                        <input
+                          type="checkbox"
+                          className="h-3.5 w-3.5 shrink-0"
+                          checked={consolidationOrderIds.includes(o.id)}
+                          onChange={e => setConsolidationOrderIds(prev =>
+                            e.target.checked ? [...prev, o.id] : prev.filter(id => id !== o.id)
+                          )}
+                        />
+                        <span className="font-mono font-semibold">{o.order_code}</span>
+                        {o.npp_name && <span className="text-slate-500 truncate">{o.npp_name}</span>}
+                        {o.vehicle_type && (
+                          <span className={`ml-auto shrink-0 px-1 py-0.5 rounded text-[10px] font-medium ${vtDiff ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>
+                            {o.vehicle_type}
+                          </span>
+                        )}
+                      </label>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+          {vtConfirmPending && (
+            <div className="rounded border border-amber-300 bg-amber-50 p-2.5 text-xs text-amber-800 space-y-2">
+              <p className="font-medium">⚠ Một số đơn được chọn có loại xe khác với đơn chính ({order.vehicle_type}). Tiếp tục?</p>
+              <div className="flex gap-2">
+                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setVtConfirmPending(false)}>Xem lại</Button>
+                <Button size="sm" className="h-7 text-xs bg-amber-600 hover:bg-amber-700" onClick={() => handleSave(true)}>Xác nhận dù vậy</Button>
               </div>
             </div>
           )}

@@ -195,6 +195,27 @@ export async function updateOrder(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
+// PATCH /api/tms/orders/bulk-date  — đổi ngày hàng loạt (chỉ PENDING orders)
+export async function bulkUpdateOrderDate(req: Request, res: Response) {
+  try {
+    const { ids, date } = req.body as { ids: string[]; date: string }
+    if (!Array.isArray(ids) || !ids.length) return fail(res, 'ids phải là array không rỗng', 400)
+    if (!date) return fail(res, 'date là bắt buộc', 400)
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const user = (req as any).user
+    const now = new Date().toISOString()
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (supabase.from('TmsOrder') as any)
+      .update({ date, updated_by: user?.emp_id || null, updated_at: now })
+      .in('id', ids)
+      .eq('status', 'PENDING')
+    if (error) return fail(res, error.message)
+    return ok(res, { updated: ids.length })
+  } catch (e) { return fail(res, String(e)) }
+}
+
 // DELETE /api/tms/orders/:id  — chỉ xoá khi chưa có slot nào BOOKED+
 export async function deleteOrder(req: Request, res: Response) {
   try {

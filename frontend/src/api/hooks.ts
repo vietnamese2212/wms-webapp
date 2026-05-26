@@ -1586,6 +1586,15 @@ export function useBulkCreateOrders() {
   })
 }
 
+export function useBulkUpdateOrderDate() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ ids, date }: { ids: string[]; date: string }) =>
+      apiClient.patch('/tms/orders/bulk-date', { ids, date }).then(r => r.data.data as { updated: number }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-orders'] }),
+  })
+}
+
 // ── TMS Vehicle Slots ─────────────────────────────────────────────────────────
 
 type VehicleSlotWriteBody = {

@@ -14,7 +14,7 @@ import { useAuthStore } from '@/stores/authStore'
 import {
   useWarehouses, useWarehouseTypes, useVehicleTypes, useTransportCompanies, useTmsVehicles,
   useDeliverySlots, useGenerateSlots,
-  useTmsOrders, useCreateOrder, useUpdateOrder, useDeleteOrder, useBulkCreateOrders,
+  useTmsOrders, useCreateOrder, useUpdateOrder, useDeleteOrder, useBulkCreateOrders, useBulkUpdateOrderDate,
   useAddVehicleSlot, useUpdateVehicleSlot, useReleaseVehicleSlot, useRevokeVehicleSlot, useDeleteVehicleSlot,
 } from '@/api/hooks'
 import { formatDate } from '@/utils/formatters'
@@ -847,7 +847,7 @@ function SlotOverviewDialog({ open, onClose, defaultDate, warehouseId, warehouse
 function ChangeDateDialog({ open, orderIds, currentDate, onClose }: {
   open: boolean; orderIds: string[]; currentDate: string; onClose: () => void
 }) {
-  const updateOrder = useUpdateOrder()
+  const bulkUpdateDate = useBulkUpdateOrderDate()
   const [newDate, setNewDate] = useState('')
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
@@ -859,7 +859,7 @@ function ChangeDateDialog({ open, orderIds, currentDate, onClose }: {
     if (newDate === currentDate) { setErr('Ngày mới phải khác ngày hiện tại'); return }
     setSaving(true)
     try {
-      await Promise.all(orderIds.map(id => updateOrder.mutateAsync({ id, date: newDate })))
+      await bulkUpdateDate.mutateAsync({ ids: orderIds, date: newDate })
       onClose()
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message

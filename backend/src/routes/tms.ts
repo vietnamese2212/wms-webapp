@@ -23,6 +23,7 @@ router.post('/slots/generate', requirePerm('tms', 'manage_booking'),  slot.gener
 router.get('/orders',              requirePerm('tms', 'view'),            order.listOrders)
 router.post('/orders',             requirePerm('tms', 'manage_booking'),  order.createOrder)
 router.post('/orders/bulk',        requirePerm('tms', 'manage_booking'),  order.bulkCreateOrders)
+router.patch('/orders/bulk-date',  requirePerm('tms', 'manage_booking'),  order.bulkUpdateOrderDate)
 router.patch('/orders/:id',        requirePerm('tms', 'manage_booking'),  order.updateOrder)
 router.delete('/orders/:id',       requirePerm('tms', 'manage_booking'),  order.deleteOrder)
 

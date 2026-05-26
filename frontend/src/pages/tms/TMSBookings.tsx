@@ -1303,7 +1303,7 @@ export default function TMSBookings() {
 
                   {/* Đặt giờ — luôn hiện cho mỗi vehicle slot */}
                   <TableCell className="px-2 py-1">
-                    {vslot.id && canBookSlot(vslot) && (
+                    {vslot.id && !vslot.id.startsWith('_temp_') && canBookSlot(vslot) && (
                       <button
                         onClick={e => { e.stopPropagation(); setBookingSlot({ vslot, order }) }}
                         className="text-blue-400 hover:text-blue-600 p-1 rounded"

@@ -1636,6 +1636,16 @@ export function useAddVehicleSlot() {
       )
       return { snapshots }
     },
+    onSuccess: (newSlot) => {
+      // Thay thế temp slot bằng real UUID ngay khi server trả về — tránh action button dùng _temp_ id
+      qc.setQueriesData<import('@/types').TmsOrder[]>(
+        { queryKey: ['tms-orders'] },
+        old => old?.map(o => o.id === newSlot.order_id
+          ? { ...o, vehicle_slots: o.vehicle_slots.map(vs => vs.id.startsWith('_temp_') && vs.order_id === newSlot.order_id ? newSlot : vs) }
+          : o
+        )
+      )
+    },
     onError: (_e, _v, ctx: any) => ctx?.snapshots.forEach(([k, d]: any) => qc.setQueryData(k, d)),
     onSettled: () => qc.invalidateQueries({ queryKey: ['tms-orders'] }),
   })

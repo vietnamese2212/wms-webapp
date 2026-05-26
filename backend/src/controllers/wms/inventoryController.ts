@@ -152,7 +152,7 @@ export async function listInventory(req: Request, res: Response) {
   if ((locResult as any).data !== null) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     locationFilter = ((locResult as any).data ?? []).map((l: any) => l.id as string)
-    if (locationFilter.length === 0)
+    if (locationFilter!.length === 0)
       return ok(res, { entries: [], total: 0, page: pageNum, limit: limitNum, total_cartons_remaining: 0 })
   }
 
@@ -161,7 +161,7 @@ export async function listInventory(req: Request, res: Response) {
   if ((matResult as any).data !== null) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     materialFilter = ((matResult as any).data ?? []).map((m: any) => m.id as string)
-    if (materialFilter.length === 0)
+    if (materialFilter!.length === 0)
       return ok(res, { entries: [], total: 0, page: pageNum, limit: limitNum, total_cartons_remaining: 0 })
   }
 
@@ -191,7 +191,7 @@ export async function listInventory(req: Request, res: Response) {
       })
       .map((e: any) => e.id as string)
 
-    if (datePctIds.length === 0)
+    if (datePctIds!.length === 0)
       return ok(res, { entries: [], total: 0, page: pageNum, limit: limitNum, total_cartons_remaining: 0 })
   }
 

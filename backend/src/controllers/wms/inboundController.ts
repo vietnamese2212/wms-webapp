@@ -44,7 +44,8 @@ function generateImportCode(dateStr: string, seq: number): string {
   return `NK-${y}${m}${d}-${String(seq).padStart(3, '0')}`
 }
 
-async function attachCount(order: Record<string, unknown>): Promise<Record<string, unknown>> {
+async function attachCount(raw: unknown): Promise<Record<string, unknown>> {
+  const order = raw as Record<string, unknown>
   const locationId = order.location_id as string | null
 
   const [entriesRes, slotsRes] = await Promise.all([
@@ -202,7 +203,7 @@ export async function createOrder(req: Request, res: Response) {
 
     const suggestions = await getLocationSuggestionsData(warehouse_id, material_id)
     emitInboundChanged()
-    ok(res, { order: { ...order, _count: { inventory_entries: 0 } }, location_suggestions: suggestions })
+    ok(res, { order: { ...(order as unknown as Record<string, unknown>), _count: { inventory_entries: 0 } }, location_suggestions: suggestions })
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
@@ -219,7 +220,7 @@ export async function getOrder(req: Request, res: Response) {
     if (!order) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
 
     ok(res, {
-      ...order,
+      ...(order as unknown as Record<string, unknown>),
       inventory_entries: entries ?? [],
       _count: { inventory_entries: entries?.length ?? 0 },
     })
@@ -249,7 +250,7 @@ export async function updateOrder(req: Request, res: Response) {
     if (error) throw error
     if (!updated) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
 
-    const withCount = await attachCount(updated as Record<string, unknown>)
+    const withCount = await attachCount(updated)
     emitInboundChanged()
     ok(res, withCount)
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
@@ -272,7 +273,7 @@ export async function completeOrder(req: Request, res: Response) {
       .select(ORDER_SELECT).maybeSingle()
     if (error) throw error
 
-    const withCount = await attachCount(updated as Record<string, unknown>)
+    const withCount = await attachCount(updated)
     emitInboundChanged()
     ok(res, withCount)
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
@@ -300,7 +301,7 @@ export async function cancelOrder(req: Request, res: Response) {
       .select(ORDER_SELECT).maybeSingle()
     if (error) throw error
 
-    const withCount = await attachCount(updated as Record<string, unknown>)
+    const withCount = await attachCount(updated)
     emitInboundChanged()
     ok(res, withCount)
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }

@@ -114,6 +114,7 @@ export async function suggestBooking(req: Request, res: Response) {
       planned_boxes:       vs.order?.planned_boxes ?? null,
       planned_pallets:     vs.order?.planned_pallets ?? null,
       gdo_refs:            vs.order?.gdo_refs ?? null,
+      priority:            vs.order?.priority ?? false,
     }))
 
   return res.json({ success: true, data: suggestions })

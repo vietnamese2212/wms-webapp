@@ -572,6 +572,7 @@ export interface BookingSuggestion {
   planned_boxes:       number | null
   planned_pallets:     number | null
   gdo_refs:            string | null
+  priority:            boolean
 }
 
 // WMS – Outbound

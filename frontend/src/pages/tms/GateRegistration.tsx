@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from '@/api/client'
+import { useWarehouses, useWarehouseTypes } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { formatDateTime } from '@/utils/formatters'
@@ -240,11 +241,8 @@ export default function GateRegistration() {
     queryFn: () => apiClient.get('/tms/vehicle-types').then(r => r.data.data),
   })
 
-  // Fetch warehouses — dùng endpoint WMS settings
-  const { data: warehouses = [] } = useQuery<{ id: string; code: string; name: string }[]>({
-    queryKey: ['warehouses'],
-    queryFn: () => apiClient.get('/wms/warehouses').then(r => r.data.data),
-  })
+  const { data: warehouses = [] } = useWarehouses(true)
+  const { data: whTypes = [] } = useWarehouseTypes()
 
   // Booking suggestion — trigger khi form thay đổi đủ điều kiện
   const suggestEnabled = !!(form.date && form.license_plate && form.warehouse_id)
@@ -373,6 +371,7 @@ export default function GateRegistration() {
       booking_order_code:  s.order_code,
       booking_slot_from:   s.booking_slot_from ?? '',
       booking_slot_to:     s.booking_slot_to ?? '',
+      priority:            s.priority,
     }))
   }
 
@@ -519,6 +518,18 @@ export default function GateRegistration() {
               <SelectItem value="__all__">Tất cả kho</SelectItem>
               {warehouses.map(w => (
                 <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select value={fWarehouseType || '__all__'} onValueChange={v => setFWarehouseType(v === '__all__' ? '' : v)}>
+            <SelectTrigger className="h-7 text-xs w-32">
+              <SelectValue placeholder="Loại kho" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">Tất cả loại kho</SelectItem>
+              {whTypes.map((t: { id: string; value: string }) => (
+                <SelectItem key={t.id} value={t.value}>{t.value}</SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -932,7 +943,17 @@ export default function GateRegistration() {
               </div>
               <div className="space-y-1">
                 <label className="text-xs text-slate-500">Loại kho</label>
-                <Input className="text-xs h-8" value={form.warehouse_type} onChange={e => f('warehouse_type', e.target.value)} placeholder="VD: Thành phẩm, NVL..." />
+                <Select value={form.warehouse_type || '__none__'} onValueChange={v => f('warehouse_type', v === '__none__' ? '' : v)}>
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue placeholder="Chọn loại kho" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">— Tất cả —</SelectItem>
+                    {whTypes.map((t: { id: string; value: string }) => (
+                      <SelectItem key={t.id} value={t.value}>{t.value}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
 

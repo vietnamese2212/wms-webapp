@@ -157,6 +157,18 @@ export const MODULES = {
       manage: 'Thêm / Sửa / Xóa xe',
     },
   },
+  gate_registration: {
+    label: 'Đăng ký cổng',
+    actions: {
+      view:   'Xem danh sách',
+      create: 'Tạo đăng ký',
+      edit:   'Sửa thông tin',
+      delete: 'Xóa đăng ký',
+      call:   'Gọi xe (NV Kho)',
+      entry:  'Xác nhận xe vào (Bảo vệ)',
+      exit:   'Xác nhận xe ra (Bảo vệ)',
+    },
+  },
 } as const
 
 export type ModuleKey = keyof typeof MODULES

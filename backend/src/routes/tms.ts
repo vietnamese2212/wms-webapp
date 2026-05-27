@@ -6,6 +6,7 @@ import * as order            from '../controllers/tms/orderController'
 import * as vehicleSlot      from '../controllers/tms/vehicleSlotController'
 import * as transportCompany from '../controllers/tms/transportCompanyController'
 import * as vehicle          from '../controllers/tms/vehicleController'
+import * as gateReg          from '../controllers/tms/gateRegistrationController'
 import { requirePerm, requireAnyPerm } from '../middlewares/auth'
 
 const router = Router()
@@ -60,5 +61,15 @@ router.get('/vehicles',        requireAnyPerm(['tms_plan', 'view'], ['tms_vehicl
 router.post('/vehicles',       requirePerm('tms_vehicles', 'manage'), vehicle.createVehicle)
 router.put('/vehicles/:id',    requirePerm('tms_vehicles', 'manage'), vehicle.updateVehicle)
 router.delete('/vehicles/:id', requirePerm('tms_vehicles', 'manage'), vehicle.deleteVehicle)
+
+// Gate Registration (Đăng ký cổng Bảo vệ)
+router.get('/gate-registrations',                    requirePerm('gate_registration', 'view'),   gateReg.listGateRegistrations)
+router.get('/gate-registrations/suggest-booking',    requirePerm('gate_registration', 'view'),   gateReg.suggestBooking)
+router.post('/gate-registrations',                   requirePerm('gate_registration', 'create'), gateReg.createGateRegistration)
+router.patch('/gate-registrations/:id',              requirePerm('gate_registration', 'edit'),   gateReg.updateGateRegistration)
+router.patch('/gate-registrations/:id/call',         requirePerm('gate_registration', 'call'),   gateReg.doCall)
+router.patch('/gate-registrations/:id/entry',        requirePerm('gate_registration', 'entry'),  gateReg.doEntry)
+router.patch('/gate-registrations/:id/exit',         requirePerm('gate_registration', 'exit'),   gateReg.doExit)
+router.delete('/gate-registrations/:id',             requirePerm('gate_registration', 'delete'), gateReg.deleteGateRegistration)
 
 export default router

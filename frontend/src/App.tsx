@@ -21,6 +21,7 @@ import Deliveries from '@/pages/tms/Deliveries'
 import WMSSettings from '@/pages/wms/WMSSettings'
 import TMSSettings from '@/pages/tms/TMSSettings'
 import TMSBookings from '@/pages/tms/TMSBookings'
+import GateRegistration from '@/pages/tms/GateRegistration'
 import Schedule from '@/pages/hr/Schedule'
 import UserManagement from '@/pages/masterdata/UserManagement'
 import Settings from '@/pages/Settings'
@@ -96,6 +97,7 @@ export default function App() {
         <Route path="/tms/bookings"   element={<PermissionRoute module="tms_plan"><TMSBookings /></PermissionRoute>} />
         <Route path="/tms/deliveries" element={<PermissionRoute module="deliveries"><Deliveries /></PermissionRoute>} />
         <Route path="/tms/settings"   element={<PermissionRoute module={['tms_vehicle_types', 'tms_slots', 'tms_companies', 'tms_vehicles']}><TMSSettings /></PermissionRoute>} />
+        <Route path="/tms/gate"       element={<PermissionRoute module="gate_registration"><GateRegistration /></PermissionRoute>} />
 
         {/* HR */}
         <Route path="/hr/schedule" element={<PermissionRoute module="schedule"><Schedule /></PermissionRoute>} />

@@ -510,6 +510,70 @@ export interface TmsVehicle {
   updated_by?:     string | null
 }
 
+// TMS — Gate Registration
+export type GateStatus = 'REGISTERED' | 'CALLED' | 'IN' | 'COMPLETED'
+
+export interface GateRegistration {
+  id:                  string
+  date:                string
+  registration_number: number
+
+  driver_name:         string | null
+  phone:               string | null
+
+  company_id:          string | null
+  company_name_raw:    string | null
+
+  vehicle_id:          string | null
+  license_plate:       string | null
+
+  direction:           'OUTBOUND' | 'INBOUND' | null
+  warehouse_id:        string
+  warehouse_type:      string | null
+  vehicle_type:        string | null
+
+  content:             string | null
+  return_pallet:       boolean
+  seal_number:         string | null
+  notes:               string | null
+
+  status:              GateStatus
+  priority:            boolean
+
+  registered_at:       string | null
+  registered_by:       string | null
+  called_at:           string | null
+  called_by:           string | null
+  entry_at:            string | null
+  entry_by:            string | null
+  exit_at:             string | null
+  exit_by:             string | null
+
+  load_capacity:       number | null
+
+  tms_order_id:        string | null
+  tms_vehicle_slot_id: string | null
+  booking_order_code:  string | null
+  booking_slot_from:   string | null
+  booking_slot_to:     string | null
+
+  created_by:          string | null
+  updated_by:          string | null
+  created_at:          string
+  updated_at:          string
+}
+
+export interface BookingSuggestion {
+  tms_order_id:        string
+  tms_vehicle_slot_id: string
+  order_code:          string
+  booking_slot_from:   string | null
+  booking_slot_to:     string | null
+  planned_boxes:       number | null
+  planned_pallets:     number | null
+  gdo_refs:            string | null
+}
+
 // WMS – Outbound
 export type OutboundStatus = 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED' | 'PAUSED'
 

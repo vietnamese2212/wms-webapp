@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import type { AxiosError } from 'axios'
-import { Plus, Pencil, ShieldCheck, Building2, User2, KeyRound, Check, Briefcase, Copy, CheckCheck, Trash2, RotateCcw } from 'lucide-react'
+import { Plus, Pencil, ShieldCheck, Building2, User2, KeyRound, Check, Briefcase, Copy, CheckCheck, Trash2, RotateCcw, X } from 'lucide-react'
+import { formatDateTime } from '@/utils/formatters'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
@@ -751,6 +752,10 @@ export default function UserManagement() {
   const [showJtDlg,  setShowJtDlg]  = useState(false)
   const [filterDeptJt, setFilterDeptJt] = useState('__all__')
 
+  const [selectedEmp,  setSelectedEmp]  = useState<EmployeeRecord | null>(null)
+  const [selectedDept, setSelectedDept] = useState<Department | null>(null)
+  const [selectedJt,   setSelectedJt]   = useState<JobTitle | null>(null)
+
   const { data: departments = [] } = useDepartments()
   const { data: jobTitles = [] }   = useJobTitles(filterDeptJt === '__all__' ? undefined : filterDeptJt)
   const { data: rawEmployees = [], isLoading, isError, error } = useEmployeeRecords({
@@ -831,117 +836,142 @@ export default function UserManagement() {
             </div>
           )}
 
-          <Card>
-            {isLoading ? (
-              <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div>
-            ) : employees.length === 0 ? (
-              <div className="p-12 text-center text-slate-400 space-y-2">
-                <User2 className="h-10 w-10 mx-auto opacity-30" />
-                <p className="text-sm">Chưa có nhân viên nào</p>
-                <Button size="sm" variant="outline" onClick={() => { setEditingEmp(null); setShowEmpDlg(true) }}>
-                  <Plus className="h-4 w-4 mr-1" /> Thêm nhân viên đầu tiên
-                </Button>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="px-3 py-2 text-xs">Nhân viên</TableHead>
-                      <TableHead className="px-3 py-2 text-xs">Phòng ban / Chức danh</TableHead>
-                      <TableHead className="px-3 py-2 text-xs">Loại hàng</TableHead>
-                      <TableHead className="px-3 py-2 text-xs">Kho</TableHead>
-                      <TableHead className="px-3 py-2 text-xs">Trạng thái</TableHead>
-                      <TableHead className="px-3 py-2 w-16" />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {employees.map(emp => {
-                      const isDeleted = !!emp.deleted_at
-                      return (
-                      <TableRow key={emp.id} className={`text-sm ${isDeleted ? 'opacity-50 bg-slate-50' : ''}`}>
-                        <TableCell className="px-3 py-2">
-                          <p className={`font-medium ${isDeleted ? 'line-through text-slate-400' : 'text-slate-800'}`}>{emp.name}</p>
-                          <p className="text-xs text-slate-400">{emp.employee_code} · {emp.email ?? '—'}</p>
-                          {isDeleted && <p className="text-[10px] text-amber-600 mt-0.5">Ẩn {new Date(emp.deleted_at!).toLocaleDateString('vi-VN')}</p>}
-                        </TableCell>
-                        <TableCell className="px-3 py-2">
-                          <p className="text-slate-700">{emp.dept?.name ?? '—'}</p>
-                          <p className="text-xs text-slate-400">{emp.job_title?.name ?? '—'}</p>
-                        </TableCell>
-                        <TableCell className="px-3 py-2">
-                          <div className="flex gap-1 flex-wrap">
-                            {(emp.allowed_categories ?? []).map(cat => (
-                              <span key={cat} className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium
-                                ${CATEGORY_COLOR[cat] ?? 'bg-slate-100 text-slate-600'}`}>{cat}</span>
-                            ))}
-                          </div>
-                        </TableCell>
-                        <TableCell className="px-3 py-2">
-                          {emp.warehouse_scope === 'NATIONAL' ? (
-                            <span className="text-xs text-blue-600 font-medium">Toàn quốc</span>
-                          ) : (
-                            <div className="flex gap-1 flex-wrap">
-                              {(emp.warehouse_access ?? []).map(wa => (
-                                <span key={wa.warehouse_id} className="text-xs text-slate-600 bg-slate-100 rounded px-1.5 py-0.5">
-                                  {wa.warehouse?.name ?? wa.warehouse_id}
-                                </span>
-                              ))}
-                              {(emp.warehouse_access ?? []).length === 0 && (
-                                <span className="text-xs text-amber-600">Chưa gán kho</span>
-                              )}
-                            </div>
-                          )}
-                        </TableCell>
-                        <TableCell className="px-3 py-2">
-                          {isDeleted ? (
-                            <Badge variant="secondary" className="text-xs text-amber-700 bg-amber-50">Đã ẩn</Badge>
-                          ) : (
-                            <Badge variant={emp.is_active ? 'default' : 'secondary'} className="text-xs">
-                              {emp.is_active ? 'Hoạt động' : 'Tạm dừng'}
-                            </Badge>
-                          )}
-                        </TableCell>
-                        <TableCell className="px-2 py-2">
-                          {isDeleted ? (
-                            can(perms, 'employees', 'delete') && (
-                              <button title="Khôi phục"
-                                disabled={restoring}
-                                className="text-slate-400 hover:text-green-600 transition-colors p-1 disabled:opacity-50"
-                                onClick={() => restore(emp.id)}>
-                                <RotateCcw className="h-3.5 w-3.5" />
-                              </button>
-                            )
-                          ) : (
-                            <div className="flex items-center gap-1">
-                              <button title="Đặt mật khẩu"
-                                className="text-slate-400 hover:text-amber-500 transition-colors p-1"
-                                onClick={() => setPwdEmp(emp)}>
-                                <KeyRound className="h-3.5 w-3.5" />
-                              </button>
-                              <button title="Sửa thông tin"
-                                className="text-slate-400 hover:text-blue-500 transition-colors p-1"
-                                onClick={() => { setEditingEmp(emp); setShowEmpDlg(true) }}>
-                                <Pencil className="h-3.5 w-3.5" />
-                              </button>
-                              {can(perms, 'employees', 'delete') && emp.id !== user?.id && (
-                                <button title="Xóa nhân viên"
-                                  className="text-slate-400 hover:text-red-500 transition-colors p-1"
-                                  onClick={() => setConfirmDeleteEmp(emp)}>
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </button>
-                              )}
-                            </div>
-                          )}
-                        </TableCell>
+          <div className="flex gap-3 items-start">
+            <Card className="flex-1 min-w-0">
+              {isLoading ? (
+                <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div>
+              ) : employees.length === 0 ? (
+                <div className="p-12 text-center text-slate-400 space-y-2">
+                  <User2 className="h-10 w-10 mx-auto opacity-30" />
+                  <p className="text-sm">Chưa có nhân viên nào</p>
+                  <Button size="sm" variant="outline" onClick={() => { setEditingEmp(null); setShowEmpDlg(true) }}>
+                    <Plus className="h-4 w-4 mr-1" /> Thêm nhân viên đầu tiên
+                  </Button>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="px-3 py-2 text-xs">Nhân viên</TableHead>
+                        <TableHead className="px-3 py-2 text-xs">Phòng ban / Chức danh</TableHead>
+                        <TableHead className="px-3 py-2 text-xs">Loại hàng</TableHead>
+                        <TableHead className="px-3 py-2 text-xs">Kho</TableHead>
+                        <TableHead className="px-3 py-2 text-xs">Trạng thái</TableHead>
+                        <TableHead className="px-3 py-2 w-16" />
                       </TableRow>
-                      )
-                    })}
-                  </TableBody>
-                </Table>
-              </div>
+                    </TableHeader>
+                    <TableBody>
+                      {employees.map(emp => {
+                        const isDeleted = !!emp.deleted_at
+                        return (
+                        <TableRow key={emp.id}
+                          className={`text-sm cursor-pointer ${isDeleted ? 'opacity-50 bg-slate-50' : ''} ${selectedEmp?.id === emp.id ? 'bg-slate-100' : isDeleted ? '' : 'hover:bg-slate-50'}`}
+                          onClick={() => setSelectedEmp(prev => prev?.id === emp.id ? null : emp)}>
+                          <TableCell className="px-3 py-2">
+                            <p className={`font-medium ${isDeleted ? 'line-through text-slate-400' : 'text-slate-800'}`}>{emp.name}</p>
+                            <p className="text-xs text-slate-400">{emp.employee_code} · {emp.email ?? '—'}</p>
+                            {isDeleted && <p className="text-[10px] text-amber-600 mt-0.5">Ẩn {new Date(emp.deleted_at!).toLocaleDateString('vi-VN')}</p>}
+                          </TableCell>
+                          <TableCell className="px-3 py-2">
+                            <p className="text-slate-700">{emp.dept?.name ?? '—'}</p>
+                            <p className="text-xs text-slate-400">{emp.job_title?.name ?? '—'}</p>
+                          </TableCell>
+                          <TableCell className="px-3 py-2">
+                            <div className="flex gap-1 flex-wrap">
+                              {(emp.allowed_categories ?? []).map(cat => (
+                                <span key={cat} className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium
+                                  ${CATEGORY_COLOR[cat] ?? 'bg-slate-100 text-slate-600'}`}>{cat}</span>
+                              ))}
+                            </div>
+                          </TableCell>
+                          <TableCell className="px-3 py-2">
+                            {emp.warehouse_scope === 'NATIONAL' ? (
+                              <span className="text-xs text-blue-600 font-medium">Toàn quốc</span>
+                            ) : (
+                              <div className="flex gap-1 flex-wrap">
+                                {(emp.warehouse_access ?? []).map(wa => (
+                                  <span key={wa.warehouse_id} className="text-xs text-slate-600 bg-slate-100 rounded px-1.5 py-0.5">
+                                    {wa.warehouse?.name ?? wa.warehouse_id}
+                                  </span>
+                                ))}
+                                {(emp.warehouse_access ?? []).length === 0 && (
+                                  <span className="text-xs text-amber-600">Chưa gán kho</span>
+                                )}
+                              </div>
+                            )}
+                          </TableCell>
+                          <TableCell className="px-3 py-2">
+                            {isDeleted ? (
+                              <Badge variant="secondary" className="text-xs text-amber-700 bg-amber-50">Đã ẩn</Badge>
+                            ) : (
+                              <Badge variant={emp.is_active ? 'default' : 'secondary'} className="text-xs">
+                                {emp.is_active ? 'Hoạt động' : 'Tạm dừng'}
+                              </Badge>
+                            )}
+                          </TableCell>
+                          <TableCell className="px-2 py-2">
+                            {isDeleted ? (
+                              can(perms, 'employees', 'delete') && (
+                                <button title="Khôi phục"
+                                  disabled={restoring}
+                                  className="text-slate-400 hover:text-green-600 transition-colors p-1 disabled:opacity-50"
+                                  onClick={e => { e.stopPropagation(); restore(emp.id) }}>
+                                  <RotateCcw className="h-3.5 w-3.5" />
+                                </button>
+                              )
+                            ) : (
+                              <div className="flex items-center gap-1">
+                                <button title="Đặt mật khẩu"
+                                  className="text-slate-400 hover:text-amber-500 transition-colors p-1"
+                                  onClick={e => { e.stopPropagation(); setPwdEmp(emp) }}>
+                                  <KeyRound className="h-3.5 w-3.5" />
+                                </button>
+                                <button title="Sửa thông tin"
+                                  className="text-slate-400 hover:text-blue-500 transition-colors p-1"
+                                  onClick={e => { e.stopPropagation(); setEditingEmp(emp); setShowEmpDlg(true) }}>
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </button>
+                                {can(perms, 'employees', 'delete') && emp.id !== user?.id && (
+                                  <button title="Xóa nhân viên"
+                                    className="text-slate-400 hover:text-red-500 transition-colors p-1"
+                                    onClick={e => { e.stopPropagation(); setConfirmDeleteEmp(emp) }}>
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                        )
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </Card>
+            {selectedEmp && (
+              <Card className="w-56 shrink-0 p-3 space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-slate-700">{selectedEmp.name}</span>
+                  <button onClick={() => setSelectedEmp(null)} className="text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>
+                </div>
+                <div><span className="text-slate-400">Mã NV:</span> <span className="font-mono font-medium">{selectedEmp.employee_code}</span></div>
+                <div><span className="text-slate-400">Đăng nhập:</span> <span className="font-medium">{selectedEmp.email ?? '—'}</span></div>
+                <div><span className="text-slate-400">SĐT:</span> <span className="font-medium">{selectedEmp.phone ?? '—'}</span></div>
+                <div><span className="text-slate-400">Phòng ban:</span> <span className="font-medium">{selectedEmp.dept?.name ?? '—'}</span></div>
+                <div><span className="text-slate-400">Chức danh:</span> <span className="font-medium">{selectedEmp.job_title?.name ?? '—'}</span></div>
+                <div><span className="text-slate-400">Trạng thái:</span> <span className="font-medium">{selectedEmp.is_active ? 'Hoạt động' : 'Tạm dừng'}</span></div>
+                <div className="border-t pt-2 space-y-1.5">
+                  <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Tạo / Sửa</p>
+                  <div><span className="text-slate-400">Người tạo:</span> <span className="font-medium">{selectedEmp.created_by ?? '—'}</span></div>
+                  <div><span className="text-slate-400">Ngày giờ tạo:</span> <span className="font-medium">{selectedEmp.created_at ? formatDateTime(selectedEmp.created_at) : '—'}</span></div>
+                  <div><span className="text-slate-400">Người sửa:</span> <span className="font-medium">{selectedEmp.updated_by ?? '—'}</span></div>
+                  <div><span className="text-slate-400">Ngày giờ sửa:</span> <span className="font-medium">{selectedEmp.updated_at ? formatDateTime(selectedEmp.updated_at) : '—'}</span></div>
+                </div>
+              </Card>
             )}
-          </Card>
+          </div>
         </TabsContent>
 
         {/* ── Tab: Phòng ban ── */}
@@ -952,49 +982,69 @@ export default function UserManagement() {
               <Plus className="h-4 w-4" /> Thêm phòng ban
             </Button>
           </div>
-          <Card>
-            {departments.length === 0 ? (
-              <div className="p-12 text-center text-slate-400 space-y-2">
-                <Building2 className="h-10 w-10 mx-auto opacity-30" />
-                <p className="text-sm">Chưa có phòng ban nào</p>
-                <Button size="sm" variant="outline" onClick={() => { setEditingDept(null); setShowDeptDlg(true) }}>
-                  <Plus className="h-4 w-4 mr-1" /> Thêm phòng ban đầu tiên
-                </Button>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="px-3 py-2 text-xs">Mã</TableHead>
-                      <TableHead className="px-3 py-2 text-xs">Tên phòng ban</TableHead>
-                      <TableHead className="px-3 py-2 text-xs">Trạng thái</TableHead>
-                      <TableHead className="px-3 py-2 w-12" />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {departments.map(d => (
-                      <TableRow key={d.id} className="text-sm">
-                        <TableCell className="px-3 py-2 font-mono font-semibold text-slate-600 text-[11px]">{d.code}</TableCell>
-                        <TableCell className="px-3 py-2 font-medium text-slate-800">{d.name}</TableCell>
-                        <TableCell className="px-3 py-2">
-                          <Badge variant={d.is_active ? 'default' : 'secondary'} className="text-xs">
-                            {d.is_active ? 'Hoạt động' : 'Tạm dừng'}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="px-2 py-2">
-                          <button title="Sửa" className="text-slate-400 hover:text-blue-500 transition-colors p-1"
-                            onClick={() => { setEditingDept(d); setShowDeptDlg(true) }}>
-                            <Pencil className="h-3.5 w-3.5" />
-                          </button>
-                        </TableCell>
+          <div className="flex gap-3 items-start">
+            <Card className="flex-1 min-w-0">
+              {departments.length === 0 ? (
+                <div className="p-12 text-center text-slate-400 space-y-2">
+                  <Building2 className="h-10 w-10 mx-auto opacity-30" />
+                  <p className="text-sm">Chưa có phòng ban nào</p>
+                  <Button size="sm" variant="outline" onClick={() => { setEditingDept(null); setShowDeptDlg(true) }}>
+                    <Plus className="h-4 w-4 mr-1" /> Thêm phòng ban đầu tiên
+                  </Button>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="px-3 py-2 text-xs">Mã</TableHead>
+                        <TableHead className="px-3 py-2 text-xs">Tên phòng ban</TableHead>
+                        <TableHead className="px-3 py-2 text-xs">Trạng thái</TableHead>
+                        <TableHead className="px-3 py-2 w-12" />
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+                    </TableHeader>
+                    <TableBody>
+                      {departments.map(d => (
+                        <TableRow key={d.id}
+                          className={`text-sm cursor-pointer ${selectedDept?.id === d.id ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
+                          onClick={() => setSelectedDept(prev => prev?.id === d.id ? null : d)}>
+                          <TableCell className="px-3 py-2 font-mono font-semibold text-slate-600 text-[11px]">{d.code}</TableCell>
+                          <TableCell className="px-3 py-2 font-medium text-slate-800">{d.name}</TableCell>
+                          <TableCell className="px-3 py-2">
+                            <Badge variant={d.is_active ? 'default' : 'secondary'} className="text-xs">
+                              {d.is_active ? 'Hoạt động' : 'Tạm dừng'}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="px-2 py-2">
+                            <button title="Sửa" className="text-slate-400 hover:text-blue-500 transition-colors p-1"
+                              onClick={e => { e.stopPropagation(); setEditingDept(d); setShowDeptDlg(true) }}>
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </Card>
+            {selectedDept && (
+              <Card className="w-56 shrink-0 p-3 space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-slate-700">{selectedDept.code} — {selectedDept.name}</span>
+                  <button onClick={() => setSelectedDept(null)} className="text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>
+                </div>
+                <div><span className="text-slate-400">Trạng thái:</span> <span className="font-medium">{selectedDept.is_active ? 'Hoạt động' : 'Tạm dừng'}</span></div>
+                <div className="border-t pt-2 space-y-1.5">
+                  <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Tạo / Sửa</p>
+                  <div><span className="text-slate-400">Người tạo:</span> <span className="font-medium">{selectedDept.created_by ?? '—'}</span></div>
+                  <div><span className="text-slate-400">Ngày giờ tạo:</span> <span className="font-medium">{selectedDept.created_at ? formatDateTime(selectedDept.created_at) : '—'}</span></div>
+                  <div><span className="text-slate-400">Người sửa:</span> <span className="font-medium">{selectedDept.updated_by ?? '—'}</span></div>
+                  <div><span className="text-slate-400">Ngày giờ sửa:</span> <span className="font-medium">{selectedDept.updated_at ? formatDateTime(selectedDept.updated_at) : '—'}</span></div>
+                </div>
+              </Card>
             )}
-          </Card>
+          </div>
         </TabsContent>
 
         {/* ── Tab: Chức danh ── */}
@@ -1017,49 +1067,70 @@ export default function UserManagement() {
               ))}
             </SelectContent>
           </Select>
-          <Card>
-            {jobTitles.length === 0 ? (
-              <div className="p-12 text-center text-slate-400 space-y-2">
-                <Briefcase className="h-10 w-10 mx-auto opacity-30" />
-                <p className="text-sm">Chưa có chức danh nào</p>
-                <Button size="sm" variant="outline" onClick={() => { setEditingJt(null); setShowJtDlg(true) }}>
-                  <Plus className="h-4 w-4 mr-1" /> Thêm chức danh đầu tiên
-                </Button>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="px-3 py-2 text-xs">Chức danh</TableHead>
-                      <TableHead className="px-3 py-2 text-xs">Phòng ban</TableHead>
-                      <TableHead className="px-3 py-2 text-xs">Trạng thái</TableHead>
-                      <TableHead className="px-3 py-2 w-12" />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {jobTitles.map(jt => (
-                      <TableRow key={jt.id} className="text-sm">
-                        <TableCell className="px-3 py-2 font-medium text-slate-800">{jt.name}</TableCell>
-                        <TableCell className="px-3 py-2 text-slate-600 text-xs">{jt.department?.name ?? '—'}</TableCell>
-                        <TableCell className="px-3 py-2">
-                          <Badge variant={jt.is_active ? 'default' : 'secondary'} className="text-xs">
-                            {jt.is_active ? 'Hoạt động' : 'Tạm dừng'}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="px-2 py-2">
-                          <button title="Sửa" className="text-slate-400 hover:text-blue-500 transition-colors p-1"
-                            onClick={() => { setEditingJt(jt); setShowJtDlg(true) }}>
-                            <Pencil className="h-3.5 w-3.5" />
-                          </button>
-                        </TableCell>
+          <div className="flex gap-3 items-start">
+            <Card className="flex-1 min-w-0">
+              {jobTitles.length === 0 ? (
+                <div className="p-12 text-center text-slate-400 space-y-2">
+                  <Briefcase className="h-10 w-10 mx-auto opacity-30" />
+                  <p className="text-sm">Chưa có chức danh nào</p>
+                  <Button size="sm" variant="outline" onClick={() => { setEditingJt(null); setShowJtDlg(true) }}>
+                    <Plus className="h-4 w-4 mr-1" /> Thêm chức danh đầu tiên
+                  </Button>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="px-3 py-2 text-xs">Chức danh</TableHead>
+                        <TableHead className="px-3 py-2 text-xs">Phòng ban</TableHead>
+                        <TableHead className="px-3 py-2 text-xs">Trạng thái</TableHead>
+                        <TableHead className="px-3 py-2 w-12" />
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+                    </TableHeader>
+                    <TableBody>
+                      {jobTitles.map(jt => (
+                        <TableRow key={jt.id}
+                          className={`text-sm cursor-pointer ${selectedJt?.id === jt.id ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
+                          onClick={() => setSelectedJt(prev => prev?.id === jt.id ? null : jt)}>
+                          <TableCell className="px-3 py-2 font-medium text-slate-800">{jt.name}</TableCell>
+                          <TableCell className="px-3 py-2 text-slate-600 text-xs">{jt.department?.name ?? '—'}</TableCell>
+                          <TableCell className="px-3 py-2">
+                            <Badge variant={jt.is_active ? 'default' : 'secondary'} className="text-xs">
+                              {jt.is_active ? 'Hoạt động' : 'Tạm dừng'}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="px-2 py-2">
+                            <button title="Sửa" className="text-slate-400 hover:text-blue-500 transition-colors p-1"
+                              onClick={e => { e.stopPropagation(); setEditingJt(jt); setShowJtDlg(true) }}>
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </Card>
+            {selectedJt && (
+              <Card className="w-56 shrink-0 p-3 space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-slate-700">{selectedJt.name}</span>
+                  <button onClick={() => setSelectedJt(null)} className="text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>
+                </div>
+                <div><span className="text-slate-400">Phòng ban:</span> <span className="font-medium">{selectedJt.department?.name ?? '—'}</span></div>
+                <div><span className="text-slate-400">Trạng thái:</span> <span className="font-medium">{selectedJt.is_active ? 'Hoạt động' : 'Tạm dừng'}</span></div>
+                <div className="border-t pt-2 space-y-1.5">
+                  <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Tạo / Sửa</p>
+                  <div><span className="text-slate-400">Người tạo:</span> <span className="font-medium">{selectedJt.created_by ?? '—'}</span></div>
+                  <div><span className="text-slate-400">Ngày giờ tạo:</span> <span className="font-medium">{selectedJt.created_at ? formatDateTime(selectedJt.created_at) : '—'}</span></div>
+                  <div><span className="text-slate-400">Người sửa:</span> <span className="font-medium">{selectedJt.updated_by ?? '—'}</span></div>
+                  <div><span className="text-slate-400">Ngày giờ sửa:</span> <span className="font-medium">{selectedJt.updated_at ? formatDateTime(selectedJt.updated_at) : '—'}</span></div>
+                </div>
+              </Card>
             )}
-          </Card>
+          </div>
         </TabsContent>
       </Tabs>
 

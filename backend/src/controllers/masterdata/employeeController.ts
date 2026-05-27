@@ -33,7 +33,8 @@ const EMP_BASE = [
   'id', 'name', 'employee_code', 'email', 'phone',
   'department_id', 'job_title_id',
   'allowed_categories', 'warehouse_scope',
-  'warehouse_id', 'is_active', 'created_at', 'deleted_at',
+  'warehouse_id', 'is_active', 'created_at', 'updated_at', 'deleted_at',
+  'created_by', 'updated_by',
   'ncc_id', 'is_driver',
 ].join(', ')
 
@@ -154,6 +155,7 @@ export async function createEmployee(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const now = new Date().toISOString()
+    const actor = (req as any).user?.name || null
     const { error } = await (supabase.from('Employee') as any).insert({
       id: empId, name, employee_code,
       email: email || null, phone: phone || null,
@@ -167,6 +169,8 @@ export async function createEmployee(req: Request, res: Response) {
       is_active: true,
       created_at: now,
       updated_at: now,
+      created_by: actor,
+      updated_by: actor,
     })
     if (error) return fail(res, error.message)
 
@@ -206,7 +210,7 @@ export async function updateEmployee(req: Request, res: Response) {
     }
 
     // Build update object explicitly — exclude undefined fields so Supabase doesn't overwrite them with null
-    const updates: Record<string, unknown> = { module_permissions: null, updated_at: new Date().toISOString() }
+    const updates: Record<string, unknown> = { module_permissions: null, updated_at: new Date().toISOString(), updated_by: (req as any).user?.name || null }
     if (name              !== undefined) updates.name              = name
     if (phone             !== undefined) updates.phone             = phone
     if (email             !== undefined) updates.email             = email

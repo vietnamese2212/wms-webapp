@@ -21,8 +21,9 @@ export async function createVehicleType(req: Request, res: Response) {
     if (!code || !name) return fail(res, 'code và name là bắt buộc', 400)
     const now = new Date().toISOString()
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const actor = (req as any).user?.name || null
     const { data, error } = await (supabase.from('VehicleType') as any)
-      .insert({ id: randomUUID(), code: code.toUpperCase().trim(), name: name.trim(), is_active: true, created_at: now, updated_at: now })
+      .insert({ id: randomUUID(), code: code.toUpperCase().trim(), name: name.trim(), is_active: true, created_at: now, updated_at: now, created_by: actor, updated_by: actor })
       .select().single()
     if (error) return fail(res, error.message)
     return ok(res, data, 201)
@@ -33,7 +34,7 @@ export async function updateVehicleType(req: Request, res: Response) {
   try {
     const { id } = req.params
     const { code, is_active } = req.body as { code?: string; is_active?: boolean }
-    const updates: Record<string, unknown> = { updated_at: new Date().toISOString() }
+    const updates: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: (req as any).user?.name || null }
     if (code      !== undefined) updates.code      = code.toUpperCase().trim()
     if (is_active !== undefined) updates.is_active = is_active
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

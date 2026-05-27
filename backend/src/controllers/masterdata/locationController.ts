@@ -108,6 +108,7 @@ export async function createLocation(req: Request, res: Response) {
 
     const { category } = req.body
 
+    const actor = (req as any).user?.name || null
     const { data, error } = await supabase
       .from('Location')
       .insert({
@@ -121,6 +122,7 @@ export async function createLocation(req: Request, res: Response) {
         row: String(row).trim(),
         shelf: String(shelf ?? '').trim(),
         max_pallets: max_pallets ? Number(max_pallets) : 1,
+        created_by: actor, updated_by: actor,
         updated_at: new Date().toISOString(),
       })
       .select('*, warehouse:Warehouse(id, code, name)')
@@ -137,7 +139,7 @@ export async function createLocation(req: Request, res: Response) {
 export async function updateLocation(req: Request, res: Response) {
   try {
     const { sub_name, sub_type, max_pallets, is_active, category, requires_stocktake } = req.body
-    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
+    const patch: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: (req as any).user?.name || null }
     if (sub_name !== undefined)          patch.sub_name          = sub_name ? String(sub_name).trim() : null
     if (sub_type !== undefined)          patch.sub_type          = sub_type
     if (category !== undefined)          patch.category          = category || null

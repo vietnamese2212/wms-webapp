@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { AxiosError } from 'axios'
-import { Plus, Pencil, Trash2, Warehouse, Tag, Settings2, MapPin } from 'lucide-react'
+import { Plus, Pencil, Trash2, Warehouse, Tag, Settings2, MapPin, X } from 'lucide-react'
+import { formatDateTime } from '@/utils/formatters'
 import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
 import { Label }    from '@/components/ui/label'
@@ -25,7 +26,7 @@ function apiMsg(err: unknown) {
 
 // ─── Warehouse Dialog ─────────────────────────────────────────────────────────
 
-interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean }
+interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
 
 function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolean; onClose: () => void }) {
   const isEdit = !!wh
@@ -269,6 +270,11 @@ export default function WMSSettings() {
   const [editingType, setEditingType] = useState<{ id: string; value: string } | null>(null)
   const [showTypeDlg, setShowTypeDlg] = useState(false)
 
+  // Detail panel state
+  const [detailWh,   setDetailWh]   = useState<WhRow | null>(null)
+  const [detailType, setDetailType] = useState<{ id: string; value: string; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null } | null>(null)
+  const [detailZone, setDetailZone] = useState<WarehouseZone | null>(null)
+
   // Khu vực kho
   const activeWh = (allWh as WhRow[]).filter(w => w.is_active)
   const [selectedWhId, setSelectedWhId] = useState('')
@@ -315,52 +321,73 @@ export default function WMSSettings() {
               </Button>
             )}
           </div>
-          <Card>
-            {loadingWh ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> : (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="px-3 py-2 text-xs">Mã</TableHead>
-                      <TableHead className="px-3 py-2 text-xs">Tên kho</TableHead>
-                      <TableHead className="px-3 py-2 text-xs">Địa chỉ</TableHead>
-                      <TableHead className="px-3 py-2 text-xs">Trạng thái</TableHead>
-                      {canManage && <TableHead className="px-3 py-2 w-16" />}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {(allWh as WhRow[]).map(wh => (
-                      <TableRow key={wh.id} className={`text-sm ${!wh.is_active ? 'opacity-50' : ''}`}>
-                        <TableCell className="px-3 py-2 font-mono font-semibold text-[11px] text-slate-600">{wh.code}</TableCell>
-                        <TableCell className="px-3 py-2 font-medium text-slate-800">{wh.name}</TableCell>
-                        <TableCell className="px-3 py-2 text-slate-500 text-xs">{wh.address ?? '—'}</TableCell>
-                        <TableCell className="px-3 py-2">
-                          <Badge variant={wh.is_active ? 'default' : 'secondary'} className="text-xs">
-                            {wh.is_active ? 'Hoạt động' : 'Tạm dừng'}
-                          </Badge>
-                        </TableCell>
-                        {canManage && (
-                          <TableCell className="px-2 py-2">
-                            <div className="flex items-center gap-0.5">
-                              <button className="text-slate-400 hover:text-blue-500 p-1 transition-colors"
-                                onClick={() => { setEditingWh(wh); setShowWhDlg(true) }}>
-                                <Pencil className="h-3.5 w-3.5" />
-                              </button>
-                              <button className="text-slate-400 hover:text-red-500 p-1 transition-colors"
-                                disabled={deletingWh}
-                                onClick={() => handleDeleteWh(wh)}>
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
-                            </div>
-                          </TableCell>
-                        )}
+          <div className="flex gap-3 items-start">
+            <Card className="flex-1 min-w-0">
+              {loadingWh ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> : (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="px-3 py-2 text-xs">Mã</TableHead>
+                        <TableHead className="px-3 py-2 text-xs">Tên kho</TableHead>
+                        <TableHead className="px-3 py-2 text-xs">Địa chỉ</TableHead>
+                        <TableHead className="px-3 py-2 text-xs">Trạng thái</TableHead>
+                        {canManage && <TableHead className="px-3 py-2 w-16" />}
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+                    </TableHeader>
+                    <TableBody>
+                      {(allWh as WhRow[]).map(wh => (
+                        <TableRow key={wh.id}
+                          className={`text-sm cursor-pointer ${!wh.is_active ? 'opacity-50' : ''} ${detailWh?.id === wh.id ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
+                          onClick={() => setDetailWh(prev => prev?.id === wh.id ? null : wh)}>
+                          <TableCell className="px-3 py-2 font-mono font-semibold text-[11px] text-slate-600">{wh.code}</TableCell>
+                          <TableCell className="px-3 py-2 font-medium text-slate-800">{wh.name}</TableCell>
+                          <TableCell className="px-3 py-2 text-slate-500 text-xs">{wh.address ?? '—'}</TableCell>
+                          <TableCell className="px-3 py-2">
+                            <Badge variant={wh.is_active ? 'default' : 'secondary'} className="text-xs">
+                              {wh.is_active ? 'Hoạt động' : 'Tạm dừng'}
+                            </Badge>
+                          </TableCell>
+                          {canManage && (
+                            <TableCell className="px-2 py-2">
+                              <div className="flex items-center gap-0.5">
+                                <button className="text-slate-400 hover:text-blue-500 p-1 transition-colors"
+                                  onClick={e => { e.stopPropagation(); setEditingWh(wh); setShowWhDlg(true) }}>
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </button>
+                                <button className="text-slate-400 hover:text-red-500 p-1 transition-colors"
+                                  disabled={deletingWh}
+                                  onClick={e => { e.stopPropagation(); handleDeleteWh(wh) }}>
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            </TableCell>
+                          )}
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </Card>
+            {detailWh && (
+              <Card className="w-60 shrink-0 p-3 space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-slate-700">{detailWh.code} — {detailWh.name}</span>
+                  <button onClick={() => setDetailWh(null)} className="text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>
+                </div>
+                <div><span className="text-slate-400">Địa chỉ:</span> <span className="font-medium">{detailWh.address ?? '—'}</span></div>
+                <div><span className="text-slate-400">Trạng thái:</span> <span className="font-medium">{detailWh.is_active ? 'Hoạt động' : 'Tạm dừng'}</span></div>
+                <div className="border-t pt-2 space-y-1.5">
+                  <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Tạo / Sửa</p>
+                  <div><span className="text-slate-400">Người tạo:</span> <span className="font-medium">{detailWh.created_by ?? '—'}</span></div>
+                  <div><span className="text-slate-400">Ngày giờ tạo:</span> <span className="font-medium">{detailWh.created_at ? formatDateTime(detailWh.created_at) : '—'}</span></div>
+                  <div><span className="text-slate-400">Người sửa:</span> <span className="font-medium">{detailWh.updated_by ?? '—'}</span></div>
+                  <div><span className="text-slate-400">Ngày giờ sửa:</span> <span className="font-medium">{detailWh.updated_at ? formatDateTime(detailWh.updated_at) : '—'}</span></div>
+                </div>
+              </Card>
             )}
-          </Card>
+          </div>
         </TabsContent>
 
         {/* ── Tab: Loại kho ── */}
@@ -376,44 +403,63 @@ export default function WMSSettings() {
             )}
           </div>
 
-          <Card>
-            {loadingTypes ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> :
-              warehouseTypes.length === 0 ? (
-                <div className="p-12 text-center text-slate-400 space-y-2">
-                  <Tag className="h-10 w-10 mx-auto opacity-30" />
-                  <p className="text-sm">Chưa có loại kho nào</p>
-                  {canManage && <p className="text-xs">Nhấn "Thêm loại kho" để tạo loại kho đầu tiên</p>}
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="px-3 py-2 text-xs">Tên loại kho</TableHead>
-                        {canManage && <TableHead className="px-3 py-2 w-16" />}
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {warehouseTypes.map(t => (
-                        <TableRow key={t.id} className="text-sm">
-                          <TableCell className="px-3 py-2 font-medium text-slate-800">{t.value}</TableCell>
-                          {canManage && (
-                            <TableCell className="px-2 py-2">
-                              <button className="text-slate-400 hover:text-red-500 p-1 transition-colors"
-                                disabled={deletingType}
-                                onClick={() => { if (confirm(`Xóa loại kho "${t.value}"?`)) deleteType(t.id) }}>
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
-                            </TableCell>
-                          )}
+          <div className="flex gap-3 items-start">
+            <Card className="flex-1 min-w-0">
+              {loadingTypes ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> :
+                warehouseTypes.length === 0 ? (
+                  <div className="p-12 text-center text-slate-400 space-y-2">
+                    <Tag className="h-10 w-10 mx-auto opacity-30" />
+                    <p className="text-sm">Chưa có loại kho nào</p>
+                    {canManage && <p className="text-xs">Nhấn "Thêm loại kho" để tạo loại kho đầu tiên</p>}
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="px-3 py-2 text-xs">Tên loại kho</TableHead>
+                          {canManage && <TableHead className="px-3 py-2 w-16" />}
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                      </TableHeader>
+                      <TableBody>
+                        {(warehouseTypes as { id: string; value: string; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }[]).map(t => (
+                          <TableRow key={t.id}
+                            className={`text-sm cursor-pointer ${detailType?.id === t.id ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
+                            onClick={() => setDetailType(prev => prev?.id === t.id ? null : t)}>
+                            <TableCell className="px-3 py-2 font-medium text-slate-800">{t.value}</TableCell>
+                            {canManage && (
+                              <TableCell className="px-2 py-2">
+                                <button className="text-slate-400 hover:text-red-500 p-1 transition-colors"
+                                  disabled={deletingType}
+                                  onClick={e => { e.stopPropagation(); if (confirm(`Xóa loại kho "${t.value}"?`)) deleteType(t.id) }}>
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </TableCell>
+                            )}
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )
+              }
+            </Card>
+            {detailType && (
+              <Card className="w-60 shrink-0 p-3 space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-slate-700">{detailType.value}</span>
+                  <button onClick={() => setDetailType(null)} className="text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>
                 </div>
-              )
-            }
-          </Card>
+                <div className="border-t pt-2 space-y-1.5">
+                  <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Tạo / Sửa</p>
+                  <div><span className="text-slate-400">Người tạo:</span> <span className="font-medium">{detailType.created_by ?? '—'}</span></div>
+                  <div><span className="text-slate-400">Ngày giờ tạo:</span> <span className="font-medium">{detailType.created_at ? formatDateTime(detailType.created_at) : '—'}</span></div>
+                  <div><span className="text-slate-400">Người sửa:</span> <span className="font-medium">{detailType.updated_by ?? '—'}</span></div>
+                  <div><span className="text-slate-400">Ngày giờ sửa:</span> <span className="font-medium">{detailType.updated_at ? formatDateTime(detailType.updated_at) : '—'}</span></div>
+                </div>
+              </Card>
+            )}
+          </div>
         </TabsContent>
 
         {/* ── Tab: Khu vực kho ── */}
@@ -442,62 +488,83 @@ export default function WMSSettings() {
             )}
           </div>
 
-          <Card>
-            {!effectiveWhId ? (
-              <div className="p-8 text-center text-sm text-slate-400">Chọn kho để xem khu vực</div>
-            ) : loadingZones ? (
-              <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div>
-            ) : zones.length === 0 ? (
-              <div className="p-12 text-center text-slate-400 space-y-2">
-                <MapPin className="h-10 w-10 mx-auto opacity-30" />
-                <p className="text-sm">Kho này chưa có khu vực nào</p>
-                {canManage && <p className="text-xs">Nhấn "Thêm khu vực" để tạo khu vực đầu tiên</p>}
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="px-3 py-2 text-xs">Mã khu vực</TableHead>
-                      <TableHead className="px-3 py-2 text-xs">Tên khu vực</TableHead>
-                      <TableHead className="px-3 py-2 text-xs">Loại kho</TableHead>
-                      <TableHead className="px-3 py-2 text-xs">Trạng thái</TableHead>
-                      {canManage && <TableHead className="px-3 py-2 w-16" />}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {zones.map(z => (
-                      <TableRow key={z.id} className={`text-sm ${!z.is_active ? 'opacity-50' : ''}`}>
-                        <TableCell className="px-3 py-2 font-mono font-semibold text-[11px] text-slate-600">{z.code}</TableCell>
-                        <TableCell className="px-3 py-2 font-medium text-slate-800">{z.name}</TableCell>
-                        <TableCell className="px-3 py-2 text-xs text-slate-500">{z.category ?? <span className="text-slate-300">—</span>}</TableCell>
-                        <TableCell className="px-3 py-2">
-                          <Badge variant={z.is_active ? 'default' : 'secondary'} className="text-xs">
-                            {z.is_active ? 'Hoạt động' : 'Tạm dừng'}
-                          </Badge>
-                        </TableCell>
-                        {canManage && (
-                          <TableCell className="px-2 py-2">
-                            <div className="flex items-center gap-0.5">
-                              <button className="text-slate-400 hover:text-blue-500 p-1 transition-colors"
-                                onClick={() => { setEditingZone(z); setShowZoneDlg(true) }}>
-                                <Pencil className="h-3.5 w-3.5" />
-                              </button>
-                              <button className="text-slate-400 hover:text-red-500 p-1 transition-colors"
-                                disabled={deletingZone}
-                                onClick={() => handleDeleteZone(z)}>
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
-                            </div>
-                          </TableCell>
-                        )}
+          <div className="flex gap-3 items-start">
+            <Card className="flex-1 min-w-0">
+              {!effectiveWhId ? (
+                <div className="p-8 text-center text-sm text-slate-400">Chọn kho để xem khu vực</div>
+              ) : loadingZones ? (
+                <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div>
+              ) : zones.length === 0 ? (
+                <div className="p-12 text-center text-slate-400 space-y-2">
+                  <MapPin className="h-10 w-10 mx-auto opacity-30" />
+                  <p className="text-sm">Kho này chưa có khu vực nào</p>
+                  {canManage && <p className="text-xs">Nhấn "Thêm khu vực" để tạo khu vực đầu tiên</p>}
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="px-3 py-2 text-xs">Mã khu vực</TableHead>
+                        <TableHead className="px-3 py-2 text-xs">Tên khu vực</TableHead>
+                        <TableHead className="px-3 py-2 text-xs">Loại kho</TableHead>
+                        <TableHead className="px-3 py-2 text-xs">Trạng thái</TableHead>
+                        {canManage && <TableHead className="px-3 py-2 w-16" />}
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+                    </TableHeader>
+                    <TableBody>
+                      {zones.map(z => (
+                        <TableRow key={z.id}
+                          className={`text-sm cursor-pointer ${!z.is_active ? 'opacity-50' : ''} ${detailZone?.id === z.id ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
+                          onClick={() => setDetailZone(prev => prev?.id === z.id ? null : z)}>
+                          <TableCell className="px-3 py-2 font-mono font-semibold text-[11px] text-slate-600">{z.code}</TableCell>
+                          <TableCell className="px-3 py-2 font-medium text-slate-800">{z.name}</TableCell>
+                          <TableCell className="px-3 py-2 text-xs text-slate-500">{z.category ?? <span className="text-slate-300">—</span>}</TableCell>
+                          <TableCell className="px-3 py-2">
+                            <Badge variant={z.is_active ? 'default' : 'secondary'} className="text-xs">
+                              {z.is_active ? 'Hoạt động' : 'Tạm dừng'}
+                            </Badge>
+                          </TableCell>
+                          {canManage && (
+                            <TableCell className="px-2 py-2">
+                              <div className="flex items-center gap-0.5">
+                                <button className="text-slate-400 hover:text-blue-500 p-1 transition-colors"
+                                  onClick={e => { e.stopPropagation(); setEditingZone(z); setShowZoneDlg(true) }}>
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </button>
+                                <button className="text-slate-400 hover:text-red-500 p-1 transition-colors"
+                                  disabled={deletingZone}
+                                  onClick={e => { e.stopPropagation(); handleDeleteZone(z) }}>
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            </TableCell>
+                          )}
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </Card>
+            {detailZone && (
+              <Card className="w-60 shrink-0 p-3 space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-slate-700">{detailZone.code} — {detailZone.name}</span>
+                  <button onClick={() => setDetailZone(null)} className="text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>
+                </div>
+                <div><span className="text-slate-400">Loại kho:</span> <span className="font-medium">{detailZone.category ?? '—'}</span></div>
+                <div><span className="text-slate-400">Trạng thái:</span> <span className="font-medium">{detailZone.is_active ? 'Hoạt động' : 'Tạm dừng'}</span></div>
+                <div className="border-t pt-2 space-y-1.5">
+                  <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Tạo / Sửa</p>
+                  <div><span className="text-slate-400">Người tạo:</span> <span className="font-medium">{detailZone.created_by ?? '—'}</span></div>
+                  <div><span className="text-slate-400">Ngày giờ tạo:</span> <span className="font-medium">{detailZone.created_at ? formatDateTime(detailZone.created_at) : '—'}</span></div>
+                  <div><span className="text-slate-400">Người sửa:</span> <span className="font-medium">{detailZone.updated_by ?? '—'}</span></div>
+                  <div><span className="text-slate-400">Ngày giờ sửa:</span> <span className="font-medium">{detailZone.updated_at ? formatDateTime(detailZone.updated_at) : '—'}</span></div>
+                </div>
+              </Card>
             )}
-          </Card>
+          </div>
         </TabsContent>
       </Tabs>
 

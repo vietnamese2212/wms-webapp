@@ -3,8 +3,8 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 
-const DEPT_SELECT = 'id, name, code, allowed_modules, is_active, created_at, updated_at'
-const JT_SELECT   = 'id, name, department_id, is_active, module_permissions, department:Department(id,name,code)'
+const DEPT_SELECT = 'id, name, code, allowed_modules, is_active, created_at, updated_at, created_by, updated_by'
+const JT_SELECT   = 'id, name, department_id, is_active, module_permissions, created_at, updated_at, created_by, updated_by, department:Department(id,name,code)'
 
 // ─── Departments ──────────────────────────────────────────────────────────────
 
@@ -27,9 +27,10 @@ export async function createDepartment(req: Request, res: Response) {
     }
     if (!name || !code) return fail(res, 'name và code là bắt buộc', 400)
 
+    const actor = (req as any).user?.name || null
     const { data, error } = await supabase
       .from('Department')
-      .insert({ id: randomUUID(), name, code: code.toUpperCase(), allowed_modules, updated_at: new Date().toISOString() })
+      .insert({ id: randomUUID(), name, code: code.toUpperCase(), allowed_modules, updated_at: new Date().toISOString(), created_by: actor, updated_by: actor })
       .select(DEPT_SELECT)
       .single()
     if (error) return fail(res, error.message)
@@ -45,7 +46,7 @@ export async function updateDepartment(req: Request, res: Response) {
     }
     const { data, error } = await supabase
       .from('Department')
-      .update({ name, code: code?.toUpperCase(), allowed_modules, is_active, updated_at: new Date().toISOString() })
+      .update({ name, code: code?.toUpperCase(), allowed_modules, is_active, updated_at: new Date().toISOString(), updated_by: (req as any).user?.name || null })
       .eq('id', id)
       .select(DEPT_SELECT)
       .single()
@@ -76,13 +77,16 @@ export async function createJobTitle(req: Request, res: Response) {
     }
     if (!name || !department_id) return fail(res, 'name và department_id là bắt buộc', 400)
 
+    const actor = (req as any).user?.name || null
+    const now = new Date().toISOString()
     const { data, error } = await supabase
       .from('JobTitle')
       .insert({
         id: randomUUID(),
         name, department_id,
         module_permissions: module_permissions ?? {},
-        updated_at: new Date().toISOString(),
+        created_at: now, updated_at: now,
+        created_by: actor, updated_by: actor,
       })
       .select(JT_SELECT)
       .single()
@@ -100,7 +104,7 @@ export async function updateJobTitle(req: Request, res: Response) {
     }
     const { data, error } = await supabase
       .from('JobTitle')
-      .update({ name, is_active, module_permissions, updated_at: new Date().toISOString() })
+      .update({ name, is_active, module_permissions, updated_at: new Date().toISOString(), updated_by: (req as any).user?.name || null })
       .eq('id', id)
       .select(JT_SELECT)
       .single()

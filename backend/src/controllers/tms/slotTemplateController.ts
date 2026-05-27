@@ -28,10 +28,12 @@ export async function createSlotTemplate(req: Request, res: Response) {
     if (!warehouse_id || !vehicle_type_id || !days_of_week?.length || !time_from || !time_to || !max_vehicles)
       return fail(res, 'Thiếu thông tin bắt buộc', 400)
     const now = new Date().toISOString()
+    const actor = (req as any).user?.name || null
     const rows = days_of_week.map(dow => ({
       id: randomUUID(), warehouse_id, vehicle_type_id, cargo_type,
       day_of_week: dow, time_from, time_to, max_vehicles: Number(max_vehicles),
       is_active: true, created_at: now, updated_at: now,
+      created_by: actor, updated_by: actor,
     }))
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await (supabase.from('SlotTemplate') as any)
@@ -48,7 +50,7 @@ export async function updateSlotTemplate(req: Request, res: Response) {
       time_from?: string; time_to?: string; max_vehicles?: number
       cargo_type?: string; is_active?: boolean
     }
-    const updates: Record<string, unknown> = { updated_at: new Date().toISOString() }
+    const updates: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: (req as any).user?.name || null }
     if (time_from    !== undefined) updates.time_from    = time_from
     if (time_to      !== undefined) updates.time_to      = time_to
     if (max_vehicles !== undefined) updates.max_vehicles = Number(max_vehicles)

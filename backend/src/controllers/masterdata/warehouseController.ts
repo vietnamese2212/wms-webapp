@@ -56,9 +56,10 @@ export async function createWarehouse(req: Request, res: Response) {
     const { code, name, address } = req.body
     if (!code || !name) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu code hoặc name')
 
+    const actor = (req as any).user?.name || null
     const { data, error } = await supabase
       .from('Warehouse')
-      .insert({ id: randomUUID(), code: String(code).toUpperCase().trim(), name: String(name).trim(), address, updated_at: new Date().toISOString() })
+      .insert({ id: randomUUID(), code: String(code).toUpperCase().trim(), name: String(name).trim(), address, created_by: actor, updated_by: actor, updated_at: new Date().toISOString() })
       .select().single()
 
     if (error) {
@@ -72,7 +73,7 @@ export async function createWarehouse(req: Request, res: Response) {
 export async function updateWarehouse(req: Request, res: Response) {
   try {
     const { name, address, is_active } = req.body
-    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
+    const patch: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: (req as any).user?.name || null }
     if (name !== undefined) patch.name = String(name).trim()
     if (address !== undefined) patch.address = address
     if (is_active !== undefined) patch.is_active = Boolean(is_active)

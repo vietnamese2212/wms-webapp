@@ -245,10 +245,12 @@ export async function createGDO(req: Request, res: Response) {
     const group_code = `${prefix}${String(maxNum + 1).padStart(2, '0')}`
 
     const gdoId = randomUUID()
+    const actor = (req as any).user?.name || null
     const { error } = await (supabase.from('GroupDeliveryOrder') as any).insert({
       id: gdoId, group_code, planned_date: delivery_date, delivery_date,
       warehouse_id: warehouse_id ?? null, dvvt: dvvt ?? null,
-      warehouse_type: warehouse_type ?? null, status: 'PENDING', updated_at: now(),
+      warehouse_type: warehouse_type ?? null, status: 'PENDING',
+      created_by: actor, updated_by: actor, updated_at: now(),
     })
     if (error) return fail(res, error.message)
 
@@ -1054,10 +1056,11 @@ export async function uploadExcel(req: Request, res: Response) {
         toReplaceIds.push(pendingSimpleMap.get(group_code)!)
       }
       const gdoId = randomUUID()
+      const actor = (req as any).user?.name || null
       gdoInserts.push({
         id: gdoId, group_code, planned_date, delivery_date,
         warehouse_id: resolved_warehouse_id, dvvt, warehouse_type: loai_kho,
-        status: 'PENDING', updated_at: now(),
+        status: 'PENDING', created_by: actor, updated_by: actor, updated_at: now(),
       })
       collectDOsAndItems(gdoId)
       created.push({ group_code, id: gdoId, created: true })

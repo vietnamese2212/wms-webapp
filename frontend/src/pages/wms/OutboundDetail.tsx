@@ -1006,6 +1006,18 @@ export default function OutboundDetail() {
             </div>
           )}
 
+          <div className="flex flex-wrap gap-x-4 gap-y-0 text-[10px] text-slate-400">
+            {gdo.created_by && (
+              <span>Tạo bởi: <span className="text-slate-600 font-medium">{gdo.created_by}</span>{gdo.created_at ? <span className="ml-1">{formatDateTime(gdo.created_at)}</span> : null}</span>
+            )}
+            {!gdo.created_by && gdo.created_at && (
+              <span>Ngày tạo: <span className="text-slate-600">{formatDateTime(gdo.created_at)}</span></span>
+            )}
+            {gdo.updated_by && (
+              <span>Sửa bởi: <span className="text-slate-600 font-medium">{gdo.updated_by}</span>{gdo.updated_at ? <span className="ml-1">{formatDateTime(gdo.updated_at)}</span> : null}</span>
+            )}
+          </div>
+
           {undoErr && (
             <div className="rounded bg-red-50 border border-red-200 px-2 py-1 text-xs text-red-700 flex items-center gap-1">
               <span>{undoErr}</span>

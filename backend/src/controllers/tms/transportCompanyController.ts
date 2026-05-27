@@ -27,12 +27,14 @@ export async function createTransportCompany(req: Request, res: Response) {
     if (!code || !name) return fail(res, 'code và name là bắt buộc', 400)
     const now = new Date().toISOString()
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const actor = (req as any).user?.name || null
     const { data, error } = await (supabase.from('TransportCompany') as any)
       .insert({
         id: randomUUID(), code: code.toUpperCase().trim(), name: name.trim(),
         contact_name: contact_name?.trim() ?? null,
         contact_phone: contact_phone?.trim() ?? null,
         is_active: true, created_at: now, updated_at: now,
+        created_by: actor, updated_by: actor,
       })
       .select().single()
     if (error) return fail(res, error.message)
@@ -51,7 +53,7 @@ export async function updateTransportCompany(req: Request, res: Response) {
     const { name, contact_name, contact_phone, is_active } = req.body as {
       name?: string; contact_name?: string; contact_phone?: string; is_active?: boolean
     }
-    const updates: Record<string, unknown> = { updated_at: new Date().toISOString() }
+    const updates: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: (req as any).user?.name || null }
     if (name          !== undefined) updates.name          = name.trim()
     if (contact_name  !== undefined) updates.contact_name  = contact_name?.trim() ?? null
     if (contact_phone !== undefined) updates.contact_phone = contact_phone?.trim() ?? null

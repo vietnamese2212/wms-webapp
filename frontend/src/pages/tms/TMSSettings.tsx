@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { AxiosError } from 'axios'
-import { Plus, Pencil, Trash2, Truck, Clock, Building2, Settings2, Warehouse } from 'lucide-react'
+import { Plus, Pencil, Trash2, Truck, Clock, Building2, Settings2, Warehouse, X } from 'lucide-react'
+import { formatDateTime } from '@/utils/formatters'
 import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
 import { Label }    from '@/components/ui/label'
@@ -384,6 +385,12 @@ export default function TMSSettings() {
 
   const selectedWarehouse = (warehouses as { id: string; name: string }[]).find(w => w.id === warehouseId)
 
+  // Detail panel state
+  const [detailVT, setDetailVT] = useState<TmsVehicleType | null>(null)
+  const [detailST, setDetailST] = useState<SlotTemplate | null>(null)
+  const [detailCo, setDetailCo] = useState<TransportCompany | null>(null)
+  const [detailV,  setDetailV]  = useState<TmsVehicle | null>(null)
+
   return (
     <div className="p-4 space-y-4 max-w-7xl mx-auto">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -432,43 +439,62 @@ export default function TMSSettings() {
               </Button>
             )}
           </div>
-          <Card>
-            {loadingVT ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> : (
-              <div className="overflow-auto max-h-[60vh]">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Mã</TableHead>
-                      <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Tên loại xe</TableHead>
-                      <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Trạng thái</TableHead>
-                      {canVehicleTypes && <TableHead className="px-2 py-1.5 w-12" />}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {vehicleTypes.map(vt => (
-                      <TableRow key={vt.id}>
-                        <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-600">{vt.code}</TableCell>
-                        <TableCell className="px-2 py-1 text-[10px] font-medium text-slate-800">{vt.name}</TableCell>
-                        <TableCell className="px-2 py-1">
-                          <Badge variant={vt.is_active ? 'default' : 'secondary'} className="text-[10px]">
-                            {vt.is_active ? 'Hoạt động' : 'Tạm dừng'}
-                          </Badge>
-                        </TableCell>
-                        {canVehicleTypes && (
-                          <TableCell className="px-2 py-1">
-                            <button className="text-slate-400 hover:text-blue-500 transition-colors p-1"
-                              onClick={() => { setEditingVT(vt); setShowVTDlg(true) }}>
-                              <Pencil className="h-3.5 w-3.5" />
-                            </button>
-                          </TableCell>
-                        )}
+          <div className="flex gap-3 items-start">
+            <Card className="flex-1 min-w-0">
+              {loadingVT ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> : (
+                <div className="overflow-auto max-h-[60vh]">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Mã</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Tên loại xe</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Trạng thái</TableHead>
+                        {canVehicleTypes && <TableHead className="px-2 py-1.5 w-12" />}
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+                    </TableHeader>
+                    <TableBody>
+                      {vehicleTypes.map(vt => (
+                        <TableRow key={vt.id} className={`cursor-pointer ${detailVT?.id === vt.id ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
+                          onClick={() => setDetailVT(prev => prev?.id === vt.id ? null : vt)}>
+                          <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-600">{vt.code}</TableCell>
+                          <TableCell className="px-2 py-1 text-[10px] font-medium text-slate-800">{vt.name}</TableCell>
+                          <TableCell className="px-2 py-1">
+                            <Badge variant={vt.is_active ? 'default' : 'secondary'} className="text-[10px]">
+                              {vt.is_active ? 'Hoạt động' : 'Tạm dừng'}
+                            </Badge>
+                          </TableCell>
+                          {canVehicleTypes && (
+                            <TableCell className="px-2 py-1">
+                              <button className="text-slate-400 hover:text-blue-500 transition-colors p-1"
+                                onClick={e => { e.stopPropagation(); setEditingVT(vt); setShowVTDlg(true) }}>
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                            </TableCell>
+                          )}
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </Card>
+            {detailVT && (
+              <Card className="w-56 shrink-0 p-3 space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-slate-700">{detailVT.code} — {detailVT.name}</span>
+                  <button onClick={() => setDetailVT(null)} className="text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>
+                </div>
+                <div><span className="text-slate-400">Trạng thái:</span> <span className="font-medium">{detailVT.is_active ? 'Hoạt động' : 'Tạm dừng'}</span></div>
+                <div className="border-t pt-2 space-y-1.5">
+                  <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Tạo / Sửa</p>
+                  <div><span className="text-slate-400">Người tạo:</span> <span className="font-medium">{detailVT.created_by ?? '—'}</span></div>
+                  <div><span className="text-slate-400">Ngày giờ tạo:</span> <span className="font-medium">{detailVT.created_at ? formatDateTime(detailVT.created_at) : '—'}</span></div>
+                  <div><span className="text-slate-400">Người sửa:</span> <span className="font-medium">{detailVT.updated_by ?? '—'}</span></div>
+                  <div><span className="text-slate-400">Ngày giờ sửa:</span> <span className="font-medium">{detailVT.updated_at ? formatDateTime(detailVT.updated_at) : '—'}</span></div>
+                </div>
+              </Card>
             )}
-          </Card>
+          </div>
         </TabsContent>
 
         {/* ── Tab: Khung giờ ── */}
@@ -500,66 +526,90 @@ export default function TMSSettings() {
                   onChange={setFilterVTIds}
                 />
               </div>
-              <Card>
-                {loadingST ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> : filteredTemplates.length === 0 ? (
-                  <div className="p-12 text-center text-slate-400 space-y-2">
-                    <Clock className="h-10 w-10 mx-auto opacity-30" />
-                    <p className="text-sm">Chưa có khung giờ nào cho kho này</p>
-                    {canSlots && <Button size="sm" variant="outline" onClick={() => { setEditingST(null); setShowSTDlg(true) }}>
-                      <Plus className="h-4 w-4 mr-1" /> Thêm khung giờ đầu tiên
-                    </Button>}
-                  </div>
-                ) : (
-                  <div className="overflow-auto max-h-[60vh]">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Loại xe</TableHead>
-                          <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Loại hàng</TableHead>
-                          <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Thứ</TableHead>
-                          <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Khung giờ</TableHead>
-                          <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right">Max xe</TableHead>
-                          <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Trạng thái</TableHead>
-                          {canSlots && <TableHead className="px-2 py-1.5 w-16" />}
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {filteredTemplates.map(st => (
-                          <TableRow key={st.id} className={!st.is_active ? 'opacity-50' : ''}>
-                            <TableCell className="px-2 py-1 text-[10px] font-medium text-slate-700">{st.vehicle_type?.name ?? '—'}</TableCell>
-                            <TableCell className="px-2 py-1 text-[10px] text-slate-500">{st.cargo_type === 'ALL' ? 'Tất cả' : st.cargo_type}</TableCell>
-                            <TableCell className="px-2 py-1 font-semibold text-[10px] text-slate-700">{DOW_LABEL[st.day_of_week] ?? st.day_of_week}</TableCell>
-                            <TableCell className="px-2 py-1 font-mono text-[10px] text-slate-700">
-                              {st.time_from?.slice(0,5)} – {st.time_to?.slice(0,5)}
-                            </TableCell>
-                            <TableCell className="px-2 py-1 text-right font-semibold tabular-nums text-[10px]">{st.max_vehicles}</TableCell>
-                            <TableCell className="px-2 py-1">
-                              <Badge variant={st.is_active ? 'default' : 'secondary'} className="text-[10px]">
-                                {st.is_active ? 'Hoạt động' : 'Tạm dừng'}
-                              </Badge>
-                            </TableCell>
-                            {canSlots && (
-                              <TableCell className="px-2 py-1">
-                                <div className="flex items-center gap-0.5">
-                                  <button className="text-slate-400 hover:text-blue-500 p-1"
-                                    onClick={() => { setEditingST(st); setShowSTDlg(true) }}>
-                                    <Pencil className="h-3.5 w-3.5" />
-                                  </button>
-                                  <button className="text-slate-400 hover:text-red-500 p-1"
-                                    disabled={deletingST}
-                                    onClick={() => { if (confirm('Xóa template này?')) deleteST(st.id) }}>
-                                    <Trash2 className="h-3.5 w-3.5" />
-                                  </button>
-                                </div>
-                              </TableCell>
-                            )}
+              <div className="flex gap-3 items-start">
+                <Card className="flex-1 min-w-0">
+                  {loadingST ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> : filteredTemplates.length === 0 ? (
+                    <div className="p-12 text-center text-slate-400 space-y-2">
+                      <Clock className="h-10 w-10 mx-auto opacity-30" />
+                      <p className="text-sm">Chưa có khung giờ nào cho kho này</p>
+                      {canSlots && <Button size="sm" variant="outline" onClick={() => { setEditingST(null); setShowSTDlg(true) }}>
+                        <Plus className="h-4 w-4 mr-1" /> Thêm khung giờ đầu tiên
+                      </Button>}
+                    </div>
+                  ) : (
+                    <div className="overflow-auto max-h-[60vh]">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Loại xe</TableHead>
+                            <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Loại hàng</TableHead>
+                            <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Thứ</TableHead>
+                            <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Khung giờ</TableHead>
+                            <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right">Max xe</TableHead>
+                            <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Trạng thái</TableHead>
+                            {canSlots && <TableHead className="px-2 py-1.5 w-16" />}
                           </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
+                        </TableHeader>
+                        <TableBody>
+                          {filteredTemplates.map(st => (
+                            <TableRow key={st.id}
+                              className={`cursor-pointer ${!st.is_active ? 'opacity-50' : ''} ${detailST?.id === st.id ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
+                              onClick={() => setDetailST(prev => prev?.id === st.id ? null : st)}>
+                              <TableCell className="px-2 py-1 text-[10px] font-medium text-slate-700">{st.vehicle_type?.name ?? '—'}</TableCell>
+                              <TableCell className="px-2 py-1 text-[10px] text-slate-500">{st.cargo_type === 'ALL' ? 'Tất cả' : st.cargo_type}</TableCell>
+                              <TableCell className="px-2 py-1 font-semibold text-[10px] text-slate-700">{DOW_LABEL[st.day_of_week] ?? st.day_of_week}</TableCell>
+                              <TableCell className="px-2 py-1 font-mono text-[10px] text-slate-700">
+                                {st.time_from?.slice(0,5)} – {st.time_to?.slice(0,5)}
+                              </TableCell>
+                              <TableCell className="px-2 py-1 text-right font-semibold tabular-nums text-[10px]">{st.max_vehicles}</TableCell>
+                              <TableCell className="px-2 py-1">
+                                <Badge variant={st.is_active ? 'default' : 'secondary'} className="text-[10px]">
+                                  {st.is_active ? 'Hoạt động' : 'Tạm dừng'}
+                                </Badge>
+                              </TableCell>
+                              {canSlots && (
+                                <TableCell className="px-2 py-1">
+                                  <div className="flex items-center gap-0.5">
+                                    <button className="text-slate-400 hover:text-blue-500 p-1"
+                                      onClick={e => { e.stopPropagation(); setEditingST(st); setShowSTDlg(true) }}>
+                                      <Pencil className="h-3.5 w-3.5" />
+                                    </button>
+                                    <button className="text-slate-400 hover:text-red-500 p-1"
+                                      disabled={deletingST}
+                                      onClick={e => { e.stopPropagation(); if (confirm('Xóa template này?')) deleteST(st.id) }}>
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </button>
+                                  </div>
+                                </TableCell>
+                              )}
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  )}
+                </Card>
+                {detailST && (
+                  <Card className="w-56 shrink-0 p-3 space-y-2 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold text-slate-700">{detailST.vehicle_type?.name ?? '—'}</span>
+                      <button onClick={() => setDetailST(null)} className="text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>
+                    </div>
+                    <div><span className="text-slate-400">Loại hàng:</span> <span className="font-medium">{detailST.cargo_type === 'ALL' ? 'Tất cả' : detailST.cargo_type}</span></div>
+                    <div><span className="text-slate-400">Thứ:</span> <span className="font-medium">{DOW_LABEL[detailST.day_of_week] ?? detailST.day_of_week}</span></div>
+                    <div><span className="text-slate-400">Giờ:</span> <span className="font-mono font-medium">{detailST.time_from?.slice(0,5)} – {detailST.time_to?.slice(0,5)}</span></div>
+                    <div><span className="text-slate-400">Max xe:</span> <span className="font-medium">{detailST.max_vehicles}</span></div>
+                    <div><span className="text-slate-400">Trạng thái:</span> <span className="font-medium">{detailST.is_active ? 'Hoạt động' : 'Tạm dừng'}</span></div>
+                    <div className="border-t pt-2 space-y-1.5">
+                      <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Tạo / Sửa</p>
+                      <div><span className="text-slate-400">Người tạo:</span> <span className="font-medium">{detailST.created_by ?? '—'}</span></div>
+                      <div><span className="text-slate-400">Ngày giờ tạo:</span> <span className="font-medium">{detailST.created_at ? formatDateTime(detailST.created_at) : '—'}</span></div>
+                      <div><span className="text-slate-400">Người sửa:</span> <span className="font-medium">{detailST.updated_by ?? '—'}</span></div>
+                      <div><span className="text-slate-400">Ngày giờ sửa:</span> <span className="font-medium">{detailST.updated_at ? formatDateTime(detailST.updated_at) : '—'}</span></div>
+                    </div>
+                  </Card>
                 )}
-              </Card>
+              </div>
             </>
           )}
         </TabsContent>
@@ -574,67 +624,87 @@ export default function TMSSettings() {
               </Button>
             )}
           </div>
-          <Card>
-            {loadingCo ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> : companies.length === 0 ? (
-              <div className="p-12 text-center text-slate-400 space-y-2">
-                <Building2 className="h-10 w-10 mx-auto opacity-30" />
-                <p className="text-sm">Chưa có ĐVVT nào</p>
-                {canCompanies && <Button size="sm" variant="outline" onClick={() => { setEditingCo(null); setShowCoDlg(true) }}>
-                  <Plus className="h-4 w-4 mr-1" /> Thêm ĐVVT đầu tiên
-                </Button>}
-              </div>
-            ) : (
-              <div className="overflow-auto max-h-[60vh]">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Mã</TableHead>
-                      <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Tên ĐVVT / NCC</TableHead>
-                      <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Người liên hệ</TableHead>
-                      <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">SĐT</TableHead>
-                      <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Trạng thái</TableHead>
-                      {canCompanies && <TableHead className="px-2 py-1.5 w-16" />}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {companies.map(co => (
-                      <TableRow key={co.id}>
-                        <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-600">{co.code}</TableCell>
-                        <TableCell className="px-2 py-1 text-[10px] font-medium text-slate-800">{co.name}</TableCell>
-                        <TableCell className="px-2 py-1 text-[10px] text-slate-600">{co.contact_name ?? '—'}</TableCell>
-                        <TableCell className="px-2 py-1 text-[10px] text-slate-600">{co.contact_phone ?? '—'}</TableCell>
-                        <TableCell className="px-2 py-1">
-                          <Badge variant={co.is_active ? 'default' : 'secondary'} className="text-[10px]">
-                            {co.is_active ? 'Hoạt động' : 'Tạm dừng'}
-                          </Badge>
-                        </TableCell>
-                        {canCompanies && (
-                          <TableCell className="px-2 py-1">
-                            <div className="flex items-center gap-0.5">
-                              <button className="text-slate-400 hover:text-blue-500 transition-colors p-1"
-                                onClick={() => { setEditingCo(co); setShowCoDlg(true) }}>
-                                <Pencil className="h-3.5 w-3.5" />
-                              </button>
-                              {!userNccId && (
-                                <button className="text-slate-400 hover:text-red-500 transition-colors p-1"
-                                  disabled={deletingCo}
-                                  onClick={() => {
-                                    if (confirm(`Xóa ĐVVT "${co.name}"?\nTất cả xe và tài khoản lái xe liên kết sẽ bị xóa vĩnh viễn.`))
-                                      deleteCo(co.id, { onError: e => alert(apiMsg(e)) })
-                                  }}>
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </button>
-                              )}
-                            </div>
-                          </TableCell>
-                        )}
+          <div className="flex gap-3 items-start">
+            <Card className="flex-1 min-w-0">
+              {loadingCo ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> : companies.length === 0 ? (
+                <div className="p-12 text-center text-slate-400 space-y-2">
+                  <Building2 className="h-10 w-10 mx-auto opacity-30" />
+                  <p className="text-sm">Chưa có ĐVVT nào</p>
+                  {canCompanies && <Button size="sm" variant="outline" onClick={() => { setEditingCo(null); setShowCoDlg(true) }}>
+                    <Plus className="h-4 w-4 mr-1" /> Thêm ĐVVT đầu tiên
+                  </Button>}
+                </div>
+              ) : (
+                <div className="overflow-auto max-h-[60vh]">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Mã</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Tên ĐVVT / NCC</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Người liên hệ</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">SĐT</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Trạng thái</TableHead>
+                        {canCompanies && <TableHead className="px-2 py-1.5 w-16" />}
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+                    </TableHeader>
+                    <TableBody>
+                      {companies.map(co => (
+                        <TableRow key={co.id}
+                          className={`cursor-pointer ${detailCo?.id === co.id ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
+                          onClick={() => setDetailCo(prev => prev?.id === co.id ? null : co)}>
+                          <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-600">{co.code}</TableCell>
+                          <TableCell className="px-2 py-1 text-[10px] font-medium text-slate-800">{co.name}</TableCell>
+                          <TableCell className="px-2 py-1 text-[10px] text-slate-600">{co.contact_name ?? '—'}</TableCell>
+                          <TableCell className="px-2 py-1 text-[10px] text-slate-600">{co.contact_phone ?? '—'}</TableCell>
+                          <TableCell className="px-2 py-1">
+                            <Badge variant={co.is_active ? 'default' : 'secondary'} className="text-[10px]">
+                              {co.is_active ? 'Hoạt động' : 'Tạm dừng'}
+                            </Badge>
+                          </TableCell>
+                          {canCompanies && (
+                            <TableCell className="px-2 py-1">
+                              <div className="flex items-center gap-0.5">
+                                <button className="text-slate-400 hover:text-blue-500 transition-colors p-1"
+                                  onClick={e => { e.stopPropagation(); setEditingCo(co); setShowCoDlg(true) }}>
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </button>
+                                {!userNccId && (
+                                  <button className="text-slate-400 hover:text-red-500 transition-colors p-1"
+                                    disabled={deletingCo}
+                                    onClick={e => { e.stopPropagation(); if (confirm(`Xóa ĐVVT "${co.name}"?\nTất cả xe và tài khoản lái xe liên kết sẽ bị xóa vĩnh viễn.`)) deleteCo(co.id, { onError: e2 => alert(apiMsg(e2)) }) }}>
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                            </TableCell>
+                          )}
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </Card>
+            {detailCo && (
+              <Card className="w-56 shrink-0 p-3 space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-slate-700">{detailCo.code}</span>
+                  <button onClick={() => setDetailCo(null)} className="text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>
+                </div>
+                <div><span className="text-slate-400">Tên:</span> <span className="font-medium">{detailCo.name}</span></div>
+                <div><span className="text-slate-400">Người LH:</span> <span className="font-medium">{detailCo.contact_name ?? '—'}</span></div>
+                <div><span className="text-slate-400">SĐT:</span> <span className="font-medium">{detailCo.contact_phone ?? '—'}</span></div>
+                <div><span className="text-slate-400">Trạng thái:</span> <span className="font-medium">{detailCo.is_active ? 'Hoạt động' : 'Tạm dừng'}</span></div>
+                <div className="border-t pt-2 space-y-1.5">
+                  <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Tạo / Sửa</p>
+                  <div><span className="text-slate-400">Người tạo:</span> <span className="font-medium">{detailCo.created_by ?? '—'}</span></div>
+                  <div><span className="text-slate-400">Ngày giờ tạo:</span> <span className="font-medium">{detailCo.created_at ? formatDateTime(detailCo.created_at) : '—'}</span></div>
+                  <div><span className="text-slate-400">Người sửa:</span> <span className="font-medium">{detailCo.updated_by ?? '—'}</span></div>
+                  <div><span className="text-slate-400">Ngày giờ sửa:</span> <span className="font-medium">{detailCo.updated_at ? formatDateTime(detailCo.updated_at) : '—'}</span></div>
+                </div>
+              </Card>
             )}
-          </Card>
+          </div>
         </TabsContent>
 
         {/* ── Tab: Xe ── */}
@@ -655,63 +725,82 @@ export default function TMSSettings() {
               onChange={setFilterNccs}
             />
           )}
-          <Card>
-            {loadingV ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> : filteredVehicles.length === 0 ? (
-              <div className="p-12 text-center text-slate-400 space-y-2">
-                <Truck className="h-10 w-10 mx-auto opacity-30" />
-                <p className="text-sm">Chưa có xe nào</p>
-                {canVehicles && <Button size="sm" variant="outline" onClick={() => { setEditingV(null); setShowVDlg(true) }}>
-                  <Plus className="h-4 w-4 mr-1" /> Thêm xe đầu tiên
-                </Button>}
-              </div>
-            ) : (
-              <div className="overflow-auto max-h-[60vh]">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Biển số</TableHead>
-                      <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Loại xe</TableHead>
-                      <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">ĐVVT / NCC</TableHead>
-                      <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Trạng thái</TableHead>
-                      {canVehicles && <TableHead className="px-2 py-1.5 w-16" />}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredVehicles.map(v => (
-                      <TableRow key={v.id} className={!v.is_active ? 'opacity-50' : ''}>
-                        <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-800">{v.license_plate}</TableCell>
-                        <TableCell className="px-2 py-1 text-[10px] text-slate-700">{v.vehicle_type?.name ?? '—'}</TableCell>
-                        <TableCell className="px-2 py-1 text-[10px] text-slate-600">{v.ncc?.name ?? '—'}</TableCell>
-                        <TableCell className="px-2 py-1">
-                          <Badge variant={v.is_active ? 'default' : 'secondary'} className="text-[10px]">
-                            {v.is_active ? 'Hoạt động' : 'Tạm dừng'}
-                          </Badge>
-                        </TableCell>
-                        {canVehicles && (
-                          <TableCell className="px-2 py-1">
-                            <div className="flex items-center gap-0.5">
-                              <button className="text-slate-400 hover:text-blue-500 transition-colors p-1"
-                                onClick={() => { setEditingV(v); setShowVDlg(true) }}>
-                                <Pencil className="h-3.5 w-3.5" />
-                              </button>
-                              <button className="text-slate-400 hover:text-red-500 transition-colors p-1"
-                                disabled={deletingV}
-                                onClick={() => {
-                                  if (confirm(`Xóa xe "${v.license_plate}"?\nTài khoản lái xe liên kết (nếu có) sẽ bị xóa vĩnh viễn.`))
-                                    deleteV(v.id, { onError: e => alert(apiMsg(e)) })
-                                }}>
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
-                            </div>
-                          </TableCell>
-                        )}
+          <div className="flex gap-3 items-start">
+            <Card className="flex-1 min-w-0">
+              {loadingV ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> : filteredVehicles.length === 0 ? (
+                <div className="p-12 text-center text-slate-400 space-y-2">
+                  <Truck className="h-10 w-10 mx-auto opacity-30" />
+                  <p className="text-sm">Chưa có xe nào</p>
+                  {canVehicles && <Button size="sm" variant="outline" onClick={() => { setEditingV(null); setShowVDlg(true) }}>
+                    <Plus className="h-4 w-4 mr-1" /> Thêm xe đầu tiên
+                  </Button>}
+                </div>
+              ) : (
+                <div className="overflow-auto max-h-[60vh]">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Biển số</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Loại xe</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">ĐVVT / NCC</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Trạng thái</TableHead>
+                        {canVehicles && <TableHead className="px-2 py-1.5 w-16" />}
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredVehicles.map(v => (
+                        <TableRow key={v.id}
+                          className={`cursor-pointer ${!v.is_active ? 'opacity-50' : ''} ${detailV?.id === v.id ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
+                          onClick={() => setDetailV(prev => prev?.id === v.id ? null : v)}>
+                          <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-800">{v.license_plate}</TableCell>
+                          <TableCell className="px-2 py-1 text-[10px] text-slate-700">{v.vehicle_type?.name ?? '—'}</TableCell>
+                          <TableCell className="px-2 py-1 text-[10px] text-slate-600">{v.ncc?.name ?? '—'}</TableCell>
+                          <TableCell className="px-2 py-1">
+                            <Badge variant={v.is_active ? 'default' : 'secondary'} className="text-[10px]">
+                              {v.is_active ? 'Hoạt động' : 'Tạm dừng'}
+                            </Badge>
+                          </TableCell>
+                          {canVehicles && (
+                            <TableCell className="px-2 py-1">
+                              <div className="flex items-center gap-0.5">
+                                <button className="text-slate-400 hover:text-blue-500 transition-colors p-1"
+                                  onClick={e => { e.stopPropagation(); setEditingV(v); setShowVDlg(true) }}>
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </button>
+                                <button className="text-slate-400 hover:text-red-500 transition-colors p-1"
+                                  disabled={deletingV}
+                                  onClick={e => { e.stopPropagation(); if (confirm(`Xóa xe "${v.license_plate}"?\nTài khoản lái xe liên kết (nếu có) sẽ bị xóa vĩnh viễn.`)) deleteV(v.id, { onError: e2 => alert(apiMsg(e2)) }) }}>
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            </TableCell>
+                          )}
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </Card>
+            {detailV && (
+              <Card className="w-56 shrink-0 p-3 space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-slate-700 font-mono">{detailV.license_plate}</span>
+                  <button onClick={() => setDetailV(null)} className="text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>
+                </div>
+                <div><span className="text-slate-400">Loại xe:</span> <span className="font-medium">{detailV.vehicle_type?.name ?? '—'}</span></div>
+                <div><span className="text-slate-400">ĐVVT:</span> <span className="font-medium">{detailV.ncc?.name ?? '—'}</span></div>
+                <div><span className="text-slate-400">Trạng thái:</span> <span className="font-medium">{detailV.is_active ? 'Hoạt động' : 'Tạm dừng'}</span></div>
+                <div className="border-t pt-2 space-y-1.5">
+                  <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Tạo / Sửa</p>
+                  <div><span className="text-slate-400">Người tạo:</span> <span className="font-medium">{detailV.created_by ?? '—'}</span></div>
+                  <div><span className="text-slate-400">Ngày giờ tạo:</span> <span className="font-medium">{detailV.created_at ? formatDateTime(detailV.created_at) : '—'}</span></div>
+                  <div><span className="text-slate-400">Người sửa:</span> <span className="font-medium">{detailV.updated_by ?? '—'}</span></div>
+                  <div><span className="text-slate-400">Ngày giờ sửa:</span> <span className="font-medium">{detailV.updated_at ? formatDateTime(detailV.updated_at) : '—'}</span></div>
+                </div>
+              </Card>
             )}
-          </Card>
+          </div>
         </TabsContent>
       </Tabs>
 

@@ -11,7 +11,7 @@ export async function listZones(req: Request, res: Response) {
 
   let query = supabase
     .from('WarehouseZone')
-    .select('id, warehouse_id, code, name, category, sort_order, is_active')
+    .select('id, warehouse_id, code, name, category, sort_order, is_active, created_at, updated_at, created_by, updated_by')
     .order('sort_order')
     .order('created_at')
 
@@ -37,6 +37,7 @@ export async function createZone(req: Request, res: Response) {
 
   const nextSort = existing?.length ? (Number((existing[0] as any).sort_order ?? 0) + 1) : 1
 
+  const actor = (req as any).user?.name || null
   const { data, error } = await supabase
     .from('WarehouseZone')
     .insert({
@@ -46,9 +47,11 @@ export async function createZone(req: Request, res: Response) {
       name:         name.trim(),
       category:     category?.trim() || null,
       sort_order:   nextSort,
+      created_by:   actor,
+      updated_by:   actor,
       updated_at:   t,
     })
-    .select('id, warehouse_id, code, name, category, sort_order, is_active')
+    .select('id, warehouse_id, code, name, category, sort_order, is_active, created_at, updated_at, created_by, updated_by')
     .single()
 
   if (error) {
@@ -62,7 +65,7 @@ export async function updateZone(req: Request, res: Response) {
   const { id } = req.params
   const { name, category, is_active } = req.body as { name?: string; category?: string | null; is_active?: boolean }
 
-  const updates: Record<string, unknown> = { updated_at: new Date().toISOString() }
+  const updates: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: (req as any).user?.name || null }
   if (name !== undefined) updates.name = name.trim()
   if (category !== undefined) updates.category = category?.trim() || null
   if (is_active !== undefined) updates.is_active = is_active
@@ -71,7 +74,7 @@ export async function updateZone(req: Request, res: Response) {
     .from('WarehouseZone')
     .update(updates)
     .eq('id', id)
-    .select('id, warehouse_id, code, name, category, sort_order, is_active')
+    .select('id, warehouse_id, code, name, category, sort_order, is_active, created_at, updated_at, created_by, updated_by')
     .single()
 
   if (error) return fail(res, error.message, 500)

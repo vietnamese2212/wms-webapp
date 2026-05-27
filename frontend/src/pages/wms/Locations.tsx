@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
-import { MapPin, Plus, Pencil, Trash2, Flag } from 'lucide-react'
+import { MapPin, Plus, Pencil, Trash2, Flag, X } from 'lucide-react'
+import { formatDateTime } from '@/utils/formatters'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { TableSkeleton }  from '@/components/shared/TableSkeleton'
@@ -32,6 +33,10 @@ interface RealLocation {
   is_active:          boolean
   requires_stocktake: boolean
   warehouse:          { id: string; code: string; name: string }
+  created_at?:        string
+  updated_at?:        string
+  created_by?:        string | null
+  updated_by?:        string | null
 }
 
 interface WhWithCount {
@@ -61,6 +66,7 @@ export default function Locations() {
   const [editRequiresStocktake, setEditRequiresStocktake] = useState(false)
   const [formError,     setFormError]     = useState('')
   const [deleteTarget,  setDeleteTarget]  = useState<RealLocation | null>(null)
+  const [selectedLoc,   setSelectedLoc]   = useState<RealLocation | null>(null)
 
   // Data
   const { data: whTypes = [] }          = useWarehouseTypes()
@@ -270,102 +276,135 @@ export default function Locations() {
         </p>
       </div>
 
-      {/* Table */}
-      <div className="flex-1 overflow-auto pb-20 lg:pb-4">
-        {isLoading ? (
-          <div className="p-4"><TableSkeleton rows={8} cols={8} /></div>
-        ) : filtered.length === 0 ? (
-          <EmptyState icon={MapPin} title="Không tìm thấy vị trí" />
-        ) : (
-          <Table className="min-w-full">
-            <TableHeader>
-              <TableRow className="bg-slate-50">
-                <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Kho</TableHead>
-                <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Loại kho</TableHead>
-                <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Khu vực kho</TableHead>
-                <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Vị trí</TableHead>
-                <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right">Sức chứa tối đa</TableHead>
-                <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right">Đang dùng</TableHead>
-                <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Trạng thái</TableHead>
-                <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 w-16"></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filtered.map(loc => {
-                const isFull    = loc.is_active && loc.max_pallets > 0 && loc.used_slots >= loc.max_pallets
-                const isPartial = loc.is_active && loc.used_slots > 0 && !isFull
-                const rowCls = !loc.is_active
-                  ? 'opacity-50 hover:opacity-80 bg-slate-50'
-                  : isFull    ? 'bg-blue-50 hover:bg-blue-100'
-                  : isPartial ? 'bg-amber-50 hover:bg-amber-100'
-                  : 'hover:bg-slate-50'
-                const showSubName = loc.sub_name && loc.sub_name !== loc.sub_code
-                return (
-                  <TableRow key={loc.id} className={rowCls}>
-                    <TableCell className="px-2 py-1 text-[10px] text-slate-600">
-                      {loc.warehouse?.name ?? '—'}
-                    </TableCell>
-                    <TableCell className="px-2 py-1 text-[10px] text-slate-600">
-                      {loc.category ?? <span className="text-slate-400">—</span>}
-                    </TableCell>
-                    <TableCell className="px-2 py-1 text-[10px]">
-                      <span className="font-semibold">{loc.sub_code}</span>
-                      {showSubName && <span className="ml-1 text-slate-400">{loc.sub_name}</span>}
-                    </TableCell>
-                    <TableCell className="px-2 py-1">
-                      <span className="font-mono font-semibold text-[10px]">{loc.location_code}</span>
-                      {loc.requires_stocktake && (
-                        <Flag className="inline-block ml-1 h-3 w-3 text-red-500 shrink-0" style={{ verticalAlign: 'middle' }} />
-                      )}
-                    </TableCell>
-                    <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums font-semibold">
-                      {loc.max_pallets} <span className="text-slate-400 font-normal">pl</span>
-                    </TableCell>
-                    <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums">
-                      <span className={isFull ? 'text-blue-600 font-semibold' : isPartial ? 'text-amber-600 font-semibold' : 'text-slate-400'}>
-                        {loc.used_slots}
-                      </span>
-                      <span className="text-slate-400">/{loc.max_pallets}</span>
-                    </TableCell>
-                    <TableCell className="px-2 py-1">
-                      {!loc.is_active ? (
-                        <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-slate-200 text-slate-500">
-                          Đã xóa
-                        </span>
-                      ) : (
-                        <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${
-                          isFull    ? 'bg-blue-100 text-blue-700'
-                          : isPartial ? 'bg-amber-100 text-amber-700'
-                          : 'bg-slate-100 text-slate-500'
-                        }`}>
-                          {isFull ? 'Đầy' : isPartial ? 'Còn chỗ' : 'Trống'}
-                        </span>
-                      )}
-                    </TableCell>
-                    <TableCell className="px-2 py-1">
-                      <div className="flex gap-1 justify-end">
-                        {can(perms, 'locations', 'edit') && (
-                          <button onClick={() => openEdit(loc)}
-                            className="p-1 rounded hover:bg-white/80 text-slate-400 hover:text-slate-700"
-                            title={loc.is_active ? 'Sửa' : 'Kích hoạt lại'}>
-                            <Pencil className="h-3.5 w-3.5" />
-                          </button>
+      {/* Table + Detail panel */}
+      <div className="flex flex-1 min-h-0 overflow-hidden">
+        <div className="flex-1 overflow-auto pb-20 lg:pb-4">
+          {isLoading ? (
+            <div className="p-4"><TableSkeleton rows={8} cols={8} /></div>
+          ) : filtered.length === 0 ? (
+            <EmptyState icon={MapPin} title="Không tìm thấy vị trí" />
+          ) : (
+            <Table className="min-w-full">
+              <TableHeader>
+                <TableRow className="bg-slate-50">
+                  <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Kho</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Loại kho</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Khu vực kho</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Vị trí</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right">Sức chứa tối đa</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right">Đang dùng</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Trạng thái</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 w-16"></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filtered.map(loc => {
+                  const isFull    = loc.is_active && loc.max_pallets > 0 && loc.used_slots >= loc.max_pallets
+                  const isPartial = loc.is_active && loc.used_slots > 0 && !isFull
+                  const isSelected = selectedLoc?.id === loc.id
+                  const rowCls = !loc.is_active
+                    ? 'opacity-50 hover:opacity-80 bg-slate-50 cursor-pointer'
+                    : isFull    ? `bg-blue-50 hover:bg-blue-100 cursor-pointer${isSelected ? ' ring-1 ring-inset ring-blue-400' : ''}`
+                    : isPartial ? `bg-amber-50 hover:bg-amber-100 cursor-pointer${isSelected ? ' ring-1 ring-inset ring-amber-400' : ''}`
+                    : `hover:bg-slate-50 cursor-pointer${isSelected ? ' bg-slate-100' : ''}`
+                  const showSubName = loc.sub_name && loc.sub_name !== loc.sub_code
+                  return (
+                    <TableRow key={loc.id} className={rowCls} onClick={() => setSelectedLoc(prev => prev?.id === loc.id ? null : loc)}>
+                      <TableCell className="px-2 py-1 text-[10px] text-slate-600">
+                        {loc.warehouse?.name ?? '—'}
+                      </TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] text-slate-600">
+                        {loc.category ?? <span className="text-slate-400">—</span>}
+                      </TableCell>
+                      <TableCell className="px-2 py-1 text-[10px]">
+                        <span className="font-semibold">{loc.sub_code}</span>
+                        {showSubName && <span className="ml-1 text-slate-400">{loc.sub_name}</span>}
+                      </TableCell>
+                      <TableCell className="px-2 py-1">
+                        <span className="font-mono font-semibold text-[10px]">{loc.location_code}</span>
+                        {loc.requires_stocktake && (
+                          <Flag className="inline-block ml-1 h-3 w-3 text-red-500 shrink-0" style={{ verticalAlign: 'middle' }} />
                         )}
-                        {loc.is_active && can(perms, 'locations', 'delete') && (
-                          <button onClick={() => setDeleteTarget(loc)}
-                            className="p-1 rounded hover:bg-white/80 text-slate-400 hover:text-red-500 disabled:opacity-30 disabled:cursor-not-allowed"
-                            disabled={loc.used_slots > 0}
-                            title={loc.used_slots > 0 ? 'Vị trí đang có hàng, không thể xóa' : 'Xóa vị trí'}>
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
+                      </TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums font-semibold">
+                        {loc.max_pallets} <span className="text-slate-400 font-normal">pl</span>
+                      </TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums">
+                        <span className={isFull ? 'text-blue-600 font-semibold' : isPartial ? 'text-amber-600 font-semibold' : 'text-slate-400'}>
+                          {loc.used_slots}
+                        </span>
+                        <span className="text-slate-400">/{loc.max_pallets}</span>
+                      </TableCell>
+                      <TableCell className="px-2 py-1">
+                        {!loc.is_active ? (
+                          <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-slate-200 text-slate-500">
+                            Đã xóa
+                          </span>
+                        ) : (
+                          <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${
+                            isFull    ? 'bg-blue-100 text-blue-700'
+                            : isPartial ? 'bg-amber-100 text-amber-700'
+                            : 'bg-slate-100 text-slate-500'
+                          }`}>
+                            {isFull ? 'Đầy' : isPartial ? 'Còn chỗ' : 'Trống'}
+                          </span>
                         )}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                )
-              })}
-            </TableBody>
-          </Table>
+                      </TableCell>
+                      <TableCell className="px-2 py-1">
+                        <div className="flex gap-1 justify-end">
+                          {can(perms, 'locations', 'edit') && (
+                            <button onClick={e => { e.stopPropagation(); openEdit(loc) }}
+                              className="p-1 rounded hover:bg-white/80 text-slate-400 hover:text-slate-700"
+                              title={loc.is_active ? 'Sửa' : 'Kích hoạt lại'}>
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                          {loc.is_active && can(perms, 'locations', 'delete') && (
+                            <button onClick={e => { e.stopPropagation(); setDeleteTarget(loc) }}
+                              className="p-1 rounded hover:bg-white/80 text-slate-400 hover:text-red-500 disabled:opacity-30 disabled:cursor-not-allowed"
+                              disabled={loc.used_slots > 0}
+                              title={loc.used_slots > 0 ? 'Vị trí đang có hàng, không thể xóa' : 'Xóa vị trí'}>
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          )}
+        </div>
+
+        {/* Detail panel */}
+        {selectedLoc && (
+          <div className="w-64 shrink-0 border-l bg-white overflow-y-auto pb-20 lg:pb-4">
+            <div className="sticky top-0 bg-white border-b px-3 py-2 flex items-center justify-between z-10">
+              <span className="text-xs font-semibold text-slate-700 truncate">{selectedLoc.location_code}</span>
+              <button onClick={() => setSelectedLoc(null)} className="text-slate-400 hover:text-slate-600 p-0.5 shrink-0">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="px-3 py-3 space-y-2 text-xs">
+              <div><span className="text-slate-400">Kho:</span> <span className="font-medium">{selectedLoc.warehouse?.name ?? '—'}</span></div>
+              <div><span className="text-slate-400">Loại kho:</span> <span className="font-medium">{selectedLoc.category ?? '—'}</span></div>
+              <div><span className="text-slate-400">Khu vực:</span> <span className="font-medium">{selectedLoc.sub_code}{selectedLoc.sub_name && selectedLoc.sub_name !== selectedLoc.sub_code ? ` — ${selectedLoc.sub_name}` : ''}</span></div>
+              <div><span className="text-slate-400">Loại vị trí:</span> <span className="font-medium">{selectedLoc.sub_type ?? '—'}</span></div>
+              <div><span className="text-slate-400">Hàng / Tầng:</span> <span className="font-mono font-semibold">{selectedLoc.row}{selectedLoc.shelf ? ` / ${selectedLoc.shelf}` : ''}</span></div>
+              <div><span className="text-slate-400">Sức chứa:</span> <span className="font-semibold">{selectedLoc.max_pallets} pallet</span></div>
+              <div><span className="text-slate-400">Đang dùng:</span> <span className="font-semibold">{selectedLoc.used_slots} pallet</span></div>
+              <div><span className="text-slate-400">Cần check hàng ngày:</span> <span className="font-medium">{selectedLoc.requires_stocktake ? 'Có' : 'Không'}</span></div>
+              <div><span className="text-slate-400">Trạng thái:</span> <span className="font-medium">{selectedLoc.is_active ? 'Hoạt động' : 'Đã xóa'}</span></div>
+              <div className="border-t pt-2 mt-2 space-y-1.5">
+                <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Thông tin tạo/sửa</p>
+                <div><span className="text-slate-400">Người tạo:</span> <span className="font-medium">{selectedLoc.created_by ?? '—'}</span></div>
+                <div><span className="text-slate-400">Ngày giờ tạo:</span> <span className="font-medium">{selectedLoc.created_at ? formatDateTime(selectedLoc.created_at) : '—'}</span></div>
+                <div><span className="text-slate-400">Người sửa:</span> <span className="font-medium">{selectedLoc.updated_by ?? '—'}</span></div>
+                <div><span className="text-slate-400">Ngày giờ sửa:</span> <span className="font-medium">{selectedLoc.updated_at ? formatDateTime(selectedLoc.updated_at) : '—'}</span></div>
+              </div>
+            </div>
+          </div>
         )}
       </div>
 

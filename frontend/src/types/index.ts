@@ -30,6 +30,10 @@ export interface Department {
   code:            string
   allowed_modules: AppModule[]
   is_active:       boolean
+  created_at?:     string
+  updated_at?:     string
+  created_by?:     string | null
+  updated_by?:     string | null
 }
 
 export interface JobTitle {
@@ -39,6 +43,10 @@ export interface JobTitle {
   is_active:          boolean
   department?:        Pick<Department, 'id' | 'name' | 'code'>
   module_permissions?: ModulePermissions
+  created_at?:        string
+  updated_at?:        string
+  created_by?:        string | null
+  updated_by?:        string | null
 }
 
 export interface EmployeeRecord {
@@ -56,6 +64,9 @@ export interface EmployeeRecord {
   ncc_id:             string | null
   is_driver:          boolean
   created_at:         string
+  updated_at?:        string
+  created_by?:        string | null
+  updated_by?:        string | null
   deleted_at?:        string | null
   dept?:              Pick<Department, 'id' | 'name' | 'code'> | null
   job_title?:         Pick<JobTitle, 'id' | 'name'> | null
@@ -448,6 +459,10 @@ export interface TmsVehicleType {
   code:       string
   name:       string
   is_active:  boolean
+  created_at?: string
+  updated_at?: string
+  created_by?: string | null
+  updated_by?: string | null
 }
 
 export interface SlotTemplate {
@@ -462,6 +477,10 @@ export interface SlotTemplate {
   time_to:         string
   max_vehicles:    number
   is_active:       boolean
+  created_at?:     string
+  updated_at?:     string
+  created_by?:     string | null
+  updated_by?:     string | null
 }
 
 export interface TransportCompany {
@@ -471,6 +490,10 @@ export interface TransportCompany {
   contact_name:  string | null
   contact_phone: string | null
   is_active:     boolean
+  created_at?:   string
+  updated_at?:   string
+  created_by?:   string | null
+  updated_by?:   string | null
 }
 
 export interface TmsVehicle {
@@ -481,6 +504,10 @@ export interface TmsVehicle {
   vehicle_type_id: string
   vehicle_type?:   Pick<TmsVehicleType, 'id' | 'code' | 'name'>
   is_active:       boolean
+  created_at?:     string
+  updated_at?:     string
+  created_by?:     string | null
+  updated_by?:     string | null
 }
 
 // WMS – Outbound
@@ -564,6 +591,10 @@ export interface GDO {
   forklift_driver_id?:    string | null
   forklift_driver_names?: string | null
   forklift_driver?:       { id: string; name: string } | null
+  // Audit
+  updated_at?:     string | null
+  created_by?:     string | null
+  updated_by?:     string | null
   // Detail
   delivery_orders?: OutboundDelivery[]
 }

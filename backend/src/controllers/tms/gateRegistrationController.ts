@@ -492,9 +492,12 @@ export async function relinkAfterDelete(
     .eq('date', date)
     .eq('warehouse_id', warehouse_id)
     .order('registered_at', { ascending: true })
-  if (direction)      gateQ = gateQ.eq('direction', direction)
-  if (warehouse_type) gateQ = gateQ.eq('warehouse_type', warehouse_type)
-  if (vehicle_type)   gateQ = gateQ.eq('vehicle_type', vehicle_type)
+  if (direction !== null)      gateQ = gateQ.eq('direction', direction)
+  else                         gateQ = gateQ.is('direction', null)
+  if (warehouse_type !== null) gateQ = gateQ.eq('warehouse_type', warehouse_type)
+  else                         gateQ = gateQ.is('warehouse_type', null)
+  if (vehicle_type !== null)   gateQ = gateQ.eq('vehicle_type', vehicle_type)
+  else                         gateQ = gateQ.is('vehicle_type', null)
 
   const { data: gates } = await gateQ as { data: { id: string }[] | null }
   if (!gates || gates.length === 0) return
@@ -514,9 +517,9 @@ export async function relinkAfterDelete(
     .filter(vs => {
       if (!vs.order) return false
       if (vs.order.date !== date || vs.order.warehouse_id !== warehouse_id) return false
-      if (direction && vs.order.direction !== direction) return false
-      if (warehouse_type && vs.order.warehouse_type !== warehouse_type) return false
-      if (vehicle_type && vs.order.vehicle_type !== vehicle_type) return false
+      if (direction !== null && vs.order.direction !== direction) return false
+      if (warehouse_type !== null && vs.order.warehouse_type !== warehouse_type) return false
+      if (vehicle_type !== null && vs.order.vehicle_type !== vehicle_type) return false
       return true
     })
     .sort((a, b) => (a.slot?.time_from ?? '99:99').localeCompare(b.slot?.time_from ?? '99:99'))

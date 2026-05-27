@@ -19,6 +19,33 @@ async function countSameBooking(slotId: string, licensePlate: string, excludeId:
   return count ?? 0
 }
 
+// Helper: tìm gate_regs theo plate+date+warehouse, gom nhóm theo criteria của gate_reg rồi relink
+async function relinkGatesByPlate(plate: string, orderId: string) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: ord } = await (supabase.from('TmsOrder') as any)
+    .select('date, warehouse_id')
+    .eq('id', orderId)
+    .single()
+  if (!ord) return
+  const o = ord as { date: string; warehouse_id: string }
+
+  const { data: gateGroups } = await supabase
+    .from('gate_registrations')
+    .select('direction, warehouse_type, vehicle_type')
+    .eq('license_plate', plate)
+    .eq('date', o.date)
+    .eq('warehouse_id', o.warehouse_id)
+
+  const seen = new Set<string>()
+  for (const g of (gateGroups ?? []) as { direction: string | null; warehouse_type: string | null; vehicle_type: string | null }[]) {
+    const key = `${g.direction ?? '\x00'}|${g.warehouse_type ?? '\x00'}|${g.vehicle_type ?? '\x00'}`
+    if (!seen.has(key)) {
+      seen.add(key)
+      await relinkAfterDelete(plate, o.date, o.warehouse_id, g.direction, g.warehouse_type, g.vehicle_type)
+    }
+  }
+}
+
 // POST /api/tms/orders/:orderId/vehicle-slots  — thêm xe cho đơn (split delivery)
 export async function addVehicleSlot(req: Request, res: Response) {
   try {
@@ -214,15 +241,7 @@ export async function updateVehicleSlot(req: Request, res: Response) {
     }
 
     if ((isChangingSlot || isChangingPlate) && relinkPlate) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: ord } = await (supabase.from('TmsOrder') as any)
-        .select('date, warehouse_id, direction, warehouse_type, vehicle_type')
-        .eq('id', existing.order_id)
-        .single()
-      if (ord) {
-        const o = ord as { date: string; warehouse_id: string; direction: string | null; warehouse_type: string | null; vehicle_type: string | null }
-        await relinkAfterDelete(relinkPlate, o.date, o.warehouse_id, o.direction, o.warehouse_type, o.vehicle_type)
-      }
+      await relinkGatesByPlate(relinkPlate, existing.order_id as string)
     }
 
     return ok(res, data)
@@ -283,6 +302,8 @@ export async function revokeVehicleSlot(req: Request, res: Response) {
       .select('*, slot:DeliverySlot!slot_id(id, date, time_from, time_to, direction, cargo_type, max_vehicles, booked_count)')
       .single()
     if (error) return fail(res, error.message)
+    const revokeOldPlate = existing.license_plate as string | null
+    if (revokeOldPlate) await relinkGatesByPlate(revokeOldPlate, existing.order_id as string)
     return ok(res, data)
   } catch (e) { return fail(res, String(e)) }
 }
@@ -378,6 +399,8 @@ export async function releaseVehicleSlot(req: Request, res: Response) {
       .select('*, slot:DeliverySlot!slot_id(id, date, time_from, time_to, direction, cargo_type, max_vehicles, booked_count)')
       .single()
     if (error) return fail(res, error.message)
+    const releaseOldPlate = existing.license_plate as string | null
+    if (releaseOldPlate) await relinkGatesByPlate(releaseOldPlate, existing.order_id as string)
     return ok(res, data)
   } catch (e) { return fail(res, String(e)) }
 }

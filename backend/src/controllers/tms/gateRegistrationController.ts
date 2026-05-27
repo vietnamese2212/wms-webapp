@@ -45,7 +45,7 @@ export async function listGateRegistrations(req: Request, res: Response) {
 
 // Gợi ý booking phù hợp với xe (theo biển số + kho + loại xe + ngày)
 export async function suggestBooking(req: Request, res: Response) {
-  const { date, license_plate, warehouse_id, warehouse_type, vehicle_type, exclude_gate_id } =
+  const { date, license_plate, warehouse_id, warehouse_type, vehicle_type, direction, exclude_gate_id } =
     req.query as Record<string, string | undefined>
 
   if (!date || !license_plate || !warehouse_id) {
@@ -73,7 +73,7 @@ export async function suggestBooking(req: Request, res: Response) {
       slot_id,
       license_plate,
       order:TmsOrder!order_id (
-        id, order_code, date, warehouse_id, warehouse_type, vehicle_type,
+        id, order_code, date, warehouse_id, warehouse_type, vehicle_type, direction,
         planned_boxes, planned_pallets, planned_tons, gdo_refs, priority
       ),
       slot:DeliverySlot!slot_id (time_from, time_to)
@@ -89,7 +89,7 @@ export async function suggestBooking(req: Request, res: Response) {
     license_plate: string | null
     order: {
       id: string; order_code: string; date: string
-      warehouse_id: string; warehouse_type: string | null; vehicle_type: string | null
+      warehouse_id: string; warehouse_type: string | null; vehicle_type: string | null; direction: string | null
       planned_boxes: number | null; planned_pallets: number | null; planned_tons: number | null
       gdo_refs: string | null; priority: boolean
     } | null
@@ -101,6 +101,7 @@ export async function suggestBooking(req: Request, res: Response) {
       if (!vs.order) return false
       if (vs.order.date !== date) return false
       if (vs.order.warehouse_id !== warehouse_id) return false
+      if (direction && vs.order.direction !== direction) return false
       if (warehouse_type && vs.order.warehouse_type !== warehouse_type) return false
       if (vehicle_type && vs.order.vehicle_type !== vehicle_type) return false
       if (linkedSlotIds.includes(vs.id)) return false

@@ -12,7 +12,6 @@ import { Badge } from '@/components/ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Checkbox } from '@/components/ui/checkbox'
 import {
   X, Plus, Pencil, Trash2, Phone, PhoneCall,
   LogIn, LogOut, Star, Package, ArrowRight, ArrowLeft,
@@ -270,14 +269,14 @@ export default function GateRegistration() {
   }
 
   const createMut = useMutation({
-    mutationFn: (body: Partial<FormData>) => apiClient.post('/tms/gate-registrations', body).then(r => r.data),
+    mutationFn: (body: Record<string, unknown>) => apiClient.post('/tms/gate-registrations', body).then(r => r.data),
     onSuccess: () => { invalidate(); closeModal() },
     onError: (e: { response?: { data?: { error?: { message?: string } } } }) =>
       setApiError(e.response?.data?.error?.message ?? 'Lỗi tạo đăng ký'),
   })
 
   const updateMut = useMutation({
-    mutationFn: ({ id, body }: { id: string; body: Partial<FormData> }) =>
+    mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) =>
       apiClient.patch(`/tms/gate-registrations/${id}`, body).then(r => r.data),
     onSuccess: (d: { data: GateRegistration }) => {
       invalidate()
@@ -971,9 +970,11 @@ export default function GateRegistration() {
             {/* Row 7: Checkboxes */}
             <div className="flex items-center gap-6">
               <label className="flex items-center gap-2 cursor-pointer">
-                <Checkbox
+                <input
+                  type="checkbox"
                   checked={form.return_pallet}
-                  onCheckedChange={v => f('return_pallet', !!v)}
+                  onChange={e => f('return_pallet', e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 accent-blue-600"
                 />
                 <div className="flex items-center gap-1 text-xs">
                   <Package className="h-3.5 w-3.5 text-blue-500" />
@@ -981,9 +982,11 @@ export default function GateRegistration() {
                 </div>
               </label>
               <label className="flex items-center gap-2 cursor-pointer">
-                <Checkbox
+                <input
+                  type="checkbox"
                   checked={form.priority}
-                  onCheckedChange={v => f('priority', !!v)}
+                  onChange={e => f('priority', e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 accent-amber-500"
                 />
                 <div className="flex items-center gap-1 text-xs">
                   <Star className="h-3.5 w-3.5 text-amber-500" />

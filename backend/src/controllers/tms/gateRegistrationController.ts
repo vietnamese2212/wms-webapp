@@ -99,9 +99,7 @@ export async function suggestBooking(req: Request, res: Response) {
   const suggestions = (vslots as unknown as VSlotRow[] ?? [])
     .filter(vs => {
       if (!vs.order) return false
-      // Cho phép xe đến muộn tối đa 1 ngày (booking ngày hôm trước vẫn match)
-      const diffDays = (new Date(date).getTime() - new Date(vs.order.date).getTime()) / 86400000
-      if (diffDays < 0 || diffDays > 1) return false
+      if (vs.order.date !== date) return false
       if (vs.order.warehouse_id !== warehouse_id) return false
       if (warehouse_type && vs.order.warehouse_type !== warehouse_type) return false
       if (vehicle_type && vs.order.vehicle_type !== vehicle_type) return false

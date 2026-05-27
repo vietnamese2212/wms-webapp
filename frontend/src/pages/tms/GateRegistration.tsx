@@ -37,8 +37,8 @@ const STATUS_BADGE: Record<GateStatus, string> = {
 
 const ROW_COLOR: Record<GateStatus, string> = {
   REGISTERED: 'hover:bg-slate-50',
-  CALLED:     'bg-amber-50 hover:bg-amber-100',
-  IN:         'bg-green-50 hover:bg-green-100',
+  CALLED:     'bg-pink-50 hover:bg-pink-100',
+  IN:         'bg-orange-50 hover:bg-orange-100',
   COMPLETED:  'bg-blue-50 hover:bg-blue-100',
 }
 

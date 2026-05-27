@@ -37,9 +37,9 @@ const STATUS_BADGE: Record<GateStatus, string> = {
 
 const ROW_COLOR: Record<GateStatus, string> = {
   REGISTERED: 'hover:bg-slate-50',
-  CALLED:     'bg-pink-50 hover:bg-pink-100',
-  IN:         'bg-orange-50 hover:bg-orange-100',
-  COMPLETED:  'bg-blue-50 hover:bg-blue-100',
+  CALLED:     'bg-[#E85AA0]/10 hover:bg-[#E85AA0]/20',
+  IN:         'bg-[#D8891C]/10 hover:bg-[#D8891C]/20',
+  COMPLETED:  'bg-[#4A90D9]/10 hover:bg-[#4A90D9]/20',
 }
 
 const TODAY_VN = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -673,9 +673,9 @@ export default function GateRegistration() {
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">SĐT</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Ghi chú</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-14 whitespace-nowrap">Giờ ĐK</TableHead>
-                    <TableHead className="text-[9px] font-medium text-pink-500 px-2 py-1.5 w-14 whitespace-nowrap">Giờ gọi</TableHead>
-                    <TableHead className="text-[9px] font-medium text-orange-500 px-2 py-1.5 w-14 whitespace-nowrap">Giờ vào</TableHead>
-                    <TableHead className="text-[9px] font-medium text-blue-500 px-2 py-1.5 w-14 whitespace-nowrap">Giờ ra</TableHead>
+                    <TableHead className="text-[9px] font-medium px-2 py-1.5 w-14 whitespace-nowrap" style={{ color: '#E85AA0' }}>Giờ gọi</TableHead>
+                    <TableHead className="text-[9px] font-medium px-2 py-1.5 w-14 whitespace-nowrap" style={{ color: '#D8891C' }}>Giờ vào</TableHead>
+                    <TableHead className="text-[9px] font-medium px-2 py-1.5 w-14 whitespace-nowrap" style={{ color: '#4A90D9' }}>Giờ ra</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-20 whitespace-nowrap">TT</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-1 py-1.5 w-40"></TableHead>
                   </TableRow>
@@ -724,9 +724,9 @@ export default function GateRegistration() {
                       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.phone ?? '—'}</TableCell>
                       <TableCell className="px-2 py-1 text-[10px] text-slate-400 whitespace-nowrap">{reg.notes ?? '—'}</TableCell>
                       <TableCell className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap">{fmtTime(reg.registered_at)}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] text-pink-600 whitespace-nowrap">{fmtTime(reg.called_at)}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] text-orange-600 whitespace-nowrap">{fmtTime(reg.entry_at)}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] text-blue-600 whitespace-nowrap">{fmtTime(reg.exit_at)}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-medium" style={{ color: '#E85AA0' }}>{fmtTime(reg.called_at)}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-medium" style={{ color: '#D8891C' }}>{fmtTime(reg.entry_at)}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-medium" style={{ color: '#4A90D9' }}>{fmtTime(reg.exit_at)}</TableCell>
                       <TableCell className="px-2 py-1 whitespace-nowrap">
                         <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${STATUS_BADGE[reg.status]}`}>
                           {STATUS_LABEL[reg.status]}

@@ -16,7 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import {
   X, Plus, Pencil, Trash2, PhoneCall,
   LogIn, LogOut, Star, Package, ArrowRight, ArrowLeft,
-  ChevronDown, Loader2, SlidersHorizontal, Phone,
+  ChevronDown, Loader2, SlidersHorizontal, Phone, RotateCcw,
 } from 'lucide-react'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -43,6 +43,17 @@ const ROW_COLOR: Record<GateStatus, string> = {
 }
 
 const TODAY_VN = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+
+function fmtDate(dateStr: string | null | undefined) {
+  if (!dateStr) return '—'
+  const [y, m, d] = dateStr.split('-')
+  return `${d}/${m}/${y}`
+}
+
+// Trả về "YYYY-MM-DDTHH:mm" theo giờ VN để dùng trong <input type="datetime-local">
+function nowVnDatetimeLocal() {
+  return new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 16)
+}
 
 function fmtTime(str: string | null | undefined) {
   if (!str) return '—'
@@ -213,6 +224,9 @@ export default function GateRegistration() {
   const [entryTarget, setEntryTarget] = useState<GateRegistration | null>(null)
   const [exitTarget,  setExitTarget]  = useState<GateRegistration | null>(null)
   const [exitWeight,  setExitWeight]  = useState('')
+  const [callTime,  setCallTime]  = useState('')
+  const [entryTime, setEntryTime] = useState('')
+  const [exitTime,  setExitTime]  = useState('')
 
   const [apiError, setApiError] = useState('')
   const [saving,   setSaving]   = useState(false)
@@ -294,27 +308,50 @@ export default function GateRegistration() {
   })
 
   const callMut = useMutation({
-    mutationFn: (id: string) => apiClient.patch(`/tms/gate-registrations/${id}/call`).then(r => r.data),
+    mutationFn: ({ id, custom_time }: { id: string; custom_time?: string }) =>
+      apiClient.patch(`/tms/gate-registrations/${id}/call`, { custom_time }).then(r => r.data),
     onSuccess: (d: { data: GateRegistration }) => { invalidate(); setSelected(d.data); setCallTarget(null) },
     onError: (e: { response?: { data?: { error?: { message?: string } } } }) =>
       alert(e.response?.data?.error?.message ?? 'Lỗi gọi xe'),
   })
 
   const entryMut = useMutation({
-    mutationFn: (id: string) => apiClient.patch(`/tms/gate-registrations/${id}/entry`).then(r => r.data),
+    mutationFn: ({ id, custom_time }: { id: string; custom_time?: string }) =>
+      apiClient.patch(`/tms/gate-registrations/${id}/entry`, { custom_time }).then(r => r.data),
     onSuccess: (d: { data: GateRegistration }) => { invalidate(); setSelected(d.data); setEntryTarget(null) },
     onError: (e: { response?: { data?: { error?: { message?: string } } } }) =>
       alert(e.response?.data?.error?.message ?? 'Lỗi xác nhận vào'),
   })
 
   const exitMut = useMutation({
-    mutationFn: ({ id, load_capacity }: { id: string; load_capacity?: string }) =>
-      apiClient.patch(`/tms/gate-registrations/${id}/exit`, { load_capacity: load_capacity || undefined }).then(r => r.data),
+    mutationFn: ({ id, load_capacity, custom_time }: { id: string; load_capacity?: string; custom_time?: string }) =>
+      apiClient.patch(`/tms/gate-registrations/${id}/exit`, { load_capacity: load_capacity || undefined, custom_time }).then(r => r.data),
     onSuccess: (d: { data: GateRegistration }) => {
       invalidate(); setSelected(d.data); setExitTarget(null); setExitWeight('')
     },
     onError: (e: { response?: { data?: { error?: { message?: string } } } }) =>
       alert(e.response?.data?.error?.message ?? 'Lỗi xác nhận ra'),
+  })
+
+  const revertCallMut = useMutation({
+    mutationFn: (id: string) => apiClient.patch(`/tms/gate-registrations/${id}/revert-call`).then(r => r.data),
+    onSuccess: (d: { data: GateRegistration }) => { invalidate(); setSelected(d.data) },
+    onError: (e: { response?: { data?: { error?: { message?: string } } } }) =>
+      alert(e.response?.data?.error?.message ?? 'Lỗi huỷ gọi xe'),
+  })
+
+  const revertEntryMut = useMutation({
+    mutationFn: (id: string) => apiClient.patch(`/tms/gate-registrations/${id}/revert-entry`).then(r => r.data),
+    onSuccess: (d: { data: GateRegistration }) => { invalidate(); setSelected(d.data) },
+    onError: (e: { response?: { data?: { error?: { message?: string } } } }) =>
+      alert(e.response?.data?.error?.message ?? 'Lỗi huỷ xác nhận vào'),
+  })
+
+  const revertExitMut = useMutation({
+    mutationFn: (id: string) => apiClient.patch(`/tms/gate-registrations/${id}/revert-exit`).then(r => r.data),
+    onSuccess: (d: { data: GateRegistration }) => { invalidate(); setSelected(d.data) },
+    onError: (e: { response?: { data?: { error?: { message?: string } } } }) =>
+      alert(e.response?.data?.error?.message ?? 'Lỗi huỷ xác nhận ra'),
   })
 
   const deleteMut = useMutation({
@@ -444,31 +481,64 @@ export default function GateRegistration() {
       : 'text-xs px-2 py-1 h-auto'
     return (
       <div className="flex gap-1 flex-wrap">
+        {/* Gọi xe */}
         {reg.status === 'REGISTERED' && can(perms, 'gate_registration', 'call') && (
-          <Button
-            size="sm" variant="outline"
+          <Button size="sm" variant="outline"
             className={`${btnCls} border-amber-300 text-amber-700 hover:bg-amber-50`}
-            onClick={e => { e.stopPropagation(); setCallTarget(reg) }}
+            onClick={e => { e.stopPropagation(); setCallTarget(reg); setCallTime(nowVnDatetimeLocal()) }}
           >
             <PhoneCall className="h-3 w-3 mr-1" />Gọi xe
           </Button>
         )}
+        {/* Huỷ gọi xe */}
+        {reg.status === 'CALLED' && can(perms, 'gate_registration', 'call') && (
+          <Button size="sm" variant="ghost"
+            className={`${btnCls} text-slate-400 hover:text-red-500`}
+            disabled={revertCallMut.isPending}
+            title="Huỷ gọi xe"
+            onClick={e => { e.stopPropagation(); revertCallMut.mutate(reg.id) }}
+          >
+            <RotateCcw className="h-3 w-3" />
+          </Button>
+        )}
+        {/* Xe vào */}
         {(reg.status === 'REGISTERED' || reg.status === 'CALLED') && can(perms, 'gate_registration', 'entry') && (
-          <Button
-            size="sm" variant="outline"
+          <Button size="sm" variant="outline"
             className={`${btnCls} border-green-300 text-green-700 hover:bg-green-50`}
-            onClick={e => { e.stopPropagation(); setEntryTarget(reg) }}
+            onClick={e => { e.stopPropagation(); setEntryTarget(reg); setEntryTime(nowVnDatetimeLocal()) }}
           >
             <LogIn className="h-3 w-3 mr-1" />Vào
           </Button>
         )}
+        {/* Huỷ xác nhận vào */}
+        {reg.status === 'IN' && can(perms, 'gate_registration', 'entry') && (
+          <Button size="sm" variant="ghost"
+            className={`${btnCls} text-slate-400 hover:text-red-500`}
+            disabled={revertEntryMut.isPending}
+            title="Huỷ xác nhận vào"
+            onClick={e => { e.stopPropagation(); revertEntryMut.mutate(reg.id) }}
+          >
+            <RotateCcw className="h-3 w-3" />
+          </Button>
+        )}
+        {/* Xe ra */}
         {reg.status === 'IN' && can(perms, 'gate_registration', 'exit') && (
-          <Button
-            size="sm" variant="outline"
+          <Button size="sm" variant="outline"
             className={`${btnCls} border-blue-300 text-blue-700 hover:bg-blue-50`}
-            onClick={e => { e.stopPropagation(); setExitTarget(reg); setExitWeight('') }}
+            onClick={e => { e.stopPropagation(); setExitTarget(reg); setExitWeight(''); setExitTime(nowVnDatetimeLocal()) }}
           >
             <LogOut className="h-3 w-3 mr-1" />Ra
+          </Button>
+        )}
+        {/* Huỷ xác nhận ra */}
+        {reg.status === 'COMPLETED' && can(perms, 'gate_registration', 'exit') && (
+          <Button size="sm" variant="ghost"
+            className={`${btnCls} text-slate-400 hover:text-red-500`}
+            disabled={revertExitMut.isPending}
+            title="Huỷ xác nhận ra"
+            onClick={e => { e.stopPropagation(); revertExitMut.mutate(reg.id) }}
+          >
+            <RotateCcw className="h-3 w-3" />
           </Button>
         )}
       </div>
@@ -491,7 +561,7 @@ export default function GateRegistration() {
   }))
 
   const vtOptions: ComboOption[] = vehicleTypes.map(vt => ({
-    value: vt.code,
+    value: vt.name,   // lưu name để khớp với TmsOrder.vehicle_type
     label: vt.name,
   }))
 
@@ -578,7 +648,7 @@ export default function GateRegistration() {
               <SelectContent>
                 <SelectItem value="__all__">Tất cả loại xe</SelectItem>
                 {vehicleTypes.map(vt => (
-                  <SelectItem key={vt.id} value={vt.code}>{vt.name}</SelectItem>
+                  <SelectItem key={vt.id} value={vt.name}>{vt.name}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -690,7 +760,7 @@ export default function GateRegistration() {
                       <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold text-slate-500 whitespace-nowrap">
                         {reg.registration_number}
                       </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] font-mono whitespace-nowrap">{reg.date}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] font-mono whitespace-nowrap">{fmtDate(reg.date)}</TableCell>
                       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{warehouseName(reg.warehouse_id)}</TableCell>
                       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
                         {reg.direction === 'OUTBOUND'
@@ -1142,10 +1212,13 @@ export default function GateRegistration() {
           <DialogHeader>
             <DialogTitle className="text-sm">Gọi xe vào</DialogTitle>
           </DialogHeader>
-          <div className="text-sm py-2">
-            <p>Xác nhận gọi xe <span className="font-mono font-semibold">{callTarget?.license_plate}</span>?</p>
-            <p className="text-xs text-slate-500 mt-1">Hệ thống sẽ ghi nhận giờ gọi xe = bây giờ.</p>
-            <p className="text-xs text-amber-600 mt-1">Bảo vệ có thể bỏ qua bước này và bấm thẳng "Xe vào".</p>
+          <div className="space-y-3 py-2">
+            <p className="text-sm">Xác nhận gọi xe <span className="font-mono font-semibold">{callTarget?.license_plate}</span>?</p>
+            <div className="space-y-1">
+              <label className="text-xs text-slate-500">Giờ gọi xe</label>
+              <Input type="datetime-local" value={callTime} onChange={e => setCallTime(e.target.value)} className="text-xs h-8" />
+            </div>
+            <p className="text-xs text-amber-600">Bảo vệ có thể bỏ qua bước này và bấm thẳng "Xe vào".</p>
           </div>
           <DialogFooter>
             <Button variant="outline" size="sm" onClick={() => setCallTarget(null)}>Hủy</Button>
@@ -1153,7 +1226,10 @@ export default function GateRegistration() {
               size="sm"
               className="bg-amber-500 hover:bg-amber-600"
               disabled={callMut.isPending}
-              onClick={() => callTarget && callMut.mutate(callTarget.id)}
+              onClick={() => callTarget && callMut.mutate({
+                id: callTarget.id,
+                custom_time: callTime ? new Date(callTime + ':00+07:00').toISOString() : undefined,
+              })}
             >
               {callMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><PhoneCall className="h-3.5 w-3.5 mr-1" />Gọi xe</>}
             </Button>
@@ -1167,9 +1243,12 @@ export default function GateRegistration() {
           <DialogHeader>
             <DialogTitle className="text-sm">Xác nhận xe vào</DialogTitle>
           </DialogHeader>
-          <div className="text-sm py-2">
-            <p>Xe <span className="font-mono font-semibold">{entryTarget?.license_plate}</span> đã vào kho?</p>
-            <p className="text-xs text-slate-500 mt-1">Hệ thống sẽ ghi nhận giờ vào = bây giờ.</p>
+          <div className="space-y-3 py-2">
+            <p className="text-sm">Xe <span className="font-mono font-semibold">{entryTarget?.license_plate}</span> đã vào kho?</p>
+            <div className="space-y-1">
+              <label className="text-xs text-slate-500">Giờ vào</label>
+              <Input type="datetime-local" value={entryTime} onChange={e => setEntryTime(e.target.value)} className="text-xs h-8" />
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" size="sm" onClick={() => setEntryTarget(null)}>Hủy</Button>
@@ -1177,7 +1256,10 @@ export default function GateRegistration() {
               size="sm"
               className="bg-green-600 hover:bg-green-700"
               disabled={entryMut.isPending}
-              onClick={() => entryTarget && entryMut.mutate(entryTarget.id)}
+              onClick={() => entryTarget && entryMut.mutate({
+                id: entryTarget.id,
+                custom_time: entryTime ? new Date(entryTime + ':00+07:00').toISOString() : undefined,
+              })}
             >
               {entryMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><LogIn className="h-3.5 w-3.5 mr-1" />Xác nhận vào</>}
             </Button>
@@ -1193,6 +1275,10 @@ export default function GateRegistration() {
           </DialogHeader>
           <div className="space-y-3 py-2">
             <p className="text-sm">Xe <span className="font-mono font-semibold">{exitTarget?.license_plate}</span> đã ra khỏi kho?</p>
+            <div className="space-y-1">
+              <label className="text-xs text-slate-500">Giờ ra</label>
+              <Input type="datetime-local" value={exitTime} onChange={e => setExitTime(e.target.value)} className="text-xs h-8" />
+            </div>
             <div className="space-y-1">
               <label className="text-xs text-slate-500">Tải trọng (tấn) — tuỳ chọn</label>
               <Input
@@ -1211,7 +1297,11 @@ export default function GateRegistration() {
               size="sm"
               className="bg-blue-600 hover:bg-blue-700"
               disabled={exitMut.isPending}
-              onClick={() => exitTarget && exitMut.mutate({ id: exitTarget.id, load_capacity: exitWeight || undefined })}
+              onClick={() => exitTarget && exitMut.mutate({
+                id: exitTarget.id,
+                load_capacity: exitWeight || undefined,
+                custom_time: exitTime ? new Date(exitTime + ':00+07:00').toISOString() : undefined,
+              })}
             >
               {exitMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><LogOut className="h-3.5 w-3.5 mr-1" />Xác nhận ra</>}
             </Button>

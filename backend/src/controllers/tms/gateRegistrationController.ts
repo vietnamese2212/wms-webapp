@@ -99,7 +99,9 @@ export async function suggestBooking(req: Request, res: Response) {
   const suggestions = (vslots as unknown as VSlotRow[] ?? [])
     .filter(vs => {
       if (!vs.order) return false
-      if (vs.order.date !== date) return false
+      // Cho phép xe đến muộn tối đa 1 ngày (booking ngày hôm trước vẫn match)
+      const diffDays = (new Date(date).getTime() - new Date(vs.order.date).getTime()) / 86400000
+      if (diffDays < 0 || diffDays > 1) return false
       if (vs.order.warehouse_id !== warehouse_id) return false
       if (warehouse_type && vs.order.warehouse_type !== warehouse_type) return false
       if (vehicle_type && vs.order.vehicle_type !== vehicle_type) return false
@@ -264,13 +266,15 @@ export async function updateGateRegistration(req: Request, res: Response) {
 export async function doCall(req: Request, res: Response) {
   const { id } = req.params
   const user = (req as Request & { user?: { name?: string } }).user
+  const { custom_time } = req.body
   const now = new Date().toISOString()
+  const ts = custom_time ? new Date(custom_time).toISOString() : now
 
   const { data, error } = await supabase
     .from('gate_registrations')
     .update({
       status:     'CALLED',
-      called_at:  now,
+      called_at:  ts,
       called_by:  user?.name ?? null,
       updated_by: user?.name ?? null,
       updated_at: now,
@@ -287,7 +291,9 @@ export async function doCall(req: Request, res: Response) {
 export async function doEntry(req: Request, res: Response) {
   const { id } = req.params
   const user = (req as Request & { user?: { name?: string } }).user
+  const { custom_time } = req.body
   const now = new Date().toISOString()
+  const ts = custom_time ? new Date(custom_time).toISOString() : now
 
   const { data: reg, error: fetchErr } = await supabase
     .from('gate_registrations')
@@ -300,7 +306,7 @@ export async function doEntry(req: Request, res: Response) {
     .from('gate_registrations')
     .update({
       status:     'IN',
-      entry_at:   now,
+      entry_at:   ts,
       entry_by:   user?.name ?? null,
       updated_by: user?.name ?? null,
       updated_at: now,
@@ -311,7 +317,6 @@ export async function doEntry(req: Request, res: Response) {
 
   if (error) return apiErr(res, 'DB_ERROR', error.message, 500)
 
-  // Update TmsOrder.export_status nếu có link
   if ((reg as { tms_order_id: string | null }).tms_order_id) {
     await supabase
       .from('TmsOrder')
@@ -326,8 +331,9 @@ export async function doEntry(req: Request, res: Response) {
 export async function doExit(req: Request, res: Response) {
   const { id } = req.params
   const user = (req as Request & { user?: { name?: string } }).user
-  const { load_capacity } = req.body
+  const { load_capacity, custom_time } = req.body
   const now = new Date().toISOString()
+  const ts = custom_time ? new Date(custom_time).toISOString() : now
 
   const { data: reg, error: fetchErr } = await supabase
     .from('gate_registrations')
@@ -338,7 +344,7 @@ export async function doExit(req: Request, res: Response) {
 
   const patch: Record<string, unknown> = {
     status:     'COMPLETED',
-    exit_at:    now,
+    exit_at:    ts,
     exit_by:    user?.name ?? null,
     updated_by: user?.name ?? null,
     updated_at: now,
@@ -360,6 +366,108 @@ export async function doExit(req: Request, res: Response) {
     await supabase
       .from('TmsOrder')
       .update({ export_status: 'Đã xuất', updated_at: now })
+      .eq('id', (reg as { tms_order_id: string }).tms_order_id)
+  }
+
+  return res.json({ success: true, data })
+}
+
+// Revert: Huỷ gọi xe → về REGISTERED
+export async function doRevertCall(req: Request, res: Response) {
+  const { id } = req.params
+  const user = (req as Request & { user?: { name?: string } }).user
+  const now = new Date().toISOString()
+
+  const { data, error } = await supabase
+    .from('gate_registrations')
+    .update({
+      status:     'REGISTERED',
+      called_at:  null,
+      called_by:  null,
+      updated_by: user?.name ?? null,
+      updated_at: now,
+    })
+    .eq('id', id)
+    .select()
+    .single()
+
+  if (error) return apiErr(res, 'DB_ERROR', error.message, 500)
+  return res.json({ success: true, data })
+}
+
+// Revert: Huỷ xác nhận vào → về CALLED (nếu đã gọi) hoặc REGISTERED
+export async function doRevertEntry(req: Request, res: Response) {
+  const { id } = req.params
+  const user = (req as Request & { user?: { name?: string } }).user
+  const now = new Date().toISOString()
+
+  const { data: reg, error: fetchErr } = await supabase
+    .from('gate_registrations')
+    .select('tms_order_id, called_at')
+    .eq('id', id)
+    .single()
+  if (fetchErr) return apiErr(res, 'DB_ERROR', fetchErr.message, 500)
+
+  const targetStatus = (reg as { called_at: string | null }).called_at ? 'CALLED' : 'REGISTERED'
+
+  const { data, error } = await supabase
+    .from('gate_registrations')
+    .update({
+      status:     targetStatus,
+      entry_at:   null,
+      entry_by:   null,
+      updated_by: user?.name ?? null,
+      updated_at: now,
+    })
+    .eq('id', id)
+    .select()
+    .single()
+
+  if (error) return apiErr(res, 'DB_ERROR', error.message, 500)
+
+  if ((reg as { tms_order_id: string | null }).tms_order_id) {
+    await supabase
+      .from('TmsOrder')
+      .update({ export_status: 'Đăng ký', updated_at: now })
+      .eq('id', (reg as { tms_order_id: string }).tms_order_id)
+  }
+
+  return res.json({ success: true, data })
+}
+
+// Revert: Huỷ xác nhận ra → về IN
+export async function doRevertExit(req: Request, res: Response) {
+  const { id } = req.params
+  const user = (req as Request & { user?: { name?: string } }).user
+  const now = new Date().toISOString()
+
+  const { data: reg, error: fetchErr } = await supabase
+    .from('gate_registrations')
+    .select('tms_order_id')
+    .eq('id', id)
+    .single()
+  if (fetchErr) return apiErr(res, 'DB_ERROR', fetchErr.message, 500)
+
+  const { data, error } = await supabase
+    .from('gate_registrations')
+    .update({
+      status:        'IN',
+      exit_at:       null,
+      exit_by:       null,
+      load_capacity: null,
+      updated_by:    user?.name ?? null,
+      updated_at:    now,
+    })
+    .eq('id', id)
+    .select()
+    .single()
+
+  if (error) return apiErr(res, 'DB_ERROR', error.message, 500)
+
+  if ((reg as { tms_order_id: string | null }).tms_order_id) {
+    await supabase
+      .from('TmsOrder')
+      .update({ export_status: 'Đang xuất', updated_at: now })
       .eq('id', (reg as { tms_order_id: string }).tms_order_id)
   }
 

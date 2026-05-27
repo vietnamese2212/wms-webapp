@@ -70,6 +70,9 @@ router.patch('/gate-registrations/:id',              requirePerm('gate_registrat
 router.patch('/gate-registrations/:id/call',         requirePerm('gate_registration', 'call'),   gateReg.doCall)
 router.patch('/gate-registrations/:id/entry',        requirePerm('gate_registration', 'entry'),  gateReg.doEntry)
 router.patch('/gate-registrations/:id/exit',         requirePerm('gate_registration', 'exit'),   gateReg.doExit)
+router.patch('/gate-registrations/:id/revert-call',  requirePerm('gate_registration', 'call'),   gateReg.doRevertCall)
+router.patch('/gate-registrations/:id/revert-entry', requirePerm('gate_registration', 'entry'),  gateReg.doRevertEntry)
+router.patch('/gate-registrations/:id/revert-exit',  requirePerm('gate_registration', 'exit'),   gateReg.doRevertExit)
 router.delete('/gate-registrations/:id',             requirePerm('gate_registration', 'delete'), gateReg.deleteGateRegistration)
 
 export default router

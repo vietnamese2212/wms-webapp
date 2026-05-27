@@ -14,9 +14,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
-  X, Plus, Pencil, Trash2, Phone, PhoneCall,
+  X, Plus, Pencil, Trash2, PhoneCall,
   LogIn, LogOut, Star, Package, ArrowRight, ArrowLeft,
-  ChevronDown, Loader2,
+  ChevronDown, Loader2, SlidersHorizontal, Phone,
 } from 'lucide-react'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -184,15 +184,23 @@ export default function GateRegistration() {
   const user = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
 
+  // Kho được phép theo user scope
+  const allowedWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
+    ? new Set(user.warehouse_ids)
+    : null
+
   // ── Filters
   const [fDate,          setFDate]          = useState(TODAY_VN)
   const [fDateTo,        setFDateTo]        = useState('')
-  const [fWarehouse,     setFWarehouse]     = useState('')
+  const [fWarehouse,     setFWarehouse]     = useState(() =>
+    allowedWhIds && allowedWhIds.size === 1 ? [...allowedWhIds][0] : ''
+  )
   const [fWarehouseType, setFWarehouseType] = useState('')
   const [fVehicleType,   setFVehicleType]   = useState('')
   const [fCompany,       setFCompany]       = useState('')
   const [fDirection,     setFDirection]     = useState('')
   const [fStatus,        setFStatus]        = useState('')
+  const [showMoreFilters, setShowMoreFilters] = useState(false)
 
   // ── Selection + Modal
   const [selected,   setSelected]   = useState<GateRegistration | null>(null)
@@ -491,11 +499,11 @@ export default function GateRegistration() {
     <div className="flex flex-col h-full">
       {/* ── Filter bar */}
       <div className="border-b bg-white px-3 py-2 shrink-0">
+        {/* Primary filters */}
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-semibold text-slate-700">Đăng ký cổng</span>
+          <span className="text-sm font-semibold text-slate-700 shrink-0">Đăng ký cổng</span>
 
           <div className="flex items-center gap-1">
-            <span className="text-xs text-slate-500">Ngày:</span>
             <Input
               type="date" value={fDate}
               onChange={e => setFDate(e.target.value)}
@@ -506,7 +514,6 @@ export default function GateRegistration() {
               type="date" value={fDateTo}
               onChange={e => setFDateTo(e.target.value)}
               className="text-xs h-7 w-32"
-              placeholder="đến ngày"
             />
           </div>
 
@@ -515,8 +522,11 @@ export default function GateRegistration() {
               <SelectValue placeholder="Tất cả kho" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="__all__">Tất cả kho</SelectItem>
-              {warehouses.map(w => (
+              {!allowedWhIds && <SelectItem value="__all__">Tất cả kho</SelectItem>}
+              {(allowedWhIds
+                ? warehouses.filter((w: { id: string }) => allowedWhIds.has(w.id))
+                : warehouses
+              ).map((w: { id: string; name: string }) => (
                 <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
               ))}
             </SelectContent>
@@ -534,62 +544,89 @@ export default function GateRegistration() {
             </SelectContent>
           </Select>
 
-          <Select value={fVehicleType || '__all__'} onValueChange={v => setFVehicleType(v === '__all__' ? '' : v)}>
-            <SelectTrigger className="h-7 text-xs w-32">
-              <SelectValue placeholder="Loại xe" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">Tất cả</SelectItem>
-              {vehicleTypes.map(vt => (
-                <SelectItem key={vt.id} value={vt.code}>{vt.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <Select value={fCompany || '__all__'} onValueChange={v => setFCompany(v === '__all__' ? '' : v)}>
-            <SelectTrigger className="h-7 text-xs w-36">
-              <SelectValue placeholder="ĐVVT/NCC" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">Tất cả ĐVVT</SelectItem>
-              {companies.map(c => (
-                <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <Select value={fDirection || '__all__'} onValueChange={v => setFDirection(v === '__all__' ? '' : v)}>
-            <SelectTrigger className="h-7 text-xs w-28">
-              <SelectValue placeholder="Hướng" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">Cả hai</SelectItem>
-              <SelectItem value="OUTBOUND">Xuất</SelectItem>
-              <SelectItem value="INBOUND">Nhập</SelectItem>
-            </SelectContent>
-          </Select>
-
-          <Select value={fStatus || '__all__'} onValueChange={v => setFStatus(v === '__all__' ? '' : v)}>
-            <SelectTrigger className="h-7 text-xs w-32">
-              <SelectValue placeholder="Trạng thái" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">Tất cả TT</SelectItem>
-              <SelectItem value="REGISTERED">Đã đăng ký</SelectItem>
-              <SelectItem value="CALLED">Đã gọi xe</SelectItem>
-              <SelectItem value="IN">Đang trong</SelectItem>
-              <SelectItem value="COMPLETED">Đã ra</SelectItem>
-            </SelectContent>
-          </Select>
+          {/* Bộ lọc thêm */}
+          <Button
+            variant="outline" size="sm"
+            className={`h-7 text-xs gap-1 ${showMoreFilters || fVehicleType || fCompany || fDirection || fStatus ? 'border-blue-400 text-blue-700 bg-blue-50' : ''}`}
+            onClick={() => setShowMoreFilters(v => !v)}
+          >
+            <SlidersHorizontal className="h-3 w-3" />
+            Bộ lọc
+            {(fVehicleType || fCompany || fDirection || fStatus) && (
+              <span className="ml-0.5 bg-blue-500 text-white rounded-full text-[9px] px-1 leading-none py-0.5">
+                {[fVehicleType, fCompany, fDirection, fStatus].filter(Boolean).length}
+              </span>
+            )}
+          </Button>
 
           <div className="ml-auto">
             {can(perms, 'gate_registration', 'create') && (
               <Button size="sm" className="h-7 text-xs" onClick={openCreate}>
-                <Plus className="h-3.5 w-3.5 mr-1" />Thêm đăng ký
+                <Plus className="h-3.5 w-3.5 mr-1" />Thêm
               </Button>
             )}
           </div>
         </div>
+
+        {/* Advanced filters */}
+        {showMoreFilters && (
+          <div className="flex items-center gap-2 flex-wrap mt-2 pt-2 border-t">
+            <Select value={fVehicleType || '__all__'} onValueChange={v => setFVehicleType(v === '__all__' ? '' : v)}>
+              <SelectTrigger className="h-7 text-xs w-32">
+                <SelectValue placeholder="Loại xe" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">Tất cả loại xe</SelectItem>
+                {vehicleTypes.map(vt => (
+                  <SelectItem key={vt.id} value={vt.code}>{vt.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <Select value={fCompany || '__all__'} onValueChange={v => setFCompany(v === '__all__' ? '' : v)}>
+              <SelectTrigger className="h-7 text-xs w-36">
+                <SelectValue placeholder="ĐVVT/NCC" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">Tất cả ĐVVT</SelectItem>
+                {companies.map(c => (
+                  <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <Select value={fDirection || '__all__'} onValueChange={v => setFDirection(v === '__all__' ? '' : v)}>
+              <SelectTrigger className="h-7 text-xs w-24">
+                <SelectValue placeholder="Hướng" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">Cả hai</SelectItem>
+                <SelectItem value="OUTBOUND">Xuất</SelectItem>
+                <SelectItem value="INBOUND">Nhập</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Select value={fStatus || '__all__'} onValueChange={v => setFStatus(v === '__all__' ? '' : v)}>
+              <SelectTrigger className="h-7 text-xs w-32">
+                <SelectValue placeholder="Trạng thái" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">Tất cả TT</SelectItem>
+                <SelectItem value="REGISTERED">Đã đăng ký</SelectItem>
+                <SelectItem value="CALLED">Đã gọi xe</SelectItem>
+                <SelectItem value="IN">Đang trong</SelectItem>
+                <SelectItem value="COMPLETED">Đã ra</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <button
+              className="text-[10px] text-slate-400 hover:text-red-500 underline"
+              onClick={() => { setFVehicleType(''); setFCompany(''); setFDirection(''); setFStatus('') }}
+            >
+              Xóa bộ lọc
+            </button>
+          </div>
+        )}
 
         {/* Stats */}
         <div className="flex gap-3 mt-1.5">
@@ -622,18 +659,19 @@ export default function GateRegistration() {
               <Table className="min-w-full">
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-8">#</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Biển số</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Lái xe</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">ĐVVT</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-14">Hướng</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Kho</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Booking</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-16">Trả pl</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-14">Gọi lúc</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-14">Vào lúc</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-14">Ra lúc</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-20">TT</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-8 whitespace-nowrap">#</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Biển số</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Kho</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-14 whitespace-nowrap">Hướng</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Loại kho</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">ĐVVT</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Lái xe</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Booking</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-14 whitespace-nowrap">Trả pl</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-14 whitespace-nowrap">Gọi lúc</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-14 whitespace-nowrap">Vào lúc</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-14 whitespace-nowrap">Ra lúc</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-20 whitespace-nowrap">TT</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-1 py-1.5 w-40"></TableHead>
                   </TableRow>
                 </TableHeader>
@@ -644,27 +682,25 @@ export default function GateRegistration() {
                       className={`cursor-pointer ${ROW_COLOR[reg.status]} ${selected?.id === reg.id ? 'ring-1 ring-inset ring-blue-400' : ''}`}
                       onClick={() => setSelected(prev => prev?.id === reg.id ? null : reg)}
                     >
-                      <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold text-slate-500">
+                      <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold text-slate-500 whitespace-nowrap">
                         {reg.registration_number}
                       </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold">
+                      <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">
                         {reg.license_plate ?? '—'}
                         {reg.priority && <Star className="h-2.5 w-2.5 inline ml-1 text-amber-500 fill-amber-500" />}
                       </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px]">{reg.driver_name ?? '—'}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] text-slate-600">{companyName(reg)}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px]">
+                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{warehouseName(reg.warehouse_id)}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
                         {reg.direction === 'OUTBOUND'
                           ? <span className="flex items-center gap-0.5 text-orange-600"><ArrowRight className="h-3 w-3" />Xuất</span>
                           : reg.direction === 'INBOUND'
                           ? <span className="flex items-center gap-0.5 text-blue-600"><ArrowLeft className="h-3 w-3" />Nhập</span>
                           : '—'}
                       </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px]">
-                        <div>{warehouseName(reg.warehouse_id)}</div>
-                        {reg.warehouse_type && <div className="text-slate-400">{reg.warehouse_type}</div>}
-                      </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px]">
+                      <TableCell className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap">{reg.warehouse_type ?? '—'}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap">{companyName(reg)}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.driver_name ?? '—'}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
                         {reg.booking_order_code
                           ? <div>
                               <div className="font-mono font-semibold text-slate-700">{reg.booking_order_code}</div>
@@ -674,20 +710,20 @@ export default function GateRegistration() {
                             </div>
                           : <span className="text-slate-300">—</span>}
                       </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] text-center">
+                      <TableCell className="px-2 py-1 text-[10px] text-center whitespace-nowrap">
                         {reg.return_pallet
                           ? <Package className="h-3.5 w-3.5 text-blue-500 inline" />
                           : <span className="text-slate-300">—</span>}
                       </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] text-slate-600">{fmtTime(reg.called_at)}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] text-slate-600">{fmtTime(reg.entry_at)}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] text-slate-600">{fmtTime(reg.exit_at)}</TableCell>
-                      <TableCell className="px-2 py-1">
+                      <TableCell className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap">{fmtTime(reg.called_at)}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap">{fmtTime(reg.entry_at)}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap">{fmtTime(reg.exit_at)}</TableCell>
+                      <TableCell className="px-2 py-1 whitespace-nowrap">
                         <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${STATUS_BADGE[reg.status]}`}>
                           {STATUS_LABEL[reg.status]}
                         </span>
                       </TableCell>
-                      <TableCell className="px-1 py-1" onClick={e => e.stopPropagation()}>
+                      <TableCell className="px-1 py-1 whitespace-nowrap" onClick={e => e.stopPropagation()}>
                         <ActionButtons reg={reg} size="xs" />
                       </TableCell>
                     </TableRow>
@@ -733,22 +769,8 @@ export default function GateRegistration() {
             <ActionButtons reg={selected} size="sm" />
 
             <div className="border-t pt-2 space-y-1.5">
-              <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Xe & Lái xe</p>
-              <div><span className="text-slate-400">Biển số:</span> <span className="font-mono font-semibold">{selected.license_plate ?? '—'}</span></div>
-              <div><span className="text-slate-400">Lái xe:</span> <span className="font-medium">{selected.driver_name ?? '—'}</span></div>
-              <div><span className="text-slate-400">SĐT:</span> <span>{selected.phone ?? '—'}</span></div>
-              <div><span className="text-slate-400">ĐVVT:</span> <span className="font-medium">{companyName(selected)}</span></div>
-              <div><span className="text-slate-400">Loại xe:</span> <span>{selected.vehicle_type ?? '—'}</span></div>
-              <div className="flex items-center gap-1">
-                <span className="text-slate-400">Trả pallet:</span>
-                {selected.return_pallet
-                  ? <span className="flex items-center gap-1 text-blue-600"><Package className="h-3 w-3" />Có</span>
-                  : <span className="text-slate-400">Không</span>}
-              </div>
-            </div>
-
-            <div className="border-t pt-2 space-y-1.5">
-              <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Hàng & Kho</p>
+              <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Kho & Hàng</p>
+              <div><span className="text-slate-400">Kho:</span> <span className="font-medium">{warehouseName(selected.warehouse_id)}</span></div>
               <div>
                 <span className="text-slate-400">Hướng:</span>
                 {selected.direction === 'OUTBOUND'
@@ -757,13 +779,34 @@ export default function GateRegistration() {
                   ? <span className="ml-1 text-blue-600 font-medium">Nhập</span>
                   : ' —'}
               </div>
-              <div><span className="text-slate-400">Kho:</span> <span className="font-medium">{warehouseName(selected.warehouse_id)}</span></div>
               {selected.warehouse_type && <div><span className="text-slate-400">Loại kho:</span> <span>{selected.warehouse_type}</span></div>}
               {selected.content && <div><span className="text-slate-400">Nội dung:</span> <span>{selected.content}</span></div>}
               {selected.seal_number && <div><span className="text-slate-400">Niêm phong:</span> <span className="font-mono">{selected.seal_number}</span></div>}
               {selected.load_capacity != null && (
                 <div><span className="text-slate-400">Tải trọng:</span> <span className="font-semibold">{selected.load_capacity} tấn</span></div>
               )}
+            </div>
+
+            <div className="border-t pt-2 space-y-1.5">
+              <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Xe & Lái xe</p>
+              <div><span className="text-slate-400">Loại xe:</span> <span>{selected.vehicle_type ?? '—'}</span></div>
+              <div><span className="text-slate-400">ĐVVT:</span> <span className="font-medium">{companyName(selected)}</span></div>
+              <div><span className="text-slate-400">Biển số:</span> <span className="font-mono font-semibold">{selected.license_plate ?? '—'}</span></div>
+              <div><span className="text-slate-400">Lái xe:</span> <span className="font-medium">{selected.driver_name ?? '—'}</span></div>
+              <div className="flex items-center gap-1">
+                <span className="text-slate-400">SĐT:</span>
+                {selected.phone
+                  ? <a href={`tel:${selected.phone}`} className="flex items-center gap-1 text-blue-600 font-medium hover:underline">
+                      <Phone className="h-3 w-3" />{selected.phone}
+                    </a>
+                  : <span className="text-slate-400">—</span>}
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="text-slate-400">Trả pallet:</span>
+                {selected.return_pallet
+                  ? <span className="flex items-center gap-1 text-blue-600"><Package className="h-3 w-3" />Có</span>
+                  : <span className="text-slate-400">Không</span>}
+              </div>
             </div>
 
             {selected.booking_order_code && (
@@ -840,12 +883,33 @@ export default function GateRegistration() {
               <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded px-3 py-2">{apiError}</div>
             )}
 
-            {/* Row 1: Ngày + Hướng */}
+            {/* Row 1: Ngày + Kho */}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
                 <label className="text-xs text-slate-500">Ngày <span className="text-red-500">*</span></label>
                 <Input type="date" value={form.date} onChange={e => f('date', e.target.value)} className="text-xs h-8" />
               </div>
+              <div className="space-y-1">
+                <label className="text-xs text-slate-500">Kho <span className="text-red-500">*</span></label>
+                <Select value={form.warehouse_id || '__none__'} onValueChange={v => f('warehouse_id', v === '__none__' ? '' : v)}>
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue placeholder="Chọn kho" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">— Chọn kho —</SelectItem>
+                    {(allowedWhIds
+                      ? warehouses.filter((w: { id: string }) => allowedWhIds.has(w.id))
+                      : warehouses
+                    ).map((w: { id: string; name: string }) => (
+                      <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {/* Row 2: Hướng + Loại kho */}
+            <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
                 <label className="text-xs text-slate-500">Hướng</label>
                 <Select value={form.direction || '__none__'} onValueChange={v => f('direction', v === '__none__' ? '' : v)}>
@@ -859,10 +923,35 @@ export default function GateRegistration() {
                   </SelectContent>
                 </Select>
               </div>
+              <div className="space-y-1">
+                <label className="text-xs text-slate-500">Loại kho</label>
+                <Select value={form.warehouse_type || '__none__'} onValueChange={v => f('warehouse_type', v === '__none__' ? '' : v)}>
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue placeholder="Chọn loại kho" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">— Không chọn —</SelectItem>
+                    {whTypes.map((t: { id: string; value: string }) => (
+                      <SelectItem key={t.id} value={t.value}>{t.value}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
 
-            {/* Row 2: ĐVVT + Biển số */}
+            {/* Row 3: Loại xe + ĐVVT */}
             <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label className="text-xs text-slate-500">Loại xe</label>
+                <ComboField
+                  value={form.vehicle_type}
+                  displayValue={vtOptions.find(v => v.value === form.vehicle_type)?.label ?? form.vehicle_type}
+                  options={vtOptions}
+                  placeholder="Tìm loại xe"
+                  onSelect={opt => f('vehicle_type', opt.value)}
+                  onClear={() => f('vehicle_type', '')}
+                />
+              </div>
               <div className="space-y-1">
                 <label className="text-xs text-slate-500">ĐVVT / NCC</label>
                 <ComboField
@@ -888,6 +977,10 @@ export default function GateRegistration() {
                   />
                 )}
               </div>
+            </div>
+
+            {/* Row 4: Biển số + Nội dung */}
+            <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
                 <label className="text-xs text-slate-500">Biển số xe</label>
                 <ComboField
@@ -911,9 +1004,13 @@ export default function GateRegistration() {
                   />
                 )}
               </div>
+              <div className="space-y-1">
+                <label className="text-xs text-slate-500">Nội dung vào ra</label>
+                <Input className="text-xs h-8" value={form.content} onChange={e => f('content', e.target.value)} placeholder="Vào lấy hàng, giao hàng..." />
+              </div>
             </div>
 
-            {/* Row 3: Lái xe + SĐT */}
+            {/* Row 5: Lái xe + SĐT */}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
                 <label className="text-xs text-slate-500">Họ và tên lái xe</label>
@@ -921,58 +1018,7 @@ export default function GateRegistration() {
               </div>
               <div className="space-y-1">
                 <label className="text-xs text-slate-500">Số điện thoại</label>
-                <Input className="text-xs h-8" value={form.phone} onChange={e => f('phone', e.target.value)} placeholder="0909..." />
-              </div>
-            </div>
-
-            {/* Row 4: Kho + Loại kho */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <label className="text-xs text-slate-500">Kho <span className="text-red-500">*</span></label>
-                <Select value={form.warehouse_id || '__none__'} onValueChange={v => f('warehouse_id', v === '__none__' ? '' : v)}>
-                  <SelectTrigger className="h-8 text-xs">
-                    <SelectValue placeholder="Chọn kho" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">— Chọn kho —</SelectItem>
-                    {warehouses.map(w => (
-                      <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs text-slate-500">Loại kho</label>
-                <Select value={form.warehouse_type || '__none__'} onValueChange={v => f('warehouse_type', v === '__none__' ? '' : v)}>
-                  <SelectTrigger className="h-8 text-xs">
-                    <SelectValue placeholder="Chọn loại kho" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">— Tất cả —</SelectItem>
-                    {whTypes.map((t: { id: string; value: string }) => (
-                      <SelectItem key={t.id} value={t.value}>{t.value}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            {/* Row 5: Loại xe + Nội dung */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <label className="text-xs text-slate-500">Loại xe</label>
-                <ComboField
-                  value={form.vehicle_type}
-                  displayValue={vtOptions.find(v => v.value === form.vehicle_type)?.label ?? form.vehicle_type}
-                  options={vtOptions}
-                  placeholder="Tìm loại xe"
-                  onSelect={opt => f('vehicle_type', opt.value)}
-                  onClear={() => f('vehicle_type', '')}
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs text-slate-500">Nội dung vào ra</label>
-                <Input className="text-xs h-8" value={form.content} onChange={e => f('content', e.target.value)} placeholder="Vào lấy hàng, giao hàng..." />
+                <Input type="tel" className="text-xs h-8" value={form.phone} onChange={e => f('phone', e.target.value)} placeholder="0909..." />
               </div>
             </div>
 
@@ -988,7 +1034,7 @@ export default function GateRegistration() {
               </div>
             </div>
 
-            {/* Row 7: Checkboxes */}
+            {/* Row 7: Trả pallet (Ưu tiên tự lấy từ Kế hoạch VC) */}
             <div className="flex items-center gap-6">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
@@ -1002,18 +1048,12 @@ export default function GateRegistration() {
                   Trả pallet
                 </div>
               </label>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={form.priority}
-                  onChange={e => f('priority', e.target.checked)}
-                  className="h-4 w-4 rounded border-slate-300 accent-amber-500"
-                />
-                <div className="flex items-center gap-1 text-xs">
-                  <Star className="h-3.5 w-3.5 text-amber-500" />
-                  Ưu tiên
+              {form.priority && (
+                <div className="flex items-center gap-1 text-xs text-amber-600">
+                  <Star className="h-3.5 w-3.5 fill-amber-500" />
+                  Ưu tiên (từ Kế hoạch VC)
                 </div>
-              </label>
+              )}
             </div>
 
             {/* Booking suggestion */}

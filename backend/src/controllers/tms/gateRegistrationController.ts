@@ -25,6 +25,12 @@ export async function listGateRegistrations(req: Request, res: Response) {
     if (date_from) q = q.gte('date', date_from)
     if (date_to)   q = q.lte('date', date_to)
   }
+  // Phân quyền kho
+  const scopeWhs = req.user?.warehouse_scope !== 'NATIONAL'
+    ? (req.user?.warehouse_ids ?? [])
+    : []
+  if (scopeWhs.length > 0) q = q.in('warehouse_id', scopeWhs)
+
   if (warehouse_id)   q = q.eq('warehouse_id', warehouse_id)
   if (warehouse_type) q = q.eq('warehouse_type', warehouse_type)
   if (vehicle_type)   q = q.eq('vehicle_type', vehicle_type)

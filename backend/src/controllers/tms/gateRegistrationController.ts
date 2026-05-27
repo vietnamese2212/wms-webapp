@@ -546,7 +546,7 @@ export async function relinkAfterDelete(
     if (match && match.order_id !== gate.tms_order_id) {
       const exportStatus =
         gate.status === 'IN'        ? 'Đang xuất' :
-        gate.status === 'COMPLETED' ? 'Đã xuất'   : 'Đã đăng ký'
+        gate.status === 'COMPLETED' ? 'Đã xuất'   : 'Đăng ký'
       ops.push(
         supabase.from('TmsOrder')
           .update({ export_status: exportStatus, updated_at: now })

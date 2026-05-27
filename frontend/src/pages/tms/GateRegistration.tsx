@@ -405,8 +405,22 @@ export default function GateRegistration() {
     setSaving(false)
   }
 
+  // Fields này quyết định booking suggestion — đổi thì phải clear booking cũ
+  const BOOKING_MATCH_FIELDS: (keyof FormData)[] = ['date', 'license_plate', 'direction', 'warehouse_id', 'warehouse_type', 'vehicle_type']
+
   function f(k: keyof FormData, v: string | boolean) {
-    setForm(prev => ({ ...prev, [k]: v }))
+    setForm(prev => {
+      const next = { ...prev, [k]: v }
+      if (BOOKING_MATCH_FIELDS.includes(k) && prev.tms_order_id) {
+        next.tms_order_id = ''
+        next.tms_vehicle_slot_id = ''
+        next.booking_order_code = ''
+        next.booking_slot_from = ''
+        next.booking_slot_to = ''
+        next.priority = false
+      }
+      return next
+    })
   }
 
   function applyBooking(s: BookingSuggestion) {

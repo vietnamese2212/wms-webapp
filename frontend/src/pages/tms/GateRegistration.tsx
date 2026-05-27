@@ -660,18 +660,22 @@ export default function GateRegistration() {
                 <TableHeader>
                   <TableRow>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-8 whitespace-nowrap">#</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Biển số</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Ngày</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Kho</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-14 whitespace-nowrap">Hướng</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Loại kho</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">ĐVVT</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Lái xe</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Loại xe</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Nội dung</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Booking</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-14 whitespace-nowrap">Trả pl</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-14 whitespace-nowrap">ĐK lúc</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-14 whitespace-nowrap">Gọi lúc</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-14 whitespace-nowrap">Vào lúc</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-14 whitespace-nowrap">Ra lúc</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">ĐVVT</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Biển số</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Lái xe</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">SĐT</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Ghi chú</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-14 whitespace-nowrap">Giờ ĐK</TableHead>
+                    <TableHead className="text-[9px] font-medium text-pink-500 px-2 py-1.5 w-14 whitespace-nowrap">Giờ gọi</TableHead>
+                    <TableHead className="text-[9px] font-medium text-orange-500 px-2 py-1.5 w-14 whitespace-nowrap">Giờ vào</TableHead>
+                    <TableHead className="text-[9px] font-medium text-blue-500 px-2 py-1.5 w-14 whitespace-nowrap">Giờ ra</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-20 whitespace-nowrap">TT</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-1 py-1.5 w-40"></TableHead>
                   </TableRow>
@@ -686,10 +690,7 @@ export default function GateRegistration() {
                       <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold text-slate-500 whitespace-nowrap">
                         {reg.registration_number}
                       </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">
-                        {reg.license_plate ?? '—'}
-                        {reg.priority && <Star className="h-2.5 w-2.5 inline ml-1 text-amber-500 fill-amber-500" />}
-                      </TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] font-mono whitespace-nowrap">{reg.date}</TableCell>
                       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{warehouseName(reg.warehouse_id)}</TableCell>
                       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
                         {reg.direction === 'OUTBOUND'
@@ -699,8 +700,14 @@ export default function GateRegistration() {
                           : '—'}
                       </TableCell>
                       <TableCell className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap">{reg.warehouse_type ?? '—'}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap">{companyName(reg)}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.driver_name ?? '—'}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap">{reg.vehicle_type ?? '—'}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
+                        <span className="flex items-center gap-1">
+                          {reg.return_pallet && <Package className="h-3 w-3 text-blue-500 shrink-0" />}
+                          <span>{reg.content ?? '—'}</span>
+                          {reg.priority && <Star className="h-2.5 w-2.5 text-amber-500 fill-amber-500 shrink-0" />}
+                        </span>
+                      </TableCell>
                       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
                         {reg.booking_order_code
                           ? <div>
@@ -711,15 +718,15 @@ export default function GateRegistration() {
                             </div>
                           : <span className="text-slate-300">—</span>}
                       </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] text-center whitespace-nowrap">
-                        {reg.return_pallet
-                          ? <Package className="h-3.5 w-3.5 text-blue-500 inline" />
-                          : <span className="text-slate-300">—</span>}
-                      </TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap">{companyName(reg)}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">{reg.license_plate ?? '—'}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.driver_name ?? '—'}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.phone ?? '—'}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] text-slate-400 whitespace-nowrap">{reg.notes ?? '—'}</TableCell>
                       <TableCell className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap">{fmtTime(reg.registered_at)}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap">{fmtTime(reg.called_at)}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap">{fmtTime(reg.entry_at)}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap">{fmtTime(reg.exit_at)}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] text-pink-600 whitespace-nowrap">{fmtTime(reg.called_at)}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] text-orange-600 whitespace-nowrap">{fmtTime(reg.entry_at)}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] text-blue-600 whitespace-nowrap">{fmtTime(reg.exit_at)}</TableCell>
                       <TableCell className="px-2 py-1 whitespace-nowrap">
                         <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${STATUS_BADGE[reg.status]}`}>
                           {STATUS_LABEL[reg.status]}

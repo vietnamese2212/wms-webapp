@@ -487,7 +487,7 @@ export async function relinkAfterDelete(
   // Gate regs còn lại, sort theo registered_at
   let gateQ = supabase
     .from('gate_registrations')
-    .select('id')
+    .select('id, status, tms_order_id')
     .eq('license_plate', license_plate)
     .eq('date', date)
     .eq('warehouse_id', warehouse_id)
@@ -499,7 +499,7 @@ export async function relinkAfterDelete(
   if (vehicle_type !== null)   gateQ = gateQ.eq('vehicle_type', vehicle_type)
   else                         gateQ = gateQ.is('vehicle_type', null)
 
-  const { data: gates } = await gateQ as { data: { id: string }[] | null }
+  const { data: gates } = await gateQ as { data: { id: string; status: string; tms_order_id: string | null }[] | null }
   if (!gates || gates.length === 0) return
 
   // Booking slots matching, sort theo time_from
@@ -539,7 +539,21 @@ export async function relinkAfterDelete(
       booking_order_code: null, booking_slot_from: null, booking_slot_to: null,
       priority: false, updated_at: now,
     }
-    return supabase.from('gate_registrations').update(patch).eq('id', gate.id)
+    const ops: Promise<unknown>[] = [
+      supabase.from('gate_registrations').update(patch).eq('id', gate.id),
+    ]
+    // Cập nhật export_status của TmsOrder mới được link
+    if (match && match.order_id !== gate.tms_order_id) {
+      const exportStatus =
+        gate.status === 'IN'        ? 'Đang xuất' :
+        gate.status === 'COMPLETED' ? 'Đã xuất'   : 'Đã đăng ký'
+      ops.push(
+        supabase.from('TmsOrder')
+          .update({ export_status: exportStatus, updated_at: now })
+          .eq('id', match.order_id)
+      )
+    }
+    return Promise.all(ops)
   }))
 }
 

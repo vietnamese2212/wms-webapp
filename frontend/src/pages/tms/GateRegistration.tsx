@@ -668,6 +668,7 @@ export default function GateRegistration() {
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Lái xe</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Booking</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-14 whitespace-nowrap">Trả pl</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-14 whitespace-nowrap">ĐK lúc</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-14 whitespace-nowrap">Gọi lúc</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-14 whitespace-nowrap">Vào lúc</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-14 whitespace-nowrap">Ra lúc</TableHead>
@@ -715,6 +716,7 @@ export default function GateRegistration() {
                           ? <Package className="h-3.5 w-3.5 text-blue-500 inline" />
                           : <span className="text-slate-300">—</span>}
                       </TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap">{fmtTime(reg.registered_at)}</TableCell>
                       <TableCell className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap">{fmtTime(reg.called_at)}</TableCell>
                       <TableCell className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap">{fmtTime(reg.entry_at)}</TableCell>
                       <TableCell className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap">{fmtTime(reg.exit_at)}</TableCell>

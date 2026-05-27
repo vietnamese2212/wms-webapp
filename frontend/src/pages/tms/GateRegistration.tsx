@@ -428,6 +428,14 @@ export default function GateRegistration() {
     }))
   }
 
+  // Auto-apply khi chỉ có 1 booking phù hợp và đang tạo mới (không edit)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (suggestions.length === 1 && !form.tms_order_id && !editReg) {
+      applyBooking(suggestions[0])
+    }
+  }, [suggestions])
+
   async function handleSubmit() {
     setSaving(true)
     setApiError('')

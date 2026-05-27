@@ -475,9 +475,25 @@ function MatPicker({ value, matName, onSelect, disabled }: {
 }) {
   const [search, setSearch] = useState(value)
   const [open, setOpen] = useState(false)
+  const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({})
+  const inputRef = useRef<HTMLInputElement>(null)
   const { data: mats = [] } = useMaterials({ search: !disabled && search.length > 1 ? search : undefined })
 
   useEffect(() => { setSearch(value) }, [value])
+
+  function handleFocus() {
+    setOpen(true)
+    if (inputRef.current) {
+      const rect = inputRef.current.getBoundingClientRect()
+      setDropdownStyle({
+        position: 'fixed',
+        top: rect.bottom + 2,
+        left: rect.left,
+        width: Math.max(rect.width, 280),
+        zIndex: 9999,
+      })
+    }
+  }
 
   if (disabled) {
     return (
@@ -489,24 +505,25 @@ function MatPicker({ value, matName, onSelect, disabled }: {
   }
 
   return (
-    <div className="relative flex-1 min-w-0">
+    <div className="flex-1 min-w-0">
       <Input
-        className="h-7 text-[10px] font-mono px-2"
+        ref={inputRef}
+        className="h-7 text-[10px] font-mono px-2 w-full"
         value={search}
-        onChange={e => { setSearch(e.target.value); setOpen(true) }}
-        onFocus={() => setOpen(true)}
+        onChange={e => { setSearch(e.target.value); setOpen(true); handleFocus() }}
+        onFocus={handleFocus}
         onBlur={() => setTimeout(() => setOpen(false), 150)}
         placeholder="Tìm mã / tên hàng…"
       />
-      {matName && !open && (
-        <p className="text-[9px] text-slate-500 mt-0.5">{matName}</p>
+      {matName && (
+        <p className="text-[9px] text-slate-500 mt-0.5 truncate">{matName}</p>
       )}
       {open && search.length > 1 && mats.length > 0 && (
-        <div className="absolute top-full left-0 right-0 bg-white border rounded shadow-lg z-50 max-h-48 overflow-y-auto">
+        <div style={dropdownStyle} className="bg-white border border-slate-200 rounded-lg shadow-xl max-h-52 overflow-y-auto">
           {(mats as MatOption[]).map(m => (
             <button
               key={m.id}
-              className="w-full text-left px-2 py-1.5 hover:bg-blue-50 border-b border-slate-50 last:border-0"
+              className="w-full text-left px-3 py-2 hover:bg-blue-50 border-b border-slate-50 last:border-0"
               onMouseDown={() => {
                 onSelect(m.material_code, m.short_name ?? '', m.category)
                 setSearch(m.material_code)
@@ -727,16 +744,16 @@ function GDOFormBody({
         {/* Items — table layout */}
         <div>
           <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Danh sách hàng</p>
-          <div className="overflow-x-auto rounded-lg border border-slate-200">
-            <table className="min-w-full">
+          <div className="rounded-lg border border-slate-200">
+            <table className="w-full table-fixed">
               <thead>
                 <tr className="bg-slate-50">
-                  <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-5">#</th>
-                  <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left">Mã hàng</th>
-                  <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right w-[72px]">Thùng</th>
-                  <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right w-[72px]">Nhặt lẻ</th>
-                  <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left min-w-[120px]">Ghi chú</th>
-                  <th className="px-1 py-1.5 w-5" />
+                  <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-7">#</th>
+                  <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left" style={{ width: '60%' }}>Mã hàng</th>
+                  <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right w-20">Thùng</th>
+                  <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right w-20">Nhặt lẻ</th>
+                  <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left">Ghi chú</th>
+                  <th className="px-1 py-1.5 w-7" />
                 </tr>
               </thead>
               <tbody>
@@ -839,7 +856,7 @@ function ModalOverlay({ children, onClose }: { children: React.ReactNode; onClos
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+      <div className="relative z-10 bg-white rounded-xl shadow-2xl w-[80vw] max-w-5xl max-h-[90vh] flex flex-col">
         {children}
       </div>
     </div>

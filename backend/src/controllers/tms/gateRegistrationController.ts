@@ -52,26 +52,34 @@ export async function suggestBooking(req: Request, res: Response) {
     return res.json({ success: true, data: [] })
   }
 
-  // Slot IDs đã được link bởi gate registration khác (tránh double-link)
-  let linkedQ = supabase
+  // 1. Đếm gate_reg cùng filter để xác định vị trí (sort theo registered_at)
+  let gateQ = supabase
     .from('gate_registrations')
-    .select('tms_vehicle_slot_id')
-    .not('tms_vehicle_slot_id', 'is', null)
-  if (exclude_gate_id) linkedQ = linkedQ.neq('id', exclude_gate_id)
+    .select('id, registered_at')
+    .eq('license_plate', license_plate)
+    .eq('date', date)
+    .eq('warehouse_id', warehouse_id)
+    .order('registered_at', { ascending: true })
+  if (direction)      gateQ = gateQ.eq('direction', direction)
+  if (warehouse_type) gateQ = gateQ.eq('warehouse_type', warehouse_type)
+  if (vehicle_type)   gateQ = gateQ.eq('vehicle_type', vehicle_type)
 
-  const { data: linkedRows } = await linkedQ
-  const linkedSlotIds = (linkedRows ?? [])
-    .map((r: { tms_vehicle_slot_id: string | null }) => r.tms_vehicle_slot_id)
-    .filter(Boolean) as string[]
+  const { data: existingGates } = await gateQ as { data: { id: string }[] | null }
 
-  // Tìm TmsVehicleSlot theo biển số
+  // Vị trí: tạo mới = count hiện có; edit = index của exclude_gate_id trong danh sách
+  let position: number
+  if (exclude_gate_id) {
+    position = (existingGates ?? []).findIndex(g => g.id === exclude_gate_id)
+    if (position === -1) position = (existingGates ?? []).length
+  } else {
+    position = (existingGates ?? []).length
+  }
+
+  // 2. Tìm TmsVehicleSlot theo biển số
   const { data: vslots, error } = await supabase
     .from('TmsVehicleSlot')
     .select(`
-      id,
-      order_id,
-      slot_id,
-      license_plate,
+      id, order_id, slot_id, license_plate,
       order:TmsOrder!order_id (
         id, order_code, date, warehouse_id, warehouse_type, vehicle_type, direction,
         planned_boxes, planned_pallets, planned_tons, gdo_refs, priority
@@ -83,10 +91,7 @@ export async function suggestBooking(req: Request, res: Response) {
   if (error) return apiErr(res, 'DB_ERROR', error.message, 500)
 
   type VSlotRow = {
-    id: string
-    order_id: string
-    slot_id: string | null
-    license_plate: string | null
+    id: string; order_id: string; slot_id: string | null; license_plate: string | null
     order: {
       id: string; order_code: string; date: string
       warehouse_id: string; warehouse_type: string | null; vehicle_type: string | null; direction: string | null
@@ -96,7 +101,8 @@ export async function suggestBooking(req: Request, res: Response) {
     slot: { time_from: string; time_to: string } | null
   }
 
-  const suggestions = (vslots as unknown as VSlotRow[] ?? [])
+  // Filter rồi sort theo khung giờ booking (nhỏ → lớn)
+  const filtered = (vslots as unknown as VSlotRow[])
     .filter(vs => {
       if (!vs.order) return false
       if (vs.order.date !== date) return false
@@ -104,27 +110,25 @@ export async function suggestBooking(req: Request, res: Response) {
       if (direction && vs.order.direction !== direction) return false
       if (warehouse_type && vs.order.warehouse_type !== warehouse_type) return false
       if (vehicle_type && vs.order.vehicle_type !== vehicle_type) return false
-      if (linkedSlotIds.includes(vs.id)) return false
       return true
     })
-    .sort((a, b) => {
-      const ta = a.slot?.time_from ?? '99:99'
-      const tb = b.slot?.time_from ?? '99:99'
-      return ta.localeCompare(tb)
-    })
-    .map(vs => ({
-      tms_order_id:        vs.order_id,
-      tms_vehicle_slot_id: vs.id,
-      order_code:          vs.order?.order_code ?? '',
-      booking_slot_from:   vs.slot?.time_from ?? null,
-      booking_slot_to:     vs.slot?.time_to ?? null,
-      planned_boxes:       vs.order?.planned_boxes ?? null,
-      planned_pallets:     vs.order?.planned_pallets ?? null,
-      gdo_refs:            vs.order?.gdo_refs ?? null,
-      priority:            vs.order?.priority ?? false,
-    }))
+    .sort((a, b) => (a.slot?.time_from ?? '99:99').localeCompare(b.slot?.time_from ?? '99:99'))
 
-  return res.json({ success: true, data: suggestions })
+  // Trả về đúng 1 booking tại vị trí tương ứng
+  const match = filtered[position]
+  if (!match) return res.json({ success: true, data: [] })
+
+  return res.json({ success: true, data: [{
+    tms_order_id:        match.order_id,
+    tms_vehicle_slot_id: match.id,
+    order_code:          match.order?.order_code ?? '',
+    booking_slot_from:   match.slot?.time_from ?? null,
+    booking_slot_to:     match.slot?.time_to ?? null,
+    planned_boxes:       match.order?.planned_boxes ?? null,
+    planned_pallets:     match.order?.planned_pallets ?? null,
+    gdo_refs:            match.order?.gdo_refs ?? null,
+    priority:            match.order?.priority ?? false,
+  }] })
 }
 
 export async function createGateRegistration(req: Request, res: Response) {
@@ -473,8 +477,78 @@ export async function doRevertExit(req: Request, res: Response) {
   return res.json({ success: true, data })
 }
 
+// Helper: tái liên kết booking cho các gate_reg còn lại sau khi 1 bị xóa
+async function relinkAfterDelete(
+  license_plate: string, date: string, warehouse_id: string,
+  direction: string | null, warehouse_type: string | null, vehicle_type: string | null
+) {
+  const now = new Date().toISOString()
+
+  // Gate regs còn lại, sort theo registered_at
+  let gateQ = supabase
+    .from('gate_registrations')
+    .select('id')
+    .eq('license_plate', license_plate)
+    .eq('date', date)
+    .eq('warehouse_id', warehouse_id)
+    .order('registered_at', { ascending: true })
+  if (direction)      gateQ = gateQ.eq('direction', direction)
+  if (warehouse_type) gateQ = gateQ.eq('warehouse_type', warehouse_type)
+  if (vehicle_type)   gateQ = gateQ.eq('vehicle_type', vehicle_type)
+
+  const { data: gates } = await gateQ as { data: { id: string }[] | null }
+  if (!gates || gates.length === 0) return
+
+  // Booking slots matching, sort theo time_from
+  type RelinkSlot = {
+    id: string; order_id: string
+    order: { order_code: string; date: string; warehouse_id: string; warehouse_type: string | null; vehicle_type: string | null; direction: string | null; priority: boolean } | null
+    slot: { time_from: string; time_to: string } | null
+  }
+  const { data: vslots } = await supabase
+    .from('TmsVehicleSlot')
+    .select(`id, order_id, order:TmsOrder!order_id(order_code, date, warehouse_id, warehouse_type, vehicle_type, direction, priority), slot:DeliverySlot!slot_id(time_from, time_to)`)
+    .eq('license_plate', license_plate)
+
+  const filtered = ((vslots ?? []) as unknown as RelinkSlot[])
+    .filter(vs => {
+      if (!vs.order) return false
+      if (vs.order.date !== date || vs.order.warehouse_id !== warehouse_id) return false
+      if (direction && vs.order.direction !== direction) return false
+      if (warehouse_type && vs.order.warehouse_type !== warehouse_type) return false
+      if (vehicle_type && vs.order.vehicle_type !== vehicle_type) return false
+      return true
+    })
+    .sort((a, b) => (a.slot?.time_from ?? '99:99').localeCompare(b.slot?.time_from ?? '99:99'))
+
+  await Promise.all(gates.map((gate, i) => {
+    const match = filtered[i]
+    const patch = match ? {
+      tms_order_id:        match.order_id,
+      tms_vehicle_slot_id: match.id,
+      booking_order_code:  match.order?.order_code ?? null,
+      booking_slot_from:   match.slot?.time_from ?? null,
+      booking_slot_to:     match.slot?.time_to ?? null,
+      priority:            match.order?.priority ?? false,
+      updated_at:          now,
+    } : {
+      tms_order_id: null, tms_vehicle_slot_id: null,
+      booking_order_code: null, booking_slot_from: null, booking_slot_to: null,
+      priority: false, updated_at: now,
+    }
+    return supabase.from('gate_registrations').update(patch).eq('id', gate.id)
+  }))
+}
+
 export async function deleteGateRegistration(req: Request, res: Response) {
   const { id } = req.params
+
+  // Lấy thông tin trước khi xóa để re-link sau
+  const { data: reg } = await supabase
+    .from('gate_registrations')
+    .select('license_plate, date, warehouse_id, direction, warehouse_type, vehicle_type')
+    .eq('id', id)
+    .maybeSingle() as { data: { license_plate: string | null; date: string; warehouse_id: string; direction: string | null; warehouse_type: string | null; vehicle_type: string | null } | null }
 
   const { error } = await supabase
     .from('gate_registrations')
@@ -482,5 +556,14 @@ export async function deleteGateRegistration(req: Request, res: Response) {
     .eq('id', id)
 
   if (error) return apiErr(res, 'DB_ERROR', error.message, 500)
+
+  // Re-link gate_regs còn lại vào đúng vị trí booking
+  if (reg?.license_plate && reg?.date && reg?.warehouse_id) {
+    await relinkAfterDelete(
+      reg.license_plate, reg.date, reg.warehouse_id,
+      reg.direction, reg.warehouse_type, reg.vehicle_type,
+    )
+  }
+
   return res.json({ success: true })
 }

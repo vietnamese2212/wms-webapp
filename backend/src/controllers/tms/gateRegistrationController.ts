@@ -477,8 +477,8 @@ export async function doRevertExit(req: Request, res: Response) {
   return res.json({ success: true, data })
 }
 
-// Helper: tái liên kết booking cho các gate_reg còn lại sau khi 1 bị xóa
-async function relinkAfterDelete(
+// Helper: tái liên kết booking cho tất cả gate_reg theo position (gọi khi xóa gate hoặc booking thay đổi)
+export async function relinkAfterDelete(
   license_plate: string, date: string, warehouse_id: string,
   direction: string | null, warehouse_type: string | null, vehicle_type: string | null
 ) {

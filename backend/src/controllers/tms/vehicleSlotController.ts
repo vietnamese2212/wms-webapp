@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
+import { relinkAfterDelete } from './gateRegistrationController'
 
 // Đếm số TmsVehicleSlot khác đơn có cùng (slot_id, license_plate) — dùng để tránh double-count booked_count
 // khi 1 xe vật lý chạy nhiều ĐƠN KHÁC NHAU trong cùng khung giờ (consolidation).
@@ -196,7 +197,10 @@ export async function updateVehicleSlot(req: Request, res: Response) {
       }
     }
 
-    // Cascade thay đổi khung giờ sang gate_registrations liên kết
+    // Cascade + re-sort position khi slot hoặc biển số thay đổi
+    const relinkPlate = (license_plate !== undefined ? (license_plate || null) : (existing.license_plate as string | null)) as string | null
+    const isChangingPlate = license_plate !== undefined && relinkPlate !== (existing.license_plate as string | null)
+
     if (isChangingSlot) {
       const newSlot = (data as { slot?: { time_from?: string; time_to?: string } | null }).slot
       await supabase
@@ -207,6 +211,18 @@ export async function updateVehicleSlot(req: Request, res: Response) {
           updated_at: now,
         })
         .eq('tms_vehicle_slot_id', id)
+    }
+
+    if ((isChangingSlot || isChangingPlate) && relinkPlate) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: ord } = await (supabase.from('TmsOrder') as any)
+        .select('date, warehouse_id, direction, warehouse_type, vehicle_type')
+        .eq('id', existing.order_id)
+        .single()
+      if (ord) {
+        const o = ord as { date: string; warehouse_id: string; direction: string | null; warehouse_type: string | null; vehicle_type: string | null }
+        await relinkAfterDelete(relinkPlate, o.date, o.warehouse_id, o.direction, o.warehouse_type, o.vehicle_type)
+      }
     }
 
     return ok(res, data)

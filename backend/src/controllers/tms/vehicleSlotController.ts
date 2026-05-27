@@ -196,6 +196,19 @@ export async function updateVehicleSlot(req: Request, res: Response) {
       }
     }
 
+    // Cascade thay đổi khung giờ sang gate_registrations liên kết
+    if (isChangingSlot) {
+      const newSlot = (data as { slot?: { time_from?: string; time_to?: string } | null }).slot
+      await supabase
+        .from('gate_registrations')
+        .update({
+          booking_slot_from: newSlot?.time_from ?? null,
+          booking_slot_to:   newSlot?.time_to ?? null,
+          updated_at: now,
+        })
+        .eq('tms_vehicle_slot_id', id)
+    }
+
     return ok(res, data)
   } catch (e) { return fail(res, String(e)) }
 }

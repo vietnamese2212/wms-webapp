@@ -96,7 +96,7 @@ export async function suggestBooking(req: Request, res: Response) {
     slot: { time_from: string; time_to: string } | null
   }
 
-  const suggestions = (vslots as VSlotRow[] ?? [])
+  const suggestions = (vslots as unknown as VSlotRow[] ?? [])
     .filter(vs => {
       if (!vs.order) return false
       if (vs.order.date !== date) return false
@@ -194,6 +194,15 @@ export async function createGateRegistration(req: Request, res: Response) {
     .single()
 
   if (error) return apiErr(res, 'DB_ERROR', error.message, 500)
+
+  // Cập nhật export_status của TmsOrder khi gate được tạo và có link booking
+  if (tms_order_id) {
+    await supabase
+      .from('TmsOrder')
+      .update({ export_status: 'Đăng ký', updated_at: now })
+      .eq('id', tms_order_id)
+  }
+
   return res.status(201).json({ success: true, data })
 }
 

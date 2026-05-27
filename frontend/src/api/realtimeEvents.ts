@@ -5,15 +5,16 @@ import type { DeliverySlot, TmsOrder } from '@/types'
 
 // Maps table name → query keys to invalidate (fallback refetch).
 const TABLE_QUERY_MAP: Record<string, string[][]> = {
-  ProductionImport: [['inbound-orders'], ['inbound-order']],
-  InventoryEntry:   [['inbound-order'], ['inventory-entries'], ['inventory-facets'], ['locations-real']],
-  Location:         [['locations-real'], ['sub-groups']],
-  Material:         [['materials']],
-  Manufacturer:     [['manufacturers']],
-  Warehouse:        [['warehouses']],
-  TmsOrder:         [['tms-orders']],
-  TmsVehicleSlot:   [['tms-orders']],
-  DeliverySlot:     [['tms-delivery-slots']],
+  ProductionImport:   [['inbound-orders'], ['inbound-order']],
+  InventoryEntry:     [['inbound-order'], ['inventory-entries'], ['inventory-facets'], ['locations-real']],
+  Location:           [['locations-real'], ['sub-groups']],
+  Material:           [['materials']],
+  Manufacturer:       [['manufacturers']],
+  Warehouse:          [['warehouses']],
+  TmsOrder:           [['tms-orders']],
+  TmsVehicleSlot:     [['tms-orders'], ['gate-registrations']],
+  DeliverySlot:       [['tms-delivery-slots']],
+  gate_registrations: [['gate-registrations']],
 }
 
 type Payload = RealtimePostgresChangesPayload<Record<string, unknown>>

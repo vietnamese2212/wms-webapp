@@ -31,17 +31,17 @@ async function relinkGatesByPlate(plate: string, orderId: string) {
 
   const { data: gateGroups } = await supabase
     .from('gate_registrations')
-    .select('direction, warehouse_type, vehicle_type')
+    .select('direction, warehouse_type, vehicle_type, company_id')
     .eq('license_plate', plate)
     .eq('date', o.date)
     .eq('warehouse_id', o.warehouse_id)
 
   const seen = new Set<string>()
-  for (const g of (gateGroups ?? []) as { direction: string | null; warehouse_type: string | null; vehicle_type: string | null }[]) {
-    const key = `${g.direction ?? '\x00'}|${g.warehouse_type ?? '\x00'}|${g.vehicle_type ?? '\x00'}`
+  for (const g of (gateGroups ?? []) as { direction: string | null; warehouse_type: string | null; vehicle_type: string | null; company_id: string | null }[]) {
+    const key = `${g.direction ?? '\x00'}|${g.warehouse_type ?? '\x00'}|${g.vehicle_type ?? '\x00'}|${g.company_id ?? '\x00'}`
     if (!seen.has(key)) {
       seen.add(key)
-      await relinkAfterDelete(plate, o.date, o.warehouse_id, g.direction, g.warehouse_type, g.vehicle_type)
+      await relinkAfterDelete(plate, o.date, o.warehouse_id, g.direction, g.warehouse_type, g.vehicle_type, g.company_id)
     }
   }
 }

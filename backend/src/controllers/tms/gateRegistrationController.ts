@@ -43,9 +43,9 @@ export async function listGateRegistrations(req: Request, res: Response) {
   return res.json({ success: true, data })
 }
 
-// Gợi ý booking phù hợp với xe (theo biển số + kho + loại xe + ngày)
+// Gợi ý booking phù hợp với xe (theo biển số + kho + loại xe + ngày + ĐVVT)
 export async function suggestBooking(req: Request, res: Response) {
-  const { date, license_plate, warehouse_id, warehouse_type, vehicle_type, direction, exclude_gate_id } =
+  const { date, license_plate, warehouse_id, warehouse_type, vehicle_type, direction, company_id, exclude_gate_id } =
     req.query as Record<string, string | undefined>
 
   if (!date || !license_plate || !warehouse_id) {
@@ -63,6 +63,7 @@ export async function suggestBooking(req: Request, res: Response) {
   if (direction)      gateQ = gateQ.eq('direction', direction)
   if (warehouse_type) gateQ = gateQ.eq('warehouse_type', warehouse_type)
   if (vehicle_type)   gateQ = gateQ.eq('vehicle_type', vehicle_type)
+  if (company_id)     gateQ = gateQ.eq('company_id', company_id)
 
   const { data: existingGates } = await gateQ as { data: { id: string }[] | null }
 
@@ -82,7 +83,7 @@ export async function suggestBooking(req: Request, res: Response) {
       id, order_id, slot_id, license_plate,
       order:TmsOrder!order_id (
         id, order_code, date, warehouse_id, warehouse_type, vehicle_type, direction,
-        planned_boxes, planned_pallets, planned_tons, gdo_refs, priority
+        planned_boxes, planned_pallets, planned_tons, gdo_refs, priority, ncc_id
       ),
       slot:DeliverySlot!slot_id (time_from, time_to)
     `)
@@ -96,7 +97,7 @@ export async function suggestBooking(req: Request, res: Response) {
       id: string; order_code: string; date: string
       warehouse_id: string; warehouse_type: string | null; vehicle_type: string | null; direction: string | null
       planned_boxes: number | null; planned_pallets: number | null; planned_tons: number | null
-      gdo_refs: string | null; priority: boolean
+      gdo_refs: string | null; priority: boolean; ncc_id: string | null
     } | null
     slot: { time_from: string; time_to: string } | null
   }
@@ -110,6 +111,7 @@ export async function suggestBooking(req: Request, res: Response) {
       if (direction && vs.order.direction !== direction) return false
       if (warehouse_type && vs.order.warehouse_type !== warehouse_type) return false
       if (vehicle_type && vs.order.vehicle_type !== vehicle_type) return false
+      if (company_id && vs.order.ncc_id !== company_id) return false
       return true
     })
     .sort((a, b) => (a.slot?.time_from ?? '99:99').localeCompare(b.slot?.time_from ?? '99:99'))
@@ -480,7 +482,8 @@ export async function doRevertExit(req: Request, res: Response) {
 // Helper: tái liên kết booking cho tất cả gate_reg theo position (gọi khi xóa gate hoặc booking thay đổi)
 export async function relinkAfterDelete(
   license_plate: string, date: string, warehouse_id: string,
-  direction: string | null, warehouse_type: string | null, vehicle_type: string | null
+  direction: string | null, warehouse_type: string | null, vehicle_type: string | null,
+  company_id: string | null = null
 ) {
   const now = new Date().toISOString()
 
@@ -498,6 +501,8 @@ export async function relinkAfterDelete(
   else                         gateQ = gateQ.is('warehouse_type', null)
   if (vehicle_type !== null)   gateQ = gateQ.eq('vehicle_type', vehicle_type)
   else                         gateQ = gateQ.is('vehicle_type', null)
+  if (company_id !== null)     gateQ = gateQ.eq('company_id', company_id)
+  else                         gateQ = gateQ.is('company_id', null)
 
   const { data: gates } = await gateQ as { data: { id: string; status: string; tms_order_id: string | null }[] | null }
   if (!gates || gates.length === 0) return
@@ -505,12 +510,12 @@ export async function relinkAfterDelete(
   // Booking slots matching, sort theo time_from
   type RelinkSlot = {
     id: string; order_id: string
-    order: { order_code: string; date: string; warehouse_id: string; warehouse_type: string | null; vehicle_type: string | null; direction: string | null; priority: boolean } | null
+    order: { order_code: string; date: string; warehouse_id: string; warehouse_type: string | null; vehicle_type: string | null; direction: string | null; priority: boolean; ncc_id: string | null } | null
     slot: { time_from: string; time_to: string } | null
   }
   const { data: vslots } = await supabase
     .from('TmsVehicleSlot')
-    .select(`id, order_id, order:TmsOrder!order_id(order_code, date, warehouse_id, warehouse_type, vehicle_type, direction, priority), slot:DeliverySlot!slot_id(time_from, time_to)`)
+    .select(`id, order_id, order:TmsOrder!order_id(order_code, date, warehouse_id, warehouse_type, vehicle_type, direction, priority, ncc_id), slot:DeliverySlot!slot_id(time_from, time_to)`)
     .eq('license_plate', license_plate)
 
   const filtered = ((vslots ?? []) as unknown as RelinkSlot[])
@@ -520,9 +525,13 @@ export async function relinkAfterDelete(
       if (direction !== null && vs.order.direction !== direction) return false
       if (warehouse_type !== null && vs.order.warehouse_type !== warehouse_type) return false
       if (vehicle_type !== null && vs.order.vehicle_type !== vehicle_type) return false
+      if (vs.order.ncc_id !== company_id) return false
       return true
     })
     .sort((a, b) => (a.slot?.time_from ?? '99:99').localeCompare(b.slot?.time_from ?? '99:99'))
+
+  // Tập hợp order_id mới sau khi relink (để phát hiện order cũ bị mất gate)
+  const newOrderIds = new Set(filtered.slice(0, gates.length).map(s => s?.order_id).filter(Boolean))
 
   await Promise.all(gates.map((gate, i) => {
     const match = filtered[i]
@@ -553,6 +562,14 @@ export async function relinkAfterDelete(
           .eq('id', match.order_id)
       )
     }
+    // Xóa export_status của TmsOrder cũ nếu không còn gate nào trong nhóm này link đến nó
+    if (gate.tms_order_id && !newOrderIds.has(gate.tms_order_id)) {
+      ops.push(
+        supabase.from('TmsOrder')
+          .update({ export_status: null, updated_at: now })
+          .eq('id', gate.tms_order_id)
+      )
+    }
     return Promise.all(ops)
   }))
 }
@@ -563,9 +580,9 @@ export async function deleteGateRegistration(req: Request, res: Response) {
   // Lấy thông tin trước khi xóa để re-link sau
   const { data: reg } = await supabase
     .from('gate_registrations')
-    .select('license_plate, date, warehouse_id, direction, warehouse_type, vehicle_type')
+    .select('license_plate, date, warehouse_id, direction, warehouse_type, vehicle_type, company_id')
     .eq('id', id)
-    .maybeSingle() as { data: { license_plate: string | null; date: string; warehouse_id: string; direction: string | null; warehouse_type: string | null; vehicle_type: string | null } | null }
+    .maybeSingle() as { data: { license_plate: string | null; date: string; warehouse_id: string; direction: string | null; warehouse_type: string | null; vehicle_type: string | null; company_id: string | null } | null }
 
   const { error } = await supabase
     .from('gate_registrations')
@@ -578,7 +595,7 @@ export async function deleteGateRegistration(req: Request, res: Response) {
   if (reg?.license_plate && reg?.date && reg?.warehouse_id) {
     await relinkAfterDelete(
       reg.license_plate, reg.date, reg.warehouse_id,
-      reg.direction, reg.warehouse_type, reg.vehicle_type,
+      reg.direction, reg.warehouse_type, reg.vehicle_type, reg.company_id ?? null,
     )
   }
 

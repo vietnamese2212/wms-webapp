@@ -269,7 +269,7 @@ export default function GateRegistration() {
   // Booking suggestion — trigger khi form thay đổi đủ điều kiện
   const suggestEnabled = !!(form.date && form.license_plate && form.warehouse_id)
   const { data: suggestions = [], isFetching: suggestLoading } = useQuery<BookingSuggestion[]>({
-    queryKey: ['gate-suggest', form.date, form.license_plate, form.warehouse_id, form.direction, form.warehouse_type, form.vehicle_type, editReg?.id],
+    queryKey: ['gate-suggest', form.date, form.license_plate, form.warehouse_id, form.direction, form.warehouse_type, form.vehicle_type, form.company_id, editReg?.id],
     queryFn: () => apiClient.get('/tms/gate-registrations/suggest-booking', {
       params: {
         date:            form.date,
@@ -278,6 +278,7 @@ export default function GateRegistration() {
         direction:       form.direction || undefined,
         warehouse_type:  form.warehouse_type || undefined,
         vehicle_type:    form.vehicle_type || undefined,
+        company_id:      form.company_id || undefined,
         exclude_gate_id: editReg?.id,
       },
     }).then(r => r.data.data),
@@ -406,7 +407,7 @@ export default function GateRegistration() {
   }
 
   // Fields này quyết định booking suggestion — đổi thì phải clear booking cũ
-  const BOOKING_MATCH_FIELDS: (keyof FormData)[] = ['date', 'license_plate', 'direction', 'warehouse_id', 'warehouse_type', 'vehicle_type']
+  const BOOKING_MATCH_FIELDS: (keyof FormData)[] = ['date', 'license_plate', 'direction', 'warehouse_id', 'warehouse_type', 'vehicle_type', 'company_id']
 
   function f(k: keyof FormData, v: string | boolean) {
     setForm(prev => {

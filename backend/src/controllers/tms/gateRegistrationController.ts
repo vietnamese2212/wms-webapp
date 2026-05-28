@@ -654,18 +654,20 @@ export async function deleteGateRegistration(req: Request, res: Response) {
     )
   }
 
-  // Với mỗi order cũ bị de-link: nếu không còn gate reg nào reference → clear export_status
+  // Tính lại export_status cho từng order dựa trên trạng thái cao nhất của các gate còn lại
   if (deletedOrderIds.length > 0) {
     const now = new Date().toISOString()
     await Promise.all(deletedOrderIds.map(async (orderId) => {
-      // Kiểm tra tms_order_id (single) và tms_order_ids (comma-sep) trong cùng query
-      const { count } = await supabase
+      const { data: remaining } = await supabase
         .from('gate_registrations')
-        .select('id', { count: 'exact', head: true })
+        .select('status')
         .or(`tms_order_id.eq.${orderId},tms_order_ids.like.%${orderId}%`)
-      if ((count ?? 0) === 0) {
-        await supabase.from('TmsOrder').update({ export_status: null, updated_at: now }).eq('id', orderId)
-      }
+      const statuses = (remaining ?? []).map(g => (g as { status: string }).status)
+      const exportStatus = statuses.length === 0       ? null
+        : statuses.some(s => s === 'COMPLETED')        ? 'Đã xuất'
+        : statuses.some(s => s === 'IN')               ? 'Đang xuất'
+        :                                                'Đăng ký'
+      await supabase.from('TmsOrder').update({ export_status: exportStatus, updated_at: now }).eq('id', orderId)
     }))
   }
 

@@ -809,19 +809,22 @@ export default function GateRegistration() {
                 <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${STATUS_BADGE[selected.status]}`}>
                   {STATUS_LABEL[selected.status]}
                 </span>
-                <div className="ml-auto flex gap-1">
+                <div className="ml-auto flex gap-2">
                   {can(perms, 'gate_registration', 'edit') && (
-                    <button onClick={() => { setSelected(null); openEdit(selected) }} className="text-slate-400 hover:text-slate-600">
-                      <Pencil className="h-3.5 w-3.5" />
-                    </button>
+                    <Button size="sm" variant="outline"
+                      className="h-8 px-3 text-xs gap-1.5"
+                      onClick={() => { setSelected(null); openEdit(selected) }}
+                    >
+                      <Pencil className="h-3.5 w-3.5" />Sửa
+                    </Button>
                   )}
                   {can(perms, 'gate_registration', 'delete') && (
-                    <button
+                    <Button size="sm" variant="outline"
+                      className="h-8 px-3 text-xs gap-1.5 border-red-200 text-red-600 hover:bg-red-50"
                       onClick={() => { if (confirm('Xóa đăng ký này?')) { deleteMut.mutate(selected.id); setSelected(null) } }}
-                      className="text-slate-400 hover:text-red-500"
                     >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
+                      <Trash2 className="h-3.5 w-3.5" />Xóa
+                    </Button>
                   )}
                 </div>
               </div>

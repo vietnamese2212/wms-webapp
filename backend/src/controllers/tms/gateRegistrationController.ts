@@ -146,9 +146,6 @@ export async function createGateRegistration(req: Request, res: Response) {
     vehicle_id, license_plate,
     direction, warehouse_id, warehouse_type, vehicle_type,
     content, return_pallet, seal_number, notes,
-    priority,
-    tms_order_id, tms_vehicle_slot_id,
-    booking_order_code, booking_slot_from, booking_slot_to,
   } = req.body
 
   if (!date || !warehouse_id) {
@@ -188,14 +185,9 @@ export async function createGateRegistration(req: Request, res: Response) {
       seal_number:        seal_number ?? null,
       notes:              notes ?? null,
       status:             'REGISTERED',
-      priority:           priority ?? false,
+      priority:           false,
       registered_at:      now,
       registered_by:      userName,
-      tms_order_id:       tms_order_id ?? null,
-      tms_vehicle_slot_id: tms_vehicle_slot_id ?? null,
-      booking_order_code: booking_order_code ?? null,
-      booking_slot_from:  booking_slot_from ?? null,
-      booking_slot_to:    booking_slot_to ?? null,
       created_by:         userName,
       updated_by:         userName,
       updated_at:         now,
@@ -205,12 +197,18 @@ export async function createGateRegistration(req: Request, res: Response) {
 
   if (error) return apiErr(res, 'DB_ERROR', error.message, 500)
 
-  // Cập nhật export_status của TmsOrder khi gate được tạo và có link booking
-  if (tms_order_id) {
-    await supabase
-      .from('TmsOrder')
-      .update({ export_status: 'Đăng ký', updated_at: now })
-      .eq('id', tms_order_id)
+  // Tính lại vị trí booking cho tất cả gate trong nhóm (position-based assignment)
+  const plate = (data as { license_plate: string | null }).license_plate
+  if (plate) {
+    await relinkAfterDelete(
+      plate,
+      date,
+      warehouse_id,
+      (direction ?? null) as string | null,
+      (warehouse_type ?? null) as string | null,
+      (vehicle_type ?? null) as string | null,
+      (company_id ?? null) as string | null,
+    )
   }
 
   return res.status(201).json({ success: true, data })
@@ -586,9 +584,11 @@ export async function deleteGateRegistration(req: Request, res: Response) {
   // Lấy thông tin trước khi xóa để re-link sau
   const { data: reg } = await supabase
     .from('gate_registrations')
-    .select('license_plate, date, warehouse_id, direction, warehouse_type, vehicle_type, company_id')
+    .select('license_plate, date, warehouse_id, direction, warehouse_type, vehicle_type, company_id, tms_order_id')
     .eq('id', id)
-    .maybeSingle() as { data: { license_plate: string | null; date: string; warehouse_id: string; direction: string | null; warehouse_type: string | null; vehicle_type: string | null; company_id: string | null } | null }
+    .maybeSingle() as { data: { license_plate: string | null; date: string; warehouse_id: string; direction: string | null; warehouse_type: string | null; vehicle_type: string | null; company_id: string | null; tms_order_id: string | null } | null }
+
+  const deletedOrderId = reg?.tms_order_id ?? null
 
   const { error } = await supabase
     .from('gate_registrations')
@@ -603,6 +603,21 @@ export async function deleteGateRegistration(req: Request, res: Response) {
       reg.license_plate, reg.date, reg.warehouse_id,
       reg.direction, reg.warehouse_type, reg.vehicle_type, reg.company_id ?? null,
     )
+  }
+
+  // Nếu gate bị xóa là gate cuối cùng link tới đơn đó → clear export_status
+  if (deletedOrderId) {
+    const now = new Date().toISOString()
+    const countResult = await supabase
+      .from('gate_registrations')
+      .select('id', { count: 'exact', head: true })
+      .eq('tms_order_id', deletedOrderId)
+    const remaining = (countResult as unknown as { count: number | null }).count
+    if ((remaining ?? 0) === 0) {
+      await supabase.from('TmsOrder')
+        .update({ export_status: null, updated_at: now })
+        .eq('id', deletedOrderId)
+    }
   }
 
   return res.json({ success: true })

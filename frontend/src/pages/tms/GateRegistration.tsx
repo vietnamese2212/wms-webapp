@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from '@/api/client'
 import { useWarehouses, useWarehouseTypes } from '@/api/hooks'
@@ -168,12 +168,6 @@ type FormData = {
   return_pallet: boolean
   seal_number: string
   notes: string
-  priority: boolean
-  tms_order_id: string
-  tms_vehicle_slot_id: string
-  booking_order_code: string
-  booking_slot_from: string
-  booking_slot_to: string
 }
 
 const FORM_DEFAULT: FormData = {
@@ -183,9 +177,6 @@ const FORM_DEFAULT: FormData = {
   vehicle_id: '', license_plate: '',
   direction: '', warehouse_id: '', warehouse_type: '', vehicle_type: '',
   content: '', return_pallet: false, seal_number: '', notes: '',
-  priority: false,
-  tms_order_id: '', tms_vehicle_slot_id: '',
-  booking_order_code: '', booking_slot_from: '', booking_slot_to: '',
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
@@ -374,27 +365,21 @@ export default function GateRegistration() {
   function openEdit(reg: GateRegistration) {
     setEditReg(reg)
     setForm({
-      date:               reg.date,
-      driver_name:        reg.driver_name ?? '',
-      phone:              reg.phone ?? '',
-      company_id:         reg.company_id ?? '',
-      company_name_raw:   reg.company_name_raw ?? '',
-      vehicle_id:         reg.vehicle_id ?? '',
-      license_plate:      reg.license_plate ?? '',
-      direction:          reg.direction ?? '',
-      warehouse_id:       reg.warehouse_id,
-      warehouse_type:     reg.warehouse_type ?? '',
-      vehicle_type:       reg.vehicle_type ?? '',
-      content:            reg.content ?? '',
-      return_pallet:      reg.return_pallet,
-      seal_number:        reg.seal_number ?? '',
-      notes:              reg.notes ?? '',
-      priority:           reg.priority,
-      tms_order_id:       reg.tms_order_id ?? '',
-      tms_vehicle_slot_id: reg.tms_vehicle_slot_id ?? '',
-      booking_order_code: reg.booking_order_code ?? '',
-      booking_slot_from:  reg.booking_slot_from ?? '',
-      booking_slot_to:    reg.booking_slot_to ?? '',
+      date:             reg.date,
+      driver_name:      reg.driver_name ?? '',
+      phone:            reg.phone ?? '',
+      company_id:       reg.company_id ?? '',
+      company_name_raw: reg.company_name_raw ?? '',
+      vehicle_id:       reg.vehicle_id ?? '',
+      license_plate:    reg.license_plate ?? '',
+      direction:        reg.direction ?? '',
+      warehouse_id:     reg.warehouse_id,
+      warehouse_type:   reg.warehouse_type ?? '',
+      vehicle_type:     reg.vehicle_type ?? '',
+      content:          reg.content ?? '',
+      return_pallet:    reg.return_pallet,
+      seal_number:      reg.seal_number ?? '',
+      notes:            reg.notes ?? '',
     })
     setApiError('')
     setModalOpen(true)
@@ -406,83 +391,29 @@ export default function GateRegistration() {
     setSaving(false)
   }
 
-  // Fields này quyết định booking suggestion — đổi thì phải clear booking cũ
-  const BOOKING_MATCH_FIELDS: (keyof FormData)[] = ['date', 'license_plate', 'direction', 'warehouse_id', 'warehouse_type', 'vehicle_type', 'company_id']
-
   function f(k: keyof FormData, v: string | boolean) {
-    setForm(prev => {
-      const next = { ...prev, [k]: v }
-      if (BOOKING_MATCH_FIELDS.includes(k) && prev.tms_order_id) {
-        next.tms_order_id = ''
-        next.tms_vehicle_slot_id = ''
-        next.booking_order_code = ''
-        next.booking_slot_from = ''
-        next.booking_slot_to = ''
-        next.priority = false
-      }
-      return next
-    })
+    setForm(prev => ({ ...prev, [k]: v }))
   }
-
-  // Patch clear booking khi setForm multi-field (ComboField không qua f())
-  function bookingClearPatch(prev: FormData): Partial<FormData> {
-    if (!prev.tms_order_id) return {}
-    return { tms_order_id: '', tms_vehicle_slot_id: '', booking_order_code: '', booking_slot_from: '', booking_slot_to: '', priority: false }
-  }
-
-  function applyBooking(s: BookingSuggestion) {
-    setForm(prev => ({
-      ...prev,
-      tms_order_id:        s.tms_order_id,
-      tms_vehicle_slot_id: s.tms_vehicle_slot_id,
-      booking_order_code:  s.order_code,
-      booking_slot_from:   s.booking_slot_from ?? '',
-      booking_slot_to:     s.booking_slot_to ?? '',
-      priority:            s.priority,
-    }))
-  }
-
-  function clearBooking() {
-    setForm(prev => ({
-      ...prev,
-      tms_order_id: '', tms_vehicle_slot_id: '',
-      booking_order_code: '', booking_slot_from: '', booking_slot_to: '',
-    }))
-  }
-
-  // Auto-apply khi chỉ có 1 booking phù hợp và đang tạo mới (không edit)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    if (suggestions.length === 1 && !form.tms_order_id && !editReg) {
-      applyBooking(suggestions[0])
-    }
-  }, [suggestions])
 
   async function handleSubmit() {
     setSaving(true)
     setApiError('')
     const body = {
-      date:               form.date,
-      driver_name:        form.driver_name || null,
-      phone:              form.phone || null,
-      company_id:         form.company_id || null,
-      company_name_raw:   form.company_name_raw || null,
-      vehicle_id:         form.vehicle_id || null,
-      license_plate:      form.license_plate || null,
-      direction:          form.direction || null,
-      warehouse_id:       form.warehouse_id,
-      warehouse_type:     form.warehouse_type || null,
-      vehicle_type:       form.vehicle_type || null,
-      content:            form.content || null,
-      return_pallet:      form.return_pallet,
-      seal_number:        form.seal_number || null,
-      notes:              form.notes || null,
-      priority:           form.priority,
-      tms_order_id:       form.tms_order_id || null,
-      tms_vehicle_slot_id: form.tms_vehicle_slot_id || null,
-      booking_order_code: form.booking_order_code || null,
-      booking_slot_from:  form.booking_slot_from || null,
-      booking_slot_to:    form.booking_slot_to || null,
+      date:             form.date,
+      driver_name:      form.driver_name || null,
+      phone:            form.phone || null,
+      company_id:       form.company_id || null,
+      company_name_raw: form.company_name_raw || null,
+      vehicle_id:       form.vehicle_id || null,
+      license_plate:    form.license_plate || null,
+      direction:        form.direction || null,
+      warehouse_id:     form.warehouse_id,
+      warehouse_type:   form.warehouse_type || null,
+      vehicle_type:     form.vehicle_type || null,
+      content:          form.content || null,
+      return_pallet:    form.return_pallet,
+      seal_number:      form.seal_number || null,
+      notes:            form.notes || null,
     }
     if (editReg) {
       updateMut.mutate({ id: editReg.id, body })
@@ -1074,9 +1005,8 @@ export default function GateRegistration() {
                     company_name_raw: opt.label,
                     vehicle_id: '',
                     license_plate: '',
-                    ...bookingClearPatch(prev),
                   }))}
-                  onClear={() => setForm(prev => ({ ...prev, company_id: '', company_name_raw: '', ...bookingClearPatch(prev) }))}
+                  onClear={() => setForm(prev => ({ ...prev, company_id: '', company_name_raw: '' }))}
                 />
                 {!form.company_id && (
                   <Input
@@ -1102,9 +1032,8 @@ export default function GateRegistration() {
                     ...prev,
                     vehicle_id: opt.value,
                     license_plate: opt.label,
-                    ...bookingClearPatch(prev),
                   }))}
-                  onClear={() => setForm(prev => ({ ...prev, vehicle_id: '', license_plate: '', ...bookingClearPatch(prev) }))}
+                  onClear={() => setForm(prev => ({ ...prev, vehicle_id: '', license_plate: '' }))}
                 />
                 {!form.vehicle_id && (
                   <Input
@@ -1145,7 +1074,7 @@ export default function GateRegistration() {
               </div>
             </div>
 
-            {/* Row 7: Trả pallet (Ưu tiên tự lấy từ Kế hoạch VC) */}
+            {/* Row 7: Trả pallet */}
             <div className="flex items-center gap-6">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
@@ -1159,7 +1088,7 @@ export default function GateRegistration() {
                   Trả pallet
                 </div>
               </label>
-              {form.priority && (
+              {suggestions[0]?.priority && (
                 <div className="flex items-center gap-1 text-xs text-amber-600">
                   <Star className="h-3.5 w-3.5 fill-amber-500" />
                   Ưu tiên (từ Kế hoạch VC)
@@ -1167,60 +1096,27 @@ export default function GateRegistration() {
               )}
             </div>
 
-            {/* Booking suggestion */}
-            <div className="border rounded-lg p-3 space-y-2 bg-slate-50">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-medium text-slate-600">Booking liên kết (tự động)</p>
-                {form.tms_order_id && (
-                  <button type="button" onClick={clearBooking} className="text-[10px] text-slate-400 hover:text-red-500 flex items-center gap-0.5">
-                    <X className="h-3 w-3" />Bỏ liên kết
-                  </button>
-                )}
-              </div>
-
-              {form.tms_order_id ? (
+            {/* Booking dự kiến — chỉ đọc, do server tính theo vị trí */}
+            <div className="border rounded-lg p-3 space-y-1.5 bg-slate-50">
+              <p className="text-xs font-medium text-slate-600">Booking dự kiến (tự động theo vị trí)</p>
+              {!suggestEnabled ? (
+                <p className="text-[10px] text-slate-400">Điền Ngày + Biển số + Kho để xem booking dự kiến</p>
+              ) : suggestLoading ? (
+                <span className="flex items-center gap-1 text-[10px] text-slate-400">
+                  <Loader2 className="h-3 w-3 animate-spin" />Đang tìm...
+                </span>
+              ) : suggestions[0] ? (
                 <div className="bg-green-50 border border-green-200 rounded px-2 py-1.5 text-xs">
-                  <span className="font-mono font-semibold text-green-700">{form.booking_order_code}</span>
-                  {(form.booking_slot_from || form.booking_slot_to) && (
-                    <span className="ml-2 text-green-600">{form.booking_slot_from}–{form.booking_slot_to}</span>
+                  <span className="font-mono font-semibold text-green-700">{suggestions[0].order_code}</span>
+                  {(suggestions[0].booking_slot_from || suggestions[0].booking_slot_to) && (
+                    <span className="ml-2 text-green-600">{suggestions[0].booking_slot_from}–{suggestions[0].booking_slot_to}</span>
+                  )}
+                  {suggestions[0].planned_boxes != null && (
+                    <span className="ml-2 text-slate-500">{suggestions[0].planned_boxes} thùng</span>
                   )}
                 </div>
               ) : (
-                <div className="text-[10px] text-slate-400">
-                  {!suggestEnabled
-                    ? 'Điền Ngày + Biển số + Kho để tìm booking phù hợp'
-                    : suggestLoading
-                    ? <span className="flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" />Đang tìm...</span>
-                    : suggestions.length === 0
-                    ? 'Không tìm thấy booking phù hợp'
-                    : null}
-                </div>
-              )}
-
-              {!form.tms_order_id && suggestions.length > 0 && (
-                <div className="space-y-1">
-                  <p className="text-[10px] text-slate-500">Chọn booking ({suggestions.length} phù hợp):</p>
-                  {suggestions.map((s, i) => (
-                    <button
-                      key={s.tms_vehicle_slot_id}
-                      type="button"
-                      onClick={() => applyBooking(s)}
-                      className="w-full text-left px-2 py-1.5 text-xs rounded border hover:bg-blue-50 hover:border-blue-300 flex items-center justify-between"
-                    >
-                      <div>
-                        <span className="text-[9px] text-slate-400 mr-1.5">#{i + 1}</span>
-                        <span className="font-mono font-semibold">{s.order_code}</span>
-                        {(s.booking_slot_from || s.booking_slot_to) && (
-                          <span className="ml-2 text-slate-500">{s.booking_slot_from}–{s.booking_slot_to}</span>
-                        )}
-                      </div>
-                      <div className="text-[10px] text-slate-400">
-                        {s.planned_boxes != null && <span>{s.planned_boxes} thùng</span>}
-                        {s.planned_pallets != null && <span className="ml-1">{s.planned_pallets} pl</span>}
-                      </div>
-                    </button>
-                  ))}
-                </div>
+                <p className="text-[10px] text-slate-400">Không tìm thấy booking phù hợp</p>
               )}
             </div>
           </div>

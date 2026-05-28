@@ -812,18 +812,18 @@ export default function GateRegistration() {
                 <div className="ml-auto flex gap-2">
                   {can(perms, 'gate_registration', 'edit') && (
                     <Button size="sm" variant="outline"
-                      className="h-8 px-3 text-xs gap-1.5"
+                      className="h-6 px-2 text-[10px] gap-1"
                       onClick={() => { setSelected(null); openEdit(selected) }}
                     >
-                      <Pencil className="h-3.5 w-3.5" />Sửa
+                      <Pencil className="h-3 w-3" />Sửa
                     </Button>
                   )}
                   {can(perms, 'gate_registration', 'delete') && (
                     <Button size="sm" variant="outline"
-                      className="h-8 px-3 text-xs gap-1.5 border-red-200 text-red-600 hover:bg-red-50"
+                      className="h-6 px-2 text-[10px] gap-1 border-red-200 text-red-600 hover:bg-red-50"
                       onClick={() => { if (confirm('Xóa đăng ký này?')) { deleteMut.mutate(selected.id); setSelected(null) } }}
                     >
-                      <Trash2 className="h-3.5 w-3.5" />Xóa
+                      <Trash2 className="h-3 w-3" />Xóa
                     </Button>
                   )}
                 </div>

@@ -105,7 +105,7 @@ export async function suggestBooking(req: Request, res: Response) {
   // Filter rồi sort theo khung giờ booking (nhỏ → lớn)
   const filtered = (vslots as unknown as VSlotRow[])
     .filter(vs => {
-      if (!vs.order) return false
+      if (!vs.order || !vs.slot) return false   // bỏ booking chưa có slot
       if (vs.order.date !== date) return false
       if (vs.order.warehouse_id !== warehouse_id) return false
       if (direction && vs.order.direction !== direction) return false
@@ -114,7 +114,10 @@ export async function suggestBooking(req: Request, res: Response) {
       if (company_id && vs.order.ncc_id !== company_id) return false
       return true
     })
-    .sort((a, b) => (a.slot?.time_from ?? '99:99').localeCompare(b.slot?.time_from ?? '99:99'))
+    .sort((a, b) => {
+      const toMin = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0) }
+      return toMin(a.slot!.time_from) - toMin(b.slot!.time_from)
+    })
 
   // Trả về đúng 1 booking tại vị trí tương ứng
   const match = filtered[position]
@@ -520,7 +523,7 @@ export async function relinkAfterDelete(
 
   const filtered = ((vslots ?? []) as unknown as RelinkSlot[])
     .filter(vs => {
-      if (!vs.order) return false
+      if (!vs.order || !vs.slot) return false   // bỏ booking chưa có slot
       if (vs.order.date !== date || vs.order.warehouse_id !== warehouse_id) return false
       if (direction !== null && vs.order.direction !== direction) return false
       if (warehouse_type !== null && vs.order.warehouse_type !== warehouse_type) return false
@@ -528,7 +531,10 @@ export async function relinkAfterDelete(
       if (vs.order.ncc_id !== company_id) return false
       return true
     })
-    .sort((a, b) => (a.slot?.time_from ?? '99:99').localeCompare(b.slot?.time_from ?? '99:99'))
+    .sort((a, b) => {
+      const toMin = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0) }
+      return toMin(a.slot!.time_from) - toMin(b.slot!.time_from)
+    })
 
   // Tập hợp order_id mới sau khi relink (để phát hiện order cũ bị mất gate)
   const newOrderIds = new Set(filtered.slice(0, gates.length).map(s => s?.order_id).filter(Boolean))

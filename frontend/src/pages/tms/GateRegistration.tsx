@@ -85,7 +85,9 @@ function ComboField({
 }) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
+  const triggerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const [dropPos, setDropPos] = useState<{ top: number; left: number; width: number }>({ top: 0, left: 0, width: 0 })
 
   const filtered = options.filter(o =>
     o.label.toLowerCase().includes(search.toLowerCase()) ||
@@ -93,11 +95,15 @@ function ComboField({
   )
 
   useEffect(() => {
-    if (!open) setSearch('')
+    if (!open) { setSearch(''); return }
+    if (triggerRef.current) {
+      const r = triggerRef.current.getBoundingClientRect()
+      setDropPos({ top: r.bottom + 2, left: r.left, width: r.width })
+    }
   }, [open])
 
   return (
-    <div className="relative">
+    <div className="relative" ref={triggerRef}>
       <div className="flex gap-1">
         <div className="relative flex-1">
           {open ? (
@@ -128,7 +134,10 @@ function ComboField({
         )}
       </div>
       {open && (
-        <div className="absolute top-full left-0 right-0 z-50 bg-white border rounded-md shadow-lg max-h-44 overflow-auto mt-0.5">
+        <div
+          style={{ position: 'fixed', top: dropPos.top, left: dropPos.left, width: dropPos.width, zIndex: 9999 }}
+          className="bg-white border rounded-md shadow-lg max-h-44 overflow-auto"
+        >
           {filtered.length === 0 ? (
             <div className="px-3 py-2 text-xs text-slate-400">Không có kết quả</div>
           ) : (

@@ -1743,8 +1743,8 @@ export default function TMSBookings() {
                           <RotateCcw className="h-3.5 w-3.5" />
                         </button>
                       )}
-                      {/* Revoke — quyền đặc biệt, bỏ qua giờ */}
-                      {vslot.id && (slotIndex === 0 || !isPrimary) && canRevokeSlot(vslot) && (
+                      {/* Revoke — quyền đặc biệt, bỏ qua giờ (xe chính, xe phụ, đơn chính, đơn phụ) */}
+                      {vslot.id && canRevokeSlot(vslot) && (
                         <button
                           onClick={e => handleRevoke(e, vslot.id)}
                           className="text-rose-400 hover:text-rose-600 p-1 rounded"

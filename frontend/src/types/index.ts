@@ -551,17 +551,16 @@ export interface GateRegistration {
 
   load_capacity:       number | null
 
-  tms_order_id:        string | null
-  tms_vehicle_slot_id: string | null
-  booking_order_code:  string | null
-  booking_slot_from:   string | null
-  booking_slot_to:     string | null
-  booking_tms_order?:  {
-    npp_name:      string | null
-    gdo_refs:      string | null
-    planned_boxes: number | null
-    planned_pallets: number | null
-  } | null
+  tms_order_id:            string | null
+  tms_vehicle_slot_id:     string | null
+  tms_order_ids:           string | null  // comma-sep UUIDs, multi-order
+  booking_order_code:      string | null  // comma-sep order codes
+  booking_slot_from:       string | null
+  booking_slot_to:         string | null
+  booking_npp_names:       string | null  // comma-sep
+  booking_gdo_refs:        string | null  // comma-sep
+  booking_planned_boxes:   string | null  // comma-sep
+  booking_planned_pallets: string | null  // comma-sep
 
   created_by:          string | null
   updated_by:          string | null
@@ -572,12 +571,13 @@ export interface GateRegistration {
 export interface BookingSuggestion {
   tms_order_id:        string
   tms_vehicle_slot_id: string
-  order_code:          string
+  order_code:          string   // comma-sep khi nhiều đơn/slot
   booking_slot_from:   string | null
   booking_slot_to:     string | null
-  planned_boxes:       number | null
-  planned_pallets:     number | null
-  gdo_refs:            string | null
+  planned_boxes:       string | null   // comma-sep
+  planned_pallets:     string | null   // comma-sep
+  gdo_refs:            string | null   // comma-sep
+  npp_names:           string | null   // comma-sep
   priority:            boolean
 }
 

@@ -872,23 +872,23 @@ export default function GateRegistration() {
             {selected.booking_order_code && (
               <div className="border-t pt-2 space-y-1.5">
                 <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Booking</p>
-                <div><span className="text-slate-400">Mã đơn:</span> <span className="font-mono font-semibold">{selected.booking_order_code}</span></div>
+                <div><span className="text-slate-400">Mã đơn:</span> <span className="font-mono font-semibold text-[10px] break-all">{selected.booking_order_code}</span></div>
                 {(selected.booking_slot_from || selected.booking_slot_to) && (
                   <div><span className="text-slate-400">Khung giờ:</span> <span className="font-semibold">{selected.booking_slot_from}–{selected.booking_slot_to}</span></div>
                 )}
-                {selected.booking_tms_order?.npp_name && (
-                  <div><span className="text-slate-400">NPP:</span> <span>{selected.booking_tms_order.npp_name}</span></div>
+                {selected.booking_npp_names && (
+                  <div><span className="text-slate-400">NPP:</span> <span>{selected.booking_npp_names}</span></div>
                 )}
-                {selected.booking_tms_order?.gdo_refs && (
-                  <div><span className="text-slate-400">GDO Refs:</span> <span className="font-mono text-[10px] break-all">{selected.booking_tms_order.gdo_refs}</span></div>
+                {selected.booking_gdo_refs && (
+                  <div><span className="text-slate-400">GDO Refs:</span> <span className="font-mono text-[10px] break-all">{selected.booking_gdo_refs}</span></div>
                 )}
-                {(selected.booking_tms_order?.planned_boxes != null || selected.booking_tms_order?.planned_pallets != null) && (
+                {(selected.booking_planned_boxes || selected.booking_planned_pallets) && (
                   <div className="flex gap-3">
-                    {selected.booking_tms_order?.planned_boxes != null && (
-                      <span><span className="text-slate-400">Thùng:</span> <span className="font-semibold">{selected.booking_tms_order.planned_boxes}</span></span>
+                    {selected.booking_planned_boxes && (
+                      <span><span className="text-slate-400">Thùng:</span> <span className="font-semibold">{selected.booking_planned_boxes}</span></span>
                     )}
-                    {selected.booking_tms_order?.planned_pallets != null && (
-                      <span><span className="text-slate-400">Pallet:</span> <span className="font-semibold">{selected.booking_tms_order.planned_pallets}</span></span>
+                    {selected.booking_planned_pallets && (
+                      <span><span className="text-slate-400">Pallet:</span> <span className="font-semibold">{selected.booking_planned_pallets}</span></span>
                     )}
                   </div>
                 )}
@@ -1151,8 +1151,9 @@ export default function GateRegistration() {
                         )}
                       </div>
                       <div className="text-slate-500 flex flex-wrap gap-x-3">
-                        {suggestions[0].planned_boxes != null && <span>{suggestions[0].planned_boxes} thùng</span>}
-                        {suggestions[0].planned_pallets != null && <span>{suggestions[0].planned_pallets} pallet</span>}
+                        {suggestions[0].planned_boxes && <span>{suggestions[0].planned_boxes} thùng</span>}
+                        {suggestions[0].planned_pallets && <span>{suggestions[0].planned_pallets} pallet</span>}
+                        {suggestions[0].npp_names && <span>{suggestions[0].npp_names}</span>}
                         {suggestions[0].gdo_refs && <span className="font-mono">{suggestions[0].gdo_refs}</span>}
                       </div>
                     </div>

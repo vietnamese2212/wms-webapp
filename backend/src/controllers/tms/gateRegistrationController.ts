@@ -15,7 +15,7 @@ export async function listGateRegistrations(req: Request, res: Response) {
 
   let q = supabase
     .from('gate_registrations')
-    .select('*, booking_tms_order:TmsOrder!tms_order_id(npp_name, gdo_refs, planned_boxes, planned_pallets)')
+    .select('*')
     .order('date', { ascending: false })
     .order('registration_number', { ascending: true })
 
@@ -43,7 +43,7 @@ export async function listGateRegistrations(req: Request, res: Response) {
   return res.json({ success: true, data })
 }
 
-// Gợi ý booking phù hợp với xe (theo biển số + kho + loại xe + ngày + ĐVVT)
+// Gợi ý booking phù hợp với xe — nhóm theo slot_id để hỗ trợ nhiều đơn/xe
 export async function suggestBooking(req: Request, res: Response) {
   const { date, license_plate, warehouse_id, warehouse_type, vehicle_type, direction, company_id, exclude_gate_id } =
     req.query as Record<string, string | undefined>
@@ -83,7 +83,7 @@ export async function suggestBooking(req: Request, res: Response) {
       id, order_id, slot_id, license_plate,
       order:TmsOrder!order_id (
         id, order_code, date, warehouse_id, warehouse_type, vehicle_type, direction,
-        planned_boxes, planned_pallets, planned_tons, gdo_refs, priority, ncc_id
+        planned_boxes, planned_pallets, planned_tons, gdo_refs, npp_name, priority, ncc_id
       ),
       slot:DeliverySlot!slot_id (time_from, time_to)
     `)
@@ -97,42 +97,60 @@ export async function suggestBooking(req: Request, res: Response) {
       id: string; order_code: string; date: string
       warehouse_id: string; warehouse_type: string | null; vehicle_type: string | null; direction: string | null
       planned_boxes: number | null; planned_pallets: number | null; planned_tons: number | null
-      gdo_refs: string | null; priority: boolean; ncc_id: string | null
+      gdo_refs: string | null; npp_name: string | null; priority: boolean; ncc_id: string | null
     } | null
     slot: { time_from: string; time_to: string } | null
   }
 
-  // Filter rồi sort theo khung giờ booking (nhỏ → lớn)
+  // Filter theo criteria của gate
   const filtered = (vslots as unknown as VSlotRow[])
     .filter(vs => {
-      if (!vs.order || !vs.slot) return false   // bỏ booking chưa có slot
+      if (!vs.order || !vs.slot) return false
       if (vs.order.date !== date) return false
       if (vs.order.warehouse_id !== warehouse_id) return false
       if (direction && vs.order.direction !== direction) return false
       if (warehouse_type && vs.order.warehouse_type !== warehouse_type) return false
       if (vehicle_type && vs.order.vehicle_type !== vehicle_type) return false
-      if (company_id && vs.order.ncc_id !== company_id) return false
+      if (company_id !== null && company_id !== undefined && vs.order.ncc_id !== company_id) return false
       return true
     })
-    .sort((a, b) => {
-      const toMin = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0) }
-      return toMin(a.slot!.time_from) - toMin(b.slot!.time_from)
-    })
 
-  // Trả về đúng 1 booking tại vị trí tương ứng
-  const match = filtered[position]
-  if (!match) return res.json({ success: true, data: [] })
+  // Nhóm theo slot_id — 1 slot group = 1 chuyến xe
+  const slotGroups = new Map<string, VSlotRow[]>()
+  for (const vs of filtered) {
+    const key = vs.slot_id ?? '__none__'
+    if (!slotGroups.has(key)) slotGroups.set(key, [])
+    slotGroups.get(key)!.push(vs)
+  }
+
+  // Sort groups theo time_from của group
+  const toMin = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0) }
+  const sortedGroups = [...slotGroups.values()]
+    .filter(g => g[0].slot)
+    .sort((a, b) => toMin(a[0].slot!.time_from) - toMin(b[0].slot!.time_from))
+
+  // Lấy group tại đúng vị trí
+  const group = sortedGroups[position]
+  if (!group) return res.json({ success: true, data: [] })
+
+  // Aggregate thông tin của group
+  const orderCodes   = group.map(vs => vs.order?.order_code ?? '').filter(Boolean).join(', ')
+  const nppNames     = [...new Set(group.map(vs => vs.order?.npp_name).filter((x): x is string => !!x))].join(', ')
+  const gdoRefs      = group.map(vs => vs.order?.gdo_refs).filter((x): x is string => !!x).join(', ')
+  const plannedBoxes = group.map(vs => vs.order?.planned_boxes).filter(x => x != null).join(', ')
+  const plannedPals  = group.map(vs => vs.order?.planned_pallets).filter(x => x != null).join(', ')
 
   return res.json({ success: true, data: [{
-    tms_order_id:        match.order_id,
-    tms_vehicle_slot_id: match.id,
-    order_code:          match.order?.order_code ?? '',
-    booking_slot_from:   match.slot?.time_from ?? null,
-    booking_slot_to:     match.slot?.time_to ?? null,
-    planned_boxes:       match.order?.planned_boxes ?? null,
-    planned_pallets:     match.order?.planned_pallets ?? null,
-    gdo_refs:            match.order?.gdo_refs ?? null,
-    priority:            match.order?.priority ?? false,
+    tms_order_id:        group[0].order_id,
+    tms_vehicle_slot_id: group[0].id,
+    order_code:          orderCodes,
+    booking_slot_from:   group[0].slot?.time_from ?? null,
+    booking_slot_to:     group[0].slot?.time_to ?? null,
+    planned_boxes:       plannedBoxes || null,
+    planned_pallets:     plannedPals || null,
+    gdo_refs:            gdoRefs || null,
+    npp_names:           nppNames || null,
+    priority:            group.some(vs => vs.order?.priority ?? false),
   }] })
 }
 
@@ -197,13 +215,11 @@ export async function createGateRegistration(req: Request, res: Response) {
 
   if (error) return apiErr(res, 'DB_ERROR', error.message, 500)
 
-  // Tính lại vị trí booking cho tất cả gate trong nhóm (position-based assignment)
+  // Tính lại vị trí booking cho tất cả gate trong nhóm
   const plate = (data as { license_plate: string | null }).license_plate
   if (plate) {
     await relinkAfterDelete(
-      plate,
-      date,
-      warehouse_id,
+      plate, date, warehouse_id,
       (direction ?? null) as string | null,
       (warehouse_type ?? null) as string | null,
       (vehicle_type ?? null) as string | null,
@@ -267,7 +283,8 @@ export async function updateGateRegistration(req: Request, res: Response) {
   return res.json({ success: true, data })
 }
 
-// Action: Gọi xe (NV Kho bấm)
+// ── Action handlers: Gọi xe, Xe vào, Xe ra, Revert
+
 export async function doCall(req: Request, res: Response) {
   const { id } = req.params
   const user = (req as Request & { user?: { name?: string } }).user
@@ -277,13 +294,7 @@ export async function doCall(req: Request, res: Response) {
 
   const { data, error } = await supabase
     .from('gate_registrations')
-    .update({
-      status:     'CALLED',
-      called_at:  ts,
-      called_by:  user?.name ?? null,
-      updated_by: user?.name ?? null,
-      updated_at: now,
-    })
+    .update({ status: 'CALLED', called_at: ts, called_by: user?.name ?? null, updated_by: user?.name ?? null, updated_at: now })
     .eq('id', id)
     .select()
     .single()
@@ -292,7 +303,6 @@ export async function doCall(req: Request, res: Response) {
   return res.json({ success: true, data })
 }
 
-// Action: Xác nhận xe vào (Bảo vệ bấm)
 export async function doEntry(req: Request, res: Response) {
   const { id } = req.params
   const user = (req as Request & { user?: { name?: string } }).user
@@ -302,37 +312,29 @@ export async function doEntry(req: Request, res: Response) {
 
   const { data: reg, error: fetchErr } = await supabase
     .from('gate_registrations')
-    .select('tms_order_id')
-    .eq('id', id)
-    .single()
+    .select('tms_order_id, tms_order_ids')
+    .eq('id', id).single()
   if (fetchErr) return apiErr(res, 'DB_ERROR', fetchErr.message, 500)
 
   const { data, error } = await supabase
     .from('gate_registrations')
-    .update({
-      status:     'IN',
-      entry_at:   ts,
-      entry_by:   user?.name ?? null,
-      updated_by: user?.name ?? null,
-      updated_at: now,
-    })
+    .update({ status: 'IN', entry_at: ts, entry_by: user?.name ?? null, updated_by: user?.name ?? null, updated_at: now })
     .eq('id', id)
     .select()
     .single()
 
   if (error) return apiErr(res, 'DB_ERROR', error.message, 500)
 
-  if ((reg as { tms_order_id: string | null }).tms_order_id) {
-    await supabase
-      .from('TmsOrder')
-      .update({ export_status: 'Đang xuất', updated_at: now })
-      .eq('id', (reg as { tms_order_id: string }).tms_order_id)
+  const allOrderIds = getAllOrderIds(reg as { tms_order_id: string | null; tms_order_ids: string | null })
+  if (allOrderIds.length > 0) {
+    await Promise.all(allOrderIds.map(oid =>
+      supabase.from('TmsOrder').update({ export_status: 'Đang xuất', updated_at: now }).eq('id', oid)
+    ))
   }
 
   return res.json({ success: true, data })
 }
 
-// Action: Xác nhận xe ra (Bảo vệ bấm) — kèm tải trọng tuỳ chọn
 export async function doExit(req: Request, res: Response) {
   const { id } = req.params
   const user = (req as Request & { user?: { name?: string } }).user
@@ -342,17 +344,13 @@ export async function doExit(req: Request, res: Response) {
 
   const { data: reg, error: fetchErr } = await supabase
     .from('gate_registrations')
-    .select('tms_order_id')
-    .eq('id', id)
-    .single()
+    .select('tms_order_id, tms_order_ids')
+    .eq('id', id).single()
   if (fetchErr) return apiErr(res, 'DB_ERROR', fetchErr.message, 500)
 
   const patch: Record<string, unknown> = {
-    status:     'COMPLETED',
-    exit_at:    ts,
-    exit_by:    user?.name ?? null,
-    updated_by: user?.name ?? null,
-    updated_at: now,
+    status: 'COMPLETED', exit_at: ts, exit_by: user?.name ?? null,
+    updated_by: user?.name ?? null, updated_at: now,
   }
   if (load_capacity !== undefined && load_capacity !== null && load_capacity !== '') {
     patch.load_capacity = Number(load_capacity)
@@ -367,17 +365,16 @@ export async function doExit(req: Request, res: Response) {
 
   if (error) return apiErr(res, 'DB_ERROR', error.message, 500)
 
-  if ((reg as { tms_order_id: string | null }).tms_order_id) {
-    await supabase
-      .from('TmsOrder')
-      .update({ export_status: 'Đã xuất', updated_at: now })
-      .eq('id', (reg as { tms_order_id: string }).tms_order_id)
+  const allOrderIds = getAllOrderIds(reg as { tms_order_id: string | null; tms_order_ids: string | null })
+  if (allOrderIds.length > 0) {
+    await Promise.all(allOrderIds.map(oid =>
+      supabase.from('TmsOrder').update({ export_status: 'Đã xuất', updated_at: now }).eq('id', oid)
+    ))
   }
 
   return res.json({ success: true, data })
 }
 
-// Revert: Huỷ gọi xe → về REGISTERED
 export async function doRevertCall(req: Request, res: Response) {
   const { id } = req.params
   const user = (req as Request & { user?: { name?: string } }).user
@@ -385,13 +382,7 @@ export async function doRevertCall(req: Request, res: Response) {
 
   const { data, error } = await supabase
     .from('gate_registrations')
-    .update({
-      status:     'REGISTERED',
-      called_at:  null,
-      called_by:  null,
-      updated_by: user?.name ?? null,
-      updated_at: now,
-    })
+    .update({ status: 'REGISTERED', called_at: null, called_by: null, updated_by: user?.name ?? null, updated_at: now })
     .eq('id', id)
     .select()
     .single()
@@ -400,7 +391,6 @@ export async function doRevertCall(req: Request, res: Response) {
   return res.json({ success: true, data })
 }
 
-// Revert: Huỷ xác nhận vào → về CALLED (nếu đã gọi) hoặc REGISTERED
 export async function doRevertEntry(req: Request, res: Response) {
   const { id } = req.params
   const user = (req as Request & { user?: { name?: string } }).user
@@ -408,39 +398,31 @@ export async function doRevertEntry(req: Request, res: Response) {
 
   const { data: reg, error: fetchErr } = await supabase
     .from('gate_registrations')
-    .select('tms_order_id, called_at')
-    .eq('id', id)
-    .single()
+    .select('tms_order_id, tms_order_ids, called_at')
+    .eq('id', id).single()
   if (fetchErr) return apiErr(res, 'DB_ERROR', fetchErr.message, 500)
 
   const targetStatus = (reg as { called_at: string | null }).called_at ? 'CALLED' : 'REGISTERED'
 
   const { data, error } = await supabase
     .from('gate_registrations')
-    .update({
-      status:     targetStatus,
-      entry_at:   null,
-      entry_by:   null,
-      updated_by: user?.name ?? null,
-      updated_at: now,
-    })
+    .update({ status: targetStatus, entry_at: null, entry_by: null, updated_by: user?.name ?? null, updated_at: now })
     .eq('id', id)
     .select()
     .single()
 
   if (error) return apiErr(res, 'DB_ERROR', error.message, 500)
 
-  if ((reg as { tms_order_id: string | null }).tms_order_id) {
-    await supabase
-      .from('TmsOrder')
-      .update({ export_status: 'Đăng ký', updated_at: now })
-      .eq('id', (reg as { tms_order_id: string }).tms_order_id)
+  const allOrderIds = getAllOrderIds(reg as { tms_order_id: string | null; tms_order_ids: string | null })
+  if (allOrderIds.length > 0) {
+    await Promise.all(allOrderIds.map(oid =>
+      supabase.from('TmsOrder').update({ export_status: 'Đăng ký', updated_at: now }).eq('id', oid)
+    ))
   }
 
   return res.json({ success: true, data })
 }
 
-// Revert: Huỷ xác nhận ra → về IN
 export async function doRevertExit(req: Request, res: Response) {
   const { id } = req.params
   const user = (req as Request & { user?: { name?: string } }).user
@@ -448,38 +430,38 @@ export async function doRevertExit(req: Request, res: Response) {
 
   const { data: reg, error: fetchErr } = await supabase
     .from('gate_registrations')
-    .select('tms_order_id')
-    .eq('id', id)
-    .single()
+    .select('tms_order_id, tms_order_ids')
+    .eq('id', id).single()
   if (fetchErr) return apiErr(res, 'DB_ERROR', fetchErr.message, 500)
 
   const { data, error } = await supabase
     .from('gate_registrations')
-    .update({
-      status:        'IN',
-      exit_at:       null,
-      exit_by:       null,
-      load_capacity: null,
-      updated_by:    user?.name ?? null,
-      updated_at:    now,
-    })
+    .update({ status: 'IN', exit_at: null, exit_by: null, load_capacity: null, updated_by: user?.name ?? null, updated_at: now })
     .eq('id', id)
     .select()
     .single()
 
   if (error) return apiErr(res, 'DB_ERROR', error.message, 500)
 
-  if ((reg as { tms_order_id: string | null }).tms_order_id) {
-    await supabase
-      .from('TmsOrder')
-      .update({ export_status: 'Đang xuất', updated_at: now })
-      .eq('id', (reg as { tms_order_id: string }).tms_order_id)
+  const allOrderIds = getAllOrderIds(reg as { tms_order_id: string | null; tms_order_ids: string | null })
+  if (allOrderIds.length > 0) {
+    await Promise.all(allOrderIds.map(oid =>
+      supabase.from('TmsOrder').update({ export_status: 'Đang xuất', updated_at: now }).eq('id', oid)
+    ))
   }
 
   return res.json({ success: true, data })
 }
 
-// Helper: tái liên kết booking cho tất cả gate_reg theo position (gọi khi xóa gate hoặc booking thay đổi)
+// Helper: lấy tất cả order IDs từ gate reg (hỗ trợ cả multi-order mới và single-order cũ)
+function getAllOrderIds(reg: { tms_order_id: string | null; tms_order_ids: string | null }): string[] {
+  if (reg.tms_order_ids) return reg.tms_order_ids.split(', ').filter(Boolean)
+  if (reg.tms_order_id) return [reg.tms_order_id]
+  return []
+}
+
+// Helper: tái liên kết booking cho tất cả gate_reg theo position
+// Nhóm TmsVehicleSlot theo slot_id → 1 slot group = 1 chuyến xe (có thể nhiều TmsOrder)
 export async function relinkAfterDelete(
   license_plate: string, date: string, warehouse_id: string,
   direction: string | null, warehouse_type: string | null, vehicle_type: string | null,
@@ -490,7 +472,7 @@ export async function relinkAfterDelete(
   // Gate regs còn lại, sort theo registered_at
   let gateQ = supabase
     .from('gate_registrations')
-    .select('id, status, tms_order_id')
+    .select('id, status, tms_order_id, tms_order_ids')
     .eq('license_plate', license_plate)
     .eq('date', date)
     .eq('warehouse_id', warehouse_id)
@@ -504,23 +486,29 @@ export async function relinkAfterDelete(
   if (company_id !== null)     gateQ = gateQ.eq('company_id', company_id)
   else                         gateQ = gateQ.is('company_id', null)
 
-  const { data: gates } = await gateQ as { data: { id: string; status: string; tms_order_id: string | null }[] | null }
+  const { data: gates } = await gateQ as { data: { id: string; status: string; tms_order_id: string | null; tms_order_ids: string | null }[] | null }
   if (!gates || gates.length === 0) return
 
-  // Booking slots matching, sort theo time_from
+  // Booking slots matching
   type RelinkSlot = {
-    id: string; order_id: string
-    order: { order_code: string; date: string; warehouse_id: string; warehouse_type: string | null; vehicle_type: string | null; direction: string | null; priority: boolean; ncc_id: string | null } | null
+    id: string; order_id: string; slot_id: string | null
+    order: {
+      order_code: string; date: string; warehouse_id: string
+      warehouse_type: string | null; vehicle_type: string | null; direction: string | null
+      priority: boolean; ncc_id: string | null
+      npp_name: string | null; gdo_refs: string | null
+      planned_boxes: number | null; planned_pallets: number | null
+    } | null
     slot: { time_from: string; time_to: string } | null
   }
   const { data: vslots } = await supabase
     .from('TmsVehicleSlot')
-    .select(`id, order_id, order:TmsOrder!order_id(order_code, date, warehouse_id, warehouse_type, vehicle_type, direction, priority, ncc_id), slot:DeliverySlot!slot_id(time_from, time_to)`)
+    .select(`id, order_id, slot_id, order:TmsOrder!order_id(order_code, date, warehouse_id, warehouse_type, vehicle_type, direction, priority, ncc_id, npp_name, gdo_refs, planned_boxes, planned_pallets), slot:DeliverySlot!slot_id(time_from, time_to)`)
     .eq('license_plate', license_plate)
 
   const filtered = ((vslots ?? []) as unknown as RelinkSlot[])
     .filter(vs => {
-      if (!vs.order || !vs.slot) return false   // bỏ booking chưa có slot
+      if (!vs.order || !vs.slot) return false
       if (vs.order.date !== date || vs.order.warehouse_id !== warehouse_id) return false
       if (direction !== null && vs.order.direction !== direction) return false
       if (warehouse_type !== null && vs.order.warehouse_type !== warehouse_type) return false
@@ -528,51 +516,88 @@ export async function relinkAfterDelete(
       if (company_id !== null && vs.order.ncc_id !== company_id) return false
       return true
     })
-    .sort((a, b) => {
-      const toMin = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0) }
-      return toMin(a.slot!.time_from) - toMin(b.slot!.time_from)
-    })
 
-  // Tập hợp order_id mới sau khi relink (để phát hiện order cũ bị mất gate)
-  const newOrderIds = new Set(filtered.slice(0, gates.length).map(s => s?.order_id).filter(Boolean))
+  // Nhóm VSlots theo slot_id — 1 group = 1 booking slot (có thể nhiều đơn)
+  const slotGroups = new Map<string, RelinkSlot[]>()
+  for (const vs of filtered) {
+    const key = vs.slot_id ?? '__none__'
+    if (!slotGroups.has(key)) slotGroups.set(key, [])
+    slotGroups.get(key)!.push(vs)
+  }
+
+  const toMin = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0) }
+  const sortedGroups = [...slotGroups.values()]
+    .filter(g => g[0].slot)
+    .sort((a, b) => toMin(a[0].slot!.time_from) - toMin(b[0].slot!.time_from))
+
+  // Tập hợp tất cả order IDs mới (để phát hiện order cũ bị mất gate)
+  const newOrderIdSet = new Set(
+    sortedGroups.slice(0, gates.length).flatMap(g => g.map(vs => vs.order_id))
+  )
 
   await Promise.all(gates.map((gate, i) => {
-    const match = filtered[i]
-    const patch = match ? {
-      tms_order_id:        match.order_id,
-      tms_vehicle_slot_id: match.id,
-      booking_order_code:  match.order?.order_code ?? null,
-      booking_slot_from:   match.slot?.time_from ?? null,
-      booking_slot_to:     match.slot?.time_to ?? null,
-      priority:            match.order?.priority ?? false,
-      updated_at:          now,
-    } : {
-      tms_order_id: null, tms_vehicle_slot_id: null,
-      booking_order_code: null, booking_slot_from: null, booking_slot_to: null,
-      priority: false, updated_at: now,
-    }
-    const ops: Promise<unknown>[] = [
-      supabase.from('gate_registrations').update(patch).eq('id', gate.id),
-    ]
-    // Cập nhật export_status của TmsOrder mới được link
-    if (match && match.order_id !== gate.tms_order_id) {
+    const group = sortedGroups[i]
+    const oldOrderIds = getAllOrderIds(gate)
+    const ops: Promise<unknown>[] = []
+    const patch: Record<string, unknown> = { updated_at: now }
+
+    if (!group) {
+      // Không có booking tại vị trí này → clear
+      Object.assign(patch, {
+        tms_order_id: null, tms_vehicle_slot_id: null, tms_order_ids: null,
+        booking_order_code: null, booking_slot_from: null, booking_slot_to: null,
+        booking_npp_names: null, booking_gdo_refs: null,
+        booking_planned_boxes: null, booking_planned_pallets: null,
+        priority: false,
+      })
+      // Clear export_status của tất cả order cũ bị de-link
+      for (const oldId of oldOrderIds) {
+        ops.push(supabase.from('TmsOrder').update({ export_status: null, updated_at: now }).eq('id', oldId))
+      }
+    } else {
+      // Aggregate thông tin của group
+      const orderCodes   = group.map(vs => vs.order?.order_code ?? '').filter(Boolean).join(', ')
+      const orderIds     = group.map(vs => vs.order_id).join(', ')
+      const nppNames     = [...new Set(group.map(vs => vs.order?.npp_name).filter((x): x is string => !!x))].join(', ')
+      const gdoRefs      = group.map(vs => vs.order?.gdo_refs).filter((x): x is string => !!x).join(', ')
+      const plannedBoxes = group.map(vs => vs.order?.planned_boxes).filter(x => x != null).join(', ')
+      const plannedPals  = group.map(vs => vs.order?.planned_pallets).filter(x => x != null).join(', ')
+      const hasPriority  = group.some(vs => vs.order?.priority ?? false)
+
+      Object.assign(patch, {
+        tms_order_id:            group[0].order_id,
+        tms_vehicle_slot_id:     group[0].id,
+        tms_order_ids:           orderIds,
+        booking_order_code:      orderCodes,
+        booking_slot_from:       group[0].slot?.time_from ?? null,
+        booking_slot_to:         group[0].slot?.time_to ?? null,
+        booking_npp_names:       nppNames || null,
+        booking_gdo_refs:        gdoRefs || null,
+        booking_planned_boxes:   plannedBoxes || null,
+        booking_planned_pallets: plannedPals || null,
+        priority:                hasPriority,
+      })
+
+      const newGroupOrderIds = new Set(group.map(vs => vs.order_id))
       const exportStatus =
         gate.status === 'IN'        ? 'Đang xuất' :
         gate.status === 'COMPLETED' ? 'Đã xuất'   : 'Đăng ký'
-      ops.push(
-        supabase.from('TmsOrder')
-          .update({ export_status: exportStatus, updated_at: now })
-          .eq('id', match.order_id)
-      )
+
+      // Update export_status của order mới được link vào group này
+      for (const vs of group) {
+        if (!oldOrderIds.includes(vs.order_id)) {
+          ops.push(supabase.from('TmsOrder').update({ export_status: exportStatus, updated_at: now }).eq('id', vs.order_id))
+        }
+      }
+      // Clear export_status của order cũ bị de-link khỏi toàn bộ gate regs
+      for (const oldId of oldOrderIds) {
+        if (!newOrderIdSet.has(oldId) && !newGroupOrderIds.has(oldId)) {
+          ops.push(supabase.from('TmsOrder').update({ export_status: null, updated_at: now }).eq('id', oldId))
+        }
+      }
     }
-    // Xóa export_status của TmsOrder cũ nếu không còn gate nào trong nhóm này link đến nó
-    if (gate.tms_order_id && !newOrderIds.has(gate.tms_order_id)) {
-      ops.push(
-        supabase.from('TmsOrder')
-          .update({ export_status: null, updated_at: now })
-          .eq('id', gate.tms_order_id)
-      )
-    }
+
+    ops.unshift(supabase.from('gate_registrations').update(patch).eq('id', gate.id))
     return Promise.all(ops)
   }))
 }
@@ -583,11 +608,18 @@ export async function deleteGateRegistration(req: Request, res: Response) {
   // Lấy thông tin trước khi xóa để re-link sau
   const { data: reg } = await supabase
     .from('gate_registrations')
-    .select('license_plate, date, warehouse_id, direction, warehouse_type, vehicle_type, company_id, tms_order_id')
+    .select('license_plate, date, warehouse_id, direction, warehouse_type, vehicle_type, company_id, tms_order_id, tms_order_ids')
     .eq('id', id)
-    .maybeSingle() as { data: { license_plate: string | null; date: string; warehouse_id: string; direction: string | null; warehouse_type: string | null; vehicle_type: string | null; company_id: string | null; tms_order_id: string | null } | null }
+    .maybeSingle() as { data: {
+      license_plate: string | null; date: string; warehouse_id: string
+      direction: string | null; warehouse_type: string | null; vehicle_type: string | null
+      company_id: string | null; tms_order_id: string | null; tms_order_ids: string | null
+    } | null }
 
-  const deletedOrderId = reg?.tms_order_id ?? null
+  const deletedOrderIds = getAllOrderIds({
+    tms_order_id:  reg?.tms_order_id  ?? null,
+    tms_order_ids: reg?.tms_order_ids ?? null,
+  })
 
   const { error } = await supabase
     .from('gate_registrations')
@@ -604,19 +636,19 @@ export async function deleteGateRegistration(req: Request, res: Response) {
     )
   }
 
-  // Nếu gate bị xóa là gate cuối cùng link tới đơn đó → clear export_status
-  if (deletedOrderId) {
+  // Với mỗi order cũ bị de-link: nếu không còn gate reg nào reference → clear export_status
+  if (deletedOrderIds.length > 0) {
     const now = new Date().toISOString()
-    const countResult = await supabase
-      .from('gate_registrations')
-      .select('id', { count: 'exact', head: true })
-      .eq('tms_order_id', deletedOrderId)
-    const remaining = (countResult as unknown as { count: number | null }).count
-    if ((remaining ?? 0) === 0) {
-      await supabase.from('TmsOrder')
-        .update({ export_status: null, updated_at: now })
-        .eq('id', deletedOrderId)
-    }
+    await Promise.all(deletedOrderIds.map(async (orderId) => {
+      // Kiểm tra tms_order_id (single) và tms_order_ids (comma-sep) trong cùng query
+      const { count } = await supabase
+        .from('gate_registrations')
+        .select('id', { count: 'exact', head: true })
+        .or(`tms_order_id.eq.${orderId},tms_order_ids.like.%${orderId}%`)
+      if ((count ?? 0) === 0) {
+        await supabase.from('TmsOrder').update({ export_status: null, updated_at: now }).eq('id', orderId)
+      }
+    }))
   }
 
   return res.json({ success: true })

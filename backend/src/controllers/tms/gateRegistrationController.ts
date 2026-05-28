@@ -225,9 +225,6 @@ export async function updateGateRegistration(req: Request, res: Response) {
     vehicle_id, license_plate,
     direction, warehouse_id, warehouse_type, vehicle_type,
     content, return_pallet, seal_number, notes,
-    priority,
-    tms_order_id, tms_vehicle_slot_id,
-    booking_order_code, booking_slot_from, booking_slot_to,
   } = req.body
 
   const patch: Record<string, unknown> = {
@@ -235,27 +232,21 @@ export async function updateGateRegistration(req: Request, res: Response) {
     updated_at: new Date().toISOString(),
   }
 
-  if (date !== undefined)                patch.date = date
-  if (driver_name !== undefined)         patch.driver_name = driver_name
-  if (phone !== undefined)               patch.phone = phone
-  if (company_id !== undefined)          patch.company_id = company_id
-  if (company_name_raw !== undefined)    patch.company_name_raw = company_name_raw
-  if (vehicle_id !== undefined)          patch.vehicle_id = vehicle_id
-  if (license_plate !== undefined)       patch.license_plate = license_plate
-  if (direction !== undefined)           patch.direction = direction
-  if (warehouse_id !== undefined)        patch.warehouse_id = warehouse_id
-  if (warehouse_type !== undefined)      patch.warehouse_type = warehouse_type
-  if (vehicle_type !== undefined)        patch.vehicle_type = vehicle_type
-  if (content !== undefined)             patch.content = content
-  if (return_pallet !== undefined)       patch.return_pallet = return_pallet
-  if (seal_number !== undefined)         patch.seal_number = seal_number
-  if (notes !== undefined)               patch.notes = notes
-  if (priority !== undefined)            patch.priority = priority
-  if (tms_order_id !== undefined)        patch.tms_order_id = tms_order_id
-  if (tms_vehicle_slot_id !== undefined) patch.tms_vehicle_slot_id = tms_vehicle_slot_id
-  if (booking_order_code !== undefined)  patch.booking_order_code = booking_order_code
-  if (booking_slot_from !== undefined)   patch.booking_slot_from = booking_slot_from
-  if (booking_slot_to !== undefined)     patch.booking_slot_to = booking_slot_to
+  if (date !== undefined)             patch.date = date
+  if (driver_name !== undefined)      patch.driver_name = driver_name
+  if (phone !== undefined)            patch.phone = phone
+  if (company_id !== undefined)       patch.company_id = company_id
+  if (company_name_raw !== undefined) patch.company_name_raw = company_name_raw
+  if (vehicle_id !== undefined)       patch.vehicle_id = vehicle_id
+  if (license_plate !== undefined)    patch.license_plate = license_plate
+  if (direction !== undefined)        patch.direction = direction
+  if (warehouse_id !== undefined)     patch.warehouse_id = warehouse_id
+  if (warehouse_type !== undefined)   patch.warehouse_type = warehouse_type
+  if (vehicle_type !== undefined)     patch.vehicle_type = vehicle_type
+  if (content !== undefined)          patch.content = content
+  if (return_pallet !== undefined)    patch.return_pallet = return_pallet
+  if (seal_number !== undefined)      patch.seal_number = seal_number
+  if (notes !== undefined)            patch.notes = notes
 
   const { data, error } = await supabase
     .from('gate_registrations')
@@ -265,6 +256,14 @@ export async function updateGateRegistration(req: Request, res: Response) {
     .single()
 
   if (error) return apiErr(res, 'DB_ERROR', error.message, 500)
+
+  // Tính lại vị trí booking sau khi sửa gate
+  type GateRow = { license_plate: string | null; date: string; warehouse_id: string; direction: string | null; warehouse_type: string | null; vehicle_type: string | null; company_id: string | null }
+  const g = data as GateRow
+  if (g.license_plate && g.date && g.warehouse_id) {
+    await relinkAfterDelete(g.license_plate, g.date, g.warehouse_id, g.direction, g.warehouse_type, g.vehicle_type, g.company_id)
+  }
+
   return res.json({ success: true, data })
 }
 
@@ -526,7 +525,7 @@ export async function relinkAfterDelete(
       if (direction !== null && vs.order.direction !== direction) return false
       if (warehouse_type !== null && vs.order.warehouse_type !== warehouse_type) return false
       if (vehicle_type !== null && vs.order.vehicle_type !== vehicle_type) return false
-      if (vs.order.ncc_id !== company_id) return false
+      if (company_id !== null && vs.order.ncc_id !== company_id) return false
       return true
     })
     .sort((a, b) => {

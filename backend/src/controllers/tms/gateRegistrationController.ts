@@ -15,7 +15,7 @@ export async function listGateRegistrations(req: Request, res: Response) {
 
   let q = supabase
     .from('gate_registrations')
-    .select('*')
+    .select('*, booking_tms_order:TmsOrder!tms_order_id(npp_name, gdo_refs, planned_boxes, planned_pallets)')
     .order('date', { ascending: false })
     .order('registration_number', { ascending: true })
 

@@ -556,6 +556,12 @@ export interface GateRegistration {
   booking_order_code:  string | null
   booking_slot_from:   string | null
   booking_slot_to:     string | null
+  booking_tms_order?:  {
+    npp_name:      string | null
+    gdo_refs:      string | null
+    planned_boxes: number | null
+    planned_pallets: number | null
+  } | null
 
   created_by:          string | null
   updated_by:          string | null

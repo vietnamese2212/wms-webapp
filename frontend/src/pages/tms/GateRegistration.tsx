@@ -170,6 +170,13 @@ type FormData = {
   notes: string
 }
 
+const PHASE2_DEFAULT = {
+  vehicle_id: '', license_plate: '',
+  driver_name: '', phone: '',
+  content: '', return_pallet: false,
+  seal_number: '', notes: '',
+}
+
 const FORM_DEFAULT: FormData = {
   date: TODAY_VN,
   driver_name: '', phone: '',
@@ -220,7 +227,6 @@ export default function GateRegistration() {
   const [exitTime,  setExitTime]  = useState('')
 
   const [apiError, setApiError] = useState('')
-  const [saving,   setSaving]   = useState(false)
 
   // ── Queries
   const params: Record<string, string> = {}
@@ -257,8 +263,14 @@ export default function GateRegistration() {
   const { data: warehouses = [] } = useWarehouses(true)
   const { data: whTypes = [] } = useWarehouseTypes()
 
-  // Booking suggestion — trigger khi form thay đổi đủ điều kiện
-  const suggestEnabled = !!(form.date && form.license_plate && form.warehouse_id)
+  // Phase 1 hoàn thành khi đủ 6 tiêu chí matching
+  const phase1Complete = !!(
+    form.date && form.warehouse_id && form.direction &&
+    form.warehouse_type && form.vehicle_type && form.company_id
+  )
+
+  // Suggest chỉ trigger khi đủ cả 7 (phase1 + biển số)
+  const suggestEnabled = !!(phase1Complete && form.license_plate)
   const { data: suggestions = [], isFetching: suggestLoading } = useQuery<BookingSuggestion[]>({
     queryKey: ['gate-suggest', form.date, form.license_plate, form.warehouse_id, form.direction, form.warehouse_type, form.vehicle_type, form.company_id, editReg?.id],
     queryFn: () => apiClient.get('/tms/gate-registrations/suggest-booking', {
@@ -388,15 +400,24 @@ export default function GateRegistration() {
   function closeModal() {
     setModalOpen(false)
     setEditReg(null)
-    setSaving(false)
   }
 
   function f(k: keyof FormData, v: string | boolean) {
     setForm(prev => ({ ...prev, [k]: v }))
   }
 
+  // Dùng cho phase 1 fields — tự clear phase 2 khi phase 1 chưa hoàn thành (chỉ ở create mode)
+  function fCriteria(k: keyof FormData, v: string | boolean) {
+    setForm(prev => {
+      const next = { ...prev, [k]: v }
+      if (editReg) return next
+      const complete = !!(next.date && next.warehouse_id && next.direction &&
+                          next.warehouse_type && next.vehicle_type && next.company_id)
+      return complete ? next : { ...next, ...PHASE2_DEFAULT }
+    })
+  }
+
   async function handleSubmit() {
-    setSaving(true)
     setApiError('')
     const body = {
       date:             form.date,
@@ -420,7 +441,6 @@ export default function GateRegistration() {
     } else {
       createMut.mutate(body)
     }
-    setSaving(false)
   }
 
   // ── Display helpers
@@ -852,9 +872,25 @@ export default function GateRegistration() {
             {selected.booking_order_code && (
               <div className="border-t pt-2 space-y-1.5">
                 <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Booking</p>
-                <div><span className="text-slate-400">Số xe:</span> <span className="font-mono font-semibold">{selected.booking_order_code}</span></div>
+                <div><span className="text-slate-400">Mã đơn:</span> <span className="font-mono font-semibold">{selected.booking_order_code}</span></div>
                 {(selected.booking_slot_from || selected.booking_slot_to) && (
                   <div><span className="text-slate-400">Khung giờ:</span> <span className="font-semibold">{selected.booking_slot_from}–{selected.booking_slot_to}</span></div>
+                )}
+                {selected.booking_tms_order?.npp_name && (
+                  <div><span className="text-slate-400">NPP:</span> <span>{selected.booking_tms_order.npp_name}</span></div>
+                )}
+                {selected.booking_tms_order?.gdo_refs && (
+                  <div><span className="text-slate-400">GDO Refs:</span> <span className="font-mono text-[10px] break-all">{selected.booking_tms_order.gdo_refs}</span></div>
+                )}
+                {(selected.booking_tms_order?.planned_boxes != null || selected.booking_tms_order?.planned_pallets != null) && (
+                  <div className="flex gap-3">
+                    {selected.booking_tms_order?.planned_boxes != null && (
+                      <span><span className="text-slate-400">Thùng:</span> <span className="font-semibold">{selected.booking_tms_order.planned_boxes}</span></span>
+                    )}
+                    {selected.booking_tms_order?.planned_pallets != null && (
+                      <span><span className="text-slate-400">Pallet:</span> <span className="font-semibold">{selected.booking_tms_order.planned_pallets}</span></span>
+                    )}
+                  </div>
                 )}
               </div>
             )}
@@ -927,11 +963,11 @@ export default function GateRegistration() {
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
                 <label className="text-xs text-slate-500">Ngày <span className="text-red-500">*</span></label>
-                <Input type="date" value={form.date} onChange={e => f('date', e.target.value)} className="text-xs h-8" />
+                <Input type="date" value={form.date} onChange={e => fCriteria('date', e.target.value)} className="text-xs h-8" />
               </div>
               <div className="space-y-1">
                 <label className="text-xs text-slate-500">Kho <span className="text-red-500">*</span></label>
-                <Select value={form.warehouse_id || '__none__'} onValueChange={v => f('warehouse_id', v === '__none__' ? '' : v)}>
+                <Select value={form.warehouse_id || '__none__'} onValueChange={v => fCriteria('warehouse_id', v === '__none__' ? '' : v)}>
                   <SelectTrigger className="h-8 text-xs">
                     <SelectValue placeholder="Chọn kho" />
                   </SelectTrigger>
@@ -952,7 +988,7 @@ export default function GateRegistration() {
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
                 <label className="text-xs text-slate-500">Hướng</label>
-                <Select value={form.direction || '__none__'} onValueChange={v => f('direction', v === '__none__' ? '' : v)}>
+                <Select value={form.direction || '__none__'} onValueChange={v => fCriteria('direction', v === '__none__' ? '' : v)}>
                   <SelectTrigger className="h-8 text-xs">
                     <SelectValue placeholder="Chọn hướng" />
                   </SelectTrigger>
@@ -965,7 +1001,7 @@ export default function GateRegistration() {
               </div>
               <div className="space-y-1">
                 <label className="text-xs text-slate-500">Loại kho</label>
-                <Select value={form.warehouse_type || '__none__'} onValueChange={v => f('warehouse_type', v === '__none__' ? '' : v)}>
+                <Select value={form.warehouse_type || '__none__'} onValueChange={v => fCriteria('warehouse_type', v === '__none__' ? '' : v)}>
                   <SelectTrigger className="h-8 text-xs">
                     <SelectValue placeholder="Chọn loại kho" />
                   </SelectTrigger>
@@ -988,8 +1024,8 @@ export default function GateRegistration() {
                   displayValue={vtOptions.find(v => v.value === form.vehicle_type)?.label ?? form.vehicle_type}
                   options={vtOptions}
                   placeholder="Tìm loại xe"
-                  onSelect={opt => f('vehicle_type', opt.value)}
-                  onClear={() => f('vehicle_type', '')}
+                  onSelect={opt => fCriteria('vehicle_type', opt.value)}
+                  onClear={() => fCriteria('vehicle_type', '')}
                 />
               </div>
               <div className="space-y-1">
@@ -999,14 +1035,16 @@ export default function GateRegistration() {
                   displayValue={companies.find(c => c.id === form.company_id)?.name ?? form.company_name_raw}
                   options={companyOptions}
                   placeholder="Tìm ĐVVT"
-                  onSelect={opt => setForm(prev => ({
-                    ...prev,
-                    company_id: opt.value,
-                    company_name_raw: opt.label,
-                    vehicle_id: '',
-                    license_plate: '',
+                  onSelect={opt => setForm(prev => {
+                    const next = { ...prev, company_id: opt.value, company_name_raw: opt.label, vehicle_id: '', license_plate: '' }
+                    if (editReg) return next
+                    const complete = !!(next.date && next.warehouse_id && next.direction && next.warehouse_type && next.vehicle_type && next.company_id)
+                    return complete ? next : { ...next, ...PHASE2_DEFAULT }
+                  })}
+                  onClear={() => setForm(prev => ({
+                    ...prev, company_id: '', company_name_raw: '',
+                    ...(editReg ? {} : PHASE2_DEFAULT),
                   }))}
-                  onClear={() => setForm(prev => ({ ...prev, company_id: '', company_name_raw: '' }))}
                 />
                 {!form.company_id && (
                   <Input
@@ -1019,116 +1057,128 @@ export default function GateRegistration() {
               </div>
             </div>
 
-            {/* Row 4: Biển số + Nội dung */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <label className="text-xs text-slate-500">Biển số xe</label>
-                <ComboField
-                  value={form.vehicle_id}
-                  displayValue={vehicles.find(v => v.id === form.vehicle_id)?.license_plate ?? form.license_plate}
-                  options={vehicleOptions}
-                  placeholder="Tìm xe"
-                  onSelect={opt => setForm(prev => ({
-                    ...prev,
-                    vehicle_id: opt.value,
-                    license_plate: opt.label,
-                  }))}
-                  onClear={() => setForm(prev => ({ ...prev, vehicle_id: '', license_plate: '' }))}
-                />
-                {!form.vehicle_id && (
-                  <Input
-                    className="text-xs h-8 mt-1 font-mono"
-                    placeholder="Hoặc nhập biển số tự do"
-                    value={form.license_plate}
-                    onChange={e => f('license_plate', e.target.value.toUpperCase())}
-                  />
-                )}
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs text-slate-500">Nội dung vào ra</label>
-                <Input className="text-xs h-8" value={form.content} onChange={e => f('content', e.target.value)} placeholder="Vào lấy hàng, giao hàng..." />
-              </div>
-            </div>
-
-            {/* Row 5: Lái xe + SĐT */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <label className="text-xs text-slate-500">Họ và tên lái xe</label>
-                <Input className="text-xs h-8" value={form.driver_name} onChange={e => f('driver_name', e.target.value)} placeholder="Nguyễn Văn A" />
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs text-slate-500">Số điện thoại</label>
-                <Input type="tel" className="text-xs h-8" value={form.phone} onChange={e => f('phone', e.target.value)} placeholder="0909..." />
-              </div>
-            </div>
-
-            {/* Row 6: Niêm phong + Ghi chú */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <label className="text-xs text-slate-500">Số niêm phong</label>
-                <Input className="text-xs h-8 font-mono" value={form.seal_number} onChange={e => f('seal_number', e.target.value)} placeholder="SP123456" />
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs text-slate-500">Ghi chú</label>
-                <Input className="text-xs h-8" value={form.notes} onChange={e => f('notes', e.target.value)} placeholder="Ghi chú thêm..." />
-              </div>
-            </div>
-
-            {/* Row 7: Trả pallet */}
-            <div className="flex items-center gap-6">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={form.return_pallet}
-                  onChange={e => f('return_pallet', e.target.checked)}
-                  className="h-4 w-4 rounded border-slate-300 accent-blue-600"
-                />
-                <div className="flex items-center gap-1 text-xs">
-                  <Package className="h-3.5 w-3.5 text-blue-500" />
-                  Trả pallet
+            {/* Phase 2 — chỉ hiện khi phase 1 đủ 6 tiêu chí, hoặc đang edit */}
+            {(phase1Complete || !!editReg) && (
+              <>
+                {/* Row 4: Biển số + Nội dung */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-xs text-slate-500">Biển số xe <span className="text-red-500">*</span></label>
+                    <ComboField
+                      value={form.vehicle_id}
+                      displayValue={vehicles.find(v => v.id === form.vehicle_id)?.license_plate ?? form.license_plate}
+                      options={vehicleOptions}
+                      placeholder="Tìm xe"
+                      onSelect={opt => setForm(prev => ({ ...prev, vehicle_id: opt.value, license_plate: opt.label }))}
+                      onClear={() => setForm(prev => ({ ...prev, vehicle_id: '', license_plate: '' }))}
+                    />
+                    {!form.vehicle_id && (
+                      <Input
+                        className="text-xs h-8 mt-1 font-mono"
+                        placeholder="Hoặc nhập biển số tự do"
+                        value={form.license_plate}
+                        onChange={e => f('license_plate', e.target.value.toUpperCase())}
+                      />
+                    )}
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs text-slate-500">Nội dung vào ra <span className="text-red-500">*</span></label>
+                    <Input className="text-xs h-8" value={form.content} onChange={e => f('content', e.target.value)} placeholder="Vào lấy hàng, giao hàng..." />
+                  </div>
                 </div>
-              </label>
-              {suggestions[0]?.priority && (
-                <div className="flex items-center gap-1 text-xs text-amber-600">
-                  <Star className="h-3.5 w-3.5 fill-amber-500" />
-                  Ưu tiên (từ Kế hoạch VC)
-                </div>
-              )}
-            </div>
 
-            {/* Booking dự kiến — chỉ đọc, do server tính theo vị trí */}
-            <div className="border rounded-lg p-3 space-y-1.5 bg-slate-50">
-              <p className="text-xs font-medium text-slate-600">Booking dự kiến (tự động theo vị trí)</p>
-              {!suggestEnabled ? (
-                <p className="text-[10px] text-slate-400">Điền Ngày + Biển số + Kho để xem booking dự kiến</p>
-              ) : suggestLoading ? (
-                <span className="flex items-center gap-1 text-[10px] text-slate-400">
-                  <Loader2 className="h-3 w-3 animate-spin" />Đang tìm...
-                </span>
-              ) : suggestions[0] ? (
-                <div className="bg-green-50 border border-green-200 rounded px-2 py-1.5 text-xs">
-                  <span className="font-mono font-semibold text-green-700">{suggestions[0].order_code}</span>
-                  {(suggestions[0].booking_slot_from || suggestions[0].booking_slot_to) && (
-                    <span className="ml-2 text-green-600">{suggestions[0].booking_slot_from}–{suggestions[0].booking_slot_to}</span>
-                  )}
-                  {suggestions[0].planned_boxes != null && (
-                    <span className="ml-2 text-slate-500">{suggestions[0].planned_boxes} thùng</span>
+                {/* Row 5: Lái xe + SĐT */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-xs text-slate-500">Họ và tên lái xe <span className="text-red-500">*</span></label>
+                    <Input className="text-xs h-8" value={form.driver_name} onChange={e => f('driver_name', e.target.value)} placeholder="Nguyễn Văn A" />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs text-slate-500">Số điện thoại <span className="text-red-500">*</span></label>
+                    <Input type="tel" className="text-xs h-8" value={form.phone} onChange={e => f('phone', e.target.value)} placeholder="0909..." />
+                  </div>
+                </div>
+
+                {/* Row 6: Niêm phong + Ghi chú */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-xs text-slate-500">Số niêm phong</label>
+                    <Input className="text-xs h-8 font-mono" value={form.seal_number} onChange={e => f('seal_number', e.target.value)} placeholder="SP123456" />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs text-slate-500">Ghi chú</label>
+                    <Input className="text-xs h-8" value={form.notes} onChange={e => f('notes', e.target.value)} placeholder="Ghi chú thêm..." />
+                  </div>
+                </div>
+
+                {/* Row 7: Trả pallet */}
+                <div className="flex items-center gap-6">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={form.return_pallet}
+                      onChange={e => f('return_pallet', e.target.checked)}
+                      className="h-4 w-4 rounded border-slate-300 accent-blue-600"
+                    />
+                    <div className="flex items-center gap-1 text-xs">
+                      <Package className="h-3.5 w-3.5 text-blue-500" />
+                      Trả pallet
+                    </div>
+                  </label>
+                  {suggestions[0]?.priority && (
+                    <div className="flex items-center gap-1 text-xs text-amber-600">
+                      <Star className="h-3.5 w-3.5 fill-amber-500" />
+                      Ưu tiên (từ Kế hoạch VC)
+                    </div>
                   )}
                 </div>
-              ) : (
-                <p className="text-[10px] text-slate-400">Không tìm thấy booking phù hợp</p>
-              )}
-            </div>
+
+                {/* Booking dự kiến — chỉ đọc, do server tính theo vị trí */}
+                <div className="border rounded-lg p-3 space-y-1.5 bg-slate-50">
+                  <p className="text-xs font-medium text-slate-600">Booking dự kiến (tự động theo vị trí)</p>
+                  {!suggestEnabled ? (
+                    <p className="text-[10px] text-slate-400">Điền Biển số để xem booking dự kiến</p>
+                  ) : suggestLoading ? (
+                    <span className="flex items-center gap-1 text-[10px] text-slate-400">
+                      <Loader2 className="h-3 w-3 animate-spin" />Đang tìm...
+                    </span>
+                  ) : suggestions[0] ? (
+                    <div className="bg-green-50 border border-green-200 rounded px-2 py-1.5 text-xs space-y-0.5">
+                      <div>
+                        <span className="font-mono font-semibold text-green-700">{suggestions[0].order_code}</span>
+                        {(suggestions[0].booking_slot_from || suggestions[0].booking_slot_to) && (
+                          <span className="ml-2 text-green-600">{suggestions[0].booking_slot_from}–{suggestions[0].booking_slot_to}</span>
+                        )}
+                      </div>
+                      <div className="text-slate-500 flex flex-wrap gap-x-3">
+                        {suggestions[0].planned_boxes != null && <span>{suggestions[0].planned_boxes} thùng</span>}
+                        {suggestions[0].planned_pallets != null && <span>{suggestions[0].planned_pallets} pallet</span>}
+                        {suggestions[0].gdo_refs && <span className="font-mono">{suggestions[0].gdo_refs}</span>}
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-[10px] text-slate-400">Không tìm thấy booking phù hợp</p>
+                  )}
+                </div>
+              </>
+            )}
           </div>
 
           <DialogFooter className="px-4 py-3 border-t shrink-0">
             <Button variant="outline" size="sm" onClick={closeModal}>Hủy</Button>
             <Button
               size="sm"
-              disabled={saving || !form.date || !form.warehouse_id}
+              disabled={
+                createMut.isPending || updateMut.isPending ||
+                !form.date || !form.warehouse_id || !form.direction ||
+                !form.warehouse_type || !form.vehicle_type || !form.company_id ||
+                !form.license_plate || !form.content || !form.driver_name || !form.phone
+              }
               onClick={handleSubmit}
             >
-              {saving ? <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />Đang lưu...</> : (editReg ? 'Cập nhật' : 'Tạo đăng ký')}
+              {(createMut.isPending || updateMut.isPending)
+                ? <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />Đang lưu...</>
+                : (editReg ? 'Cập nhật' : 'Tạo đăng ký')}
             </Button>
           </DialogFooter>
         </DialogContent>

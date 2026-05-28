@@ -692,7 +692,7 @@ export default function GateRegistration() {
         </div>
       </div>
 
-      {/* ── Main area: table + detail panel */}
+      {/* ── Main area: table */}
       <div className="flex flex-1 min-h-0 gap-3 p-3 overflow-hidden">
 
         {/* Table */}
@@ -794,156 +794,158 @@ export default function GateRegistration() {
           )}
         </Card>
 
-        {/* Detail panel */}
-        {selected && (
-          <Card className="w-64 shrink-0 p-3 space-y-2 text-xs overflow-y-auto">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5">
+      </div>
+
+      {/* Detail dialog — overlay, không ảnh hưởng layout bảng */}
+      <Dialog open={!!selected} onOpenChange={open => { if (!open) setSelected(null) }}>
+        <DialogContent className="max-w-sm p-0 overflow-hidden">
+          <DialogTitle className="sr-only">Chi tiết đăng ký cổng</DialogTitle>
+          {selected && (
+            <div className="p-4 space-y-2 text-xs max-h-[80vh] overflow-y-auto">
+              {/* Header */}
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-mono font-semibold text-slate-700">#{selected.registration_number}</span>
                 {selected.priority && <Star className="h-3 w-3 text-amber-500 fill-amber-500" />}
                 <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${STATUS_BADGE[selected.status]}`}>
                   {STATUS_LABEL[selected.status]}
                 </span>
+                <div className="ml-auto flex gap-1">
+                  {can(perms, 'gate_registration', 'edit') && (
+                    <button onClick={() => { setSelected(null); openEdit(selected) }} className="text-slate-400 hover:text-slate-600">
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                  {can(perms, 'gate_registration', 'delete') && (
+                    <button
+                      onClick={() => { if (confirm('Xóa đăng ký này?')) { deleteMut.mutate(selected.id); setSelected(null) } }}
+                      className="text-slate-400 hover:text-red-500"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
               </div>
-              <div className="flex gap-1">
-                {can(perms, 'gate_registration', 'edit') && (
-                  <button onClick={() => openEdit(selected)} className="text-slate-400 hover:text-slate-600">
-                    <Pencil className="h-3.5 w-3.5" />
-                  </button>
-                )}
-                {can(perms, 'gate_registration', 'delete') && (
-                  <button
-                    onClick={() => { if (confirm('Xóa đăng ký này?')) deleteMut.mutate(selected.id) }}
-                    className="text-slate-400 hover:text-red-500"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                )}
-                <button onClick={() => setSelected(null)} className="text-slate-400 hover:text-slate-600">
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            </div>
 
-            {/* Action buttons */}
-            <ActionButtons reg={selected} size="sm" />
+              {/* Action buttons */}
+              <ActionButtons reg={selected} size="sm" />
 
-            <div className="border-t pt-2 space-y-1.5">
-              <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Kho & Hàng</p>
-              <div><span className="text-slate-400">Kho:</span> <span className="font-medium">{warehouseName(selected.warehouse_id)}</span></div>
-              <div>
-                <span className="text-slate-400">Hướng:</span>
-                {selected.direction === 'OUTBOUND'
-                  ? <span className="ml-1 text-orange-600 font-medium">Xuất</span>
-                  : selected.direction === 'INBOUND'
-                  ? <span className="ml-1 text-blue-600 font-medium">Nhập</span>
-                  : ' —'}
-              </div>
-              {selected.warehouse_type && <div><span className="text-slate-400">Loại kho:</span> <span>{selected.warehouse_type}</span></div>}
-              {selected.content && <div><span className="text-slate-400">Nội dung:</span> <span>{selected.content}</span></div>}
-              {selected.seal_number && <div><span className="text-slate-400">Niêm phong:</span> <span className="font-mono">{selected.seal_number}</span></div>}
-              {selected.load_capacity != null && (
-                <div><span className="text-slate-400">Tải trọng:</span> <span className="font-semibold">{selected.load_capacity} tấn</span></div>
-              )}
-            </div>
-
-            <div className="border-t pt-2 space-y-1.5">
-              <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Xe & Lái xe</p>
-              <div><span className="text-slate-400">Loại xe:</span> <span>{selected.vehicle_type ?? '—'}</span></div>
-              <div><span className="text-slate-400">ĐVVT:</span> <span className="font-medium">{companyName(selected)}</span></div>
-              <div><span className="text-slate-400">Biển số:</span> <span className="font-mono font-semibold">{selected.license_plate ?? '—'}</span></div>
-              <div><span className="text-slate-400">Lái xe:</span> <span className="font-medium">{selected.driver_name ?? '—'}</span></div>
-              <div className="flex items-center gap-1">
-                <span className="text-slate-400">SĐT:</span>
-                {selected.phone
-                  ? <a href={`tel:${selected.phone}`} className="flex items-center gap-1 text-blue-600 font-medium hover:underline">
-                      <Phone className="h-3 w-3" />{selected.phone}
-                    </a>
-                  : <span className="text-slate-400">—</span>}
-              </div>
-              <div className="flex items-center gap-1">
-                <span className="text-slate-400">Trả pallet:</span>
-                {selected.return_pallet
-                  ? <span className="flex items-center gap-1 text-blue-600"><Package className="h-3 w-3" />Có</span>
-                  : <span className="text-slate-400">Không</span>}
-              </div>
-            </div>
-
-            {selected.booking_order_code && (
               <div className="border-t pt-2 space-y-1.5">
-                <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Booking</p>
-                <div><span className="text-slate-400">Mã đơn:</span> <span className="font-mono font-semibold text-[10px] break-all">{selected.booking_order_code}</span></div>
-                {(selected.booking_slot_from || selected.booking_slot_to) && (
-                  <div><span className="text-slate-400">Khung giờ:</span> <span className="font-semibold">{selected.booking_slot_from}–{selected.booking_slot_to}</span></div>
+                <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Kho & Hàng</p>
+                <div><span className="text-slate-400">Kho:</span> <span className="font-medium">{warehouseName(selected.warehouse_id)}</span></div>
+                <div>
+                  <span className="text-slate-400">Hướng:</span>
+                  {selected.direction === 'OUTBOUND'
+                    ? <span className="ml-1 text-orange-600 font-medium">Xuất</span>
+                    : selected.direction === 'INBOUND'
+                    ? <span className="ml-1 text-blue-600 font-medium">Nhập</span>
+                    : ' —'}
+                </div>
+                {selected.warehouse_type && <div><span className="text-slate-400">Loại kho:</span> <span>{selected.warehouse_type}</span></div>}
+                {selected.content && <div><span className="text-slate-400">Nội dung:</span> <span>{selected.content}</span></div>}
+                {selected.seal_number && <div><span className="text-slate-400">Niêm phong:</span> <span className="font-mono">{selected.seal_number}</span></div>}
+                {selected.load_capacity != null && (
+                  <div><span className="text-slate-400">Tải trọng:</span> <span className="font-semibold">{selected.load_capacity} tấn</span></div>
                 )}
-                {selected.booking_npp_names && (
-                  <div><span className="text-slate-400">NPP:</span> <span>{selected.booking_npp_names}</span></div>
+              </div>
+
+              <div className="border-t pt-2 space-y-1.5">
+                <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Xe & Lái xe</p>
+                <div><span className="text-slate-400">Loại xe:</span> <span>{selected.vehicle_type ?? '—'}</span></div>
+                <div><span className="text-slate-400">ĐVVT:</span> <span className="font-medium">{companyName(selected)}</span></div>
+                <div><span className="text-slate-400">Biển số:</span> <span className="font-mono font-semibold">{selected.license_plate ?? '—'}</span></div>
+                <div><span className="text-slate-400">Lái xe:</span> <span className="font-medium">{selected.driver_name ?? '—'}</span></div>
+                <div className="flex items-center gap-1">
+                  <span className="text-slate-400">SĐT:</span>
+                  {selected.phone
+                    ? <a href={`tel:${selected.phone}`} className="flex items-center gap-1 text-blue-600 font-medium hover:underline">
+                        <Phone className="h-3 w-3" />{selected.phone}
+                      </a>
+                    : <span className="text-slate-400">—</span>}
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="text-slate-400">Trả pallet:</span>
+                  {selected.return_pallet
+                    ? <span className="flex items-center gap-1 text-blue-600"><Package className="h-3 w-3" />Có</span>
+                    : <span className="text-slate-400">Không</span>}
+                </div>
+              </div>
+
+              {selected.booking_order_code && (
+                <div className="border-t pt-2 space-y-1.5">
+                  <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Booking</p>
+                  <div><span className="text-slate-400">Mã đơn:</span> <span className="font-mono font-semibold text-[10px] break-all">{selected.booking_order_code}</span></div>
+                  {(selected.booking_slot_from || selected.booking_slot_to) && (
+                    <div><span className="text-slate-400">Khung giờ:</span> <span className="font-semibold">{selected.booking_slot_from}–{selected.booking_slot_to}</span></div>
+                  )}
+                  {selected.booking_npp_names && (
+                    <div><span className="text-slate-400">NPP:</span> <span>{selected.booking_npp_names}</span></div>
+                  )}
+                  {selected.booking_gdo_refs && (
+                    <div><span className="text-slate-400">GDO Refs:</span> <span className="font-mono text-[10px] break-all">{selected.booking_gdo_refs}</span></div>
+                  )}
+                  {(selected.booking_planned_boxes || selected.booking_planned_pallets) && (
+                    <div className="flex gap-3">
+                      {selected.booking_planned_boxes && (
+                        <span><span className="text-slate-400">Thùng:</span> <span className="font-semibold">{selected.booking_planned_boxes}</span></span>
+                      )}
+                      {selected.booking_planned_pallets && (
+                        <span><span className="text-slate-400">Pallet:</span> <span className="font-semibold">{selected.booking_planned_pallets}</span></span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="border-t pt-2 space-y-1.5">
+                <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Thời gian</p>
+                {selected.registered_at && (
+                  <div>
+                    <div className="text-slate-400">Đăng ký:</div>
+                    <div>{formatDateTime(selected.registered_at)}</div>
+                    {selected.registered_by && <div className="text-slate-400">{selected.registered_by}</div>}
+                  </div>
                 )}
-                {selected.booking_gdo_refs && (
-                  <div><span className="text-slate-400">GDO Refs:</span> <span className="font-mono text-[10px] break-all">{selected.booking_gdo_refs}</span></div>
+                {selected.called_at && (
+                  <div>
+                    <div className="text-slate-400">Gọi xe:</div>
+                    <div>{formatDateTime(selected.called_at)}</div>
+                    {selected.called_by && <div className="text-slate-400">{selected.called_by}</div>}
+                  </div>
                 )}
-                {(selected.booking_planned_boxes || selected.booking_planned_pallets) && (
-                  <div className="flex gap-3">
-                    {selected.booking_planned_boxes && (
-                      <span><span className="text-slate-400">Thùng:</span> <span className="font-semibold">{selected.booking_planned_boxes}</span></span>
-                    )}
-                    {selected.booking_planned_pallets && (
-                      <span><span className="text-slate-400">Pallet:</span> <span className="font-semibold">{selected.booking_planned_pallets}</span></span>
-                    )}
+                {selected.entry_at && (
+                  <div>
+                    <div className="text-slate-400">Xe vào:</div>
+                    <div>{formatDateTime(selected.entry_at)}</div>
+                    {selected.entry_by && <div className="text-slate-400">{selected.entry_by}</div>}
+                  </div>
+                )}
+                {selected.exit_at && (
+                  <div>
+                    <div className="text-slate-400">Xe ra:</div>
+                    <div>{formatDateTime(selected.exit_at)}</div>
+                    {selected.exit_by && <div className="text-slate-400">{selected.exit_by}</div>}
                   </div>
                 )}
               </div>
-            )}
 
-            <div className="border-t pt-2 space-y-1.5">
-              <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Thời gian</p>
-              {selected.registered_at && (
-                <div>
-                  <div className="text-slate-400">Đăng ký:</div>
-                  <div>{formatDateTime(selected.registered_at)}</div>
-                  {selected.registered_by && <div className="text-slate-400">{selected.registered_by}</div>}
+              {selected.notes && (
+                <div className="border-t pt-2">
+                  <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Ghi chú</p>
+                  <p className="text-slate-600">{selected.notes}</p>
                 </div>
               )}
-              {selected.called_at && (
-                <div>
-                  <div className="text-slate-400">Gọi xe:</div>
-                  <div>{formatDateTime(selected.called_at)}</div>
-                  {selected.called_by && <div className="text-slate-400">{selected.called_by}</div>}
-                </div>
-              )}
-              {selected.entry_at && (
-                <div>
-                  <div className="text-slate-400">Xe vào:</div>
-                  <div>{formatDateTime(selected.entry_at)}</div>
-                  {selected.entry_by && <div className="text-slate-400">{selected.entry_by}</div>}
-                </div>
-              )}
-              {selected.exit_at && (
-                <div>
-                  <div className="text-slate-400">Xe ra:</div>
-                  <div>{formatDateTime(selected.exit_at)}</div>
-                  {selected.exit_by && <div className="text-slate-400">{selected.exit_by}</div>}
-                </div>
-              )}
-            </div>
 
-            {selected.notes && (
-              <div className="border-t pt-2">
-                <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Ghi chú</p>
-                <p className="text-slate-600">{selected.notes}</p>
+              <div className="border-t pt-2 space-y-1.5">
+                <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Audit</p>
+                <div><span className="text-slate-400">Người tạo:</span> <span>{selected.created_by ?? '—'}</span></div>
+                <div><span className="text-slate-400">Tạo lúc:</span> <span>{formatDateTime(selected.created_at)}</span></div>
+                <div><span className="text-slate-400">Người sửa:</span> <span>{selected.updated_by ?? '—'}</span></div>
+                <div><span className="text-slate-400">Sửa lúc:</span> <span>{formatDateTime(selected.updated_at)}</span></div>
               </div>
-            )}
-
-            <div className="border-t pt-2 space-y-1.5">
-              <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Audit</p>
-              <div><span className="text-slate-400">Người tạo:</span> <span>{selected.created_by ?? '—'}</span></div>
-              <div><span className="text-slate-400">Tạo lúc:</span> <span>{formatDateTime(selected.created_at)}</span></div>
-              <div><span className="text-slate-400">Người sửa:</span> <span>{selected.updated_by ?? '—'}</span></div>
-              <div><span className="text-slate-400">Sửa lúc:</span> <span>{formatDateTime(selected.updated_at)}</span></div>
             </div>
-          </Card>
-        )}
-      </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* ── Create / Edit Modal */}
       <Dialog open={modalOpen} onOpenChange={v => { if (!v) closeModal() }}>

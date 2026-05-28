@@ -243,6 +243,10 @@ export async function updateVehicleSlot(req: Request, res: Response) {
     if ((isChangingSlot || isChangingPlate) && relinkPlate) {
       await relinkGatesByPlate(relinkPlate, existing.order_id as string)
     }
+    // Khi biển số thay đổi: relink biển số cũ để xoá booking info khỏi gate đã đăng ký biển cũ
+    if (isChangingPlate && (existing.license_plate as string | null)) {
+      await relinkGatesByPlate(existing.license_plate as string, existing.order_id as string)
+    }
 
     return ok(res, data)
   } catch (e) { return fail(res, String(e)) }

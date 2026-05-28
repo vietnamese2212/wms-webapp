@@ -80,7 +80,7 @@ export async function suggestBooking(req: Request, res: Response) {
   const { data: vslots, error } = await supabase
     .from('TmsVehicleSlot')
     .select(`
-      id, order_id, slot_id, license_plate,
+      id, order_id, slot_id, license_plate, is_consolidation_primary,
       order:TmsOrder!order_id (
         id, order_code, date, warehouse_id, warehouse_type, vehicle_type, direction,
         planned_boxes, planned_pallets, planned_tons, gdo_refs, npp_name, priority, ncc_id
@@ -93,6 +93,7 @@ export async function suggestBooking(req: Request, res: Response) {
 
   type VSlotRow = {
     id: string; order_id: string; slot_id: string | null; license_plate: string | null
+    is_consolidation_primary: boolean
     order: {
       id: string; order_code: string; date: string
       warehouse_id: string; warehouse_type: string | null; vehicle_type: string | null; direction: string | null
@@ -102,25 +103,30 @@ export async function suggestBooking(req: Request, res: Response) {
     slot: { time_from: string; time_to: string } | null
   }
 
-  // Filter theo criteria của gate
-  const filtered = (vslots as unknown as VSlotRow[])
-    .filter(vs => {
-      if (!vs.order || !vs.slot) return false
-      if (vs.order.date !== date) return false
-      if (vs.order.warehouse_id !== warehouse_id) return false
-      if (direction && vs.order.direction !== direction) return false
-      if (warehouse_type && vs.order.warehouse_type !== warehouse_type) return false
-      if (vehicle_type && vs.order.vehicle_type !== vehicle_type) return false
-      if (company_id !== null && company_id !== undefined && vs.order.ncc_id !== company_id) return false
-      return true
-    })
+  // Filter theo criteria của gate → xác định slot_id hợp lệ
+  const allVslots = vslots as unknown as VSlotRow[]
+  const filtered = allVslots.filter(vs => {
+    if (!vs.order || !vs.slot) return false
+    if (vs.order.date !== date) return false
+    if (vs.order.warehouse_id !== warehouse_id) return false
+    if (direction && vs.order.direction !== direction) return false
+    if (warehouse_type && vs.order.warehouse_type !== warehouse_type) return false
+    if (vehicle_type && vs.order.vehicle_type !== vehicle_type) return false
+    if (company_id !== null && company_id !== undefined && vs.order.ncc_id !== company_id) return false
+    return true
+  })
 
-  // Nhóm theo slot_id — 1 slot group = 1 chuyến xe
+  // Tập hợp slot_id từ matched VSlots → dùng để expand group (gom đủ đơn ghép cùng chuyến)
+  const matchedSlotIds = new Set<string>(
+    filtered.map(vs => vs.slot_id).filter((x): x is string => !!x)
+  )
+
+  // Nhóm theo slot_id — gom ALL VSlot cùng slot (kể cả đơn có vehicle_type khác nhau)
   const slotGroups = new Map<string, VSlotRow[]>()
-  for (const vs of filtered) {
-    const key = vs.slot_id ?? '__none__'
-    if (!slotGroups.has(key)) slotGroups.set(key, [])
-    slotGroups.get(key)!.push(vs)
+  for (const vs of allVslots) {
+    if (!vs.slot_id || !matchedSlotIds.has(vs.slot_id) || !vs.order || !vs.slot) continue
+    if (!slotGroups.has(vs.slot_id)) slotGroups.set(vs.slot_id, [])
+    slotGroups.get(vs.slot_id)!.push(vs)
   }
 
   // Sort groups theo time_from của group
@@ -133,6 +139,9 @@ export async function suggestBooking(req: Request, res: Response) {
   const group = sortedGroups[position]
   if (!group) return res.json({ success: true, data: [] })
 
+  // Đơn chính = is_consolidation_primary=true, fallback = group[0]
+  const primaryVSlot = group.find(vs => vs.is_consolidation_primary) ?? group[0]
+
   // Aggregate thông tin của group
   const orderCodes   = group.map(vs => vs.order?.order_code ?? '').filter(Boolean).join(', ')
   const nppNames     = [...new Set(group.map(vs => vs.order?.npp_name).filter((x): x is string => !!x))].join(', ')
@@ -141,8 +150,8 @@ export async function suggestBooking(req: Request, res: Response) {
   const plannedPals  = group.map(vs => vs.order?.planned_pallets).filter(x => x != null).join(', ')
 
   return res.json({ success: true, data: [{
-    tms_order_id:        group[0].order_id,
-    tms_vehicle_slot_id: group[0].id,
+    tms_order_id:        primaryVSlot.order_id,
+    tms_vehicle_slot_id: primaryVSlot.id,
     order_code:          orderCodes,
     booking_slot_from:   group[0].slot?.time_from ?? null,
     booking_slot_to:     group[0].slot?.time_to ?? null,
@@ -492,6 +501,7 @@ export async function relinkAfterDelete(
   // Booking slots matching
   type RelinkSlot = {
     id: string; order_id: string; slot_id: string | null
+    is_consolidation_primary: boolean
     order: {
       order_code: string; date: string; warehouse_id: string
       warehouse_type: string | null; vehicle_type: string | null; direction: string | null
@@ -503,26 +513,31 @@ export async function relinkAfterDelete(
   }
   const { data: vslots } = await supabase
     .from('TmsVehicleSlot')
-    .select(`id, order_id, slot_id, order:TmsOrder!order_id(order_code, date, warehouse_id, warehouse_type, vehicle_type, direction, priority, ncc_id, npp_name, gdo_refs, planned_boxes, planned_pallets), slot:DeliverySlot!slot_id(time_from, time_to)`)
+    .select(`id, order_id, slot_id, is_consolidation_primary, order:TmsOrder!order_id(order_code, date, warehouse_id, warehouse_type, vehicle_type, direction, priority, ncc_id, npp_name, gdo_refs, planned_boxes, planned_pallets), slot:DeliverySlot!slot_id(time_from, time_to)`)
     .eq('license_plate', license_plate)
 
-  const filtered = ((vslots ?? []) as unknown as RelinkSlot[])
-    .filter(vs => {
-      if (!vs.order || !vs.slot) return false
-      if (vs.order.date !== date || vs.order.warehouse_id !== warehouse_id) return false
-      if (direction !== null && vs.order.direction !== direction) return false
-      if (warehouse_type !== null && vs.order.warehouse_type !== warehouse_type) return false
-      if (vehicle_type !== null && vs.order.vehicle_type !== vehicle_type) return false
-      if (company_id !== null && vs.order.ncc_id !== company_id) return false
-      return true
-    })
+  const allRelinkVslots = ((vslots ?? []) as unknown as RelinkSlot[])
+  const filtered = allRelinkVslots.filter(vs => {
+    if (!vs.order || !vs.slot) return false
+    if (vs.order.date !== date || vs.order.warehouse_id !== warehouse_id) return false
+    if (direction !== null && vs.order.direction !== direction) return false
+    if (warehouse_type !== null && vs.order.warehouse_type !== warehouse_type) return false
+    if (vehicle_type !== null && vs.order.vehicle_type !== vehicle_type) return false
+    if (company_id !== null && vs.order.ncc_id !== company_id) return false
+    return true
+  })
 
-  // Nhóm VSlots theo slot_id — 1 group = 1 booking slot (có thể nhiều đơn)
+  // Tập hợp slot_id từ matched → expand group để gom đủ đơn ghép cùng chuyến
+  const matchedRelinkSlotIds = new Set<string>(
+    filtered.map(vs => vs.slot_id).filter((x): x is string => !!x)
+  )
+
+  // Nhóm VSlots theo slot_id — gom ALL VSlot cùng slot (kể cả đơn vehicle_type khác)
   const slotGroups = new Map<string, RelinkSlot[]>()
-  for (const vs of filtered) {
-    const key = vs.slot_id ?? '__none__'
-    if (!slotGroups.has(key)) slotGroups.set(key, [])
-    slotGroups.get(key)!.push(vs)
+  for (const vs of allRelinkVslots) {
+    if (!vs.slot_id || !matchedRelinkSlotIds.has(vs.slot_id) || !vs.order || !vs.slot) continue
+    if (!slotGroups.has(vs.slot_id)) slotGroups.set(vs.slot_id, [])
+    slotGroups.get(vs.slot_id)!.push(vs)
   }
 
   const toMin = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0) }
@@ -555,6 +570,9 @@ export async function relinkAfterDelete(
         ops.push(supabase.from('TmsOrder').update({ export_status: null, updated_at: now }).eq('id', oldId))
       }
     } else {
+      // Đơn chính = is_consolidation_primary=true, fallback = group[0]
+      const primaryVSlot = group.find(vs => vs.is_consolidation_primary) ?? group[0]
+
       // Aggregate thông tin của group
       const orderCodes   = group.map(vs => vs.order?.order_code ?? '').filter(Boolean).join(', ')
       const orderIds     = group.map(vs => vs.order_id).join(', ')
@@ -565,12 +583,12 @@ export async function relinkAfterDelete(
       const hasPriority  = group.some(vs => vs.order?.priority ?? false)
 
       Object.assign(patch, {
-        tms_order_id:            group[0].order_id,
-        tms_vehicle_slot_id:     group[0].id,
+        tms_order_id:            primaryVSlot.order_id,
+        tms_vehicle_slot_id:     primaryVSlot.id,
         tms_order_ids:           orderIds,
         booking_order_code:      orderCodes,
-        booking_slot_from:       group[0].slot?.time_from ?? null,
-        booking_slot_to:         group[0].slot?.time_to ?? null,
+        booking_slot_from:       primaryVSlot.slot?.time_from ?? null,
+        booking_slot_to:         primaryVSlot.slot?.time_to ?? null,
         booking_npp_names:       nppNames || null,
         booking_gdo_refs:        gdoRefs || null,
         booking_planned_boxes:   plannedBoxes || null,

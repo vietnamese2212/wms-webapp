@@ -424,6 +424,12 @@ export default function GateRegistration() {
     })
   }
 
+  // Patch clear booking khi setForm multi-field (ComboField không qua f())
+  function bookingClearPatch(prev: FormData): Partial<FormData> {
+    if (!prev.tms_order_id) return {}
+    return { tms_order_id: '', tms_vehicle_slot_id: '', booking_order_code: '', booking_slot_from: '', booking_slot_to: '', priority: false }
+  }
+
   function applyBooking(s: BookingSuggestion) {
     setForm(prev => ({
       ...prev,
@@ -1068,8 +1074,9 @@ export default function GateRegistration() {
                     company_name_raw: opt.label,
                     vehicle_id: '',
                     license_plate: '',
+                    ...bookingClearPatch(prev),
                   }))}
-                  onClear={() => setForm(prev => ({ ...prev, company_id: '', company_name_raw: '' }))}
+                  onClear={() => setForm(prev => ({ ...prev, company_id: '', company_name_raw: '', ...bookingClearPatch(prev) }))}
                 />
                 {!form.company_id && (
                   <Input
@@ -1095,8 +1102,9 @@ export default function GateRegistration() {
                     ...prev,
                     vehicle_id: opt.value,
                     license_plate: opt.label,
+                    ...bookingClearPatch(prev),
                   }))}
-                  onClear={() => setForm(prev => ({ ...prev, vehicle_id: '', license_plate: '' }))}
+                  onClear={() => setForm(prev => ({ ...prev, vehicle_id: '', license_plate: '', ...bookingClearPatch(prev) }))}
                 />
                 {!form.vehicle_id && (
                   <Input

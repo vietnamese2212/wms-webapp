@@ -364,10 +364,14 @@ export default function GateRegistration() {
       setApiError(e.response?.data?.error?.message ?? 'Lỗi cập nhật'),
   })
 
+  // Cập nhật selected chỉ khi detail đang mở cho chính đăng ký đó — không tự mở nếu đang đóng
+  const syncSelected = (reg: GateRegistration) =>
+    setSelected(prev => prev?.id === reg.id ? reg : prev)
+
   const callMut = useMutation({
     mutationFn: ({ id, custom_time }: { id: string; custom_time?: string }) =>
       apiClient.patch(`/tms/gate-registrations/${id}/call`, { custom_time }).then(r => r.data),
-    onSuccess: (d: { data: GateRegistration }) => { invalidate(); setSelected(d.data); setCallTarget(null) },
+    onSuccess: (d: { data: GateRegistration }) => { invalidate(); syncSelected(d.data); setCallTarget(null) },
     onError: (e: { response?: { data?: { error?: { message?: string } } } }) =>
       alert(e.response?.data?.error?.message ?? 'Lỗi gọi xe'),
   })
@@ -375,7 +379,7 @@ export default function GateRegistration() {
   const entryMut = useMutation({
     mutationFn: ({ id, custom_time }: { id: string; custom_time?: string }) =>
       apiClient.patch(`/tms/gate-registrations/${id}/entry`, { custom_time }).then(r => r.data),
-    onSuccess: (d: { data: GateRegistration }) => { invalidate(); setSelected(d.data); setEntryTarget(null) },
+    onSuccess: (d: { data: GateRegistration }) => { invalidate(); syncSelected(d.data); setEntryTarget(null) },
     onError: (e: { response?: { data?: { error?: { message?: string } } } }) =>
       alert(e.response?.data?.error?.message ?? 'Lỗi xác nhận vào'),
   })
@@ -384,7 +388,7 @@ export default function GateRegistration() {
     mutationFn: ({ id, load_capacity, custom_time }: { id: string; load_capacity?: string; custom_time?: string }) =>
       apiClient.patch(`/tms/gate-registrations/${id}/exit`, { load_capacity: load_capacity || undefined, custom_time }).then(r => r.data),
     onSuccess: (d: { data: GateRegistration }) => {
-      invalidate(); setSelected(d.data); setExitTarget(null); setExitWeight('')
+      invalidate(); syncSelected(d.data); setExitTarget(null); setExitWeight('')
     },
     onError: (e: { response?: { data?: { error?: { message?: string } } } }) =>
       alert(e.response?.data?.error?.message ?? 'Lỗi xác nhận ra'),
@@ -392,21 +396,21 @@ export default function GateRegistration() {
 
   const revertCallMut = useMutation({
     mutationFn: (id: string) => apiClient.patch(`/tms/gate-registrations/${id}/revert-call`).then(r => r.data),
-    onSuccess: (d: { data: GateRegistration }) => { invalidate(); setSelected(d.data) },
+    onSuccess: (d: { data: GateRegistration }) => { invalidate(); syncSelected(d.data) },
     onError: (e: { response?: { data?: { error?: { message?: string } } } }) =>
       alert(e.response?.data?.error?.message ?? 'Lỗi huỷ gọi xe'),
   })
 
   const revertEntryMut = useMutation({
     mutationFn: (id: string) => apiClient.patch(`/tms/gate-registrations/${id}/revert-entry`).then(r => r.data),
-    onSuccess: (d: { data: GateRegistration }) => { invalidate(); setSelected(d.data) },
+    onSuccess: (d: { data: GateRegistration }) => { invalidate(); syncSelected(d.data) },
     onError: (e: { response?: { data?: { error?: { message?: string } } } }) =>
       alert(e.response?.data?.error?.message ?? 'Lỗi huỷ xác nhận vào'),
   })
 
   const revertExitMut = useMutation({
     mutationFn: (id: string) => apiClient.patch(`/tms/gate-registrations/${id}/revert-exit`).then(r => r.data),
-    onSuccess: (d: { data: GateRegistration }) => { invalidate(); setSelected(d.data) },
+    onSuccess: (d: { data: GateRegistration }) => { invalidate(); syncSelected(d.data) },
     onError: (e: { response?: { data?: { error?: { message?: string } } } }) =>
       alert(e.response?.data?.error?.message ?? 'Lỗi huỷ xác nhận ra'),
   })

@@ -87,7 +87,7 @@ function ComboField({
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
   const triggerRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const portalRef = useRef<HTMLDivElement>(null)
   const [dropPos, setDropPos] = useState<{ top: number; left: number; width: number }>({ top: 0, left: 0, width: 0 })
 
   const filtered = options.filter(o =>
@@ -101,6 +101,15 @@ function ComboField({
       const r = triggerRef.current.getBoundingClientRect()
       setDropPos({ top: r.bottom + 2, left: r.left, width: r.width })
     }
+    const handleMouseDown = (e: MouseEvent) => {
+      if (
+        triggerRef.current?.contains(e.target as Node) ||
+        portalRef.current?.contains(e.target as Node)
+      ) return
+      setOpen(false)
+    }
+    document.addEventListener('mousedown', handleMouseDown)
+    return () => document.removeEventListener('mousedown', handleMouseDown)
   }, [open])
 
   return (
@@ -109,13 +118,12 @@ function ComboField({
         <div className="relative flex-1">
           {open ? (
             <Input
-              ref={inputRef}
               autoFocus
               className="text-xs h-8"
               placeholder={`Tìm ${placeholder ?? ''}...`}
               value={search}
               onChange={e => setSearch(e.target.value)}
-              onBlur={() => setTimeout(() => setOpen(false), 150)}
+              onKeyDown={e => { if (e.key === 'Escape') setOpen(false) }}
             />
           ) : (
             <button
@@ -136,6 +144,7 @@ function ComboField({
       </div>
       {open && createPortal(
         <div
+          ref={portalRef}
           data-combofield-portal=""
           style={{ position: 'fixed', top: dropPos.top, left: dropPos.left, width: dropPos.width, zIndex: 9999 }}
           className="bg-white border rounded-md shadow-lg max-h-44 overflow-auto"
@@ -148,7 +157,7 @@ function ComboField({
                 key={o.value}
                 type="button"
                 className="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 flex flex-col"
-                onMouseDown={e => { e.preventDefault(); onSelect(o); setOpen(false) }}
+                onClick={() => { onSelect(o); setOpen(false) }}
               >
                 <span className="font-medium">{o.label}</span>
                 {o.sub && <span className="text-slate-400 text-[10px]">{o.sub}</span>}

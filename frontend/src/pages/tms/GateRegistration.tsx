@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from '@/api/client'
 import { useWarehouses, useWarehouseTypes } from '@/api/hooks'
@@ -133,7 +134,7 @@ function ComboField({
           </button>
         )}
       </div>
-      {open && (
+      {open && createPortal(
         <div
           style={{ position: 'fixed', top: dropPos.top, left: dropPos.left, width: dropPos.width, zIndex: 9999 }}
           className="bg-white border rounded-md shadow-lg max-h-44 overflow-auto"
@@ -153,7 +154,8 @@ function ComboField({
               </button>
             ))
           )}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )

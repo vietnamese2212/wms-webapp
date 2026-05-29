@@ -252,6 +252,14 @@ export async function updateGateRegistration(req: Request, res: Response) {
     content, return_pallet, seal_number, notes,
   } = req.body
 
+  // Đọc trạng thái cũ TRƯỚC khi update để biết biển số cũ (cần relink nếu biển đổi)
+  type GateRow = { license_plate: string | null; date: string; warehouse_id: string; direction: string | null; warehouse_type: string | null; vehicle_type: string | null; company_id: string | null }
+  const { data: before } = await supabase
+    .from('gate_registrations')
+    .select('license_plate, date, warehouse_id, direction, warehouse_type, vehicle_type, company_id')
+    .eq('id', id)
+    .single() as { data: GateRow | null }
+
   const patch: Record<string, unknown> = {
     updated_by: userName,
     updated_at: new Date().toISOString(),
@@ -282,11 +290,17 @@ export async function updateGateRegistration(req: Request, res: Response) {
 
   if (error) return apiErr(res, 'DB_ERROR', error.message, 500)
 
-  // Tính lại vị trí booking sau khi sửa gate
-  type GateRow = { license_plate: string | null; date: string; warehouse_id: string; direction: string | null; warehouse_type: string | null; vehicle_type: string | null; company_id: string | null }
   const g = data as GateRow
+
+  // Relink biển mới
   if (g.license_plate && g.date && g.warehouse_id) {
     await relinkAfterDelete(g.license_plate, g.date, g.warehouse_id, g.direction, g.warehouse_type, g.vehicle_type, g.company_id)
+  }
+
+  // Nếu biển số thay đổi → relink thêm biển cũ để recalculate export_status cho các order còn gắn với biển cũ
+  const plateChanged = before && license_plate !== undefined && before.license_plate !== g.license_plate
+  if (plateChanged && before!.license_plate && before!.date && before!.warehouse_id) {
+    await relinkAfterDelete(before!.license_plate, before!.date, before!.warehouse_id, before!.direction, before!.warehouse_type, before!.vehicle_type, before!.company_id)
   }
 
   return res.json({ success: true, data })

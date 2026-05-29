@@ -18,7 +18,9 @@ import {
   X, Plus, Pencil, Trash2, PhoneCall,
   LogIn, LogOut, Star, Package, ArrowRight, ArrowLeft,
   ChevronDown, Loader2, SlidersHorizontal, Phone, RotateCcw,
+  HelpCircle, XCircle,
 } from 'lucide-react'
+import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -36,11 +38,11 @@ const STATUS_BADGE: Record<GateStatus, string> = {
   COMPLETED:  'bg-blue-100 text-blue-700',
 }
 
-const ROW_COLOR: Record<GateStatus, string> = {
+const ROW_TEXT: Record<GateStatus, string> = {
   REGISTERED: 'hover:bg-slate-50',
-  CALLED:     'bg-[#E85AA0]/10 hover:bg-[#E85AA0]/20',
-  IN:         'bg-[#D8891C]/10 hover:bg-[#D8891C]/20',
-  COMPLETED:  'bg-[#4A90D9]/10 hover:bg-[#4A90D9]/20',
+  CALLED:     'text-[#E85AA0] hover:bg-slate-50',
+  IN:         'text-[#D8891C] hover:bg-slate-50',
+  COMPLETED:  'text-[#4A90D9] line-through hover:bg-slate-50',
 }
 
 const TODAY_VN = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -66,6 +68,19 @@ function fmtTime(str: string | null | undefined) {
   } catch {
     return str
   }
+}
+
+// Icon trạng thái booking: ? nếu đang trong giờ chưa vào, X đỏ nếu đã qua giờ chưa vào
+function bookingIcon(reg: GateRegistration) {
+  if (!reg.booking_slot_from || ['IN', 'COMPLETED'].includes(reg.status)) return null
+  const now = Date.now()
+  const slotFrom = new Date(`${reg.date}T${reg.booking_slot_from}+07:00`).getTime()
+  const slotTo   = reg.booking_slot_to
+    ? new Date(`${reg.date}T${reg.booking_slot_to}+07:00`).getTime()
+    : slotFrom + 3600_000
+  if (now > slotTo)   return <XCircle className="h-3 w-3 text-red-500 shrink-0 inline-block" />
+  if (now >= slotFrom) return <HelpCircle className="h-3 w-3 text-amber-500 shrink-0 inline-block" />
+  return null
 }
 
 // ─── Combobox (dùng trong modal — không bị overflow clip) ────────────────────
@@ -226,7 +241,7 @@ export default function GateRegistration() {
     allowedWhIds && allowedWhIds.size === 1 ? [...allowedWhIds][0] : ''
   )
   const [fWarehouseType, setFWarehouseType] = useState('')
-  const [fVehicleType,   setFVehicleType]   = useState('')
+  const [fVehicleTypes,  setFVehicleTypes]  = useState<string[]>([])
   const [fCompany,       setFCompany]       = useState('')
   const [fDirection,     setFDirection]     = useState('')
   const [fStatus,        setFStatus]        = useState('')
@@ -251,12 +266,11 @@ export default function GateRegistration() {
 
   // ── Queries
   const params: Record<string, string> = {}
-  if (fDate)          params.date           = fDate
-  if (!fDate && fDateTo) params.date_to     = fDateTo
-  if (fDate && fDateTo)  params.date_to     = fDateTo
+  if (fDate && !fDateTo)  params.date      = fDate
+  if (fDate && fDateTo)   params.date_from = fDate
+  if (fDateTo)            params.date_to   = fDateTo
   if (fWarehouse)     params.warehouse_id   = fWarehouse
   if (fWarehouseType) params.warehouse_type = fWarehouseType
-  if (fVehicleType)   params.vehicle_type   = fVehicleType
   if (fCompany)       params.company_id     = fCompany
   if (fDirection)     params.direction      = fDirection
   if (fStatus)        params.status         = fStatus
@@ -265,6 +279,23 @@ export default function GateRegistration() {
     queryKey: ['gate-registrations', params],
     queryFn: () => apiClient.get('/tms/gate-registrations', { params }).then(r => r.data.data),
   })
+
+  // Client-side vehicle type filter + sort: date DESC → vehicle_type ASC → booking_slot_from ASC → reg_number ASC
+  const displayRegs = (() => {
+    const filtered = fVehicleTypes.length > 0
+      ? regs.filter(r => fVehicleTypes.includes(r.vehicle_type ?? ''))
+      : regs
+    return [...filtered].sort((a, b) => {
+      if (a.date !== b.date) return a.date > b.date ? -1 : 1
+      const vta = a.vehicle_type ?? '￿'
+      const vtb = b.vehicle_type ?? '￿'
+      if (vta !== vtb) return vta < vtb ? -1 : 1
+      const bfa = a.booking_slot_from ?? '￿'
+      const bfb = b.booking_slot_from ?? '￿'
+      if (bfa !== bfb) return bfa < bfb ? -1 : 1
+      return a.registration_number - b.registration_number
+    })
+  })()
 
   const { data: companies = [] } = useQuery<TransportCompany[]>({
     queryKey: ['tms-companies'],
@@ -619,14 +650,14 @@ export default function GateRegistration() {
           {/* Bộ lọc thêm */}
           <Button
             variant="outline" size="sm"
-            className={`h-7 text-xs gap-1 ${showMoreFilters || fVehicleType || fCompany || fDirection || fStatus ? 'border-blue-400 text-blue-700 bg-blue-50' : ''}`}
+            className={`h-7 text-xs gap-1 ${showMoreFilters || fVehicleTypes.length > 0 || fCompany || fDirection || fStatus ? 'border-blue-400 text-blue-700 bg-blue-50' : ''}`}
             onClick={() => setShowMoreFilters(v => !v)}
           >
             <SlidersHorizontal className="h-3 w-3" />
             Bộ lọc
-            {(fVehicleType || fCompany || fDirection || fStatus) && (
+            {(fVehicleTypes.length > 0 || fCompany || fDirection || fStatus) && (
               <span className="ml-0.5 bg-blue-500 text-white rounded-full text-[9px] px-1 leading-none py-0.5">
-                {[fVehicleType, fCompany, fDirection, fStatus].filter(Boolean).length}
+                {[fVehicleTypes.length > 0, fCompany, fDirection, fStatus].filter(Boolean).length}
               </span>
             )}
           </Button>
@@ -643,17 +674,13 @@ export default function GateRegistration() {
         {/* Advanced filters */}
         {showMoreFilters && (
           <div className="flex items-center gap-2 flex-wrap mt-2 pt-2 border-t">
-            <Select value={fVehicleType || '__all__'} onValueChange={v => setFVehicleType(v === '__all__' ? '' : v)}>
-              <SelectTrigger className="h-7 text-xs w-32">
-                <SelectValue placeholder="Loại xe" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">Tất cả loại xe</SelectItem>
-                {vehicleTypes.map(vt => (
-                  <SelectItem key={vt.id} value={vt.name}>{vt.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <MultiSelectFilter
+              label="Loại xe"
+              options={vehicleTypes.map(vt => ({ value: vt.name, label: vt.name }))}
+              selected={fVehicleTypes}
+              onChange={setFVehicleTypes}
+              searchable={false}
+            />
 
             <Select value={fCompany || '__all__'} onValueChange={v => setFCompany(v === '__all__' ? '' : v)}>
               <SelectTrigger className="h-7 text-xs w-36">
@@ -693,7 +720,7 @@ export default function GateRegistration() {
 
             <button
               className="text-[10px] text-slate-400 hover:text-red-500 underline"
-              onClick={() => { setFVehicleType(''); setFCompany(''); setFDirection(''); setFStatus('') }}
+              onClick={() => { setFVehicleTypes([]); setFCompany(''); setFDirection(''); setFStatus('') }}
             >
               Xóa bộ lọc
             </button>
@@ -703,7 +730,7 @@ export default function GateRegistration() {
         {/* Stats */}
         <div className="flex gap-3 mt-1.5">
           {(['REGISTERED','CALLED','IN','COMPLETED'] as GateStatus[]).map(s => {
-            const count = regs.filter(r => r.status === s).length
+            const count = displayRegs.filter(r => r.status === s).length
             return (
               <span key={s} className={`text-[10px] px-1.5 py-0.5 rounded-full ${STATUS_BADGE[s]}`}>
                 {STATUS_LABEL[s]}: {count}
@@ -722,7 +749,7 @@ export default function GateRegistration() {
             <div className="flex items-center justify-center h-32 text-sm text-slate-400">
               <Loader2 className="h-4 w-4 animate-spin mr-2" />Đang tải...
             </div>
-          ) : regs.length === 0 ? (
+          ) : displayRegs.length === 0 ? (
             <div className="flex items-center justify-center h-32 text-sm text-slate-400">
               Không có dữ liệu
             </div>
@@ -733,12 +760,13 @@ export default function GateRegistration() {
                   <TableRow>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-8 whitespace-nowrap">#</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Ngày</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Kho</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-14 whitespace-nowrap">Hướng</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Loại kho</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Loại xe</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Nội dung</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Booking</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Mã đơn</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">NPP</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">GDO</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">ĐVVT</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Biển số</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Lái xe</TableHead>
@@ -753,17 +781,16 @@ export default function GateRegistration() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {regs.map(reg => (
+                  {displayRegs.map(reg => (
                     <TableRow
                       key={reg.id}
-                      className={`cursor-pointer ${ROW_COLOR[reg.status]} ${selected?.id === reg.id ? 'ring-1 ring-inset ring-blue-400' : ''}`}
+                      className={`cursor-pointer ${ROW_TEXT[reg.status]} ${selected?.id === reg.id ? 'ring-1 ring-inset ring-blue-400' : ''}`}
                       onClick={() => setSelected(prev => prev?.id === reg.id ? null : reg)}
                     >
-                      <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold text-slate-500 whitespace-nowrap">
+                      <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">
                         {reg.registration_number}
                       </TableCell>
                       <TableCell className="px-2 py-1 text-[10px] font-mono whitespace-nowrap">{fmtDate(reg.date)}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{warehouseName(reg.warehouse_id)}</TableCell>
                       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
                         {reg.direction === 'OUTBOUND'
                           ? <span className="flex items-center gap-0.5 text-orange-600"><ArrowRight className="h-3 w-3" />Xuất</span>
@@ -771,8 +798,7 @@ export default function GateRegistration() {
                           ? <span className="flex items-center gap-0.5 text-blue-600"><ArrowLeft className="h-3 w-3" />Nhập</span>
                           : '—'}
                       </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap">{reg.warehouse_type ?? '—'}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap">{reg.vehicle_type ?? '—'}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.vehicle_type ?? '—'}</TableCell>
                       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
                         <span className="flex items-center gap-1">
                           {reg.return_pallet && <Package className="h-3 w-3 text-blue-500 shrink-0" />}
@@ -781,21 +807,28 @@ export default function GateRegistration() {
                         </span>
                       </TableCell>
                       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
-                        {reg.booking_order_code
-                          ? <div>
-                              <div className="font-mono font-semibold text-slate-700">{reg.booking_order_code}</div>
-                              {(reg.booking_slot_from || reg.booking_slot_to) && (
-                                <div className="text-slate-400">{reg.booking_slot_from}–{reg.booking_slot_to}</div>
-                              )}
-                            </div>
-                          : <span className="text-slate-300">—</span>}
+                        <span className="flex items-center gap-1">
+                          {bookingIcon(reg)}
+                          {reg.booking_slot_from
+                            ? <span className="text-slate-500">{reg.booking_slot_from.slice(0,5)}–{(reg.booking_slot_to ?? '').slice(0,5)}</span>
+                            : <span className="text-slate-300">—</span>}
+                        </span>
                       </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap">{companyName(reg)}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">
+                        {reg.booking_order_code ?? <span className="text-slate-300">—</span>}
+                      </TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
+                        {reg.booking_npp_names ?? <span className="text-slate-300">—</span>}
+                      </TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
+                        {reg.booking_gdo_refs ?? <span className="text-slate-300">—</span>}
+                      </TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{companyName(reg)}</TableCell>
                       <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">{reg.license_plate ?? '—'}</TableCell>
                       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.driver_name ?? '—'}</TableCell>
                       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.phone ?? '—'}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] text-slate-400 whitespace-nowrap">{reg.notes ?? '—'}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap">{fmtTime(reg.registered_at)}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.notes ?? '—'}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{fmtTime(reg.registered_at)}</TableCell>
                       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-medium" style={{ color: '#E85AA0' }}>{fmtTime(reg.called_at)}</TableCell>
                       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-medium" style={{ color: '#D8891C' }}>{fmtTime(reg.entry_at)}</TableCell>
                       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-medium" style={{ color: '#4A90D9' }}>{fmtTime(reg.exit_at)}</TableCell>

@@ -550,6 +550,9 @@ export async function relinkAfterDelete(
     sortedGroups.slice(0, gates.length).flatMap(g => g.map(vs => vs.order_id))
   )
 
+  // Collect orders bị de-link để recalculate sau (không clear ngay — order có thể còn gate khác)
+  const ordersToRecalculate = new Set<string>()
+
   await Promise.all(gates.map((gate, i) => {
     const group = sortedGroups[i]
     const oldOrderIds = getAllOrderIds(gate)
@@ -565,9 +568,9 @@ export async function relinkAfterDelete(
         booking_planned_boxes: null, booking_planned_pallets: null,
         priority: false,
       })
-      // Clear export_status của tất cả order cũ bị de-link
+      // Đánh dấu recalculate thay vì clear ngay — order có thể còn gate khác
       for (const oldId of oldOrderIds) {
-        ops.push(supabase.from('TmsOrder').update({ export_status: null, updated_at: now }).eq('id', oldId))
+        ordersToRecalculate.add(oldId)
       }
     } else {
       // Đơn chính = is_consolidation_primary=true, fallback = group[0]
@@ -607,10 +610,10 @@ export async function relinkAfterDelete(
           ops.push(supabase.from('TmsOrder').update({ export_status: exportStatus, updated_at: now }).eq('id', vs.order_id))
         }
       }
-      // Clear export_status của order cũ bị de-link khỏi toàn bộ gate regs
+      // Đánh dấu recalculate cho order cũ bị de-link
       for (const oldId of oldOrderIds) {
         if (!newOrderIdSet.has(oldId) && !newGroupOrderIds.has(oldId)) {
-          ops.push(supabase.from('TmsOrder').update({ export_status: null, updated_at: now }).eq('id', oldId))
+          ordersToRecalculate.add(oldId)
         }
       }
     }
@@ -618,6 +621,23 @@ export async function relinkAfterDelete(
     ops.unshift(supabase.from('gate_registrations').update(patch).eq('id', gate.id))
     return Promise.all(ops)
   }))
+
+  // Recalculate export_status cho các order bị de-link dựa trên TẤT CẢ gate còn lại của order đó
+  // (xe đơn lẻ / đơn chính / đơn phụ đều được xử lý giống nhau)
+  if (ordersToRecalculate.size > 0) {
+    await Promise.all([...ordersToRecalculate].map(async (orderId) => {
+      const { data: remaining } = await supabase
+        .from('gate_registrations')
+        .select('status')
+        .or(`tms_order_id.eq.${orderId},tms_order_ids.like.%${orderId}%`)
+      const statuses = (remaining ?? []).map(g => (g as { status: string }).status)
+      const exportStatus = statuses.length === 0       ? null
+        : statuses.some(s => s === 'COMPLETED')        ? 'Đã xuất'
+        : statuses.some(s => s === 'IN')               ? 'Đang xuất'
+        :                                                'Đăng ký'
+      await supabase.from('TmsOrder').update({ export_status: exportStatus, updated_at: now }).eq('id', orderId)
+    }))
+  }
 }
 
 export async function deleteGateRegistration(req: Request, res: Response) {

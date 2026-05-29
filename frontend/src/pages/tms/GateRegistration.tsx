@@ -78,8 +78,8 @@ function bookingIcon(reg: GateRegistration) {
   const slotTo   = reg.booking_slot_to
     ? new Date(`${reg.date}T${reg.booking_slot_to}+07:00`).getTime()
     : slotFrom + 3600_000
-  if (now > slotTo)   return <XCircle className="h-3 w-3 text-red-500 shrink-0 inline-block" />
-  if (now >= slotFrom) return <HelpCircle className="h-3 w-3 text-amber-500 shrink-0 inline-block" />
+  if (now > slotTo)    return <XCircle   className="h-3 w-3 text-red-500 shrink-0 inline-block" />
+  if (now >= slotFrom) return <HelpCircle className="h-3 w-3 text-red-500 shrink-0 inline-block" />
   return null
 }
 
@@ -773,9 +773,11 @@ export default function GateRegistration() {
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">SĐT</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Ghi chú</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-14 whitespace-nowrap">Giờ ĐK</TableHead>
-                    <TableHead className="text-[9px] font-medium px-2 py-1.5 w-14 whitespace-nowrap" style={{ color: '#E85AA0' }}>Giờ gọi</TableHead>
-                    <TableHead className="text-[9px] font-medium px-2 py-1.5 w-14 whitespace-nowrap" style={{ color: '#D8891C' }}>Giờ vào</TableHead>
-                    <TableHead className="text-[9px] font-medium px-2 py-1.5 w-14 whitespace-nowrap" style={{ color: '#4A90D9' }}>Giờ ra</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-14 whitespace-nowrap">Giờ gọi</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-14 whitespace-nowrap">Giờ vào</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-14 whitespace-nowrap">Giờ ra</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Kho</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Loại kho</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-20 whitespace-nowrap">TT</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-1 py-1.5 w-40"></TableHead>
                   </TableRow>
@@ -814,13 +816,13 @@ export default function GateRegistration() {
                             : <span className="text-slate-300">—</span>}
                         </span>
                       </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">
+                      <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap text-slate-700">
                         {reg.booking_order_code ?? <span className="text-slate-300">—</span>}
                       </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
+                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-slate-600">
                         {reg.booking_npp_names ?? <span className="text-slate-300">—</span>}
                       </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
+                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-slate-600">
                         {reg.booking_gdo_refs ?? <span className="text-slate-300">—</span>}
                       </TableCell>
                       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{companyName(reg)}</TableCell>
@@ -829,9 +831,11 @@ export default function GateRegistration() {
                       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.phone ?? '—'}</TableCell>
                       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.notes ?? '—'}</TableCell>
                       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{fmtTime(reg.registered_at)}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-medium" style={{ color: '#E85AA0' }}>{fmtTime(reg.called_at)}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-medium" style={{ color: '#D8891C' }}>{fmtTime(reg.entry_at)}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-medium" style={{ color: '#4A90D9' }}>{fmtTime(reg.exit_at)}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-medium">{fmtTime(reg.called_at)}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-medium">{fmtTime(reg.entry_at)}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-medium">{fmtTime(reg.exit_at)}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-slate-600">{warehouseName(reg.warehouse_id)}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-slate-600">{reg.warehouse_type ?? '—'}</TableCell>
                       <TableCell className="px-2 py-1 whitespace-nowrap">
                         <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${STATUS_BADGE[reg.status]}`}>
                           {STATUS_LABEL[reg.status]}

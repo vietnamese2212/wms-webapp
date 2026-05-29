@@ -1702,13 +1702,13 @@ export default function TMSBookings() {
                     </TableCell>
                   )}
                   <TableCell className={`px-2 py-1 ${cellBg}`}>
-                    {order.export_status && (
+                    {vslot.gate_export_status && (
                       <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium ${
-                        order.export_status === 'Đăng ký'  ? 'bg-amber-100 text-amber-700'  :
-                        order.export_status === 'Đang xuất' ? 'bg-blue-100 text-blue-700'   :
-                        order.export_status === 'Đã xuất'   ? 'bg-green-100 text-green-700' :
+                        vslot.gate_export_status === 'Đăng ký'  ? 'bg-amber-100 text-amber-700'  :
+                        vslot.gate_export_status === 'Đang xuất' ? 'bg-blue-100 text-blue-700'   :
+                        vslot.gate_export_status === 'Đã xuất'   ? 'bg-green-100 text-green-700' :
                         'bg-slate-100 text-slate-600'
-                      }`}>{order.export_status}</span>
+                      }`}>{vslot.gate_export_status}</span>
                     )}
                   </TableCell>
                   <TableCell className={`px-2 py-1 ${cellBg}`}>

@@ -423,6 +423,7 @@ export interface TmsVehicleSlot {
   booked_by:     string | null
   consolidation_group_id:    string | null
   is_consolidation_primary:  boolean
+  gate_export_status:        string | null
   created_at:    string
   updated_at:    string
 }

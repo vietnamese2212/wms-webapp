@@ -335,7 +335,7 @@ export async function doEntry(req: Request, res: Response) {
 
   const { data: reg, error: fetchErr } = await supabase
     .from('gate_registrations')
-    .select('tms_order_id, tms_order_ids')
+    .select('tms_order_id, tms_order_ids, tms_vehicle_slot_id')
     .eq('id', id).single()
   if (fetchErr) return apiErr(res, 'DB_ERROR', fetchErr.message, 500)
 
@@ -348,12 +348,12 @@ export async function doEntry(req: Request, res: Response) {
 
   if (error) return apiErr(res, 'DB_ERROR', error.message, 500)
 
-  const allOrderIds = getAllOrderIds(reg as { tms_order_id: string | null; tms_order_ids: string | null })
-  if (allOrderIds.length > 0) {
-    await Promise.all(allOrderIds.map(oid =>
-      supabase.from('TmsOrder').update({ export_status: 'Đang xuất', updated_at: now }).eq('id', oid)
-    ))
-  }
+  const r = reg as { tms_order_id: string | null; tms_order_ids: string | null; tms_vehicle_slot_id: string | null }
+  const allOrderIds = getAllOrderIds(r)
+  await Promise.all([
+    ...allOrderIds.map(oid => supabase.from('TmsOrder').update({ export_status: 'Đang xuất', updated_at: now }).eq('id', oid)),
+    ...(r.tms_vehicle_slot_id ? [supabase.from('TmsVehicleSlot').update({ gate_export_status: 'Đang xuất', updated_at: now }).eq('id', r.tms_vehicle_slot_id)] : []),
+  ])
 
   return res.json({ success: true, data })
 }
@@ -367,7 +367,7 @@ export async function doExit(req: Request, res: Response) {
 
   const { data: reg, error: fetchErr } = await supabase
     .from('gate_registrations')
-    .select('tms_order_id, tms_order_ids')
+    .select('tms_order_id, tms_order_ids, tms_vehicle_slot_id')
     .eq('id', id).single()
   if (fetchErr) return apiErr(res, 'DB_ERROR', fetchErr.message, 500)
 
@@ -388,12 +388,12 @@ export async function doExit(req: Request, res: Response) {
 
   if (error) return apiErr(res, 'DB_ERROR', error.message, 500)
 
-  const allOrderIds = getAllOrderIds(reg as { tms_order_id: string | null; tms_order_ids: string | null })
-  if (allOrderIds.length > 0) {
-    await Promise.all(allOrderIds.map(oid =>
-      supabase.from('TmsOrder').update({ export_status: 'Đã xuất', updated_at: now }).eq('id', oid)
-    ))
-  }
+  const r = reg as { tms_order_id: string | null; tms_order_ids: string | null; tms_vehicle_slot_id: string | null }
+  const allOrderIds = getAllOrderIds(r)
+  await Promise.all([
+    ...allOrderIds.map(oid => supabase.from('TmsOrder').update({ export_status: 'Đã xuất', updated_at: now }).eq('id', oid)),
+    ...(r.tms_vehicle_slot_id ? [supabase.from('TmsVehicleSlot').update({ gate_export_status: 'Đã xuất', updated_at: now }).eq('id', r.tms_vehicle_slot_id)] : []),
+  ])
 
   return res.json({ success: true, data })
 }
@@ -421,7 +421,7 @@ export async function doRevertEntry(req: Request, res: Response) {
 
   const { data: reg, error: fetchErr } = await supabase
     .from('gate_registrations')
-    .select('tms_order_id, tms_order_ids, called_at')
+    .select('tms_order_id, tms_order_ids, tms_vehicle_slot_id, called_at')
     .eq('id', id).single()
   if (fetchErr) return apiErr(res, 'DB_ERROR', fetchErr.message, 500)
 
@@ -436,12 +436,12 @@ export async function doRevertEntry(req: Request, res: Response) {
 
   if (error) return apiErr(res, 'DB_ERROR', error.message, 500)
 
-  const allOrderIds = getAllOrderIds(reg as { tms_order_id: string | null; tms_order_ids: string | null })
-  if (allOrderIds.length > 0) {
-    await Promise.all(allOrderIds.map(oid =>
-      supabase.from('TmsOrder').update({ export_status: 'Đăng ký', updated_at: now }).eq('id', oid)
-    ))
-  }
+  const r = reg as { tms_order_id: string | null; tms_order_ids: string | null; tms_vehicle_slot_id: string | null }
+  const allOrderIds = getAllOrderIds(r)
+  await Promise.all([
+    ...allOrderIds.map(oid => supabase.from('TmsOrder').update({ export_status: 'Đăng ký', updated_at: now }).eq('id', oid)),
+    ...(r.tms_vehicle_slot_id ? [supabase.from('TmsVehicleSlot').update({ gate_export_status: 'Đăng ký', updated_at: now }).eq('id', r.tms_vehicle_slot_id)] : []),
+  ])
 
   return res.json({ success: true, data })
 }
@@ -453,7 +453,7 @@ export async function doRevertExit(req: Request, res: Response) {
 
   const { data: reg, error: fetchErr } = await supabase
     .from('gate_registrations')
-    .select('tms_order_id, tms_order_ids')
+    .select('tms_order_id, tms_order_ids, tms_vehicle_slot_id')
     .eq('id', id).single()
   if (fetchErr) return apiErr(res, 'DB_ERROR', fetchErr.message, 500)
 
@@ -466,12 +466,12 @@ export async function doRevertExit(req: Request, res: Response) {
 
   if (error) return apiErr(res, 'DB_ERROR', error.message, 500)
 
-  const allOrderIds = getAllOrderIds(reg as { tms_order_id: string | null; tms_order_ids: string | null })
-  if (allOrderIds.length > 0) {
-    await Promise.all(allOrderIds.map(oid =>
-      supabase.from('TmsOrder').update({ export_status: 'Đang xuất', updated_at: now }).eq('id', oid)
-    ))
-  }
+  const r = reg as { tms_order_id: string | null; tms_order_ids: string | null; tms_vehicle_slot_id: string | null }
+  const allOrderIds = getAllOrderIds(r)
+  await Promise.all([
+    ...allOrderIds.map(oid => supabase.from('TmsOrder').update({ export_status: 'Đang xuất', updated_at: now }).eq('id', oid)),
+    ...(r.tms_vehicle_slot_id ? [supabase.from('TmsVehicleSlot').update({ gate_export_status: 'Đang xuất', updated_at: now }).eq('id', r.tms_vehicle_slot_id)] : []),
+  ])
 
   return res.json({ success: true, data })
 }
@@ -495,7 +495,7 @@ export async function relinkAfterDelete(
   // Gate regs còn lại, sort theo registered_at
   let gateQ = supabase
     .from('gate_registrations')
-    .select('id, status, tms_order_id, tms_order_ids')
+    .select('id, status, tms_order_id, tms_order_ids, tms_vehicle_slot_id')
     .eq('license_plate', license_plate)
     .eq('date', date)
     .eq('warehouse_id', warehouse_id)
@@ -509,7 +509,7 @@ export async function relinkAfterDelete(
   if (company_id !== null)     gateQ = gateQ.eq('company_id', company_id)
   else                         gateQ = gateQ.is('company_id', null)
 
-  const { data: gates } = await gateQ as { data: { id: string; status: string; tms_order_id: string | null; tms_order_ids: string | null }[] | null }
+  const { data: gates } = await gateQ as { data: { id: string; status: string; tms_order_id: string | null; tms_order_ids: string | null; tms_vehicle_slot_id: string | null }[] | null }
   if (!gates || gates.length === 0) return
 
   // Booking slots matching
@@ -586,6 +586,10 @@ export async function relinkAfterDelete(
       for (const oldId of oldOrderIds) {
         ordersToRecalculate.add(oldId)
       }
+      // Clear gate_export_status trên VSlot cũ (nếu có)
+      if (gate.tms_vehicle_slot_id) {
+        ops.push(supabase.from('TmsVehicleSlot').update({ gate_export_status: null, updated_at: now }).eq('id', gate.tms_vehicle_slot_id))
+      }
     } else {
       // Đơn chính = is_consolidation_primary=true, fallback = group[0]
       const primaryVSlot = group.find(vs => vs.is_consolidation_primary) ?? group[0]
@@ -629,6 +633,15 @@ export async function relinkAfterDelete(
         if (!newOrderIdSet.has(oldId) && !newGroupOrderIds.has(oldId)) {
           ordersToRecalculate.add(oldId)
         }
+      }
+
+      // Cập nhật gate_export_status trên từng TmsVehicleSlot trong group (per-slot tracking)
+      for (const vs of group) {
+        ops.push(supabase.from('TmsVehicleSlot').update({ gate_export_status: exportStatus, updated_at: now }).eq('id', vs.id))
+      }
+      // Nếu gate chuyển sang slot mới → xóa gate_export_status của slot cũ
+      if (gate.tms_vehicle_slot_id && gate.tms_vehicle_slot_id !== primaryVSlot.id) {
+        ops.push(supabase.from('TmsVehicleSlot').update({ gate_export_status: null, updated_at: now }).eq('id', gate.tms_vehicle_slot_id))
       }
     }
 

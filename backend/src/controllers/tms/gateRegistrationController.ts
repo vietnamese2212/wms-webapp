@@ -673,12 +673,13 @@ export async function deleteGateRegistration(req: Request, res: Response) {
   // Lấy thông tin trước khi xóa để re-link sau
   const { data: reg } = await supabase
     .from('gate_registrations')
-    .select('license_plate, date, warehouse_id, direction, warehouse_type, vehicle_type, company_id, tms_order_id, tms_order_ids')
+    .select('license_plate, date, warehouse_id, direction, warehouse_type, vehicle_type, company_id, tms_order_id, tms_order_ids, tms_vehicle_slot_id')
     .eq('id', id)
     .maybeSingle() as { data: {
       license_plate: string | null; date: string; warehouse_id: string
       direction: string | null; warehouse_type: string | null; vehicle_type: string | null
       company_id: string | null; tms_order_id: string | null; tms_order_ids: string | null
+      tms_vehicle_slot_id: string | null
     } | null }
 
   const deletedOrderIds = getAllOrderIds({
@@ -716,6 +717,21 @@ export async function deleteGateRegistration(req: Request, res: Response) {
         :                                                'Đăng ký'
       await supabase.from('TmsOrder').update({ export_status: exportStatus, updated_at: now }).eq('id', orderId)
     }))
+  }
+
+  // Clear gate_export_status trên VSlot cũ nếu không còn gate nào linked vào slot đó
+  // (relinkAfterDelete trả về sớm khi không còn gate → không tự clear được)
+  const deletedVSlotId = reg?.tms_vehicle_slot_id
+  if (deletedVSlotId) {
+    const now = new Date().toISOString()
+    const { data: stillLinked } = await supabase
+      .from('gate_registrations')
+      .select('id')
+      .eq('tms_vehicle_slot_id', deletedVSlotId)
+      .limit(1)
+    if (!stillLinked || stillLinked.length === 0) {
+      await supabase.from('TmsVehicleSlot').update({ gate_export_status: null, updated_at: now }).eq('id', deletedVSlotId)
+    }
   }
 
   return res.json({ success: true })

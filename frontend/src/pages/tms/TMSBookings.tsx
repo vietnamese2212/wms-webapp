@@ -1422,11 +1422,10 @@ export default function TMSBookings() {
     }
   }
 
-  // Xe phụ: trả lại = release (nếu đang BOOKED) rồi xóa luôn dòng
+  // Xe phụ: xóa trực tiếp — backend tự giải phóng booked_count nếu đang BOOKED
   const handleReleaseAndDeleteVslot = async (e: React.MouseEvent, vslot: TmsVehicleSlot) => {
     e.stopPropagation(); setActionErr('')
     try {
-      if (vslot.status === 'BOOKED') await releaseVehicleSlot.mutateAsync(vslot.id)
       await deleteVehicleSlot.mutateAsync(vslot.id)
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message

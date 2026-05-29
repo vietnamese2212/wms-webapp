@@ -312,17 +312,18 @@ export async function revokeVehicleSlot(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
-// DELETE /api/tms/vehicle-slots/:id  — xoá xe khỏi đơn (chỉ khi PENDING)
+// DELETE /api/tms/vehicle-slots/:id  — xoá xe phụ (PENDING hoặc BOOKED)
 export async function deleteVehicleSlot(req: Request, res: Response) {
   try {
     const { id } = req.params
+    const now = new Date().toISOString()
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: existing, error: fetchErr } = await (supabase.from('TmsVehicleSlot') as any)
-      .select('id, slot_id, status, order_id').eq('id', id).single()
+      .select('id, slot_id, status, order_id, license_plate, consolidation_group_id, is_consolidation_primary').eq('id', id).single()
     if (fetchErr) return fail(res, fetchErr.message)
     if (!existing) return fail(res, 'Không tìm thấy vehicle slot', 404)
-    if (existing.status !== 'PENDING') return fail(res, 'Chỉ xoá được xe chưa đặt khung giờ', 400)
+    if (!['PENDING', 'BOOKED'].includes(existing.status as string)) return fail(res, 'Chỉ xoá được xe chưa thực hiện', 400)
 
     // Không cho xoá slot duy nhất của đơn
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -330,9 +331,44 @@ export async function deleteVehicleSlot(req: Request, res: Response) {
       .select('id').eq('order_id', existing.order_id)
     if ((siblings ?? []).length <= 1) return fail(res, 'Không thể xoá xe duy nhất của đơn hàng', 400)
 
+    // Nếu BOOKED: giải phóng booked_count
+    if (existing.status === 'BOOKED' && existing.slot_id) {
+      const plate = existing.license_plate as string | null
+      const othersInSlot = plate ? await countSameBooking(existing.slot_id, plate, id, existing.order_id as string) : 0
+      if (!plate || othersInSlot === 0) {
+        await supabase.rpc('try_book_slot', { p_slot_id: existing.slot_id, p_delta: -1 })
+      }
+    }
+
+    // Xử lý consolidation group
+    const groupId = existing.consolidation_group_id as string | null
+    if (groupId) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: mates } = await (supabase.from('TmsVehicleSlot') as any)
+        .select('id, is_consolidation_primary')
+        .eq('consolidation_group_id', groupId)
+        .neq('id', id)
+      const mateList = (mates ?? []) as { id: string; is_consolidation_primary: boolean }[]
+      if (mateList.length === 1) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (supabase.from('TmsVehicleSlot') as any).update({
+          consolidation_group_id: null, is_consolidation_primary: false, updated_at: now,
+        }).eq('id', mateList[0].id)
+      } else if (mateList.length >= 2 && (existing.is_consolidation_primary as boolean)) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (supabase.from('TmsVehicleSlot') as any).update({
+          is_consolidation_primary: true, updated_at: now,
+        }).eq('id', mateList[0].id)
+      }
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (supabase.from('TmsVehicleSlot') as any).delete().eq('id', id)
     if (error) return fail(res, error.message)
+
+    const deletedPlate = existing.license_plate as string | null
+    if (deletedPlate) await relinkGatesByPlate(deletedPlate, existing.order_id as string)
+
     return ok(res, { id })
   } catch (e) { return fail(res, String(e)) }
 }

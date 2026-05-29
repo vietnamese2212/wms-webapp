@@ -7,7 +7,6 @@ import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { formatDateTime } from '@/utils/formatters'
 import type { GateRegistration, GateStatus, BookingSuggestion, TransportCompany, TmsVehicle, TmsVehicleType } from '@/types'
-import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -745,21 +744,18 @@ export default function GateRegistration() {
       </div>
 
       {/* ── Main area: table */}
-      <div className="flex flex-1 min-h-0 gap-3 p-3 overflow-hidden">
-
-        {/* Table */}
-        <Card className="flex-1 min-w-0 overflow-auto">
-          {isLoading ? (
-            <div className="flex items-center justify-center h-32 text-sm text-slate-400">
-              <Loader2 className="h-4 w-4 animate-spin mr-2" />Đang tải...
-            </div>
-          ) : displayRegs.length === 0 ? (
-            <div className="flex items-center justify-center h-32 text-sm text-slate-400">
-              Không có dữ liệu
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <Table className="min-w-full">
+      <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+        {isLoading ? (
+          <div className="flex items-center justify-center h-32 text-sm text-slate-400">
+            <Loader2 className="h-4 w-4 animate-spin mr-2" />Đang tải...
+          </div>
+        ) : displayRegs.length === 0 ? (
+          <div className="flex items-center justify-center h-32 text-sm text-slate-400">
+            Không có dữ liệu
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <Table className="min-w-full">
                 <TableHeader>
                   <TableRow>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-8 whitespace-nowrap">#</TableHead>
@@ -854,8 +850,6 @@ export default function GateRegistration() {
               </Table>
             </div>
           )}
-        </Card>
-
       </div>
 
       {/* Detail dialog — overlay, không ảnh hưởng layout bảng */}

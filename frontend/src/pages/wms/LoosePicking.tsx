@@ -2,7 +2,7 @@ import { useMemo, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
-import { CalendarDays, Scissors, X, Bookmark } from 'lucide-react'
+import { Scissors, X, Bookmark } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
@@ -32,9 +32,9 @@ function itemLooseStats(i: LoosePickingItem) {
   return { effective, done, remaining: Math.max(0, effective - done) }
 }
 
-function rowBg(s: GDOSummary): string {
-  if (s.totalLoose > 0 && s.totalLooseDone >= s.totalLoose) return 'bg-blue-50 hover:bg-blue-100'
-  if (s.totalLooseDone > 0)                                  return 'bg-amber-50 hover:bg-amber-100'
+function rowText(s: GDOSummary): string {
+  if (s.totalLoose > 0 && s.totalLooseDone >= s.totalLoose) return 'text-[#4A90D9] line-through hover:bg-slate-50'
+  if (s.totalLooseDone > 0)                                  return 'text-[#D8891C] hover:bg-slate-50'
   return 'hover:bg-slate-50'
 }
 
@@ -142,31 +142,24 @@ export default function LoosePicking() {
     <div className="flex flex-col h-full">
 
       {/* ── Header ── */}
-      <div className="border-b bg-white px-4 py-3 shrink-0 space-y-2">
+      <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5">
 
-        <div className="flex items-center gap-2">
-          <h1 className="text-xl font-semibold flex items-center gap-2">
-            <Scissors className="h-5 w-5 text-slate-500" />
-            Nhặt lẻ
-          </h1>
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm font-semibold text-slate-700 shrink-0">Nhặt lẻ</span>
           {totalPending > 0 && (
             <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">
               {totalPending} chưa xong
             </span>
           )}
-        </div>
-
-        <div className="flex gap-2">
-          <div className="relative flex items-center gap-1.5">
-            <CalendarDays className="absolute left-2.5 h-4 w-4 text-slate-400 pointer-events-none" />
+          <div className="flex items-center gap-1.5">
             <Input
               type="date"
-              className="pl-8 h-8 text-sm w-[160px]"
+              className="h-7 text-xs w-[130px]"
               value={f.date}
               onChange={e => setLoosePicking({ date: e.target.value })}
             />
             {f.date && f.date !== TODAY && (
-              <button className="ml-1 text-xs text-slate-400 hover:text-slate-700 underline whitespace-nowrap"
+              <button className="text-[10px] text-slate-400 hover:text-slate-700 underline whitespace-nowrap"
                 onClick={() => setLoosePicking({ date: TODAY })}>
                 Hôm nay
               </button>
@@ -174,11 +167,11 @@ export default function LoosePicking() {
             {f.date && (
               <button className="p-0.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-600"
                 title="Xem tất cả ngày" onClick={() => setLoosePicking({ date: '' })}>
-                <X className="h-3.5 w-3.5" />
+                <X className="h-3 w-3" />
               </button>
             )}
           </div>
-          <SearchInput value={f.search} onChange={v => setLoosePicking({ search: v })} placeholder="Tìm số xe, NPP, mã hàng…" className="flex-1" />
+          <SearchInput value={f.search} onChange={v => setLoosePicking({ search: v })} placeholder="Tìm số xe, NPP, mã hàng…" className="flex-1 min-w-[120px]" />
         </div>
 
         <div className="flex gap-2 flex-wrap items-center">
@@ -211,7 +204,7 @@ export default function LoosePicking() {
       </div>
 
       {/* ── Table ── */}
-      <div className="flex-1 overflow-auto pb-20 lg:pb-4">
+      <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
         {isLoading ? (
           <div className="p-4 space-y-2">
             {[1, 2, 3, 4].map(i => <div key={i} className="h-10 rounded bg-slate-100 animate-pulse" />)}
@@ -228,6 +221,7 @@ export default function LoosePicking() {
             </p>
           </div>
         ) : (
+          <div className="overflow-x-auto">
           <Table className="min-w-[900px]">
             <TableHeader>
               <TableRow className="bg-slate-50">
@@ -259,7 +253,7 @@ export default function LoosePicking() {
                 return (
                   <TableRow
                     key={gdoId || '__unknown__'}
-                    className={`cursor-pointer transition-colors ${rowBg(s)}`}
+                    className={`cursor-pointer ${rowText(s)}`}
                     onClick={() => gdoId && navigate(`/wms/loosepicking/${gdoId}`)}
                   >
                     <TableCell className="px-1 py-1">
@@ -325,6 +319,7 @@ export default function LoosePicking() {
               })}
             </TableBody>
           </Table>
+          </div>
         )}
       </div>
     </div>

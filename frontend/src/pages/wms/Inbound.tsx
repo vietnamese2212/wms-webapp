@@ -581,16 +581,13 @@ export default function Inbound() {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="border-b bg-white px-4 py-3 shrink-0 space-y-2">
+      <div className="border-b bg-white px-3 py-2 shrink-0 space-y-2">
         {/* Row 1: Title + Search + Filter toggle + Create button */}
         <div className="flex items-center gap-2">
-          <h1 className="text-xl font-semibold flex items-center gap-2 shrink-0">
-            <PackagePlus className="h-5 w-5 text-slate-500" />
-            Nhập kho
-          </h1>
+          <span className="text-sm font-semibold text-slate-700 shrink-0">Nhập kho</span>
           <SearchInput value={f.search} onChange={v => setInbound({ search: v })} placeholder="Tìm mã phiếu, hàng hóa…" className="flex-1 min-w-[100px]" />
           <button
-            className={`flex items-center gap-1 h-8 px-2.5 rounded-md border text-xs font-medium transition-colors shrink-0 ${
+            className={`flex items-center gap-1 h-7 px-2 rounded-md border text-xs font-medium transition-colors shrink-0 ${
               showFilters || activeFilterCount > 0
                 ? 'bg-blue-50 border-blue-200 text-blue-700'
                 : 'border-slate-200 text-slate-600 hover:bg-slate-50'
@@ -606,8 +603,8 @@ export default function Inbound() {
             )}
           </button>
           {can(perms, 'inbound', 'create') && (
-            <Button size="sm" className="gap-1.5 shrink-0" onClick={() => setShowNew(true)}>
-              <Plus className="h-4 w-4" /> Tạo phiếu nhập
+            <Button size="sm" className="h-7 text-xs gap-1 shrink-0" onClick={() => setShowNew(true)}>
+              <Plus className="h-3.5 w-3.5" /> Tạo phiếu
             </Button>
           )}
         </div>
@@ -771,7 +768,7 @@ export default function Inbound() {
       </div>
 
       {/* Scrollable content */}
-      <div className="flex-1 overflow-auto pb-20 lg:pb-4">
+      <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
         {isLoading ? (
           <div className="p-4"><TableSkeleton rows={5} cols={6} /></div>
         ) : filteredOrders.length === 0 ? (
@@ -788,6 +785,7 @@ export default function Inbound() {
         ) : (
           <>
             {/* Orders table */}
+            <div className="overflow-x-auto">
             <Table className="min-w-full">
                 <TableHeader>
                   <TableRow>
@@ -814,6 +812,7 @@ export default function Inbound() {
                   ))}
                 </TableBody>
               </Table>
+            </div>
           </>
         )}
       </div>
@@ -823,14 +822,14 @@ export default function Inbound() {
   )
 }
 
-function statusColors(order: InboundOrder) {
+function rowText(order: InboundOrder): string {
   const used = order.location_used_slots ?? 0
   const max  = order.location?.max_pallets ?? 0
   const full = max > 0 && used >= max
   const hasEntries = (order._count?.inventory_entries ?? 0) > 0
-  if (full)        return { bg: 'bg-blue-50',  hover: 'hover:bg-blue-100',  text: 'text-blue-700'  }
-  if (hasEntries)  return { bg: 'bg-amber-50', hover: 'hover:bg-amber-100', text: 'text-amber-600' }
-  return                  { bg: '',            hover: 'hover:bg-slate-50',  text: 'text-slate-400' }
+  if (full)        return 'text-[#4A90D9] hover:bg-slate-50'
+  if (hasEntries)  return 'text-[#D8891C] hover:bg-slate-50'
+  return 'hover:bg-slate-50'
 }
 
 function InboundRow({ order, onClick, onScan }: { order: InboundOrder; onClick: () => void; onScan?: (e: React.MouseEvent) => void }) {
@@ -840,10 +839,9 @@ function InboundRow({ order, onClick, onScan }: { order: InboundOrder; onClick: 
   const matName  = order.material?.short_name ?? order.material?.material_description ?? '—'
   const matCode  = order.material?.material_code ?? ''
   const pallets  = order._count.inventory_entries
-  const { bg, hover, text } = statusColors(order)
 
   return (
-    <TableRow className={`cursor-pointer transition-colors ${bg} ${hover}`} onClick={onClick}>
+    <TableRow className={`cursor-pointer ${rowText(order)}`} onClick={onClick}>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px] font-medium tabular-nums">{dateFull}</span>
         {isRowToday && <span className="ml-1 text-[9px] text-blue-600 font-medium">· Hôm nay</span>}
@@ -867,7 +865,7 @@ function InboundRow({ order, onClick, onScan }: { order: InboundOrder; onClick: 
         {matCode && <span className="ml-1 text-[9px] text-slate-400 font-mono">{matCode}</span>}
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
-        <span className={`text-[10px] font-semibold tabular-nums ${text}`}>{pallets}</span>
+        <span className="text-[10px] font-semibold tabular-nums">{pallets}</span>
         <span className="text-[9px] text-slate-400 ml-0.5">pl</span>
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">

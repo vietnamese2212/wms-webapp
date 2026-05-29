@@ -2,7 +2,7 @@ import { useRef, useState, useMemo, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
-import { Upload, Truck, CheckCircle2, AlertTriangle, CalendarDays, X, Bookmark, Info, Plus, Trash2, PenSquare } from 'lucide-react'
+import { Upload, Truck, CheckCircle2, AlertTriangle, X, Bookmark, Info, Plus, Trash2, PenSquare } from 'lucide-react'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { SearchInput } from '@/components/shared/SearchInput'
 import type { AxiosError } from 'axios'
@@ -25,12 +25,12 @@ const normalizeForMatch = (s: string) =>
 const canonicalExportType = (raw: string, types: { value: string }[]) =>
   types.find(t => normalizeForMatch(t.value) === normalizeForMatch(raw))?.value ?? raw
 
-// ─── Row background by status ─────────────────────────────────
-function gdoRowBg(gdo: GDO) {
-  if (gdo.status === 'COMPLETED')  return 'bg-blue-50 hover:bg-blue-100'
-  if (gdo.status === 'IN_PROGRESS') return 'bg-amber-50 hover:bg-amber-100'
-  if (gdo.status === 'PAUSED')     return 'bg-red-50 hover:bg-red-100'
-  if (gdo.assigned_at)             return 'bg-green-50 hover:bg-green-100'
+// ─── Row text color by status (TEXT color, không dùng background) ────────────
+function gdoRowText(gdo: GDO) {
+  if (gdo.status === 'COMPLETED')   return 'text-[#4A90D9] line-through hover:bg-slate-50'
+  if (gdo.status === 'IN_PROGRESS') return 'text-[#D8891C] hover:bg-slate-50'
+  if (gdo.status === 'PAUSED')      return 'text-red-500 hover:bg-slate-50'
+  if (gdo.assigned_at)              return 'text-green-600 hover:bg-slate-50'
   return 'hover:bg-slate-50'
 }
 
@@ -202,22 +202,41 @@ export default function Outbound() {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="border-b bg-white px-4 py-3 shrink-0 space-y-2">
-        <div className="flex items-center justify-between gap-2">
-          <h1 className="text-xl font-semibold flex items-center gap-2">
-            <Truck className="h-5 w-5 text-slate-500" />
-            Xuất kho
-          </h1>
-          <div className="flex gap-2">
+      <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5">
+        {/* Row 1: Title + Date + Search + Actions */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm font-semibold text-slate-700 shrink-0">Xuất kho</span>
+          <div className="flex items-center gap-1.5">
+            <Input
+              type="date"
+              className="h-7 text-xs w-[130px]"
+              value={f.date}
+              onChange={e => setOutbound({ date: e.target.value })}
+            />
+            {f.date && f.date !== TODAY && (
+              <button className="text-[10px] text-slate-400 hover:text-slate-700 underline whitespace-nowrap"
+                onClick={() => setOutbound({ date: TODAY })}>
+                Hôm nay
+              </button>
+            )}
+            {f.date && (
+              <button className="p-0.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-600"
+                title="Xem tất cả ngày" onClick={() => setOutbound({ date: '' })}>
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+          <SearchInput value={f.search} onChange={v => setOutbound({ search: v })} placeholder="Tìm số xe…" className="flex-1 min-w-[120px]" />
+          <div className="ml-auto flex gap-1.5">
             {can(perms, 'outbound', 'create') && (
-              <Button size="sm" variant="outline" onClick={() => setShowCreate(true)} className="gap-1.5">
-                <PenSquare className="h-4 w-4" />
+              <Button size="sm" variant="outline" onClick={() => setShowCreate(true)} className="h-7 text-xs gap-1">
+                <PenSquare className="h-3.5 w-3.5" />
                 Tạo đơn
               </Button>
             )}
             {can(perms, 'outbound', 'create') && (
-              <Button size="sm" disabled={uploading} onClick={() => fileRef.current?.click()} className="gap-1.5">
-                <Upload className="h-4 w-4" />
+              <Button size="sm" disabled={uploading} onClick={() => fileRef.current?.click()} className="h-7 text-xs gap-1">
+                <Upload className="h-3.5 w-3.5" />
                 {uploading ? 'Đang xử lý…' : 'Upload Excel'}
               </Button>
             )}
@@ -242,32 +261,6 @@ export default function Outbound() {
             <pre className="whitespace-pre-wrap font-sans">{uploadErr}</pre>
           </div>
         )}
-
-        {/* Row 1: Date + Search */}
-        <div className="flex gap-2">
-          <div className="relative flex items-center gap-1.5">
-            <CalendarDays className="absolute left-2.5 h-4 w-4 text-slate-400 pointer-events-none" />
-            <Input
-              type="date"
-              className="pl-8 h-8 text-sm w-[160px]"
-              value={f.date}
-              onChange={e => setOutbound({ date: e.target.value })}
-            />
-            {f.date && f.date !== TODAY && (
-              <button className="ml-1 text-xs text-slate-400 hover:text-slate-700 underline whitespace-nowrap"
-                onClick={() => setOutbound({ date: TODAY })}>
-                Hôm nay
-              </button>
-            )}
-            {f.date && (
-              <button className="p-0.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-600"
-                title="Xem tất cả ngày" onClick={() => setOutbound({ date: '' })}>
-                <X className="h-3.5 w-3.5" />
-              </button>
-            )}
-          </div>
-          <SearchInput value={f.search} onChange={v => setOutbound({ search: v })} placeholder="Tìm số xe…" className="flex-1" />
-        </div>
 
         {/* Row 2: Filters */}
         <div className="flex gap-2 flex-wrap items-center">
@@ -303,7 +296,7 @@ export default function Outbound() {
       </div>
 
       {/* Table */}
-      <div className="flex-1 overflow-auto pb-20 lg:pb-4">
+      <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
         {isLoading || postUploadLoading ? (
           <div className="p-4 space-y-2">
             {[1,2,3,4].map(i => <div key={i} className="h-10 rounded bg-slate-100 animate-pulse" />)}
@@ -315,6 +308,7 @@ export default function Outbound() {
             {!f.date && <p className="text-xs">Upload file Excel để bắt đầu</p>}
           </div>
         ) : (
+          <div className="overflow-x-auto">
           <Table className="min-w-[1700px]">
             <TableHeader>
               <TableRow className="bg-slate-50">
@@ -349,6 +343,7 @@ export default function Outbound() {
               ))}
             </TableBody>
           </Table>
+          </div>
         )}
       </div>
 
@@ -378,7 +373,7 @@ function GDORow({ gdo, onClick, onAssign }: {
   const isPending = gdo.status === 'PENDING'
 
   return (
-    <TableRow className={`cursor-pointer transition-colors ${gdoRowBg(gdo)}`} onClick={onClick}>
+    <TableRow className={`cursor-pointer ${gdoRowText(gdo)}`} onClick={onClick}>
       {/* Bookmark */}
       <TableCell className="px-1.5 py-1" onClick={e => e.stopPropagation()}>
         <button

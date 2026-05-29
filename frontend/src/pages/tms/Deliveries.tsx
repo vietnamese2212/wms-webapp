@@ -1,12 +1,10 @@
 import { useState } from 'react'
 import { Navigation, MapPin, Package, User } from 'lucide-react'
 import { SearchInput } from '@/components/shared/SearchInput'
-import { PageHeader } from '@/components/shared/PageHeader'
 import { DeliveryStatusBadge } from '@/components/shared/StatusBadge'
 import { TableSkeleton } from '@/components/shared/TableSkeleton'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { Button } from '@/components/ui/button'
-import { Card } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useDeliveries } from '@/api/hooks'
@@ -38,14 +36,11 @@ export default function Deliveries() {
   return (
     <div className="flex flex-col h-full">
       <div className="border-b bg-white px-3 py-2 shrink-0">
-        <PageHeader
-          title="Giao hàng"
-          description="Theo dõi lệnh vận chuyển và trạng thái giao hàng"
-        />
-        <div className="flex flex-col sm:flex-row gap-2 mt-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm font-semibold text-slate-700 shrink-0">Giao hàng</span>
           <SearchInput value={search} onChange={setSearch} placeholder="Tìm mã đơn, khách hàng..." className="flex-1 max-w-sm" />
           <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as DeliveryStatus | 'ALL')}>
-            <SelectTrigger className="h-8 text-sm w-full sm:w-44">
+            <SelectTrigger className="h-7 text-xs w-36">
               <SelectValue placeholder="Trạng thái" />
             </SelectTrigger>
             <SelectContent>
@@ -56,20 +51,19 @@ export default function Deliveries() {
             </SelectContent>
           </Select>
         </div>
-        <div className="flex gap-2 mt-2 overflow-x-auto pb-1">
+        <div className="flex gap-3 mt-1.5">
           {Object.entries(counts).map(([key, count]) => {
-            const labels: Record<string, { label: string; color: string }> = {
-              pending:   { label: 'Chờ giao',    color: 'text-amber-600' },
-              assigned:  { label: 'Đã phân công', color: 'text-blue-600' },
-              inTransit: { label: 'Đang giao',   color: 'text-purple-600' },
-              delivered: { label: 'Hoàn thành',  color: 'text-green-600' },
-              failed:    { label: 'Thất bại',    color: 'text-red-600' },
+            const labels: Record<string, { label: string; cls: string }> = {
+              pending:   { label: 'Chờ giao',     cls: 'bg-amber-100 text-amber-700'   },
+              assigned:  { label: 'Đã phân công', cls: 'bg-blue-100 text-blue-700'     },
+              inTransit: { label: 'Đang giao',    cls: 'bg-purple-100 text-purple-700' },
+              delivered: { label: 'Hoàn thành',   cls: 'bg-green-100 text-green-700'   },
+              failed:    { label: 'Thất bại',     cls: 'bg-red-100 text-red-600'       },
             }
             return (
-              <div key={key} className="shrink-0 border rounded-lg px-3 py-1.5 text-center bg-white min-w-[80px]">
-                <p className={`text-base font-bold tabular-nums ${labels[key]?.color}`}>{count}</p>
-                <p className="text-[10px] text-slate-500">{labels[key]?.label}</p>
-              </div>
+              <span key={key} className={`text-[10px] px-1.5 py-0.5 rounded-full ${labels[key]?.cls}`}>
+                {labels[key]?.label}: {count}
+              </span>
             )
           })}
         </div>
@@ -77,20 +71,21 @@ export default function Deliveries() {
 
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
         {isLoading ? (
-          <Card className="m-3"><TableSkeleton rows={5} cols={6} /></Card>
+          <div className="p-4"><TableSkeleton rows={5} cols={6} /></div>
         ) : filtered.length === 0 ? (
           <EmptyState icon={Navigation} title="Không có lệnh giao hàng" />
         ) : (
+          <div className="overflow-x-auto">
           <Table className="min-w-[700px]">
             <TableHeader>
               <TableRow>
-                <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Mã lệnh</TableHead>
-                <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Khách hàng / Điểm đến</TableHead>
-                <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Xe / Tài xế</TableHead>
-                <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right">Hàng hoá</TableHead>
-                <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Lịch giao</TableHead>
-                <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Trạng thái</TableHead>
-                <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right">Thao tác</TableHead>
+                <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap">Mã lệnh</TableHead>
+                <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap">Khách hàng / Điểm đến</TableHead>
+                <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap">Xe / Tài xế</TableHead>
+                <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right whitespace-nowrap">Hàng hoá</TableHead>
+                <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap">Lịch giao</TableHead>
+                <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap">Trạng thái</TableHead>
+                <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right whitespace-nowrap">Thao tác</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -124,6 +119,7 @@ export default function Deliveries() {
               ))}
             </TableBody>
           </Table>
+          </div>
         )}
       </div>
     </div>

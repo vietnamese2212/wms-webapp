@@ -146,7 +146,7 @@ function ComboField({
         <div
           ref={portalRef}
           data-combofield-portal=""
-          style={{ position: 'fixed', top: dropPos.top, left: dropPos.left, width: dropPos.width, zIndex: 9999 }}
+          style={{ position: 'fixed', top: dropPos.top, left: dropPos.left, width: dropPos.width, zIndex: 9999, pointerEvents: 'auto' }}
           className="bg-white border rounded-md shadow-lg max-h-44 overflow-auto"
         >
           {filtered.length === 0 ? (
@@ -284,10 +284,10 @@ export default function GateRegistration() {
   const { data: warehouses = [] } = useWarehouses(true)
   const { data: whTypes = [] } = useWarehouseTypes()
 
-  // Phase 1 hoàn thành khi đủ 6 tiêu chí matching
+  // Phase 1 hoàn thành khi đủ 6 tiêu chí matching (company_name_raw chấp nhận thay company_id cho NCC vãng lai)
   const phase1Complete = !!(
     form.date && form.warehouse_id && form.direction &&
-    form.warehouse_type && form.vehicle_type && form.company_id
+    form.warehouse_type && form.vehicle_type && (form.company_id || form.company_name_raw)
   )
 
   // Suggest chỉ trigger khi đủ cả 7 (phase1 + biển số)
@@ -433,7 +433,7 @@ export default function GateRegistration() {
       const next = { ...prev, [k]: v }
       if (editReg) return next
       const complete = !!(next.date && next.warehouse_id && next.direction &&
-                          next.warehouse_type && next.vehicle_type && next.company_id)
+                          next.warehouse_type && next.vehicle_type && (next.company_id || next.company_name_raw))
       return complete ? next : { ...next, ...PHASE2_DEFAULT }
     })
   }
@@ -1069,7 +1069,7 @@ export default function GateRegistration() {
                   onSelect={opt => setForm(prev => {
                     const next = { ...prev, company_id: opt.value, company_name_raw: opt.label, vehicle_id: '', license_plate: '' }
                     if (editReg) return next
-                    const complete = !!(next.date && next.warehouse_id && next.direction && next.warehouse_type && next.vehicle_type && next.company_id)
+                    const complete = !!(next.date && next.warehouse_id && next.direction && next.warehouse_type && next.vehicle_type && (next.company_id || next.company_name_raw))
                     return complete ? next : { ...next, ...PHASE2_DEFAULT }
                   })}
                   onClear={() => setForm(prev => ({

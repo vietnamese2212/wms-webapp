@@ -136,6 +136,7 @@ function ComboField({
       </div>
       {open && createPortal(
         <div
+          data-combofield-portal=""
           style={{ position: 'fixed', top: dropPos.top, left: dropPos.left, width: dropPos.width, zIndex: 9999 }}
           className="bg-white border rounded-md shadow-lg max-h-44 overflow-auto"
         >
@@ -963,7 +964,12 @@ export default function GateRegistration() {
 
       {/* ── Create / Edit Modal */}
       <Dialog open={modalOpen} onOpenChange={v => { if (!v) closeModal() }}>
-        <DialogContent className="w-[90vw] max-w-3xl max-h-[90vh] flex flex-col p-0">
+        <DialogContent
+          className="w-[90vw] max-w-3xl max-h-[90vh] flex flex-col p-0"
+          onPointerDownOutside={e => {
+            if ((e.target as Element).closest('[data-combofield-portal]')) e.preventDefault()
+          }}
+        >
           <DialogHeader className="px-4 pt-4 pb-2 border-b shrink-0">
             <DialogTitle className="text-sm">
               {editReg ? `Sửa đăng ký #${editReg.registration_number}` : 'Thêm đăng ký xe'}

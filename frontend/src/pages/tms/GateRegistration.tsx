@@ -824,7 +824,7 @@ export default function GateRegistration() {
           {selected && (
             <div className="p-4 space-y-2 text-xs max-h-[80vh] overflow-y-auto">
               {/* Header */}
-              <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex items-center gap-2 flex-wrap pr-8">
                 <span className="font-mono font-semibold text-slate-700">#{selected.registration_number}</span>
                 {selected.priority && <Star className="h-3 w-3 text-amber-500 fill-amber-500" />}
                 <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${STATUS_BADGE[selected.status]}`}>

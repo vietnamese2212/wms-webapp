@@ -142,10 +142,10 @@ export async function suggestBooking(req: Request, res: Response) {
   // Đơn chính = is_consolidation_primary=true, fallback = group[0]
   const primaryVSlot = group.find(vs => vs.is_consolidation_primary) ?? group[0]
 
-  // Aggregate thông tin của group
-  const orderCodes   = group.map(vs => vs.order?.order_code ?? '').filter(Boolean).join(', ')
-  const nppNames     = [...new Set(group.map(vs => vs.order?.npp_name).filter((x): x is string => !!x))].join(', ')
-  const gdoRefs      = group.map(vs => vs.order?.gdo_refs).filter((x): x is string => !!x).join(', ')
+  // Aggregate thông tin của group — dùng '\n' để frontend có thể split theo từng đơn
+  const orderCodes   = group.map(vs => vs.order?.order_code ?? '').filter(Boolean).join('\n')
+  const nppNames     = group.map(vs => vs.order?.npp_name ?? '').join('\n')
+  const gdoRefs      = group.map(vs => vs.order?.gdo_refs ?? '').join('\n')
   const plannedBoxes = group.map(vs => vs.order?.planned_boxes).filter(x => x != null).join(', ')
   const plannedPals  = group.map(vs => vs.order?.planned_pallets).filter(x => x != null).join(', ')
 
@@ -594,11 +594,11 @@ export async function relinkAfterDelete(
       // Đơn chính = is_consolidation_primary=true, fallback = group[0]
       const primaryVSlot = group.find(vs => vs.is_consolidation_primary) ?? group[0]
 
-      // Aggregate thông tin của group
-      const orderCodes   = group.map(vs => vs.order?.order_code ?? '').filter(Boolean).join(', ')
+      // Aggregate thông tin của group — dùng '\n' để frontend có thể split theo từng đơn
+      const orderCodes   = group.map(vs => vs.order?.order_code ?? '').filter(Boolean).join('\n')
       const orderIds     = group.map(vs => vs.order_id).join(', ')
-      const nppNames     = [...new Set(group.map(vs => vs.order?.npp_name).filter((x): x is string => !!x))].join(', ')
-      const gdoRefs      = group.map(vs => vs.order?.gdo_refs).filter((x): x is string => !!x).join(', ')
+      const nppNames     = group.map(vs => vs.order?.npp_name ?? '').join('\n')
+      const gdoRefs      = group.map(vs => vs.order?.gdo_refs ?? '').join('\n')
       const plannedBoxes = group.map(vs => vs.order?.planned_boxes).filter(x => x != null).join(', ')
       const plannedPals  = group.map(vs => vs.order?.planned_pallets).filter(x => x != null).join(', ')
       const hasPriority  = group.some(vs => vs.order?.priority ?? false)

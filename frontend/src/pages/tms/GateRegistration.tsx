@@ -23,6 +23,22 @@ import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+// Render field có thể chứa '\n' (multi-order) thành nhiều dòng riêng biệt
+function renderOrderField(value: string | null | undefined, mono = false) {
+  if (!value) return <span className="text-slate-300">—</span>
+  const parts = value.split('\n')
+  if (parts.length <= 1) return <span className={mono ? 'font-mono font-semibold' : ''}>{value || <span className="text-slate-300">—</span>}</span>
+  return (
+    <div className={`divide-y divide-slate-100 ${mono ? 'font-mono font-semibold' : ''}`}>
+      {parts.map((p, i) => (
+        <div key={i} className={i > 0 ? 'pt-0.5' : ''}>
+          {p || <span className="text-slate-300 font-normal">—</span>}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 const STATUS_LABEL: Record<GateStatus, string> = {
   REGISTERED: 'Đã đăng ký',
   CALLED:     'Đã gọi xe',
@@ -822,14 +838,14 @@ export default function GateRegistration() {
                           {bookingIcon(reg)}
                         </span>
                       </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">
-                        {reg.booking_order_code ?? <span className="text-slate-300">—</span>}
+                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap align-top">
+                        {renderOrderField(reg.booking_order_code, true)}
                       </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
-                        {reg.booking_npp_names ?? <span className="text-slate-300">—</span>}
+                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap align-top">
+                        {renderOrderField(reg.booking_npp_names)}
                       </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
-                        {reg.booking_gdo_refs ?? <span className="text-slate-300">—</span>}
+                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap align-top">
+                        {renderOrderField(reg.booking_gdo_refs)}
                       </TableCell>
                       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{companyName(reg)}</TableCell>
                       <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">{reg.license_plate ?? '—'}</TableCell>

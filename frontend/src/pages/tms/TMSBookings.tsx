@@ -1596,7 +1596,7 @@ export default function TMSBookings() {
                     {slotIndex === 0 ? (
                       <>
                         {order.vehicle_slots.length > 1 && (
-                          <div className="absolute left-[3px] top-[50%] bottom-0 w-px bg-slate-300 pointer-events-none" />
+                          <div className="absolute left-1/2 top-1/2 bottom-0 w-px bg-slate-300 pointer-events-none" />
                         )}
                         {order.order_code || <span className="text-slate-400 font-normal">—</span>}
                       </>
@@ -1605,8 +1605,12 @@ export default function TMSBookings() {
                       const isLast = !nextRow || nextRow.order.id !== order.id || nextRow.slotIndex === 0
                       return (
                         <>
-                          <div className={`absolute left-[3px] w-px bg-slate-300 pointer-events-none ${isLast ? 'top-0 h-1/2' : 'top-0 bottom-0'}`} />
-                          <span className="absolute left-[6px] top-[50%] -translate-y-1/2 text-slate-400 select-none leading-none font-sans font-normal text-[10px]">→</span>
+                          {/* Đường dọc ở giữa cột */}
+                          <div className={`absolute left-1/2 w-px bg-slate-300 pointer-events-none ${isLast ? 'top-0 h-1/2' : 'top-0 bottom-0'}`} />
+                          {/* Đường ngang từ giữa ra tới sát phải */}
+                          <div className="absolute left-1/2 right-[10px] top-1/2 h-px bg-slate-300 pointer-events-none -translate-y-px" />
+                          {/* Mũi tên tại điểm cuối cột */}
+                          <span className="absolute right-0 top-1/2 -translate-y-1/2 text-slate-300 select-none leading-none font-sans font-normal text-[10px]">→</span>
                         </>
                       )
                     })()}

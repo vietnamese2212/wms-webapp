@@ -22,6 +22,16 @@ import type { TmsOrder, TmsVehicleSlot, DeliverySlot, TmsVehicleType, TmsVehicle
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+function fmtTime(str: string | null | undefined) {
+  if (!str) return '—'
+  try {
+    return new Intl.DateTimeFormat('vi-VN', {
+      hour: '2-digit', minute: '2-digit',
+      timeZone: 'Asia/Ho_Chi_Minh',
+    }).format(new Date(str))
+  } catch { return '—' }
+}
+
 function isSlotTimePassed(slotDate: string, timeFrom: string): boolean {
   return Date.now() >= new Date(`${slotDate}T${timeFrom}+07:00`).getTime()
 }
@@ -1528,6 +1538,9 @@ export default function TMSBookings() {
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">SĐT</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Trạng thái</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Tình trạng XH</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Giờ ĐK</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Giờ vào</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Giờ ra</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-16"></TableHead>
               </TableRow>
             </TableHeader>
@@ -1536,6 +1549,10 @@ export default function TMSBookings() {
                 const isConsolidated = !!vslot.consolidation_group_id
                 const isGroupHovered = spanRowKeys.includes(hoveredRow ?? '')
                 const rowTextCls = (() => {
+                  // Gate status overrides booking status
+                  if (vslot.gate_export_status === 'Đã xuất')   return 'text-[#4A90D9] line-through'
+                  if (vslot.gate_export_status === 'Đang xuất') return 'text-[#D8891C]'
+                  if (vslot.gate_export_status === 'Đăng ký')   return 'text-[#E85AA0]'
                   if (groupStatus === 'DONE')    return 'text-[#4A90D9] line-through'
                   if (groupStatus === 'ARRIVED') return 'text-[#4A90D9]'
                   if (groupStatus === 'BOOKED')  return 'text-green-700'
@@ -1687,15 +1704,17 @@ export default function TMSBookings() {
                       <StatusBadge status={groupStatus} />
                     </TableCell>
                   )}
-                  <TableCell className={`px-2 py-1 ${cellHoverBg}`}>
-                    {vslot.gate_export_status && (
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium ${
-                        vslot.gate_export_status === 'Đăng ký'  ? 'bg-amber-100 text-amber-700'  :
-                        vslot.gate_export_status === 'Đang xuất' ? 'bg-blue-100 text-blue-700'   :
-                        vslot.gate_export_status === 'Đã xuất'   ? 'bg-green-100 text-green-700' :
-                        'bg-slate-100 text-slate-600'
-                      }`}>{vslot.gate_export_status}</span>
-                    )}
+                  <TableCell className={`px-2 py-1 text-[10px] whitespace-nowrap ${cellHoverBg}`}>
+                    {vslot.gate_export_status || <span className="text-slate-300">—</span>}
+                  </TableCell>
+                  <TableCell className={`px-2 py-1 text-[10px] font-mono whitespace-nowrap ${cellHoverBg}`}>
+                    {fmtTime(vslot.gate_registered_at)}
+                  </TableCell>
+                  <TableCell className={`px-2 py-1 text-[10px] font-mono whitespace-nowrap ${cellHoverBg}`}>
+                    {fmtTime(vslot.gate_entry_at)}
+                  </TableCell>
+                  <TableCell className={`px-2 py-1 text-[10px] font-mono whitespace-nowrap ${cellHoverBg}`}>
+                    {fmtTime(vslot.gate_exit_at)}
                   </TableCell>
                   <TableCell className={`px-2 py-1 ${cellHoverBg}`}>
                     <div className="flex items-center gap-0.5">

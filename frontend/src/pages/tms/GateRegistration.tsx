@@ -731,7 +731,13 @@ export default function GateRegistration() {
         )}
 
         {/* Stats */}
-        <div className="flex gap-3 mt-1.5">
+        <div className="flex gap-3 mt-1.5 flex-wrap">
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-700 font-medium">
+            Tổng: {displayRegs.length}
+          </span>
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700">
+            Đang chờ: {displayRegs.filter(r => r.status === 'REGISTERED' || r.status === 'CALLED').length}
+          </span>
           {(['REGISTERED','CALLED','IN','COMPLETED'] as GateStatus[]).map(s => {
             const count = displayRegs.filter(r => r.status === s).length
             return (

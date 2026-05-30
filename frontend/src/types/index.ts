@@ -424,6 +424,9 @@ export interface TmsVehicleSlot {
   consolidation_group_id:    string | null
   is_consolidation_primary:  boolean
   gate_export_status:        string | null
+  gate_registered_at:        string | null
+  gate_entry_at:             string | null
+  gate_exit_at:              string | null
   created_at:    string
   updated_at:    string
 }

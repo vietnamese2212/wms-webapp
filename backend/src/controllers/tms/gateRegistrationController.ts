@@ -352,7 +352,7 @@ export async function doEntry(req: Request, res: Response) {
   const allOrderIds = getAllOrderIds(r)
   await Promise.all([
     ...allOrderIds.map(oid => supabase.from('TmsOrder').update({ export_status: 'Đang xuất', updated_at: now }).eq('id', oid)),
-    ...(r.tms_vehicle_slot_id ? [supabase.from('TmsVehicleSlot').update({ gate_export_status: 'Đang xuất', updated_at: now }).eq('id', r.tms_vehicle_slot_id)] : []),
+    ...(r.tms_vehicle_slot_id ? [supabase.from('TmsVehicleSlot').update({ gate_export_status: 'Đang xuất', gate_entry_at: ts, updated_at: now }).eq('id', r.tms_vehicle_slot_id)] : []),
   ])
 
   return res.json({ success: true, data })
@@ -392,7 +392,7 @@ export async function doExit(req: Request, res: Response) {
   const allOrderIds = getAllOrderIds(r)
   await Promise.all([
     ...allOrderIds.map(oid => supabase.from('TmsOrder').update({ export_status: 'Đã xuất', updated_at: now }).eq('id', oid)),
-    ...(r.tms_vehicle_slot_id ? [supabase.from('TmsVehicleSlot').update({ gate_export_status: 'Đã xuất', updated_at: now }).eq('id', r.tms_vehicle_slot_id)] : []),
+    ...(r.tms_vehicle_slot_id ? [supabase.from('TmsVehicleSlot').update({ gate_export_status: 'Đã xuất', gate_exit_at: ts, updated_at: now }).eq('id', r.tms_vehicle_slot_id)] : []),
   ])
 
   return res.json({ success: true, data })
@@ -440,7 +440,7 @@ export async function doRevertEntry(req: Request, res: Response) {
   const allOrderIds = getAllOrderIds(r)
   await Promise.all([
     ...allOrderIds.map(oid => supabase.from('TmsOrder').update({ export_status: 'Đăng ký', updated_at: now }).eq('id', oid)),
-    ...(r.tms_vehicle_slot_id ? [supabase.from('TmsVehicleSlot').update({ gate_export_status: 'Đăng ký', updated_at: now }).eq('id', r.tms_vehicle_slot_id)] : []),
+    ...(r.tms_vehicle_slot_id ? [supabase.from('TmsVehicleSlot').update({ gate_export_status: 'Đăng ký', gate_entry_at: null, updated_at: now }).eq('id', r.tms_vehicle_slot_id)] : []),
   ])
 
   return res.json({ success: true, data })
@@ -470,7 +470,7 @@ export async function doRevertExit(req: Request, res: Response) {
   const allOrderIds = getAllOrderIds(r)
   await Promise.all([
     ...allOrderIds.map(oid => supabase.from('TmsOrder').update({ export_status: 'Đang xuất', updated_at: now }).eq('id', oid)),
-    ...(r.tms_vehicle_slot_id ? [supabase.from('TmsVehicleSlot').update({ gate_export_status: 'Đang xuất', updated_at: now }).eq('id', r.tms_vehicle_slot_id)] : []),
+    ...(r.tms_vehicle_slot_id ? [supabase.from('TmsVehicleSlot').update({ gate_export_status: 'Đang xuất', gate_exit_at: null, updated_at: now }).eq('id', r.tms_vehicle_slot_id)] : []),
   ])
 
   return res.json({ success: true, data })
@@ -495,7 +495,7 @@ export async function relinkAfterDelete(
   // Gate regs còn lại, sort theo registered_at
   let gateQ = supabase
     .from('gate_registrations')
-    .select('id, status, tms_order_id, tms_order_ids, tms_vehicle_slot_id')
+    .select('id, status, tms_order_id, tms_order_ids, tms_vehicle_slot_id, registered_at, entry_at, exit_at')
     .eq('license_plate', license_plate)
     .eq('date', date)
     .eq('warehouse_id', warehouse_id)
@@ -509,7 +509,7 @@ export async function relinkAfterDelete(
   if (company_id !== null)     gateQ = gateQ.eq('company_id', company_id)
   else                         gateQ = gateQ.is('company_id', null)
 
-  const { data: gates } = await gateQ as { data: { id: string; status: string; tms_order_id: string | null; tms_order_ids: string | null; tms_vehicle_slot_id: string | null }[] | null }
+  const { data: gates } = await gateQ as { data: { id: string; status: string; tms_order_id: string | null; tms_order_ids: string | null; tms_vehicle_slot_id: string | null; registered_at: string | null; entry_at: string | null; exit_at: string | null }[] | null }
   if (!gates || gates.length === 0) return
 
   // Booking slots matching
@@ -586,9 +586,9 @@ export async function relinkAfterDelete(
       for (const oldId of oldOrderIds) {
         ordersToRecalculate.add(oldId)
       }
-      // Clear gate_export_status trên VSlot cũ (nếu có)
+      // Clear gate_export_status và timestamps trên VSlot cũ (nếu có)
       if (gate.tms_vehicle_slot_id) {
-        ops.push(supabase.from('TmsVehicleSlot').update({ gate_export_status: null, updated_at: now }).eq('id', gate.tms_vehicle_slot_id))
+        ops.push(supabase.from('TmsVehicleSlot').update({ gate_export_status: null, gate_registered_at: null, gate_entry_at: null, gate_exit_at: null, updated_at: now }).eq('id', gate.tms_vehicle_slot_id))
       }
     } else {
       // Đơn chính = is_consolidation_primary=true, fallback = group[0]
@@ -635,13 +635,18 @@ export async function relinkAfterDelete(
         }
       }
 
-      // Cập nhật gate_export_status trên từng TmsVehicleSlot trong group (per-slot tracking)
-      for (const vs of group) {
-        ops.push(supabase.from('TmsVehicleSlot').update({ gate_export_status: exportStatus, updated_at: now }).eq('id', vs.id))
+      // Cập nhật gate_export_status và timestamps trên từng TmsVehicleSlot trong group
+      const gateTimestamps = {
+        gate_registered_at: gate.registered_at ?? null,
+        gate_entry_at: (gate.status === 'IN' || gate.status === 'COMPLETED') ? (gate.entry_at ?? null) : null,
+        gate_exit_at: gate.status === 'COMPLETED' ? (gate.exit_at ?? null) : null,
       }
-      // Nếu gate chuyển sang slot mới → xóa gate_export_status của slot cũ
+      for (const vs of group) {
+        ops.push(supabase.from('TmsVehicleSlot').update({ gate_export_status: exportStatus, ...gateTimestamps, updated_at: now }).eq('id', vs.id))
+      }
+      // Nếu gate chuyển sang slot mới → xóa gate_export_status và timestamps của slot cũ
       if (gate.tms_vehicle_slot_id && gate.tms_vehicle_slot_id !== primaryVSlot.id) {
-        ops.push(supabase.from('TmsVehicleSlot').update({ gate_export_status: null, updated_at: now }).eq('id', gate.tms_vehicle_slot_id))
+        ops.push(supabase.from('TmsVehicleSlot').update({ gate_export_status: null, gate_registered_at: null, gate_entry_at: null, gate_exit_at: null, updated_at: now }).eq('id', gate.tms_vehicle_slot_id))
       }
     }
 
@@ -730,7 +735,7 @@ export async function deleteGateRegistration(req: Request, res: Response) {
       .eq('tms_vehicle_slot_id', deletedVSlotId)
       .limit(1)
     if (!stillLinked || stillLinked.length === 0) {
-      await supabase.from('TmsVehicleSlot').update({ gate_export_status: null, updated_at: now }).eq('id', deletedVSlotId)
+      await supabase.from('TmsVehicleSlot').update({ gate_export_status: null, gate_registered_at: null, gate_entry_at: null, gate_exit_at: null, updated_at: now }).eq('id', deletedVSlotId)
     }
   }
 

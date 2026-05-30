@@ -11,7 +11,7 @@ const ORDER_SELECT = `
     slot:DeliverySlot!slot_id(id, date, time_from, time_to, direction, cargo_type, max_vehicles, booked_count),
     license_plate, driver_name, driver_phone, status, booked_by,
     consolidation_group_id, is_consolidation_primary,
-    gate_export_status,
+    gate_export_status, gate_registered_at, gate_entry_at, gate_exit_at,
     created_at, updated_at
   )
 `

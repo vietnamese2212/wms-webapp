@@ -5,6 +5,7 @@ import {
   mockLocations, mockOvertimeRequests,
 } from '@/utils/mockData'
 import { apiClient } from './client'
+import { suppressTmsOrdersRealtime } from './realtimeEvents'
 import type { InboundOrder, Department, JobTitle, EmployeeRecord, GDO, InventoryEntry, TmsVehicleType, SlotTemplate, TransportCompany, TmsVehicle } from '@/types'
 
 const delay = (ms = 600) => new Promise((r) => setTimeout(r, ms))
@@ -1680,6 +1681,7 @@ export function useReleaseVehicleSlot() {
     mutationFn: (id: string) =>
       apiClient.patch(`/tms/vehicle-slots/${id}/release`).then(r => r.data.data as import('@/types').TmsVehicleSlot),
     onMutate: async (id: string) => {
+      suppressTmsOrdersRealtime(5000)
       await qc.cancelQueries({ queryKey: ['tms-orders'] })
       const snapshots = qc.getQueriesData<import('@/types').TmsOrder[]>({ queryKey: ['tms-orders'] })
       qc.setQueriesData<import('@/types').TmsOrder[]>(
@@ -1696,6 +1698,7 @@ export function useReleaseVehicleSlot() {
     },
     onError: (_e, _v, ctx: any) => ctx?.snapshots.forEach(([k, d]: any) => qc.setQueryData(k, d)),
     onSettled: () => {
+      suppressTmsOrdersRealtime(2500)
       qc.invalidateQueries({ queryKey: ['tms-orders'] })
       qc.invalidateQueries({ queryKey: ['tms-delivery-slots'] })
     },
@@ -1708,6 +1711,7 @@ export function useRevokeVehicleSlot() {
     mutationFn: (id: string) =>
       apiClient.patch(`/tms/vehicle-slots/${id}/revoke`).then(r => r.data.data as import('@/types').TmsVehicleSlot),
     onMutate: async (id: string) => {
+      suppressTmsOrdersRealtime(5000)
       await qc.cancelQueries({ queryKey: ['tms-orders'] })
       const snapshots = qc.getQueriesData<import('@/types').TmsOrder[]>({ queryKey: ['tms-orders'] })
       qc.setQueriesData<import('@/types').TmsOrder[]>(
@@ -1724,6 +1728,7 @@ export function useRevokeVehicleSlot() {
     },
     onError: (_e, _v, ctx: any) => ctx?.snapshots.forEach(([k, d]: any) => qc.setQueryData(k, d)),
     onSettled: () => {
+      suppressTmsOrdersRealtime(2500)
       qc.invalidateQueries({ queryKey: ['tms-orders'] })
       qc.invalidateQueries({ queryKey: ['tms-delivery-slots'] })
     },

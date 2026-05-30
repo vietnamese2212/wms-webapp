@@ -1145,6 +1145,7 @@ export default function TMSBookings() {
   const [hoveredRow, setHoveredRow] = useState<string | null>(null)
   const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set())
   const [changeDateOpen, setChangeDateOpen] = useState(false)
+  const [pendingRelease, setPendingRelease] = useState<{ type: 'release' | 'revoke' | 'delete'; id: string; vslot?: TmsVehicleSlot; label: string } | null>(null)
 
   const { data: warehouses = [] }             = useWarehouses(true)
   const { data: slotsList = [] }              = useDeliverySlots(warehouseId ? { date, warehouse_id: warehouseId } : undefined)
@@ -1407,33 +1408,35 @@ export default function TMSBookings() {
     }
   }
 
-  const handleRelease = async (e: React.MouseEvent, id: string) => {
-    e.stopPropagation(); setActionErr('')
-    try { await releaseVehicleSlot.mutateAsync(id) }
-    catch (err: unknown) {
-      const msg = (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
-      setActionErr(msg ?? 'Lỗi trả lại')
-    }
+  const handleRelease = (e: React.MouseEvent, id: string) => {
+    e.stopPropagation()
+    setPendingRelease({ type: 'release', id, label: 'Trả lại khung giờ' })
   }
 
-  const handleRevoke = async (e: React.MouseEvent, id: string) => {
-    e.stopPropagation(); setActionErr('')
-    try { await revokeVehicleSlot.mutateAsync(id) }
-    catch (err: unknown) {
+  const handleRevoke = (e: React.MouseEvent, id: string) => {
+    e.stopPropagation()
+    setPendingRelease({ type: 'revoke', id, label: 'Thu hồi booking' })
+  }
+
+  const executeRelease = async () => {
+    if (!pendingRelease) return
+    const { type, id, label } = pendingRelease
+    setPendingRelease(null)
+    setActionErr('')
+    try {
+      if (type === 'release') await releaseVehicleSlot.mutateAsync(id)
+      else if (type === 'revoke') await revokeVehicleSlot.mutateAsync(id)
+      else await deleteVehicleSlot.mutateAsync(id)
+    } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
-      setActionErr(msg ?? 'Lỗi thu hồi booking')
+      setActionErr(msg ?? `Lỗi ${label.toLowerCase()}`)
     }
   }
 
   // Xe phụ: xóa trực tiếp — backend tự giải phóng booked_count nếu đang BOOKED
-  const handleReleaseAndDeleteVslot = async (e: React.MouseEvent, vslot: TmsVehicleSlot) => {
-    e.stopPropagation(); setActionErr('')
-    try {
-      await deleteVehicleSlot.mutateAsync(vslot.id)
-    } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
-      setActionErr(msg ?? 'Lỗi xóa xe phụ')
-    }
+  const handleReleaseAndDeleteVslot = (e: React.MouseEvent, vslot: TmsVehicleSlot) => {
+    e.stopPropagation()
+    setPendingRelease({ type: 'delete', id: vslot.id, vslot, label: 'Trả lại & xóa xe phụ' })
   }
 
   return (
@@ -1858,6 +1861,18 @@ export default function TMSBookings() {
         onClose={() => setDetailOrder(null)}
         warehouses={warehouses as { id: string; name: string }[]}
       />
+      <Dialog open={!!pendingRelease} onOpenChange={() => setPendingRelease(null)}>
+        <DialogContent className="max-w-xs">
+          <DialogHeader>
+            <DialogTitle className="text-sm">{pendingRelease?.label}</DialogTitle>
+          </DialogHeader>
+          <p className="text-xs text-slate-600 py-1">Xác nhận thực hiện thao tác này?</p>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" size="sm" onClick={() => setPendingRelease(null)}>Hủy</Button>
+            <Button size="sm" variant="destructive" onClick={executeRelease}>Xác nhận</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

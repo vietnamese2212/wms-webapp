@@ -58,6 +58,17 @@ function patchSlotCache(payload: Payload) {
 
 let channel: RealtimeChannel | null = null
 
+// Time-based cooldown to block late Realtime events that arrive after a mutation
+// settles but before all backend DB writes have propagated. isMutating() drops to 0
+// the moment the HTTP response lands, but Supabase Realtime events can arrive 100-800ms
+// later — creating a window where intermediate state triggers a premature refetch.
+// Mutations call suppressTmsOrdersRealtime() on start (5s) and again on settle (2.5s).
+let suppressTmsOrdersUntil = 0
+
+export function suppressTmsOrdersRealtime(ms: number): void {
+  suppressTmsOrdersUntil = Date.now() + ms
+}
+
 export function connectRealtimeEvents(): void {
   if (!supabaseClient || channel) return
 
@@ -77,9 +88,9 @@ export function connectRealtimeEvents(): void {
         // tms-orders từ Realtime — tránh race condition khi backend update nhiều rows
         // tuần tự và Realtime fires giữa chừng thấy state trung gian.
         // Mutation's onSettled sẽ invalidate sau khi tất cả writes committed.
-        const isMutating = queryClient.isMutating() > 0
+        const suppress = queryClient.isMutating() > 0 || Date.now() < suppressTmsOrdersUntil
         keys.forEach((k) => {
-          if (isMutating && k[0] === 'tms-orders') return
+          if (suppress && k[0] === 'tms-orders') return
           queryClient.invalidateQueries({ queryKey: k })
         })
       }

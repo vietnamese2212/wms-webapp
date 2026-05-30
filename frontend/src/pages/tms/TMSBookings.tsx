@@ -1606,8 +1606,7 @@ export default function TMSBookings() {
                       return (
                         <>
                           <div className={`absolute left-[3px] w-px bg-slate-300 pointer-events-none ${isLast ? 'top-0 h-1/2' : 'top-0 bottom-0'}`} />
-                          <div className="absolute left-[3px] top-[50%] w-2 h-px bg-slate-300 pointer-events-none" />
-                          <span className="pl-3 text-purple-500 font-normal text-[9px] font-sans">Xe phụ {slotIndex}</span>
+                          <span className="absolute left-[6px] top-[50%] -translate-y-1/2 text-slate-400 select-none leading-none font-sans font-normal text-[10px]">→</span>
                         </>
                       )
                     })()}
@@ -1615,10 +1614,7 @@ export default function TMSBookings() {
                   <TableCell className={`px-2 py-1 text-[10px] font-semibold max-w-[140px] truncate ${cellHoverBg}`}>
                     {isPrimary
                       ? (slotIndex > 0
-                          ? <span className="flex flex-col gap-0 pl-2">
-                              <span className="inline-flex items-center gap-1 text-[9px] text-purple-500">
-                                <span>↳</span><span className="font-medium">Xe phụ {slotIndex}</span>
-                              </span>
+                          ? <span className="flex flex-col gap-0">
                               <span className="truncate">{order.npp_name || <span className="text-slate-400 font-normal">—</span>}</span>
                               {isConsolidated && <span className="text-[9px] font-semibold text-teal-700">★ Đơn chính</span>}
                             </span>

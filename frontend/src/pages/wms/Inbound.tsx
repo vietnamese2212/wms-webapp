@@ -848,7 +848,7 @@ function InboundRow({ order, onClick, onScan }: { order: InboundOrder; onClick: 
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <div className="flex items-center justify-between gap-1.5 min-w-[80px]">
-          <span className="text-[10px] font-mono text-slate-600">{order.location?.location_code ?? '—'}</span>
+          <span className="text-[10px] font-mono">{order.location?.location_code ?? '—'}</span>
           {onScan && (
             <button
               onClick={onScan}
@@ -873,7 +873,7 @@ function InboundRow({ order, onClick, onScan }: { order: InboundOrder; onClick: 
         <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
       </TableCell>
       <TableCell className="px-2 py-1 max-w-[90px]">
-        <span className="text-[10px] text-slate-700 truncate block">{importer}</span>
+        <span className="text-[10px] truncate block">{importer}</span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         {order.shift
@@ -881,7 +881,7 @@ function InboundRow({ order, onClick, onScan }: { order: InboundOrder; onClick: 
           : <span className="text-[10px] text-slate-300">—</span>}
       </TableCell>
       <TableCell className="px-2 py-1">
-        <span className="text-[10px] text-slate-500">{order.notes ?? '—'}</span>
+        <span className="text-[10px]">{order.notes ?? '—'}</span>
       </TableCell>
     </TableRow>
   )

@@ -516,7 +516,7 @@ export default function GateRegistration() {
       ? 'text-[10px] px-1.5 py-0.5 h-auto'
       : 'text-xs px-2 py-1 h-auto'
     return (
-      <div className="flex gap-1 flex-wrap">
+      <div className="flex gap-1 items-center flex-nowrap">
         {/* Gọi xe */}
         {reg.status === 'REGISTERED' && can(perms, 'gate_registration', 'call') && (
           <Button size="sm" variant="outline"
@@ -795,9 +795,9 @@ export default function GateRegistration() {
                       <TableCell className="px-2 py-1 text-[10px] font-mono whitespace-nowrap">{fmtDate(reg.date)}</TableCell>
                       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
                         {reg.direction === 'OUTBOUND'
-                          ? <span className="flex items-center gap-0.5 text-orange-600"><ArrowRight className="h-3 w-3" />Xuất</span>
+                          ? <span className="flex items-center gap-0.5"><ArrowRight className="h-3 w-3 text-orange-600" />Xuất</span>
                           : reg.direction === 'INBOUND'
-                          ? <span className="flex items-center gap-0.5 text-blue-600"><ArrowLeft className="h-3 w-3" />Nhập</span>
+                          ? <span className="flex items-center gap-0.5"><ArrowLeft className="h-3 w-3 text-blue-600" />Nhập</span>
                           : '—'}
                       </TableCell>
                       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.vehicle_type ?? '—'}</TableCell>
@@ -812,17 +812,17 @@ export default function GateRegistration() {
                         <span className="flex items-center gap-1">
                           {bookingIcon(reg)}
                           {reg.booking_slot_from
-                            ? <span className="text-slate-500">{reg.booking_slot_from.slice(0,5)}–{(reg.booking_slot_to ?? '').slice(0,5)}</span>
+                            ? <span>{reg.booking_slot_from.slice(0,5)}–{(reg.booking_slot_to ?? '').slice(0,5)}</span>
                             : <span className="text-slate-300">—</span>}
                         </span>
                       </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap text-slate-700">
+                      <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">
                         {reg.booking_order_code ?? <span className="text-slate-300">—</span>}
                       </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-slate-600">
+                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
                         {reg.booking_npp_names ?? <span className="text-slate-300">—</span>}
                       </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-slate-600">
+                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
                         {reg.booking_gdo_refs ?? <span className="text-slate-300">—</span>}
                       </TableCell>
                       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{companyName(reg)}</TableCell>
@@ -834,8 +834,8 @@ export default function GateRegistration() {
                       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-medium">{fmtTime(reg.called_at)}</TableCell>
                       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-medium">{fmtTime(reg.entry_at)}</TableCell>
                       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-medium">{fmtTime(reg.exit_at)}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-slate-600">{warehouseName(reg.warehouse_id)}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-slate-600">{reg.warehouse_type ?? '—'}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{warehouseName(reg.warehouse_id)}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.warehouse_type ?? '—'}</TableCell>
                       <TableCell className="px-2 py-1 whitespace-nowrap">
                         <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${STATUS_BADGE[reg.status]}`}>
                           {STATUS_LABEL[reg.status]}

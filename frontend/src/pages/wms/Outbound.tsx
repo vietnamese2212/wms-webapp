@@ -392,10 +392,10 @@ function GDORow({ gdo, onClick, onAssign }: {
         <span className="text-[10px] font-mono font-semibold">{gdo.group_code}</span>
       </TableCell>
       <TableCell className="px-2 py-1 max-w-[150px]">
-        <span className="text-[10px] text-slate-700 truncate block" title={npp}>{npp}</span>
+        <span className="text-[10px] truncate block" title={npp}>{npp}</span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
-        <span className="text-[10px] text-slate-700">{gdo.dvvt ?? '—'}</span>
+        <span className="text-[10px]">{gdo.dvvt ?? '—'}</span>
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         <span className="text-[10px] font-semibold tabular-nums">{gdo.total_cartons ?? 0}</span>
@@ -406,13 +406,13 @@ function GDORow({ gdo, onClick, onAssign }: {
         <span className="text-[9px] text-slate-400 ml-0.5">pl</span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
-        <span className="text-[10px] text-slate-700">{gdo.warehouse?.name ?? '—'}</span>
+        <span className="text-[10px]">{gdo.warehouse?.name ?? '—'}</span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
-        <span className="text-[10px] text-slate-700">{gdo.export_type ?? '—'}</span>
+        <span className="text-[10px]">{gdo.export_type ?? '—'}</span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
-        <span className="text-[10px] text-slate-700">{gdo.warehouse_type ?? '—'}</span>
+        <span className="text-[10px]">{gdo.warehouse_type ?? '—'}</span>
       </TableCell>
 
       {/* Giờ giao đơn — inline assign action */}
@@ -432,27 +432,27 @@ function GDORow({ gdo, onClick, onAssign }: {
       </TableCell>
 
       <TableCell className="px-2 py-1 whitespace-nowrap">
-        <span className="text-[10px] tabular-nums text-slate-600">{fTime(gdo.started_at)}</span>
+        <span className="text-[10px] tabular-nums">{fTime(gdo.started_at)}</span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
-        <span className="text-[10px] tabular-nums text-slate-600">{fTime(gdo.completed_at)}</span>
+        <span className="text-[10px] tabular-nums">{fTime(gdo.completed_at)}</span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
-        <span className="text-[10px] tabular-nums text-slate-600">{fTime(gdo.completed_at)}</span>
+        <span className="text-[10px] tabular-nums">{fTime(gdo.completed_at)}</span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${statusCls}`}>{statusLabel}</span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
-        <span className="text-[10px] text-slate-700">{gdo.exporter_name ?? '—'}</span>
+        <span className="text-[10px]">{gdo.exporter_name ?? '—'}</span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
-        <span className="text-[10px] text-slate-700">
+        <span className="text-[10px]">
           {gdo.forklift_driver_names || gdo.forklift_driver?.name || '—'}
         </span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
-        <span className="text-[10px] text-slate-700">{gdo.loader_name ?? '—'}</span>
+        <span className="text-[10px]">{gdo.loader_name ?? '—'}</span>
       </TableCell>
     </TableRow>
   )

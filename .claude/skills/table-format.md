@@ -26,6 +26,15 @@
 | Đơn vị phụ | thêm `text-slate-400` |
 | Empty | `<span className="text-slate-300">—</span>` |
 
+## Không wrap text — bắt buộc
+
+**Mọi `<TableHead>` và `<TableCell>` đều phải có `whitespace-nowrap`** — không có ngoại lệ.
+
+- Thiếu `whitespace-nowrap` → text xuống dòng → row cao bất thường → layout vỡ
+- Nội dung dài cần rút ngắn → dùng `truncate` (bao gồm `whitespace-nowrap` + `overflow-hidden`) kết hợp `max-w-[Npx]`
+- Không dùng `max-w` để giới hạn cột nếu không có `truncate` — text sẽ vẫn wrap
+- Container `overflow-x-auto` đảm bảo bảng scroll ngang thay vì vỡ layout khi cột nhiều
+
 ## Màu row theo trạng thái — TEXT color, không dùng background
 
 ```tsx
@@ -54,13 +63,7 @@ const ROW_TEXT: Record<Status, string> = {
   </span>
 </TableCell>
 ```
-
-## Thứ tự cột gợi ý (Gate Registration pattern)
-
-`# | Ngày | Hướng | Loại xe | Nội dung | [Booking cols] | ĐVVT | Biển số | Lái xe | SĐT | Ghi chú | Giờ ĐK | Giờ gọi | Giờ vào | Giờ ra | Kho | Loại kho | TT | Actions`
-
-**Nguyên tắc:** thông tin đã có trên filter bar → đưa ra cột sau cùng (trước TT), không xóa hoàn toàn.
-
+Filter cần gộp vào 1 nút để tránh làm rối
 ## Booking icon (Gate Registration)
 
 ```tsx

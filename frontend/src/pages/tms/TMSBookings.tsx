@@ -1521,22 +1521,22 @@ export default function TMSBookings() {
                     />
                   )}
                 </TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Mã đơn</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Tên NPP</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-10">Đặt giờ</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Khung giờ</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Biển số</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">ĐVVT</TableHead>
-                <TableHead className="text-[9px] font-medium text-red-500 px-2 py-1.5 w-6">UT</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Hướng</TableHead>
-                {isNccUser && !warehouseId && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Kho</TableHead>}
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Loại kho</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Loại xe</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right">Thùng</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right">Pallet</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right">Tấn</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">SĐT</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Trạng thái</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Mã đơn</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Tên NPP</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap w-10">Đặt giờ</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Khung giờ</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Biển số</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">ĐVVT</TableHead>
+                <TableHead className="text-[9px] font-medium text-red-500 px-2 py-1.5 whitespace-nowrap w-6">UT</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Hướng</TableHead>
+                {isNccUser && !warehouseId && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Kho</TableHead>}
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Loại kho</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Loại xe</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap text-right">Thùng</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap text-right">Pallet</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap text-right">Tấn</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">SĐT</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Trạng thái</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Tình trạng XH</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Giờ ĐK</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Giờ vào</TableHead>
@@ -1630,7 +1630,7 @@ export default function TMSBookings() {
                   </TableCell>
 
                   {showSlotCell && (
-                    <TableCell rowSpan={slotCellRowspan > 1 ? slotCellRowspan : undefined} className={`px-2 py-1 text-[10px] align-middle ${cellHoverBg}`}>
+                    <TableCell rowSpan={slotCellRowspan > 1 ? slotCellRowspan : undefined} className={`px-2 py-1 text-[10px] whitespace-nowrap align-middle ${cellHoverBg}`}>
                       {vslot.slot && (
                         <span className="font-mono">{vslot.slot.time_from.slice(0, 5)}–{vslot.slot.time_to.slice(0, 5)}</span>
                       )}
@@ -1638,7 +1638,7 @@ export default function TMSBookings() {
                   )}
                   {/* Biển số — merge qua tất cả rows cùng vehicle group */}
                   {stt !== null && (
-                    <TableCell rowSpan={sttRowspan > 1 ? sttRowspan : undefined} className={`px-2 py-1 text-[10px] font-mono font-semibold align-middle ${cellHoverBg}`}>
+                    <TableCell rowSpan={sttRowspan > 1 ? sttRowspan : undefined} className={`px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap align-middle ${cellHoverBg}`}>
                       {vslot.license_plate ? (
                         <span className="flex items-center gap-0.5">
                           {user?.employee_code && vslot.license_plate === user.employee_code && (
@@ -1650,7 +1650,7 @@ export default function TMSBookings() {
                     </TableCell>
                   )}
                   {stt !== null && (
-                    <TableCell rowSpan={sttRowspan > 1 ? sttRowspan : undefined} className={`px-2 py-1 text-[10px] max-w-[120px] truncate align-middle ${cellHoverBg}`}>
+                    <TableCell rowSpan={sttRowspan > 1 ? sttRowspan : undefined} className={`px-2 py-1 text-[10px] whitespace-nowrap max-w-[120px] truncate align-middle ${cellHoverBg}`}>
                       {order.ncc?.name || <span className="text-slate-300">—</span>}
                     </TableCell>
                   )}
@@ -1659,7 +1659,7 @@ export default function TMSBookings() {
                   </TableCell>
                   {/* Hướng — merge qua tất cả rows cùng vehicle group */}
                   {stt !== null && (
-                    <TableCell rowSpan={sttRowspan > 1 ? sttRowspan : undefined} className={`px-2 py-1 text-[10px] align-middle ${cellHoverBg}`}>
+                    <TableCell rowSpan={sttRowspan > 1 ? sttRowspan : undefined} className={`px-2 py-1 text-[10px] whitespace-nowrap align-middle ${cellHoverBg}`}>
                       {order.direction ? (
                         <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${order.direction === 'OUTBOUND' ? 'bg-orange-100 text-orange-700' : 'bg-teal-100 text-teal-700'}`}>
                           {order.direction === 'OUTBOUND' ? 'Xuất' : 'Nhập'}
@@ -1668,39 +1668,39 @@ export default function TMSBookings() {
                     </TableCell>
                   )}
                   {isNccUser && !warehouseId && (
-                    <TableCell className={`px-2 py-1 text-[10px] ${cellHoverBg}`}>
+                    <TableCell className={`px-2 py-1 text-[10px] whitespace-nowrap ${cellHoverBg}`}>
                       {(warehouses as { id: string; name: string }[]).find(w => w.id === order.warehouse_id)?.name ?? '—'}
                     </TableCell>
                   )}
                   {/* Loại kho — merge qua tất cả rows cùng vehicle group */}
                   {stt !== null && (
-                    <TableCell rowSpan={sttRowspan > 1 ? sttRowspan : undefined} className={`px-2 py-1 text-[10px] align-middle ${cellHoverBg}`}>
+                    <TableCell rowSpan={sttRowspan > 1 ? sttRowspan : undefined} className={`px-2 py-1 text-[10px] whitespace-nowrap align-middle ${cellHoverBg}`}>
                       {order.warehouse_type || <span className="text-slate-400">—</span>}
                     </TableCell>
                   )}
-                  <TableCell className={`px-2 py-1 text-[10px] ${cellHoverBg}`}>
+                  <TableCell className={`px-2 py-1 text-[10px] whitespace-nowrap ${cellHoverBg}`}>
                     {order.vehicle_type || <span className="text-slate-400">—</span>}
                   </TableCell>
-                  <TableCell className={`px-2 py-1 text-[10px] tabular-nums text-right ${cellHoverBg}`}>
+                  <TableCell className={`px-2 py-1 text-[10px] whitespace-nowrap tabular-nums text-right ${cellHoverBg}`}>
                     {order.planned_boxes != null
                       ? <>{order.planned_boxes}<span className="text-slate-400 text-[9px]"> thùng</span></>
                       : <span className="text-slate-400">—</span>}
                   </TableCell>
-                  <TableCell className={`px-2 py-1 text-[10px] tabular-nums text-right ${cellHoverBg}`}>
+                  <TableCell className={`px-2 py-1 text-[10px] whitespace-nowrap tabular-nums text-right ${cellHoverBg}`}>
                     {order.planned_pallets != null
                       ? <>{order.planned_pallets}<span className="text-slate-400 text-[9px]"> pl</span></>
                       : <span className="text-slate-400">—</span>}
                   </TableCell>
-                  <TableCell className={`px-2 py-1 text-[10px] tabular-nums text-right ${cellHoverBg}`}>
+                  <TableCell className={`px-2 py-1 text-[10px] whitespace-nowrap tabular-nums text-right ${cellHoverBg}`}>
                     {order.planned_tons != null
                       ? <>{order.planned_tons}<span className="text-slate-400 text-[9px]"> t</span></>
                       : <span className="text-slate-400">—</span>}
                   </TableCell>
-                  <TableCell className={`px-2 py-1 text-[10px] ${cellHoverBg}`}>
+                  <TableCell className={`px-2 py-1 text-[10px] whitespace-nowrap ${cellHoverBg}`}>
                     {vslot.driver_phone || <span className="text-slate-400">—</span>}
                   </TableCell>
                   {stt !== null && (
-                    <TableCell rowSpan={sttRowspan > 1 ? sttRowspan : undefined} className={`px-2 py-1 align-middle ${cellHoverBg}`}>
+                    <TableCell rowSpan={sttRowspan > 1 ? sttRowspan : undefined} className={`px-2 py-1 whitespace-nowrap align-middle ${cellHoverBg}`}>
                       <StatusBadge status={groupStatus} />
                     </TableCell>
                   )}

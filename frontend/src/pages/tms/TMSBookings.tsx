@@ -1510,6 +1510,7 @@ export default function TMSBookings() {
             <TableHeader>
               <TableRow>
                 <TableHead className="px-1 py-1.5 w-6"></TableHead>
+                <TableHead className="p-0 w-5"></TableHead>
                 <TableHead className="px-2 py-1.5 w-8">
                   {checkableOrderIds.length > 0 && (
                     <input
@@ -1577,19 +1578,28 @@ export default function TMSBookings() {
                     : !isPrimary ? 'border-t border-t-slate-200' : '',
                 ].filter(Boolean).join(' ')}>
                   {stt !== null && (
-                    <TableCell rowSpan={sttRowspan} className={`relative px-0 py-0 w-6 align-middle border-r border-slate-100 ${cellHoverBg}`}>
-                      {isConsolidated && sttRowspan > 1 && (() => {
-                        const pct = 50 / sttRowspan
-                        return (
-                          <>
-                            <div className="absolute left-1/2 w-px bg-teal-500 pointer-events-none" style={{ top: `${pct}%`, bottom: `${pct}%` }} />
-                            <div className="absolute h-px bg-teal-500 pointer-events-none" style={{ top: `${pct}%`, left: '50%', right: 2 }} />
-                            <div className="absolute h-px bg-teal-500 pointer-events-none" style={{ bottom: `${pct}%`, left: '50%', right: 2 }} />
-                          </>
-                        )
-                      })()}
+                    <TableCell rowSpan={sttRowspan} className={`px-1 py-1 w-6 text-center align-middle border-r border-slate-100 ${cellHoverBg}`}>
                     </TableCell>
                   )}
+                  {/* Bracket column: mỗi row tự vẽ đoạn của mình — không dùng rowspan/absolute-% để tránh lỗi browser */}
+                  <TableCell className={`relative p-0 w-5 ${cellHoverBg}`}>
+                    {(() => {
+                      if (isPrimary && isConsolidated && sttRowspan > 1) {
+                        return <>
+                          <div className="absolute left-1/2 top-1/2 bottom-0 w-px bg-teal-500 pointer-events-none" />
+                          <div className="absolute left-1/2 right-0 top-1/2 h-px bg-teal-500 pointer-events-none" />
+                        </>
+                      }
+                      if (!isPrimary) {
+                        const isLastSec = rowKey === spanRowKeys[spanRowKeys.length - 1]
+                        return <>
+                          <div className={`absolute left-1/2 w-px bg-teal-500 pointer-events-none ${isLastSec ? 'top-0 h-1/2' : 'top-0 bottom-0'}`} />
+                          <div className="absolute left-1/2 right-0 top-1/2 h-px bg-teal-500 pointer-events-none" />
+                        </>
+                      }
+                      return null
+                    })()}
+                  </TableCell>
                   <TableCell className={`px-2 py-1 w-8 ${cellHoverBg}`}>
                     {isFirstOrderRow && checkableOrderIds.includes(order.id) && (
                       <input

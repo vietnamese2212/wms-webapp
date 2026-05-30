@@ -1631,7 +1631,7 @@ export function useAddVehicleSlot() {
         slot_id: null, slot: null, license_plate: null,
         driver_name: null, driver_phone: null, status: 'PENDING', booked_by: null,
         consolidation_group_id: null, is_consolidation_primary: false,
-        gate_export_status: null,
+        gate_export_status: null, gate_registered_at: null, gate_entry_at: null, gate_exit_at: null,
         created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
       }
       qc.setQueriesData<import('@/types').TmsOrder[]>(

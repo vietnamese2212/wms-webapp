@@ -352,7 +352,7 @@ export async function doEntry(req: Request, res: Response) {
   const allOrderIds = getAllOrderIds(r)
   await Promise.all([
     ...allOrderIds.map(oid => supabase.from('TmsOrder').update({ export_status: 'Đang xuất', updated_at: now }).eq('id', oid)),
-    ...(r.tms_vehicle_slot_id ? [supabase.from('TmsVehicleSlot').update({ gate_export_status: 'Đang xuất', gate_entry_at: ts, updated_at: now }).eq('id', r.tms_vehicle_slot_id)] : []),
+    ...(r.tms_vehicle_slot_id ? [updateVSlotGateStatus(r.tms_vehicle_slot_id, { gate_export_status: 'Đang xuất', gate_entry_at: ts, updated_at: now })] : []),
   ])
 
   return res.json({ success: true, data })
@@ -392,7 +392,7 @@ export async function doExit(req: Request, res: Response) {
   const allOrderIds = getAllOrderIds(r)
   await Promise.all([
     ...allOrderIds.map(oid => supabase.from('TmsOrder').update({ export_status: 'Đã xuất', updated_at: now }).eq('id', oid)),
-    ...(r.tms_vehicle_slot_id ? [supabase.from('TmsVehicleSlot').update({ gate_export_status: 'Đã xuất', gate_exit_at: ts, updated_at: now }).eq('id', r.tms_vehicle_slot_id)] : []),
+    ...(r.tms_vehicle_slot_id ? [updateVSlotGateStatus(r.tms_vehicle_slot_id, { gate_export_status: 'Đã xuất', gate_exit_at: ts, updated_at: now })] : []),
   ])
 
   return res.json({ success: true, data })
@@ -440,7 +440,7 @@ export async function doRevertEntry(req: Request, res: Response) {
   const allOrderIds = getAllOrderIds(r)
   await Promise.all([
     ...allOrderIds.map(oid => supabase.from('TmsOrder').update({ export_status: 'Đăng ký', updated_at: now }).eq('id', oid)),
-    ...(r.tms_vehicle_slot_id ? [supabase.from('TmsVehicleSlot').update({ gate_export_status: 'Đăng ký', gate_entry_at: null, updated_at: now }).eq('id', r.tms_vehicle_slot_id)] : []),
+    ...(r.tms_vehicle_slot_id ? [updateVSlotGateStatus(r.tms_vehicle_slot_id, { gate_export_status: 'Đăng ký', gate_entry_at: null, updated_at: now })] : []),
   ])
 
   return res.json({ success: true, data })
@@ -470,7 +470,7 @@ export async function doRevertExit(req: Request, res: Response) {
   const allOrderIds = getAllOrderIds(r)
   await Promise.all([
     ...allOrderIds.map(oid => supabase.from('TmsOrder').update({ export_status: 'Đang xuất', updated_at: now }).eq('id', oid)),
-    ...(r.tms_vehicle_slot_id ? [supabase.from('TmsVehicleSlot').update({ gate_export_status: 'Đang xuất', gate_exit_at: null, updated_at: now }).eq('id', r.tms_vehicle_slot_id)] : []),
+    ...(r.tms_vehicle_slot_id ? [updateVSlotGateStatus(r.tms_vehicle_slot_id, { gate_export_status: 'Đang xuất', gate_exit_at: null, updated_at: now })] : []),
   ])
 
   return res.json({ success: true, data })
@@ -481,6 +481,21 @@ function getAllOrderIds(reg: { tms_order_id: string | null; tms_order_ids: strin
   if (reg.tms_order_ids) return reg.tms_order_ids.split(', ').filter(Boolean)
   if (reg.tms_order_id) return [reg.tms_order_id]
   return []
+}
+
+// Helper: update gate status trên primary slot VÀ toàn bộ secondary slots cùng consolidation_group
+// Cần thiết vì gate_registrations chỉ lưu primary slot ID, nhưng group chia sẻ gate timestamps
+async function updateVSlotGateStatus(vslotId: string, patch: Record<string, unknown>): Promise<void> {
+  const { data: slot } = await supabase
+    .from('TmsVehicleSlot')
+    .select('consolidation_group_id')
+    .eq('id', vslotId)
+    .maybeSingle()
+  if (slot?.consolidation_group_id) {
+    await supabase.from('TmsVehicleSlot').update(patch).eq('consolidation_group_id', slot.consolidation_group_id)
+  } else {
+    await supabase.from('TmsVehicleSlot').update(patch).eq('id', vslotId)
+  }
 }
 
 // Helper: tái liên kết booking cho tất cả gate_reg theo position
@@ -586,9 +601,9 @@ export async function relinkAfterDelete(
       for (const oldId of oldOrderIds) {
         ordersToRecalculate.add(oldId)
       }
-      // Clear gate_export_status và timestamps trên VSlot cũ (nếu có)
+      // Clear gate_export_status và timestamps trên VSlot cũ (và toàn bộ group nếu có)
       if (gate.tms_vehicle_slot_id) {
-        ops.push(supabase.from('TmsVehicleSlot').update({ gate_export_status: null, gate_registered_at: null, gate_entry_at: null, gate_exit_at: null, updated_at: now }).eq('id', gate.tms_vehicle_slot_id))
+        ops.push(updateVSlotGateStatus(gate.tms_vehicle_slot_id, { gate_export_status: null, gate_registered_at: null, gate_entry_at: null, gate_exit_at: null, updated_at: now }))
       }
     } else {
       // Đơn chính = is_consolidation_primary=true, fallback = group[0]
@@ -644,9 +659,9 @@ export async function relinkAfterDelete(
       for (const vs of group) {
         ops.push(supabase.from('TmsVehicleSlot').update({ gate_export_status: exportStatus, ...gateTimestamps, updated_at: now }).eq('id', vs.id))
       }
-      // Nếu gate chuyển sang slot mới → xóa gate_export_status và timestamps của slot cũ
+      // Nếu gate chuyển sang slot mới → xóa gate_export_status và timestamps của slot cũ (và group cũ)
       if (gate.tms_vehicle_slot_id && gate.tms_vehicle_slot_id !== primaryVSlot.id) {
-        ops.push(supabase.from('TmsVehicleSlot').update({ gate_export_status: null, gate_registered_at: null, gate_entry_at: null, gate_exit_at: null, updated_at: now }).eq('id', gate.tms_vehicle_slot_id))
+        ops.push(updateVSlotGateStatus(gate.tms_vehicle_slot_id, { gate_export_status: null, gate_registered_at: null, gate_entry_at: null, gate_exit_at: null, updated_at: now }))
       }
     }
 
@@ -735,7 +750,7 @@ export async function deleteGateRegistration(req: Request, res: Response) {
       .eq('tms_vehicle_slot_id', deletedVSlotId)
       .limit(1)
     if (!stillLinked || stillLinked.length === 0) {
-      await supabase.from('TmsVehicleSlot').update({ gate_export_status: null, gate_registered_at: null, gate_entry_at: null, gate_exit_at: null, updated_at: now }).eq('id', deletedVSlotId)
+      await updateVSlotGateStatus(deletedVSlotId, { gate_export_status: null, gate_registered_at: null, gate_entry_at: null, gate_exit_at: null, updated_at: now })
     }
   }
 

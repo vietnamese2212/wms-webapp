@@ -95,19 +95,19 @@ export default function Deliveries() {
                   <TableCell className="px-2 py-1">
                     <p className="text-[10px] font-medium truncate max-w-[160px]">{order.customer}</p>
                     <p className="text-[10px] text-slate-400 flex items-center gap-1 truncate max-w-[160px]">
-                      <MapPin className="h-2.5 w-2.5 shrink-0" />{order.destination}
+                      {order.destination}<MapPin className="h-2.5 w-2.5 shrink-0" />
                     </p>
                   </TableCell>
                   <TableCell className="px-2 py-1">
                     <p className="text-[10px] font-medium">{order.vehicle?.plateNumber ?? '—'}</p>
                     <p className="text-[10px] text-slate-400 flex items-center gap-1">
-                      <User className="h-2.5 w-2.5" />{order.driver?.name ?? 'Chưa phân công'}
+                      {order.driver?.name ?? 'Chưa phân công'}<User className="h-2.5 w-2.5" />
                     </p>
                   </TableCell>
                   <TableCell className="px-2 py-1 text-right">
                     <p className="text-[10px] font-medium tabular-nums">{formatWeight(order.weight)}</p>
                     <p className="text-[10px] text-slate-400 flex items-center gap-1 justify-end">
-                      <Package className="h-2.5 w-2.5" />{order.items} kiện
+                      {order.items} kiện<Package className="h-2.5 w-2.5" />
                     </p>
                   </TableCell>
                   <TableCell className="px-2 py-1 text-[10px] text-slate-500">{formatDateTime(order.scheduledAt)}</TableCell>

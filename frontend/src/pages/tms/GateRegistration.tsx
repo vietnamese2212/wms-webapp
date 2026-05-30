@@ -795,25 +795,25 @@ export default function GateRegistration() {
                       <TableCell className="px-2 py-1 text-[10px] font-mono whitespace-nowrap">{fmtDate(reg.date)}</TableCell>
                       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
                         {reg.direction === 'OUTBOUND'
-                          ? <span className="flex items-center gap-0.5"><ArrowRight className="h-3 w-3 text-orange-600" />Xuất</span>
+                          ? <span className="flex items-center gap-0.5">Xuất<ArrowRight className="h-3 w-3 text-orange-600" /></span>
                           : reg.direction === 'INBOUND'
-                          ? <span className="flex items-center gap-0.5"><ArrowLeft className="h-3 w-3 text-blue-600" />Nhập</span>
+                          ? <span className="flex items-center gap-0.5">Nhập<ArrowLeft className="h-3 w-3 text-blue-600" /></span>
                           : '—'}
                       </TableCell>
                       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.vehicle_type ?? '—'}</TableCell>
                       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
                         <span className="flex items-center gap-1">
-                          {reg.return_pallet && <Package className="h-3 w-3 text-blue-500 shrink-0" />}
                           <span>{reg.content ?? '—'}</span>
+                          {reg.return_pallet && <Package className="h-3 w-3 text-blue-500 shrink-0" />}
                           {reg.priority && <Star className="h-2.5 w-2.5 text-amber-500 fill-amber-500 shrink-0" />}
                         </span>
                       </TableCell>
                       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
                         <span className="flex items-center gap-1">
-                          {bookingIcon(reg)}
                           {reg.booking_slot_from
                             ? <span>{reg.booking_slot_from.slice(0,5)}–{(reg.booking_slot_to ?? '').slice(0,5)}</span>
                             : <span className="text-slate-300">—</span>}
+                          {bookingIcon(reg)}
                         </span>
                       </TableCell>
                       <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">

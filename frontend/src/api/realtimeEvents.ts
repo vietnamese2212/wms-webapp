@@ -71,10 +71,17 @@ export function connectRealtimeEvents(): void {
 
         // Invalidate để eventual consistency (background refetch sau patch)
         const keys = TABLE_QUERY_MAP[payload.table]
-        if (keys) {
-          keys.forEach((k) => queryClient.invalidateQueries({ queryKey: k }))
-        }
-        // Bảng không có trong map → bỏ qua, không bust toàn bộ cache
+        if (!keys) return
+
+        // Khi đang có mutation in-flight (optimistic update), bỏ qua invalidation
+        // tms-orders từ Realtime — tránh race condition khi backend update nhiều rows
+        // tuần tự và Realtime fires giữa chừng thấy state trung gian.
+        // Mutation's onSettled sẽ invalidate sau khi tất cả writes committed.
+        const isMutating = queryClient.isMutating() > 0
+        keys.forEach((k) => {
+          if (isMutating && k[0] === 'tms-orders') return
+          queryClient.invalidateQueries({ queryKey: k })
+        })
       }
     )
     .subscribe((status) => {

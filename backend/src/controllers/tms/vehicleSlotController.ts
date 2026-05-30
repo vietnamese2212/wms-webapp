@@ -300,7 +300,9 @@ export async function revokeVehicleSlot(req: Request, res: Response) {
     const { data, error } = await (supabase.from('TmsVehicleSlot') as any)
       .update({
         slot_id: null, license_plate: null, driver_phone: null, status: 'PENDING',
-        consolidation_group_id: null, is_consolidation_primary: false, updated_at: now,
+        consolidation_group_id: null, is_consolidation_primary: false,
+        gate_export_status: null, gate_registered_at: null, gate_entry_at: null, gate_exit_at: null,
+        updated_at: now,
       })
       .eq('id', id)
       .select('*, slot:DeliverySlot!slot_id(id, date, time_from, time_to, direction, cargo_type, max_vehicles, booked_count)')
@@ -433,7 +435,9 @@ export async function releaseVehicleSlot(req: Request, res: Response) {
     const { data, error } = await (supabase.from('TmsVehicleSlot') as any)
       .update({
         slot_id: null, license_plate: null, driver_phone: null, status: 'PENDING',
-        consolidation_group_id: null, is_consolidation_primary: false, updated_at: now,
+        consolidation_group_id: null, is_consolidation_primary: false,
+        gate_export_status: null, gate_registered_at: null, gate_entry_at: null, gate_exit_at: null,
+        updated_at: now,
       })
       .eq('id', id)
       .select('*, slot:DeliverySlot!slot_id(id, date, time_from, time_to, direction, cargo_type, max_vehicles, booked_count)')

@@ -1687,7 +1687,7 @@ export function useReleaseVehicleSlot() {
         old => old?.map(o => ({
           ...o,
           vehicle_slots: o.vehicle_slots.map(vs => vs.id === id
-            ? { ...vs, slot_id: null, slot: null, license_plate: null, driver_phone: null, status: 'PENDING', consolidation_group_id: null, is_consolidation_primary: false, gate_export_status: null }
+            ? { ...vs, slot_id: null, slot: null, license_plate: null, driver_phone: null, status: 'PENDING', consolidation_group_id: null, is_consolidation_primary: false, gate_export_status: null, gate_registered_at: null, gate_entry_at: null, gate_exit_at: null }
             : vs
           ),
         }))
@@ -1715,7 +1715,7 @@ export function useRevokeVehicleSlot() {
         old => old?.map(o => ({
           ...o,
           vehicle_slots: o.vehicle_slots.map(vs => vs.id === id
-            ? { ...vs, slot_id: null, slot: null, license_plate: null, driver_phone: null, status: 'PENDING', consolidation_group_id: null, is_consolidation_primary: false, gate_export_status: null }
+            ? { ...vs, slot_id: null, slot: null, license_plate: null, driver_phone: null, status: 'PENDING', consolidation_group_id: null, is_consolidation_primary: false, gate_export_status: null, gate_registered_at: null, gate_entry_at: null, gate_exit_at: null }
             : vs
           ),
         }))

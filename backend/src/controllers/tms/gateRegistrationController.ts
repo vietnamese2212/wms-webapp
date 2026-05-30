@@ -659,6 +659,9 @@ export async function relinkAfterDelete(
       for (const vs of group) {
         ops.push(supabase.from('TmsVehicleSlot').update({ gate_export_status: exportStatus, ...gateTimestamps, updated_at: now }).eq('id', vs.id))
       }
+      // Safety net: propagate sang secondary slots bị lọc ra khỏi group (ví dụ: ncc_id hoặc
+      // vehicle_type khác primary) — tìm qua consolidation_group_id thay vì filter slot_id
+      ops.push(updateVSlotGateStatus(primaryVSlot.id, { gate_export_status: exportStatus, ...gateTimestamps, updated_at: now }))
       // Nếu gate chuyển sang slot mới → xóa gate_export_status và timestamps của slot cũ (và group cũ)
       if (gate.tms_vehicle_slot_id && gate.tms_vehicle_slot_id !== primaryVSlot.id) {
         ops.push(updateVSlotGateStatus(gate.tms_vehicle_slot_id, { gate_export_status: null, gate_registered_at: null, gate_entry_at: null, gate_exit_at: null, updated_at: now }))

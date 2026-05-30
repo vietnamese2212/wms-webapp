@@ -1592,8 +1592,25 @@ export default function TMSBookings() {
                       />
                     )}
                   </TableCell>
-                  <TableCell className={`px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap ${cellHoverBg}`}>
-                    {order.order_code || <span className="text-slate-400 font-normal">—</span>}
+                  <TableCell className={`relative px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap ${cellHoverBg}`}>
+                    {slotIndex === 0 ? (
+                      <>
+                        {order.vehicle_slots.length > 1 && (
+                          <div className="absolute left-[3px] top-[50%] bottom-0 w-px bg-slate-300 pointer-events-none" />
+                        )}
+                        {order.order_code || <span className="text-slate-400 font-normal">—</span>}
+                      </>
+                    ) : (() => {
+                      const nextRow = tableRows[rowIndex + 1]
+                      const isLast = !nextRow || nextRow.order.id !== order.id || nextRow.slotIndex === 0
+                      return (
+                        <>
+                          <div className={`absolute left-[3px] w-px bg-slate-300 pointer-events-none ${isLast ? 'top-0 h-1/2' : 'top-0 bottom-0'}`} />
+                          <div className="absolute left-[3px] top-[50%] w-2 h-px bg-slate-300 pointer-events-none" />
+                          <span className="pl-3 text-purple-500 font-normal text-[9px] font-sans">Xe phụ {slotIndex}</span>
+                        </>
+                      )
+                    })()}
                   </TableCell>
                   <TableCell className={`px-2 py-1 text-[10px] font-semibold max-w-[140px] truncate ${cellHoverBg}`}>
                     {isPrimary

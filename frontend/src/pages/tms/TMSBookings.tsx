@@ -1625,21 +1625,16 @@ export default function TMSBookings() {
                       )
                     })()}
                   </TableCell>
-                  <TableCell className={`px-2 py-1 text-[10px] font-semibold max-w-[140px] truncate ${cellHoverBg}`}>
+                  <TableCell className={`px-2 py-1 text-[10px] font-semibold max-w-[140px] truncate whitespace-nowrap ${cellHoverBg}`}>
                     {isPrimary
-                      ? (slotIndex > 0
-                          ? <span className="flex flex-col gap-0">
-                              <span className="truncate">{order.npp_name || <span className="text-slate-400 font-normal">—</span>}</span>
-                              {isConsolidated && <span className="text-[9px] font-semibold text-teal-700">★ Đơn chính</span>}
-                            </span>
-                          : <span className="flex flex-col gap-0">
-                              <span className="truncate">{order.npp_name || <span className="text-slate-400 font-normal">—</span>}</span>
-                              {isConsolidated && <span className="text-[9px] font-semibold text-teal-700">★ Đơn chính</span>}
-                            </span>)
-                      : <span className="flex flex-col gap-0 pl-2">
-                          <span className="truncate">{order.npp_name || <span className="text-slate-400 font-normal">—</span>}</span>
-                          <span className="text-[9px] font-semibold text-teal-600">↑ Đơn phụ {secIndex}</span>
-                        </span>
+                      ? <>
+                          {isConsolidated && sttRowspan > 1 && <span className="font-normal text-teal-600">(đơn chính): </span>}
+                          {order.npp_name || <span className="text-slate-400 font-normal">—</span>}
+                        </>
+                      : <>
+                          <span className="font-normal text-teal-600">(đơn phụ {secIndex}): </span>
+                          {order.npp_name || <span className="text-slate-400 font-normal">—</span>}
+                        </>
                     }
                   </TableCell>
 

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import * as XLSX from 'xlsx'
-import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, CalendarDays, ShieldX, ChevronRight } from 'lucide-react'
+import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, CalendarDays, ShieldX } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -1577,8 +1577,17 @@ export default function TMSBookings() {
                     : !isPrimary ? 'border-t border-t-slate-200' : '',
                 ].filter(Boolean).join(' ')}>
                   {stt !== null && (
-                    <TableCell rowSpan={sttRowspan} className={`px-1 py-1 w-6 text-center align-middle border-r border-slate-100 ${cellHoverBg}`}>
-                      {!!vslot.slot_id && <ChevronRight className="h-3.5 w-3.5 text-red-500 mx-auto" />}
+                    <TableCell rowSpan={sttRowspan} className={`relative px-0 py-0 w-6 align-middle border-r border-slate-100 ${cellHoverBg}`}>
+                      {isConsolidated && sttRowspan > 1 && (() => {
+                        const pct = 50 / sttRowspan
+                        return (
+                          <>
+                            <div className="absolute left-1/2 w-px bg-teal-500 pointer-events-none" style={{ top: `${pct}%`, bottom: `${pct}%` }} />
+                            <div className="absolute h-px bg-teal-500 pointer-events-none" style={{ top: `${pct}%`, left: '50%', right: 2 }} />
+                            <div className="absolute h-px bg-teal-500 pointer-events-none" style={{ bottom: `${pct}%`, left: '50%', right: 2 }} />
+                          </>
+                        )
+                      })()}
                     </TableCell>
                   )}
                   <TableCell className={`px-2 py-1 w-8 ${cellHoverBg}`}>
@@ -1605,14 +1614,12 @@ export default function TMSBookings() {
                       const isLast = !nextRow || nextRow.order.id !== order.id || nextRow.slotIndex === 0
                       return (
                         <>
-                          {/* Đường dọc: chỉ nửa dưới — tránh chèn vào chữ dòng trên */}
-                          {!isLast && (
-                            <div className="absolute left-1/2 top-1/2 bottom-0 w-px bg-slate-300 pointer-events-none" />
-                          )}
-                          {/* Nhánh ngang + mũi tên trong 1 flex container → thẳng hàng tuyệt đối */}
+                          {/* Đường dọc: nửa trên để nối từ xe chính xuống; tiếp tục full nếu còn xe phụ */}
+                          <div className={`absolute left-1/2 w-px bg-slate-300 pointer-events-none ${isLast ? 'top-0 h-1/2' : 'top-0 bottom-0'}`} />
+                          {/* Nhánh ngang + CSS triangle arrowhead — một khối duy nhất, không dùng ký tự font */}
                           <div className="absolute left-1/2 right-0 top-1/2 -translate-y-1/2 flex items-center pointer-events-none">
                             <div className="flex-1 h-px bg-slate-300" />
-                            <span className="text-slate-300 select-none font-sans font-normal text-[10px] leading-none shrink-0">→</span>
+                            <div className="w-0 h-0 border-t-[3px] border-t-transparent border-b-[3px] border-b-transparent border-l-[4px] border-l-slate-300 shrink-0" />
                           </div>
                         </>
                       )

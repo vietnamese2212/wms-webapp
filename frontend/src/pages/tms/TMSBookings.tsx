@@ -1605,12 +1605,15 @@ export default function TMSBookings() {
                       const isLast = !nextRow || nextRow.order.id !== order.id || nextRow.slotIndex === 0
                       return (
                         <>
-                          {/* Đường dọc ở giữa cột */}
-                          <div className={`absolute left-1/2 w-px bg-slate-300 pointer-events-none ${isLast ? 'top-0 h-1/2' : 'top-0 bottom-0'}`} />
-                          {/* Đường ngang từ giữa ra tới sát phải */}
-                          <div className="absolute left-1/2 right-[10px] top-1/2 h-px bg-slate-300 pointer-events-none -translate-y-px" />
-                          {/* Mũi tên tại điểm cuối cột */}
-                          <span className="absolute right-0 top-1/2 -translate-y-1/2 text-slate-300 select-none leading-none font-sans font-normal text-[10px]">→</span>
+                          {/* Đường dọc: chỉ nửa dưới — tránh chèn vào chữ dòng trên */}
+                          {!isLast && (
+                            <div className="absolute left-1/2 top-1/2 bottom-0 w-px bg-slate-300 pointer-events-none" />
+                          )}
+                          {/* Nhánh ngang + mũi tên trong 1 flex container → thẳng hàng tuyệt đối */}
+                          <div className="absolute left-1/2 right-0 top-1/2 -translate-y-1/2 flex items-center pointer-events-none">
+                            <div className="flex-1 h-px bg-slate-300" />
+                            <span className="text-slate-300 select-none font-sans font-normal text-[10px] leading-none shrink-0">→</span>
+                          </div>
                         </>
                       )
                     })()}

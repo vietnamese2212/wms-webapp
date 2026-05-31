@@ -105,6 +105,7 @@ interface ComboOption { value: string; label: string; sub?: string }
 function ComboField({
   value, displayValue, options, placeholder, loading,
   onSelect, onClear,
+  freetextMode, freeTextValue, onFreeText,
 }: {
   value: string
   displayValue: string
@@ -113,6 +114,9 @@ function ComboField({
   loading?: boolean
   onSelect: (opt: ComboOption) => void
   onClear: () => void
+  freetextMode?: boolean
+  freeTextValue?: string
+  onFreeText?: (text: string) => void
 }) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
@@ -125,8 +129,16 @@ function ComboField({
     (o.sub ?? '').toLowerCase().includes(search.toLowerCase())
   )
 
+  // Text hiển thị khi dropdown đóng (freetext mode)
+  const closedText = value ? displayValue : (freeTextValue ?? '')
+
   useEffect(() => {
-    if (!open) { setSearch(''); return }
+    if (!open) {
+      // Commit text đã gõ khi đóng dropdown (freetext mode, chưa chọn option)
+      if (freetextMode && !value && onFreeText) onFreeText(search)
+      setSearch('')
+      return
+    }
     if (triggerRef.current) {
       const r = triggerRef.current.getBoundingClientRect()
       setDropPos({ top: r.bottom + 2, left: r.left, width: r.width })
@@ -146,7 +158,16 @@ function ComboField({
     <div className="relative" ref={triggerRef}>
       <div className="flex gap-1">
         <div className="relative flex-1">
-          {open ? (
+          {freetextMode ? (
+            <Input
+              className="text-xs h-8"
+              placeholder={placeholder ?? 'Tìm hoặc nhập...'}
+              value={open ? search : closedText}
+              onChange={e => { setSearch(e.target.value); if (!open) setOpen(true) }}
+              onFocus={() => { setSearch(closedText); setOpen(true) }}
+              onKeyDown={e => { if (e.key === 'Escape') setOpen(false) }}
+            />
+          ) : open ? (
             <Input
               autoFocus
               className="text-xs h-8"
@@ -166,7 +187,7 @@ function ComboField({
             </button>
           )}
         </div>
-        {value && (
+        {(value || (freetextMode && freeTextValue)) && (
           <button type="button" onClick={onClear} className="text-slate-400 hover:text-slate-600">
             <X className="h-3.5 w-3.5" />
           </button>
@@ -182,7 +203,9 @@ function ComboField({
           onTouchMove={e => e.stopPropagation()}
         >
           {filtered.length === 0 ? (
-            <div className="px-3 py-2 text-xs text-slate-400">Không có kết quả</div>
+            <div className="px-3 py-2 text-xs text-slate-400">
+              {freetextMode ? 'Không có kết quả — nhập tự do sẽ được lưu' : 'Không có kết quả'}
+            </div>
           ) : (
             filtered.map(o => (
               <button
@@ -1123,27 +1146,22 @@ export default function GateRegistration() {
                 <ComboField
                   value={form.company_id}
                   displayValue={companies.find(c => c.id === form.company_id)?.name ?? form.company_name_raw}
+                  freeTextValue={form.company_name_raw}
                   options={companyOptions}
-                  placeholder="Tìm ĐVVT"
+                  placeholder="Tìm hoặc nhập ĐVVT"
+                  freetextMode
                   onSelect={opt => setForm(prev => {
                     const next = { ...prev, company_id: opt.value, company_name_raw: opt.label, vehicle_id: '', license_plate: '' }
                     if (editReg) return next
                     const complete = !!(next.date && next.warehouse_id && next.direction && next.warehouse_type && next.vehicle_type && (next.company_id || next.company_name_raw))
                     return complete ? next : { ...next, ...PHASE2_DEFAULT }
                   })}
+                  onFreeText={text => fCriteria('company_name_raw', text)}
                   onClear={() => setForm(prev => ({
                     ...prev, company_id: '', company_name_raw: '',
                     ...(editReg ? {} : PHASE2_DEFAULT),
                   }))}
                 />
-                {!form.company_id && (
-                  <Input
-                    className="text-xs h-8 mt-1"
-                    placeholder="Hoặc nhập tên ĐVVT tự do"
-                    value={form.company_name_raw}
-                    onChange={e => f('company_name_raw', e.target.value)}
-                  />
-                )}
               </div>
             </div>
 
@@ -1157,19 +1175,14 @@ export default function GateRegistration() {
                     <ComboField
                       value={form.vehicle_id}
                       displayValue={vehicles.find(v => v.id === form.vehicle_id)?.license_plate ?? form.license_plate}
+                      freeTextValue={form.license_plate}
                       options={vehicleOptions}
-                      placeholder="Tìm xe"
+                      placeholder="Tìm hoặc nhập biển số"
+                      freetextMode
                       onSelect={opt => setForm(prev => ({ ...prev, vehicle_id: opt.value, license_plate: opt.label }))}
+                      onFreeText={text => f('license_plate', text.toUpperCase())}
                       onClear={() => setForm(prev => ({ ...prev, vehicle_id: '', license_plate: '' }))}
                     />
-                    {!form.vehicle_id && (
-                      <Input
-                        className="text-xs h-8 mt-1 font-mono"
-                        placeholder="Hoặc nhập biển số tự do"
-                        value={form.license_plate}
-                        onChange={e => f('license_plate', e.target.value.toUpperCase())}
-                      />
-                    )}
                   </div>
                   <div className="space-y-1">
                     <label className="text-xs text-slate-500">Nội dung vào ra <span className="text-red-500">*</span></label>
@@ -1262,7 +1275,7 @@ export default function GateRegistration() {
               disabled={
                 createMut.isPending || updateMut.isPending ||
                 !form.date || !form.warehouse_id || !form.direction ||
-                !form.warehouse_type || !form.vehicle_type || !form.company_id ||
+                !form.warehouse_type || !form.vehicle_type || !(form.company_id || form.company_name_raw) ||
                 !form.license_plate || !form.content || !form.driver_name || !form.phone
               }
               onClick={handleSubmit}

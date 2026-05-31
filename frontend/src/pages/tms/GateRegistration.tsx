@@ -122,6 +122,7 @@ function ComboField({
   const [search, setSearch] = useState('')
   const triggerRef = useRef<HTMLDivElement>(null)
   const portalRef = useRef<HTMLDivElement>(null)
+  const didOpenRef = useRef(false)
   const [dropPos, setDropPos] = useState<{ top: number; left: number; width: number }>({ top: 0, left: 0, width: 0 })
 
   const filtered = options.filter(o =>
@@ -134,11 +135,13 @@ function ComboField({
 
   useEffect(() => {
     if (!open) {
-      // Commit text đã gõ khi đóng dropdown (freetext mode, chưa chọn option)
-      if (freetextMode && !value && onFreeText) onFreeText(search)
+      // Chỉ commit khi dropdown đã được mở rồi đóng — không chạy lúc initial mount
+      if (didOpenRef.current && freetextMode && !value && onFreeText) onFreeText(search)
+      didOpenRef.current = false
       setSearch('')
       return
     }
+    didOpenRef.current = true
     if (triggerRef.current) {
       const r = triggerRef.current.getBoundingClientRect()
       setDropPos({ top: r.bottom + 2, left: r.left, width: r.width })

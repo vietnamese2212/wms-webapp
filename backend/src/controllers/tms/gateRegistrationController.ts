@@ -266,6 +266,18 @@ export async function updateGateRegistration(req: Request, res: Response) {
   }
 
   if (date !== undefined)             patch.date = date
+
+  // Khi đổi ngày → cấp registration_number mới cho ngày đích (tránh duplicate key)
+  if (date !== undefined && before && date !== before.date) {
+    const { data: maxRow } = await supabase
+      .from('gate_registrations')
+      .select('registration_number')
+      .eq('date', date)
+      .order('registration_number', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    patch.registration_number = ((maxRow as { registration_number: number } | null)?.registration_number ?? 0) + 1
+  }
   if (driver_name !== undefined)      patch.driver_name = driver_name
   if (phone !== undefined)            patch.phone = phone
   if (company_id !== undefined)       patch.company_id = company_id

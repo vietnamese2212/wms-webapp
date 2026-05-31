@@ -11,7 +11,7 @@ export const ALL_PERMISSIONS: Record<string, string[]> = {
   deliveries:   ['view', 'create', 'edit'],
   schedule:     ['view', 'create', 'approve'],
   wms_settings: ['view', 'manage'],
-  tms_plan:          ['view', 'create', 'edit', 'delete', 'add_vehicle', 'release', 'change_date', 'book', 'revoke', 'upload_outbound', 'upload_inbound', 'gate_log'],
+  tms_plan:          ['view', 'create', 'edit', 'delete', 'add_vehicle', 'release', 'change_date', 'book', 'revoke', 'upload_outbound', 'upload_inbound'],
   tms_vehicle_types: ['view', 'manage'],
   tms_slots:         ['view', 'manage'],
   tms_companies:     ['view', 'manage'],

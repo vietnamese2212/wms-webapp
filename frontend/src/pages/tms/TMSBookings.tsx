@@ -1104,6 +1104,7 @@ export default function TMSBookings() {
   const canChangeDate = can(perms, 'tms_plan', 'change_date')
   const canBook       = can(perms, 'tms_plan', 'book')
   const canRevoke     = can(perms, 'tms_plan', 'revoke')
+  const canView       = can(perms, 'tms_plan', 'view')
   const canUpload     = can(perms, 'tms_plan', 'upload_outbound') || can(perms, 'tms_plan', 'upload_inbound')
   const isNccUser = user?.department === 'Đơn vị vận tải'
 
@@ -1446,7 +1447,7 @@ export default function TMSBookings() {
         <div className="flex items-center justify-between mb-2">
           <h1 className="text-base font-semibold md:text-xl">Kế hoạch vận chuyển</h1>
           <div className="flex items-center gap-1.5">
-            {warehouseId && (
+            {warehouseId && canView && (
               <Button variant="outline" size="sm" onClick={() => setSlotOverviewOpen(true)} className="h-8 px-2">
                 <Eye className="h-3.5 w-3.5 shrink-0" /><span className="hidden sm:inline ml-1">Xem booking</span>
               </Button>

@@ -126,7 +126,6 @@ export const MODULES = {
       revoke:          'Thu hồi booking (bỏ qua giờ)',
       upload_outbound: 'Upload kế hoạch xuất',
       upload_inbound:  'Upload kế hoạch nhập',
-      gate_log:        'Ghi nhận xe cổng (Bảo vệ)',
     },
   },
   tms_vehicle_types: {

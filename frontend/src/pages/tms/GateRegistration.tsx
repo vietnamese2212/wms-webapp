@@ -178,6 +178,8 @@ function ComboField({
           data-combofield-portal=""
           style={{ position: 'fixed', top: dropPos.top, left: dropPos.left, width: dropPos.width, zIndex: 9999, pointerEvents: 'auto' }}
           className="bg-white border rounded-md shadow-lg max-h-44 overflow-auto"
+          onWheel={e => e.stopPropagation()}
+          onTouchMove={e => e.stopPropagation()}
         >
           {filtered.length === 0 ? (
             <div className="px-3 py-2 text-xs text-slate-400">Không có kết quả</div>

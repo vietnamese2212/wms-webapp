@@ -4,7 +4,7 @@
 -- is_unplanned: đánh dấu xe phát sinh, không có trong kế hoạch SAP
 
 ALTER TABLE "TmsOrder"
-  ADD COLUMN IF NOT EXISTS material_id  UUID REFERENCES "Material"(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS material_id  TEXT REFERENCES "Material"(id) ON DELETE SET NULL,
   ADD COLUMN IF NOT EXISTS po_number    TEXT,
   ADD COLUMN IF NOT EXISTS is_unplanned BOOLEAN NOT NULL DEFAULT FALSE;
 

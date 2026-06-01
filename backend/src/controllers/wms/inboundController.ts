@@ -13,7 +13,7 @@ const ORDER_SELECT = `
   source_type, gate_registration_id, tms_order_id, planned_cartons,
   warehouse:Warehouse(id, code, name),
   location:Location(id, location_code, sub_code, max_pallets),
-  material:Material(id, material_code, short_name, material_description, cartons_per_pallet, cartons_per_pallet_mn),
+  material:Material(id, material_code, short_name, material_description, cartons_per_pallet, cartons_per_pallet_mn, category),
   shift:ImportShift(id, code, name),
   gate_registration:gate_registrations!gate_registration_id(id, registration_number, date, license_plate, company_name_raw, driver_name, status, direction),
   tms_order:TmsOrder!tms_order_id(id, order_code, po_number, planned_boxes, planned_pallets),
@@ -114,12 +114,10 @@ export async function listOrders(req: Request, res: Response) {
     const effectiveCategories = scopeCategories.length > 0
       ? (material_category ? scopeCategories.filter(c => c === material_category) : scopeCategories)
       : (material_category ? [material_category] : [])
-    if (effectiveCategories.length > 0) {
-      const { data: catMats } = await supabase
-        .from('Material').select('id').in('category', effectiveCategories)
-      const catMatIds = (catMats ?? []).map((m: { id: string }) => m.id)
-      if (catMatIds.length === 0) { ok(res, []); return }
-      query = query.in('material_id', catMatIds)
+    if (effectiveCategories.length === 1) {
+      query = query.eq('material.category', effectiveCategories[0])
+    } else if (effectiveCategories.length > 1) {
+      query = query.in('material.category', effectiveCategories)
     }
 
     // Date range – support legacy ?date= and new ?date_from= / ?date_to=

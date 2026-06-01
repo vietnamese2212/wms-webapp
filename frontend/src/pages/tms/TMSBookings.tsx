@@ -352,12 +352,12 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
   const { data: whTypesData = [] }         = useWarehouseTypes()
   const { data: vehicleTypes = [] }        = useVehicleTypes(true)
   const { data: transportCompanies = [] }  = useTransportCompanies(true)
-  const { data: materials = [] }           = useMaterials(undefined, form.direction === 'INBOUND')
   const createOrder  = useCreateOrder()
   const updateOrder  = useUpdateOrder()
   const isEdit = !!order
 
   const [form, setForm] = useState<OrderFormData>(EMPTY_FORM(defaultDate, defaultWarehouseId))
+  const { data: materials = [] }           = useMaterials(undefined, form.direction === 'INBOUND')
   const [err, setErr] = useState('')
   const set = (k: keyof OrderFormData) => (v: string) => setForm(f => ({ ...f, [k]: v }))
 

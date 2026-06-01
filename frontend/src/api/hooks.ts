@@ -239,6 +239,10 @@ export function useCreateInboundOrder() {
       import_date?: string
       notes?: string
       imported_by?: string
+      source_type?: string
+      gate_registration_id?: string
+      tms_order_id?: string
+      planned_cartons?: number
     }) => apiClient.post('/wms/inbound-orders', body).then((r) => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['inbound-orders'] }),
   })

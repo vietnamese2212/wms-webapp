@@ -65,7 +65,8 @@ function isExcludedFromCount(item: any): boolean {
 
 async function fetchGDOFull(id: string) {
   const { data: gdo, error } = await (supabase.from('GroupDeliveryOrder') as any)
-    .select('*, warehouse:Warehouse(id,code,name)').eq('id', id).single()
+    .select('*, warehouse:Warehouse(id,code,name), gate_registration:gate_registrations!gate_registration_id(id,registration_number,date,license_plate,company_name_raw,driver_name,status,direction,registered_at,entry_at,exit_at,called_at)')
+    .eq('id', id).single()
   if (error || !gdo) return null
 
   const { data: dos } = await (supabase.from('OutboundDelivery') as any)
@@ -317,9 +318,9 @@ export async function deleteGDO(req: Request, res: Response) {
 
 export async function updateGDO(req: Request, res: Response) {
   try {
-    const { delivery_date, warehouse_id, dvvt, customer_name, export_type, items } = req.body as {
+    const { delivery_date, warehouse_id, dvvt, customer_name, export_type, items, gate_registration_id } = req.body as {
       delivery_date?: string; warehouse_id?: string; dvvt?: string
-      customer_name?: string; export_type?: string
+      customer_name?: string; export_type?: string; gate_registration_id?: string | null
       items?: Array<{ db_id?: string; material_code: string; cartons_ordered: number; loose_picking?: number; header_text?: string }>
     }
 
@@ -329,9 +330,13 @@ export async function updateGDO(req: Request, res: Response) {
     if (!['PENDING', 'PAUSED'].includes(gdo.status)) return fail(res, 'Chỉ sửa được đơn ở trạng thái PENDING hoặc PAUSED', 400)
 
     const t = now()
+    const gdoUpdates: Record<string, unknown> = {
+      delivery_date, warehouse_id: warehouse_id ?? null, dvvt: dvvt ?? null, updated_at: t,
+    }
+    if ('gate_registration_id' in req.body) gdoUpdates.gate_registration_id = gate_registration_id ?? null
 
     await (supabase.from('GroupDeliveryOrder') as any)
-      .update({ delivery_date, warehouse_id: warehouse_id ?? null, dvvt: dvvt ?? null, updated_at: t })
+      .update(gdoUpdates)
       .eq('id', req.params.id)
 
     const { data: dos } = await (supabase.from('OutboundDelivery') as any)

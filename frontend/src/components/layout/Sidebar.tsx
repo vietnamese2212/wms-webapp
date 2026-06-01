@@ -39,6 +39,7 @@ const navGroups: NavGroup[] = [
     items: [
       { to: '/wms/inventory',         icon: Package,        label: 'Tồn kho',       module: 'inventory' },
       { to: '/wms/inbound',           icon: PackagePlus,    label: 'Nhập kho',       module: 'inbound' },
+      { to: '/wms/inbound-plan',      icon: ClipboardList,  label: 'KH nhập ngoài',  module: 'inbound' },
       { to: '/wms/outbound',          icon: PackageMinus,   label: 'Xuất kho',       module: 'outbound' },
       { to: '/wms/outbound/scan-log', icon: ScanLine,       label: 'Lịch sử quét',   module: 'scanlog' },
       { to: '/wms/loosepicking',      icon: Scissors,       label: 'Nhặt lẻ',        module: 'loosepicking' },

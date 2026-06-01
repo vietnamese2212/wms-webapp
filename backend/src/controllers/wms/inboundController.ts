@@ -10,10 +10,13 @@ import { emitInboundChanged } from '../../lib/events'
 const ORDER_SELECT = `
   id, import_code, warehouse_id, location_id, material_id, planned_pallets, shift_id, status,
   imported_by, created_by, updated_by, import_date, notes, created_at, updated_at,
+  source_type, gate_registration_id, tms_order_id, planned_cartons,
   warehouse:Warehouse(id, code, name),
   location:Location(id, location_code, sub_code, max_pallets),
   material:Material(id, material_code, short_name, material_description, cartons_per_pallet, cartons_per_pallet_mn),
   shift:ImportShift(id, code, name),
+  gate_registration:gate_registrations!gate_registration_id(id, registration_number, date, license_plate, company_name_raw, driver_name, status, direction),
+  tms_order:TmsOrder!tms_order_id(id, order_code, po_number, planned_boxes, planned_pallets),
   imported_by_emp:Employee!imported_by(id, name),
   created_by_emp:Employee!created_by(id, name),
   updated_by_emp:Employee!updated_by(id, name)
@@ -150,9 +153,13 @@ export async function listOrders(req: Request, res: Response) {
 
 export async function createOrder(req: Request, res: Response) {
   try {
-    const { warehouse_id, material_id, location_id, planned_pallets, shift_id, import_date, notes, imported_by } = req.body
+    const {
+      warehouse_id, material_id, location_id, planned_pallets, shift_id, import_date, notes, imported_by,
+      source_type, gate_registration_id, tms_order_id, planned_cartons,
+    } = req.body
     if (!warehouse_id) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu warehouse_id')
     if (!material_id)  return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu material_id')
+    const resolvedSourceType = source_type === 'NCC' ? 'NCC' : 'FACTORY'
 
     // Count today's orders for import_code sequence (dùng giờ Hà Nội)
     const todayStr   = vnDate()
@@ -177,20 +184,24 @@ export async function createOrder(req: Request, res: Response) {
     const { data: order, error } = await supabase
       .from('ProductionImport')
       .insert({
-        id:              randomUUID(),
+        id:                   randomUUID(),
         import_code,
         warehouse_id,
         material_id,
-        location_id:     location_id ?? null,
-        planned_pallets: planned_pallets ? Number(planned_pallets) : null,
-        shift_id:        shift_id ?? null,
-        import_date:     import_date ? import_date.slice(0, 10) : todayStr,
-        notes:           notes ?? null,
-        imported_by:     resolvedImportedBy,
-        created_by:      resolvedImportedBy,
-        status:          'OPEN',
-        created_at:      new Date().toISOString(),
-        updated_at:      new Date().toISOString(),
+        location_id:          location_id ?? null,
+        planned_pallets:      planned_pallets ? Number(planned_pallets) : null,
+        shift_id:             shift_id ?? null,
+        import_date:          import_date ? import_date.slice(0, 10) : todayStr,
+        notes:                notes ?? null,
+        imported_by:          resolvedImportedBy,
+        created_by:           resolvedImportedBy,
+        status:               'OPEN',
+        source_type:          resolvedSourceType,
+        gate_registration_id: gate_registration_id ?? null,
+        tms_order_id:         tms_order_id ?? null,
+        planned_cartons:      planned_cartons ? Number(planned_cartons) : null,
+        created_at:           new Date().toISOString(),
+        updated_at:           new Date().toISOString(),
       })
       .select(ORDER_SELECT)
       .single()

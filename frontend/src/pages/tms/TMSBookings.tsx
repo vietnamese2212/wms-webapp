@@ -16,6 +16,7 @@ import {
   useDeliverySlots, useGenerateSlots,
   useTmsOrders, useCreateOrder, useUpdateOrder, useDeleteOrder, useBulkCreateOrders, useBulkUpdateOrderDate,
   useAddVehicleSlot, useUpdateVehicleSlot, useReleaseVehicleSlot, useRevokeVehicleSlot, useDeleteVehicleSlot,
+  useMaterials,
 } from '@/api/hooks'
 import { formatDate, formatDateTime } from '@/utils/formatters'
 import type { TmsOrder, TmsVehicleSlot, DeliverySlot, TmsVehicleType, TmsVehicle, TransportCompany } from '@/types'
@@ -328,6 +329,8 @@ type OrderFormData = {
   warehouse_type: string; vehicle_type: string
   planned_boxes: string; planned_pallets: string; planned_tons: string
   gdo_refs: string; notes: string; priority: boolean
+  // INBOUND fields
+  material_id: string; po_number: string
 }
 
 const EMPTY_FORM = (date: string, warehouse_id: string): OrderFormData => ({
@@ -336,6 +339,7 @@ const EMPTY_FORM = (date: string, warehouse_id: string): OrderFormData => ({
   warehouse_type: '', vehicle_type: '',
   planned_boxes: '', planned_pallets: '', planned_tons: '',
   gdo_refs: '', notes: '', priority: false,
+  material_id: '', po_number: '',
 })
 
 const ORDER_CODE_RE = /^\d{6}_[A-Za-z0-9]+_\d+$/
@@ -348,6 +352,7 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
   const { data: whTypesData = [] }         = useWarehouseTypes()
   const { data: vehicleTypes = [] }        = useVehicleTypes(true)
   const { data: transportCompanies = [] }  = useTransportCompanies(true)
+  const { data: materials = [] }           = useMaterials(undefined, form.direction === 'INBOUND')
   const createOrder  = useCreateOrder()
   const updateOrder  = useUpdateOrder()
   const isEdit = !!order
@@ -370,6 +375,8 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
         planned_tons: order.planned_tons != null ? String(order.planned_tons) : '',
         gdo_refs: order.gdo_refs ?? '', notes: order.notes ?? '',
         priority: order.priority ?? false,
+        material_id: (order as any).material_id ?? '',
+        po_number: (order as any).po_number ?? '',
       })
     } else {
       setForm(EMPTY_FORM(defaultDate, defaultWarehouseId))
@@ -395,6 +402,8 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
       planned_tons: form.planned_tons ? Number(form.planned_tons) : null,
       gdo_refs: form.gdo_refs || null, notes: form.notes || null,
       priority: form.priority,
+      material_id: form.material_id || null,
+      po_number: form.po_number || null,
     }
     try {
       if (isEdit && order) await updateOrder.mutateAsync({ id: order.id, ...payload })
@@ -501,10 +510,37 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
               <Input type="number" min="0" step="0.001" value={form.planned_tons} onChange={e => set('planned_tons')(e.target.value)} className="h-8 text-sm mt-1" />
             </div>
           </div>
-          <div>
-            <Label className="text-xs">Mã GDO</Label>
-            <Input value={form.gdo_refs} onChange={e => set('gdo_refs')(e.target.value)} placeholder="GDO-001, GDO-002" className="h-8 text-sm mt-1" />
-          </div>
+          {form.direction !== 'INBOUND' && (
+            <div>
+              <Label className="text-xs">Mã GDO</Label>
+              <Input value={form.gdo_refs} onChange={e => set('gdo_refs')(e.target.value)} placeholder="GDO-001, GDO-002" className="h-8 text-sm mt-1" />
+            </div>
+          )}
+          {form.direction === 'INBOUND' && (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs">Số PO</Label>
+                <Input value={form.po_number} onChange={e => set('po_number')(e.target.value)} placeholder="PO-0001" className="h-8 text-sm mt-1" />
+              </div>
+              <div>
+                <Label className="text-xs">Mã hàng (tùy chọn)</Label>
+                <Select value={form.material_id} onValueChange={set('material_id')}>
+                  <SelectTrigger className="h-8 text-sm mt-1">
+                    <SelectValue placeholder="Chọn mã hàng" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">— Không chọn —</SelectItem>
+                    {(materials as any[]).map((m) => (
+                      <SelectItem key={m.id} value={m.id}>
+                        <span className="font-mono text-xs">{m.material_code}</span>
+                        {m.short_name && <span className="ml-1 text-slate-500">{m.short_name}</span>}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          )}
           <div>
             <Label className="text-xs">Ghi chú</Label>
             <textarea

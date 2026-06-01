@@ -7,6 +7,7 @@ import Dashboard from '@/pages/Dashboard'
 import Inventory from '@/pages/wms/Inventory'
 import Inbound       from '@/pages/wms/Inbound'
 import InboundDetail from '@/pages/wms/InboundDetail'
+import InboundPlan   from '@/pages/wms/InboundPlan'
 import Outbound           from '@/pages/wms/Outbound'
 import OutboundDetail     from '@/pages/wms/OutboundDetail'
 import OutboundItemDetail from '@/pages/wms/OutboundItemDetail'
@@ -69,8 +70,9 @@ export default function App() {
         <Route path="/wms/inventory" element={<PermissionRoute module="inventory"><Inventory /></PermissionRoute>} />
 
         {/* WMS — inbound */}
-        <Route path="/wms/inbound"    element={<PermissionRoute module="inbound"><Inbound /></PermissionRoute>} />
-        <Route path="/wms/inbound/:id" element={<PermissionRoute module="inbound"><InboundDetail /></PermissionRoute>} />
+        <Route path="/wms/inbound"         element={<PermissionRoute module="inbound"><Inbound /></PermissionRoute>} />
+        <Route path="/wms/inbound/:id"     element={<PermissionRoute module="inbound"><InboundDetail /></PermissionRoute>} />
+        <Route path="/wms/inbound-plan"    element={<PermissionRoute module="inbound"><InboundPlan /></PermissionRoute>} />
 
         {/* WMS — outbound */}
         <Route path="/wms/outbound"                         element={<PermissionRoute module="outbound"><Outbound /></PermissionRoute>} />

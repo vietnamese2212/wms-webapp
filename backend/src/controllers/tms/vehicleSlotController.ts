@@ -72,7 +72,7 @@ export async function addVehicleSlot(req: Request, res: Response) {
 export async function updateVehicleSlot(req: Request, res: Response) {
   try {
     const { id } = req.params
-    const { slot_id, license_plate, driver_name, driver_phone, status, consolidation_order_ids } = req.body
+    const { slot_id, license_plate, driver_name, driver_phone, status, consolidation_order_ids, gate_registration_id } = req.body
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const user = (req as any).user
     const now = new Date().toISOString()
@@ -134,11 +134,61 @@ export async function updateVehicleSlot(req: Request, res: Response) {
       }
     }
 
+    // Validate gate_registration_id: cảnh báo nếu link sai thứ tự lần (nhưng vẫn cho phép)
+    let sequenceWarning: string | null = null
+    if (gate_registration_id !== undefined && gate_registration_id) {
+      const { data: gateReg } = await supabase
+        .from('gate_registrations')
+        .select('id, license_plate, date, registration_number, warehouse_id')
+        .eq('id', gate_registration_id)
+        .single()
+
+      if (gateReg) {
+        const g = gateReg as { license_plate: string | null; date: string; registration_number: number; warehouse_id: string }
+        // Tìm thứ tự của slot này trong các slots cùng biển số + ngày + kho
+        if (g.license_plate) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: sameOrder } = await (supabase.from('TmsOrder') as any)
+            .select('id').eq('id', existing.order_id).single()
+          if (sameOrder) {
+            // Đếm số gate_registrations cùng biển + ngày trước gate này
+            const { count: gatesBefore } = await supabase
+              .from('gate_registrations')
+              .select('*', { count: 'exact', head: true })
+              .eq('license_plate', g.license_plate)
+              .eq('date', g.date)
+              .eq('warehouse_id', g.warehouse_id)
+              .lt('registration_number', g.registration_number)
+
+            // Đếm số slots cùng biển số + ngày đã được link trước slot này
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { data: samePlateSlotsData } = await (supabase.from('TmsVehicleSlot') as any)
+              .select('id, order_id, gate_registration_id, created_at')
+              .eq('license_plate', g.license_plate)
+              .neq('id', id)
+              .not('gate_registration_id', 'is', null)
+              .order('created_at')
+
+            const linkedBefore = ((samePlateSlotsData ?? []) as { gate_registration_id: string }[]).filter(s => {
+              // Chỉ tính slots đã link với gate_reg có registration_number nhỏ hơn
+              return true // simplified: count all already linked = gatesBefore is the expected index
+            }).length
+
+            const expectedGateIndex = linkedBefore // 0-indexed: slot này nên là link thứ (linkedBefore + 1)
+            if ((gatesBefore ?? 0) !== expectedGateIndex) {
+              sequenceWarning = `Cảnh báo: Xe ${g.license_plate} đã có ${gatesBefore ?? 0} lần đăng ký trước đó — bạn đang link lần ${g.registration_number} vào slot không đúng thứ tự (nên là lần ${expectedGateIndex + 1})`
+            }
+          }
+        }
+      }
+    }
+
     const updates: Record<string, unknown> = { booked_by: user?.name || null, updated_at: now }
-    if (slot_id       !== undefined) updates.slot_id       = slot_id
-    if (license_plate !== undefined) updates.license_plate = license_plate || null
-    if (driver_name   !== undefined) updates.driver_name   = driver_name || null
-    if (driver_phone  !== undefined) updates.driver_phone  = driver_phone || null
+    if (slot_id              !== undefined) updates.slot_id              = slot_id
+    if (license_plate        !== undefined) updates.license_plate        = license_plate || null
+    if (driver_name          !== undefined) updates.driver_name          = driver_name || null
+    if (driver_phone         !== undefined) updates.driver_phone         = driver_phone || null
+    if (gate_registration_id !== undefined) updates.gate_registration_id = gate_registration_id || null
     if (status        !== undefined) updates.status        = status
     else if (isChangingSlot) {
       updates.status = newSlotId && license_plate !== undefined
@@ -248,7 +298,8 @@ export async function updateVehicleSlot(req: Request, res: Response) {
       await relinkGatesByPlate(existing.license_plate as string, existing.order_id as string)
     }
 
-    return ok(res, data)
+    const result = sequenceWarning ? { ...data, _warning: sequenceWarning } : data
+    return ok(res, result)
   } catch (e) { return fail(res, String(e)) }
 }
 

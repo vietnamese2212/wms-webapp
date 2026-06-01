@@ -19,6 +19,7 @@ import {
   useInboundOrders, useCreateInboundOrder,
   useWarehouses, useMaterials, useLocationsReal, useImportShifts,
   useEmployeeRecords, useWarehouseTypes, useWarehouseZones,
+  useActiveGateRegistrations, useInboundMaterials,
 } from '@/api/hooks'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { SearchInput } from '@/components/shared/SearchInput'
@@ -53,13 +54,20 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
     ? new Set(user.warehouse_ids)
     : null
 
-  const [warehouseId, setWarehouseId] = useState('')
-  const [subType,     setSubType]     = useState('')
-  const [materialId,  setMaterialId]  = useState('')
-  const [locationId,  setLocationId]  = useState('')
-  const [shiftId,     setShiftId]     = useState('')
-  const [importDate,  setImportDate]  = useState(format(new Date(), 'yyyy-MM-dd'))
-  const [notes,       setNotes]       = useState('')
+  const [sourceType,    setSourceType]    = useState<'FACTORY' | 'NCC'>('FACTORY')
+  const [warehouseId,   setWarehouseId]   = useState('')
+  const [subType,       setSubType]       = useState('')
+  const [materialId,    setMaterialId]    = useState('')
+  const [locationId,    setLocationId]    = useState('')
+  const [shiftId,       setShiftId]       = useState('')
+  const [importDate,    setImportDate]    = useState(format(new Date(), 'yyyy-MM-dd'))
+  const [notes,         setNotes]         = useState('')
+  // NCC-specific
+  const [gateRegId,     setGateRegId]     = useState('')
+  const [tmsOrderId,    setTmsOrderId]    = useState('')
+  const [plannedCartons,setPlannedCartons]= useState('')
+  const [nccMatOpen,    setNccMatOpen]    = useState(false)
+  const nccMatRef = useRef<HTMLDivElement>(null)
 
   // Material combobox state
   const [matSearch, setMatSearch] = useState('')
@@ -69,6 +77,7 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
   // Reset all fields each time the dialog opens
   useEffect(() => {
     if (open) {
+      setSourceType('FACTORY')
       setWarehouseId(user?.warehouse_id ?? user?.warehouse_ids?.[0] ?? '')
       setSubType('')
       setMaterialId('')
@@ -78,11 +87,28 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
       setShiftId('')
       setImportDate(format(new Date(), 'yyyy-MM-dd'))
       setNotes('')
+      setGateRegId('')
+      setTmsOrderId('')
+      setPlannedCartons('')
+      setNccMatOpen(false)
     }
   }, [open, user?.warehouse_id, user?.warehouse_ids])
 
   const { data: warehouses = [] } = useWarehouses(true)
   const { data: shifts     = [] } = useImportShifts()
+
+  // NCC: gate registrations đang IN (direction=INBOUND) để thủ kho chọn xe
+  const { data: activeGates = [] } = useActiveGateRegistrations(
+    sourceType === 'NCC' && warehouseId && importDate
+      ? { date: importDate, warehouse_id: warehouseId, direction: 'INBOUND', status: 'IN' }
+      : undefined
+  )
+  // NCC: materials từ SAP INBOUND plan (lọc theo gate nếu đã chọn)
+  const { data: planMaterials = [] } = useInboundMaterials(
+    sourceType === 'NCC' && warehouseId && importDate
+      ? { date: importDate, warehouse_id: warehouseId, ...(gateRegId ? { gate_registration_id: gateRegId } : {}) }
+      : undefined
+  )
   const { data: locations  = [] } = useLocationsReal(
     warehouseId ? { warehouse_id: warehouseId } : undefined
   )
@@ -134,16 +160,22 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
     : (selectedMat ? `${selectedMat.material_code} – ${selectedMat.short_name ?? selectedMat.material_description}` : matSearch)
 
   function handleSubmit() {
-    if (!warehouseId || !subType || !materialId || !locationId || !shiftId || !importDate) return
+    if (!warehouseId || !subType || !materialId || !shiftId || !importDate) return
+    if (sourceType === 'FACTORY' && !locationId) return
+    if (sourceType === 'NCC' && !gateRegId) return
     createOrder(
       {
-        warehouse_id: warehouseId,
-        material_id:  materialId,
-        location_id:  locationId,
-        shift_id:     shiftId          || undefined,
-        import_date:  importDate,
-        notes:        notes            || undefined,
-        imported_by:  importedByEmpId  || undefined,
+        warehouse_id:         warehouseId,
+        material_id:          materialId,
+        location_id:          locationId  || undefined,
+        shift_id:             shiftId          || undefined,
+        import_date:          importDate,
+        notes:                notes            || undefined,
+        imported_by:          importedByEmpId  || undefined,
+        source_type:          sourceType,
+        gate_registration_id: gateRegId        || undefined,
+        tms_order_id:         tmsOrderId       || undefined,
+        planned_cartons:      plannedCartons ? Number(plannedCartons) : undefined,
       },
       {
         onSuccess: (data) => {
@@ -169,6 +201,25 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
               {apiError}
             </div>
           )}
+
+          {/* Nguồn nhập */}
+          <div className="flex rounded-lg border overflow-hidden">
+            {(['FACTORY', 'NCC'] as const).map(t => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => { setSourceType(t); setGateRegId(''); setTmsOrderId(''); setMaterialId(''); setMatSearch('') }}
+                className={[
+                  'flex-1 py-1.5 text-xs font-medium transition-colors',
+                  sourceType === t
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-white text-slate-600 hover:bg-slate-50',
+                ].join(' ')}
+              >
+                {t === 'FACTORY' ? 'Nhập Sản Xuất' : 'Nhập Ngoài (NCC)'}
+              </button>
+            ))}
+          </div>
 
           {/* Kho – tự do nếu user không có warehouse_id cố định */}
           <div className="space-y-2">
@@ -206,10 +257,111 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
             </Select>
           </div>
 
+          {/* NCC: Chọn xe đang vào + Material từ kế hoạch */}
+          {sourceType === 'NCC' && (
+            <>
+              <div className="space-y-2">
+                <Label>Xe đang vào cổng <span className="text-red-500">*</span></Label>
+                <Select value={gateRegId} onValueChange={v => { setGateRegId(v); setTmsOrderId(''); setMaterialId('') }} disabled={!warehouseId || !importDate}>
+                  <SelectTrigger>
+                    <SelectValue placeholder={!warehouseId ? 'Chọn kho trước' : activeGates.length === 0 ? 'Không có xe INBOUND đang vào' : 'Chọn xe...'} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(activeGates as any[]).map((g) => (
+                      <SelectItem key={g.id} value={g.id}>
+                        <span className="font-mono font-semibold text-slate-700">{g.license_plate ?? '—'}</span>
+                        <span className="ml-2 text-xs text-slate-400">
+                          Lần {g.registration_number} · {g.company_name_raw ?? '—'} · {g.driver_name ?? ''}
+                        </span>
+                      </SelectItem>
+                    ))}
+                    {activeGates.length === 0 && !warehouseId && null}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Mã hàng theo kế hoạch <span className="text-red-500">*</span></Label>
+                <div ref={nccMatRef} className="relative">
+                  <Select
+                    value={tmsOrderId}
+                    onValueChange={v => {
+                      setTmsOrderId(v)
+                      const found = (planMaterials as any[]).find(m => m.id === v)
+                      if (found?.material_id) setMaterialId(found.material_id)
+                    }}
+                    disabled={!gateRegId}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder={!gateRegId ? 'Chọn xe trước' : planMaterials.length === 0 ? 'Không có kế hoạch — dùng Phát sinh' : 'Chọn từ kế hoạch...'} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(planMaterials as any[]).map((m) => (
+                        <SelectItem key={m.id} value={m.id}>
+                          <span className="font-mono text-xs text-slate-500">{m.material?.material_code ?? '—'}</span>
+                          <span className="ml-2">{m.material?.short_name ?? '—'}</span>
+                          <span className="ml-2 text-xs text-slate-400">KH: {m.planned_boxes ?? 0} thùng</span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {gateRegId && (
+                    <button
+                      type="button"
+                      className="mt-1.5 text-xs text-amber-600 hover:text-amber-700 underline"
+                      onClick={() => { setTmsOrderId('__unplanned__'); setMaterialId('') }}
+                    >
+                      + Thêm mã phát sinh (không có trong kế hoạch)
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Mã hàng tự chọn (chỉ khi phát sinh) */}
+              {tmsOrderId === '__unplanned__' && (
+                <div className="space-y-2">
+                  <Label>Mã hàng (phát sinh) <span className="text-red-500">*</span></Label>
+                  <div ref={matRef} className="relative">
+                    <Input
+                      placeholder="Tìm mã hoặc tên hàng..."
+                      value={materialId ? ((materials as MatItem[]).find(m => m.id === materialId) ? `${(materials as MatItem[]).find(m => m.id === materialId)!.material_code} – ${(materials as MatItem[]).find(m => m.id === materialId)!.short_name ?? ''}` : matSearch) : matSearch}
+                      onChange={(e) => { setMatSearch(e.target.value); setMaterialId(''); setMatOpen(true) }}
+                      onFocus={() => setMatOpen(true)}
+                    />
+                    {matOpen && (
+                      <div className="absolute z-[100] w-full mt-1 max-h-52 overflow-y-auto rounded-md border bg-white shadow-lg">
+                        {(materials as MatItem[]).map((m) => (
+                          <button key={m.id} type="button"
+                            className={`w-full text-left px-3 py-2 text-sm hover:bg-slate-100 flex items-baseline gap-2 ${m.id === materialId ? 'bg-slate-50 font-medium' : ''}`}
+                            onMouseDown={(e) => { e.preventDefault(); e.stopPropagation() }}
+                            onClick={() => { setMaterialId(m.id); setMatSearch(''); setMatOpen(false) }}
+                          >
+                            <span className="font-mono text-xs text-slate-500 shrink-0">{m.material_code}</span>
+                            <span className="text-slate-800 truncate">{m.short_name ?? m.material_description}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <Label>Số thùng dự kiến trên xe</Label>
+                <Input
+                  type="number" min={0} placeholder="Nhập khi mở xe ra"
+                  value={plannedCartons}
+                  onChange={(e) => setPlannedCartons(e.target.value)}
+                />
+              </div>
+            </>
+          )}
+
           {/* Vị trí – lọc theo loại kho, color-coded by capacity */}
           <div className="space-y-2">
             <Label>
-              Vị trí nhập <span className="text-red-500">*</span>
+              Vị trí nhập {sourceType === 'FACTORY' && <span className="text-red-500">*</span>}
+              {sourceType === 'NCC' && <span className="text-xs font-normal text-slate-400 ml-1">(để trống — lái xe nâng chọn khi scan)</span>}
               <span className="ml-2 text-xs font-normal text-slate-400">
                 đầy=xanh · một phần=cam · trống=trắng
               </span>
@@ -237,8 +389,8 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
             </Select>
           </div>
 
-          {/* Material – combobox, lọc theo mat_category của loại kho đã chọn */}
-          <div className="space-y-2">
+          {/* Material – combobox, chỉ dùng cho FACTORY (NCC dùng dropdown kế hoạch ở trên) */}
+          {sourceType === 'FACTORY' && <div className="space-y-2">
             <Label>Material <span className="text-red-500">*</span></Label>
             <div ref={matRef} className="relative">
               <Input
@@ -267,7 +419,7 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
                 </div>
               )}
             </div>
-          </div>
+          </div>}
 
           {/* Ca nhập + Ngày nhập */}
           <div className="grid grid-cols-2 gap-3">
@@ -315,7 +467,11 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
           <Button variant="outline" onClick={onClose}>Huỷ</Button>
           <Button
             onClick={handleSubmit}
-            disabled={!warehouseId || !subType || !locationId || !materialId || isPending}
+            disabled={
+              !warehouseId || !subType || !materialId || isPending ||
+              (sourceType === 'FACTORY' && !locationId) ||
+              (sourceType === 'NCC' && !gateRegId)
+            }
           >
             {isPending ? 'Đang tạo...' : 'Tạo phiếu'}
           </Button>

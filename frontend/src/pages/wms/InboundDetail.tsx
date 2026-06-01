@@ -19,7 +19,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import {
-  useInboundOrder, useCancelInboundOrder,
+  useInboundOrder, useInboundOrders, useCancelInboundOrder,
   useScanPallet, useDeletePalletEntry, useDeletePalletEntries,
   useLocationsReal, useUpdateInboundOrder, useUpdatePalletEntry,
   useCheckInboundScan,
@@ -101,10 +101,7 @@ function validateQR(raw: string, order: InboundOrder): ValidationResult {
   if (alreadyIn) {
     return { ok: false, msg: 'Pallet này đã được nhập trong phiếu' }
   }
-  if (!order.location_id) {
-    return { ok: false, msg: 'Chưa chọn vị trí — đóng dialog và chọn vị trí trước' }
-  }
-  return { ok: true, msg: `Hợp lệ · ${order.material?.material_code} · ${order.location?.location_code ?? ''}` }
+  return { ok: true, msg: `Hợp lệ · ${order.material?.material_code}` }
 }
 
 // ─── Scan overlay (camera stays mounted to avoid repeated permission prompts) ──
@@ -113,9 +110,10 @@ interface ScanDialogProps {
   order: InboundOrder
   onClose: () => void
   employeeId?: string
+  allLocations: { id: string; location_code: string; sub_code: string; max_pallets: number; used_slots?: number; category?: string | null }[]
 }
 
-function ScanDialog({ order, onClose, employeeId }: ScanDialogProps) {
+function ScanDialog({ order, onClose, employeeId, allLocations }: ScanDialogProps) {
   const scannerRef = useRef<QRScannerHandle>(null)
   const { mutate: scanPallet,  isPending: saving        } = useScanPallet()
   const { mutate: checkScan,   isPending: serverChecking } = useCheckInboundScan()
@@ -128,7 +126,17 @@ function ScanDialog({ order, onClose, employeeId }: ScanDialogProps) {
   const [validation,       setValidation]       = useState<ValidationResult | null>(null)
   const [serverCheckOk,    setServerCheckOk]    = useState(false)
 
+  // Đổi vị trí: activeLocationId có thể khác order.location_id khi overflow
+  const [activeLocationId, setActiveLocationId] = useState<string>(order.location_id ?? '')
+  const [showLocPicker,    setShowLocPicker]    = useState(!order.location_id) // NCC: mở picker ngay
+
+  const activeLoc = allLocations.find(l => l.id === activeLocationId)
+
   function handleScan(raw: string) {
+    if (!activeLocationId) {
+      setShowLocPicker(true)
+      return
+    }
     playBeep()
     setPendingQR(raw)
     setFeedback(null)
@@ -138,11 +146,8 @@ function ScanDialog({ order, onClose, employeeId }: ScanDialogProps) {
     setValidation(val)
     if (!val.ok) return
 
-    const locationId = order.location_id
-    if (!locationId) return
-
     checkScan(
-      { orderId: order.id, qr_code: raw, location_id: locationId, stack_layer: Number(stackLayer) },
+      { orderId: order.id, qr_code: raw, location_id: activeLocationId, stack_layer: Number(stackLayer) },
       {
         onSuccess: () => setServerCheckOk(true),
         onError: (err) => {
@@ -155,13 +160,12 @@ function ScanDialog({ order, onClose, employeeId }: ScanDialogProps) {
 
   function handleSave() {
     if (!pendingQR || !serverCheckOk || saving) return
-    const locationId = order.location_id
-    if (!locationId) {
-      setFeedback({ type: 'error', msg: 'Chưa chọn vị trí. Đóng và chọn vị trí trước.' })
+    if (!activeLocationId) {
+      setShowLocPicker(true)
       return
     }
     scanPallet(
-      { orderId: order.id, qr_code: pendingQR, location_id: locationId, stack_layer: Number(stackLayer), cartons_override: Number(cartons) || undefined, employee_id: employeeId },
+      { orderId: order.id, qr_code: pendingQR, location_id: activeLocationId, stack_layer: Number(stackLayer), cartons_override: Number(cartons) || undefined, employee_id: employeeId },
       {
         onSuccess: (data) => {
           setPendingQR(null)
@@ -203,12 +207,63 @@ function ScanDialog({ order, onClose, employeeId }: ScanDialogProps) {
       <div className="relative mt-auto bg-white rounded-t-2xl max-h-[90dvh] overflow-y-auto">
         <div className="p-4 space-y-3">
 
-          {/* Subtitle: material + short name + location */}
-          <p className="text-xs text-slate-500">
-            <span className="font-medium text-slate-700">{order.material?.material_code}</span>
-            {order.material?.short_name && <span className="text-slate-500"> · {order.material.short_name}</span>}
-            {order.location && <span className="font-mono"> · {order.location.location_code}</span>}
-          </p>
+          {/* Subtitle: material + active location + "Đổi vị trí" button */}
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs text-slate-500 min-w-0">
+              <span className="font-medium text-slate-700">{order.material?.material_code}</span>
+              {order.material?.short_name && <span className="text-slate-500"> · {order.material.short_name}</span>}
+              {activeLoc && <span className="font-mono"> · {activeLoc.location_code}</span>}
+              {!activeLocationId && <span className="text-amber-500"> · Chưa chọn vị trí</span>}
+            </p>
+            <button
+              type="button"
+              className="shrink-0 flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-700 border border-blue-200 rounded px-2 py-1"
+              onClick={() => setShowLocPicker(true)}
+            >
+              <MapPin className="h-3 w-3" />
+              {activeLocationId ? 'Đổi vị trí' : 'Chọn vị trí'}
+            </button>
+          </div>
+
+          {/* Location picker dialog */}
+          {showLocPicker && (
+            <div className="border rounded-lg bg-slate-50 p-3 space-y-2">
+              <p className="text-xs font-medium text-slate-600">Chọn vị trí{activeLocationId ? ' mới' : ''}:</p>
+              <div className="max-h-36 overflow-y-auto space-y-1">
+                {allLocations
+                  .filter(l => !order.material || !l.category || l.category === (order as any).warehouse?.warehouse_type || true)
+                  .map(l => {
+                    const isFull    = l.max_pallets > 0 && (l.used_slots ?? 0) >= l.max_pallets
+                    const isPartial = (l.used_slots ?? 0) > 0 && !isFull
+                    return (
+                      <button
+                        key={l.id}
+                        type="button"
+                        onClick={() => { setActiveLocationId(l.id); setShowLocPicker(false) }}
+                        className={[
+                          'w-full text-left px-2 py-1.5 rounded text-xs flex items-center justify-between',
+                          l.id === activeLocationId
+                            ? 'bg-blue-100 text-blue-700 font-medium'
+                            : isFull
+                            ? 'text-blue-600 hover:bg-blue-50'
+                            : isPartial
+                            ? 'text-amber-600 hover:bg-amber-50'
+                            : 'text-slate-700 hover:bg-white',
+                        ].join(' ')}
+                      >
+                        <span className="font-mono">{l.location_code}</span>
+                        <span className="text-[10px] text-slate-400">{l.used_slots ?? 0}/{l.max_pallets}</span>
+                      </button>
+                    )
+                  })}
+              </div>
+              {activeLocationId && (
+                <button type="button" className="text-xs text-slate-400 hover:text-slate-600" onClick={() => setShowLocPicker(false)}>
+                  Huỷ
+                </button>
+              )}
+            </div>
+          )}
 
           {/* Camera with floating buttons */}
           <div className="relative">
@@ -314,6 +369,13 @@ export default function InboundDetail() {
     order?.warehouse_id ? { warehouse_id: order.warehouse_id } : undefined
   )
 
+  // Tab bar: tất cả phiếu OPEN của kho + ngày này (để lái xe nâng nhảy qua lại)
+  const { data: openOrders = [] } = useInboundOrders(
+    order?.warehouse_id && order?.import_date
+      ? { warehouse_id: order.warehouse_id, date: order.import_date }
+      : undefined
+  )
+
   const user  = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
 
@@ -398,6 +460,7 @@ export default function InboundDetail() {
           order={order}
           onClose={() => setShowScan(false)}
           employeeId={user?.id}
+          allLocations={allLocations as any}
         />
       )}
 
@@ -474,6 +537,39 @@ export default function InboundDetail() {
       )}
 
       <div className="flex flex-col h-full min-h-0">
+
+        {/* ── Tab bar (nhảy qua lại giữa các phiếu đang mở) ── */}
+        {openOrders.length > 1 && (
+          <div className="flex overflow-x-auto shrink-0 border-b bg-slate-50 gap-0 scrollbar-none">
+            {openOrders.map((o: InboundOrder) => {
+              const isActive = o.id === id
+              const isNCC    = (o as any).source_type === 'NCC'
+              const plate    = (o as any).gate_registration?.license_plate
+              const pallets  = (o as any)._count?.inventory_entries ?? 0
+              const label    = isNCC
+                ? `NCC${plate ? `·${plate}` : ''} · ${o.material?.short_name ?? o.material?.material_code ?? '—'}`
+                : (o.material?.short_name ?? o.material?.material_code ?? '—')
+              return (
+                <button
+                  key={o.id}
+                  onClick={() => navigate(`/wms/inbound/${o.id}`)}
+                  className={[
+                    'flex items-center gap-1.5 px-3 py-2 text-[10px] whitespace-nowrap border-b-2 transition-colors shrink-0',
+                    isActive
+                      ? 'border-blue-600 text-blue-700 font-semibold bg-white'
+                      : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-100',
+                  ].join(' ')}
+                >
+                  {isNCC && (
+                    <span className="rounded px-1 py-0.5 text-[8px] font-bold bg-green-100 text-green-700">NCC</span>
+                  )}
+                  <span className="max-w-[110px] truncate">{label}</span>
+                  <span className="ml-auto rounded-full bg-slate-200 text-slate-600 px-1.5 py-0.5 text-[8px] font-mono">{pallets}</span>
+                </button>
+              )
+            })}
+          </div>
+        )}
 
         {/* ── Compact header (~20%) ── */}
         <div className="border-b bg-white px-4 pt-3 pb-3 shrink-0 space-y-2">

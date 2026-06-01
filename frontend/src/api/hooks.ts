@@ -1735,6 +1735,36 @@ export function useRevokeVehicleSlot() {
   })
 }
 
+// ── Gate Registrations (cho Inbound NCC picker) ──────────────────────────────
+
+export function useActiveGateRegistrations(params?: {
+  date?: string; warehouse_id?: string; direction?: string; status?: string
+}) {
+  return useQuery({
+    queryKey: ['gate-registrations', params],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/tms/gate-registrations', { params })
+      return data.data as any[]
+    },
+    enabled: !!(params?.date && params?.warehouse_id),
+  })
+}
+
+// ── Inbound Materials từ kế hoạch nhập ngoài (SAP plan) ─────────────────────
+
+export function useInboundMaterials(params?: {
+  date?: string; warehouse_id?: string; gate_registration_id?: string
+}) {
+  return useQuery({
+    queryKey: ['inbound-materials', params],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/tms/orders/inbound-materials', { params })
+      return data.data as any[]
+    },
+    enabled: !!(params?.date && params?.warehouse_id),
+  })
+}
+
 export function useDeleteVehicleSlot() {
   const qc = useQueryClient()
   return useMutation({

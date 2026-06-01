@@ -176,7 +176,7 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
         imported_by:          importedByEmpId  || undefined,
         source_type:          sourceType,
         gate_registration_id: gateRegId        || undefined,
-        tms_order_id:         tmsOrderId       || undefined,
+        tms_order_id:         (tmsOrderId && tmsOrderId !== '__unplanned__') ? tmsOrderId : undefined,
         planned_cartons:      plannedCartons ? Number(plannedCartons) : undefined,
       },
       {
@@ -630,9 +630,11 @@ export default function Inbound() {
   const inboundAllowedWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
     ? new Set(user.warehouse_ids)
     : null
-  const inboundAllowedCats = user?.allowed_categories?.length
-    ? user.allowed_categories.map(normCatFe)
-    : null
+  const inboundAllowedCats = user?.warehouse_scope === 'NATIONAL'
+    ? null
+    : user?.allowed_categories?.length
+      ? user.allowed_categories.map(normCatFe)
+      : null
 
   // Resolve effective warehouse: UI filter override → user's single fixed warehouse → let backend scope handle multi-warehouse
   const effectiveWarehouseId = f.warehouseId || user?.warehouse_id || undefined

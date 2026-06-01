@@ -93,8 +93,10 @@ export async function listInventory(req: Request, res: Response) {
     : warehouseIds
 
   // Normalize old abbreviations from stale JWT (TP→Thành phẩm, BAO_BI→Bao bì)
+  // NATIONAL scope: bỏ qua allowed_categories restriction
   const normCat = (c: string) => c === 'TP' ? 'Thành phẩm' : c === 'BAO_BI' ? 'Bao bì' : c
-  const scopeCategories = (req.user?.allowed_categories ?? []).map(normCat)
+  const isNational = req.user?.warehouse_scope === 'NATIONAL'
+  const scopeCategories = isNational ? [] : (req.user?.allowed_categories ?? []).map(normCat)
   const effectiveCategories = scopeCategories.length > 0
     ? (categories.length > 0 ? categories.filter(c => scopeCategories.includes(c)) : scopeCategories)
     : categories

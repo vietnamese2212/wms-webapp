@@ -107,8 +107,10 @@ export async function listOrders(req: Request, res: Response) {
     if (shift_id)    query = query.eq('shift_id', shift_id)
 
     // Enforce user's category scope + optional query-param category filter
+    // NATIONAL scope: bỏ qua allowed_categories, chỉ lọc theo query param nếu có
     const normCat = (c: string) => c === 'TP' ? 'Thành phẩm' : c === 'BAO_BI' ? 'Bao bì' : c
-    const scopeCategories = (req.user?.allowed_categories ?? []).map(normCat)
+    const isNational = req.user?.warehouse_scope === 'NATIONAL'
+    const scopeCategories = isNational ? [] : (req.user?.allowed_categories ?? []).map(normCat)
     const effectiveCategories = scopeCategories.length > 0
       ? (material_category ? scopeCategories.filter(c => c === material_category) : scopeCategories)
       : (material_category ? [material_category] : [])

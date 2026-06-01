@@ -1,13 +1,5 @@
--- TmsOrder: bổ sung fields cho kế hoạch nhập ngoài (INBOUND direction)
--- material_id : mã hàng SAP plan (nullable — outbound không dùng)
--- po_number   : số PO mua hàng (chỉ dùng cho INBOUND)
--- is_unplanned: đánh dấu xe phát sinh, không có trong kế hoạch SAP
+-- Migration 20260601_tms_inbound_plan_fields.sql
+-- ĐÃ THAY ĐỔI THIẾT KẾ: material_id/po_number/is_unplanned chuyển sang bảng inbound_plan_lines
+-- File này giữ lại để không phá sequence migration, không có thay đổi thực tế.
 
-ALTER TABLE "TmsOrder"
-  ADD COLUMN IF NOT EXISTS material_id  TEXT REFERENCES "Material"(id) ON DELETE SET NULL,
-  ADD COLUMN IF NOT EXISTS po_number    TEXT,
-  ADD COLUMN IF NOT EXISTS is_unplanned BOOLEAN NOT NULL DEFAULT FALSE;
-
-CREATE INDEX IF NOT EXISTS idx_tms_order_material ON "TmsOrder"(material_id);
-
-NOTIFY pgrst, 'reload schema';
+-- (no-op)

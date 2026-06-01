@@ -79,5 +79,5 @@ DROP POLICY IF EXISTS "service_role_bypass" ON gate_registrations;
 CREATE POLICY "service_role_bypass" ON gate_registrations
   FOR ALL TO service_role USING (true) WITH CHECK (true);
 
--- Realtime
-ALTER PUBLICATION supabase_realtime ADD TABLE gate_registrations;
+-- Realtime: bảng tự động vào publication vì project dùng FOR ALL TABLES
+-- ALTER PUBLICATION supabase_realtime ADD TABLE gate_registrations;

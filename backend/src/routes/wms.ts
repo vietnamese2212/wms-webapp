@@ -5,6 +5,7 @@ import * as outbound from '../controllers/wms/outboundController'
 import * as inventory from '../controllers/wms/inventoryController'
 import * as lookup from '../controllers/wms/lookupController'
 import * as zone from '../controllers/wms/zoneController'
+import * as inboundPlan from '../controllers/wms/inboundPlanController'
 import { inboundEmitter } from '../lib/events'
 import { requirePerm, requireAnyPerm } from '../middlewares/auth'
 
@@ -42,6 +43,13 @@ router.get('/zones',         zone.listZones)
 router.post('/zones',        requirePerm('wms_settings', 'manage'), zone.createZone)
 router.put('/zones/:id',     requirePerm('wms_settings', 'manage'), zone.updateZone)
 router.delete('/zones/:id',  requirePerm('wms_settings', 'manage'), zone.deleteZone)
+
+// Inbound plan lines (kế hoạch nhập ngoài NCC)
+router.get('/inbound-plan',         requirePerm('inbound_plan', 'view'),   inboundPlan.listPlanLines)
+router.post('/inbound-plan',        requirePerm('inbound_plan', 'create'), inboundPlan.createPlanLine)
+router.post('/inbound-plan/bulk',   requirePerm('inbound_plan', 'create'), inboundPlan.bulkCreatePlanLines)
+router.patch('/inbound-plan/:id',   requirePerm('inbound_plan', 'edit'),   inboundPlan.updatePlanLine)
+router.delete('/inbound-plan/:id',  requirePerm('inbound_plan', 'delete'), inboundPlan.deletePlanLine)
 
 // Inbound orders (phiếu nhập kho)
 router.get('/inbound-orders',                           inbound.listOrders)

@@ -19,7 +19,7 @@ import {
   useInboundOrders, useCreateInboundOrder,
   useWarehouses, useMaterials, useLocationsReal, useImportShifts,
   useEmployeeRecords, useWarehouseTypes, useWarehouseZones,
-  useActiveGateRegistrations, useInboundMaterials,
+  useActiveGateRegistrations, useInboundPlanLines,
 } from '@/api/hooks'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { SearchInput } from '@/components/shared/SearchInput'
@@ -103,10 +103,12 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
       ? { date: importDate, warehouse_id: warehouseId, direction: 'INBOUND', status: 'IN' }
       : undefined
   )
-  // NCC: materials từ SAP INBOUND plan (lọc theo gate nếu đã chọn)
-  const { data: planMaterials = [] } = useInboundMaterials(
+  // NCC: materials từ SAP INBOUND plan — lọc theo tms_order_id của gate đã chọn
+  const selectedGate = (activeGates as any[]).find(g => g.id === gateRegId)
+  const gateTmsOrderId: string | undefined = selectedGate?.tms_order_id ?? undefined
+  const { data: planMaterials = [] } = useInboundPlanLines(
     sourceType === 'NCC' && warehouseId && importDate
-      ? { date: importDate, warehouse_id: warehouseId, ...(gateRegId ? { gate_registration_id: gateRegId } : {}) }
+      ? { date: importDate, warehouse_id: warehouseId, ...(gateTmsOrderId ? { tms_order_id: gateTmsOrderId } : {}) }
       : undefined
   )
   const { data: locations  = [] } = useLocationsReal(
@@ -284,11 +286,13 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
                 <Label>Mã hàng theo kế hoạch <span className="text-red-500">*</span></Label>
                 <div ref={nccMatRef} className="relative">
                   <Select
-                    value={tmsOrderId}
+                    value={(planMaterials as any[]).find(m => m.tms_order_id === tmsOrderId && m.material_id === materialId)?.id ?? ''}
                     onValueChange={v => {
-                      setTmsOrderId(v)
                       const found = (planMaterials as any[]).find(m => m.id === v)
-                      if (found?.material_id) setMaterialId(found.material_id)
+                      if (found) {
+                        setTmsOrderId(found.tms_order_id ?? '')
+                        setMaterialId(found.material_id ?? '')
+                      }
                     }}
                     disabled={!gateRegId}
                   >

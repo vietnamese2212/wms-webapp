@@ -6,7 +6,6 @@ import { ok, fail } from '../../utils/response'
 const ORDER_SELECT = `
   *,
   ncc:TransportCompany!ncc_id(id, code, name),
-  material:Material!material_id(id, material_code, short_name),
   vehicle_slots:TmsVehicleSlot(
     id, order_id, slot_id,
     slot:DeliverySlot!slot_id(id, date, time_from, time_to, direction, cargo_type, max_vehicles, booked_count),
@@ -51,7 +50,6 @@ export async function createOrder(req: Request, res: Response) {
       vehicle_type, direction, warehouse_type,
       planned_boxes, planned_pallets, planned_tons,
       gdo_refs, notes, priority,
-      material_id, po_number, is_unplanned,
     } = req.body
     if (!date || !warehouse_id) return fail(res, 'date và warehouse_id là bắt buộc', 400)
     if (!order_code) return fail(res, 'order_code là bắt buộc', 400)
@@ -73,9 +71,6 @@ export async function createOrder(req: Request, res: Response) {
       planned_tons: planned_tons ?? null,
       gdo_refs: gdo_refs || null, notes: notes || null,
       priority: priority === true || priority === 'true',
-      material_id: material_id || null,
-      po_number: po_number || null,
-      is_unplanned: is_unplanned === true || is_unplanned === 'true',
       status: 'PENDING',
       created_by: user?.name || null, updated_by: user?.name || null,
       created_at: now, updated_at: now,
@@ -137,9 +132,6 @@ export async function bulkCreateOrders(req: Request, res: Response) {
         planned_tons: o.planned_tons ?? null,
         gdo_refs: o.gdo_refs || null, notes: o.notes || null,
         priority: o.priority === true || o.priority === 'true',
-        material_id: o.material_id || null,
-        po_number: o.po_number || null,
-        is_unplanned: o.is_unplanned === true || o.is_unplanned === 'true',
         status: 'PENDING',
         created_by: user?.name || null, updated_by: user?.name || null,
         created_at: now, updated_at: now,
@@ -201,9 +193,6 @@ export async function updateOrder(req: Request, res: Response) {
     if (notes           !== undefined) updates.notes           = notes || null
     if (status          !== undefined) updates.status          = status
     if (priority        !== undefined) updates.priority        = priority === true || priority === 'true'
-    if ('material_id'   in req.body)   updates.material_id    = req.body.material_id || null
-    if ('po_number'     in req.body)   updates.po_number      = req.body.po_number || null
-    if ('is_unplanned'  in req.body)   updates.is_unplanned   = req.body.is_unplanned === true || req.body.is_unplanned === 'true'
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await (supabase.from('TmsOrder') as any)
@@ -230,66 +219,6 @@ export async function bulkUpdateOrderDate(req: Request, res: Response) {
       .in('id', ids)
     if (error) return fail(res, error.message)
     return ok(res, { updated: ids.length })
-  } catch (e) { return fail(res, String(e)) }
-}
-
-// GET /api/tms/orders/inbound-materials?gate_registration_id=&date=&warehouse_id=
-// Trả về danh sách materials từ TmsOrder INBOUND theo gate registration (dropdown cho thủ kho)
-export async function listInboundMaterials(req: Request, res: Response) {
-  try {
-    const { gate_registration_id, date, warehouse_id } = req.query as Record<string, string>
-    if (!date || !warehouse_id) return fail(res, 'date và warehouse_id là bắt buộc', 400)
-
-    // Nếu có gate_registration_id: lấy tms_vehicle_slot_id từ gate → tìm TmsOrder qua slot
-    let orderIds: string[] = []
-    if (gate_registration_id) {
-      const { data: gate } = await supabase
-        .from('gate_registrations')
-        .select('tms_vehicle_slot_id, tms_order_ids, tms_order_id')
-        .eq('id', gate_registration_id)
-        .single()
-
-      if (gate) {
-        const g = gate as { tms_vehicle_slot_id: string | null; tms_order_ids: string | null; tms_order_id: string | null }
-        // Thu thập tất cả order IDs từ gate
-        const ids = new Set<string>()
-        if (g.tms_order_id) ids.add(g.tms_order_id)
-        if (g.tms_order_ids) g.tms_order_ids.split(',').map(s => s.trim()).filter(Boolean).forEach(id => ids.add(id))
-        // Nếu có vehicle slot, lấy thêm order từ slot đó (và các slot cùng consolidation group)
-        if (g.tms_vehicle_slot_id) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { data: slot } = await (supabase.from('TmsVehicleSlot') as any)
-            .select('order_id, consolidation_group_id')
-            .eq('id', g.tms_vehicle_slot_id)
-            .single()
-          if (slot) {
-            ids.add(slot.order_id)
-            if (slot.consolidation_group_id) {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const { data: mates } = await (supabase.from('TmsVehicleSlot') as any)
-                .select('order_id')
-                .eq('consolidation_group_id', slot.consolidation_group_id)
-              ;(mates ?? []).forEach((m: { order_id: string }) => ids.add(m.order_id))
-            }
-          }
-        }
-        orderIds = [...ids]
-      }
-    }
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let q = (supabase.from('TmsOrder') as any)
-      .select('id, order_code, material_id, po_number, planned_boxes, planned_pallets, is_unplanned, material:Material!material_id(id, material_code, short_name)')
-      .eq('date', date)
-      .eq('warehouse_id', warehouse_id)
-      .eq('direction', 'INBOUND')
-      .not('material_id', 'is', null)
-
-    if (orderIds.length > 0) q = q.in('id', orderIds)
-
-    const { data, error } = await q
-    if (error) return fail(res, error.message)
-    return ok(res, data ?? [])
   } catch (e) { return fail(res, String(e)) }
 }
 

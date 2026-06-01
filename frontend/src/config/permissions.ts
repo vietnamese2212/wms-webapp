@@ -168,6 +168,15 @@ export const MODULES = {
       exit:   'Xác nhận xe ra (Bảo vệ)',
     },
   },
+  inbound_plan: {
+    label: 'KH nhập ngoài',
+    actions: {
+      view:   'Xem kế hoạch',
+      create: 'Thêm / Upload dòng kế hoạch',
+      edit:   'Sửa dòng kế hoạch',
+      delete: 'Xóa dòng kế hoạch',
+    },
+  },
 } as const
 
 export type ModuleKey = keyof typeof MODULES

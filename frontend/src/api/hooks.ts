@@ -1754,18 +1754,65 @@ export function useActiveGateRegistrations(params?: {
   })
 }
 
-// ── Inbound Materials từ kế hoạch nhập ngoài (SAP plan) ─────────────────────
+// ── Inbound Plan Lines (kế hoạch nhập ngoài NCC) ─────────────────────────────
 
-export function useInboundMaterials(params?: {
-  date?: string; warehouse_id?: string; gate_registration_id?: string
+export function useInboundPlanLines(params?: {
+  date?: string; warehouse_id?: string; tms_order_id?: string
 }) {
   return useQuery({
-    queryKey: ['inbound-materials', params],
+    queryKey: ['inbound-plan-lines', params],
     queryFn: async () => {
-      const { data } = await apiClient.get('/tms/orders/inbound-materials', { params })
+      const { data } = await apiClient.get('/wms/inbound-plan', { params })
       return data.data as any[]
     },
     enabled: !!(params?.date && params?.warehouse_id),
+  })
+}
+
+export function useCreatePlanLine() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: {
+      date: string; warehouse_id: string; warehouse_type?: string; vehicle_type?: string
+      ncc_id?: string; material_id?: string; po_number?: string
+      planned_boxes?: number; planned_pallets?: number
+    }) => apiClient.post('/wms/inbound-plan', body).then(r => r.data.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['inbound-plan-lines'] }),
+  })
+}
+
+export function useBulkCreatePlanLines() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (lines: Record<string, unknown>[]) =>
+      apiClient.post('/wms/inbound-plan/bulk', { lines }).then(r => r.data.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['inbound-plan-lines'] })
+      qc.invalidateQueries({ queryKey: ['tms-orders'] })
+    },
+  })
+}
+
+export function useUpdatePlanLine() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string; material_id?: string; po_number?: string; planned_boxes?: number; planned_pallets?: number }) =>
+      apiClient.patch(`/wms/inbound-plan/${id}`, body).then(r => r.data.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['inbound-plan-lines'] })
+      qc.invalidateQueries({ queryKey: ['tms-orders'] })
+    },
+  })
+}
+
+export function useDeletePlanLine() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.delete(`/wms/inbound-plan/${id}`).then(() => id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['inbound-plan-lines'] })
+      qc.invalidateQueries({ queryKey: ['tms-orders'] })
+    },
   })
 }
 

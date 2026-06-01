@@ -175,6 +175,7 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
         notes:                notes            || undefined,
         imported_by:          importedByEmpId  || undefined,
         source_type:          sourceType,
+        warehouse_type:       subType          || undefined,
         gate_registration_id: gateRegId        || undefined,
         tms_order_id:         (tmsOrderId && tmsOrderId !== '__unplanned__') ? tmsOrderId : undefined,
         planned_cartons:      plannedCartons ? Number(plannedCartons) : undefined,

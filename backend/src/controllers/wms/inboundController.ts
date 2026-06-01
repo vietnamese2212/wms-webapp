@@ -106,18 +106,18 @@ export async function listOrders(req: Request, res: Response) {
     if (material_id) query = query.eq('material_id', material_id)
     if (shift_id)    query = query.eq('shift_id', shift_id)
 
-    // Enforce user's category scope + optional query-param category filter
-    // NATIONAL scope: bỏ qua allowed_categories, chỉ lọc theo query param nếu có
+    // Lọc theo warehouse_type lưu trực tiếp trên order
+    // NATIONAL scope: không giới hạn category, chỉ lọc theo query param nếu có
     const normCat = (c: string) => c === 'TP' ? 'Thành phẩm' : c === 'BAO_BI' ? 'Bao bì' : c
     const isNational = req.user?.warehouse_scope === 'NATIONAL'
     const scopeCategories = isNational ? [] : (req.user?.allowed_categories ?? []).map(normCat)
-    const effectiveCategories = scopeCategories.length > 0
-      ? (material_category ? scopeCategories.filter(c => c === material_category) : scopeCategories)
-      : (material_category ? [material_category] : [])
-    if (effectiveCategories.length === 1) {
-      query = query.eq('material.category', effectiveCategories[0])
-    } else if (effectiveCategories.length > 1) {
-      query = query.in('material.category', effectiveCategories)
+
+    if (material_category) {
+      query = query.eq('warehouse_type', material_category)
+    } else if (scopeCategories.length > 0) {
+      query = scopeCategories.length === 1
+        ? query.eq('warehouse_type', scopeCategories[0])
+        : query.in('warehouse_type', scopeCategories)
     }
 
     // Date range – support legacy ?date= and new ?date_from= / ?date_to=
@@ -155,7 +155,7 @@ export async function createOrder(req: Request, res: Response) {
   try {
     const {
       warehouse_id, material_id, location_id, planned_pallets, shift_id, import_date, notes, imported_by,
-      source_type, gate_registration_id, tms_order_id, planned_cartons,
+      source_type, gate_registration_id, tms_order_id, planned_cartons, warehouse_type,
     } = req.body
     if (!warehouse_id) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu warehouse_id')
     if (!material_id)  return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu material_id')
@@ -197,6 +197,7 @@ export async function createOrder(req: Request, res: Response) {
         created_by:           resolvedImportedBy,
         status:               'OPEN',
         source_type:          resolvedSourceType,
+        warehouse_type:       warehouse_type ?? null,
         gate_registration_id: gate_registration_id ?? null,
         tms_order_id:         tms_order_id ?? null,
         planned_cartons:      planned_cartons ? Number(planned_cartons) : null,

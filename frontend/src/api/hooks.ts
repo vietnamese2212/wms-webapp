@@ -240,6 +240,7 @@ export function useCreateInboundOrder() {
       notes?: string
       imported_by?: string
       source_type?: string
+      warehouse_type?: string
       gate_registration_id?: string
       tms_order_id?: string
       planned_cartons?: number

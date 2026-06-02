@@ -2,7 +2,7 @@ import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Package, PackagePlus, PackageMinus, MapPin,
   Truck, Navigation, Calendar, Settings, Settings2, BarChart3, Scissors, ScanLine,
-  ClipboardCheck, BarChart2, UserCog, ClipboardList, ShieldCheck,
+  ClipboardCheck, BarChart2, UserCog, ClipboardList, ShieldCheck, Tag,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/authStore'
@@ -46,7 +46,8 @@ const navGroups: { label: string; items: { to: string; icon: React.ElementType; 
   {
     label: 'Quản trị',
     items: [
-      { to: '/masterdata/users', icon: UserCog, label: 'Quản lý người dùng', adminOnly: true },
+      { to: '/masterdata/materials', icon: Tag,     label: 'Mã hàng',            module: 'materials' as ModuleKey },
+      { to: '/masterdata/users',     icon: UserCog, label: 'Quản lý người dùng', adminOnly: true },
     ],
   },
 ]

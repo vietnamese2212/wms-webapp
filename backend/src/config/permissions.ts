@@ -18,4 +18,5 @@ export const ALL_PERMISSIONS: Record<string, string[]> = {
   tms_vehicles:      ['view', 'manage'],
   gate_registration: ['view', 'create', 'edit', 'delete', 'call', 'entry', 'exit'],
   inbound_plan:      ['view', 'create', 'edit', 'delete'],
+  materials:         ['view', 'create', 'edit', 'delete'],
 }

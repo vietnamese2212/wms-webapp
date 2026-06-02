@@ -143,9 +143,36 @@ export function useCreateMaterial() {
   return useMutation({
     mutationFn: (body: {
       material_code: string; material_description: string
-      custom_short_name?: string; product_type?: string
-      unit?: string; manufacturer_id?: string; notes?: string
+      custom_short_name?: string; category?: string; product_type?: string
+      unit?: string; manufacturer_id?: string; notes?: string; old_code?: string
+      weight_kg?: number | null; cartons_per_pallet?: number | null
+      cartons_per_pallet_mn?: number | null; units_per_carton?: number | null
+      shelf_life_days?: number | null
     }) => apiClient.post('/masterdata/materials', body).then((r) => r.data.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['materials'] }),
+  })
+}
+
+export function useUpdateMaterial() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: {
+      id: string; material_description?: string; custom_short_name?: string
+      category?: string; product_type?: string; unit?: string
+      manufacturer_id?: string; notes?: string; old_code?: string
+      weight_kg?: number | null; cartons_per_pallet?: number | null
+      cartons_per_pallet_mn?: number | null; units_per_carton?: number | null
+      shelf_life_days?: number | null; is_active?: boolean
+    }) => apiClient.put(`/masterdata/materials/${id}`, body).then((r) => r.data.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['materials'] }),
+  })
+}
+
+export function useDeleteMaterial() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiClient.delete(`/masterdata/materials/${id}`).then((r) => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['materials'] }),
   })
 }

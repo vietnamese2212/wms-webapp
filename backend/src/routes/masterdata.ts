@@ -33,12 +33,12 @@ router.put('/manufacturers/:id',     manufacturer.updateManufacturer)
 router.delete('/manufacturers/:id',  manufacturer.deleteManufacturer)
 
 // Material
-router.get('/materials',            material.listMaterials)
-router.get('/materials/categories', material.listCategories)
-router.post('/materials',           material.createMaterial)
-router.get('/materials/:id',        material.getMaterial)
-router.put('/materials/:id',     material.updateMaterial)
-router.delete('/materials/:id',  material.deleteMaterial)
+router.get('/materials',            requirePerm('materials', 'view'),   material.listMaterials)
+router.get('/materials/categories', requirePerm('materials', 'view'),   material.listCategories)
+router.post('/materials',           requirePerm('materials', 'create'), material.createMaterial)
+router.get('/materials/:id',        requirePerm('materials', 'view'),   material.getMaterial)
+router.put('/materials/:id',        requirePerm('materials', 'edit'),   material.updateMaterial)
+router.delete('/materials/:id',     requirePerm('materials', 'delete'), material.deleteMaterial)
 
 // ImportShift (Ca nhập)
 router.get('/import-shifts',        shiftQa.listImportShifts)

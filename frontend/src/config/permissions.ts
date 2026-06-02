@@ -177,6 +177,15 @@ export const MODULES = {
       delete: 'Xóa dòng kế hoạch',
     },
   },
+  materials: {
+    label: 'Mã hàng',
+    actions: {
+      view:   'Xem danh sách',
+      create: 'Thêm mã hàng',
+      edit:   'Sửa mã hàng',
+      delete: 'Ẩn mã hàng',
+    },
+  },
 } as const
 
 export type ModuleKey = keyof typeof MODULES

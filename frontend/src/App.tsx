@@ -25,6 +25,7 @@ import TMSBookings from '@/pages/tms/TMSBookings'
 import GateRegistration from '@/pages/tms/GateRegistration'
 import Schedule from '@/pages/hr/Schedule'
 import UserManagement from '@/pages/masterdata/UserManagement'
+import Materials       from '@/pages/masterdata/Materials'
 import Settings from '@/pages/Settings'
 import Login from '@/pages/Login'
 
@@ -104,14 +105,14 @@ export default function App() {
         {/* HR */}
         <Route path="/hr/schedule" element={<PermissionRoute module="schedule"><Schedule /></PermissionRoute>} />
 
-        {/* Masterdata — chỉ chức danh có quyền employees mới được vào */}
+        {/* Masterdata */}
         <Route
           path="/masterdata/users"
-          element={
-            <PermissionRoute module="employees">
-              <UserManagement />
-            </PermissionRoute>
-          }
+          element={<PermissionRoute module="employees"><UserManagement /></PermissionRoute>}
+        />
+        <Route
+          path="/masterdata/materials"
+          element={<PermissionRoute module="materials"><Materials /></PermissionRoute>}
         />
 
         <Route path="/settings" element={<Settings />} />

@@ -255,9 +255,13 @@ export interface Material {
   cartons_per_pallet:   number | null
   cartons_per_pallet_mn: number | null
   units_per_carton:     number | null
+  ea_per_pallet:        number | null
   shelf_life_days:      number | null
   storage_category:     string | null
+  old_code:             string | null
   manufacturer_id:      string | null
+  manufacturer?:        { id: string; code: string; name: string | null } | null
+  notes:                string | null
   is_active:            boolean
 }
 

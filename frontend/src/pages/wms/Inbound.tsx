@@ -95,9 +95,13 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
   const { data: warehouses = [] } = useWarehouses(true)
   const { data: shifts     = [] } = useImportShifts()
 
+  // Tính ngày hôm trước để bắt tình huống xe đăng ký đêm hôm trước, sáng hôm sau mới nhập
+  const prevDay = importDate
+    ? (() => { const d = new Date(importDate); d.setDate(d.getDate() - 1); return d.toISOString().slice(0, 10) })()
+    : undefined
   const { data: activeGates = [] } = useActiveGateRegistrations(
     sourceType === 'NCC' && warehouseId && importDate
-      ? { date: importDate, warehouse_id: warehouseId, warehouse_type: subType || undefined, direction: 'INBOUND', status: 'IN' }
+      ? { date_from: prevDay, date_to: importDate, warehouse_id: warehouseId, warehouse_type: subType || undefined, direction: 'INBOUND', status: 'IN' }
       : undefined
   )
   const selectedGate    = (activeGates as any[]).find(g => g.id === gateRegId)
@@ -426,7 +430,10 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
                       {(activeGates as any[]).map(g => (
                         <SelectItem key={g.id} value={g.id}>
                           <span className="font-mono font-semibold">{g.license_plate ?? '—'}</span>
-                          <span className="ml-2 text-xs text-slate-400">{g.company_name_raw ?? ''} · Lần {g.registration_number}</span>
+                          <span className="ml-2 text-xs text-slate-400">
+                            {g.company_name_raw ?? ''} · Lần {g.registration_number}
+                            {g.date !== importDate && <span className="ml-1 text-amber-500">(đăng ký {g.date?.slice(8)}/{g.date?.slice(5, 7)})</span>}
+                          </span>
                         </SelectItem>
                       ))}
                     </SelectContent>

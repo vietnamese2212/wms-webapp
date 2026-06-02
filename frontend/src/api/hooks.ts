@@ -1773,7 +1773,8 @@ export function useRevokeVehicleSlot() {
 // ── Gate Registrations (cho Inbound NCC picker) ──────────────────────────────
 
 export function useActiveGateRegistrations(params?: {
-  date?: string; warehouse_id?: string; warehouse_type?: string; direction?: string; status?: string
+  date?: string; date_from?: string; date_to?: string
+  warehouse_id?: string; warehouse_type?: string; direction?: string; status?: string
 }) {
   return useQuery({
     queryKey: ['gate-registrations', params],
@@ -1781,7 +1782,7 @@ export function useActiveGateRegistrations(params?: {
       const { data } = await apiClient.get('/tms/gate-registrations', { params })
       return data.data as any[]
     },
-    enabled: !!(params?.date && params?.warehouse_id),
+    enabled: !!((params?.date || params?.date_from) && params?.warehouse_id),
   })
 }
 

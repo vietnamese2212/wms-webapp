@@ -102,6 +102,7 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 - Lỗi API hiển thị inline (banner đỏ trong component), không chỉ `console.error`
 - **Bulk action phải chạy song song** — dùng `Promise.all(ids.map(...))`, không dùng `for...of await` (sequential = N round-trips, chậm tuyến tính)
 - **Loading state bắt buộc** — mọi button gọi API phải có `disabled={saving}` và text phản hồi trong khi chờ
+- **Dropdown trong table cell bị che:** wrapper ngoài table **không được có `overflow-hidden`** — CSS clips tất cả `position: absolute` descendants kể cả `z-50`. Dùng `border rounded-lg` (bỏ `overflow-hidden`).
 
 **Phân quyền — bắt buộc mọi nút action:**
 - Mọi `<Button>` hay element có `onClick` gọi API write (tạo/sửa/xóa/quét/giao/hoàn thành…) **phải** được bọc bởi `can(perms, module, action)`.

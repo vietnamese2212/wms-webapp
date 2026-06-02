@@ -470,7 +470,7 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
                   </button>
                 )}
               </div>
-              <div className="border rounded-lg overflow-hidden">
+              <div className="border rounded-lg">
                 <table className="min-w-full text-[10px]">
                   <thead className="bg-slate-50 border-b">
                     <tr>

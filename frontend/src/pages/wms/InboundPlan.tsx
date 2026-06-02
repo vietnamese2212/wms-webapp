@@ -236,7 +236,7 @@ function AddLineDialog({ open, date, warehouseId, onClose }: {
         {/* Section 2: Bảng mã hàng */}
         <div className="space-y-1.5">
           <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">Danh sách hàng hóa</p>
-          <div className="border rounded-lg overflow-hidden">
+          <div className="border rounded-lg">
             <table className="min-w-full text-[10px]">
               <thead className="bg-slate-50 border-b">
                 <tr>

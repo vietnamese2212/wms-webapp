@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Plus, PackagePlus, CalendarDays, X, ChevronDown, User, MapPin, Filter, QrCode } from 'lucide-react'
 import type { AxiosError } from 'axios'
@@ -45,91 +45,83 @@ const normCatFe = (c: string) => c === 'TP' ? 'Thành phẩm' : c === 'BAO_BI' ?
 
 type MatItem = { id: string; material_code: string; short_name: string | null; material_description: string }
 
+type NccMatRow = {
+  material_code: string; material_id: string
+  mat_name: string; mat_unit: string
+  unit_input: string; planned_qty: string
+}
+const emptyNccRow = (): NccMatRow => ({
+  material_code: '', material_id: '', mat_name: '', mat_unit: '', unit_input: '', planned_qty: '',
+})
+
 function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const navigate  = useNavigate()
   const user      = useAuthStore((s) => s.user)
-  // NATIONAL scope → can pick any warehouse; ASSIGNED with single warehouse → fixed
   const canPickWarehouse = user?.warehouse_scope === 'NATIONAL' || !user?.warehouse_id
   const dialogAllowedWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
-    ? new Set(user.warehouse_ids)
-    : null
+    ? new Set(user.warehouse_ids) : null
 
-  const [sourceType,    setSourceType]    = useState<'FACTORY' | 'NCC'>('FACTORY')
-  const [warehouseId,   setWarehouseId]   = useState('')
-  const [subType,       setSubType]       = useState('')
-  const [materialId,    setMaterialId]    = useState('')
-  const [locationId,    setLocationId]    = useState('')
-  const [shiftId,       setShiftId]       = useState('')
-  const [importDate,    setImportDate]    = useState(format(new Date(), 'yyyy-MM-dd'))
-  const [notes,         setNotes]         = useState('')
-  // NCC-specific
-  const [gateRegId,     setGateRegId]     = useState('')
-  const [tmsOrderId,    setTmsOrderId]    = useState('')
-  const [plannedCartons,setPlannedCartons]= useState('')
-  const [nccMatOpen,    setNccMatOpen]    = useState(false)
-  const nccMatRef = useRef<HTMLDivElement>(null)
-
-  // Material combobox state
+  const [sourceType,   setSourceType]   = useState<'FACTORY' | 'NCC'>('FACTORY')
+  const [warehouseId,  setWarehouseId]  = useState('')
+  const [subType,      setSubType]      = useState('')
+  const [materialId,   setMaterialId]   = useState('')
+  const [locationId,   setLocationId]   = useState('')
+  const [shiftId,      setShiftId]      = useState('')
+  const [importDate,   setImportDate]   = useState(format(new Date(), 'yyyy-MM-dd'))
+  const [notes,        setNotes]        = useState('')
+  const [gateRegId,    setGateRegId]    = useState('')
+  // FACTORY combobox
   const [matSearch, setMatSearch] = useState('')
   const [matOpen,   setMatOpen]   = useState(false)
   const matRef = useRef<HTMLDivElement>(null)
+  // NCC table
+  const [nccRows,        setNccRows]        = useState<NccMatRow[]>([emptyNccRow()])
+  const [nccSaving,      setNccSaving]      = useState(false)
+  const [nccErr,         setNccErr]         = useState('')
+  const [nccDropdownIdx, setNccDropdownIdx] = useState<number | null>(null)
 
-  // Reset all fields each time the dialog opens
   useEffect(() => {
     if (open) {
       setSourceType('FACTORY')
       setWarehouseId(user?.warehouse_id ?? user?.warehouse_ids?.[0] ?? '')
-      setSubType('')
-      setMaterialId('')
-      setMatSearch('')
-      setMatOpen(false)
-      setLocationId('')
-      setShiftId('')
+      setSubType(''); setMaterialId(''); setMatSearch(''); setMatOpen(false)
+      setLocationId(''); setShiftId('')
       setImportDate(format(new Date(), 'yyyy-MM-dd'))
-      setNotes('')
-      setGateRegId('')
-      setTmsOrderId('')
-      setPlannedCartons('')
-      setNccMatOpen(false)
+      setNotes(''); setGateRegId('')
+      setNccRows([emptyNccRow()]); setNccSaving(false); setNccErr(''); setNccDropdownIdx(null)
     }
   }, [open, user?.warehouse_id, user?.warehouse_ids])
 
   const { data: warehouses = [] } = useWarehouses(true)
   const { data: shifts     = [] } = useImportShifts()
 
-  // NCC: gate registrations đang IN (direction=INBOUND) để thủ kho chọn xe
   const { data: activeGates = [] } = useActiveGateRegistrations(
     sourceType === 'NCC' && warehouseId && importDate
       ? { date: importDate, warehouse_id: warehouseId, direction: 'INBOUND', status: 'IN' }
       : undefined
   )
-  // NCC: materials từ SAP INBOUND plan — lọc theo tms_order_id của gate đã chọn
-  const selectedGate = (activeGates as any[]).find(g => g.id === gateRegId)
+  const selectedGate    = (activeGates as any[]).find(g => g.id === gateRegId)
   const gateTmsOrderId: string | undefined = selectedGate?.tms_order_id ?? undefined
   const { data: planMaterials = [] } = useInboundPlanLines(
     sourceType === 'NCC' && warehouseId && importDate
       ? { date: importDate, warehouse_id: warehouseId, ...(gateTmsOrderId ? { tms_order_id: gateTmsOrderId } : {}) }
       : undefined
   )
-  const { data: locations  = [] } = useLocationsReal(
-    warehouseId ? { warehouse_id: warehouseId } : undefined
-  )
-  const { data: zones = [] } = useWarehouseZones(warehouseId || undefined)
-
+  const { data: locations = [] } = useLocationsReal(warehouseId ? { warehouse_id: warehouseId } : undefined)
+  const { data: zones     = [] } = useWarehouseZones(warehouseId || undefined)
   const allLocs = locations as LocationWithCapacity[]
 
   const { data: allWhTypes = [] } = useWarehouseTypes()
   const loaiKhoOpts = allWhTypes.map(t => t.value)
-  // backward compat: also match location by sub_code if zone name matches subType
   const selectedZone = zones.find(z => z.name === subType)
   const filteredLocs = subType
     ? allLocs.filter(l => l.category === subType || (selectedZone && l.sub_code === selectedZone.code))
     : allLocs
 
   const matCategory = subType || undefined
-  const { data: materials = [] } = useMaterials({ search: matSearch || undefined, category: matCategory })
+  const { data: materials    = [] } = useMaterials({ search: matSearch || undefined, category: matCategory })
+  const { data: allMaterials = [] } = useMaterials(undefined, sourceType === 'NCC')
 
-  // Người nhập: tự động khớp theo tên user đang đăng nhập
   const { data: allEmployees = [] } = useEmployeeRecords({ is_active: 'true' })
   type EmpItem = { id: string; name: string; employee_code: string }
   const importedByEmpId = useMemo(
@@ -137,14 +129,12 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
     [allEmployees, user?.name]
   )
 
-  // Auto-select warehouse by name when warehouse_id not set (mock auth scenario)
   useEffect(() => {
     if (!open || warehouseId || !user?.warehouse_name || !warehouses.length) return
     const match = (warehouses as { id: string; name: string }[]).find(w => w.name === user.warehouse_name)
     if (match) setWarehouseId(match.id)
   }, [open, warehouses, user?.warehouse_name, warehouseId])
 
-  // Close comboboxes on click outside
   useEffect(() => {
     if (!matOpen) return
     const handler = (e: MouseEvent) => {
@@ -154,332 +144,436 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
     return () => document.removeEventListener('mousedown', handler)
   }, [matOpen])
 
-  const { mutate: createOrder, isPending, error } = useCreateInboundOrder()
+  const { mutate: createOrder, mutateAsync: createOrderAsync, isPending, error } = useCreateInboundOrder()
 
-  const selectedMat = (materials as MatItem[]).find(m => m.id === materialId)
+  // NCC helpers
+  const nccMatByCode = useMemo(() =>
+    new Map((allMaterials as any[]).map(m => [String(m.material_code).trim().toUpperCase(), m])),
+    [allMaterials]
+  )
+
+  function lookupNccRow(code: string): NccMatRow {
+    const found = nccMatByCode.get(code.trim().toUpperCase())
+    return { material_code: code, material_id: found?.id ?? '', mat_name: found?.short_name ?? '', mat_unit: found?.unit ?? '', unit_input: found?.unit ?? '', planned_qty: '' }
+  }
+
+  function handleNccMatCodeChange(idx: number, code: string) {
+    const found = nccMatByCode.get(code.trim().toUpperCase())
+    setNccRows(prev => prev.map((r, i) => i !== idx ? r : {
+      ...r, material_code: code,
+      material_id: found?.id ?? '', mat_name: found?.short_name ?? '',
+      mat_unit: found?.unit ?? '', unit_input: found ? (found.unit ?? '') : r.unit_input,
+    }))
+  }
+
+  function handleNccMatCodePaste(idx: number, e: React.ClipboardEvent) {
+    const text = e.clipboardData.getData('text')
+    const lines = text.split(/[\n\r]+/).map(s => s.trim()).filter(Boolean)
+    if (lines.length <= 1) return
+    e.preventDefault()
+    const newRows = lines.map(c => lookupNccRow(c))
+    setNccRows(prev => {
+      const before = prev.slice(0, idx)
+      const after  = prev.slice(idx + 1).filter(r => r.material_code !== '')
+      return [...before, ...newRows, ...after]
+    })
+    setNccDropdownIdx(null)
+  }
+
+  function selectNccMatFromDropdown(idx: number, m: any) {
+    setNccRows(prev => prev.map((r, i) => i !== idx ? r : {
+      ...r, material_code: m.material_code, material_id: m.id,
+      mat_name: m.short_name ?? '', mat_unit: m.unit ?? '', unit_input: m.unit ?? '',
+    }))
+    setNccDropdownIdx(null)
+  }
+
+  function getNccDropdownMatches(code: string) {
+    const list = allMaterials as any[]
+    if (!code) return list.slice(0, 8)
+    const q = code.toUpperCase()
+    return list.filter(m =>
+      String(m.material_code).toUpperCase().includes(q) ||
+      String(m.short_name ?? '').toUpperCase().includes(q)
+    ).slice(0, 8)
+  }
+
+  function setNccRowField(idx: number, field: 'unit_input' | 'planned_qty', val: string) {
+    setNccRows(prev => prev.map((r, i) => i !== idx ? r : { ...r, [field]: val }))
+  }
+
+  function addNccRow()    { setNccRows(prev => [...prev, emptyNccRow()]) }
+  function removeNccRow(idx: number) {
+    setNccRows(prev => prev.length === 1 ? [emptyNccRow()] : prev.filter((_, i) => i !== idx))
+  }
+  function loadFromPlan() {
+    setNccRows((planMaterials as any[]).map(m => ({
+      material_code: m.material?.material_code ?? '', material_id: m.material_id ?? '',
+      mat_name: m.material?.short_name ?? '', mat_unit: m.material?.unit ?? '',
+      unit_input: m.material?.unit ?? '',
+      planned_qty: m.planned_boxes != null ? String(m.planned_boxes) : '',
+    })))
+  }
+
+  async function handleNccSubmit() {
+    if (!warehouseId) { setNccErr('Vui lòng chọn Kho'); return }
+    if (!subType)     { setNccErr('Vui lòng chọn Loại kho'); return }
+    if (!gateRegId)   { setNccErr('Vui lòng chọn Xe đang vào cổng'); return }
+    if (!shiftId)     { setNccErr('Vui lòng chọn Ca nhập'); return }
+    if (!importDate)  { setNccErr('Vui lòng chọn Ngày nhập'); return }
+    const validRows = nccRows.filter(r => r.material_id)
+    if (!validRows.length) { setNccErr('Vui lòng nhập ít nhất 1 mã hàng hợp lệ'); return }
+    setNccSaving(true); setNccErr('')
+    try {
+      await Promise.all(validRows.map(r => createOrderAsync({
+        warehouse_id: warehouseId, material_id: r.material_id,
+        shift_id: shiftId || undefined, import_date: importDate,
+        notes: notes || undefined, imported_by: importedByEmpId || undefined,
+        source_type: 'NCC', warehouse_type: subType || undefined,
+        gate_registration_id: gateRegId || undefined,
+        planned_cartons: r.planned_qty ? Number(r.planned_qty) : undefined,
+      })))
+      onClose()
+    } catch (e) {
+      const msg = (e as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message
+      setNccErr(msg ?? 'Lỗi tạo phiếu')
+    } finally {
+      setNccSaving(false)
+    }
+  }
+
+  const selectedMat   = (materials as MatItem[]).find(m => m.id === materialId)
   const matInputValue = matOpen
     ? matSearch
     : (selectedMat ? `${selectedMat.material_code} – ${selectedMat.short_name ?? selectedMat.material_description}` : matSearch)
 
-  function handleSubmit() {
-    if (!warehouseId || !subType || !materialId || !shiftId || !importDate) return
-    if (sourceType === 'FACTORY' && !locationId) return
-    if (sourceType === 'NCC' && !gateRegId) return
+  function handleFactorySubmit() {
+    if (!warehouseId || !subType || !materialId || !locationId || !shiftId || !importDate) return
     createOrder(
-      {
-        warehouse_id:         warehouseId,
-        material_id:          materialId,
-        location_id:          locationId  || undefined,
-        shift_id:             shiftId          || undefined,
-        import_date:          importDate,
-        notes:                notes            || undefined,
-        imported_by:          importedByEmpId  || undefined,
-        source_type:          sourceType,
-        warehouse_type:       subType          || undefined,
-        gate_registration_id: gateRegId        || undefined,
-        tms_order_id:         (tmsOrderId && tmsOrderId !== '__unplanned__') ? tmsOrderId : undefined,
-        planned_cartons:      plannedCartons ? Number(plannedCartons) : undefined,
-      },
-      {
-        onSuccess: (data) => {
-          onClose()
-          navigate(`/wms/inbound/${data.order.id}`)
-        },
-      }
+      { warehouse_id: warehouseId, material_id: materialId, location_id: locationId || undefined,
+        shift_id: shiftId || undefined, import_date: importDate, notes: notes || undefined,
+        imported_by: importedByEmpId || undefined, source_type: 'FACTORY', warehouse_type: subType || undefined },
+      { onSuccess: (data) => { onClose(); navigate(`/wms/inbound/${data.order.id}`) } }
     )
   }
 
-  const apiError = (error as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message
+  const apiError      = (error as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message
+  const nccValidCount = nccRows.filter(r => r.material_id).length
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose() }}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className={sourceType === 'NCC' ? 'max-w-2xl' : 'sm:max-w-lg'}>
         <DialogHeader>
           <DialogTitle>Tạo phiếu nhập kho</DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-4 py-2">
-          {apiError && (
-            <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
-              {apiError}
-            </div>
-          )}
-
-          {/* Nguồn nhập */}
+        <div className="space-y-3 py-1 max-h-[80vh] overflow-y-auto pr-0.5">
+          {/* Tab toggle */}
           <div className="flex rounded-lg border overflow-hidden">
             {(['FACTORY', 'NCC'] as const).map(t => (
-              <button
-                key={t}
-                type="button"
-                onClick={() => { setSourceType(t); setGateRegId(''); setTmsOrderId(''); setMaterialId(''); setMatSearch('') }}
-                className={[
-                  'flex-1 py-1.5 text-xs font-medium transition-colors',
-                  sourceType === t
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-white text-slate-600 hover:bg-slate-50',
-                ].join(' ')}
-              >
+              <button key={t} type="button"
+                onClick={() => { setSourceType(t); setGateRegId(''); setMaterialId(''); setMatSearch(''); setNccRows([emptyNccRow()]); setNccErr('') }}
+                className={['flex-1 py-1.5 text-xs font-medium transition-colors',
+                  sourceType === t ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'].join(' ')}>
                 {t === 'FACTORY' ? 'Nhập Sản Xuất' : 'Nhập Ngoài (NCC)'}
               </button>
             ))}
           </div>
 
-          {/* Kho – tự do nếu user không có warehouse_id cố định */}
-          <div className="space-y-2">
-            <Label>Kho <span className="text-red-500">*</span></Label>
-            {canPickWarehouse ? (
-              <Select value={warehouseId} onValueChange={v => { setWarehouseId(v); setSubType(''); setLocationId(''); setMaterialId(''); setMatSearch('') }}>
-                <SelectTrigger><SelectValue placeholder="Chọn kho" /></SelectTrigger>
-                <SelectContent>
-                  {(warehouses as { id: string; name: string; code: string }[])
-                    .filter(w => !dialogAllowedWhIds || dialogAllowedWhIds.has(w.id))
-                    .map((w) => (
-                      <SelectItem key={w.id} value={w.id}>{w.name} ({w.code})</SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
-            ) : (
-              <div className="flex h-10 items-center rounded-md border bg-slate-50 px-3 text-sm text-slate-700">
-                {(warehouses as { id: string; name: string }[]).find((w) => w.id === warehouseId)?.name ?? (warehouseId || '—')}
-              </div>
-            )}
-          </div>
+          {/* ─── FACTORY ─── */}
+          {sourceType === 'FACTORY' && (<>
+            {apiError && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{apiError}</div>}
 
-          {/* Loại kho – lọc cả vị trí lẫn danh sách hàng hóa theo cùng category */}
-          <div className="space-y-2">
-            <Label>Loại kho <span className="text-red-500">*</span></Label>
-            <Select value={subType} onValueChange={v => { setSubType(v); setLocationId(''); setMaterialId(''); setMatSearch('') }} disabled={!warehouseId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Chọn loại kho" />
-              </SelectTrigger>
-              <SelectContent>
-                {loaiKhoOpts.map(v => (
-                  <SelectItem key={v} value={v}>{v}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* NCC: Chọn xe đang vào + Material từ kế hoạch */}
-          {sourceType === 'NCC' && (
-            <>
-              <div className="space-y-2">
-                <Label>Xe đang vào cổng <span className="text-red-500">*</span></Label>
-                <Select value={gateRegId} onValueChange={v => { setGateRegId(v); setTmsOrderId(''); setMaterialId('') }} disabled={!warehouseId || !importDate}>
-                  <SelectTrigger>
-                    <SelectValue placeholder={!warehouseId ? 'Chọn kho trước' : activeGates.length === 0 ? 'Không có xe INBOUND đang vào' : 'Chọn xe...'} />
-                  </SelectTrigger>
+            <div className="space-y-2">
+              <Label>Kho <span className="text-red-500">*</span></Label>
+              {canPickWarehouse ? (
+                <Select value={warehouseId} onValueChange={v => { setWarehouseId(v); setSubType(''); setLocationId(''); setMaterialId(''); setMatSearch('') }}>
+                  <SelectTrigger><SelectValue placeholder="Chọn kho" /></SelectTrigger>
                   <SelectContent>
-                    {(activeGates as any[]).map((g) => (
-                      <SelectItem key={g.id} value={g.id}>
-                        <span className="font-mono font-semibold text-slate-700">{g.license_plate ?? '—'}</span>
-                        <span className="ml-2 text-xs text-slate-400">
-                          Lần {g.registration_number} · {g.company_name_raw ?? '—'} · {g.driver_name ?? ''}
-                        </span>
-                      </SelectItem>
-                    ))}
-                    {activeGates.length === 0 && !warehouseId && null}
+                    {(warehouses as { id: string; name: string; code: string }[])
+                      .filter(w => !dialogAllowedWhIds || dialogAllowedWhIds.has(w.id))
+                      .map(w => <SelectItem key={w.id} value={w.id}>{w.name} ({w.code})</SelectItem>)}
                   </SelectContent>
                 </Select>
-              </div>
+              ) : (
+                <div className="flex h-10 items-center rounded-md border bg-slate-50 px-3 text-sm text-slate-700">
+                  {(warehouses as { id: string; name: string }[]).find(w => w.id === warehouseId)?.name ?? (warehouseId || '—')}
+                </div>
+              )}
+            </div>
 
+            <div className="space-y-2">
+              <Label>Loại kho <span className="text-red-500">*</span></Label>
+              <Select value={subType} onValueChange={v => { setSubType(v); setLocationId(''); setMaterialId(''); setMatSearch('') }} disabled={!warehouseId}>
+                <SelectTrigger><SelectValue placeholder="Chọn loại kho" /></SelectTrigger>
+                <SelectContent>{loaiKhoOpts.map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Vị trí nhập <span className="text-red-500">*</span>
+                <span className="ml-2 text-xs font-normal text-slate-400">đầy=xanh · một phần=cam</span>
+              </Label>
+              <Select value={locationId} onValueChange={setLocationId} disabled={!warehouseId}>
+                <SelectTrigger><SelectValue placeholder={!warehouseId ? 'Chọn kho trước' : !subType ? 'Chọn loại kho trước' : 'Chọn vị trí'} /></SelectTrigger>
+                <SelectContent>
+                  {filteredLocs.map(l => {
+                    const isFull = l.max_pallets > 0 && l.used_slots >= l.max_pallets
+                    const isPartial = l.used_slots > 0 && !isFull
+                    return (
+                      <SelectItem key={l.id} value={l.id}>
+                        <span className={isFull ? 'text-blue-700 font-semibold' : isPartial ? 'text-amber-600' : ''}>{l.location_code}</span>
+                        <span className="ml-2 text-xs text-slate-400">({l.used_slots}/{l.max_pallets})</span>
+                      </SelectItem>
+                    )
+                  })}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Material <span className="text-red-500">*</span></Label>
+              <div ref={matRef} className="relative">
+                <Input placeholder={subType ? `Tìm hàng ${subType}…` : 'Tìm mã hoặc tên hàng...'}
+                  value={matInputValue}
+                  onChange={e => { setMatSearch(e.target.value); setMaterialId(''); setMatOpen(true) }}
+                  onFocus={() => setMatOpen(true)}
+                />
+                {matOpen && (
+                  <div className="absolute z-[100] w-full mt-1 max-h-52 overflow-y-auto rounded-md border bg-white shadow-lg">
+                    {(materials as MatItem[]).map(m => (
+                      <button key={m.id} type="button"
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-slate-100 flex items-baseline gap-2 ${m.id === materialId ? 'bg-slate-50 font-medium' : ''}`}
+                        onMouseDown={e => { e.preventDefault(); e.stopPropagation() }}
+                        onClick={() => { setMaterialId(m.id); setMatSearch(''); setMatOpen(false) }}>
+                        <span className="font-mono text-xs text-slate-500 shrink-0">{m.material_code}</span>
+                        <span className="text-slate-800 truncate">{m.short_name ?? m.material_description}</span>
+                      </button>
+                    ))}
+                    {(materials as MatItem[]).length === 0 && (
+                      <div className="px-3 py-3 text-sm text-slate-400 text-center">Không tìm thấy hàng hóa</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
-                <Label>Mã hàng theo kế hoạch <span className="text-red-500">*</span></Label>
-                <div ref={nccMatRef} className="relative">
-                  <Select
-                    value={(planMaterials as any[]).find(m => m.tms_order_id === tmsOrderId && m.material_id === materialId)?.id ?? ''}
-                    onValueChange={v => {
-                      const found = (planMaterials as any[]).find(m => m.id === v)
-                      if (found) {
-                        setTmsOrderId(found.tms_order_id ?? '')
-                        setMaterialId(found.material_id ?? '')
-                      }
-                    }}
-                    disabled={!gateRegId}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder={!gateRegId ? 'Chọn xe trước' : planMaterials.length === 0 ? 'Không có kế hoạch — dùng Phát sinh' : 'Chọn từ kế hoạch...'} />
+                <Label>Ca nhập <span className="text-red-500">*</span></Label>
+                <Select value={shiftId} onValueChange={setShiftId}>
+                  <SelectTrigger><SelectValue placeholder="Chọn ca" /></SelectTrigger>
+                  <SelectContent>{(shifts as { id: string; name: string }[]).map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Ngày nhập <span className="text-red-500">*</span></Label>
+                <Input type="date" value={importDate} onChange={e => setImportDate(e.target.value)} />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Người nhập</Label>
+              <div className="flex h-10 items-center rounded-md border bg-slate-50 px-3 text-sm text-slate-700 gap-2">
+                <User className="h-4 w-4 text-slate-400 shrink-0" />
+                <span className="truncate">{user?.name ?? '—'}</span>
+                {!importedByEmpId && <span className="ml-auto text-xs text-amber-500 shrink-0">chưa khớp nhân viên</span>}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Ghi chú</Label>
+              <Input placeholder="Tuỳ chọn" value={notes} onChange={e => setNotes(e.target.value)} />
+            </div>
+          </>)}
+
+          {/* ─── NCC ─── */}
+          {sourceType === 'NCC' && (<>
+            {/* Section 1: Thông tin chuyến xe */}
+            <div className="border rounded-lg bg-slate-50 px-3 py-2.5 space-y-2">
+              <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">Thông tin chuyến xe</p>
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <Label className="text-xs">Kho *</Label>
+                  {canPickWarehouse ? (
+                    <Select value={warehouseId} onValueChange={v => { setWarehouseId(v); setSubType(''); setGateRegId(''); setNccRows([emptyNccRow()]) }}>
+                      <SelectTrigger className="h-8 text-xs mt-0.5"><SelectValue placeholder="Chọn kho" /></SelectTrigger>
+                      <SelectContent>
+                        {(warehouses as any[]).filter(w => !dialogAllowedWhIds || dialogAllowedWhIds.has(w.id))
+                          .map(w => <SelectItem key={w.id} value={w.id}>{w.code} – {w.name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <div className="h-8 flex items-center text-xs text-slate-700 border rounded-md bg-white px-2 mt-0.5">
+                      {(warehouses as any[]).find(w => w.id === warehouseId)?.name ?? '—'}
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <Label className="text-xs">Loại kho *</Label>
+                  <Select value={subType} onValueChange={v => { setSubType(v); setGateRegId(''); setNccRows([emptyNccRow()]) }} disabled={!warehouseId}>
+                    <SelectTrigger className="h-8 text-xs mt-0.5"><SelectValue placeholder="Chọn loại kho" /></SelectTrigger>
+                    <SelectContent>{loaiKhoOpts.map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label className="text-xs">Xe đang vào cổng *</Label>
+                  <Select value={gateRegId} onValueChange={v => setGateRegId(v)} disabled={!warehouseId || !subType}>
+                    <SelectTrigger className="h-8 text-xs mt-0.5">
+                      <SelectValue placeholder={!warehouseId ? 'Chọn kho trước' : !subType ? 'Chọn loại kho' : activeGates.length === 0 ? 'Không có xe INBOUND' : 'Chọn xe...'} />
                     </SelectTrigger>
                     <SelectContent>
-                      {(planMaterials as any[]).map((m) => (
-                        <SelectItem key={m.id} value={m.id}>
-                          <span className="font-mono text-xs text-slate-500">{m.material?.material_code ?? '—'}</span>
-                          <span className="ml-2">{m.material?.short_name ?? '—'}</span>
-                          <span className="ml-2 text-xs text-slate-400">KH: {m.planned_boxes ?? 0} thùng</span>
+                      {(activeGates as any[]).map(g => (
+                        <SelectItem key={g.id} value={g.id}>
+                          <span className="font-mono font-semibold">{g.license_plate ?? '—'}</span>
+                          <span className="ml-2 text-xs text-slate-400">{g.company_name_raw ?? ''} · Lần {g.registration_number}</span>
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
-                  {gateRegId && (
-                    <button
-                      type="button"
-                      className="mt-1.5 text-xs text-amber-600 hover:text-amber-700 underline"
-                      onClick={() => { setTmsOrderId('__unplanned__'); setMaterialId('') }}
-                    >
-                      + Thêm mã phát sinh (không có trong kế hoạch)
-                    </button>
-                  )}
                 </div>
               </div>
-
-              {/* Mã hàng tự chọn (chỉ khi phát sinh) */}
-              {tmsOrderId === '__unplanned__' && (
-                <div className="space-y-2">
-                  <Label>Mã hàng (phát sinh) <span className="text-red-500">*</span></Label>
-                  <div ref={matRef} className="relative">
-                    <Input
-                      placeholder="Tìm mã hoặc tên hàng..."
-                      value={materialId ? ((materials as MatItem[]).find(m => m.id === materialId) ? `${(materials as MatItem[]).find(m => m.id === materialId)!.material_code} – ${(materials as MatItem[]).find(m => m.id === materialId)!.short_name ?? ''}` : matSearch) : matSearch}
-                      onChange={(e) => { setMatSearch(e.target.value); setMaterialId(''); setMatOpen(true) }}
-                      onFocus={() => setMatOpen(true)}
-                    />
-                    {matOpen && (
-                      <div className="absolute z-[100] w-full mt-1 max-h-52 overflow-y-auto rounded-md border bg-white shadow-lg">
-                        {(materials as MatItem[]).map((m) => (
-                          <button key={m.id} type="button"
-                            className={`w-full text-left px-3 py-2 text-sm hover:bg-slate-100 flex items-baseline gap-2 ${m.id === materialId ? 'bg-slate-50 font-medium' : ''}`}
-                            onMouseDown={(e) => { e.preventDefault(); e.stopPropagation() }}
-                            onClick={() => { setMaterialId(m.id); setMatSearch(''); setMatOpen(false) }}
-                          >
-                            <span className="font-mono text-xs text-slate-500 shrink-0">{m.material_code}</span>
-                            <span className="text-slate-800 truncate">{m.short_name ?? m.material_description}</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <Label className="text-xs">Ngày nhập *</Label>
+                  <Input type="date" value={importDate} onChange={e => setImportDate(e.target.value)} className="h-8 text-xs mt-0.5" />
+                </div>
+                <div>
+                  <Label className="text-xs">Ca nhập *</Label>
+                  <Select value={shiftId} onValueChange={setShiftId}>
+                    <SelectTrigger className="h-8 text-xs mt-0.5"><SelectValue placeholder="Chọn ca" /></SelectTrigger>
+                    <SelectContent>{(shifts as { id: string; name: string }[]).map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label className="text-xs">Người nhập</Label>
+                  <div className="h-8 flex items-center text-xs text-slate-600 border rounded-md bg-white px-2 mt-0.5 gap-1.5">
+                    <User className="h-3 w-3 text-slate-400 shrink-0" />
+                    <span className="truncate">{user?.name ?? '—'}</span>
                   </div>
                 </div>
-              )}
-
-              <div className="space-y-2">
-                <Label>Số thùng dự kiến trên xe</Label>
-                <Input
-                  type="number" min={0} placeholder="Nhập khi mở xe ra"
-                  value={plannedCartons}
-                  onChange={(e) => setPlannedCartons(e.target.value)}
-                />
               </div>
-            </>
-          )}
-
-          {/* Vị trí – lọc theo loại kho, color-coded by capacity */}
-          <div className="space-y-2">
-            <Label>
-              Vị trí nhập {sourceType === 'FACTORY' && <span className="text-red-500">*</span>}
-              {sourceType === 'NCC' && <span className="text-xs font-normal text-slate-400 ml-1">(để trống — lái xe nâng chọn khi scan)</span>}
-              <span className="ml-2 text-xs font-normal text-slate-400">
-                đầy=xanh · một phần=cam · trống=trắng
-              </span>
-            </Label>
-            <Select value={locationId} onValueChange={setLocationId} disabled={!warehouseId}>
-              <SelectTrigger>
-                <SelectValue placeholder={!warehouseId ? 'Chọn kho trước' : !subType ? 'Chọn loại kho trước' : 'Chọn vị trí'} />
-              </SelectTrigger>
-              <SelectContent>
-                {filteredLocs.map((l) => {
-                  const isFull    = l.max_pallets > 0 && l.used_slots >= l.max_pallets
-                  const isPartial = l.used_slots > 0 && !isFull
-                  return (
-                    <SelectItem key={l.id} value={l.id}>
-                      <span className={isFull ? 'text-blue-700 font-semibold' : isPartial ? 'text-amber-600' : ''}>
-                        {l.location_code}
-                      </span>
-                      <span className="ml-2 text-xs text-slate-400">
-                        ({l.used_slots}/{l.max_pallets})
-                      </span>
-                    </SelectItem>
-                  )
-                })}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Material – combobox, chỉ dùng cho FACTORY (NCC dùng dropdown kế hoạch ở trên) */}
-          {sourceType === 'FACTORY' && <div className="space-y-2">
-            <Label>Material <span className="text-red-500">*</span></Label>
-            <div ref={matRef} className="relative">
-              <Input
-                placeholder={subType ? `Tìm hàng ${subType}…` : 'Tìm mã hoặc tên hàng...'}
-                value={matInputValue}
-                onChange={(e) => { setMatSearch(e.target.value); setMaterialId(''); setMatOpen(true) }}
-                onFocus={() => setMatOpen(true)}
-              />
-              {matOpen && (
-                <div className="absolute z-[100] w-full mt-1 max-h-52 overflow-y-auto rounded-md border bg-white shadow-lg">
-                  {(materials as MatItem[]).map((m) => (
-                    <button
-                      key={m.id}
-                      type="button"
-                      className={`w-full text-left px-3 py-2 text-sm hover:bg-slate-100 flex items-baseline gap-2 ${m.id === materialId ? 'bg-slate-50 font-medium' : ''}`}
-                      onMouseDown={(e) => { e.preventDefault(); e.stopPropagation() }}
-                      onClick={() => { setMaterialId(m.id); setMatSearch(''); setMatOpen(false) }}
-                    >
-                      <span className="font-mono text-xs text-slate-500 shrink-0">{m.material_code}</span>
-                      <span className="text-slate-800 truncate">{m.short_name ?? m.material_description}</span>
-                    </button>
-                  ))}
-                  {(materials as MatItem[]).length === 0 && (
-                    <div className="px-3 py-3 text-sm text-slate-400 text-center">Không tìm thấy hàng hóa</div>
-                  )}
-                </div>
-              )}
+              <div>
+                <Label className="text-xs">Ghi chú</Label>
+                <Input placeholder="Tuỳ chọn" value={notes} onChange={e => setNotes(e.target.value)} className="h-8 text-xs mt-0.5" />
+              </div>
             </div>
-          </div>}
 
-          {/* Ca nhập + Ngày nhập */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <Label>Ca nhập <span className="text-red-500">*</span></Label>
-              <Select value={shiftId} onValueChange={setShiftId}>
-                <SelectTrigger><SelectValue placeholder="Chọn ca" /></SelectTrigger>
-                <SelectContent>
-                  {(shifts as { id: string; name: string }[]).map((s) => (
-                    <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            {/* Section 2: Danh sách hàng hóa */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">Danh sách hàng hóa</p>
+                {gateRegId && planMaterials.length > 0 && (
+                  <button type="button" onClick={loadFromPlan}
+                    className="text-[10px] text-blue-600 hover:text-blue-700 underline">
+                    Nạp từ kế hoạch ({planMaterials.length} hàng)
+                  </button>
+                )}
+              </div>
+              <div className="border rounded-lg overflow-hidden">
+                <table className="min-w-full text-[10px]">
+                  <thead className="bg-slate-50 border-b">
+                    <tr>
+                      <th className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 w-32">Mã hàng</th>
+                      <th className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500">Tên hàng</th>
+                      <th className="px-2 py-1.5 text-center text-[9px] font-medium text-slate-500 w-16">ĐVT</th>
+                      <th className="px-2 py-1.5 text-right text-[9px] font-medium text-slate-500 w-20">SL dự kiến</th>
+                      <th className="w-6"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {nccRows.map((row, idx) => {
+                      const invalid     = row.material_code !== '' && !row.material_id
+                      const unitMismatch = row.unit_input && row.mat_unit && row.unit_input !== row.mat_unit
+                      const dropMatches = getNccDropdownMatches(row.material_code)
+                      return (
+                        <tr key={idx} className={invalid ? 'bg-red-50' : ''}>
+                          <td className="px-1.5 py-1 relative">
+                            <input type="text" value={row.material_code}
+                              onChange={e => handleNccMatCodeChange(idx, e.target.value)}
+                              onPaste={e => handleNccMatCodePaste(idx, e)}
+                              onFocus={() => setNccDropdownIdx(idx)}
+                              onBlur={() => setTimeout(() => setNccDropdownIdx(prev => prev === idx ? null : prev), 150)}
+                              placeholder="Paste hoặc tìm mã"
+                              className={`w-full h-7 px-1.5 text-[10px] font-mono border rounded focus:outline-none focus:ring-1 ${
+                                invalid ? 'border-red-300 bg-red-50 focus:ring-red-400' : 'border-slate-200 bg-white focus:ring-blue-400'
+                              }`}
+                            />
+                            {nccDropdownIdx === idx && !row.material_id && (
+                              <div className="absolute left-0 top-full z-50 w-72 mt-0.5 border rounded-md bg-white shadow-lg max-h-40 overflow-y-auto">
+                                {dropMatches.length === 0
+                                  ? <p className="text-[10px] text-slate-400 px-2 py-2 text-center">Không tìm thấy</p>
+                                  : dropMatches.map((m: any) => (
+                                    <button key={m.id} type="button"
+                                      onMouseDown={e => e.preventDefault()}
+                                      onClick={() => selectNccMatFromDropdown(idx, m)}
+                                      className="w-full text-left px-2 py-1.5 hover:bg-blue-50 flex items-center gap-2 border-b border-slate-50 last:border-0">
+                                      <span className="text-[10px] font-mono text-slate-700 shrink-0">{m.material_code}</span>
+                                      <span className="text-[10px] text-slate-500 truncate">{m.short_name}</span>
+                                    </button>
+                                  ))
+                                }
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-2 py-1">
+                            {row.mat_name
+                              ? <span className="text-[10px] text-slate-700">{row.mat_name}</span>
+                              : invalid ? <span className="text-[9px] text-red-400">Không tìm thấy</span>
+                              : <span className="text-[9px] text-slate-300">—</span>}
+                          </td>
+                          <td className="px-1.5 py-1">
+                            <div className="relative">
+                              <input type="text" value={row.unit_input}
+                                onChange={e => setNccRowField(idx, 'unit_input', e.target.value)}
+                                placeholder={row.mat_unit || '—'}
+                                className={`w-full h-7 px-1.5 text-[10px] border rounded text-center focus:outline-none focus:ring-1 ${
+                                  unitMismatch ? 'border-amber-300 bg-amber-50 focus:ring-amber-400' : 'border-slate-200 bg-white focus:ring-blue-400'
+                                }`}
+                              />
+                              {unitMismatch && <span className="absolute -top-4 left-0 text-[8px] text-amber-500 whitespace-nowrap">KH: {row.mat_unit}</span>}
+                            </div>
+                          </td>
+                          <td className="px-1.5 py-1">
+                            <input type="number" min="0" value={row.planned_qty}
+                              onChange={e => setNccRowField(idx, 'planned_qty', e.target.value)}
+                              className="w-full h-7 px-1.5 text-[10px] border border-slate-200 rounded text-right bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+                            />
+                          </td>
+                          <td className="px-1 py-1 text-center">
+                            <button type="button" onClick={() => removeNccRow(idx)}
+                              className="text-slate-300 hover:text-red-500 transition-colors">
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <button type="button" onClick={addNccRow}
+                className="text-[10px] text-blue-600 hover:text-blue-800 flex items-center gap-1 transition-colors">
+                <Plus className="h-3 w-3" /> Thêm dòng hàng
+              </button>
             </div>
-            <div className="space-y-2">
-              <Label>Ngày nhập <span className="text-red-500">*</span></Label>
-              <Input
-                type="date"
-                value={importDate}
-                onChange={(e) => setImportDate(e.target.value)}
-              />
-            </div>
-          </div>
 
-          {/* Người nhập – tự động theo user hiện tại */}
-          <div className="space-y-2">
-            <Label>Người nhập</Label>
-            <div className="flex h-10 items-center rounded-md border bg-slate-50 px-3 text-sm text-slate-700 gap-2">
-              <User className="h-4 w-4 text-slate-400 shrink-0" />
-              <span className="truncate">{user?.name ?? '—'}</span>
-              {!importedByEmpId && (
-                <span className="ml-auto text-xs text-amber-500 shrink-0">chưa khớp nhân viên</span>
-              )}
-            </div>
-          </div>
-
-          {/* Ghi chú */}
-          <div className="space-y-2">
-            <Label>Ghi chú</Label>
-            <Input placeholder="Tuỳ chọn" value={notes} onChange={(e) => setNotes(e.target.value)} />
-          </div>
+            {nccErr && <p className="text-xs text-red-500">{nccErr}</p>}
+          </>)}
         </div>
 
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Huỷ</Button>
-          <Button
-            onClick={handleSubmit}
-            disabled={
-              !warehouseId || !subType || !materialId || isPending ||
-              (sourceType === 'FACTORY' && !locationId) ||
-              (sourceType === 'NCC' && !gateRegId)
-            }
-          >
-            {isPending ? 'Đang tạo...' : 'Tạo phiếu'}
-          </Button>
+          {sourceType === 'FACTORY' ? (
+            <Button onClick={handleFactorySubmit}
+              disabled={!warehouseId || !subType || !materialId || !locationId || isPending}>
+              {isPending ? 'Đang tạo...' : 'Tạo phiếu'}
+            </Button>
+          ) : (
+            <Button onClick={handleNccSubmit} disabled={nccSaving || nccValidCount === 0}>
+              {nccSaving ? 'Đang tạo...' : nccValidCount > 0 ? `Tạo ${nccValidCount} phiếu nhập` : 'Tạo phiếu'}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

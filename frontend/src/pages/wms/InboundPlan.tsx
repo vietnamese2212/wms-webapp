@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from 'react'
+import React, { useState, useRef, useEffect, useMemo } from 'react'
 import * as XLSX from 'xlsx'
 import { format } from 'date-fns'
 import { vi } from 'date-fns/locale'
@@ -65,10 +65,24 @@ function AddLineDialog({ open, date, warehouseId, onClose }: {
     }
   }, [open, warehouseId])
 
+  const [activeDropdownIdx, setActiveDropdownIdx] = useState<number | null>(null)
+
   const matByCode = useMemo(() =>
     new Map((materials as any[]).map(m => [String(m.material_code).trim().toUpperCase(), m])),
     [materials]
   )
+
+  function lookupAndSetRow(idx: number, code: string): MatRow {
+    const found = matByCode.get(code.trim().toUpperCase())
+    return {
+      material_code: code,
+      material_id:   found?.id        ?? '',
+      mat_name:      found?.short_name ?? '',
+      mat_unit:      found?.unit       ?? '',
+      planned_boxes:   '',
+      planned_pallets: '',
+    }
+  }
 
   function handleMatCodeChange(idx: number, code: string) {
     const found = matByCode.get(code.trim().toUpperCase())
@@ -79,6 +93,42 @@ function AddLineDialog({ open, date, warehouseId, onClose }: {
       mat_name:      found?.short_name ?? '',
       mat_unit:      found?.unit       ?? '',
     }))
+  }
+
+  function handleMatCodePaste(idx: number, e: React.ClipboardEvent) {
+    const text = e.clipboardData.getData('text')
+    const lines = text.split(/[\n\r]+/).map(s => s.trim()).filter(Boolean)
+    if (lines.length <= 1) return
+    e.preventDefault()
+    const newRows = lines.map(c => lookupAndSetRow(idx, c))
+    setRows(prev => {
+      const before = prev.slice(0, idx)
+      const after  = prev.slice(idx + 1).filter(r => r.material_code !== '')
+      return [...before, ...newRows, ...after]
+    })
+    setActiveDropdownIdx(null)
+  }
+
+  function selectMatFromDropdown(idx: number, m: any) {
+    setRows(prev => prev.map((r, i) => i !== idx ? r : {
+      ...r,
+      material_code: m.material_code,
+      material_id:   m.id,
+      mat_name:      m.short_name ?? '',
+      mat_unit:      m.unit       ?? '',
+    }))
+    setActiveDropdownIdx(null)
+  }
+
+  function getDropdownMatches(code: string) {
+    if (!code) return (materials as any[]).slice(0, 8)
+    const q = code.toUpperCase()
+    return (materials as any[])
+      .filter(m =>
+        String(m.material_code).toUpperCase().includes(q) ||
+        String(m.short_name ?? '').toUpperCase().includes(q)
+      )
+      .slice(0, 8)
   }
 
   function setRowField(idx: number, field: 'planned_boxes' | 'planned_pallets', val: string) {
@@ -201,20 +251,43 @@ function AddLineDialog({ open, date, warehouseId, onClose }: {
               <tbody className="divide-y divide-slate-100">
                 {rows.map((row, idx) => {
                   const invalid = row.material_code !== '' && !row.material_id
+                  const dropMatches = getDropdownMatches(row.material_code)
                   return (
                     <tr key={idx} className={invalid ? 'bg-red-50' : ''}>
-                      <td className="px-1.5 py-1">
+                      <td className="px-1.5 py-1 relative">
                         <input
                           type="text"
                           value={row.material_code}
                           onChange={e => handleMatCodeChange(idx, e.target.value)}
-                          placeholder="Paste mã hàng"
+                          onPaste={e => handleMatCodePaste(idx, e)}
+                          onFocus={() => setActiveDropdownIdx(idx)}
+                          onBlur={() => setTimeout(() => setActiveDropdownIdx(prev => prev === idx ? null : prev), 150)}
+                          placeholder="Paste hoặc tìm mã hàng"
                           className={`w-full h-7 px-1.5 text-[10px] font-mono border rounded focus:outline-none focus:ring-1 ${
                             invalid
                               ? 'border-red-300 bg-red-50 focus:ring-red-400'
                               : 'border-slate-200 bg-white focus:ring-blue-400'
                           }`}
                         />
+                        {activeDropdownIdx === idx && !row.material_id && (
+                          <div className="absolute left-0 top-full z-50 w-72 mt-0.5 border rounded-md bg-white shadow-lg max-h-40 overflow-y-auto">
+                            {dropMatches.length === 0
+                              ? <p className="text-[10px] text-slate-400 px-2 py-2 text-center">Không tìm thấy</p>
+                              : dropMatches.map((m: any) => (
+                                <button
+                                  key={m.id}
+                                  type="button"
+                                  onMouseDown={e => e.preventDefault()}
+                                  onClick={() => selectMatFromDropdown(idx, m)}
+                                  className="w-full text-left px-2 py-1.5 hover:bg-blue-50 flex items-center gap-2 border-b border-slate-50 last:border-0"
+                                >
+                                  <span className="text-[10px] font-mono text-slate-700 shrink-0">{m.material_code}</span>
+                                  <span className="text-[10px] text-slate-500 truncate">{m.short_name}</span>
+                                </button>
+                              ))
+                            }
+                          </div>
+                        )}
                       </td>
                       <td className="px-2 py-1">
                         {row.mat_name

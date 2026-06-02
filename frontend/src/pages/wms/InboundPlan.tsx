@@ -146,6 +146,10 @@ function AddLineDialog({ open, date, warehouseId, onClose }: {
     if (!nccId)        { setErr('Vui lòng chọn ĐVVT / NCC'); return }
     const validRows = rows.filter(r => r.material_id)
     if (!validRows.length) { setErr('Vui lòng nhập ít nhất 1 mã hàng hợp lệ'); return }
+    const missingUnit = validRows.filter(r => !r.mat_unit)
+    const missingQty  = validRows.filter(r => !r.planned_boxes)
+    if (missingUnit.length) { setErr(`${missingUnit.length} hàng chưa có ĐVT — cần cập nhật ĐVT trong Masterdata`); return }
+    if (missingQty.length)  { setErr('Vui lòng nhập Số thùng cho tất cả hàng'); return }
     try {
       await bulkCreate.mutateAsync(validRows.map(r => ({
         date, warehouse_id: warehouse,
@@ -297,13 +301,23 @@ function AddLineDialog({ open, date, warehouseId, onClose }: {
                             : <span className="text-[9px] text-slate-300">—</span>
                         }
                       </td>
-                      <td className="px-2 py-1 text-center text-slate-500">{row.mat_unit || '—'}</td>
+                      <td className="px-2 py-1 text-center">
+                        {row.mat_unit
+                          ? <span className="text-[10px] text-slate-500">{row.mat_unit}</span>
+                          : row.material_id
+                            ? <span className="text-[9px] text-amber-500 font-medium">Chưa có</span>
+                            : <span className="text-[10px] text-slate-300">—</span>}
+                      </td>
                       <td className="px-1.5 py-1">
                         <input
                           type="number" min="0"
                           value={row.planned_boxes}
                           onChange={e => setRowField(idx, 'planned_boxes', e.target.value)}
-                          className="w-full h-7 px-1.5 text-[10px] border border-slate-200 rounded text-right bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+                          className={`w-full h-7 px-1.5 text-[10px] border rounded text-right bg-white focus:outline-none focus:ring-1 ${
+                            row.material_id && !row.planned_boxes
+                              ? 'border-amber-300 focus:ring-amber-400'
+                              : 'border-slate-200 focus:ring-blue-400'
+                          }`}
                         />
                       </td>
                       <td className="px-1.5 py-1">
@@ -355,8 +369,10 @@ function AddLineDialog({ open, date, warehouseId, onClose }: {
 
 type PreviewRow = {
   ncc_code: string; ncc_id: string
+  kho_code: string; kho_id: string
   warehouse_type: string; vehicle_type: string
   material_code: string; material_id: string
+  dvt_input: string; mat_unit: string
   po_number: string; planned_boxes: number | null; planned_pallets: number | null
   _valid: boolean; _error: string
 }
@@ -366,6 +382,9 @@ function UploadDialog({ open, date, warehouseId, onClose }: {
 }) {
   const { data: transportCompanies = [] } = useTransportCompanies(true)
   const { data: materials = [] }          = useMaterials()
+  const { data: warehouses = [] }         = useWarehouses(true)
+  const { data: whTypesData = [] }        = useWarehouseTypes()
+  const { data: vehicleTypes = [] }       = useVehicleTypes(true)
   const bulkCreate = useBulkCreatePlanLines()
 
   const [preview, setPreview] = useState<PreviewRow[] | null>(null)
@@ -374,7 +393,10 @@ function UploadDialog({ open, date, warehouseId, onClose }: {
   const fileRef = useRef<HTMLInputElement>(null)
 
   const nccByCode = new Map((transportCompanies as any[]).map((c: any) => [String(c.code).trim().toUpperCase(), c.id]))
-  const matByCode = new Map((materials as any[]).map((m: any) => [String(m.material_code).trim(), m.id]))
+  const whByCode  = new Map((warehouses as any[]).map((w: any) => [String(w.code).trim().toUpperCase(), w.id]))
+  const whTypeSet = new Set(whTypesData.map(t => t.value))
+  const vtNameSet = new Set((vehicleTypes as any[]).map((vt: any) => String(vt.name)))
+  const matByCode = new Map((materials as any[]).map((m: any) => [String(m.material_code).trim(), { id: m.id, unit: m.unit ?? '' }]))
 
   function parseFile(file: File) {
     const reader = new FileReader()
@@ -385,27 +407,39 @@ function UploadDialog({ open, date, warehouseId, onClose }: {
         const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' })
 
         const parsed: PreviewRow[] = rows.map((row, i) => {
-          const nccCode     = String(row['Mã NCC'] ?? row['NCC'] ?? row['ncc_code'] ?? '').trim().toUpperCase()
-          const whType      = String(row['Loại kho'] ?? row['warehouse_type'] ?? '').trim()
-          const vt          = String(row['Loại xe'] ?? row['vehicle_type'] ?? '').trim()
-          const matCode     = String(row['Mã hàng'] ?? row['material_code'] ?? '').trim()
-          const po          = String(row['Số PO'] ?? row['PO'] ?? row['po_number'] ?? '').trim()
-          const boxes       = row['Số thùng'] ?? row['planned_boxes'] ?? null
-          const pallets     = row['Số pallet'] ?? row['planned_pallets'] ?? null
+          const khoCode  = String(row['Mã kho'] ?? row['kho_code'] ?? '').trim().toUpperCase()
+          const nccCode  = String(row['Mã NCC'] ?? row['NCC'] ?? row['ncc_code'] ?? '').trim().toUpperCase()
+          const whType   = String(row['Loại kho'] ?? row['warehouse_type'] ?? '').trim()
+          const vt       = String(row['Loại xe'] ?? row['vehicle_type'] ?? '').trim()
+          const matCode  = String(row['Mã hàng'] ?? row['material_code'] ?? '').trim()
+          const dvtInput = String(row['ĐVT'] ?? row['unit'] ?? '').trim()
+          const po       = String(row['Số PO'] ?? row['PO'] ?? row['po_number'] ?? '').trim()
+          const boxes    = row['Số thùng'] ?? row['planned_boxes'] ?? null
+          const pallets  = row['Số pallet'] ?? row['planned_pallets'] ?? null
 
-          const nccId  = nccByCode.get(nccCode)  ?? ''
-          const matId  = matByCode.get(matCode)  ?? ''
+          const khoId   = khoCode ? (whByCode.get(khoCode) ?? '') : warehouseId
+          const nccId   = nccByCode.get(nccCode) ?? ''
+          const matInfo = matByCode.get(matCode)
+          const matId   = matInfo?.id ?? ''
+          const matUnit = matInfo?.unit ?? ''
 
           let error = ''
-          if (!nccCode)  error = `Dòng ${i + 2}: thiếu Mã NCC`
-          else if (!nccId)  error = `Dòng ${i + 2}: không tìm thấy NCC "${nccCode}"`
-          else if (!matCode) error = `Dòng ${i + 2}: thiếu Mã hàng`
-          else if (!matId)   error = `Dòng ${i + 2}: không tìm thấy mã hàng "${matCode}"`
+          if (!nccCode)                                    error = `Dòng ${i + 2}: thiếu Mã NCC`
+          else if (!nccId)                                 error = `Dòng ${i + 2}: NCC "${nccCode}" không tìm thấy`
+          else if (khoCode && !whByCode.has(khoCode))      error = `Dòng ${i + 2}: kho "${khoCode}" không tìm thấy`
+          else if (whType && !whTypeSet.has(whType))       error = `Dòng ${i + 2}: Loại kho "${whType}" không hợp lệ`
+          else if (vt && !vtNameSet.has(vt))               error = `Dòng ${i + 2}: Loại xe "${vt}" không hợp lệ`
+          else if (!matCode)                               error = `Dòng ${i + 2}: thiếu Mã hàng`
+          else if (!matId)                                 error = `Dòng ${i + 2}: hàng "${matCode}" không tìm thấy`
+          else if (dvtInput && matUnit && dvtInput.toUpperCase() !== matUnit.toUpperCase())
+                                                           error = `Dòng ${i + 2}: ĐVT "${dvtInput}" ≠ "${matUnit}"`
 
           return {
             ncc_code: nccCode, ncc_id: nccId,
+            kho_code: khoCode, kho_id: khoId,
             warehouse_type: whType, vehicle_type: vt,
             material_code: matCode, material_id: matId,
+            dvt_input: dvtInput, mat_unit: matUnit,
             po_number: po,
             planned_boxes:   boxes   != null && boxes   !== '' ? Number(boxes)   : null,
             planned_pallets: pallets != null && pallets !== '' ? Number(pallets) : null,
@@ -428,7 +462,7 @@ function UploadDialog({ open, date, warehouseId, onClose }: {
     if (!valid.length) { setErr('Không có dòng hợp lệ nào'); return }
     try {
       const lines = valid.map(r => ({
-        date, warehouse_id: warehouseId,
+        date, warehouse_id: r.kho_id || warehouseId,
         warehouse_type:  r.warehouse_type  || null,
         vehicle_type:    r.vehicle_type    || null,
         ncc_id:          r.ncc_id          || null,
@@ -447,7 +481,7 @@ function UploadDialog({ open, date, warehouseId, onClose }: {
 
   function downloadTemplate() {
     const data = [
-      { 'Mã NCC': 'FAST', 'Loại kho': 'TP', 'Loại xe': 'PALLET', 'Mã hàng': '510000127', 'Số PO': 'PO-0001', 'Số thùng': 500, 'Số pallet': 10 },
+      { 'Mã kho': 'KHO1', 'Mã NCC': 'FAST', 'Loại kho': 'TP', 'Loại xe': 'PALLET', 'Mã hàng': '510000127', 'ĐVT': 'CTN', 'Số PO': 'PO-0001', 'Số thùng': 500, 'Số pallet': 10 },
     ]
     const ws = XLSX.utils.json_to_sheet(data)
     const wb = XLSX.utils.book_new()
@@ -467,7 +501,7 @@ function UploadDialog({ open, date, warehouseId, onClose }: {
         {!preview ? (
           <div className="space-y-3 py-2">
             <p className="text-xs text-slate-500">
-              File Excel phải có các cột: <strong>Mã NCC</strong>, <strong>Mã hàng</strong>, Loại kho, Loại xe, Số PO, Số thùng, Số pallet.
+              File Excel phải có các cột: <strong>Mã NCC</strong>, <strong>Mã hàng</strong>, Loại kho, Loại xe, ĐVT, Số PO, Số thùng, Số pallet. Tuỳ chọn: Mã kho (nếu không điền dùng kho đang chọn).
             </p>
             <div className="flex gap-2">
               <Button variant="outline" size="sm" onClick={downloadTemplate}>
@@ -500,7 +534,7 @@ function UploadDialog({ open, date, warehouseId, onClose }: {
               <table className="min-w-full text-[10px]">
                 <thead className="sticky top-0 bg-slate-50 border-b">
                   <tr>
-                    {['NCC', 'Loại kho', 'Loại xe', 'Mã hàng', 'PO', 'Thùng', 'Pallet', 'Trạng thái'].map(h => (
+                    {['Kho', 'NCC', 'Loại kho', 'Loại xe', 'Mã hàng', 'ĐVT', 'Thùng', 'Trạng thái'].map(h => (
                       <th key={h} className="px-2 py-1 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
@@ -508,13 +542,17 @@ function UploadDialog({ open, date, warehouseId, onClose }: {
                 <tbody>
                   {preview.map((r, i) => (
                     <tr key={i} className={r._valid ? 'hover:bg-slate-50' : 'bg-red-50'}>
+                      <td className="px-2 py-1 font-mono text-[9px] text-slate-400">{r.kho_code || '(mặc định)'}</td>
                       <td className="px-2 py-1 font-mono">{r.ncc_code || '—'}</td>
                       <td className="px-2 py-1">{r.warehouse_type || '—'}</td>
                       <td className="px-2 py-1">{r.vehicle_type || '—'}</td>
                       <td className="px-2 py-1 font-mono">{r.material_code || '—'}</td>
-                      <td className="px-2 py-1">{r.po_number || '—'}</td>
+                      <td className="px-2 py-1">
+                        {r.dvt_input && r.mat_unit && r.dvt_input.toUpperCase() !== r.mat_unit.toUpperCase()
+                          ? <span className="text-red-500">{r.dvt_input}</span>
+                          : <span>{r.dvt_input || r.mat_unit || '—'}</span>}
+                      </td>
                       <td className="px-2 py-1 tabular-nums text-right">{r.planned_boxes ?? '—'}</td>
-                      <td className="px-2 py-1 tabular-nums text-right">{r.planned_pallets ?? '—'}</td>
                       <td className="px-2 py-1">
                         {r._valid
                           ? <span className="text-green-600">✓</span>

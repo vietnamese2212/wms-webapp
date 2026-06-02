@@ -79,6 +79,7 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
   const [nccSaving,      setNccSaving]      = useState(false)
   const [nccErr,         setNccErr]         = useState('')
   const [nccDropdownIdx, setNccDropdownIdx] = useState<number | null>(null)
+  const [showMoreGates,  setShowMoreGates]  = useState(false)
 
   useEffect(() => {
     if (open) {
@@ -89,19 +90,21 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
       setImportDate(format(new Date(), 'yyyy-MM-dd'))
       setNotes(''); setGateRegId('')
       setNccRows([emptyNccRow()]); setNccSaving(false); setNccErr(''); setNccDropdownIdx(null)
+      setShowMoreGates(false)
     }
   }, [open, user?.warehouse_id, user?.warehouse_ids])
 
   const { data: warehouses = [] } = useWarehouses(true)
   const { data: shifts     = [] } = useImportShifts()
 
-  // Tính ngày hôm trước để bắt tình huống xe đăng ký đêm hôm trước, sáng hôm sau mới nhập
-  const prevDay = importDate
-    ? (() => { const d = new Date(importDate); d.setDate(d.getDate() - 1); return d.toISOString().slice(0, 10) })()
+  const prevDay2 = importDate
+    ? (() => { const d = new Date(importDate); d.setDate(d.getDate() - 2); return d.toISOString().slice(0, 10) })()
     : undefined
   const { data: activeGates = [] } = useActiveGateRegistrations(
     sourceType === 'NCC' && warehouseId && importDate
-      ? { date_from: prevDay, date_to: importDate, warehouse_id: warehouseId, warehouse_type: subType || undefined, direction: 'INBOUND', status: 'IN' }
+      ? showMoreGates
+        ? { date_from: prevDay2, date_to: importDate, warehouse_id: warehouseId, warehouse_type: subType || undefined, direction: 'INBOUND', status: 'IN' }
+        : { date: importDate, warehouse_id: warehouseId, warehouse_type: subType || undefined, direction: 'INBOUND', status: 'IN' }
       : undefined
   )
   const selectedGate    = (activeGates as any[]).find(g => g.id === gateRegId)
@@ -440,6 +443,12 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
                       ))}
                     </SelectContent>
                   </Select>
+                  {warehouseId && subType && (
+                    <button type="button" onClick={() => setShowMoreGates(v => !v)}
+                      className="text-[9px] text-slate-400 hover:text-blue-500 mt-0.5 underline-offset-2 hover:underline">
+                      {showMoreGates ? 'Ẩn bớt' : '+ Xem 2 ngày trước'}
+                    </button>
+                  )}
                 </div>
               </div>
               <div className="grid grid-cols-3 gap-2">

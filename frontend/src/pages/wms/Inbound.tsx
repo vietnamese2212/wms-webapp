@@ -123,6 +123,20 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
     }
     return m
   })()
+  // Phát hiện gate đã bị chiếm bởi phiếu nhập khác
+  const sevenDaysAgo = importDate
+    ? (() => { const d = new Date(importDate); d.setDate(d.getDate() - 7); return d.toISOString().slice(0, 10) })()
+    : undefined
+  const { data: recentOrders = [] } = useInboundOrders(
+    sourceType === 'NCC' && warehouseId && importDate
+      ? { warehouse_id: warehouseId, date_from: sevenDaysAgo, date_to: importDate }
+      : undefined
+  )
+  const takenGateMap = new Map<string, string>()
+  for (const o of recentOrders as any[]) {
+    if (o.gate_registration_id) takenGateMap.set(o.gate_registration_id, o.import_code ?? '?')
+  }
+
   const gateTmsOrderId: string | undefined = selectedGate?.tms_order_id ?? undefined
   const { data: planMaterials = [] } = useInboundPlanLines(
     sourceType === 'NCC' && warehouseId && importDate
@@ -480,34 +494,50 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
                         {sortedGates.length === 0 ? (
                           <div className="text-center text-xs text-slate-400 py-4">Không có xe INBOUND đang vào cổng</div>
                         ) : (
-                          sortedGates.map(g => (
+                          sortedGates.map(g => {
+                            const isTaken      = takenGateMap.has(g.id)
+                            const isDateBefore = importDate && g.date > importDate
+                            const isDisabled   = isTaken || !!isDateBefore
+                            return (
                             <button
                               key={g.id}
                               type="button"
+                              disabled={isDisabled}
                               onClick={() => { setGateRegId(g.id); setShowGateDialog(false) }}
-                              className={`w-full text-left rounded border px-2 py-1 transition-colors ${
-                                gateRegId === g.id
-                                  ? 'border-blue-400 bg-blue-50'
-                                  : g.date !== importDate
-                                    ? 'border-amber-200 bg-amber-50 hover:border-amber-300'
-                                    : 'border-slate-200 bg-white hover:border-blue-200 hover:bg-blue-50/40'
+                              className={`w-full text-left rounded border px-2 py-1 transition-colors disabled:cursor-not-allowed ${
+                                isDisabled
+                                  ? 'border-slate-200 bg-slate-50 opacity-70'
+                                  : gateRegId === g.id
+                                    ? 'border-blue-400 bg-blue-50'
+                                    : g.date !== importDate
+                                      ? 'border-amber-200 bg-amber-50 hover:border-amber-300'
+                                      : 'border-slate-200 bg-white hover:border-blue-200 hover:bg-blue-50/40'
                               }`}
                             >
                               <div className="flex items-center gap-1.5">
-                                <span className="font-mono font-semibold text-[11px] text-slate-800">{g.license_plate ?? '—'}</span>
+                                <span className={`font-mono font-semibold text-[11px] ${isTaken ? 'line-through text-slate-400' : 'text-slate-800'}`}>
+                                  {g.license_plate ?? '—'}
+                                </span>
                                 {g.company_name_raw && <span className="text-[10px] text-slate-500 truncate">{g.company_name_raw}</span>}
                                 <span className="ml-auto text-[9px] text-slate-400 shrink-0">
                                   {g.date?.slice(8)}/{g.date?.slice(5, 7)} · Lần {gateLane.get(g.id)}
-                                  {g.date !== importDate && <span className="ml-1 text-amber-500">(trước)</span>}
+                                  {g.date !== importDate && !isDateBefore && <span className="ml-1 text-amber-500">(trước)</span>}
                                 </span>
                               </div>
-                              {(g.driver_name || g.content) && (
+                              {isTaken && (
+                                <div className="text-[9px] text-red-400 mt-0.5">Đã dùng bởi phiếu {takenGateMap.get(g.id)}</div>
+                              )}
+                              {isDateBefore && (
+                                <div className="text-[9px] text-amber-600 mt-0.5">Đăng ký ({g.date}) sau ngày nhập — đổi ngày nhập trước</div>
+                              )}
+                              {!isDisabled && (g.driver_name || g.content) && (
                                 <div className="text-[9px] text-slate-400 truncate mt-0.5">
                                   {[g.driver_name, g.content].filter(Boolean).join(' · ')}
                                 </div>
                               )}
                             </button>
-                          ))
+                            )
+                          })
                         )}
                       </div>
                       {gateRegId && (
@@ -525,7 +555,10 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
               <div className="grid grid-cols-3 gap-2">
                 <div>
                   <Label className="text-xs">Ngày nhập *</Label>
-                  <Input type="date" value={importDate} onChange={e => setImportDate(e.target.value)} className="h-8 text-xs mt-0.5" />
+                  <Input type="date" value={importDate} onChange={e => {
+                    setImportDate(e.target.value)
+                    if (selectedGate && e.target.value < selectedGate.date) setGateRegId('')
+                  }} className="h-8 text-xs mt-0.5" />
                 </div>
                 <div>
                   <Label className="text-xs">Ca nhập *</Label>

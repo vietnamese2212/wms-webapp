@@ -488,7 +488,9 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
                               className={`w-full text-left rounded border px-2 py-1 transition-colors ${
                                 gateRegId === g.id
                                   ? 'border-blue-400 bg-blue-50'
-                                  : 'border-slate-200 bg-white hover:border-blue-200 hover:bg-blue-50/40'
+                                  : g.date !== importDate
+                                    ? 'border-amber-200 bg-amber-50 hover:border-amber-300'
+                                    : 'border-slate-200 bg-white hover:border-blue-200 hover:bg-blue-50/40'
                               }`}
                             >
                               <div className="flex items-center gap-1.5">

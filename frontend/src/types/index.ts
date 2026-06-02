@@ -242,27 +242,33 @@ export interface QAStatus {
   is_active:     boolean
 }
 
+export interface WarehousePalletOverride {
+  warehouse_id:       string
+  cartons_per_pallet: number
+}
+
 export interface Material {
-  id:                   string
-  material_code:        string
-  material_description: string
-  short_name:           string | null
-  custom_short_name:    string | null
-  category:             string | null
-  product_type:         string | null
-  unit:                 string | null
-  weight_kg:            number | null
-  cartons_per_pallet:   number | null
-  cartons_per_pallet_mn: number | null
-  units_per_carton:     number | null
-  ea_per_pallet:        number | null
-  shelf_life_days:      number | null
-  storage_category:     string | null
-  old_code:             string | null
-  manufacturer_id:      string | null
-  manufacturer?:        { id: string; code: string; name: string | null } | null
-  notes:                string | null
-  is_active:            boolean
+  id:                         string
+  material_code:              string
+  material_description:       string
+  short_name:                 string | null
+  custom_short_name:          string | null
+  category:                   string | null
+  product_type:               string | null
+  unit:                       string | null
+  weight_kg:                  number | null
+  cartons_per_pallet:         number | null
+  cartons_per_pallet_mn:      number | null
+  units_per_carton:           number | null
+  ea_per_pallet:              number | null
+  shelf_life_days:            number | null
+  storage_category:           string | null
+  old_code:                   string | null
+  warehouse_pallet_overrides: WarehousePalletOverride[] | null
+  manufacturer_id:            string | null
+  manufacturer?:              { id: string; code: string; name: string | null } | null
+  notes:                      string | null
+  is_active:                  boolean
 }
 
 // WMS – Inbound

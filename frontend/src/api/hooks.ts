@@ -146,8 +146,8 @@ export function useCreateMaterial() {
       custom_short_name?: string; category?: string; product_type?: string
       unit?: string; manufacturer_id?: string; notes?: string; old_code?: string
       weight_kg?: number | null; cartons_per_pallet?: number | null
-      cartons_per_pallet_mn?: number | null; units_per_carton?: number | null
-      shelf_life_days?: number | null
+      units_per_carton?: number | null; shelf_life_days?: number | null
+      warehouse_pallet_overrides?: import('@/types').WarehousePalletOverride[]
     }) => apiClient.post('/masterdata/materials', body).then((r) => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['materials'] }),
   })
@@ -161,8 +161,9 @@ export function useUpdateMaterial() {
       category?: string; product_type?: string; unit?: string
       manufacturer_id?: string; notes?: string; old_code?: string
       weight_kg?: number | null; cartons_per_pallet?: number | null
-      cartons_per_pallet_mn?: number | null; units_per_carton?: number | null
-      shelf_life_days?: number | null; is_active?: boolean
+      units_per_carton?: number | null; shelf_life_days?: number | null
+      is_active?: boolean
+      warehouse_pallet_overrides?: import('@/types').WarehousePalletOverride[]
     }) => apiClient.put(`/masterdata/materials/${id}`, body).then((r) => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['materials'] }),
   })

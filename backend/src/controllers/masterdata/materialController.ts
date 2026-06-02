@@ -55,6 +55,7 @@ export async function createMaterial(req: Request, res: Response) {
       category, product_type, unit, manufacturer_id, notes,
       weight_kg, cartons_per_pallet, cartons_per_pallet_mn,
       units_per_carton, ea_per_pallet, shelf_life_days, storage_category, old_code, image_url,
+      warehouse_pallet_overrides,
     } = req.body
     if (!material_code || !material_description)
       return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu material_code hoặc material_description')
@@ -83,6 +84,7 @@ export async function createMaterial(req: Request, res: Response) {
         image_url: image_url ?? null,
         manufacturer_id: manufacturer_id ?? null,
         notes: notes ?? null,
+        warehouse_pallet_overrides: Array.isArray(warehouse_pallet_overrides) ? warehouse_pallet_overrides : [],
         updated_at: new Date().toISOString(),
       })
       .select('*, manufacturer:Manufacturer(id, code, name)')
@@ -104,6 +106,7 @@ export async function updateMaterial(req: Request, res: Response) {
       manufacturer_id, notes, is_active,
       weight_kg, cartons_per_pallet, cartons_per_pallet_mn,
       units_per_carton, ea_per_pallet, shelf_life_days, storage_category, old_code, image_url,
+      warehouse_pallet_overrides,
     } = req.body
 
     let short_name: string | undefined
@@ -137,6 +140,7 @@ export async function updateMaterial(req: Request, res: Response) {
     if (manufacturer_id !== undefined) patch.manufacturer_id = manufacturer_id || null
     if (notes !== undefined) patch.notes = notes
     if (is_active !== undefined) patch.is_active = Boolean(is_active)
+    if (warehouse_pallet_overrides !== undefined) patch.warehouse_pallet_overrides = Array.isArray(warehouse_pallet_overrides) ? warehouse_pallet_overrides : []
 
     const { data, error } = await supabase
       .from('Material')

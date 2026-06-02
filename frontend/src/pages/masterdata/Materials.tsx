@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import {
   useMaterials, useWarehouses, useWarehouseTypes,
   useCreateMaterial, useUpdateMaterial, useDeleteMaterial,
@@ -293,7 +294,7 @@ export default function Materials() {
     return `${base} [${sfx}]`
   })()
 
-  const colCount = canDel ? 11 : 10
+  const colCount = (canDel ? 1 : 0) + 9 + 2 + (canEdit || canDel ? 1 : 0)
 
   return (
     <div className="flex flex-col h-full">
@@ -338,7 +339,6 @@ export default function Materials() {
 
       {/* ── Table ─────────────────────────────────────────────────────── */}
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
-        <div className="overflow-x-auto">
           <Table className="min-w-full">
             <TableHeader>
               <TableRow>
@@ -356,6 +356,8 @@ export default function Materials() {
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap text-right">EA/T</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap text-right">KG</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">TT</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Tạo</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Sửa</TableHead>
                 {(canEdit || canDel) && (
                   <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap w-14" />
                 )}
@@ -403,6 +405,22 @@ export default function Materials() {
                         {mat.is_active ? 'Đang dùng' : 'Ẩn'}
                       </span>
                     </TableCell>
+                    <TableCell className="px-2 py-1 whitespace-nowrap">
+                      {mat.created_at ? (
+                        <div className="leading-tight">
+                          <div className="text-[10px] text-slate-600">{mat.created_by ?? <span className="text-slate-300">—</span>}</div>
+                          <div className="text-[9px] text-slate-400">{formatTimestampDate(mat.created_at, true)}</div>
+                        </div>
+                      ) : <span className="text-slate-300">—</span>}
+                    </TableCell>
+                    <TableCell className="px-2 py-1 whitespace-nowrap">
+                      {mat.updated_at ? (
+                        <div className="leading-tight">
+                          <div className="text-[10px] text-slate-600">{mat.updated_by ?? <span className="text-slate-300">—</span>}</div>
+                          <div className="text-[9px] text-slate-400">{formatTimestampDate(mat.updated_at, true)}</div>
+                        </div>
+                      ) : <span className="text-slate-300">—</span>}
+                    </TableCell>
                     {(canEdit || canDel) && (
                       <TableCell className="px-2 py-1 whitespace-nowrap" onClick={e => e.stopPropagation()}>
                         <div className="flex gap-0.5">
@@ -424,7 +442,6 @@ export default function Materials() {
               })}
             </TableBody>
           </Table>
-        </div>
       </div>
 
       {/* ── Bulk action bar ────────────────────────────────────────────── */}
@@ -514,6 +531,25 @@ export default function Materials() {
                     {detailMat.manufacturer && (
                       <DRow label="Nhà SX" value={`${detailMat.manufacturer.code}${detailMat.manufacturer.name ? ` – ${detailMat.manufacturer.name}` : ''}`} />
                     )}
+                  </div>
+                </div>
+
+                {/* Audit */}
+                <div>
+                  <p className="text-[10px] font-medium text-slate-500 mb-1.5">Lịch sử</p>
+                  <div className="space-y-0">
+                    <DRow label="Người tạo"  value={detailMat.created_by} />
+                    <DRow label="Giờ tạo"
+                      value={detailMat.created_at
+                        ? `${formatTimestampDate(detailMat.created_at)} ${formatTimestampTime(detailMat.created_at)}`
+                        : null}
+                    />
+                    <DRow label="Người sửa"  value={detailMat.updated_by} />
+                    <DRow label="Giờ sửa"
+                      value={detailMat.updated_at
+                        ? `${formatTimestampDate(detailMat.updated_at)} ${formatTimestampTime(detailMat.updated_at)}`
+                        : null}
+                    />
                   </div>
                 </div>
               </div>
@@ -608,6 +644,7 @@ export default function Materials() {
                   <SelectItem value="__none__" className="text-xs text-slate-400">— Chọn ĐVT —</SelectItem>
                   <SelectItem value="CAR" className="text-xs font-mono">CAR – Carton (thùng)</SelectItem>
                   <SelectItem value="EA"  className="text-xs font-mono">EA – Each (cái)</SelectItem>
+                  <SelectItem value="KG"  className="text-xs font-mono">KG – Kilogram</SelectItem>
                 </SelectContent>
               </Select>
             </div>

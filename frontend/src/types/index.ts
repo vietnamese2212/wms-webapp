@@ -269,6 +269,10 @@ export interface Material {
   manufacturer?:              { id: string; code: string; name: string | null } | null
   notes:                      string | null
   is_active:                  boolean
+  created_at?:                string
+  updated_at?:                string | null
+  created_by?:                string | null
+  updated_by?:                string | null
 }
 
 // WMS – Inbound

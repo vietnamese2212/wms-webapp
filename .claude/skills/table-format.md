@@ -7,12 +7,13 @@
 <div className="flex flex-col h-full">
   <div className="border-b bg-white px-3 py-2 shrink-0">{/* filter bar */}</div>
   <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
-    <div className="overflow-x-auto">
-      <Table className="min-w-full">
+    <Table className="min-w-full">
 ```
 
-- `overflow-auto` trên container dọc → sticky header bám đúng
-- `overflow-x-auto` trên inner div → scroll ngang
+> **QUAN TRỌNG — sticky header**: KHÔNG bọc `<Table>` trong `<div className="overflow-x-auto">`.
+> CSS quirk: `overflow-x: auto` ngầm set `overflow-y: auto`, tạo ra scroll container mới → `sticky top-0` bám vào container đó (không scroll dọc) thay vì bám vào ngoài cùng → header KHÔNG freeze.
+> Dùng **một** `overflow-auto` duy nhất trên container ngoài — nó xử lý cả scroll dọc lẫn ngang. `min-w-full` đảm bảo bảng rộng hơn container sẽ tự scroll ngang.
+
 - `TableHead` base component tự có `sticky top-0 z-10 bg-slate-50` — không thêm thủ công
 
 ## Typography chuẩn
@@ -33,7 +34,36 @@
 - Thiếu `whitespace-nowrap` → text xuống dòng → row cao bất thường → layout vỡ
 - Nội dung dài cần rút ngắn → dùng `truncate` (bao gồm `whitespace-nowrap` + `overflow-hidden`) kết hợp `max-w-[Npx]`
 - Không dùng `max-w` để giới hạn cột nếu không có `truncate` — text sẽ vẫn wrap
-- Container `overflow-x-auto` đảm bảo bảng scroll ngang thay vì vỡ layout khi cột nhiều
+
+## Cột Tạo / Sửa (audit columns — bắt buộc với mọi masterdata table)
+
+```tsx
+// Hiển thị stacked: người + ngày, compact
+<TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Tạo</TableHead>
+<TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Sửa</TableHead>
+
+// Cell:
+<TableCell className="px-2 py-1 whitespace-nowrap">
+  {item.created_at ? (
+    <div className="leading-tight">
+      <div className="text-[10px] text-slate-600">{item.created_by ?? <span className="text-slate-300">—</span>}</div>
+      <div className="text-[9px] text-slate-400">{formatTimestampDate(item.created_at, true)}</div>
+    </div>
+  ) : <span className="text-slate-300">—</span>}
+</TableCell>
+<TableCell className="px-2 py-1 whitespace-nowrap">
+  {item.updated_at ? (
+    <div className="leading-tight">
+      <div className="text-[10px] text-slate-600">{item.updated_by ?? <span className="text-slate-300">—</span>}</div>
+      <div className="text-[9px] text-slate-400">{formatTimestampDate(item.updated_at, true)}</div>
+    </div>
+  ) : <span className="text-slate-300">—</span>}
+</TableCell>
+```
+
+- `formatTimestampDate(ts, true)` → `dd-MM-yy` (compact), import từ `@/utils/formatters`
+- `formatTimestampTime(ts)` → `HH:mm:ss` — dùng trong sheet detail (không phải table)
+- Detail sheet hiển thị đầy đủ: `formatTimestampDate(ts) + ' ' + formatTimestampTime(ts)`
 
 ## Màu row theo trạng thái — TEXT color, không dùng background
 
@@ -106,11 +136,12 @@ const displayItems = (() => {
 
 ## Checklist khi tạo table mới
 
-- [ ] Container đúng cấu trúc layout (overflow-auto → overflow-x-auto → Table min-w-full)
+- [ ] Container: `overflow-auto` duy nhất — KHÔNG bọc thêm `overflow-x-auto` (vỡ sticky)
 - [ ] Header: `text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap`
 - [ ] Cell: `px-2 py-1 text-[10px] whitespace-nowrap`
 - [ ] Row status dùng text color (ROW_TEXT), không dùng background
 - [ ] Cell cần màu riêng → thêm `text-slate-600/700` explicit
 - [ ] Cột action cuối cùng, `onClick={e => e.stopPropagation()}`
+- [ ] Cột Tạo + Sửa (created_by/updated_by + date) — bắt buộc với masterdata
 - [ ] Empty state: `<span className="text-slate-300">—</span>`
 - [ ] Stats bar dùng `displayItems` (đã filter), không dùng raw `items`

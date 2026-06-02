@@ -463,45 +463,46 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
 
                   {/* Dialog chọn xe cổng */}
                   <Dialog open={showGateDialog} onOpenChange={setShowGateDialog}>
-                    <DialogContent className="max-w-lg">
-                      <DialogHeader>
-                        <DialogTitle className="text-sm">Chọn xe đang vào cổng</DialogTitle>
-                      </DialogHeader>
-                      <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-1">
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-[10px] text-slate-400">{sortedGates.length} xe đang vào</span>
-                          <button type="button" onClick={() => setShowMoreGates(v => !v)}
-                            className="text-[10px] text-slate-400 hover:text-blue-500 underline-offset-2 hover:underline">
-                            {showMoreGates ? 'Ẩn bớt (chỉ hôm nay)' : '+ Xem 2 ngày trước'}
-                          </button>
+                    <DialogContent className="max-w-md">
+                      <DialogHeader className="pb-1">
+                        <div className="flex items-center justify-between">
+                          <DialogTitle className="text-sm">Chọn xe vào cổng</DialogTitle>
+                          <div className="flex items-center gap-3">
+                            <span className="text-[10px] text-slate-400">{sortedGates.length} xe</span>
+                            <button type="button" onClick={() => setShowMoreGates(v => !v)}
+                              className="text-[10px] text-slate-400 hover:text-blue-500 underline-offset-2 hover:underline">
+                              {showMoreGates ? 'Chỉ hôm nay' : '+ 2 ngày trước'}
+                            </button>
+                          </div>
                         </div>
+                      </DialogHeader>
+                      <div className="space-y-1 max-h-[72vh] overflow-y-auto pr-0.5">
                         {sortedGates.length === 0 ? (
-                          <div className="text-center text-xs text-slate-400 py-6">Không có xe INBOUND đang vào cổng</div>
+                          <div className="text-center text-xs text-slate-400 py-4">Không có xe INBOUND đang vào cổng</div>
                         ) : (
                           sortedGates.map(g => (
                             <button
                               key={g.id}
                               type="button"
                               onClick={() => { setGateRegId(g.id); setShowGateDialog(false) }}
-                              className={`w-full text-left rounded-lg border px-3 py-2 text-xs space-y-0.5 transition-colors ${
+                              className={`w-full text-left rounded border px-2 py-1 transition-colors ${
                                 gateRegId === g.id
                                   ? 'border-blue-400 bg-blue-50'
                                   : 'border-slate-200 bg-white hover:border-blue-200 hover:bg-blue-50/40'
                               }`}
                             >
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <span className="font-mono font-semibold text-slate-800">{g.license_plate ?? '—'}</span>
-                                {g.company_name_raw && <span className="text-slate-600">{g.company_name_raw}</span>}
-                                <span className="ml-auto text-[10px] text-slate-400 shrink-0">
-                                  {g.date?.slice(8)}/{g.date?.slice(5, 7)}/{g.date?.slice(0, 4)} · Lần {gateLane.get(g.id)}
-                                  {g.date !== importDate && <span className="ml-1 text-amber-500"> (đăng ký trước)</span>}
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-mono font-semibold text-[11px] text-slate-800">{g.license_plate ?? '—'}</span>
+                                {g.company_name_raw && <span className="text-[10px] text-slate-500 truncate">{g.company_name_raw}</span>}
+                                <span className="ml-auto text-[9px] text-slate-400 shrink-0">
+                                  {g.date?.slice(8)}/{g.date?.slice(5, 7)} · Lần {gateLane.get(g.id)}
+                                  {g.date !== importDate && <span className="ml-1 text-amber-500">(trước)</span>}
                                 </span>
                               </div>
-                              {g.driver_name && (
-                                <div className="text-slate-500 text-[10px]">Tài xế: {g.driver_name}{g.phone ? ` · ${g.phone}` : ''}</div>
-                              )}
-                              {g.content && (
-                                <div className="text-slate-600 text-[10px] italic">"{g.content}"</div>
+                              {(g.driver_name || g.content) && (
+                                <div className="text-[9px] text-slate-400 truncate mt-0.5">
+                                  {[g.driver_name, g.content].filter(Boolean).join(' · ')}
+                                </div>
                               )}
                             </button>
                           ))

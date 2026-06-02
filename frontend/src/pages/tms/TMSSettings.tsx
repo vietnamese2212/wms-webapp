@@ -186,10 +186,11 @@ function SlotTemplateDialog({ st, open, onClose, vehicleTypes, warehouseId, carg
 
 function TransportCompanyDialog({ co, open, onClose }: { co: TransportCompany | null; open: boolean; onClose: () => void }) {
   const isEdit = !!co
-  const [code,    setCode]    = useState(co?.code    ?? '')
-  const [name,    setName]    = useState(co?.name    ?? '')
-  const [contact, setContact] = useState(co?.contact_name  ?? '')
-  const [phone,   setPhone]   = useState(co?.contact_phone ?? '')
+  const [code,     setCode]     = useState(co?.code         ?? '')
+  const [name,     setName]     = useState(co?.name         ?? '')
+  const [type,     setType]     = useState<'ĐVVT' | 'NCC'>(co?.type ?? 'ĐVVT')
+  const [contact,  setContact]  = useState(co?.contact_name  ?? '')
+  const [phone,    setPhone]    = useState(co?.contact_phone ?? '')
   const [isActive, setIsActive] = useState(co?.is_active ?? true)
   const [err, setErr] = useState('')
 
@@ -201,10 +202,10 @@ function TransportCompanyDialog({ co, open, onClose }: { co: TransportCompany | 
     setErr('')
     if (!code || !name) { setErr('Mã và tên là bắt buộc'); return }
     if (isEdit) {
-      update({ id: co.id, name, contact_name: contact || undefined, contact_phone: phone || undefined, is_active: isActive },
+      update({ id: co.id, name, type, contact_name: contact || undefined, contact_phone: phone || undefined, is_active: isActive },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
     } else {
-      create({ code, name, contact_name: contact || undefined, contact_phone: phone || undefined },
+      create({ code, name, type, contact_name: contact || undefined, contact_phone: phone || undefined },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
     }
   }
@@ -219,8 +220,17 @@ function TransportCompanyDialog({ co, open, onClose }: { co: TransportCompany | 
             <div className="space-y-1"><Label className="text-xs">Mã *</Label>
               <Input value={code} onChange={e => setCode(e.target.value.toUpperCase())} placeholder="DVVT01…"
                 disabled={isEdit} className={isEdit ? 'bg-slate-50 cursor-not-allowed' : ''} /></div>
-            <div className="space-y-1"><Label className="text-xs">Tên ĐVVT *</Label>
+            <div className="space-y-1"><Label className="text-xs">Tên *</Label>
               <Input value={name} onChange={e => setName(e.target.value)} placeholder="Công ty vận tải A…" /></div>
+          </div>
+          <div className="space-y-1"><Label className="text-xs">Loại *</Label>
+            <Select value={type} onValueChange={v => setType(v as 'ĐVVT' | 'NCC')}>
+              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ĐVVT" className="text-xs">ĐVVT – Đơn vị vận tải</SelectItem>
+                <SelectItem value="NCC"  className="text-xs">NCC – Nhà cung cấp</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           <div className="space-y-1"><Label className="text-xs">Người liên hệ</Label>
             <Input value={contact} onChange={e => setContact(e.target.value)} /></div>
@@ -640,6 +650,7 @@ export default function TMSSettings() {
                     <TableHeader>
                       <TableRow>
                         <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Mã</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Loại</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Tên ĐVVT / NCC</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Người liên hệ</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">SĐT</TableHead>
@@ -653,6 +664,11 @@ export default function TMSSettings() {
                           className={`cursor-pointer ${detailCo?.id === co.id ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
                           onClick={() => setDetailCo(prev => prev?.id === co.id ? null : co)}>
                           <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-600">{co.code}</TableCell>
+                          <TableCell className="px-2 py-1 whitespace-nowrap">
+                            <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${co.type === 'NCC' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>
+                              {co.type ?? 'ĐVVT'}
+                            </span>
+                          </TableCell>
                           <TableCell className="px-2 py-1 text-[10px] font-medium text-slate-800">{co.name}</TableCell>
                           <TableCell className="px-2 py-1 text-[10px] text-slate-600">{co.contact_name ?? '—'}</TableCell>
                           <TableCell className="px-2 py-1 text-[10px] text-slate-600">{co.contact_phone ?? '—'}</TableCell>
@@ -691,6 +707,7 @@ export default function TMSSettings() {
                   <span className="font-semibold text-slate-700">{detailCo.code}</span>
                   <button onClick={() => setDetailCo(null)} className="text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>
                 </div>
+                <div><span className="text-slate-400">Loại:</span> <span className={`ml-1 text-[9px] px-1.5 py-0.5 rounded-full font-medium ${detailCo.type === 'NCC' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>{detailCo.type ?? 'ĐVVT'}</span></div>
                 <div><span className="text-slate-400">Tên:</span> <span className="font-medium">{detailCo.name}</span></div>
                 <div><span className="text-slate-400">Người LH:</span> <span className="font-medium">{detailCo.contact_name ?? '—'}</span></div>
                 <div><span className="text-slate-400">SĐT:</span> <span className="font-medium">{detailCo.contact_phone ?? '—'}</span></div>

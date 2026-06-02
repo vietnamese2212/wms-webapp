@@ -148,6 +148,7 @@ export function useCreateMaterial() {
       weight_kg?: number | null; cartons_per_pallet?: number | null
       units_per_carton?: number | null; shelf_life_days?: number | null
       warehouse_pallet_overrides?: import('@/types').WarehousePalletOverride[]
+      supplier_shelf_life_overrides?: import('@/types').SupplierShelfLifeOverride[]
     }) => apiClient.post('/masterdata/materials', body).then((r) => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['materials'] }),
   })
@@ -164,6 +165,7 @@ export function useUpdateMaterial() {
       units_per_carton?: number | null; shelf_life_days?: number | null
       is_active?: boolean
       warehouse_pallet_overrides?: import('@/types').WarehousePalletOverride[]
+      supplier_shelf_life_overrides?: import('@/types').SupplierShelfLifeOverride[]
     }) => apiClient.put(`/masterdata/materials/${id}`, body).then((r) => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['materials'] }),
   })
@@ -1478,7 +1480,7 @@ export function useTransportCompanies(onlyActive = false) {
 export function useCreateTransportCompany() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { code: string; name: string; contact_name?: string; contact_phone?: string }) =>
+    mutationFn: (body: { code: string; name: string; type?: 'ĐVVT' | 'NCC'; contact_name?: string; contact_phone?: string }) =>
       apiClient.post('/tms/transport-companies', body).then(r => r.data.data as TransportCompany),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-transport-companies'] }),
   })
@@ -1487,7 +1489,7 @@ export function useCreateTransportCompany() {
 export function useUpdateTransportCompany() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; code?: string; name?: string; contact_name?: string; contact_phone?: string; is_active?: boolean }) =>
+    mutationFn: ({ id, ...body }: { id: string; code?: string; name?: string; type?: 'ĐVVT' | 'NCC'; contact_name?: string; contact_phone?: string; is_active?: boolean }) =>
       apiClient.put(`/tms/transport-companies/${id}`, body).then(r => r.data.data as TransportCompany),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-transport-companies'] }),
   })

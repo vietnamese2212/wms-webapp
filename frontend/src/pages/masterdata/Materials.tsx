@@ -12,12 +12,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import {
-  useMaterials, useWarehouses, useWarehouseTypes,
+  useMaterials, useWarehouses, useWarehouseTypes, useTransportCompanies,
   useCreateMaterial, useUpdateMaterial, useDeleteMaterial,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
-import type { Material, WarehousePalletOverride } from '@/types'
+import type { Material, WarehousePalletOverride, SupplierShelfLifeOverride } from '@/types'
 
 type WhRow = { id: string; code: string; name: string }
 
@@ -95,9 +95,10 @@ export default function Materials() {
   const [dialogMode, setDialogMode] = useState<'add' | 'edit' | null>(null)
   const [editing,    setEditing]    = useState<Material | null>(null)
   const [form,       setForm]       = useState(EMPTY_FORM)
-  const [editActive, setEditActive] = useState(true)
-  const [overrides,  setOverrides]  = useState<{ warehouse_id: string; cartons_per_pallet: string }[]>([])
-  const [formError,  setFormError]  = useState('')
+  const [editActive,       setEditActive]       = useState(true)
+  const [overrides,        setOverrides]        = useState<{ warehouse_id: string; cartons_per_pallet: string }[]>([])
+  const [supplierOverrides,setSupplierOverrides] = useState<{ transport_company_id: string; shelf_life_days: string }[]>([])
+  const [formError,        setFormError]        = useState('')
 
   // Delete
   const [deleteTarget, setDeleteTarget] = useState<Material | null>(null)
@@ -112,7 +113,9 @@ export default function Materials() {
   const { data: raw = [], isLoading }    = useMaterials(undefined)
   const { data: warehouseTypes = [] }    = useWarehouseTypes()
   const { data: warehousesRaw = [] }     = useWarehouses(true)
+  const { data: allCompanies = [] }      = useTransportCompanies(true)
   const warehouses = warehousesRaw as WhRow[]
+  const nccList = allCompanies.filter(c => c.type === 'NCC')
 
   const whMap = useMemo(() =>
     Object.fromEntries(warehouses.map(w => [w.id, w])),
@@ -176,6 +179,7 @@ export default function Materials() {
     setEditing(null)
     setForm(EMPTY_FORM)
     setOverrides([])
+    setSupplierOverrides([])
     setEditActive(true)
     setFormError('')
     setDialogMode('add')
@@ -201,6 +205,12 @@ export default function Materials() {
         cartons_per_pallet: String(o.cartons_per_pallet),
       }))
     )
+    setSupplierOverrides(
+      (mat.supplier_shelf_life_overrides ?? []).map(o => ({
+        transport_company_id: o.transport_company_id,
+        shelf_life_days: String(o.shelf_life_days),
+      }))
+    )
     setEditActive(mat.is_active)
     setFormError('')
     setDialogMode('edit')
@@ -215,17 +225,22 @@ export default function Materials() {
         .filter(o => o.warehouse_id && o.cartons_per_pallet)
         .map(o => ({ warehouse_id: o.warehouse_id, cartons_per_pallet: Number(o.cartons_per_pallet) }))
 
+      const supplierHsdOverrides: SupplierShelfLifeOverride[] = supplierOverrides
+        .filter(o => o.transport_company_id && o.shelf_life_days)
+        .map(o => ({ transport_company_id: o.transport_company_id, shelf_life_days: Number(o.shelf_life_days) }))
+
       const payload = {
-        material_description:       form.material_description.trim(),
-        custom_short_name:          form.custom_short_name.trim() || undefined,
-        category:                   form.category || undefined,
-        unit:                       form.unit || undefined,
-        cartons_per_pallet:         Number(form.cartons_per_pallet),
-        units_per_carton:           form.units_per_carton ? Number(form.units_per_carton) : undefined,
-        weight_kg:                  Number(form.weight_kg),
-        shelf_life_days:            form.shelf_life_days ? Number(form.shelf_life_days) : undefined,
-        old_code:                   form.old_code.trim() || undefined,
-        warehouse_pallet_overrides: palletOverrides,
+        material_description:          form.material_description.trim(),
+        custom_short_name:             form.custom_short_name.trim() || undefined,
+        category:                      form.category || undefined,
+        unit:                          form.unit || undefined,
+        cartons_per_pallet:            Number(form.cartons_per_pallet),
+        units_per_carton:              form.units_per_carton ? Number(form.units_per_carton) : undefined,
+        weight_kg:                     Number(form.weight_kg),
+        shelf_life_days:               form.shelf_life_days ? Number(form.shelf_life_days) : undefined,
+        old_code:                      form.old_code.trim() || undefined,
+        warehouse_pallet_overrides:    palletOverrides,
+        supplier_shelf_life_overrides: supplierHsdOverrides,
       }
       if (dialogMode === 'add') {
         await createMaterial.mutateAsync({ material_code: form.material_code.trim().toUpperCase(), ...payload })
@@ -285,6 +300,18 @@ export default function Materials() {
 
   // Already-selected warehouse_ids to prevent duplicate
   const usedWhIds = new Set(overrides.map(o => o.warehouse_id).filter(Boolean))
+
+  // Supplier HSD override helpers
+  function addSupplierOverride() {
+    setSupplierOverrides(v => [...v, { transport_company_id: '', shelf_life_days: '' }])
+  }
+  function removeSupplierOverride(i: number) {
+    setSupplierOverrides(v => v.filter((_, idx) => idx !== i))
+  }
+  function setSupplierOverrideField(i: number, k: 'transport_company_id' | 'shelf_life_days', v: string) {
+    setSupplierOverrides(prev => prev.map((o, idx) => idx === i ? { ...o, [k]: v } : o))
+  }
+  const usedNccIds = new Set(supplierOverrides.map(o => o.transport_company_id).filter(Boolean))
 
   const saving = createMaterial.isPending || updateMaterial.isPending
 
@@ -523,6 +550,24 @@ export default function Materials() {
                   </div>
                 )}
 
+                {/* HSD ngoại lệ NCC */}
+                {(detailMat.supplier_shelf_life_overrides?.length ?? 0) > 0 && (
+                  <div>
+                    <p className="text-[10px] font-medium text-slate-500 mb-1.5">HSD theo NCC</p>
+                    <div className="space-y-1">
+                      {(detailMat.supplier_shelf_life_overrides ?? []).map((ov, i) => {
+                        const co = allCompanies.find(c => c.id === ov.transport_company_id)
+                        return (
+                          <div key={i} className="flex justify-between text-xs py-0.5 border-b border-slate-100">
+                            <span className="text-slate-500">{co ? `${co.code} – ${co.name}` : ov.transport_company_id}</span>
+                            <span className="font-semibold tabular-nums">{ov.shelf_life_days} ngày</span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+
                 {/* Khác */}
                 <div>
                   <p className="text-[10px] font-medium text-slate-500 mb-1.5">Thông tin khác</p>
@@ -710,6 +755,46 @@ export default function Materials() {
                 HSD (ngày){SHELF_LIFE_CATS.includes(form.category) && ' *'}
               </Label>
               <Input type="number" min={0} className="col-span-2 h-7 text-xs" value={form.shelf_life_days} onChange={e => setField('shelf_life_days', e.target.value)} placeholder="Số ngày hạn sử dụng" />
+            </div>
+
+            {/* HSD ngoại lệ theo NCC */}
+            <div className="grid grid-cols-3 items-start gap-2">
+              <Label className="text-xs text-right pt-1.5">HSD theo NCC</Label>
+              <div className="col-span-2 space-y-1.5">
+                {supplierOverrides.map((ov, i) => (
+                  <div key={i} className="flex gap-1.5 items-center">
+                    <Select value={ov.transport_company_id || '__none__'} onValueChange={v => setSupplierOverrideField(i, 'transport_company_id', v === '__none__' ? '' : v)}>
+                      <SelectTrigger className="h-7 text-xs flex-1 min-w-0">
+                        <SelectValue placeholder="NCC" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__" className="text-xs text-slate-400">— Chọn NCC —</SelectItem>
+                        {nccList
+                          .filter(c => !usedNccIds.has(c.id) || c.id === ov.transport_company_id)
+                          .map(c => (
+                            <SelectItem key={c.id} value={c.id} className="text-xs">{c.code} – {c.name}</SelectItem>
+                          ))
+                        }
+                      </SelectContent>
+                    </Select>
+                    <Input type="number" min={1} className="w-20 h-7 text-xs" value={ov.shelf_life_days} onChange={e => setSupplierOverrideField(i, 'shelf_life_days', e.target.value)} placeholder="Ngày" />
+                    <button onClick={() => removeSupplierOverride(i)} className="text-slate-400 hover:text-red-500 shrink-0">
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+                {nccList.length > 0 && supplierOverrides.length < nccList.length && (
+                  <button onClick={addSupplierOverride} className="flex items-center gap-1 text-[10px] text-blue-500 hover:text-blue-700">
+                    <PlusCircle className="h-3 w-3" />Thêm NCC đặc biệt
+                  </button>
+                )}
+                {nccList.length === 0 && (
+                  <p className="text-[10px] text-slate-400">Chưa có NCC nào trong TMS Settings</p>
+                )}
+                {supplierOverrides.length === 0 && nccList.length > 0 && (
+                  <p className="text-[10px] text-slate-400">Áp dụng HSD mặc định cho mọi NCC</p>
+                )}
+              </div>
             </div>
 
             {/* Mã cũ */}

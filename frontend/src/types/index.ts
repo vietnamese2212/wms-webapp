@@ -264,8 +264,9 @@ export interface Material {
   shelf_life_days:            number | null
   storage_category:           string | null
   old_code:                   string | null
-  warehouse_pallet_overrides: WarehousePalletOverride[] | null
-  manufacturer_id:            string | null
+  warehouse_pallet_overrides:     WarehousePalletOverride[] | null
+  supplier_shelf_life_overrides?: SupplierShelfLifeOverride[] | null
+  manufacturer_id:                string | null
   manufacturer?:              { id: string; code: string; name: string | null } | null
   notes:                      string | null
   is_active:                  boolean
@@ -505,6 +506,7 @@ export interface TransportCompany {
   id:            string
   code:          string
   name:          string
+  type:          'ĐVVT' | 'NCC'
   contact_name:  string | null
   contact_phone: string | null
   is_active:     boolean
@@ -512,6 +514,11 @@ export interface TransportCompany {
   updated_at?:   string
   created_by?:   string | null
   updated_by?:   string | null
+}
+
+export interface SupplierShelfLifeOverride {
+  transport_company_id: string
+  shelf_life_days:      number
 }
 
 export interface TmsVehicle {

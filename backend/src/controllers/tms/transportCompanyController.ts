@@ -21,8 +21,8 @@ export async function listTransportCompanies(req: Request, res: Response) {
 
 export async function createTransportCompany(req: Request, res: Response) {
   try {
-    const { code, name, contact_name, contact_phone } = req.body as {
-      code: string; name: string; contact_name?: string; contact_phone?: string
+    const { code, name, type, contact_name, contact_phone } = req.body as {
+      code: string; name: string; type?: string; contact_name?: string; contact_phone?: string
     }
     if (!code || !name) return fail(res, 'code và name là bắt buộc', 400)
     const now = new Date().toISOString()
@@ -31,6 +31,7 @@ export async function createTransportCompany(req: Request, res: Response) {
     const { data, error } = await (supabase.from('TransportCompany') as any)
       .insert({
         id: randomUUID(), code: code.toUpperCase().trim(), name: name.trim(),
+        type: type ?? 'ĐVVT',
         contact_name: contact_name?.trim() ?? null,
         contact_phone: contact_phone?.trim() ?? null,
         is_active: true, created_at: now, updated_at: now,
@@ -50,11 +51,12 @@ export async function updateTransportCompany(req: Request, res: Response) {
     // ĐVVT user: chỉ được sửa công ty của mình
     if (userNccId && id !== userNccId)
       return fail(res, 'Bạn không có quyền chỉnh sửa ĐVVT này', 403)
-    const { name, contact_name, contact_phone, is_active } = req.body as {
-      name?: string; contact_name?: string; contact_phone?: string; is_active?: boolean
+    const { name, type, contact_name, contact_phone, is_active } = req.body as {
+      name?: string; type?: string; contact_name?: string; contact_phone?: string; is_active?: boolean
     }
     const updates: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: (req as any).user?.name || null }
     if (name          !== undefined) updates.name          = name.trim()
+    if (type          !== undefined) updates.type          = type
     if (contact_name  !== undefined) updates.contact_name  = contact_name?.trim() ?? null
     if (contact_phone !== undefined) updates.contact_phone = contact_phone?.trim() ?? null
     if (is_active     !== undefined) updates.is_active     = is_active

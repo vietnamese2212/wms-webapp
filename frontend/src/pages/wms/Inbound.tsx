@@ -108,6 +108,20 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
       : undefined
   )
   const selectedGate    = (activeGates as any[]).find(g => g.id === gateRegId)
+  const sortedGates = [...(activeGates as any[])].sort(
+    (a, b) => a.date.localeCompare(b.date) || a.registration_number - b.registration_number
+  )
+  // Lần = vị trí trong ngày (reset mỗi ngày, không bị ảnh hưởng bởi bản ghi đã xóa)
+  const gateLane: Map<string, number> = (() => {
+    const dayCount = new Map<string, number>()
+    const m = new Map<string, number>()
+    for (const g of sortedGates) {
+      const cnt = (dayCount.get(g.date) ?? 0) + 1
+      dayCount.set(g.date, cnt)
+      m.set(g.id, cnt)
+    }
+    return m
+  })()
   const gateTmsOrderId: string | undefined = selectedGate?.tms_order_id ?? undefined
   const { data: planMaterials = [] } = useInboundPlanLines(
     sourceType === 'NCC' && warehouseId && importDate
@@ -430,13 +444,11 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
                       <SelectValue placeholder={!warehouseId ? 'Chọn kho trước' : !subType ? 'Chọn loại kho' : activeGates.length === 0 ? 'Không có xe INBOUND' : 'Chọn xe...'} />
                     </SelectTrigger>
                     <SelectContent>
-                      {[...(activeGates as any[])]
-                        .sort((a, b) => a.date.localeCompare(b.date) || a.registration_number - b.registration_number)
-                        .map((g, idx) => (
+                      {sortedGates.map(g => (
                         <SelectItem key={g.id} value={g.id}>
                           <span className="font-mono font-semibold">{g.license_plate ?? '—'}</span>
                           <span className="ml-2 text-xs text-slate-400">
-                            {g.company_name_raw ?? ''} · Lần {idx + 1}
+                            {g.company_name_raw ?? ''} · Lần {gateLane.get(g.id)}
                             {g.date !== importDate && <span className="ml-1 text-amber-500">(đk {g.date?.slice(8)}/{g.date?.slice(5, 7)})</span>}
                           </span>
                         </SelectItem>
@@ -448,6 +460,21 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
                       className="text-[9px] text-slate-400 hover:text-blue-500 mt-0.5 underline-offset-2 hover:underline">
                       {showMoreGates ? 'Ẩn bớt' : '+ Xem 2 ngày trước'}
                     </button>
+                  )}
+                  {selectedGate && (
+                    <div className="mt-1.5 rounded border border-blue-100 bg-blue-50 px-2.5 py-1.5 text-[10px] space-y-0.5">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-mono font-semibold text-slate-800">{selectedGate.license_plate ?? '—'}</span>
+                        {selectedGate.company_name_raw && <span className="text-slate-600">{selectedGate.company_name_raw}</span>}
+                        <span className="text-slate-400 ml-auto">Lần {gateLane.get(selectedGate.id)} · {selectedGate.date?.slice(8)}/{selectedGate.date?.slice(5, 7)}/{selectedGate.date?.slice(0, 4)}</span>
+                      </div>
+                      {selectedGate.driver_name && (
+                        <div className="text-slate-500">Tài xế: {selectedGate.driver_name}{selectedGate.phone ? ` · ${selectedGate.phone}` : ''}</div>
+                      )}
+                      {selectedGate.content && (
+                        <div className="text-slate-600 italic">"{selectedGate.content}"</div>
+                      )}
+                    </div>
                   )}
                 </div>
               </div>

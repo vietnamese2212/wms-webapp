@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import * as XLSX from 'xlsx'
 import { format } from 'date-fns'
 import { vi } from 'date-fns/locale'
@@ -7,7 +7,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import {
   useWarehouses, useWarehouseTypes, useVehicleTypes, useTransportCompanies,
-  useMaterials, useInboundPlanLines, useCreatePlanLine, useBulkCreatePlanLines, useDeletePlanLine,
+  useMaterials, useInboundPlanLines, useBulkCreatePlanLines, useDeletePlanLine,
 } from '@/api/hooks'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
@@ -19,81 +19,137 @@ import type { AxiosError } from 'axios'
 
 const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
-// ─── Form thêm 1 dòng ────────────────────────────────────────────────────────
+// ─── Form thêm dòng ─────────────────────────────────────────────────────────
 
-type FormData = {
-  warehouse_type: string; vehicle_type: string; ncc_id: string
-  material_id: string; po_number: string
-  planned_boxes: string; planned_pallets: string
+type MatRow = {
+  material_code:   string
+  material_id:     string
+  mat_name:        string
+  mat_unit:        string
+  planned_boxes:   string
+  planned_pallets: string
 }
-const EMPTY: FormData = {
-  warehouse_type: '', vehicle_type: '', ncc_id: '',
-  material_id: '', po_number: '', planned_boxes: '', planned_pallets: '',
-}
+const emptyRow = (): MatRow => ({
+  material_code: '', material_id: '', mat_name: '', mat_unit: '',
+  planned_boxes: '', planned_pallets: '',
+})
 
 function AddLineDialog({ open, date, warehouseId, onClose }: {
   open: boolean; date: string; warehouseId: string; onClose: () => void
 }) {
-  const { data: whTypesData = [] }        = useWarehouseTypes()
-  const { data: vehicleTypes = [] }       = useVehicleTypes(true)
-  const { data: transportCompanies = [] } = useTransportCompanies(true)
-  const { data: materials = [] }          = useMaterials()
+  const { data: warehouses = [] }          = useWarehouses(true)
+  const { data: whTypesData = [] }         = useWarehouseTypes()
+  const { data: vehicleTypes = [] }        = useVehicleTypes(true)
+  const { data: transportCompanies = [] }  = useTransportCompanies(true)
+  const { data: materials = [] }           = useMaterials()
 
-  const createLine = useCreatePlanLine()
-  const [form, setForm]   = useState<FormData>(EMPTY)
-  const [matSearch, setMatSearch] = useState('')
-  const [err, setErr]     = useState('')
+  const bulkCreate = useBulkCreatePlanLines()
 
-  const set = (k: keyof FormData) => (v: string) => setForm(f => ({ ...f, [k]: v }))
+  const [warehouse,     setWarehouse]     = useState(warehouseId)
+  const [warehouseType, setWarehouseType] = useState('')
+  const [vehicleType,   setVehicleType]   = useState('')
+  const [nccId,         setNccId]         = useState('')
+  const [poNumber,      setPoNumber]      = useState('')
+  const [rows,          setRows]          = useState<MatRow[]>([emptyRow()])
+  const [err,           setErr]           = useState('')
 
-  const filteredMats = (materials as any[]).filter(m =>
-    !matSearch ||
-    m.material_code?.toLowerCase().includes(matSearch.toLowerCase()) ||
-    m.short_name?.toLowerCase().includes(matSearch.toLowerCase())
-  ).slice(0, 60)
+  useEffect(() => {
+    if (open) {
+      setWarehouse(warehouseId)
+      setWarehouseType('')
+      setVehicleType('')
+      setNccId('')
+      setPoNumber('')
+      setRows([emptyRow()])
+      setErr('')
+    }
+  }, [open, warehouseId])
+
+  const matByCode = useMemo(() =>
+    new Map((materials as any[]).map(m => [String(m.material_code).trim().toUpperCase(), m])),
+    [materials]
+  )
+
+  function handleMatCodeChange(idx: number, code: string) {
+    const found = matByCode.get(code.trim().toUpperCase())
+    setRows(prev => prev.map((r, i) => i !== idx ? r : {
+      ...r,
+      material_code: code,
+      material_id:   found?.id        ?? '',
+      mat_name:      found?.short_name ?? '',
+      mat_unit:      found?.unit       ?? '',
+    }))
+  }
+
+  function setRowField(idx: number, field: 'planned_boxes' | 'planned_pallets', val: string) {
+    setRows(prev => prev.map((r, i) => i !== idx ? r : { ...r, [field]: val }))
+  }
+
+  function addRow() { setRows(prev => [...prev, emptyRow()]) }
+
+  function removeRow(idx: number) {
+    setRows(prev => prev.length === 1 ? [emptyRow()] : prev.filter((_, i) => i !== idx))
+  }
 
   async function handleSave() {
-    if (!form.ncc_id)      { setErr('Vui lòng chọn ĐVVT / NCC'); return }
-    if (!form.material_id) { setErr('Vui lòng chọn mã hàng'); return }
+    if (!warehouse)    { setErr('Vui lòng chọn Kho'); return }
+    if (!nccId)        { setErr('Vui lòng chọn ĐVVT / NCC'); return }
+    const validRows = rows.filter(r => r.material_id)
+    if (!validRows.length) { setErr('Vui lòng nhập ít nhất 1 mã hàng hợp lệ'); return }
     try {
-      await createLine.mutateAsync({
-        date, warehouse_id: warehouseId,
-        warehouse_type:  form.warehouse_type  || undefined,
-        vehicle_type:    form.vehicle_type    || undefined,
-        ncc_id:          form.ncc_id          || undefined,
-        material_id:     form.material_id     || undefined,
-        po_number:       form.po_number       || undefined,
-        planned_boxes:   form.planned_boxes   ? Number(form.planned_boxes)   : undefined,
-        planned_pallets: form.planned_pallets ? Number(form.planned_pallets) : undefined,
-      })
-      setForm(EMPTY); setMatSearch(''); setErr(''); onClose()
+      await bulkCreate.mutateAsync(validRows.map(r => ({
+        date, warehouse_id: warehouse,
+        warehouse_type:  warehouseType || undefined,
+        vehicle_type:    vehicleType   || undefined,
+        ncc_id:          nccId         || undefined,
+        material_id:     r.material_id,
+        po_number:       poNumber      || undefined,
+        planned_boxes:   r.planned_boxes   ? Number(r.planned_boxes)   : undefined,
+        planned_pallets: r.planned_pallets ? Number(r.planned_pallets) : undefined,
+      })))
+      onClose()
     } catch (e) {
       const msg = (e as AxiosError<{error:{message:string}}>)?.response?.data?.error?.message
       setErr(msg ?? 'Lỗi lưu dữ liệu')
     }
   }
 
+  const validCount = rows.filter(r => r.material_id).length
+
   return (
-    <Dialog open={open} onOpenChange={v => { if (!v) { setForm(EMPTY); setMatSearch(''); setErr(''); onClose() } }}>
-      <DialogContent className="max-w-md">
+    <Dialog open={open} onOpenChange={v => { if (!v) onClose() }}>
+      <DialogContent className="max-w-3xl">
         <DialogHeader><DialogTitle>Thêm dòng kế hoạch</DialogTitle></DialogHeader>
-        <div className="space-y-3 py-1">
-          <div className="grid grid-cols-2 gap-3">
+
+        {/* Section 1: Thông tin chung */}
+        <div className="border rounded-lg bg-slate-50 px-3 py-2.5 space-y-2">
+          <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">Thông tin chung</p>
+          <div className="grid grid-cols-3 gap-2">
             <div>
-              <Label className="text-xs">ĐVVT / NCC *</Label>
-              <Select value={form.ncc_id || '__none__'} onValueChange={v => set('ncc_id')(v === '__none__' ? '' : v)}>
-                <SelectTrigger className="h-8 text-sm mt-1"><SelectValue placeholder="Chọn NCC" /></SelectTrigger>
+              <Label className="text-xs">Kho *</Label>
+              <Select value={warehouse || '__none__'} onValueChange={v => setWarehouse(v === '__none__' ? '' : v)}>
+                <SelectTrigger className="h-8 text-xs mt-0.5"><SelectValue placeholder="Chọn kho" /></SelectTrigger>
                 <SelectContent>
-                  {(transportCompanies as any[]).map(c => (
-                    <SelectItem key={c.id} value={c.id}>{c.code} — {c.name}</SelectItem>
+                  {(warehouses as any[]).map(w => (
+                    <SelectItem key={w.id} value={w.id}>{w.code} – {w.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
             <div>
+              <Label className="text-xs">Loại kho</Label>
+              <Select value={warehouseType || '__none__'} onValueChange={v => setWarehouseType(v === '__none__' ? '' : v)}>
+                <SelectTrigger className="h-8 text-xs mt-0.5"><SelectValue placeholder="Chọn loại kho" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">— Không chọn —</SelectItem>
+                  {whTypesData.map(t => <SelectItem key={t.id} value={t.value}>{t.value}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
               <Label className="text-xs">Loại xe</Label>
-              <Select value={form.vehicle_type || '__none__'} onValueChange={v => set('vehicle_type')(v === '__none__' ? '' : v)}>
-                <SelectTrigger className="h-8 text-sm mt-1"><SelectValue placeholder="Chọn loại xe" /></SelectTrigger>
+              <Select value={vehicleType || '__none__'} onValueChange={v => setVehicleType(v === '__none__' ? '' : v)}>
+                <SelectTrigger className="h-8 text-xs mt-0.5"><SelectValue placeholder="Chọn loại xe" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__none__">— Không chọn —</SelectItem>
                   {(vehicleTypes as any[]).map(vt => (
@@ -103,64 +159,118 @@ function AddLineDialog({ open, date, warehouseId, onClose }: {
               </Select>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label className="text-xs">Loại kho</Label>
-              <Select value={form.warehouse_type || '__none__'} onValueChange={v => set('warehouse_type')(v === '__none__' ? '' : v)}>
-                <SelectTrigger className="h-8 text-sm mt-1"><SelectValue placeholder="Chọn loại kho" /></SelectTrigger>
+          <div className="grid grid-cols-3 gap-2">
+            <div className="col-span-2">
+              <Label className="text-xs">ĐVVT / NCC *</Label>
+              <Select value={nccId || '__none__'} onValueChange={v => setNccId(v === '__none__' ? '' : v)}>
+                <SelectTrigger className="h-8 text-xs mt-0.5"><SelectValue placeholder="Chọn ĐVVT / NCC" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="__none__">— Không chọn —</SelectItem>
-                  {whTypesData.map(t => <SelectItem key={t.id} value={t.value}>{t.value}</SelectItem>)}
+                  {(transportCompanies as any[]).map(c => (
+                    <SelectItem key={c.id} value={c.id}>{c.code} — {c.name}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
             <div>
               <Label className="text-xs">Số PO</Label>
-              <Input value={form.po_number} onChange={e => set('po_number')(e.target.value)} placeholder="PO-0001" className="h-8 text-sm mt-1" />
+              <Input
+                value={poNumber}
+                onChange={e => setPoNumber(e.target.value)}
+                placeholder="PO-0001"
+                className="h-8 text-xs mt-0.5"
+              />
             </div>
           </div>
-          <div>
-            <Label className="text-xs">Mã hàng *</Label>
-            <Input
-              value={matSearch}
-              onChange={e => { setMatSearch(e.target.value); set('material_id')('') }}
-              placeholder="Tìm mã hàng..."
-              className="h-8 text-sm mt-1"
-            />
-            {matSearch && (
-              <div className="border rounded-md mt-1 max-h-36 overflow-y-auto bg-white shadow-sm">
-                {filteredMats.length === 0
-                  ? <p className="text-xs text-slate-400 px-3 py-2">Không tìm thấy</p>
-                  : filteredMats.map((m: any) => (
-                    <button
-                      key={m.id} type="button"
-                      onClick={() => { set('material_id')(m.id); setMatSearch(`${m.material_code} — ${m.short_name ?? ''}`) }}
-                      className={`w-full text-left px-3 py-1.5 text-xs hover:bg-blue-50 ${form.material_id === m.id ? 'bg-blue-50 font-medium' : ''}`}
-                    >
-                      <span className="font-mono text-slate-600">{m.material_code}</span>
-                      <span className="ml-2 text-slate-500">{m.short_name}</span>
-                    </button>
-                  ))
-                }
-              </div>
-            )}
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label className="text-xs">Số thùng KH</Label>
-              <Input type="number" min="0" value={form.planned_boxes} onChange={e => set('planned_boxes')(e.target.value)} className="h-8 text-sm mt-1" />
-            </div>
-            <div>
-              <Label className="text-xs">Số pallet KH</Label>
-              <Input type="number" min="0" value={form.planned_pallets} onChange={e => set('planned_pallets')(e.target.value)} className="h-8 text-sm mt-1" />
-            </div>
-          </div>
-          {err && <p className="text-xs text-red-500">{err}</p>}
         </div>
+
+        {/* Section 2: Bảng mã hàng */}
+        <div className="space-y-1.5">
+          <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">Danh sách hàng hóa</p>
+          <div className="border rounded-lg overflow-hidden">
+            <table className="min-w-full text-[10px]">
+              <thead className="bg-slate-50 border-b">
+                <tr>
+                  <th className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 w-32">Mã hàng</th>
+                  <th className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500">Tên hàng</th>
+                  <th className="px-2 py-1.5 text-center text-[9px] font-medium text-slate-500 w-14">ĐVT</th>
+                  <th className="px-2 py-1.5 text-right text-[9px] font-medium text-slate-500 w-20">Số thùng</th>
+                  <th className="px-2 py-1.5 text-right text-[9px] font-medium text-slate-500 w-20">Pallet</th>
+                  <th className="w-7"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {rows.map((row, idx) => {
+                  const invalid = row.material_code !== '' && !row.material_id
+                  return (
+                    <tr key={idx} className={invalid ? 'bg-red-50' : ''}>
+                      <td className="px-1.5 py-1">
+                        <input
+                          type="text"
+                          value={row.material_code}
+                          onChange={e => handleMatCodeChange(idx, e.target.value)}
+                          placeholder="Paste mã hàng"
+                          className={`w-full h-7 px-1.5 text-[10px] font-mono border rounded focus:outline-none focus:ring-1 ${
+                            invalid
+                              ? 'border-red-300 bg-red-50 focus:ring-red-400'
+                              : 'border-slate-200 bg-white focus:ring-blue-400'
+                          }`}
+                        />
+                      </td>
+                      <td className="px-2 py-1">
+                        {row.mat_name
+                          ? <span className="text-[10px] text-slate-700">{row.mat_name}</span>
+                          : invalid
+                            ? <span className="text-[9px] text-red-400">Không tìm thấy mã</span>
+                            : <span className="text-[9px] text-slate-300">—</span>
+                        }
+                      </td>
+                      <td className="px-2 py-1 text-center text-slate-500">{row.mat_unit || '—'}</td>
+                      <td className="px-1.5 py-1">
+                        <input
+                          type="number" min="0"
+                          value={row.planned_boxes}
+                          onChange={e => setRowField(idx, 'planned_boxes', e.target.value)}
+                          className="w-full h-7 px-1.5 text-[10px] border border-slate-200 rounded text-right bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+                        />
+                      </td>
+                      <td className="px-1.5 py-1">
+                        <input
+                          type="number" min="0"
+                          value={row.planned_pallets}
+                          onChange={e => setRowField(idx, 'planned_pallets', e.target.value)}
+                          className="w-full h-7 px-1.5 text-[10px] border border-slate-200 rounded text-right bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+                        />
+                      </td>
+                      <td className="px-1 py-1 text-center">
+                        <button
+                          type="button"
+                          onClick={() => removeRow(idx)}
+                          className="text-slate-300 hover:text-red-500 transition-colors"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+          <button
+            type="button"
+            onClick={addRow}
+            className="text-[10px] text-blue-600 hover:text-blue-800 flex items-center gap-1 transition-colors"
+          >
+            <Plus className="h-3 w-3" /> Thêm dòng hàng
+          </button>
+        </div>
+
+        {err && <p className="text-xs text-red-500">{err}</p>}
+
         <DialogFooter>
-          <Button variant="outline" size="sm" onClick={() => { setForm(EMPTY); setMatSearch(''); setErr(''); onClose() }}>Hủy</Button>
-          <Button size="sm" onClick={handleSave} disabled={createLine.isPending}>
-            {createLine.isPending ? 'Đang lưu...' : 'Lưu'}
+          <Button variant="outline" size="sm" onClick={onClose}>Hủy</Button>
+          <Button size="sm" onClick={handleSave} disabled={bulkCreate.isPending || validCount === 0}>
+            {bulkCreate.isPending ? 'Đang lưu...' : validCount > 0 ? `Lưu ${validCount} dòng` : 'Lưu'}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -202,7 +312,6 @@ function UploadDialog({ open, date, warehouseId, onClose }: {
         const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' })
 
         const parsed: PreviewRow[] = rows.map((row, i) => {
-          // Mapping: đọc nhiều tên cột khác nhau
           const nccCode     = String(row['Mã NCC'] ?? row['NCC'] ?? row['ncc_code'] ?? '').trim().toUpperCase()
           const whType      = String(row['Loại kho'] ?? row['warehouse_type'] ?? '').trim()
           const vt          = String(row['Loại xe'] ?? row['vehicle_type'] ?? '').trim()
@@ -458,7 +567,6 @@ export default function InboundPlan() {
               {[...groups.entries()].map(([key, group]) => {
                 const order = group.order
                 const groupBoxes   = group.lines.reduce((s, l) => s + (l.planned_boxes ?? 0), 0)
-                const groupPallets = group.lines.reduce((s, l) => s + (l.planned_pallets ?? 0), 0)
                 return group.lines.map((line: any, li: number) => {
                   const isFirst = li === 0
                   return (
@@ -473,7 +581,7 @@ export default function InboundPlan() {
                           </TableCell>
                           <TableCell rowSpan={group.lines.length} className="px-2 py-1 text-slate-500 align-top border-r border-slate-100">
                             {line.vehicle_type || '—'}
-                            {isFirst && groupBoxes > 0 && (
+                            {groupBoxes > 0 && (
                               <div className="text-[9px] text-blue-600 font-semibold mt-0.5">{groupBoxes.toLocaleString()} thùng</div>
                             )}
                           </TableCell>

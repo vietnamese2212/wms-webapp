@@ -80,6 +80,7 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
   const [nccErr,         setNccErr]         = useState('')
   const [nccDropdownIdx, setNccDropdownIdx] = useState<number | null>(null)
   const [showMoreGates,  setShowMoreGates]  = useState(false)
+  const [showGateDialog, setShowGateDialog] = useState(false)
 
   useEffect(() => {
     if (open) {
@@ -439,43 +440,83 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
                 </div>
                 <div>
                   <Label className="text-xs">Xe đang vào cổng *</Label>
-                  <Select value={gateRegId} onValueChange={v => setGateRegId(v)} disabled={!warehouseId || !subType}>
-                    <SelectTrigger className="h-8 text-xs mt-0.5">
-                      <SelectValue placeholder={!warehouseId ? 'Chọn kho trước' : !subType ? 'Chọn loại kho' : activeGates.length === 0 ? 'Không có xe INBOUND' : 'Chọn xe...'} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {sortedGates.map(g => (
-                        <SelectItem key={g.id} value={g.id}>
-                          <span className="font-mono font-semibold">{g.license_plate ?? '—'}</span>
-                          <span className="ml-2 text-xs text-slate-400">
-                            {g.company_name_raw ?? ''} · Lần {gateLane.get(g.id)}
-                            {g.date !== importDate && <span className="ml-1 text-amber-500">(đk {g.date?.slice(8)}/{g.date?.slice(5, 7)})</span>}
-                          </span>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {warehouseId && subType && (
-                    <button type="button" onClick={() => setShowMoreGates(v => !v)}
-                      className="text-[9px] text-slate-400 hover:text-blue-500 mt-0.5 underline-offset-2 hover:underline">
-                      {showMoreGates ? 'Ẩn bớt' : '+ Xem 2 ngày trước'}
-                    </button>
-                  )}
-                  {selectedGate && (
-                    <div className="mt-1.5 rounded border border-blue-100 bg-blue-50 px-2.5 py-1.5 text-[10px] space-y-0.5">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-mono font-semibold text-slate-800">{selectedGate.license_plate ?? '—'}</span>
-                        {selectedGate.company_name_raw && <span className="text-slate-600">{selectedGate.company_name_raw}</span>}
-                        <span className="text-slate-400 ml-auto">Lần {gateLane.get(selectedGate.id)} · {selectedGate.date?.slice(8)}/{selectedGate.date?.slice(5, 7)}/{selectedGate.date?.slice(0, 4)}</span>
+                  <button
+                    type="button"
+                    disabled={!warehouseId || !subType}
+                    onClick={() => setShowGateDialog(true)}
+                    className="mt-0.5 w-full h-8 flex items-center justify-between px-2 rounded-md border border-input bg-white text-xs hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {selectedGate ? (
+                      <span className="truncate">
+                        <span className="font-mono font-semibold">{selectedGate.license_plate ?? '—'}</span>
+                        <span className="ml-1.5 text-slate-500">{selectedGate.company_name_raw ?? ''}</span>
+                        <span className="ml-1.5 text-slate-400">· Lần {gateLane.get(selectedGate.id)}</span>
+                        {selectedGate.date !== importDate && <span className="ml-1 text-amber-500">(đk {selectedGate.date?.slice(8)}/{selectedGate.date?.slice(5, 7)})</span>}
+                      </span>
+                    ) : (
+                      <span className="text-slate-400">
+                        {!warehouseId ? 'Chọn kho trước' : !subType ? 'Chọn loại kho' : activeGates.length === 0 ? 'Không có xe INBOUND' : 'Chọn xe...'}
+                      </span>
+                    )}
+                    <ChevronDown className="h-3 w-3 text-slate-400 shrink-0 ml-1" />
+                  </button>
+
+                  {/* Dialog chọn xe cổng */}
+                  <Dialog open={showGateDialog} onOpenChange={setShowGateDialog}>
+                    <DialogContent className="max-w-lg">
+                      <DialogHeader>
+                        <DialogTitle className="text-sm">Chọn xe đang vào cổng</DialogTitle>
+                      </DialogHeader>
+                      <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-1">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-[10px] text-slate-400">{sortedGates.length} xe đang vào</span>
+                          <button type="button" onClick={() => setShowMoreGates(v => !v)}
+                            className="text-[10px] text-slate-400 hover:text-blue-500 underline-offset-2 hover:underline">
+                            {showMoreGates ? 'Ẩn bớt (chỉ hôm nay)' : '+ Xem 2 ngày trước'}
+                          </button>
+                        </div>
+                        {sortedGates.length === 0 ? (
+                          <div className="text-center text-xs text-slate-400 py-6">Không có xe INBOUND đang vào cổng</div>
+                        ) : (
+                          sortedGates.map(g => (
+                            <button
+                              key={g.id}
+                              type="button"
+                              onClick={() => { setGateRegId(g.id); setShowGateDialog(false) }}
+                              className={`w-full text-left rounded-lg border px-3 py-2 text-xs space-y-0.5 transition-colors ${
+                                gateRegId === g.id
+                                  ? 'border-blue-400 bg-blue-50'
+                                  : 'border-slate-200 bg-white hover:border-blue-200 hover:bg-blue-50/40'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-mono font-semibold text-slate-800">{g.license_plate ?? '—'}</span>
+                                {g.company_name_raw && <span className="text-slate-600">{g.company_name_raw}</span>}
+                                <span className="ml-auto text-[10px] text-slate-400 shrink-0">
+                                  {g.date?.slice(8)}/{g.date?.slice(5, 7)}/{g.date?.slice(0, 4)} · Lần {gateLane.get(g.id)}
+                                  {g.date !== importDate && <span className="ml-1 text-amber-500"> (đăng ký trước)</span>}
+                                </span>
+                              </div>
+                              {g.driver_name && (
+                                <div className="text-slate-500 text-[10px]">Tài xế: {g.driver_name}{g.phone ? ` · ${g.phone}` : ''}</div>
+                              )}
+                              {g.content && (
+                                <div className="text-slate-600 text-[10px] italic">"{g.content}"</div>
+                              )}
+                            </button>
+                          ))
+                        )}
                       </div>
-                      {selectedGate.driver_name && (
-                        <div className="text-slate-500">Tài xế: {selectedGate.driver_name}{selectedGate.phone ? ` · ${selectedGate.phone}` : ''}</div>
+                      {gateRegId && (
+                        <div className="pt-1 border-t">
+                          <button type="button" onClick={() => { setGateRegId(''); setShowGateDialog(false) }}
+                            className="text-[10px] text-red-400 hover:text-red-600">
+                            Bỏ chọn xe
+                          </button>
+                        </div>
                       )}
-                      {selectedGate.content && (
-                        <div className="text-slate-600 italic">"{selectedGate.content}"</div>
-                      )}
-                    </div>
-                  )}
+                    </DialogContent>
+                  </Dialog>
                 </div>
               </div>
               <div className="grid grid-cols-3 gap-2">

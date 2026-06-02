@@ -1773,7 +1773,7 @@ export function useRevokeVehicleSlot() {
 // ── Gate Registrations (cho Inbound NCC picker) ──────────────────────────────
 
 export function useActiveGateRegistrations(params?: {
-  date?: string; warehouse_id?: string; direction?: string; status?: string
+  date?: string; warehouse_id?: string; warehouse_type?: string; direction?: string; status?: string
 }) {
   return useQuery({
     queryKey: ['gate-registrations', params],

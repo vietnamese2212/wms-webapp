@@ -97,7 +97,7 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
 
   const { data: activeGates = [] } = useActiveGateRegistrations(
     sourceType === 'NCC' && warehouseId && importDate
-      ? { date: importDate, warehouse_id: warehouseId, direction: 'INBOUND', status: 'IN' }
+      ? { date: importDate, warehouse_id: warehouseId, warehouse_type: subType || undefined, direction: 'INBOUND', status: 'IN' }
       : undefined
   )
   const selectedGate    = (activeGates as any[]).find(g => g.id === gateRegId)

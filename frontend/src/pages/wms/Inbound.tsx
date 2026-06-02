@@ -427,12 +427,14 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
                       <SelectValue placeholder={!warehouseId ? 'Chọn kho trước' : !subType ? 'Chọn loại kho' : activeGates.length === 0 ? 'Không có xe INBOUND' : 'Chọn xe...'} />
                     </SelectTrigger>
                     <SelectContent>
-                      {(activeGates as any[]).map(g => (
+                      {[...(activeGates as any[])]
+                        .sort((a, b) => a.date.localeCompare(b.date) || a.registration_number - b.registration_number)
+                        .map((g, idx) => (
                         <SelectItem key={g.id} value={g.id}>
                           <span className="font-mono font-semibold">{g.license_plate ?? '—'}</span>
                           <span className="ml-2 text-xs text-slate-400">
-                            {g.company_name_raw ?? ''} · Lần {g.registration_number}
-                            {g.date !== importDate && <span className="ml-1 text-amber-500">(đăng ký {g.date?.slice(8)}/{g.date?.slice(5, 7)})</span>}
+                            {g.company_name_raw ?? ''} · Lần {idx + 1}
+                            {g.date !== importDate && <span className="ml-1 text-amber-500">(đk {g.date?.slice(8)}/{g.date?.slice(5, 7)})</span>}
                           </span>
                         </SelectItem>
                       ))}

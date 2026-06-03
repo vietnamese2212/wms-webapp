@@ -20,6 +20,7 @@ export const MODULES = {
     actions: {
       view:               'Xem danh sách',
       create:             'Tạo phiếu',
+      edit:               'Sửa nhóm phiếu NCC',
       scan:               'Quét QR',
       edit_pallet:        'Sửa pallet (của mình)',
       force_edit_pallet:  'Sửa pallet (bất kỳ)',

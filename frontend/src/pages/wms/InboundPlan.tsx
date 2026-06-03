@@ -398,7 +398,12 @@ function AddLineDialog({ open, date, warehouseId, onClose }: {
 function EditLineDialog({ line, onClose, onSaved }: {
   line: any; onClose: () => void; onSaved: (updated: any) => void
 }) {
-  const { data: materials = [] } = useMaterials()
+  const canEditGrouping = !line.tms_order || line.tms_order.status === 'PENDING'
+
+  const { data: materials = [] }           = useMaterials()
+  const { data: whTypesData = [] }         = useWarehouseTypes()
+  const { data: vehicleTypes = [] }        = useVehicleTypes(true)
+  const { data: transportCompanies = [] }  = useTransportCompanies(true)
   const updateLine = useUpdatePlanLine()
 
   const matByCode = useMemo(() =>
@@ -406,20 +411,26 @@ function EditLineDialog({ line, onClose, onSaved }: {
     [materials]
   )
 
-  const [matCode,       setMatCode]       = useState(line.material?.material_code ?? '')
-  const [matId,         setMatId]         = useState(line.material_id ?? '')
-  const [matName,       setMatName]       = useState(line.material?.short_name ?? '')
-  const [poNumber,      setPoNumber]      = useState(line.po_number ?? '')
-  const [plannedBoxes,  setPlannedBoxes]  = useState(String(line.planned_boxes ?? ''))
-  const [plannedPallets,setPlannedPallets]= useState(String(line.planned_pallets ?? ''))
-  const [showDrop,      setShowDrop]      = useState(false)
-  const [err,           setErr]           = useState('')
+  // Non-grouping
+  const [matCode,        setMatCode]        = useState(line.material?.material_code ?? '')
+  const [matId,          setMatId]          = useState(line.material_id ?? '')
+  const [matName,        setMatName]        = useState(line.material?.short_name ?? '')
+  const [poNumber,       setPoNumber]       = useState(line.po_number ?? '')
+  const [plannedBoxes,   setPlannedBoxes]   = useState(String(line.planned_boxes ?? ''))
+  const [plannedPallets, setPlannedPallets] = useState(String(line.planned_pallets ?? ''))
+  const [showDrop,       setShowDrop]       = useState(false)
+
+  // Grouping (chỉ dùng khi canEditGrouping)
+  const [formDate,      setFormDate]      = useState(line.date ?? '')
+  const [warehouseType, setWarehouseType] = useState(line.warehouse_type ?? '')
+  const [vehicleType,   setVehicleType]   = useState(line.vehicle_type ?? '')
+  const [nccId,         setNccId]         = useState(line.ncc_id ?? line.ncc?.id ?? '')
+
+  const [err, setErr] = useState('')
 
   function handleCodeChange(code: string) {
     const found = matByCode.get(code.trim().toUpperCase())
-    setMatCode(code)
-    setMatId(found?.id ?? '')
-    setMatName(found?.short_name ?? '')
+    setMatCode(code); setMatId(found?.id ?? ''); setMatName(found?.short_name ?? '')
   }
 
   function selectMat(m: any) {
@@ -445,6 +456,12 @@ function EditLineDialog({ line, onClose, onSaved }: {
         po_number:       poNumber      || undefined,
         planned_boxes:   plannedBoxes   ? Number(plannedBoxes)   : undefined,
         planned_pallets: plannedPallets ? Number(plannedPallets) : undefined,
+        ...(canEditGrouping && {
+          date:           formDate      || undefined,
+          warehouse_type: warehouseType || null,
+          vehicle_type:   vehicleType   || null,
+          ncc_id:         nccId         || null,
+        }),
       })
       onSaved(updated)
     } catch (e) {
@@ -458,17 +475,64 @@ function EditLineDialog({ line, onClose, onSaved }: {
       <DialogContent className="max-w-sm">
         <DialogHeader><DialogTitle>Sửa dòng kế hoạch</DialogTitle></DialogHeader>
 
-        {/* Context info — read-only */}
-        <div className="bg-slate-50 rounded-lg px-3 py-2 text-[10px] text-slate-500 space-y-0.5">
-          <div className="flex gap-2"><span className="w-20 shrink-0">Ngày</span><span className="font-medium text-slate-700">{line.date}</span></div>
-          <div className="flex gap-2"><span className="w-20 shrink-0">ĐVVT</span><span className="font-medium text-slate-700">{line.ncc?.name ?? line.ncc?.code ?? '—'}</span></div>
-          {line.warehouse_type && <div className="flex gap-2"><span className="w-20 shrink-0">Loại kho</span><span className="font-medium text-slate-700">{line.warehouse_type}</span></div>}
-          {line.vehicle_type   && <div className="flex gap-2"><span className="w-20 shrink-0">Loại xe</span><span className="font-medium text-slate-700">{line.vehicle_type}</span></div>}
+        {/* Section 1: Grouping */}
+        <div className="border rounded-lg bg-slate-50 px-3 py-2.5 space-y-2">
+          <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">
+            Thông tin vận chuyển
+            {!canEditGrouping && <span className="ml-2 text-amber-500 normal-case font-normal">· Lệnh TMS đang xử lý</span>}
+          </p>
+          {canEditGrouping ? (
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label className="text-xs">Ngày</Label>
+                <Input type="date" value={formDate} onChange={e => setFormDate(e.target.value)} className="h-8 text-xs mt-0.5" />
+              </div>
+              <div>
+                <Label className="text-xs">ĐVVT / NCC</Label>
+                <Select value={nccId || '__none__'} onValueChange={v => setNccId(v === '__none__' ? '' : v)}>
+                  <SelectTrigger className="h-8 text-xs mt-0.5"><SelectValue placeholder="Chọn ĐVVT" /></SelectTrigger>
+                  <SelectContent>
+                    {(transportCompanies as any[]).map(c => (
+                      <SelectItem key={c.id} value={c.id}>{c.code} — {c.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-xs">Loại kho</Label>
+                <Select value={warehouseType || '__none__'} onValueChange={v => setWarehouseType(v === '__none__' ? '' : v)}>
+                  <SelectTrigger className="h-8 text-xs mt-0.5"><SelectValue placeholder="— Không chọn —" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">— Không chọn —</SelectItem>
+                    {whTypesData.map(t => <SelectItem key={t.id} value={t.value}>{t.value}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-xs">Loại xe</Label>
+                <Select value={vehicleType || '__none__'} onValueChange={v => setVehicleType(v === '__none__' ? '' : v)}>
+                  <SelectTrigger className="h-8 text-xs mt-0.5"><SelectValue placeholder="— Không chọn —" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">— Không chọn —</SelectItem>
+                    {(vehicleTypes as any[]).map(vt => (
+                      <SelectItem key={vt.id} value={vt.name}>{vt.code} — {vt.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          ) : (
+            <div className="text-[10px] text-slate-500 space-y-0.5">
+              <div className="flex gap-2"><span className="w-20 shrink-0">Ngày</span><span className="font-medium text-slate-700">{line.date}</span></div>
+              <div className="flex gap-2"><span className="w-20 shrink-0">ĐVVT</span><span className="font-medium text-slate-700">{line.ncc?.name ?? line.ncc?.code ?? '—'}</span></div>
+              {line.warehouse_type && <div className="flex gap-2"><span className="w-20 shrink-0">Loại kho</span><span className="font-medium text-slate-700">{line.warehouse_type}</span></div>}
+              {line.vehicle_type   && <div className="flex gap-2"><span className="w-20 shrink-0">Loại xe</span><span className="font-medium text-slate-700">{line.vehicle_type}</span></div>}
+            </div>
+          )}
         </div>
 
-        {/* Editable fields */}
+        {/* Section 2: Hàng hóa */}
         <div className="space-y-3">
-          {/* Mã hàng */}
           <div className="relative">
             <Label className="text-xs">Mã hàng</Label>
             <input

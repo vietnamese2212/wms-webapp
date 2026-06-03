@@ -245,14 +245,18 @@ export async function bulkCreatePlanLines(req: Request, res: Response) {
 export async function updatePlanLine(req: Request, res: Response) {
   try {
     const { id } = req.params
-    const { material_id, po_number, planned_boxes, planned_pallets } = req.body
+    const {
+      material_id, po_number, planned_boxes, planned_pallets,
+      date, warehouse_type, vehicle_type, ncc_id,
+    } = req.body
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const user = (req as any).user
     const now  = new Date().toISOString()
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: existing } = await (supabase.from('inbound_plan_lines') as any)
-      .select('id, tms_order_id').eq('id', id).single()
+      .select('id, date, warehouse_id, warehouse_type, vehicle_type, ncc_id, tms_order_id')
+      .eq('id', id).single()
     if (!existing) return fail(res, 'Không tìm thấy dòng kế hoạch', 404)
 
     const updates: Record<string, unknown> = { updated_by: user?.name || null, updated_at: now }
@@ -261,11 +265,47 @@ export async function updatePlanLine(req: Request, res: Response) {
     if (planned_boxes   !== undefined) updates.planned_boxes   = planned_boxes   ?? null
     if (planned_pallets !== undefined) updates.planned_pallets = planned_pallets ?? null
 
+    // Grouping fields — chỉ cho phép khi TmsOrder còn PENDING
+    const groupingChanged = date !== undefined || warehouse_type !== undefined ||
+                            vehicle_type !== undefined || ncc_id !== undefined
+    let newTmsOrderId = existing.tms_order_id
+
+    if (groupingChanged) {
+      if (existing.tms_order_id) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: order } = await (supabase.from('TmsOrder') as any)
+          .select('status').eq('id', existing.tms_order_id).single()
+        if (order && order.status !== 'PENDING') {
+          return fail(res, 'Lệnh TMS đã được xử lý, không thể sửa nhóm vận chuyển', 400)
+        }
+      }
+
+      const newGroup = {
+        date:           date           ?? existing.date,
+        warehouse_id:   existing.warehouse_id,
+        warehouse_type: warehouse_type !== undefined ? (warehouse_type || null) : existing.warehouse_type,
+        vehicle_type:   vehicle_type   !== undefined ? (vehicle_type   || null) : existing.vehicle_type,
+        ncc_id:         ncc_id         !== undefined ? (ncc_id         || null) : existing.ncc_id,
+      }
+
+      newTmsOrderId = await findOrCreateTmsOrder(newGroup, user)
+
+      updates.tms_order_id   = newTmsOrderId
+      if (date           !== undefined) updates.date           = date
+      if (warehouse_type !== undefined) updates.warehouse_type = warehouse_type || null
+      if (vehicle_type   !== undefined) updates.vehicle_type   = vehicle_type   || null
+      if (ncc_id         !== undefined) updates.ncc_id         = ncc_id         || null
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (supabase.from('inbound_plan_lines') as any).update(updates).eq('id', id)
     if (error) return fail(res, error.message)
 
-    if (existing.tms_order_id) await recalcTmsOrder(existing.tms_order_id)
+    // Recalc cả 2 TmsOrder nếu có thay đổi nhóm
+    if (existing.tms_order_id && existing.tms_order_id !== newTmsOrderId) {
+      await recalcTmsOrder(existing.tms_order_id)
+    }
+    if (newTmsOrderId) await recalcTmsOrder(newTmsOrderId)
 
     const { data, error: fe } = await supabase
       .from('inbound_plan_lines').select(LINE_SELECT).eq('id', id).single()

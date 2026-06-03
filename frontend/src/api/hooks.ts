@@ -1828,7 +1828,11 @@ export function useBulkCreatePlanLines() {
 export function useUpdatePlanLine() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; material_id?: string; po_number?: string; planned_boxes?: number; planned_pallets?: number }) =>
+    mutationFn: ({ id, ...body }: {
+      id: string
+      material_id?: string; po_number?: string; planned_boxes?: number; planned_pallets?: number
+      date?: string; warehouse_type?: string | null; vehicle_type?: string | null; ncc_id?: string | null
+    }) =>
       apiClient.patch(`/wms/inbound-plan/${id}`, body).then(r => r.data.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['inbound-plan-lines'] })

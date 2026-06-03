@@ -51,7 +51,7 @@ function AddLineDialog({ open, date, warehouseId, onClose }: {
   const [warehouse,     setWarehouse]     = useState(warehouseId)
   const [warehouseType, setWarehouseType] = useState('')
 
-  const { data: materials = [] }           = useMaterials(warehouseType ? { category: warehouseType } : undefined)
+  const { data: materials = [] }           = useMaterials()
   const [vehicleType,   setVehicleType]   = useState('')
   const [nccId,         setNccId]         = useState('')
   const [poNumber,      setPoNumber]      = useState('')
@@ -127,14 +127,21 @@ function AddLineDialog({ open, date, warehouseId, onClose }: {
   }
 
   function getDropdownMatches(code: string) {
-    if (!code) return (materials as any[]).slice(0, 8)
-    const q = code.toUpperCase()
-    return (materials as any[])
-      .filter(m =>
+    const list = materials as any[]
+    let filtered: any[]
+    if (!code) {
+      filtered = list.slice(0, 20)
+    } else {
+      const q = code.toUpperCase()
+      filtered = list.filter(m =>
         String(m.material_code).toUpperCase().includes(q) ||
         String(m.short_name ?? '').toUpperCase().includes(q)
-      )
-      .slice(0, 8)
+      ).slice(0, 12)
+    }
+    if (!warehouseType) return filtered
+    return [...filtered].sort((a, b) =>
+      (a.category === warehouseType ? 0 : 1) - (b.category === warehouseType ? 0 : 1)
+    )
   }
 
   function setRowField(idx: number, field: 'planned_boxes' | 'planned_pallets', val: string) {
@@ -314,7 +321,13 @@ function AddLineDialog({ open, date, warehouseId, onClose }: {
                                   className="w-full text-left px-2 py-1.5 hover:bg-blue-50 flex items-center gap-2 border-b border-slate-50 last:border-0"
                                 >
                                   <span className="text-[10px] font-mono text-slate-700 shrink-0">{m.material_code}</span>
-                                  <span className="text-[10px] text-slate-500 truncate">{m.short_name}</span>
+                                  <span className="text-[10px] text-slate-500 truncate flex-1">{m.short_name}</span>
+                                  {warehouseType && m.category === warehouseType && (
+                                    <span className="text-[8px] px-1 py-0.5 rounded bg-blue-100 text-blue-600 shrink-0">{m.category}</span>
+                                  )}
+                                  {warehouseType && m.category && m.category !== warehouseType && (
+                                    <span className="text-[8px] px-1 py-0.5 rounded bg-slate-100 text-slate-400 shrink-0">{m.category}</span>
+                                  )}
                                 </button>
                               ))
                             }

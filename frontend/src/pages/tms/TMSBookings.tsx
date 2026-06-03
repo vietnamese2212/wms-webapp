@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import * as XLSX from 'xlsx'
-import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, CalendarDays, ShieldX } from 'lucide-react'
+import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, CalendarDays, ShieldX, Lock } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -437,13 +437,19 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
             </div>
             <div>
               <Label className="text-xs">Hướng *</Label>
-              <Select value={form.direction || '__none__'} onValueChange={v => set('direction')(v === '__none__' ? '' : v as 'OUTBOUND' | 'INBOUND')}>
-                <SelectTrigger className="h-8 text-sm mt-1"><SelectValue placeholder="Xuất / Nhập" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="OUTBOUND">Xuất hàng</SelectItem>
-                  <SelectItem value="INBOUND">Nhập hàng</SelectItem>
-                </SelectContent>
-              </Select>
+              {isEdit ? (
+                <Select value={form.direction || '__none__'} onValueChange={v => set('direction')(v === '__none__' ? '' : v as 'OUTBOUND' | 'INBOUND')}>
+                  <SelectTrigger className="h-8 text-sm mt-1"><SelectValue placeholder="Xuất / Nhập" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="OUTBOUND">Xuất hàng</SelectItem>
+                    <SelectItem value="INBOUND">Nhập hàng</SelectItem>
+                  </SelectContent>
+                </Select>
+              ) : (
+                <div className="h-8 mt-1 px-3 flex items-center text-sm border rounded-md bg-slate-50 text-slate-500">
+                  Xuất hàng
+                </div>
+              )}
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -642,6 +648,7 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
           const errors: string[] = []
           if (!date) errors.push('thiếu ngày')
           if (!direction) errors.push('thiếu hướng (Xuất/Nhập)')
+          else if (direction === 'INBOUND') errors.push('chỉ nhập đơn Xuất — dùng Kế hoạch nhập ngoài cho hàng Nhập')
           if (whName && !whId) errors.push(`kho "${whName}" không tìm thấy`)
           if (!whId && !whName) errors.push('thiếu kho')
           if (whType && validWhTypes.size > 0 && !validWhTypes.has(whType.toLowerCase())) errors.push(`loại kho "${whType}" không hợp lệ`)
@@ -1381,7 +1388,7 @@ export default function TMSBookings() {
     !canReleaseSlot(vs)
 
   const checkableOrderIds = useMemo(() =>
-    canChangeDate ? filteredOrders.filter(o => o.vehicle_slots.every(vs => vs.status === 'PENDING')).map(o => o.id) : [],
+    canChangeDate ? filteredOrders.filter(o => o.direction !== 'INBOUND' && o.vehicle_slots.every(vs => vs.status === 'PENDING')).map(o => o.id) : [],
     [filteredOrders, canChangeDate]
   )
   const allChecked = checkableOrderIds.length > 0 && checkableOrderIds.every(id => selectedOrderIds.has(id))
@@ -1754,8 +1761,18 @@ export default function TMSBookings() {
                   </TableCell>
                   <TableCell className={`px-2 py-1 ${cellHoverBg}`}>
                     <div className="flex items-center gap-0.5">
-                      {/* Sửa đơn — lần xuất hiện đầu của mỗi order */}
-                      {isFirstOrderRow && canEditOrder(order) && (
+                      {/* Lock icon cho INBOUND (đồng bộ từ Kế hoạch nhập ngoài) */}
+                      {isFirstOrderRow && order.direction === 'INBOUND' && (
+                        <button
+                          onClick={e => e.stopPropagation()}
+                          className="text-slate-300 p-1 rounded cursor-default"
+                          title="Có thể sửa / xóa ở Kế hoạch nhập ngoài nhé"
+                        >
+                          <Lock className="h-3 w-3" />
+                        </button>
+                      )}
+                      {/* Sửa đơn — chỉ OUTBOUND, lần xuất hiện đầu của mỗi order */}
+                      {isFirstOrderRow && order.direction !== 'INBOUND' && canEditOrder(order) && (
                         <button
                           onClick={e => { e.stopPropagation(); setEditOrder(order) }}
                           className="text-slate-400 hover:text-slate-600 p-1 rounded"
@@ -1804,8 +1821,8 @@ export default function TMSBookings() {
                           <RotateCcw className="h-3.5 w-3.5" />
                         </button>
                       )}
-                      {/* Xóa đơn — lần xuất hiện đầu, khi tất cả slots PENDING */}
-                      {isFirstOrderRow && canDelete && order.vehicle_slots.every(vs => vs.status === 'PENDING') && (
+                      {/* Xóa đơn — chỉ OUTBOUND, lần xuất hiện đầu, khi tất cả slots PENDING */}
+                      {isFirstOrderRow && order.direction !== 'INBOUND' && canDelete && order.vehicle_slots.every(vs => vs.status === 'PENDING') && (
                         <button
                           onClick={e => handleDeleteOrder(e, order.id)}
                           className="text-red-400 hover:text-red-600 p-1 rounded"

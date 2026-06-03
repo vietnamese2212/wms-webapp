@@ -33,7 +33,8 @@ router.post('/slots/generate', requireAnyPerm(['tms_plan', 'book'], ['tms_plan',
 router.get('/orders',                    requirePerm('tms_plan', 'view'),                                                    order.listOrders)
 router.post('/orders',                   requirePerm('tms_plan', 'create'),                                                  order.createOrder)
 router.post('/orders/bulk',              requireAnyPerm(['tms_plan', 'upload_outbound'], ['tms_plan', 'upload_inbound']),     order.bulkCreateOrders)
-router.patch('/orders/bulk-date',        requirePerm('tms_plan', 'change_date'),                                             order.bulkUpdateOrderDate)
+router.patch('/orders/bulk-date',              requirePerm('tms_plan', 'change_date'),                                      order.bulkUpdateOrderDate)
+router.get('/orders/:orderId/plan-vs-actual',  requirePerm('tms_plan', 'view'),                                              order.getPlanVsActual)
 router.patch('/orders/:id',              requirePerm('tms_plan', 'edit'),                                                    order.updateOrder)
 router.delete('/orders/:id',             requirePerm('tms_plan', 'delete'),                                                  order.deleteOrder)
 

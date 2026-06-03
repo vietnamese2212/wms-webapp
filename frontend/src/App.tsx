@@ -73,7 +73,7 @@ export default function App() {
         {/* WMS — inbound */}
         <Route path="/wms/inbound"         element={<PermissionRoute module="inbound"><Inbound /></PermissionRoute>} />
         <Route path="/wms/inbound/:id"     element={<PermissionRoute module="inbound"><InboundDetail /></PermissionRoute>} />
-        <Route path="/wms/inbound-plan"    element={<PermissionRoute module="inbound_plan"><InboundPlan /></PermissionRoute>} />
+        <Route path="/wms/inbound-plan"    element={<Navigate to="/tms/bookings" replace />} />
 
         {/* WMS — outbound */}
         <Route path="/wms/outbound"                         element={<PermissionRoute module="outbound"><Outbound /></PermissionRoute>} />

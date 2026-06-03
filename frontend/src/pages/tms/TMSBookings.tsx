@@ -16,6 +16,7 @@ import {
   useDeliverySlots, useGenerateSlots,
   useTmsOrders, useCreateOrder, useUpdateOrder, useDeleteOrder, useBulkCreateOrders, useBulkUpdateOrderDate,
   useAddVehicleSlot, useUpdateVehicleSlot, useReleaseVehicleSlot, useRevokeVehicleSlot, useDeleteVehicleSlot,
+  usePlanLinesByOrder, usePlanVsActual, useBulkCreatePlanLinesForOrder, useMaterials,
 } from '@/api/hooks'
 import { formatDate, formatDateTime } from '@/utils/formatters'
 import type { TmsOrder, TmsVehicleSlot, DeliverySlot, TmsVehicleType, TmsVehicle, TransportCompany } from '@/types'
@@ -987,6 +988,120 @@ function ChangeDateDialog({ open, orderIds, currentDate, onClose }: {
   )
 }
 
+// ── Upload Plan Lines Dialog (cho INBOUND booking) ───────────────────────────
+
+function UploadPlanLinesDialog({ orderId, onClose }: { orderId: string; onClose: () => void }) {
+  const [rows, setRows] = useState<{ material_code: string; material_id?: string; planned_boxes: number; planned_pallets?: number; err?: string }[]>([])
+  const [saving, setSaving] = useState(false)
+  const [apiError, setApiError] = useState('')
+  const { mutateAsync: bulkCreate } = useBulkCreatePlanLinesForOrder()
+  const { data: materials = [] } = useMaterials()
+
+  function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0]
+    if (!f) return
+    const reader = new FileReader()
+    reader.onload = (ev) => {
+      const wb = XLSX.read(ev.target?.result, { type: 'binary' })
+      const ws = wb.Sheets[wb.SheetNames[0]]
+      const raw = XLSX.utils.sheet_to_json(ws, { header: 1 }) as unknown[][]
+      const parsed = (raw.slice(1) as unknown[][])
+        .filter(r => r[0])
+        .map(r => {
+          const material_code = String(r[0] ?? '').trim()
+          const planned_boxes = Number(r[1] ?? 0)
+          const planned_pallets = r[2] != null && r[2] !== '' ? Number(r[2]) : undefined
+          const mat = (materials as import('@/types').Material[]).find(m => m.material_code === material_code)
+          return {
+            material_code,
+            material_id: mat?.id,
+            planned_boxes,
+            planned_pallets,
+            err: !mat ? 'Không tìm thấy mã hàng' : planned_boxes <= 0 ? 'SL thùng phải > 0' : undefined,
+          }
+        })
+      setRows(parsed)
+    }
+    reader.readAsBinaryString(f)
+  }
+
+  async function handleSave() {
+    const valid = rows.filter(r => !r.err && r.material_id)
+    if (!valid.length) return
+    setSaving(true)
+    setApiError('')
+    try {
+      await bulkCreate({
+        tms_order_id: orderId,
+        lines: valid.map(r => ({ material_id: r.material_id!, planned_boxes: r.planned_boxes, ...(r.planned_pallets != null ? { planned_pallets: r.planned_pallets } : {}) })),
+      })
+      onClose()
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { error?: { message?: string } } } }
+      setApiError(err.response?.data?.error?.message ?? String(e))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const validCount = rows.filter(r => !r.err).length
+  const errCount   = rows.filter(r => r.err).length
+
+  return (
+    <Dialog open onOpenChange={v => !v && onClose()}>
+      <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="text-sm">Upload hàng hóa kế hoạch nhập</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3 text-xs">
+          <p className="text-slate-500">
+            File Excel: cột A = <span className="font-mono">Mã hàng</span> · cột B = <span className="font-mono">SL thùng</span> · cột C = <span className="font-mono">SL pallet</span> (tùy chọn). Hàng đầu là tiêu đề, bỏ qua.
+          </p>
+          <input type="file" accept=".xlsx,.xls" onChange={handleFile} className="text-xs" />
+          {rows.length > 0 && (
+            <>
+              <div className="flex gap-3 text-[10px]">
+                <span className="text-green-600 font-medium">{validCount} dòng hợp lệ</span>
+                {errCount > 0 && <span className="text-red-500">{errCount} dòng lỗi</span>}
+              </div>
+              <div className="rounded border overflow-auto max-h-52">
+                <table className="min-w-full">
+                  <thead className="bg-slate-50 sticky top-0">
+                    <tr>
+                      {['Mã hàng', 'SL thùng', 'SL pl', 'Trạng thái'].map(h => (
+                        <th key={h} className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((r, i) => (
+                      <tr key={i} className={`border-t border-slate-100 ${r.err ? 'bg-red-50' : ''}`}>
+                        <td className="px-2 py-1 font-mono font-semibold text-[10px]">{r.material_code}</td>
+                        <td className="px-2 py-1 text-[10px] tabular-nums">{r.planned_boxes}</td>
+                        <td className="px-2 py-1 text-[10px] tabular-nums">{r.planned_pallets ?? '—'}</td>
+                        <td className="px-2 py-1 text-[10px]">
+                          {r.err ? <span className="text-red-500">{r.err}</span> : <span className="text-green-600">OK</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+          {apiError && <p className="text-red-500 text-xs bg-red-50 px-3 py-2 rounded">{apiError}</p>}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={onClose}>Hủy</Button>
+          <Button size="sm" onClick={handleSave} disabled={saving || validCount === 0}>
+            {saving ? 'Đang lưu...' : `Lưu ${validCount} dòng`}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 // ── Order Detail Dialog ───────────────────────────────────────────────────────
 
 function DR({ label, value, wide }: { label: string; value?: React.ReactNode | null; wide?: boolean }) {
@@ -1000,15 +1115,23 @@ function DR({ label, value, wide }: { label: string; value?: React.ReactNode | n
   )
 }
 
-function OrderDetailDialog({ order, onClose, warehouses }: {
+function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound }: {
   order: TmsOrder | null
   onClose: () => void
   warehouses: { id: string; name: string }[]
+  canUploadInbound: boolean
 }) {
+  const [showUpload, setShowUpload] = useState(false)
+  const { data: planLines = [] } = usePlanLinesByOrder(order?.id ?? null)
+  const { data: planVsActual = [] } = usePlanVsActual(order?.id ?? null)
+
   if (!order) return null
   const whName = warehouses.find(w => w.id === order.warehouse_id)?.name ?? order.warehouse_id
+  const isInbound = order.direction === 'INBOUND'
 
   return (
+    <>
+    {showUpload && <UploadPlanLinesDialog orderId={order.id} onClose={() => setShowUpload(false)} />}
     <Dialog open={!!order} onOpenChange={v => !v && onClose()}>
       <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
@@ -1088,6 +1211,95 @@ function OrderDetailDialog({ order, onClose, warehouses }: {
               </table>
             </div>
           </section>
+
+          {/* Hàng hóa kế hoạch nhập (chỉ INBOUND) */}
+          {isInbound && (
+            <section>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">
+                  Hàng hóa kế hoạch ({planLines.length})
+                </p>
+                {canUploadInbound && (
+                  <Button size="sm" variant="outline" className="h-6 text-[10px] px-2 gap-1"
+                    onClick={() => setShowUpload(true)}>
+                    <Upload className="h-3 w-3" />Upload
+                  </Button>
+                )}
+              </div>
+              <div className="rounded border overflow-hidden">
+                <table className="min-w-full">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      {['Mã hàng', 'Tên hàng', 'KH (thùng)', 'KH (pl)', 'Trạng thái'].map(h => (
+                        <th key={h} className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {planLines.length === 0 ? (
+                      <tr><td colSpan={5} className="px-2 py-3 text-center text-xs text-slate-400">Chưa có hàng hóa kế hoạch</td></tr>
+                    ) : (planLines as Record<string, unknown>[]).map(line => (
+                      <tr key={line.id as string}
+                        className={`border-t border-slate-100 ${line.status === 'CANCELLED' ? 'bg-red-50 opacity-60' : ''}`}>
+                        <td className="px-2 py-1 font-mono font-semibold text-[10px]">
+                          {(line.material as Record<string, unknown>)?.material_code as string}
+                        </td>
+                        <td className="px-2 py-1 text-[10px]">
+                          {(line.material as Record<string, unknown>)?.short_name as string ?? '—'}
+                        </td>
+                        <td className="px-2 py-1 text-[10px] tabular-nums">{line.planned_boxes as number ?? '—'}</td>
+                        <td className="px-2 py-1 text-[10px] tabular-nums">{line.planned_pallets as number ?? '—'}</td>
+                        <td className="px-2 py-1">
+                          <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${line.status === 'CANCELLED' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-700'}`}>
+                            {line.status === 'CANCELLED' ? 'Đã hủy' : 'Hoạt động'}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
+          {/* Kế hoạch vs Thực tế (chỉ INBOUND, khi có dữ liệu) */}
+          {isInbound && planVsActual.length > 0 && (
+            <section>
+              <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-400 mb-2">
+                Kế hoạch vs Thực tế
+              </p>
+              <div className="rounded border overflow-x-auto">
+                <table className="min-w-full">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      {['Mã hàng', 'Tên hàng', 'KH (thùng)', 'KH (pl)', 'Thực (thùng)', 'Thực (pl)', 'CL (thùng)'].map(h => (
+                        <th key={h} className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(planVsActual as Record<string, unknown>[]).map(row => {
+                      const diff = ((row.actual_boxes as number) ?? 0) - ((row.planned_boxes as number) ?? 0)
+                      return (
+                        <tr key={row.material_code as string}
+                          className={`border-t border-slate-100 ${diff < 0 ? 'bg-red-50' : diff > 0 ? 'bg-green-50' : ''}`}>
+                          <td className="px-2 py-1 font-mono font-semibold text-[10px]">{row.material_code as string}</td>
+                          <td className="px-2 py-1 text-[10px]">{row.material_name as string || '—'}</td>
+                          <td className="px-2 py-1 text-[10px] tabular-nums">{(row.planned_boxes as number) ?? 0}</td>
+                          <td className="px-2 py-1 text-[10px] tabular-nums">{(row.planned_pallets as number) ?? 0}</td>
+                          <td className="px-2 py-1 text-[10px] tabular-nums">{(row.actual_boxes as number) ?? 0}</td>
+                          <td className="px-2 py-1 text-[10px] tabular-nums">{(row.actual_pallets as number) ?? 0}</td>
+                          <td className={`px-2 py-1 text-[10px] tabular-nums font-semibold ${diff < 0 ? 'text-red-600' : diff > 0 ? 'text-green-600' : 'text-slate-400'}`}>
+                            {diff > 0 ? `+${diff}` : diff}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
         </div>
 
         <DialogFooter>
@@ -1095,6 +1307,7 @@ function OrderDetailDialog({ order, onClose, warehouses }: {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+    </>
   )
 }
 
@@ -1112,7 +1325,8 @@ export default function TMSBookings() {
   const canBook       = can(perms, 'tms_plan', 'book')
   const canRevoke     = can(perms, 'tms_plan', 'revoke')
   const canView       = can(perms, 'tms_plan', 'view')
-  const canUpload     = can(perms, 'tms_plan', 'upload_outbound') || can(perms, 'tms_plan', 'upload_inbound')
+  const canUpload         = can(perms, 'tms_plan', 'upload_outbound') || can(perms, 'tms_plan', 'upload_inbound')
+  const canUploadInbound  = can(perms, 'tms_plan', 'upload_inbound')
   const isNccUser = user?.department === 'Đơn vị vận tải'
 
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -1880,6 +2094,7 @@ export default function TMSBookings() {
         order={detailOrder}
         onClose={() => setDetailOrder(null)}
         warehouses={warehouses as { id: string; name: string }[]}
+        canUploadInbound={canUploadInbound}
       />
       <Dialog open={!!pendingRelease} onOpenChange={() => setPendingRelease(null)}>
         <DialogContent className="max-w-xs">

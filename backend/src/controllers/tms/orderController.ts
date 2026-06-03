@@ -222,6 +222,66 @@ export async function bulkUpdateOrderDate(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
+// GET /api/tms/orders/:orderId/plan-vs-actual
+// So sánh kế hoạch (InboundPlanLine) vs thực tế (ProductionImport) theo từng mã hàng
+export async function getPlanVsActual(req: Request, res: Response) {
+  try {
+    const { orderId } = req.params
+
+    // Plan lines (kế hoạch)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: planLines, error: planErr } = await (supabase.from('inbound_plan_lines') as any)
+      .select('material_id, planned_boxes, planned_pallets, material:Material!material_id(material_code, short_name, material_description)')
+      .eq('tms_order_id', orderId)
+      .neq('status', 'CANCELLED')
+    if (planErr) return fail(res, planErr.message)
+
+    // Actual inbound orders (thực tế nhập)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: actualOrders, error: actErr } = await (supabase.from('ProductionImport') as any)
+      .select('material_id, planned_pallets, planned_cartons, material:Material!material_id(material_code, short_name, material_description)')
+      .eq('tms_order_id', orderId)
+      .neq('status', 'CANCELLED')
+    if (actErr) return fail(res, actErr.message)
+
+    type PVARow = {
+      material_code: string; material_name: string
+      planned_boxes: number; planned_pallets: number
+      actual_boxes: number; actual_pallets: number
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const byMaterial: Record<string, PVARow> = {}
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const line of (planLines ?? []) as any[]) {
+      const mid = line.material_id as string
+      if (!mid) continue
+      if (!byMaterial[mid]) byMaterial[mid] = {
+        material_code: line.material?.material_code ?? '',
+        material_name: line.material?.short_name ?? line.material?.material_description ?? '',
+        planned_boxes: 0, planned_pallets: 0, actual_boxes: 0, actual_pallets: 0,
+      }
+      byMaterial[mid].planned_boxes   += (line.planned_boxes   ?? 0) as number
+      byMaterial[mid].planned_pallets += (line.planned_pallets ?? 0) as number
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const order of (actualOrders ?? []) as any[]) {
+      const mid = order.material_id as string
+      if (!mid) continue
+      if (!byMaterial[mid]) byMaterial[mid] = {
+        material_code: order.material?.material_code ?? '',
+        material_name: order.material?.short_name ?? order.material?.material_description ?? '',
+        planned_boxes: 0, planned_pallets: 0, actual_boxes: 0, actual_pallets: 0,
+      }
+      byMaterial[mid].actual_boxes   += (order.planned_cartons  ?? 0) as number
+      byMaterial[mid].actual_pallets += (order.planned_pallets  ?? 0) as number
+    }
+
+    return ok(res, Object.values(byMaterial))
+  } catch (e) { return fail(res, String(e)) }
+}
+
 // DELETE /api/tms/orders/:id  — chỉ xoá khi chưa có slot nào BOOKED+
 export async function deleteOrder(req: Request, res: Response) {
   try {

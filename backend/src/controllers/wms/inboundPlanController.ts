@@ -116,18 +116,18 @@ export async function listPlanLines(req: Request, res: Response) {
     const { date, date_from, date_to, warehouse_id, tms_order_id } = req.query as Record<string, string>
     const from = date_from ?? date
     const to   = date_to   ?? date
-    if (!from || !warehouse_id) return fail(res, 'date_from và warehouse_id là bắt buộc', 400)
+    if (!tms_order_id && (!from || !warehouse_id)) return fail(res, 'date_from và warehouse_id là bắt buộc', 400)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let q = (supabase.from('inbound_plan_lines') as any)
-      .select(LINE_SELECT)
-      .gte('date', from)
-      .lte('date', to)
-      .eq('warehouse_id', warehouse_id)
-      .order('date')
-      .order('created_at')
+    let q = (supabase.from('inbound_plan_lines') as any).select(LINE_SELECT)
 
-    if (tms_order_id) q = q.eq('tms_order_id', tms_order_id)
+    if (tms_order_id && !from) {
+      q = q.eq('tms_order_id', tms_order_id)
+    } else {
+      q = q.gte('date', from).lte('date', to).eq('warehouse_id', warehouse_id)
+      if (tms_order_id) q = q.eq('tms_order_id', tms_order_id)
+    }
+    q = q.order('date').order('created_at')
 
     const { data, error } = await q
     if (error) return fail(res, error.message)
@@ -407,5 +407,60 @@ export async function cancelPlanLine(req: Request, res: Response) {
       .from('inbound_plan_lines').select(LINE_SELECT).eq('id', id).single()
     if (fe) return fail(res, fe.message)
     return ok(res, data)
+  } catch (e) { return fail(res, String(e)) }
+}
+
+// POST /api/wms/inbound-plan/bulk-for-order
+// Tạo plan lines trực tiếp cho 1 TmsOrder đã có (upload từ booking detail)
+export async function bulkCreateForOrder(req: Request, res: Response) {
+  try {
+    const { tms_order_id, lines } = req.body as {
+      tms_order_id: string
+      lines: { material_id: string; planned_boxes: number; planned_pallets?: number }[]
+    }
+    if (!tms_order_id) return fail(res, 'tms_order_id là bắt buộc', 400)
+    if (!Array.isArray(lines) || !lines.length) return fail(res, 'lines phải là array không rỗng', 400)
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: tmsOrder, error: orderErr } = await (supabase.from('TmsOrder') as any)
+      .select('id, date, warehouse_id, warehouse_type, vehicle_type, ncc_id, direction')
+      .eq('id', tms_order_id)
+      .single()
+    if (orderErr || !tmsOrder) return fail(res, 'Không tìm thấy TmsOrder', 404)
+    if (tmsOrder.direction !== 'INBOUND') return fail(res, 'Chỉ tạo kế hoạch cho đơn hàng hướng nhập (INBOUND)', 400)
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const user = (req as any).user
+    const now = new Date().toISOString()
+
+    const lineRows = lines
+      .filter(l => l.material_id && (l.planned_boxes ?? 0) > 0)
+      .map(l => ({
+        id: randomUUID(),
+        tms_order_id,
+        date: tmsOrder.date,
+        warehouse_id: tmsOrder.warehouse_id,
+        warehouse_type: tmsOrder.warehouse_type ?? null,
+        vehicle_type: tmsOrder.vehicle_type ?? null,
+        ncc_id: tmsOrder.ncc_id ?? null,
+        material_id: l.material_id,
+        planned_boxes: l.planned_boxes,
+        planned_pallets: l.planned_pallets ?? null,
+        status: 'ACTIVE',
+        created_by: user?.name ?? null,
+        updated_by: user?.name ?? null,
+        created_at: now,
+        updated_at: now,
+      }))
+
+    if (!lineRows.length) return fail(res, 'Không có dòng hợp lệ (material_id + planned_boxes > 0)', 400)
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error: insErr } = await (supabase.from('inbound_plan_lines') as any).insert(lineRows)
+    if (insErr) return fail(res, insErr.message)
+
+    await recalcTmsOrder(tms_order_id)
+
+    return ok(res, { inserted: lineRows.length }, 201)
   } catch (e) { return fail(res, String(e)) }
 }

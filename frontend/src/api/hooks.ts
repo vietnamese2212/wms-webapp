@@ -1864,6 +1864,45 @@ export function useCancelPlanLine() {
   })
 }
 
+// Fetch plan lines cho 1 TmsOrder (dùng trong booking detail)
+export function usePlanLinesByOrder(orderId: string | null) {
+  return useQuery({
+    queryKey: ['inbound-plan-lines-by-order', orderId],
+    enabled: !!orderId,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/inbound-plan', { params: { tms_order_id: orderId } })
+      return data.data as any[]
+    },
+  })
+}
+
+// Fetch bảng so sánh kế hoạch vs thực tế cho 1 TmsOrder
+export function usePlanVsActual(orderId: string | null) {
+  return useQuery({
+    queryKey: ['plan-vs-actual', orderId],
+    enabled: !!orderId,
+    queryFn: async () => {
+      const { data } = await apiClient.get(`/tms/orders/${orderId}/plan-vs-actual`)
+      return data.data as any[]
+    },
+  })
+}
+
+// Upload plan lines trực tiếp vào 1 TmsOrder đã có
+export function useBulkCreatePlanLinesForOrder() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ tms_order_id, lines }: { tms_order_id: string; lines: Record<string, unknown>[] }) =>
+      apiClient.post('/wms/inbound-plan/bulk-for-order', { tms_order_id, lines }).then(r => r.data.data),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ['inbound-plan-lines-by-order', vars.tms_order_id] })
+      qc.invalidateQueries({ queryKey: ['plan-vs-actual', vars.tms_order_id] })
+      qc.invalidateQueries({ queryKey: ['inbound-plan-lines'] })
+      qc.invalidateQueries({ queryKey: ['tms-orders'] })
+    },
+  })
+}
+
 export function useDeleteVehicleSlot() {
   const qc = useQueryClient()
   return useMutation({

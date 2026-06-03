@@ -55,7 +55,7 @@ function AddLineDialog({ open, date, warehouseId, onClose }: {
   const [vehicleType,   setVehicleType]   = useState('')
   const [nccId,         setNccId]         = useState('')
   const [poNumber,      setPoNumber]      = useState('')
-  const [rows,          setRows]          = useState<MatRow[]>([emptyRow()])
+  const [rows,          setRows]          = useState<MatRow[]>(() => Array.from({ length: 20 }, emptyRow))
   const [err,           setErr]           = useState('')
 
   useEffect(() => {
@@ -66,7 +66,7 @@ function AddLineDialog({ open, date, warehouseId, onClose }: {
       setVehicleType('')
       setNccId('')
       setPoNumber('')
-      setRows([emptyRow()])
+      setRows(Array.from({ length: 20 }, emptyRow))
       setErr('')
     }
   }, [open, date, warehouseId])
@@ -190,7 +190,7 @@ function AddLineDialog({ open, date, warehouseId, onClose }: {
 
   return (
     <Dialog open={open} onOpenChange={v => { if (!v) onClose() }}>
-      <DialogContent className="max-w-3xl">
+      <DialogContent className="max-w-[80vw]">
         <DialogHeader><DialogTitle>Thêm dòng kế hoạch</DialogTitle></DialogHeader>
 
         {/* Section 1: Thông tin chung */}
@@ -267,9 +267,10 @@ function AddLineDialog({ open, date, warehouseId, onClose }: {
         {/* Section 2: Bảng mã hàng */}
         <div className="space-y-1.5">
           <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">Danh sách hàng hóa</p>
-          <div className="border rounded-lg">
+          <div className="border rounded-lg overflow-hidden">
+            <div className="max-h-[50vh] overflow-y-auto">
             <table className="min-w-full text-[10px]">
-              <thead className="bg-slate-50 border-b">
+              <thead className="bg-slate-50 border-b sticky top-0 z-10">
                 <tr>
                   <th className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 w-32">Mã hàng</th>
                   <th className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500">Tên hàng</th>
@@ -371,6 +372,7 @@ function AddLineDialog({ open, date, warehouseId, onClose }: {
                 })}
               </tbody>
             </table>
+            </div>
           </div>
           <button
             type="button"

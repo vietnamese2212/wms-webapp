@@ -247,7 +247,7 @@ export async function getOrder(req: Request, res: Response) {
 
 export async function updateOrder(req: Request, res: Response) {
   try {
-    const { location_id, planned_pallets, shift_id, notes, updated_by } = req.body
+    const { location_id, planned_pallets, shift_id, import_date, notes, updated_by } = req.body
 
     const { data: existing } = await supabase
       .from('ProductionImport').select('status').eq('id', req.params.id).maybeSingle()
@@ -258,6 +258,7 @@ export async function updateOrder(req: Request, res: Response) {
     if (location_id     !== undefined) patch.location_id = location_id
     if (planned_pallets !== undefined) patch.planned_pallets = Number(planned_pallets)
     if (shift_id        !== undefined) patch.shift_id = shift_id
+    if (import_date     !== undefined) patch.import_date = import_date
     if (notes           !== undefined) patch.notes = notes
     if (updated_by      !== undefined) patch.updated_by = updated_by
 

@@ -140,6 +140,18 @@ function AddLineDialog({ open, date, warehouseId, onClose }: {
     setRows(prev => prev.map((r, i) => i !== idx ? r : { ...r, [field]: val }))
   }
 
+  function handleNumberPaste(idx: number, field: 'planned_boxes' | 'planned_pallets', e: React.ClipboardEvent) {
+    const text = e.clipboardData.getData('text')
+    const values = text.split(/[\n\r]+/).map(s => s.trim().replace(/,/g, '')).filter(Boolean)
+    if (values.length <= 1) return
+    e.preventDefault()
+    setRows(prev => prev.map((r, i) => {
+      const vi = i - idx
+      if (vi < 0 || vi >= values.length) return r
+      return { ...r, [field]: values[vi] }
+    }))
+  }
+
   function addRow() { setRows(prev => [...prev, emptyRow()]) }
 
   function removeRow(idx: number) {
@@ -327,6 +339,7 @@ function AddLineDialog({ open, date, warehouseId, onClose }: {
                           type="number" min="0"
                           value={row.planned_boxes}
                           onChange={e => setRowField(idx, 'planned_boxes', e.target.value)}
+                          onPaste={e => handleNumberPaste(idx, 'planned_boxes', e)}
                           className={`w-full h-7 px-1.5 text-[10px] border rounded text-right bg-white focus:outline-none focus:ring-1 ${
                             row.material_id && !row.planned_boxes
                               ? 'border-amber-300 focus:ring-amber-400'
@@ -339,6 +352,7 @@ function AddLineDialog({ open, date, warehouseId, onClose }: {
                           type="number" min="0"
                           value={row.planned_pallets}
                           onChange={e => setRowField(idx, 'planned_pallets', e.target.value)}
+                          onPaste={e => handleNumberPaste(idx, 'planned_pallets', e)}
                           className="w-full h-7 px-1.5 text-[10px] border border-slate-200 rounded text-right bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
                         />
                       </td>

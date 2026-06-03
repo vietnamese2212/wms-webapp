@@ -127,17 +127,13 @@ function AddLineDialog({ open, date, warehouseId, onClose }: {
   }
 
   function getDropdownMatches(code: string) {
+    if (!code) return []
     const list = materials as any[]
-    let filtered: any[]
-    if (!code) {
-      filtered = list.slice(0, 20)
-    } else {
-      const q = code.toUpperCase()
-      filtered = list.filter(m =>
-        String(m.material_code).toUpperCase().includes(q) ||
-        String(m.short_name ?? '').toUpperCase().includes(q)
-      ).slice(0, 12)
-    }
+    const q = code.toUpperCase()
+    const filtered = list.filter(m =>
+      String(m.material_code).toUpperCase().includes(q) ||
+      String(m.short_name ?? '').toUpperCase().includes(q)
+    ).slice(0, 20)
     if (!warehouseType) return filtered
     return [...filtered].sort((a, b) =>
       (a.category === warehouseType ? 0 : 1) - (b.category === warehouseType ? 0 : 1)
@@ -308,7 +304,7 @@ function AddLineDialog({ open, date, warehouseId, onClose }: {
                               : 'border-slate-200 bg-white focus:ring-blue-400'
                           }`}
                         />
-                        {activeDropdownIdx === idx && !row.material_id && (
+                        {activeDropdownIdx === idx && !row.material_id && row.material_code !== '' && (
                           <div className="absolute left-0 top-full z-50 w-72 mt-0.5 border rounded-md bg-white shadow-lg max-h-40 overflow-y-auto">
                             {dropMatches.length === 0
                               ? <p className="text-[10px] text-slate-400 px-2 py-2 text-center">Không tìm thấy</p>

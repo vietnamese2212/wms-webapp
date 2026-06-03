@@ -2,12 +2,12 @@ import React, { useState, useRef, useEffect, useMemo } from 'react'
 import * as XLSX from 'xlsx'
 import { format } from 'date-fns'
 import { vi } from 'date-fns/locale'
-import { Plus, Upload, Trash2, FileSpreadsheet, X } from 'lucide-react'
+import { Plus, Upload, Trash2, FileSpreadsheet, X, Pencil } from 'lucide-react'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import {
   useWarehouses, useWarehouseTypes, useVehicleTypes, useTransportCompanies,
-  useMaterials, useInboundPlanLines, useBulkCreatePlanLines, useDeletePlanLine,
+  useMaterials, useInboundPlanLines, useBulkCreatePlanLines, useUpdatePlanLine, useDeletePlanLine,
 } from '@/api/hooks'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
@@ -393,6 +393,149 @@ function AddLineDialog({ open, date, warehouseId, onClose }: {
   )
 }
 
+// ─── Edit Line Dialog ─────────────────────────────────────────────────────────
+
+function EditLineDialog({ line, onClose, onSaved }: {
+  line: any; onClose: () => void; onSaved: (updated: any) => void
+}) {
+  const { data: materials = [] } = useMaterials()
+  const updateLine = useUpdatePlanLine()
+
+  const matByCode = useMemo(() =>
+    new Map((materials as any[]).map(m => [String(m.material_code).trim().toUpperCase(), m])),
+    [materials]
+  )
+
+  const [matCode,       setMatCode]       = useState(line.material?.material_code ?? '')
+  const [matId,         setMatId]         = useState(line.material_id ?? '')
+  const [matName,       setMatName]       = useState(line.material?.short_name ?? '')
+  const [poNumber,      setPoNumber]      = useState(line.po_number ?? '')
+  const [plannedBoxes,  setPlannedBoxes]  = useState(String(line.planned_boxes ?? ''))
+  const [plannedPallets,setPlannedPallets]= useState(String(line.planned_pallets ?? ''))
+  const [showDrop,      setShowDrop]      = useState(false)
+  const [err,           setErr]           = useState('')
+
+  function handleCodeChange(code: string) {
+    const found = matByCode.get(code.trim().toUpperCase())
+    setMatCode(code)
+    setMatId(found?.id ?? '')
+    setMatName(found?.short_name ?? '')
+  }
+
+  function selectMat(m: any) {
+    setMatCode(m.material_code); setMatId(m.id); setMatName(m.short_name ?? '')
+    setShowDrop(false)
+  }
+
+  const dropMatches = useMemo(() => {
+    if (!matCode) return (materials as any[]).slice(0, 8)
+    const q = matCode.toUpperCase()
+    return (materials as any[]).filter(m =>
+      String(m.material_code).toUpperCase().includes(q) ||
+      String(m.short_name ?? '').toUpperCase().includes(q)
+    ).slice(0, 8)
+  }, [matCode, materials])
+
+  async function handleSave() {
+    setErr('')
+    try {
+      const updated = await updateLine.mutateAsync({
+        id:              line.id,
+        material_id:     matId         || undefined,
+        po_number:       poNumber      || undefined,
+        planned_boxes:   plannedBoxes   ? Number(plannedBoxes)   : undefined,
+        planned_pallets: plannedPallets ? Number(plannedPallets) : undefined,
+      })
+      onSaved(updated)
+    } catch (e) {
+      const msg = (e as AxiosError<{error:{message:string}}>)?.response?.data?.error?.message
+      setErr(msg ?? 'Lỗi lưu dữ liệu')
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={v => { if (!v) onClose() }}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader><DialogTitle>Sửa dòng kế hoạch</DialogTitle></DialogHeader>
+
+        {/* Context info — read-only */}
+        <div className="bg-slate-50 rounded-lg px-3 py-2 text-[10px] text-slate-500 space-y-0.5">
+          <div className="flex gap-2"><span className="w-20 shrink-0">Ngày</span><span className="font-medium text-slate-700">{line.date}</span></div>
+          <div className="flex gap-2"><span className="w-20 shrink-0">ĐVVT</span><span className="font-medium text-slate-700">{line.ncc?.name ?? line.ncc?.code ?? '—'}</span></div>
+          {line.warehouse_type && <div className="flex gap-2"><span className="w-20 shrink-0">Loại kho</span><span className="font-medium text-slate-700">{line.warehouse_type}</span></div>}
+          {line.vehicle_type   && <div className="flex gap-2"><span className="w-20 shrink-0">Loại xe</span><span className="font-medium text-slate-700">{line.vehicle_type}</span></div>}
+        </div>
+
+        {/* Editable fields */}
+        <div className="space-y-3">
+          {/* Mã hàng */}
+          <div className="relative">
+            <Label className="text-xs">Mã hàng</Label>
+            <input
+              type="text"
+              value={matCode}
+              onChange={e => handleCodeChange(e.target.value)}
+              onFocus={() => setShowDrop(true)}
+              onBlur={() => setTimeout(() => setShowDrop(false), 150)}
+              placeholder="Mã hàng"
+              className={`w-full h-8 mt-0.5 px-2 text-xs font-mono border rounded focus:outline-none focus:ring-1 ${
+                matCode && !matId ? 'border-red-300 focus:ring-red-400' : 'border-slate-200 focus:ring-blue-400'
+              }`}
+            />
+            {matName && <p className="text-[10px] text-slate-500 mt-0.5">{matName}</p>}
+            {showDrop && !matId && (
+              <div className="absolute left-0 top-full z-50 w-full mt-0.5 border rounded-md bg-white shadow-lg max-h-36 overflow-y-auto">
+                {dropMatches.length === 0
+                  ? <p className="text-[10px] text-slate-400 px-2 py-2 text-center">Không tìm thấy</p>
+                  : dropMatches.map((m: any) => (
+                    <button key={m.id} type="button"
+                      onMouseDown={e => e.preventDefault()}
+                      onClick={() => selectMat(m)}
+                      className="w-full text-left px-2 py-1.5 hover:bg-blue-50 flex items-center gap-2 border-b border-slate-50 last:border-0"
+                    >
+                      <span className="text-[10px] font-mono text-slate-700 shrink-0">{m.material_code}</span>
+                      <span className="text-[10px] text-slate-500 truncate">{m.short_name}</span>
+                    </button>
+                  ))
+                }
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-3 gap-2">
+            <div>
+              <Label className="text-xs">Số thùng</Label>
+              <Input type="number" min="0" value={plannedBoxes}
+                onChange={e => setPlannedBoxes(e.target.value)}
+                className="h-8 text-xs mt-0.5 text-right" />
+            </div>
+            <div>
+              <Label className="text-xs">Pallet</Label>
+              <Input type="number" min="0" value={plannedPallets}
+                onChange={e => setPlannedPallets(e.target.value)}
+                className="h-8 text-xs mt-0.5 text-right" />
+            </div>
+            <div>
+              <Label className="text-xs">Số PO</Label>
+              <Input value={poNumber} onChange={e => setPoNumber(e.target.value)}
+                placeholder="PO-0001" className="h-8 text-xs mt-0.5" />
+            </div>
+          </div>
+        </div>
+
+        {err && <p className="text-xs text-red-500">{err}</p>}
+
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={onClose}>Hủy</Button>
+          <Button size="sm" onClick={handleSave} disabled={updateLine.isPending}>
+            {updateLine.isPending ? 'Đang lưu...' : 'Lưu'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 // ─── Upload Excel Dialog ──────────────────────────────────────────────────────
 
 type PreviewRow = {
@@ -632,6 +775,7 @@ export default function InboundPlan() {
   const [warehouseId, setWarehouseId] = useState(user?.warehouse_id ?? (user?.warehouse_ids as string[] | undefined)?.[0] ?? '')
   const [addOpen,      setAddOpen]      = useState(false)
   const [uploadOpen,   setUploadOpen]   = useState(false)
+  const [editLine,     setEditLine]     = useState<any | null>(null)
   const [whTypeFilter, setWhTypeFilter] = useState<string[]>([])
   const [nccFilter,    setNccFilter]    = useState<string[]>([])
   const [detailLine,   setDetailLine]   = useState<any | null>(null)
@@ -798,14 +942,24 @@ export default function InboundPlan() {
                     {line.vehicle_type ?? <span className="text-slate-300">—</span>}
                   </TableCell>
                   <TableCell className="px-2 py-1 whitespace-nowrap" onClick={e => e.stopPropagation()}>
-                    {can(perms, 'inbound_plan', 'delete') && (
-                      <button
-                        onClick={e => { e.stopPropagation(); if (confirm('Xóa dòng này?')) deleteLine.mutate(line.id) }}
-                        className="text-red-400 hover:text-red-600 transition-colors"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    )}
+                    <div className="flex items-center gap-1">
+                      {can(perms, 'inbound_plan', 'edit') && (
+                        <button
+                          onClick={e => { e.stopPropagation(); setEditLine(line) }}
+                          className="text-slate-400 hover:text-blue-600 transition-colors"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                      {can(perms, 'inbound_plan', 'delete') && (
+                        <button
+                          onClick={e => { e.stopPropagation(); if (confirm('Xóa dòng này?')) deleteLine.mutate(line.id) }}
+                          className="text-slate-400 hover:text-red-600 transition-colors"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
                   </TableCell>
                 </TableRow>
               )
@@ -817,6 +971,13 @@ export default function InboundPlan() {
       {/* Dialogs */}
       <AddLineDialog  open={addOpen}    date={dateFrom} warehouseId={warehouseId} onClose={() => setAddOpen(false)} />
       <UploadDialog   open={uploadOpen} date={dateFrom} warehouseId={warehouseId} onClose={() => setUploadOpen(false)} />
+      {editLine && (
+        <EditLineDialog
+          line={editLine}
+          onClose={() => setEditLine(null)}
+          onSaved={updated => { setEditLine(null); if (detailLine?.id === updated.id) setDetailLine(updated) }}
+        />
+      )}
 
       {/* Detail Sheet */}
       <Sheet open={!!detailLine} onOpenChange={open => !open && setDetailLine(null)}>
@@ -824,10 +985,28 @@ export default function InboundPlan() {
           {detailLine && (
             <>
               <SheetHeader className="px-4 py-3 border-b bg-slate-50 shrink-0">
-                <div className="flex items-start gap-2 pr-6">
-                  <div className="min-w-0">
+                <div className="flex items-center gap-2 pr-6">
+                  <div className="min-w-0 flex-1">
                     <SheetTitle className="text-sm font-mono">{detailLine.material?.material_code ?? '—'}</SheetTitle>
                     <p className="text-xs text-slate-500 mt-0.5 truncate">{detailLine.material?.short_name ?? ''}</p>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {can(perms, 'inbound_plan', 'edit') && (
+                      <button
+                        onClick={() => setEditLine(detailLine)}
+                        className="p-1 rounded hover:bg-slate-200 text-slate-400 hover:text-blue-600 transition-colors"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                    {can(perms, 'inbound_plan', 'delete') && (
+                      <button
+                        onClick={() => { if (confirm('Xóa dòng này?')) { deleteLine.mutate(detailLine.id); setDetailLine(null) } }}
+                        className="p-1 rounded hover:bg-red-100 text-slate-400 hover:text-red-600 transition-colors"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                   </div>
                 </div>
               </SheetHeader>

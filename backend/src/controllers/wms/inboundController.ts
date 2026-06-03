@@ -161,18 +161,9 @@ export async function createOrder(req: Request, res: Response) {
     if (!material_id)  return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu material_id')
     const resolvedSourceType = source_type === 'NCC' ? 'NCC' : 'FACTORY'
 
-    // Count today's orders for import_code sequence (dùng giờ Hà Nội)
     const todayStr   = vnDate()
     const todayStart = new Date(`${todayStr}T00:00:00+07:00`).toISOString()
     const todayEnd   = new Date(`${todayStr}T23:59:59.999+07:00`).toISOString()
-
-    const { count: todayCount } = await supabase
-      .from('ProductionImport')
-      .select('*', { count: 'exact', head: true })
-      .gte('created_at', todayStart)
-      .lt('created_at', todayEnd)
-
-    const import_code = generateImportCode(todayStr, (todayCount ?? 0) + 1)
 
     // Validate imported_by — skip if employee doesn't exist (e.g. mock/dev user IDs)
     let resolvedImportedBy: string | null = null
@@ -181,37 +172,50 @@ export async function createOrder(req: Request, res: Response) {
       resolvedImportedBy = emp?.id ?? null
     }
 
-    const { data: order, error } = await supabase
-      .from('ProductionImport')
-      .insert({
-        id:                   randomUUID(),
-        import_code,
-        warehouse_id,
-        material_id,
-        location_id:          location_id ?? null,
-        planned_pallets:      planned_pallets ? Number(planned_pallets) : null,
-        shift_id:             shift_id ?? null,
-        import_date:          import_date ? import_date.slice(0, 10) : todayStr,
-        notes:                notes ?? null,
-        imported_by:          resolvedImportedBy,
-        created_by:           resolvedImportedBy,
-        status:               'OPEN',
-        source_type:          resolvedSourceType,
-        warehouse_type:       warehouse_type ?? null,
-        gate_registration_id: gate_registration_id ?? null,
-        tms_order_id:         tms_order_id ?? null,
-        planned_cartons:      planned_cartons ? Number(planned_cartons) : null,
-        created_at:           new Date().toISOString(),
-        updated_at:           new Date().toISOString(),
-      })
-      .select(ORDER_SELECT)
-      .single()
+    // Retry khi 2 request song song lấy cùng count → cùng import_code → 23505
+    let order: unknown = null
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const { count: todayCount } = await supabase
+        .from('ProductionImport')
+        .select('*', { count: 'exact', head: true })
+        .gte('created_at', todayStart)
+        .lt('created_at', todayEnd)
 
-    if (error) {
-      if (error.code === '23505') return fail(res, 409, 'DUPLICATE', 'Mã phiếu đã tồn tại')
+      const import_code = generateImportCode(todayStr, (todayCount ?? 0) + 1)
+
+      const { data, error } = await supabase
+        .from('ProductionImport')
+        .insert({
+          id:                   randomUUID(),
+          import_code,
+          warehouse_id,
+          material_id,
+          location_id:          location_id ?? null,
+          planned_pallets:      planned_pallets ? Number(planned_pallets) : null,
+          shift_id:             shift_id ?? null,
+          import_date:          import_date ? import_date.slice(0, 10) : todayStr,
+          notes:                notes ?? null,
+          imported_by:          resolvedImportedBy,
+          created_by:           resolvedImportedBy,
+          status:               'OPEN',
+          source_type:          resolvedSourceType,
+          warehouse_type:       warehouse_type ?? null,
+          gate_registration_id: gate_registration_id ?? null,
+          tms_order_id:         tms_order_id ?? null,
+          planned_cartons:      planned_cartons ? Number(planned_cartons) : null,
+          created_at:           new Date().toISOString(),
+          updated_at:           new Date().toISOString(),
+        })
+        .select(ORDER_SELECT)
+        .single()
+
+      if (!error) { order = data; break }
+      if (error.code === '23505') continue  // race condition — đếm lại và thử seq tiếp
       if (error.code === '23503') return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy kho hoặc hàng hóa — kiểm tra warehouse_id, material_id, location_id, shift_id')
       throw error
     }
+
+    if (!order) return fail(res, 409, 'DUPLICATE', 'Không thể tạo mã phiếu — thử lại')
 
     const suggestions = await getLocationSuggestionsData(warehouse_id, material_id)
     emitInboundChanged()

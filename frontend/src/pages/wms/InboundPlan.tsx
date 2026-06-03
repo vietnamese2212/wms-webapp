@@ -44,13 +44,14 @@ function AddLineDialog({ open, date, warehouseId, onClose }: {
   const { data: whTypesData = [] }         = useWarehouseTypes()
   const { data: vehicleTypes = [] }        = useVehicleTypes(true)
   const { data: transportCompanies = [] }  = useTransportCompanies(true)
-  const { data: materials = [] }           = useMaterials()
 
   const bulkCreate = useBulkCreatePlanLines()
 
   const [formDate,      setFormDate]      = useState(date)
   const [warehouse,     setWarehouse]     = useState(warehouseId)
   const [warehouseType, setWarehouseType] = useState('')
+
+  const { data: materials = [] }           = useMaterials(warehouseType ? { category: warehouseType } : undefined)
   const [vehicleType,   setVehicleType]   = useState('')
   const [nccId,         setNccId]         = useState('')
   const [poNumber,      setPoNumber]      = useState('')

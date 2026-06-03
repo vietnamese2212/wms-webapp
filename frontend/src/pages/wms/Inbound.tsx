@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { Plus, PackagePlus, CalendarDays, X, ChevronDown, User, MapPin, Filter, QrCode } from 'lucide-react'
 import type { AxiosError } from 'axios'
@@ -81,6 +82,8 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
   const [nccDropdownIdx, setNccDropdownIdx] = useState<number | null>(null)
   const [showMoreGates,  setShowMoreGates]  = useState(false)
   const [showGateDialog, setShowGateDialog] = useState(false)
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number } | null>(null)
+  const nccDropdownRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (open) {
@@ -90,7 +93,7 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
       setLocationId(''); setShiftId('')
       setImportDate(format(new Date(), 'yyyy-MM-dd'))
       setNotes(''); setGateRegId('')
-      setNccRows([emptyNccRow()]); setNccSaving(false); setNccErr(''); setNccDropdownIdx(null)
+      setNccRows([emptyNccRow()]); setNccSaving(false); setNccErr(''); setNccDropdownIdx(null); setDropdownPos(null)
       setShowMoreGates(false)
     }
   }, [open, user?.warehouse_id, user?.warehouse_ids])
@@ -110,7 +113,7 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
   )
   const selectedGate    = (activeGates as any[]).find(g => g.id === gateRegId)
   const sortedGates = [...(activeGates as any[])].sort(
-    (a, b) => a.date.localeCompare(b.date) || a.registration_number - b.registration_number
+    (a, b) => b.date.localeCompare(a.date) || a.registration_number - b.registration_number
   )
   // Lần = vị trí trong ngày (reset mỗi ngày, không bị ảnh hưởng bởi bản ghi đã xóa)
   const gateLane: Map<string, number> = (() => {
@@ -143,6 +146,13 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
       ? { date: importDate, warehouse_id: warehouseId, ...(gateTmsOrderId ? { tms_order_id: gateTmsOrderId } : {}) }
       : undefined
   )
+  const planMatIds = useMemo(() => {
+    const active = (planMaterials as any[]).filter((m: any) =>
+      m.status !== 'CANCELLED' && (!subType || !m.warehouse_type || m.warehouse_type === subType)
+    )
+    return new Set(active.map((m: any) => m.material_id).filter(Boolean) as string[])
+  }, [planMaterials, subType])
+
   const { data: locations = [] } = useLocationsReal(warehouseId ? { warehouse_id: warehouseId } : undefined)
   const { data: zones     = [] } = useWarehouseZones(warehouseId || undefined)
   const allLocs = locations as LocationWithCapacity[]
@@ -214,6 +224,7 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
       return [...before, ...newRows, ...after]
     })
     setNccDropdownIdx(null)
+    setDropdownPos(null)
   }
 
   function selectNccMatFromDropdown(idx: number, m: any) {
@@ -222,16 +233,23 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
       mat_name: m.short_name ?? '', mat_unit: m.unit ?? '', unit_input: m.unit ?? '',
     }))
     setNccDropdownIdx(null)
+    setDropdownPos(null)
   }
 
   function getNccDropdownMatches(code: string) {
     const list = allMaterials as any[]
-    if (!code) return list.slice(0, 8)
-    const q = code.toUpperCase()
-    return list.filter(m =>
-      String(m.material_code).toUpperCase().includes(q) ||
-      String(m.short_name ?? '').toUpperCase().includes(q)
-    ).slice(0, 8)
+    let filtered: any[]
+    if (!code) {
+      filtered = list.slice(0, 12)
+    } else {
+      const q = code.toUpperCase()
+      filtered = list.filter(m =>
+        String(m.material_code).toUpperCase().includes(q) ||
+        String(m.short_name ?? '').toUpperCase().includes(q)
+      ).slice(0, 10)
+    }
+    if (planMatIds.size === 0) return filtered
+    return [...filtered].sort((a, b) => (planMatIds.has(b.id) ? 1 : 0) - (planMatIds.has(a.id) ? 1 : 0))
   }
 
   function setNccRowField(idx: number, field: 'unit_input' | 'planned_qty', val: string) {
@@ -298,7 +316,10 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose() }}>
-      <DialogContent className={sourceType === 'NCC' ? 'max-w-2xl' : 'sm:max-w-lg'}>
+      <DialogContent
+        className={sourceType === 'NCC' ? 'max-w-2xl' : 'sm:max-w-lg'}
+        onPointerDownOutside={e => { if (nccDropdownIdx !== null) e.preventDefault() }}
+      >
         <DialogHeader>
           <DialogTitle>Tạo phiếu nhập kho</DialogTitle>
         </DialogHeader>
@@ -497,7 +518,7 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
                           sortedGates.map(g => {
                             const isTaken      = takenGateMap.has(g.id)
                             const isDateBefore = importDate && g.date > importDate
-                            const isDisabled   = isTaken || !!isDateBefore
+                            const isDisabled   = !!isDateBefore
                             return (
                             <button
                               key={g.id}
@@ -509,13 +530,15 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
                                   ? 'border-slate-200 bg-slate-50 opacity-70'
                                   : gateRegId === g.id
                                     ? 'border-blue-400 bg-blue-50'
-                                    : g.date !== importDate
+                                    : isTaken
                                       ? 'border-amber-200 bg-amber-50 hover:border-amber-300'
-                                      : 'border-slate-200 bg-white hover:border-blue-200 hover:bg-blue-50/40'
+                                      : g.date !== importDate
+                                        ? 'border-amber-200 bg-amber-50 hover:border-amber-300'
+                                        : 'border-slate-200 bg-white hover:border-blue-200 hover:bg-blue-50/40'
                               }`}
                             >
                               <div className="flex items-center gap-1.5">
-                                <span className={`font-mono font-semibold text-[11px] ${isTaken ? 'line-through text-slate-400' : 'text-slate-800'}`}>
+                                <span className={`font-mono font-semibold text-[11px] ${isDisabled ? 'text-slate-400' : isTaken ? 'text-amber-700' : 'text-slate-800'}`}>
                                   {g.license_plate ?? '—'}
                                 </span>
                                 {g.company_name_raw && <span className="text-[10px] text-slate-500 truncate">{g.company_name_raw}</span>}
@@ -525,7 +548,7 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
                                 </span>
                               </div>
                               {isTaken && (
-                                <div className="text-[9px] text-red-400 mt-0.5">Đã dùng bởi phiếu {takenGateMap.get(g.id)}</div>
+                                <div className="text-[9px] text-amber-600 mt-0.5">Đã có phiếu nhập · chọn để thêm hàng còn thiếu</div>
                               )}
                               {isDateBefore && (
                                 <div className="text-[9px] text-amber-600 mt-0.5">Đăng ký ({g.date}) sau ngày nhập — đổi ngày nhập trước</div>
@@ -607,36 +630,26 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
                     {nccRows.map((row, idx) => {
                       const invalid     = row.material_code !== '' && !row.material_id
                       const unitMismatch = row.unit_input && row.mat_unit && row.unit_input !== row.mat_unit
-                      const dropMatches = getNccDropdownMatches(row.material_code)
                       return (
                         <tr key={idx} className={invalid ? 'bg-red-50' : ''}>
-                          <td className="px-1.5 py-1 relative">
+                          <td className="px-1.5 py-1">
                             <input type="text" value={row.material_code}
                               onChange={e => handleNccMatCodeChange(idx, e.target.value)}
                               onPaste={e => handleNccMatCodePaste(idx, e)}
-                              onFocus={() => setNccDropdownIdx(idx)}
-                              onBlur={() => setTimeout(() => setNccDropdownIdx(prev => prev === idx ? null : prev), 150)}
+                              onFocus={e => {
+                                setNccDropdownIdx(idx)
+                                const rect = e.currentTarget.getBoundingClientRect()
+                                setDropdownPos({ top: rect.bottom + 4, left: rect.left })
+                              }}
+                              onBlur={() => setTimeout(() => setNccDropdownIdx(prev => {
+                                if (prev === idx) { setDropdownPos(null); return null }
+                                return prev
+                              }), 150)}
                               placeholder="Paste hoặc tìm mã"
                               className={`w-full h-7 px-1.5 text-[10px] font-mono border rounded focus:outline-none focus:ring-1 ${
                                 invalid ? 'border-red-300 bg-red-50 focus:ring-red-400' : 'border-slate-200 bg-white focus:ring-blue-400'
                               }`}
                             />
-                            {nccDropdownIdx === idx && !row.material_id && (
-                              <div className="absolute left-0 top-full z-50 w-72 mt-0.5 border rounded-md bg-white shadow-lg max-h-40 overflow-y-auto">
-                                {dropMatches.length === 0
-                                  ? <p className="text-[10px] text-slate-400 px-2 py-2 text-center">Không tìm thấy</p>
-                                  : dropMatches.map((m: any) => (
-                                    <button key={m.id} type="button"
-                                      onMouseDown={e => e.preventDefault()}
-                                      onClick={() => selectNccMatFromDropdown(idx, m)}
-                                      className="w-full text-left px-2 py-1.5 hover:bg-blue-50 flex items-center gap-2 border-b border-slate-50 last:border-0">
-                                      <span className="text-[10px] font-mono text-slate-700 shrink-0">{m.material_code}</span>
-                                      <span className="text-[10px] text-slate-500 truncate">{m.short_name}</span>
-                                    </button>
-                                  ))
-                                }
-                              </div>
-                            )}
                           </td>
                           <td className="px-2 py-1">
                             {row.mat_name
@@ -681,6 +694,40 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
             </div>
 
             {nccErr && <p className="text-xs text-red-500">{nccErr}</p>}
+
+            {/* Portal dropdown cho mã hàng — tránh bị che bởi overflow-y-auto */}
+            {nccDropdownIdx !== null && dropdownPos && !nccRows[nccDropdownIdx]?.material_id &&
+              createPortal(
+                <div
+                  ref={nccDropdownRef}
+                  style={{ position: 'fixed', top: dropdownPos.top, left: dropdownPos.left, zIndex: 9999 }}
+                  className="w-72 border rounded-md bg-white shadow-lg max-h-44 overflow-y-auto"
+                >
+                  {(() => {
+                    const matches = getNccDropdownMatches(nccRows[nccDropdownIdx]?.material_code ?? '')
+                    return matches.length === 0
+                      ? <p className="text-[10px] text-slate-400 px-2 py-2 text-center">Không tìm thấy</p>
+                      : matches.map((m: any) => (
+                        <button key={m.id} type="button"
+                          onMouseDown={e => e.preventDefault()}
+                          onClick={() => selectNccMatFromDropdown(nccDropdownIdx, m)}
+                          className="w-full text-left px-2 py-1.5 hover:bg-blue-50 flex items-center gap-2 border-b border-slate-50 last:border-0"
+                        >
+                          {planMatIds.has(m.id)
+                            ? <span className="text-[8px] bg-green-100 text-green-700 px-1 py-0.5 rounded shrink-0">KH</span>
+                            : planMatIds.size > 0
+                              ? <span className="text-[8px] text-slate-300 w-5 shrink-0" />
+                              : null
+                          }
+                          <span className="text-[10px] font-mono text-slate-700 shrink-0">{m.material_code}</span>
+                          <span className="text-[10px] text-slate-500 truncate">{m.short_name}</span>
+                        </button>
+                      ))
+                  })()}
+                </div>,
+                document.body
+              )
+            }
           </>)}
         </div>
 
@@ -1223,7 +1270,10 @@ function InboundRow({ order, onClick, onScan }: { order: InboundOrder; onClick: 
     <TableRow className={`cursor-pointer ${rowText(order)}`} onClick={onClick}>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px] font-medium tabular-nums">{dateFull}</span>
-        {isRowToday && <span className="ml-1 text-[9px] text-blue-600 font-medium">· Hôm nay</span>}
+        {isRowToday && <span className="ml-1 text-[9px] text-blue-600 font-medium">· HN</span>}
+        <span className={`ml-1 text-[8px] px-1 py-0.5 rounded font-medium ${
+          order.source_type === 'NCC' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-600'
+        }`}>{order.source_type === 'NCC' ? 'NCC' : 'SX'}</span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <div className="flex items-center justify-between gap-1.5 min-w-[80px]">

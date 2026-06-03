@@ -302,6 +302,8 @@ export interface InboundOrder {
   cycles?:             string[]
   machine_codes?:      string[]
   location_used_slots?: number
+  source_type?:         'FACTORY' | 'NCC'
+  gate_registration_id?: string | null
   created_at:      string
   updated_at:      string
   inventory_entries?: PalletEntry[]

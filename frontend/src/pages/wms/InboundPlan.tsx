@@ -245,7 +245,7 @@ function AddLineDialog({ open, date, warehouseId, onClose }: {
               <Select value={nccId || '__none__'} onValueChange={v => setNccId(v === '__none__' ? '' : v)}>
                 <SelectTrigger className="h-8 text-xs mt-0.5"><SelectValue placeholder="Chọn ĐVVT / NCC" /></SelectTrigger>
                 <SelectContent>
-                  {(transportCompanies as any[]).map(c => (
+                  {(transportCompanies as any[]).filter(c => c.type === 'NCC').map(c => (
                     <SelectItem key={c.id} value={c.id}>{c.code} — {c.name}</SelectItem>
                   ))}
                 </SelectContent>
@@ -630,7 +630,7 @@ function UploadDialog({ open, date, warehouseId, onClose }: {
   const [err, setErr] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
 
-  const nccByCode = new Map((transportCompanies as any[]).map((c: any) => [String(c.code).trim().toUpperCase(), c.id]))
+  const nccByCode = new Map((transportCompanies as any[]).filter((c: any) => c.type === 'NCC').map((c: any) => [String(c.code).trim().toUpperCase(), c.id]))
   const whByCode  = new Map((warehouses as any[]).map((w: any) => [String(w.code).trim().toUpperCase(), w.id]))
   const whTypeSet = new Set(whTypesData.map(t => t.value))
   const vtNameSet = new Set((vehicleTypes as any[]).map((vt: any) => String(vt.name)))

@@ -37,6 +37,21 @@ const emptyRow = (): MatRow => ({
   planned_boxes: '', planned_pallets: '',
 })
 
+type EditMatRow = {
+  id?:             string
+  material_code:   string
+  material_id:     string
+  mat_name:        string
+  mat_unit:        string
+  planned_boxes:   string
+  planned_pallets: string
+  po_number:       string
+}
+const emptyEditRow = (): EditMatRow => ({
+  material_code: '', material_id: '', mat_name: '', mat_unit: '',
+  planned_boxes: '', planned_pallets: '', po_number: '',
+})
+
 function AddLineDialog({ open, date, warehouseId, onClose }: {
   open: boolean; date: string; warehouseId: string; onClose: () => void
 }) {
@@ -615,6 +630,276 @@ function CancelLineDialog({ line, onClose }: { line: any; onClose: () => void })
   )
 }
 
+// ─── Edit Group Dialog ────────────────────────────────────────────────────────
+
+function EditGroupDialog({ groupLines, onClose }: { groupLines: any[]; onClose: () => void }) {
+  const first = groupLines[0]
+  const { data: materials = [] } = useMaterials()
+  const updateLine = useUpdatePlanLine()
+  const bulkCreate = useBulkCreatePlanLines()
+  const deleteLine = useDeletePlanLine()
+
+  const [rows, setRows] = useState<EditMatRow[]>(() =>
+    groupLines.map(l => ({
+      id:              l.id,
+      material_code:   l.material?.material_code ?? '',
+      material_id:     l.material_id             ?? '',
+      mat_name:        l.material?.short_name     ?? '',
+      mat_unit:        l.material?.unit           ?? '',
+      planned_boxes:   String(l.planned_boxes    ?? ''),
+      planned_pallets: String(l.planned_pallets  ?? ''),
+      po_number:       l.po_number               ?? '',
+    }))
+  )
+  const [activeDropdownIdx, setActiveDropdownIdx] = useState<number | null>(null)
+  const [toDelete, setToDelete] = useState<string[]>([])
+  const [saving,   setSaving]   = useState(false)
+  const [err,      setErr]      = useState('')
+
+  const matByCode = useMemo(() =>
+    new Map((materials as any[]).map(m => [String(m.material_code).trim().toUpperCase(), m])),
+    [materials]
+  )
+
+  function handleMatCodeChange(idx: number, code: string) {
+    const found = matByCode.get(code.trim().toUpperCase())
+    setRows(prev => prev.map((r, i) => i !== idx ? r : {
+      ...r, material_code: code,
+      material_id: found?.id ?? '', mat_name: found?.short_name ?? '', mat_unit: found?.unit ?? '',
+    }))
+  }
+
+  function handleMatCodePaste(idx: number, e: React.ClipboardEvent) {
+    const text = e.clipboardData.getData('text')
+    const rawLines = text.split(/[\n\r]+/).map(s => s.trim()).filter(Boolean)
+    if (rawLines.length <= 1) return
+    e.preventDefault()
+    const newRows = rawLines.map(c => {
+      const found = matByCode.get(c.trim().toUpperCase())
+      return { material_code: c, material_id: found?.id ?? '', mat_name: found?.short_name ?? '', mat_unit: found?.unit ?? '', planned_boxes: '', planned_pallets: '', po_number: '' }
+    })
+    setRows(prev => [...prev.slice(0, idx), ...newRows, ...prev.slice(idx + 1).filter(r => r.material_code !== '')])
+    setActiveDropdownIdx(null)
+  }
+
+  function selectMat(idx: number, m: any) {
+    setRows(prev => prev.map((r, i) => i !== idx ? r : {
+      ...r, material_code: m.material_code, material_id: m.id,
+      mat_name: m.short_name ?? '', mat_unit: m.unit ?? '',
+    }))
+    setActiveDropdownIdx(null)
+  }
+
+  function getDropdownMatches(code: string) {
+    if (!code) return []
+    const q = code.toUpperCase()
+    return (materials as any[]).filter(m =>
+      String(m.material_code).toUpperCase().includes(q) ||
+      String(m.short_name ?? '').toUpperCase().includes(q)
+    ).slice(0, 20)
+  }
+
+  function setField(idx: number, field: keyof EditMatRow, val: string) {
+    setRows(prev => prev.map((r, i) => i !== idx ? r : { ...r, [field]: val }))
+  }
+
+  function handleNumberPaste(idx: number, field: 'planned_boxes' | 'planned_pallets', e: React.ClipboardEvent) {
+    const text = e.clipboardData.getData('text')
+    const vals = text.split(/[\n\r]+/).map(s => s.trim().replace(/,/g, '')).filter(Boolean)
+    if (vals.length <= 1) return
+    e.preventDefault()
+    setRows(prev => prev.map((r, i) => {
+      const vi = i - idx
+      return vi >= 0 && vi < vals.length ? { ...r, [field]: vals[vi] } : r
+    }))
+  }
+
+  function removeRow(idx: number) {
+    const row = rows[idx]
+    if (row.id) setToDelete(prev => [...prev, row.id!])
+    setRows(prev => prev.filter((_, i) => i !== idx))
+  }
+
+  async function handleSave() {
+    const valid = rows.filter(r => r.material_id)
+    if (!valid.length) { setErr('Cần ít nhất 1 mã hàng hợp lệ'); return }
+    setErr(''); setSaving(true)
+    try {
+      if (toDelete.length)
+        await Promise.all(toDelete.map(id => deleteLine.mutateAsync(id)))
+      const existing = valid.filter(r => r.id)
+      if (existing.length)
+        await Promise.all(existing.map(r => updateLine.mutateAsync({
+          id: r.id!,
+          material_id:     r.material_id,
+          po_number:       r.po_number       || undefined,
+          planned_boxes:   r.planned_boxes   ? Number(r.planned_boxes)   : undefined,
+          planned_pallets: r.planned_pallets ? Number(r.planned_pallets) : undefined,
+        })))
+      const newOnes = valid.filter(r => !r.id)
+      if (newOnes.length)
+        await bulkCreate.mutateAsync(newOnes.map(r => ({
+          date:            first.date,
+          warehouse_id:    first.warehouse_id,
+          warehouse_type:  first.warehouse_type || undefined,
+          vehicle_type:    first.vehicle_type   || undefined,
+          ncc_id:          first.ncc?.id        || undefined,
+          material_id:     r.material_id,
+          po_number:       r.po_number          || undefined,
+          planned_boxes:   r.planned_boxes   ? Number(r.planned_boxes)   : undefined,
+          planned_pallets: r.planned_pallets ? Number(r.planned_pallets) : undefined,
+        })))
+      onClose()
+    } catch (e) {
+      const msg = (e as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message
+      setErr(msg ?? 'Lỗi lưu dữ liệu')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={v => { if (!v) onClose() }}>
+      <DialogContent className="max-w-[80vw]">
+        <DialogHeader>
+          <DialogTitle>Sửa nhóm kế hoạch · {groupLines.length} dòng</DialogTitle>
+        </DialogHeader>
+
+        {/* Header read-only */}
+        <div className="border rounded-lg bg-slate-50 px-3 py-2 space-y-1">
+          <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">Thông tin vận chuyển (chỉ đọc)</p>
+          <div className="flex flex-wrap gap-x-6 gap-y-0.5 text-xs text-slate-500">
+            <span><span className="text-slate-400">Ngày: </span><strong className="text-slate-700">{format(new Date(first.date + 'T00:00:00'), 'dd-MM-yyyy')}</strong></span>
+            <span><span className="text-slate-400">ĐVVT: </span><strong className="text-slate-700">{first.ncc?.name ?? first.ncc?.code ?? '—'}</strong></span>
+            {first.warehouse_type && <span><span className="text-slate-400">Loại kho: </span><strong className="text-slate-700">{first.warehouse_type}</strong></span>}
+            {first.vehicle_type   && <span><span className="text-slate-400">Loại xe: </span><strong className="text-slate-700">{first.vehicle_type}</strong></span>}
+          </div>
+          <p className="text-[9px] text-amber-600">Để đổi lịch/NCC: Hủy các dòng này → Tạo nhóm mới</p>
+        </div>
+
+        {/* Table */}
+        <div className="space-y-1.5">
+          <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">
+            Danh sách hàng hóa{toDelete.length > 0 ? ` · ${toDelete.length} dòng sẽ xóa` : ''}
+          </p>
+          <div className="border rounded-lg overflow-hidden">
+            <div className="max-h-[50vh] overflow-y-auto">
+              <table className="min-w-full text-[10px]">
+                <thead className="bg-slate-50 border-b sticky top-0 z-10">
+                  <tr>
+                    <th className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 w-32">Mã hàng</th>
+                    <th className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500">Tên hàng</th>
+                    <th className="px-2 py-1.5 text-center text-[9px] font-medium text-slate-500 w-14">ĐVT</th>
+                    <th className="px-2 py-1.5 text-right text-[9px] font-medium text-slate-500 w-20">Số thùng</th>
+                    <th className="px-2 py-1.5 text-right text-[9px] font-medium text-slate-500 w-20">Pallet</th>
+                    <th className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 w-24">Số PO</th>
+                    <th className="w-7"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {rows.map((row, idx) => {
+                    const invalid = row.material_code !== '' && !row.material_id
+                    const dropMatches = getDropdownMatches(row.material_code)
+                    return (
+                      <tr key={idx} className={invalid ? 'bg-red-50' : ''}>
+                        <td className="px-1.5 py-1 relative">
+                          <input
+                            type="text" value={row.material_code}
+                            onChange={e => handleMatCodeChange(idx, e.target.value)}
+                            onPaste={e => handleMatCodePaste(idx, e)}
+                            onFocus={() => setActiveDropdownIdx(idx)}
+                            onBlur={() => setTimeout(() => setActiveDropdownIdx(prev => prev === idx ? null : prev), 150)}
+                            placeholder="Mã hàng"
+                            className={`w-full h-7 px-1.5 text-[10px] font-mono border rounded focus:outline-none focus:ring-1 ${
+                              invalid ? 'border-red-300 bg-red-50 focus:ring-red-400' : 'border-slate-200 bg-white focus:ring-blue-400'
+                            }`}
+                          />
+                          {activeDropdownIdx === idx && !row.material_id && row.material_code !== '' && (
+                            <div className="absolute left-0 top-full z-50 w-72 mt-0.5 border rounded-md bg-white shadow-lg max-h-40 overflow-y-auto">
+                              {dropMatches.length === 0
+                                ? <p className="text-[10px] text-slate-400 px-2 py-2 text-center">Không tìm thấy</p>
+                                : dropMatches.map((m: any) => (
+                                  <button key={m.id} type="button"
+                                    onMouseDown={e => e.preventDefault()}
+                                    onClick={() => selectMat(idx, m)}
+                                    className="w-full text-left px-2 py-1.5 hover:bg-blue-50 flex items-center gap-2 border-b border-slate-50 last:border-0"
+                                  >
+                                    <span className="text-[10px] font-mono text-slate-700 shrink-0">{m.material_code}</span>
+                                    <span className="text-[10px] text-slate-500 truncate">{m.short_name}</span>
+                                  </button>
+                                ))
+                              }
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-2 py-1">
+                          {row.mat_name
+                            ? <span className="text-[10px] text-slate-700">{row.mat_name}</span>
+                            : invalid
+                              ? <span className="text-[9px] text-red-400">Không tìm thấy mã</span>
+                              : <span className="text-[9px] text-slate-300">—</span>}
+                        </td>
+                        <td className="px-2 py-1 text-center">
+                          {row.mat_unit
+                            ? <span className="text-[10px] text-slate-500">{row.mat_unit}</span>
+                            : row.material_id
+                              ? <span className="text-[9px] text-amber-500 font-medium">Chưa có</span>
+                              : <span className="text-[10px] text-slate-300">—</span>}
+                        </td>
+                        <td className="px-1.5 py-1">
+                          <input type="number" min="0" value={row.planned_boxes}
+                            onChange={e => setField(idx, 'planned_boxes', e.target.value)}
+                            onPaste={e => handleNumberPaste(idx, 'planned_boxes', e)}
+                            className="w-full h-7 px-1.5 text-[10px] border border-slate-200 rounded text-right bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+                          />
+                        </td>
+                        <td className="px-1.5 py-1">
+                          <input type="number" min="0" value={row.planned_pallets}
+                            onChange={e => setField(idx, 'planned_pallets', e.target.value)}
+                            onPaste={e => handleNumberPaste(idx, 'planned_pallets', e)}
+                            className="w-full h-7 px-1.5 text-[10px] border border-slate-200 rounded text-right bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+                          />
+                        </td>
+                        <td className="px-1.5 py-1">
+                          <input type="text" value={row.po_number}
+                            onChange={e => setField(idx, 'po_number', e.target.value)}
+                            placeholder="PO-..."
+                            className="w-full h-7 px-1.5 text-[10px] border border-slate-200 rounded bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+                          />
+                        </td>
+                        <td className="px-1 py-1 text-center">
+                          <button type="button" onClick={() => removeRow(idx)}
+                            className="text-slate-300 hover:text-red-500 transition-colors" title={row.id ? 'Xóa dòng này khỏi kế hoạch' : 'Bỏ dòng'}>
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <button type="button" onClick={() => setRows(prev => [...prev, emptyEditRow()])}
+            className="text-[10px] text-blue-600 hover:text-blue-800 flex items-center gap-1 transition-colors"
+          >
+            <Plus className="h-3 w-3" /> Thêm dòng hàng
+          </button>
+        </div>
+
+        {err && <p className="text-xs text-red-500">{err}</p>}
+
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={onClose}>Hủy</Button>
+          <Button size="sm" onClick={handleSave} disabled={saving}>
+            {saving ? 'Đang lưu...' : 'Lưu thay đổi'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 // ─── Upload Excel Dialog ──────────────────────────────────────────────────────
 
 type PreviewRow = {
@@ -875,7 +1160,7 @@ export default function InboundPlan() {
 
   const [addOpen,           setAddOpen]           = useState(false)
   const [uploadOpen,        setUploadOpen]        = useState(false)
-  const [editLine,          setEditLine]          = useState<any | null>(null)
+  const [editGroup,         setEditGroup]         = useState<any[] | null>(null)
   const [cancelLineTarget,  setCancelLineTarget]  = useState<any | null>(null)
   const [detailLine,        setDetailLine]        = useState<any | null>(null)
 
@@ -905,6 +1190,18 @@ export default function InboundPlan() {
       return true
     })
   , [lines, whTypeFilter, nccFilter])
+
+  function openEditGroup(line: any) {
+    const group = (filteredLines as any[]).filter(l =>
+      l.status !== 'CANCELLED' &&
+      l.date === line.date &&
+      (l.ncc?.id ?? null) === (line.ncc?.id ?? null) &&
+      l.warehouse_id === line.warehouse_id &&
+      (l.warehouse_type ?? null) === (line.warehouse_type ?? null) &&
+      (l.vehicle_type ?? null) === (line.vehicle_type ?? null)
+    )
+    setEditGroup(group.length > 0 ? group : [line])
+  }
 
   const activeLines  = filteredLines.filter((l: any) => l.status !== 'CANCELLED')
   const cancelledCnt = filteredLines.length - activeLines.length
@@ -1072,9 +1369,9 @@ export default function InboundPlan() {
                       <div className="flex items-center gap-1">
                         {can(perms, 'inbound_plan', 'edit') && (
                           <button
-                            onClick={e => { e.stopPropagation(); setEditLine(line) }}
+                            onClick={e => { e.stopPropagation(); openEditGroup(line) }}
                             className="text-slate-400 hover:text-blue-600 transition-colors"
-                            title="Sửa hàng hóa"
+                            title="Sửa nhóm kế hoạch"
                           >
                             <Pencil className="h-3.5 w-3.5" />
                           </button>
@@ -1110,12 +1407,8 @@ export default function InboundPlan() {
       {/* Dialogs */}
       <AddLineDialog  open={addOpen}    date={dateFrom} warehouseId={warehouseId} onClose={() => setAddOpen(false)} />
       <UploadDialog   open={uploadOpen} date={dateFrom} warehouseId={warehouseId} onClose={() => setUploadOpen(false)} />
-      {editLine && (
-        <EditLineDialog
-          line={editLine}
-          onClose={() => setEditLine(null)}
-          onSaved={updated => { setEditLine(null); if (detailLine?.id === updated.id) setDetailLine(updated) }}
-        />
+      {editGroup && (
+        <EditGroupDialog groupLines={editGroup} onClose={() => setEditGroup(null)} />
       )}
       {cancelLineTarget && (
         <CancelLineDialog
@@ -1142,9 +1435,9 @@ export default function InboundPlan() {
                     <div className="flex items-center gap-1 shrink-0">
                       {can(perms, 'inbound_plan', 'edit') && (
                         <button
-                          onClick={() => setEditLine(detailLine)}
+                          onClick={() => openEditGroup(detailLine)}
                           className="p-1 rounded hover:bg-slate-200 text-slate-400 hover:text-blue-600 transition-colors"
-                          title="Sửa hàng hóa"
+                          title="Sửa nhóm kế hoạch"
                         >
                           <Pencil className="h-3.5 w-3.5" />
                         </button>

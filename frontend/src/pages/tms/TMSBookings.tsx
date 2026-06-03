@@ -341,6 +341,14 @@ const EMPTY_FORM = (date: string, warehouse_id: string): OrderFormData => ({
 
 const ORDER_CODE_RE = /^\d{6}_[A-Za-z0-9]+_\d+$/
 
+type PlanLineRow = {
+  material_code: string; material_id: string; material_name: string
+  unit: string; planned_boxes: string; planned_pallets: string
+}
+const EMPTY_PLAN_LINE = (): PlanLineRow => ({
+  material_code: '', material_id: '', material_name: '', unit: '', planned_boxes: '', planned_pallets: '',
+})
+
 function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseId }: {
   open: boolean; order: TmsOrder | null; onClose: () => void
   defaultDate: string; defaultWarehouseId: string
@@ -351,11 +359,33 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
   const { data: transportCompanies = [] }  = useTransportCompanies(true)
   const createOrder  = useCreateOrder()
   const updateOrder  = useUpdateOrder()
+  const { data: allMats = [] }        = useMaterials()
+  const { mutateAsync: addPlanLines } = useBulkCreatePlanLinesForOrder()
   const isEdit = !!order
 
-  const [form, setForm] = useState<OrderFormData>(EMPTY_FORM(defaultDate, defaultWarehouseId))
+  const [form, setForm]         = useState<OrderFormData>(EMPTY_FORM(defaultDate, defaultWarehouseId))
+  const [planRows, setPlanRows] = useState<PlanLineRow[]>(() => Array.from({ length: 20 }, EMPTY_PLAN_LINE))
+  const [planSaving, setPlanSaving] = useState(false)
   const [err, setErr] = useState('')
   const set = (k: keyof OrderFormData) => (v: string) => setForm(f => ({ ...f, [k]: v }))
+
+  function updatePlanRow(i: number, field: keyof PlanLineRow, value: string) {
+    setPlanRows(prev => {
+      const rows = [...prev]
+      rows[i] = { ...rows[i], [field]: value }
+      if (field === 'material_code') {
+        const mat = (allMats as import('@/types').Material[]).find(m => m.material_code === value.trim())
+        if (mat) {
+          rows[i].material_id   = mat.id
+          rows[i].material_name = (mat as { short_name?: string }).short_name ?? ''
+          rows[i].unit          = (mat as { unit?: string }).unit ?? ''
+        } else {
+          rows[i].material_id = ''; rows[i].material_name = ''; rows[i].unit = ''
+        }
+      }
+      return rows
+    })
+  }
 
   useEffect(() => {
     if (!open) return
@@ -376,6 +406,7 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
       setForm(EMPTY_FORM(defaultDate, defaultWarehouseId))
     }
     setErr('')
+    if (!order) setPlanRows(Array.from({ length: 20 }, EMPTY_PLAN_LINE))
   }, [open, order?.id])
 
   const handleSubmit = async () => {
@@ -398,20 +429,39 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
       priority: form.priority,
     }
     try {
-      if (isEdit && order) await updateOrder.mutateAsync({ id: order.id, ...payload })
-      else await createOrder.mutateAsync(payload)
+      if (isEdit && order) {
+        await updateOrder.mutateAsync({ id: order.id, ...payload })
+      } else {
+        const created = await createOrder.mutateAsync(payload)
+        if (form.direction === 'INBOUND') {
+          const validLines = planRows.filter(r => r.material_id && Number(r.planned_boxes) > 0)
+          if (validLines.length > 0) {
+            setPlanSaving(true)
+            await addPlanLines({
+              tms_order_id: (created as import('@/types').TmsOrder).id,
+              lines: validLines.map(r => ({
+                material_id:   r.material_id,
+                planned_boxes: Number(r.planned_boxes),
+                ...(r.planned_pallets ? { planned_pallets: Number(r.planned_pallets) } : {}),
+              })),
+            })
+            setPlanSaving(false)
+          }
+        }
+      }
       onClose()
     } catch (e: unknown) {
+      setPlanSaving(false)
       const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
       setErr(msg ?? 'Lỗi lưu dữ liệu')
     }
   }
 
-  const isSaving = createOrder.isPending || updateOrder.isPending
+  const isSaving = createOrder.isPending || updateOrder.isPending || planSaving
 
   return (
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className={!isEdit && form.direction === 'INBOUND' ? 'max-w-3xl' : 'max-w-lg'}>
         <DialogHeader><DialogTitle>{isEdit ? 'Sửa đơn hàng' : 'Thêm đơn hàng'}</DialogTitle></DialogHeader>
         <div className="space-y-3 py-2">
           <div className="grid grid-cols-2 gap-3">
@@ -438,19 +488,13 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
             </div>
             <div>
               <Label className="text-xs">Hướng *</Label>
-              {isEdit ? (
-                <Select value={form.direction || '__none__'} onValueChange={v => set('direction')(v === '__none__' ? '' : v as 'OUTBOUND' | 'INBOUND')}>
-                  <SelectTrigger className="h-8 text-sm mt-1"><SelectValue placeholder="Xuất / Nhập" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="OUTBOUND">Xuất hàng</SelectItem>
-                    <SelectItem value="INBOUND">Nhập hàng</SelectItem>
-                  </SelectContent>
-                </Select>
-              ) : (
-                <div className="h-8 mt-1 px-3 flex items-center text-sm border rounded-md bg-slate-50 text-slate-500">
-                  Xuất hàng
-                </div>
-              )}
+              <Select value={form.direction || '__none__'} onValueChange={v => set('direction')(v === '__none__' ? '' : v as 'OUTBOUND' | 'INBOUND')}>
+                <SelectTrigger className="h-8 text-sm mt-1"><SelectValue placeholder="Xuất / Nhập" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="OUTBOUND">Xuất hàng</SelectItem>
+                  <SelectItem value="INBOUND">Nhập hàng</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -512,6 +556,67 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
             <div>
               <Label className="text-xs">Mã GDO</Label>
               <Input value={form.gdo_refs} onChange={e => set('gdo_refs')(e.target.value)} placeholder="GDO-001, GDO-002" className="h-8 text-sm mt-1" />
+            </div>
+          )}
+          {/* Bảng hàng hóa kế hoạch — chỉ hiện khi tạo mới + INBOUND */}
+          {!isEdit && form.direction === 'INBOUND' && (
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <Label className="text-xs font-medium">Hàng hóa kế hoạch nhập</Label>
+                <Button type="button" variant="outline" size="sm" className="h-6 text-[10px] px-2"
+                  onClick={() => setPlanRows(prev => [...prev, EMPTY_PLAN_LINE()])}>
+                  + Thêm dòng
+                </Button>
+              </div>
+              <div className="rounded border overflow-auto max-h-52">
+                <table className="min-w-full">
+                  <thead className="sticky top-0 bg-slate-50">
+                    <tr>
+                      {['#', 'Mã hàng', 'Tên hàng', 'ĐVT', 'SL thùng', 'SL pallet'].map(h => (
+                        <th key={h} className="px-1.5 py-1 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {planRows.map((row, i) => (
+                      <tr key={i} className={`border-t border-slate-100 ${row.material_code && !row.material_id ? 'bg-red-50' : ''}`}>
+                        <td className="px-1.5 py-0.5 text-[9px] text-slate-400">{i + 1}</td>
+                        <td className="px-1 py-0.5">
+                          <Input
+                            value={row.material_code}
+                            onChange={e => updatePlanRow(i, 'material_code', e.target.value)}
+                            className="h-6 text-[10px] font-mono w-28 border-slate-200"
+                            placeholder="Mã hàng"
+                          />
+                        </td>
+                        <td className="px-1.5 py-0.5 text-[10px] text-slate-600 max-w-[140px] truncate">{row.material_name || <span className="text-slate-300">—</span>}</td>
+                        <td className="px-1.5 py-0.5 text-[10px] text-slate-500">{row.unit || <span className="text-slate-300">—</span>}</td>
+                        <td className="px-1 py-0.5">
+                          <Input
+                            type="number" min={1}
+                            value={row.planned_boxes}
+                            onChange={e => updatePlanRow(i, 'planned_boxes', e.target.value)}
+                            className="h-6 text-[10px] w-16 border-slate-200"
+                            placeholder="Thùng"
+                          />
+                        </td>
+                        <td className="px-1 py-0.5">
+                          <Input
+                            type="number" min={0}
+                            value={row.planned_pallets}
+                            onChange={e => updatePlanRow(i, 'planned_pallets', e.target.value)}
+                            className="h-6 text-[10px] w-16 border-slate-200"
+                            placeholder="Pallet"
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {planRows.some(r => r.material_code && !r.material_id) && (
+                <p className="text-[10px] text-amber-600 mt-1">Một số mã hàng không tìm thấy — các dòng này sẽ bị bỏ qua</p>
+              )}
             </div>
           )}
           <div>

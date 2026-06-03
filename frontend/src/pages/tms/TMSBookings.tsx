@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import * as XLSX from 'xlsx'
-import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, CalendarDays, ShieldX, Lock } from 'lucide-react'
+import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, CalendarDays, ShieldX, Lock, FileSpreadsheet, X } from 'lucide-react'
+import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -17,6 +18,7 @@ import {
   useTmsOrders, useCreateOrder, useUpdateOrder, useDeleteOrder, useBulkCreateOrders, useBulkUpdateOrderDate,
   useAddVehicleSlot, useUpdateVehicleSlot, useReleaseVehicleSlot, useRevokeVehicleSlot, useDeleteVehicleSlot,
   usePlanLinesByOrder, usePlanVsActual, useBulkCreatePlanLinesForOrder, useMaterials,
+  useBulkCreatePlanLines,
 } from '@/api/hooks'
 import { formatDate, formatDateTime } from '@/utils/formatters'
 import type { TmsOrder, TmsVehicleSlot, DeliverySlot, TmsVehicleType, TmsVehicle, TransportCompany } from '@/types'
@@ -988,6 +990,226 @@ function ChangeDateDialog({ open, orderIds, currentDate, onClose }: {
   )
 }
 
+// ── Inbound Plan Bulk Upload Dialog (upload Excel toàn bộ KH nhập — list page) ─
+
+type PlanBulkRow = {
+  ncc_code: string; ncc_id: string
+  kho_code: string; kho_id: string
+  warehouse_type: string; vehicle_type: string
+  material_code: string; material_id: string
+  dvt_input: string; mat_unit: string
+  po_number: string; planned_boxes: number | null; planned_pallets: number | null
+  _valid: boolean; _error: string
+}
+
+function InboundPlanBulkUploadDialog({ open, date, warehouseId, onClose }: {
+  open: boolean; date: string; warehouseId: string; onClose: () => void
+}) {
+  const { data: transportCompanies = [] } = useTransportCompanies(true)
+  const { data: materials = [] }          = useMaterials()
+  const { data: warehouses = [] }         = useWarehouses(true)
+  const { data: whTypesData = [] }        = useWarehouseTypes()
+  const { data: vehicleTypes = [] }       = useVehicleTypes(true)
+  const bulkCreate = useBulkCreatePlanLines()
+
+  const [preview, setPreview] = useState<PlanBulkRow[] | null>(null)
+  const [fileName, setFileName] = useState('')
+  const [err, setErr]           = useState('')
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  const nccByCode = new Map(
+    (transportCompanies as import('@/types').TransportCompany[])
+      .filter((c) => (c as unknown as { type?: string }).type === 'NCC')
+      .map((c) => [String((c as unknown as { code?: string }).code ?? '').trim().toUpperCase(), c.id])
+  )
+  const whByCode  = new Map((warehouses as { code: string; id: string }[]).map(w => [String(w.code).trim().toUpperCase(), w.id]))
+  const whTypeSet = new Set(whTypesData.map(t => t.value))
+  const vtNameSet = new Set((vehicleTypes as import('@/types').TmsVehicleType[]).map(vt => String(vt.name)))
+  const matByCode = new Map(
+    (materials as import('@/types').Material[]).map(m => [
+      String(m.material_code).trim(),
+      { id: m.id, unit: (m as unknown as { unit?: string }).unit ?? '' },
+    ])
+  )
+
+  function parseFile(file: File) {
+    const reader = new FileReader()
+    reader.onload = e => {
+      try {
+        const wb = XLSX.read(e.target?.result, { type: 'binary', cellDates: true })
+        const ws = wb.Sheets[wb.SheetNames[0]]
+        const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' })
+        const parsed: PlanBulkRow[] = rows.map((row, i) => {
+          const khoCode  = String(row['Mã kho']    ?? row['kho_code']   ?? '').trim().toUpperCase()
+          const nccCode  = String(row['Mã NCC']    ?? row['NCC']        ?? row['ncc_code'] ?? '').trim().toUpperCase()
+          const whType   = String(row['Loại kho']  ?? row['warehouse_type'] ?? '').trim()
+          const vt       = String(row['Loại xe']   ?? row['vehicle_type']   ?? '').trim()
+          const matCode  = String(row['Mã hàng']   ?? row['material_code']  ?? '').trim()
+          const dvtInput = String(row['ĐVT']       ?? row['unit']           ?? '').trim()
+          const po       = String(row['Số PO']     ?? row['PO']             ?? row['po_number'] ?? '').trim()
+          const boxes    = row['Số thùng']  ?? row['planned_boxes']   ?? null
+          const pallets  = row['Số pallet'] ?? row['planned_pallets'] ?? null
+
+          const khoId   = khoCode ? (whByCode.get(khoCode) ?? '') : warehouseId
+          const nccId   = nccByCode.get(nccCode) ?? ''
+          const matInfo = matByCode.get(matCode)
+          const matId   = matInfo?.id ?? ''
+          const matUnit = matInfo?.unit ?? ''
+
+          let error = ''
+          if (!nccCode)                               error = `Dòng ${i + 2}: thiếu Mã NCC`
+          else if (!nccId)                            error = `Dòng ${i + 2}: NCC "${nccCode}" không tìm thấy`
+          else if (khoCode && !whByCode.has(khoCode)) error = `Dòng ${i + 2}: kho "${khoCode}" không tìm thấy`
+          else if (whType && !whTypeSet.has(whType))  error = `Dòng ${i + 2}: Loại kho "${whType}" không hợp lệ`
+          else if (vt && !vtNameSet.has(vt))          error = `Dòng ${i + 2}: Loại xe "${vt}" không hợp lệ`
+          else if (!matCode)                          error = `Dòng ${i + 2}: thiếu Mã hàng`
+          else if (!matId)                            error = `Dòng ${i + 2}: hàng "${matCode}" không tìm thấy`
+          else if (dvtInput && matUnit && dvtInput.toUpperCase() !== matUnit.toUpperCase())
+                                                      error = `Dòng ${i + 2}: ĐVT "${dvtInput}" ≠ "${matUnit}"`
+
+          return {
+            ncc_code: nccCode, ncc_id: nccId,
+            kho_code: khoCode, kho_id: khoId,
+            warehouse_type: whType, vehicle_type: vt,
+            material_code: matCode, material_id: matId,
+            dvt_input: dvtInput, mat_unit: matUnit,
+            po_number: po,
+            planned_boxes:   boxes   != null && boxes   !== '' ? Number(boxes)   : null,
+            planned_pallets: pallets != null && pallets !== '' ? Number(pallets) : null,
+            _valid: !error, _error: error,
+          }
+        }).filter(r => r.ncc_code || r.material_code)
+        setPreview(parsed)
+        setErr('')
+      } catch { setErr('Không đọc được file Excel') }
+    }
+    reader.readAsBinaryString(file)
+  }
+
+  async function handleConfirm() {
+    if (!preview) return
+    const valid = preview.filter(r => r._valid)
+    if (!valid.length) { setErr('Không có dòng hợp lệ nào'); return }
+    try {
+      const lines = valid.map(r => ({
+        date,
+        warehouse_id:    r.kho_id   || warehouseId,
+        warehouse_type:  r.warehouse_type  || null,
+        vehicle_type:    r.vehicle_type    || null,
+        ncc_id:          r.ncc_id          || null,
+        material_id:     r.material_id     || null,
+        po_number:       r.po_number       || null,
+        planned_boxes:   r.planned_boxes,
+        planned_pallets: r.planned_pallets,
+      }))
+      await bulkCreate.mutateAsync(lines)
+      setPreview(null); setFileName(''); onClose()
+    } catch (e) {
+      const msg = (e as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message
+      setErr(msg ?? 'Lỗi upload')
+    }
+  }
+
+  function downloadTemplate() {
+    const data = [
+      { 'Mã kho': 'KHO1', 'Mã NCC': 'FAST', 'Loại kho': 'TP', 'Loại xe': 'PALLET', 'Mã hàng': '510000127', 'ĐVT': 'CTN', 'Số PO': 'PO-0001', 'Số thùng': 500, 'Số pallet': 10 },
+    ]
+    const ws = XLSX.utils.json_to_sheet(data)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'KH Nhập ngoài')
+    XLSX.writeFile(wb, 'template_ke_hoach_nhap.xlsx')
+  }
+
+  function handleClose() { setPreview(null); setFileName(''); setErr(''); onClose() }
+
+  return (
+    <Dialog open={open} onOpenChange={v => { if (!v) handleClose() }}>
+      <DialogContent className="max-w-3xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-sm">
+            <FileSpreadsheet className="h-4 w-4" /> Upload kế hoạch nhập — ngày {formatDate(date)}
+          </DialogTitle>
+        </DialogHeader>
+
+        {!preview ? (
+          <div className="space-y-3 py-2 text-xs">
+            <p className="text-slate-500">
+              Cột bắt buộc: <strong>Mã NCC</strong>, <strong>Mã hàng</strong>, <strong>Số thùng</strong>.
+              Tuỳ chọn: Mã kho (mặc định = kho đang chọn), Loại kho, Loại xe, ĐVT, Số PO, Số pallet.
+            </p>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={downloadTemplate}>
+                <FileSpreadsheet className="h-3.5 w-3.5 mr-1" /> Tải template
+              </Button>
+              <Button size="sm" onClick={() => fileRef.current?.click()}>
+                <Upload className="h-3.5 w-3.5 mr-1" /> Chọn file
+              </Button>
+              <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden"
+                onChange={e => { const f = e.target.files?.[0]; if (f) { setFileName(f.name); parseFile(f) } }}
+              />
+            </div>
+            {fileName && <p className="text-slate-500">File: {fileName}</p>}
+            {err && <p className="text-red-500">{err}</p>}
+          </div>
+        ) : (
+          <div className="space-y-2 py-1 text-xs">
+            <div className="flex items-center justify-between">
+              <p className="text-slate-500">{preview.filter(r => r._valid).length}/{preview.length} dòng hợp lệ</p>
+              <Button variant="ghost" size="sm" onClick={() => { setPreview(null); setFileName('') }}>
+                <X className="h-3.5 w-3.5 mr-1" /> Chọn lại
+              </Button>
+            </div>
+            <div className="max-h-64 overflow-auto border rounded-md">
+              <table className="min-w-full text-[10px]">
+                <thead className="sticky top-0 bg-slate-50 border-b">
+                  <tr>
+                    {['Kho', 'NCC', 'Loại kho', 'Loại xe', 'Mã hàng', 'ĐVT', 'Thùng', 'Trạng thái'].map(h => (
+                      <th key={h} className="px-2 py-1 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {preview.map((r, i) => (
+                    <tr key={i} className={r._valid ? 'hover:bg-slate-50' : 'bg-red-50'}>
+                      <td className="px-2 py-1 font-mono text-[9px] text-slate-400">{r.kho_code || '(mặc định)'}</td>
+                      <td className="px-2 py-1 font-mono">{r.ncc_code || '—'}</td>
+                      <td className="px-2 py-1">{r.warehouse_type || '—'}</td>
+                      <td className="px-2 py-1">{r.vehicle_type || '—'}</td>
+                      <td className="px-2 py-1 font-mono">{r.material_code || '—'}</td>
+                      <td className="px-2 py-1">
+                        {r.dvt_input && r.mat_unit && r.dvt_input.toUpperCase() !== r.mat_unit.toUpperCase()
+                          ? <span className="text-red-500">{r.dvt_input}</span>
+                          : <span>{r.dvt_input || r.mat_unit || '—'}</span>}
+                      </td>
+                      <td className="px-2 py-1 tabular-nums text-right">{r.planned_boxes ?? '—'}</td>
+                      <td className="px-2 py-1">
+                        {r._valid
+                          ? <span className="text-green-600">✓</span>
+                          : <span className="text-red-500 text-[9px]">{r._error}</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {err && <p className="text-red-500 text-xs">{err}</p>}
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={handleClose}>Hủy</Button>
+          {preview && (
+            <Button size="sm" onClick={handleConfirm}
+              disabled={bulkCreate.isPending || preview.filter(r => r._valid).length === 0}>
+              {bulkCreate.isPending ? 'Đang lưu...' : `Lưu ${preview.filter(r => r._valid).length} dòng`}
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 // ── Upload Plan Lines Dialog (cho INBOUND booking) ───────────────────────────
 
 function UploadPlanLinesDialog({ orderId, onClose }: { orderId: string; onClose: () => void }) {
@@ -1122,8 +1344,33 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound }: {
   canUploadInbound: boolean
 }) {
   const [showUpload, setShowUpload] = useState(false)
-  const { data: planLines = [] } = usePlanLinesByOrder(order?.id ?? null)
+  const [addCode, setAddCode]       = useState('')
+  const [addBoxes, setAddBoxes]     = useState('')
+  const [addPallets, setAddPallets] = useState('')
+  const [addSaving, setAddSaving]   = useState(false)
+  const [addError, setAddError]     = useState('')
+  const { data: planLines = [] }    = usePlanLinesByOrder(order?.id ?? null)
   const { data: planVsActual = [] } = usePlanVsActual(order?.id ?? null)
+  const { data: allMats = [] }      = useMaterials()
+  const { mutateAsync: addLines }   = useBulkCreatePlanLinesForOrder()
+
+  async function handleAddLine() {
+    const mat = (allMats as import('@/types').Material[]).find(m => m.material_code === addCode.trim())
+    if (!mat) { setAddError('Không tìm thấy mã hàng'); return }
+    const boxes = Number(addBoxes)
+    if (!boxes || boxes <= 0) { setAddError('SL thùng phải > 0'); return }
+    setAddSaving(true); setAddError('')
+    try {
+      await addLines({
+        tms_order_id: order!.id,
+        lines: [{ material_id: mat.id, planned_boxes: boxes, ...(addPallets ? { planned_pallets: Number(addPallets) } : {}) }],
+      })
+      setAddCode(''); setAddBoxes(''); setAddPallets('')
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { error?: { message?: string } } } }
+      setAddError(err.response?.data?.error?.message ?? String(e))
+    } finally { setAddSaving(false) }
+  }
 
   if (!order) return null
   const whName = warehouses.find(w => w.id === order.warehouse_id)?.name ?? order.warehouse_id
@@ -1259,6 +1506,30 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound }: {
                   </tbody>
                 </table>
               </div>
+              {/* Form thêm dòng thủ công */}
+              {canUploadInbound && (
+                <div className="mt-2 space-y-1">
+                  <div className="flex gap-1 items-center">
+                    <Input
+                      className="h-7 text-xs font-mono w-36 shrink-0" placeholder="Mã hàng"
+                      value={addCode} onChange={e => { setAddCode(e.target.value); setAddError('') }}
+                    />
+                    <Input
+                      className="h-7 text-xs w-20 shrink-0" placeholder="SL thùng" type="number" min={1}
+                      value={addBoxes} onChange={e => setAddBoxes(e.target.value)}
+                    />
+                    <Input
+                      className="h-7 text-xs w-20 shrink-0" placeholder="SL pallet" type="number" min={1}
+                      value={addPallets} onChange={e => setAddPallets(e.target.value)}
+                    />
+                    <Button size="sm" className="h-7 px-2 shrink-0" onClick={handleAddLine}
+                      disabled={addSaving || !addCode || !addBoxes}>
+                      {addSaving ? '...' : <Plus className="h-3 w-3" />}
+                    </Button>
+                  </div>
+                  {addError && <p className="text-[10px] text-red-500">{addError}</p>}
+                </div>
+              )}
             </section>
           )}
 
@@ -1360,6 +1631,7 @@ export default function TMSBookings() {
 
   const [createOpen, setCreateOpen] = useState(false)
   const [uploadOpen, setUploadOpen] = useState(false)
+  const [inboundPlanUploadOpen, setInboundPlanUploadOpen] = useState(false)
   const [editOrder, setEditOrder] = useState<TmsOrder | null>(null)
   const [detailOrder, setDetailOrder] = useState<TmsOrder | null>(null)
   const [bookingSlot, setBookingSlot] = useState<{ vslot: TmsVehicleSlot; order: TmsOrder } | null>(null)
@@ -1673,9 +1945,14 @@ export default function TMSBookings() {
                 <Eye className="h-3.5 w-3.5 shrink-0" /><span className="hidden sm:inline ml-1">Xem booking</span>
               </Button>
             )}
-            {canUpload && (
+            {can(perms, 'tms_plan', 'upload_outbound') && (
               <Button variant="outline" size="sm" onClick={() => setUploadOpen(true)} className="h-8 px-2">
-                <Upload className="h-3.5 w-3.5 shrink-0" /><span className="hidden sm:inline ml-1">Upload Excel</span>
+                <Upload className="h-3.5 w-3.5 shrink-0" /><span className="hidden sm:inline ml-1">Upload xuất</span>
+              </Button>
+            )}
+            {canUploadInbound && (
+              <Button variant="outline" size="sm" onClick={() => setInboundPlanUploadOpen(true)} className="h-8 px-2">
+                <FileSpreadsheet className="h-3.5 w-3.5 shrink-0" /><span className="hidden sm:inline ml-1">Upload KH nhập</span>
               </Button>
             )}
             {canCreate && (
@@ -2075,6 +2352,12 @@ export default function TMSBookings() {
         defaultDate={date}
         warehouseId={warehouseId}
         warehouseName={warehouseName}
+      />
+      <InboundPlanBulkUploadDialog
+        open={inboundPlanUploadOpen}
+        date={date}
+        warehouseId={warehouseId}
+        onClose={() => setInboundPlanUploadOpen(false)}
       />
       <ExcelUploadDialog
         open={uploadOpen}

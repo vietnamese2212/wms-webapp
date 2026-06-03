@@ -1789,7 +1789,7 @@ export function useActiveGateRegistrations(params?: {
 // ── Inbound Plan Lines (kế hoạch nhập ngoài NCC) ─────────────────────────────
 
 export function useInboundPlanLines(params?: {
-  date?: string; warehouse_id?: string; tms_order_id?: string
+  date?: string; date_from?: string; date_to?: string; warehouse_id?: string; tms_order_id?: string
 }) {
   return useQuery({
     queryKey: ['inbound-plan-lines', params],
@@ -1797,7 +1797,7 @@ export function useInboundPlanLines(params?: {
       const { data } = await apiClient.get('/wms/inbound-plan', { params })
       return data.data as any[]
     },
-    enabled: !!(params?.date && params?.warehouse_id),
+    enabled: !!((params?.date || params?.date_from) && params?.warehouse_id),
   })
 }
 

@@ -94,23 +94,27 @@ async function recalcTmsOrder(tmsOrderId: string): Promise<void> {
   }).eq('id', tmsOrderId)
 }
 
-// GET /api/wms/inbound-plan?date=&warehouse_id=[&tms_order_id=]
+// GET /api/wms/inbound-plan?date_from=&date_to=&warehouse_id=[&tms_order_id=]
+// (cũng nhận date= để backward-compat với UploadDialog)
 export async function listPlanLines(req: Request, res: Response) {
   try {
-    const { date, warehouse_id, tms_order_id } = req.query as Record<string, string>
-    if (!date || !warehouse_id) return fail(res, 'date và warehouse_id là bắt buộc', 400)
+    const { date, date_from, date_to, warehouse_id, tms_order_id } = req.query as Record<string, string>
+    const from = date_from ?? date
+    const to   = date_to   ?? date
+    if (!from || !warehouse_id) return fail(res, 'date_from và warehouse_id là bắt buộc', 400)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let q = (supabase.from('inbound_plan_lines') as any)
       .select(LINE_SELECT)
-      .eq('date', date)
+      .gte('date', from)
+      .lte('date', to)
       .eq('warehouse_id', warehouse_id)
+      .order('date')
       .order('created_at')
 
     if (tms_order_id) q = q.eq('tms_order_id', tms_order_id)
 
     const { data, error } = await q
-
     if (error) return fail(res, error.message)
     return ok(res, data ?? [])
   } catch (e) { return fail(res, String(e)) }

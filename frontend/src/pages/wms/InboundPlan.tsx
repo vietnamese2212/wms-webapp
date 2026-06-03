@@ -48,6 +48,7 @@ function AddLineDialog({ open, date, warehouseId, onClose }: {
 
   const bulkCreate = useBulkCreatePlanLines()
 
+  const [formDate,      setFormDate]      = useState(date)
   const [warehouse,     setWarehouse]     = useState(warehouseId)
   const [warehouseType, setWarehouseType] = useState('')
   const [vehicleType,   setVehicleType]   = useState('')
@@ -58,6 +59,7 @@ function AddLineDialog({ open, date, warehouseId, onClose }: {
 
   useEffect(() => {
     if (open) {
+      setFormDate(date)
       setWarehouse(warehouseId)
       setWarehouseType('')
       setVehicleType('')
@@ -66,7 +68,7 @@ function AddLineDialog({ open, date, warehouseId, onClose }: {
       setRows([emptyRow()])
       setErr('')
     }
-  }, [open, warehouseId])
+  }, [open, date, warehouseId])
 
   const [activeDropdownIdx, setActiveDropdownIdx] = useState<number | null>(null)
 
@@ -155,7 +157,7 @@ function AddLineDialog({ open, date, warehouseId, onClose }: {
     if (missingQty.length)  { setErr('Vui lòng nhập Số thùng cho tất cả hàng'); return }
     try {
       await bulkCreate.mutateAsync(validRows.map(r => ({
-        date, warehouse_id: warehouse,
+        date: formDate, warehouse_id: warehouse,
         warehouse_type:  warehouseType || undefined,
         vehicle_type:    vehicleType   || undefined,
         ncc_id:          nccId         || undefined,
@@ -181,7 +183,16 @@ function AddLineDialog({ open, date, warehouseId, onClose }: {
         {/* Section 1: Thông tin chung */}
         <div className="border rounded-lg bg-slate-50 px-3 py-2.5 space-y-2">
           <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">Thông tin chung</p>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-4 gap-2">
+            <div>
+              <Label className="text-xs">Ngày *</Label>
+              <Input
+                type="date"
+                value={formDate}
+                onChange={e => setFormDate(e.target.value)}
+                className="h-8 text-xs mt-0.5"
+              />
+            </div>
             <div>
               <Label className="text-xs">Kho *</Label>
               <Select value={warehouse || '__none__'} onValueChange={v => setWarehouse(v === '__none__' ? '' : v)}>
@@ -602,7 +613,8 @@ export default function InboundPlan() {
   const user = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
 
-  const [date,        setDate]        = useState(TODAY)
+  const [dateFrom,    setDateFrom]    = useState(TODAY)
+  const [dateTo,      setDateTo]      = useState(TODAY)
   const [warehouseId, setWarehouseId] = useState(user?.warehouse_id ?? (user?.warehouse_ids as string[] | undefined)?.[0] ?? '')
   const [addOpen,      setAddOpen]      = useState(false)
   const [uploadOpen,   setUploadOpen]   = useState(false)
@@ -613,7 +625,7 @@ export default function InboundPlan() {
   const { data: warehouses = [] }   = useWarehouses(true)
   const { data: whTypesData = [] }  = useWarehouseTypes()
   const { data: lines = [], isLoading } = useInboundPlanLines(
-    date && warehouseId ? { date, warehouse_id: warehouseId } : undefined
+    dateFrom && warehouseId ? { date_from: dateFrom, date_to: dateTo || dateFrom, warehouse_id: warehouseId } : undefined
   )
   const deleteLine = useDeletePlanLine()
 
@@ -661,7 +673,9 @@ export default function InboundPlan() {
 
         {/* Filters — all in one row */}
         <div className="flex flex-wrap gap-2 mt-2 items-center">
-          <Input type="date" value={date} onChange={e => setDate(e.target.value)} className="h-7 text-xs w-32" />
+          <Input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); if (dateTo < e.target.value) setDateTo(e.target.value) }} className="h-7 text-xs w-32" />
+          <span className="text-xs text-slate-400">–</span>
+          <Input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); if (dateFrom > e.target.value) setDateFrom(e.target.value) }} className="h-7 text-xs w-32" />
           <Select value={warehouseId} onValueChange={setWarehouseId}>
             <SelectTrigger className="h-7 text-xs w-28">
               <SelectValue placeholder="Chọn kho" />
@@ -787,8 +801,8 @@ export default function InboundPlan() {
       </div>
 
       {/* Dialogs */}
-      <AddLineDialog  open={addOpen}    date={date} warehouseId={warehouseId} onClose={() => setAddOpen(false)} />
-      <UploadDialog   open={uploadOpen} date={date} warehouseId={warehouseId} onClose={() => setUploadOpen(false)} />
+      <AddLineDialog  open={addOpen}    date={dateFrom} warehouseId={warehouseId} onClose={() => setAddOpen(false)} />
+      <UploadDialog   open={uploadOpen} date={dateFrom} warehouseId={warehouseId} onClose={() => setUploadOpen(false)} />
 
       {/* Detail Sheet */}
       <Sheet open={!!detailLine} onOpenChange={open => !open && setDetailLine(null)}>

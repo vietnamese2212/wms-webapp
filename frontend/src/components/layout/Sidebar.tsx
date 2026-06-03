@@ -78,7 +78,7 @@ function NavItemComponent({ item, collapsed }: { item: NavItem; collapsed: boole
   const allItems = navGroups.flatMap(g => g.items)
   const isActive = item.to === '/'
     ? location.pathname === '/'
-    : location.pathname.startsWith(item.to) &&
+    : (location.pathname === item.to || location.pathname.startsWith(item.to + '/')) &&
       !allItems.some(
         other => other.to !== item.to &&
           other.to.startsWith(item.to + '/') &&

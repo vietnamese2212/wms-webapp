@@ -607,6 +607,7 @@ export default function InboundPlan() {
   const [addOpen,      setAddOpen]      = useState(false)
   const [uploadOpen,   setUploadOpen]   = useState(false)
   const [whTypeFilter, setWhTypeFilter] = useState<string[]>([])
+  const [nccFilter,    setNccFilter]    = useState<string[]>([])
   const [detailLine,   setDetailLine]   = useState<any | null>(null)
 
   const { data: warehouses = [] }   = useWarehouses(true)
@@ -616,157 +617,173 @@ export default function InboundPlan() {
   )
   const deleteLine = useDeletePlanLine()
 
-  const filteredLines = useMemo(() =>
-    whTypeFilter.length === 0
-      ? lines as any[]
-      : (lines as any[]).filter(l => whTypeFilter.includes(l.warehouse_type ?? ''))
-  , [lines, whTypeFilter])
+  const whMap = useMemo(() =>
+    new Map((warehouses as any[]).map(w => [w.id, w.code]))
+  , [warehouses])
 
-  // Group by tms_order_id để hiển thị header nhóm
-  const groups = new Map<string, { order: any; lines: any[] }>()
-  for (const line of filteredLines) {
-    const key = line.tms_order_id ?? '__no_order__'
-    if (!groups.has(key)) groups.set(key, { order: line.tms_order, lines: [] })
-    groups.get(key)!.lines.push(line)
-  }
+  const nccOptions = useMemo(() => {
+    const seen = new Map<string, string>()
+    for (const l of lines as any[]) {
+      if (l.ncc?.id) seen.set(l.ncc.id, l.ncc.name ?? l.ncc.code ?? l.ncc.id)
+    }
+    return [...seen.entries()].map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label))
+  }, [lines])
+
+  const filteredLines = useMemo(() =>
+    (lines as any[]).filter(l => {
+      if (whTypeFilter.length > 0 && !whTypeFilter.includes(l.warehouse_type ?? '')) return false
+      if (nccFilter.length > 0 && !nccFilter.includes(l.ncc?.id ?? '')) return false
+      return true
+    })
+  , [lines, whTypeFilter, nccFilter])
 
   const totalPlanned = filteredLines.reduce((s, l) => s + (l.planned_boxes ?? 0), 0)
   const totalLines   = filteredLines.length
+  const uniqueNcc    = new Set(filteredLines.map(l => l.ncc?.id).filter(Boolean)).size
 
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="border-b bg-white px-4 py-3 shrink-0">
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div>
-            <h1 className="text-base font-semibold text-slate-800">Kế hoạch nhập ngoài</h1>
-            <p className="text-xs text-slate-400 mt-0.5">
-              {format(new Date(date + 'T00:00:00'), 'EEEE, dd-MM-yyyy', { locale: vi })}
-            </p>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <Input type="date" value={date} onChange={e => setDate(e.target.value)} className="h-8 text-sm w-36" />
-            <Select value={warehouseId} onValueChange={setWarehouseId}>
-              <SelectTrigger className="h-8 text-sm w-32">
-                <SelectValue placeholder="Chọn kho" />
-              </SelectTrigger>
-              <SelectContent>
-                {(warehouses as { id: string; name: string; code: string }[]).map(w => (
-                  <SelectItem key={w.id} value={w.id}>{w.code} – {w.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {can(perms, 'inbound_plan', 'create') && (
-              <>
-                <Button size="sm" variant="outline" onClick={() => setUploadOpen(true)}>
-                  <Upload className="h-3.5 w-3.5 mr-1" /> Upload Excel
-                </Button>
-                <Button size="sm" onClick={() => setAddOpen(true)}>
-                  <Plus className="h-3.5 w-3.5 mr-1" /> Thêm dòng
-                </Button>
-              </>
-            )}
-          </div>
+      <div className="border-b bg-white px-3 py-2 shrink-0">
+        <div className="flex items-center justify-between gap-2">
+          <h1 className="text-base font-semibold text-slate-800">Kế hoạch nhập ngoài</h1>
+          {can(perms, 'inbound_plan', 'create') && (
+            <div className="flex items-center gap-1.5 shrink-0">
+              <Button size="sm" variant="outline" onClick={() => setUploadOpen(true)}>
+                <Upload className="h-3.5 w-3.5 mr-1" /> Upload Excel
+              </Button>
+              <Button size="sm" onClick={() => setAddOpen(true)}>
+                <Plus className="h-3.5 w-3.5 mr-1" /> Thêm dòng
+              </Button>
+            </div>
+          )}
         </div>
 
-        {/* Filters */}
+        {/* Filters — all in one row */}
         <div className="flex flex-wrap gap-2 mt-2 items-center">
+          <Input type="date" value={date} onChange={e => setDate(e.target.value)} className="h-7 text-xs w-32" />
+          <Select value={warehouseId} onValueChange={setWarehouseId}>
+            <SelectTrigger className="h-7 text-xs w-28">
+              <SelectValue placeholder="Chọn kho" />
+            </SelectTrigger>
+            <SelectContent>
+              {(warehouses as { id: string; name: string; code: string }[]).map(w => (
+                <SelectItem key={w.id} value={w.id}>{w.code} – {w.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <MultiSelectFilter
             label="Loại kho"
             options={whTypesData.map(t => ({ value: t.value, label: t.value }))}
             selected={whTypeFilter}
             onChange={setWhTypeFilter}
           />
+          <MultiSelectFilter
+            label="ĐVVT"
+            options={nccOptions}
+            selected={nccFilter}
+            onChange={setNccFilter}
+            searchable
+          />
         </div>
 
         {/* Summary */}
-        <div className="flex gap-4 mt-2 text-xs">
+        <div className="flex gap-4 mt-1.5 text-xs">
           <span className="text-slate-500">Tổng dòng: <strong className="text-slate-700">{totalLines}</strong></span>
-          <span className="text-slate-500">Tổng thùng KH: <strong className="text-blue-700">{totalPlanned.toLocaleString()}</strong></span>
-          <span className="text-slate-500">Nhóm xe: <strong className="text-slate-700">{groups.size}</strong></span>
+          <span className="text-slate-500">Tổng SL KH: <strong className="text-blue-700">{totalPlanned.toLocaleString()}</strong></span>
+          <span className="text-slate-500">ĐVVT: <strong className="text-slate-700">{uniqueNcc}</strong></span>
         </div>
       </div>
 
       {/* Table */}
       <div className="flex-1 overflow-auto pb-20 lg:pb-4">
-        <div className="overflow-x-auto">
-          <Table className="min-w-full text-[10px]">
-            <TableHeader>
+        <Table className="min-w-full">
+          <TableHeader>
+            <TableRow>
+              <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Ngày</TableHead>
+              <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Kho</TableHead>
+              <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">ĐVVT</TableHead>
+              <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Mã hàng</TableHead>
+              <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Tên hàng</TableHead>
+              <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">ĐVT</TableHead>
+              <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap text-right">SL KH</TableHead>
+              <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap text-right">SL nhận</TableHead>
+              <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Booking</TableHead>
+              <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Loại kho</TableHead>
+              <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Loại xe</TableHead>
+              <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap w-8" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {isLoading && (
+              <TableRow><TableCell colSpan={12} className="px-3 py-6 text-center text-slate-400">Đang tải...</TableCell></TableRow>
+            )}
+            {!isLoading && filteredLines.length === 0 && (
               <TableRow>
-                {['ĐVVT', 'Loại xe', 'Loại kho', 'Mã hàng', 'Tên hàng', 'Số PO', 'KH thùng', 'KH pallet', 'Booking', ''].map(h => (
-                  <TableHead key={h} className="text-[9px] px-2 py-1.5 whitespace-nowrap">{h}</TableHead>
-                ))}
+                <TableCell colSpan={12} className="px-3 py-10 text-center text-slate-400">
+                  Chưa có kế hoạch nhập — nhấn <strong>Upload Excel</strong> hoặc <strong>Thêm dòng</strong>
+                </TableCell>
               </TableRow>
-            </TableHeader>
-            <TableBody>
-              {isLoading && (
-                <TableRow><TableCell colSpan={10} className="px-3 py-6 text-center text-slate-400">Đang tải...</TableCell></TableRow>
-              )}
-              {!isLoading && groups.size === 0 && (
-                <TableRow>
-                  <TableCell colSpan={10} className="px-3 py-10 text-center text-slate-400">
-                    Chưa có kế hoạch nhập — nhấn <strong>Upload Excel</strong> hoặc <strong>Thêm dòng</strong>
+            )}
+            {filteredLines.map((line: any) => {
+              const order = line.tms_order
+              return (
+                <TableRow
+                  key={line.id}
+                  className={`cursor-pointer ${detailLine?.id === line.id ? 'bg-blue-50 hover:bg-blue-50' : 'hover:bg-slate-50'}`}
+                  onClick={() => setDetailLine((prev: any) => prev?.id === line.id ? null : line)}
+                >
+                  <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] font-mono text-slate-500">
+                    {format(new Date(line.date + 'T00:00:00'), 'dd-MM-yy')}
+                  </TableCell>
+                  <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] font-mono text-slate-500">
+                    {whMap.get(line.warehouse_id) ?? <span className="text-slate-300">—</span>}
+                  </TableCell>
+                  <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] font-semibold">
+                    {line.ncc?.name ?? line.ncc?.code ?? <span className="text-slate-300">—</span>}
+                  </TableCell>
+                  <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] font-mono font-semibold">
+                    {line.material?.material_code ?? <span className="text-slate-300">—</span>}
+                  </TableCell>
+                  <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] text-slate-600 max-w-[180px] truncate">
+                    {line.material?.short_name ?? <span className="text-slate-300">—</span>}
+                  </TableCell>
+                  <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] text-slate-500">
+                    {line.material?.unit ?? <span className="text-slate-300">—</span>}
+                  </TableCell>
+                  <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] font-semibold tabular-nums text-right">
+                    {line.planned_boxes != null ? line.planned_boxes.toLocaleString() : <span className="text-slate-300">—</span>}
+                  </TableCell>
+                  <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] tabular-nums text-right text-slate-500">
+                    {line.actual_boxes != null ? line.actual_boxes.toLocaleString() : <span className="text-slate-300">—</span>}
+                  </TableCell>
+                  <TableCell className="px-2 py-1 whitespace-nowrap">
+                    {order
+                      ? <span className="text-[9px] px-1.5 py-0.5 rounded bg-green-100 text-green-700 font-mono">{order.status}</span>
+                      : <span className="text-[9px] text-slate-300">—</span>
+                    }
+                  </TableCell>
+                  <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] text-slate-500">
+                    {line.warehouse_type ?? <span className="text-slate-300">—</span>}
+                  </TableCell>
+                  <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] text-slate-500">
+                    {line.vehicle_type ?? <span className="text-slate-300">—</span>}
+                  </TableCell>
+                  <TableCell className="px-2 py-1 whitespace-nowrap" onClick={e => e.stopPropagation()}>
+                    {can(perms, 'inbound_plan', 'delete') && (
+                      <button
+                        onClick={e => { e.stopPropagation(); if (confirm('Xóa dòng này?')) deleteLine.mutate(line.id) }}
+                        className="text-red-400 hover:text-red-600 transition-colors"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                   </TableCell>
                 </TableRow>
-              )}
-              {[...groups.entries()].map(([key, group]) => {
-                const order = group.order
-                const groupBoxes   = group.lines.reduce((s, l) => s + (l.planned_boxes ?? 0), 0)
-                return group.lines.map((line: any, li: number) => {
-                  const isFirst = li === 0
-                  return (
-                    <TableRow
-                      key={line.id}
-                      className={`cursor-pointer ${isFirst ? 'border-t-2 border-slate-200' : ''} ${detailLine?.id === line.id ? 'bg-blue-50 hover:bg-blue-50' : 'hover:bg-slate-50'}`}
-                      onClick={() => setDetailLine((prev: any) => prev?.id === line.id ? null : line)}
-                    >
-                      {isFirst ? (
-                        <>
-                          <TableCell rowSpan={group.lines.length} className="px-2 py-1 font-semibold align-top border-r border-slate-100">
-                            {line.ncc?.name ?? line.ncc?.code ?? '—'}
-                            {order && (
-                              <div className="text-[9px] text-slate-400 font-mono mt-0.5">{order.order_code}</div>
-                            )}
-                          </TableCell>
-                          <TableCell rowSpan={group.lines.length} className="px-2 py-1 text-slate-500 align-top border-r border-slate-100">
-                            {line.vehicle_type || '—'}
-                            {groupBoxes > 0 && (
-                              <div className="text-[9px] text-blue-600 font-semibold mt-0.5">{groupBoxes.toLocaleString()} thùng</div>
-                            )}
-                          </TableCell>
-                          <TableCell rowSpan={group.lines.length} className="px-2 py-1 text-slate-500 align-top border-r border-slate-100">
-                            {line.warehouse_type || '—'}
-                          </TableCell>
-                        </>
-                      ) : null}
-                      <TableCell className="px-2 py-1 font-mono">{line.material?.material_code ?? '—'}</TableCell>
-                      <TableCell className="px-2 py-1 text-slate-600">{line.material?.short_name ?? '—'}</TableCell>
-                      <TableCell className="px-2 py-1 text-blue-600 font-mono">{line.po_number || '—'}</TableCell>
-                      <TableCell className="px-2 py-1 tabular-nums font-semibold text-right">{line.planned_boxes?.toLocaleString() ?? '—'}</TableCell>
-                      <TableCell className="px-2 py-1 tabular-nums text-right text-slate-500">{line.planned_pallets ?? '—'}</TableCell>
-                      <TableCell className="px-2 py-1">
-                        {order
-                          ? <span className="text-[9px] px-1.5 py-0.5 rounded bg-green-100 text-green-700 font-mono">{order.status}</span>
-                          : <span className="text-[9px] text-slate-400">Chưa tạo</span>
-                        }
-                      </TableCell>
-                      <TableCell className="px-2 py-1" onClick={e => e.stopPropagation()}>
-                        {can(perms, 'inbound_plan', 'delete') && (
-                          <button
-                            onClick={e => { e.stopPropagation(); if (confirm('Xóa dòng này?')) deleteLine.mutate(line.id) }}
-                            className="text-red-400 hover:text-red-600 transition-colors"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  )
-                })
-              })}
-            </TableBody>
-          </Table>
-        </div>
+              )
+            })}
+          </TableBody>
+        </Table>
       </div>
 
       {/* Dialogs */}

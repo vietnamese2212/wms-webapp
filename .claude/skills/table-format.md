@@ -134,6 +134,89 @@ const displayItems = (() => {
 - **Single select**: `<Select>` shadcn — sentinel `'__all__'` thay vì `''` (Radix crash với `value=""`)
 - **Date range bug**: khi có cả `dateFrom` và `dateTo`, gửi `date_from` + `date_to` (không gửi `date`); backend dùng `gte/lte`. Nếu chỉ có `date`, gửi `date` → backend `eq`.
 
+## Detail Sheet (right slide-in)
+
+Pattern: click row → Sheet trượt từ phải, hiển thị chi tiết đầy đủ. Click lại row đã chọn → đóng.
+
+**Import:**
+```tsx
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+```
+
+**DRow helper** — render label + value (khai báo ở module level):
+```tsx
+function DRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex gap-2 text-xs py-1 border-b border-slate-100 last:border-0">
+      <span className="w-28 shrink-0 text-slate-400">{label}</span>
+      <span className="font-medium text-slate-700 break-words min-w-0">
+        {value ?? <span className="text-slate-300">—</span>}
+      </span>
+    </div>
+  )
+}
+```
+
+**State + TableRow:**
+```tsx
+const [detailItem, setDetailItem] = useState<ItemType | null>(null)
+
+// TableRow — clickable, highlight khi chọn:
+<TableRow
+  className={`cursor-pointer hover:bg-slate-50 ${detailItem?.id === item.id ? 'bg-blue-50 hover:bg-blue-50' : ''}`}
+  onClick={() => setDetailItem(prev => prev?.id === item.id ? null : item)}
+>
+
+// Cell action (delete/edit) — PHẢI có stopPropagation:
+<TableCell className="px-2 py-1" onClick={e => e.stopPropagation()}>
+```
+
+**Sheet JSX** (đặt cuối return, sau Dialogs):
+```tsx
+<Sheet open={!!detailItem} onOpenChange={open => !open && setDetailItem(null)}>
+  <SheetContent side="right" className="w-80 sm:w-96 p-0 flex flex-col">
+    {detailItem && (
+      <>
+        <SheetHeader className="px-4 py-3 border-b bg-slate-50 shrink-0">
+          <div className="flex items-start gap-2 pr-6">
+            <div className="min-w-0">
+              <SheetTitle className="text-sm font-mono">{detailItem.code}</SheetTitle>
+              <p className="text-xs text-slate-500 mt-0.5 truncate">{detailItem.name}</p>
+            </div>
+          </div>
+        </SheetHeader>
+        <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+          <div>
+            <p className="text-[10px] font-medium text-slate-500 mb-1.5">Section title</p>
+            <div className="space-y-0">
+              <DRow label="Field" value={detailItem.field} />
+            </div>
+          </div>
+          {/* Audit section */}
+          <div>
+            <p className="text-[10px] font-medium text-slate-500 mb-1.5">Lịch sử</p>
+            <div className="space-y-0">
+              <DRow label="Tạo lúc" value={detailItem.created_at
+                ? `${formatTimestampDate(detailItem.created_at)} ${formatTimestampTime(detailItem.created_at)}`
+                : null} />
+              <DRow label="Sửa lúc" value={detailItem.updated_at
+                ? `${formatTimestampDate(detailItem.updated_at)} ${formatTimestampTime(detailItem.updated_at)}`
+                : null} />
+            </div>
+          </div>
+        </div>
+      </>
+    )}
+  </SheetContent>
+</Sheet>
+```
+
+**Quy tắc section:**
+- Header Sheet: `font-mono` cho code/ID, `text-xs text-slate-500` cho mô tả phụ
+- Mỗi nhóm field = 1 `<div>` với `<p text-[10px]>` tiêu đề + `<div space-y-0>` chứa DRow
+- `DRow label` width cố định `w-28` — đảm bảo alignment nhất quán
+- Timestamp dùng `formatTimestampDate` + `formatTimestampTime` từ `@/utils/formatters`
+
 ## Checklist khi tạo table mới
 
 - [ ] Container: `overflow-auto` duy nhất — KHÔNG bọc thêm `overflow-x-auto` (vỡ sticky)

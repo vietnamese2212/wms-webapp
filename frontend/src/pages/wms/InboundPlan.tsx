@@ -15,6 +15,9 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
+import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import type { AxiosError } from 'axios'
 
 const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -581,6 +584,18 @@ function UploadDialog({ open, date, warehouseId, onClose }: {
   )
 }
 
+// ─── Detail helper ───────────────────────────────────────────────────────────
+function DRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex gap-2 text-xs py-1 border-b border-slate-100 last:border-0">
+      <span className="w-28 shrink-0 text-slate-400">{label}</span>
+      <span className="font-medium text-slate-700 break-words min-w-0">
+        {value ?? <span className="text-slate-300">—</span>}
+      </span>
+    </div>
+  )
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function InboundPlan() {
@@ -589,25 +604,34 @@ export default function InboundPlan() {
 
   const [date,        setDate]        = useState(TODAY)
   const [warehouseId, setWarehouseId] = useState(user?.warehouse_id ?? (user?.warehouse_ids as string[] | undefined)?.[0] ?? '')
-  const [addOpen,     setAddOpen]     = useState(false)
-  const [uploadOpen,  setUploadOpen]  = useState(false)
+  const [addOpen,      setAddOpen]      = useState(false)
+  const [uploadOpen,   setUploadOpen]   = useState(false)
+  const [whTypeFilter, setWhTypeFilter] = useState<string[]>([])
+  const [detailLine,   setDetailLine]   = useState<any | null>(null)
 
-  const { data: warehouses = [] } = useWarehouses(true)
+  const { data: warehouses = [] }   = useWarehouses(true)
+  const { data: whTypesData = [] }  = useWarehouseTypes()
   const { data: lines = [], isLoading } = useInboundPlanLines(
     date && warehouseId ? { date, warehouse_id: warehouseId } : undefined
   )
   const deleteLine = useDeletePlanLine()
 
+  const filteredLines = useMemo(() =>
+    whTypeFilter.length === 0
+      ? lines as any[]
+      : (lines as any[]).filter(l => whTypeFilter.includes(l.warehouse_type ?? ''))
+  , [lines, whTypeFilter])
+
   // Group by tms_order_id để hiển thị header nhóm
   const groups = new Map<string, { order: any; lines: any[] }>()
-  for (const line of lines as any[]) {
+  for (const line of filteredLines) {
     const key = line.tms_order_id ?? '__no_order__'
     if (!groups.has(key)) groups.set(key, { order: line.tms_order, lines: [] })
     groups.get(key)!.lines.push(line)
   }
 
-  const totalPlanned = (lines as any[]).reduce((s, l) => s + (l.planned_boxes ?? 0), 0)
-  const totalLines   = (lines as any[]).length
+  const totalPlanned = filteredLines.reduce((s, l) => s + (l.planned_boxes ?? 0), 0)
+  const totalLines   = filteredLines.length
 
   return (
     <div className="flex flex-col h-full">
@@ -643,6 +667,16 @@ export default function InboundPlan() {
               </>
             )}
           </div>
+        </div>
+
+        {/* Filters */}
+        <div className="flex flex-wrap gap-2 mt-2 items-center">
+          <MultiSelectFilter
+            label="Loại kho"
+            options={whTypesData.map(t => ({ value: t.value, label: t.value }))}
+            selected={whTypeFilter}
+            onChange={setWhTypeFilter}
+          />
         </div>
 
         {/* Summary */}
@@ -681,7 +715,11 @@ export default function InboundPlan() {
                 return group.lines.map((line: any, li: number) => {
                   const isFirst = li === 0
                   return (
-                    <TableRow key={line.id} className={isFirst ? 'border-t-2 border-slate-200' : ''}>
+                    <TableRow
+                      key={line.id}
+                      className={`cursor-pointer ${isFirst ? 'border-t-2 border-slate-200' : ''} ${detailLine?.id === line.id ? 'bg-blue-50 hover:bg-blue-50' : 'hover:bg-slate-50'}`}
+                      onClick={() => setDetailLine((prev: any) => prev?.id === line.id ? null : line)}
+                    >
                       {isFirst ? (
                         <>
                           <TableCell rowSpan={group.lines.length} className="px-2 py-1 font-semibold align-top border-r border-slate-100">
@@ -712,10 +750,10 @@ export default function InboundPlan() {
                           : <span className="text-[9px] text-slate-400">Chưa tạo</span>
                         }
                       </TableCell>
-                      <TableCell className="px-2 py-1">
+                      <TableCell className="px-2 py-1" onClick={e => e.stopPropagation()}>
                         {can(perms, 'inbound_plan', 'delete') && (
                           <button
-                            onClick={() => { if (confirm('Xóa dòng này?')) deleteLine.mutate(line.id) }}
+                            onClick={e => { e.stopPropagation(); if (confirm('Xóa dòng này?')) deleteLine.mutate(line.id) }}
                             className="text-red-400 hover:text-red-600 transition-colors"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
@@ -734,6 +772,73 @@ export default function InboundPlan() {
       {/* Dialogs */}
       <AddLineDialog  open={addOpen}    date={date} warehouseId={warehouseId} onClose={() => setAddOpen(false)} />
       <UploadDialog   open={uploadOpen} date={date} warehouseId={warehouseId} onClose={() => setUploadOpen(false)} />
+
+      {/* Detail Sheet */}
+      <Sheet open={!!detailLine} onOpenChange={open => !open && setDetailLine(null)}>
+        <SheetContent side="right" className="w-80 sm:w-96 p-0 flex flex-col">
+          {detailLine && (
+            <>
+              <SheetHeader className="px-4 py-3 border-b bg-slate-50 shrink-0">
+                <div className="flex items-start gap-2 pr-6">
+                  <div className="min-w-0">
+                    <SheetTitle className="text-sm font-mono">{detailLine.material?.material_code ?? '—'}</SheetTitle>
+                    <p className="text-xs text-slate-500 mt-0.5 truncate">{detailLine.material?.short_name ?? ''}</p>
+                  </div>
+                </div>
+              </SheetHeader>
+              <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+                <div>
+                  <p className="text-[10px] font-medium text-slate-500 mb-1.5">Kế hoạch</p>
+                  <div className="space-y-0">
+                    <DRow label="KH thùng"  value={detailLine.planned_boxes != null ? detailLine.planned_boxes.toLocaleString() : null} />
+                    <DRow label="KH pallet" value={detailLine.planned_pallets} />
+                    <DRow label="Số PO"     value={detailLine.po_number} />
+                    <DRow label="Loại kho"  value={detailLine.warehouse_type} />
+                    <DRow label="Loại xe"   value={detailLine.vehicle_type} />
+                  </div>
+                </div>
+                <div>
+                  <p className="text-[10px] font-medium text-slate-500 mb-1.5">Hàng hóa</p>
+                  <div className="space-y-0">
+                    <DRow label="Mã hàng"  value={<span className="font-mono">{detailLine.material?.material_code}</span>} />
+                    <DRow label="Tên hàng" value={detailLine.material?.short_name} />
+                    <DRow label="ĐVT"      value={detailLine.material?.unit} />
+                  </div>
+                </div>
+                <div>
+                  <p className="text-[10px] font-medium text-slate-500 mb-1.5">ĐVVT / NCC</p>
+                  <div className="space-y-0">
+                    <DRow label="Tên" value={detailLine.ncc?.name} />
+                    <DRow label="Mã"  value={detailLine.ncc?.code} />
+                  </div>
+                </div>
+                {detailLine.tms_order && (
+                  <div>
+                    <p className="text-[10px] font-medium text-slate-500 mb-1.5">Lệnh TMS</p>
+                    <div className="space-y-0">
+                      <DRow label="Mã lệnh"    value={<span className="font-mono">{detailLine.tms_order.order_code}</span>} />
+                      <DRow label="Trạng thái" value={detailLine.tms_order.status} />
+                    </div>
+                  </div>
+                )}
+                {(detailLine.created_at || detailLine.updated_at) && (
+                  <div>
+                    <p className="text-[10px] font-medium text-slate-500 mb-1.5">Lịch sử</p>
+                    <div className="space-y-0">
+                      {detailLine.created_at && (
+                        <DRow label="Tạo lúc" value={`${formatTimestampDate(detailLine.created_at)} ${formatTimestampTime(detailLine.created_at)}`} />
+                      )}
+                      {detailLine.updated_at && (
+                        <DRow label="Sửa lúc" value={`${formatTimestampDate(detailLine.updated_at)} ${formatTimestampTime(detailLine.updated_at)}`} />
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </SheetContent>
+      </Sheet>
     </div>
   )
 }

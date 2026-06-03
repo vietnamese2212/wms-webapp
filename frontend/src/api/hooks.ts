@@ -1852,6 +1852,18 @@ export function useDeletePlanLine() {
   })
 }
 
+export function useCancelPlanLine() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, cancel_reason }: { id: string; cancel_reason: string }) =>
+      apiClient.patch(`/wms/inbound-plan/${id}/cancel`, { cancel_reason }).then(r => r.data.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['inbound-plan-lines'] })
+      qc.invalidateQueries({ queryKey: ['tms-orders'] })
+    },
+  })
+}
+
 export function useDeleteVehicleSlot() {
   const qc = useQueryClient()
   return useMutation({

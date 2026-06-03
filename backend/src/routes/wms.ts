@@ -48,8 +48,9 @@ router.delete('/zones/:id',  requirePerm('wms_settings', 'manage'), zone.deleteZ
 router.get('/inbound-plan',         requirePerm('inbound_plan', 'view'),   inboundPlan.listPlanLines)
 router.post('/inbound-plan',        requirePerm('inbound_plan', 'create'), inboundPlan.createPlanLine)
 router.post('/inbound-plan/bulk',   requirePerm('inbound_plan', 'create'), inboundPlan.bulkCreatePlanLines)
-router.patch('/inbound-plan/:id',   requirePerm('inbound_plan', 'edit'),   inboundPlan.updatePlanLine)
-router.delete('/inbound-plan/:id',  requirePerm('inbound_plan', 'delete'), inboundPlan.deletePlanLine)
+router.patch('/inbound-plan/:id',        requirePerm('inbound_plan', 'edit'),   inboundPlan.updatePlanLine)
+router.patch('/inbound-plan/:id/cancel', requirePerm('inbound_plan', 'cancel'), inboundPlan.cancelPlanLine)
+router.delete('/inbound-plan/:id',       requirePerm('inbound_plan', 'delete'), inboundPlan.deletePlanLine)
 
 // Inbound orders (phiếu nhập kho)
 router.get('/inbound-orders',                           inbound.listOrders)

@@ -1562,6 +1562,8 @@ export default function TMSBookings() {
                 const isConsolidated = !!vslot.consolidation_group_id
                 const isGroupHovered = spanRowKeys.includes(hoveredRow ?? '')
                 const rowTextCls = (() => {
+                  // TmsOrder bị hủy (do INBOUND NCC không tới / kế hoạch bị cancel)
+                  if (order.status === 'CANCELLED') return 'text-slate-400 line-through opacity-60'
                   // Gate status overrides booking status
                   if (vslot.gate_export_status === 'Đã xuất')   return 'text-[#4A90D9] line-through'
                   if (vslot.gate_export_status === 'Đang xuất') return 'text-[#D8891C]'

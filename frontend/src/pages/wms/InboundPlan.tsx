@@ -2,12 +2,12 @@ import React, { useState, useRef, useEffect, useMemo } from 'react'
 import * as XLSX from 'xlsx'
 import { format } from 'date-fns'
 import { vi } from 'date-fns/locale'
-import { Plus, Upload, Trash2, FileSpreadsheet, X, Pencil } from 'lucide-react'
+import { Plus, Upload, Trash2, FileSpreadsheet, X, Pencil, Ban } from 'lucide-react'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import {
   useWarehouses, useWarehouseTypes, useVehicleTypes, useTransportCompanies,
-  useMaterials, useInboundPlanLines, useBulkCreatePlanLines, useUpdatePlanLine, useDeletePlanLine,
+  useMaterials, useInboundPlanLines, useBulkCreatePlanLines, useUpdatePlanLine, useDeletePlanLine, useCancelPlanLine,
 } from '@/api/hooks'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
@@ -393,17 +393,12 @@ function AddLineDialog({ open, date, warehouseId, onClose }: {
   )
 }
 
-// ─── Edit Line Dialog ─────────────────────────────────────────────────────────
+// ─── Edit Line Dialog (chỉ sửa hàng hóa — không sửa lịch/NCC) ───────────────
 
 function EditLineDialog({ line, onClose, onSaved }: {
   line: any; onClose: () => void; onSaved: (updated: any) => void
 }) {
-  const canEditGrouping = !line.tms_order || line.tms_order.status === 'PENDING'
-
-  const { data: materials = [] }           = useMaterials()
-  const { data: whTypesData = [] }         = useWarehouseTypes()
-  const { data: vehicleTypes = [] }        = useVehicleTypes(true)
-  const { data: transportCompanies = [] }  = useTransportCompanies(true)
+  const { data: materials = [] } = useMaterials()
   const updateLine = useUpdatePlanLine()
 
   const matByCode = useMemo(() =>
@@ -411,7 +406,6 @@ function EditLineDialog({ line, onClose, onSaved }: {
     [materials]
   )
 
-  // Non-grouping
   const [matCode,        setMatCode]        = useState(line.material?.material_code ?? '')
   const [matId,          setMatId]          = useState(line.material_id ?? '')
   const [matName,        setMatName]        = useState(line.material?.short_name ?? '')
@@ -419,14 +413,7 @@ function EditLineDialog({ line, onClose, onSaved }: {
   const [plannedBoxes,   setPlannedBoxes]   = useState(String(line.planned_boxes ?? ''))
   const [plannedPallets, setPlannedPallets] = useState(String(line.planned_pallets ?? ''))
   const [showDrop,       setShowDrop]       = useState(false)
-
-  // Grouping (chỉ dùng khi canEditGrouping)
-  const [formDate,      setFormDate]      = useState(line.date ?? '')
-  const [warehouseType, setWarehouseType] = useState(line.warehouse_type ?? '')
-  const [vehicleType,   setVehicleType]   = useState(line.vehicle_type ?? '')
-  const [nccId,         setNccId]         = useState(line.ncc_id ?? line.ncc?.id ?? '')
-
-  const [err, setErr] = useState('')
+  const [err,            setErr]            = useState('')
 
   function handleCodeChange(code: string) {
     const found = matByCode.get(code.trim().toUpperCase())
@@ -456,12 +443,6 @@ function EditLineDialog({ line, onClose, onSaved }: {
         po_number:       poNumber      || undefined,
         planned_boxes:   plannedBoxes   ? Number(plannedBoxes)   : undefined,
         planned_pallets: plannedPallets ? Number(plannedPallets) : undefined,
-        ...(canEditGrouping && {
-          date:           formDate      || undefined,
-          warehouse_type: warehouseType || null,
-          vehicle_type:   vehicleType   || null,
-          ncc_id:         nccId         || null,
-        }),
       })
       onSaved(updated)
     } catch (e) {
@@ -475,63 +456,19 @@ function EditLineDialog({ line, onClose, onSaved }: {
       <DialogContent className="max-w-sm">
         <DialogHeader><DialogTitle>Sửa dòng kế hoạch</DialogTitle></DialogHeader>
 
-        {/* Section 1: Grouping */}
-        <div className="border rounded-lg bg-slate-50 px-3 py-2.5 space-y-2">
-          <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">
-            Thông tin vận chuyển
-            {!canEditGrouping && <span className="ml-2 text-amber-500 normal-case font-normal">· Lệnh TMS đang xử lý</span>}
-          </p>
-          {canEditGrouping ? (
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <Label className="text-xs">Ngày</Label>
-                <Input type="date" value={formDate} onChange={e => setFormDate(e.target.value)} className="h-8 text-xs mt-0.5" />
-              </div>
-              <div>
-                <Label className="text-xs">ĐVVT / NCC</Label>
-                <Select value={nccId || '__none__'} onValueChange={v => setNccId(v === '__none__' ? '' : v)}>
-                  <SelectTrigger className="h-8 text-xs mt-0.5"><SelectValue placeholder="Chọn ĐVVT" /></SelectTrigger>
-                  <SelectContent>
-                    {(transportCompanies as any[]).map(c => (
-                      <SelectItem key={c.id} value={c.id}>{c.code} — {c.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label className="text-xs">Loại kho</Label>
-                <Select value={warehouseType || '__none__'} onValueChange={v => setWarehouseType(v === '__none__' ? '' : v)}>
-                  <SelectTrigger className="h-8 text-xs mt-0.5"><SelectValue placeholder="— Không chọn —" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">— Không chọn —</SelectItem>
-                    {whTypesData.map(t => <SelectItem key={t.id} value={t.value}>{t.value}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label className="text-xs">Loại xe</Label>
-                <Select value={vehicleType || '__none__'} onValueChange={v => setVehicleType(v === '__none__' ? '' : v)}>
-                  <SelectTrigger className="h-8 text-xs mt-0.5"><SelectValue placeholder="— Không chọn —" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">— Không chọn —</SelectItem>
-                    {(vehicleTypes as any[]).map(vt => (
-                      <SelectItem key={vt.id} value={vt.name}>{vt.code} — {vt.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          ) : (
-            <div className="text-[10px] text-slate-500 space-y-0.5">
-              <div className="flex gap-2"><span className="w-20 shrink-0">Ngày</span><span className="font-medium text-slate-700">{line.date}</span></div>
-              <div className="flex gap-2"><span className="w-20 shrink-0">ĐVVT</span><span className="font-medium text-slate-700">{line.ncc?.name ?? line.ncc?.code ?? '—'}</span></div>
-              {line.warehouse_type && <div className="flex gap-2"><span className="w-20 shrink-0">Loại kho</span><span className="font-medium text-slate-700">{line.warehouse_type}</span></div>}
-              {line.vehicle_type   && <div className="flex gap-2"><span className="w-20 shrink-0">Loại xe</span><span className="font-medium text-slate-700">{line.vehicle_type}</span></div>}
-            </div>
-          )}
+        {/* Thông tin vận chuyển — chỉ đọc */}
+        <div className="border rounded-lg bg-slate-50 px-3 py-2 space-y-1">
+          <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">Thông tin vận chuyển (chỉ đọc)</p>
+          <div className="text-[10px] text-slate-500 space-y-0.5">
+            <div className="flex gap-2"><span className="w-20 shrink-0">Ngày</span><span className="font-medium text-slate-700">{line.date}</span></div>
+            <div className="flex gap-2"><span className="w-20 shrink-0">ĐVVT</span><span className="font-medium text-slate-700">{line.ncc?.name ?? line.ncc?.code ?? '—'}</span></div>
+            {line.warehouse_type && <div className="flex gap-2"><span className="w-20 shrink-0">Loại kho</span><span className="font-medium text-slate-700">{line.warehouse_type}</span></div>}
+            {line.vehicle_type   && <div className="flex gap-2"><span className="w-20 shrink-0">Loại xe</span><span className="font-medium text-slate-700">{line.vehicle_type}</span></div>}
+          </div>
+          <p className="text-[9px] text-amber-600 pt-0.5">Để đổi lịch: Hủy dòng này → Tạo dòng mới</p>
         </div>
 
-        {/* Section 2: Hàng hóa */}
+        {/* Hàng hóa */}
         <div className="space-y-3">
           <div className="relative">
             <Label className="text-xs">Mã hàng</Label>
@@ -590,9 +527,75 @@ function EditLineDialog({ line, onClose, onSaved }: {
         {err && <p className="text-xs text-red-500">{err}</p>}
 
         <DialogFooter>
-          <Button variant="outline" size="sm" onClick={onClose}>Hủy</Button>
+          <Button variant="outline" size="sm" onClick={onClose}>Đóng</Button>
           <Button size="sm" onClick={handleSave} disabled={updateLine.isPending}>
             {updateLine.isPending ? 'Đang lưu...' : 'Lưu'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ─── Cancel Line Dialog ───────────────────────────────────────────────────────
+
+const CANCEL_REASONS = [
+  'NCC không tới theo kế hoạch',
+  'NCC dời lịch sang ngày khác',
+  'Hàng chưa sẵn sàng ở NCC',
+  'Thay đổi kế hoạch nội bộ',
+  'Lý do khác',
+]
+
+function CancelLineDialog({ line, onClose }: { line: any; onClose: () => void }) {
+  const [reason, setReason] = useState('')
+  const [note,   setNote]   = useState('')
+  const [err,    setErr]    = useState('')
+  const cancelLine = useCancelPlanLine()
+
+  async function handleConfirm() {
+    if (!reason) { setErr('Vui lòng chọn lý do hủy'); return }
+    const full = reason === 'Lý do khác' && note ? `Lý do khác: ${note}` : reason
+    setErr('')
+    try {
+      await cancelLine.mutateAsync({ id: line.id, cancel_reason: full })
+      onClose()
+    } catch (e) {
+      const msg = (e as AxiosError<{error:{message:string}}>)?.response?.data?.error?.message
+      setErr(msg ?? 'Lỗi hủy kế hoạch')
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={v => { if (!v) onClose() }}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader><DialogTitle>Hủy dòng kế hoạch</DialogTitle></DialogHeader>
+        <div className="space-y-3 py-1">
+          <div className="text-xs text-slate-600 border rounded-lg bg-slate-50 px-3 py-2 space-y-0.5">
+            <p className="font-semibold">{line.material?.short_name ?? line.material?.material_code ?? '—'}</p>
+            <p className="text-slate-500">{line.ncc?.name ?? '—'} · {format(new Date(line.date + 'T00:00:00'), 'dd-MM-yyyy')}</p>
+          </div>
+          <div>
+            <Label className="text-xs">Lý do hủy</Label>
+            <Select value={reason || '__none__'} onValueChange={v => setReason(v === '__none__' ? '' : v)}>
+              <SelectTrigger className="h-8 text-xs mt-1"><SelectValue placeholder="Chọn lý do..." /></SelectTrigger>
+              <SelectContent>
+                {CANCEL_REASONS.map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          {reason === 'Lý do khác' && (
+            <div>
+              <Label className="text-xs">Ghi chú</Label>
+              <Input value={note} onChange={e => setNote(e.target.value)} className="h-8 text-xs mt-1" placeholder="Nhập chi tiết..." />
+            </div>
+          )}
+          {err && <p className="text-xs text-red-500">{err}</p>}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={onClose}>Đóng</Button>
+          <Button variant="destructive" size="sm" onClick={handleConfirm} disabled={cancelLine.isPending}>
+            {cancelLine.isPending ? 'Đang hủy...' : 'Xác nhận Hủy'}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -830,19 +833,39 @@ function DRow({ label, value }: { label: string; value: React.ReactNode }) {
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 
+const FILTER_KEY = 'ipl_filter'
+
 export default function InboundPlan() {
   const user = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
 
-  const [dateFrom,    setDateFrom]    = useState(TODAY)
-  const [dateTo,      setDateTo]      = useState(TODAY)
-  const [warehouseId, setWarehouseId] = useState(user?.warehouse_id ?? (user?.warehouse_ids as string[] | undefined)?.[0] ?? '')
-  const [addOpen,      setAddOpen]      = useState(false)
-  const [uploadOpen,   setUploadOpen]   = useState(false)
-  const [editLine,     setEditLine]     = useState<any | null>(null)
-  const [whTypeFilter, setWhTypeFilter] = useState<string[]>([])
-  const [nccFilter,    setNccFilter]    = useState<string[]>([])
-  const [detailLine,   setDetailLine]   = useState<any | null>(null)
+  const defaultWarehouseId = user?.warehouse_id ?? (user?.warehouse_ids as string[] | undefined)?.[0] ?? ''
+
+  const [dateFrom,    setDateFrom]    = useState<string>(() => {
+    try { return JSON.parse(localStorage.getItem(FILTER_KEY) ?? '{}').dateFrom ?? TODAY } catch { return TODAY }
+  })
+  const [dateTo,      setDateTo]      = useState<string>(() => {
+    try { return JSON.parse(localStorage.getItem(FILTER_KEY) ?? '{}').dateTo ?? TODAY } catch { return TODAY }
+  })
+  const [warehouseId, setWarehouseId] = useState<string>(() => {
+    try { return JSON.parse(localStorage.getItem(FILTER_KEY) ?? '{}').warehouseId ?? defaultWarehouseId } catch { return defaultWarehouseId }
+  })
+  const [whTypeFilter, setWhTypeFilter] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem(FILTER_KEY) ?? '{}').whTypeFilter ?? [] } catch { return [] }
+  })
+  const [nccFilter,    setNccFilter]    = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem(FILTER_KEY) ?? '{}').nccFilter ?? [] } catch { return [] }
+  })
+
+  useEffect(() => {
+    localStorage.setItem(FILTER_KEY, JSON.stringify({ dateFrom, dateTo, warehouseId, whTypeFilter, nccFilter }))
+  }, [dateFrom, dateTo, warehouseId, whTypeFilter, nccFilter])
+
+  const [addOpen,           setAddOpen]           = useState(false)
+  const [uploadOpen,        setUploadOpen]        = useState(false)
+  const [editLine,          setEditLine]          = useState<any | null>(null)
+  const [cancelLineTarget,  setCancelLineTarget]  = useState<any | null>(null)
+  const [detailLine,        setDetailLine]        = useState<any | null>(null)
 
   const { data: warehouses = [] }   = useWarehouses(true)
   const { data: whTypesData = [] }  = useWarehouseTypes()
@@ -871,9 +894,11 @@ export default function InboundPlan() {
     })
   , [lines, whTypeFilter, nccFilter])
 
-  const totalPlanned = filteredLines.reduce((s, l) => s + (l.planned_boxes ?? 0), 0)
-  const totalLines   = filteredLines.length
-  const uniqueNcc    = new Set(filteredLines.map(l => l.ncc?.id).filter(Boolean)).size
+  const activeLines  = filteredLines.filter((l: any) => l.status !== 'CANCELLED')
+  const cancelledCnt = filteredLines.length - activeLines.length
+  const totalPlanned = activeLines.reduce((s: number, l: any) => s + (l.planned_boxes ?? 0), 0)
+  const totalLines   = activeLines.length
+  const uniqueNcc    = new Set(activeLines.map((l: any) => l.ncc?.id).filter(Boolean)).size
 
   return (
     <div className="flex flex-col h-full">
@@ -928,6 +953,9 @@ export default function InboundPlan() {
           <span className="text-slate-500">Tổng dòng: <strong className="text-slate-700">{totalLines}</strong></span>
           <span className="text-slate-500">Tổng SL KH: <strong className="text-blue-700">{totalPlanned.toLocaleString()}</strong></span>
           <span className="text-slate-500">ĐVVT: <strong className="text-slate-700">{uniqueNcc}</strong></span>
+          {cancelledCnt > 0 && (
+            <span className="text-slate-500">Đã hủy: <strong className="text-red-600">{cancelledCnt}</strong></span>
+          )}
         </div>
       </div>
 
@@ -962,41 +990,59 @@ export default function InboundPlan() {
               </TableRow>
             )}
             {filteredLines.map((line: any) => {
-              const order = line.tms_order
+              const order      = line.tms_order
+              const isCancelled = line.status === 'CANCELLED'
+              const rowCls = isCancelled
+                ? 'cursor-pointer bg-slate-50 opacity-60'
+                : detailLine?.id === line.id
+                  ? 'cursor-pointer bg-blue-50 hover:bg-blue-50'
+                  : 'cursor-pointer hover:bg-slate-50'
               return (
                 <TableRow
                   key={line.id}
-                  className={`cursor-pointer ${detailLine?.id === line.id ? 'bg-blue-50 hover:bg-blue-50' : 'hover:bg-slate-50'}`}
+                  className={rowCls}
                   onClick={() => setDetailLine((prev: any) => prev?.id === line.id ? null : line)}
                 >
                   <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] font-mono text-slate-500">
-                    {format(new Date(line.date + 'T00:00:00'), 'dd-MM-yy')}
+                    <span className={isCancelled ? 'line-through' : ''}>
+                      {format(new Date(line.date + 'T00:00:00'), 'dd-MM-yy')}
+                    </span>
                   </TableCell>
                   <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] font-mono text-slate-500">
                     {whMap.get(line.warehouse_id) ?? <span className="text-slate-300">—</span>}
                   </TableCell>
                   <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] font-semibold">
-                    {line.ncc?.name ?? line.ncc?.code ?? <span className="text-slate-300">—</span>}
+                    <span className={isCancelled ? 'line-through text-slate-400' : ''}>
+                      {line.ncc?.name ?? line.ncc?.code ?? <span className="text-slate-300">—</span>}
+                    </span>
                   </TableCell>
                   <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] font-mono font-semibold">
-                    {line.material?.material_code ?? <span className="text-slate-300">—</span>}
+                    <span className={isCancelled ? 'line-through text-slate-400' : ''}>
+                      {line.material?.material_code ?? <span className="text-slate-300">—</span>}
+                    </span>
                   </TableCell>
                   <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] text-slate-600 max-w-[180px] truncate">
-                    {line.material?.short_name ?? <span className="text-slate-300">—</span>}
+                    <span className={isCancelled ? 'line-through text-slate-400' : ''}>
+                      {line.material?.short_name ?? <span className="text-slate-300">—</span>}
+                    </span>
                   </TableCell>
                   <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] text-slate-500">
                     {line.material?.unit ?? <span className="text-slate-300">—</span>}
                   </TableCell>
                   <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] font-semibold tabular-nums text-right">
-                    {line.planned_boxes != null ? line.planned_boxes.toLocaleString() : <span className="text-slate-300">—</span>}
+                    <span className={isCancelled ? 'line-through text-slate-400' : ''}>
+                      {line.planned_boxes != null ? line.planned_boxes.toLocaleString() : <span className="text-slate-300">—</span>}
+                    </span>
                   </TableCell>
                   <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] tabular-nums text-right text-slate-500">
                     {line.actual_boxes != null ? line.actual_boxes.toLocaleString() : <span className="text-slate-300">—</span>}
                   </TableCell>
                   <TableCell className="px-2 py-1 whitespace-nowrap">
-                    {order
-                      ? <span className="text-[9px] px-1.5 py-0.5 rounded bg-green-100 text-green-700 font-mono">{order.status}</span>
-                      : <span className="text-[9px] text-slate-300">—</span>
+                    {isCancelled
+                      ? <span className="text-[9px] px-1.5 py-0.5 rounded bg-red-100 text-red-600">Đã hủy</span>
+                      : order
+                        ? <span className={`text-[9px] px-1.5 py-0.5 rounded font-mono ${order.status === 'CANCELLED' ? 'bg-slate-100 text-slate-400 line-through' : 'bg-green-100 text-green-700'}`}>{order.status}</span>
+                        : <span className="text-[9px] text-slate-300">—</span>
                     }
                   </TableCell>
                   <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] text-slate-500">
@@ -1006,24 +1052,41 @@ export default function InboundPlan() {
                     {line.vehicle_type ?? <span className="text-slate-300">—</span>}
                   </TableCell>
                   <TableCell className="px-2 py-1 whitespace-nowrap" onClick={e => e.stopPropagation()}>
-                    <div className="flex items-center gap-1">
-                      {can(perms, 'inbound_plan', 'edit') && (
-                        <button
-                          onClick={e => { e.stopPropagation(); setEditLine(line) }}
-                          className="text-slate-400 hover:text-blue-600 transition-colors"
-                        >
-                          <Pencil className="h-3.5 w-3.5" />
-                        </button>
-                      )}
-                      {can(perms, 'inbound_plan', 'delete') && (
-                        <button
-                          onClick={e => { e.stopPropagation(); if (confirm('Xóa dòng này?')) deleteLine.mutate(line.id) }}
-                          className="text-slate-400 hover:text-red-600 transition-colors"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      )}
-                    </div>
+                    {isCancelled ? (
+                      <span className="text-[9px] text-slate-400 italic" title={line.cancel_reason ?? ''}>
+                        {line.cancel_reason ? `${line.cancel_reason.slice(0, 20)}${line.cancel_reason.length > 20 ? '…' : ''}` : ''}
+                      </span>
+                    ) : (
+                      <div className="flex items-center gap-1">
+                        {can(perms, 'inbound_plan', 'edit') && (
+                          <button
+                            onClick={e => { e.stopPropagation(); setEditLine(line) }}
+                            className="text-slate-400 hover:text-blue-600 transition-colors"
+                            title="Sửa hàng hóa"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                        {can(perms, 'inbound_plan', 'cancel') && (
+                          <button
+                            onClick={e => { e.stopPropagation(); setCancelLineTarget(line) }}
+                            className="text-slate-400 hover:text-amber-600 transition-colors"
+                            title="Hủy kế hoạch"
+                          >
+                            <Ban className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                        {can(perms, 'inbound_plan', 'delete') && (
+                          <button
+                            onClick={e => { e.stopPropagation(); if (confirm('Xóa hẳn dòng này? (chỉ dùng khi nhập nhầm)')) deleteLine.mutate(line.id) }}
+                            className="text-slate-400 hover:text-red-600 transition-colors"
+                            title="Xóa (nhập nhầm)"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </TableCell>
                 </TableRow>
               )
@@ -1042,6 +1105,12 @@ export default function InboundPlan() {
           onSaved={updated => { setEditLine(null); if (detailLine?.id === updated.id) setDetailLine(updated) }}
         />
       )}
+      {cancelLineTarget && (
+        <CancelLineDialog
+          line={cancelLineTarget}
+          onClose={() => { setCancelLineTarget(null); if (detailLine?.id === cancelLineTarget.id) setDetailLine(null) }}
+        />
+      )}
 
       {/* Detail Sheet */}
       <Sheet open={!!detailLine} onOpenChange={open => !open && setDetailLine(null)}>
@@ -1053,25 +1122,41 @@ export default function InboundPlan() {
                   <div className="min-w-0 flex-1">
                     <SheetTitle className="text-sm font-mono">{detailLine.material?.material_code ?? '—'}</SheetTitle>
                     <p className="text-xs text-slate-500 mt-0.5 truncate">{detailLine.material?.short_name ?? ''}</p>
-                  </div>
-                  <div className="flex items-center gap-1 shrink-0">
-                    {can(perms, 'inbound_plan', 'edit') && (
-                      <button
-                        onClick={() => setEditLine(detailLine)}
-                        className="p-1 rounded hover:bg-slate-200 text-slate-400 hover:text-blue-600 transition-colors"
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                      </button>
-                    )}
-                    {can(perms, 'inbound_plan', 'delete') && (
-                      <button
-                        onClick={() => { if (confirm('Xóa dòng này?')) { deleteLine.mutate(detailLine.id); setDetailLine(null) } }}
-                        className="p-1 rounded hover:bg-red-100 text-slate-400 hover:text-red-600 transition-colors"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
+                    {detailLine.status === 'CANCELLED' && (
+                      <p className="text-[10px] text-red-500 mt-0.5 truncate">Đã hủy · {detailLine.cancel_reason ?? ''}</p>
                     )}
                   </div>
+                  {detailLine.status !== 'CANCELLED' && (
+                    <div className="flex items-center gap-1 shrink-0">
+                      {can(perms, 'inbound_plan', 'edit') && (
+                        <button
+                          onClick={() => setEditLine(detailLine)}
+                          className="p-1 rounded hover:bg-slate-200 text-slate-400 hover:text-blue-600 transition-colors"
+                          title="Sửa hàng hóa"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                      {can(perms, 'inbound_plan', 'cancel') && (
+                        <button
+                          onClick={() => setCancelLineTarget(detailLine)}
+                          className="p-1 rounded hover:bg-amber-100 text-slate-400 hover:text-amber-600 transition-colors"
+                          title="Hủy kế hoạch"
+                        >
+                          <Ban className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                      {can(perms, 'inbound_plan', 'delete') && (
+                        <button
+                          onClick={() => { if (confirm('Xóa hẳn dòng này? (chỉ dùng khi nhập nhầm)')) { deleteLine.mutate(detailLine.id); setDetailLine(null) } }}
+                          className="p-1 rounded hover:bg-red-100 text-slate-400 hover:text-red-600 transition-colors"
+                          title="Xóa (nhập nhầm)"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               </SheetHeader>
               <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">

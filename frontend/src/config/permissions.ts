@@ -174,7 +174,8 @@ export const MODULES = {
       view:   'Xem kế hoạch',
       create: 'Thêm / Upload dòng kế hoạch',
       edit:   'Sửa dòng kế hoạch',
-      delete: 'Xóa dòng kế hoạch',
+      delete: 'Xóa dòng (nhập nhầm)',
+      cancel: 'Hủy dòng kế hoạch',
     },
   },
   materials: {

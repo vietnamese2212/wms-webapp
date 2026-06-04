@@ -43,383 +43,12 @@ interface LocationWithCapacity {
 const normCatFe = (c: string) => c === 'TP' ? 'Thành phẩm' : c === 'BAO_BI' ? 'Bao bì' : c
 
 
-// ─── Edit NCC group dialog ────────────────────────────────────
+// ─── Edit row type (used by CreateOrderDialog in edit mode) ──────────────
 
-type NccGrpRow = {
+type EditRow = {
   id: string; material_id: string; materialCode: string; matName: string
-  locationCode: string; palletCount: number; notes: string; toCancel: boolean
-}
-type NccGrpNewRow = { material_code: string; material_id: string; mat_name: string; mat_unit: string; planned_qty: string; notes: string }
-const emptyGrpNewRow = (): NccGrpNewRow => ({ material_code: '', material_id: '', mat_name: '', mat_unit: '', planned_qty: '', notes: '' })
-
-function EditNccGroupDialog({ groupOrders, onClose }: { groupOrders: InboundOrder[]; onClose: () => void }) {
-  const firstOrder  = groupOrders[0]
-  const gateReg     = (firstOrder as any).gate_registration
-  const warehouseId = (firstOrder as any).warehouse_id ?? ''
-  const whType      = (firstOrder as any).warehouse_type ?? ''
-
-  const { data: warehouses = [] }   = useWarehouses(true)
-  const { data: shifts = [] }       = useImportShifts()
-  const { data: allMaterials = [] } = useMaterials()
-  const { mutateAsync: updateAsync } = useUpdateInboundOrder()
-  const { mutateAsync: cancelAsync } = useCancelInboundOrder()
-  const { mutateAsync: createAsync } = useCreateInboundOrder()
-
-  const warehouseName = (warehouses as { id: string; name: string }[]).find(w => w.id === warehouseId)?.name ?? ''
-
-  // Plan lines
-  const gateTmsOrderId: string | undefined = gateReg?.tms_order_id ?? undefined
-  const { data: planMaterials = [] } = useInboundPlanLines(
-    gateTmsOrderId ? { tms_order_id: gateTmsOrderId } : undefined
-  )
-  const activePlanLines = useMemo(() =>
-    (planMaterials as any[]).filter((m: any) =>
-      m.status !== 'CANCELLED' && (!whType || !m.warehouse_type || m.warehouse_type === whType)
-    ), [planMaterials, whType])
-  const planMatIds = useMemo(() =>
-    new Set(activePlanLines.map((m: any) => m.material_id).filter(Boolean) as string[]),
-    [activePlanLines]
-  )
-
-  const [importDate, setImportDate] = useState((firstOrder as any).import_date ?? '')
-  const [shiftId,    setShiftId]    = useState((firstOrder as any).shift_id ?? '')
-  const [rows,       setRows]       = useState<NccGrpRow[]>(() =>
-    groupOrders.map(o => ({
-      id:           o.id,
-      material_id:  o.material_id ?? '',
-      materialCode: o.material?.material_code ?? '',
-      matName:      o.material?.short_name ?? '',
-      locationCode: (o as any).location?.location_code ?? '',
-      palletCount:  o._count.inventory_entries,
-      notes:        (o as any).notes ?? '',
-      toCancel:     false,
-    }))
-  )
-  const [newRows,   setNewRows]   = useState<NccGrpNewRow[]>([])
-  const [saving,    setSaving]    = useState(false)
-  const [err,       setErr]       = useState('')
-  const [activeNewDropIdx, setActiveNewDropIdx] = useState<number | null>(null)
-  const [newDropPos, setNewDropPos] = useState<{ top: number; left: number } | null>(null)
-
-  const allMatsList = allMaterials as any[]
-  const allMatsByCode = useMemo(
-    () => new Map(allMatsList.map(m => [String(m.material_code).toUpperCase(), m])),
-    [allMatsList]
-  )
-  const existingMatIds = useMemo(() => new Set(rows.map(r => r.material_id).filter(Boolean)), [rows])
-
-  function getNewDropMatches(code: string) {
-    const list = allMatsList
-    let filtered: any[]
-    if (!code) {
-      filtered = list.slice(0, 12)
-    } else {
-      const q = code.toUpperCase()
-      filtered = list.filter(m =>
-        String(m.material_code).toUpperCase().includes(q) ||
-        String(m.short_name ?? '').toUpperCase().includes(q)
-      ).slice(0, 10)
-    }
-    if (planMatIds.size === 0) return filtered
-    return [...filtered].sort((a, b) => (planMatIds.has(b.id) ? 1 : 0) - (planMatIds.has(a.id) ? 1 : 0))
-  }
-
-  function handleNewCodeChange(idx: number, code: string) {
-    const found = allMatsByCode.get(code.trim().toUpperCase())
-    setNewRows(prev => prev.map((r, i) => i !== idx ? r : {
-      ...r, material_code: code,
-      material_id: found?.id ?? '', mat_name: found?.short_name ?? '', mat_unit: found?.unit ?? '',
-    }))
-  }
-
-  function loadFromPlan() {
-    const toAdd = activePlanLines.filter((m: any) => m.material_id && !existingMatIds.has(m.material_id))
-    if (toAdd.length === 0) return
-    const planRows: NccGrpNewRow[] = toAdd.map((m: any) => ({
-      material_code: m.material?.material_code ?? '',
-      material_id:   m.material_id ?? '',
-      mat_name:      m.material?.short_name ?? '',
-      mat_unit:      m.material?.unit ?? '',
-      planned_qty:   m.planned_boxes != null ? String(m.planned_boxes) : '',
-      notes:         '',
-    }))
-    setNewRows(prev => [...prev.filter(r => r.material_code !== ''), ...planRows])
-  }
-
-  async function handleSave() {
-    setSaving(true); setErr('')
-    try {
-      await Promise.all(
-        rows.filter(r => !r.toCancel).map(r =>
-          updateAsync({ id: r.id, import_date: importDate, shift_id: shiftId, notes: r.notes })
-        )
-      )
-      await Promise.all(
-        rows.filter(r => r.toCancel && r.palletCount === 0).map(r => cancelAsync(r.id))
-      )
-      const validNew = newRows.filter(r => r.material_id)
-      await Promise.all(
-        validNew.map(r => createAsync({
-          warehouse_id: warehouseId, material_id: r.material_id,
-          shift_id: shiftId || undefined, import_date: importDate,
-          notes: r.notes || undefined, source_type: 'NCC',
-          warehouse_type: whType || undefined,
-          gate_registration_id: (firstOrder as any).gate_registration_id || undefined,
-          planned_cartons: r.planned_qty ? Number(r.planned_qty) : undefined,
-        }))
-      )
-      onClose()
-    } catch (e) {
-      const msg = (e as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message
-      setErr(msg ?? 'Lỗi lưu nhóm phiếu')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <Dialog open onOpenChange={(v) => { if (!v) onClose() }}>
-      <DialogContent className="max-w-2xl" onPointerDownOutside={e => { if (activeNewDropIdx !== null) e.preventDefault() }}>
-        <DialogHeader>
-          <DialogTitle className="text-sm">Sửa nhóm phiếu NCC</DialogTitle>
-        </DialogHeader>
-
-        <div className="space-y-3 py-1 max-h-[80vh] overflow-y-auto pr-0.5">
-
-          {/* Section 1: Thông tin chuyến xe */}
-          <div className="border rounded-lg bg-slate-50 px-3 py-2.5 space-y-2">
-            <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">Thông tin chuyến xe</p>
-            <div className="grid grid-cols-3 gap-2">
-              <div>
-                <Label className="text-xs">Kho</Label>
-                <div className="h-8 flex items-center text-xs text-slate-700 border rounded-md bg-white px-2 mt-0.5">
-                  {warehouseName || '—'}
-                </div>
-              </div>
-              <div>
-                <Label className="text-xs">Loại kho</Label>
-                <div className="h-8 flex items-center text-xs font-medium text-slate-700 border rounded-md bg-white px-2 mt-0.5">
-                  {whType || '—'}
-                </div>
-              </div>
-              <div>
-                <Label className="text-xs">Xe vào cổng</Label>
-                <div className="h-8 flex items-center text-xs border rounded-md bg-white px-2 mt-0.5 gap-1.5 overflow-hidden">
-                  {gateReg?.license_plate
-                    ? <>
-                        <span className="font-mono font-semibold text-slate-800 shrink-0">{gateReg.license_plate}</span>
-                        {gateReg.company_name_raw && <span className="text-slate-500 truncate">{gateReg.company_name_raw}</span>}
-                      </>
-                    : <span className="text-slate-400">—</span>}
-                </div>
-              </div>
-            </div>
-            <div className="grid grid-cols-3 gap-2">
-              <div>
-                <Label className="text-xs">Ngày nhập *</Label>
-                <Input type="date" value={importDate} onChange={e => setImportDate(e.target.value)} className="h-8 text-xs mt-0.5" />
-              </div>
-              <div>
-                <Label className="text-xs">Ca nhập *</Label>
-                <Select value={shiftId} onValueChange={setShiftId}>
-                  <SelectTrigger className="h-8 text-xs mt-0.5"><SelectValue placeholder="Chọn ca" /></SelectTrigger>
-                  <SelectContent>
-                    {(shifts as { id: string; name: string }[]).map(s => (
-                      <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          </div>
-
-          {/* Section 2: Danh sách hàng hóa */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">Danh sách hàng hóa</p>
-              {activePlanLines.length > 0 && (
-                <button type="button" onClick={loadFromPlan}
-                  className="text-[10px] text-blue-600 hover:text-blue-700 underline">
-                  Nạp từ kế hoạch ({activePlanLines.length} hàng)
-                </button>
-              )}
-            </div>
-
-            {/* Existing rows */}
-            <div className="border rounded-lg overflow-hidden">
-              <table className="min-w-full text-[10px]">
-                <thead className="bg-slate-50 border-b">
-                  <tr>
-                    <th className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500">Mã hàng</th>
-                    <th className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500">Tên hàng</th>
-                    <th className="px-2 py-1.5 text-center text-[9px] font-medium text-slate-500 w-16">Vị trí</th>
-                    <th className="px-2 py-1.5 text-center text-[9px] font-medium text-slate-500 w-10">PL</th>
-                    <th className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500">Ghi chú</th>
-                    <th className="w-6"></th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {rows.map((row, idx) => (
-                    <tr key={row.id} className={row.toCancel ? 'bg-red-50 opacity-60' : ''}>
-                      <td className="px-2 py-1">
-                        <div className="flex items-center gap-1">
-                          {planMatIds.has(row.material_id) && (
-                            <span className="text-[8px] bg-green-100 text-green-700 px-1 py-0.5 rounded shrink-0">KH</span>
-                          )}
-                          <span className="font-mono font-semibold">{row.materialCode}</span>
-                        </div>
-                      </td>
-                      <td className="px-2 py-1 text-slate-600 truncate max-w-[120px]">{row.matName || '—'}</td>
-                      <td className="px-2 py-1 text-center font-mono text-slate-500">{row.locationCode || '—'}</td>
-                      <td className="px-2 py-1 text-center tabular-nums font-semibold">{row.palletCount}</td>
-                      <td className="px-1.5 py-1">
-                        {row.toCancel
-                          ? <span className="text-[9px] text-red-500 italic">Sẽ hủy</span>
-                          : <input type="text" value={row.notes}
-                              onChange={e => setRows(prev => prev.map((r, i) => i !== idx ? r : { ...r, notes: e.target.value }))}
-                              className="w-full h-6 px-1.5 text-[10px] border border-slate-200 rounded bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
-                              placeholder="—" />}
-                      </td>
-                      <td className="px-1 py-1 text-center">
-                        {row.palletCount === 0 ? (
-                          <button type="button"
-                            onClick={() => setRows(prev => prev.map((r, i) => i !== idx ? r : { ...r, toCancel: !r.toCancel }))}
-                            className={row.toCancel ? 'text-slate-400 hover:text-slate-600' : 'text-slate-300 hover:text-red-500'}
-                            title={row.toCancel ? 'Bỏ hủy' : 'Hủy dòng'}>
-                            <X className="h-3.5 w-3.5" />
-                          </button>
-                        ) : <span className="block w-3.5" />}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            {/* New rows — styled like NCC create form */}
-            {newRows.length > 0 && (
-              <div className="border rounded-lg border-blue-200 overflow-hidden">
-                <table className="min-w-full text-[10px]">
-                  <thead className="bg-blue-50 border-b border-blue-200">
-                    <tr>
-                      <th className="px-2 py-1.5 text-left text-[9px] font-medium text-blue-500 w-32">Mã hàng mới</th>
-                      <th className="px-2 py-1.5 text-left text-[9px] font-medium text-blue-500">Tên hàng</th>
-                      <th className="px-2 py-1.5 text-center text-[9px] font-medium text-blue-500 w-16">ĐVT</th>
-                      <th className="px-2 py-1.5 text-right text-[9px] font-medium text-blue-500 w-20">SL dự kiến</th>
-                      <th className="px-2 py-1.5 text-left text-[9px] font-medium text-blue-500">Ghi chú</th>
-                      <th className="w-6"></th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-blue-100">
-                    {newRows.map((row, idx) => {
-                      const invalid = row.material_code !== '' && !row.material_id
-                      return (
-                        <tr key={idx} className={invalid ? 'bg-red-50' : ''}>
-                          <td className="px-1.5 py-1">
-                            <input type="text" value={row.material_code}
-                              onChange={e => handleNewCodeChange(idx, e.target.value)}
-                              onFocus={e => {
-                                setActiveNewDropIdx(idx)
-                                const rect = e.currentTarget.getBoundingClientRect()
-                                setNewDropPos({ top: rect.bottom + 4, left: rect.left })
-                              }}
-                              onBlur={() => setTimeout(() => setActiveNewDropIdx(prev => {
-                                if (prev === idx) { setNewDropPos(null); return null }
-                                return prev
-                              }), 150)}
-                              placeholder="Paste hoặc tìm mã"
-                              className={`w-full h-7 px-1.5 text-[10px] font-mono border rounded focus:outline-none focus:ring-1 ${
-                                invalid ? 'border-red-300 bg-red-50 focus:ring-red-400' : 'border-blue-200 bg-white focus:ring-blue-400'
-                              }`}
-                            />
-                          </td>
-                          <td className="px-2 py-1">
-                            {row.mat_name
-                              ? <span className="text-[10px] text-slate-700">{row.mat_name}</span>
-                              : invalid ? <span className="text-[9px] text-red-400">Không tìm thấy</span>
-                              : <span className="text-[9px] text-slate-300">—</span>}
-                          </td>
-                          <td className="px-1.5 py-1 text-center text-[10px] text-slate-500">{row.mat_unit || '—'}</td>
-                          <td className="px-1.5 py-1">
-                            <input type="number" min="0" value={row.planned_qty}
-                              onChange={e => setNewRows(prev => prev.map((r, i) => i !== idx ? r : { ...r, planned_qty: e.target.value }))}
-                              className="w-full h-7 px-1.5 text-[10px] border border-blue-200 rounded text-right bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
-                            />
-                          </td>
-                          <td className="px-1.5 py-1">
-                            <input type="text" value={row.notes}
-                              onChange={e => setNewRows(prev => prev.map((r, i) => i !== idx ? r : { ...r, notes: e.target.value }))}
-                              className="w-full h-7 px-1.5 text-[10px] border border-blue-200 rounded bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
-                              placeholder="—" />
-                          </td>
-                          <td className="px-1 py-1 text-center">
-                            <button type="button" onClick={() => setNewRows(prev => prev.filter((_, i) => i !== idx))}
-                              className="text-slate-300 hover:text-red-500 transition-colors">
-                              <X className="h-3.5 w-3.5" />
-                            </button>
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-
-            <button type="button" onClick={() => setNewRows(prev => [...prev, emptyGrpNewRow()])}
-              className="text-[10px] text-blue-600 hover:text-blue-800 flex items-center gap-1 transition-colors">
-              <Plus className="h-3 w-3" /> Thêm mã hàng vào nhóm
-            </button>
-          </div>
-
-          {err && <p className="text-xs text-red-500">{err}</p>}
-        </div>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Huỷ</Button>
-          <Button onClick={handleSave} disabled={saving}>
-            {saving ? 'Đang lưu…' : 'Lưu nhóm'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-
-      {/* Portal dropdown cho mã hàng mới */}
-      {activeNewDropIdx !== null && newDropPos &&
-        !newRows[activeNewDropIdx]?.material_id &&
-        createPortal(
-          <div style={{ position: 'fixed', top: newDropPos.top, left: newDropPos.left, zIndex: 9999 }}
-            className="w-72 border rounded-md bg-white shadow-lg max-h-44 overflow-y-auto">
-            {(() => {
-              const matches = getNewDropMatches(newRows[activeNewDropIdx]?.material_code ?? '')
-              return matches.length === 0
-                ? <p className="text-[10px] text-slate-400 px-2 py-2 text-center">Gõ mã hoặc tên hàng để tìm</p>
-                : matches.map((m: any) => (
-                  <button key={m.id} type="button"
-                    onMouseDown={e => e.preventDefault()}
-                    onClick={() => {
-                      setNewRows(prev => prev.map((r, i) => i !== activeNewDropIdx ? r : {
-                        ...r, material_code: m.material_code, material_id: m.id,
-                        mat_name: m.short_name ?? '', mat_unit: m.unit ?? '',
-                      }))
-                      setActiveNewDropIdx(null); setNewDropPos(null)
-                    }}
-                    className="w-full text-left px-2 py-1.5 hover:bg-blue-50 flex items-center gap-2 border-b border-slate-50 last:border-0">
-                    {planMatIds.has(m.id)
-                      ? <span className="text-[8px] bg-green-100 text-green-700 px-1 py-0.5 rounded shrink-0">KH</span>
-                      : planMatIds.size > 0
-                        ? <span className="text-[8px] text-slate-300 w-5 shrink-0" />
-                        : null}
-                    <span className="text-[10px] font-mono text-slate-700 shrink-0">{m.material_code}</span>
-                    <span className="text-[10px] text-slate-500 truncate">{m.short_name}</span>
-                  </button>
-                ))
-            })()}
-          </div>,
-          document.body
-        )
-      }
-    </Dialog>
-  )
+  locationCode: string; palletCount: number
+  planned_cartons: number | null; notes: string; toCancel: boolean
 }
 
 // ─── Create order dialog ─────────────────────────────────────
@@ -435,7 +64,7 @@ const emptyNccRow = (): NccMatRow => ({
   material_code: '', material_id: '', mat_name: '', mat_unit: '', unit_input: '', planned_qty: '',
 })
 
-function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClose: () => void; editGroup?: InboundOrder[] | null }) {
   const navigate  = useNavigate()
   const user      = useAuthStore((s) => s.user)
   const canPickWarehouse = user?.warehouse_scope === 'NATIONAL' || !user?.warehouse_id
@@ -467,16 +96,42 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
 
   useEffect(() => {
     if (open) {
-      setSourceType('FACTORY')
-      setWarehouseId(user?.warehouse_id ?? user?.warehouse_ids?.[0] ?? '')
-      setSubType(''); setMaterialId(''); setMatSearch(''); setMatOpen(false)
-      setLocationId(''); setShiftId('')
-      setImportDate(format(new Date(), 'yyyy-MM-dd'))
-      setNotes(''); setGateRegId('')
-      setNccRows([emptyNccRow()]); setNccSaving(false); setNccErr(''); setNccDropdownIdx(null); setDropdownPos(null)
-      setShowMoreGates(false)
+      if (editGroup?.length) {
+        const first = editGroup[0]
+        setSourceType('NCC')
+        setWarehouseId((first as any).warehouse_id ?? user?.warehouse_id ?? user?.warehouse_ids?.[0] ?? '')
+        setSubType((first as any).warehouse_type ?? '')
+        setGateRegId((first as any).gate_registration_id ?? '')
+        setImportDate((first as any).import_date ?? format(new Date(), 'yyyy-MM-dd'))
+        setShiftId((first as any).shift_id ?? '')
+        setMaterialId(''); setMatSearch(''); setMatOpen(false); setLocationId('')
+        setNotes('')
+        setNccRows([emptyNccRow()]); setNccSaving(false); setNccErr(''); setNccDropdownIdx(null); setDropdownPos(null)
+        setShowMoreGates(false)
+        setEditRows(editGroup.map(o => ({
+          id:              o.id,
+          material_id:     o.material_id ?? '',
+          materialCode:    o.material?.material_code ?? '',
+          matName:         o.material?.short_name ?? '',
+          locationCode:    (o as any).location?.location_code ?? '',
+          palletCount:     o._count.inventory_entries,
+          planned_cartons: (o as any).planned_cartons != null ? Number((o as any).planned_cartons) : null,
+          notes:           (o as any).notes ?? '',
+          toCancel:        false,
+        })))
+      } else {
+        setSourceType('FACTORY')
+        setWarehouseId(user?.warehouse_id ?? user?.warehouse_ids?.[0] ?? '')
+        setSubType(''); setMaterialId(''); setMatSearch(''); setMatOpen(false)
+        setLocationId(''); setShiftId('')
+        setImportDate(format(new Date(), 'yyyy-MM-dd'))
+        setNotes(''); setGateRegId('')
+        setNccRows([emptyNccRow()]); setNccSaving(false); setNccErr(''); setNccDropdownIdx(null); setDropdownPos(null)
+        setShowMoreGates(false)
+        setEditRows([])
+      }
     }
-  }, [open, user?.warehouse_id, user?.warehouse_ids])
+  }, [open, user?.warehouse_id, user?.warehouse_ids]) // eslint-disable-line
 
   const { data: warehouses = [] } = useWarehouses(true)
   const { data: shifts     = [] } = useImportShifts()
@@ -492,6 +147,10 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
       : undefined
   )
   const selectedGate    = (activeGates as any[]).find(g => g.id === gateRegId)
+  const editModeGateInfo = editGroup?.length && gateRegId
+    ? (editGroup[0] as any).gate_registration
+    : null
+  const displayGate = selectedGate ?? (editModeGateInfo?.id === gateRegId ? editModeGateInfo : null)
   const sortedGates = [...(activeGates as any[])].sort(
     (a, b) => b.date.localeCompare(a.date) || a.registration_number - b.registration_number
   )
@@ -520,7 +179,7 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
     if (o.gate_registration_id) takenGateMap.set(o.gate_registration_id, o.import_code ?? '?')
   }
 
-  const gateTmsOrderId: string | undefined = selectedGate?.tms_order_id ?? undefined
+  const gateTmsOrderId: string | undefined = displayGate?.tms_order_id ?? undefined
   const { data: planMaterials = [] } = useInboundPlanLines(
     sourceType === 'NCC'
       ? gateTmsOrderId
@@ -577,6 +236,10 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
   }, [matOpen])
 
   const { mutate: createOrder, mutateAsync: createOrderAsync, isPending, error } = useCreateInboundOrder()
+  const { mutateAsync: updateOrderAsync } = useUpdateInboundOrder()
+  const { mutateAsync: cancelOrderAsync }  = useCancelInboundOrder()
+
+  const [editRows, setEditRows] = useState<EditRow[]>([])
 
   // NCC helpers
   const nccMatByCode = useMemo(() =>
@@ -647,15 +310,62 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
     setNccRows(prev => prev.length === 1 ? [emptyNccRow()] : prev.filter((_, i) => i !== idx))
   }
   function loadFromPlan() {
-    setNccRows(activePlanLines.map((m: any) => ({
-      material_code: m.material?.material_code ?? '', material_id: m.material_id ?? '',
-      mat_name: m.material?.short_name ?? '', mat_unit: m.material?.unit ?? '',
-      unit_input: m.material?.unit ?? '',
-      planned_qty: m.planned_boxes != null ? String(m.planned_boxes) : '',
-    })))
+    const existingIds = editGroup?.length
+      ? new Set(editRows.map(r => r.material_id).filter(Boolean))
+      : new Set<string>()
+    setNccRows(activePlanLines
+      .filter((m: any) => m.material_id && (!editGroup?.length || !existingIds.has(m.material_id)))
+      .map((m: any) => {
+        const fullMat = nccMatByCode.get((m.material?.material_code ?? '').trim().toUpperCase())
+        const unit = fullMat?.unit ?? m.material?.unit ?? ''
+        return {
+          material_code: m.material?.material_code ?? '',
+          material_id:   m.material_id ?? '',
+          mat_name:      m.material?.short_name ?? '',
+          mat_unit:      unit,
+          unit_input:    unit,
+          planned_qty:   m.planned_boxes != null ? String(m.planned_boxes) : '',
+        }
+      })
+    )
   }
 
   async function handleNccSubmit() {
+    if (editGroup?.length) {
+      if (!warehouseId) { setNccErr('Vui lòng chọn Kho'); return }
+      if (!shiftId)     { setNccErr('Vui lòng chọn Ca nhập'); return }
+      if (!importDate)  { setNccErr('Vui lòng chọn Ngày nhập'); return }
+      setNccSaving(true); setNccErr('')
+      try {
+        await Promise.all(
+          editRows.filter(r => !r.toCancel).map(r =>
+            updateOrderAsync({ id: r.id, import_date: importDate, shift_id: shiftId,
+              notes: r.notes, planned_cartons: r.planned_cartons ?? undefined })
+          )
+        )
+        await Promise.all(
+          editRows.filter(r => r.toCancel && r.palletCount === 0).map(r => cancelOrderAsync(r.id))
+        )
+        const validNew = nccRows.filter(r => r.material_id)
+        if (validNew.length) {
+          await Promise.all(validNew.map(r => createOrderAsync({
+            warehouse_id: warehouseId, material_id: r.material_id,
+            shift_id: shiftId || undefined, import_date: importDate,
+            notes: notes || undefined, imported_by: importedByEmpId || undefined,
+            source_type: 'NCC', warehouse_type: subType || undefined,
+            gate_registration_id: gateRegId || undefined,
+            planned_cartons: r.planned_qty ? Number(r.planned_qty) : undefined,
+          })))
+        }
+        onClose()
+      } catch (e) {
+        const msg = (e as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message
+        setNccErr(msg ?? 'Lỗi lưu nhóm phiếu')
+      } finally {
+        setNccSaving(false)
+      }
+      return
+    }
     if (!warehouseId) { setNccErr('Vui lòng chọn Kho'); return }
     if (!subType)     { setNccErr('Vui lòng chọn Loại kho'); return }
     if (!gateRegId)   { setNccErr('Vui lòng chọn Xe đang vào cổng'); return }
@@ -707,21 +417,23 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
         onPointerDownOutside={e => { if (nccDropdownIdx !== null) e.preventDefault() }}
       >
         <DialogHeader>
-          <DialogTitle>Tạo phiếu nhập kho</DialogTitle>
+          <DialogTitle>{editGroup?.length ? 'Sửa nhóm phiếu NCC' : 'Tạo phiếu nhập kho'}</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-3 py-1 max-h-[80vh] overflow-y-auto pr-0.5">
           {/* Tab toggle */}
-          <div className="flex rounded-lg border overflow-hidden">
-            {(['FACTORY', 'NCC'] as const).map(t => (
-              <button key={t} type="button"
-                onClick={() => { setSourceType(t); setGateRegId(''); setMaterialId(''); setMatSearch(''); setNccRows([emptyNccRow()]); setNccErr('') }}
-                className={['flex-1 py-1.5 text-xs font-medium transition-colors',
-                  sourceType === t ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'].join(' ')}>
-                {t === 'FACTORY' ? 'Nhập Sản Xuất' : 'Nhập Ngoài (NCC)'}
-              </button>
-            ))}
-          </div>
+          {!editGroup?.length && (
+            <div className="flex rounded-lg border overflow-hidden">
+              {(['FACTORY', 'NCC'] as const).map(t => (
+                <button key={t} type="button"
+                  onClick={() => { setSourceType(t); setGateRegId(''); setMaterialId(''); setMatSearch(''); setNccRows([emptyNccRow()]); setNccErr('') }}
+                  className={['flex-1 py-1.5 text-xs font-medium transition-colors',
+                    sourceType === t ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'].join(' ')}>
+                  {t === 'FACTORY' ? 'Nhập Sản Xuất' : 'Nhập Ngoài (NCC)'}
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* ─── FACTORY ─── */}
           {sourceType === 'FACTORY' && (<>
@@ -867,12 +579,12 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
                     onClick={() => setShowGateDialog(true)}
                     className="mt-0.5 w-full h-8 flex items-center justify-between px-2 rounded-md border border-input bg-white text-xs hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {selectedGate ? (
+                    {displayGate ? (
                       <span className="truncate">
-                        <span className="font-mono font-semibold">{selectedGate.license_plate ?? '—'}</span>
-                        <span className="ml-1.5 text-slate-500">{selectedGate.company_name_raw ?? ''}</span>
-                        <span className="ml-1.5 text-slate-400">· Lần {gateLane.get(selectedGate.id)}</span>
-                        {selectedGate.date !== importDate && <span className="ml-1 text-amber-500">(đk {selectedGate.date?.slice(8)}/{selectedGate.date?.slice(5, 7)})</span>}
+                        <span className="font-mono font-semibold">{displayGate.license_plate ?? '—'}</span>
+                        <span className="ml-1.5 text-slate-500">{displayGate.company_name_raw ?? ''}</span>
+                        {gateLane.get(displayGate.id) && <span className="ml-1.5 text-slate-400">· Lần {gateLane.get(displayGate.id)}</span>}
+                        {displayGate.date && displayGate.date !== importDate && <span className="ml-1 text-amber-500">(đk {displayGate.date?.slice(8)}/{displayGate.date?.slice(5, 7)})</span>}
                       </span>
                     ) : (
                       <span className="text-slate-400">
@@ -989,10 +701,81 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
               </div>
             </div>
 
+            {/* Phiếu hiện có (edit mode) */}
+            {editGroup?.length && editRows.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">
+                  Phiếu hiện có ({editRows.length})
+                </p>
+                <div className="border rounded-lg overflow-hidden">
+                  <table className="min-w-full text-[10px]">
+                    <thead className="bg-slate-50 border-b">
+                      <tr>
+                        <th className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500">Mã hàng</th>
+                        <th className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500">Tên hàng</th>
+                        <th className="px-2 py-1.5 text-center text-[9px] font-medium text-slate-500 w-14">Vị trí</th>
+                        <th className="px-2 py-1.5 text-center text-[9px] font-medium text-slate-500 w-8">PL</th>
+                        <th className="px-2 py-1.5 text-right text-[9px] font-medium text-slate-500 w-20">SL dự kiến</th>
+                        <th className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500">Ghi chú</th>
+                        <th className="w-6"></th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {editRows.map((row, idx) => (
+                        <tr key={row.id} className={row.toCancel ? 'bg-red-50 opacity-60' : ''}>
+                          <td className="px-2 py-1">
+                            <div className="flex items-center gap-1">
+                              {planMatIds.has(row.material_id) && (
+                                <span className="text-[8px] bg-green-100 text-green-700 px-1 py-0.5 rounded shrink-0">KH</span>
+                              )}
+                              <span className="font-mono font-semibold">{row.materialCode}</span>
+                            </div>
+                          </td>
+                          <td className="px-2 py-1 text-slate-600 truncate max-w-[80px]">{row.matName || '—'}</td>
+                          <td className="px-2 py-1 text-center font-mono text-slate-500">{row.locationCode || '—'}</td>
+                          <td className="px-2 py-1 text-center tabular-nums font-semibold">{row.palletCount}</td>
+                          <td className="px-1.5 py-1">
+                            {!row.toCancel && (
+                              <input type="number" min="0"
+                                value={row.planned_cartons ?? ''}
+                                onChange={e => setEditRows(prev => prev.map((r, i) => i !== idx ? r : {
+                                  ...r, planned_cartons: e.target.value === '' ? null : Number(e.target.value)
+                                }))}
+                                className="w-full h-6 px-1.5 text-[10px] border border-slate-200 rounded text-right bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+                                placeholder="—"
+                              />
+                            )}
+                          </td>
+                          <td className="px-1.5 py-1">
+                            {row.toCancel
+                              ? <span className="text-[9px] text-red-500 italic">Sẽ hủy</span>
+                              : <input type="text" value={row.notes}
+                                  onChange={e => setEditRows(prev => prev.map((r, i) => i !== idx ? r : { ...r, notes: e.target.value }))}
+                                  className="w-full h-6 px-1.5 text-[10px] border border-slate-200 rounded bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+                                  placeholder="—" />}
+                          </td>
+                          <td className="px-1 py-1 text-center">
+                            {row.palletCount === 0 ? (
+                              <button type="button"
+                                onClick={() => setEditRows(prev => prev.map((r, i) => i !== idx ? r : { ...r, toCancel: !r.toCancel }))}
+                                className={row.toCancel ? 'text-slate-400 hover:text-slate-600' : 'text-slate-300 hover:text-red-500'}
+                                title={row.toCancel ? 'Bỏ hủy' : 'Hủy dòng'}>
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            ) : <span className="block w-3.5" />}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
             {/* Section 2: Danh sách hàng hóa */}
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
-                <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">Danh sách hàng hóa</p>
+                <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">{editGroup?.length ? 'Thêm hàng mới vào nhóm' : 'Danh sách hàng hóa'}</p>
                 {gateRegId && activePlanLines.length > 0 && (
                   <button type="button" onClick={loadFromPlan}
                     className="text-[10px] text-blue-600 hover:text-blue-700 underline">
@@ -1122,6 +905,10 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
             <Button onClick={handleFactorySubmit}
               disabled={!warehouseId || !subType || !materialId || !locationId || isPending}>
               {isPending ? 'Đang tạo...' : 'Tạo phiếu'}
+            </Button>
+          ) : editGroup?.length ? (
+            <Button onClick={handleNccSubmit} disabled={nccSaving}>
+              {nccSaving ? 'Đang lưu…' : 'Lưu nhóm'}
             </Button>
           ) : (
             <Button onClick={handleNccSubmit} disabled={nccSaving || nccValidCount === 0}>
@@ -1448,7 +1235,7 @@ export default function Inbound() {
         {/* Collapsible filter panel */}
         {showFilters && (
           <div className="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2.5 space-y-2">
-            {/* Hàng 1: Ngày */}
+            {/* Hàng 1: Ngày + Kho + Loại kho + Ca */}
             <div className="flex items-center gap-2 flex-wrap">
               <CalendarDays className="h-3.5 w-3.5 text-blue-400 shrink-0" />
               <DateBtn value={f.dateFrom} placeholder="Từ ngày" onChange={v => setInbound({ dateFrom: v })} />
@@ -1457,7 +1244,7 @@ export default function Inbound() {
               {!isToday && (
                 <button className="text-xs text-blue-500 hover:text-blue-700 underline whitespace-nowrap"
                   onClick={() => setInbound({ dateFrom: TODAY, dateTo: TODAY })}>
-                  Hôm nay
+                  HN
                 </button>
               )}
               {hasDate && (
@@ -1466,12 +1253,9 @@ export default function Inbound() {
                   <X className="h-3 w-3" />
                 </button>
               )}
-            </div>
-
-            {/* Hàng 2: Kho / Loại / Ca */}
-            <div className="flex gap-2 flex-wrap items-center">
+              <span className="w-px h-4 bg-blue-200 shrink-0" />
               <Select value={f.warehouseId || '__all__'} onValueChange={v => setInbound({ warehouseId: v === '__all__' ? '' : v, filterMaterials: [], filterCycles: [], filterMachines: [] })}>
-                <SelectTrigger className="h-7 text-xs w-[110px] bg-white">
+                <SelectTrigger className="h-7 text-xs w-[100px] bg-white">
                   <SelectValue placeholder="Tất cả kho" />
                 </SelectTrigger>
                 <SelectContent>
@@ -1483,10 +1267,8 @@ export default function Inbound() {
                     ))}
                 </SelectContent>
               </Select>
-
-              {/* Loại kho — dynamic từ API */}
               <Select value={f.materialCategory || '__all__'} onValueChange={v => setInbound({ materialCategory: v === '__all__' ? '' : v, filterMaterials: [], filterCycles: [], filterMachines: [] })}>
-                <SelectTrigger className="h-7 text-xs w-[120px] bg-white">
+                <SelectTrigger className="h-7 text-xs w-[100px] bg-white">
                   <SelectValue placeholder="Loại kho" />
                 </SelectTrigger>
                 <SelectContent>
@@ -1498,8 +1280,6 @@ export default function Inbound() {
                     ))}
                 </SelectContent>
               </Select>
-
-              {/* Ca — client-side multi-select */}
               <MultiSelectFilter
                 label="Ca"
                 options={shiftOptions}
@@ -1509,7 +1289,7 @@ export default function Inbound() {
               />
             </div>
 
-            {/* Hàng 3: Material / Chu kỳ / Máy / Người nhập */}
+            {/* Hàng 2: Material / Chu kỳ / Máy / Người nhập */}
             <div className="flex gap-2 flex-wrap items-center">
               <MultiSelectDropdown label="Material" options={materialOptions} searchable
                 selected={filterMaterials} onChange={v => setInbound({ filterMaterials: v })} />
@@ -1656,10 +1436,7 @@ export default function Inbound() {
         )}
       </div>
 
-      <CreateOrderDialog open={showNew} onClose={() => setShowNew(false)} />
-      {editNccGroup && (
-        <EditNccGroupDialog groupOrders={editNccGroup} onClose={() => setEditNccGroup(null)} />
-      )}
+      <CreateOrderDialog open={showNew || !!editNccGroup} onClose={() => { setShowNew(false); setEditNccGroup(null) }} editGroup={editNccGroup} />
     </div>
   )
 }

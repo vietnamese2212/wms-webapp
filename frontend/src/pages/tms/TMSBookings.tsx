@@ -18,7 +18,7 @@ import {
   useTmsOrders, useCreateOrder, useUpdateOrder, useDeleteOrder, useBulkCreateOrders, useBulkUpdateOrderDate,
   useAddVehicleSlot, useUpdateVehicleSlot, useReleaseVehicleSlot, useRevokeVehicleSlot, useDeleteVehicleSlot,
   usePlanLinesByOrder, usePlanVsActual, useBulkCreatePlanLinesForOrder, useMaterials,
-  useBulkCreatePlanLines,
+  useBulkCreatePlanLines, useUpdatePlanLine, useDeletePlanLine,
 } from '@/api/hooks'
 import { formatDate, formatDateTime } from '@/utils/formatters'
 import type { TmsOrder, TmsVehicleSlot, DeliverySlot, TmsVehicleType, TmsVehicle, TransportCompany } from '@/types'
@@ -349,6 +349,70 @@ const EMPTY_PLAN_LINE = (): PlanLineRow => ({
   material_code: '', material_id: '', material_name: '', unit: '', planned_boxes: '', planned_pallets: '',
 })
 
+// ── Material search combobox ──────────────────────────────────────────────────
+type MatItem = { id: string; material_code: string; short_name?: string | null; unit?: string | null }
+
+function MatCombobox({
+  value, onSelect, allMats, onPaste, inputClassName,
+}: {
+  value: string
+  onSelect: (code: string, id: string, name: string, unit: string) => void
+  allMats: MatItem[]
+  onPaste?: (e: React.ClipboardEvent<HTMLInputElement>) => void
+  inputClassName?: string
+}) {
+  const [q, setQ] = React.useState(value)
+  const [open, setOpen] = React.useState(false)
+
+  React.useEffect(() => { setQ(value) }, [value])
+
+  const matches = React.useMemo(() => {
+    if (!q) return []
+    const lower = q.toLowerCase()
+    return allMats
+      .filter(m =>
+        m.material_code.toLowerCase().includes(lower) ||
+        (m.short_name ?? '').toLowerCase().includes(lower)
+      )
+      .slice(0, 10)
+  }, [q, allMats])
+
+  return (
+    <div className="relative">
+      <input
+        value={q}
+        onChange={e => { setQ(e.target.value); setOpen(true) }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 120)}
+        onPaste={onPaste}
+        placeholder="Mã / Tên hàng"
+        className={inputClassName ?? 'h-6 w-32 rounded border border-slate-200 px-2 text-[10px] font-mono focus:outline-none focus:ring-1 focus:ring-blue-400'}
+      />
+      {open && matches.length > 0 && (
+        <div className="absolute z-[100] top-full left-0 mt-0.5 w-72 bg-white border border-slate-200 rounded-md shadow-lg max-h-48 overflow-auto">
+          {matches.map(m => (
+            <button
+              key={m.id}
+              type="button"
+              className="w-full text-left px-2 py-1 hover:bg-blue-50 flex items-center gap-2 border-b border-slate-50 last:border-0"
+              onMouseDown={e => e.preventDefault()}
+              onClick={() => {
+                onSelect(m.material_code, m.id, m.short_name ?? '', m.unit ?? '')
+                setQ(m.material_code)
+                setOpen(false)
+              }}
+            >
+              <span className="text-[10px] font-mono font-semibold text-slate-800 w-24 shrink-0 truncate">{m.material_code}</span>
+              <span className="text-[9px] text-slate-500 flex-1 truncate">{m.short_name}</span>
+              <span className="text-[9px] text-slate-400 shrink-0">{m.unit}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseId }: {
   open: boolean; order: TmsOrder | null; onClose: () => void
   defaultDate: string; defaultWarehouseId: string
@@ -383,6 +447,42 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
           rows[i].material_id = ''; rows[i].material_name = ''; rows[i].unit = ''
         }
       }
+      return rows
+    })
+  }
+
+  function selectPlanMat(i: number, code: string, id: string, name: string, unit: string) {
+    setPlanRows(prev => {
+      const rows = [...prev]
+      rows[i] = { ...rows[i], material_code: code, material_id: id, material_name: name, unit }
+      return rows
+    })
+  }
+
+  // Paste từ Excel: tab-separated columns → Mã hàng | SL thùng | SL pallet
+  function handlePasteAt(startIdx: number, e: React.ClipboardEvent<HTMLInputElement>) {
+    const text = e.clipboardData.getData('text')
+    if (!text.includes('\t') && !text.includes('\n')) return
+    e.preventDefault()
+    const lines = text.trim().split(/\r?\n/).filter(Boolean)
+    setPlanRows(prev => {
+      const rows = [...prev]
+      while (rows.length < startIdx + lines.length) rows.push(EMPTY_PLAN_LINE())
+      lines.forEach((line, offset) => {
+        const cols = line.split('\t')
+        const code    = (cols[0] ?? '').trim()
+        const boxes   = (cols[1] ?? '').trim().replace(/[^0-9]/g, '')
+        const pallets = (cols[2] ?? '').trim().replace(/[^0-9]/g, '')
+        const mat = (allMats as import('@/types').Material[]).find(m => m.material_code === code)
+        rows[startIdx + offset] = {
+          material_code: code,
+          material_id:   mat?.id ?? '',
+          material_name: (mat as { short_name?: string } | undefined)?.short_name ?? '',
+          unit:          (mat as { unit?: string } | undefined)?.unit ?? '',
+          planned_boxes: boxes,
+          planned_pallets: pallets,
+        }
+      })
       return rows
     })
   }
@@ -582,30 +682,30 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
                       <tr key={i} className={`border-t border-slate-100 ${row.material_code && !row.material_id ? 'bg-red-50' : ''}`}>
                         <td className="px-1.5 py-0.5 text-[9px] text-slate-400">{i + 1}</td>
                         <td className="px-1 py-0.5">
-                          <Input
+                          <MatCombobox
                             value={row.material_code}
-                            onChange={e => updatePlanRow(i, 'material_code', e.target.value)}
-                            className="h-6 text-[10px] font-mono w-28 border-slate-200"
-                            placeholder="Mã hàng"
+                            allMats={allMats as MatItem[]}
+                            onSelect={(code, id, name, unit) => selectPlanMat(i, code, id, name, unit)}
+                            onPaste={e => handlePasteAt(i, e)}
                           />
                         </td>
                         <td className="px-1.5 py-0.5 text-[10px] text-slate-600 max-w-[140px] truncate">{row.material_name || <span className="text-slate-300">—</span>}</td>
                         <td className="px-1.5 py-0.5 text-[10px] text-slate-500">{row.unit || <span className="text-slate-300">—</span>}</td>
                         <td className="px-1 py-0.5">
-                          <Input
+                          <input
                             type="number" min={1}
                             value={row.planned_boxes}
                             onChange={e => updatePlanRow(i, 'planned_boxes', e.target.value)}
-                            className="h-6 text-[10px] w-16 border-slate-200"
+                            className="h-6 w-16 rounded border border-slate-200 px-1 text-[10px] focus:outline-none focus:ring-1 focus:ring-blue-400"
                             placeholder="Thùng"
                           />
                         </td>
                         <td className="px-1 py-0.5">
-                          <Input
+                          <input
                             type="number" min={0}
                             value={row.planned_pallets}
                             onChange={e => updatePlanRow(i, 'planned_pallets', e.target.value)}
-                            className="h-6 text-[10px] w-16 border-slate-200"
+                            className="h-6 w-16 rounded border border-slate-200 px-1 text-[10px] focus:outline-none focus:ring-1 focus:ring-blue-400"
                             placeholder="Pallet"
                           />
                         </td>
@@ -1454,13 +1554,17 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound }: {
   const [addPallets, setAddPallets] = useState('')
   const [addSaving, setAddSaving]   = useState(false)
   const [addError, setAddError]     = useState('')
+  const [addMatId, setAddMatId]     = useState('')
   const { data: planLines = [] }    = usePlanLinesByOrder(order?.id ?? null)
   const { data: planVsActual = [] } = usePlanVsActual(order?.id ?? null)
   const { data: allMats = [] }      = useMaterials()
   const { mutateAsync: addLines }   = useBulkCreatePlanLinesForOrder()
+  const { mutate: updateLine }      = useUpdatePlanLine()
+  const { mutate: deleteLine }      = useDeletePlanLine()
+  const [editingLine, setEditingLine] = useState<{ id: string; boxes: string; pallets: string } | null>(null)
 
   const mergedRows = useMemo(() => {
-    type MR = { material_code: string; material_name: string; unit: string; planned_boxes: number; actual_boxes: number; status: string | null }
+    type MR = { line_id: string | null; material_code: string; material_name: string; unit: string; planned_boxes: number; actual_boxes: number; status: string | null }
     const actualMap = new Map<string, number>()
     for (const row of planVsActual as Record<string, unknown>[]) {
       actualMap.set(row.material_code as string, (row.actual_boxes as number) ?? 0)
@@ -1474,6 +1578,7 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound }: {
       seen.add(code)
       const matFull = (allMats as import('@/types').Material[]).find(m => m.material_code === code)
       rows.push({
+        line_id: line.id as string ?? null,
         material_code: code,
         material_name: mat?.short_name as string || '—',
         unit: (matFull as { unit?: string })?.unit ?? '',
@@ -1488,6 +1593,7 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound }: {
       seen.add(code)
       const matFull = (allMats as import('@/types').Material[]).find(m => m.material_code === code)
       rows.push({
+        line_id: null,
         material_code: code,
         material_name: row.material_name as string || '—',
         unit: (matFull as { unit?: string })?.unit ?? '',
@@ -1500,17 +1606,17 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound }: {
   }, [planLines, planVsActual, allMats])
 
   async function handleAddLine() {
-    const mat = (allMats as import('@/types').Material[]).find(m => m.material_code === addCode.trim())
-    if (!mat) { setAddError('Không tìm thấy mã hàng'); return }
+    const matId = addMatId || (allMats as import('@/types').Material[]).find(m => m.material_code === addCode.trim())?.id
+    if (!matId) { setAddError('Không tìm thấy mã hàng'); return }
     const boxes = Number(addBoxes)
     if (!boxes || boxes <= 0) { setAddError('SL thùng phải > 0'); return }
     setAddSaving(true); setAddError('')
     try {
       await addLines({
         tms_order_id: order!.id,
-        lines: [{ material_id: mat.id, planned_boxes: boxes, ...(addPallets ? { planned_pallets: Number(addPallets) } : {}) }],
+        lines: [{ material_id: matId, planned_boxes: boxes, ...(addPallets ? { planned_pallets: Number(addPallets) } : {}) }],
       })
-      setAddCode(''); setAddBoxes(''); setAddPallets('')
+      setAddCode(''); setAddBoxes(''); setAddPallets(''); setAddMatId('')
     } catch (e: unknown) {
       const err = e as { response?: { data?: { error?: { message?: string } } } }
       setAddError(err.response?.data?.error?.message ?? String(e))
@@ -1622,28 +1728,72 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound }: {
                 <table className="min-w-full">
                   <thead className="bg-slate-50">
                     <tr>
-                      {['Mã hàng', 'Tên hàng', 'ĐVT', 'Kế hoạch', 'Thực tế', 'CL'].map(h => (
-                        <th key={h} className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
+                      {['Mã hàng', 'Tên hàng', 'ĐVT', 'Kế hoạch', 'Thực tế', 'CL', ...(canUploadInbound ? [''] : [])].map((h, idx) => (
+                        <th key={idx} className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {mergedRows.length === 0 ? (
-                      <tr><td colSpan={6} className="px-2 py-3 text-center text-xs text-slate-400">Chưa có hàng hóa</td></tr>
+                      <tr><td colSpan={canUploadInbound ? 7 : 6} className="px-2 py-3 text-center text-xs text-slate-400">Chưa có hàng hóa</td></tr>
                     ) : mergedRows.map(row => {
                       const diff = row.actual_boxes - row.planned_boxes
                       const isCancelled = row.status === 'CANCELLED'
+                      const isEditing = editingLine?.id === row.line_id
                       return (
                         <tr key={row.material_code}
                           className={`border-t border-slate-100 ${isCancelled ? 'opacity-50' : diff < 0 && row.actual_boxes > 0 ? 'bg-red-50' : diff > 0 ? 'bg-green-50' : ''}`}>
                           <td className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">{row.material_code}</td>
                           <td className="px-2 py-1 text-[10px] max-w-[140px] truncate whitespace-nowrap">{row.material_name}</td>
                           <td className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{row.unit || '—'}</td>
-                          <td className="px-2 py-1 text-[10px] tabular-nums font-semibold whitespace-nowrap">{row.planned_boxes || <span className="text-slate-300">—</span>}</td>
+                          <td className="px-2 py-1 text-[10px] tabular-nums font-semibold whitespace-nowrap">
+                            {isEditing ? (
+                              <input type="number" min={1}
+                                value={editingLine.boxes}
+                                onChange={e => setEditingLine(prev => prev ? { ...prev, boxes: e.target.value } : null)}
+                                className="h-5 w-14 rounded border border-blue-300 px-1 text-[10px] focus:outline-none"
+                              />
+                            ) : row.planned_boxes || <span className="text-slate-300">—</span>}
+                          </td>
                           <td className="px-2 py-1 text-[10px] tabular-nums font-semibold whitespace-nowrap">{row.actual_boxes > 0 ? row.actual_boxes : <span className="text-slate-300">0</span>}</td>
                           <td className={`px-2 py-1 text-[10px] tabular-nums font-semibold whitespace-nowrap ${diff < 0 && row.actual_boxes > 0 ? 'text-red-600' : diff > 0 ? 'text-green-600' : 'text-slate-300'}`}>
-                            {row.actual_boxes > 0 ? (diff > 0 ? `+${diff}` : diff) : '—'}
+                            {isEditing ? (
+                              <input type="number" min={0}
+                                value={editingLine.pallets}
+                                onChange={e => setEditingLine(prev => prev ? { ...prev, pallets: e.target.value } : null)}
+                                className="h-5 w-12 rounded border border-blue-300 px-1 text-[10px] focus:outline-none"
+                                placeholder="pl"
+                              />
+                            ) : row.actual_boxes > 0 ? (diff > 0 ? `+${diff}` : diff) : '—'}
                           </td>
+                          {canUploadInbound && (
+                            <td className="px-1 py-1 whitespace-nowrap">
+                              {row.line_id && !isCancelled && (
+                                isEditing ? (
+                                  <span className="flex gap-1">
+                                    <button className="text-[10px] text-green-600 hover:text-green-700 font-semibold px-1"
+                                      onClick={() => {
+                                        if (!editingLine) return
+                                        updateLine({ id: editingLine.id, planned_boxes: Number(editingLine.boxes), ...(editingLine.pallets ? { planned_pallets: Number(editingLine.pallets) } : {}) })
+                                        setEditingLine(null)
+                                      }}>✓</button>
+                                    <button className="text-[10px] text-slate-400 px-1" onClick={() => setEditingLine(null)}>✕</button>
+                                  </span>
+                                ) : (
+                                  <span className="flex gap-1">
+                                    <button className="p-0.5 text-slate-400 hover:text-blue-600"
+                                      onClick={() => setEditingLine({ id: row.line_id!, boxes: String(row.planned_boxes), pallets: '' })}>
+                                      <Pencil className="h-3 w-3" />
+                                    </button>
+                                    <button className="p-0.5 text-slate-400 hover:text-red-600"
+                                      onClick={() => { if (confirm(`Xóa dòng ${row.material_code}?`)) deleteLine(row.line_id!) }}>
+                                      <Trash2 className="h-3 w-3" />
+                                    </button>
+                                  </span>
+                                )
+                              )}
+                            </td>
+                          )}
                         </tr>
                       )
                     })}
@@ -1654,9 +1804,11 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound }: {
               {canUploadInbound && (
                 <div className="mt-2 space-y-1">
                   <div className="flex gap-1 items-center">
-                    <Input
-                      className="h-7 text-xs font-mono w-36 shrink-0" placeholder="Mã hàng"
-                      value={addCode} onChange={e => { setAddCode(e.target.value); setAddError('') }}
+                    <MatCombobox
+                      value={addCode}
+                      allMats={allMats as MatItem[]}
+                      onSelect={(code, id) => { setAddCode(code); setAddMatId(id); setAddError('') }}
+                      inputClassName="h-7 w-36 shrink-0 rounded border border-slate-200 px-2 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-400"
                     />
                     <Input
                       className="h-7 text-xs w-20 shrink-0" placeholder="SL thùng" type="number" min={1}

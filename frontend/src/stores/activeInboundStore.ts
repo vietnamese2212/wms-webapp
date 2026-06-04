@@ -6,7 +6,7 @@ export interface ActiveInbound {
   import_code: string
   status: string
   location_code?: string
-  mat_name?: string
+  mat_code?: string
 }
 
 interface ActiveInboundState {

@@ -1415,7 +1415,7 @@ export default function Inbound() {
                         e.stopPropagation()
                         isPinned(order.id)
                           ? unpin(order.id)
-                          : pin({ id: order.id, import_code: order.import_code ?? order.id.slice(0, 8), status: order.status, location_code: order.location?.location_code, mat_name: order.material?.short_name ?? order.material?.material_code })
+                          : pin({ id: order.id, import_code: order.import_code ?? order.id.slice(0, 8), status: order.status, location_code: order.location?.location_code, mat_code: order.material?.material_code })
                       }}
                     />
                   ))}

@@ -552,8 +552,8 @@ export default function InboundDetail() {
               <span className="text-[9px] text-amber-600 font-medium shrink-0">Đang làm:</span>
               {pinnedOrders.map(o => {
                 const isCurrent = o.id === id
-                const barLabel = (o.location_code || o.mat_name)
-                  ? `${o.location_code ?? '—'} · ${o.mat_name ?? '—'}`
+                const barLabel = (o.location_code || o.mat_code)
+                  ? `${o.location_code ?? '—'}_${o.mat_code?.slice(-3) ?? '—'}`
                   : o.import_code
                 return (
                   <button key={o.id}
@@ -631,7 +631,7 @@ export default function InboundDetail() {
               <button
                 onClick={() => isPinned(order.id)
                   ? unpin(order.id)
-                  : pin({ id: order.id, import_code: order.import_code ?? order.id.slice(0, 8), status: order.status, location_code: order.location?.location_code, mat_name: order.material?.short_name ?? order.material?.material_code })
+                  : pin({ id: order.id, import_code: order.import_code ?? order.id.slice(0, 8), status: order.status, location_code: order.location?.location_code, mat_code: order.material?.material_code })
                 }
                 title={isPinned(order.id) ? 'Bỏ đánh dấu đang làm' : 'Đánh dấu đang làm'}
                 className="p-1 rounded hover:bg-slate-100 transition-colors"

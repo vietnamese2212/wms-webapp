@@ -810,6 +810,7 @@ export default function InboundDetail() {
                       <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap">NSX</TableHead>
                       <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Mã pallet</TableHead>
                       <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right">Thùng</TableHead>
+                      <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Vị trí</TableHead>
                       <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Người quét</TableHead>
                       <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap">Ngày</TableHead>
                       <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap">Giờ</TableHead>
@@ -847,6 +848,9 @@ export default function InboundDetail() {
                         </TableCell>
                         <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums font-semibold">
                           {entry.cartons_imported}
+                        </TableCell>
+                        <TableCell className="px-2 py-1 text-[10px] font-mono text-slate-600">
+                          {entry.location?.location_code ?? '—'}
                         </TableCell>
                         <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">
                           {entry.created_by_emp?.name ?? '—'}

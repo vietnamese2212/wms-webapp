@@ -190,14 +190,28 @@ export async function createOrder(req: Request, res: Response) {
     }
 
     // Enforce: 1 gate_registration = 1 phiếu nhập duy nhất
+    // Đồng thời lấy tms_order_id từ gate registration để link báo cáo
+    let resolvedTmsOrderId: string | null = tms_order_id ?? null
     if (gate_registration_id) {
-      const { data: existing } = await supabase
-        .from('ProductionImport')
-        .select('import_code')
-        .eq('gate_registration_id', gate_registration_id)
-        .neq('status', 'CANCELLED')
+      const { data: gateReg } = await supabase
+        .from('gate_registrations')
+        .select('tms_order_id, id')
+        .eq('id', gate_registration_id)
         .maybeSingle()
-      if (existing) return fail(res, 409, 'GATE_REG_TAKEN', `Lượt vào này đã có phiếu nhập ${existing.import_code}`)
+      if (gateReg) {
+        // Kiểm tra đã có phiếu nhập chưa
+        const { data: existing } = await supabase
+          .from('ProductionImport')
+          .select('import_code')
+          .eq('gate_registration_id', gate_registration_id)
+          .neq('status', 'CANCELLED')
+          .maybeSingle()
+        if (existing) return fail(res, 409, 'GATE_REG_TAKEN', `Lượt vào này đã có phiếu nhập ${existing.import_code}`)
+        // Propagate tms_order_id từ gate registration nếu chưa có
+        if (!resolvedTmsOrderId && gateReg.tms_order_id) {
+          resolvedTmsOrderId = gateReg.tms_order_id
+        }
+      }
     }
 
     // Retry khi 2 request song song lấy cùng count → cùng import_code → 23505
@@ -229,7 +243,7 @@ export async function createOrder(req: Request, res: Response) {
           source_type:          resolvedSourceType,
           warehouse_type:       warehouse_type ?? null,
           gate_registration_id: gate_registration_id ?? null,
-          tms_order_id:         tms_order_id ?? null,
+          tms_order_id:         resolvedTmsOrderId,
           planned_cartons:      planned_cartons ? Number(planned_cartons) : null,
           created_at:           new Date().toISOString(),
           updated_at:           new Date().toISOString(),

@@ -1928,7 +1928,7 @@ export function useDeleteVehicleSlot() {
 export type InboundReportRow = {
   date: string; warehouse_name: string; po_number: string
   ncc_code: string; ncc_name: string
-  material_code: string; material_name: string; unit: string
+  material_code: string; material_name: string; unit: string; material_category: string
   planned_boxes: number; actual_boxes: number; pct: number | null
 }
 

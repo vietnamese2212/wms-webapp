@@ -295,7 +295,7 @@ export async function getInboundReport(req: Request, res: Response) {
       .select(`
         id, date, warehouse_id, ncc_id, material_id, po_number,
         planned_boxes, tms_order_id, status,
-        material:Material!material_id(material_code, short_name, unit),
+        material:Material!material_id(material_code, short_name, unit, category),
         ncc:TransportCompany!ncc_id(code, name),
         warehouse:Warehouse!warehouse_id(code, name)
       `)
@@ -346,6 +346,7 @@ export async function getInboundReport(req: Request, res: Response) {
         material_code: (line.material?.material_code ?? '') as string,
         material_name: (line.material?.short_name ?? '') as string,
         unit: (line.material?.unit ?? '') as string,
+        material_category: (line.material?.category ?? '') as string,
         planned_boxes: planned,
         actual_boxes,
         pct: planned > 0 ? Math.round((actual_boxes / planned) * 100) : null,

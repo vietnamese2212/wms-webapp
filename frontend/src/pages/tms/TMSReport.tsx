@@ -6,8 +6,12 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { useWarehouses, useInboundReport, type InboundReportRow } from '@/api/hooks'
 import { formatDate } from '@/utils/formatters'
+
+const TH = 'text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap'
+const TD = 'px-2 py-1 text-[10px] whitespace-nowrap'
 
 export default function TMSReport() {
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -17,9 +21,10 @@ export default function TMSReport() {
     return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   }, [])
 
-  const [dateFrom, setDateFrom] = useState(defaultFrom)
-  const [dateTo, setDateTo]     = useState(today)
-  const [warehouseId, setWarehouseId] = useState('')
+  const [dateFrom, setDateFrom]         = useState(defaultFrom)
+  const [dateTo, setDateTo]             = useState(today)
+  const [warehouseId, setWarehouseId]   = useState('')
+  const [selCategories, setSelCategories] = useState<string[]>([])
 
   const { data: warehouses = [] } = useWarehouses(true)
   const { data: rows = [], isLoading } = useInboundReport(
@@ -28,20 +33,31 @@ export default function TMSReport() {
       : undefined
   )
 
+  const categoryOptions = useMemo(() => {
+    const cats = [...new Set((rows as InboundReportRow[]).map(r => r.material_category).filter(Boolean))]
+    return cats.sort().map(c => ({ value: c, label: c }))
+  }, [rows])
+
+  const filteredRows = useMemo(() => {
+    if (selCategories.length === 0) return rows as InboundReportRow[]
+    return (rows as InboundReportRow[]).filter(r => selCategories.includes(r.material_category))
+  }, [rows, selCategories])
+
   const summary = useMemo(() => ({
-    totalPlan:   rows.reduce((s, r) => s + r.planned_boxes, 0),
-    totalActual: rows.reduce((s, r) => s + r.actual_boxes, 0),
-  }), [rows])
+    totalPlan:   filteredRows.reduce((s, r) => s + r.planned_boxes, 0),
+    totalActual: filteredRows.reduce((s, r) => s + r.actual_boxes, 0),
+  }), [filteredRows])
 
   const overallPct = summary.totalPlan > 0
     ? Math.round(summary.totalActual / summary.totalPlan * 100) : 0
 
   function exportExcel() {
-    const data = rows.map(r => ({
+    const data = filteredRows.map(r => ({
       'Ngày':             r.date,
       'Kho':              r.warehouse_name,
       'PO':               r.po_number,
       'NCC':              r.ncc_code ? `${r.ncc_code} — ${r.ncc_name}` : r.ncc_name,
+      'Loại hàng':        r.material_category || '',
       'Mã hàng':          r.material_code,
       'Tên hàng':         r.material_name,
       'ĐVT':              r.unit,
@@ -50,10 +66,9 @@ export default function TMSReport() {
       '% TT/KH':          r.pct != null ? r.pct / 100 : null,
     }))
     const ws = XLSX.utils.json_to_sheet(data)
-    // Format cột % thành percent
     const range = XLSX.utils.decode_range(ws['!ref'] ?? 'A1')
     for (let R = 1; R <= range.e.r; R++) {
-      const cell = ws[XLSX.utils.encode_cell({ r: R, c: 9 })]
+      const cell = ws[XLSX.utils.encode_cell({ r: R, c: 10 })]
       if (cell) cell.z = '0%'
     }
     const wb = XLSX.utils.book_new()
@@ -91,11 +106,19 @@ export default function TMSReport() {
             ))}
           </SelectContent>
         </Select>
+        <MultiSelectFilter
+          label="Loại hàng"
+          options={categoryOptions}
+          selected={selCategories}
+          onChange={setSelCategories}
+          searchable={false}
+          width="w-36"
+        />
 
         <div className="ml-auto flex items-center gap-3">
-          {rows.length > 0 && (
+          {filteredRows.length > 0 && (
             <span className="text-[10px] text-slate-500">
-              {rows.length} dòng
+              {filteredRows.length} dòng
               &nbsp;·&nbsp;KH: <span className="font-semibold tabular-nums">{summary.totalPlan.toLocaleString()}</span> thùng
               &nbsp;·&nbsp;Thực: <span className="font-semibold tabular-nums">{summary.totalActual.toLocaleString()}</span> thùng
               &nbsp;·&nbsp;
@@ -104,75 +127,85 @@ export default function TMSReport() {
               </span>
             </span>
           )}
-          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={exportExcel} disabled={rows.length === 0}>
+          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={exportExcel} disabled={filteredRows.length === 0}>
             <Download className="h-3.5 w-3.5 mr-1" />Excel
           </Button>
         </div>
       </div>
 
-      {/* Table */}
+      {/* Table — single overflow-auto, no inner overflow-x-auto (sticky header) */}
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
-        <div className="overflow-x-auto">
-          <Table className="min-w-full">
-            <TableHeader>
+        <Table className="min-w-full">
+          <TableHeader>
+            <TableRow>
+              <TableHead className={TH}>#</TableHead>
+              <TableHead className={TH}>Ngày</TableHead>
+              <TableHead className={TH}>Kho</TableHead>
+              <TableHead className={TH}>PO</TableHead>
+              <TableHead className={TH}>NCC</TableHead>
+              <TableHead className={TH}>Loại hàng</TableHead>
+              <TableHead className={TH}>Mã hàng</TableHead>
+              <TableHead className={TH}>Tên hàng</TableHead>
+              <TableHead className={TH}>ĐVT</TableHead>
+              <TableHead className={`${TH} text-right`}>KH (thùng)</TableHead>
+              <TableHead className={`${TH} text-right`}>Thực tế (thùng)</TableHead>
+              <TableHead className={`${TH} text-right`}>% TT/KH</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {isLoading ? (
               <TableRow>
-                {['#','Ngày','Kho','PO','NCC','Mã hàng','Tên hàng','ĐVT','KH (thùng)','Thực tế (thùng)','% TT/KH'].map(h => (
-                  <TableHead key={h}>{h}</TableHead>
-                ))}
+                <TableCell colSpan={12} className="text-center text-xs text-slate-400 py-10">Đang tải...</TableCell>
               </TableRow>
-            </TableHeader>
-            <TableBody>
-              {isLoading ? (
-                <TableRow>
-                  <TableCell colSpan={11} className="text-center text-xs text-slate-400 py-10">Đang tải...</TableCell>
-                </TableRow>
-              ) : rows.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={11} className="text-center text-xs text-slate-400 py-10">
-                    {dateFrom && dateTo ? 'Không có dữ liệu' : 'Chọn khoảng ngày để xem báo cáo'}
+            ) : filteredRows.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={12} className="text-center text-xs text-slate-400 py-10">
+                  {dateFrom && dateTo ? 'Không có dữ liệu' : 'Chọn khoảng ngày để xem báo cáo'}
+                </TableCell>
+              </TableRow>
+            ) : filteredRows.map((row, i) => {
+              const pct = row.pct ?? 0
+              const rowCls =
+                row.actual_boxes === 0 && row.planned_boxes > 0 ? 'bg-red-50 hover:bg-red-100'
+                : pct >= 100                                     ? 'bg-green-50 hover:bg-green-100'
+                : pct > 0                                        ? 'bg-amber-50 hover:bg-amber-100'
+                :                                                  'hover:bg-slate-50'
+              const pctCls =
+                row.pct == null ? 'text-slate-300'
+                : pct >= 100   ? 'text-green-700'
+                : pct >= 50    ? 'text-amber-700'
+                :                'text-red-600'
+              return (
+                <TableRow key={i} className={rowCls}>
+                  <TableCell className={`${TD} text-slate-400 tabular-nums`}>{i + 1}</TableCell>
+                  <TableCell className={`${TD} font-mono`}>{formatDate(row.date)}</TableCell>
+                  <TableCell className={TD}>{row.warehouse_name}</TableCell>
+                  <TableCell className={`${TD} font-mono`}>{row.po_number || <span className="text-slate-300">—</span>}</TableCell>
+                  <TableCell className={TD}>
+                    {row.ncc_code
+                      ? <><span className="font-mono font-semibold">{row.ncc_code}</span><span className="text-slate-400 ml-1">{row.ncc_name}</span></>
+                      : <span className="text-slate-300">—</span>}
+                  </TableCell>
+                  <TableCell className={TD}>
+                    {row.material_category || <span className="text-slate-300">—</span>}
+                  </TableCell>
+                  <TableCell className={`${TD} font-mono font-semibold`}>{row.material_code}</TableCell>
+                  <TableCell className={`${TD} max-w-[180px] truncate`}>{row.material_name}</TableCell>
+                  <TableCell className={`${TD} text-slate-500`}>{row.unit || '—'}</TableCell>
+                  <TableCell className={`${TD} tabular-nums font-semibold text-right`}>{row.planned_boxes.toLocaleString()}</TableCell>
+                  <TableCell className={`${TD} tabular-nums font-semibold text-right`}>
+                    {row.actual_boxes > 0
+                      ? row.actual_boxes.toLocaleString()
+                      : <span className="text-slate-300">0</span>}
+                  </TableCell>
+                  <TableCell className={`${TD} tabular-nums font-semibold text-right ${pctCls}`}>
+                    {row.pct != null ? `${pct}%` : '—'}
                   </TableCell>
                 </TableRow>
-              ) : (rows as InboundReportRow[]).map((row, i) => {
-                const pct = row.pct ?? 0
-                const rowCls =
-                  row.actual_boxes === 0 && row.planned_boxes > 0 ? 'bg-red-50 hover:bg-red-100'
-                  : pct >= 100                                     ? 'bg-green-50 hover:bg-green-100'
-                  : pct > 0                                        ? 'bg-amber-50 hover:bg-amber-100'
-                  :                                                  'hover:bg-slate-50'
-                const pctCls =
-                  row.pct == null ? 'text-slate-300'
-                  : pct >= 100   ? 'text-green-700'
-                  : pct >= 50    ? 'text-amber-700'
-                  :                'text-red-600'
-                return (
-                  <TableRow key={i} className={rowCls}>
-                    <TableCell className="text-[10px] text-slate-400 tabular-nums">{i + 1}</TableCell>
-                    <TableCell className="text-[10px] font-mono whitespace-nowrap">{formatDate(row.date)}</TableCell>
-                    <TableCell className="text-[10px] whitespace-nowrap">{row.warehouse_name}</TableCell>
-                    <TableCell className="text-[10px] font-mono">{row.po_number || <span className="text-slate-300">—</span>}</TableCell>
-                    <TableCell className="text-[10px] whitespace-nowrap">
-                      {row.ncc_code
-                        ? <><span className="font-mono font-semibold">{row.ncc_code}</span><span className="text-slate-400 ml-1">{row.ncc_name}</span></>
-                        : <span className="text-slate-300">—</span>}
-                    </TableCell>
-                    <TableCell className="text-[10px] font-mono font-semibold whitespace-nowrap">{row.material_code}</TableCell>
-                    <TableCell className="text-[10px] max-w-[180px] truncate">{row.material_name}</TableCell>
-                    <TableCell className="text-[10px] text-slate-500">{row.unit || '—'}</TableCell>
-                    <TableCell className="text-[10px] tabular-nums font-semibold text-right">{row.planned_boxes.toLocaleString()}</TableCell>
-                    <TableCell className="text-[10px] tabular-nums font-semibold text-right">
-                      {row.actual_boxes > 0
-                        ? row.actual_boxes.toLocaleString()
-                        : <span className="text-slate-300">0</span>}
-                    </TableCell>
-                    <TableCell className={`text-[10px] tabular-nums font-semibold text-right ${pctCls}`}>
-                      {row.pct != null ? `${pct}%` : '—'}
-                    </TableCell>
-                  </TableRow>
-                )
-              })}
-            </TableBody>
-          </Table>
-        </div>
+              )
+            })}
+          </TableBody>
+        </Table>
       </div>
     </div>
   )

@@ -504,7 +504,7 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
         priority: order.priority ?? false,
       })
     } else {
-      setForm(EMPTY_FORM(defaultDate, defaultWarehouseId))
+      setForm(EMPTY_FORM(today, defaultWarehouseId))
     }
     setErr('')
     if (!order) setPlanRows(Array.from({ length: 20 }, EMPTY_PLAN_LINE))

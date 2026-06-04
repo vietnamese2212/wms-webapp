@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, PackagePlus, CalendarDays, X, ChevronDown, User, MapPin, Filter, QrCode, Pencil } from 'lucide-react'
+import { Plus, PackagePlus, CalendarDays, X, ChevronDown, User, MapPin, Filter, QrCode, Pencil, Bookmark } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
@@ -26,6 +26,7 @@ import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { SearchInput } from '@/components/shared/SearchInput'
 import type { InboundOrder } from '@/types'
 import { unlockAudio } from '@/utils/audio'
+import { useActiveInboundStore } from '@/stores/activeInboundStore'
 
 const TODAY = new Date().toISOString().slice(0, 10)
 
@@ -1033,6 +1034,7 @@ export default function Inbound() {
   const user      = useAuthStore(s => s.user)
   const perms     = user?.module_permissions as ModulePermissions | null ?? null
   const { inbound: f, setInbound } = useWmsFilterStore()
+  const { pin, unpin, isPinned } = useActiveInboundStore()
   const [showNew,      setShowNew]      = useState(false)
   const [locOpen,      setLocOpen]      = useState(false)
   const [showFilters,  setShowFilters]  = useState(false)
@@ -1393,6 +1395,7 @@ export default function Inbound() {
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Người nhập</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Ca</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Ghi chú</TableHead>
+                    <TableHead className="w-7" />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1407,6 +1410,13 @@ export default function Inbound() {
                       onEditGroup={order.source_type === 'NCC' && order.status === 'OPEN' && can(perms, 'inbound', 'edit')
                         ? (e) => { e.stopPropagation(); openEditNccGroup(order) }
                         : undefined}
+                      pinned={isPinned(order.id)}
+                      onPin={(e) => {
+                        e.stopPropagation()
+                        isPinned(order.id)
+                          ? unpin(order.id)
+                          : pin({ id: order.id, import_code: order.import_code ?? order.id.slice(0, 8), status: order.status })
+                      }}
                     />
                   ))}
                 </TableBody>
@@ -1432,10 +1442,12 @@ function rowBg(order: InboundOrder): string {
   return 'hover:bg-slate-50'
 }
 
-function InboundRow({ order, onClick, onScan, onEditGroup }: {
+function InboundRow({ order, onClick, onScan, onEditGroup, onPin, pinned }: {
   order: InboundOrder; onClick: () => void
   onScan?: (e: React.MouseEvent) => void
   onEditGroup?: (e: React.MouseEvent) => void
+  onPin?: (e: React.MouseEvent) => void
+  pinned?: boolean
 }) {
   const dateFull = order.import_date ? format(parseISO(order.import_date), 'dd-MM-yy', { locale: vi }) : '—'
   const isRowToday = order.import_date?.slice(0, 10) === TODAY
@@ -1500,6 +1512,17 @@ function InboundRow({ order, onClick, onScan, onEditGroup }: {
       </TableCell>
       <TableCell className="px-2 py-1">
         <span className="text-[10px]">{order.notes ?? '—'}</span>
+      </TableCell>
+      <TableCell className="px-1 py-1 text-center">
+        {onPin && (
+          <button
+            onClick={onPin}
+            title={pinned ? 'Bỏ đánh dấu' : 'Đánh dấu đang làm'}
+            className="p-0.5 rounded hover:bg-slate-100 transition-colors"
+          >
+            <Bookmark className={`h-3.5 w-3.5 transition-colors ${pinned ? 'fill-amber-400 text-amber-500' : 'text-slate-300 hover:text-slate-500'}`} />
+          </button>
+        )}
       </TableCell>
     </TableRow>
   )

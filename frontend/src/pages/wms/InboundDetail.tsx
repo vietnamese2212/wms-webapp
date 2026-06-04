@@ -4,7 +4,7 @@ import type { AxiosError }              from 'axios'
 import {
   ArrowLeft, Plus, CheckCircle2, XCircle, Trash2, Pencil,
   MapPin, Package, AlertTriangle, QrCode,
-  Clock, Calendar, User,
+  Clock, Calendar, User, Bookmark,
 } from 'lucide-react'
 import { format, parseISO }    from 'date-fns'
 import { vi }                  from 'date-fns/locale'
@@ -26,6 +26,7 @@ import {
 } from '@/api/hooks'
 import { useAuthStore }            from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
+import { useActiveInboundStore }  from '@/stores/activeInboundStore'
 import { inboundOrderStatusLabel, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { playBeep, unlockAudio }   from '@/utils/audio'
 import type { InboundOrder, InboundOrderStatus, PalletEntry } from '@/types'
@@ -379,6 +380,10 @@ export default function InboundDetail() {
   const user  = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
 
+  const { orders: pinnedOrders, pin, unpin, isPinned, update } = useActiveInboundStore()
+  useEffect(() => {
+    if (order) update(order.id, order.status)
+  }, [order?.id, order?.status]) // eslint-disable-line
 
   const { mutate: cancelOrder, isPending: cancelling } = useCancelInboundOrder()
   const { mutate: deleteEntry                           } = useDeletePalletEntry()
@@ -540,6 +545,36 @@ export default function InboundDetail() {
 
       <div className="flex flex-col h-full min-h-0">
 
+        {/* ── "Đang làm" quick-switch bar ── */}
+        {pinnedOrders.length > 0 && (
+          <div className="flex overflow-x-auto shrink-0 border-b bg-amber-50/60 gap-0 scrollbar-none">
+            <span className="text-[9px] text-amber-600 font-medium px-2 py-1.5 shrink-0 border-r border-amber-200">
+              Đang làm:
+            </span>
+            {pinnedOrders.map(o => {
+              const isCurrent = o.id === id
+              return (
+                <button key={o.id}
+                  onClick={() => !isCurrent && navigate(`/wms/inbound/${o.id}`)}
+                  className={[
+                    'flex items-center px-3 py-1.5 text-[10px] whitespace-nowrap border-b-2 transition-colors shrink-0',
+                    isCurrent
+                      ? 'border-amber-500 bg-amber-100 text-amber-800 font-semibold cursor-default'
+                      : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-amber-50 cursor-pointer',
+                  ].join(' ')}
+                >
+                  <span className={`h-1.5 w-1.5 rounded-full mr-1.5 shrink-0 ${
+                    o.status === 'OPEN'      ? 'bg-amber-500'
+                    : o.status === 'COMPLETED' ? 'bg-blue-500'
+                    : 'bg-slate-400'
+                  }`} />
+                  <span className="truncate max-w-[100px]">{o.import_code}</span>
+                </button>
+              )
+            })}
+          </div>
+        )}
+
         {/* ── Tab bar (nhảy qua lại giữa các phiếu đang mở) ── */}
         {openOrders.length > 1 && (
           <div className="flex overflow-x-auto shrink-0 border-b bg-slate-50 gap-0 scrollbar-none">
@@ -591,6 +626,16 @@ export default function InboundDetail() {
             </div>
 
             <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                onClick={() => isPinned(order.id)
+                  ? unpin(order.id)
+                  : pin({ id: order.id, import_code: order.import_code ?? order.id.slice(0, 8), status: order.status })
+                }
+                title={isPinned(order.id) ? 'Bỏ đánh dấu đang làm' : 'Đánh dấu đang làm'}
+                className="p-1 rounded hover:bg-slate-100 transition-colors"
+              >
+                <Bookmark className={`h-4 w-4 transition-colors ${isPinned(order.id) ? 'fill-amber-400 text-amber-500' : 'text-slate-300 hover:text-slate-500'}`} />
+              </button>
               {isOpen && can(perms, 'inbound', 'cancel') && (
                 <Button
                   size="sm" variant="outline"

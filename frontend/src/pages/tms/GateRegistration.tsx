@@ -698,29 +698,17 @@ export default function GateRegistration() {
             </SelectContent>
           </Select>
 
-          <Select value={fWarehouseType || '__all__'} onValueChange={v => setFWarehouseType(v === '__all__' ? '' : v)}>
-            <SelectTrigger className="h-7 text-xs w-32">
-              <SelectValue placeholder="Loại kho" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">Tất cả loại kho</SelectItem>
-              {whTypes.map((t: { id: string; value: string }) => (
-                <SelectItem key={t.id} value={t.value}>{t.value}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
           {/* Bộ lọc thêm */}
           <Button
             variant="outline" size="sm"
-            className={`h-7 text-xs gap-1 ${showMoreFilters || fVehicleTypes.length > 0 || fCompany || fDirection || fStatus ? 'border-blue-400 text-blue-700 bg-blue-50' : ''}`}
+            className={`h-7 text-xs gap-1 ${showMoreFilters || fVehicleTypes.length > 0 || fCompany || fDirection || fStatus || fWarehouseType ? 'border-blue-400 text-blue-700 bg-blue-50' : ''}`}
             onClick={() => setShowMoreFilters(v => !v)}
           >
             <SlidersHorizontal className="h-3 w-3" />
             Bộ lọc
-            {(fVehicleTypes.length > 0 || fCompany || fDirection || fStatus) && (
+            {(fVehicleTypes.length > 0 || fCompany || fDirection || fStatus || fWarehouseType) && (
               <span className="ml-0.5 bg-blue-500 text-white rounded-full text-[9px] px-1 leading-none py-0.5">
-                {[fVehicleTypes.length > 0, fCompany, fDirection, fStatus].filter(Boolean).length}
+                {[fVehicleTypes.length > 0, !!fCompany, !!fDirection, !!fStatus, !!fWarehouseType].filter(Boolean).length}
               </span>
             )}
           </Button>
@@ -781,9 +769,21 @@ export default function GateRegistration() {
               </SelectContent>
             </Select>
 
+            <Select value={fWarehouseType || '__all__'} onValueChange={v => setFWarehouseType(v === '__all__' ? '' : v)}>
+              <SelectTrigger className="h-7 text-xs w-32">
+                <SelectValue placeholder="Loại kho" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">Tất cả loại kho</SelectItem>
+                {whTypes.map((t: { id: string; value: string }) => (
+                  <SelectItem key={t.id} value={t.value}>{t.value}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
             <button
               className="text-[10px] text-slate-400 hover:text-red-500 underline"
-              onClick={() => { setFVehicleTypes([]); setFCompany(''); setFDirection(''); setFStatus('') }}
+              onClick={() => { setFVehicleTypes([]); setFCompany(''); setFDirection(''); setFStatus(''); setFWarehouseType('') }}
             >
               Xóa bộ lọc
             </button>

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import * as XLSX from 'xlsx'
-import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, CalendarDays, ShieldX, Lock, FileSpreadsheet, X } from 'lucide-react'
+import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, CalendarDays, ShieldX, Lock, FileSpreadsheet, X, SlidersHorizontal } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -1877,6 +1877,7 @@ export default function TMSBookings() {
     try { return JSON.parse(localStorage.getItem('tmsb_khungio') ?? '[]') } catch { return [] }
   })
   const [slotOverviewOpen, setSlotOverviewOpen] = useState(false)
+  const [showMoreFilters, setShowMoreFilters] = useState(false)
 
   useEffect(() => { localStorage.setItem('tmsb_date', date) }, [date])
   useEffect(() => { localStorage.setItem('tmsb_wh', warehouseId) }, [warehouseId])
@@ -2232,15 +2233,22 @@ export default function TMSBookings() {
               ))}
             </SelectContent>
           </Select>
-          {(warehouseId || isNccUser) && (
-            <>
-              <MultiSelectFilter label="Khung giờ" options={khungGioOptions} selected={khungGioFilter} onChange={setKhungGioFilter} />
-              <MultiSelectFilter label="Hướng" options={huongOptions} selected={huongFilter} onChange={setHuongFilter} />
-              <MultiSelectFilter label="ĐVVT" options={dvvtOptions} selected={dvvtFilter} onChange={setDvvtFilter} />
-              <MultiSelectFilter label="Loại kho" options={loaiKhoOptions} selected={loaiKhoFilter} onChange={setLoaiKhoFilter} />
-              <MultiSelectFilter label="Loại xe" options={loaiXeOptions} selected={loaiXeFilter} onChange={setLoaiXeFilter} />
-            </>
-          )}
+          {(warehouseId || isNccUser) && (() => {
+            const activeCnt = [khungGioFilter.length > 0, huongFilter.length > 0, dvvtFilter.length > 0, loaiKhoFilter.length > 0, loaiXeFilter.length > 0].filter(Boolean).length
+            return (
+              <Button
+                variant="outline" size="sm"
+                className={`h-8 text-xs gap-1 ${showMoreFilters || activeCnt > 0 ? 'border-blue-400 text-blue-700 bg-blue-50' : ''}`}
+                onClick={() => setShowMoreFilters(v => !v)}
+              >
+                <SlidersHorizontal className="h-3.5 w-3.5" />
+                Bộ lọc
+                {activeCnt > 0 && (
+                  <span className="ml-0.5 bg-blue-500 text-white rounded-full text-[9px] px-1 leading-none py-0.5">{activeCnt}</span>
+                )}
+              </Button>
+            )
+          })()}
           {canChangeDate && selectedOrderIds.size > 0 && (
             <div className="flex items-center gap-2 w-full py-0.5">
               <span className="text-xs text-slate-600 font-medium">{selectedOrderIds.size} đơn đã chọn</span>
@@ -2254,6 +2262,23 @@ export default function TMSBookings() {
           )}
           {actionErr && <p className="text-xs text-red-600 w-full">{actionErr}</p>}
         </div>
+        {(warehouseId || isNccUser) && showMoreFilters && (
+          <div className="flex items-center gap-2 flex-wrap mt-2 pt-2 border-t">
+            <MultiSelectFilter label="Khung giờ" options={khungGioOptions} selected={khungGioFilter} onChange={setKhungGioFilter} />
+            <MultiSelectFilter label="Hướng" options={huongOptions} selected={huongFilter} onChange={setHuongFilter} />
+            <MultiSelectFilter label="ĐVVT" options={dvvtOptions} selected={dvvtFilter} onChange={setDvvtFilter} />
+            <MultiSelectFilter label="Loại kho" options={loaiKhoOptions} selected={loaiKhoFilter} onChange={setLoaiKhoFilter} />
+            <MultiSelectFilter label="Loại xe" options={loaiXeOptions} selected={loaiXeFilter} onChange={setLoaiXeFilter} />
+            {(khungGioFilter.length > 0 || huongFilter.length > 0 || dvvtFilter.length > 0 || loaiKhoFilter.length > 0 || loaiXeFilter.length > 0) && (
+              <button
+                className="text-[10px] text-slate-400 hover:text-red-500 underline"
+                onClick={() => { setKhungGioFilter([]); setHuongFilter([]); setDvvtFilter([]); setLoaiKhoFilter([]); setLoaiXeFilter([]) }}
+              >
+                Xóa bộ lọc
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Content */}

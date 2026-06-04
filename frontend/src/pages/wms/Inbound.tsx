@@ -1384,18 +1384,18 @@ export default function Inbound() {
           <>
             {/* Orders table */}
             <div className="overflow-x-auto">
-            <Table className="table-fixed min-w-[660px]">
+            <Table className="min-w-max">
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-7" />
-                    <TableHead className="w-24 text-[9px] font-medium text-slate-500 px-2 py-1.5">Ngày nhập</TableHead>
-                    <TableHead className="w-20 text-[9px] font-medium text-slate-500 px-2 py-1.5">Vị trí</TableHead>
-                    <TableHead className="w-32 text-[9px] font-medium text-slate-500 px-2 py-1.5">Material</TableHead>
-                    <TableHead className="w-12 text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right">Pallet</TableHead>
-                    <TableHead className="w-16 text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right">Tổng nhập</TableHead>
-                    <TableHead className="w-20 text-[9px] font-medium text-slate-500 px-2 py-1.5">Người nhập</TableHead>
-                    <TableHead className="w-14 text-[9px] font-medium text-slate-500 px-2 py-1.5">Ca</TableHead>
-                    <TableHead className="w-20 text-[9px] font-medium text-slate-500 px-2 py-1.5">Ghi chú</TableHead>
+                    <TableHead className="w-7 px-2 py-1.5" />
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Ngày nhập</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Vị trí</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Material</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Pallet</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Tổng nhập</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Người nhập</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Ca</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Ghi chú</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1489,13 +1489,13 @@ function InboundRow({ order, onClick, onScan, onEditGroup, onPin, pinned }: {
           </div>
         )}
       </TableCell>
-      <TableCell className="px-2 py-1 overflow-hidden">
-        <div className="flex items-center justify-between gap-1">
-          <span className="text-[10px] font-mono truncate">{order.location?.location_code ?? '—'}</span>
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        <div className="flex items-center gap-1">
+          <span className="text-[10px] font-mono font-semibold">{order.location?.location_code ?? '—'}</span>
           {onScan && (
             <button
               onClick={onScan}
-              className="flex items-center gap-0.5 text-[9px] font-medium text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 rounded px-1 py-0.5 transition-colors shrink-0"
+              className="flex items-center gap-0.5 text-[9px] font-medium text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 rounded px-1 py-0.5 transition-colors"
               title="Thêm pallet"
             >
               <QrCode className="h-2.5 w-2.5" />
@@ -1503,28 +1503,28 @@ function InboundRow({ order, onClick, onScan, onEditGroup, onPin, pinned }: {
           )}
         </div>
       </TableCell>
-      <TableCell className="px-2 py-1 overflow-hidden">
-        <div className="truncate text-[10px] font-medium">{matName}</div>
-        {matCode && <div className="text-[9px] text-slate-400 font-mono truncate">{matCode}</div>}
+      <TableCell className="px-2 py-1">
+        <div className="text-[10px] font-medium whitespace-nowrap">{matName}</div>
+        {matCode && <div className="text-[9px] text-slate-400 font-mono whitespace-nowrap">{matCode}</div>}
       </TableCell>
-      <TableCell className="px-2 py-1 text-right">
+      <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         <span className="text-[10px] font-semibold tabular-nums">{pallets}</span>
         <span className="text-[9px] text-slate-400 ml-0.5">pl</span>
       </TableCell>
-      <TableCell className="px-2 py-1 text-right">
+      <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         <span className="text-[10px] font-semibold tabular-nums">{order.total_cartons ?? 0}</span>
         <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
       </TableCell>
-      <TableCell className="px-2 py-1 overflow-hidden">
-        <span className="text-[10px] truncate block">{importer}</span>
+      <TableCell className="px-2 py-1">
+        <div className="text-[10px] max-w-[90px] truncate">{importer}</div>
       </TableCell>
-      <TableCell className="px-2 py-1 overflow-hidden">
+      <TableCell className="px-2 py-1 whitespace-nowrap">
         {order.shift
-          ? <span className="text-[10px] font-medium truncate block">{order.shift.name}</span>
+          ? <span className="text-[10px] font-medium">{order.shift.name}</span>
           : <span className="text-[10px] text-slate-300">—</span>}
       </TableCell>
-      <TableCell className="px-2 py-1 overflow-hidden">
-        <span className="text-[10px] truncate block">{order.notes ?? '—'}</span>
+      <TableCell className="px-2 py-1">
+        <div className="text-[10px] max-w-[90px] truncate">{order.notes ?? '—'}</div>
       </TableCell>
     </TableRow>
   )

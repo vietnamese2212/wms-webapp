@@ -95,6 +95,12 @@ interface MaterialsFilters {
   catFilter: string[]
   statusFilter: string[]
 }
+interface InboundReportFilters {
+  dateFrom: string
+  dateTo: string
+  warehouseId: string
+  selCategories: string[]
+}
 interface WmsFilterState {
   outbound:          OutboundFilters
   inbound:           InboundFilters
@@ -105,6 +111,7 @@ interface WmsFilterState {
   gateRegistration:  GateRegistrationFilters
   deliveries:        DeliveriesFilters
   materials:         MaterialsFilters
+  inboundReport:     InboundReportFilters
   setOutbound:          (f: Partial<OutboundFilters>)          => void
   setInbound:           (f: Partial<InboundFilters>)           => void
   setInventory:         (f: Partial<InventoryFilters>)         => void
@@ -114,6 +121,7 @@ interface WmsFilterState {
   setGateRegistration:  (f: Partial<GateRegistrationFilters>)  => void
   setDeliveries:        (f: Partial<DeliveriesFilters>)        => void
   setMaterials:         (f: Partial<MaterialsFilters>)         => void
+  setInboundReport:     (f: Partial<InboundReportFilters>)     => void
 }
 
 const INBOUND_DEFAULT: InboundFilters = {
@@ -154,6 +162,10 @@ export const useWmsFilterStore = create<WmsFilterState>()(
       },
       deliveries: { search: '', statusFilter: 'ALL' },
       materials:  { search: '', catFilter: [], statusFilter: ['active'] },
+      inboundReport: {
+        dateFrom: (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }) })(),
+        dateTo: today(), warehouseId: '', selCategories: [],
+      },
       setOutbound:         (f) => set(s => ({ outbound:         { ...s.outbound,         ...f } })),
       setInbound:          (f) => set(s => ({ inbound:          { ...INBOUND_DEFAULT, ...s.inbound, ...f } })),
       setInventory:        (f) => set(s => ({ inventory:        { ...s.inventory,        ...f } })),
@@ -163,7 +175,8 @@ export const useWmsFilterStore = create<WmsFilterState>()(
       setGateRegistration: (f) => set(s => ({ gateRegistration: { ...s.gateRegistration, ...f } })),
       setDeliveries:       (f) => set(s => ({ deliveries:       { ...s.deliveries,       ...f } })),
       setMaterials:        (f) => set(s => ({ materials:        { ...s.materials,        ...f } })),
+      setInboundReport:    (f) => set(s => ({ inboundReport:    { ...s.inboundReport,    ...f } })),
     }),
-    { name: 'wms-filters-v7', storage: createJSONStorage(() => sessionStorage) }
+    { name: 'wms-filters-v8', storage: createJSONStorage(() => sessionStorage) }
   )
 )

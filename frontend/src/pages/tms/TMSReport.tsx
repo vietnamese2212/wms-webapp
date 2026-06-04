@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react'
+import React, { useMemo } from 'react'
 import * as XLSX from 'xlsx'
 import { Download } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -9,22 +9,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { useWarehouses, useInboundReport, type InboundReportRow } from '@/api/hooks'
 import { formatDate } from '@/utils/formatters'
+import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 
 const TH = 'text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap'
 const TD = 'px-2 py-1 text-[10px] whitespace-nowrap'
 
 export default function TMSReport() {
-  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
-  const defaultFrom = useMemo(() => {
-    const d = new Date()
-    d.setDate(d.getDate() - 30)
-    return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
-  }, [])
-
-  const [dateFrom, setDateFrom]         = useState(defaultFrom)
-  const [dateTo, setDateTo]             = useState(today)
-  const [warehouseId, setWarehouseId]   = useState('')
-  const [selCategories, setSelCategories] = useState<string[]>([])
+  const { inboundReport, setInboundReport } = useWmsFilterStore()
+  const { dateFrom, dateTo, warehouseId, selCategories } = inboundReport
 
   const { data: warehouses = [] } = useWarehouses(true)
   const { data: rows = [], isLoading } = useInboundReport(
@@ -85,7 +77,7 @@ export default function TMSReport() {
           <Label className="text-xs text-slate-500 shrink-0">Từ</Label>
           <Input
             type="date" value={dateFrom}
-            onChange={e => setDateFrom(e.target.value)}
+            onChange={e => setInboundReport({ dateFrom: e.target.value })}
             className="h-7 text-xs w-32"
           />
         </div>
@@ -93,11 +85,11 @@ export default function TMSReport() {
           <Label className="text-xs text-slate-500 shrink-0">Đến</Label>
           <Input
             type="date" value={dateTo}
-            onChange={e => setDateTo(e.target.value)}
+            onChange={e => setInboundReport({ dateTo: e.target.value })}
             className="h-7 text-xs w-32"
           />
         </div>
-        <Select value={warehouseId || '__all__'} onValueChange={v => setWarehouseId(v === '__all__' ? '' : v)}>
+        <Select value={warehouseId || '__all__'} onValueChange={v => setInboundReport({ warehouseId: v === '__all__' ? '' : v })}>
           <SelectTrigger className="h-7 text-xs w-36"><SelectValue placeholder="Tất cả kho" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="__all__">Tất cả kho</SelectItem>
@@ -110,7 +102,7 @@ export default function TMSReport() {
           label="Loại hàng"
           options={categoryOptions}
           selected={selCategories}
-          onChange={setSelCategories}
+          onChange={v => setInboundReport({ selCategories: v })}
           searchable={false}
           width="w-36"
         />

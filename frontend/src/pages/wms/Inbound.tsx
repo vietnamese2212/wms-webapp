@@ -1490,7 +1490,7 @@ function InboundRow({ order, onClick, onScan, onEditGroup, onPin, pinned }: {
         )}
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
-        <div className="flex items-center gap-1">
+        <div className="flex items-center justify-between gap-1 w-full">
           <span className="text-[10px] font-mono font-semibold">{order.location?.location_code ?? '—'}</span>
           {onScan && (
             <button

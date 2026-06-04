@@ -314,19 +314,37 @@ export async function getInboundReport(req: Request, res: Response) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const orderIds = [...new Set(((planLines ?? []) as any[]).map((l: any) => l.tms_order_id).filter(Boolean))]
 
-    // 3. Fetch thực tế từ ProductionImport, group theo tms_order_id + material_id
+    // 3. Fetch thực tế từ InventoryEntry (số thùng đã quét thực tế)
+    //    InventoryEntry.import_order_id → ProductionImport.(tms_order_id, material_id)
     const actualMap = new Map<string, number>() // key: `${tms_order_id}/${material_id}` → boxes
     if (orderIds.length > 0) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: actuals, error: actErr } = await (supabase.from('ProductionImport') as any)
-        .select('tms_order_id, material_id, planned_cartons')
+      const { data: imports, error: impErr } = await (supabase.from('ProductionImport') as any)
+        .select('id, tms_order_id, material_id')
         .in('tms_order_id', orderIds)
         .neq('status', 'CANCELLED')
-      if (actErr) return fail(res, actErr.message)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      for (const a of (actuals ?? []) as any[]) {
-        const key = `${a.tms_order_id}/${a.material_id}`
-        actualMap.set(key, (actualMap.get(key) ?? 0) + ((a.planned_cartons ?? 0) as number))
+      if (impErr) return fail(res, impErr.message)
+
+      const importIds = ((imports ?? []) as any[]).map((i: any) => i.id as string)
+      const importMeta = new Map<string, { tms_order_id: string; material_id: string }>()
+      for (const i of (imports ?? []) as any[]) {
+        importMeta.set(i.id, { tms_order_id: i.tms_order_id, material_id: i.material_id })
+      }
+
+      if (importIds.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: entries, error: entErr } = await (supabase.from('InventoryEntry') as any)
+          .select('import_order_id, cartons_imported')
+          .in('import_order_id', importIds)
+        if (entErr) return fail(res, entErr.message)
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        for (const e of (entries ?? []) as any[]) {
+          const meta = importMeta.get(e.import_order_id)
+          if (!meta) continue
+          const key = `${meta.tms_order_id}/${meta.material_id}`
+          actualMap.set(key, (actualMap.get(key) ?? 0) + ((e.cartons_imported ?? 0) as number))
+        }
       }
     }
 

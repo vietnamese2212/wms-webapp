@@ -1459,6 +1459,46 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound }: {
   const { data: allMats = [] }      = useMaterials()
   const { mutateAsync: addLines }   = useBulkCreatePlanLinesForOrder()
 
+  const mergedRows = useMemo(() => {
+    type MR = { material_code: string; material_name: string; unit: string; planned_boxes: number; actual_boxes: number; status: string | null }
+    const actualMap = new Map<string, number>()
+    for (const row of planVsActual as Record<string, unknown>[]) {
+      actualMap.set(row.material_code as string, (row.actual_boxes as number) ?? 0)
+    }
+    const seen = new Set<string>()
+    const rows: MR[] = []
+    for (const line of planLines as Record<string, unknown>[]) {
+      const mat = line.material as Record<string, unknown>
+      const code = mat?.material_code as string
+      if (!code || seen.has(code)) continue
+      seen.add(code)
+      const matFull = (allMats as import('@/types').Material[]).find(m => m.material_code === code)
+      rows.push({
+        material_code: code,
+        material_name: mat?.short_name as string || '—',
+        unit: (matFull as { unit?: string })?.unit ?? '',
+        planned_boxes: (line.planned_boxes as number) ?? 0,
+        actual_boxes: actualMap.get(code) ?? 0,
+        status: line.status as string | null,
+      })
+    }
+    for (const row of planVsActual as Record<string, unknown>[]) {
+      const code = row.material_code as string
+      if (seen.has(code)) continue
+      seen.add(code)
+      const matFull = (allMats as import('@/types').Material[]).find(m => m.material_code === code)
+      rows.push({
+        material_code: code,
+        material_name: row.material_name as string || '—',
+        unit: (matFull as { unit?: string })?.unit ?? '',
+        planned_boxes: (row.planned_boxes as number) ?? 0,
+        actual_boxes: (row.actual_boxes as number) ?? 0,
+        status: null,
+      })
+    }
+    return rows
+  }, [planLines, planVsActual, allMats])
+
   async function handleAddLine() {
     const mat = (allMats as import('@/types').Material[]).find(m => m.material_code === addCode.trim())
     if (!mat) { setAddError('Không tìm thấy mã hàng'); return }
@@ -1564,12 +1604,12 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound }: {
             </div>
           </section>
 
-          {/* Hàng hóa kế hoạch nhập (chỉ INBOUND) */}
+          {/* Hàng hóa nhập hàng — KH vs Thực tế (chỉ INBOUND) */}
           {isInbound && (
             <section>
               <div className="flex items-center justify-between mb-2">
                 <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">
-                  Hàng hóa kế hoạch ({planLines.length})
+                  Hàng hóa ({mergedRows.length})
                 </p>
                 {canUploadInbound && (
                   <Button size="sm" variant="outline" className="h-6 text-[10px] px-2 gap-1"
@@ -1578,36 +1618,35 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound }: {
                   </Button>
                 )}
               </div>
-              <div className="rounded border overflow-hidden">
+              <div className="rounded border overflow-x-auto">
                 <table className="min-w-full">
                   <thead className="bg-slate-50">
                     <tr>
-                      {['Mã hàng', 'Tên hàng', 'KH (thùng)', 'KH (pl)', 'Trạng thái'].map(h => (
+                      {['Mã hàng', 'Tên hàng', 'ĐVT', 'Kế hoạch', 'Thực tế', 'CL'].map(h => (
                         <th key={h} className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {planLines.length === 0 ? (
-                      <tr><td colSpan={5} className="px-2 py-3 text-center text-xs text-slate-400">Chưa có hàng hóa kế hoạch</td></tr>
-                    ) : (planLines as Record<string, unknown>[]).map(line => (
-                      <tr key={line.id as string}
-                        className={`border-t border-slate-100 ${line.status === 'CANCELLED' ? 'bg-red-50 opacity-60' : ''}`}>
-                        <td className="px-2 py-1 font-mono font-semibold text-[10px]">
-                          {(line.material as Record<string, unknown>)?.material_code as string}
-                        </td>
-                        <td className="px-2 py-1 text-[10px]">
-                          {(line.material as Record<string, unknown>)?.short_name as string ?? '—'}
-                        </td>
-                        <td className="px-2 py-1 text-[10px] tabular-nums">{line.planned_boxes as number ?? '—'}</td>
-                        <td className="px-2 py-1 text-[10px] tabular-nums">{line.planned_pallets as number ?? '—'}</td>
-                        <td className="px-2 py-1">
-                          <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${line.status === 'CANCELLED' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-700'}`}>
-                            {line.status === 'CANCELLED' ? 'Đã hủy' : 'Hoạt động'}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
+                    {mergedRows.length === 0 ? (
+                      <tr><td colSpan={6} className="px-2 py-3 text-center text-xs text-slate-400">Chưa có hàng hóa</td></tr>
+                    ) : mergedRows.map(row => {
+                      const diff = row.actual_boxes - row.planned_boxes
+                      const isCancelled = row.status === 'CANCELLED'
+                      return (
+                        <tr key={row.material_code}
+                          className={`border-t border-slate-100 ${isCancelled ? 'opacity-50' : diff < 0 && row.actual_boxes > 0 ? 'bg-red-50' : diff > 0 ? 'bg-green-50' : ''}`}>
+                          <td className="px-2 py-1 font-mono font-semibold text-[10px]">{row.material_code}</td>
+                          <td className="px-2 py-1 text-[10px] max-w-[140px] truncate">{row.material_name}</td>
+                          <td className="px-2 py-1 text-[10px] text-slate-500">{row.unit || '—'}</td>
+                          <td className="px-2 py-1 text-[10px] tabular-nums">{row.planned_boxes || <span className="text-slate-300">—</span>}</td>
+                          <td className="px-2 py-1 text-[10px] tabular-nums">{row.actual_boxes > 0 ? row.actual_boxes : <span className="text-slate-300">0</span>}</td>
+                          <td className={`px-2 py-1 text-[10px] tabular-nums font-semibold ${diff < 0 && row.actual_boxes > 0 ? 'text-red-600' : diff > 0 ? 'text-green-600' : 'text-slate-300'}`}>
+                            {row.actual_boxes > 0 ? (diff > 0 ? `+${diff}` : diff) : '—'}
+                          </td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -1635,45 +1674,6 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound }: {
                   {addError && <p className="text-[10px] text-red-500">{addError}</p>}
                 </div>
               )}
-            </section>
-          )}
-
-          {/* Kế hoạch vs Thực tế (chỉ INBOUND, khi có dữ liệu) */}
-          {isInbound && planVsActual.length > 0 && (
-            <section>
-              <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-400 mb-2">
-                Kế hoạch vs Thực tế
-              </p>
-              <div className="rounded border overflow-x-auto">
-                <table className="min-w-full">
-                  <thead className="bg-slate-50">
-                    <tr>
-                      {['Mã hàng', 'Tên hàng', 'KH (thùng)', 'KH (pl)', 'Thực (thùng)', 'Thực (pl)', 'CL (thùng)'].map(h => (
-                        <th key={h} className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(planVsActual as Record<string, unknown>[]).map(row => {
-                      const diff = ((row.actual_boxes as number) ?? 0) - ((row.planned_boxes as number) ?? 0)
-                      return (
-                        <tr key={row.material_code as string}
-                          className={`border-t border-slate-100 ${diff < 0 ? 'bg-red-50' : diff > 0 ? 'bg-green-50' : ''}`}>
-                          <td className="px-2 py-1 font-mono font-semibold text-[10px]">{row.material_code as string}</td>
-                          <td className="px-2 py-1 text-[10px]">{row.material_name as string || '—'}</td>
-                          <td className="px-2 py-1 text-[10px] tabular-nums">{(row.planned_boxes as number) ?? 0}</td>
-                          <td className="px-2 py-1 text-[10px] tabular-nums">{(row.planned_pallets as number) ?? 0}</td>
-                          <td className="px-2 py-1 text-[10px] tabular-nums">{(row.actual_boxes as number) ?? 0}</td>
-                          <td className="px-2 py-1 text-[10px] tabular-nums">{(row.actual_pallets as number) ?? 0}</td>
-                          <td className={`px-2 py-1 text-[10px] tabular-nums font-semibold ${diff < 0 ? 'text-red-600' : diff > 0 ? 'text-green-600' : 'text-slate-400'}`}>
-                            {diff > 0 ? `+${diff}` : diff}
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
             </section>
           )}
         </div>

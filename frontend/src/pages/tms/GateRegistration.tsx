@@ -484,7 +484,7 @@ export default function GateRegistration() {
   // ── Modal helpers
   function openCreate() {
     setEditReg(null)
-    setForm({ ...FORM_DEFAULT, date: fDate || TODAY_VN, warehouse_id: fWarehouse })
+    setForm({ ...FORM_DEFAULT, date: TODAY_VN, warehouse_id: fWarehouse })
     setApiError('')
     setModalOpen(true)
   }

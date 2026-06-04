@@ -388,6 +388,8 @@ export default function InboundDetail() {
 
   const [showScan,    setShowScan]    = useState(false)
   const [editState, setEditState] = useState<{ entry: PalletEntry; cartons: number; stack: number } | null>(null)
+  const [editingPlannedCartons, setEditingPlannedCartons] = useState(false)
+  const [plannedCartonsInput,   setPlannedCartonsInput]   = useState('')
 
   // Auto-open scan khi navigate từ list với ?scan=1
   useEffect(() => {
@@ -658,6 +660,58 @@ export default function InboundDetail() {
               <User className="h-3 w-3 text-slate-400 shrink-0" />
               {order.imported_by_emp?.name ?? order.created_by_emp?.name ?? '—'}
             </span>
+
+            {order.gate_registration?.license_plate && (
+              <span className="flex items-center gap-1">
+                <span className="text-slate-400 text-[10px]">Xe:</span>
+                <span className="font-mono font-semibold text-xs">{order.gate_registration.license_plate}</span>
+              </span>
+            )}
+
+            {order.source_type === 'NCC' && (
+              <span className="flex items-center gap-1">
+                <span className="text-slate-400 text-[10px]">KH:</span>
+                {editingPlannedCartons ? (
+                  <span className="flex items-center gap-1">
+                    <input
+                      type="number" min={0}
+                      value={plannedCartonsInput}
+                      onChange={e => setPlannedCartonsInput(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                          updateOrder({ id: order.id, planned_cartons: plannedCartonsInput === '' ? null : Number(plannedCartonsInput) })
+                          setEditingPlannedCartons(false)
+                        }
+                        if (e.key === 'Escape') setEditingPlannedCartons(false)
+                      }}
+                      className="h-5 w-16 text-xs border border-slate-300 rounded px-1 font-mono"
+                      autoFocus
+                    />
+                    <button
+                      className="text-[10px] text-green-600 hover:text-green-700"
+                      onClick={() => {
+                        updateOrder({ id: order.id, planned_cartons: plannedCartonsInput === '' ? null : Number(plannedCartonsInput) })
+                        setEditingPlannedCartons(false)
+                      }}
+                    >✓</button>
+                    <button className="text-[10px] text-slate-400" onClick={() => setEditingPlannedCartons(false)}>✕</button>
+                  </span>
+                ) : (
+                  <span
+                    className={`font-semibold font-mono ${isOpen ? 'cursor-pointer hover:text-blue-600' : ''}`}
+                    onClick={() => {
+                      if (!isOpen) return
+                      setPlannedCartonsInput(order.planned_cartons != null ? String(order.planned_cartons) : '')
+                      setEditingPlannedCartons(true)
+                    }}
+                    title={isOpen ? 'Click để sửa SL dự kiến' : undefined}
+                  >
+                    {order.planned_cartons != null ? `${order.planned_cartons} thùng` : <span className="text-slate-400 font-normal">—</span>}
+                    {isOpen && <Pencil className="inline h-2.5 w-2.5 ml-1 text-slate-400" />}
+                  </span>
+                )}
+              </span>
+            )}
 
             {order.notes && (
               <span className="text-slate-400 italic truncate max-w-[240px]">{order.notes}</span>

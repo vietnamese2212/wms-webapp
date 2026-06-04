@@ -172,6 +172,17 @@ export async function createOrder(req: Request, res: Response) {
       resolvedImportedBy = emp?.id ?? null
     }
 
+    // Enforce: 1 gate_registration = 1 phiếu nhập duy nhất
+    if (gate_registration_id) {
+      const { data: existing } = await supabase
+        .from('ProductionImport')
+        .select('import_code')
+        .eq('gate_registration_id', gate_registration_id)
+        .neq('status', 'CANCELLED')
+        .maybeSingle()
+      if (existing) return fail(res, 409, 'GATE_REG_TAKEN', `Lượt vào này đã có phiếu nhập ${existing.import_code}`)
+    }
+
     // Retry khi 2 request song song lấy cùng count → cùng import_code → 23505
     let order: unknown = null
     for (let attempt = 0; attempt < 5; attempt++) {
@@ -247,7 +258,7 @@ export async function getOrder(req: Request, res: Response) {
 
 export async function updateOrder(req: Request, res: Response) {
   try {
-    const { location_id, planned_pallets, shift_id, import_date, notes, updated_by } = req.body
+    const { location_id, planned_pallets, planned_cartons, shift_id, import_date, notes, updated_by } = req.body
 
     const { data: existing } = await supabase
       .from('ProductionImport').select('status').eq('id', req.params.id).maybeSingle()
@@ -257,6 +268,7 @@ export async function updateOrder(req: Request, res: Response) {
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
     if (location_id     !== undefined) patch.location_id = location_id
     if (planned_pallets !== undefined) patch.planned_pallets = Number(planned_pallets)
+    if (planned_cartons !== undefined) patch.planned_cartons = planned_cartons === null ? null : Number(planned_cartons)
     if (shift_id        !== undefined) patch.shift_id = shift_id
     if (import_date     !== undefined) patch.import_date = import_date
     if (notes           !== undefined) patch.notes = notes

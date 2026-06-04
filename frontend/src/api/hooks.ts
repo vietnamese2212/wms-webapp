@@ -282,7 +282,7 @@ export function useCreateInboundOrder() {
 export function useUpdateInboundOrder() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; location_id?: string; planned_pallets?: number; shift_id?: string; import_date?: string; notes?: string }) =>
+    mutationFn: ({ id, ...body }: { id: string; location_id?: string; planned_pallets?: number; planned_cartons?: number | null; shift_id?: string; import_date?: string; notes?: string }) =>
       apiClient.patch(`/wms/inbound-orders/${id}`, body).then((r) => r.data.data),
     onSuccess: (_d, v) => {
       qc.invalidateQueries({ queryKey: ['inbound-orders'] })

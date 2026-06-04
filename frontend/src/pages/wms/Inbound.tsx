@@ -799,8 +799,9 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
                         ) : (
                           sortedGates.map(g => {
                             const isTaken      = takenGateMap.has(g.id)
+                            const takenCode    = takenGateMap.get(g.id)
                             const isDateBefore = importDate && g.date > importDate
-                            const isDisabled   = !!isDateBefore
+                            const isDisabled   = !!isDateBefore || isTaken
                             return (
                             <button
                               key={g.id}
@@ -809,18 +810,16 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
                               onClick={() => { setGateRegId(g.id); setShowGateDialog(false) }}
                               className={`w-full text-left rounded border px-2 py-1 transition-colors disabled:cursor-not-allowed ${
                                 isDisabled
-                                  ? 'border-slate-200 bg-slate-50 opacity-70'
+                                  ? 'border-slate-200 bg-slate-50 opacity-60'
                                   : gateRegId === g.id
                                     ? 'border-blue-400 bg-blue-50'
-                                    : isTaken
+                                    : g.date !== importDate
                                       ? 'border-amber-200 bg-amber-50 hover:border-amber-300'
-                                      : g.date !== importDate
-                                        ? 'border-amber-200 bg-amber-50 hover:border-amber-300'
-                                        : 'border-slate-200 bg-white hover:border-blue-200 hover:bg-blue-50/40'
+                                      : 'border-slate-200 bg-white hover:border-blue-200 hover:bg-blue-50/40'
                               }`}
                             >
                               <div className="flex items-center gap-1.5">
-                                <span className={`font-mono font-semibold text-[11px] ${isDisabled ? 'text-slate-400' : isTaken ? 'text-amber-700' : 'text-slate-800'}`}>
+                                <span className={`font-mono font-semibold text-[11px] ${isDisabled ? 'text-slate-400' : 'text-slate-800'}`}>
                                   {g.license_plate ?? '—'}
                                 </span>
                                 {g.company_name_raw && <span className="text-[10px] text-slate-500 truncate">{g.company_name_raw}</span>}
@@ -830,7 +829,7 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
                                 </span>
                               </div>
                               {isTaken && (
-                                <div className="text-[9px] text-amber-600 mt-0.5">Đã có phiếu nhập · chọn để thêm hàng còn thiếu</div>
+                                <div className="text-[9px] text-red-500 mt-0.5">Đã có phiếu nhập {takenCode} — lượt vào này không thể dùng lại</div>
                               )}
                               {isDateBefore && (
                                 <div className="text-[9px] text-amber-600 mt-0.5">Đăng ký ({g.date}) sau ngày nhập — đổi ngày nhập trước</div>

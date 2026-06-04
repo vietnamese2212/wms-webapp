@@ -1582,21 +1582,21 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound }: {
                 <tbody>
                   {order.vehicle_slots.map((vs, i) => (
                     <tr key={vs.id} className="border-t border-slate-100">
-                      <td className="px-2 py-1.5 text-slate-400">{i + 1}</td>
-                      <td className="px-2 py-1.5 font-mono">
+                      <td className="px-2 py-1 text-[10px] text-slate-400 whitespace-nowrap">{i + 1}</td>
+                      <td className="px-2 py-1 text-[10px] font-mono whitespace-nowrap">
                         {vs.slot
                           ? `${vs.slot.time_from.slice(0, 5)}–${vs.slot.time_to.slice(0, 5)}`
-                          : <span className="text-slate-400">—</span>}
+                          : <span className="text-slate-300">—</span>}
                       </td>
-                      <td className="px-2 py-1.5 font-mono font-semibold">
-                        {vs.license_plate || <span className="text-slate-400 font-normal">—</span>}
+                      <td className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">
+                        {vs.license_plate || <span className="text-slate-300 font-normal">—</span>}
                       </td>
-                      <td className="px-2 py-1.5">{vs.driver_phone || <span className="text-slate-400">—</span>}</td>
-                      <td className="px-2 py-1.5"><StatusBadge status={vs.status} /></td>
-                      <td className="px-2 py-1.5 font-mono">
-                        {vs.booked_by || <span className="text-slate-400">—</span>}
+                      <td className="px-2 py-1 text-[10px] whitespace-nowrap">{vs.driver_phone || <span className="text-slate-300">—</span>}</td>
+                      <td className="px-2 py-1 whitespace-nowrap"><StatusBadge status={vs.status} /></td>
+                      <td className="px-2 py-1 text-[10px] font-mono whitespace-nowrap">
+                        {vs.booked_by || <span className="text-slate-300">—</span>}
                       </td>
-                      <td className="px-2 py-1.5 font-mono text-slate-500">{formatDateTime(vs.updated_at)}</td>
+                      <td className="px-2 py-1 text-[10px] font-mono text-slate-500 whitespace-nowrap">{formatDateTime(vs.updated_at)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1618,7 +1618,7 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound }: {
                   </Button>
                 )}
               </div>
-              <div className="rounded border overflow-x-auto">
+              <div className="rounded border overflow-hidden">
                 <table className="min-w-full">
                   <thead className="bg-slate-50">
                     <tr>
@@ -1636,12 +1636,12 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound }: {
                       return (
                         <tr key={row.material_code}
                           className={`border-t border-slate-100 ${isCancelled ? 'opacity-50' : diff < 0 && row.actual_boxes > 0 ? 'bg-red-50' : diff > 0 ? 'bg-green-50' : ''}`}>
-                          <td className="px-2 py-1 font-mono font-semibold text-[10px]">{row.material_code}</td>
-                          <td className="px-2 py-1 text-[10px] max-w-[140px] truncate">{row.material_name}</td>
-                          <td className="px-2 py-1 text-[10px] text-slate-500">{row.unit || '—'}</td>
-                          <td className="px-2 py-1 text-[10px] tabular-nums">{row.planned_boxes || <span className="text-slate-300">—</span>}</td>
-                          <td className="px-2 py-1 text-[10px] tabular-nums">{row.actual_boxes > 0 ? row.actual_boxes : <span className="text-slate-300">0</span>}</td>
-                          <td className={`px-2 py-1 text-[10px] tabular-nums font-semibold ${diff < 0 && row.actual_boxes > 0 ? 'text-red-600' : diff > 0 ? 'text-green-600' : 'text-slate-300'}`}>
+                          <td className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">{row.material_code}</td>
+                          <td className="px-2 py-1 text-[10px] max-w-[140px] truncate whitespace-nowrap">{row.material_name}</td>
+                          <td className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{row.unit || '—'}</td>
+                          <td className="px-2 py-1 text-[10px] tabular-nums font-semibold whitespace-nowrap">{row.planned_boxes || <span className="text-slate-300">—</span>}</td>
+                          <td className="px-2 py-1 text-[10px] tabular-nums font-semibold whitespace-nowrap">{row.actual_boxes > 0 ? row.actual_boxes : <span className="text-slate-300">0</span>}</td>
+                          <td className={`px-2 py-1 text-[10px] tabular-nums font-semibold whitespace-nowrap ${diff < 0 && row.actual_boxes > 0 ? 'text-red-600' : diff > 0 ? 'text-green-600' : 'text-slate-300'}`}>
                             {row.actual_boxes > 0 ? (diff > 0 ? `+${diff}` : diff) : '—'}
                           </td>
                         </tr>

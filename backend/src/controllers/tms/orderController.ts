@@ -282,6 +282,80 @@ export async function getPlanVsActual(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
+// GET /api/tms/reports/inbound?date_from=&date_to=&warehouse_id=
+// Báo cáo nhập hàng: kế hoạch (inbound_plan_lines) vs thực tế (ProductionImport)
+export async function getInboundReport(req: Request, res: Response) {
+  try {
+    const { date_from, date_to, warehouse_id } = req.query as Record<string, string>
+    if (!date_from || !date_to) return fail(res, 'date_from và date_to là bắt buộc', 400)
+
+    // 1. Fetch plan lines với join material, ncc, warehouse
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let q = (supabase.from('inbound_plan_lines') as any)
+      .select(`
+        id, date, warehouse_id, ncc_id, material_id, po_number,
+        planned_boxes, tms_order_id, status,
+        material:Material!material_id(material_code, short_name, unit),
+        ncc:TransportCompany!ncc_id(code, name),
+        warehouse:Warehouse!warehouse_id(code, name)
+      `)
+      .gte('date', date_from)
+      .lte('date', date_to)
+      .neq('status', 'CANCELLED')
+      .order('date')
+      .order('ncc_id')
+
+    if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
+
+    const { data: planLines, error: planErr } = await q
+    if (planErr) return fail(res, planErr.message)
+
+    // 2. Collect distinct tms_order_ids từ plan lines
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const orderIds = [...new Set(((planLines ?? []) as any[]).map((l: any) => l.tms_order_id).filter(Boolean))]
+
+    // 3. Fetch thực tế từ ProductionImport, group theo tms_order_id + material_id
+    const actualMap = new Map<string, number>() // key: `${tms_order_id}/${material_id}` → boxes
+    if (orderIds.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: actuals, error: actErr } = await (supabase.from('ProductionImport') as any)
+        .select('tms_order_id, material_id, planned_cartons')
+        .in('tms_order_id', orderIds)
+        .neq('status', 'CANCELLED')
+      if (actErr) return fail(res, actErr.message)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      for (const a of (actuals ?? []) as any[]) {
+        const key = `${a.tms_order_id}/${a.material_id}`
+        actualMap.set(key, (actualMap.get(key) ?? 0) + ((a.planned_cartons ?? 0) as number))
+      }
+    }
+
+    // 4. Build report rows — 1 dòng / plan line, actual lấy từ actualMap
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows = ((planLines ?? []) as any[]).map((line: any) => {
+      const actualKey = line.tms_order_id && line.material_id
+        ? `${line.tms_order_id}/${line.material_id}` : null
+      const actual_boxes = actualKey ? (actualMap.get(actualKey) ?? 0) : 0
+      const planned = (line.planned_boxes ?? 0) as number
+      return {
+        date: line.date as string,
+        warehouse_name: (line.warehouse?.name ?? line.warehouse_id) as string,
+        po_number: (line.po_number ?? '') as string,
+        ncc_code: (line.ncc?.code ?? '') as string,
+        ncc_name: (line.ncc?.name ?? '') as string,
+        material_code: (line.material?.material_code ?? '') as string,
+        material_name: (line.material?.short_name ?? '') as string,
+        unit: (line.material?.unit ?? '') as string,
+        planned_boxes: planned,
+        actual_boxes,
+        pct: planned > 0 ? Math.round((actual_boxes / planned) * 100) : null,
+      }
+    })
+
+    return ok(res, rows)
+  } catch (e) { return fail(res, String(e)) }
+}
+
 // DELETE /api/tms/orders/:id  — chỉ xoá khi chưa có slot nào BOOKED+
 export async function deleteOrder(req: Request, res: Response) {
   try {

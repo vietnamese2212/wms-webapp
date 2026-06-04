@@ -1923,3 +1923,22 @@ export function useDeleteVehicleSlot() {
     },
   })
 }
+
+// Báo cáo nhập hàng: KH vs thực tế theo date range
+export type InboundReportRow = {
+  date: string; warehouse_name: string; po_number: string
+  ncc_code: string; ncc_name: string
+  material_code: string; material_name: string; unit: string
+  planned_boxes: number; actual_boxes: number; pct: number | null
+}
+
+export function useInboundReport(params?: { date_from: string; date_to: string; warehouse_id?: string }) {
+  return useQuery({
+    queryKey: ['inbound-report', params],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/tms/reports/inbound', { params })
+      return data.data as InboundReportRow[]
+    },
+    enabled: !!(params?.date_from && params?.date_to),
+  })
+}

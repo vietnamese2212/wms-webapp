@@ -700,8 +700,8 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                 <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">
                   Phiếu hiện có ({editRows.length})
                 </p>
-                <div className="border rounded-lg overflow-hidden">
-                  <table className="min-w-full text-[10px]">
+                <div className="overflow-x-auto border rounded-lg">
+                  <table className="min-w-max text-[10px]">
                     <thead className="bg-slate-50 border-b">
                       <tr>
                         <th className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500">Mã hàng</th>
@@ -808,7 +808,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                               {nccDropdownIdx === idx && !row.material_id && (() => {
                                 const matches = getNccDropdownMatches(row.material_code ?? '')
                                 return (
-                                  <div className="absolute top-full left-0 z-[100] w-72 border rounded-md bg-white shadow-lg max-h-44 overflow-y-auto">
+                                  <div className="absolute bottom-full left-0 z-[100] w-72 border rounded-md bg-white shadow-lg max-h-44 overflow-y-auto mb-1">
                                     {matches.length === 0
                                       ? <p className="text-[10px] text-slate-400 px-2 py-2 text-center">Không tìm thấy</p>
                                       : matches.map((m: any) => (

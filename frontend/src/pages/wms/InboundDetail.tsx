@@ -581,11 +581,10 @@ export default function InboundDetail() {
             {openOrders.map((o: InboundOrder) => {
               const isActive = o.id === id
               const isNCC    = (o as any).source_type === 'NCC'
-              const plate    = (o as any).gate_registration?.license_plate
               const pallets  = (o as any)._count?.inventory_entries ?? 0
-              const label    = isNCC
-                ? `NCC${plate ? `·${plate}` : ''} · ${o.material?.short_name ?? o.material?.material_code ?? '—'}`
-                : (o.material?.short_name ?? o.material?.material_code ?? '—')
+              const loc      = (o as any).location?.location_code ?? '—'
+              const matName  = o.material?.short_name ?? o.material?.material_code ?? '—'
+              const label    = `${loc} · ${matName}`
               return (
                 <button
                   key={o.id}

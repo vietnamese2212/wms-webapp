@@ -1387,6 +1387,7 @@ export default function Inbound() {
             <Table className="min-w-full">
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-7" />
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Ngày nhập</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Vị trí</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Material</TableHead>
@@ -1395,7 +1396,6 @@ export default function Inbound() {
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Người nhập</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Ca</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Ghi chú</TableHead>
-                    <TableHead className="w-7" />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1458,6 +1458,17 @@ function InboundRow({ order, onClick, onScan, onEditGroup, onPin, pinned }: {
 
   return (
     <TableRow className={`cursor-pointer ${rowBg(order)}`} onClick={onClick}>
+      <TableCell className="px-1 py-1 text-center">
+        {onPin && (
+          <button
+            onClick={onPin}
+            title={pinned ? 'Bỏ đánh dấu' : 'Đánh dấu đang làm'}
+            className="p-0.5 rounded hover:bg-slate-100 transition-colors"
+          >
+            <Bookmark className={`h-3.5 w-3.5 transition-colors ${pinned ? 'fill-amber-400 text-amber-500' : 'text-slate-300 hover:text-slate-500'}`} />
+          </button>
+        )}
+      </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <div className="flex items-center gap-1 flex-wrap">
           <span className="text-[10px] font-medium tabular-nums">{dateFull}</span>
@@ -1512,17 +1523,6 @@ function InboundRow({ order, onClick, onScan, onEditGroup, onPin, pinned }: {
       </TableCell>
       <TableCell className="px-2 py-1">
         <span className="text-[10px]">{order.notes ?? '—'}</span>
-      </TableCell>
-      <TableCell className="px-1 py-1 text-center">
-        {onPin && (
-          <button
-            onClick={onPin}
-            title={pinned ? 'Bỏ đánh dấu' : 'Đánh dấu đang làm'}
-            className="p-0.5 rounded hover:bg-slate-100 transition-colors"
-          >
-            <Bookmark className={`h-3.5 w-3.5 transition-colors ${pinned ? 'fill-amber-400 text-amber-500' : 'text-slate-300 hover:text-slate-500'}`} />
-          </button>
-        )}
       </TableCell>
     </TableRow>
   )

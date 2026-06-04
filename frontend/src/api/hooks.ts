@@ -1797,7 +1797,7 @@ export function useInboundPlanLines(params?: {
       const { data } = await apiClient.get('/wms/inbound-plan', { params })
       return data.data as any[]
     },
-    enabled: !!((params?.date || params?.date_from) && params?.warehouse_id),
+    enabled: !!(params?.tms_order_id || ((params?.date || params?.date_from) && params?.warehouse_id)),
   })
 }
 

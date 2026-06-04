@@ -424,16 +424,22 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
 
   const gateTmsOrderId: string | undefined = selectedGate?.tms_order_id ?? undefined
   const { data: planMaterials = [] } = useInboundPlanLines(
-    sourceType === 'NCC' && warehouseId && importDate
-      ? { date: importDate, warehouse_id: warehouseId, ...(gateTmsOrderId ? { tms_order_id: gateTmsOrderId } : {}) }
+    sourceType === 'NCC'
+      ? gateTmsOrderId
+        ? { tms_order_id: gateTmsOrderId }
+        : warehouseId && importDate
+          ? { date: importDate, warehouse_id: warehouseId }
+          : undefined
       : undefined
   )
-  const planMatIds = useMemo(() => {
-    const active = (planMaterials as any[]).filter((m: any) =>
+  const activePlanLines = useMemo(() =>
+    (planMaterials as any[]).filter((m: any) =>
       m.status !== 'CANCELLED' && (!subType || !m.warehouse_type || m.warehouse_type === subType)
-    )
-    return new Set(active.map((m: any) => m.material_id).filter(Boolean) as string[])
-  }, [planMaterials, subType])
+    ), [planMaterials, subType])
+  const planMatIds = useMemo(() =>
+    new Set(activePlanLines.map((m: any) => m.material_id).filter(Boolean) as string[]),
+    [activePlanLines]
+  )
 
   const { data: locations = [] } = useLocationsReal(warehouseId ? { warehouse_id: warehouseId } : undefined)
   const { data: zones     = [] } = useWarehouseZones(warehouseId || undefined)
@@ -543,7 +549,7 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
     setNccRows(prev => prev.length === 1 ? [emptyNccRow()] : prev.filter((_, i) => i !== idx))
   }
   function loadFromPlan() {
-    setNccRows((planMaterials as any[]).map(m => ({
+    setNccRows(activePlanLines.map((m: any) => ({
       material_code: m.material?.material_code ?? '', material_id: m.material_id ?? '',
       mat_name: m.material?.short_name ?? '', mat_unit: m.material?.unit ?? '',
       unit_input: m.material?.unit ?? '',
@@ -889,10 +895,10 @@ function CreateOrderDialog({ open, onClose }: { open: boolean; onClose: () => vo
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
                 <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">Danh sách hàng hóa</p>
-                {gateRegId && planMaterials.length > 0 && (
+                {gateRegId && activePlanLines.length > 0 && (
                   <button type="button" onClick={loadFromPlan}
                     className="text-[10px] text-blue-600 hover:text-blue-700 underline">
-                    Nạp từ kế hoạch ({planMaterials.length} hàng)
+                    Nạp từ kế hoạch ({activePlanLines.length} hàng)
                   </button>
                 )}
               </div>

@@ -1579,12 +1579,15 @@ function InboundRow({ order, onClick, onScan, onEditGroup }: {
   return (
     <TableRow className={`cursor-pointer ${rowText(order)}`} onClick={onClick}>
       <TableCell className="px-2 py-1 whitespace-nowrap">
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 flex-wrap">
           <span className="text-[10px] font-medium tabular-nums">{dateFull}</span>
           {isRowToday && <span className="text-[9px] text-blue-600 font-medium">· HN</span>}
           <span className={`text-[8px] px-1 py-0.5 rounded font-medium ${
             order.source_type === 'NCC' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-600'
           }`}>{order.source_type === 'NCC' ? 'NCC' : 'SX'}</span>
+          {order.source_type === 'NCC' && (order as any).gate_registration?.license_plate && (
+            <span className="text-[8px] font-mono font-semibold text-slate-600">{(order as any).gate_registration.license_plate}</span>
+          )}
           {onEditGroup && (
             <button onClick={onEditGroup} title="Sửa nhóm"
               className="text-slate-300 hover:text-blue-500 transition-colors shrink-0">

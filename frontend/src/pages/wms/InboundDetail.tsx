@@ -623,7 +623,21 @@ export default function InboundDetail() {
             <span className="flex items-center gap-1">
               <MapPin className="h-3 w-3 text-slate-400 shrink-0" />
               {order.location ? (
-                <span className="font-mono font-medium">{order.location.location_code}</span>
+                <span className="flex items-center gap-1">
+                  <span className="font-mono font-medium">{order.location.location_code}</span>
+                  {isOpen && can(perms, 'inbound', 'edit') && (
+                    <Select onValueChange={(v) => updateOrder({ id: order.id, location_id: v })}>
+                      <SelectTrigger className="h-5 w-6 border-dashed px-1 text-slate-300 hover:text-slate-500">
+                        <Pencil className="h-2.5 w-2.5" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(allLocations as { id: string; location_code: string }[]).map(l => (
+                          <SelectItem key={l.id} value={l.id}>{l.location_code}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                </span>
               ) : isOpen ? (
                 <span className="text-amber-600 flex items-center gap-1">
                   <AlertTriangle className="h-3 w-3" />
@@ -633,7 +647,7 @@ export default function InboundDetail() {
                       <SelectValue placeholder="Chọn" />
                     </SelectTrigger>
                     <SelectContent>
-                      {allLocations.map((l: { id: string; location_code: string }) => (
+                      {(allLocations as { id: string; location_code: string }[]).map(l => (
                         <SelectItem key={l.id} value={l.id}>{l.location_code}</SelectItem>
                       ))}
                     </SelectContent>

@@ -1029,19 +1029,20 @@ export default function OutboundDetail() {
 
         {/* Quick-switch bar — nằm ngoài header để không gây scroll */}
         {vehicles.length > 0 && (
-          <div className="border-b bg-white px-3 py-1.5 shrink-0 flex flex-wrap items-center gap-1">
-            <span className="text-[9px] text-slate-400 shrink-0">Đang làm:</span>
+          <div className="flex overflow-x-auto shrink-0 border-b bg-amber-50/60 gap-0 scrollbar-none">
+            <span className="text-[9px] text-amber-600 font-medium px-2 py-1.5 shrink-0 border-r border-amber-200">Đang làm:</span>
             {vehicles.map(v => (
               <button
                 key={v.id}
                 onClick={() => navigate(`/wms/outbound/${v.id}`)}
-                className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium whitespace-nowrap border transition-colors ${
+                className={[
+                  'flex items-center gap-1 px-3 py-1.5 text-[10px] border-b-2 transition-colors shrink-0',
                   v.id === id
-                    ? 'bg-amber-100 text-amber-800 border-amber-300'
-                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-                }`}
+                    ? 'border-amber-500 bg-amber-100 text-amber-800 font-semibold cursor-default'
+                    : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-amber-50 cursor-pointer',
+                ].join(' ')}
               >
-                <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${
+                <span className={`h-1.5 w-1.5 rounded-full shrink-0 mr-0.5 ${
                   v.status === 'IN_PROGRESS' ? 'bg-amber-500'
                   : v.status === 'COMPLETED'  ? 'bg-green-500'
                   : v.status === 'PAUSED'     ? 'bg-red-500'

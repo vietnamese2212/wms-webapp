@@ -1384,7 +1384,7 @@ export default function Inbound() {
           <>
             {/* Orders table */}
             <div className="overflow-x-auto">
-            <Table className="min-w-full">
+            <Table className="min-w-max">
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-7" />

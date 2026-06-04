@@ -877,7 +877,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                       ? <p className="text-[10px] text-slate-400 px-2 py-2 text-center">Không tìm thấy</p>
                       : matches.map((m: any) => (
                         <button key={m.id} type="button"
-                          onMouseDown={e => { e.preventDefault(); selectNccMatFromDropdown(nccDropdownIdx, m) }}
+                          onPointerDown={e => { e.preventDefault(); e.nativeEvent.stopPropagation(); selectNccMatFromDropdown(nccDropdownIdx, m) }}
                           className="w-full text-left px-2 py-1.5 hover:bg-blue-50 flex items-center gap-2 border-b border-slate-50 last:border-0"
                         >
                           {planMatIds.has(m.id)

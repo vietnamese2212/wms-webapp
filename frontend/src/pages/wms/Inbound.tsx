@@ -97,7 +97,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
         const first = editGroup[0]
         setSourceType('NCC')
         setWarehouseId((first as any).warehouse_id ?? user?.warehouse_id ?? user?.warehouse_ids?.[0] ?? '')
-        setSubType((first as any).warehouse_type ?? '')
+        setSubType(first.warehouse_type ?? '')
         setGateRegId((first as any).gate_registration_id ?? '')
         setImportDate((first as any).import_date ?? format(new Date(), 'yyyy-MM-dd'))
         setShiftId((first as any).shift_id ?? '')

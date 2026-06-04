@@ -10,7 +10,7 @@ import { emitInboundChanged } from '../../lib/events'
 const ORDER_SELECT = `
   id, import_code, warehouse_id, location_id, material_id, planned_pallets, shift_id, status,
   imported_by, created_by, updated_by, import_date, notes, created_at, updated_at,
-  source_type, gate_registration_id, tms_order_id, planned_cartons,
+  source_type, gate_registration_id, tms_order_id, planned_cartons, warehouse_type,
   warehouse:Warehouse(id, code, name),
   location:Location(id, location_code, sub_code, max_pallets),
   material:Material(id, material_code, short_name, material_description, cartons_per_pallet, cartons_per_pallet_mn, category),

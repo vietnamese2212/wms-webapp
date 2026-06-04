@@ -547,37 +547,40 @@ export default function InboundDetail() {
 
         {/* ── "Đang làm" quick-switch bar ── */}
         {pinnedOrders.length > 0 && (
-          <div className="flex overflow-x-auto shrink-0 border-b bg-amber-50/60 gap-0 scrollbar-none">
-            <span className="text-[9px] text-amber-600 font-medium px-2 py-1.5 shrink-0 border-r border-amber-200">
-              Đang làm:
-            </span>
-            {pinnedOrders.map(o => {
-              const isCurrent = o.id === id
-              return (
-                <button key={o.id}
-                  onClick={() => !isCurrent && navigate(`/wms/inbound/${o.id}`)}
-                  className={[
-                    'flex items-center px-3 py-1.5 text-[10px] whitespace-nowrap border-b-2 transition-colors shrink-0',
-                    isCurrent
-                      ? 'border-amber-500 bg-amber-100 text-amber-800 font-semibold cursor-default'
-                      : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-amber-50 cursor-pointer',
-                  ].join(' ')}
-                >
-                  <span className={`h-1.5 w-1.5 rounded-full mr-1.5 shrink-0 ${
-                    o.status === 'OPEN'      ? 'bg-amber-500'
-                    : o.status === 'COMPLETED' ? 'bg-blue-500'
-                    : 'bg-slate-400'
-                  }`} />
-                  <span className="truncate max-w-[100px]">{o.import_code}</span>
-                </button>
-              )
-            })}
+          <div className="shrink-0 border-b bg-amber-50/60 px-2 py-1">
+            <div className="flex flex-wrap gap-1 items-center">
+              <span className="text-[9px] text-amber-600 font-medium shrink-0">Đang làm:</span>
+              {pinnedOrders.map(o => {
+                const isCurrent = o.id === id
+                const barLabel = (o.location_code || o.mat_name)
+                  ? `${o.location_code ?? '—'} · ${o.mat_name ?? '—'}`
+                  : o.import_code
+                return (
+                  <button key={o.id}
+                    onClick={() => !isCurrent && navigate(`/wms/inbound/${o.id}`)}
+                    className={[
+                      'flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border transition-colors',
+                      isCurrent
+                        ? 'bg-amber-100 text-amber-800 border-amber-300 font-semibold cursor-default'
+                        : 'bg-white text-slate-600 border-slate-200 hover:bg-amber-50 cursor-pointer',
+                    ].join(' ')}
+                  >
+                    <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${
+                      o.status === 'OPEN'        ? 'bg-amber-500'
+                      : o.status === 'COMPLETED' ? 'bg-blue-500'
+                      : 'bg-slate-400'
+                    }`} />
+                    {barLabel}
+                  </button>
+                )
+              })}
+            </div>
           </div>
         )}
 
         {/* ── Tab bar (nhảy qua lại giữa các phiếu đang mở) ── */}
         {openOrders.length > 1 && (
-          <div className="flex overflow-x-auto shrink-0 border-b bg-slate-50 gap-0 scrollbar-none">
+          <div className="flex flex-wrap shrink-0 border-b bg-slate-50 gap-0">
             {openOrders.map((o: InboundOrder) => {
               const isActive = o.id === id
               const isNCC    = (o as any).source_type === 'NCC'
@@ -599,7 +602,7 @@ export default function InboundDetail() {
                   {isNCC && (
                     <span className="rounded px-1 py-0.5 text-[8px] font-bold bg-green-100 text-green-700 shrink-0">NCC</span>
                   )}
-                  <span className="max-w-[120px]">{label}</span>
+                  <span>{label}</span>
                   <span className="ml-1 rounded-full bg-slate-200 text-slate-600 px-1.5 py-0.5 text-[8px] font-mono shrink-0">{pallets}</span>
                 </button>
               )
@@ -628,7 +631,7 @@ export default function InboundDetail() {
               <button
                 onClick={() => isPinned(order.id)
                   ? unpin(order.id)
-                  : pin({ id: order.id, import_code: order.import_code ?? order.id.slice(0, 8), status: order.status })
+                  : pin({ id: order.id, import_code: order.import_code ?? order.id.slice(0, 8), status: order.status, location_code: order.location?.location_code, mat_name: order.material?.short_name ?? order.material?.material_code })
                 }
                 title={isPinned(order.id) ? 'Bỏ đánh dấu đang làm' : 'Đánh dấu đang làm'}
                 className="p-1 rounded hover:bg-slate-100 transition-colors"

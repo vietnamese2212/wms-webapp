@@ -46,29 +46,47 @@ const normCatFe = (c: string) => c === 'TP' ? 'Thành phẩm' : c === 'BAO_BI' ?
 // ─── Edit NCC group dialog ────────────────────────────────────
 
 type NccGrpRow = {
-  id: string; materialCode: string; matName: string
+  id: string; material_id: string; materialCode: string; matName: string
   locationCode: string; palletCount: number; notes: string; toCancel: boolean
 }
-type NccGrpNewRow = { material_code: string; material_id: string; mat_name: string; notes: string }
-const emptyGrpNewRow = (): NccGrpNewRow => ({ material_code: '', material_id: '', mat_name: '', notes: '' })
+type NccGrpNewRow = { material_code: string; material_id: string; mat_name: string; mat_unit: string; planned_qty: string; notes: string }
+const emptyGrpNewRow = (): NccGrpNewRow => ({ material_code: '', material_id: '', mat_name: '', mat_unit: '', planned_qty: '', notes: '' })
 
 function EditNccGroupDialog({ groupOrders, onClose }: { groupOrders: InboundOrder[]; onClose: () => void }) {
-  const firstOrder = groupOrders[0]
+  const firstOrder  = groupOrders[0]
   const gateReg     = (firstOrder as any).gate_registration
   const warehouseId = (firstOrder as any).warehouse_id ?? ''
   const whType      = (firstOrder as any).warehouse_type ?? ''
 
+  const { data: warehouses = [] }   = useWarehouses(true)
   const { data: shifts = [] }       = useImportShifts()
   const { data: allMaterials = [] } = useMaterials()
   const { mutateAsync: updateAsync } = useUpdateInboundOrder()
   const { mutateAsync: cancelAsync } = useCancelInboundOrder()
   const { mutateAsync: createAsync } = useCreateInboundOrder()
 
+  const warehouseName = (warehouses as { id: string; name: string }[]).find(w => w.id === warehouseId)?.name ?? ''
+
+  // Plan lines
+  const gateTmsOrderId: string | undefined = gateReg?.tms_order_id ?? undefined
+  const { data: planMaterials = [] } = useInboundPlanLines(
+    gateTmsOrderId ? { tms_order_id: gateTmsOrderId } : undefined
+  )
+  const activePlanLines = useMemo(() =>
+    (planMaterials as any[]).filter((m: any) =>
+      m.status !== 'CANCELLED' && (!whType || !m.warehouse_type || m.warehouse_type === whType)
+    ), [planMaterials, whType])
+  const planMatIds = useMemo(() =>
+    new Set(activePlanLines.map((m: any) => m.material_id).filter(Boolean) as string[]),
+    [activePlanLines]
+  )
+
   const [importDate, setImportDate] = useState((firstOrder as any).import_date ?? '')
   const [shiftId,    setShiftId]    = useState((firstOrder as any).shift_id ?? '')
   const [rows,       setRows]       = useState<NccGrpRow[]>(() =>
     groupOrders.map(o => ({
-      id: o.id,
+      id:           o.id,
+      material_id:  o.material_id ?? '',
       materialCode: o.material?.material_code ?? '',
       matName:      o.material?.short_name ?? '',
       locationCode: (o as any).location?.location_code ?? '',
@@ -88,22 +106,44 @@ function EditNccGroupDialog({ groupOrders, onClose }: { groupOrders: InboundOrde
     () => new Map(allMatsList.map(m => [String(m.material_code).toUpperCase(), m])),
     [allMatsList]
   )
+  const existingMatIds = useMemo(() => new Set(rows.map(r => r.material_id).filter(Boolean)), [rows])
 
   function getNewDropMatches(code: string) {
-    if (!code) return []
-    const q = code.toUpperCase()
-    return allMatsList.filter(m =>
-      String(m.material_code).toUpperCase().includes(q) ||
-      String(m.short_name ?? '').toUpperCase().includes(q)
-    ).slice(0, 20)
+    const list = allMatsList
+    let filtered: any[]
+    if (!code) {
+      filtered = list.slice(0, 12)
+    } else {
+      const q = code.toUpperCase()
+      filtered = list.filter(m =>
+        String(m.material_code).toUpperCase().includes(q) ||
+        String(m.short_name ?? '').toUpperCase().includes(q)
+      ).slice(0, 10)
+    }
+    if (planMatIds.size === 0) return filtered
+    return [...filtered].sort((a, b) => (planMatIds.has(b.id) ? 1 : 0) - (planMatIds.has(a.id) ? 1 : 0))
   }
 
   function handleNewCodeChange(idx: number, code: string) {
     const found = allMatsByCode.get(code.trim().toUpperCase())
     setNewRows(prev => prev.map((r, i) => i !== idx ? r : {
       ...r, material_code: code,
-      material_id: found?.id ?? '', mat_name: found?.short_name ?? '',
+      material_id: found?.id ?? '', mat_name: found?.short_name ?? '', mat_unit: found?.unit ?? '',
     }))
+  }
+
+  function loadFromPlan() {
+    const toAdd = activePlanLines.filter((m: any) => m.material_id && !existingMatIds.has(m.material_id))
+    if (toAdd.length === 0) return
+    const planRows: NccGrpNewRow[] = toAdd.map((m: any) => ({
+      material_code: m.material?.material_code ?? '',
+      material_id:   m.material_id ?? '',
+      mat_name:      m.material?.short_name ?? '',
+      mat_unit:      m.material?.unit ?? '',
+      planned_qty:   m.planned_boxes != null ? String(m.planned_boxes) : '',
+      notes:         '',
+    }))
+    setNewRows(prev => [...prev.filter(r => r.material_code !== ''), ...planRows])
   }
 
   async function handleSave() {
@@ -125,6 +165,7 @@ function EditNccGroupDialog({ groupOrders, onClose }: { groupOrders: InboundOrde
           notes: r.notes || undefined, source_type: 'NCC',
           warehouse_type: whType || undefined,
           gate_registration_id: (firstOrder as any).gate_registration_id || undefined,
+          planned_cartons: r.planned_qty ? Number(r.planned_qty) : undefined,
         }))
       )
       onClose()
@@ -140,145 +181,196 @@ function EditNccGroupDialog({ groupOrders, onClose }: { groupOrders: InboundOrde
     <Dialog open onOpenChange={(v) => { if (!v) onClose() }}>
       <DialogContent className="max-w-2xl" onPointerDownOutside={e => { if (activeNewDropIdx !== null) e.preventDefault() }}>
         <DialogHeader>
-          <DialogTitle>Sửa nhóm phiếu NCC</DialogTitle>
+          <DialogTitle className="text-sm">Sửa nhóm phiếu NCC</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-3 py-1 max-h-[80vh] overflow-y-auto pr-0.5">
-          {/* Group header — read-only */}
-          <div className="border rounded-lg bg-slate-50 px-3 py-2 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-slate-600">
-            {gateReg?.license_plate && <span className="font-mono font-semibold">{gateReg.license_plate}</span>}
-            {gateReg?.company_name_raw && <span className="text-slate-500">{gateReg.company_name_raw}</span>}
-            {whType && <span>Loại kho: <span className="font-medium">{whType}</span></span>}
-          </div>
 
-          {/* Common editable fields */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <Label className="text-xs">Ngày nhập *</Label>
-              <Input type="date" value={importDate} onChange={e => setImportDate(e.target.value)} className="h-8 text-xs" />
+          {/* Section 1: Thông tin chuyến xe */}
+          <div className="border rounded-lg bg-slate-50 px-3 py-2.5 space-y-2">
+            <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">Thông tin chuyến xe</p>
+            <div className="grid grid-cols-3 gap-2">
+              <div>
+                <Label className="text-xs">Kho</Label>
+                <div className="h-8 flex items-center text-xs text-slate-700 border rounded-md bg-white px-2 mt-0.5">
+                  {warehouseName || '—'}
+                </div>
+              </div>
+              <div>
+                <Label className="text-xs">Loại kho</Label>
+                <div className="h-8 flex items-center text-xs font-medium text-slate-700 border rounded-md bg-white px-2 mt-0.5">
+                  {whType || '—'}
+                </div>
+              </div>
+              <div>
+                <Label className="text-xs">Xe vào cổng</Label>
+                <div className="h-8 flex items-center text-xs border rounded-md bg-white px-2 mt-0.5 gap-1.5 overflow-hidden">
+                  {gateReg?.license_plate
+                    ? <>
+                        <span className="font-mono font-semibold text-slate-800 shrink-0">{gateReg.license_plate}</span>
+                        {gateReg.company_name_raw && <span className="text-slate-500 truncate">{gateReg.company_name_raw}</span>}
+                      </>
+                    : <span className="text-slate-400">—</span>}
+                </div>
+              </div>
             </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Ca nhập *</Label>
-              <Select value={shiftId} onValueChange={setShiftId}>
-                <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Chọn ca" /></SelectTrigger>
-                <SelectContent>
-                  {(shifts as { id: string; name: string }[]).map(s => (
-                    <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <div className="grid grid-cols-3 gap-2">
+              <div>
+                <Label className="text-xs">Ngày nhập *</Label>
+                <Input type="date" value={importDate} onChange={e => setImportDate(e.target.value)} className="h-8 text-xs mt-0.5" />
+              </div>
+              <div>
+                <Label className="text-xs">Ca nhập *</Label>
+                <Select value={shiftId} onValueChange={setShiftId}>
+                  <SelectTrigger className="h-8 text-xs mt-0.5"><SelectValue placeholder="Chọn ca" /></SelectTrigger>
+                  <SelectContent>
+                    {(shifts as { id: string; name: string }[]).map(s => (
+                      <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
           </div>
 
-          {/* Existing rows */}
-          <div className="border rounded-lg overflow-hidden">
-            <table className="min-w-full text-[10px]">
-              <thead className="bg-slate-50 border-b">
-                <tr>
-                  <th className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500">Mã hàng</th>
-                  <th className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500">Tên hàng</th>
-                  <th className="px-2 py-1.5 text-center text-[9px] font-medium text-slate-500 w-16">Vị trí</th>
-                  <th className="px-2 py-1.5 text-center text-[9px] font-medium text-slate-500 w-10">PL</th>
-                  <th className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500">Ghi chú</th>
-                  <th className="w-6"></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {rows.map((row, idx) => (
-                  <tr key={row.id} className={row.toCancel ? 'bg-red-50 opacity-60' : ''}>
-                    <td className="px-2 py-1 font-mono font-semibold">{row.materialCode}</td>
-                    <td className="px-2 py-1 text-slate-600 truncate max-w-[120px]">{row.matName || '—'}</td>
-                    <td className="px-2 py-1 text-center font-mono text-slate-500">{row.locationCode || '—'}</td>
-                    <td className="px-2 py-1 text-center tabular-nums font-semibold">{row.palletCount}</td>
-                    <td className="px-1.5 py-1">
-                      {row.toCancel
-                        ? <span className="text-[9px] text-red-500 italic">Sẽ hủy</span>
-                        : <input type="text" value={row.notes}
-                            onChange={e => setRows(prev => prev.map((r, i) => i !== idx ? r : { ...r, notes: e.target.value }))}
-                            className="w-full h-6 px-1.5 text-[10px] border border-slate-200 rounded bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
-                            placeholder="—" />}
-                    </td>
-                    <td className="px-1 py-1 text-center">
-                      {row.palletCount === 0 ? (
-                        <button type="button"
-                          onClick={() => setRows(prev => prev.map((r, i) => i !== idx ? r : { ...r, toCancel: !r.toCancel }))}
-                          className={row.toCancel ? 'text-slate-400 hover:text-slate-600' : 'text-slate-300 hover:text-red-500'}
-                          title={row.toCancel ? 'Bỏ hủy' : 'Hủy dòng'}>
-                          <X className="h-3.5 w-3.5" />
-                        </button>
-                      ) : <span className="block w-3.5" />}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {/* Section 2: Danh sách hàng hóa */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">Danh sách hàng hóa</p>
+              {activePlanLines.length > 0 && (
+                <button type="button" onClick={loadFromPlan}
+                  className="text-[10px] text-blue-600 hover:text-blue-700 underline">
+                  Nạp từ kế hoạch ({activePlanLines.length} hàng)
+                </button>
+              )}
+            </div>
 
-          {/* New rows */}
-          {newRows.length > 0 && (
-            <div className="border rounded-lg border-blue-200 overflow-hidden">
+            {/* Existing rows */}
+            <div className="border rounded-lg overflow-hidden">
               <table className="min-w-full text-[10px]">
-                <thead className="bg-blue-50 border-b border-blue-200">
+                <thead className="bg-slate-50 border-b">
                   <tr>
-                    <th className="px-2 py-1.5 text-left text-[9px] font-medium text-blue-500 w-32">Mã hàng mới</th>
-                    <th className="px-2 py-1.5 text-left text-[9px] font-medium text-blue-500">Tên hàng</th>
-                    <th className="px-2 py-1.5 text-left text-[9px] font-medium text-blue-500">Ghi chú</th>
+                    <th className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500">Mã hàng</th>
+                    <th className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500">Tên hàng</th>
+                    <th className="px-2 py-1.5 text-center text-[9px] font-medium text-slate-500 w-16">Vị trí</th>
+                    <th className="px-2 py-1.5 text-center text-[9px] font-medium text-slate-500 w-10">PL</th>
+                    <th className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500">Ghi chú</th>
                     <th className="w-6"></th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-blue-100">
-                  {newRows.map((row, idx) => {
-                    const invalid = row.material_code !== '' && !row.material_id
-                    return (
-                      <tr key={idx} className={invalid ? 'bg-red-50' : ''}>
-                        <td className="px-1.5 py-1">
-                          <input type="text" value={row.material_code}
-                            onChange={e => handleNewCodeChange(idx, e.target.value)}
-                            onFocus={e => {
-                              setActiveNewDropIdx(idx)
-                              const rect = e.currentTarget.getBoundingClientRect()
-                              setNewDropPos({ top: rect.bottom + 4, left: rect.left })
-                            }}
-                            onBlur={() => setTimeout(() => setActiveNewDropIdx(prev => {
-                              if (prev === idx) { setNewDropPos(null); return null }
-                              return prev
-                            }), 150)}
-                            placeholder="Gõ mã / tên"
-                            className={`w-full h-7 px-1.5 text-[10px] font-mono border rounded focus:outline-none focus:ring-1 ${
-                              invalid ? 'border-red-300 bg-red-50 focus:ring-red-400' : 'border-blue-200 bg-white focus:ring-blue-400'
-                            }`}
-                          />
-                        </td>
-                        <td className="px-2 py-1">
-                          {row.mat_name
-                            ? <span className="text-[10px] text-slate-700">{row.mat_name}</span>
-                            : invalid ? <span className="text-[9px] text-red-400">Không tìm thấy</span>
-                            : <span className="text-[9px] text-slate-300">—</span>}
-                        </td>
-                        <td className="px-1.5 py-1">
-                          <input type="text" value={row.notes}
-                            onChange={e => setNewRows(prev => prev.map((r, i) => i !== idx ? r : { ...r, notes: e.target.value }))}
-                            className="w-full h-7 px-1.5 text-[10px] border border-blue-200 rounded bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
-                            placeholder="—" />
-                        </td>
-                        <td className="px-1 py-1 text-center">
-                          <button type="button" onClick={() => setNewRows(prev => prev.filter((_, i) => i !== idx))}
-                            className="text-slate-300 hover:text-red-500 transition-colors">
+                <tbody className="divide-y divide-slate-100">
+                  {rows.map((row, idx) => (
+                    <tr key={row.id} className={row.toCancel ? 'bg-red-50 opacity-60' : ''}>
+                      <td className="px-2 py-1">
+                        <div className="flex items-center gap-1">
+                          {planMatIds.has(row.material_id) && (
+                            <span className="text-[8px] bg-green-100 text-green-700 px-1 py-0.5 rounded shrink-0">KH</span>
+                          )}
+                          <span className="font-mono font-semibold">{row.materialCode}</span>
+                        </div>
+                      </td>
+                      <td className="px-2 py-1 text-slate-600 truncate max-w-[120px]">{row.matName || '—'}</td>
+                      <td className="px-2 py-1 text-center font-mono text-slate-500">{row.locationCode || '—'}</td>
+                      <td className="px-2 py-1 text-center tabular-nums font-semibold">{row.palletCount}</td>
+                      <td className="px-1.5 py-1">
+                        {row.toCancel
+                          ? <span className="text-[9px] text-red-500 italic">Sẽ hủy</span>
+                          : <input type="text" value={row.notes}
+                              onChange={e => setRows(prev => prev.map((r, i) => i !== idx ? r : { ...r, notes: e.target.value }))}
+                              className="w-full h-6 px-1.5 text-[10px] border border-slate-200 rounded bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+                              placeholder="—" />}
+                      </td>
+                      <td className="px-1 py-1 text-center">
+                        {row.palletCount === 0 ? (
+                          <button type="button"
+                            onClick={() => setRows(prev => prev.map((r, i) => i !== idx ? r : { ...r, toCancel: !r.toCancel }))}
+                            className={row.toCancel ? 'text-slate-400 hover:text-slate-600' : 'text-slate-300 hover:text-red-500'}
+                            title={row.toCancel ? 'Bỏ hủy' : 'Hủy dòng'}>
                             <X className="h-3.5 w-3.5" />
                           </button>
-                        </td>
-                      </tr>
-                    )
-                  })}
+                        ) : <span className="block w-3.5" />}
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
-          )}
 
-          <button type="button" onClick={() => setNewRows(prev => [...prev, emptyGrpNewRow()])}
-            className="text-[10px] text-blue-600 hover:text-blue-800 flex items-center gap-1 transition-colors">
-            <Plus className="h-3 w-3" /> Thêm mã hàng vào nhóm
-          </button>
+            {/* New rows — styled like NCC create form */}
+            {newRows.length > 0 && (
+              <div className="border rounded-lg border-blue-200 overflow-hidden">
+                <table className="min-w-full text-[10px]">
+                  <thead className="bg-blue-50 border-b border-blue-200">
+                    <tr>
+                      <th className="px-2 py-1.5 text-left text-[9px] font-medium text-blue-500 w-32">Mã hàng mới</th>
+                      <th className="px-2 py-1.5 text-left text-[9px] font-medium text-blue-500">Tên hàng</th>
+                      <th className="px-2 py-1.5 text-center text-[9px] font-medium text-blue-500 w-16">ĐVT</th>
+                      <th className="px-2 py-1.5 text-right text-[9px] font-medium text-blue-500 w-20">SL dự kiến</th>
+                      <th className="px-2 py-1.5 text-left text-[9px] font-medium text-blue-500">Ghi chú</th>
+                      <th className="w-6"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-blue-100">
+                    {newRows.map((row, idx) => {
+                      const invalid = row.material_code !== '' && !row.material_id
+                      return (
+                        <tr key={idx} className={invalid ? 'bg-red-50' : ''}>
+                          <td className="px-1.5 py-1">
+                            <input type="text" value={row.material_code}
+                              onChange={e => handleNewCodeChange(idx, e.target.value)}
+                              onFocus={e => {
+                                setActiveNewDropIdx(idx)
+                                const rect = e.currentTarget.getBoundingClientRect()
+                                setNewDropPos({ top: rect.bottom + 4, left: rect.left })
+                              }}
+                              onBlur={() => setTimeout(() => setActiveNewDropIdx(prev => {
+                                if (prev === idx) { setNewDropPos(null); return null }
+                                return prev
+                              }), 150)}
+                              placeholder="Paste hoặc tìm mã"
+                              className={`w-full h-7 px-1.5 text-[10px] font-mono border rounded focus:outline-none focus:ring-1 ${
+                                invalid ? 'border-red-300 bg-red-50 focus:ring-red-400' : 'border-blue-200 bg-white focus:ring-blue-400'
+                              }`}
+                            />
+                          </td>
+                          <td className="px-2 py-1">
+                            {row.mat_name
+                              ? <span className="text-[10px] text-slate-700">{row.mat_name}</span>
+                              : invalid ? <span className="text-[9px] text-red-400">Không tìm thấy</span>
+                              : <span className="text-[9px] text-slate-300">—</span>}
+                          </td>
+                          <td className="px-1.5 py-1 text-center text-[10px] text-slate-500">{row.mat_unit || '—'}</td>
+                          <td className="px-1.5 py-1">
+                            <input type="number" min="0" value={row.planned_qty}
+                              onChange={e => setNewRows(prev => prev.map((r, i) => i !== idx ? r : { ...r, planned_qty: e.target.value }))}
+                              className="w-full h-7 px-1.5 text-[10px] border border-blue-200 rounded text-right bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+                            />
+                          </td>
+                          <td className="px-1.5 py-1">
+                            <input type="text" value={row.notes}
+                              onChange={e => setNewRows(prev => prev.map((r, i) => i !== idx ? r : { ...r, notes: e.target.value }))}
+                              className="w-full h-7 px-1.5 text-[10px] border border-blue-200 rounded bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+                              placeholder="—" />
+                          </td>
+                          <td className="px-1 py-1 text-center">
+                            <button type="button" onClick={() => setNewRows(prev => prev.filter((_, i) => i !== idx))}
+                              className="text-slate-300 hover:text-red-500 transition-colors">
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <button type="button" onClick={() => setNewRows(prev => [...prev, emptyGrpNewRow()])}
+              className="text-[10px] text-blue-600 hover:text-blue-800 flex items-center gap-1 transition-colors">
+              <Plus className="h-3 w-3" /> Thêm mã hàng vào nhóm
+            </button>
+          </div>
 
           {err && <p className="text-xs text-red-500">{err}</p>}
         </div>
@@ -306,11 +398,17 @@ function EditNccGroupDialog({ groupOrders, onClose }: { groupOrders: InboundOrde
                     onMouseDown={e => e.preventDefault()}
                     onClick={() => {
                       setNewRows(prev => prev.map((r, i) => i !== activeNewDropIdx ? r : {
-                        ...r, material_code: m.material_code, material_id: m.id, mat_name: m.short_name ?? '',
+                        ...r, material_code: m.material_code, material_id: m.id,
+                        mat_name: m.short_name ?? '', mat_unit: m.unit ?? '',
                       }))
                       setActiveNewDropIdx(null); setNewDropPos(null)
                     }}
                     className="w-full text-left px-2 py-1.5 hover:bg-blue-50 flex items-center gap-2 border-b border-slate-50 last:border-0">
+                    {planMatIds.has(m.id)
+                      ? <span className="text-[8px] bg-green-100 text-green-700 px-1 py-0.5 rounded shrink-0">KH</span>
+                      : planMatIds.size > 0
+                        ? <span className="text-[8px] text-slate-300 w-5 shrink-0" />
+                        : null}
                     <span className="text-[10px] font-mono text-slate-700 shrink-0">{m.material_code}</span>
                     <span className="text-[10px] text-slate-500 truncate">{m.short_name}</span>
                   </button>

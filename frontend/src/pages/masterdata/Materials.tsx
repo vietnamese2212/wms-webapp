@@ -16,6 +16,7 @@ import {
   useCreateMaterial, useUpdateMaterial, useDeleteMaterial,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
+import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import type { Material, WarehousePalletOverride, SupplierShelfLifeOverride } from '@/types'
 
@@ -83,10 +84,14 @@ export default function Materials() {
   const canEdit = can(perms, 'materials', 'edit')
   const canDel  = can(perms, 'materials', 'delete')
 
-  // Filters
-  const [search,       setSearch]       = useState('')
-  const [catFilter,    setCatFilter]    = useState<string[]>([])
-  const [statusFilter, setStatusFilter] = useState<string[]>(['active'])
+  // Filters (persisted via wmsFilterStore)
+  const { materials: mf, setMaterials } = useWmsFilterStore()
+  const search       = mf.search
+  const catFilter    = mf.catFilter
+  const statusFilter = mf.statusFilter
+  const setSearch       = (v: string)   => setMaterials({ search: v })
+  const setCatFilter    = (v: string[]) => setMaterials({ catFilter: v })
+  const setStatusFilter = (v: string[]) => setMaterials({ statusFilter: v })
 
   // Detail sheet
   const [detailMat, setDetailMat] = useState<Material | null>(null)

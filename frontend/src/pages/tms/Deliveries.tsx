@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { Navigation, MapPin, Package, User } from 'lucide-react'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { DeliveryStatusBadge } from '@/components/shared/StatusBadge'
@@ -13,8 +13,11 @@ import type { DeliveryStatus } from '@/types'
 
 export default function Deliveries() {
   const { data: deliveries, isLoading } = useDeliveries()
-  const [search, setSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState<DeliveryStatus | 'ALL'>('ALL')
+  const { deliveries: df, setDeliveries } = useWmsFilterStore()
+  const search       = df.search
+  const statusFilter = (df.statusFilter || 'ALL') as DeliveryStatus | 'ALL'
+  const setSearch       = (v: string) => setDeliveries({ search: v })
+  const setStatusFilter = (v: DeliveryStatus | 'ALL') => setDeliveries({ statusFilter: v })
 
   const filtered = deliveries?.filter((d) => {
     const matchSearch =

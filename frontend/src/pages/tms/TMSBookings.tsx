@@ -426,6 +426,7 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
   const { data: allMats = [] }        = useMaterials()
   const { mutateAsync: addPlanLines } = useBulkCreatePlanLinesForOrder()
   const isEdit = !!order
+  const today  = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
   const [form, setForm]         = useState<OrderFormData>(EMPTY_FORM(defaultDate, defaultWarehouseId))
   const [planRows, setPlanRows] = useState<PlanLineRow[]>(() => Array.from({ length: 20 }, EMPTY_PLAN_LINE))
@@ -567,7 +568,7 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label className="text-xs">Ngày *</Label>
-              <Input type="date" value={form.date} onChange={e => set('date')(e.target.value)} className="h-8 text-sm mt-1" />
+              <Input type="date" value={form.date} min={today} onChange={e => set('date')(e.target.value)} className="h-8 text-sm mt-1" />
             </div>
             <div>
               <Label className="text-xs">Kho *</Label>

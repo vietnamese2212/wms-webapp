@@ -76,19 +76,44 @@ export interface ScanLogApplied {
   cycles?: string
   scanner_name?: string
 }
+interface GateRegistrationFilters {
+  fDate: string
+  fDateTo: string
+  fWarehouse: string
+  fWarehouseType: string
+  fVehicleTypes: string[]
+  fCompany: string
+  fDirection: string
+  fStatus: string
+}
+interface DeliveriesFilters {
+  search: string
+  statusFilter: string
+}
+interface MaterialsFilters {
+  search: string
+  catFilter: string[]
+  statusFilter: string[]
+}
 interface WmsFilterState {
-  outbound:       OutboundFilters
-  inbound:        InboundFilters
-  inventory:      InventoryFilters
-  loosePicking:   LoosePickingFilters
-  scanLogDraft:   ScanLogDraft
-  scanLogApplied: ScanLogApplied
-  setOutbound:       (f: Partial<OutboundFilters>)       => void
-  setInbound:        (f: Partial<InboundFilters>)        => void
-  setInventory:      (f: Partial<InventoryFilters>)      => void
-  setLoosePicking:   (f: Partial<LoosePickingFilters>)   => void
-  setScanLogDraft:   (f: Partial<ScanLogDraft>)          => void
-  setScanLogApplied: (f: ScanLogApplied)                 => void
+  outbound:          OutboundFilters
+  inbound:           InboundFilters
+  inventory:         InventoryFilters
+  loosePicking:      LoosePickingFilters
+  scanLogDraft:      ScanLogDraft
+  scanLogApplied:    ScanLogApplied
+  gateRegistration:  GateRegistrationFilters
+  deliveries:        DeliveriesFilters
+  materials:         MaterialsFilters
+  setOutbound:          (f: Partial<OutboundFilters>)          => void
+  setInbound:           (f: Partial<InboundFilters>)           => void
+  setInventory:         (f: Partial<InventoryFilters>)         => void
+  setLoosePicking:      (f: Partial<LoosePickingFilters>)      => void
+  setScanLogDraft:      (f: Partial<ScanLogDraft>)             => void
+  setScanLogApplied:    (f: ScanLogApplied)                    => void
+  setGateRegistration:  (f: Partial<GateRegistrationFilters>)  => void
+  setDeliveries:        (f: Partial<DeliveriesFilters>)        => void
+  setMaterials:         (f: Partial<MaterialsFilters>)         => void
 }
 
 const INBOUND_DEFAULT: InboundFilters = {
@@ -123,12 +148,21 @@ export const useWmsFilterStore = create<WmsFilterState>()(
         pallet_code: '', materials: [], machines: [], cycles: [], scanner_name: '',
       },
       scanLogApplied: { from_date: today(), to_date: today() },
-      setOutbound:       (f) => set(s => ({ outbound:       { ...s.outbound,       ...f } })),
-      setInbound:        (f) => set(s => ({ inbound:        { ...INBOUND_DEFAULT, ...s.inbound, ...f } })),
-      setInventory:      (f) => set(s => ({ inventory:      { ...s.inventory,      ...f } })),
-      setLoosePicking:   (f) => set(s => ({ loosePicking:   { ...s.loosePicking,   ...f } })),
-      setScanLogDraft:   (f) => set(s => ({ scanLogDraft:   { ...s.scanLogDraft,   ...f } })),
-      setScanLogApplied: (f) => set(_  => ({ scanLogApplied: f })),
+      gateRegistration: {
+        fDate: today(), fDateTo: '', fWarehouse: '', fWarehouseType: '',
+        fVehicleTypes: [], fCompany: '', fDirection: '', fStatus: '',
+      },
+      deliveries: { search: '', statusFilter: 'ALL' },
+      materials:  { search: '', catFilter: [], statusFilter: ['active'] },
+      setOutbound:         (f) => set(s => ({ outbound:         { ...s.outbound,         ...f } })),
+      setInbound:          (f) => set(s => ({ inbound:          { ...INBOUND_DEFAULT, ...s.inbound, ...f } })),
+      setInventory:        (f) => set(s => ({ inventory:        { ...s.inventory,        ...f } })),
+      setLoosePicking:     (f) => set(s => ({ loosePicking:     { ...s.loosePicking,     ...f } })),
+      setScanLogDraft:     (f) => set(s => ({ scanLogDraft:     { ...s.scanLogDraft,     ...f } })),
+      setScanLogApplied:   (f) => set(_  => ({ scanLogApplied: f })),
+      setGateRegistration: (f) => set(s => ({ gateRegistration: { ...s.gateRegistration, ...f } })),
+      setDeliveries:       (f) => set(s => ({ deliveries:       { ...s.deliveries,       ...f } })),
+      setMaterials:        (f) => set(s => ({ materials:        { ...s.materials,        ...f } })),
     }),
     { name: 'wms-filters-v7', storage: createJSONStorage(() => sessionStorage) }
   )

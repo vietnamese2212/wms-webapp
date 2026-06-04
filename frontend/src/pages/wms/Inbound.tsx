@@ -523,7 +523,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
               </div>
               <div className="space-y-2">
                 <Label>Ngày nhập <span className="text-red-500">*</span></Label>
-                <Input type="date" value={importDate} onChange={e => setImportDate(e.target.value)} />
+                <Input type="date" value={importDate} min={TODAY} onChange={e => setImportDate(e.target.value)} />
               </div>
             </div>
 
@@ -675,7 +675,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
               <div className="grid grid-cols-3 gap-2">
                 <div>
                   <Label className="text-xs">Ngày nhập *</Label>
-                  <Input type="date" value={importDate} onChange={e => {
+                  <Input type="date" value={importDate} min={TODAY} onChange={e => {
                     setImportDate(e.target.value)
                     if (selectedGate && e.target.value < selectedGate.date) setGateRegId('')
                   }} className="h-8 text-xs mt-0.5" />

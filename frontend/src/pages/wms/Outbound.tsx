@@ -633,7 +633,7 @@ function GDOFormBody({
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1">
             <label className="text-[10px] font-medium text-slate-500">Ngày xuất <span className="text-red-500">*</span></label>
-            <Input type="date" className="h-8 text-xs" value={date} onChange={e => setDate(e.target.value)} />
+            <Input type="date" className="h-8 text-xs" value={date} min={TODAY_STR} onChange={e => setDate(e.target.value)} />
           </div>
           <div className="space-y-1">
             <label className="text-[10px] font-medium text-slate-500">Kho xuất</label>

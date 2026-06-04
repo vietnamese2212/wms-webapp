@@ -98,6 +98,15 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 **QR parsing:**
 - Sau parse ngày: `isNaN(date.getTime())` trước khi dùng
 
+**Filter persistence — bắt buộc mọi list page:**
+- Mọi filter state trên list page (search, date, dropdown…) phải được lưu vào `useWmsFilterStore` (`frontend/src/stores/wmsFilterStore.ts`) — không dùng `useState` thuần cho filter (mất state khi navigate).
+- Thêm interface mới vào store + setter tương ứng. Tên key theo module: `inbound`, `outbound`, `inventory`, `loosePicking`, `gateRegistration`, `deliveries`, `materials`…
+- TMSBookings là ngoại lệ — đang dùng `localStorage` trực tiếp với `useEffect` save (chấp nhận vì đã hoạt động).
+
+**Date input — bắt buộc:**
+- **Form tạo mới**: `min={TODAY}` (hoặc `TODAY_VN` / `TODAY_STR` tùy file) — không cho chọn ngày cũ hơn hôm nay.
+- **Form sửa**: `min={TODAY}` — cho phép **lưu** giá trị cũ đang có (pre-fill từ record), nhưng **không cho chọn** ngày mới cũ hơn hôm nay. React controlled input: giá trị cũ vẫn hiển thị bình thường dù < min.
+
 **Frontend:**
 - Lỗi API hiển thị inline (banner đỏ trong component), không chỉ `console.error`
 - **Bulk action phải chạy song song** — dùng `Promise.all(ids.map(...))`, không dùng `for...of await` (sequential = N round-trips, chậm tuyến tính)
@@ -179,6 +188,7 @@ PENDING / chưa xử lý     →  hover:bg-slate-50  (nền trắng)
 - **Header cột:** `text-[9px] font-medium text-slate-500` · padding `px-2 py-1.5` · nền `bg-slate-50`
 - **Dữ liệu:** `text-[10px]` · thêm `font-mono font-semibold` cho mã/ID, `font-semibold tabular-nums` cho số, `text-slate-400` cho đơn vị phụ (thùng, pl…)
 
+Không được hiển thị thiếu thông tin trong table ( kể cả dữ liệu dài)
 **Padding data row:** `px-2 py-1`
 
 **Responsive:** Không ẩn cột trên mobile (`hidden sm:table-cell` bị cấm) — wrap `overflow-x-auto`, scroll ngang thay vì vỡ layout.
@@ -212,16 +222,6 @@ PENDING / chưa xử lý     →  hover:bg-slate-50  (nền trắng)
 ```
 
 **Chung:** Desktop sidebar 240px · Mobile bottom nav · Cards `rounded-xl shadow-sm border border-slate-200 p-4`
-
----
-
-## Tính năng chưa hoàn thiện
-
-| Module | Trạng thái |
-|---|---|
-| **Auth** | JWT middleware chưa implement — `backend/src/middlewares/` |
-| **TMS / HR** | Routes comment out, chưa có controller — `backend/src/app.ts` dòng 28–30 |
-| **Services layer** | Business logic trong controllers, `services/` trống |
 
 ---
 

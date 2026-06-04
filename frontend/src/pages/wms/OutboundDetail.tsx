@@ -852,107 +852,115 @@ export default function OutboundDetail() {
                 <Bookmark className="h-3.5 w-3.5" fill={pinned ? 'currentColor' : 'none'} />
               </button>
             </div>
-            <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+            <div className="flex items-center gap-1 shrink-0 flex-wrap justify-end">
               {/* ── Edit / Delete ── */}
               {(gdo.status === 'PENDING' || gdo.status === 'PAUSED') && can(perms, 'outbound', 'edit') && (
                 <Button size="sm" variant="outline"
-                  className="h-7 text-xs gap-1 px-2"
+                  className="h-7 text-xs gap-1 px-1.5 sm:px-2"
+                  title="Sửa"
                   onClick={() => setShowEditGDO(true)}>
-                  <PenSquare className="h-3 w-3" /> Sửa
+                  <PenSquare className="h-3 w-3" /><span className="hidden sm:inline">Sửa</span>
                 </Button>
               )}
               {gdo.status === 'PENDING' && can(perms, 'outbound', 'cancel') && (
                 <Button size="sm" variant="outline"
-                  className="h-7 text-xs gap-1 px-2 border-red-200 text-red-600 hover:bg-red-50"
+                  className="h-7 text-xs gap-1 px-1.5 sm:px-2 border-red-200 text-red-600 hover:bg-red-50"
+                  title="Xóa đơn"
                   onClick={handleDelete}>
-                  <Trash2 className="h-3 w-3" /> Xóa
+                  <Trash2 className="h-3 w-3" /><span className="hidden sm:inline">Xóa</span>
                 </Button>
               )}
               {/* ── Forward actions ── */}
               {!gdo.assigned_at && can(perms, 'outbound', 'assign') && (
-                <Button size="sm" variant="outline" className="h-7 text-xs gap-1 px-2" disabled={assigning}
+                <Button size="sm" variant="outline" className="h-7 text-xs gap-1 px-1.5 sm:px-2" disabled={assigning}
+                  title="Giao đơn"
                   onClick={() => setPendingConfirm({
                     title: 'Giao đơn',
                     message: `Xác nhận giao đơn ${gdo.group_code}?`,
                     onConfirm: () => assignGDO({ id: gdo.id, assigned_by: user?.name ?? undefined }),
                   })}>
                   <ClipboardList className="h-3 w-3" />
-                  {assigning ? '…' : 'Giao đơn'}
+                  <span className="hidden sm:inline">{assigning ? '…' : 'Giao đơn'}</span>
                 </Button>
               )}
               {canStart && (
-                <Button size="sm" className="h-7 text-xs gap-1 px-2" onClick={() => setShowStart(true)}>
-                  <Play className="h-3 w-3" />Bắt đầu
+                <Button size="sm" className="h-7 text-xs gap-1 px-1.5 sm:px-2" title="Bắt đầu" onClick={() => setShowStart(true)}>
+                  <Play className="h-3 w-3" /><span className="hidden sm:inline">Bắt đầu</span>
                 </Button>
               )}
               {gdo.status === 'IN_PROGRESS' && totalOrdered > 0 && totalScanned >= totalOrdered && can(perms, 'outbound', 'complete') && (
                 <Button size="sm"
-                  className="h-7 text-xs gap-1 px-2 bg-green-600 hover:bg-green-700"
+                  className="h-7 text-xs gap-1 px-1.5 sm:px-2 bg-green-600 hover:bg-green-700"
                   disabled={patching}
+                  title="Hoàn thành"
                   onClick={() => setPendingConfirm({
                     title: 'Hoàn thành',
                     message: `Xác nhận hoàn thành chuyến ${gdo.group_code}?`,
                     onConfirm: () => patchGDO({ id: gdo.id, status: 'COMPLETED' }),
                   })}>
                   <CheckCircle2 className="h-3 w-3" />
-                  {patching ? '…' : 'Hoàn thành'}
+                  <span className="hidden sm:inline">{patching ? '…' : 'Hoàn thành'}</span>
                 </Button>
               )}
               {canManagePause && gdo.status === 'IN_PROGRESS' && (
                 <Button size="sm" variant="outline"
-                  className="h-7 text-xs gap-1 px-2 border-red-200 text-red-600 hover:bg-red-50"
+                  className="h-7 text-xs gap-1 px-1.5 sm:px-2 border-red-200 text-red-600 hover:bg-red-50"
                   disabled={patching}
+                  title="Tạm dừng"
                   onClick={() => patchGDO({ id: gdo.id, status: 'PAUSED' })}>
                   <Pause className="h-3 w-3" />
-                  {patching ? '…' : 'Tạm dừng'}
+                  <span className="hidden sm:inline">{patching ? '…' : 'Tạm dừng'}</span>
                 </Button>
               )}
               {canManagePause && gdo.status === 'PAUSED' && (
-                <Button size="sm" className="h-7 text-xs gap-1 px-2 bg-green-600 hover:bg-green-700"
+                <Button size="sm" className="h-7 text-xs gap-1 px-1.5 sm:px-2 bg-green-600 hover:bg-green-700"
                   disabled={patching}
+                  title="Tiếp tục"
                   onClick={() => patchGDO({ id: gdo.id, status: 'IN_PROGRESS' })}>
                   <Play className="h-3 w-3" />
-                  {patching ? '…' : 'Tiếp tục'}
+                  <span className="hidden sm:inline">{patching ? '…' : 'Tiếp tục'}</span>
                 </Button>
               )}
               {hasScanEntries && (
                 <Button size="sm" variant="outline"
-                  className="h-7 text-xs gap-1 px-2 border-slate-200 text-slate-500 hover:bg-slate-50"
+                  className="h-7 text-xs gap-1 px-1.5 sm:px-2 border-slate-200 text-slate-500 hover:bg-slate-50"
                   onClick={toggleExpandAll}
                   title={hasAnyExpanded ? 'Thu gọn tất cả' : 'Xem pallet đã quét'}
                 >
                   <ChevronDown className={`h-3 w-3 transition-transform ${hasAnyExpanded ? 'rotate-180' : ''}`} />
-                  {hasAnyExpanded ? 'Thu gọn' : 'Pallet'}
+                  <span className="hidden sm:inline">{hasAnyExpanded ? 'Thu gọn' : 'Pallet'}</span>
                 </Button>
               )}
 
               {/* ── Undo actions ── */}
               {can(perms, 'outbound', 'uncomplete') && gdo.status === 'COMPLETED' && (
                 <Button size="sm" variant="outline"
-                  className="h-7 text-xs gap-1 px-2 border-slate-300 text-slate-500 hover:bg-slate-50"
+                  className="h-7 text-xs gap-1 px-1.5 sm:px-2 border-slate-300 text-slate-500 hover:bg-slate-50"
                   disabled={uncompleting}
+                  title="Bỏ hoàn thành"
                   onClick={() => doUndo((id, opts) => uncompleteGDO(id, opts))}>
                   <RotateCcw className="h-3 w-3" />
-                  {uncompleting ? '…' : 'Bỏ HT'}
+                  <span className="hidden sm:inline">{uncompleting ? '…' : 'Bỏ HT'}</span>
                 </Button>
               )}
               {can(perms, 'outbound', 'unstart') && !!gdo.started_at && gdo.status !== 'COMPLETED' && gdo.status !== 'PAUSED' && (
                 <Button size="sm" variant="outline"
-                  className="h-7 text-xs gap-1 px-2 border-slate-300 text-slate-500 hover:bg-slate-50 disabled:opacity-40"
+                  className="h-7 text-xs gap-1 px-1.5 sm:px-2 border-slate-300 text-slate-500 hover:bg-slate-50 disabled:opacity-40"
                   disabled={unstarting || hasBlockingScans}
                   title={hasBlockingScans ? 'Xóa hết QR đã quét trước' : 'Gỡ bắt đầu'}
                   onClick={() => doUndo((id, opts) => unstartGDO(id, opts))}>
                   <RotateCcw className="h-3 w-3" />
-                  {unstarting ? '…' : 'Gỡ BĐ'}
+                  <span className="hidden sm:inline">{unstarting ? '…' : 'Gỡ BĐ'}</span>
                 </Button>
               )}
               {can(perms, 'outbound', 'unassign') && !!gdo.assigned_at && !gdo.started_at && (
                 <Button size="sm" variant="outline"
-                  className="h-7 text-xs gap-1 px-2 border-slate-300 text-slate-500 hover:bg-slate-50"
+                  className="h-7 text-xs gap-1 px-1.5 sm:px-2 border-slate-300 text-slate-500 hover:bg-slate-50"
                   disabled={unassigning}
+                  title="Gỡ giao đơn"
                   onClick={() => doUndo((id, opts) => unassignGDO(id, opts))}>
                   <RotateCcw className="h-3 w-3" />
-                  {unassigning ? '…' : 'Gỡ GĐ'}
+                  <span className="hidden sm:inline">{unassigning ? '…' : 'Gỡ GĐ'}</span>
                 </Button>
               )}
             </div>

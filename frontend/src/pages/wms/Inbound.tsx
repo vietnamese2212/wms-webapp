@@ -1268,17 +1268,29 @@ export default function Inbound() {
   const totalPallets = useMemo(() => filteredOrders.reduce((s, o) => s + o._count.inventory_entries, 0), [filteredOrders])
   const totalCartons = useMemo(() => filteredOrders.reduce((s, o) => s + (o.total_cartons ?? 0), 0), [filteredOrders])
 
-  // Location summary
+  // Location summary — aggregate theo vị trí thực tế của từng pallet (entries_by_location)
+  // không dùng order.location vì user có thể đổi vị trí phiếu sau khi đã quét
   const locationSummary = useMemo(() => {
     const map = new Map<string, { loc: string; pallets: number; cartons: number }>()
     for (const order of filteredOrders) {
-      const loc = order.location
-        ? `${order.location.location_code}-${order.location.sub_code}`
-        : '(chưa xác định)'
-      const cur = map.get(loc) ?? { loc, pallets: 0, cartons: 0 }
-      cur.pallets += order._count.inventory_entries
-      cur.cartons += order.total_cartons ?? 0
-      map.set(loc, cur)
+      const byLoc = order.entries_by_location
+      if (byLoc && byLoc.length > 0) {
+        for (const { loc, pallets, cartons } of byLoc) {
+          const cur = map.get(loc) ?? { loc, pallets: 0, cartons: 0 }
+          cur.pallets += pallets
+          cur.cartons += cartons
+          map.set(loc, cur)
+        }
+      } else if (order._count.inventory_entries > 0) {
+        // Fallback khi entries_by_location chưa có (dữ liệu cũ)
+        const loc = order.location
+          ? `${order.location.location_code}-${order.location.sub_code}`
+          : '(chưa xác định)'
+        const cur = map.get(loc) ?? { loc, pallets: 0, cartons: 0 }
+        cur.pallets += order._count.inventory_entries
+        cur.cartons += order.total_cartons ?? 0
+        map.set(loc, cur)
+      }
     }
     return [...map.values()].sort((a, b) => b.pallets - a.pallets)
   }, [filteredOrders])
@@ -1554,13 +1566,14 @@ export default function Inbound() {
   )
 }
 
-function rowText(order: InboundOrder): string {
+function rowBg(order: InboundOrder): string {
+  if (order.status === 'CANCELLED') return 'bg-slate-50 opacity-60'
+  if (order.status === 'COMPLETED') return 'bg-blue-50 hover:bg-blue-100'
+  // OPEN
   const used = order.location_used_slots ?? 0
   const max  = order.location?.max_pallets ?? 0
-  const full = max > 0 && used >= max
-  const hasEntries = (order._count?.inventory_entries ?? 0) > 0
-  if (full)        return 'text-[#4A90D9] hover:bg-slate-50'
-  if (hasEntries)  return 'text-[#D8891C] hover:bg-slate-50'
+  if (max > 0 && used >= max) return 'bg-blue-50 hover:bg-blue-100'
+  if ((order._count?.inventory_entries ?? 0) > 0) return 'bg-amber-50 hover:bg-amber-100'
   return 'hover:bg-slate-50'
 }
 
@@ -1577,7 +1590,7 @@ function InboundRow({ order, onClick, onScan, onEditGroup }: {
   const pallets  = order._count.inventory_entries
 
   return (
-    <TableRow className={`cursor-pointer ${rowText(order)}`} onClick={onClick}>
+    <TableRow className={`cursor-pointer ${rowBg(order)}`} onClick={onClick}>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <div className="flex items-center gap-1 flex-wrap">
           <span className="text-[10px] font-medium tabular-nums">{dateFull}</span>

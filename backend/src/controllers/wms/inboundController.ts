@@ -53,7 +53,7 @@ async function attachCount(raw: unknown): Promise<Record<string, unknown>> {
 
   const [entriesRes, slotsRes] = await Promise.all([
     supabase.from('InventoryEntry')
-      .select('cartons_imported, cycle, machine_code')
+      .select('cartons_imported, cycle, machine_code, location:Location(location_code, sub_code)')
       .eq('import_order_id', order.id as string),
     locationId
       ? supabase.from('InventoryEntry').select('*', { count: 'exact', head: true })
@@ -61,9 +61,25 @@ async function attachCount(raw: unknown): Promise<Record<string, unknown>> {
       : Promise.resolve({ count: 0, data: null, error: null }),
   ])
 
-  const entries = (entriesRes.data ?? []) as { cartons_imported: number; cycle: string | null; machine_code: string | null }[]
+  const entries = (entriesRes.data ?? []) as unknown as {
+    cartons_imported: number
+    cycle: string | null
+    machine_code: string | null
+    location: { location_code: string; sub_code: string } | null
+  }[]
   const cycles       = [...new Set(entries.map(e => e.cycle).filter((c): c is string => !!c))]
   const machine_codes = [...new Set(entries.map(e => e.machine_code).filter((m): m is string => !!m))]
+
+  // Aggregate theo location thực tế của từng pallet entry (không phụ thuộc vào order.location_id)
+  const locMap = new Map<string, { pallets: number; cartons: number }>()
+  for (const e of entries) {
+    const loc = e.location ? `${e.location.location_code}-${e.location.sub_code}` : '(chưa xác định)'
+    const cur = locMap.get(loc) ?? { pallets: 0, cartons: 0 }
+    cur.pallets++
+    cur.cartons += e.cartons_imported || 0
+    locMap.set(loc, cur)
+  }
+  const entries_by_location = [...locMap.entries()].map(([loc, v]) => ({ loc, ...v }))
 
   return {
     ...order,
@@ -72,6 +88,7 @@ async function attachCount(raw: unknown): Promise<Record<string, unknown>> {
     cycles,
     machine_codes,
     location_used_slots: slotsRes.count ?? 0,
+    entries_by_location,
   }
 }
 

@@ -1389,8 +1389,8 @@ export default function Inbound() {
                   <TableRow>
                     <TableHead className="w-7" />
                     <TableHead className="w-24 text-[9px] font-medium text-slate-500 px-2 py-1.5">Ngày nhập</TableHead>
-                    <TableHead className="w-24 text-[9px] font-medium text-slate-500 px-2 py-1.5">Vị trí</TableHead>
-                    <TableHead className="w-28 text-[9px] font-medium text-slate-500 px-2 py-1.5">Material</TableHead>
+                    <TableHead className="w-20 text-[9px] font-medium text-slate-500 px-2 py-1.5">Vị trí</TableHead>
+                    <TableHead className="w-32 text-[9px] font-medium text-slate-500 px-2 py-1.5">Material</TableHead>
                     <TableHead className="w-12 text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right">Pallet</TableHead>
                     <TableHead className="w-16 text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right">Tổng nhập</TableHead>
                     <TableHead className="w-20 text-[9px] font-medium text-slate-500 px-2 py-1.5">Người nhập</TableHead>
@@ -1469,16 +1469,13 @@ function InboundRow({ order, onClick, onScan, onEditGroup, onPin, pinned }: {
           </button>
         )}
       </TableCell>
-      <TableCell className="px-2 py-1 overflow-hidden">
-        <div className="flex items-center gap-1 overflow-hidden">
+      <TableCell className="px-2 py-1">
+        <div className="flex items-center gap-0.5">
           <span className="text-[10px] font-medium tabular-nums shrink-0">{dateFull}</span>
-          {isRowToday && <span className="text-[9px] text-blue-600 font-medium shrink-0">HN</span>}
-          <span className={`text-[8px] px-1 py-0.5 rounded font-medium shrink-0 ${
+          {isRowToday && <span className="text-[9px] text-blue-600 font-medium shrink-0 ml-0.5">HN</span>}
+          <span className={`text-[8px] px-1 py-0.5 rounded font-medium shrink-0 ml-0.5 ${
             order.source_type === 'NCC' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-600'
           }`}>{order.source_type === 'NCC' ? 'NCC' : 'SX'}</span>
-          {order.source_type === 'NCC' && (order as any).gate_registration?.license_plate && (
-            <span className="text-[8px] font-mono font-semibold text-slate-600 truncate">{(order as any).gate_registration.license_plate}</span>
-          )}
           {onEditGroup && (
             <button onClick={onEditGroup} title="Sửa nhóm"
               className="text-slate-300 hover:text-blue-500 transition-colors shrink-0 ml-auto">
@@ -1486,6 +1483,11 @@ function InboundRow({ order, onClick, onScan, onEditGroup, onPin, pinned }: {
             </button>
           )}
         </div>
+        {order.source_type === 'NCC' && (order as any).gate_registration?.license_plate && (
+          <div className="text-[8px] font-mono font-semibold text-slate-600 truncate mt-0.5">
+            {(order as any).gate_registration.license_plate}
+          </div>
+        )}
       </TableCell>
       <TableCell className="px-2 py-1 overflow-hidden">
         <div className="flex items-center justify-between gap-1">

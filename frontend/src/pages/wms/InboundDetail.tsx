@@ -585,15 +585,15 @@ export default function InboundDetail() {
               const isActive = o.id === id
               const isNCC    = (o as any).source_type === 'NCC'
               const pallets  = (o as any)._count?.inventory_entries ?? 0
-              const loc      = (o as any).location?.location_code ?? '—'
-              const matName  = o.material?.short_name ?? o.material?.material_code ?? '—'
-              const label    = `${loc} · ${matName}`
+              const loc       = (o as any).location?.location_code ?? '—'
+              const matCode3  = o.material?.material_code?.slice(-3) ?? '—'
+              const label     = `${loc}_${matCode3}`
               return (
                 <button
                   key={o.id}
                   onClick={() => navigate(`/wms/inbound/${o.id}`)}
                   className={[
-                    'flex items-center gap-1.5 px-3 py-2 text-[10px] border-b-2 transition-colors shrink-0 text-left',
+                    'flex items-center gap-1 px-2 py-1.5 text-[10px] border-b-2 transition-colors text-left',
                     isActive
                       ? 'border-blue-600 text-blue-700 font-semibold bg-white'
                       : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-100',

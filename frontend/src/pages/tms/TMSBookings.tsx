@@ -1679,13 +1679,15 @@ function DR({ label, value, wide }: { label: string; value?: React.ReactNode | n
   )
 }
 
-function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEdit, canDelete }: {
+function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEdit, canDelete, onEditOrder, onDeleteOrder }: {
   order: TmsOrder | null
   onClose: () => void
   warehouses: { id: string; name: string }[]
   canUploadInbound: boolean
   canEdit: boolean
   canDelete: boolean
+  onEditOrder: () => void
+  onDeleteOrder: () => void
 }) {
   const [showUpload, setShowUpload] = useState(false)
   const [addCode, setAddCode]       = useState('')
@@ -1772,7 +1774,21 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
     <Dialog open={!!order} onOpenChange={v => !v && onClose()}>
       <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="font-mono text-base">{order.order_code || 'Chi tiết đơn'}</DialogTitle>
+          <div className="flex items-start justify-between gap-2">
+            <DialogTitle className="font-mono text-base">{order.order_code || 'Chi tiết đơn'}</DialogTitle>
+            <div className="flex gap-1 shrink-0">
+              {canEdit && (
+                <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={onEditOrder}>
+                  <Pencil className="h-3 w-3" />Sửa
+                </Button>
+              )}
+              {canDelete && (
+                <Button size="sm" variant="outline" className="h-7 text-xs gap-1 text-red-600 hover:text-red-700 border-red-200 hover:border-red-300" onClick={onDeleteOrder}>
+                  <Trash2 className="h-3 w-3" />Xóa
+                </Button>
+              )}
+            </div>
+          </div>
         </DialogHeader>
 
         <div className="space-y-5 py-1 text-xs">
@@ -2812,6 +2828,14 @@ export default function TMSBookings() {
         canUploadInbound={canUploadInbound}
         canEdit={canEdit}
         canDelete={canDelete}
+        onEditOrder={() => { setEditOrder(detailOrder); setDetailOrder(null) }}
+        onDeleteOrder={() => {
+          if (!detailOrder) return
+          if (!confirm(`Xóa đơn ${detailOrder.order_code}?`)) return
+          const id = detailOrder.id
+          setDetailOrder(null)
+          deleteOrder.mutate(id)
+        }}
       />
       <Dialog open={!!pendingRelease} onOpenChange={() => setPendingRelease(null)}>
         <DialogContent className="max-w-xs">

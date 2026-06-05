@@ -679,6 +679,7 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
     if (!form.direction) { setErr('Vui lòng chọn hướng vận chuyển'); return }
     if (!form.ncc_id) { setErr('Vui lòng chọn ĐVVT'); return }
     if (!form.warehouse_type) { setErr('Vui lòng chọn loại kho'); return }
+    if (!form.vehicle_type) { setErr('Vui lòng chọn loại xe'); return }
     const payload = {
       date: form.date, warehouse_id: form.warehouse_id,
       npp_name: form.npp_name || null, ncc_id: form.ncc_id || null,
@@ -810,11 +811,10 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
               </Select>
             </div>
             <div>
-              <Label className="text-xs">Loại xe</Label>
+              <Label className="text-xs">Loại xe *</Label>
               <Select value={form.vehicle_type || '__none__'} onValueChange={v => set('vehicle_type')(v === '__none__' ? '' : v)}>
                 <SelectTrigger className="h-8 text-sm mt-1"><SelectValue placeholder="Chọn loại xe" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="__none__">— Không chọn —</SelectItem>
                   {(vehicleTypes as TmsVehicleType[]).map(vt => (
                     <SelectItem key={vt.id} value={vt.name}>{vt.code} — {vt.name}</SelectItem>
                   ))}

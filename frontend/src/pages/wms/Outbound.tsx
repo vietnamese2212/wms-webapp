@@ -460,13 +460,14 @@ function GDORow({ gdo, onClick, onAssign }: {
 
 // ─── Material picker ──────────────────────────────────────────
 
-type MatOption = { id: string; material_code: string; short_name: string | null; category: string | null }
+type MatOption = { id: string; material_code: string; short_name: string | null; category: string | null; unit: string | null }
 
-function MatPicker({ value, matName, onSelect, disabled }: {
+function MatPicker({ value, matName, onSelect, disabled, onPaste }: {
   value: string
   matName: string
-  onSelect: (code: string, name: string, category: string | null) => void
+  onSelect: (code: string, name: string, category: string | null, unit: string) => void
   disabled?: boolean
+  onPaste?: (e: React.ClipboardEvent<HTMLInputElement>) => void
 }) {
   const [search, setSearch] = useState(value)
   const [open, setOpen] = useState(false)
@@ -491,16 +492,11 @@ function MatPicker({ value, matName, onSelect, disabled }: {
   }
 
   if (disabled) {
-    return (
-      <div className="flex-1 min-w-0">
-        <span className="text-[10px] font-mono font-semibold text-slate-700">{value}</span>
-        {matName && <span className="text-[9px] text-slate-500 ml-1.5">{matName}</span>}
-      </div>
-    )
+    return <span className="text-[10px] font-mono font-semibold text-slate-700">{value}</span>
   }
 
   return (
-    <div className="flex-1 min-w-0">
+    <div className="min-w-[140px]">
       <Input
         ref={inputRef}
         className="h-7 text-[10px] font-mono px-2 w-full"
@@ -508,11 +504,9 @@ function MatPicker({ value, matName, onSelect, disabled }: {
         onChange={e => { setSearch(e.target.value); setOpen(true); handleFocus() }}
         onFocus={handleFocus}
         onBlur={() => setTimeout(() => setOpen(false), 150)}
+        onPaste={onPaste}
         placeholder="Tìm mã / tên hàng…"
       />
-      {matName && (
-        <p className="text-[9px] text-slate-500 mt-0.5 truncate">{matName}</p>
-      )}
       {open && search.length > 1 && mats.length > 0 && (
         <div style={dropdownStyle} className="bg-white border border-slate-200 rounded-lg shadow-xl max-h-52 overflow-y-auto">
           {(mats as MatOption[]).map(m => (
@@ -520,7 +514,7 @@ function MatPicker({ value, matName, onSelect, disabled }: {
               key={m.id}
               className="w-full text-left px-3 py-2 hover:bg-blue-50 border-b border-slate-50 last:border-0"
               onMouseDown={() => {
-                onSelect(m.material_code, m.short_name ?? '', m.category)
+                onSelect(m.material_code, m.short_name ?? '', m.category, m.unit ?? '')
                 setSearch(m.material_code)
                 setOpen(false)
               }}
@@ -543,6 +537,7 @@ type ItemRow = {
   db_id?: string       // actual OutboundItem.id in DB (for existing items)
   material_code: string
   mat_name: string
+  unit: string
   category: string | null
   cartons: number
   min_cartons: number  // 0 for new items, cartons_scanned for existing
@@ -552,7 +547,7 @@ type ItemRow = {
 
 let _uid = 0
 const uid = () => String(++_uid)
-const makeItem = (): ItemRow => ({ id: uid(), material_code: '', mat_name: '', category: null, cartons: 0, min_cartons: 0, loose_picking: 0, header_text: '' })
+const makeItem = (): ItemRow => ({ id: uid(), material_code: '', mat_name: '', unit: '', category: null, cartons: 0, min_cartons: 0, loose_picking: 0, header_text: '' })
 
 // ─── Shared form UI ───────────────────────────────────────────
 
@@ -593,7 +588,9 @@ function GDOFormBody({
   const { data: whTypesInForm = [] } = useWarehouseTypes()
   const { data: allVehicleTypes = [] } = useVehicleTypes()
   const { data: vtByWarehouse = [] } = useVehicleTypesByWarehouse(warehouseId || null, warehouseType || undefined)
-  // Nếu đã chọn kho: lọc theo kho + loại kho (giống TMS booking); chưa chọn: hiện tất cả
+  const { data: allMatsData = [] } = useMaterials()
+  const allMats = allMatsData as { id: string; material_code: string; short_name?: string | null; unit?: string | null; category?: string | null }[]
+
   const exportTypeOptions = warehouseId ? vtByWarehouse : allVehicleTypes
   const isMultiDO = (gdo?.delivery_orders?.length ?? 0) > 1
 
@@ -605,10 +602,101 @@ function GDOFormBody({
     setItems(rows => rows.map(r => r.id === id ? { ...r, ...patch } : r))
   }
 
+  function lookupMat(code: string) {
+    return allMats.find(m => m.material_code === code.trim())
+  }
+
+  // Paste tab-separated Excel row(s) into material code cell — fills all columns
+  function handlePasteRowAt(startIdx: number, e: React.ClipboardEvent<HTMLInputElement>) {
+    const text = e.clipboardData.getData('text')
+    if (!text.includes('\t') && !text.includes('\n')) {
+      // Single code paste — auto-lookup if exact match
+      const mat = lookupMat(text.trim())
+      if (mat) {
+        e.preventDefault()
+        setItems(prev => prev.map((r, i) => i !== startIdx ? r : {
+          ...r, material_code: text.trim(),
+          mat_name: mat.short_name ?? '', unit: mat.unit ?? '', category: mat.category ?? null,
+        }))
+      }
+      return
+    }
+    e.preventDefault()
+    const lines = text.trim().split(/\r?\n/).filter(Boolean)
+    setItems(prev => {
+      const rows = [...prev]
+      while (rows.length < startIdx + lines.length) rows.push(makeItem())
+      lines.forEach((line, offset) => {
+        const cols = line.split('\t')
+        const code  = (cols[0] ?? '').trim()
+        const cart  = parseInt((cols[1] ?? '').replace(/[^0-9]/g, '')) || 0
+        const loose = parseInt((cols[2] ?? '').replace(/[^0-9]/g, '')) || 0
+        const note  = (cols[3] ?? '').trim()
+        const mat   = lookupMat(code)
+        rows[startIdx + offset] = {
+          ...rows[startIdx + offset],
+          material_code: code,
+          mat_name:  mat?.short_name ?? rows[startIdx + offset].mat_name,
+          unit:      mat?.unit      ?? rows[startIdx + offset].unit,
+          category:  mat?.category  ?? rows[startIdx + offset].category,
+          ...(cart  ? { cartons: cart }                              : {}),
+          ...(loose !== 0 ? { loose_picking: loose }                 : {}),
+          ...(note  ? { header_text: note }                          : {}),
+        }
+      })
+      return rows
+    })
+  }
+
+  function handlePasteCartonsAt(startIdx: number, e: React.ClipboardEvent<HTMLInputElement>) {
+    const text = e.clipboardData.getData('text')
+    if (!text.includes('\n')) return
+    e.preventDefault()
+    const values = text.trim().split(/\r?\n/).filter(Boolean)
+    setItems(prev => {
+      const rows = [...prev]
+      while (rows.length < startIdx + values.length) rows.push(makeItem())
+      values.forEach((val, offset) => {
+        rows[startIdx + offset] = { ...rows[startIdx + offset], cartons: parseInt(val.trim().replace(/[^0-9]/g, '')) || 0 }
+      })
+      return rows
+    })
+  }
+
+  function handlePasteLooseAt(startIdx: number, e: React.ClipboardEvent<HTMLInputElement>) {
+    const text = e.clipboardData.getData('text')
+    if (!text.includes('\n')) return
+    e.preventDefault()
+    const values = text.trim().split(/\r?\n/).filter(Boolean)
+    setItems(prev => {
+      const rows = [...prev]
+      while (rows.length < startIdx + values.length) rows.push(makeItem())
+      values.forEach((val, offset) => {
+        rows[startIdx + offset] = { ...rows[startIdx + offset], loose_picking: parseInt(val.trim().replace(/[^0-9]/g, '')) || 0 }
+      })
+      return rows
+    })
+  }
+
+  function handlePasteNoteAt(startIdx: number, e: React.ClipboardEvent<HTMLInputElement>) {
+    const text = e.clipboardData.getData('text')
+    if (!text.includes('\n')) return
+    e.preventDefault()
+    const values = text.trim().split(/\r?\n/).filter(Boolean)
+    setItems(prev => {
+      const rows = [...prev]
+      while (rows.length < startIdx + values.length) rows.push(makeItem())
+      values.forEach((val, offset) => {
+        rows[startIdx + offset] = { ...rows[startIdx + offset], header_text: val.trim() }
+      })
+      return rows
+    })
+  }
+
   return (
     <>
-      {/* Header */}
-      <div className="flex items-center justify-between px-5 py-3.5 border-b shrink-0">
+      {/* Title bar */}
+      <div className="flex items-center justify-between px-4 py-2.5 border-b shrink-0">
         <div>
           <h2 className="text-sm font-semibold text-slate-800">
             {mode === 'create' ? 'Tạo đơn xuất thủ công' : `Sửa đơn: ${gdo?.group_code}`}
@@ -625,19 +713,17 @@ function GDOFormBody({
         </button>
       </div>
 
-      {/* Body */}
-      <div className="overflow-y-auto flex-1 px-5 py-4 space-y-4">
-
-        {/* Header fields — 2 columns */}
-        <div className="grid grid-cols-2 gap-3">
+      {/* Metadata fields — compact strip, no scroll */}
+      <div className="shrink-0 border-b bg-slate-50/50 px-4 py-2.5">
+        <div className="grid grid-cols-3 gap-x-4 gap-y-2">
           <div className="space-y-1">
             <label className="text-[10px] font-medium text-slate-500">Ngày xuất <span className="text-red-500">*</span></label>
-            <Input type="date" className="h-8 text-xs" value={date} min={TODAY_STR} onChange={e => setDate(e.target.value)} />
+            <Input type="date" className="h-7 text-xs" value={date} min={TODAY_STR} onChange={e => setDate(e.target.value)} />
           </div>
           <div className="space-y-1">
             <label className="text-[10px] font-medium text-slate-500">Kho xuất</label>
             <Select value={warehouseId || '__none__'} onValueChange={v => setWarehouseId(v === '__none__' ? '' : v)}>
-              <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Chọn kho…" /></SelectTrigger>
+              <SelectTrigger className="h-7 text-xs"><SelectValue placeholder="Chọn kho…" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="__none__">— Không chọn</SelectItem>
                 {(warehouses as any[])
@@ -646,162 +732,168 @@ function GDOFormBody({
               </SelectContent>
             </Select>
           </div>
-          {setWarehouseType !== undefined && (
-            <div className="space-y-1 col-span-2">
+          {setWarehouseType !== undefined ? (
+            <div className="space-y-1">
               <label className="text-[10px] font-medium text-slate-500">Loại kho <span className="text-red-500">*</span></label>
               <Select value={warehouseType || '__none__'} onValueChange={v => setWarehouseType(v === '__none__' ? '' : v)}>
-                <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Chọn loại kho…" /></SelectTrigger>
+                <SelectTrigger className="h-7 text-xs"><SelectValue placeholder="Loại kho…" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__none__">— Chọn loại kho</SelectItem>
                   {whTypesInForm.map(t => <SelectItem key={t.id} value={t.value}>{t.value}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
-          )}
+          ) : <div />}
           <div className="space-y-1">
             <label className="text-[10px] font-medium text-slate-500">
               Tên khách hàng {(!isMultiDO || mode === 'create') && <span className="text-red-500">*</span>}
             </label>
             {isMultiDO && mode === 'edit' ? (
-              <div className="min-h-[32px] text-[11px] px-2.5 py-1.5 border border-slate-100 rounded-md bg-slate-50 text-slate-600 leading-snug break-words">
+              <div className="text-[10px] px-2 py-1 border border-slate-100 rounded bg-white text-slate-600 truncate">
                 {(gdo?.delivery_orders ?? []).map(d => d.distributor_name).filter(Boolean).join(' · ') || '—'}
               </div>
             ) : (
-              <Input className="h-8 text-xs" placeholder="Tên NPP / khách hàng…" value={customerName} onChange={e => setCustomerName(e.target.value)} />
+              <Input className="h-7 text-xs" placeholder="Tên NPP / khách hàng…" value={customerName} onChange={e => setCustomerName(e.target.value)} />
             )}
           </div>
           <div className="space-y-1">
             <label className="text-[10px] font-medium text-slate-500">ĐVVT {mode === 'create' && <span className="text-red-500">*</span>}</label>
             {mode === 'edit' ? (
-              <div className="h-8 text-xs px-2.5 flex items-center border border-slate-100 rounded-md bg-slate-50 text-slate-600">{dvvt || '—'}</div>
+              <div className="h-7 text-xs px-2 flex items-center border border-slate-100 rounded bg-white text-slate-600">{dvvt || '—'}</div>
             ) : (
-              <Input className="h-8 text-xs" placeholder="Đơn vị vận tải…" value={dvvt} onChange={e => setDvvt(e.target.value)} />
+              <Input className="h-7 text-xs" placeholder="Đơn vị vận tải…" value={dvvt} onChange={e => setDvvt(e.target.value)} />
             )}
           </div>
-          <div className="space-y-1 col-span-2">
-            <label className="text-[10px] font-medium text-slate-500">
-              Loại xe <span className="text-red-500">*</span>
-            </label>
-            <div className="flex flex-wrap gap-2">
+          <div className="space-y-1">
+            <label className="text-[10px] font-medium text-slate-500">Loại xe <span className="text-red-500">*</span></label>
+            <div className="flex flex-wrap gap-1.5">
               {exportTypeOptions.map((vt: any) => (
                 <button key={vt.id} type="button" onClick={() => setExportType(vt.name)}
-                  className={`h-8 px-3 text-xs rounded-md border font-medium transition-colors ${
+                  className={`h-7 px-2.5 text-xs rounded border font-medium transition-colors ${
                     exportType === vt.name ? 'bg-blue-600 border-blue-600 text-white' : 'border-slate-200 text-slate-600 hover:border-blue-300 hover:text-blue-600'
                   }`}>
                   {vt.name}
                 </button>
               ))}
               {exportTypeOptions.length === 0 && (
-                <p className="text-xs text-slate-400 italic">
-                  {warehouseId ? 'Chưa có loại xe nào cho kho này — kiểm tra TMS Settings' : 'Chọn kho để lọc loại xe'}
+                <p className="text-[10px] text-slate-400 italic leading-7">
+                  {warehouseId ? 'Chưa có loại xe — kiểm tra TMS' : 'Chọn kho để lọc'}
                 </p>
               )}
             </div>
           </div>
         </div>
+      </div>
 
-        <hr className="border-slate-100" />
+      {/* Error banner */}
+      {error && (
+        <div className="shrink-0 bg-red-50 border-b border-red-200 px-4 py-1.5 text-[11px] text-red-700">{error}</div>
+      )}
 
-        {/* Items — table layout */}
-        <div>
-          <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Danh sách hàng</p>
-          <div className="rounded-lg border border-slate-200">
-            <table className="w-full table-fixed">
-              <thead>
-                <tr className="bg-slate-50">
-                  <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-7">#</th>
-                  <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left" style={{ width: '60%' }}>Mã hàng</th>
-                  <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right w-20">Thùng</th>
-                  <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right w-20">Nhặt lẻ</th>
-                  <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left">Ghi chú</th>
-                  <th className="px-1 py-1.5 w-7" />
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((item, idx) => {
-                  const fullScanned    = item.min_cartons > 0 && item.min_cartons >= item.cartons
-                  const partScanned    = item.min_cartons > 0 && item.min_cartons < item.cartons
-                  const cartonsInvalid = item.cartons > 0 && item.cartons < item.min_cartons
-                  const rowCls = fullScanned ? 'bg-blue-50' : partScanned ? 'bg-amber-50' : ''
-                  return (
-                    <tr key={item.id} className={`border-t border-slate-100 ${rowCls}`}>
-                      <td className="px-2 py-1.5 text-[9px] text-slate-400 align-middle">{idx + 1}</td>
-                      <td className="px-2 py-1 align-top">
-                        <MatPicker
-                          value={item.material_code}
-                          matName={item.mat_name}
-                          onSelect={(code, name, category) => updateItem(item.id, { material_code: code, mat_name: name, category })}
-                          disabled={item.min_cartons > 0}
+      {/* Items table — flex-1, fills remaining height */}
+      <div className="flex-1 min-h-0 overflow-auto px-4 py-3">
+        <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
+          Danh sách hàng
+          <span className="text-slate-400 font-normal normal-case ml-2">paste từ Excel OK — Mã hàng | Thùng | Nhặt lẻ | Ghi chú</span>
+        </p>
+        <div className="rounded-lg border border-slate-200 overflow-x-auto">
+          <table className="min-w-max w-full">
+            <thead>
+              <tr className="bg-slate-50 sticky top-0">
+                <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-7">#</th>
+                <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-40">Mã hàng</th>
+                <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-44">Tên hàng</th>
+                <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-14">DVT</th>
+                <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right w-20">Thùng</th>
+                <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right w-20">Nhặt lẻ</th>
+                <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-40">Ghi chú</th>
+                <th className="px-1 py-1.5 w-7" />
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item, idx) => {
+                const fullScanned    = item.min_cartons > 0 && item.min_cartons >= item.cartons
+                const partScanned    = item.min_cartons > 0 && item.min_cartons < item.cartons
+                const cartonsInvalid = item.cartons > 0 && item.cartons < item.min_cartons
+                const rowCls = fullScanned ? 'bg-blue-50' : partScanned ? 'bg-amber-50' : ''
+                return (
+                  <tr key={item.id} className={`border-t border-slate-100 ${rowCls}`}>
+                    <td className="px-2 py-1 text-[9px] text-slate-400 tabular-nums">{idx + 1}</td>
+                    <td className="px-2 py-1">
+                      <MatPicker
+                        value={item.material_code}
+                        matName=""
+                        onSelect={(code, name, category, unit) => updateItem(item.id, { material_code: code, mat_name: name, category, unit })}
+                        disabled={item.min_cartons > 0}
+                        onPaste={item.min_cartons === 0 ? e => handlePasteRowAt(idx, e) : undefined}
+                      />
+                      {item.min_cartons > 0 && (
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium mt-0.5 inline-block ${fullScanned ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>
+                          Đã xuất {item.min_cartons} thùng
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-2 py-1 text-[10px] text-slate-600 max-w-[176px] truncate">{item.mat_name || <span className="text-slate-300">—</span>}</td>
+                    <td className="px-2 py-1 text-[10px] text-slate-500">{item.unit || <span className="text-slate-300">—</span>}</td>
+                    <td className="px-2 py-1">
+                      <input
+                        type="number" min={item.min_cartons || 1}
+                        className={`h-6 w-16 rounded border border-slate-200 px-1 text-[10px] text-right focus:outline-none focus:ring-1 focus:ring-blue-400 ${cartonsInvalid ? 'border-red-400' : ''}`}
+                        value={item.cartons || ''}
+                        onChange={e => updateItem(item.id, { cartons: parseInt(e.target.value) || 0 })}
+                        onPaste={e => handlePasteCartonsAt(idx, e)}
+                      />
+                      {cartonsInvalid && <p className="text-[9px] text-red-600 text-right">Min {item.min_cartons}</p>}
+                    </td>
+                    <td className="px-2 py-1">
+                      <input
+                        type="number" min={0}
+                        className="h-6 w-16 rounded border border-slate-200 px-1 text-[10px] text-right focus:outline-none focus:ring-1 focus:ring-blue-400"
+                        value={item.loose_picking || ''}
+                        onChange={e => updateItem(item.id, { loose_picking: parseInt(e.target.value) || 0 })}
+                        onPaste={e => handlePasteLooseAt(idx, e)}
+                      />
+                    </td>
+                    <td className="px-2 py-1">
+                      {item.min_cartons > 0 ? (
+                        <span className="text-[10px] text-slate-500 italic">{item.header_text || '—'}</span>
+                      ) : (
+                        <input
+                          className="h-6 w-full rounded border border-slate-200 px-1.5 text-[10px] focus:outline-none focus:ring-1 focus:ring-blue-400"
+                          placeholder="Header text…"
+                          value={item.header_text}
+                          onChange={e => updateItem(item.id, { header_text: e.target.value })}
+                          onPaste={e => handlePasteNoteAt(idx, e)}
                         />
-                        {item.min_cartons > 0 && (
-                          <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium mt-0.5 inline-block ${fullScanned ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>
-                            Đã xuất {item.min_cartons} thùng
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-2 py-1 align-top">
-                        <Input
-                          type="number" min={item.min_cartons || 1}
-                          className={`h-7 text-[10px] text-right w-full ${cartonsInvalid ? 'border-red-400' : ''}`}
-                          value={item.cartons || ''}
-                          onChange={e => updateItem(item.id, { cartons: parseInt(e.target.value) || 0 })}
-                        />
-                        {cartonsInvalid && (
-                          <p className="text-[9px] text-red-600 mt-0.5 text-right">Min {item.min_cartons}</p>
-                        )}
-                      </td>
-                      <td className="px-2 py-1 align-top">
-                        <Input
-                          type="number" min={0}
-                          className="h-7 text-[10px] text-right w-full"
-                          value={item.loose_picking || ''}
-                          onChange={e => updateItem(item.id, { loose_picking: parseInt(e.target.value) || 0 })}
-                        />
-                      </td>
-                      <td className="px-2 py-1 align-top">
-                        {item.min_cartons > 0 ? (
-                          <span className="text-[10px] text-slate-500 italic leading-7 block">{item.header_text || '—'}</span>
-                        ) : (
-                          <Input
-                            className="h-7 text-[10px]"
-                            placeholder="Header text…"
-                            value={item.header_text}
-                            onChange={e => updateItem(item.id, { header_text: e.target.value })}
-                          />
-                        )}
-                      </td>
-                      <td className="px-1 py-1 align-middle">
-                        {items.length > 1 && item.min_cartons === 0 && (
-                          <button onClick={() => setItems(rows => rows.filter(r => r.id !== item.id))}
-                            className="text-slate-300 hover:text-red-400" title="Xóa dòng">
-                            <Trash2 className="h-3 w-3" />
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-
-          {!isMultiDO && (
-            <button
-              onClick={() => setItems(rows => [...rows, makeItem()])}
-              className="flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-700 w-full justify-center border border-dashed border-blue-200 rounded-lg py-1.5 hover:border-blue-400 mt-2"
-            >
-              <Plus className="h-3 w-3" /> Thêm mặt hàng
-            </button>
-          )}
+                      )}
+                    </td>
+                    <td className="px-1 py-1">
+                      {item.min_cartons === 0 && (
+                        <button onClick={() => setItems(rows => rows.filter(r => r.id !== item.id))}
+                          className="text-slate-300 hover:text-red-400" title="Xóa dòng">
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
         </div>
 
-        {error && (
-          <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-[11px] text-red-700">{error}</div>
+        {!isMultiDO && (
+          <button
+            onClick={() => setItems(rows => [...rows, makeItem()])}
+            className="flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-700 w-full justify-center border border-dashed border-blue-200 rounded-lg py-1.5 hover:border-blue-400 mt-2"
+          >
+            <Plus className="h-3 w-3" /> Thêm dòng
+          </button>
         )}
       </div>
 
       {/* Footer */}
-      <div className="border-t px-5 py-3 shrink-0 bg-slate-50/50 flex justify-end gap-2">
+      <div className="border-t px-4 py-2.5 shrink-0 bg-slate-50/50 flex justify-end gap-2">
         <Button variant="outline" size="sm" onClick={onClose} disabled={submitting}>Hủy</Button>
         <Button size="sm" disabled={submitting} onClick={onSubmit} className="min-w-[100px]">
           {submitting ? 'Đang lưu…' : mode === 'create' ? 'Tạo đơn xuất' : 'Lưu thay đổi'}
@@ -834,7 +926,7 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
   const [dvvt, setDvvt]               = useState('')
   const [customerName, setCustomerName] = useState('')
   const [exportType, setExportType]   = useState('')
-  const [items, setItems]             = useState<ItemRow[]>([makeItem()])
+  const [items, setItems]             = useState<ItemRow[]>(() => Array.from({ length: 20 }, makeItem))
   const [error, setError]             = useState('')
 
   const { mutate: createGDO, isPending } = useCreateGDO()
@@ -845,9 +937,10 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
     if (!customerName.trim()) return setError('Nhập tên khách hàng')
     if (!dvvt.trim())  return setError('Nhập đơn vị vận tải')
     if (!exportType)   return setError('Chọn loại xuất')
-    for (const item of items) {
-      if (!item.material_code.trim()) return setError('Chọn mã hàng cho tất cả dòng')
-      if (!item.cartons || item.cartons <= 0) return setError('Số thùng phải > 0')
+    const filledItems = items.filter(i => i.material_code.trim())
+    if (filledItems.length === 0) return setError('Nhập ít nhất một mã hàng')
+    for (const item of filledItems) {
+      if (!item.cartons || item.cartons <= 0) return setError(`Số thùng phải > 0 (${item.material_code})`)
     }
     setError('')
     createGDO(
@@ -858,7 +951,7 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
         dvvt: dvvt.trim(),
         customer_name: customerName.trim(),
         export_type: exportType,
-        items: items.map(i => ({ material_code: i.material_code, cartons_ordered: i.cartons, loose_picking: i.loose_picking, header_text: i.header_text || undefined })),
+        items: filledItems.map(i => ({ material_code: i.material_code, cartons_ordered: i.cartons, loose_picking: i.loose_picking, header_text: i.header_text || undefined })),
       },
       {
         onSuccess: () => onClose(),
@@ -926,6 +1019,7 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
         db_id: item.id,
         material_code: item.material_code_raw ?? '',
         mat_name: item.material?.short_name ?? '',
+        unit: item.material?.unit ?? '',
         category: item.material_type ?? null,
         cartons: item.cartons_ordered ?? 0,
         min_cartons: item.cartons_scanned ?? 0,

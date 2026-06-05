@@ -336,40 +336,64 @@ export async function getInboundReport(req: Request, res: Response) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const orderIds = [...new Set(((planLines ?? []) as any[]).map((l: any) => l.tms_order_id).filter(Boolean))]
 
-    // 3. Fetch thực tế từ InventoryEntry (số thùng đã quét thực tế)
-    //    InventoryEntry.import_order_id → ProductionImport.(tms_order_id, material_id)
+    // 3. Fetch ProductionImports từ 2 nguồn:
+    //    a) Theo tms_order_id có trong plan lines
+    //    b) Theo import_date trong range (bắt orders không có plan line nào)
     const actualMap = new Map<string, number>() // key: `${tms_order_id}/${material_id}` → boxes
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let allImports: any[] = []
+    const IMPORT_SELECT = 'id, tms_order_id, material_id, planned_cartons, import_date, material:Material!material_id(material_code, short_name, unit, category), warehouse:Warehouse!warehouse_id(name)'
+
     if (orderIds.length > 0) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: imports, error: impErr } = await (supabase.from('ProductionImport') as any)
-        .select('id, tms_order_id, material_id, material:Material!material_id(material_code, short_name, unit, category)')
+      const { data: planImports, error: impErr } = await (supabase.from('ProductionImport') as any)
+        .select(IMPORT_SELECT)
         .in('tms_order_id', orderIds)
         .neq('status', 'CANCELLED')
       if (impErr) return fail(res, impErr.message)
-      allImports = (imports ?? []) as any[]
+      allImports = (planImports ?? []) as any[]
+    }
 
-      const importIds = allImports.map((i: any) => i.id as string)
-      const importMeta = new Map<string, { tms_order_id: string; material_id: string }>()
-      for (const i of allImports) {
-        importMeta.set(i.id, { tms_order_id: i.tms_order_id, material_id: i.material_id })
+    // Thêm imports theo date range (bắt phát sinh thuần — không nằm trong plan nào)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let dateQ = (supabase.from('ProductionImport') as any)
+      .select(IMPORT_SELECT)
+      .gte('import_date', date_from)
+      .lte('import_date', date_to)
+      .neq('status', 'CANCELLED')
+    if (warehouse_id) dateQ = dateQ.eq('warehouse_id', warehouse_id)
+    const { data: dateImports, error: dateImpErr } = await dateQ
+    if (dateImpErr) return fail(res, dateImpErr.message)
+
+    // Merge + dedup by id
+    const seenImportIds = new Set<string>(allImports.map((i: any) => i.id as string))
+    for (const imp of (dateImports ?? []) as any[]) {
+      if (!seenImportIds.has(imp.id)) {
+        seenImportIds.add(imp.id)
+        allImports.push(imp)
       }
+    }
 
-      if (importIds.length > 0) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: entries, error: entErr } = await (supabase.from('InventoryEntry') as any)
-          .select('import_order_id, cartons_imported')
-          .in('import_order_id', importIds)
-        if (entErr) return fail(res, entErr.message)
+    // Fetch InventoryEntry cho tất cả imports
+    const importIds = allImports.map((i: any) => i.id as string)
+    const importMeta = new Map<string, { tms_order_id: string; material_id: string }>()
+    for (const i of allImports) {
+      importMeta.set(i.id, { tms_order_id: i.tms_order_id, material_id: i.material_id })
+    }
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        for (const e of (entries ?? []) as any[]) {
-          const meta = importMeta.get(e.import_order_id)
-          if (!meta) continue
-          const key = `${meta.tms_order_id}/${meta.material_id}`
-          actualMap.set(key, (actualMap.get(key) ?? 0) + ((e.cartons_imported ?? 0) as number))
-        }
+    if (importIds.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: entries, error: entErr } = await (supabase.from('InventoryEntry') as any)
+        .select('import_order_id, cartons_imported')
+        .in('import_order_id', importIds)
+      if (entErr) return fail(res, entErr.message)
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      for (const e of (entries ?? []) as any[]) {
+        const meta = importMeta.get(e.import_order_id)
+        if (!meta) continue
+        const key = `${meta.tms_order_id}/${meta.material_id}`
+        actualMap.set(key, (actualMap.get(key) ?? 0) + ((e.cartons_imported ?? 0) as number))
       }
     }
 
@@ -385,6 +409,16 @@ export async function getInboundReport(req: Request, res: Response) {
           ncc_name: (line.ncc?.name ?? '') as string,
         })
       }
+    }
+    // Bổ sung orderInfoMap cho orders không có plan line (lấy từ import_date và warehouse)
+    for (const imp of allImports) {
+      if (!imp.tms_order_id || orderInfoMap.has(imp.tms_order_id)) continue
+      orderInfoMap.set(imp.tms_order_id, {
+        date: (imp.import_date ?? '') as string,
+        warehouse_name: (imp.warehouse?.name ?? '') as string,
+        ncc_code: '',
+        ncc_name: '',
+      })
     }
 
     // 5. Build report rows từ plan lines (kế hoạch)
@@ -415,14 +449,15 @@ export async function getInboundReport(req: Request, res: Response) {
       }
     })
 
-    // 6. Phát sinh: ProductionImport có quét thực tế nhưng không có trong plan lines
+    // 6. Phát sinh: ProductionImport không có trong plan lines (kể cả chưa quét — planned_cartons > 0)
     const phatSinhSeen = new Set<string>()
     for (const imp of allImports) {
       if (!imp.tms_order_id || !imp.material_id) continue
       const key = `${imp.tms_order_id}/${imp.material_id}`
       if (planLineKeys.has(key) || phatSinhSeen.has(key)) continue
       const actual_boxes = actualMap.get(key) ?? 0
-      if (actual_boxes === 0) continue
+      const planned_cartons = (imp.planned_cartons ?? 0) as number
+      if (actual_boxes === 0 && planned_cartons === 0) continue
       phatSinhSeen.add(key)
       const info = orderInfoMap.get(imp.tms_order_id) ?? { date: '', warehouse_name: '', ncc_code: '', ncc_name: '' }
       rows.push({
@@ -436,9 +471,9 @@ export async function getInboundReport(req: Request, res: Response) {
         material_name: (imp.material?.short_name ?? '') as string,
         unit: (imp.material?.unit ?? '') as string,
         material_category: (imp.material?.category ?? '') as string,
-        planned_boxes: 0,
+        planned_boxes: planned_cartons,
         actual_boxes,
-        pct: null,
+        pct: planned_cartons > 0 && actual_boxes > 0 ? Math.round(actual_boxes / planned_cartons * 100) : null,
         note: 'Phát sinh',
       })
     }

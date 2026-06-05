@@ -18,7 +18,7 @@ import {
   useTmsOrders, useCreateOrder, useUpdateOrder, useDeleteOrder, useBulkCreateOrders, useBulkUpdateOrderDate,
   useAddVehicleSlot, useUpdateVehicleSlot, useReleaseVehicleSlot, useRevokeVehicleSlot, useDeleteVehicleSlot,
   usePlanLinesByOrder, usePlanVsActual, useBulkCreatePlanLinesForOrder, useMaterials,
-  useBulkCreatePlanLines, useUpdatePlanLine, useDeletePlanLine,
+  useBulkCreatePlanLines, useDeletePlanLine,
 } from '@/api/hooks'
 import { formatDate, formatDateTime } from '@/utils/formatters'
 import type { TmsOrder, TmsVehicleSlot, DeliverySlot, TmsVehicleType, TmsVehicle, TransportCompany } from '@/types'
@@ -1700,9 +1700,7 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
   const { data: planVsActual = [] } = usePlanVsActual(order?.id ?? null)
   const { data: allMats = [] }      = useMaterials()
   const { mutateAsync: addLines }   = useBulkCreatePlanLinesForOrder()
-  const { mutate: updateLine }      = useUpdatePlanLine()
   const { mutate: deleteLine }      = useDeletePlanLine()
-  const [editingLine, setEditingLine] = useState<{ id: string; boxes: string; pallets: string } | null>(null)
 
   const mergedRows = useMemo(() => {
     type MR = { line_id: string | null; material_code: string; material_name: string; unit: string; planned_boxes: number; actual_boxes: number; status: string | null }
@@ -1883,18 +1881,17 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
                 <table className="min-w-full">
                   <thead className="bg-slate-50">
                     <tr>
-                      {['Mã hàng', 'Tên hàng', 'ĐVT', 'Kế hoạch', 'Thực tế', 'CL', ...((canEdit || canDelete) ? [''] : [])].map((h, idx) => (
+                      {['Mã hàng', 'Tên hàng', 'ĐVT', 'Kế hoạch', 'Thực tế', 'CL', ...(canDelete ? [''] : [])].map((h, idx) => (
                         <th key={idx} className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {mergedRows.length === 0 ? (
-                      <tr><td colSpan={(canEdit || canDelete) ? 7 : 6} className="px-2 py-3 text-center text-xs text-slate-400">Chưa có hàng hóa</td></tr>
+                      <tr><td colSpan={canDelete ? 7 : 6} className="px-2 py-3 text-center text-xs text-slate-400">Chưa có hàng hóa</td></tr>
                     ) : mergedRows.map(row => {
                       const diff = row.actual_boxes - row.planned_boxes
                       const isCancelled = row.status === 'CANCELLED'
-                      const isEditing = editingLine?.id === row.line_id
                       return (
                         <tr key={row.material_code}
                           className={`border-t border-slate-100 ${isCancelled ? 'opacity-50' : diff < 0 && row.actual_boxes > 0 ? 'bg-red-50' : diff > 0 ? 'bg-green-50' : ''}`}>
@@ -1902,56 +1899,19 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
                           <td className="px-2 py-1 text-[10px] max-w-[140px] truncate whitespace-nowrap">{row.material_name}</td>
                           <td className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{row.unit || '—'}</td>
                           <td className="px-2 py-1 text-[10px] tabular-nums font-semibold whitespace-nowrap">
-                            {isEditing ? (
-                              <input type="number" min={1}
-                                value={editingLine.boxes}
-                                onChange={e => setEditingLine(prev => prev ? { ...prev, boxes: e.target.value } : null)}
-                                className="h-5 w-14 rounded border border-blue-300 px-1 text-[10px] focus:outline-none"
-                              />
-                            ) : row.planned_boxes || <span className="text-slate-300">—</span>}
+                            {row.planned_boxes || <span className="text-slate-300">—</span>}
                           </td>
                           <td className="px-2 py-1 text-[10px] tabular-nums font-semibold whitespace-nowrap">{row.actual_boxes > 0 ? row.actual_boxes : <span className="text-slate-300">0</span>}</td>
                           <td className={`px-2 py-1 text-[10px] tabular-nums font-semibold whitespace-nowrap ${diff < 0 && row.actual_boxes > 0 ? 'text-red-600' : diff > 0 ? 'text-green-600' : 'text-slate-300'}`}>
-                            {isEditing ? (
-                              <input type="number" min={0}
-                                value={editingLine.pallets}
-                                onChange={e => setEditingLine(prev => prev ? { ...prev, pallets: e.target.value } : null)}
-                                className="h-5 w-12 rounded border border-blue-300 px-1 text-[10px] focus:outline-none"
-                                placeholder="pl"
-                              />
-                            ) : row.actual_boxes > 0 ? (diff > 0 ? `+${diff}` : diff) : '—'}
+                            {row.actual_boxes > 0 ? (diff > 0 ? `+${diff}` : diff) : '—'}
                           </td>
-                          {(canEdit || canDelete) && (
+                          {canDelete && (
                             <td className="px-1 py-1 whitespace-nowrap">
                               {row.line_id && !isCancelled && (
-                                isEditing ? (
-                                  <span className="flex gap-1">
-                                    {canEdit && (
-                                      <button className="text-[10px] text-green-600 hover:text-green-700 font-semibold px-1"
-                                        onClick={() => {
-                                          if (!editingLine) return
-                                          updateLine({ id: editingLine.id, planned_boxes: Number(editingLine.boxes), ...(editingLine.pallets ? { planned_pallets: Number(editingLine.pallets) } : {}) })
-                                          setEditingLine(null)
-                                        }}>✓</button>
-                                    )}
-                                    <button className="text-[10px] text-slate-400 px-1" onClick={() => setEditingLine(null)}>✕</button>
-                                  </span>
-                                ) : (
-                                  <span className="flex gap-1">
-                                    {canEdit && (
-                                      <button className="p-0.5 text-slate-400 hover:text-blue-600"
-                                        onClick={() => setEditingLine({ id: row.line_id!, boxes: String(row.planned_boxes), pallets: '' })}>
-                                        <Pencil className="h-3 w-3" />
-                                      </button>
-                                    )}
-                                    {canDelete && (
-                                      <button className="p-0.5 text-slate-400 hover:text-red-600"
-                                        onClick={() => { if (confirm(`Xóa dòng ${row.material_code}?`)) deleteLine(row.line_id!) }}>
-                                        <Trash2 className="h-3 w-3" />
-                                      </button>
-                                    )}
-                                  </span>
-                                )
+                                <button className="p-0.5 text-slate-400 hover:text-red-600"
+                                  onClick={() => { if (confirm(`Xóa dòng ${row.material_code}?`)) deleteLine(row.line_id!) }}>
+                                  <Trash2 className="h-3 w-3" />
+                                </button>
                               )}
                             </td>
                           )}

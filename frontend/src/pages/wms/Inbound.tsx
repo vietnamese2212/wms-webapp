@@ -724,7 +724,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                               <span className="font-mono font-semibold">{row.materialCode}</span>
                             </div>
                           </td>
-                          <td className="px-2 py-1 text-slate-600 truncate max-w-[80px]">{row.matName || '—'}</td>
+                          <td className="px-2 py-1 text-slate-600 whitespace-nowrap">{row.matName || '—'}</td>
                           <td className="px-2 py-1 text-center font-mono text-slate-500">{row.locationCode || '—'}</td>
                           <td className="px-2 py-1 text-center tabular-nums font-semibold">{row.palletCount}</td>
                           <td className="px-1.5 py-1">

@@ -47,6 +47,7 @@ router.patch('/vehicle-slots/:id/revoke',        requirePerm('tms_plan', 'revoke
 router.delete('/vehicle-slots/:id',              requirePerm('tms_plan', 'add_vehicle'), vehicleSlot.deleteVehicleSlot)
 
 // SlotTemplate (Khung giờ)
+router.get('/slot-templates/vehicle-types', requireTmsView,                    slotTemplate.getVehicleTypesByWarehouse)
 router.get('/slot-templates',        requirePerm('tms_slots', 'view'),         slotTemplate.listSlotTemplates)
 router.post('/slot-templates',       requirePerm('tms_slots', 'manage'),       slotTemplate.createSlotTemplate)
 router.put('/slot-templates/:id',    requirePerm('tms_slots', 'manage'),       slotTemplate.updateSlotTemplate)

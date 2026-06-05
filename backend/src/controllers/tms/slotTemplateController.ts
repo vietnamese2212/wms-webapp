@@ -73,3 +73,23 @@ export async function deleteSlotTemplate(req: Request, res: Response) {
     return ok(res, { message: 'Đã xóa' })
   } catch (e) { return fail(res, String(e)) }
 }
+
+// Trả về danh sách loại xe duy nhất từ slot templates của kho, lọc theo cargo_type nếu có
+export async function getVehicleTypesByWarehouse(req: Request, res: Response) {
+  try {
+    const { warehouse_id, cargo_type } = req.query as Record<string, string>
+    if (!warehouse_id) return fail(res, 'warehouse_id là bắt buộc', 400)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let q = (supabase.from('SlotTemplate') as any)
+      .select('vehicle_type:VehicleType(id, code, name)')
+      .eq('warehouse_id', warehouse_id)
+      .eq('is_active', true)
+    if (cargo_type) q = q.in('cargo_type', [cargo_type, 'ALL'])
+    const { data, error } = await q
+    if (error) return fail(res, error.message)
+    const seen = new Set<string>()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const unique = (data ?? []).map((r: any) => r.vehicle_type).filter((vt: any) => vt && !seen.has(vt.id) && seen.add(vt.id))
+    return ok(res, unique)
+  } catch (e) { return fail(res, String(e)) }
+}

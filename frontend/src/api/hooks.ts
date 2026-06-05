@@ -1394,6 +1394,20 @@ export function useOutboundScanLogFacets(materialCategory?: string) {
 
 // ─── TMS ─────────────────────────────────────────────────────────────────────
 
+export function useVehicleTypesByWarehouse(warehouseId: string | null, cargoType?: string) {
+  return useQuery<TmsVehicleType[]>({
+    queryKey: ['tms-vehicle-types-by-warehouse', warehouseId, cargoType ?? null],
+    enabled: !!warehouseId,
+    staleTime: 30 * 60_000,
+    queryFn: async () => {
+      const params: Record<string, string> = { warehouse_id: warehouseId! }
+      if (cargoType) params.cargo_type = cargoType
+      const { data } = await apiClient.get('/tms/slot-templates/vehicle-types', { params })
+      return data.data as TmsVehicleType[]
+    },
+  })
+}
+
 export function useVehicleTypes(onlyActive = false) {
   return useQuery({
     queryKey: ['tms-vehicle-types', onlyActive],

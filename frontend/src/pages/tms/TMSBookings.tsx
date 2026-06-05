@@ -13,7 +13,7 @@ import type { MSOpt } from '@/components/shared/MultiSelectFilter'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useAuthStore } from '@/stores/authStore'
 import {
-  useWarehouses, useWarehouseTypes, useVehicleTypes, useTransportCompanies, useTmsVehicles,
+  useWarehouses, useWarehouseTypes, useVehicleTypes, useVehicleTypesByWarehouse, useTransportCompanies, useTmsVehicles,
   useDeliverySlots, useGenerateSlots,
   useTmsOrders, useCreateOrder, useUpdateOrder, useDeleteOrder, useBulkCreateOrders, useBulkUpdateOrderDate,
   useAddVehicleSlot, useUpdateVehicleSlot, useReleaseVehicleSlot, useRevokeVehicleSlot, useDeleteVehicleSlot,
@@ -341,6 +341,13 @@ const EMPTY_FORM = (date: string, warehouse_id: string): OrderFormData => ({
 
 const ORDER_CODE_RE = /^\d{6}_[A-Za-z0-9]+_\d+$/
 
+// Map warehouse_type (từ WMS lookup) sang cargo_type của slot template
+const WAREHOUSE_TYPE_TO_CARGO: Record<string, string> = {
+  'Thành phẩm': 'TP',
+  'NVL': 'NVL',
+  'POSM': 'POSM',
+}
+
 type PlanLineRow = {
   line_id?: string // undefined = dòng mới chưa lưu
   material_code: string; material_id: string; material_name: string
@@ -544,6 +551,11 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
   const [err, setErr] = useState('')
   const planRowsInitRef = React.useRef(false)
   const set = (k: keyof OrderFormData) => (v: string) => setForm(f => ({ ...f, [k]: v }))
+
+  // Lọc loại xe theo kho + loại kho (từ slot templates)
+  const _cargoType = form.warehouse_type ? WAREHOUSE_TYPE_TO_CARGO[form.warehouse_type] : undefined
+  const { data: filteredVehicleTypes = [] } = useVehicleTypesByWarehouse(form.warehouse_id || null, _cargoType)
+  const availableVehicleTypes = (filteredVehicleTypes.length > 0 ? filteredVehicleTypes : vehicleTypes) as TmsVehicleType[]
 
   function updatePlanRow(i: number, field: keyof PlanLineRow, value: string) {
     setPlanRows(prev => {
@@ -759,7 +771,10 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
             </div>
             <div>
               <Label className="text-xs">Kho *</Label>
-              <Select value={form.warehouse_id || '__none__'} onValueChange={v => set('warehouse_id')(v === '__none__' ? '' : v)}>
+              <Select value={form.warehouse_id || '__none__'} onValueChange={v => {
+                const newId = v === '__none__' ? '' : v
+                setForm(f => ({ ...f, warehouse_id: newId, warehouse_type: '', vehicle_type: '' }))
+              }}>
                 <SelectTrigger className="h-8 text-sm mt-1"><SelectValue placeholder="Chọn kho" /></SelectTrigger>
                 <SelectContent>
                   {(warehouses as { id: string; name: string }[]).map(w => (
@@ -803,7 +818,10 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label className="text-xs">Loại kho *</Label>
-              <Select value={form.warehouse_type || '__none__'} onValueChange={v => set('warehouse_type')(v === '__none__' ? '' : v)}>
+              <Select value={form.warehouse_type || '__none__'} onValueChange={v => {
+                const newVal = v === '__none__' ? '' : v
+                setForm(f => ({ ...f, warehouse_type: newVal, vehicle_type: '' }))
+              }}>
                 <SelectTrigger className="h-8 text-sm mt-1"><SelectValue placeholder="Chọn loại kho" /></SelectTrigger>
                 <SelectContent>
                   {whTypesData.map(t => <SelectItem key={t.id} value={t.value}>{t.value}</SelectItem>)}
@@ -815,7 +833,7 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
               <Select value={form.vehicle_type || '__none__'} onValueChange={v => set('vehicle_type')(v === '__none__' ? '' : v)}>
                 <SelectTrigger className="h-8 text-sm mt-1"><SelectValue placeholder="Chọn loại xe" /></SelectTrigger>
                 <SelectContent>
-                  {(vehicleTypes as TmsVehicleType[]).map(vt => (
+                  {availableVehicleTypes.map(vt => (
                     <SelectItem key={vt.id} value={vt.name}>{vt.code} — {vt.name}</SelectItem>
                   ))}
                 </SelectContent>

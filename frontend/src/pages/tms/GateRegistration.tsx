@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from '@/api/client'
-import { useWarehouses, useWarehouseTypes } from '@/api/hooks'
+import { useWarehouses, useWarehouseTypes, useVehicleTypesByWarehouse } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -62,6 +62,12 @@ const ROW_TEXT: Record<GateStatus, string> = {
 }
 
 const TODAY_VN = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+
+const WAREHOUSE_TYPE_TO_CARGO: Record<string, string> = {
+  'Thành phẩm': 'TP',
+  'NVL': 'NVL',
+  'POSM': 'POSM',
+}
 
 function fmtDate(dateStr: string | null | undefined) {
   if (!dateStr) return '—'
@@ -374,6 +380,14 @@ export default function GateRegistration() {
   const { data: warehouses = [] } = useWarehouses(true)
   const { data: whTypes = [] } = useWarehouseTypes()
 
+  // Lọc loại xe theo kho + loại kho dựa trên slot templates; 'Khác' = không filter (tất cả xe của kho đó)
+  const _gateCargoType = (form.warehouse_type && form.warehouse_type !== 'Khác')
+    ? WAREHOUSE_TYPE_TO_CARGO[form.warehouse_type]
+    : undefined
+  const { data: filteredGateVehicleTypes = [] } = useVehicleTypesByWarehouse(form.warehouse_id || null, _gateCargoType)
+  const availableVehicleTypes = (form.warehouse_id && filteredGateVehicleTypes.length > 0
+    ? filteredGateVehicleTypes : vehicleTypes) as TmsVehicleType[]
+
   // Phase 1 hoàn thành khi đủ 6 tiêu chí matching (company_name_raw chấp nhận thay company_id cho NCC vãng lai)
   const phase1Complete = !!(
     form.date && form.warehouse_id && form.direction &&
@@ -656,7 +670,7 @@ export default function GateRegistration() {
     sub:   c.code,
   }))
 
-  const vtOptions: ComboOption[] = vehicleTypes.map(vt => ({
+  const vtOptions: ComboOption[] = availableVehicleTypes.map(vt => ({
     value: vt.name,   // lưu name để khớp với TmsOrder.vehicle_type
     label: vt.name,
   }))
@@ -1099,7 +1113,16 @@ export default function GateRegistration() {
               </div>
               <div className="space-y-1">
                 <label className="text-xs text-slate-500">Kho <span className="text-red-500">*</span></label>
-                <Select value={form.warehouse_id || '__none__'} onValueChange={v => fCriteria('warehouse_id', v === '__none__' ? '' : v)}>
+                <Select value={form.warehouse_id || '__none__'} onValueChange={v => {
+                  const newId = v === '__none__' ? '' : v
+                  setForm(prev => {
+                    const next = { ...prev, warehouse_id: newId, warehouse_type: '', vehicle_type: '' }
+                    if (editReg) return next
+                    const complete = !!(next.date && next.warehouse_id && next.direction &&
+                                        next.warehouse_type && next.vehicle_type && (next.company_id || next.company_name_raw))
+                    return complete ? next : { ...next, ...PHASE2_DEFAULT }
+                  })
+                }}>
                   <SelectTrigger className="h-8 text-xs">
                     <SelectValue placeholder="Chọn kho" />
                   </SelectTrigger>
@@ -1133,7 +1156,16 @@ export default function GateRegistration() {
               </div>
               <div className="space-y-1">
                 <label className="text-xs text-slate-500">Loại kho</label>
-                <Select value={form.warehouse_type || '__none__'} onValueChange={v => fCriteria('warehouse_type', v === '__none__' ? '' : v)}>
+                <Select value={form.warehouse_type || '__none__'} onValueChange={v => {
+                  const newVal = v === '__none__' ? '' : v
+                  setForm(prev => {
+                    const next = { ...prev, warehouse_type: newVal, vehicle_type: '' }
+                    if (editReg) return next
+                    const complete = !!(next.date && next.warehouse_id && next.direction &&
+                                        next.warehouse_type && next.vehicle_type && (next.company_id || next.company_name_raw))
+                    return complete ? next : { ...next, ...PHASE2_DEFAULT }
+                  })
+                }}>
                   <SelectTrigger className="h-8 text-xs">
                     <SelectValue placeholder="Chọn loại kho" />
                   </SelectTrigger>
@@ -1142,6 +1174,7 @@ export default function GateRegistration() {
                     {whTypes.map((t: { id: string; value: string }) => (
                       <SelectItem key={t.id} value={t.value}>{t.value}</SelectItem>
                     ))}
+                    <SelectItem value="Khác">Khác</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

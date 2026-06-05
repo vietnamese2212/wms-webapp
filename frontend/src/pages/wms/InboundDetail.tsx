@@ -399,6 +399,8 @@ export default function InboundDetail() {
   // Auto-open scan khi navigate từ list với ?scan=1
   useEffect(() => {
     if (autoScan && order && order.status === 'OPEN' && order.location_id) {
+      const total = (order.inventory_entries ?? []).reduce((s, e) => s + e.cartons_imported, 0)
+      if (order.source_type === 'NCC' && (order.planned_cartons ?? 0) > 0 && total >= (order.planned_cartons ?? 0)) return
       unlockAudio()
       setShowScan(true)
     }
@@ -410,8 +412,10 @@ export default function InboundDetail() {
     setConfirm({ title, msg, onOk })
   }
 
-  const isOpen  = order?.status === 'OPEN'
-  const entries = order?.inventory_entries ?? []
+  const isOpen      = order?.status === 'OPEN'
+  const entries     = order?.inventory_entries ?? []
+  const totalScanned = entries.reduce((sum, e) => sum + e.cartons_imported, 0)
+  const isNccFull   = order?.source_type === 'NCC' && (order?.planned_cartons ?? 0) > 0 && totalScanned >= (order?.planned_cartons ?? 0)
 
   function canDeleteEntry(entry: PalletEntry): boolean {
     if (!isOpen) return false
@@ -812,12 +816,12 @@ export default function InboundDetail() {
                 <Button
                   size="sm"
                   className="h-8 gap-1.5"
-                  disabled={!order.location_id}
+                  disabled={!order.location_id || isNccFull}
                   onClick={() => { unlockAudio(); setShowScan(true) }}
-                  title={!order.location_id ? 'Chọn vị trí trước' : undefined}
+                  title={isNccFull ? `Đã nhập đủ ${order.planned_cartons} thùng theo kế hoạch` : !order.location_id ? 'Chọn vị trí trước' : undefined}
                 >
                   <Plus className="h-3.5 w-3.5" />
-                  {order.location_id ? 'Thêm pallet' : 'Chọn vị trí trước'}
+                  {isNccFull ? 'Đủ kế hoạch' : order.location_id ? 'Thêm pallet' : 'Chọn vị trí trước'}
                 </Button>
               )}
             </div>
@@ -830,7 +834,7 @@ export default function InboundDetail() {
               <div className="flex flex-col items-center gap-2 py-12 text-slate-400">
                 <QrCode className="h-10 w-10 opacity-30" />
                 <p className="text-sm">Chưa có pallet nào được quét</p>
-                {isOpen && can(perms, 'inbound', 'scan') && (
+                {isOpen && can(perms, 'inbound', 'scan') && !isNccFull && (
                   <Button
                     size="sm" variant="outline"
                     disabled={!order.location_id}

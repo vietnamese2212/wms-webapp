@@ -1679,11 +1679,13 @@ function DR({ label, value, wide }: { label: string; value?: React.ReactNode | n
   )
 }
 
-function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound }: {
+function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEdit, canDelete }: {
   order: TmsOrder | null
   onClose: () => void
   warehouses: { id: string; name: string }[]
   canUploadInbound: boolean
+  canEdit: boolean
+  canDelete: boolean
 }) {
   const [showUpload, setShowUpload] = useState(false)
   const [addCode, setAddCode]       = useState('')
@@ -1865,14 +1867,14 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound }: {
                 <table className="min-w-full">
                   <thead className="bg-slate-50">
                     <tr>
-                      {['Mã hàng', 'Tên hàng', 'ĐVT', 'Kế hoạch', 'Thực tế', 'CL', ...(canUploadInbound ? [''] : [])].map((h, idx) => (
+                      {['Mã hàng', 'Tên hàng', 'ĐVT', 'Kế hoạch', 'Thực tế', 'CL', ...((canEdit || canDelete) ? [''] : [])].map((h, idx) => (
                         <th key={idx} className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {mergedRows.length === 0 ? (
-                      <tr><td colSpan={canUploadInbound ? 7 : 6} className="px-2 py-3 text-center text-xs text-slate-400">Chưa có hàng hóa</td></tr>
+                      <tr><td colSpan={(canEdit || canDelete) ? 7 : 6} className="px-2 py-3 text-center text-xs text-slate-400">Chưa có hàng hóa</td></tr>
                     ) : mergedRows.map(row => {
                       const diff = row.actual_boxes - row.planned_boxes
                       const isCancelled = row.status === 'CANCELLED'
@@ -1903,29 +1905,35 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound }: {
                               />
                             ) : row.actual_boxes > 0 ? (diff > 0 ? `+${diff}` : diff) : '—'}
                           </td>
-                          {canUploadInbound && (
+                          {(canEdit || canDelete) && (
                             <td className="px-1 py-1 whitespace-nowrap">
                               {row.line_id && !isCancelled && (
                                 isEditing ? (
                                   <span className="flex gap-1">
-                                    <button className="text-[10px] text-green-600 hover:text-green-700 font-semibold px-1"
-                                      onClick={() => {
-                                        if (!editingLine) return
-                                        updateLine({ id: editingLine.id, planned_boxes: Number(editingLine.boxes), ...(editingLine.pallets ? { planned_pallets: Number(editingLine.pallets) } : {}) })
-                                        setEditingLine(null)
-                                      }}>✓</button>
+                                    {canEdit && (
+                                      <button className="text-[10px] text-green-600 hover:text-green-700 font-semibold px-1"
+                                        onClick={() => {
+                                          if (!editingLine) return
+                                          updateLine({ id: editingLine.id, planned_boxes: Number(editingLine.boxes), ...(editingLine.pallets ? { planned_pallets: Number(editingLine.pallets) } : {}) })
+                                          setEditingLine(null)
+                                        }}>✓</button>
+                                    )}
                                     <button className="text-[10px] text-slate-400 px-1" onClick={() => setEditingLine(null)}>✕</button>
                                   </span>
                                 ) : (
                                   <span className="flex gap-1">
-                                    <button className="p-0.5 text-slate-400 hover:text-blue-600"
-                                      onClick={() => setEditingLine({ id: row.line_id!, boxes: String(row.planned_boxes), pallets: '' })}>
-                                      <Pencil className="h-3 w-3" />
-                                    </button>
-                                    <button className="p-0.5 text-slate-400 hover:text-red-600"
-                                      onClick={() => { if (confirm(`Xóa dòng ${row.material_code}?`)) deleteLine(row.line_id!) }}>
-                                      <Trash2 className="h-3 w-3" />
-                                    </button>
+                                    {canEdit && (
+                                      <button className="p-0.5 text-slate-400 hover:text-blue-600"
+                                        onClick={() => setEditingLine({ id: row.line_id!, boxes: String(row.planned_boxes), pallets: '' })}>
+                                        <Pencil className="h-3 w-3" />
+                                      </button>
+                                    )}
+                                    {canDelete && (
+                                      <button className="p-0.5 text-slate-400 hover:text-red-600"
+                                        onClick={() => { if (confirm(`Xóa dòng ${row.material_code}?`)) deleteLine(row.line_id!) }}>
+                                        <Trash2 className="h-3 w-3" />
+                                      </button>
+                                    )}
                                   </span>
                                 )
                               )}
@@ -2802,6 +2810,8 @@ export default function TMSBookings() {
         onClose={() => setDetailOrder(null)}
         warehouses={warehouses as { id: string; name: string }[]}
         canUploadInbound={canUploadInbound}
+        canEdit={canEdit}
+        canDelete={canDelete}
       />
       <Dialog open={!!pendingRelease} onOpenChange={() => setPendingRelease(null)}>
         <DialogContent className="max-w-xs">

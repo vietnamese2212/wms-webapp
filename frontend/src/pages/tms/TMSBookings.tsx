@@ -529,15 +529,18 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
   const { data: transportCompanies = [] }  = useTransportCompanies(true)
   const createOrder  = useCreateOrder()
   const updateOrder  = useUpdateOrder()
-  const { data: allMats = [] }        = useMaterials()
-  const { mutateAsync: addPlanLines } = useBulkCreatePlanLinesForOrder()
+  const { data: allMats = [] }             = useMaterials()
+  const { mutateAsync: addPlanLines }      = useBulkCreatePlanLinesForOrder()
+  const { mutateAsync: deletePlanLine }    = useDeletePlanLine()
   const isEdit = !!order
   const today  = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+  const { data: existingPlanLines = [] }   = usePlanLinesByOrder(isEdit ? (order?.id ?? null) : null)
 
   const [form, setForm]         = useState<OrderFormData>(EMPTY_FORM(defaultDate, defaultWarehouseId))
   const [planRows, setPlanRows] = useState<PlanLineRow[]>(() => Array.from({ length: 20 }, EMPTY_PLAN_LINE))
   const [planSaving, setPlanSaving] = useState(false)
   const [err, setErr] = useState('')
+  const planRowsInitRef = React.useRef(false)
   const set = (k: keyof OrderFormData) => (v: string) => setForm(f => ({ ...f, [k]: v }))
 
   function updatePlanRow(i: number, field: keyof PlanLineRow, value: string) {
@@ -625,7 +628,7 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
   }
 
   useEffect(() => {
-    if (!open) return
+    if (!open) { planRowsInitRef.current = false; return }
     if (order) {
       setForm({
         date: order.date, warehouse_id: order.warehouse_id,
@@ -641,10 +644,30 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
       })
     } else {
       setForm(EMPTY_FORM(today, defaultWarehouseId))
+      setPlanRows(Array.from({ length: 20 }, EMPTY_PLAN_LINE))
+      planRowsInitRef.current = true
     }
     setErr('')
-    if (!order) setPlanRows(Array.from({ length: 20 }, EMPTY_PLAN_LINE))
   }, [open, order?.id])
+
+  // Load existing plan lines into planRows when editing INBOUND
+  useEffect(() => {
+    if (!open || !isEdit || planRowsInitRef.current) return
+    if ((existingPlanLines as any[]).length === 0) return
+    planRowsInitRef.current = true
+    const rows: PlanLineRow[] = (existingPlanLines as any[])
+      .filter((l: any) => l.status !== 'CANCELLED')
+      .map((l: any) => ({
+        material_code: l.material?.material_code ?? '',
+        material_id: l.material_id ?? '',
+        material_name: l.material?.short_name ?? '',
+        unit: l.unit ?? '',
+        planned_boxes: String(l.planned_boxes ?? ''),
+        planned_pallets: String(l.planned_pallets ?? ''),
+      }))
+    while (rows.length < 5) rows.push(EMPTY_PLAN_LINE())
+    setPlanRows(rows)
+  }, [open, isEdit, existingPlanLines])
 
   const handleSubmit = async () => {
     if (!form.date || !form.warehouse_id) { setErr('Vui lòng chọn ngày và kho'); return }
@@ -668,6 +691,23 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
     try {
       if (isEdit && order) {
         await updateOrder.mutateAsync({ id: order.id, ...payload })
+        if (form.direction === 'INBOUND') {
+          const validLines = planRows.filter(r => r.material_id && Number(r.planned_boxes) > 0)
+          const toDelete = (existingPlanLines as any[]).filter((l: any) => l.status !== 'CANCELLED')
+          setPlanSaving(true)
+          if (toDelete.length > 0) await Promise.all(toDelete.map((l: any) => deletePlanLine(l.id)))
+          if (validLines.length > 0) {
+            await addPlanLines({
+              tms_order_id: order.id,
+              lines: validLines.map(r => ({
+                material_id:   r.material_id,
+                planned_boxes: Number(r.planned_boxes),
+                ...(r.planned_pallets ? { planned_pallets: Number(r.planned_pallets) } : {}),
+              })),
+            })
+          }
+          setPlanSaving(false)
+        }
       } else {
         const created = await createOrder.mutateAsync(payload)
         if (form.direction === 'INBOUND') {
@@ -698,7 +738,7 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
 
   return (
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
-      <DialogContent className={!isEdit && form.direction === 'INBOUND' ? 'max-w-3xl' : 'max-w-lg'}>
+      <DialogContent className={form.direction === 'INBOUND' ? 'max-w-3xl' : 'max-w-lg'}>
         <DialogHeader><DialogTitle>{isEdit ? 'Sửa đơn hàng' : 'Thêm đơn hàng'}</DialogTitle></DialogHeader>
         <div className="space-y-3 py-2">
           <div className="grid grid-cols-2 gap-3">
@@ -793,8 +833,8 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
               <Input value={form.gdo_refs} onChange={e => set('gdo_refs')(e.target.value)} placeholder="GDO-001, GDO-002" className="h-8 text-sm mt-1" />
             </div>
           )}
-          {/* Bảng hàng hóa kế hoạch — chỉ hiện khi tạo mới + INBOUND */}
-          {!isEdit && form.direction === 'INBOUND' && (
+          {/* Bảng hàng hóa kế hoạch — hiện khi INBOUND (cả tạo mới lẫn edit) */}
+          {form.direction === 'INBOUND' && (
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <Label className="text-xs font-medium">Hàng hóa kế hoạch nhập</Label>

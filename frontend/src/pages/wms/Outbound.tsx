@@ -557,6 +557,7 @@ function GDOFormBody({
   date, setDate,
   warehouseId, setWarehouseId,
   warehouseType, setWarehouseType,
+  shiptoPartyId, setShiptoPartyId,
   dvvt, setDvvt,
   customerName, setCustomerName,
   exportType, setExportType,
@@ -571,6 +572,7 @@ function GDOFormBody({
   date: string; setDate: (v: string) => void
   warehouseId: string; setWarehouseId: (v: string) => void
   warehouseType?: string; setWarehouseType?: (v: string) => void
+  shiptoPartyId: string; setShiptoPartyId: (v: string) => void
   dvvt: string; setDvvt: (v: string) => void
   customerName: string; setCustomerName: (v: string) => void
   exportType: string; setExportType: (v: string) => void
@@ -782,6 +784,18 @@ function GDOFormBody({
               )}
             </div>
           </div>
+          <div className="space-y-1">
+            <label className="text-[10px] font-medium text-slate-500">Kho nhận (NPP)</label>
+            <Select value={shiptoPartyId || '__none__'} onValueChange={v => setShiptoPartyId(v === '__none__' ? '' : v)}>
+              <SelectTrigger className="h-7 text-xs"><SelectValue placeholder="— Không giao NPP" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">— Không giao NPP</SelectItem>
+                {(warehouses as any[])
+                  .filter((w: any) => w.warehouse_type === 'NPP' && w.is_active)
+                  .map((w: any) => <SelectItem key={w.id} value={w.id}>{w.name} ({w.code})</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
       </div>
 
@@ -923,6 +937,7 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
   const [date, setDate]               = useState(TODAY_STR)
   const [warehouseId, setWarehouseId] = useState(defaultWarehouseId)
   const [warehouseType, setWarehouseType] = useState('')
+  const [shiptoPartyId, setShiptoPartyId] = useState('')
   const [dvvt, setDvvt]               = useState('')
   const [customerName, setCustomerName] = useState('')
   const [exportType, setExportType]   = useState('')
@@ -948,6 +963,7 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
         delivery_date: date,
         warehouse_id: warehouseId || undefined,
         warehouse_type: warehouseType,
+        shipto_party_id: shiptoPartyId || undefined,
         dvvt: dvvt.trim(),
         customer_name: customerName.trim(),
         export_type: exportType,
@@ -970,6 +986,7 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
         date={date} setDate={setDate}
         warehouseId={warehouseId} setWarehouseId={setWarehouseId}
         warehouseType={warehouseType} setWarehouseType={setWarehouseType}
+        shiptoPartyId={shiptoPartyId} setShiptoPartyId={setShiptoPartyId}
         dvvt={dvvt} setDvvt={setDvvt}
         customerName={customerName} setCustomerName={setCustomerName}
         exportType={exportType} setExportType={setExportType}
@@ -989,6 +1006,7 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
 
   const [date, setDate]               = useState('')
   const [warehouseId, setWarehouseId] = useState(defaultWarehouseId)
+  const [shiptoPartyId, setShiptoPartyId] = useState('')
   const [dvvt, setDvvt]               = useState('')
   const [customerName, setCustomerName] = useState('')
   const [exportType, setExportType]   = useState('')
@@ -1004,6 +1022,7 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
     setInitialized(true)
     setDate(gdo.delivery_date)
     setWarehouseId(gdo.warehouse_id ?? '')
+    setShiptoPartyId(gdo.shipto_party_id ?? '')
     setDvvt(gdo.dvvt ?? '')
     // distributor_name: single-DO → from first DO; multi-DO → displayed read-only separately
     setCustomerName(gdo.delivery_orders?.[0]?.distributor_name ?? '')
@@ -1046,6 +1065,7 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
         id: gdoId,
         delivery_date: date,
         warehouse_id: warehouseId || undefined,
+        shipto_party_id: shiptoPartyId || undefined,
         dvvt: dvvt.trim(),
         customer_name: customerName.trim(),
         export_type: exportType,
@@ -1073,6 +1093,7 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
           gdo={gdo}
           date={date} setDate={setDate}
           warehouseId={warehouseId} setWarehouseId={setWarehouseId}
+          shiptoPartyId={shiptoPartyId} setShiptoPartyId={setShiptoPartyId}
           dvvt={dvvt} setDvvt={setDvvt}
           customerName={customerName} setCustomerName={setCustomerName}
           exportType={exportType} setExportType={setExportType}

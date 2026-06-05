@@ -932,6 +932,7 @@ type GDOFormPayload = {
   delivery_date: string
   warehouse_id?: string
   warehouse_type?: string
+  shipto_party_id?: string
   dvvt: string
   customer_name: string
   export_type: string

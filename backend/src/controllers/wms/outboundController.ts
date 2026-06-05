@@ -227,9 +227,9 @@ export async function getGDO(req: Request, res: Response) {
 
 export async function createGDO(req: Request, res: Response) {
   try {
-    const { delivery_date, warehouse_id, dvvt, customer_name, export_type, warehouse_type, items } = req.body as {
+    const { delivery_date, warehouse_id, dvvt, customer_name, export_type, warehouse_type, shipto_party_id, items } = req.body as {
       delivery_date: string; warehouse_id?: string; dvvt?: string
-      customer_name?: string; export_type?: string; warehouse_type?: string
+      customer_name?: string; export_type?: string; warehouse_type?: string; shipto_party_id?: string
       items?: Array<{ material_code: string; cartons_ordered: number }>
     }
     if (!delivery_date) return fail(res, 'delivery_date là bắt buộc', 400)
@@ -250,7 +250,7 @@ export async function createGDO(req: Request, res: Response) {
     const { error } = await (supabase.from('GroupDeliveryOrder') as any).insert({
       id: gdoId, group_code, planned_date: delivery_date, delivery_date,
       warehouse_id: warehouse_id ?? null, dvvt: dvvt ?? null,
-      warehouse_type: warehouse_type ?? null, status: 'PENDING',
+      warehouse_type: warehouse_type ?? null, shipto_party_id: shipto_party_id ?? null, status: 'PENDING',
       created_by: actor, updated_by: actor, updated_at: now(),
     })
     if (error) return fail(res, error.message)
@@ -318,9 +318,9 @@ export async function deleteGDO(req: Request, res: Response) {
 
 export async function updateGDO(req: Request, res: Response) {
   try {
-    const { delivery_date, warehouse_id, dvvt, customer_name, export_type, items, gate_registration_id } = req.body as {
+    const { delivery_date, warehouse_id, dvvt, customer_name, export_type, items, gate_registration_id, shipto_party_id } = req.body as {
       delivery_date?: string; warehouse_id?: string; dvvt?: string
-      customer_name?: string; export_type?: string; gate_registration_id?: string | null
+      customer_name?: string; export_type?: string; gate_registration_id?: string | null; shipto_party_id?: string | null
       items?: Array<{ db_id?: string; material_code: string; cartons_ordered: number; loose_picking?: number; header_text?: string }>
     }
 
@@ -334,6 +334,7 @@ export async function updateGDO(req: Request, res: Response) {
       delivery_date, warehouse_id: warehouse_id ?? null, dvvt: dvvt ?? null, updated_at: t,
     }
     if ('gate_registration_id' in req.body) gdoUpdates.gate_registration_id = gate_registration_id ?? null
+    if ('shipto_party_id' in req.body) gdoUpdates.shipto_party_id = shipto_party_id ?? null
 
     await (supabase.from('GroupDeliveryOrder') as any)
       .update(gdoUpdates)

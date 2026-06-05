@@ -413,9 +413,115 @@ function MatCombobox({
   )
 }
 
-function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseId }: {
+// ── Searchable select (ĐVVT) ─────────────────────────────────────────────────
+function SearchableSelect({ value, onChange, options, placeholder }: {
+  value: string
+  onChange: (v: string) => void
+  options: { value: string; label: string }[]
+  placeholder?: string
+}) {
+  const [q, setQ] = React.useState('')
+  const [open, setOpen] = React.useState(false)
+  const inputRef = React.useRef<HTMLInputElement>(null)
+  const selectedLabel = options.find(o => o.value === value)?.label ?? ''
+  const filtered = React.useMemo(() => {
+    const lower = q.toLowerCase()
+    return q ? options.filter(o => o.label.toLowerCase().includes(lower)) : options
+  }, [q, options])
+  return (
+    <div className="relative mt-1">
+      <button
+        type="button"
+        className="h-8 w-full flex items-center justify-between rounded-md border border-input bg-background px-3 text-sm text-left shadow-sm"
+        onClick={() => { setOpen(v => !v); setTimeout(() => inputRef.current?.focus(), 50) }}
+      >
+        <span className={selectedLabel ? 'text-foreground' : 'text-muted-foreground'}>
+          {selectedLabel || (placeholder ?? 'Chọn...')}
+        </span>
+        <svg className="h-4 w-4 opacity-50 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      {open && (
+        <div className="absolute z-[200] top-full left-0 mt-1 w-full bg-white border border-slate-200 rounded-md shadow-lg">
+          <div className="p-1.5 border-b">
+            <input
+              ref={inputRef}
+              className="w-full px-2 py-1 text-xs rounded border border-slate-200 outline-none focus:ring-1 focus:ring-blue-400"
+              placeholder="Tìm kiếm..."
+              value={q}
+              onChange={e => setQ(e.target.value)}
+              onBlur={() => setTimeout(() => setOpen(false), 120)}
+            />
+          </div>
+          <div className="max-h-48 overflow-y-auto">
+            {filtered.length === 0
+              ? <p className="text-xs text-slate-400 text-center py-3">Không tìm thấy</p>
+              : filtered.map(o => (
+                <button
+                  key={o.value}
+                  type="button"
+                  className={`w-full text-left px-3 py-1.5 text-sm hover:bg-blue-50 ${o.value === value ? 'bg-blue-50 text-blue-700 font-medium' : ''}`}
+                  onMouseDown={e => e.preventDefault()}
+                  onClick={() => { onChange(o.value); setQ(''); setOpen(false) }}
+                >
+                  {o.label}
+                </button>
+              ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── NPP combobox (free text + suggestions) ───────────────────────────────────
+function NppCombobox({ value, onChange, suggestions }: {
+  value: string
+  onChange: (v: string) => void
+  suggestions: string[]
+}) {
+  const [open, setOpen] = React.useState(false)
+  const filtered = React.useMemo(() => {
+    const lower = value.toLowerCase()
+    const list = value
+      ? suggestions.filter(s => s.toLowerCase().includes(lower))
+      : suggestions
+    return list.slice(0, 10)
+  }, [value, suggestions])
+  return (
+    <div className="relative">
+      <input
+        value={value}
+        onChange={e => { onChange(e.target.value); setOpen(true) }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 120)}
+        placeholder="Tên nhà phân phối"
+        className="flex h-8 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring mt-1"
+      />
+      {open && filtered.length > 0 && (
+        <div className="absolute z-[200] top-full left-0 mt-0.5 w-full bg-white border border-slate-200 rounded-md shadow-lg max-h-48 overflow-auto">
+          {filtered.map(s => (
+            <button
+              key={s}
+              type="button"
+              className="w-full text-left px-3 py-1.5 text-sm hover:bg-blue-50"
+              onMouseDown={e => e.preventDefault()}
+              onClick={() => { onChange(s); setOpen(false) }}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseId, nppSuggestions }: {
   open: boolean; order: TmsOrder | null; onClose: () => void
   defaultDate: string; defaultWarehouseId: string
+  nppSuggestions: string[]
 }) {
   const { data: warehouses = [] }          = useWarehouses(true)
   const { data: whTypesData = [] }         = useWarehouseTypes()
@@ -456,6 +562,36 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
     setPlanRows(prev => {
       const rows = [...prev]
       rows[i] = { ...rows[i], material_code: code, material_id: id, material_name: name, unit }
+      return rows
+    })
+  }
+
+  function handlePasteBoxesAt(startIdx: number, e: React.ClipboardEvent<HTMLInputElement>) {
+    const text = e.clipboardData.getData('text')
+    if (!text.includes('\n')) return
+    e.preventDefault()
+    const values = text.trim().split(/\r?\n/).filter(Boolean)
+    setPlanRows(prev => {
+      const rows = [...prev]
+      while (rows.length < startIdx + values.length) rows.push(EMPTY_PLAN_LINE())
+      values.forEach((val, offset) => {
+        rows[startIdx + offset] = { ...rows[startIdx + offset], planned_boxes: val.trim().replace(/[^0-9]/g, '') }
+      })
+      return rows
+    })
+  }
+
+  function handlePastePalletsAt(startIdx: number, e: React.ClipboardEvent<HTMLInputElement>) {
+    const text = e.clipboardData.getData('text')
+    if (!text.includes('\n')) return
+    e.preventDefault()
+    const values = text.trim().split(/\r?\n/).filter(Boolean)
+    setPlanRows(prev => {
+      const rows = [...prev]
+      while (rows.length < startIdx + values.length) rows.push(EMPTY_PLAN_LINE())
+      values.forEach((val, offset) => {
+        rows[startIdx + offset] = { ...rows[startIdx + offset], planned_pallets: val.trim().replace(/[^0-9]/g, '') }
+      })
       return rows
     })
   }
@@ -601,18 +737,16 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label className="text-xs">Tên NPP</Label>
-              <Input value={form.npp_name} onChange={e => set('npp_name')(e.target.value)} placeholder="Tên nhà phân phối" className="h-8 text-sm mt-1" />
+              <NppCombobox value={form.npp_name} onChange={set('npp_name')} suggestions={nppSuggestions} />
             </div>
             <div>
               <Label className="text-xs">ĐVVT *</Label>
-              <Select value={form.ncc_id || '__none__'} onValueChange={v => set('ncc_id')(v === '__none__' ? '' : v)}>
-                <SelectTrigger className="h-8 text-sm mt-1"><SelectValue placeholder="Chọn ĐVVT" /></SelectTrigger>
-                <SelectContent>
-                  {(transportCompanies as TransportCompany[]).map(c => (
-                    <SelectItem key={c.id} value={c.id}>{c.code} — {c.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                value={form.ncc_id}
+                onChange={set('ncc_id')}
+                placeholder="Chọn ĐVVT"
+                options={(transportCompanies as TransportCompany[]).map(c => ({ value: c.id, label: `${c.code} — ${c.name}` }))}
+              />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -697,6 +831,7 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
                             type="number" min={1}
                             value={row.planned_boxes}
                             onChange={e => updatePlanRow(i, 'planned_boxes', e.target.value)}
+                            onPaste={e => handlePasteBoxesAt(i, e)}
                             className="h-6 w-16 rounded border border-slate-200 px-1 text-[10px] focus:outline-none focus:ring-1 focus:ring-blue-400"
                             placeholder="Thùng"
                           />
@@ -706,6 +841,7 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
                             type="number" min={0}
                             value={row.planned_pallets}
                             onChange={e => updatePlanRow(i, 'planned_pallets', e.target.value)}
+                            onPaste={e => handlePastePalletsAt(i, e)}
                             className="h-6 w-16 rounded border border-slate-200 px-1 text-[10px] focus:outline-none focus:ring-1 focus:ring-blue-400"
                             placeholder="Pallet"
                           />
@@ -1908,6 +2044,10 @@ export default function TMSBookings() {
   const { data: orders = [], isLoading }      = useTmsOrders(
     (warehouseId || isNccUser) ? { date, warehouse_id: warehouseId || undefined } : undefined,
   )
+  const nppSuggestions = useMemo(() =>
+    [...new Set((orders as TmsOrder[]).map(o => o.npp_name).filter(Boolean) as string[])].sort(),
+    [orders]
+  )
   const deleteOrder        = useDeleteOrder()
   const addVehicleSlot     = useAddVehicleSlot()
   const releaseVehicleSlot = useReleaseVehicleSlot()
@@ -2622,6 +2762,7 @@ export default function TMSBookings() {
         onClose={() => { setCreateOpen(false); setEditOrder(null) }}
         defaultDate={date}
         defaultWarehouseId={warehouseId}
+        nppSuggestions={nppSuggestions}
       />
       <BookSlotDialog
         vslot={bookingSlot?.vslot ?? null}

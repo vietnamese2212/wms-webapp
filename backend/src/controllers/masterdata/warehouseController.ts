@@ -53,13 +53,15 @@ export async function getWarehouse(req: Request, res: Response) {
 
 export async function createWarehouse(req: Request, res: Response) {
   try {
-    const { code, name, address } = req.body
+    const { code, name, address, warehouse_type } = req.body
     if (!code || !name) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu code hoặc name')
+    if (!warehouse_type || !['CENTRAL', 'NPP'].includes(warehouse_type))
+      return fail(res, 400, 'VALIDATION_ERROR', 'Chức năng kho không hợp lệ (CENTRAL hoặc NPP)')
 
     const actor = (req as any).user?.name || null
     const { data, error } = await supabase
       .from('Warehouse')
-      .insert({ id: randomUUID(), code: String(code).toUpperCase().trim(), name: String(name).trim(), address, created_by: actor, updated_by: actor, updated_at: new Date().toISOString() })
+      .insert({ id: randomUUID(), code: String(code).toUpperCase().trim(), name: String(name).trim(), address, warehouse_type, created_by: actor, updated_by: actor, updated_at: new Date().toISOString() })
       .select().single()
 
     if (error) {
@@ -72,11 +74,16 @@ export async function createWarehouse(req: Request, res: Response) {
 
 export async function updateWarehouse(req: Request, res: Response) {
   try {
-    const { name, address, is_active } = req.body
+    const { name, address, is_active, warehouse_type } = req.body
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: (req as any).user?.name || null }
     if (name !== undefined) patch.name = String(name).trim()
     if (address !== undefined) patch.address = address
     if (is_active !== undefined) patch.is_active = Boolean(is_active)
+    if (warehouse_type !== undefined) {
+      if (!['CENTRAL', 'NPP'].includes(warehouse_type))
+        return fail(res, 400, 'VALIDATION_ERROR', 'Chức năng kho không hợp lệ')
+      patch.warehouse_type = warehouse_type
+    }
 
     const { data, error } = await supabase
       .from('Warehouse').update(patch).eq('id', req.params.id).select().maybeSingle()

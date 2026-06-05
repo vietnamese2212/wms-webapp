@@ -26,14 +26,15 @@ function apiMsg(err: unknown) {
 
 // ─── Warehouse Dialog ─────────────────────────────────────────────────────────
 
-interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
 
 function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolean; onClose: () => void }) {
   const isEdit = !!wh
-  const [code,     setCode]     = useState(wh?.code ?? '')
-  const [name,     setName]     = useState(wh?.name ?? '')
-  const [address,  setAddress]  = useState(wh?.address ?? '')
-  const [isActive, setIsActive] = useState(wh?.is_active ?? true)
+  const [code,          setCode]          = useState(wh?.code ?? '')
+  const [name,          setName]          = useState(wh?.name ?? '')
+  const [address,       setAddress]       = useState(wh?.address ?? '')
+  const [warehouseType, setWarehouseType] = useState<'CENTRAL' | 'NPP'>((wh?.warehouse_type as 'CENTRAL' | 'NPP') ?? 'CENTRAL')
+  const [isActive,      setIsActive]      = useState(wh?.is_active ?? true)
   const [err, setErr] = useState('')
 
   const { mutate: create, isPending: creating } = useCreateWarehouse()
@@ -45,12 +46,12 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
     if (!code.trim() || !name.trim()) { setErr('Mã và tên kho là bắt buộc'); return }
     if (isEdit) {
       update(
-        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive },
+        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     } else {
       create(
-        { code: code.trim(), name: name.trim(), address: address.trim() || undefined },
+        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     }
@@ -73,6 +74,18 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
           <div className="space-y-1">
             <Label className="text-xs">Địa chỉ</Label>
             <Input value={address} onChange={e => setAddress(e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Chức năng kho *</Label>
+            <Select value={warehouseType} onValueChange={v => setWarehouseType(v as 'CENTRAL' | 'NPP')}>
+              <SelectTrigger className="h-8 text-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="CENTRAL">Kho tổng</SelectItem>
+                <SelectItem value="NPP">Kho NPP</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           {isEdit && (
             <div className="flex items-center gap-2">
@@ -330,6 +343,7 @@ export default function WMSSettings() {
                       <TableRow>
                         <TableHead className="px-3 py-2 text-xs">Mã</TableHead>
                         <TableHead className="px-3 py-2 text-xs">Tên kho</TableHead>
+                        <TableHead className="px-3 py-2 text-xs">Chức năng</TableHead>
                         <TableHead className="px-3 py-2 text-xs">Địa chỉ</TableHead>
                         <TableHead className="px-3 py-2 text-xs">Trạng thái</TableHead>
                         {canManage && <TableHead className="px-3 py-2 w-16" />}
@@ -342,6 +356,11 @@ export default function WMSSettings() {
                           onClick={() => setDetailWh(prev => prev?.id === wh.id ? null : wh)}>
                           <TableCell className="px-3 py-2 font-mono font-semibold text-[11px] text-slate-600">{wh.code}</TableCell>
                           <TableCell className="px-3 py-2 font-medium text-slate-800">{wh.name}</TableCell>
+                          <TableCell className="px-3 py-2">
+                            <Badge variant="outline" className={`text-[10px] ${wh.warehouse_type === 'NPP' ? 'border-amber-400 text-amber-700 bg-amber-50' : 'border-blue-400 text-blue-700 bg-blue-50'}`}>
+                              {wh.warehouse_type === 'NPP' ? 'Kho NPP' : 'Kho tổng'}
+                            </Badge>
+                          </TableCell>
                           <TableCell className="px-3 py-2 text-slate-500 text-xs">{wh.address ?? '—'}</TableCell>
                           <TableCell className="px-3 py-2">
                             <Badge variant={wh.is_active ? 'default' : 'secondary'} className="text-xs">
@@ -376,6 +395,7 @@ export default function WMSSettings() {
                   <span className="font-semibold text-slate-700">{detailWh.code} — {detailWh.name}</span>
                   <button onClick={() => setDetailWh(null)} className="text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>
                 </div>
+                <div><span className="text-slate-400">Chức năng:</span> <span className="font-medium">{detailWh.warehouse_type === 'NPP' ? 'Kho NPP' : 'Kho tổng'}</span></div>
                 <div><span className="text-slate-400">Địa chỉ:</span> <span className="font-medium">{detailWh.address ?? '—'}</span></div>
                 <div><span className="text-slate-400">Trạng thái:</span> <span className="font-medium">{detailWh.is_active ? 'Hoạt động' : 'Tạm dừng'}</span></div>
                 <div className="border-t pt-2 space-y-1.5">

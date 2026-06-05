@@ -341,12 +341,6 @@ const EMPTY_FORM = (date: string, warehouse_id: string): OrderFormData => ({
 
 const ORDER_CODE_RE = /^\d{6}_[A-Za-z0-9]+_\d+$/
 
-// Map warehouse_type (từ WMS lookup) sang cargo_type của slot template
-const WAREHOUSE_TYPE_TO_CARGO: Record<string, string> = {
-  'Thành phẩm': 'TP',
-  'NVL': 'NVL',
-  'POSM': 'POSM',
-}
 
 type PlanLineRow = {
   line_id?: string // undefined = dòng mới chưa lưu
@@ -552,9 +546,8 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
   const planRowsInitRef = React.useRef(false)
   const set = (k: keyof OrderFormData) => (v: string) => setForm(f => ({ ...f, [k]: v }))
 
-  // Lọc loại xe theo kho + loại kho (từ slot templates)
-  const _cargoType = form.warehouse_type ? WAREHOUSE_TYPE_TO_CARGO[form.warehouse_type] : undefined
-  const { data: filteredVehicleTypes = [] } = useVehicleTypesByWarehouse(form.warehouse_id || null, _cargoType)
+  // Lọc loại xe theo kho + loại kho — warehouse_type dùng thẳng, không map
+  const { data: filteredVehicleTypes = [] } = useVehicleTypesByWarehouse(form.warehouse_id || null, form.warehouse_type || undefined)
   const availableVehicleTypes = (filteredVehicleTypes.length > 0 ? filteredVehicleTypes : vehicleTypes) as TmsVehicleType[]
 
   function updatePlanRow(i: number, field: keyof PlanLineRow, value: string) {

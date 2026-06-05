@@ -63,11 +63,6 @@ const ROW_TEXT: Record<GateStatus, string> = {
 
 const TODAY_VN = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
-const WAREHOUSE_TYPE_TO_CARGO: Record<string, string> = {
-  'Thành phẩm': 'TP',
-  'NVL': 'NVL',
-  'POSM': 'POSM',
-}
 
 function fmtDate(dateStr: string | null | undefined) {
   if (!dateStr) return '—'
@@ -380,10 +375,8 @@ export default function GateRegistration() {
   const { data: warehouses = [] } = useWarehouses(true)
   const { data: whTypes = [] } = useWarehouseTypes()
 
-  // Lọc loại xe theo kho + loại kho dựa trên slot templates; 'Khác' = không filter (tất cả xe của kho đó)
-  const _gateCargoType = (form.warehouse_type && form.warehouse_type !== 'Khác')
-    ? WAREHOUSE_TYPE_TO_CARGO[form.warehouse_type]
-    : undefined
+  // Lọc loại xe theo kho + loại kho — warehouse_type dùng thẳng; 'Khác' = không filter
+  const _gateCargoType = (form.warehouse_type && form.warehouse_type !== 'Khác') ? form.warehouse_type : undefined
   const { data: filteredGateVehicleTypes = [] } = useVehicleTypesByWarehouse(form.warehouse_id || null, _gateCargoType)
   const availableVehicleTypes = (form.warehouse_id && filteredGateVehicleTypes.length > 0
     ? filteredGateVehicleTypes : vehicleTypes) as TmsVehicleType[]

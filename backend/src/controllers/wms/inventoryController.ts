@@ -22,6 +22,7 @@ interface FilterParams {
   status?: string
   locationFilter?: string[] | null
   materialFilter?: string[] | null
+  categoryFilter?: string[]
   qa_status_ids?: string[]
   search?: string
   manufacturer_id?: string
@@ -35,8 +36,11 @@ function applyInventoryFilters(q: any, p: FilterParams): any {
   if (!p.status || p.status === '') q = q.in('status', ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'])
   else if (p.status !== 'ALL')       q = q.eq('status', p.status)
 
-  if (p.locationFilter)                              q = q.in('location_id', p.locationFilter)
-  if (p.materialFilter)                              q = q.in('material_id', p.materialFilter)
+  if (p.locationFilter)  q = q.in('location_id', p.locationFilter)
+  if (p.materialFilter)  q = q.in('material_id', p.materialFilter)
+  // Dùng embedded filter thay vì IN (material_id) để tránh URL quá dài khi nhiều material
+  if (p.categoryFilter && p.categoryFilter.length === 1)    q = q.eq('material.category', p.categoryFilter[0])
+  else if (p.categoryFilter && p.categoryFilter.length > 1) q = q.in('material.category', p.categoryFilter)
   if (p.qa_status_ids && p.qa_status_ids.length > 0) q = q.in('qa_status_id', p.qa_status_ids)
   if (p.search)          q = q.ilike('pallet_code', `%${p.search}%`)
   if (p.manufacturer_id) q = q.eq('manufacturer_id', p.manufacturer_id)
@@ -119,7 +123,8 @@ export async function listInventory(req: Request, res: Response) {
     return ok(res, { entries: [], total: 0, page: pageNum, limit: limitNum, total_cartons_remaining: 0 })
 
   const needLocFilter = effectiveWarehouseIds.length > 0 || filterLocations.length > 0
-  const needMatFilter = !!(material_search) || effectiveCategories.length > 0 || filterMaterialIds.length > 0
+  // Category filter dùng embedded resource filter — không cần pre-query material IDs
+  const needMatFilter = !!(material_search) || filterMaterialIds.length > 0
 
   // Resolve location_ids and material_ids in parallel — they are independent queries
   const [locResult, matResult] = await Promise.all([
@@ -136,10 +141,8 @@ export async function listInventory(req: Request, res: Response) {
     needMatFilter ? (async () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let matQ = (supabase.from('Material') as any).select('id')
-      if (material_search)                        matQ = matQ.or(`material_code.ilike.%${material_search}%,short_name.ilike.%${material_search}%`)
-      if (effectiveCategories.length === 1)       matQ = matQ.eq('category', effectiveCategories[0])
-      else if (effectiveCategories.length > 1)    matQ = matQ.in('category', effectiveCategories)
-      if (filterMaterialIds.length > 0)           matQ = matQ.in('id', filterMaterialIds)
+      if (material_search)            matQ = matQ.or(`material_code.ilike.%${material_search}%,short_name.ilike.%${material_search}%`)
+      if (filterMaterialIds.length > 0) matQ = matQ.in('id', filterMaterialIds)
       return await matQ
     })() : Promise.resolve({ data: null, error: null }),
   ])
@@ -168,8 +171,9 @@ export async function listInventory(req: Request, res: Response) {
   }
 
   const filterParams: FilterParams = {
-    status, locationFilter, materialFilter, qa_status_ids, search,
-    manufacturer_id, filterCycles, filterMachines, import_date_from, import_date_to,
+    status, locationFilter, materialFilter,
+    categoryFilter: effectiveCategories.length > 0 ? effectiveCategories : undefined,
+    qa_status_ids, search, manufacturer_id, filterCycles, filterMachines, import_date_from, import_date_to,
   }
 
   // Pre-filter by %date: fetch ALL IDs (no pagination) with same filters, compute pct in JS

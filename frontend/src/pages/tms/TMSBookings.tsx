@@ -548,7 +548,9 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
 
   // Lọc loại xe theo kho + loại kho — warehouse_type dùng thẳng, không map
   const { data: filteredVehicleTypes = [] } = useVehicleTypesByWarehouse(form.warehouse_id || null, form.warehouse_type || undefined)
-  const availableVehicleTypes = (filteredVehicleTypes.length > 0 ? filteredVehicleTypes : vehicleTypes) as TmsVehicleType[]
+  // Đã chọn kho: dùng list lọc (rỗng = không có loại xe nào hợp lệ cho cargo_type này)
+  // Chưa chọn kho: hiện tất cả
+  const availableVehicleTypes = (form.warehouse_id ? filteredVehicleTypes : vehicleTypes) as TmsVehicleType[]
 
   function updatePlanRow(i: number, field: keyof PlanLineRow, value: string) {
     setPlanRows(prev => {

@@ -378,8 +378,9 @@ export default function GateRegistration() {
   // Lọc loại xe theo kho + loại kho — warehouse_type dùng thẳng; 'Khác' = không filter
   const _gateCargoType = (form.warehouse_type && form.warehouse_type !== 'Khác') ? form.warehouse_type : undefined
   const { data: filteredGateVehicleTypes = [] } = useVehicleTypesByWarehouse(form.warehouse_id || null, _gateCargoType)
-  const availableVehicleTypes = (form.warehouse_id && filteredGateVehicleTypes.length > 0
-    ? filteredGateVehicleTypes : vehicleTypes) as TmsVehicleType[]
+  // Đã chọn kho: dùng list lọc ('Khác'→ tất cả xe trong kho, cụ thể→ theo cargo_type, rỗng→ không có)
+  // Chưa chọn kho: hiện tất cả
+  const availableVehicleTypes = (form.warehouse_id ? filteredGateVehicleTypes : vehicleTypes) as TmsVehicleType[]
 
   // Phase 1 hoàn thành khi đủ 6 tiêu chí matching (company_name_raw chấp nhận thay company_id cho NCC vãng lai)
   const phase1Complete = !!(

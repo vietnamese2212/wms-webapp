@@ -231,9 +231,7 @@ function ScanDialog({ order, onClose, employeeId, allLocations }: ScanDialogProp
             <div className="border rounded-lg bg-slate-50 p-3 space-y-2">
               <p className="text-xs font-medium text-slate-600">Chọn vị trí{activeLocationId ? ' mới' : ''}:</p>
               <div className="max-h-36 overflow-y-auto space-y-1">
-                {allLocations
-                  .filter(l => !order.material || !l.category || l.category === (order as any).warehouse?.warehouse_type || true)
-                  .map(l => {
+                {allLocations.map(l => {
                     const isFull    = l.max_pallets > 0 && (l.used_slots ?? 0) >= l.max_pallets
                     const isPartial = (l.used_slots ?? 0) > 0 && !isFull
                     return (
@@ -367,7 +365,9 @@ export default function InboundDetail() {
 
   const { data: order, isLoading, isPlaceholderData } = useInboundOrder(id)
   const { data: allLocations = [] } = useLocationsReal(
-    order?.warehouse_id ? { warehouse_id: order.warehouse_id } : undefined
+    order?.warehouse_id
+      ? { warehouse_id: order.warehouse_id, ...(order.warehouse_type ? { category: order.warehouse_type } : {}) }
+      : undefined
   )
 
   // Tab bar: tất cả phiếu OPEN của kho + ngày này (để lái xe nâng nhảy qua lại)

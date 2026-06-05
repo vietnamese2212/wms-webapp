@@ -18,7 +18,7 @@ import {
   useTmsOrders, useCreateOrder, useUpdateOrder, useDeleteOrder, useBulkCreateOrders, useBulkUpdateOrderDate,
   useAddVehicleSlot, useUpdateVehicleSlot, useReleaseVehicleSlot, useRevokeVehicleSlot, useDeleteVehicleSlot,
   usePlanLinesByOrder, usePlanVsActual, useBulkCreatePlanLinesForOrder, useMaterials,
-  useBulkCreatePlanLines, useDeletePlanLine,
+  useBulkCreatePlanLines, useUpdatePlanLine, useDeletePlanLine,
 } from '@/api/hooks'
 import { formatDate, formatDateTime } from '@/utils/formatters'
 import type { TmsOrder, TmsVehicleSlot, DeliverySlot, TmsVehicleType, TmsVehicle, TransportCompany } from '@/types'
@@ -342,6 +342,7 @@ const EMPTY_FORM = (date: string, warehouse_id: string): OrderFormData => ({
 const ORDER_CODE_RE = /^\d{6}_[A-Za-z0-9]+_\d+$/
 
 type PlanLineRow = {
+  line_id?: string // undefined = dòng mới chưa lưu
   material_code: string; material_id: string; material_name: string
   unit: string; planned_boxes: string; planned_pallets: string
 }
@@ -532,6 +533,7 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
   const { data: allMats = [] }             = useMaterials()
   const { mutateAsync: addPlanLines }      = useBulkCreatePlanLinesForOrder()
   const { mutateAsync: deletePlanLine }    = useDeletePlanLine()
+  const { mutateAsync: updatePlanLine }    = useUpdatePlanLine()
   const isEdit = !!order
   const today  = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   const { data: existingPlanLines = [] }   = usePlanLinesByOrder(isEdit ? (order?.id ?? null) : null)
@@ -658,6 +660,7 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
     const rows: PlanLineRow[] = (existingPlanLines as any[])
       .filter((l: any) => l.status !== 'CANCELLED')
       .map((l: any) => ({
+        line_id: l.id,
         material_code: l.material?.material_code ?? '',
         material_id: l.material_id ?? '',
         material_name: l.material?.short_name ?? '',
@@ -693,14 +696,20 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
       if (isEdit && order) {
         await updateOrder.mutateAsync({ id: order.id, ...payload })
         if (form.direction === 'INBOUND') {
-          const validLines = planRows.filter(r => r.material_id && Number(r.planned_boxes) > 0)
-          const toDelete = (existingPlanLines as any[]).filter((l: any) => l.status !== 'CANCELLED')
+          const validRows = planRows.filter(r => r.material_id && Number(r.planned_boxes) > 0)
+          const keptIds = new Set(validRows.map(r => r.line_id).filter(Boolean))
+          const toDelete = (existingPlanLines as any[]).filter((l: any) => l.status !== 'CANCELLED' && !keptIds.has(l.id))
+          const toAdd    = validRows.filter(r => !r.line_id)
+          const toUpdate = validRows.filter(r => r.line_id)
           setPlanSaving(true)
-          if (toDelete.length > 0) await Promise.all(toDelete.map((l: any) => deletePlanLine(l.id)))
-          if (validLines.length > 0) {
+          await Promise.all([
+            ...toDelete.map((l: any) => deletePlanLine(l.id)),
+            ...toUpdate.map(r => updatePlanLine({ id: r.line_id!, planned_boxes: Number(r.planned_boxes), ...(r.planned_pallets ? { planned_pallets: Number(r.planned_pallets) } : {}) })),
+          ])
+          if (toAdd.length > 0) {
             await addPlanLines({
               tms_order_id: order.id,
-              lines: validLines.map(r => ({
+              lines: toAdd.map(r => ({
                 material_id:   r.material_id,
                 planned_boxes: Number(r.planned_boxes),
                 ...(r.planned_pallets ? { planned_pallets: Number(r.planned_pallets) } : {}),
@@ -847,7 +856,7 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
                 <table className="min-w-full">
                   <thead className="sticky top-0 bg-slate-50">
                     <tr>
-                      {['#', 'Mã hàng', 'Tên hàng', 'ĐVT', 'SL thùng', 'SL pallet'].map(h => (
+                      {['#', 'Mã hàng', 'Tên hàng', 'ĐVT', 'SL thùng', 'SL pallet', ''].map(h => (
                         <th key={h} className="px-1.5 py-1 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
                       ))}
                     </tr>
@@ -885,6 +894,10 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
                             className="h-6 w-16 rounded border border-slate-200 px-1 text-[10px] focus:outline-none focus:ring-1 focus:ring-blue-400"
                             placeholder="Pallet"
                           />
+                        </td>
+                        <td className="px-1 py-0.5">
+                          <button type="button" className="text-slate-300 hover:text-red-500 text-xs px-1"
+                            onClick={() => setPlanRows(prev => prev.filter((_, idx) => idx !== i))}>×</button>
                         </td>
                       </tr>
                     ))}
@@ -1814,7 +1827,7 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
         <DialogHeader>
           <div className="flex items-start justify-between gap-2">
             <DialogTitle className="font-mono text-base">{order.order_code || 'Chi tiết đơn'}</DialogTitle>
-            <div className="flex gap-1 shrink-0">
+            <div className="flex gap-1 shrink-0 mr-8">
               {canEdit && (
                 <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={onEditOrder}>
                   <Pencil className="h-3 w-3" />Sửa
@@ -1921,14 +1934,14 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
                 <table className="min-w-full">
                   <thead className="bg-slate-50">
                     <tr>
-                      {['Mã hàng', 'Tên hàng', 'ĐVT', 'Kế hoạch', 'Thực tế', 'CL', ...(canDelete ? [''] : [])].map((h, idx) => (
+                      {['Mã hàng', 'Tên hàng', 'ĐVT', 'Kế hoạch', 'Thực tế', 'CL'].map((h, idx) => (
                         <th key={idx} className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {mergedRows.length === 0 ? (
-                      <tr><td colSpan={canDelete ? 7 : 6} className="px-2 py-3 text-center text-xs text-slate-400">Chưa có hàng hóa</td></tr>
+                      <tr><td colSpan={6} className="px-2 py-3 text-center text-xs text-slate-400">Chưa có hàng hóa</td></tr>
                     ) : mergedRows.map(row => {
                       const diff = row.actual_boxes - row.planned_boxes
                       const isCancelled = row.status === 'CANCELLED'
@@ -1945,16 +1958,6 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
                           <td className={`px-2 py-1 text-[10px] tabular-nums font-semibold whitespace-nowrap ${diff < 0 && row.actual_boxes > 0 ? 'text-red-600' : diff > 0 ? 'text-green-600' : 'text-slate-300'}`}>
                             {row.actual_boxes > 0 ? (diff > 0 ? `+${diff}` : diff) : '—'}
                           </td>
-                          {canDelete && (
-                            <td className="px-1 py-1 whitespace-nowrap">
-                              {row.line_id && !isCancelled && (
-                                <button className="p-0.5 text-slate-400 hover:text-red-600"
-                                  onClick={() => { if (confirm(`Xóa dòng ${row.material_code}?`)) deleteLine(row.line_id!) }}>
-                                  <Trash2 className="h-3 w-3" />
-                                </button>
-                              )}
-                            </td>
-                          )}
                         </tr>
                       )
                     })}

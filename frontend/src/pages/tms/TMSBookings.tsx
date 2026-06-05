@@ -675,6 +675,7 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
     if (!isEdit && !ORDER_CODE_RE.test(form.order_code)) { setErr('Mã đơn sai định dạng — ví dụ: 240526_BV_1'); return }
     if (!form.direction) { setErr('Vui lòng chọn hướng vận chuyển'); return }
     if (!form.ncc_id) { setErr('Vui lòng chọn ĐVVT'); return }
+    if (!form.warehouse_type) { setErr('Vui lòng chọn loại kho'); return }
     const payload = {
       date: form.date, warehouse_id: form.warehouse_id,
       npp_name: form.npp_name || null, ncc_id: form.ncc_id || null,
@@ -791,11 +792,10 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label className="text-xs">Loại kho</Label>
+              <Label className="text-xs">Loại kho *</Label>
               <Select value={form.warehouse_type || '__none__'} onValueChange={v => set('warehouse_type')(v === '__none__' ? '' : v)}>
                 <SelectTrigger className="h-8 text-sm mt-1"><SelectValue placeholder="Chọn loại kho" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="__none__">— Không chọn —</SelectItem>
                   {whTypesData.map(t => <SelectItem key={t.id} value={t.value}>{t.value}</SelectItem>)}
                 </SelectContent>
               </Select>

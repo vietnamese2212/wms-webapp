@@ -200,13 +200,26 @@ export async function createOrder(req: Request, res: Response) {
         .maybeSingle()
       if (gateReg) {
         // Kiểm tra đã có phiếu nhập chưa
-        const { data: existing } = await supabase
+        const { data: activeImports } = await supabase
           .from('ProductionImport')
-          .select('import_code')
+          .select('id, import_code')
           .eq('gate_registration_id', gate_registration_id)
           .neq('status', 'CANCELLED')
-          .maybeSingle()
-        if (existing) return fail(res, 409, 'GATE_REG_TAKEN', `Lượt vào này đã có phiếu nhập ${existing.import_code}`)
+        if (activeImports && activeImports.length > 0) {
+          // Chỉ block nếu ít nhất 1 phiếu đã có pallet quét vào
+          const activeIds = (activeImports as { id: string; import_code: string }[]).map(i => i.id)
+          const { count: entriesCount } = await supabase
+            .from('InventoryEntry')
+            .select('id', { count: 'exact', head: true })
+            .in('import_order_id', activeIds)
+          if (entriesCount && entriesCount > 0)
+            return fail(res, 409, 'GATE_REG_TAKEN', `Lượt vào này đã có phiếu nhập ${(activeImports as { import_code: string }[])[0].import_code}`)
+          // Không có pallet — tự động hủy phiếu rỗng để cho phép tạo lại
+          const now = new Date().toISOString()
+          await supabase.from('ProductionImport')
+            .update({ status: 'CANCELLED', updated_at: now })
+            .in('id', activeIds)
+        }
         // Propagate tms_order_id từ gate registration nếu chưa có
         if (!resolvedTmsOrderId && gateReg.tms_order_id) {
           resolvedTmsOrderId = gateReg.tms_order_id

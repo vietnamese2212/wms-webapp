@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Input }  from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { useGDOs, useUploadGDOExcel, useWarehouses, useWarehouseTypes, useCreateGDO, useUpdateGDO, useMaterials, useGDO, useAssignGDO, useLookup, useAddLookup, useDeleteLookup } from '@/api/hooks'
+import { useGDOs, useUploadGDOExcel, useWarehouses, useWarehouseTypes, useCreateGDO, useUpdateGDO, useMaterials, useGDO, useAssignGDO, useVehicleTypes, useVehicleTypesByWarehouse } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
@@ -22,8 +22,8 @@ const TODAY = new Date().toISOString().slice(0, 10)
 // So sánh không phân biệt hoa thường và dấu ("xe container"→"Xe Container", "xe xa"→"Xe Xá")
 const normalizeForMatch = (s: string) =>
   s.normalize('NFD').replace(/\p{Mn}/gu, '').toLowerCase().trim()
-const canonicalExportType = (raw: string, types: { value: string }[]) =>
-  types.find(t => normalizeForMatch(t.value) === normalizeForMatch(raw))?.value ?? raw
+const canonicalExportType = (raw: string, types: { name: string }[]) =>
+  types.find(t => normalizeForMatch(t.name) === normalizeForMatch(raw))?.name ?? raw
 
 // ─── Row text color by status (TEXT color, không dùng background) ────────────
 function gdoRowText(gdo: GDO) {
@@ -276,7 +276,7 @@ export default function Outbound() {
             </SelectContent>
           </Select>
           <MultiSelectFilter label="Loại kho" options={warehouseTypeOpts.map(t => ({ value: t, label: t }))} selected={filterWarehouseTypes} onChange={v => setOutbound({ filterWarehouseTypes: v })} />
-          <MultiSelectFilter label="Loại xuất" options={typeOptions.map(t => ({ value: t, label: t }))} selected={filterTypes} onChange={v => setOutbound({ filterTypes: v })} />
+          <MultiSelectFilter label="Loại xe" options={typeOptions.map(t => ({ value: t, label: t }))} selected={filterTypes} onChange={v => setOutbound({ filterTypes: v })} />
           <MultiSelectFilter label="ĐVVT" options={dvvtOptions.map(d => ({ value: d, label: d }))} selected={filterDvvts} onChange={v => setOutbound({ filterDvvts: v })} />
           <MultiSelectFilter label="NPP" options={nppOptions.map(n => ({ value: n, label: n }))} selected={filterNpps} onChange={v => setOutbound({ filterNpps: v })} width="min-w-[140px]" />
           <MultiSelectFilter label="Tình trạng" options={statusOptions} selected={filterStatuses} onChange={v => setOutbound({ filterStatuses: v })} />
@@ -320,7 +320,7 @@ export default function Outbound() {
                 <TableHead className="text-[9px] font-medium text-slate-500 text-right whitespace-nowrap px-2 py-1.5">Tổng thùng</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 text-right whitespace-nowrap px-2 py-1.5">Pallet</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Kho xuất</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Loại xuất</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Loại xe</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Loại kho</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Giờ giao đơn</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Giờ bắt đầu</TableHead>
@@ -590,12 +590,11 @@ function GDOFormBody({
     ? new Set(formUser.warehouse_ids)
     : null
   const { data: warehouses = [] } = useWarehouses(true)
-  const { data: exportTypes = [] } = useLookup('export_type')
   const { data: whTypesInForm = [] } = useWarehouseTypes()
-  const { mutate: addLookup } = useAddLookup()
-  const { mutate: deleteLookup } = useDeleteLookup()
-  const [addingType, setAddingType] = useState(false)
-  const [newTypeName, setNewTypeName] = useState('')
+  const { data: allVehicleTypes = [] } = useVehicleTypes()
+  const { data: vtByWarehouse = [] } = useVehicleTypesByWarehouse(warehouseId || null, warehouseType || undefined)
+  // Nếu đã chọn kho: lọc theo kho + loại kho (giống TMS booking); chưa chọn: hiện tất cả
+  const exportTypeOptions = warehouseId ? vtByWarehouse : allVehicleTypes
   const isMultiDO = (gdo?.delivery_orders?.length ?? 0) > 1
 
   const TODAY_STR = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -681,54 +680,21 @@ function GDOFormBody({
           </div>
           <div className="space-y-1 col-span-2">
             <label className="text-[10px] font-medium text-slate-500">
-              Loại xuất <span className="text-red-500">*</span>
+              Loại xe <span className="text-red-500">*</span>
             </label>
             <div className="flex flex-wrap gap-2">
-              {exportTypes.map(item => (
-                <div key={item.id} className="relative group">
-                  <button type="button" onClick={() => setExportType(item.value)}
-                    className={`h-8 pl-3 pr-6 text-xs rounded-md border font-medium transition-colors ${
-                      exportType === item.value ? 'bg-blue-600 border-blue-600 text-white' : 'border-slate-200 text-slate-600 hover:border-blue-300 hover:text-blue-600'
-                    }`}>
-                    {item.value}
-                  </button>
-                  <button type="button"
-                    onClick={() => {
-                      if (exportType === item.value) setExportType('')
-                      deleteLookup({ type: 'export_type', id: item.id })
-                    }}
-                    className="absolute right-1 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center justify-center w-4 h-4 rounded-full text-[10px] text-slate-400 hover:text-red-500 hover:bg-red-50">
-                    ×
-                  </button>
-                </div>
-              ))}
-              {addingType ? (
-                <div className="flex gap-1">
-                  <Input
-                    autoFocus
-                    className="h-8 w-32 text-xs"
-                    placeholder="Tên loại xuất…"
-                    value={newTypeName}
-                    onChange={e => setNewTypeName(e.target.value)}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault()
-                        if (!newTypeName.trim()) return
-                        addLookup({ type: 'export_type', value: newTypeName.trim() }, {
-                          onSuccess: (data) => { setExportType(data.value); setNewTypeName(''); setAddingType(false) },
-                        })
-                      }
-                      if (e.key === 'Escape') { setNewTypeName(''); setAddingType(false) }
-                    }}
-                  />
-                  <button type="button" onClick={() => { setNewTypeName(''); setAddingType(false) }}
-                    className="h-8 px-2 text-xs border border-slate-200 rounded-md text-slate-400 hover:text-slate-600">✕</button>
-                </div>
-              ) : (
-                <button type="button" onClick={() => setAddingType(true)}
-                  className="h-8 px-2 text-xs border border-dashed border-slate-300 rounded-md text-slate-400 hover:border-blue-400 hover:text-blue-500">
-                  + Thêm
+              {exportTypeOptions.map((vt: any) => (
+                <button key={vt.id} type="button" onClick={() => setExportType(vt.name)}
+                  className={`h-8 px-3 text-xs rounded-md border font-medium transition-colors ${
+                    exportType === vt.name ? 'bg-blue-600 border-blue-600 text-white' : 'border-slate-200 text-slate-600 hover:border-blue-300 hover:text-blue-600'
+                  }`}>
+                  {vt.name}
                 </button>
+              ))}
+              {exportTypeOptions.length === 0 && (
+                <p className="text-xs text-slate-400 italic">
+                  {warehouseId ? 'Chưa có loại xe nào cho kho này — kiểm tra TMS Settings' : 'Chọn kho để lọc loại xe'}
+                </p>
               )}
             </div>
           </div>
@@ -926,7 +892,7 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
 
 export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: string; defaultWarehouseId: string; onClose: () => void }) {
   const { data: gdo, isLoading } = useGDO(gdoId)
-  const { data: exportTypes = [] } = useLookup('export_type')
+  const { data: allVehicleTypes = [] } = useVehicleTypes()
 
   const [date, setDate]               = useState('')
   const [warehouseId, setWarehouseId] = useState(defaultWarehouseId)
@@ -939,9 +905,9 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
 
   const { mutate: updateGDO, isPending } = useUpdateGDO()
 
-  // Pre-fill once GDO loads (wait for exportTypes to normalize correctly)
+  // Pre-fill once GDO loads (wait for vehicle types to normalize correctly)
   useEffect(() => {
-    if (!gdo || initialized || exportTypes.length === 0) return
+    if (!gdo || initialized || allVehicleTypes.length === 0) return
     setInitialized(true)
     setDate(gdo.delivery_date)
     setWarehouseId(gdo.warehouse_id ?? '')
@@ -951,7 +917,7 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
     // export_type: tìm từ items, normalize để match "xe container"→"Xe Container", "xe xa"→"Xe Xá"
     const allItemsForFill = (gdo.delivery_orders ?? []).flatMap(d => d.items ?? [])
     const rawExportType = allItemsForFill.find(i => i.export_type)?.export_type ?? ''
-    setExportType(canonicalExportType(rawExportType, exportTypes))
+    setExportType(canonicalExportType(rawExportType, allVehicleTypes))
 
     // Build items from delivery_orders (single DO for manual, all DOs for multi-DO)
     const allItems: ItemRow[] = (gdo.delivery_orders ?? []).flatMap(doRow =>
@@ -968,13 +934,13 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
       }))
     )
     setItems(allItems.length ? allItems : [makeItem()])
-  }, [gdo, initialized, exportTypes])
+  }, [gdo, initialized, allVehicleTypes])
 
   function handleSubmit() {
     const isMultiDO = (gdo?.delivery_orders?.length ?? 0) > 1
     if (!date) return setError('Chọn ngày xuất')
     if (!isMultiDO && !customerName.trim()) return setError('Nhập tên khách hàng')
-    if (!exportType) return setError('Chọn loại xuất')
+    if (!exportType) return setError('Chọn loại xe')
     for (const item of items) {
       if (!item.material_code.trim()) return setError('Chọn mã hàng cho tất cả dòng')
       if (!item.cartons || item.cartons <= 0) return setError('Số thùng phải > 0')

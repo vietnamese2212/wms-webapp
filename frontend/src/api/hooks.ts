@@ -1851,6 +1851,7 @@ export function useUpdatePlanLine() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['inbound-plan-lines'] })
       qc.invalidateQueries({ queryKey: ['tms-orders'] })
+      qc.invalidateQueries({ queryKey: ['inbound-report'] })
     },
   })
 }
@@ -1944,6 +1945,8 @@ export type InboundReportRow = {
   ncc_code: string; ncc_name: string
   material_code: string; material_name: string; unit: string; material_category: string
   planned_boxes: number; actual_boxes: number; pct: number | null
+  plan_line_id?: string
+  note?: string | null
 }
 
 export function useInboundReport(params?: { date_from: string; date_to: string; warehouse_id?: string }) {

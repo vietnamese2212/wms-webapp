@@ -223,7 +223,7 @@ export async function bulkUpdateOrderDate(req: Request, res: Response) {
 }
 
 // GET /api/tms/orders/:orderId/plan-vs-actual
-// So sánh kế hoạch (InboundPlanLine) vs thực tế (ProductionImport) theo từng mã hàng
+// So sánh kế hoạch (InboundPlanLine) vs thực tế (InventoryEntry quét) theo từng mã hàng
 export async function getPlanVsActual(req: Request, res: Response) {
   try {
     const { orderId } = req.params
@@ -236,13 +236,33 @@ export async function getPlanVsActual(req: Request, res: Response) {
       .neq('status', 'CANCELLED')
     if (planErr) return fail(res, planErr.message)
 
-    // Actual inbound orders (thực tế nhập)
+    // ProductionImport records cho order này
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: actualOrders, error: actErr } = await (supabase.from('ProductionImport') as any)
-      .select('material_id, planned_pallets, planned_cartons, material:Material!material_id(material_code, short_name, material_description)')
+      .select('id, material_id, material:Material!material_id(material_code, short_name, material_description)')
       .eq('tms_order_id', orderId)
       .neq('status', 'CANCELLED')
     if (actErr) return fail(res, actErr.message)
+
+    // Lấy số thùng thực tế từ InventoryEntry (cartons_imported) thay vì planned_cartons
+    const importIds = ((actualOrders ?? []) as any[]).map((o: any) => o.id as string)
+    const actualBoxMap = new Map<string, number>() // material_id → tổng cartons_imported
+    if (importIds.length > 0) {
+      const importMaterialMap = new Map<string, string>() // import_id → material_id
+      for (const o of (actualOrders ?? []) as any[]) {
+        importMaterialMap.set(o.id as string, o.material_id as string)
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: entries, error: entErr } = await (supabase.from('InventoryEntry') as any)
+        .select('import_order_id, cartons_imported')
+        .in('import_order_id', importIds)
+      if (entErr) return fail(res, entErr.message)
+      for (const e of (entries ?? []) as any[]) {
+        const mid = importMaterialMap.get(e.import_order_id as string)
+        if (!mid) continue
+        actualBoxMap.set(mid, (actualBoxMap.get(mid) ?? 0) + ((e.cartons_imported ?? 0) as number))
+      }
+    }
 
     type PVARow = {
       material_code: string; material_name: string
@@ -265,6 +285,7 @@ export async function getPlanVsActual(req: Request, res: Response) {
       byMaterial[mid].planned_pallets += (line.planned_pallets ?? 0) as number
     }
 
+    // Thêm material chưa có trong plan (phát sinh) + điền actual_boxes từ InventoryEntry
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     for (const order of (actualOrders ?? []) as any[]) {
       const mid = order.material_id as string
@@ -274,8 +295,9 @@ export async function getPlanVsActual(req: Request, res: Response) {
         material_name: order.material?.short_name ?? order.material?.material_description ?? '',
         planned_boxes: 0, planned_pallets: 0, actual_boxes: 0, actual_pallets: 0,
       }
-      byMaterial[mid].actual_boxes   += (order.planned_cartons  ?? 0) as number
-      byMaterial[mid].actual_pallets += (order.planned_pallets  ?? 0) as number
+    }
+    for (const [mid, boxes] of actualBoxMap.entries()) {
+      if (byMaterial[mid]) byMaterial[mid].actual_boxes = boxes
     }
 
     return ok(res, Object.values(byMaterial))
@@ -317,17 +339,20 @@ export async function getInboundReport(req: Request, res: Response) {
     // 3. Fetch thực tế từ InventoryEntry (số thùng đã quét thực tế)
     //    InventoryEntry.import_order_id → ProductionImport.(tms_order_id, material_id)
     const actualMap = new Map<string, number>() // key: `${tms_order_id}/${material_id}` → boxes
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let allImports: any[] = []
     if (orderIds.length > 0) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: imports, error: impErr } = await (supabase.from('ProductionImport') as any)
-        .select('id, tms_order_id, material_id')
+        .select('id, tms_order_id, material_id, material:Material!material_id(material_code, short_name, unit, category)')
         .in('tms_order_id', orderIds)
         .neq('status', 'CANCELLED')
       if (impErr) return fail(res, impErr.message)
+      allImports = (imports ?? []) as any[]
 
-      const importIds = ((imports ?? []) as any[]).map((i: any) => i.id as string)
+      const importIds = allImports.map((i: any) => i.id as string)
       const importMeta = new Map<string, { tms_order_id: string; material_id: string }>()
-      for (const i of (imports ?? []) as any[]) {
+      for (const i of allImports) {
         importMeta.set(i.id, { tms_order_id: i.tms_order_id, material_id: i.material_id })
       }
 
@@ -348,14 +373,32 @@ export async function getInboundReport(req: Request, res: Response) {
       }
     }
 
-    // 4. Build report rows — 1 dòng / plan line, actual lấy từ actualMap
+    // 4. Build TmsOrder context map từ plan lines (để dùng cho phát sinh rows)
+    const orderInfoMap = new Map<string, { date: string; warehouse_name: string; ncc_code: string; ncc_name: string }>()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const line of (planLines ?? []) as any[]) {
+      if (line.tms_order_id && !orderInfoMap.has(line.tms_order_id)) {
+        orderInfoMap.set(line.tms_order_id, {
+          date: line.date as string,
+          warehouse_name: (line.warehouse?.name ?? line.warehouse_id) as string,
+          ncc_code: (line.ncc?.code ?? '') as string,
+          ncc_name: (line.ncc?.name ?? '') as string,
+        })
+      }
+    }
+
+    // 5. Build report rows từ plan lines (kế hoạch)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const planLineKeys = new Set<string>()
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rows = ((planLines ?? []) as any[]).map((line: any) => {
       const actualKey = line.tms_order_id && line.material_id
         ? `${line.tms_order_id}/${line.material_id}` : null
+      if (actualKey) planLineKeys.add(actualKey)
       const actual_boxes = actualKey ? (actualMap.get(actualKey) ?? 0) : 0
       const planned = (line.planned_boxes ?? 0) as number
       return {
+        plan_line_id: line.id as string,
         date: line.date as string,
         warehouse_name: (line.warehouse?.name ?? line.warehouse_id) as string,
         po_number: (line.po_number ?? '') as string,
@@ -368,8 +411,37 @@ export async function getInboundReport(req: Request, res: Response) {
         planned_boxes: planned,
         actual_boxes,
         pct: planned > 0 ? Math.round((actual_boxes / planned) * 100) : null,
+        note: null as string | null,
       }
     })
+
+    // 6. Phát sinh: ProductionImport có quét thực tế nhưng không có trong plan lines
+    const phatSinhSeen = new Set<string>()
+    for (const imp of allImports) {
+      if (!imp.tms_order_id || !imp.material_id) continue
+      const key = `${imp.tms_order_id}/${imp.material_id}`
+      if (planLineKeys.has(key) || phatSinhSeen.has(key)) continue
+      const actual_boxes = actualMap.get(key) ?? 0
+      if (actual_boxes === 0) continue
+      phatSinhSeen.add(key)
+      const info = orderInfoMap.get(imp.tms_order_id) ?? { date: '', warehouse_name: '', ncc_code: '', ncc_name: '' }
+      rows.push({
+        plan_line_id: '',
+        date: info.date,
+        warehouse_name: info.warehouse_name,
+        po_number: '',
+        ncc_code: info.ncc_code,
+        ncc_name: info.ncc_name,
+        material_code: (imp.material?.material_code ?? '') as string,
+        material_name: (imp.material?.short_name ?? '') as string,
+        unit: (imp.material?.unit ?? '') as string,
+        material_category: (imp.material?.category ?? '') as string,
+        planned_boxes: 0,
+        actual_boxes,
+        pct: null,
+        note: 'Phát sinh',
+      })
+    }
 
     return ok(res, rows)
   } catch (e) { return fail(res, String(e)) }

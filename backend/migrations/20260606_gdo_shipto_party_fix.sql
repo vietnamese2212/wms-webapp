@@ -1,3 +1,3 @@
--- Bỏ FK constraint, giữ lại plain text field (ship to party là mã khách hàng, không phải warehouse FK)
-ALTER TABLE "GroupDeliveryOrder" DROP CONSTRAINT IF EXISTS "GroupDeliveryOrder_shipto_party_id_fkey";
-ALTER TABLE "GroupDeliveryOrder" RENAME COLUMN shipto_party_id TO shipto_party;
+-- Thêm cột ship-to-party (mã khách hàng/NPP) vào đơn xuất
+-- Plain text, không FK — nếu trùng với Warehouse.code thì app tự tạo inbound điều chuyển
+ALTER TABLE "GroupDeliveryOrder" ADD COLUMN IF NOT EXISTS shipto_party text;

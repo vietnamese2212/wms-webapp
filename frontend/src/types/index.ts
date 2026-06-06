@@ -686,6 +686,7 @@ export interface GDO {
   assigned_by?:        string | null
   started_at?:         string | null
   last_scanned_at?:    string | null
+  scan_completed_at?:  string | null
   completed_at?:       string | null
   license_plate?:      string | null
   container_number?:   string | null

@@ -1297,7 +1297,7 @@ export const useUnassignGDO   = makeUndoGDOMutation('unassign',
 export const useUnstartGDO    = makeUndoGDOMutation('unstart',
   old => ({ ...old, started_at: null, license_plate: null, container_number: null, exporter_name: null, loader_name: null, forklift_driver_id: null, forklift_driver_names: null, status: 'PENDING' }))
 export const useUncompleteGDO = makeUndoGDOMutation('uncomplete',
-  old => ({ ...old, status: 'IN_PROGRESS', completed_at: null }))
+  old => ({ ...old, status: 'IN_PROGRESS', completed_at: null, scan_completed_at: null }))
 
 export function useWarehouseEmployees(warehouse_id?: string | null) {
   return useQuery({

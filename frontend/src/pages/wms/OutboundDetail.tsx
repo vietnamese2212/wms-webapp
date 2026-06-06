@@ -1014,6 +1014,13 @@ export default function OutboundDetail() {
             </div>
           )}
 
+          {gdo.scan_completed_at && (
+            <div className="text-[10px] text-green-700 font-medium">
+              Quét xong: <span>{formatDateTime(gdo.scan_completed_at)}</span>
+              {gdo.completed_at && <span className="ml-3 text-blue-600">Hoàn thành: {formatDateTime(gdo.completed_at)}</span>}
+            </div>
+          )}
+
           <div className="flex flex-wrap gap-x-4 gap-y-0 text-[10px] text-slate-400">
             {gdo.created_by && (
               <span>Tạo bởi: <span className="text-slate-600 font-medium">{gdo.created_by}</span>{gdo.created_at ? <span className="ml-1">{formatDateTime(gdo.created_at)}</span> : null}</span>

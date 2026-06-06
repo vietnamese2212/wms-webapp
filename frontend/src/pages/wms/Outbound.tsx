@@ -29,6 +29,7 @@ const canonicalExportType = (raw: string, types: { name: string }[]) =>
 // ─── Row text color by status (TEXT color, không dùng background) ────────────
 function gdoRowText(gdo: GDO) {
   if (gdo.status === 'COMPLETED')   return 'text-[#4A90D9] line-through hover:bg-slate-50'
+  if (gdo.scan_completed_at)        return 'text-pink-600 hover:bg-slate-50'
   if (gdo.status === 'IN_PROGRESS') return 'text-[#D8891C] hover:bg-slate-50'
   if (gdo.status === 'PAUSED')      return 'text-red-500 hover:bg-slate-50'
   if (gdo.assigned_at)              return 'text-green-600 hover:bg-slate-50'

@@ -1060,7 +1060,7 @@ export function useDeleteGDO() {
   })
 }
 
-export function useGDOs(params?: { warehouse_id?: string; status?: string; date?: string; search?: string }) {
+export function useGDOs(params?: { warehouse_id?: string; status?: string; transfer_status?: string; date?: string; search?: string }) {
   return useQuery({
     queryKey: ['gdos', params],
     queryFn: async () => {

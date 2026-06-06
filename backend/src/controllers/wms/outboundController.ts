@@ -189,7 +189,7 @@ async function maybeCreateTransferInbound(gdoId: string, t: string): Promise<voi
 
 export async function listGDOs(req: Request, res: Response) {
   try {
-    const { warehouse_id, status, date, search } = req.query as Record<string, string>
+    const { warehouse_id, status, date, search, transfer_status } = req.query as Record<string, string>
     const scopeWarehouseIds = req.user?.warehouse_scope !== 'NATIONAL'
       ? (req.user?.warehouse_ids ?? [])
       : []
@@ -209,9 +209,10 @@ export async function listGDOs(req: Request, res: Response) {
     } else {
       if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
     }
-    if (status)       q = q.eq('status', status)
-    if (date)         q = q.eq('delivery_date', date)
-    if (search)       q = q.ilike('group_code', `%${search}%`)
+    if (status)          q = q.eq('status', status)
+    if (transfer_status) q = q.eq('transfer_status', transfer_status)
+    if (date)            q = q.eq('delivery_date', date)
+    if (search)          q = q.ilike('group_code', `%${search}%`)
     const { data, error } = await q
     if (error) return fail(res, error.message)
 

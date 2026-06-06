@@ -1746,12 +1746,10 @@ function CreateFromGDODialog({ open, warehouseId, onClose }: {
 }) {
   const [selectedGdo, setSelectedGdo] = useState<string>('')
   const [err, setErr] = useState('')
-  const { data: gdos = [], isLoading } = useGDOs(open ? { warehouse_id: warehouseId, status: 'COMPLETED' } : undefined)
+  const { data: gdos = [], isLoading } = useGDOs(open ? { transfer_status: 'PENDING_DELIVERY' } : undefined)
   const { mutateAsync: createTransfer, isPending: saving } = useCreateTransferOrder()
 
-  const eligible = (gdos as import('@/types').GDO[]).filter(g =>
-    g.shipto_party && (!g.transfer_status || g.transfer_status === 'PENDING_DELIVERY')
-  )
+  const eligible = gdos as import('@/types').GDO[]
 
   useEffect(() => { if (open) { setSelectedGdo(''); setErr('') } }, [open])
 

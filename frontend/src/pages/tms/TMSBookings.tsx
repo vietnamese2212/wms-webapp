@@ -1744,6 +1744,7 @@ const TRANSFER_STATUS_CFG: Record<string, { label: string; cls: string }> = {
 function CreateFromGDODialog({ open, warehouseId, onClose }: {
   open: boolean; warehouseId: string; onClose: () => void
 }) {
+  void warehouseId
   const [selectedGdo, setSelectedGdo] = useState<string>('')
   const [err, setErr] = useState('')
   const { data: gdos = [], isLoading } = useGDOs(open ? { transfer_status: 'PENDING_DELIVERY' } : undefined)
@@ -1824,64 +1825,142 @@ function CreateFromGDODialog({ open, warehouseId, onClose }: {
 }
 
 function TransferOrdersPanel({ warehouseId, canCreate }: { warehouseId: string; canCreate: boolean }) {
-  const [createOpen, setCreateOpen] = useState(false)
-  const { data: orders = [], isLoading } = useTransferOrders(warehouseId || undefined)
+  const { data: pendingGDOs = [], isLoading: loadingGDOs } = useGDOs({ transfer_status: 'PENDING_DELIVERY' })
+  const { data: orders = [], isLoading: loadingOrders } = useTransferOrders(warehouseId || undefined)
+  const { mutateAsync: createTransfer } = useCreateTransferOrder()
+  const [creatingId, setCreatingId] = useState('')
+  const [err, setErr] = useState('')
 
   type TrOrder = import('@/types').TmsOrder & { transfer_gdo?: { id: string; group_code: string; shipto_party: string | null; transfer_status: string | null } | null }
 
+  async function handleCreate(gdoId: string) {
+    setCreatingId(gdoId); setErr('')
+    try {
+      await createTransfer({ gdo_id: gdoId })
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
+      setErr(msg ?? 'Lỗi tạo lệnh')
+    } finally {
+      setCreatingId('')
+    }
+  }
+
+  const isLoading = loadingGDOs || loadingOrders
+  const pending = pendingGDOs as import('@/types').GDO[]
+
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between px-3 py-2 border-b bg-white shrink-0">
-        <span className="text-xs text-slate-500">{orders.length} lệnh chuyển kho</span>
-        {canCreate && (
-          <Button size="sm" onClick={() => setCreateOpen(true)} disabled={!warehouseId} className="h-8 px-2">
-            <Plus className="h-3.5 w-3.5 mr-1" />Tạo từ GDO xuất
-          </Button>
-        )}
-      </div>
-      <div className="flex-1 min-h-0 overflow-auto">
-        {!warehouseId ? (
-          <div className="py-24 text-center text-sm text-slate-400">Chọn kho để xem lệnh chuyển</div>
-        ) : isLoading ? (
+      {err && (
+        <div className="px-3 py-2 bg-red-50 border-b border-red-200 text-xs text-red-700 shrink-0">{err}</div>
+      )}
+      <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+        {isLoading ? (
           <div className="py-24 text-center text-sm text-slate-400">Đang tải...</div>
-        ) : orders.length === 0 ? (
-          <div className="py-24 text-center text-sm text-slate-400">Chưa có lệnh chuyển kho nào</div>
+        ) : pending.length === 0 && orders.length === 0 ? (
+          <div className="py-24 text-center text-sm text-slate-400">Không có lệnh chuyển kho nào</div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-[10px]">
-              <thead className="bg-slate-50 sticky top-0 z-10">
-                <tr>
-                  {['Mã lệnh', 'GDO nguồn', 'Ship-to', 'Thùng KH', 'Tình trạng giao', 'Ngày tạo'].map(h => (
-                    <th key={h} className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {(orders as TrOrder[]).map(o => {
-                  const tStatus = o.transfer_gdo?.transfer_status
-                  const cfg = tStatus ? TRANSFER_STATUS_CFG[tStatus] : null
-                  return (
-                    <tr key={o.id} className="border-t border-slate-100 hover:bg-slate-50">
-                      <td className="px-2 py-1 font-mono font-semibold">{o.order_code}</td>
-                      <td className="px-2 py-1 font-mono">{o.transfer_gdo?.group_code ?? '—'}</td>
-                      <td className="px-2 py-1 font-semibold text-blue-700">{o.transfer_gdo?.shipto_party ?? '—'}</td>
-                      <td className="px-2 py-1 tabular-nums text-right font-semibold">{o.planned_boxes ?? 0}</td>
-                      <td className="px-2 py-1">
-                        {cfg
-                          ? <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${cfg.cls}`}>{cfg.label}</span>
-                          : <span className="text-slate-400">—</span>
-                        }
-                      </td>
-                      <td className="px-2 py-1 text-slate-400 tabular-nums">{o.created_at ? o.created_at.slice(0, 10) : '—'}</td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
+          <>
+            {/* ── Chờ lấy hàng ── */}
+            {pending.length > 0 && (
+              <>
+                <div className="px-3 py-1.5 border-b bg-amber-50 shrink-0">
+                  <span className="text-[10px] font-semibold text-amber-700">Chờ lấy hàng ({pending.length})</span>
+                </div>
+                <Table className="min-w-full">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Mã GDO</TableHead>
+                      <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Ngày xuất</TableHead>
+                      <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Kho xuất</TableHead>
+                      <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Kho nhận</TableHead>
+                      {canCreate && <TableHead className="w-16"></TableHead>}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {pending.map(g => (
+                      <TableRow key={g.id} className="hover:bg-amber-50/40">
+                        <TableCell className="px-2 py-1 whitespace-nowrap">
+                          <span className="text-[10px] font-mono font-semibold">{g.group_code}</span>
+                        </TableCell>
+                        <TableCell className="px-2 py-1 whitespace-nowrap">
+                          <span className="text-[10px] tabular-nums">{g.delivery_date}</span>
+                        </TableCell>
+                        <TableCell className="px-2 py-1 whitespace-nowrap">
+                          <span className="text-[10px] text-slate-600">{(g as any).warehouse?.name ?? g.warehouse_id ?? '—'}</span>
+                        </TableCell>
+                        <TableCell className="px-2 py-1 whitespace-nowrap">
+                          <span className="text-[10px] font-semibold text-blue-700">{g.shipto_party ?? '—'}</span>
+                        </TableCell>
+                        {canCreate && (
+                          <TableCell className="px-2 py-1 whitespace-nowrap" onClick={e => e.stopPropagation()}>
+                            <Button size="sm"
+                              className="h-6 px-2 text-[10px]"
+                              disabled={!!creatingId}
+                              onClick={() => handleCreate(g.id)}>
+                              {creatingId === g.id ? '…' : 'Nhận →'}
+                            </Button>
+                          </TableCell>
+                        )}
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </>
+            )}
+
+            {/* ── Lệnh đã tạo (IN_TRANSIT / DELIVERED) ── */}
+            {orders.length > 0 && (
+              <>
+                <div className="px-3 py-1.5 border-b border-t bg-slate-50 shrink-0">
+                  <span className="text-[10px] font-semibold text-slate-500">Lệnh chuyển kho ({orders.length})</span>
+                </div>
+                <Table className="min-w-full">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Mã lệnh</TableHead>
+                      <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">GDO nguồn</TableHead>
+                      <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Kho nhận</TableHead>
+                      <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap text-right">Thùng KH</TableHead>
+                      <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Tình trạng</TableHead>
+                      <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Ngày tạo</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {(orders as TrOrder[]).map(o => {
+                      const tStatus = o.transfer_gdo?.transfer_status
+                      const cfg = tStatus ? TRANSFER_STATUS_CFG[tStatus] : null
+                      return (
+                        <TableRow key={o.id} className="hover:bg-slate-50">
+                          <TableCell className="px-2 py-1 whitespace-nowrap">
+                            <span className="text-[10px] font-mono font-semibold">{o.order_code}</span>
+                          </TableCell>
+                          <TableCell className="px-2 py-1 whitespace-nowrap">
+                            <span className="text-[10px] font-mono">{o.transfer_gdo?.group_code ?? '—'}</span>
+                          </TableCell>
+                          <TableCell className="px-2 py-1 whitespace-nowrap">
+                            <span className="text-[10px] font-semibold text-blue-700">{o.transfer_gdo?.shipto_party ?? '—'}</span>
+                          </TableCell>
+                          <TableCell className="px-2 py-1 whitespace-nowrap text-right">
+                            <span className="text-[10px] font-semibold tabular-nums">{o.planned_boxes ?? 0}</span>
+                          </TableCell>
+                          <TableCell className="px-2 py-1 whitespace-nowrap">
+                            {cfg
+                              ? <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${cfg.cls}`}>{cfg.label}</span>
+                              : <span className="text-slate-300">—</span>}
+                          </TableCell>
+                          <TableCell className="px-2 py-1 whitespace-nowrap">
+                            <span className="text-[10px] tabular-nums text-slate-400">{o.created_at ? o.created_at.slice(0, 10) : '—'}</span>
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+              </>
+            )}
+          </>
         )}
       </div>
-      <CreateFromGDODialog open={createOpen} warehouseId={warehouseId} onClose={() => setCreateOpen(false)} />
     </div>
   )
 }

@@ -133,7 +133,7 @@ async function fetchGDOFull(id: string) {
 // ─── Auto-create inbound khi GDO hoàn thành → NPP warehouse ──
 async function maybeCreateTransferInbound(gdoId: string, t: string): Promise<void> {
   const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
-    .select('id, shipto_party, delivery_date, warehouse_type').eq('id', gdoId).single()
+    .select('id, shipto_party, delivery_date, warehouse_type, group_code').eq('id', gdoId).single()
   if (!gdo?.shipto_party) return
 
   const { data: nppWh } = await (supabase.from('Warehouse') as any)
@@ -164,14 +164,11 @@ async function maybeCreateTransferInbound(gdoId: string, t: string): Promise<voi
   if (!matMap.size) return
 
   const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
-  const dateCompact = vnDate.replace(/-/g, '')
-  const { data: existing2 } = await (supabase.from('ProductionImport') as any)
-    .select('id').ilike('import_code', `CK-${dateCompact}-%`)
-  const baseSeq = (existing2?.length ?? 0)
+  const groupCode = gdo.group_code ?? gdoId.slice(0, 8)
 
   const toInsert = [...matMap.values()].map((m, idx) => ({
     id: randomUUID(),
-    import_code: `CK-${dateCompact}-${String(baseSeq + idx + 1).padStart(3, '0')}`,
+    import_code: `CK-${groupCode}-${String(idx + 1).padStart(2, '0')}`,
     warehouse_id: nppWh.id,
     material_id: m.material_id,
     planned_cartons: m.cartons,
@@ -716,11 +713,26 @@ export async function uncompleteGDO(req: Request, res: Response) {
     const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
       .select('status').eq('id', req.params.id).single()
     if (gdo?.status !== 'COMPLETED') return fail(res, 'Đơn chưa hoàn thành', 400)
+
+    // Chặn nếu kho NPP đã bắt đầu nhận hàng
+    const { data: activeInbounds } = await (supabase.from('ProductionImport') as any)
+      .select('import_code, status').eq('from_gdo_id', req.params.id)
+      .in('status', ['IN_PROGRESS', 'COMPLETED'])
+    if (activeInbounds && activeInbounds.length > 0) {
+      const codes = activeInbounds.map((r: any) => r.import_code).join(', ')
+      const hasCompleted = activeInbounds.some((r: any) => r.status === 'COMPLETED')
+      return fail(res, 400, 'INBOUND_STARTED',
+        hasCompleted
+          ? `Kho NPP đã hoàn thành nhận hàng (${codes}) — không thể bỏ hoàn thành`
+          : `Kho NPP đang nhận hàng (${codes}) — không thể bỏ hoàn thành lúc này`
+      )
+    }
+
     const { error } = await (supabase.from('GroupDeliveryOrder') as any)
       .update({ status: 'IN_PROGRESS', completed_at: null, updated_at: now() })
       .eq('id', req.params.id)
     if (error) return fail(res, error.message)
-    // Hủy inbound điều chuyển nếu chưa bắt đầu nhận
+    // Hủy inbound điều chuyển chưa bắt đầu
     await (supabase.from('ProductionImport') as any)
       .update({ status: 'CANCELLED', updated_at: now() })
       .eq('from_gdo_id', req.params.id).eq('status', 'PENDING')

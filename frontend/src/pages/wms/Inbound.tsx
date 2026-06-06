@@ -21,6 +21,7 @@ import {
   useEmployeeRecords, useWarehouseTypes, useWarehouseZones,
   useActiveGateRegistrations, useInboundPlanLines,
   useUpdateInboundOrder, useCancelInboundOrder,
+  useTransferOrders,
 } from '@/api/hooks'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { SearchInput } from '@/components/shared/SearchInput'
@@ -72,7 +73,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
   const dialogAllowedWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
     ? new Set(user.warehouse_ids) : null
 
-  const [sourceType,   setSourceType]   = useState<'FACTORY' | 'NCC'>('FACTORY')
+  const [sourceType,   setSourceType]   = useState<'FACTORY' | 'NCC' | 'TRANSFER'>('FACTORY')
   const [warehouseId,  setWarehouseId]  = useState('')
   const [subType,      setSubType]      = useState('')
   const [materialId,   setMaterialId]   = useState('')
@@ -90,8 +91,9 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
   const [nccSaving,      setNccSaving]      = useState(false)
   const [nccErr,         setNccErr]         = useState('')
   const [nccDropdownIdx, setNccDropdownIdx] = useState<number | null>(null)
-  const [showMoreGates,  setShowMoreGates]  = useState(false)
-  const [showGateDialog, setShowGateDialog] = useState(false)
+  const [showMoreGates,    setShowMoreGates]    = useState(false)
+  const [showGateDialog,   setShowGateDialog]   = useState(false)
+  const [transferOrderId,  setTransferOrderId]  = useState('')
 
   useEffect(() => {
     if (open) {
@@ -126,7 +128,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
         setImportDate(format(new Date(), 'yyyy-MM-dd'))
         setNotes(''); setGateRegId('')
         setNccRows([emptyNccRow()]); setNccSaving(false); setNccErr(''); setNccDropdownIdx(null)
-        setShowMoreGates(false)
+        setShowMoreGates(false); setTransferOrderId('')
         setEditRows([])
       }
     }
@@ -186,7 +188,12 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
         : warehouseId && importDate
           ? { date: importDate, warehouse_id: warehouseId }
           : undefined
-      : undefined
+      : sourceType === 'TRANSFER' && transferOrderId
+        ? { tms_order_id: transferOrderId }
+        : undefined
+  )
+  const { data: transferOrders = [] } = useTransferOrders(
+    sourceType === 'TRANSFER' && warehouseId ? warehouseId : undefined
   )
   const activePlanLines = useMemo(() =>
     (planMaterials as any[]).filter((m: any) =>
@@ -389,6 +396,33 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
     }
   }
 
+  async function handleTransferSubmit() {
+    if (!warehouseId)      { setNccErr('Vui lòng chọn Kho'); return }
+    if (!subType)          { setNccErr('Vui lòng chọn Loại kho'); return }
+    if (!transferOrderId)  { setNccErr('Vui lòng chọn chuyến chuyển kho'); return }
+    if (!shiftId)          { setNccErr('Vui lòng chọn Ca nhập'); return }
+    if (!importDate)       { setNccErr('Vui lòng chọn Ngày nhập'); return }
+    const validRows = nccRows.filter(r => r.material_id)
+    if (!validRows.length) { setNccErr('Vui lòng nhập ít nhất 1 mã hàng hợp lệ'); return }
+    setNccSaving(true); setNccErr('')
+    try {
+      await Promise.all(validRows.map(r => createOrderAsync({
+        warehouse_id: warehouseId, material_id: r.material_id,
+        shift_id: shiftId || undefined, import_date: importDate,
+        notes: notes || undefined, imported_by: importedByEmpId || undefined,
+        source_type: 'TRANSFER', warehouse_type: subType || undefined,
+        tms_order_id: transferOrderId,
+        planned_cartons: r.planned_qty ? Number(r.planned_qty) : undefined,
+      })))
+      onClose()
+    } catch (e) {
+      const msg = (e as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message
+      setNccErr(msg ?? 'Lỗi tạo phiếu')
+    } finally {
+      setNccSaving(false)
+    }
+  }
+
   const selectedMat   = (materials as MatItem[]).find(m => m.id === materialId)
   const matInputValue = matOpen
     ? matSearch
@@ -409,7 +443,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose() }}>
-      <DialogContent className={sourceType === 'NCC' ? 'max-w-2xl' : 'sm:max-w-lg'}>
+      <DialogContent className={sourceType === 'FACTORY' ? 'sm:max-w-lg' : 'max-w-2xl'}>
         <DialogHeader>
           <DialogTitle>{editGroup?.length ? 'Sửa nhóm phiếu NCC' : 'Tạo phiếu nhập kho'}</DialogTitle>
         </DialogHeader>
@@ -418,12 +452,12 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
           {/* Tab toggle */}
           {!editGroup?.length && (
             <div className="flex rounded-lg border overflow-hidden">
-              {(['FACTORY', 'NCC'] as const).map(t => (
+              {(['FACTORY', 'NCC', 'TRANSFER'] as const).map(t => (
                 <button key={t} type="button"
-                  onClick={() => { setSourceType(t); setGateRegId(''); setMaterialId(''); setMatSearch(''); setNccRows([emptyNccRow()]); setNccErr('') }}
+                  onClick={() => { setSourceType(t); setGateRegId(''); setTransferOrderId(''); setMaterialId(''); setMatSearch(''); setNccRows([emptyNccRow()]); setNccErr('') }}
                   className={['flex-1 py-1.5 text-xs font-medium transition-colors',
                     sourceType === t ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'].join(' ')}>
-                  {t === 'FACTORY' ? 'Nhập Sản Xuất' : 'Nhập Ngoài (NCC)'}
+                  {t === 'FACTORY' ? 'Nhập SX' : t === 'NCC' ? 'Nhập NCC' : 'Chuyển kho'}
                 </button>
               ))}
             </div>
@@ -880,6 +914,193 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
             {nccErr && <p className="text-xs text-red-500">{nccErr}</p>}
 
           </>)}
+
+          {/* ─── TRANSFER ─── */}
+          {sourceType === 'TRANSFER' && (<>
+            {/* Section 1: Thông tin nhập */}
+            <div className="border rounded-lg bg-slate-50 px-3 py-2.5 space-y-2">
+              <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">Thông tin nhập chuyển kho</p>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <Label className="text-xs">Kho nhận *</Label>
+                  {canPickWarehouse ? (
+                    <WarehouseSingleSelect
+                      warehouses={(warehouses as any[]).filter(w => !dialogAllowedWhIds || dialogAllowedWhIds.has(w.id))}
+                      value={warehouseId}
+                      onChange={v => { setWarehouseId(v); setSubType(''); setTransferOrderId(''); setNccRows([emptyNccRow()]) }}
+                      placeholder="Chọn kho"
+                      dropUp
+                      triggerClassName="h-8 mt-0.5"
+                    />
+                  ) : (
+                    <div className="h-8 flex items-center text-xs text-slate-700 border rounded-md bg-white px-2 mt-0.5">
+                      {(warehouses as any[]).find(w => w.id === warehouseId)?.name ?? '—'}
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <Label className="text-xs">Loại kho *</Label>
+                  <Select value={subType} onValueChange={v => { setSubType(v); setNccRows([emptyNccRow()]) }} disabled={!warehouseId}>
+                    <SelectTrigger className="h-8 text-xs mt-0.5"><SelectValue placeholder="Chọn loại kho" /></SelectTrigger>
+                    <SelectContent>{loaiKhoOpts.map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div>
+                <Label className="text-xs">Chuyến chuyển kho *</Label>
+                <Select value={transferOrderId} onValueChange={v => { setTransferOrderId(v); setNccRows([emptyNccRow()]) }} disabled={!warehouseId}>
+                  <SelectTrigger className="h-8 text-xs mt-0.5">
+                    <SelectValue placeholder={!warehouseId ? 'Chọn kho trước' : (transferOrders as any[]).length === 0 ? 'Không có chuyến đang IN_TRANSIT' : 'Chọn chuyến...'} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(transferOrders as any[]).map(o => (
+                      <SelectItem key={o.id} value={o.id}>
+                        <span className="font-mono font-semibold text-xs">{o.order_code}</span>
+                        <span className="ml-2 text-slate-500 text-xs">{o.delivery_date}</span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <Label className="text-xs">Ngày nhập *</Label>
+                  <Input type="date" value={importDate} min={TODAY} onChange={e => setImportDate(e.target.value)} className="h-8 text-xs mt-0.5" />
+                </div>
+                <div>
+                  <Label className="text-xs">Ca nhập *</Label>
+                  <Select value={shiftId} onValueChange={setShiftId}>
+                    <SelectTrigger className="h-8 text-xs mt-0.5"><SelectValue placeholder="Chọn ca" /></SelectTrigger>
+                    <SelectContent>{(shifts as { id: string; name: string }[]).map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label className="text-xs">Người nhập</Label>
+                  <div className="h-8 flex items-center text-xs text-slate-600 border rounded-md bg-white px-2 mt-0.5 gap-1.5">
+                    <User className="h-3 w-3 text-slate-400 shrink-0" />
+                    <span className="truncate">{user?.name ?? '—'}</span>
+                  </div>
+                </div>
+              </div>
+              <div>
+                <Label className="text-xs">Ghi chú</Label>
+                <Input placeholder="Tuỳ chọn" value={notes} onChange={e => setNotes(e.target.value)} className="h-8 text-xs mt-0.5" />
+              </div>
+            </div>
+
+            {/* Section 2: Danh sách hàng hóa */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">Danh sách hàng hóa</p>
+                {transferOrderId && activePlanLines.length > 0 && (
+                  <button type="button" onClick={loadFromPlan}
+                    className="text-[10px] text-blue-600 hover:text-blue-700 underline">
+                    Nạp từ chuyến ({activePlanLines.length} hàng)
+                  </button>
+                )}
+              </div>
+              <div className="border rounded-lg">
+                <table className="min-w-full text-[10px]">
+                  <thead className="bg-slate-50 border-b">
+                    <tr>
+                      <th className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 w-32">Mã hàng</th>
+                      <th className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500">Tên hàng</th>
+                      <th className="px-2 py-1.5 text-center text-[9px] font-medium text-slate-500 w-16">ĐVT</th>
+                      <th className="px-2 py-1.5 text-right text-[9px] font-medium text-slate-500 w-20">SL dự kiến</th>
+                      <th className="w-6"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {nccRows.map((row, idx) => {
+                      const invalid      = row.material_code !== '' && !row.material_id
+                      const unitMismatch = row.unit_input && row.mat_unit && row.unit_input !== row.mat_unit
+                      return (
+                        <tr key={idx} className={invalid ? 'bg-red-50' : ''}>
+                          <td className="px-1.5 py-1">
+                            <div className="relative">
+                              <input type="text" value={row.material_code}
+                                onChange={e => handleNccMatCodeChange(idx, e.target.value)}
+                                onPaste={e => handleNccMatCodePaste(idx, e)}
+                                onFocus={() => setNccDropdownIdx(idx)}
+                                onBlur={() => setTimeout(() => setNccDropdownIdx(prev => prev === idx ? null : prev), 150)}
+                                placeholder="Paste hoặc tìm mã"
+                                className={`w-full h-7 px-1.5 text-[10px] font-mono border rounded focus:outline-none focus:ring-1 ${
+                                  invalid ? 'border-red-300 bg-red-50 focus:ring-red-400' : 'border-slate-200 bg-white focus:ring-blue-400'
+                                }`}
+                              />
+                              {nccDropdownIdx === idx && !row.material_id && (() => {
+                                const matches = getNccDropdownMatches(row.material_code ?? '')
+                                return (
+                                  <div className="absolute bottom-full left-0 z-[100] w-72 border rounded-md bg-white shadow-lg max-h-44 overflow-y-auto mb-1">
+                                    {matches.length === 0
+                                      ? <p className="text-[10px] text-slate-400 px-2 py-2 text-center">Không tìm thấy</p>
+                                      : matches.map((m: any) => (
+                                        <button key={m.id} type="button"
+                                          onMouseDown={e => e.preventDefault()}
+                                          onClick={() => selectNccMatFromDropdown(idx, m)}
+                                          className="w-full text-left px-2 py-1.5 hover:bg-blue-50 flex items-center gap-2 border-b border-slate-50 last:border-0"
+                                        >
+                                          {planMatIds.has(m.id)
+                                            ? <span className="text-[8px] bg-green-100 text-green-700 px-1 py-0.5 rounded shrink-0">KH</span>
+                                            : planMatIds.size > 0
+                                              ? <span className="text-[8px] text-slate-300 w-5 shrink-0" />
+                                              : null
+                                          }
+                                          <span className="text-[10px] font-mono text-slate-700 shrink-0">{m.material_code}</span>
+                                          <span className="text-[10px] text-slate-500 truncate">{m.short_name}</span>
+                                        </button>
+                                      ))
+                                    }
+                                  </div>
+                                )
+                              })()}
+                            </div>
+                          </td>
+                          <td className="px-2 py-1">
+                            {row.mat_name
+                              ? <span className="text-[10px] text-slate-700">{row.mat_name}</span>
+                              : invalid ? <span className="text-[9px] text-red-400">Không tìm thấy</span>
+                              : <span className="text-[9px] text-slate-300">—</span>}
+                          </td>
+                          <td className="px-1.5 py-1">
+                            <div className="relative">
+                              <input type="text" value={row.unit_input}
+                                onChange={e => setNccRowField(idx, 'unit_input', e.target.value)}
+                                placeholder={row.mat_unit || '—'}
+                                className={`w-full h-7 px-1.5 text-[10px] border rounded text-center focus:outline-none focus:ring-1 ${
+                                  unitMismatch ? 'border-amber-300 bg-amber-50 focus:ring-amber-400' : 'border-slate-200 bg-white focus:ring-blue-400'
+                                }`}
+                              />
+                              {unitMismatch && <span className="absolute -top-4 left-0 text-[8px] text-amber-500 whitespace-nowrap">KH: {row.mat_unit}</span>}
+                            </div>
+                          </td>
+                          <td className="px-1.5 py-1">
+                            <input type="number" min="0" value={row.planned_qty}
+                              onChange={e => setNccRowField(idx, 'planned_qty', e.target.value)}
+                              className="w-full h-7 px-1.5 text-[10px] border border-slate-200 rounded text-right bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+                            />
+                          </td>
+                          <td className="px-1 py-1 text-center">
+                            <button type="button" onClick={() => removeNccRow(idx)}
+                              className="text-slate-300 hover:text-red-500 transition-colors">
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <button type="button" onClick={addNccRow}
+                className="text-[10px] text-blue-600 hover:text-blue-800 flex items-center gap-1 transition-colors">
+                <Plus className="h-3 w-3" /> Thêm dòng hàng
+              </button>
+            </div>
+
+            {nccErr && <p className="text-xs text-red-500">{nccErr}</p>}
+
+          </>)}
         </div>
 
         <DialogFooter>
@@ -888,6 +1109,10 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
             <Button onClick={handleFactorySubmit}
               disabled={!warehouseId || !subType || !materialId || !locationId || isPending}>
               {isPending ? 'Đang tạo...' : 'Tạo phiếu'}
+            </Button>
+          ) : sourceType === 'TRANSFER' ? (
+            <Button onClick={handleTransferSubmit} disabled={nccSaving || nccValidCount === 0}>
+              {nccSaving ? 'Đang tạo...' : nccValidCount > 0 ? `Tạo ${nccValidCount} phiếu nhập` : 'Tạo phiếu'}
             </Button>
           ) : editGroup?.length ? (
             <Button onClick={handleNccSubmit} disabled={nccSaving}>

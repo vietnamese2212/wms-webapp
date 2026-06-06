@@ -1597,6 +1597,31 @@ export function useTmsOrders(params?: { date?: string; warehouse_id?: string }) 
   })
 }
 
+export function useTransferOrders(destination_warehouse_id?: string) {
+  return useQuery({
+    queryKey: ['tms-orders-transfer', destination_warehouse_id],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/tms/orders', {
+        params: { source_type: 'TRANSFER', destination_warehouse_id },
+      })
+      return data.data as (import('@/types').TmsOrder & { transfer_gdo?: { id: string; group_code: string; shipto_party: string | null; transfer_status: string | null } | null })[]
+    },
+    enabled: !!destination_warehouse_id,
+  })
+}
+
+export function useCreateTransferOrder() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { gdo_id: string; ncc_id?: string; notes?: string }) =>
+      apiClient.post('/tms/orders/from-gdo', body).then(r => r.data.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tms-orders-transfer'] })
+      qc.invalidateQueries({ queryKey: ['gdos'] })
+    },
+  })
+}
+
 type OrderWriteBody = {
   order_code?: string; date?: string; warehouse_id?: string
   ncc_id?: string | null; npp_name?: string | null

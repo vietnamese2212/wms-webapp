@@ -671,7 +671,8 @@ export interface GDO {
   warehouse_id:     string | null
   warehouse_type:   string | null
   warehouse?:       { id: string; code: string; name: string } | null
-  shipto_party?:    string | null
+  shipto_party?:     string | null
+  transfer_status?:  string | null
   dvvt:             string | null
   status:           OutboundStatus
   created_at:       string

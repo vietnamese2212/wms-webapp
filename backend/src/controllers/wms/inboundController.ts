@@ -176,7 +176,7 @@ export async function createOrder(req: Request, res: Response) {
     } = req.body
     if (!warehouse_id) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu warehouse_id')
     if (!material_id)  return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu material_id')
-    const resolvedSourceType = source_type === 'NCC' ? 'NCC' : 'FACTORY'
+    const resolvedSourceType = source_type === 'NCC' ? 'NCC' : source_type === 'TRANSFER' ? 'TRANSFER' : 'FACTORY'
 
     const todayStr   = vnDate()
     const todayStart = new Date(`${todayStr}T00:00:00+07:00`).toISOString()
@@ -334,17 +334,39 @@ export async function updateOrder(req: Request, res: Response) {
 export async function completeOrder(req: Request, res: Response) {
   try {
     const { data: existing } = await supabase
-      .from('ProductionImport').select('status').eq('id', req.params.id).maybeSingle()
+      .from('ProductionImport').select('id, status, source_type, tms_order_id').eq('id', req.params.id).maybeSingle()
     if (!existing) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (existing.status === 'COMPLETED') return fail(res, 400, 'ALREADY_COMPLETED', 'Phiếu nhập đã hoàn thành')
     if (existing.status === 'CANCELLED') return fail(res, 400, 'ORDER_CANCELLED', 'Phiếu nhập đã bị hủy')
 
+    const nowTs = new Date().toISOString()
     const { data: updated, error } = await supabase
       .from('ProductionImport')
-      .update({ status: 'COMPLETED', updated_by: req.body.updated_by ?? null, updated_at: new Date().toISOString() })
+      .update({ status: 'COMPLETED', updated_by: req.body.updated_by ?? null, updated_at: nowTs })
       .eq('id', req.params.id)
       .select(ORDER_SELECT).maybeSingle()
     if (error) throw error
+
+    // Nếu là phiếu TRANSFER — kiểm tra toàn bộ phiếu cùng TmsOrder đã COMPLETED chưa
+    if (existing.source_type === 'TRANSFER' && existing.tms_order_id) {
+      const { data: siblings } = await supabase
+        .from('ProductionImport')
+        .select('id, status')
+        .eq('tms_order_id', existing.tms_order_id)
+        .neq('status', 'CANCELLED')
+      const allDone = (siblings ?? []).every((s: { status: string }) => s.status === 'COMPLETED')
+      if (allDone) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: tmsOrder } = await (supabase.from('TmsOrder') as any)
+          .select('transfer_gdo_id').eq('id', existing.tms_order_id).single()
+        if (tmsOrder?.transfer_gdo_id) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (supabase.from('GroupDeliveryOrder') as any)
+            .update({ transfer_status: 'DELIVERED', updated_at: nowTs })
+            .eq('id', tmsOrder.transfer_gdo_id)
+        }
+      }
+    }
 
     const withCount = await attachCount(updated)
     emitInboundChanged()

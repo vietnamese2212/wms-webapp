@@ -325,6 +325,7 @@ export default function Outbound() {
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Giờ quét xong</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Giờ kết thúc</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Tình trạng</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Chuyển kho</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Người xuất</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Lái xe nâng</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Bốc xếp</TableHead>
@@ -442,6 +443,19 @@ function GDORow({ gdo, onClick, onAssign }: {
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${statusCls}`}>{statusLabel}</span>
+      </TableCell>
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        {gdo.transfer_status ? (
+          <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${
+            gdo.transfer_status === 'DELIVERED'        ? 'bg-blue-100 text-blue-700' :
+            gdo.transfer_status === 'IN_TRANSIT'       ? 'bg-amber-100 text-amber-700' :
+            gdo.transfer_status === 'PENDING_DELIVERY' ? 'bg-slate-100 text-slate-600' : ''
+          }`}>
+            {gdo.transfer_status === 'DELIVERED' ? 'Đã giao' :
+             gdo.transfer_status === 'IN_TRANSIT' ? 'Đang giao' :
+             gdo.transfer_status === 'PENDING_DELIVERY' ? 'Chờ giao' : gdo.transfer_status}
+          </span>
+        ) : <span className="text-[9px] text-slate-300">—</span>}
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px]">{gdo.exporter_name ?? '—'}</span>

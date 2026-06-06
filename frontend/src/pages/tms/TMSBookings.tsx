@@ -19,6 +19,7 @@ import {
   useAddVehicleSlot, useUpdateVehicleSlot, useReleaseVehicleSlot, useRevokeVehicleSlot, useDeleteVehicleSlot,
   usePlanLinesByOrder, usePlanVsActual, useBulkCreatePlanLinesForOrder, useMaterials,
   useBulkCreatePlanLines, useUpdatePlanLine, useDeletePlanLine,
+  useTransferOrders, useCreateTransferOrder, useGDOs,
 } from '@/api/hooks'
 import { formatDate, formatDateTime } from '@/utils/formatters'
 import type { TmsOrder, TmsVehicleSlot, DeliverySlot, TmsVehicleType, TmsVehicle, TransportCompany } from '@/types'
@@ -1732,6 +1733,161 @@ function UploadPlanLinesDialog({ orderId, onClose }: { orderId: string; onClose:
   )
 }
 
+// ── Transfer Orders Panel ─────────────────────────────────────────────────────
+
+const TRANSFER_STATUS_CFG: Record<string, { label: string; cls: string }> = {
+  PENDING_DELIVERY: { label: 'Chờ giao',        cls: 'bg-amber-100 text-amber-700' },
+  IN_TRANSIT:       { label: 'Đang vận chuyển', cls: 'bg-blue-100 text-blue-700' },
+  DELIVERED:        { label: 'Đã giao',         cls: 'bg-green-100 text-green-700' },
+}
+
+function CreateFromGDODialog({ open, warehouseId, onClose }: {
+  open: boolean; warehouseId: string; onClose: () => void
+}) {
+  const [selectedGdo, setSelectedGdo] = useState<string>('')
+  const [err, setErr] = useState('')
+  const { data: gdos = [], isLoading } = useGDOs(open ? { warehouse_id: warehouseId, status: 'COMPLETED' } : undefined)
+  const { mutateAsync: createTransfer, isPending: saving } = useCreateTransferOrder()
+
+  const eligible = (gdos as import('@/types').GDO[]).filter(g =>
+    g.shipto_party && (!g.transfer_status || g.transfer_status === 'PENDING_DELIVERY')
+  )
+
+  useEffect(() => { if (open) { setSelectedGdo(''); setErr('') } }, [open])
+
+  const handleCreate = async () => {
+    if (!selectedGdo) { setErr('Chọn GDO cần tạo lệnh chuyển'); return }
+    setErr('')
+    try {
+      await createTransfer({ gdo_id: selectedGdo })
+      onClose()
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
+      setErr(msg ?? 'Lỗi tạo lệnh chuyển')
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={v => !v && onClose()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader><DialogTitle>Tạo lệnh chuyển kho từ GDO</DialogTitle></DialogHeader>
+        <div className="space-y-3 py-2">
+          <p className="text-xs text-slate-500">Chọn đơn xuất đã Hoàn thành có kho đích (Ship-to) để tạo lệnh chuyển. Hàng hóa sẽ được tự động nạp từ đơn xuất.</p>
+          {isLoading ? (
+            <p className="text-xs text-slate-400 py-4 text-center">Đang tải...</p>
+          ) : eligible.length === 0 ? (
+            <p className="text-xs text-slate-400 py-4 text-center">Không có GDO nào phù hợp (cần COMPLETED + có Ship-to kho NPP + chưa tạo lệnh)</p>
+          ) : (
+            <div className="border rounded-lg overflow-auto max-h-64">
+              <table className="min-w-full text-[10px]">
+                <thead className="bg-slate-50 sticky top-0">
+                  <tr>
+                    {['', 'Số xe', 'Ngày xuất', 'Ship-to', 'Tình trạng'].map(h => (
+                      <th key={h} className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {(eligible as import('@/types').GDO[]).map(g => (
+                    <tr
+                      key={g.id}
+                      onClick={() => setSelectedGdo(g.id)}
+                      className={`border-t border-slate-100 cursor-pointer ${selectedGdo === g.id ? 'bg-blue-50' : 'hover:bg-slate-50'}`}
+                    >
+                      <td className="px-2 py-1">
+                        <input type="radio" readOnly checked={selectedGdo === g.id} className="h-3 w-3" />
+                      </td>
+                      <td className="px-2 py-1 font-mono font-semibold">{g.group_code}</td>
+                      <td className="px-2 py-1 tabular-nums">{g.delivery_date}</td>
+                      <td className="px-2 py-1 font-semibold text-blue-700">{g.shipto_party ?? '—'}</td>
+                      <td className="px-2 py-1">
+                        {g.transfer_status
+                          ? <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${TRANSFER_STATUS_CFG[g.transfer_status]?.cls ?? ''}`}>{TRANSFER_STATUS_CFG[g.transfer_status]?.label ?? g.transfer_status}</span>
+                          : <span className="text-slate-400">Chưa tạo</span>
+                        }
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {err && <p className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded">{err}</p>}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={onClose}>Hủy</Button>
+          <Button size="sm" onClick={handleCreate} disabled={saving || !selectedGdo}>
+            {saving ? 'Đang tạo...' : 'Tạo lệnh chuyển'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function TransferOrdersPanel({ warehouseId, canCreate }: { warehouseId: string; canCreate: boolean }) {
+  const [createOpen, setCreateOpen] = useState(false)
+  const { data: orders = [], isLoading } = useTransferOrders(warehouseId || undefined)
+
+  type TrOrder = import('@/types').TmsOrder & { transfer_gdo?: { id: string; group_code: string; shipto_party: string | null; transfer_status: string | null } | null }
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex items-center justify-between px-3 py-2 border-b bg-white shrink-0">
+        <span className="text-xs text-slate-500">{orders.length} lệnh chuyển kho</span>
+        {canCreate && (
+          <Button size="sm" onClick={() => setCreateOpen(true)} disabled={!warehouseId} className="h-8 px-2">
+            <Plus className="h-3.5 w-3.5 mr-1" />Tạo từ GDO xuất
+          </Button>
+        )}
+      </div>
+      <div className="flex-1 min-h-0 overflow-auto">
+        {!warehouseId ? (
+          <div className="py-24 text-center text-sm text-slate-400">Chọn kho để xem lệnh chuyển</div>
+        ) : isLoading ? (
+          <div className="py-24 text-center text-sm text-slate-400">Đang tải...</div>
+        ) : orders.length === 0 ? (
+          <div className="py-24 text-center text-sm text-slate-400">Chưa có lệnh chuyển kho nào</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-[10px]">
+              <thead className="bg-slate-50 sticky top-0 z-10">
+                <tr>
+                  {['Mã lệnh', 'GDO nguồn', 'Ship-to', 'Thùng KH', 'Tình trạng giao', 'Ngày tạo'].map(h => (
+                    <th key={h} className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {(orders as TrOrder[]).map(o => {
+                  const tStatus = o.transfer_gdo?.transfer_status
+                  const cfg = tStatus ? TRANSFER_STATUS_CFG[tStatus] : null
+                  return (
+                    <tr key={o.id} className="border-t border-slate-100 hover:bg-slate-50">
+                      <td className="px-2 py-1 font-mono font-semibold">{o.order_code}</td>
+                      <td className="px-2 py-1 font-mono">{o.transfer_gdo?.group_code ?? '—'}</td>
+                      <td className="px-2 py-1 font-semibold text-blue-700">{o.transfer_gdo?.shipto_party ?? '—'}</td>
+                      <td className="px-2 py-1 tabular-nums text-right font-semibold">{o.planned_boxes ?? 0}</td>
+                      <td className="px-2 py-1">
+                        {cfg
+                          ? <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${cfg.cls}`}>{cfg.label}</span>
+                          : <span className="text-slate-400">—</span>
+                        }
+                      </td>
+                      <td className="px-2 py-1 text-slate-400 tabular-nums">{o.created_at ? o.created_at.slice(0, 10) : '—'}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+      <CreateFromGDODialog open={createOpen} warehouseId={warehouseId} onClose={() => setCreateOpen(false)} />
+    </div>
+  )
+}
+
 // ── Order Detail Dialog ───────────────────────────────────────────────────────
 
 function DR({ label, value, wide }: { label: string; value?: React.ReactNode | null; wide?: boolean }) {
@@ -2064,6 +2220,7 @@ export default function TMSBookings() {
   useEffect(() => { localStorage.setItem('tmsb_khungio', JSON.stringify(khungGioFilter)) }, [khungGioFilter])
   useEffect(() => { setSelectedOrderIds(new Set()) }, [date, warehouseId])
 
+  const [activeTab, setActiveTab] = useState<'main' | 'transfer'>('main')
   const [createOpen, setCreateOpen] = useState(false)
   const [uploadOpen, setUploadOpen] = useState(false)
   const [inboundPlanUploadOpen, setInboundPlanUploadOpen] = useState(false)
@@ -2377,7 +2534,19 @@ export default function TMSBookings() {
       {/* Header */}
       <div className="border-b bg-white px-3 py-2 shrink-0">
         <div className="flex items-center justify-between mb-2">
-          <h1 className="text-base font-semibold md:text-xl">Kế hoạch vận chuyển</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-base font-semibold md:text-xl">Kế hoạch vận chuyển</h1>
+            <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-medium">
+              <button
+                onClick={() => setActiveTab('main')}
+                className={`px-3 py-1 transition-colors ${activeTab === 'main' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+              >Kế hoạch</button>
+              <button
+                onClick={() => setActiveTab('transfer')}
+                className={`px-3 py-1 transition-colors border-l border-slate-200 ${activeTab === 'transfer' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+              >Chuyển kho</button>
+            </div>
+          </div>
           <div className="flex items-center gap-1.5">
             {warehouseId && canView && (
               <Button variant="outline" size="sm" onClick={() => setSlotOverviewOpen(true)} className="h-8 px-2">
@@ -2462,7 +2631,12 @@ export default function TMSBookings() {
       </div>
 
       {/* Content */}
-      <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+      {activeTab === 'transfer' ? (
+        <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+          <TransferOrdersPanel warehouseId={warehouseId} canCreate={canCreate} />
+        </div>
+      ) : null}
+      <div className={`flex-1 min-h-0 overflow-auto pb-20 lg:pb-4 ${activeTab !== 'main' ? 'hidden' : ''}`}>
         {!warehouseId && !isNccUser ? (
           <div className="py-24 text-center text-sm text-slate-400">Chọn kho để xem kế hoạch</div>
         ) : isLoading ? (

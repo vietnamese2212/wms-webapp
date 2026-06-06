@@ -560,9 +560,25 @@ export async function patchGDO(req: Request, res: Response) {
     }
 
     const t = now()
+    const patch: Record<string, unknown> = { updated_at: t }
+    if (delivery_date !== undefined) patch.delivery_date = delivery_date
+    if (status !== undefined) {
+      patch.status = status
+      if (status === 'COMPLETED') patch.completed_at = t
+    }
+
+    // Nếu COMPLETED + có shipto_party → set transfer_status = PENDING_DELIVERY
+    if (status === 'COMPLETED') {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: gdoCur } = await (supabase.from('GroupDeliveryOrder') as any)
+        .select('shipto_party, transfer_status').eq('id', req.params.id).single()
+      if (gdoCur?.shipto_party && !gdoCur.transfer_status) {
+        patch.transfer_status = 'PENDING_DELIVERY'
+      }
+    }
+
     const { error } = await (supabase.from('GroupDeliveryOrder') as any)
-      .update({ delivery_date, status, ...(status === 'COMPLETED' ? { completed_at: t } : {}), updated_at: t })
-      .eq('id', req.params.id)
+      .update(patch).eq('id', req.params.id)
     if (error) return fail(res, error.message)
     if (status === 'COMPLETED') await maybeCreateTransferInbound(req.params.id, t)
     const result = await fetchGDOFull(req.params.id)

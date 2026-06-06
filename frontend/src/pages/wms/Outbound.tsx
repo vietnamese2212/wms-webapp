@@ -5,6 +5,7 @@ import { vi } from 'date-fns/locale'
 import { Upload, Truck, CheckCircle2, AlertTriangle, X, Bookmark, Info, Plus, Trash2, PenSquare } from 'lucide-react'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { SearchInput } from '@/components/shared/SearchInput'
+import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
 import { Input }  from '@/components/ui/input'
@@ -264,17 +265,13 @@ export default function Outbound() {
 
         {/* Row 2: Filters */}
         <div className="flex gap-2 flex-wrap items-center">
-          <Select value={f.warehouseId || '__all__'} onValueChange={v => setOutbound({ warehouseId: v === '__all__' ? '' : v })}>
-            <SelectTrigger className="h-7 text-xs w-[130px]">
-              <SelectValue placeholder="Kho xuất" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">Tất cả kho</SelectItem>
-              {(warehouses as any[])
-                .filter((w: any) => !outboundAllowedWhIds || outboundAllowedWhIds.has(w.id))
-                .map((w: any) => <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>)}
-            </SelectContent>
-          </Select>
+          <WarehouseSingleSelect
+            warehouses={(warehouses as any[]).filter((w: any) => !outboundAllowedWhIds || outboundAllowedWhIds.has(w.id))}
+            value={f.warehouseId || ''}
+            onChange={v => setOutbound({ warehouseId: v })}
+            allLabel="Tất cả kho"
+            triggerClassName="h-7 w-[130px]"
+          />
           <MultiSelectFilter label="Loại kho" options={warehouseTypeOpts.map(t => ({ value: t, label: t }))} selected={filterWarehouseTypes} onChange={v => setOutbound({ filterWarehouseTypes: v })} />
           <MultiSelectFilter label="Loại xe" options={typeOptions.map(t => ({ value: t, label: t }))} selected={filterTypes} onChange={v => setOutbound({ filterTypes: v })} />
           <MultiSelectFilter label="ĐVVT" options={dvvtOptions.map(d => ({ value: d, label: d }))} selected={filterDvvts} onChange={v => setOutbound({ filterDvvts: v })} />
@@ -776,15 +773,14 @@ function GDOFormBody({
           </div>
           <div className="space-y-1">
             <label className="text-[10px] font-medium text-slate-500">Kho xuất</label>
-            <Select value={warehouseId || '__none__'} onValueChange={v => setWarehouseId(v === '__none__' ? '' : v)}>
-              <SelectTrigger className="h-7 text-xs"><SelectValue placeholder="Chọn kho…" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none__">— Không chọn</SelectItem>
-                {(warehouses as any[])
-                  .filter((w: any) => !formAllowedWhIds || formAllowedWhIds.has(w.id))
-                  .map((w: any) => <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
+            <WarehouseSingleSelect
+              warehouses={(warehouses as any[]).filter((w: any) => !formAllowedWhIds || formAllowedWhIds.has(w.id))}
+              value={warehouseId}
+              onChange={setWarehouseId}
+              placeholder="Chọn kho…"
+              dropUp
+              triggerClassName="h-7"
+            />
           </div>
           {setWarehouseType !== undefined ? (
             <div className="space-y-1">

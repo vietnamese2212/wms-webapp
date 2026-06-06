@@ -24,6 +24,7 @@ import {
 } from '@/api/hooks'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { SearchInput } from '@/components/shared/SearchInput'
+import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import type { InboundOrder } from '@/types'
 import { unlockAudio } from '@/utils/audio'
 import { useActiveInboundStore } from '@/stores/activeInboundStore'
@@ -435,14 +436,14 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
             <div className="space-y-2">
               <Label>Kho <span className="text-red-500">*</span></Label>
               {canPickWarehouse ? (
-                <Select value={warehouseId} onValueChange={v => { setWarehouseId(v); setSubType(''); setLocationId(''); setMaterialId(''); setMatSearch('') }}>
-                  <SelectTrigger><SelectValue placeholder="Chọn kho" /></SelectTrigger>
-                  <SelectContent>
-                    {(warehouses as { id: string; name: string; code: string }[])
-                      .filter(w => !dialogAllowedWhIds || dialogAllowedWhIds.has(w.id))
-                      .map(w => <SelectItem key={w.id} value={w.id}>{w.name} ({w.code})</SelectItem>)}
-                  </SelectContent>
-                </Select>
+                <WarehouseSingleSelect
+                  warehouses={(warehouses as { id: string; code: string; name: string }[]).filter(w => !dialogAllowedWhIds || dialogAllowedWhIds.has(w.id))}
+                  value={warehouseId}
+                  onChange={v => { setWarehouseId(v); setSubType(''); setLocationId(''); setMaterialId(''); setMatSearch('') }}
+                  placeholder="Chọn kho"
+                  dropUp
+                  triggerClassName="h-10"
+                />
               ) : (
                 <div className="flex h-10 items-center rounded-md border bg-slate-50 px-3 text-sm text-slate-700">
                   {(warehouses as { id: string; name: string }[]).find(w => w.id === warehouseId)?.name ?? (warehouseId || '—')}
@@ -544,13 +545,14 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                 <div>
                   <Label className="text-xs">Kho *</Label>
                   {canPickWarehouse ? (
-                    <Select value={warehouseId} onValueChange={v => { setWarehouseId(v); setSubType(''); setGateRegId(''); setNccRows([emptyNccRow()]) }}>
-                      <SelectTrigger className="h-8 text-xs mt-0.5"><SelectValue placeholder="Chọn kho" /></SelectTrigger>
-                      <SelectContent>
-                        {(warehouses as any[]).filter(w => !dialogAllowedWhIds || dialogAllowedWhIds.has(w.id))
-                          .map(w => <SelectItem key={w.id} value={w.id}>{w.code} – {w.name}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
+                    <WarehouseSingleSelect
+                      warehouses={(warehouses as any[]).filter(w => !dialogAllowedWhIds || dialogAllowedWhIds.has(w.id))}
+                      value={warehouseId}
+                      onChange={v => { setWarehouseId(v); setSubType(''); setGateRegId(''); setNccRows([emptyNccRow()]) }}
+                      placeholder="Chọn kho"
+                      dropUp
+                      triggerClassName="h-8 mt-0.5"
+                    />
                   ) : (
                     <div className="h-8 flex items-center text-xs text-slate-700 border rounded-md bg-white px-2 mt-0.5">
                       {(warehouses as any[]).find(w => w.id === warehouseId)?.name ?? '—'}
@@ -1236,19 +1238,13 @@ export default function Inbound() {
                 </button>
               )}
               <span className="w-px h-4 bg-blue-200 shrink-0" />
-              <Select value={f.warehouseId || '__all__'} onValueChange={v => setInbound({ warehouseId: v === '__all__' ? '' : v, filterMaterials: [], filterCycles: [], filterMachines: [] })}>
-                <SelectTrigger className="h-7 text-xs w-[100px] bg-white">
-                  <SelectValue placeholder="Tất cả kho" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__all__">Tất cả kho</SelectItem>
-                  {(warehouses as { id: string; name: string }[])
-                    .filter(w => !inboundAllowedWhIds || inboundAllowedWhIds.has(w.id))
-                    .map(w => (
-                      <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
+              <WarehouseSingleSelect
+                warehouses={(warehouses as { id: string; name: string }[]).filter(w => !inboundAllowedWhIds || inboundAllowedWhIds.has(w.id))}
+                value={f.warehouseId || ''}
+                onChange={v => setInbound({ warehouseId: v, filterMaterials: [], filterCycles: [], filterMachines: [] })}
+                allLabel="Tất cả kho"
+                triggerClassName="h-7 w-[100px]"
+              />
               <Select value={f.materialCategory || '__all__'} onValueChange={v => setInbound({ materialCategory: v === '__all__' ? '' : v, filterMaterials: [], filterCycles: [], filterMachines: [] })}>
                 <SelectTrigger className="h-7 text-xs w-[100px] bg-white">
                   <SelectValue placeholder="Loại kho" />

@@ -4,6 +4,7 @@ import { useWarehouses, useLocationsReal, useWarehouseTypes } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { MapPin, AlertTriangle, CheckCircle2, Flag, QrCode, Clock, UserRound } from 'lucide-react'
@@ -175,20 +176,13 @@ export default function Stocktake() {
           <p className="text-sm font-semibold text-slate-700">Check vị trí</p>
         </div>
         <div className="flex gap-1.5 flex-wrap items-center">
-          <Select value={warehouseId || '__none__'} onValueChange={v => {
-            setWarehouseId(v === '__none__' ? '' : v)
-            setLocationId('')
-            setResultState({ mode: 'none' })
-            setInputVal('')
-          }}>
-            <SelectTrigger className="h-7 text-xs w-[110px]"><SelectValue placeholder="Kho…" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__none__" className="text-xs">Chọn kho…</SelectItem>
-              {(warehouses as any[]).filter((w: any) => !allowedStockWhIds || allowedStockWhIds.has(w.id)).map((w: any) => (
-                <SelectItem key={w.id} value={w.id} className="text-xs">{w.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <WarehouseSingleSelect
+            warehouses={(warehouses as any[]).filter((w: any) => !allowedStockWhIds || allowedStockWhIds.has(w.id))}
+            value={warehouseId || ''}
+            onChange={v => { setWarehouseId(v); setLocationId(''); setResultState({ mode: 'none' }); setInputVal('') }}
+            placeholder="Kho…"
+            triggerClassName="h-7 w-[110px]"
+          />
           <Select value={category || '__all__'} onValueChange={v => {
             setCategory(v === '__all__' ? '' : v)
             setLocationId('')

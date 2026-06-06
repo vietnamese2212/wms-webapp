@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import type { AxiosError } from 'axios'
-import { Plus, Pencil, ShieldCheck, Building2, User2, KeyRound, Check, Briefcase, Copy, CheckCheck, Trash2, RotateCcw, X, ChevronDown } from 'lucide-react'
+import { Plus, Pencil, ShieldCheck, Building2, User2, KeyRound, Check, Briefcase, Copy, CheckCheck, Trash2, RotateCcw, X } from 'lucide-react'
+import { WarehouseMultiSelect } from '@/components/shared/WarehouseMultiSelect'
 import { formatDateTime } from '@/utils/formatters'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { Button }   from '@/components/ui/button'
@@ -174,82 +175,6 @@ function ConfirmDeleteDialog({ emp, open, onClose }: { emp: EmployeeRecord; open
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  )
-}
-
-// ─── Warehouse multi-select dropdown ─────────────────────────────────────────
-
-function WarehouseMultiSelect({ warehouses, selected, onChange }: {
-  warehouses: { id: string; code: string; name: string }[]
-  selected: string[]
-  onChange: (ids: string[]) => void
-}) {
-  const [open, setOpen] = useState(false)
-  const [search, setSearch] = useState('')
-  const filtered = warehouses.filter(w =>
-    w.name.toLowerCase().includes(search.toLowerCase()) ||
-    w.code.toLowerCase().includes(search.toLowerCase())
-  )
-
-  function toggle(id: string) {
-    onChange(selected.includes(id) ? selected.filter(x => x !== id) : [...selected, id])
-  }
-
-  return (
-    <div className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen(o => !o)}
-        className="w-full flex items-center justify-between bg-white border border-slate-200 rounded-md px-3 py-1.5 text-xs hover:border-slate-300 transition-colors"
-      >
-        <span className={selected.length === 0 ? 'text-slate-400' : 'text-slate-700'}>
-          {selected.length === 0 ? 'Chọn kho…' : `${selected.length} kho được chọn`}
-        </span>
-        <ChevronDown className={`h-3.5 w-3.5 text-slate-400 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
-      </button>
-
-      {open && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => { setOpen(false); setSearch('') }} />
-          <div className="absolute z-50 w-full bottom-full mb-1 bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden">
-            <div className="p-2 border-b border-slate-100">
-              <input
-                type="text"
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                placeholder="Tìm tên hoặc mã kho…"
-                className="w-full text-xs border border-slate-200 rounded px-2 py-1 outline-none focus:border-blue-400"
-                autoFocus
-              />
-            </div>
-            <div className="max-h-44 overflow-y-auto">
-              {filtered.length === 0 ? (
-                <p className="text-[11px] text-slate-400 text-center py-3">Không tìm thấy</p>
-              ) : filtered.map(w => (
-                <label key={w.id} className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={selected.includes(w.id)}
-                    onChange={() => toggle(w.id)}
-                    className="h-3.5 w-3.5 rounded accent-blue-600"
-                  />
-                  <span className="text-[11px] text-slate-700 flex-1">{w.name}</span>
-                  <span className="text-[10px] text-slate-400 font-mono">{w.code}</span>
-                </label>
-              ))}
-            </div>
-            {selected.length > 0 && (
-              <div className="border-t border-slate-100 px-3 py-1.5 flex items-center justify-between">
-                <span className="text-[10px] text-slate-500">{selected.length} đã chọn</span>
-                <button type="button" onClick={() => onChange([])} className="text-[10px] text-red-500 hover:text-red-700">
-                  Bỏ chọn tất cả
-                </button>
-              </div>
-            )}
-          </div>
-        </>
-      )}
-    </div>
   )
 }
 
@@ -558,22 +483,9 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
                       warehouses={warehouses as { id: string; code: string; name: string }[]}
                       selected={warehouseIds}
                       onChange={setWarehouseIds}
+                      dropUp
+                      showTags
                     />
-                    {warehouseIds.length > 0 && (
-                      <div className="flex gap-1 flex-wrap pt-1">
-                        {warehouseIds.map(wid => {
-                          const w = (warehouses as { id: string; code: string; name: string }[]).find(x => x.id === wid)
-                          return w ? (
-                            <span key={wid} className="inline-flex items-center gap-1 bg-blue-50 text-blue-700 border border-blue-200 rounded px-1.5 py-0.5 text-[10px]">
-                              {w.name}
-                              <button type="button" onClick={() => setWarehouseIds(prev => prev.filter(x => x !== wid))} className="hover:text-blue-900">
-                                <X className="h-2.5 w-2.5" />
-                              </button>
-                            </span>
-                          ) : null
-                        })}
-                      </div>
-                    )}
                   </div>
                 )}
               </div>

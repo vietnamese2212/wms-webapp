@@ -6,6 +6,7 @@ import { Scissors, X, Bookmark } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
+import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useLoosePickingItems, useWarehouses, type LoosePickingItem } from '@/api/hooks'
@@ -175,15 +176,13 @@ export default function LoosePicking() {
         </div>
 
         <div className="flex gap-2 flex-wrap items-center">
-          <Select value={f.warehouseId || '__all__'} onValueChange={v => setLoosePicking({ warehouseId: v === '__all__' ? '' : v })}>
-            <SelectTrigger className="h-7 text-xs w-[130px]">
-              <SelectValue placeholder="Kho xuất" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">Tất cả kho</SelectItem>
-              {(warehouses as any[]).filter((w: any) => !looseAllowedWhIds || looseAllowedWhIds.has(w.id)).map((w: any) => <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>)}
-            </SelectContent>
-          </Select>
+          <WarehouseSingleSelect
+            warehouses={(warehouses as any[]).filter((w: any) => !looseAllowedWhIds || looseAllowedWhIds.has(w.id))}
+            value={f.warehouseId || ''}
+            onChange={v => setLoosePicking({ warehouseId: v })}
+            allLabel="Tất cả kho"
+            triggerClassName="h-7 w-[130px]"
+          />
           <MultiSelectFilter label="Loại kho" options={warehouseTypeOpts.map(t => ({ value: t, label: t }))} selected={filterWarehouseTypes} onChange={v => setLoosePicking({ filterWarehouseTypes: v })} />
           <MultiSelectFilter label="Loại xuất" options={typeOptions.map(t => ({ value: t, label: t }))} selected={filterTypes} onChange={v => setLoosePicking({ filterTypes: v })} />
           <MultiSelectFilter label="ĐVVT" options={dvvtOptions.map(d => ({ value: d, label: d }))} selected={filterDvvts} onChange={v => setLoosePicking({ filterDvvts: v })} />

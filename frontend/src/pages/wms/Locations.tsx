@@ -3,6 +3,7 @@ import { MapPin, Plus, Pencil, Trash2, Flag, X } from 'lucide-react'
 import { formatDateTime } from '@/utils/formatters'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { SearchInput } from '@/components/shared/SearchInput'
+import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { TableSkeleton }  from '@/components/shared/TableSkeleton'
 import { EmptyState }     from '@/components/shared/EmptyState'
 import { Input }          from '@/components/ui/input'
@@ -221,17 +222,13 @@ export default function Locations() {
 
         {/* Filters */}
         <div className="flex gap-2 flex-wrap items-center">
-          <Select value={warehouseId || '__all__'} onValueChange={v => { setWarehouseId(v === '__all__' ? '' : v); setCatFilter('') }}>
-            <SelectTrigger className="h-8 text-sm w-[130px]">
-              <SelectValue placeholder="Tất cả kho" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">Tất cả kho</SelectItem>
-              {warehouses.map(w => (
-                <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <WarehouseSingleSelect
+            warehouses={warehouses}
+            value={warehouseId || ''}
+            onChange={v => { setWarehouseId(v); setCatFilter('') }}
+            allLabel="Tất cả kho"
+            triggerClassName="h-8 w-[130px]"
+          />
 
           <Select value={catFilter || '__all__'} onValueChange={v => setCatFilter(v === '__all__' ? '' : v)}>
             <SelectTrigger className="h-8 text-sm w-[130px]">
@@ -428,22 +425,14 @@ export default function Locations() {
             {dialogMode === 'add' && (
               <div>
                 <Label className="text-xs">Kho <span className="text-red-500">*</span></Label>
-                <Select value={form.warehouse_id || '__none__'}
-                  onValueChange={v => {
-                    setField('warehouse_id', v === '__none__' ? '' : v)
-                    setField('category', '')
-                    setField('sub_code', '')
-                  }}>
-                  <SelectTrigger className="h-8 text-sm mt-1">
-                    <SelectValue placeholder="Chọn kho" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">Chọn kho</SelectItem>
-                    {warehouses.map(w => (
-                      <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <WarehouseSingleSelect
+                  warehouses={warehouses}
+                  value={form.warehouse_id}
+                  onChange={v => { setField('warehouse_id', v); setField('category', ''); setField('sub_code', '') }}
+                  placeholder="Chọn kho"
+                  dropUp
+                  triggerClassName="h-8 mt-1"
+                />
               </div>
             )}
 

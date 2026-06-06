@@ -604,7 +604,7 @@ export default function Inventory() {
             options={warehouseOpts}
             selected={f.warehouseIds}
             onChange={v => setInventory({ warehouseIds: v, page: 1 })}
-            searchable={warehouseOpts.length > 5}
+            searchable={true}
             width="min-w-[100px]"
           />
 

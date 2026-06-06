@@ -418,7 +418,7 @@ function GDORow({ gdo, onClick, onAssign }: {
       {/* Giờ giao đơn — inline assign action */}
       <TableCell className="px-2 py-1 whitespace-nowrap" onClick={e => e.stopPropagation()}>
         {gdo.assigned_at ? (
-          <span className="text-[10px] tabular-nums text-green-700 font-medium">{fTime(gdo.assigned_at)}</span>
+          <span className="text-[10px] tabular-nums text-green-600 font-medium">{fTime(gdo.assigned_at)}</span>
         ) : isPending && onAssign ? (
           <button
             onClick={onAssign}
@@ -432,13 +432,13 @@ function GDORow({ gdo, onClick, onAssign }: {
       </TableCell>
 
       <TableCell className="px-2 py-1 whitespace-nowrap">
-        <span className="text-[10px] tabular-nums">{fTime(gdo.started_at)}</span>
+        <span className="text-[10px] tabular-nums text-[#D8891C]">{fTime(gdo.started_at)}</span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px] tabular-nums text-pink-600">{fTime(gdo.scan_completed_at)}</span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
-        <span className="text-[10px] tabular-nums">{fTime(gdo.completed_at)}</span>
+        <span className="text-[10px] tabular-nums text-[#4A90D9]">{fTime(gdo.completed_at)}</span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${statusCls}`}>{statusLabel}</span>

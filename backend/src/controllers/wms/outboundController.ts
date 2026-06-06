@@ -567,13 +567,16 @@ export async function patchGDO(req: Request, res: Response) {
       if (status === 'COMPLETED') patch.completed_at = t
     }
 
-    // Nếu COMPLETED + có shipto_party → set transfer_status = PENDING_DELIVERY
+    // Nếu COMPLETED + shipto_party khớp với 1 kho trong hệ thống → chuyển kho → PENDING_DELIVERY
     if (status === 'COMPLETED') {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: gdoCur } = await (supabase.from('GroupDeliveryOrder') as any)
         .select('shipto_party, transfer_status').eq('id', req.params.id).single()
       if (gdoCur?.shipto_party && !gdoCur.transfer_status) {
-        patch.transfer_status = 'PENDING_DELIVERY'
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: destWh } = await (supabase.from('Warehouse') as any)
+          .select('id').eq('code', gdoCur.shipto_party).eq('is_active', true).maybeSingle()
+        if (destWh) patch.transfer_status = 'PENDING_DELIVERY'
       }
     }
 

@@ -1007,17 +1007,20 @@ export default function OutboundDetail() {
             </Card>
           )}
 
-          {gdo.assigned_at && !gdo.started_at && (
-            <div className="text-xs text-slate-500">
-              Giao đơn: <span className="font-medium">{gdo.assigned_by ?? '—'}</span>
-              <span className="text-slate-400 ml-1">{formatDateTime(gdo.assigned_at)}</span>
-            </div>
-          )}
-
-          {gdo.scan_completed_at && (
-            <div className="text-[10px] text-green-600 font-medium">
-              Quét xong: <span>{formatDateTime(gdo.scan_completed_at)}</span>
-              {gdo.completed_at && <span className="ml-3 text-blue-600">Hoàn thành: {formatDateTime(gdo.completed_at)}</span>}
+          {(gdo.assigned_at || gdo.scan_completed_at || gdo.completed_at) && (
+            <div className="flex flex-wrap gap-x-4 gap-y-0 text-[10px] font-medium">
+              {gdo.assigned_at && (
+                <span className="text-green-600">
+                  Giao đơn:{gdo.assigned_by ? <span className="font-normal text-slate-500"> {gdo.assigned_by} · </span> : ' '}
+                  {formatDateTime(gdo.assigned_at)}
+                </span>
+              )}
+              {gdo.scan_completed_at && (
+                <span className="text-pink-600">Quét xong: {formatDateTime(gdo.scan_completed_at)}</span>
+              )}
+              {gdo.completed_at && (
+                <span className="text-blue-600">Kết thúc: {formatDateTime(gdo.completed_at)}</span>
+              )}
             </div>
           )}
 

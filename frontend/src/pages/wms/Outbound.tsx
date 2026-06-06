@@ -308,14 +308,14 @@ export default function Outbound() {
             {!f.date && <p className="text-xs">Upload file Excel để bắt đầu</p>}
           </div>
         ) : (
-          <div className="overflow-x-auto">
-          <Table className="min-w-[1700px]">
+          <Table className="min-w-[1800px]">
             <TableHeader>
               <TableRow className="bg-slate-50">
                 <TableHead className="px-1.5 py-1.5 w-7" />
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Ngày xuất</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Số xe</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Tên NPP</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Ship-to</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">ĐVVT</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 text-right whitespace-nowrap px-2 py-1.5">Tổng thùng</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 text-right whitespace-nowrap px-2 py-1.5">Pallet</TableHead>
@@ -343,7 +343,6 @@ export default function Outbound() {
               ))}
             </TableBody>
           </Table>
-          </div>
         )}
       </div>
 
@@ -393,6 +392,9 @@ function GDORow({ gdo, onClick, onAssign }: {
       </TableCell>
       <TableCell className="px-2 py-1 max-w-[150px]">
         <span className="text-[10px] truncate block" title={npp}>{npp}</span>
+      </TableCell>
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        <span className="text-[10px] font-mono">{gdo.shipto_party ?? '—'}</span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px]">{gdo.dvvt ?? '—'}</span>

@@ -792,7 +792,7 @@ function GDOFormBody({
                 <SelectItem value="__none__">— Không giao NPP</SelectItem>
                 {(warehouses as any[])
                   .filter((w: any) => w.warehouse_type === 'NPP' && w.is_active)
-                  .map((w: any) => <SelectItem key={w.id} value={w.id}>{w.name} ({w.code})</SelectItem>)}
+                  .map((w: any) => <SelectItem key={w.id} value={w.code}>{w.name} ({w.code})</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
@@ -963,7 +963,7 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
         delivery_date: date,
         warehouse_id: warehouseId || undefined,
         warehouse_type: warehouseType,
-        shipto_party_id: shiptoPartyId || undefined,
+        shipto_party: shiptoPartyId || undefined,
         dvvt: dvvt.trim(),
         customer_name: customerName.trim(),
         export_type: exportType,
@@ -1022,7 +1022,7 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
     setInitialized(true)
     setDate(gdo.delivery_date)
     setWarehouseId(gdo.warehouse_id ?? '')
-    setShiptoPartyId(gdo.shipto_party_id ?? '')
+    setShiptoPartyId(gdo.shipto_party ?? '')
     setDvvt(gdo.dvvt ?? '')
     // distributor_name: single-DO → from first DO; multi-DO → displayed read-only separately
     setCustomerName(gdo.delivery_orders?.[0]?.distributor_name ?? '')
@@ -1065,7 +1065,7 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
         id: gdoId,
         delivery_date: date,
         warehouse_id: warehouseId || undefined,
-        shipto_party_id: shiptoPartyId || undefined,
+        shipto_party: shiptoPartyId || undefined,
         dvvt: dvvt.trim(),
         customer_name: customerName.trim(),
         export_type: exportType,

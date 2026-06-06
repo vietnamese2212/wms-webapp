@@ -1015,7 +1015,7 @@ export default function OutboundDetail() {
           )}
 
           {gdo.scan_completed_at && (
-            <div className="text-[10px] text-green-700 font-medium">
+            <div className="text-[10px] text-green-600 font-medium">
               Quét xong: <span>{formatDateTime(gdo.scan_completed_at)}</span>
               {gdo.completed_at && <span className="ml-3 text-blue-600">Hoàn thành: {formatDateTime(gdo.completed_at)}</span>}
             </div>

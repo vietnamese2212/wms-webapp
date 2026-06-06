@@ -130,6 +130,63 @@ async function fetchGDOFull(id: string) {
   }
 }
 
+// ─── Auto-create inbound khi GDO hoàn thành → NPP warehouse ──
+async function maybeCreateTransferInbound(gdoId: string, t: string): Promise<void> {
+  const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
+    .select('id, shipto_party, delivery_date, warehouse_type').eq('id', gdoId).single()
+  if (!gdo?.shipto_party) return
+
+  const { data: nppWh } = await (supabase.from('Warehouse') as any)
+    .select('id, code, name').eq('code', gdo.shipto_party)
+    .eq('warehouse_type', 'NPP').eq('is_active', true).maybeSingle()
+  if (!nppWh) return
+
+  // Idempotent: nếu đã tạo rồi thì bỏ qua
+  const { count: existing } = await (supabase.from('ProductionImport') as any)
+    .select('id', { count: 'exact', head: true }).eq('from_gdo_id', gdoId)
+  if (existing && existing > 0) return
+
+  const { data: dos } = await (supabase.from('OutboundDelivery') as any)
+    .select('id').eq('gdo_id', gdoId)
+  const doIds = (dos ?? []).map((d: any) => d.id)
+  if (!doIds.length) return
+
+  const { data: items } = await (supabase.from('OutboundItem') as any)
+    .select('material_id, cartons_ordered, material_type').in('do_id', doIds)
+
+  const matMap = new Map<string, { material_id: string; cartons: number }>()
+  for (const item of (items ?? []) as any[]) {
+    if (!item.material_id || item.material_type === 'POSM' || item.material_type === 'Pallet Loscam') continue
+    const cur = matMap.get(item.material_id) ?? { material_id: item.material_id, cartons: 0 }
+    cur.cartons += item.cartons_ordered || 0
+    matMap.set(item.material_id, cur)
+  }
+  if (!matMap.size) return
+
+  const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+  const dateCompact = vnDate.replace(/-/g, '')
+  const { data: existing2 } = await (supabase.from('ProductionImport') as any)
+    .select('id').ilike('import_code', `CK-${dateCompact}-%`)
+  const baseSeq = (existing2?.length ?? 0)
+
+  const toInsert = [...matMap.values()].map((m, idx) => ({
+    id: randomUUID(),
+    import_code: `CK-${dateCompact}-${String(baseSeq + idx + 1).padStart(3, '0')}`,
+    warehouse_id: nppWh.id,
+    material_id: m.material_id,
+    planned_cartons: m.cartons,
+    planned_pallets: 0,
+    status: 'PENDING',
+    source_type: 'TRANSFER',
+    warehouse_type: gdo.warehouse_type ?? null,
+    import_date: vnDate,
+    from_gdo_id: gdoId,
+    updated_at: t,
+  }))
+
+  await (supabase.from('ProductionImport') as any).insert(toInsert)
+}
+
 // ─── List GDOs ────────────────────────────────────────────────
 
 export async function listGDOs(req: Request, res: Response) {
@@ -663,6 +720,10 @@ export async function uncompleteGDO(req: Request, res: Response) {
       .update({ status: 'IN_PROGRESS', completed_at: null, updated_at: now() })
       .eq('id', req.params.id)
     if (error) return fail(res, error.message)
+    // Hủy inbound điều chuyển nếu chưa bắt đầu nhận
+    await (supabase.from('ProductionImport') as any)
+      .update({ status: 'CANCELLED', updated_at: now() })
+      .eq('from_gdo_id', req.params.id).eq('status', 'PENDING')
     return ok(res, await fetchGDOFull(req.params.id))
   } catch (e) { return fail(res, String(e)) }
 }
@@ -1459,6 +1520,7 @@ export async function scanItem(req: Request, res: Response) {
             updated_at:       t,
           })
           .eq('id', doRow.gdo_id)
+        if (gdoCompleted) await maybeCreateTransferInbound(doRow.gdo_id, t)
       }
     }
 
@@ -1565,6 +1627,7 @@ export async function deleteScanEntry(req: Request, res: Response) {
         if (gdo?.started_at && gdoStatus === 'PENDING') gdoStatus = 'IN_PROGRESS'
         await (supabase.from('GroupDeliveryOrder') as any)
           .update({ status: gdoStatus, updated_at: t }).eq('id', doRow.gdo_id)
+        if (gdoCompleted) await maybeCreateTransferInbound(doRow.gdo_id, t)
       }
     }
 
@@ -1658,6 +1721,7 @@ export async function confirmLoosePickingItem(req: Request, res: Response) {
             updated_at:      t,
           })
           .eq('id', doRow.gdo_id)
+        if (gdoCompleted) await maybeCreateTransferInbound(doRow.gdo_id, t)
       }
     }
 
@@ -1792,6 +1856,7 @@ export async function manualCompleteItem(req: Request, res: Response) {
           updated_at: t,
         })
         .eq('id', doRow.gdo_id)
+      if (gdoCompleted) await maybeCreateTransferInbound(doRow.gdo_id, t)
     }
 
     return ok(res, { success: true })

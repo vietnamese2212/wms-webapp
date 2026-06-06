@@ -532,6 +532,56 @@ function MatPicker({ value, matName, onSelect, disabled, onPaste }: {
   )
 }
 
+// ─── Customer combobox (search + free text + NPP detection) ──
+
+function CustomerCombobox({ value, onChange, onNPPChange, warehouses }: {
+  value: string
+  onChange: (v: string) => void
+  onNPPChange: (code: string) => void  // '' = không phải NPP
+  warehouses: any[]
+}) {
+  const [open, setOpen] = useState(false)
+  const allActive = (warehouses as any[]).filter((w: any) => w.is_active)
+  const filtered = value.trim()
+    ? allActive.filter((w: any) =>
+        w.name.toLowerCase().includes(value.toLowerCase()) ||
+        w.code.toLowerCase().includes(value.toLowerCase())
+      )
+    : allActive
+
+  return (
+    <div className="relative">
+      <Input
+        className="h-7 text-xs"
+        placeholder="Tên NPP / khách hàng…"
+        value={value}
+        onChange={e => { onChange(e.target.value); onNPPChange(''); setOpen(true) }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+      />
+      {open && filtered.length > 0 && (
+        <div className="absolute z-50 w-full mt-0.5 bg-white border border-slate-200 rounded shadow-lg max-h-44 overflow-y-auto">
+          {filtered.map((w: any) => (
+            <button key={w.id} type="button"
+              className="w-full text-left px-2.5 py-1.5 text-[11px] hover:bg-slate-50 flex items-center justify-between gap-2"
+              onMouseDown={() => {
+                onChange(w.name)
+                onNPPChange(w.warehouse_type === 'NPP' ? w.code : '')
+                setOpen(false)
+              }}
+            >
+              <span>{w.name} <span className="text-slate-400">({w.code})</span></span>
+              {w.warehouse_type === 'NPP' && (
+                <span className="text-[9px] font-medium text-amber-600 border border-amber-300 rounded px-1">NPP</span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Item row type ────────────────────────────────────────────
 
 type ItemRow = {
@@ -757,7 +807,18 @@ function GDOFormBody({
                 {(gdo?.delivery_orders ?? []).map(d => d.distributor_name).filter(Boolean).join(' · ') || '—'}
               </div>
             ) : (
-              <Input className="h-7 text-xs" placeholder="Tên NPP / khách hàng…" value={customerName} onChange={e => setCustomerName(e.target.value)} />
+              <CustomerCombobox
+                value={customerName}
+                onChange={setCustomerName}
+                onNPPChange={setShiptoPartyId}
+                warehouses={warehouses}
+              />
+            )}
+            {shiptoPartyId && (
+              <div className="flex items-center gap-1.5 rounded bg-amber-50 border border-amber-200 px-2 py-1 text-[10px] text-amber-800">
+                <AlertTriangle className="h-3 w-3 shrink-0" />
+                <span>Kho NPP · Ship-to: <span className="font-mono font-semibold">{shiptoPartyId}</span> — Hoàn thành đơn sẽ tạo phiếu nhập cho kho này</span>
+              </div>
             )}
           </div>
           <div className="space-y-1">
@@ -785,18 +846,6 @@ function GDOFormBody({
                 </p>
               )}
             </div>
-          </div>
-          <div className="space-y-1">
-            <label className="text-[10px] font-medium text-slate-500">Kho nhận (NPP)</label>
-            <Select value={shiptoPartyId || '__none__'} onValueChange={v => setShiptoPartyId(v === '__none__' ? '' : v)}>
-              <SelectTrigger className="h-7 text-xs"><SelectValue placeholder="— Không giao NPP" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none__">— Không giao NPP</SelectItem>
-                {(warehouses as any[])
-                  .filter((w: any) => w.warehouse_type === 'NPP' && w.is_active)
-                  .map((w: any) => <SelectItem key={w.id} value={w.code}>{w.name} ({w.code})</SelectItem>)}
-              </SelectContent>
-            </Select>
           </div>
         </div>
       </div>

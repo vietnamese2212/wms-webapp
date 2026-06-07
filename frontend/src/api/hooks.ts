@@ -1597,16 +1597,24 @@ export function useTmsOrders(params?: { date?: string; warehouse_id?: string }) 
   })
 }
 
+export type TransferGDO = {
+  id: string; group_code: string; shipto_party: string | null; transfer_status: string | null
+  delivery_date?: string | null
+  warehouse?: { id: string; code: string; name: string } | null
+}
+export type TransferOrder = import('@/types').TmsOrder & { transfer_gdo?: TransferGDO | null }
+
+// destination_warehouse_id: nếu truyền, lọc theo kho nhận (dùng ở Inbound để hiển thị đúng kho)
+// Nếu không truyền: hiển thị tất cả lệnh TRANSFER (dùng ở TMS Bookings)
 export function useTransferOrders(destination_warehouse_id?: string) {
   return useQuery({
-    queryKey: ['tms-orders-transfer', destination_warehouse_id],
+    queryKey: ['tms-orders-transfer', destination_warehouse_id ?? 'all'],
     queryFn: async () => {
-      const { data } = await apiClient.get('/tms/orders', {
-        params: { source_type: 'TRANSFER', destination_warehouse_id },
-      })
-      return data.data as (import('@/types').TmsOrder & { transfer_gdo?: { id: string; group_code: string; shipto_party: string | null; transfer_status: string | null } | null })[]
+      const params: Record<string, string> = { source_type: 'TRANSFER' }
+      if (destination_warehouse_id) params.destination_warehouse_id = destination_warehouse_id
+      const { data } = await apiClient.get('/tms/orders', { params })
+      return data.data as TransferOrder[]
     },
-    enabled: !!destination_warehouse_id,
   })
 }
 
@@ -1628,6 +1636,7 @@ type OrderWriteBody = {
   vehicle_type?: string | null; direction?: string | null; warehouse_type?: string | null
   planned_boxes?: number | null; planned_pallets?: number | null; planned_tons?: number | null
   gdo_refs?: string | null; notes?: string | null; status?: string
+  eta?: string | null
 }
 
 export function useCreateOrder() {
@@ -1644,7 +1653,10 @@ export function useUpdateOrder() {
   return useMutation({
     mutationFn: ({ id, ...body }: OrderWriteBody & { id: string }) =>
       apiClient.patch(`/tms/orders/${id}`, body).then(r => r.data.data as import('@/types').TmsOrder),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-orders'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tms-orders'] })
+      qc.invalidateQueries({ queryKey: ['tms-orders-transfer'] })
+    },
   })
 }
 

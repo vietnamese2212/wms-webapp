@@ -6,6 +6,7 @@ import { ok, fail } from '../../utils/response'
 const ORDER_SELECT = `
   *,
   ncc:TransportCompany!ncc_id(id, code, name),
+  warehouse:Warehouse!warehouse_id(id, code, name),
   vehicle_slots:TmsVehicleSlot(
     id, order_id, slot_id,
     slot:DeliverySlot!slot_id(id, date, time_from, time_to, direction, cargo_type, max_vehicles, booked_count),
@@ -25,15 +26,15 @@ export async function listOrders(req: Request, res: Response) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const userNccId: string | null = (req as any).user?.ncc_id ?? null
 
-    // TRANSFER orders: không cần date, lọc theo destination
+    // TRANSFER orders: không cần date
     if (source_type === 'TRANSFER') {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let q = (supabase.from('TmsOrder') as any)
-        .select(`${ORDER_SELECT}, transfer_gdo:GroupDeliveryOrder!transfer_gdo_id(id, group_code, shipto_party, transfer_status)`)
+        .select(`${ORDER_SELECT}, transfer_gdo:GroupDeliveryOrder!transfer_gdo_id(id, group_code, shipto_party, transfer_status, delivery_date, warehouse:Warehouse!warehouse_id(id, code, name))`)
         .eq('source_type', 'TRANSFER')
         .order('created_at', { ascending: false })
+      // Lọc kho nhận nếu truyền (dùng bởi Inbound để lấy lệnh về đúng kho)
       if (destination_warehouse_id) q = q.eq('destination_warehouse_id', destination_warehouse_id)
-      if (warehouse_id)             q = q.eq('warehouse_id', warehouse_id)
       const { data, error } = await q
       if (error) return fail(res, error.message)
       return ok(res, data)
@@ -181,7 +182,7 @@ export async function updateOrder(req: Request, res: Response) {
       date, warehouse_id, ncc_id, npp_name,
       vehicle_type, direction, warehouse_type,
       planned_boxes, planned_pallets, planned_tons,
-      gdo_refs, notes, status, priority,
+      gdo_refs, notes, status, priority, eta,
     } = req.body
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -208,6 +209,7 @@ export async function updateOrder(req: Request, res: Response) {
     if (notes           !== undefined) updates.notes           = notes || null
     if (status          !== undefined) updates.status          = status
     if (priority        !== undefined) updates.priority        = priority === true || priority === 'true'
+    if (eta             !== undefined) updates.eta             = eta || null
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await (supabase.from('TmsOrder') as any)

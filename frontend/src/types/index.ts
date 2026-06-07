@@ -457,6 +457,7 @@ export interface TmsOrder {
   order_code:      string
   date:            string
   warehouse_id:    string
+  warehouse?:      { id: string; code: string; name: string } | null
   ncc_id:          string | null
   ncc?:            Pick<TransportCompany, 'id' | 'code' | 'name'> | null
   npp_name:        string | null
@@ -471,6 +472,9 @@ export interface TmsOrder {
   priority:        boolean
   export_status:   string | null
   status:          string
+  source_type?:    string | null
+  destination_warehouse_id?: string | null
+  eta?:            string | null
   created_by:      string | null
   updated_by:      string | null
   created_at:      string

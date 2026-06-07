@@ -640,6 +640,79 @@ export async function createTransferOrder(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
+// POST /api/tms/orders/:id/confirm-receipt  — NPP xác nhận nhận hàng → tạo ProductionImport
+export async function confirmTransferReceipt(req: Request, res: Response) {
+  try {
+    const { id } = req.params
+    const t = new Date().toISOString()
+
+    const { data: tmsOrder } = await (supabase.from('TmsOrder') as any)
+      .select('id, destination_warehouse_id, transfer_gdo_id, warehouse:Warehouse!destination_warehouse_id(id, code, name)')
+      .eq('id', id).single()
+    if (!tmsOrder) return fail(res, 'Không tìm thấy lệnh chuyển kho', 404)
+    if (!tmsOrder.transfer_gdo_id) return fail(res, 'Lệnh này không phải lệnh chuyển kho', 400)
+    if (!tmsOrder.destination_warehouse_id) return fail(res, 'Lệnh chưa có kho nhận', 400)
+
+    const gdoId = tmsOrder.transfer_gdo_id as string
+    const nppWh = tmsOrder.warehouse as { id: string; code: string; name: string }
+
+    const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
+      .select('id, transfer_status').eq('id', gdoId).single()
+    if (!gdo) return fail(res, 'Không tìm thấy GDO', 404)
+    if (gdo.transfer_status === 'DELIVERED') return fail(res, 'GDO này đã được xác nhận giao', 409)
+    if (gdo.transfer_status !== 'IN_TRANSIT') return fail(res, 'GDO phải ở trạng thái Đang giao trước khi xác nhận', 400)
+
+    const { count: existing } = await (supabase.from('ProductionImport') as any)
+      .select('id', { count: 'exact', head: true }).eq('from_gdo_id', gdoId)
+    if (existing && existing > 0) return fail(res, 'Đã tạo phiếu nhập cho lô hàng này rồi', 409)
+
+    const { data: dos } = await (supabase.from('OutboundDelivery') as any)
+      .select('id').eq('gdo_id', gdoId)
+    const doIds: string[] = (dos ?? []).map((d: { id: string }) => d.id)
+    if (!doIds.length) return fail(res, 'GDO không có đơn giao hàng', 400)
+
+    const { data: items } = await (supabase.from('OutboundItem') as any)
+      .select('material_id, cartons_ordered, material_type, material:Material(category)').in('do_id', doIds)
+
+    const matMap = new Map<string, { material_id: string; cartons: number; category: string | null }>()
+    for (const item of (items ?? []) as any[]) {
+      if (!item.material_id || item.material_type === 'POSM' || item.material_type === 'Pallet Loscam') continue
+      if (!matMap.has(item.material_id))
+        matMap.set(item.material_id, { material_id: item.material_id, cartons: 0, category: item.material?.category ?? null })
+      matMap.get(item.material_id)!.cartons += item.cartons_ordered || 0
+    }
+    if (!matMap.size) return fail(res, 'GDO không có mặt hàng hợp lệ', 400)
+
+    const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+    const [vy, vm, vd] = vnDate.split('-')
+    const ddmmyy = `${vd}${vm}${vy.slice(2)}`
+    const importPrefix = `${nppWh.code}_N_${ddmmyy}_`
+    const { count: existingCount } = await (supabase.from('ProductionImport') as any)
+      .select('*', { count: 'exact', head: true }).ilike('import_code', `${importPrefix}%`)
+
+    const toInsert = [...matMap.values()].map((m, idx) => ({
+      id: randomUUID(),
+      import_code: `${importPrefix}${String((existingCount ?? 0) + idx + 1).padStart(2, '0')}`,
+      warehouse_id: tmsOrder.destination_warehouse_id,
+      material_id: m.material_id,
+      planned_cartons: m.cartons,
+      planned_pallets: 0,
+      status: 'PENDING',
+      source_type: 'TRANSFER',
+      warehouse_type: m.category ?? null,
+      import_date: vnDate,
+      from_gdo_id: gdoId,
+      updated_at: t,
+    }))
+    await (supabase.from('ProductionImport') as any).insert(toInsert)
+
+    await (supabase.from('GroupDeliveryOrder') as any)
+      .update({ transfer_status: 'DELIVERED', updated_at: t }).eq('id', gdoId)
+
+    return ok(res, { created: toInsert.length })
+  } catch (e) { return fail(res, String(e)) }
+}
+
 // GET /api/tms/orders/:id/transfer-goods
 export async function getTransferGoods(req: Request, res: Response) {
   try {

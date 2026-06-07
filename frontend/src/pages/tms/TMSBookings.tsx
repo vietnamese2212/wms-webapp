@@ -19,7 +19,7 @@ import {
   useAddVehicleSlot, useUpdateVehicleSlot, useReleaseVehicleSlot, useRevokeVehicleSlot, useDeleteVehicleSlot,
   usePlanLinesByOrder, usePlanVsActual, useBulkCreatePlanLinesForOrder, useMaterials,
   useBulkCreatePlanLines, useUpdatePlanLine, useDeletePlanLine,
-  useTransferOrders, useCreateTransferOrder, useGDOs, useTransferGoods,
+  useTransferOrders, useCreateTransferOrder, useConfirmTransferReceipt, useGDOs, useTransferGoods,
   type TransferOrder,
 } from '@/api/hooks'
 import { formatDate, formatDateTime } from '@/utils/formatters'
@@ -1878,7 +1878,7 @@ function TransportUpdateDialog({ order, onClose }: { order: TransferOrder | null
     <Dialog open={!!order} onOpenChange={v => !v && onClose()}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
-          <DialogTitle>Cập nhật giao hàng</DialogTitle>
+          <DialogTitle>ĐVVT booking</DialogTitle>
           <p className="text-xs text-slate-500 mt-1">{order.order_code} · {order.transfer_gdo?.warehouse?.name ?? '—'} → {order.warehouse?.name ?? '—'}</p>
         </DialogHeader>
         <div className="space-y-3 py-2">
@@ -1930,10 +1930,12 @@ function TransportUpdateDialog({ order, onClose }: { order: TransferOrder | null
 
 // ── Transfer Order Detail (slide-over dialog ~80% screen) ────────────────────
 
-function TransferOrderDetail({ order, canEdit, onClose }: { order: TransferOrder | null; canEdit: boolean; onClose: () => void }) {
+function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { order: TransferOrder | null; canEdit: boolean; canConfirmReceipt: boolean; onClose: () => void }) {
   const { data: goods = [], isLoading } = useTransferGoods(order?.id)
   const [expandedMats, setExpandedMats] = useState<Set<string>>(new Set())
   const [showUpdate, setShowUpdate]     = useState(false)
+  const [confirmErr, setConfirmErr]     = useState('')
+  const { mutateAsync: confirmReceipt, isPending: confirming } = useConfirmTransferReceipt()
 
   const hasPallets = goods.some(g => g.pallets.length > 0)
   const allExpanded = hasPallets && goods.filter(g => g.pallets.length > 0).every(g => expandedMats.has(g.material_id))
@@ -1972,9 +1974,25 @@ function TransferOrderDetail({ order, canEdit, onClose }: { order: TransferOrder
               <span className="text-sm font-mono font-bold text-slate-800">{order?.order_code}</span>
               {cfg && <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${cfg.cls}`}>{cfg.label}</span>}
               <div className="ml-auto flex items-center gap-2 shrink-0">
+                {canConfirmReceipt && tStatus === 'IN_TRANSIT' && (
+                  <Button size="sm" className="h-7 text-xs bg-green-600 hover:bg-green-700"
+                    disabled={confirming}
+                    onClick={async () => {
+                      if (!order) return
+                      setConfirmErr('')
+                      try {
+                        await confirmReceipt(order.id)
+                      } catch (e: unknown) {
+                        const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
+                        setConfirmErr(msg ?? 'Lỗi xác nhận nhận hàng')
+                      }
+                    }}>
+                    {confirming ? 'Đang xử lý...' : 'NPP bắt đầu nhận'}
+                  </Button>
+                )}
                 {canEdit && (
                   <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setShowUpdate(true)}>
-                    Cập nhật giao hàng
+                    ĐVVT booking
                   </Button>
                 )}
                 {!isLoading && goods.length > 0 && hasPallets && (
@@ -1984,6 +2002,7 @@ function TransferOrderDetail({ order, canEdit, onClose }: { order: TransferOrder
                 )}
               </div>
             </div>
+            {confirmErr && <p className="text-xs text-red-600 bg-red-50 px-2 py-1 rounded mt-1">{confirmErr}</p>}
             {/* Dòng 2: Info grid */}
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-0.5 text-[11px]">
               <div className="flex gap-2">
@@ -2146,7 +2165,7 @@ function TransferOrderDetail({ order, canEdit, onClose }: { order: TransferOrder
 
 // ── TransferOrdersPanel ───────────────────────────────────────────────────────
 
-function TransferOrdersPanel({ canCreate, canEdit }: { canCreate: boolean; canEdit: boolean }) {
+function TransferOrdersPanel({ canCreate, canEdit, canConfirmReceipt }: { canCreate: boolean; canEdit: boolean; canConfirmReceipt: boolean }) {
   const { data: pendingGDOs = [], isLoading: loadingGDOs } = useGDOs({ transfer_status: 'PENDING_DELIVERY' })
   const { data: orders = [], isLoading: loadingOrders } = useTransferOrders()
   const { mutateAsync: createTransfer } = useCreateTransferOrder()
@@ -2172,7 +2191,7 @@ function TransferOrdersPanel({ canCreate, canEdit }: { canCreate: boolean; canEd
 
   return (
     <div className="flex flex-col h-full">
-      <TransferOrderDetail order={selectedOrder} canEdit={canEdit} onClose={() => setSelectedOrderId(null)} />
+      <TransferOrderDetail order={selectedOrder} canEdit={canEdit} canConfirmReceipt={canConfirmReceipt} onClose={() => setSelectedOrderId(null)} />
       {err && (
         <div className="px-3 py-2 bg-red-50 border-b border-red-200 text-xs text-red-700 shrink-0">{err}</div>
       )}
@@ -2620,8 +2639,9 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
 export default function TMSBookings() {
   const user = useAuthStore(s => s.user)
   const perms = (user?.module_permissions as ModulePermissions | null) ?? null
-  const canCreate     = can(perms, 'tms_plan', 'create')
-  const canEdit       = can(perms, 'tms_plan', 'edit')
+  const canCreate          = can(perms, 'tms_plan', 'create')
+  const canEdit            = can(perms, 'tms_plan', 'edit')
+  const canConfirmReceipt  = can(perms, 'tms_plan', 'confirm_receipt')
   const canDelete     = can(perms, 'tms_plan', 'delete')
   const canAddVehicle = can(perms, 'tms_plan', 'add_vehicle')
   const canRelease    = can(perms, 'tms_plan', 'release')
@@ -3076,7 +3096,7 @@ export default function TMSBookings() {
       {/* Content */}
       {activeTab === 'transfer' ? (
         <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
-          <TransferOrdersPanel canCreate={canCreate} canEdit={canEdit} />
+          <TransferOrdersPanel canCreate={canCreate} canEdit={canEdit} canConfirmReceipt={canConfirmReceipt} />
         </div>
       ) : null}
       <div className={`flex-1 min-h-0 overflow-auto pb-20 lg:pb-4 ${activeTab !== 'main' ? 'hidden' : ''}`}>

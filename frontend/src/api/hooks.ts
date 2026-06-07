@@ -1655,6 +1655,19 @@ export function useCreateTransferOrder() {
   })
 }
 
+export function useConfirmTransferReceipt() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (orderId: string) =>
+      apiClient.post(`/tms/orders/${orderId}/confirm-receipt`).then(r => r.data.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tms-orders-transfer'] })
+      qc.invalidateQueries({ queryKey: ['gdos'] })
+      qc.invalidateQueries({ queryKey: ['inbound-orders'] })
+    },
+  })
+}
+
 type OrderWriteBody = {
   order_code?: string; date?: string; warehouse_id?: string
   ncc_id?: string | null; npp_name?: string | null

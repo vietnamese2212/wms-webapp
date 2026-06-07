@@ -137,66 +137,6 @@ async function fetchGDOFull(id: string) {
   }
 }
 
-// ─── Auto-create inbound khi GDO hoàn thành → NPP warehouse ──
-async function maybeCreateTransferInbound(gdoId: string, t: string): Promise<void> {
-  const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
-    .select('id, shipto_party, delivery_date, warehouse_type, group_code').eq('id', gdoId).single()
-  if (!gdo?.shipto_party) return
-
-  const { data: nppWh } = await (supabase.from('Warehouse') as any)
-    .select('id, code, name').eq('code', gdo.shipto_party)
-    .eq('warehouse_type', 'NPP').eq('is_active', true).maybeSingle()
-  if (!nppWh) return
-
-  // Idempotent: nếu đã tạo rồi thì bỏ qua
-  const { count: existing } = await (supabase.from('ProductionImport') as any)
-    .select('id', { count: 'exact', head: true }).eq('from_gdo_id', gdoId)
-  if (existing && existing > 0) return
-
-  const { data: dos } = await (supabase.from('OutboundDelivery') as any)
-    .select('id').eq('gdo_id', gdoId)
-  const doIds = (dos ?? []).map((d: any) => d.id)
-  if (!doIds.length) return
-
-  const { data: items } = await (supabase.from('OutboundItem') as any)
-    .select('material_id, cartons_ordered, material_type, material:Material(category)').in('do_id', doIds)
-
-  const matMap = new Map<string, { material_id: string; cartons: number; category: string | null }>()
-  for (const item of (items ?? []) as any[]) {
-    if (!item.material_id || item.material_type === 'POSM' || item.material_type === 'Pallet Loscam') continue
-    if (!matMap.has(item.material_id)) {
-      matMap.set(item.material_id, { material_id: item.material_id, cartons: 0, category: (item.material as any)?.category ?? null })
-    }
-    matMap.get(item.material_id)!.cartons += item.cartons_ordered || 0
-  }
-  if (!matMap.size) return
-
-  const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
-  const [vy, vm, vd] = vnDate.split('-')
-  const ddmmyy = `${vd}${vm}${vy.slice(2)}`
-  const importPrefix = `${nppWh.code}_N_${ddmmyy}_`
-  const { count: existingCount } = await (supabase.from('ProductionImport') as any)
-    .select('*', { count: 'exact', head: true })
-    .ilike('import_code', `${importPrefix}%`)
-
-  const toInsert = [...matMap.values()].map((m, idx) => ({
-    id: randomUUID(),
-    import_code: `${importPrefix}${String((existingCount ?? 0) + idx + 1).padStart(2, '0')}`,
-    warehouse_id: nppWh.id,
-    material_id: m.material_id,
-    planned_cartons: m.cartons,
-    planned_pallets: 0,
-    status: 'PENDING',
-    source_type: 'TRANSFER',
-    warehouse_type: m.category ?? null,
-    import_date: vnDate,
-    from_gdo_id: gdoId,
-    updated_at: t,
-  }))
-
-  await (supabase.from('ProductionImport') as any).insert(toInsert)
-}
-
 // ─── List GDOs ────────────────────────────────────────────────
 
 export async function listGDOs(req: Request, res: Response) {
@@ -608,7 +548,6 @@ export async function patchGDO(req: Request, res: Response) {
     const { error } = await (supabase.from('GroupDeliveryOrder') as any)
       .update(patch).eq('id', req.params.id)
     if (error) return fail(res, error.message)
-    if (status === 'COMPLETED') await maybeCreateTransferInbound(req.params.id, t)
     const result = await fetchGDOFull(req.params.id)
     return ok(res, result)
   } catch (e) { return fail(res, String(e)) }

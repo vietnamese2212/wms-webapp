@@ -127,6 +127,7 @@ export const MODULES = {
       revoke:          'Thu hồi booking (bỏ qua giờ)',
       upload_outbound: 'Upload kế hoạch xuất',
       upload_inbound:  'Upload kế hoạch nhập',
+      confirm_receipt: 'NPP xác nhận nhận hàng',
     },
   },
   tms_vehicle_types: {

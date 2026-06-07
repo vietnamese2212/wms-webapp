@@ -9,11 +9,16 @@ const now = () => new Date().toISOString()
 // ─── Helpers ──────────────────────────────────────────────────
 
 function parsePlannedDate(group_code: string): string | null {
-  const prefix = group_code.split('_')[0]
-  if (!prefix || prefix.length !== 6) return null
-  const dd = prefix.slice(0, 2)
-  const mm = prefix.slice(2, 4)
-  const yy = prefix.slice(4, 6)
+  const parts = group_code.split('_')
+  // New format: warehouseCode_X|N_ddmmyy_stt  (parts[1] is 'X' or 'N')
+  // Old format: ddmmyy_Kho_stt                (parts[0] is 6-digit date)
+  const rawDate = (parts.length >= 4 && (parts[1] === 'X' || parts[1] === 'N'))
+    ? parts[2]
+    : parts[0]
+  if (!rawDate || rawDate.length !== 6) return null
+  const dd = rawDate.slice(0, 2)
+  const mm = rawDate.slice(2, 4)
+  const yy = rawDate.slice(4, 6)
   const d = new Date(Date.UTC(2000 + parseInt(yy), parseInt(mm) - 1, parseInt(dd)))
   if (isNaN(d.getTime())) return null
   return d.toISOString().slice(0, 10)
@@ -27,8 +32,16 @@ function parseDecimal(val: any): number {
 
 function validateGroupCode(gc: string): string | null {
   const parts = gc.split('_')
-  if (parts.length < 3)                        return 'Số xe phải có định dạng ddmmyy_Kho_STT (vd: 150526_BV_01)'
-  if (!/^\d{6}$/.test(parts[0]))               return 'Phần đầu Số xe phải là 6 chữ số ddmmyy'
+  // New format: warehouseCode_X|N_ddmmyy_stt
+  if (parts.length >= 4 && (parts[1] === 'X' || parts[1] === 'N')) {
+    if (!/^\d{6}$/.test(parts[2]))              return 'Phần ngày trong Số xe phải là 6 chữ số ddmmyy'
+    if (!/^\d+$/.test(parts[parts.length - 1])) return 'Phần cuối Số xe phải là số thứ tự (01, 02…)'
+    if (!parsePlannedDate(gc))                  return 'Ngày trong Số xe không hợp lệ'
+    return null
+  }
+  // Old format fallback: ddmmyy_Kho_stt
+  if (parts.length < 3)                        return 'Số xe phải có định dạng Mãkho_X_ddmmyy_stt (vd: 88888888_X_060626_01)'
+  if (!/^\d{6}$/.test(parts[0]))               return 'Định dạng Số xe không hợp lệ — dùng Mãkho_X_ddmmyy_stt'
   if (!/^\d+$/.test(parts[parts.length - 1]))  return 'Phần cuối Số xe phải là số thứ tự (01, 02…)'
   if (!parsePlannedDate(gc))                   return 'Ngày trong Số xe không hợp lệ (ddmmyy phải là ngày thực)'
   return null
@@ -295,14 +308,18 @@ export async function createGDO(req: Request, res: Response) {
     if (!delivery_date) return fail(res, 'delivery_date là bắt buộc', 400)
     if (!items?.length) return fail(res, 'Phải có ít nhất 1 mặt hàng', 400)
 
-    // Auto-generate group_code: ddmmyy_ĐT_01, _02, ...
+    // Auto-generate group_code: warehouseCode_X_ddmmyy_stt
     const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
     const [yr, mo, dy] = today.split('-')
     const ddmmyy = `${dy}${mo}${yr.slice(2)}`
-    const prefix = `${ddmmyy}_ĐT_`
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const whData = warehouse_id ? (await (supabase.from('Warehouse') as any).select('code').eq('id', warehouse_id).single()).data : null
+    const whCode = whData?.code ? String(whData.code) : 'XX'
+    const prefix = `${whCode}_X_${ddmmyy}_`
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: existing } = await (supabase.from('GroupDeliveryOrder') as any)
       .select('group_code').ilike('group_code', `${prefix}%`)
-    const maxNum = Math.max(0, ...(existing ?? []).map((r: any) => parseInt(r.group_code.replace(prefix, '')) || 0))
+    const maxNum = Math.max(0, ...(existing ?? []).map((r: any) => parseInt(r.group_code.split('_').at(-1) ?? '') || 0))
     const group_code = `${prefix}${String(maxNum + 1).padStart(2, '0')}`
 
     const gdoId = randomUUID()

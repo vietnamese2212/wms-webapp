@@ -32,18 +32,12 @@ function parseDecimal(val: any): number {
 
 function validateGroupCode(gc: string): string | null {
   const parts = gc.split('_')
-  // New format: warehouseCode_X|N_ddmmyy_stt
-  if (parts.length >= 4 && (parts[1] === 'X' || parts[1] === 'N')) {
-    if (!/^\d{6}$/.test(parts[2]))              return 'Phần ngày trong Số xe phải là 6 chữ số ddmmyy'
-    if (!/^\d+$/.test(parts[parts.length - 1])) return 'Phần cuối Số xe phải là số thứ tự (01, 02…)'
-    if (!parsePlannedDate(gc))                  return 'Ngày trong Số xe không hợp lệ'
-    return null
-  }
-  // Old format fallback: ddmmyy_Kho_stt
-  if (parts.length < 3)                        return 'Số xe phải có định dạng Mãkho_X_ddmmyy_stt (vd: 88888888_X_060626_01)'
-  if (!/^\d{6}$/.test(parts[0]))               return 'Định dạng Số xe không hợp lệ — dùng Mãkho_X_ddmmyy_stt'
-  if (!/^\d+$/.test(parts[parts.length - 1]))  return 'Phần cuối Số xe phải là số thứ tự (01, 02…)'
-  if (!parsePlannedDate(gc))                   return 'Ngày trong Số xe không hợp lệ (ddmmyy phải là ngày thực)'
+  // Bắt buộc format mới: Mãkho_X_ddmmyy_stt (vd: 88888888_X_060626_01)
+  if (parts.length < 4 || (parts[1] !== 'X' && parts[1] !== 'N'))
+    return 'Số xe phải có định dạng Mãkho_X_ddmmyy_stt (vd: 88888888_X_060626_01)'
+  if (!/^\d{6}$/.test(parts[2]))              return 'Phần ngày trong Số xe phải là 6 chữ số ddmmyy'
+  if (!/^\d+$/.test(parts[parts.length - 1])) return 'Phần cuối Số xe phải là số thứ tự (01, 02…)'
+  if (!parsePlannedDate(gc))                  return 'Ngày trong Số xe không hợp lệ'
   return null
 }
 

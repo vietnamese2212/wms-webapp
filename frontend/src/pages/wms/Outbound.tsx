@@ -670,7 +670,7 @@ function GDOFormBody({
 
   const TODAY_STR = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   const [yr, mo, dy] = TODAY_STR.split('-')
-  const codePreview = mode === 'create' ? `${dy}${mo}${yr.slice(2)}_ĐT_XX` : gdo?.group_code ?? ''
+  const codePreview = mode === 'create' ? `Mãkho_X_${dy}${mo}${yr.slice(2)}_01` : gdo?.group_code ?? ''
 
   function updateItem(id: string, patch: Partial<ItemRow>) {
     setItems(rows => rows.map(r => r.id === id ? { ...r, ...patch } : r))

@@ -42,9 +42,8 @@ function vnDate(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 }
 
-function generateImportCode(dateStr: string, seq: number): string {
-  const [y, m, d] = dateStr.split('-')
-  return `NK-${y}${m}${d}-${String(seq).padStart(3, '0')}`
+function generateImportCode(whCode: string, ddmmyy: string, seq: number): string {
+  return `${whCode}_N_${ddmmyy}_${String(seq).padStart(2, '0')}`
 }
 
 async function attachCount(raw: unknown): Promise<Record<string, unknown>> {
@@ -178,9 +177,7 @@ export async function createOrder(req: Request, res: Response) {
     if (!material_id)  return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu material_id')
     const resolvedSourceType = source_type === 'NCC' ? 'NCC' : source_type === 'TRANSFER' ? 'TRANSFER' : 'FACTORY'
 
-    const todayStr   = vnDate()
-    const todayStart = new Date(`${todayStr}T00:00:00+07:00`).toISOString()
-    const todayEnd   = new Date(`${todayStr}T23:59:59.999+07:00`).toISOString()
+    const todayStr = vnDate()
 
     // Validate imported_by — skip if employee doesn't exist (e.g. mock/dev user IDs)
     let resolvedImportedBy: string | null = null
@@ -227,16 +224,21 @@ export async function createOrder(req: Request, res: Response) {
       }
     }
 
+    // Lấy warehouse code để tạo import_code theo format mới
+    const [y, mo, d] = todayStr.split('-')
+    const ddmmyy = `${d}${mo}${y.slice(2)}`
+    const { data: whRow } = await (supabase.from('Warehouse') as any).select('code').eq('id', warehouse_id).maybeSingle()
+    const whCode = whRow?.code ? String(whRow.code) : 'XX'
+    const importPrefix = `${whCode}_N_${ddmmyy}_`
+
     // Retry khi 2 request song song lấy cùng count → cùng import_code → 23505
     let order: unknown = null
     for (let attempt = 0; attempt < 5; attempt++) {
-      const { count: todayCount } = await supabase
-        .from('ProductionImport')
+      const { count: todayCount } = await (supabase.from('ProductionImport') as any)
         .select('*', { count: 'exact', head: true })
-        .gte('created_at', todayStart)
-        .lt('created_at', todayEnd)
+        .ilike('import_code', `${importPrefix}%`)
 
-      const import_code = generateImportCode(todayStr, (todayCount ?? 0) + 1)
+      const import_code = generateImportCode(whCode, ddmmyy, (todayCount ?? 0) + 1)
 
       const { data, error } = await supabase
         .from('ProductionImport')

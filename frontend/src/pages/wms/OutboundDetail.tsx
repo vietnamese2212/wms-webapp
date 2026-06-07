@@ -978,7 +978,10 @@ export default function OutboundDetail() {
             {gdo.dvvt && <span>{gdo.dvvt}</span>}
             {npp && <span className="text-slate-500 break-words">{npp}</span>}
             {(gdo.delivery_codes?.length ?? 0) > 0 && (
-              <span className="font-mono text-slate-600 font-semibold">{gdo.delivery_codes!.join(' · ')}</span>
+              <span className="flex items-center gap-1">
+                <span className="text-slate-400">DO</span>
+                <span className="font-mono text-slate-700 font-semibold">{gdo.delivery_codes!.join(' · ')}</span>
+              </span>
             )}
             <span className="flex items-center gap-1">
               <Package className="h-3 w-3 text-slate-400 shrink-0" />

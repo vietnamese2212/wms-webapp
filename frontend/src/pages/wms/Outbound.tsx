@@ -312,7 +312,6 @@ export default function Outbound() {
                 <TableHead className="px-1.5 py-1.5 w-7" />
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Ngày xuất</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Số xe</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Số DO</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Tên NPP</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Ship-to</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">ĐVVT</TableHead>
@@ -330,6 +329,7 @@ export default function Outbound() {
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Người xuất</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Lái xe nâng</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Bốc xếp</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Số DO</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -389,11 +389,6 @@ function GDORow({ gdo, onClick, onAssign }: {
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px] font-mono font-semibold">{gdo.group_code}</span>
-      </TableCell>
-      <TableCell className="px-2 py-1 whitespace-nowrap">
-        {gdo.delivery_codes?.length
-          ? <span className="text-[10px] font-mono font-semibold">{gdo.delivery_codes.join(', ')}</span>
-          : <span className="text-[10px] text-slate-300">—</span>}
       </TableCell>
       <TableCell className="px-2 py-1 max-w-[150px]">
         <span className="text-[10px] truncate block" title={npp}>{npp}</span>
@@ -473,6 +468,11 @@ function GDORow({ gdo, onClick, onAssign }: {
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px]">{gdo.loader_name ?? '—'}</span>
+      </TableCell>
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        {gdo.delivery_codes?.length
+          ? <span className="text-[10px] font-mono font-semibold">{gdo.delivery_codes.join(', ')}</span>
+          : <span className="text-[10px] text-slate-300">—</span>}
       </TableCell>
     </TableRow>
   )

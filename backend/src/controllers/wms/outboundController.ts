@@ -178,11 +178,16 @@ async function maybeCreateTransferInbound(gdoId: string, t: string): Promise<voi
   if (!matMap.size) return
 
   const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
-  const groupCode = gdo.group_code ?? gdoId.slice(0, 8)
+  const [vy, vm, vd] = vnDate.split('-')
+  const ddmmyy = `${vd}${vm}${vy.slice(2)}`
+  const importPrefix = `${nppWh.code}_N_${ddmmyy}_`
+  const { count: existingCount } = await (supabase.from('ProductionImport') as any)
+    .select('*', { count: 'exact', head: true })
+    .ilike('import_code', `${importPrefix}%`)
 
   const toInsert = [...matMap.values()].map((m, idx) => ({
     id: randomUUID(),
-    import_code: `CK-${groupCode}-${String(idx + 1).padStart(2, '0')}`,
+    import_code: `${importPrefix}${String((existingCount ?? 0) + idx + 1).padStart(2, '0')}`,
     warehouse_id: nppWh.id,
     material_id: m.material_id,
     planned_cartons: m.cartons,

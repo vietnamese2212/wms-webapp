@@ -513,7 +513,7 @@ export async function createTransferOrder(req: Request, res: Response) {
     // Fetch GDO + OutboundItems
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: gdo, error: gdoErr } = await (supabase.from('GroupDeliveryOrder') as any)
-      .select('id, group_code, status, shipto_party, transfer_status, license_plate')
+      .select('id, group_code, status, shipto_party, transfer_status, license_plate, warehouse:Warehouse!warehouse_id(code)')
       .eq('id', gdo_id).single()
     if (gdoErr || !gdo) return fail(res, 'Không tìm thấy GDO', 404)
     if (gdo.status !== 'COMPLETED') return fail(res, 'GDO chưa hoàn thành xuất kho', 400)
@@ -555,8 +555,10 @@ export async function createTransferOrder(req: Request, res: Response) {
     // Tạo TmsOrder TRANSFER
     const orderId = randomUUID()
     const datePart = vnToday.replace(/-/g, '').slice(2)
-    const suffix = randomUUID().slice(0, 4)
-    const orderCode = `TRF${datePart}_${gdo.shipto_party}_${suffix}`
+    const srcWhCode = (gdo.warehouse as { code: string } | null)?.code ?? gdo.shipto_party
+    const licensePlateClean = (gdo.license_plate ?? '').replace(/[^A-Za-z0-9]/g, '')
+    const suffix = licensePlateClean || randomUUID().slice(0, 4)
+    const orderCode = `TRF${datePart}_${srcWhCode}_${suffix}`
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error: ordErr } = await (supabase.from('TmsOrder') as any).insert({

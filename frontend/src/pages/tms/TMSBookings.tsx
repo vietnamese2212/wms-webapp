@@ -1834,6 +1834,7 @@ function TransportUpdateDialog({ order, onClose }: { order: TransferOrder | null
   const [licensePlate, setPlate]    = useState('')
   const [driverPhone, setPhone]     = useState('')
   const [eta, setEta]               = useState('')
+  const [notes, setNotes]           = useState('')
   const [err, setErr]               = useState('')
   const saving = updateOrder.isPending || updateSlot.isPending
 
@@ -1846,6 +1847,7 @@ function TransportUpdateDialog({ order, onClose }: { order: TransferOrder | null
       setPlate(slot?.license_plate ?? order.transfer_gdo?.license_plate ?? '')
       setPhone(slot?.driver_phone ?? '')
       setEta(order.eta ? order.eta.slice(0, 16) : '')
+      setNotes(order.notes ?? '')
       setErr('')
     }
   }, [order?.id])
@@ -1858,7 +1860,7 @@ function TransportUpdateDialog({ order, onClose }: { order: TransferOrder | null
     }
     try {
       const isoEta = eta ? new Date(eta).toISOString() : null
-      await updateOrder.mutateAsync({ id: order.id, eta: isoEta })
+      await updateOrder.mutateAsync({ id: order.id, eta: isoEta, notes: notes || null })
       const slot = order.vehicle_slots?.[0]
       if (slot) {
         await updateSlot.mutateAsync({ id: slot.id, license_plate: licensePlate || null, driver_phone: driverPhone || null })
@@ -1902,6 +1904,16 @@ function TransportUpdateDialog({ order, onClose }: { order: TransferOrder | null
               {minEta && <span className="text-slate-400 font-normal ml-1">· không trước {order.transfer_gdo?.delivery_date}</span>}
             </Label>
             <Input type="datetime-local" value={eta} min={minEta} onChange={e => setEta(e.target.value)} className="h-8 text-sm mt-1" />
+          </div>
+          <div>
+            <Label className="text-xs">Ghi chú <span className="text-slate-400 font-normal">(lái xe ghi chú cho NPP)</span></Label>
+            <textarea
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+              rows={2}
+              placeholder="Nhập ghi chú..."
+              className="flex w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring mt-1"
+            />
           </div>
           {err && <p className="text-xs text-red-600">{err}</p>}
         </div>
@@ -1955,10 +1967,22 @@ function TransferOrderDetail({ order, canEdit, onClose }: { order: TransferOrder
         <DialogContent className="max-w-[88vw] max-h-[90vh] flex flex-col p-0 gap-0">
           {/* Header — pr-10 để tránh nút X của shadcn */}
           <div className="px-4 pt-3 pb-2 border-b bg-white shrink-0 pr-10">
-            {/* Dòng 1: Mã lệnh + trạng thái */}
+            {/* Dòng 1: Mã lệnh + trạng thái + actions (góc phải) */}
             <div className="flex items-center gap-2 flex-wrap mb-2">
               <span className="text-sm font-mono font-bold text-slate-800">{order?.order_code}</span>
               {cfg && <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${cfg.cls}`}>{cfg.label}</span>}
+              <div className="ml-auto flex items-center gap-2 shrink-0">
+                {canEdit && (
+                  <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setShowUpdate(true)}>
+                    Cập nhật giao hàng
+                  </Button>
+                )}
+                {!isLoading && goods.length > 0 && hasPallets && (
+                  <Button variant="outline" size="sm" className="h-7 text-[10px] px-2.5" onClick={toggleAllPallets}>
+                    {allExpanded ? 'Thu gọn' : 'Pallet ▾'}
+                  </Button>
+                )}
+              </div>
             </div>
             {/* Dòng 2: Info grid */}
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-0.5 text-[11px]">
@@ -1990,7 +2014,9 @@ function TransferOrderDetail({ order, canEdit, onClose }: { order: TransferOrder
               </div>
               <div className="flex gap-2">
                 <span className="text-slate-400 w-16 shrink-0">Biển số</span>
-                <span className="font-mono font-semibold text-slate-800">{slot?.license_plate ?? <span className="text-slate-300 font-normal">—</span>}</span>
+                <span className="font-mono font-semibold text-slate-800">
+                  {(slot?.license_plate ?? order?.transfer_gdo?.license_plate) ?? <span className="text-slate-300 font-normal">—</span>}
+                </span>
               </div>
               <div className="flex gap-2 items-center">
                 <span className="text-slate-400 w-16 shrink-0">SĐT</span>
@@ -2016,18 +2042,15 @@ function TransferOrderDetail({ order, canEdit, onClose }: { order: TransferOrder
                 <span className="text-slate-400 w-16 shrink-0">Người sửa</span>
                 <span className="text-slate-600">{order?.updated_by ?? <span className="text-slate-300">—</span>}</span>
               </div>
-            </div>
-            {/* Dòng 3: Action buttons */}
-            <div className="mt-2 flex items-center gap-2">
-              {canEdit && (
-                <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setShowUpdate(true)}>
-                  Cập nhật giao hàng
-                </Button>
-              )}
-              {!isLoading && goods.length > 0 && hasPallets && (
-                <Button variant="outline" size="sm" className="h-7 text-[10px] px-2.5" onClick={toggleAllPallets}>
-                  {allExpanded ? 'Thu gọn' : 'Pallet ▾'}
-                </Button>
+              <div className="flex gap-2">
+                <span className="text-slate-400 w-16 shrink-0">Giờ sửa</span>
+                <span className="text-slate-600 font-mono text-[10px]">{order?.updated_at ? formatDateTime(order.updated_at) : '—'}</span>
+              </div>
+              {order?.notes && (
+                <div className="flex gap-2 col-span-2 sm:col-span-3">
+                  <span className="text-slate-400 w-16 shrink-0">Ghi chú</span>
+                  <span className="text-slate-700 break-words">{order.notes}</span>
+                </div>
               )}
             </div>
           </div>
@@ -2213,7 +2236,7 @@ function TransferOrdersPanel({ canCreate, canEdit }: { canCreate: boolean; canEd
                   <table className="min-w-max w-full">
                     <thead className="sticky top-0 z-10 bg-slate-50">
                       <tr>
-                        {['Mã lệnh', 'Ngày xuất', 'Kho xuất', 'Kho nhận', 'Thùng KH', 'Dự kiến giao', 'ĐVVT', 'Biển số', 'Số điện thoại', 'Tình trạng', 'Số GDO'].map(h => (
+                        {['Mã lệnh', 'Ngày xuất', 'Kho xuất', 'Kho nhận', 'Thùng KH', 'Dự kiến giao', 'ĐVVT', 'Biển số', 'Số điện thoại', 'Tình trạng', 'Số GDO', 'Ghi chú'].map(h => (
                           <th key={h} className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
@@ -2256,7 +2279,7 @@ function TransferOrdersPanel({ canCreate, canEdit }: { canCreate: boolean; canEd
                               <span className="text-[10px] text-slate-600">{dvvt ?? <span className="text-slate-300">—</span>}</span>
                             </td>
                             <td className="px-2 py-1 whitespace-nowrap">
-                              <span className="text-[10px] font-mono">{slot?.license_plate ?? <span className="text-slate-300">—</span>}</span>
+                              <span className="text-[10px] font-mono">{(slot?.license_plate ?? o.transfer_gdo?.license_plate) ?? <span className="text-slate-300">—</span>}</span>
                             </td>
                             <td className="px-2 py-1 whitespace-nowrap">
                               {slot?.driver_phone
@@ -2270,6 +2293,11 @@ function TransferOrdersPanel({ canCreate, canEdit }: { canCreate: boolean; canEd
                             </td>
                             <td className="px-2 py-1 whitespace-nowrap">
                               <span className="text-[10px] font-mono text-slate-500">{o.transfer_gdo?.group_code ?? '—'}</span>
+                            </td>
+                            <td className="px-2 py-1 max-w-[160px]">
+                              {o.notes
+                                ? <span className="text-[10px] text-slate-600 truncate block">{o.notes}</span>
+                                : <span className="text-slate-300 text-[10px]">—</span>}
                             </td>
                           </tr>
                         )

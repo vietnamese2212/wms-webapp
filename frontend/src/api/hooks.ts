@@ -1780,6 +1780,7 @@ export function useUpdateVehicleSlot() {
         )
       }
       qc.invalidateQueries({ queryKey: ['tms-orders'] })
+      qc.invalidateQueries({ queryKey: ['tms-orders-transfer'] })
       qc.invalidateQueries({ queryKey: ['tms-delivery-slots'] })
     },
   })

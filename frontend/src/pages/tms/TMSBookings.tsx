@@ -2144,8 +2144,9 @@ function TransferOrdersPanel({ canCreate, canEdit }: { canCreate: boolean; canEd
   const { data: pendingGDOs = [], isLoading: loadingGDOs } = useGDOs({ transfer_status: 'PENDING_DELIVERY' })
   const { data: orders = [], isLoading: loadingOrders } = useTransferOrders()
   const { mutateAsync: createTransfer } = useCreateTransferOrder()
-  const [creatingId, setCreatingId]     = useState('')
-  const [selectedOrder, setSelectedOrder] = useState<TransferOrder | null>(null)
+  const [creatingId, setCreatingId]       = useState('')
+  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null)
+  const selectedOrder = orders.find(o => o.id === selectedOrderId) ?? null
   const [err, setErr] = useState('')
 
   async function handleCreate(gdoId: string) {
@@ -2165,7 +2166,7 @@ function TransferOrdersPanel({ canCreate, canEdit }: { canCreate: boolean; canEd
 
   return (
     <div className="flex flex-col h-full">
-      <TransferOrderDetail order={selectedOrder} canEdit={canEdit} onClose={() => setSelectedOrder(null)} />
+      <TransferOrderDetail order={selectedOrder} canEdit={canEdit} onClose={() => setSelectedOrderId(null)} />
       {err && (
         <div className="px-3 py-2 bg-red-50 border-b border-red-200 text-xs text-red-700 shrink-0">{err}</div>
       )}
@@ -2254,7 +2255,7 @@ function TransferOrdersPanel({ canCreate, canEdit }: { canCreate: boolean; canEd
                           : 'hover:bg-slate-50'
                         return (
                           <tr key={o.id} className={`border-t border-slate-100 cursor-pointer ${rowCls}`}
-                            onClick={() => setSelectedOrder(o)}>
+                            onClick={() => setSelectedOrderId(o.id)}>
                             <td className="px-2 py-1 whitespace-nowrap">
                               <span className="text-[10px] font-mono font-semibold">{o.order_code}</span>
                             </td>

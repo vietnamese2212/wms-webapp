@@ -1,16 +1,26 @@
--- Backfill GDO group_code: ddmmyy_ĐT_NN → warehouseCode_X_ddmmyy_stt
+-- Backfill GDO group_code: ddmmyy_Kho_NN → warehouseCode_X_ddmmyy_stt
 -- Backfill TRF order_code: TRFyymmdd_srcWh_xxx → TRF_destWh_newGroupCode
 
 -- Step 1: Update GDO group_code
+-- Xử lý mọi dạng cũ bắt đầu bằng 6 chữ số (vd: 060626_ĐT_01, 110526_BV_P01)
 WITH ranked AS (
   SELECT
     g.id,
-    COALESCE(w.code::text, 'XX')          AS wh_code,
-    substring(g.group_code, 1, 6)         AS ddmmyy,
+    COALESCE(w.code::text, 'XX')    AS wh_code,
+    substring(g.group_code, 1, 6)   AS ddmmyy,
     ROW_NUMBER() OVER (
       PARTITION BY g.warehouse_id, substring(g.group_code, 1, 6)
-      ORDER BY (regexp_replace(g.group_code, '^.*_(\d+)$', '\1'))::int
-    )                                     AS stt
+      ORDER BY COALESCE(
+        NULLIF(
+          regexp_replace(
+            regexp_replace(g.group_code, '^.*_', ''),
+            '[^\d]', '', 'g'
+          ),
+          ''
+        ),
+        '0'
+      )::int
+    ) AS stt
   FROM "GroupDeliveryOrder" g
   LEFT JOIN "Warehouse" w ON w.id = g.warehouse_id
   WHERE g.group_code ~ '^\d{6}_'

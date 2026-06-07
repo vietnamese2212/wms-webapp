@@ -19,7 +19,7 @@ import {
   useAddVehicleSlot, useUpdateVehicleSlot, useReleaseVehicleSlot, useRevokeVehicleSlot, useDeleteVehicleSlot,
   usePlanLinesByOrder, usePlanVsActual, useBulkCreatePlanLinesForOrder, useMaterials,
   useBulkCreatePlanLines, useUpdatePlanLine, useDeletePlanLine,
-  useTransferOrders, useCreateTransferOrder, useGDOs,
+  useTransferOrders, useCreateTransferOrder, useGDOs, useTransferGoods,
   type TransferOrder,
 } from '@/api/hooks'
 import { formatDate, formatDateTime } from '@/utils/formatters'
@@ -1825,18 +1825,27 @@ function CreateFromGDODialog({ open, warehouseId, onClose }: {
   )
 }
 
-// ── Update ETA Dialog ────────────────────────────────────────────────────────
+// ── Transport Update Dialog (ĐVVT + biển số + SĐT + ETA) ────────────────────
 
-function UpdateEtaDialog({ order, onClose }: { order: TransferOrder | null; onClose: () => void }) {
+function TransportUpdateDialog({ order, onClose }: { order: TransferOrder | null; onClose: () => void }) {
   const updateOrder = useUpdateOrder()
-  const [eta, setEta] = useState('')
-  const [err, setErr] = useState('')
+  const updateSlot  = useUpdateVehicleSlot()
+  const { data: transportCompanies = [] } = useTransportCompanies(true)
+
+  const [nccId, setNccId]           = useState('')
+  const [licensePlate, setPlate]    = useState('')
+  const [driverPhone, setPhone]     = useState('')
+  const [eta, setEta]               = useState('')
+  const [err, setErr]               = useState('')
+  const saving = updateOrder.isPending || updateSlot.isPending
 
   useEffect(() => {
     if (order) {
-      // datetime-local cần format YYYY-MM-DDTHH:MM
-      const existing = order.eta ? order.eta.slice(0, 16) : ''
-      setEta(existing)
+      setNccId(order.ncc_id ?? '')
+      const slot = order.vehicle_slots?.[0]
+      setPlate(slot?.license_plate ?? '')
+      setPhone(slot?.driver_phone ?? '')
+      setEta(order.eta ? order.eta.slice(0, 16) : '')
       setErr('')
     }
   }, [order?.id])
@@ -1844,59 +1853,57 @@ function UpdateEtaDialog({ order, onClose }: { order: TransferOrder | null; onCl
   const handleSave = async () => {
     if (!order) return
     try {
-      // Chuyển datetime-local string sang ISO UTC để lưu
       const isoEta = eta ? new Date(eta).toISOString() : null
-      await updateOrder.mutateAsync({ id: order.id, eta: isoEta })
+      await updateOrder.mutateAsync({ id: order.id, ncc_id: nccId || null, eta: isoEta })
+      const slot = order.vehicle_slots?.[0]
+      if (slot) {
+        await updateSlot.mutateAsync({ id: slot.id, license_plate: licensePlate || null, driver_phone: driverPhone || null })
+      }
       onClose()
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
-      setErr(msg ?? 'Lỗi cập nhật ETA')
+      setErr(msg ?? 'Lỗi cập nhật')
     }
   }
 
   if (!order) return null
-  const slot = order.vehicle_slots?.[0]
   return (
     <Dialog open={!!order} onOpenChange={v => !v && onClose()}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
-          <DialogTitle>Cập nhật ETA</DialogTitle>
-          <p className="text-xs text-slate-500 mt-1">{order.order_code}</p>
+          <DialogTitle>Cập nhật vận chuyển</DialogTitle>
+          <p className="text-xs text-slate-500 mt-1">{order.order_code} · {order.transfer_gdo?.warehouse?.name ?? '—'} → {order.warehouse?.name ?? '—'}</p>
         </DialogHeader>
         <div className="space-y-3 py-2">
-          {/* Info readonly */}
-          <div className="bg-slate-50 rounded p-2.5 text-[10px] space-y-1">
-            <div className="flex gap-4">
-              <span className="text-slate-400 w-16 shrink-0">Kho xuất</span>
-              <span className="font-medium">{order.transfer_gdo?.warehouse?.name ?? order.transfer_gdo?.warehouse?.code ?? '—'}</span>
+          <div>
+            <Label className="text-xs">ĐVVT</Label>
+            <SearchableSelect
+              value={nccId}
+              onChange={setNccId}
+              placeholder="Chọn ĐVVT"
+              options={(transportCompanies as TransportCompany[]).map(c => ({ value: c.id, label: `${c.code} — ${c.name}` }))}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <Label className="text-xs">Biển số xe</Label>
+              <Input value={licensePlate} onChange={e => setPlate(e.target.value)} placeholder="51F-12345" className="h-8 text-sm mt-1 font-mono" />
             </div>
-            <div className="flex gap-4">
-              <span className="text-slate-400 w-16 shrink-0">Kho nhận</span>
-              <span className="font-medium">{order.warehouse?.name ?? '—'}</span>
+            <div>
+              <Label className="text-xs">SĐT lái xe</Label>
+              <Input value={driverPhone} onChange={e => setPhone(e.target.value)} placeholder="0912..." className="h-8 text-sm mt-1" />
             </div>
-            {slot?.license_plate && (
-              <div className="flex gap-4">
-                <span className="text-slate-400 w-16 shrink-0">Biển số</span>
-                <span className="font-mono font-semibold">{slot.license_plate}</span>
-                {slot.driver_phone && <span className="text-slate-500">{slot.driver_phone}</span>}
-              </div>
-            )}
           </div>
           <div>
             <Label className="text-xs">Dự kiến đến (ETA)</Label>
-            <Input
-              type="datetime-local"
-              value={eta}
-              onChange={e => setEta(e.target.value)}
-              className="h-8 text-sm mt-1"
-            />
+            <Input type="datetime-local" value={eta} onChange={e => setEta(e.target.value)} className="h-8 text-sm mt-1" />
           </div>
           {err && <p className="text-xs text-red-600">{err}</p>}
         </div>
         <DialogFooter>
           <Button variant="outline" size="sm" onClick={onClose}>Hủy</Button>
-          <Button size="sm" onClick={handleSave} disabled={updateOrder.isPending}>
-            {updateOrder.isPending ? 'Đang lưu...' : 'Lưu ETA'}
+          <Button size="sm" onClick={handleSave} disabled={saving}>
+            {saving ? 'Đang lưu...' : 'Lưu'}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -1904,42 +1911,163 @@ function UpdateEtaDialog({ order, onClose }: { order: TransferOrder | null; onCl
   )
 }
 
-// ── Transfer Detail Row (expanded) ───────────────────────────────────────────
+// ── Transfer Order Detail (slide-over dialog ~80% screen) ────────────────────
 
-function TransferDetailSection({ orderId, colSpan }: { orderId: string; colSpan: number }) {
-  const { data: planLines = [], isLoading } = usePlanLinesByOrder(orderId)
-  const lines = planLines as { id: string; material?: { material_code?: string; short_name?: string }; planned_boxes?: number }[]
+function TransferOrderDetail({ order, canEdit, onClose }: { order: TransferOrder | null; canEdit: boolean; onClose: () => void }) {
+  const { data: goods = [], isLoading } = useTransferGoods(order?.id)
+  const [expandedMat, setExpandedMat] = useState<string | null>(null)
+  const [showUpdate, setShowUpdate]   = useState(false)
+
+  const slot = order?.vehicle_slots?.[0]
+  const tStatus = order?.transfer_gdo?.transfer_status
+  const cfg = tStatus ? TRANSFER_STATUS_CFG[tStatus] : null
+  const totalScanned = goods.reduce((s, g) => s + g.pallets.reduce((ps, p) => ps + (p.cartons_scanned ?? 0), 0), 0)
+
   return (
-    <tr>
-      <td colSpan={colSpan} className="p-0 bg-blue-50/40 border-b border-blue-100">
-        <div className="px-6 py-2">
-          {isLoading ? (
-            <p className="text-[10px] text-slate-400 py-2">Đang tải hàng hóa...</p>
-          ) : lines.length === 0 ? (
-            <p className="text-[10px] text-slate-400 py-2">Không có dữ liệu hàng hóa</p>
-          ) : (
-            <table className="min-w-[400px] text-[10px]">
-              <thead>
-                <tr className="text-[9px] text-slate-500">
-                  <th className="text-left px-2 py-1 font-medium">Mã hàng</th>
-                  <th className="text-left px-2 py-1 font-medium">Tên hàng</th>
-                  <th className="text-right px-2 py-1 font-medium">SL thùng KH</th>
-                </tr>
-              </thead>
-              <tbody>
-                {lines.map((line, i) => (
-                  <tr key={line.id ?? i} className="border-t border-blue-100">
-                    <td className="px-2 py-0.5 font-mono font-semibold">{line.material?.material_code ?? '—'}</td>
-                    <td className="px-2 py-0.5 text-slate-600">{line.material?.short_name ?? '—'}</td>
-                    <td className="px-2 py-0.5 text-right tabular-nums font-semibold">{line.planned_boxes ?? 0}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </td>
-    </tr>
+    <>
+      <TransportUpdateDialog order={showUpdate ? order : null} onClose={() => setShowUpdate(false)} />
+      <Dialog open={!!order} onOpenChange={v => !v && onClose()}>
+        <DialogContent className="max-w-[88vw] max-h-[90vh] flex flex-col p-0 gap-0">
+          {/* Header */}
+          <div className="px-4 py-3 border-b bg-white shrink-0">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm font-mono font-bold text-slate-800">{order?.order_code}</span>
+                  {cfg && <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${cfg.cls}`}>{cfg.label}</span>}
+                </div>
+                <div className="mt-1.5 grid grid-cols-2 gap-x-6 gap-y-0.5 text-[11px]">
+                  <div className="flex gap-2">
+                    <span className="text-slate-400 w-16 shrink-0">Kho xuất</span>
+                    <span className="font-medium text-slate-700">{order?.transfer_gdo?.warehouse?.name ?? '—'}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="text-slate-400 w-16 shrink-0">Kho nhận</span>
+                    <span className="font-medium text-blue-700">{order?.warehouse?.name ?? '—'}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="text-slate-400 w-16 shrink-0">ĐVVT</span>
+                    <span className="font-medium text-slate-700">{order?.ncc?.name ?? <span className="text-slate-300">Chưa cập nhật</span>}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="text-slate-400 w-16 shrink-0">Ngày XK</span>
+                    <span className="font-medium text-slate-700">{order?.transfer_gdo?.delivery_date ?? '—'}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="text-slate-400 w-16 shrink-0">Biển số</span>
+                    <span className="font-mono font-semibold text-slate-800">{slot?.license_plate ?? <span className="text-slate-300 font-normal">Chưa cập nhật</span>}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="text-slate-400 w-16 shrink-0">SĐT</span>
+                    <span className="text-slate-700">{slot?.driver_phone ?? <span className="text-slate-300">—</span>}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="text-slate-400 w-16 shrink-0">ETA</span>
+                    {order?.eta
+                      ? <span className="font-semibold text-green-700">{formatDateTime(order.eta)}</span>
+                      : <span className="text-slate-300">Chưa cập nhật</span>}
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="text-slate-400 w-16 shrink-0">Thùng</span>
+                    <span className="tabular-nums font-semibold text-slate-800">
+                      {totalScanned > 0 ? `${totalScanned} / ` : ''}{order?.planned_boxes ?? 0} thùng
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {canEdit && (
+                  <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setShowUpdate(true)}>
+                    Cập nhật vận chuyển
+                  </Button>
+                )}
+                <button onClick={onClose} className="text-slate-400 hover:text-slate-700 p-1">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Goods table */}
+          <div className="flex-1 min-h-0 overflow-auto">
+            {isLoading ? (
+              <div className="py-16 text-center text-sm text-slate-400">Đang tải hàng hóa...</div>
+            ) : goods.length === 0 ? (
+              <div className="py-16 text-center text-sm text-slate-400">Không có dữ liệu hàng hóa</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-max w-full">
+                  <thead className="sticky top-0 z-10 bg-slate-50">
+                    <tr>
+                      <th className="w-6 px-2 py-1.5"></th>
+                      {['Mã hàng', 'Tên hàng', 'ĐVT', 'Thùng KH', 'Thùng thực', 'Pallet'].map(h => (
+                        <th key={h} className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {goods.map(g => {
+                      const isExpanded = expandedMat === g.material_id
+                      const actualCartons = g.pallets.reduce((s, p) => s + (p.cartons_scanned ?? 0), 0)
+                      return (
+                        <React.Fragment key={g.material_id}>
+                          <tr
+                            className={`border-t border-slate-100 cursor-pointer ${g.pallets.length > 0 ? 'hover:bg-blue-50/40' : 'hover:bg-slate-50'}`}
+                            onClick={() => g.pallets.length > 0 && setExpandedMat(isExpanded ? null : g.material_id)}
+                          >
+                            <td className="px-2 py-1 text-slate-300 text-[10px]">
+                              {g.pallets.length > 0 ? (isExpanded ? '▾' : '▸') : ''}
+                            </td>
+                            <td className="px-2 py-1 whitespace-nowrap">
+                              <span className="text-[10px] font-mono font-semibold">{g.material_code ?? '—'}</span>
+                            </td>
+                            <td className="px-2 py-1 whitespace-nowrap max-w-[240px]">
+                              <span className="text-[10px] text-slate-700">{g.material_name ?? '—'}</span>
+                            </td>
+                            <td className="px-2 py-1 whitespace-nowrap">
+                              <span className="text-[10px] text-slate-400">{g.unit ?? '—'}</span>
+                            </td>
+                            <td className="px-2 py-1 whitespace-nowrap text-right">
+                              <span className="text-[10px] font-semibold tabular-nums">{g.planned_boxes}</span>
+                            </td>
+                            <td className="px-2 py-1 whitespace-nowrap text-right">
+                              <span className={`text-[10px] font-semibold tabular-nums ${actualCartons > 0 ? 'text-green-700' : 'text-slate-300'}`}>
+                                {actualCartons > 0 ? actualCartons : '—'}
+                              </span>
+                            </td>
+                            <td className="px-2 py-1 whitespace-nowrap">
+                              <span className="text-[10px] text-slate-500">{g.pallets.length > 0 ? `${g.pallets.length} pallet` : <span className="text-slate-300">—</span>}</span>
+                            </td>
+                          </tr>
+                          {isExpanded && g.pallets.map(p => (
+                            <tr key={p.pallet_code} className="bg-blue-50/30 border-t border-blue-100">
+                              <td className="px-2 py-0.5"></td>
+                              <td colSpan={2} className="px-2 py-0.5">
+                                <span className="text-[10px] font-mono font-semibold text-blue-700">{p.pallet_code}</span>
+                              </td>
+                              <td className="px-2 py-0.5"></td>
+                              <td className="px-2 py-0.5 text-right">
+                                <span className="text-[10px] tabular-nums text-slate-500">{p.cartons_scanned}</span>
+                              </td>
+                              <td className="px-2 py-0.5 text-right">
+                                <span className="text-[10px] tabular-nums text-green-700 font-semibold">{p.cartons_scanned}</span>
+                              </td>
+                              <td className="px-2 py-0.5">
+                                {p.scanned_at && <span className="text-[9px] text-slate-400">{formatDateTime(p.scanned_at)}</span>}
+                              </td>
+                            </tr>
+                          ))}
+                        </React.Fragment>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }
 
@@ -1949,9 +2077,8 @@ function TransferOrdersPanel({ canCreate, canEdit }: { canCreate: boolean; canEd
   const { data: pendingGDOs = [], isLoading: loadingGDOs } = useGDOs({ transfer_status: 'PENDING_DELIVERY' })
   const { data: orders = [], isLoading: loadingOrders } = useTransferOrders()
   const { mutateAsync: createTransfer } = useCreateTransferOrder()
-  const [creatingId, setCreatingId] = useState('')
-  const [expandedId, setExpandedId] = useState<string | null>(null)
-  const [etaOrder, setEtaOrder] = useState<TransferOrder | null>(null)
+  const [creatingId, setCreatingId]     = useState('')
+  const [selectedOrder, setSelectedOrder] = useState<TransferOrder | null>(null)
   const [err, setErr] = useState('')
 
   async function handleCreate(gdoId: string) {
@@ -1968,12 +2095,10 @@ function TransferOrdersPanel({ canCreate, canEdit }: { canCreate: boolean; canEd
 
   const isLoading = loadingGDOs || loadingOrders
   const pending = pendingGDOs as import('@/types').GDO[]
-  // Số cột trong bảng lệnh chuyển kho để colSpan
-  const ORDER_COL_COUNT = 10 + (canEdit ? 1 : 0)
 
   return (
     <div className="flex flex-col h-full">
-      <UpdateEtaDialog order={etaOrder} onClose={() => setEtaOrder(null)} />
+      <TransferOrderDetail order={selectedOrder} canEdit={canEdit} onClose={() => setSelectedOrder(null)} />
       {err && (
         <div className="px-3 py-2 bg-red-50 border-b border-red-200 text-xs text-red-700 shrink-0">{err}</div>
       )}
@@ -2033,21 +2158,20 @@ function TransferOrdersPanel({ canCreate, canEdit }: { canCreate: boolean; canEd
               </>
             )}
 
-            {/* ── Lệnh chuyển kho (IN_TRANSIT / DELIVERED) ── */}
+            {/* ── Lệnh chuyển kho ── */}
             {orders.length > 0 && (
               <>
                 <div className="px-3 py-1.5 border-b border-t bg-slate-50">
                   <span className="text-[10px] font-semibold text-slate-500">Lệnh chuyển kho ({orders.length})</span>
+                  <span className="ml-2 text-[9px] text-slate-400">Click vào dòng để xem chi tiết</span>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="min-w-max w-full">
                     <thead className="sticky top-0 z-10 bg-slate-50">
                       <tr>
-                        <th className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 w-6"></th>
                         {['Mã lệnh', 'Ngày XK', 'Kho xuất', 'Kho nhận', 'ĐVVT', 'Biển số', 'SĐT lái xe', 'ETA', 'Thùng KH', 'Tình trạng'].map(h => (
                           <th key={h} className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
                         ))}
-                        {canEdit && <th className="w-20"></th>}
                       </tr>
                     </thead>
                     <tbody>
@@ -2055,66 +2179,49 @@ function TransferOrdersPanel({ canCreate, canEdit }: { canCreate: boolean; canEd
                         const tStatus = o.transfer_gdo?.transfer_status
                         const cfg = tStatus ? TRANSFER_STATUS_CFG[tStatus] : null
                         const slot = o.vehicle_slots?.[0]
-                        const isExpanded = expandedId === o.id
                         const rowCls = tStatus === 'DELIVERED'
                           ? 'bg-blue-50 hover:bg-blue-100'
                           : tStatus === 'IN_TRANSIT'
                           ? 'bg-amber-50 hover:bg-amber-100'
                           : 'hover:bg-slate-50'
                         return (
-                          <React.Fragment key={o.id}>
-                            <tr className={`border-t border-slate-100 cursor-pointer ${rowCls}`}
-                              onClick={() => setExpandedId(isExpanded ? null : o.id)}>
-                              <td className="px-2 py-1 text-slate-400 text-[10px]">
-                                {isExpanded ? '▾' : '▸'}
-                              </td>
-                              <td className="px-2 py-1 whitespace-nowrap">
-                                <span className="text-[10px] font-mono font-semibold">{o.order_code}</span>
-                              </td>
-                              <td className="px-2 py-1 whitespace-nowrap">
-                                <span className="text-[10px] tabular-nums">{o.transfer_gdo?.delivery_date ?? '—'}</span>
-                              </td>
-                              <td className="px-2 py-1 whitespace-nowrap">
-                                <span className="text-[10px] text-slate-600">{o.transfer_gdo?.warehouse?.name ?? '—'}</span>
-                              </td>
-                              <td className="px-2 py-1 whitespace-nowrap">
-                                <span className="text-[10px] font-semibold text-blue-700">{o.warehouse?.name ?? o.transfer_gdo?.shipto_party ?? '—'}</span>
-                              </td>
-                              <td className="px-2 py-1 whitespace-nowrap">
-                                <span className="text-[10px] text-slate-600">{o.ncc?.name ?? '—'}</span>
-                              </td>
-                              <td className="px-2 py-1 whitespace-nowrap">
-                                <span className="text-[10px] font-mono">{slot?.license_plate ?? '—'}</span>
-                              </td>
-                              <td className="px-2 py-1 whitespace-nowrap">
-                                <span className="text-[10px] text-slate-500">{slot?.driver_phone ?? '—'}</span>
-                              </td>
-                              <td className="px-2 py-1 whitespace-nowrap">
-                                {o.eta
-                                  ? <span className="text-[10px] font-semibold text-green-700">{formatDateTime(o.eta)}</span>
-                                  : <span className="text-[9px] text-slate-300">Chưa cập nhật</span>}
-                              </td>
-                              <td className="px-2 py-1 whitespace-nowrap text-right">
-                                <span className="text-[10px] font-semibold tabular-nums">{o.planned_boxes ?? 0}</span>
-                              </td>
-                              <td className="px-2 py-1 whitespace-nowrap">
-                                {cfg
-                                  ? <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${cfg.cls}`}>{cfg.label}</span>
-                                  : <span className="text-slate-300">—</span>}
-                              </td>
-                              {canEdit && (
-                                <td className="px-2 py-1 whitespace-nowrap" onClick={e => e.stopPropagation()}>
-                                  <Button variant="outline" size="sm" className="h-6 px-2 text-[10px]"
-                                    onClick={() => setEtaOrder(o)}>
-                                    ETA
-                                  </Button>
-                                </td>
-                              )}
-                            </tr>
-                            {isExpanded && (
-                              <TransferDetailSection orderId={o.id} colSpan={ORDER_COL_COUNT} />
-                            )}
-                          </React.Fragment>
+                          <tr key={o.id} className={`border-t border-slate-100 cursor-pointer ${rowCls}`}
+                            onClick={() => setSelectedOrder(o)}>
+                            <td className="px-2 py-1 whitespace-nowrap">
+                              <span className="text-[10px] font-mono font-semibold">{o.order_code}</span>
+                            </td>
+                            <td className="px-2 py-1 whitespace-nowrap">
+                              <span className="text-[10px] tabular-nums">{o.transfer_gdo?.delivery_date ?? '—'}</span>
+                            </td>
+                            <td className="px-2 py-1 whitespace-nowrap">
+                              <span className="text-[10px] text-slate-600">{o.transfer_gdo?.warehouse?.name ?? '—'}</span>
+                            </td>
+                            <td className="px-2 py-1 whitespace-nowrap">
+                              <span className="text-[10px] font-semibold text-blue-700">{o.warehouse?.name ?? o.transfer_gdo?.shipto_party ?? '—'}</span>
+                            </td>
+                            <td className="px-2 py-1 whitespace-nowrap">
+                              <span className="text-[10px] text-slate-600">{o.ncc?.name ?? <span className="text-slate-300">—</span>}</span>
+                            </td>
+                            <td className="px-2 py-1 whitespace-nowrap">
+                              <span className="text-[10px] font-mono">{slot?.license_plate ?? <span className="text-slate-300">—</span>}</span>
+                            </td>
+                            <td className="px-2 py-1 whitespace-nowrap">
+                              <span className="text-[10px] text-slate-500">{slot?.driver_phone ?? <span className="text-slate-300">—</span>}</span>
+                            </td>
+                            <td className="px-2 py-1 whitespace-nowrap">
+                              {o.eta
+                                ? <span className="text-[10px] font-semibold text-green-700">{formatDateTime(o.eta)}</span>
+                                : <span className="text-[9px] text-slate-300">—</span>}
+                            </td>
+                            <td className="px-2 py-1 whitespace-nowrap text-right">
+                              <span className="text-[10px] font-semibold tabular-nums">{o.planned_boxes ?? 0}</span>
+                            </td>
+                            <td className="px-2 py-1 whitespace-nowrap">
+                              {cfg
+                                ? <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${cfg.cls}`}>{cfg.label}</span>
+                                : <span className="text-slate-300">—</span>}
+                            </td>
+                          </tr>
                         )
                       })}
                     </tbody>

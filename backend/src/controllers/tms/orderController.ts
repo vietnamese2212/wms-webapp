@@ -513,7 +513,7 @@ export async function createTransferOrder(req: Request, res: Response) {
     // Fetch GDO + OutboundItems
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: gdo, error: gdoErr } = await (supabase.from('GroupDeliveryOrder') as any)
-      .select('id, group_code, status, shipto_party, transfer_status')
+      .select('id, group_code, status, shipto_party, transfer_status, license_plate')
       .eq('id', gdo_id).single()
     if (gdoErr || !gdo) return fail(res, 'Không tìm thấy GDO', 404)
     if (gdo.status !== 'COMPLETED') return fail(res, 'GDO chưa hoàn thành xuất kho', 400)
@@ -598,11 +598,14 @@ export async function createTransferOrder(req: Request, res: Response) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (supabase.from('TmsOrder') as any).update({ planned_boxes: totalBoxes, updated_at: nowTs }).eq('id', orderId)
 
-    // Tạo TmsVehicleSlot mặc định
+    // Tạo TmsVehicleSlot mặc định — copy biển số từ GDO nếu có
+    const plateFromGDO: string | null = gdo.license_plate || null
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (supabase.from('TmsVehicleSlot') as any).insert({
       id: randomUUID(), order_id: orderId,
-      status: 'PENDING', created_at: nowTs, updated_at: nowTs,
+      license_plate: plateFromGDO,
+      status: plateFromGDO ? 'BOOKED' : 'PENDING',
+      created_at: nowTs, updated_at: nowTs,
     })
 
     // Cập nhật GDO.transfer_status → IN_TRANSIT
@@ -616,6 +619,86 @@ export async function createTransferOrder(req: Request, res: Response) {
       .select(`${ORDER_SELECT}, transfer_gdo:GroupDeliveryOrder!transfer_gdo_id(id, group_code, shipto_party, transfer_status)`)
       .eq('id', orderId).single()
     return ok(res, created, 201)
+  } catch (e) { return fail(res, String(e)) }
+}
+
+// GET /api/tms/orders/:id/transfer-goods
+export async function getTransferGoods(req: Request, res: Response) {
+  try {
+    const { id } = req.params
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: order } = await (supabase.from('TmsOrder') as any)
+      .select('transfer_gdo_id').eq('id', id).single()
+    if (!order) return fail(res, 'Không tìm thấy lệnh', 404)
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: planLines } = await (supabase.from('inbound_plan_lines') as any)
+      .select('material_id, planned_boxes, material:Material(id, material_code, short_name, unit)')
+      .eq('tms_order_id', id)
+      .neq('status', 'CANCELLED')
+
+    if (!order.transfer_gdo_id) {
+      return ok(res, (planLines ?? []).map((l: any) => ({
+        material_id: l.material_id,
+        material_code: l.material?.material_code ?? null,
+        material_name: l.material?.short_name ?? null,
+        unit: l.material?.unit ?? null,
+        planned_boxes: l.planned_boxes,
+        pallets: [],
+      })))
+    }
+
+    // Lấy OutboundDeliveries cho GDO
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: dos } = await (supabase.from('OutboundDelivery') as any)
+      .select('id').eq('gdo_id', order.transfer_gdo_id)
+    const doIds: string[] = (dos ?? []).map((d: any) => d.id)
+
+    // Lấy OutboundItems (bỏ POSM + Pallet Loscam)
+    const { data: items } = doIds.length
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ? await (supabase.from('OutboundItem') as any)
+          .select('id, material_id')
+          .in('do_id', doIds)
+          .neq('material_type', 'POSM')
+          .neq('material_type', 'Pallet Loscam')
+      : { data: [] as { id: string; material_id: string }[] }
+
+    const itemIdToMatId = new Map<string, string>()
+    for (const item of items ?? []) itemIdToMatId.set(item.id, item.material_id)
+    const itemIds = [...itemIdToMatId.keys()]
+
+    // Lấy OutboundScanEntries để biết pallet nào đã quét
+    const { data: scans } = itemIds.length
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ? await (supabase.from('OutboundScanEntry') as any)
+          .select('item_id, pallet_code, cartons_scanned, scanned_at')
+          .in('item_id', itemIds)
+      : { data: [] as { item_id: string; pallet_code: string; cartons_scanned: number; scanned_at: string }[] }
+
+    // Gom pallet theo material_id
+    type PalletInfo = { pallet_code: string; cartons_scanned: number; scanned_at: string | null }
+    const palletsByMat = new Map<string, Map<string, PalletInfo>>()
+    for (const scan of scans ?? []) {
+      const matId = itemIdToMatId.get(scan.item_id)
+      if (!matId || !scan.pallet_code) continue
+      if (!palletsByMat.has(matId)) palletsByMat.set(matId, new Map())
+      const byCode = palletsByMat.get(matId)!
+      if (!byCode.has(scan.pallet_code)) {
+        byCode.set(scan.pallet_code, { pallet_code: scan.pallet_code, cartons_scanned: 0, scanned_at: scan.scanned_at ?? null })
+      }
+      byCode.get(scan.pallet_code)!.cartons_scanned += (scan.cartons_scanned ?? 0)
+    }
+
+    return ok(res, (planLines ?? []).map((l: any) => ({
+      material_id: l.material_id,
+      material_code: l.material?.material_code ?? null,
+      material_name: l.material?.short_name ?? null,
+      unit: l.material?.unit ?? null,
+      planned_boxes: l.planned_boxes,
+      pallets: [...(palletsByMat.get(l.material_id)?.values() ?? [])],
+    })))
   } catch (e) { return fail(res, String(e)) }
 }
 

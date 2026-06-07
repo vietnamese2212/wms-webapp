@@ -1618,6 +1618,27 @@ export function useTransferOrders(destination_warehouse_id?: string) {
   })
 }
 
+export type TransferGoodsRow = {
+  material_id: string
+  material_code: string | null
+  material_name: string | null
+  unit: string | null
+  planned_boxes: number
+  pallets: { pallet_code: string; cartons_scanned: number; scanned_at: string | null }[]
+}
+
+export function useTransferGoods(orderId?: string | null) {
+  return useQuery({
+    queryKey: ['transfer-goods', orderId],
+    queryFn: async () => {
+      const { data } = await apiClient.get(`/tms/orders/${orderId}/transfer-goods`)
+      return data.data as TransferGoodsRow[]
+    },
+    enabled: !!orderId,
+    staleTime: 30_000,
+  })
+}
+
 export function useCreateTransferOrder() {
   const qc = useQueryClient()
   return useMutation({

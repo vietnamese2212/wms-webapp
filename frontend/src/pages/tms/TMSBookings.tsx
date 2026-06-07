@@ -1915,8 +1915,27 @@ function TransportUpdateDialog({ order, onClose }: { order: TransferOrder | null
 
 function TransferOrderDetail({ order, canEdit, onClose }: { order: TransferOrder | null; canEdit: boolean; onClose: () => void }) {
   const { data: goods = [], isLoading } = useTransferGoods(order?.id)
-  const [expandedMat, setExpandedMat] = useState<string | null>(null)
-  const [showUpdate, setShowUpdate]   = useState(false)
+  const [expandedMats, setExpandedMats] = useState<Set<string>>(new Set())
+  const [showUpdate, setShowUpdate]     = useState(false)
+
+  const hasPallets = goods.some(g => g.pallets.length > 0)
+  const allExpanded = hasPallets && goods.filter(g => g.pallets.length > 0).every(g => expandedMats.has(g.material_id))
+
+  function toggleAllPallets() {
+    if (allExpanded) {
+      setExpandedMats(new Set())
+    } else {
+      setExpandedMats(new Set(goods.filter(g => g.pallets.length > 0).map(g => g.material_id)))
+    }
+  }
+
+  function toggleMat(matId: string) {
+    setExpandedMats(prev => {
+      const next = new Set(prev)
+      next.has(matId) ? next.delete(matId) : next.add(matId)
+      return next
+    })
+  }
 
   const slot = order?.vehicle_slots?.[0]
   const tStatus = order?.transfer_gdo?.transfer_status
@@ -1975,18 +1994,27 @@ function TransferOrderDetail({ order, canEdit, onClose }: { order: TransferOrder
                   </div>
                 </div>
               </div>
-              <div className="flex items-center gap-2 shrink-0">
-                {canEdit && (
+              {canEdit && (
+                <div className="shrink-0 pt-1">
                   <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setShowUpdate(true)}>
                     Cập nhật vận chuyển
                   </Button>
-                )}
-                <button onClick={onClose} className="text-slate-400 hover:text-slate-700 p-1">
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
+                </div>
+              )}
             </div>
           </div>
+
+          {/* Toolbar */}
+          {!isLoading && goods.length > 0 && hasPallets && (
+            <div className="px-3 py-1.5 border-b bg-slate-50 shrink-0 flex items-center gap-2">
+              <Button variant="outline" size="sm" className="h-6 text-[10px] px-2.5" onClick={toggleAllPallets}>
+                {allExpanded ? 'Thu gọn' : 'Pallet ▾'}
+              </Button>
+              <span className="text-[9px] text-slate-400">
+                {allExpanded ? 'Ẩn chi tiết pallet' : 'Hiển thị danh sách pallet theo mặt hàng'}
+              </span>
+            </div>
+          )}
 
           {/* Goods table */}
           <div className="flex-1 min-h-0 overflow-auto">
@@ -2007,13 +2035,13 @@ function TransferOrderDetail({ order, canEdit, onClose }: { order: TransferOrder
                   </thead>
                   <tbody>
                     {goods.map(g => {
-                      const isExpanded = expandedMat === g.material_id
+                      const isExpanded = expandedMats.has(g.material_id)
                       const actualCartons = g.pallets.reduce((s, p) => s + (p.cartons_scanned ?? 0), 0)
                       return (
                         <React.Fragment key={g.material_id}>
                           <tr
-                            className={`border-t border-slate-100 cursor-pointer ${g.pallets.length > 0 ? 'hover:bg-blue-50/40' : 'hover:bg-slate-50'}`}
-                            onClick={() => g.pallets.length > 0 && setExpandedMat(isExpanded ? null : g.material_id)}
+                            className={`border-t border-slate-100 ${g.pallets.length > 0 ? 'cursor-pointer hover:bg-blue-50/40' : 'hover:bg-slate-50'}`}
+                            onClick={() => g.pallets.length > 0 && toggleMat(g.material_id)}
                           >
                             <td className="px-2 py-1 text-slate-300 text-[10px]">
                               {g.pallets.length > 0 ? (isExpanded ? '▾' : '▸') : ''}

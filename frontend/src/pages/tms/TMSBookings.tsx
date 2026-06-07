@@ -2193,7 +2193,7 @@ function TransferOrdersPanel({ canCreate, canEdit }: { canCreate: boolean; canEd
                   <table className="min-w-max w-full">
                     <thead className="sticky top-0 z-10 bg-slate-50">
                       <tr>
-                        {['Mã GDO', 'Ngày xuất', 'Kho xuất', 'Kho nhận', 'Thùng', ''].map(h => (
+                        {['Mã GDO', 'Số DO', 'Ngày xuất', 'Kho xuất', 'Kho nhận', 'Thùng', ''].map(h => (
                           <th key={h} className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
@@ -2203,6 +2203,11 @@ function TransferOrdersPanel({ canCreate, canEdit }: { canCreate: boolean; canEd
                         <tr key={g.id} className="border-t border-slate-100 hover:bg-amber-50/40">
                           <td className="px-2 py-1 whitespace-nowrap">
                             <span className="text-[10px] font-mono font-semibold">{g.group_code}</span>
+                          </td>
+                          <td className="px-2 py-1 whitespace-nowrap">
+                            {(g.delivery_codes?.length ?? 0) > 0
+                              ? <span className="text-[10px] font-mono font-semibold">{g.delivery_codes!.join(', ')}</span>
+                              : <span className="text-[10px] text-slate-300">—</span>}
                           </td>
                           <td className="px-2 py-1 whitespace-nowrap">
                             <span className="text-[10px] tabular-nums">{g.delivery_date}</span>

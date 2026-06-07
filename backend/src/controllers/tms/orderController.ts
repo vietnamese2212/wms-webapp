@@ -45,6 +45,7 @@ export async function listOrders(req: Request, res: Response) {
           .select('gdo_id, delivery_code').in('gdo_id', gdoIds)
         const codesByGdo = new Map<string, string[]>()
         for (const d of (dos ?? [])) {
+          if (!d.delivery_code) continue
           const list = codesByGdo.get(d.gdo_id) ?? []
           list.push(d.delivery_code)
           codesByGdo.set(d.gdo_id, list)
@@ -573,11 +574,7 @@ export async function createTransferOrder(req: Request, res: Response) {
 
     // Tạo TmsOrder TRANSFER
     const orderId = randomUUID()
-    const datePart = vnToday.replace(/-/g, '').slice(2)
-    const srcWhCode = (gdo.warehouse as { code: string } | null)?.code ?? gdo.shipto_party
-    const licensePlateClean = (gdo.license_plate ?? '').replace(/[^A-Za-z0-9]/g, '')
-    const suffix = licensePlateClean || randomUUID().slice(0, 4)
-    const orderCode = `TRF${datePart}_${srcWhCode}_${suffix}`
+    const orderCode = `TRF_${destWh.code}_${gdo.group_code}`
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error: ordErr } = await (supabase.from('TmsOrder') as any).insert({

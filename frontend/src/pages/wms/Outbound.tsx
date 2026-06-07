@@ -850,7 +850,7 @@ function GDOFormBody({
           </div>
           {!isMultiDO && (
             <div className="space-y-1">
-              <label className="text-[10px] font-medium text-slate-500">Số DO <span className="text-slate-400 font-normal">(mã giao hàng)</span></label>
+              <label className="text-[10px] font-medium text-slate-500">Số DO *</label>
               {isMultiDO ? (
                 <div className="text-[10px] px-2 py-1 border border-slate-100 rounded bg-white text-slate-600 font-mono">
                   {(gdo?.delivery_orders ?? []).map(d => d.delivery_code).filter(Boolean).join(', ') || '—'}
@@ -1031,6 +1031,7 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
 
   function handleSubmit() {
     if (!date)         return setError('Chọn ngày xuất')
+    if (!deliveryCode.trim()) return setError('Nhập Số DO')
     if (!warehouseType) return setError('Chọn loại kho')
     if (!customerName.trim()) return setError('Nhập tên khách hàng')
     if (!dvvt.trim())  return setError('Nhập đơn vị vận tải')
@@ -1139,6 +1140,7 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
   function handleSubmit() {
     const isMultiDO = (gdo?.delivery_orders?.length ?? 0) > 1
     if (!date) return setError('Chọn ngày xuất')
+    if (!isMultiDO && !deliveryCode.trim()) return setError('Nhập Số DO')
     if (!isMultiDO && !customerName.trim()) return setError('Nhập tên khách hàng')
     if (!exportType) return setError('Chọn loại xe')
     for (const item of items) {

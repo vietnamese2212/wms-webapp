@@ -306,6 +306,7 @@ export async function createGDO(req: Request, res: Response) {
       items?: Array<{ material_code: string; cartons_ordered: number; loose_picking?: number; header_text?: string }>
     }
     if (!delivery_date) return fail(res, 'delivery_date là bắt buộc', 400)
+    if (!delivery_code?.trim()) return fail(res, 'Số DO là bắt buộc', 400)
     if (!items?.length) return fail(res, 'Phải có ít nhất 1 mặt hàng', 400)
 
     // Auto-generate group_code: warehouseCode_X_ddmmyy_stt

@@ -1739,7 +1739,8 @@ function UploadPlanLinesDialog({ orderId, onClose }: { orderId: string; onClose:
 const TRANSFER_STATUS_CFG: Record<string, { label: string; cls: string }> = {
   PENDING_DELIVERY: { label: 'Chờ giao',        cls: 'bg-amber-100 text-amber-700' },
   IN_TRANSIT:       { label: 'Đang vận chuyển', cls: 'bg-blue-100 text-blue-700' },
-  DELIVERED:        { label: 'Đã giao',         cls: 'bg-green-100 text-green-700' },
+  RECEIVING:        { label: 'Đang nhận',        cls: 'bg-green-100 text-green-700' },
+  DELIVERED:        { label: 'Đã giao',          cls: 'bg-slate-100 text-slate-600' },
 }
 
 function CreateFromGDODialog({ open, warehouseId, onClose }: {
@@ -2279,7 +2280,9 @@ function TransferOrdersPanel({ canCreate, canEdit, canConfirmReceipt }: { canCre
                         const slot = o.vehicle_slots?.[0]
                         const dvvt = o.ncc?.name ?? o.transfer_gdo?.dvvt
                         const rowCls = tStatus === 'DELIVERED'
-                          ? 'bg-blue-50 hover:bg-blue-100'
+                          ? 'bg-slate-50 hover:bg-slate-100'
+                          : tStatus === 'RECEIVING'
+                          ? 'bg-green-50 hover:bg-green-100'
                           : tStatus === 'IN_TRANSIT'
                           ? 'bg-amber-50 hover:bg-amber-100'
                           : 'hover:bg-slate-50'

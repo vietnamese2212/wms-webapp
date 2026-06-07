@@ -697,17 +697,18 @@ export async function confirmTransferReceipt(req: Request, res: Response) {
       material_id: m.material_id,
       planned_cartons: m.cartons,
       planned_pallets: 0,
-      status: 'PENDING',
+      status: 'OPEN',
       source_type: 'TRANSFER',
       warehouse_type: m.category ?? null,
       import_date: vnDate,
       from_gdo_id: gdoId,
+      tms_order_id: id,
       updated_at: t,
     }))
     await (supabase.from('ProductionImport') as any).insert(toInsert)
 
     await (supabase.from('GroupDeliveryOrder') as any)
-      .update({ transfer_status: 'DELIVERED', updated_at: t }).eq('id', gdoId)
+      .update({ transfer_status: 'RECEIVING', updated_at: t }).eq('id', gdoId)
 
     return ok(res, { created: toInsert.length })
   } catch (e) { return fail(res, String(e)) }

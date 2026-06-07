@@ -221,7 +221,7 @@ export async function listGDOs(req: Request, res: Response) {
 
     // Bulk fetch DOs and items for aggregation
     const { data: dos } = await (supabase.from('OutboundDelivery') as any)
-      .select('id, gdo_id, distributor_name')
+      .select('id, gdo_id, distributor_name, delivery_code')
       .in('gdo_id', gdoIds)
 
     const doIds = (dos ?? []).map((d: any) => d.id)
@@ -255,12 +255,16 @@ export async function listGDOs(req: Request, res: Response) {
       const distributorNames = [...new Set(
         gdoDOs.map((d: any) => d.distributor_name).filter(Boolean)
       )]
+      const deliveryCodes = [...new Set(
+        gdoDOs.map((d: any) => d.delivery_code).filter(Boolean)
+      )]
       const firstExportType = gdoItems.find((i: any) => i.export_type)?.export_type ?? null
 
       return {
         ...g,
         do_count:          gdoDOs.length,
         distributor_names: distributorNames as string[],
+        delivery_codes:    deliveryCodes as string[],
         export_type:       firstExportType,
         total_cartons:     countable.reduce((s: number, i: any) => s + Number(i.cartons_ordered),    0),
         total_pallets:     countable.reduce((s: number, i: any) => s + Number(i.pallets_estimated),  0),
@@ -283,10 +287,10 @@ export async function getGDO(req: Request, res: Response) {
 
 export async function createGDO(req: Request, res: Response) {
   try {
-    const { delivery_date, warehouse_id, dvvt, customer_name, export_type, warehouse_type, shipto_party, items } = req.body as {
+    const { delivery_date, warehouse_id, dvvt, customer_name, delivery_code, export_type, warehouse_type, shipto_party, items } = req.body as {
       delivery_date: string; warehouse_id?: string; dvvt?: string
-      customer_name?: string; export_type?: string; warehouse_type?: string; shipto_party?: string
-      items?: Array<{ material_code: string; cartons_ordered: number }>
+      customer_name?: string; delivery_code?: string; export_type?: string; warehouse_type?: string; shipto_party?: string
+      items?: Array<{ material_code: string; cartons_ordered: number; loose_picking?: number; header_text?: string }>
     }
     if (!delivery_date) return fail(res, 'delivery_date là bắt buộc', 400)
     if (!items?.length) return fail(res, 'Phải có ít nhất 1 mặt hàng', 400)
@@ -322,7 +326,7 @@ export async function createGDO(req: Request, res: Response) {
     // Single DO for manual orders
     const doId = randomUUID()
     const { error: doErr } = await (supabase.from('OutboundDelivery') as any).insert({
-      id: doId, gdo_id: gdoId, delivery_code: 'ĐT01',
+      id: doId, gdo_id: gdoId, delivery_code: delivery_code?.trim() || 'ĐT01',
       distributor_name: customer_name ?? null, status: 'PENDING', updated_at: now(),
     })
     if (doErr) return fail(res, doErr.message)
@@ -374,9 +378,9 @@ export async function deleteGDO(req: Request, res: Response) {
 
 export async function updateGDO(req: Request, res: Response) {
   try {
-    const { delivery_date, warehouse_id, dvvt, customer_name, export_type, items, gate_registration_id, shipto_party } = req.body as {
+    const { delivery_date, warehouse_id, dvvt, customer_name, delivery_code, export_type, items, gate_registration_id, shipto_party } = req.body as {
       delivery_date?: string; warehouse_id?: string; dvvt?: string
-      customer_name?: string; export_type?: string; gate_registration_id?: string | null; shipto_party?: string | null
+      customer_name?: string; delivery_code?: string; export_type?: string; gate_registration_id?: string | null; shipto_party?: string | null
       items?: Array<{ db_id?: string; material_code: string; cartons_ordered: number; loose_picking?: number; header_text?: string }>
     }
 
@@ -401,10 +405,13 @@ export async function updateGDO(req: Request, res: Response) {
     const doList = dos ?? []
     const isMultiDO = doList.length > 1
 
-    // Update customer_name chỉ cho single-DO (multi-DO có distributor_name riêng mỗi OD)
+    // Update customer_name / delivery_code chỉ cho single-DO (multi-DO có distributor_name riêng mỗi OD)
     if (!isMultiDO && doList.length === 1) {
+      const singleDOPatch: Record<string, unknown> = { distributor_name: customer_name ?? null, updated_at: t }
+      if ('delivery_code' in req.body && delivery_code !== undefined)
+        singleDOPatch.delivery_code = delivery_code.trim() || 'ĐT01'
       await (supabase.from('OutboundDelivery') as any)
-        .update({ distributor_name: customer_name ?? null, updated_at: t }).eq('id', doList[0].id)
+        .update(singleDOPatch).eq('id', doList[0].id)
     }
 
     if (!items) return ok(res, await fetchGDOFull(req.params.id))

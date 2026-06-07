@@ -683,6 +683,7 @@ export interface GDO {
   // List aggregates
   do_count?:        number
   distributor_names?: string[]
+  delivery_codes?:  string[]
   export_type?:     string | null
   total_cartons?:   number
   total_pallets?:   number

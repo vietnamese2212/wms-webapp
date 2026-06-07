@@ -33,10 +33,29 @@ export async function listOrders(req: Request, res: Response) {
         .select(`${ORDER_SELECT}, transfer_gdo:GroupDeliveryOrder!transfer_gdo_id(id, group_code, shipto_party, transfer_status, delivery_date, dvvt, license_plate, warehouse:Warehouse!warehouse_id(id, code, name))`)
         .eq('source_type', 'TRANSFER')
         .order('created_at', { ascending: false })
-      // Lọc kho nhận nếu truyền (dùng bởi Inbound để lấy lệnh về đúng kho)
       if (destination_warehouse_id) q = q.eq('destination_warehouse_id', destination_warehouse_id)
       const { data, error } = await q
       if (error) return fail(res, error.message)
+
+      // Gắn delivery_codes từ OutboundDelivery cho mỗi order
+      const gdoIds = [...new Set((data ?? []).map((o: any) => o.transfer_gdo_id).filter(Boolean))] as string[]
+      if (gdoIds.length) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: dos } = await (supabase.from('OutboundDelivery') as any)
+          .select('gdo_id, delivery_code').in('gdo_id', gdoIds)
+        const codesByGdo = new Map<string, string[]>()
+        for (const d of (dos ?? [])) {
+          const list = codesByGdo.get(d.gdo_id) ?? []
+          list.push(d.delivery_code)
+          codesByGdo.set(d.gdo_id, list)
+        }
+        return ok(res, (data ?? []).map((o: any) => ({
+          ...o,
+          transfer_gdo: o.transfer_gdo
+            ? { ...o.transfer_gdo, delivery_codes: codesByGdo.get(o.transfer_gdo_id) ?? [] }
+            : o.transfer_gdo,
+        })))
+      }
       return ok(res, data)
     }
 

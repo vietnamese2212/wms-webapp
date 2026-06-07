@@ -1998,6 +1998,12 @@ function TransferOrderDetail({ order, canEdit, onClose }: { order: TransferOrder
                 <span className="text-slate-400 w-16 shrink-0">Mã GDO</span>
                 <span className="font-mono font-semibold text-slate-600">{order?.transfer_gdo?.group_code ?? '—'}</span>
               </div>
+              {(order?.transfer_gdo?.delivery_codes?.length ?? 0) > 0 && (
+                <div className="flex gap-2">
+                  <span className="text-slate-400 w-16 shrink-0">Số DO</span>
+                  <span className="font-mono font-semibold text-slate-700">{order!.transfer_gdo!.delivery_codes!.join(' · ')}</span>
+                </div>
+              )}
               <div className="flex gap-2">
                 <span className="text-slate-400 w-16 shrink-0">Ngày xuất</span>
                 <span className="font-medium text-slate-700">{order?.transfer_gdo?.delivery_date ?? '—'}</span>
@@ -2237,7 +2243,7 @@ function TransferOrdersPanel({ canCreate, canEdit }: { canCreate: boolean; canEd
                   <table className="min-w-max w-full">
                     <thead className="sticky top-0 z-10 bg-slate-50">
                       <tr>
-                        {['Mã lệnh', 'Ngày xuất', 'Kho xuất', 'Kho nhận', 'Thùng KH', 'Dự kiến giao', 'ĐVVT', 'Biển số', 'Số điện thoại', 'Tình trạng', 'Số GDO', 'Ghi chú'].map(h => (
+                        {['Mã lệnh', 'Ngày xuất', 'Kho xuất', 'Kho nhận', 'Thùng KH', 'Dự kiến giao', 'ĐVVT', 'Biển số', 'Số điện thoại', 'Tình trạng', 'Số GDO', 'Số DO', 'Ghi chú'].map(h => (
                           <th key={h} className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
@@ -2294,6 +2300,11 @@ function TransferOrdersPanel({ canCreate, canEdit }: { canCreate: boolean; canEd
                             </td>
                             <td className="px-2 py-1 whitespace-nowrap">
                               <span className="text-[10px] font-mono text-slate-500">{o.transfer_gdo?.group_code ?? '—'}</span>
+                            </td>
+                            <td className="px-2 py-1 whitespace-nowrap">
+                              {(o.transfer_gdo?.delivery_codes?.length ?? 0) > 0
+                                ? <span className="text-[10px] font-mono font-semibold">{o.transfer_gdo!.delivery_codes!.join(', ')}</span>
+                                : <span className="text-slate-300 text-[10px]">—</span>}
                             </td>
                             <td className="px-2 py-1 max-w-[160px]">
                               {o.notes

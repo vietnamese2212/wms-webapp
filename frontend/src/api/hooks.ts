@@ -935,6 +935,7 @@ type GDOFormPayload = {
   shipto_party?: string
   dvvt: string
   customer_name: string
+  delivery_code?: string
   export_type: string
   items?: Array<{ db_id?: string; material_code: string; cartons_ordered: number; loose_picking?: number; header_text?: string }>
 }
@@ -1603,6 +1604,7 @@ export type TransferGDO = {
   dvvt?: string | null
   license_plate?: string | null
   warehouse?: { id: string; code: string; name: string } | null
+  delivery_codes?: string[]
 }
 export type TransferOrder = import('@/types').TmsOrder & { transfer_gdo?: TransferGDO | null }
 

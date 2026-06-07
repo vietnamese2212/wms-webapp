@@ -313,6 +313,7 @@ export default function Outbound() {
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Ngày xuất</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Số xe</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Tên NPP</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Số DO</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Ship-to</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">ĐVVT</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 text-right whitespace-nowrap px-2 py-1.5">Tổng thùng</TableHead>
@@ -391,6 +392,11 @@ function GDORow({ gdo, onClick, onAssign }: {
       </TableCell>
       <TableCell className="px-2 py-1 max-w-[150px]">
         <span className="text-[10px] truncate block" title={npp}>{npp}</span>
+      </TableCell>
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        {gdo.delivery_codes?.length
+          ? <span className="text-[10px] font-mono font-semibold">{gdo.delivery_codes.join(', ')}</span>
+          : <span className="text-[10px] text-slate-300">—</span>}
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px] font-mono">{gdo.shipto_party ?? '—'}</span>
@@ -624,6 +630,7 @@ function GDOFormBody({
   shiptoPartyId, setShiptoPartyId,
   dvvt, setDvvt,
   customerName, setCustomerName,
+  deliveryCode, setDeliveryCode,
   exportType, setExportType,
   items, setItems,
   error,
@@ -639,6 +646,7 @@ function GDOFormBody({
   shiptoPartyId: string; setShiptoPartyId: (v: string) => void
   dvvt: string; setDvvt: (v: string) => void
   customerName: string; setCustomerName: (v: string) => void
+  deliveryCode: string; setDeliveryCode: (v: string) => void
   exportType: string; setExportType: (v: string) => void
   items: ItemRow[]; setItems: React.Dispatch<React.SetStateAction<ItemRow[]>>
   error: string
@@ -840,6 +848,18 @@ function GDOFormBody({
               <Input className="h-7 text-xs" placeholder="Đơn vị vận tải…" value={dvvt} onChange={e => setDvvt(e.target.value)} />
             )}
           </div>
+          {!isMultiDO && (
+            <div className="space-y-1">
+              <label className="text-[10px] font-medium text-slate-500">Số DO <span className="text-slate-400 font-normal">(mã giao hàng)</span></label>
+              {isMultiDO ? (
+                <div className="text-[10px] px-2 py-1 border border-slate-100 rounded bg-white text-slate-600 font-mono">
+                  {(gdo?.delivery_orders ?? []).map(d => d.delivery_code).filter(Boolean).join(', ') || '—'}
+                </div>
+              ) : (
+                <Input className="h-7 text-xs font-mono" placeholder="VD: 3000245103" value={deliveryCode} onChange={e => setDeliveryCode(e.target.value)} />
+              )}
+            </div>
+          )}
           <div className="space-y-1">
             <label className="text-[10px] font-medium text-slate-500">Loại xe <span className="text-red-500">*</span></label>
             <div className="flex flex-wrap gap-1.5">
@@ -1002,6 +1022,7 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
   const [shiptoPartyId, setShiptoPartyId] = useState('')
   const [dvvt, setDvvt]               = useState('')
   const [customerName, setCustomerName] = useState('')
+  const [deliveryCode, setDeliveryCode] = useState('')
   const [exportType, setExportType]   = useState('')
   const [items, setItems]             = useState<ItemRow[]>(() => Array.from({ length: 20 }, makeItem))
   const [error, setError]             = useState('')
@@ -1028,6 +1049,7 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
         shipto_party: shiptoPartyId || undefined,
         dvvt: dvvt.trim(),
         customer_name: customerName.trim(),
+        delivery_code: deliveryCode.trim() || undefined,
         export_type: exportType,
         items: filledItems.map(i => ({ material_code: i.material_code, cartons_ordered: i.cartons, loose_picking: i.loose_picking, header_text: i.header_text || undefined })),
       },
@@ -1051,6 +1073,7 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
         shiptoPartyId={shiptoPartyId} setShiptoPartyId={setShiptoPartyId}
         dvvt={dvvt} setDvvt={setDvvt}
         customerName={customerName} setCustomerName={setCustomerName}
+        deliveryCode={deliveryCode} setDeliveryCode={setDeliveryCode}
         exportType={exportType} setExportType={setExportType}
         items={items} setItems={setItems}
         error={error} isPending={isPending}
@@ -1071,6 +1094,7 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
   const [shiptoPartyId, setShiptoPartyId] = useState('')
   const [dvvt, setDvvt]               = useState('')
   const [customerName, setCustomerName] = useState('')
+  const [deliveryCode, setDeliveryCode] = useState('')
   const [exportType, setExportType]   = useState('')
   const [items, setItems]             = useState<ItemRow[]>([])
   const [error, setError]             = useState('')
@@ -1088,6 +1112,7 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
     setDvvt(gdo.dvvt ?? '')
     // distributor_name: single-DO → from first DO; multi-DO → displayed read-only separately
     setCustomerName(gdo.delivery_orders?.[0]?.distributor_name ?? '')
+    setDeliveryCode(gdo.delivery_orders?.[0]?.delivery_code ?? '')
     // export_type: tìm từ items, normalize để match "xe container"→"Xe Container", "xe xa"→"Xe Xá"
     const allItemsForFill = (gdo.delivery_orders ?? []).flatMap(d => d.items ?? [])
     const rawExportType = allItemsForFill.find(i => i.export_type)?.export_type ?? ''
@@ -1130,6 +1155,7 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
         shipto_party: shiptoPartyId || undefined,
         dvvt: dvvt.trim(),
         customer_name: customerName.trim(),
+        delivery_code: deliveryCode.trim() || undefined,
         export_type: exportType,
         items: items.map(i => ({ db_id: i.db_id, material_code: i.material_code, cartons_ordered: i.cartons, loose_picking: i.loose_picking, header_text: i.header_text || undefined })),
       },
@@ -1158,6 +1184,7 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
           shiptoPartyId={shiptoPartyId} setShiptoPartyId={setShiptoPartyId}
           dvvt={dvvt} setDvvt={setDvvt}
           customerName={customerName} setCustomerName={setCustomerName}
+          deliveryCode={deliveryCode} setDeliveryCode={setDeliveryCode}
           exportType={exportType} setExportType={setExportType}
           items={items} setItems={setItems}
           error={error} isPending={isPending}

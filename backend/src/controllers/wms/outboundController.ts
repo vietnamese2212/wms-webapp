@@ -343,7 +343,7 @@ export async function createGDO(req: Request, res: Response) {
     // Single DO for manual orders
     const doId = randomUUID()
     const { error: doErr } = await (supabase.from('OutboundDelivery') as any).insert({
-      id: doId, gdo_id: gdoId, delivery_code: delivery_code?.trim() || 'ĐT01',
+      id: doId, gdo_id: gdoId, delivery_code: delivery_code?.trim() || null,
       distributor_name: customer_name ?? null, status: 'PENDING', updated_at: now(),
     })
     if (doErr) return fail(res, doErr.message)
@@ -426,7 +426,7 @@ export async function updateGDO(req: Request, res: Response) {
     if (!isMultiDO && doList.length === 1) {
       const singleDOPatch: Record<string, unknown> = { distributor_name: customer_name ?? null, updated_at: t }
       if ('delivery_code' in req.body && delivery_code !== undefined)
-        singleDOPatch.delivery_code = delivery_code.trim() || 'ĐT01'
+        singleDOPatch.delivery_code = delivery_code.trim() || null
       await (supabase.from('OutboundDelivery') as any)
         .update(singleDOPatch).eq('id', doList[0].id)
     }

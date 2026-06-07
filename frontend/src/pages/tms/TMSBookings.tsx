@@ -1825,25 +1825,25 @@ function CreateFromGDODialog({ open, warehouseId, onClose }: {
   )
 }
 
-// ── Transport Update Dialog (ĐVVT + biển số + SĐT + ETA) ────────────────────
+// ── Transport Update Dialog (biển số + SĐT + Dự kiến giao) ──────────────────
 
 function TransportUpdateDialog({ order, onClose }: { order: TransferOrder | null; onClose: () => void }) {
   const updateOrder = useUpdateOrder()
   const updateSlot  = useUpdateVehicleSlot()
-  const { data: transportCompanies = [] } = useTransportCompanies(true)
 
-  const [nccId, setNccId]           = useState('')
   const [licensePlate, setPlate]    = useState('')
   const [driverPhone, setPhone]     = useState('')
   const [eta, setEta]               = useState('')
   const [err, setErr]               = useState('')
   const saving = updateOrder.isPending || updateSlot.isPending
 
+  // min ETA = ngày bốc hàng (delivery_date của GDO)
+  const minEta = order?.transfer_gdo?.delivery_date ? `${order.transfer_gdo.delivery_date}T00:00` : ''
+
   useEffect(() => {
     if (order) {
-      setNccId(order.ncc_id ?? '')
       const slot = order.vehicle_slots?.[0]
-      setPlate(slot?.license_plate ?? '')
+      setPlate(slot?.license_plate ?? order.transfer_gdo?.license_plate ?? '')
       setPhone(slot?.driver_phone ?? '')
       setEta(order.eta ? order.eta.slice(0, 16) : '')
       setErr('')
@@ -1852,9 +1852,13 @@ function TransportUpdateDialog({ order, onClose }: { order: TransferOrder | null
 
   const handleSave = async () => {
     if (!order) return
+    if (eta && minEta && eta < minEta) {
+      setErr(`Thời gian giao không được trước ngày bốc hàng (${order.transfer_gdo?.delivery_date ?? ''})`)
+      return
+    }
     try {
       const isoEta = eta ? new Date(eta).toISOString() : null
-      await updateOrder.mutateAsync({ id: order.id, ncc_id: nccId || null, eta: isoEta })
+      await updateOrder.mutateAsync({ id: order.id, eta: isoEta })
       const slot = order.vehicle_slots?.[0]
       if (slot) {
         await updateSlot.mutateAsync({ id: slot.id, license_plate: licensePlate || null, driver_phone: driverPhone || null })
@@ -1867,22 +1871,20 @@ function TransportUpdateDialog({ order, onClose }: { order: TransferOrder | null
   }
 
   if (!order) return null
+  const dvvtDisplay = order.ncc?.name ?? order.transfer_gdo?.dvvt ?? null
   return (
     <Dialog open={!!order} onOpenChange={v => !v && onClose()}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
-          <DialogTitle>Cập nhật vận chuyển</DialogTitle>
+          <DialogTitle>Cập nhật giao hàng</DialogTitle>
           <p className="text-xs text-slate-500 mt-1">{order.order_code} · {order.transfer_gdo?.warehouse?.name ?? '—'} → {order.warehouse?.name ?? '—'}</p>
         </DialogHeader>
         <div className="space-y-3 py-2">
           <div>
-            <Label className="text-xs">ĐVVT</Label>
-            <SearchableSelect
-              value={nccId}
-              onChange={setNccId}
-              placeholder="Chọn ĐVVT"
-              options={(transportCompanies as TransportCompany[]).map(c => ({ value: c.id, label: `${c.code} — ${c.name}` }))}
-            />
+            <Label className="text-xs">ĐVVT <span className="text-slate-400 font-normal">(từ Outbound)</span></Label>
+            <div className="h-8 mt-1 px-3 flex items-center rounded-md border border-slate-200 bg-slate-50 text-sm text-slate-600">
+              {dvvtDisplay ?? <span className="text-slate-400">—</span>}
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div>
@@ -1895,8 +1897,11 @@ function TransportUpdateDialog({ order, onClose }: { order: TransferOrder | null
             </div>
           </div>
           <div>
-            <Label className="text-xs">Dự kiến đến (ETA)</Label>
-            <Input type="datetime-local" value={eta} onChange={e => setEta(e.target.value)} className="h-8 text-sm mt-1" />
+            <Label className="text-xs">
+              Dự kiến giao
+              {minEta && <span className="text-slate-400 font-normal ml-1">· không trước {order.transfer_gdo?.delivery_date}</span>}
+            </Label>
+            <Input type="datetime-local" value={eta} min={minEta} onChange={e => setEta(e.target.value)} className="h-8 text-sm mt-1" />
           </div>
           {err && <p className="text-xs text-red-600">{err}</p>}
         </div>
@@ -1941,80 +1946,91 @@ function TransferOrderDetail({ order, canEdit, onClose }: { order: TransferOrder
   const tStatus = order?.transfer_gdo?.transfer_status
   const cfg = tStatus ? TRANSFER_STATUS_CFG[tStatus] : null
   const totalScanned = goods.reduce((s, g) => s + g.pallets.reduce((ps, p) => ps + (p.cartons_scanned ?? 0), 0), 0)
+  const dvvtDisplay = order?.ncc?.name ?? order?.transfer_gdo?.dvvt ?? null
 
   return (
     <>
       <TransportUpdateDialog order={showUpdate ? order : null} onClose={() => setShowUpdate(false)} />
       <Dialog open={!!order} onOpenChange={v => !v && onClose()}>
         <DialogContent className="max-w-[88vw] max-h-[90vh] flex flex-col p-0 gap-0">
-          {/* Header */}
-          <div className="px-4 py-3 border-b bg-white shrink-0">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-sm font-mono font-bold text-slate-800">{order?.order_code}</span>
-                  {cfg && <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${cfg.cls}`}>{cfg.label}</span>}
-                </div>
-                <div className="mt-1.5 grid grid-cols-2 gap-x-6 gap-y-0.5 text-[11px]">
-                  <div className="flex gap-2">
-                    <span className="text-slate-400 w-16 shrink-0">Kho xuất</span>
-                    <span className="font-medium text-slate-700">{order?.transfer_gdo?.warehouse?.name ?? '—'}</span>
-                  </div>
-                  <div className="flex gap-2">
-                    <span className="text-slate-400 w-16 shrink-0">Kho nhận</span>
-                    <span className="font-medium text-blue-700">{order?.warehouse?.name ?? '—'}</span>
-                  </div>
-                  <div className="flex gap-2">
-                    <span className="text-slate-400 w-16 shrink-0">ĐVVT</span>
-                    <span className="font-medium text-slate-700">{order?.ncc?.name ?? <span className="text-slate-300">Chưa cập nhật</span>}</span>
-                  </div>
-                  <div className="flex gap-2">
-                    <span className="text-slate-400 w-16 shrink-0">Ngày XK</span>
-                    <span className="font-medium text-slate-700">{order?.transfer_gdo?.delivery_date ?? '—'}</span>
-                  </div>
-                  <div className="flex gap-2">
-                    <span className="text-slate-400 w-16 shrink-0">Biển số</span>
-                    <span className="font-mono font-semibold text-slate-800">{slot?.license_plate ?? <span className="text-slate-300 font-normal">Chưa cập nhật</span>}</span>
-                  </div>
-                  <div className="flex gap-2">
-                    <span className="text-slate-400 w-16 shrink-0">SĐT</span>
-                    <span className="text-slate-700">{slot?.driver_phone ?? <span className="text-slate-300">—</span>}</span>
-                  </div>
-                  <div className="flex gap-2">
-                    <span className="text-slate-400 w-16 shrink-0">ETA</span>
-                    {order?.eta
-                      ? <span className="font-semibold text-green-700">{formatDateTime(order.eta)}</span>
-                      : <span className="text-slate-300">Chưa cập nhật</span>}
-                  </div>
-                  <div className="flex gap-2">
-                    <span className="text-slate-400 w-16 shrink-0">Thùng</span>
-                    <span className="tabular-nums font-semibold text-slate-800">
-                      {totalScanned > 0 ? `${totalScanned} / ` : ''}{order?.planned_boxes ?? 0} thùng
-                    </span>
-                  </div>
-                </div>
+          {/* Header — pr-10 để tránh nút X của shadcn */}
+          <div className="px-4 pt-3 pb-2 border-b bg-white shrink-0 pr-10">
+            {/* Dòng 1: Mã lệnh + trạng thái */}
+            <div className="flex items-center gap-2 flex-wrap mb-2">
+              <span className="text-sm font-mono font-bold text-slate-800">{order?.order_code}</span>
+              {cfg && <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${cfg.cls}`}>{cfg.label}</span>}
+            </div>
+            {/* Dòng 2: Info grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-0.5 text-[11px]">
+              <div className="flex gap-2">
+                <span className="text-slate-400 w-16 shrink-0">Kho xuất</span>
+                <span className="font-medium text-slate-700">{order?.transfer_gdo?.warehouse?.name ?? '—'}</span>
               </div>
+              <div className="flex gap-2">
+                <span className="text-slate-400 w-16 shrink-0">Kho nhận</span>
+                <span className="font-medium text-blue-700">{order?.warehouse?.name ?? '—'}</span>
+              </div>
+              <div className="flex gap-2">
+                <span className="text-slate-400 w-16 shrink-0">Mã GDO</span>
+                <span className="font-mono font-semibold text-slate-600">{order?.transfer_gdo?.group_code ?? '—'}</span>
+              </div>
+              <div className="flex gap-2">
+                <span className="text-slate-400 w-16 shrink-0">Ngày xuất</span>
+                <span className="font-medium text-slate-700">{order?.transfer_gdo?.delivery_date ?? '—'}</span>
+              </div>
+              <div className="flex gap-2">
+                <span className="text-slate-400 w-16 shrink-0">ĐVVT</span>
+                <span className="font-medium text-slate-700">{dvvtDisplay ?? <span className="text-slate-300">—</span>}</span>
+              </div>
+              <div className="flex gap-2">
+                <span className="text-slate-400 w-16 shrink-0">Thùng</span>
+                <span className="tabular-nums font-semibold text-slate-800">
+                  {totalScanned > 0 ? `${totalScanned} / ` : ''}{order?.planned_boxes ?? 0} thùng
+                </span>
+              </div>
+              <div className="flex gap-2">
+                <span className="text-slate-400 w-16 shrink-0">Biển số</span>
+                <span className="font-mono font-semibold text-slate-800">{slot?.license_plate ?? <span className="text-slate-300 font-normal">—</span>}</span>
+              </div>
+              <div className="flex gap-2 items-center">
+                <span className="text-slate-400 w-16 shrink-0">SĐT</span>
+                {slot?.driver_phone
+                  ? <a href={`tel:${slot.driver_phone}`} className="text-blue-600 hover:text-blue-800 font-medium">{slot.driver_phone}</a>
+                  : <span className="text-slate-300">—</span>}
+              </div>
+              <div className="flex gap-2">
+                <span className="text-slate-400 w-16 shrink-0">Dự kiến giao</span>
+                {order?.eta
+                  ? <span className="font-semibold text-green-700">{formatDateTime(order.eta)}</span>
+                  : <span className="text-slate-300">—</span>}
+              </div>
+              <div className="flex gap-2">
+                <span className="text-slate-400 w-16 shrink-0">Người tạo</span>
+                <span className="text-slate-600">{order?.created_by ?? <span className="text-slate-300">—</span>}</span>
+              </div>
+              <div className="flex gap-2">
+                <span className="text-slate-400 w-16 shrink-0">Giờ tạo</span>
+                <span className="text-slate-600 font-mono text-[10px]">{order?.created_at ? formatDateTime(order.created_at) : '—'}</span>
+              </div>
+              <div className="flex gap-2">
+                <span className="text-slate-400 w-16 shrink-0">Người sửa</span>
+                <span className="text-slate-600">{order?.updated_by ?? <span className="text-slate-300">—</span>}</span>
+              </div>
+            </div>
+            {/* Dòng 3: Action buttons */}
+            <div className="mt-2 flex items-center gap-2">
               {canEdit && (
-                <div className="shrink-0 pt-1">
-                  <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setShowUpdate(true)}>
-                    Cập nhật vận chuyển
-                  </Button>
-                </div>
+                <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setShowUpdate(true)}>
+                  Cập nhật giao hàng
+                </Button>
+              )}
+              {!isLoading && goods.length > 0 && hasPallets && (
+                <Button variant="outline" size="sm" className="h-7 text-[10px] px-2.5" onClick={toggleAllPallets}>
+                  {allExpanded ? 'Thu gọn' : 'Pallet ▾'}
+                </Button>
               )}
             </div>
           </div>
-
-          {/* Toolbar */}
-          {!isLoading && goods.length > 0 && hasPallets && (
-            <div className="px-3 py-1.5 border-b bg-slate-50 shrink-0 flex items-center gap-2">
-              <Button variant="outline" size="sm" className="h-6 text-[10px] px-2.5" onClick={toggleAllPallets}>
-                {allExpanded ? 'Thu gọn' : 'Pallet ▾'}
-              </Button>
-              <span className="text-[9px] text-slate-400">
-                {allExpanded ? 'Ẩn chi tiết pallet' : 'Hiển thị danh sách pallet theo mặt hàng'}
-              </span>
-            </div>
-          )}
 
           {/* Goods table */}
           <div className="flex-1 min-h-0 overflow-auto">
@@ -2197,7 +2213,7 @@ function TransferOrdersPanel({ canCreate, canEdit }: { canCreate: boolean; canEd
                   <table className="min-w-max w-full">
                     <thead className="sticky top-0 z-10 bg-slate-50">
                       <tr>
-                        {['Mã lệnh', 'Ngày XK', 'Kho xuất', 'Kho nhận', 'ĐVVT', 'Biển số', 'SĐT lái xe', 'ETA', 'Thùng KH', 'Tình trạng'].map(h => (
+                        {['Mã lệnh', 'Ngày xuất', 'Kho xuất', 'Kho nhận', 'Thùng KH', 'Dự kiến giao', 'ĐVVT', 'Biển số', 'Số điện thoại', 'Tình trạng', 'Số GDO'].map(h => (
                           <th key={h} className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
@@ -2207,6 +2223,7 @@ function TransferOrdersPanel({ canCreate, canEdit }: { canCreate: boolean; canEd
                         const tStatus = o.transfer_gdo?.transfer_status
                         const cfg = tStatus ? TRANSFER_STATUS_CFG[tStatus] : null
                         const slot = o.vehicle_slots?.[0]
+                        const dvvt = o.ncc?.name ?? o.transfer_gdo?.dvvt
                         const rowCls = tStatus === 'DELIVERED'
                           ? 'bg-blue-50 hover:bg-blue-100'
                           : tStatus === 'IN_TRANSIT'
@@ -2227,27 +2244,32 @@ function TransferOrdersPanel({ canCreate, canEdit }: { canCreate: boolean; canEd
                             <td className="px-2 py-1 whitespace-nowrap">
                               <span className="text-[10px] font-semibold text-blue-700">{o.warehouse?.name ?? o.transfer_gdo?.shipto_party ?? '—'}</span>
                             </td>
-                            <td className="px-2 py-1 whitespace-nowrap">
-                              <span className="text-[10px] text-slate-600">{o.ncc?.name ?? <span className="text-slate-300">—</span>}</span>
-                            </td>
-                            <td className="px-2 py-1 whitespace-nowrap">
-                              <span className="text-[10px] font-mono">{slot?.license_plate ?? <span className="text-slate-300">—</span>}</span>
-                            </td>
-                            <td className="px-2 py-1 whitespace-nowrap">
-                              <span className="text-[10px] text-slate-500">{slot?.driver_phone ?? <span className="text-slate-300">—</span>}</span>
+                            <td className="px-2 py-1 whitespace-nowrap text-right">
+                              <span className="text-[10px] font-semibold tabular-nums">{o.planned_boxes ?? 0}</span>
                             </td>
                             <td className="px-2 py-1 whitespace-nowrap">
                               {o.eta
                                 ? <span className="text-[10px] font-semibold text-green-700">{formatDateTime(o.eta)}</span>
                                 : <span className="text-[9px] text-slate-300">—</span>}
                             </td>
-                            <td className="px-2 py-1 whitespace-nowrap text-right">
-                              <span className="text-[10px] font-semibold tabular-nums">{o.planned_boxes ?? 0}</span>
+                            <td className="px-2 py-1 whitespace-nowrap">
+                              <span className="text-[10px] text-slate-600">{dvvt ?? <span className="text-slate-300">—</span>}</span>
+                            </td>
+                            <td className="px-2 py-1 whitespace-nowrap">
+                              <span className="text-[10px] font-mono">{slot?.license_plate ?? <span className="text-slate-300">—</span>}</span>
+                            </td>
+                            <td className="px-2 py-1 whitespace-nowrap">
+                              {slot?.driver_phone
+                                ? <a href={`tel:${slot.driver_phone}`} onClick={e => e.stopPropagation()} className="text-[10px] text-blue-600 hover:underline">{slot.driver_phone}</a>
+                                : <span className="text-slate-300 text-[10px]">—</span>}
                             </td>
                             <td className="px-2 py-1 whitespace-nowrap">
                               {cfg
                                 ? <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${cfg.cls}`}>{cfg.label}</span>
                                 : <span className="text-slate-300">—</span>}
+                            </td>
+                            <td className="px-2 py-1 whitespace-nowrap">
+                              <span className="text-[10px] font-mono text-slate-500">{o.transfer_gdo?.group_code ?? '—'}</span>
                             </td>
                           </tr>
                         )

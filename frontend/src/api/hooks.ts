@@ -1600,6 +1600,8 @@ export function useTmsOrders(params?: { date?: string; warehouse_id?: string }) 
 export type TransferGDO = {
   id: string; group_code: string; shipto_party: string | null; transfer_status: string | null
   delivery_date?: string | null
+  dvvt?: string | null
+  license_plate?: string | null
   warehouse?: { id: string; code: string; name: string } | null
 }
 export type TransferOrder = import('@/types').TmsOrder & { transfer_gdo?: TransferGDO | null }

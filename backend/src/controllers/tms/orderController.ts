@@ -30,7 +30,7 @@ export async function listOrders(req: Request, res: Response) {
     if (source_type === 'TRANSFER') {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let q = (supabase.from('TmsOrder') as any)
-        .select(`${ORDER_SELECT}, transfer_gdo:GroupDeliveryOrder!transfer_gdo_id(id, group_code, shipto_party, transfer_status, delivery_date, warehouse:Warehouse!warehouse_id(id, code, name))`)
+        .select(`${ORDER_SELECT}, transfer_gdo:GroupDeliveryOrder!transfer_gdo_id(id, group_code, shipto_party, transfer_status, delivery_date, dvvt, license_plate, warehouse:Warehouse!warehouse_id(id, code, name))`)
         .eq('source_type', 'TRANSFER')
         .order('created_at', { ascending: false })
       // Lọc kho nhận nếu truyền (dùng bởi Inbound để lấy lệnh về đúng kho)

@@ -37,8 +37,8 @@ UPDATE "TmsOrder" o
 SET
   order_code = 'TRF_' || dw.code::text || '_' || g.group_code,
   updated_at = NOW()
-FROM "GroupDeliveryOrder" g
-JOIN "Warehouse" dw ON dw.id = o.destination_warehouse_id
-WHERE o.source_type = 'TRANSFER'
+FROM "GroupDeliveryOrder" g, "Warehouse" dw
+WHERE dw.id = o.destination_warehouse_id
+  AND o.source_type = 'TRANSFER'
   AND o.transfer_gdo_id = g.id
   AND o.order_code ~ '^TRF\d{6}_';

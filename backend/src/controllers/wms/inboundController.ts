@@ -46,11 +46,29 @@ function generateImportCode(whCode: string, ddmmyy: string, seq: number): string
   return `${whCode}_N_${ddmmyy}_${String(seq).padStart(2, '0')}`
 }
 
+async function computeGdoTotalCartons(gdoId: string, materialId: string | null): Promise<number | null> {
+  const { data: dos } = await (supabase.from('OutboundDelivery') as any).select('id').eq('gdo_id', gdoId)
+  const doIds = (dos ?? []).map((d: any) => d.id as string)
+  if (!doIds.length) return null
+
+  let itemQuery = (supabase.from('OutboundItem') as any).select('id').in('do_id', doIds)
+  if (materialId) itemQuery = itemQuery.eq('material_id', materialId)
+  const { data: items } = await itemQuery
+  const itemIds = (items ?? []).map((i: any) => i.id as string)
+  if (!itemIds.length) return null
+
+  const { data: scans } = await (supabase.from('OutboundScanEntry') as any)
+    .select('cartons_scanned').in('item_id', itemIds)
+  return (scans ?? []).reduce((sum: number, s: any) => sum + (Number(s.cartons_scanned) || 0), 0)
+}
+
 async function attachCount(raw: unknown): Promise<Record<string, unknown>> {
   const order = raw as Record<string, unknown>
   const locationId = order.location_id as string | null
+  const fromGdoId = order.from_gdo_id as string | null
+  const isTransfer = order.source_type === 'TRANSFER'
 
-  const [entriesRes, slotsRes] = await Promise.all([
+  const [entriesRes, slotsRes, gdoCartons] = await Promise.all([
     supabase.from('InventoryEntry')
       .select('cartons_imported, cycle, machine_code, location:Location(location_code, sub_code)')
       .eq('import_order_id', order.id as string),
@@ -58,6 +76,9 @@ async function attachCount(raw: unknown): Promise<Record<string, unknown>> {
       ? supabase.from('InventoryEntry').select('*', { count: 'exact', head: true })
           .eq('location_id', locationId).eq('stack_layer', 1).in('status', ['IN_STOCK', 'PARTIAL'])
       : Promise.resolve({ count: 0, data: null, error: null }),
+    isTransfer && fromGdoId && order.planned_cartons == null
+      ? computeGdoTotalCartons(fromGdoId, order.material_id as string | null)
+      : Promise.resolve(null),
   ])
 
   const entries = (entriesRes.data ?? []) as unknown as {
@@ -82,6 +103,7 @@ async function attachCount(raw: unknown): Promise<Record<string, unknown>> {
 
   return {
     ...order,
+    planned_cartons: order.planned_cartons != null ? order.planned_cartons : (gdoCartons ?? null),
     _count: { inventory_entries: entries.length },
     total_cartons: entries.reduce((sum, e) => sum + (e.cartons_imported || 0), 0),
     cycles,
@@ -180,7 +202,7 @@ export async function createOrder(req: Request, res: Response) {
   try {
     const {
       warehouse_id, material_id, location_id, planned_pallets, shift_id, import_date, notes, imported_by,
-      source_type, gate_registration_id, tms_order_id, planned_cartons, warehouse_type,
+      source_type, gate_registration_id, tms_order_id, planned_cartons, warehouse_type, from_gdo_id,
     } = req.body
     if (!warehouse_id) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu warehouse_id')
     if (!material_id)  return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu material_id')
@@ -271,6 +293,7 @@ export async function createOrder(req: Request, res: Response) {
           warehouse_type:       warehouse_type ?? null,
           gate_registration_id: gate_registration_id ?? null,
           tms_order_id:         resolvedTmsOrderId,
+          from_gdo_id:          from_gdo_id ?? null,
           planned_cartons:      planned_cartons ? Number(planned_cartons) : null,
           created_at:           new Date().toISOString(),
           updated_at:           new Date().toISOString(),

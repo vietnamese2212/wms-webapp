@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { ChevronDown, Check } from 'lucide-react'
 
 interface Warehouse {
@@ -25,6 +25,8 @@ export function WarehouseSingleSelect({
 }: WarehouseSingleSelectProps) {
   const [open, setOpen]   = useState(false)
   const [search, setSearch] = useState('')
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const [dropPos, setDropPos] = useState<{ top?: number; bottom?: number; left: number; width: number } | null>(null)
 
   const filtered = warehouses.filter(w =>
     w.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -36,14 +38,26 @@ export function WarehouseSingleSelect({
     ? (allLabel ?? placeholder)
     : (selectedWh?.name ?? placeholder)
 
+  function openDropdown() {
+    if (triggerRef.current) {
+      const r = triggerRef.current.getBoundingClientRect()
+      setDropPos(dropUp
+        ? { bottom: window.innerHeight - r.top + 4, left: r.left, width: r.width }
+        : { top: r.bottom + 4, left: r.left, width: r.width }
+      )
+    }
+    setOpen(true)
+  }
+
   function close() { setOpen(false); setSearch('') }
 
   return (
     <div className={`relative ${triggerClassName}`}>
       <button
+        ref={triggerRef}
         type="button"
         disabled={disabled}
-        onClick={() => setOpen(o => !o)}
+        onClick={openDropdown}
         className={`flex items-center justify-between gap-1.5 border border-slate-200 rounded-md px-2.5 text-xs w-full h-full
           bg-white hover:border-slate-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed
           ${!value ? 'text-slate-400' : 'text-slate-700'}`}
@@ -53,11 +67,13 @@ export function WarehouseSingleSelect({
         <ChevronDown className={`h-3.5 w-3.5 text-slate-400 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
 
-      {open && (
+      {open && dropPos && (
         <>
           <div className="fixed inset-0 z-40" onClick={close} />
-          <div className={`absolute z-50 w-full min-w-[160px] bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden
-            ${dropUp ? 'bottom-full mb-1' : 'top-full mt-1'}`}>
+          <div
+            className="fixed z-[9999] min-w-[160px] bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden"
+            style={{ top: dropPos.top, bottom: dropPos.bottom, left: dropPos.left, width: dropPos.width }}
+          >
             <div className="p-2 border-b border-slate-100">
               <input
                 type="text"

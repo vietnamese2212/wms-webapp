@@ -92,6 +92,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
   const [nccDropdownIdx, setNccDropdownIdx] = useState<number | null>(null)
   const [showMoreGates,    setShowMoreGates]    = useState(false)
   const [showGateDialog,   setShowGateDialog]   = useState(false)
+  const [factoryEmpId,     setFactoryEmpId]     = useState('')
 
   useEffect(() => {
     if (open) {
@@ -125,12 +126,18 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
         setLocationId(''); setShiftId('')
         setImportDate(format(new Date(), 'yyyy-MM-dd'))
         setNotes(''); setGateRegId('')
+        setFactoryEmpId('')
         setNccRows([emptyNccRow()]); setNccSaving(false); setNccErr(''); setNccDropdownIdx(null)
         setShowMoreGates(false)
         setEditRows([])
       }
     }
   }, [open, user?.warehouse_id, user?.warehouse_ids]) // eslint-disable-line
+
+  // Auto-fill factoryEmpId when employee list resolves
+  useEffect(() => {
+    if (importedByEmpId && !factoryEmpId) setFactoryEmpId(importedByEmpId)
+  }, [importedByEmpId]) // eslint-disable-line
 
   const { data: warehouses = [] } = useWarehouses(true)
   const { data: shifts     = [] } = useImportShifts()
@@ -208,8 +215,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
     ? allLocs.filter(l => l.category === subType || (selectedZone && l.sub_code === selectedZone.code))
     : allLocs
 
-  const matCategory = subType || undefined
-  const { data: materials    = [] } = useMaterials({ search: matSearch || undefined, category: matCategory })
+  const { data: materials    = [] } = useMaterials({ search: matSearch || undefined })
   const { data: allMaterials = [] } = useMaterials(undefined, sourceType === 'NCC')
 
   const { data: allEmployees = [] } = useEmployeeRecords({ is_active: 'true' })
@@ -399,7 +405,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
     createOrder(
       { warehouse_id: warehouseId, material_id: materialId, location_id: locationId || undefined,
         shift_id: shiftId || undefined, import_date: importDate, notes: notes || undefined,
-        imported_by: importedByEmpId || undefined, source_type: 'FACTORY', warehouse_type: subType || undefined },
+        imported_by: factoryEmpId || undefined, source_type: 'FACTORY', warehouse_type: subType || undefined },
       { onSuccess: (data) => { onClose(); navigate(`/wms/inbound/${data.order.id}`) } }
     )
   }
@@ -523,11 +529,16 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
 
             <div className="space-y-2">
               <Label>Người nhập</Label>
-              <div className="flex h-10 items-center rounded-md border bg-slate-50 px-3 text-sm text-slate-700 gap-2">
-                <User className="h-4 w-4 text-slate-400 shrink-0" />
-                <span className="truncate">{user?.name ?? '—'}</span>
-                {!importedByEmpId && <span className="ml-auto text-xs text-amber-500 shrink-0">chưa khớp nhân viên</span>}
-              </div>
+              <Select value={factoryEmpId} onValueChange={setFactoryEmpId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Chọn nhân viên..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {(allEmployees as EmpItem[]).map(e => (
+                    <SelectItem key={e.id} value={e.id}>{e.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="space-y-2">
@@ -1483,6 +1494,9 @@ function InboundRow({ order, onClick, onScan, onEditGroup, onPin, pinned }: {
             </button>
           )}
         </div>
+        {order.import_code && (
+          <div className="text-[8px] font-mono text-slate-400 truncate mt-0.5">{order.import_code}</div>
+        )}
         {order.source_type === 'NCC' && (order as any).gate_registration?.license_plate && (
           <div className="text-[8px] font-mono font-semibold text-slate-600 truncate mt-0.5">
             {(order as any).gate_registration.license_plate}

@@ -779,10 +779,14 @@ export default function InboundDetail() {
               )
             })()}
 
-            {order.source_type === 'NCC' && (
+            {(order.source_type === 'NCC' || order.source_type === 'TRANSFER') && (
               <span className="flex items-center gap-1">
                 <span className="text-slate-400 text-[10px]">KH:</span>
-                {editingPlannedCartons ? (
+                {order.source_type === 'TRANSFER' ? (
+                  <span className="font-semibold font-mono">
+                    {order.planned_cartons != null ? `${order.planned_cartons} thùng` : <span className="text-slate-400 font-normal">—</span>}
+                  </span>
+                ) : editingPlannedCartons ? (
                   <span className="flex items-center gap-1">
                     <input
                       type="number" min={0}

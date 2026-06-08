@@ -303,7 +303,7 @@ export interface InboundOrder {
   machine_codes?:      string[]
   location_used_slots?: number
   entries_by_location?: { loc: string; pallets: number; cartons: number }[]
-  source_type?:         'FACTORY' | 'NCC'
+  source_type?:         'FACTORY' | 'NCC' | 'TRANSFER'
   warehouse_type?:      string | null
   gate_registration_id?: string | null
   gate_registration?:   { id: string; registration_number: number; date: string; license_plate: string | null; company_name_raw: string | null; driver_name: string | null; status: string; direction: string } | null

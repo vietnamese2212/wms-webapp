@@ -448,13 +448,13 @@ function GDORow({ gdo, onClick, onAssign }: {
       <TableCell className="px-2 py-1 whitespace-nowrap">
         {gdo.transfer_status ? (
           <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${
-            gdo.transfer_status === 'DELIVERED'        ? 'bg-blue-100 text-blue-700' :
-            gdo.transfer_status === 'IN_TRANSIT'       ? 'bg-amber-100 text-amber-700' :
-            gdo.transfer_status === 'PENDING_DELIVERY' ? 'bg-slate-100 text-slate-600' : ''
+            gdo.transfer_status === 'DELIVERED'  ? 'bg-slate-100 text-slate-600' :
+            gdo.transfer_status === 'RECEIVING'  ? 'bg-green-100 text-green-700' :
+            gdo.transfer_status === 'IN_TRANSIT' ? 'bg-amber-100 text-amber-700' : ''
           }`}>
-            {gdo.transfer_status === 'DELIVERED' ? 'Đã giao' :
-             gdo.transfer_status === 'IN_TRANSIT' ? 'Đang giao' :
-             gdo.transfer_status === 'PENDING_DELIVERY' ? 'Chờ giao' : gdo.transfer_status}
+            {gdo.transfer_status === 'DELIVERED'  ? 'Đã giao' :
+             gdo.transfer_status === 'RECEIVING'  ? 'Đang nhận' :
+             gdo.transfer_status === 'IN_TRANSIT' ? 'Đang giao' : gdo.transfer_status}
           </span>
         ) : <span className="text-[9px] text-slate-300">—</span>}
       </TableCell>

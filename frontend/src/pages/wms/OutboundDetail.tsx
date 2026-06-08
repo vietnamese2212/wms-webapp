@@ -933,16 +933,24 @@ export default function OutboundDetail() {
               )}
 
               {/* ── Undo actions ── */}
-              {can(perms, 'outbound', 'uncomplete') && gdo.status === 'COMPLETED' && (
-                <Button size="sm" variant="outline"
-                  className="h-7 text-xs gap-1 px-1.5 sm:px-2 border-slate-300 text-slate-500 hover:bg-slate-50"
-                  disabled={uncompleting}
-                  title="Bỏ hoàn thành"
-                  onClick={() => doUndo((id, opts) => uncompleteGDO(id, opts))}>
-                  <RotateCcw className="h-3 w-3" />
-                  <span className="hidden sm:inline">{uncompleting ? '…' : 'Bỏ HT'}</span>
-                </Button>
-              )}
+              {can(perms, 'outbound', 'uncomplete') && gdo.status === 'COMPLETED' && (() => {
+                const ts = gdo.transfer_status as string | null
+                const tsLabel: Record<string, string> = { IN_TRANSIT: 'Đang vận chuyển', RECEIVING: 'Đang nhận', DELIVERED: 'Đã giao' }
+                const blockedByTransfer = ts === 'RECEIVING' || ts === 'DELIVERED'
+                const tooltip = blockedByTransfer
+                  ? `Tình trạng bên Booking chuyển kho là "${tsLabel[ts!]}" — hủy phiếu nhập ở kho NPP để có thể bỏ HT`
+                  : ts === 'IN_TRANSIT' ? 'Bỏ hoàn thành sẽ xóa lệnh TMS chuyển kho' : 'Bỏ hoàn thành'
+                return (
+                  <Button size="sm" variant="outline"
+                    className="h-7 text-xs gap-1 px-1.5 sm:px-2 border-slate-300 text-slate-500 hover:bg-slate-50 disabled:opacity-40"
+                    disabled={uncompleting || blockedByTransfer}
+                    title={tooltip}
+                    onClick={() => doUndo((id, opts) => uncompleteGDO(id, opts))}>
+                    <RotateCcw className="h-3 w-3" />
+                    <span className="hidden sm:inline">{uncompleting ? '…' : 'Bỏ HT'}</span>
+                  </Button>
+                )
+              })()}
               {can(perms, 'outbound', 'unstart') && !!gdo.started_at && gdo.status !== 'COMPLETED' && gdo.status !== 'PAUSED' && (
                 <Button size="sm" variant="outline"
                   className="h-7 text-xs gap-1 px-1.5 sm:px-2 border-slate-300 text-slate-500 hover:bg-slate-50 disabled:opacity-40"

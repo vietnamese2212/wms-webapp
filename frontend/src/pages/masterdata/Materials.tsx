@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Tag, Plus, Pencil, Trash2, X, Search, Check, Minus, PlusCircle } from 'lucide-react'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
+import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { TableSkeleton } from '@/components/shared/TableSkeleton'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { Input } from '@/components/ui/input'
@@ -711,20 +712,15 @@ export default function Materials() {
               <div className="col-span-2 space-y-1.5">
                 {overrides.map((ov, i) => (
                   <div key={i} className="flex gap-1.5 items-center">
-                    <Select value={ov.warehouse_id || '__none__'} onValueChange={v => setOverrideField(i, 'warehouse_id', v === '__none__' ? '' : v)}>
-                      <SelectTrigger className="h-7 text-xs flex-1 min-w-0">
-                        <SelectValue placeholder="Kho" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__none__" className="text-xs text-slate-400">— Chọn kho —</SelectItem>
-                        {warehouses
-                          .filter(w => !usedWhIds.has(w.id) || w.id === ov.warehouse_id)
-                          .map(w => (
-                            <SelectItem key={w.id} value={w.id} className="text-xs">{w.code}</SelectItem>
-                          ))
-                        }
-                      </SelectContent>
-                    </Select>
+                    <WarehouseSingleSelect
+                      warehouses={warehouses
+                        .filter(w => !usedWhIds.has(w.id) || w.id === ov.warehouse_id)
+                        .map(w => ({ id: w.id, name: w.code ?? w.name }))}
+                      value={ov.warehouse_id}
+                      onChange={v => setOverrideField(i, 'warehouse_id', v)}
+                      placeholder="Kho"
+                      triggerClassName="flex-1 min-w-0"
+                    />
                     <Input type="number" min={1} className="w-16 h-7 text-xs" value={ov.cartons_per_pallet} onChange={e => setOverrideField(i, 'cartons_per_pallet', e.target.value)} placeholder="Số T" />
                     <button onClick={() => removeOverride(i)} className="text-slate-400 hover:text-red-500 shrink-0">
                       <X className="h-3.5 w-3.5" />

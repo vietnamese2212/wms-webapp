@@ -132,9 +132,11 @@ export async function listOrders(req: Request, res: Response) {
     if (material_category) {
       query = query.eq('warehouse_type', material_category)
     } else if (scopeCategories.length > 0) {
-      query = scopeCategories.length === 1
-        ? query.eq('warehouse_type', scopeCategories[0])
-        : query.in('warehouse_type', scopeCategories)
+      // TRANSFER imports không bị filter theo warehouse_type — NPP nhận hàng từ nhiều loại
+      const cats = scopeCategories
+      query = cats.length === 1
+        ? query.or(`source_type.eq.TRANSFER,warehouse_type.eq.${cats[0]}`)
+        : query.or(`source_type.eq.TRANSFER,warehouse_type.in.(${cats.join(',')})`)
     }
 
     // Date range – support legacy ?date= and new ?date_from= / ?date_to=

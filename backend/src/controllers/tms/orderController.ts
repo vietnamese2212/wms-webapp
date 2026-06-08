@@ -663,7 +663,7 @@ export async function confirmTransferReceipt(req: Request, res: Response) {
     if (gdo.transfer_status !== 'IN_TRANSIT') return fail(res, 'GDO phải ở trạng thái Đang giao trước khi xác nhận', 400)
 
     const { count: existing } = await (supabase.from('ProductionImport') as any)
-      .select('id', { count: 'exact', head: true }).eq('from_gdo_id', gdoId)
+      .select('id', { count: 'exact', head: true }).eq('from_gdo_id', gdoId).neq('status', 'CANCELLED')
     if (existing && existing > 0) return fail(res, 'Đã tạo phiếu nhập cho lô hàng này rồi', 409)
 
     const { data: dos } = await (supabase.from('OutboundDelivery') as any)
@@ -711,6 +711,44 @@ export async function confirmTransferReceipt(req: Request, res: Response) {
       .update({ transfer_status: 'RECEIVING', updated_at: t }).eq('id', gdoId)
 
     return ok(res, { created: toInsert.length })
+  } catch (e) { return fail(res, String(e)) }
+}
+
+// POST /api/tms/orders/:id/cancel-receipt
+export async function cancelTransferReceipt(req: Request, res: Response) {
+  try {
+    const { id } = req.params
+    const t = new Date().toISOString()
+
+    const { data: tmsOrder } = await (supabase.from('TmsOrder') as any)
+      .select('id, transfer_gdo_id').eq('id', id).single()
+    if (!tmsOrder) return fail(res, 'Không tìm thấy lệnh chuyển kho', 404)
+    if (!tmsOrder.transfer_gdo_id) return fail(res, 'Lệnh này không phải lệnh chuyển kho', 400)
+
+    const gdoId = tmsOrder.transfer_gdo_id as string
+
+    const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
+      .select('id, transfer_status').eq('id', gdoId).single()
+    if (!gdo) return fail(res, 'Không tìm thấy GDO', 404)
+    if (gdo.transfer_status !== 'RECEIVING') return fail(res, 'Lệnh không ở trạng thái Đang nhận', 400)
+
+    // Chỉ cho phép hủy nếu chưa có phiếu nhập nào đang COMPLETED
+    const { count: completedCount } = await (supabase.from('ProductionImport') as any)
+      .select('id', { count: 'exact', head: true })
+      .eq('from_gdo_id', gdoId).eq('status', 'COMPLETED')
+    if (completedCount && completedCount > 0)
+      return fail(res, 'Đã có phiếu nhập hoàn thành — không thể hủy', 409)
+
+    // Hủy tất cả OPEN imports
+    await (supabase.from('ProductionImport') as any)
+      .update({ status: 'CANCELLED', updated_at: t })
+      .eq('from_gdo_id', gdoId).eq('status', 'OPEN')
+
+    // Reset GDO về IN_TRANSIT
+    await (supabase.from('GroupDeliveryOrder') as any)
+      .update({ transfer_status: 'IN_TRANSIT', updated_at: t }).eq('id', gdoId)
+
+    return ok(res, { cancelled: true })
   } catch (e) { return fail(res, String(e)) }
 }
 

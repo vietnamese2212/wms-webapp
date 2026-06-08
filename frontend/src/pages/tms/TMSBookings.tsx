@@ -19,7 +19,7 @@ import {
   useAddVehicleSlot, useUpdateVehicleSlot, useReleaseVehicleSlot, useRevokeVehicleSlot, useDeleteVehicleSlot,
   usePlanLinesByOrder, usePlanVsActual, useBulkCreatePlanLinesForOrder, useMaterials,
   useBulkCreatePlanLines, useUpdatePlanLine, useDeletePlanLine,
-  useTransferOrders, useCreateTransferOrder, useConfirmTransferReceipt, useGDOs, useTransferGoods,
+  useTransferOrders, useCreateTransferOrder, useConfirmTransferReceipt, useCancelTransferReceipt, useGDOs, useTransferGoods,
   type TransferOrder,
 } from '@/api/hooks'
 import { formatDate, formatDateTime } from '@/utils/formatters'
@@ -1937,6 +1937,7 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
   const [showUpdate, setShowUpdate]     = useState(false)
   const [confirmErr, setConfirmErr]     = useState('')
   const { mutateAsync: confirmReceipt, isPending: confirming } = useConfirmTransferReceipt()
+  const { mutateAsync: cancelReceipt,  isPending: cancelling } = useCancelTransferReceipt()
 
   const hasPallets = goods.some(g => g.pallets.length > 0)
   const allExpanded = hasPallets && goods.filter(g => g.pallets.length > 0).every(g => expandedMats.has(g.material_id))
@@ -1989,6 +1990,24 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                       }
                     }}>
                     {confirming ? 'Đang xử lý...' : 'NPP bắt đầu nhận'}
+                  </Button>
+                )}
+                {canConfirmReceipt && tStatus === 'RECEIVING' && (
+                  <Button size="sm" variant="outline"
+                    className="h-7 text-xs border-red-200 text-red-600 hover:bg-red-50"
+                    disabled={cancelling}
+                    onClick={async () => {
+                      if (!order) return
+                      if (!confirm('Hủy nhận hàng? Các phiếu nhập OPEN sẽ bị hủy và trạng thái về Đang vận chuyển.')) return
+                      setConfirmErr('')
+                      try {
+                        await cancelReceipt(order.id)
+                      } catch (e: unknown) {
+                        const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
+                        setConfirmErr(msg ?? 'Lỗi hủy nhận hàng')
+                      }
+                    }}>
+                    {cancelling ? 'Đang hủy...' : 'Hủy nhận'}
                   </Button>
                 )}
                 {canEdit && (

@@ -37,6 +37,7 @@ router.post('/orders/bulk',              requireAnyPerm(['tms_plan', 'upload_out
 router.patch('/orders/bulk-date',              requirePerm('tms_plan', 'change_date'),                                      order.bulkUpdateOrderDate)
 router.get('/orders/:id/transfer-goods',       requirePerm('tms_plan', 'view'),          order.getTransferGoods)
 router.post('/orders/:id/confirm-receipt',    requirePerm('tms_plan', 'confirm_receipt'), order.confirmTransferReceipt)
+router.post('/orders/:id/cancel-receipt',     requirePerm('tms_plan', 'confirm_receipt'), order.cancelTransferReceipt)
 router.get('/orders/:orderId/plan-vs-actual',  requirePerm('tms_plan', 'view'),   order.getPlanVsActual)
 router.get('/reports/inbound',                 requirePerm('tms_plan', 'view'),   order.getInboundReport)
 router.patch('/orders/:id',              requirePerm('tms_plan', 'edit'),                                                    order.updateOrder)

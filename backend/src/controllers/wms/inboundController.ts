@@ -557,7 +557,10 @@ export async function scanQR(req: Request, res: Response) {
     const existingPallet = allPallets.find(
       (e: any) => e.location?.warehouse_id === orderWarehouseId && e.status !== 'EXPORTED'
     ) as { id: string; status: string; cartons_remaining: number; adjustment_qty: number } | undefined
-    const exportedEntry = allPallets.find((e: any) => e.status === 'EXPORTED') as { id: string } | undefined
+    // Pallet ở kho khác (bất kể status) hoặc đã EXPORTED cùng kho → cho phép nhận về bằng UPDATE
+    const relocatableEntry = allPallets.find(
+      (e: any) => e.status === 'EXPORTED' || e.location?.warehouse_id !== orderWarehouseId
+    ) as { id: string } | undefined
     const location = locResult.data
 
     if (!material) {
@@ -644,8 +647,8 @@ export async function scanQR(req: Request, res: Response) {
       }
     }
 
-    // Pallet đã xuất/transfer trước đó → cập nhật entry hiện có, tránh vi phạm UNIQUE(pallet_code)
-    if (exportedEntry) {
+    // Pallet ở kho khác hoặc đã EXPORTED → cập nhật entry hiện có, tránh vi phạm UNIQUE(pallet_code)
+    if (relocatableEntry) {
       const cartons_received = cartons_override ? Number(cartons_override) : (material.cartons_per_pallet ?? 0)
       const { data: updEntry, error: updErr } = await supabase
         .from('InventoryEntry')
@@ -661,7 +664,7 @@ export async function scanQR(req: Request, res: Response) {
           update_date:       vnDate(),
           updated_at:        new Date().toISOString(),
         })
-        .eq('id', exportedEntry.id)
+        .eq('id', relocatableEntry.id)
         .select(ENTRY_SELECT)
         .maybeSingle()
       if (updErr) throw updErr

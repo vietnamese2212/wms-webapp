@@ -127,6 +127,7 @@ function ScanDialog({ order, onClose, employeeId, allLocations }: ScanDialogProp
   const [validation,       setValidation]       = useState<ValidationResult | null>(null)
   const [serverCheckOk,    setServerCheckOk]    = useState(false)
   const [mergeWarning,     setMergeWarning]     = useState<string | null>(null)
+  const [outboundCartons,  setOutboundCartons]  = useState<number | null>(null)
 
   // Đổi vị trí: activeLocationId có thể khác order.location_id khi overflow
   const [activeLocationId, setActiveLocationId] = useState<string>(order.location_id ?? '')
@@ -153,6 +154,8 @@ function ScanDialog({ order, onClose, employeeId, allLocations }: ScanDialogProp
       {
         onSuccess: (data) => {
           setServerCheckOk(true)
+          setCartons(String(data.suggested_cartons))
+          setOutboundCartons(data.outbound_cartons ?? null)
           setMergeWarning(data.will_merge ? (data.merge_warning ?? null) : null)
         },
         onError: (err) => {
@@ -177,6 +180,8 @@ function ScanDialog({ order, onClose, employeeId, allLocations }: ScanDialogProp
           setValidation(null)
           setServerCheckOk(false)
           setMergeWarning(null)
+          setOutboundCartons(null)
+          setCartons(defaultCartons)
           const successMsg = data.merged
             ? `✓ Đã cộng ${data.added_cartons} thùng · Tồn mới: ${data.new_remaining} thùng`
             : `✓ ${data.entry.pallet_code} · ${data.entry.cartons_imported} thùng · ${data.entry.location?.location_code ?? ''}`
@@ -188,6 +193,8 @@ function ScanDialog({ order, onClose, employeeId, allLocations }: ScanDialogProp
           setValidation(null)
           setServerCheckOk(false)
           setMergeWarning(null)
+          setOutboundCartons(null)
+          setCartons(defaultCartons)
           const msg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
           setFeedback({ type: 'error', msg })
         },
@@ -201,6 +208,8 @@ function ScanDialog({ order, onClose, employeeId, allLocations }: ScanDialogProp
     setFeedback(null)
     setServerCheckOk(false)
     setMergeWarning(null)
+    setOutboundCartons(null)
+    setCartons(defaultCartons)
     scannerRef.current?.resume()
   }
 
@@ -354,6 +363,9 @@ function ScanDialog({ order, onClose, employeeId, allLocations }: ScanDialogProp
             <div className="space-y-1">
               <Label className="text-xs">Số thùng / pallet</Label>
               <Input type="number" min="0" value={cartons} onChange={(e) => setCartons(e.target.value)} />
+              {outboundCartons != null && (
+                <p className="text-[10px] text-slate-500">Phiếu xuất: <span className="font-semibold text-slate-700">{outboundCartons}</span> thùng</p>
+              )}
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Tầng chồng</Label>

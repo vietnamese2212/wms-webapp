@@ -455,15 +455,20 @@ export async function checkScanQR(req: Request, res: Response) {
     const parsed = parseInboundQR(qr_code)
     if (!parsed.is_valid) return fail(res, 400, 'INVALID_QR', parsed.error ?? 'QR không hợp lệ')
 
-    const [matResult, dupResult, locResult] = await Promise.all([
+    const orderWarehouseId = (order as any).warehouse_id as string
+    const isTransfer = (order as any).source_type === 'TRANSFER'
+
+    const [matResult, dupResult, locResult, obScanResult] = await Promise.all([
       supabase.from('Material').select('id, material_code, cartons_per_pallet').eq('material_code', parsed.material_code).maybeSingle(),
       supabase.from('InventoryEntry').select('id, status, cartons_remaining, import_order_id, location:Location!location_id(warehouse_id)').eq('pallet_code', parsed.pallet_code).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']),
       supabase.from('Location').select('id, location_code, max_pallets, is_active').eq('id', location_id).maybeSingle(),
+      isTransfer
+        ? (supabase.from('OutboundScanEntry') as any).select('cartons_scanned').eq('pallet_code', parsed.pallet_code).order('created_at', { ascending: false }).limit(1).maybeSingle()
+        : Promise.resolve({ data: null }),
     ])
 
     const material = matResult.data
-    const orderWarehouseId = (order as any).warehouse_id as string
-    const isTransfer = (order as any).source_type === 'TRANSFER'
+    const outboundCartons: number | null = isTransfer ? ((obScanResult as any).data?.cartons_scanned ?? null) : null
     const existingPallet = ((dupResult.data ?? []) as any[]).find(
       (e: any) => e.location?.warehouse_id === orderWarehouseId
     ) as { id: string; status: string; cartons_remaining: number; import_order_id: string | null } | undefined
@@ -481,7 +486,8 @@ export async function checkScanQR(req: Request, res: Response) {
         return ok(res, {
           pallet_code:       parsed.pallet_code,
           production_date:   parsed.production_date ?? null,
-          suggested_cartons: mat.cartons_per_pallet ?? 0,
+          suggested_cartons: outboundCartons ?? mat.cartons_per_pallet ?? 0,
+          outbound_cartons:  outboundCartons,
           will_merge:        true,
           cartons_existing:  existingPallet.cartons_remaining,
           existing_entry_id: existingPallet.id,
@@ -521,7 +527,8 @@ export async function checkScanQR(req: Request, res: Response) {
     return ok(res, {
       pallet_code:       parsed.pallet_code,
       production_date:   parsed.production_date ?? null,
-      suggested_cartons: mat.cartons_per_pallet ?? 0,
+      suggested_cartons: outboundCartons ?? mat.cartons_per_pallet ?? 0,
+      outbound_cartons:  outboundCartons,
     })
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }

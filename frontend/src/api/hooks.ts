@@ -1211,6 +1211,7 @@ export interface CheckScanResult {
   pallet_code: string
   production_date: string | null
   suggested_cartons: number
+  outbound_cartons?: number | null
   will_merge?: boolean
   cartons_existing?: number
   existing_entry_id?: string

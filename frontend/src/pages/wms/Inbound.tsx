@@ -1475,7 +1475,7 @@ function InboundRow({ order, onClick, onScan, onEditGroup, onPin, pinned }: {
             order.source_type === 'NCC' ? 'bg-amber-100 text-amber-700'
             : order.source_type === 'TRANSFER' ? 'bg-purple-100 text-purple-700'
             : 'bg-blue-100 text-blue-600'
-          }`}>{order.source_type === 'NCC' ? 'NCC' : order.source_type === 'TRANSFER' ? 'VK' : 'SX'}</span>
+          }`}>{order.source_type === 'NCC' ? 'NCC' : order.source_type === 'TRANSFER' ? 'TF' : 'SX'}</span>
           {onEditGroup && (
             <button onClick={onEditGroup} title="Sửa nhóm"
               className="text-slate-300 hover:text-blue-500 transition-colors shrink-0 ml-auto">

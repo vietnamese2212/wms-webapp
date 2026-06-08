@@ -457,7 +457,7 @@ export async function checkScanQR(req: Request, res: Response) {
 
     const [matResult, dupResult, locResult] = await Promise.all([
       supabase.from('Material').select('id, material_code, cartons_per_pallet').eq('material_code', parsed.material_code).maybeSingle(),
-      supabase.from('InventoryEntry').select('id, status, cartons_remaining, location:Location!location_id(warehouse_id)').eq('pallet_code', parsed.pallet_code).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']),
+      supabase.from('InventoryEntry').select('id, status, cartons_remaining, import_order_id, location:Location!location_id(warehouse_id)').eq('pallet_code', parsed.pallet_code).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']),
       supabase.from('Location').select('id, location_code, max_pallets, is_active').eq('id', location_id).maybeSingle(),
     ])
 
@@ -466,7 +466,7 @@ export async function checkScanQR(req: Request, res: Response) {
     const isTransfer = (order as any).source_type === 'TRANSFER'
     const existingPallet = ((dupResult.data ?? []) as any[]).find(
       (e: any) => e.location?.warehouse_id === orderWarehouseId
-    ) as { id: string; status: string; cartons_remaining: number } | undefined
+    ) as { id: string; status: string; cartons_remaining: number; import_order_id: string | null } | undefined
     const location = locResult.data
 
     if (!material) return fail(res, 400, 'MATERIAL_NOT_FOUND', `Mã hàng "${parsed.material_code}" từ QR không tồn tại trong hệ thống`)
@@ -475,8 +475,8 @@ export async function checkScanQR(req: Request, res: Response) {
       return fail(res, 400, 'MATERIAL_MISMATCH', `Hàng hóa không khớp: QR có "${parsed.material_code}" nhưng phiếu nhập yêu cầu "${orderMat?.material_code}"`)
     }
     if (existingPallet) {
-      // Phiếu TRANSFER + pallet đang PARTIAL → cho phép merge, cảnh báo thay vì block
-      if (isTransfer && existingPallet.status === 'PARTIAL') {
+      // TRANSFER + pallet từ phiếu KHÁC (IN_STOCK hoặc PARTIAL) → cho phép merge
+      if (isTransfer && ['IN_STOCK', 'PARTIAL'].includes(existingPallet.status) && existingPallet.import_order_id !== order_id) {
         const mat = material as { cartons_per_pallet?: number | null }
         return ok(res, {
           pallet_code:       parsed.pallet_code,
@@ -485,8 +485,12 @@ export async function checkScanQR(req: Request, res: Response) {
           will_merge:        true,
           cartons_existing:  existingPallet.cartons_remaining,
           existing_entry_id: existingPallet.id,
-          merge_warning:     `Pallet này còn ${existingPallet.cartons_remaining} thùng trong kho. Quét sẽ cộng thêm số thùng trả về vào tồn hiện tại.`,
+          merge_warning:     `Pallet này còn ${existingPallet.cartons_remaining} thùng trong kho. Quét sẽ cộng thêm số thùng mới vào tồn hiện tại.`,
         })
+      }
+      // TRANSFER + cùng phiếu = quét nhầm 2 lần → block rõ ràng
+      if (isTransfer && existingPallet.import_order_id === order_id) {
+        return fail(res, 409, 'DUPLICATE_PALLET', `Pallet "${parsed.pallet_code}" đã được quét trong phiếu nhập này`)
       }
       const msg = existingPallet.status === 'PARTIAL'
         ? `Pallet "${parsed.pallet_code}" còn ${existingPallet.cartons_remaining} thùng trong kho này. Để cộng thêm thùng trả về, dùng chức năng điều chỉnh tồn kho.`
@@ -546,7 +550,7 @@ export async function scanQR(req: Request, res: Response) {
     // Parallel: material lookup + duplicate check + location lookup
     const [matResult, dupResult, locResult] = await Promise.all([
       supabase.from('Material').select('*').eq('material_code', parsed.material_code).maybeSingle(),
-      supabase.from('InventoryEntry').select('id, status, cartons_remaining, adjustment_qty, location:Location!location_id(warehouse_id)').eq('pallet_code', parsed.pallet_code).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']),
+      supabase.from('InventoryEntry').select('id, status, cartons_remaining, adjustment_qty, import_order_id, location:Location!location_id(warehouse_id)').eq('pallet_code', parsed.pallet_code).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']),
       supabase.from('Location').select('*').eq('id', location_id).maybeSingle(),
     ])
 
@@ -555,7 +559,7 @@ export async function scanQR(req: Request, res: Response) {
     const isTransfer = (order as any).source_type === 'TRANSFER'
     const existingPallet = ((dupResult.data ?? []) as any[]).find(
       (e: any) => e.location?.warehouse_id === orderWarehouseId
-    ) as { id: string; status: string; cartons_remaining: number; adjustment_qty: number } | undefined
+    ) as { id: string; status: string; cartons_remaining: number; adjustment_qty: number; import_order_id: string | null } | undefined
     const location = locResult.data
 
     if (!material) {
@@ -568,8 +572,8 @@ export async function scanQR(req: Request, res: Response) {
         `Hàng hóa không khớp: QR có "${parsed.material_code}" (${material.material_description}) nhưng phiếu nhập yêu cầu "${orderMat?.material_code}"`)
     }
 
-    // Phiếu TRANSFER + pallet đang PARTIAL cùng kho → merge (cộng tồn, không tạo entry mới)
-    if (isTransfer && existingPallet?.status === 'PARTIAL') {
+    // TRANSFER + pallet từ phiếu KHÁC (IN_STOCK hoặc PARTIAL) → merge (cộng tồn)
+    if (isTransfer && existingPallet && ['IN_STOCK', 'PARTIAL'].includes(existingPallet.status) && existingPallet.import_order_id !== order_id) {
       const addCartons = cartons_override ? Number(cartons_override) : (material.cartons_per_pallet ?? 0)
       const cartonsBeforeAdjust = Number(existingPallet.cartons_remaining)
       const newRemaining = cartonsBeforeAdjust + addCartons
@@ -609,6 +613,9 @@ export async function scanQR(req: Request, res: Response) {
     }
 
     if (existingPallet) {
+      if (isTransfer && existingPallet.import_order_id === order_id) {
+        return fail(res, 409, 'DUPLICATE_PALLET', `Pallet "${parsed.pallet_code}" đã được quét trong phiếu nhập này`)
+      }
       const msg = existingPallet.status === 'PARTIAL'
         ? `Pallet "${parsed.pallet_code}" còn ${existingPallet.cartons_remaining} thùng trong kho này. Để cộng thêm thùng trả về, dùng chức năng điều chỉnh tồn kho.`
         : `Pallet "${parsed.pallet_code}" đang tồn kho tại đây, chưa được xuất`

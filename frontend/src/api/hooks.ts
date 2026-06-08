@@ -1098,6 +1098,8 @@ export function usePatchGDO() {
     onSettled: (_, __, { id }) => {
       qc.invalidateQueries({ queryKey: ['gdos'] })
       qc.invalidateQueries({ queryKey: ['gdo', id] })
+      qc.invalidateQueries({ queryKey: ['tms-orders'] })
+      qc.invalidateQueries({ queryKey: ['tms-orders-transfer'] })
     },
   })
 }
@@ -1273,7 +1275,7 @@ export function useUpdateTransport() {
   })
 }
 
-function makeUndoGDOMutation(path: string, optimisticFn?: (old: any) => any) {
+function makeUndoGDOMutation(path: string, optimisticFn?: (old: any) => any, extraInvalidate?: string[][]) {
   return function() {
     const qc = useQueryClient()
     return useMutation({
@@ -1289,6 +1291,7 @@ function makeUndoGDOMutation(path: string, optimisticFn?: (old: any) => any) {
       onSettled: (_d, _e, id) => {
         qc.invalidateQueries({ queryKey: ['gdos'] })
         qc.invalidateQueries({ queryKey: ['gdo', id] })
+        extraInvalidate?.forEach(key => qc.invalidateQueries({ queryKey: key }))
       },
     })
   }
@@ -1298,7 +1301,8 @@ export const useUnassignGDO   = makeUndoGDOMutation('unassign',
 export const useUnstartGDO    = makeUndoGDOMutation('unstart',
   old => ({ ...old, started_at: null, license_plate: null, container_number: null, exporter_name: null, loader_name: null, forklift_driver_id: null, forklift_driver_names: null, status: 'PENDING' }))
 export const useUncompleteGDO = makeUndoGDOMutation('uncomplete',
-  old => ({ ...old, status: 'IN_PROGRESS', completed_at: null, scan_completed_at: null }))
+  old => ({ ...old, status: 'IN_PROGRESS', completed_at: null, scan_completed_at: null }),
+  [['tms-orders'], ['tms-orders-transfer']])
 
 export function useWarehouseEmployees(warehouse_id?: string | null) {
   return useQuery({

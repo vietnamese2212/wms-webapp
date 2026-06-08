@@ -133,10 +133,9 @@ export async function listOrders(req: Request, res: Response) {
       query = query.eq('warehouse_type', material_category)
     } else if (scopeCategories.length > 0) {
       // TRANSFER imports không bị filter theo warehouse_type — NPP nhận hàng từ nhiều loại
-      const cats = scopeCategories
-      query = cats.length === 1
-        ? query.or(`source_type.eq.TRANSFER,warehouse_type.eq.${cats[0]}`)
-        : query.or(`source_type.eq.TRANSFER,warehouse_type.in.(${cats.join(',')})`)
+      // Dùng double-quote quanh từng giá trị để PostgREST parse đúng (tránh lỗi space trong "Thành phẩm")
+      const quotedCats = scopeCategories.map(c => `"${c}"`).join(',')
+      query = query.or(`source_type.eq.TRANSFER,warehouse_type.in.(${quotedCats})`)
     }
 
     // Date range – support legacy ?date= and new ?date_from= / ?date_to=

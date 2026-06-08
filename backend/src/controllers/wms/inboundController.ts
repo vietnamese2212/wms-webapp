@@ -17,7 +17,6 @@ const ORDER_SELECT = `
   shift:ImportShift(id, code, name),
   gate_registration:gate_registrations!gate_registration_id(id, registration_number, date, license_plate, company_name_raw, driver_name, status, direction),
   tms_order:TmsOrder!tms_order_id(id, order_code, planned_boxes, planned_pallets),
-  from_gdo:GroupDeliveryOrder!from_gdo_id(group_code, license_plate, warehouse:Warehouse!warehouse_id(name)),
   imported_by_emp:Employee!imported_by(id, name),
   created_by_emp:Employee!created_by(id, name),
   updated_by_emp:Employee!updated_by(id, name)

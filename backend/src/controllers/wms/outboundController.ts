@@ -310,6 +310,88 @@ export async function createGDO(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
+// ─── Auto-create TmsOrder khi GDO COMPLETED + shipto_party là kho hệ thống ───
+
+async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
+    .select('id, group_code, shipto_party, transfer_status, license_plate')
+    .eq('id', gdoId).single()
+  if (!gdo?.shipto_party || gdo.transfer_status) return
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: destWh } = await (supabase.from('Warehouse') as any)
+    .select('id, code, name').eq('code', gdo.shipto_party).eq('is_active', true).maybeSingle()
+  if (!destWh) return
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: dos } = await (supabase.from('OutboundDelivery') as any)
+    .select('id').eq('gdo_id', gdoId)
+  const doIds = (dos ?? []).map((d: { id: string }) => d.id)
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: items } = doIds.length
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ? await (supabase.from('OutboundItem') as any)
+        .select('material_id, cartons_ordered, material_type, material:Material(category)')
+        .in('do_id', doIds)
+    : { data: [] as any[] }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const matMap = new Map<string, { material_id: string; planned_boxes: number; category: string | null }>()
+  for (const item of (items ?? []) as any[]) {
+    if (!item.material_id) continue
+    if (item.material_type === 'POSM' || item.material_type === 'Pallet Loscam') continue
+    if (!matMap.has(item.material_id))
+      matMap.set(item.material_id, { material_id: item.material_id, planned_boxes: 0, category: item.material?.category ?? null })
+    matMap.get(item.material_id)!.planned_boxes += item.cartons_ordered || 0
+  }
+  if (!matMap.size) return
+
+  const orderId = randomUUID()
+  const orderCode = `TRF_${destWh.code}_${gdo.group_code}`
+  const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await (supabase.from('TmsOrder') as any).insert({
+    id: orderId, order_code: orderCode,
+    date: vnDate, warehouse_id: destWh.id,
+    destination_warehouse_id: destWh.id,
+    direction: 'INBOUND', source_type: 'TRANSFER',
+    transfer_gdo_id: gdoId,
+    planned_boxes: 0, planned_pallets: 0,
+    status: 'PENDING',
+    created_at: nowTs, updated_at: nowTs,
+  })
+
+  const lineRows = [...matMap.values()].map(m => ({
+    id: randomUUID(), tms_order_id: orderId, date: vnDate,
+    warehouse_id: destWh.id, warehouse_type: m.category || null,
+    material_id: m.material_id, planned_boxes: m.planned_boxes,
+    planned_pallets: null, status: 'ACTIVE',
+    created_at: nowTs, updated_at: nowTs,
+  }))
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await (supabase.from('inbound_plan_lines') as any).insert(lineRows)
+
+  const totalBoxes = lineRows.reduce((s, r) => s + r.planned_boxes, 0)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await (supabase.from('TmsOrder') as any).update({ planned_boxes: totalBoxes, updated_at: nowTs }).eq('id', orderId)
+
+  const plate: string | null = gdo.license_plate || null
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await (supabase.from('TmsVehicleSlot') as any).insert({
+    id: randomUUID(), order_id: orderId,
+    license_plate: plate,
+    status: plate ? 'BOOKED' : 'PENDING',
+    created_at: nowTs, updated_at: nowTs,
+  })
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await (supabase.from('GroupDeliveryOrder') as any)
+    .update({ transfer_status: 'IN_TRANSIT', updated_at: nowTs }).eq('id', gdoId)
+}
+
 // ─── Delete GDO ───────────────────────────────────────────────
 
 export async function deleteGDO(req: Request, res: Response) {
@@ -532,22 +614,13 @@ export async function patchGDO(req: Request, res: Response) {
       if (status === 'COMPLETED') patch.completed_at = t
     }
 
-    // Nếu COMPLETED + shipto_party khớp với 1 kho trong hệ thống → chuyển kho → PENDING_DELIVERY
-    if (status === 'COMPLETED') {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: gdoCur } = await (supabase.from('GroupDeliveryOrder') as any)
-        .select('shipto_party, transfer_status').eq('id', req.params.id).single()
-      if (gdoCur?.shipto_party && !gdoCur.transfer_status) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: destWh } = await (supabase.from('Warehouse') as any)
-          .select('id').eq('code', gdoCur.shipto_party).eq('is_active', true).maybeSingle()
-        if (destWh) patch.transfer_status = 'PENDING_DELIVERY'
-      }
-    }
-
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (supabase.from('GroupDeliveryOrder') as any)
       .update(patch).eq('id', req.params.id)
     if (error) return fail(res, error.message)
+
+    if (status === 'COMPLETED') await maybeAutoCreateTransferOrder(req.params.id, t)
+
     const result = await fetchGDOFull(req.params.id)
     return ok(res, result)
   } catch (e) { return fail(res, String(e)) }
@@ -696,32 +769,43 @@ export async function unstartGDO(req: Request, res: Response) {
 
 export async function uncompleteGDO(req: Request, res: Response) {
   try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
-      .select('status').eq('id', req.params.id).single()
+      .select('status, transfer_status').eq('id', req.params.id).single()
     if (gdo?.status !== 'COMPLETED') return fail(res, 'Đơn chưa hoàn thành', 400)
 
-    // Chặn nếu kho NPP đã bắt đầu nhận hàng
-    const { data: activeInbounds } = await (supabase.from('ProductionImport') as any)
-      .select('import_code, status').eq('from_gdo_id', req.params.id)
-      .in('status', ['IN_PROGRESS', 'COMPLETED'])
-    if (activeInbounds && activeInbounds.length > 0) {
-      const codes = activeInbounds.map((r: any) => r.import_code).join(', ')
-      const hasCompleted = activeInbounds.some((r: any) => r.status === 'COMPLETED')
-      return fail(res, 400, 'INBOUND_STARTED',
-        hasCompleted
-          ? `Kho NPP đã hoàn thành nhận hàng (${codes}) — không thể bỏ hoàn thành`
-          : `Kho NPP đang nhận hàng (${codes}) — không thể bỏ hoàn thành lúc này`
-      )
+    const ts = gdo.transfer_status as string | null
+
+    if (ts === 'DELIVERED')
+      return fail(res, 400, 'TRANSFER_DELIVERED', 'Kho NPP đã hoàn thành nhận hàng — không thể bỏ hoàn thành')
+
+    if (ts === 'RECEIVING') {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: openImports } = await (supabase.from('ProductionImport') as any)
+        .select('import_code').eq('from_gdo_id', req.params.id).neq('status', 'CANCELLED')
+      const codes = (openImports ?? []).map((r: { import_code: string }) => r.import_code).join(', ')
+      return fail(res, 400, 'INBOUND_OPEN', `Kho NPP đã tạo phiếu nhập (${codes}) — hủy phiếu trước khi bỏ hoàn thành`)
     }
 
+    if (ts === 'IN_TRANSIT') {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: tmsOrder } = await (supabase.from('TmsOrder') as any)
+        .select('id').eq('transfer_gdo_id', req.params.id).maybeSingle()
+      if (tmsOrder) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (supabase.from('inbound_plan_lines') as any).delete().eq('tms_order_id', tmsOrder.id)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (supabase.from('TmsVehicleSlot') as any).delete().eq('order_id', tmsOrder.id)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (supabase.from('TmsOrder') as any).delete().eq('id', tmsOrder.id)
+      }
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (supabase.from('GroupDeliveryOrder') as any)
-      .update({ status: 'IN_PROGRESS', completed_at: null, scan_completed_at: null, updated_at: now() })
+      .update({ status: 'IN_PROGRESS', completed_at: null, scan_completed_at: null, transfer_status: null, updated_at: now() })
       .eq('id', req.params.id)
     if (error) return fail(res, error.message)
-    // Hủy inbound điều chuyển chưa bắt đầu
-    await (supabase.from('ProductionImport') as any)
-      .update({ status: 'CANCELLED', updated_at: now() })
-      .eq('from_gdo_id', req.params.id).eq('status', 'PENDING')
     return ok(res, await fetchGDOFull(req.params.id))
   } catch (e) { return fail(res, String(e)) }
 }

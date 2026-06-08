@@ -2166,104 +2166,27 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
 
 // ── TransferOrdersPanel ───────────────────────────────────────────────────────
 
-function TransferOrdersPanel({ canCreate, canEdit, canConfirmReceipt }: { canCreate: boolean; canEdit: boolean; canConfirmReceipt: boolean }) {
-  const { data: pendingGDOs = [], isLoading: loadingGDOs } = useGDOs({ transfer_status: 'PENDING_DELIVERY' })
-  const { data: orders = [], isLoading: loadingOrders } = useTransferOrders()
-  const { mutateAsync: createTransfer } = useCreateTransferOrder()
-  const [creatingId, setCreatingId]       = useState('')
+function TransferOrdersPanel({ canEdit, canConfirmReceipt }: { canEdit: boolean; canConfirmReceipt: boolean }) {
+  const { data: orders = [], isLoading } = useTransferOrders()
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null)
   const selectedOrder = orders.find(o => o.id === selectedOrderId) ?? null
-  const [err, setErr] = useState('')
-
-  async function handleCreate(gdoId: string) {
-    setCreatingId(gdoId); setErr('')
-    try {
-      await createTransfer({ gdo_id: gdoId })
-    } catch (e: unknown) {
-      const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
-      setErr(msg ?? 'Lỗi tạo lệnh')
-    } finally {
-      setCreatingId('')
-    }
-  }
-
-  const isLoading = loadingGDOs || loadingOrders
-  const pending = pendingGDOs as import('@/types').GDO[]
 
   return (
     <div className="flex flex-col h-full">
       <TransferOrderDetail order={selectedOrder} canEdit={canEdit} canConfirmReceipt={canConfirmReceipt} onClose={() => setSelectedOrderId(null)} />
-      {err && (
-        <div className="px-3 py-2 bg-red-50 border-b border-red-200 text-xs text-red-700 shrink-0">{err}</div>
-      )}
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
         {isLoading ? (
           <div className="py-24 text-center text-sm text-slate-400">Đang tải...</div>
-        ) : pending.length === 0 && orders.length === 0 ? (
+        ) : orders.length === 0 ? (
           <div className="py-24 text-center text-sm text-slate-400">Không có lệnh chuyển kho nào</div>
         ) : (
           <>
-            {/* ── Chờ lấy hàng ── */}
-            {pending.length > 0 && (
-              <>
-                <div className="px-3 py-1.5 border-b bg-amber-50">
-                  <span className="text-[10px] font-semibold text-amber-700">Chờ lấy hàng ({pending.length})</span>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="min-w-max w-full">
-                    <thead className="sticky top-0 z-10 bg-slate-50">
-                      <tr>
-                        {['Mã GDO', 'Số DO', 'Ngày xuất', 'Kho xuất', 'Kho nhận', 'Thùng', ''].map(h => (
-                          <th key={h} className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {pending.map(g => (
-                        <tr key={g.id} className="border-t border-slate-100 hover:bg-amber-50/40">
-                          <td className="px-2 py-1 whitespace-nowrap">
-                            <span className="text-[10px] font-mono font-semibold">{g.group_code}</span>
-                          </td>
-                          <td className="px-2 py-1 whitespace-nowrap">
-                            {(g.delivery_codes?.length ?? 0) > 0
-                              ? <span className="text-[10px] font-mono font-semibold">{g.delivery_codes!.join(', ')}</span>
-                              : <span className="text-[10px] text-slate-300">—</span>}
-                          </td>
-                          <td className="px-2 py-1 whitespace-nowrap">
-                            <span className="text-[10px] tabular-nums">{g.delivery_date}</span>
-                          </td>
-                          <td className="px-2 py-1 whitespace-nowrap">
-                            <span className="text-[10px] text-slate-600">{g.warehouse?.name ?? g.warehouse_id ?? '—'}</span>
-                          </td>
-                          <td className="px-2 py-1 whitespace-nowrap">
-                            <span className="text-[10px] font-semibold text-blue-700">{g.shipto_party ?? '—'}</span>
-                          </td>
-                          <td className="px-2 py-1 whitespace-nowrap text-right">
-                            <span className="text-[10px] tabular-nums font-semibold">{g.total_cartons ?? '—'}</span>
-                          </td>
-                          <td className="px-2 py-1 whitespace-nowrap">
-                            {canCreate && (
-                              <Button size="sm" className="h-6 px-2 text-[10px]"
-                                disabled={!!creatingId} onClick={() => handleCreate(g.id)}>
-                                {creatingId === g.id ? '…' : 'Nhận →'}
-                              </Button>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </>
-            )}
-
             {/* ── Lệnh chuyển kho ── */}
-            {orders.length > 0 && (
-              <>
-                <div className="px-3 py-1.5 border-b border-t bg-slate-50">
-                  <span className="text-[10px] font-semibold text-slate-500">Lệnh chuyển kho ({orders.length})</span>
-                  <span className="ml-2 text-[9px] text-slate-400">Click vào dòng để xem chi tiết</span>
-                </div>
+            <>
+              <div className="px-3 py-1.5 border-b bg-slate-50">
+                <span className="text-[10px] font-semibold text-slate-500">Lệnh chuyển kho ({orders.length})</span>
+                <span className="ml-2 text-[9px] text-slate-400">Click vào dòng để xem chi tiết</span>
+              </div>
                 <div className="overflow-x-auto">
                   <table className="min-w-max w-full">
                     <thead className="sticky top-0 z-10 bg-slate-50">
@@ -2344,8 +2267,7 @@ function TransferOrdersPanel({ canCreate, canEdit, canConfirmReceipt }: { canCre
                     </tbody>
                   </table>
                 </div>
-              </>
-            )}
+            </>
           </>
         )}
       </div>
@@ -3099,7 +3021,7 @@ export default function TMSBookings() {
       {/* Content */}
       {activeTab === 'transfer' ? (
         <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
-          <TransferOrdersPanel canCreate={canCreate} canEdit={canEdit} canConfirmReceipt={canConfirmReceipt} />
+          <TransferOrdersPanel canEdit={canEdit} canConfirmReceipt={canConfirmReceipt} />
         </div>
       ) : null}
       <div className={`flex-1 min-h-0 overflow-auto pb-20 lg:pb-4 ${activeTab !== 'main' ? 'hidden' : ''}`}>

@@ -20,8 +20,10 @@ import {
   usePlanLinesByOrder, usePlanVsActual, useBulkCreatePlanLinesForOrder, useMaterials,
   useBulkCreatePlanLines, useUpdatePlanLine, useDeletePlanLine,
   useTransferOrders, useCreateTransferOrder, useConfirmTransferReceipt, useCancelTransferReceipt, useGDOs, useTransferGoods,
+  useActiveImportsByGdo,
   type TransferOrder,
 } from '@/api/hooks'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { formatDate, formatDateTime } from '@/utils/formatters'
 import type { TmsOrder, TmsVehicleSlot, DeliverySlot, TmsVehicleType, TmsVehicle, TransportCompany } from '@/types'
 
@@ -1933,6 +1935,8 @@ function TransportUpdateDialog({ order, onClose }: { order: TransferOrder | null
 
 function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { order: TransferOrder | null; canEdit: boolean; canConfirmReceipt: boolean; onClose: () => void }) {
   const { data: goods = [], isLoading } = useTransferGoods(order?.id)
+  const { data: activeImports = [] } = useActiveImportsByGdo(order?.transfer_gdo?.id)
+  const hasActiveImports = activeImports.length > 0
   const [expandedMats, setExpandedMats] = useState<Set<string>>(new Set())
   const [showUpdate, setShowUpdate]     = useState(false)
   const [confirmErr, setConfirmErr]     = useState('')
@@ -1993,22 +1997,35 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                   </Button>
                 )}
                 {canConfirmReceipt && tStatus === 'RECEIVING' && (
-                  <Button size="sm" variant="outline"
-                    className="h-7 text-xs border-red-200 text-red-600 hover:bg-red-50"
-                    disabled={cancelling}
-                    onClick={async () => {
-                      if (!order) return
-                      if (!confirm('Hủy nhận hàng? Các phiếu nhập OPEN sẽ bị hủy và trạng thái về Đang vận chuyển.')) return
-                      setConfirmErr('')
-                      try {
-                        await cancelReceipt(order.id)
-                      } catch (e: unknown) {
-                        const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
-                        setConfirmErr(msg ?? 'Lỗi hủy nhận hàng')
-                      }
-                    }}>
-                    {cancelling ? 'Đang hủy...' : 'Hủy nhận'}
-                  </Button>
+                  <TooltipProvider delayDuration={100}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span>
+                          <Button size="sm" variant="outline"
+                            className="h-7 text-xs border-red-200 text-red-600 hover:bg-red-50"
+                            disabled={cancelling || hasActiveImports}
+                            onClick={async () => {
+                              if (!order) return
+                              if (!confirm('Hủy nhận hàng? Trạng thái sẽ về Đang vận chuyển.')) return
+                              setConfirmErr('')
+                              try {
+                                await cancelReceipt(order.id)
+                              } catch (e: unknown) {
+                                const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
+                                setConfirmErr(msg ?? 'Lỗi hủy nhận hàng')
+                              }
+                            }}>
+                            {cancelling ? 'Đang hủy...' : 'Hủy nhận'}
+                          </Button>
+                        </span>
+                      </TooltipTrigger>
+                      {hasActiveImports && (
+                        <TooltipContent side="bottom">
+                          Còn {activeImports.length} phiếu nhập đang hoạt động — hủy từng phiếu ở Nhập kho trước
+                        </TooltipContent>
+                      )}
+                    </Tooltip>
+                  </TooltipProvider>
                 )}
                 {canEdit && (
                   <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setShowUpdate(true)}>

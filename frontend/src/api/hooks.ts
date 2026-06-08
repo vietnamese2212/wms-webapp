@@ -1681,7 +1681,20 @@ export function useCancelTransferReceipt() {
       qc.invalidateQueries({ queryKey: ['tms-orders-transfer'] })
       qc.invalidateQueries({ queryKey: ['gdos'] })
       qc.invalidateQueries({ queryKey: ['inbound-orders'] })
+      qc.invalidateQueries({ queryKey: ['inbound-by-gdo'] })
     },
+  })
+}
+
+export function useActiveImportsByGdo(gdoId?: string | null) {
+  return useQuery({
+    queryKey: ['inbound-by-gdo', gdoId],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/orders', { params: { from_gdo_id: gdoId } })
+      return (data.data as { status: string }[]).filter(o => o.status !== 'CANCELLED')
+    },
+    enabled: !!gdoId,
+    staleTime: 15_000,
   })
 }
 

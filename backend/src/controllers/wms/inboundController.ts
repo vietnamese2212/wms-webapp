@@ -96,7 +96,7 @@ async function attachCount(raw: unknown): Promise<Record<string, unknown>> {
 
 export async function listOrders(req: Request, res: Response) {
   try {
-    const { warehouse_id, status, material_id, material_category, search, date, date_from, date_to, shift_id } = req.query as Record<string, string>
+    const { warehouse_id, status, material_id, material_category, search, date, date_from, date_to, shift_id, from_gdo_id } = req.query as Record<string, string>
 
     let query = supabase.from('ProductionImport').select(ORDER_SELECT)
       .order('import_date', { ascending: false })
@@ -122,6 +122,7 @@ export async function listOrders(req: Request, res: Response) {
     else             query = query.neq('status', 'CANCELLED')
     if (material_id) query = query.eq('material_id', material_id)
     if (shift_id)    query = query.eq('shift_id', shift_id)
+    if (from_gdo_id) query = query.eq('from_gdo_id', from_gdo_id)
 
     // Lọc theo warehouse_type lưu trực tiếp trên order
     // NATIONAL scope: không giới hạn category, chỉ lọc theo query param nếu có
@@ -132,10 +133,9 @@ export async function listOrders(req: Request, res: Response) {
     if (material_category) {
       query = query.eq('warehouse_type', material_category)
     } else if (scopeCategories.length > 0) {
-      // TRANSFER imports không bị filter theo warehouse_type — NPP nhận hàng từ nhiều loại
-      // Dùng double-quote quanh từng giá trị để PostgREST parse đúng (tránh lỗi space trong "Thành phẩm")
-      const quotedCats = scopeCategories.map(c => `"${c}"`).join(',')
-      query = query.or(`source_type.eq.TRANSFER,warehouse_type.in.(${quotedCats})`)
+      // TRANSFER imports luôn hiển thị — dùng từng eq thay vì in.() để tránh PostgREST parse lỗi trong or()
+      const orClauses = ['source_type.eq.TRANSFER', ...scopeCategories.map(c => `warehouse_type.eq."${c}"`)]
+      query = query.or(orClauses.join(','))
     }
 
     // Date range – support legacy ?date= and new ?date_from= / ?date_to=

@@ -733,17 +733,13 @@ export async function cancelTransferReceipt(req: Request, res: Response) {
     if (!gdo) return fail(res, 'Không tìm thấy GDO', 404)
     if (gdo.transfer_status !== 'RECEIVING') return fail(res, 'Lệnh không ở trạng thái Đang nhận', 400)
 
-    // Chỉ cho phép hủy nếu chưa có phiếu nhập nào đang COMPLETED
-    const { count: completedCount } = await (supabase.from('ProductionImport') as any)
+    // Không cho phép hủy nếu còn phiếu nhập đang hoạt động (OPEN hoặc COMPLETED)
+    // NPP phải tự hủy/hoàn thành từng phiếu qua module Nhập kho trước
+    const { count: activeCount } = await (supabase.from('ProductionImport') as any)
       .select('id', { count: 'exact', head: true })
-      .eq('from_gdo_id', gdoId).eq('status', 'COMPLETED')
-    if (completedCount && completedCount > 0)
-      return fail(res, 'Đã có phiếu nhập hoàn thành — không thể hủy', 409)
-
-    // Hủy tất cả OPEN imports
-    await (supabase.from('ProductionImport') as any)
-      .update({ status: 'CANCELLED', updated_at: t })
-      .eq('from_gdo_id', gdoId).eq('status', 'OPEN')
+      .eq('from_gdo_id', gdoId).neq('status', 'CANCELLED')
+    if (activeCount && activeCount > 0)
+      return fail(res, `Còn ${activeCount} phiếu nhập đang hoạt động — hủy từng phiếu ở module Nhập kho trước`, 409)
 
     // Reset GDO về IN_TRANSIT
     await (supabase.from('GroupDeliveryOrder') as any)

@@ -1329,14 +1329,15 @@ export async function checkScanItem(req: Request, res: Response) {
     const [
       { data: gdo },
       { data: item, error: itemErr },
-      { data: inv },
+      { data: invList },
       { data: dupCheck },
     ] = await Promise.all([
       (supabase.from('GroupDeliveryOrder') as any).select('status, warehouse_id').eq('id', gdoId).single(),
       (supabase.from('OutboundItem') as any).select('*').eq('id', itemId).single(),
-      (supabase.from('InventoryEntry') as any).select('*, qa_status:QAStatus(code,name)').eq('pallet_code', qr).maybeSingle(),
+      (supabase.from('InventoryEntry') as any).select('*, qa_status:QAStatus(code,name), location:Location!location_id(warehouse_id)').eq('pallet_code', qr).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']),
       (supabase.from('OutboundScanEntry') as any).select('id').eq('item_id', itemId).eq('pallet_code', qr).maybeSingle(),
     ])
+    const inv = ((invList ?? []) as any[]).find((e: any) => e.location?.warehouse_id === gdo?.warehouse_id) ?? null
 
     if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng — không thể quét', 400)
     if (itemErr || !item) return fail(res, 'Không tìm thấy mặt hàng', 404)
@@ -1420,18 +1421,19 @@ export async function scanItem(req: Request, res: Response) {
     const [
       { data: gdo },
       { data: item, error: itemErr },
-      { data: inv },
+      { data: invList },
       { data: dupCheck },
       { data: empCheck },
     ] = await Promise.all([
       (supabase.from('GroupDeliveryOrder') as any).select('status, started_at, warehouse_id').eq('id', gdoId).single(),
       (supabase.from('OutboundItem') as any).select('*').eq('id', itemId).single(),
-      (supabase.from('InventoryEntry') as any).select('*, qa_status:QAStatus(code,name)').eq('pallet_code', qr).maybeSingle(),
+      (supabase.from('InventoryEntry') as any).select('*, qa_status:QAStatus(code,name), location:Location!location_id(warehouse_id)').eq('pallet_code', qr).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']),
       (supabase.from('OutboundScanEntry') as any).select('id').eq('item_id', itemId).eq('pallet_code', qr).maybeSingle(),
       employee_id
         ? (supabase.from('Employee') as any).select('id').eq('id', employee_id).maybeSingle()
         : Promise.resolve({ data: null }),
     ])
+    const inv = ((invList ?? []) as any[]).find((e: any) => e.location?.warehouse_id === gdo?.warehouse_id) ?? null
     const resolved_employee_id = empCheck ? employee_id : null
     if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng — không thể quét', 400)
     if (itemErr || !item) return fail(res, 'Không tìm thấy mặt hàng', 404)

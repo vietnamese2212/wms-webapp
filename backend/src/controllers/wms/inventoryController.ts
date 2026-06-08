@@ -464,6 +464,8 @@ export async function stocktakeCheck(req: Request, res: Response) {
     .select(ENTRY_SELECT)
     .eq('pallet_code', palletCode)
     .in('status', ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'])
+    .order('updated_at', { ascending: false })
+    .limit(1)
     .maybeSingle()
 
   if (error) return fail(res, 500, 'DB_ERROR', error.message)

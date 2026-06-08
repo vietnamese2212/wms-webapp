@@ -440,7 +440,6 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                   value={warehouseId}
                   onChange={v => { setWarehouseId(v); setSubType(''); setLocationId(''); setMaterialId(''); setMatSearch('') }}
                   placeholder="Chọn kho"
-                  dropUp
                   triggerClassName="h-10"
                 />
               ) : (
@@ -548,7 +547,6 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                       value={warehouseId}
                       onChange={v => { setWarehouseId(v); setSubType(''); setGateRegId(''); setNccRows([emptyNccRow()]) }}
                       placeholder="Chọn kho"
-                      dropUp
                       triggerClassName="h-8 mt-0.5"
                     />
                   ) : (

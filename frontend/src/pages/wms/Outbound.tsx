@@ -801,7 +801,6 @@ function GDOFormBody({
               value={warehouseId}
               onChange={setWarehouseId}
               placeholder="Chọn kho…"
-              dropUp
               triggerClassName="h-7"
             />
           </div>

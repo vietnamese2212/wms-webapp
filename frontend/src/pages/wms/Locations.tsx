@@ -430,7 +430,6 @@ export default function Locations() {
                   value={form.warehouse_id}
                   onChange={v => { setField('warehouse_id', v); setField('category', ''); setField('sub_code', '') }}
                   placeholder="Chọn kho"
-                  dropUp
                   triggerClassName="h-8 mt-1"
                 />
               </div>

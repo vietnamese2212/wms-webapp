@@ -451,17 +451,19 @@ export default function InboundDetail() {
   const allDeletableSelected = entries.filter(canDeleteEntry).length > 0 &&
     entries.filter(canDeleteEntry).every(e => selectedIds.has(e.id))
 
+  // Auto-redirect khi phiếu không còn tồn tại (bị xóa/hủy, ghost từ cache)
+  useEffect(() => {
+    if (!isLoading && !isPlaceholderData && !order) {
+      navigate('/wms/inbound', { replace: true })
+    }
+  }, [isLoading, isPlaceholderData, order, navigate])
+
   if (isLoading && !order) {
     return <div className="p-6"><TableSkeleton rows={8} cols={7} /></div>
   }
 
   if (!order) {
-    return (
-      <div className="p-6 text-center text-slate-500">
-        Không tìm thấy phiếu nhập.{' '}
-        <Button variant="link" onClick={() => navigate('/wms/inbound')}>Quay lại</Button>
-      </div>
-    )
+    return <div className="p-6"><TableSkeleton rows={8} cols={7} /></div>
   }
 
   return (

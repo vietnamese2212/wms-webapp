@@ -85,6 +85,20 @@ export function connectRealtimeEvents(): void {
       (payload) => {
         if (payload.table === 'DeliverySlot') patchSlotCache(payload)
 
+        // Khi ProductionImport thay đổi (kể cả SQL-level delete), xóa localStorage
+        // list cache để tránh ghost record flash khi component mount lại.
+        if (payload.table === 'ProductionImport') {
+          try {
+            Object.keys(localStorage)
+              .filter(k => k.startsWith('wms:io:'))
+              .forEach(k => localStorage.removeItem(k))
+            if (payload.eventType === 'DELETE') {
+              const deletedId = (payload.old as Record<string, unknown>)?.id as string | undefined
+              if (deletedId) localStorage.removeItem(`wms:io-detail:${deletedId}`)
+            }
+          } catch {}
+        }
+
         // Invalidate để eventual consistency (background refetch sau patch)
         const keys = TABLE_QUERY_MAP[payload.table]
         if (!keys) return

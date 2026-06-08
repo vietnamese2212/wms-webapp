@@ -1388,7 +1388,8 @@ export default function Inbound() {
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Vị trí</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Material</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Pallet</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Tổng nhập</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Thực nhập</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Thùng KH</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Người nhập</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Ca</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Ghi chú</TableHead>
@@ -1484,6 +1485,9 @@ function InboundRow({ order, onClick, onScan, onEditGroup, onPin, pinned }: {
         {order.import_code && (
           <div className="text-[8px] font-mono text-slate-400 truncate mt-0.5">{order.import_code}</div>
         )}
+        {(order as any).tms_order?.order_code && (
+          <div className="text-[8px] font-mono text-blue-600 truncate mt-0.5">{(order as any).tms_order.order_code}</div>
+        )}
         {order.source_type === 'NCC' && (order as any).gate_registration?.license_plate && (
           <div className="text-[8px] font-mono font-semibold text-slate-600 truncate mt-0.5">
             {(order as any).gate_registration.license_plate}
@@ -1520,6 +1524,18 @@ function InboundRow({ order, onClick, onScan, onEditGroup, onPin, pinned }: {
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         <span className="text-[10px] font-semibold tabular-nums">{order.total_cartons ?? 0}</span>
         <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
+      </TableCell>
+      <TableCell className="px-2 py-1 text-right whitespace-nowrap">
+        {order.planned_cartons != null ? (
+          <>
+            <span className={`text-[10px] font-semibold tabular-nums ${(order.total_cartons ?? 0) >= order.planned_cartons ? 'text-green-600' : 'text-slate-700'}`}>
+              {order.planned_cartons}
+            </span>
+            <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
+          </>
+        ) : (
+          <span className="text-[10px] text-slate-300">—</span>
+        )}
       </TableCell>
       <TableCell className="px-2 py-1">
         <div className="text-[10px] max-w-[90px] truncate">{importer}</div>

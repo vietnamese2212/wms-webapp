@@ -6,7 +6,7 @@ import * as material    from '../controllers/masterdata/materialController'
 import * as shiftQa     from '../controllers/masterdata/shiftQaController'
 import * as department  from '../controllers/masterdata/departmentController'
 import * as employee    from '../controllers/masterdata/employeeController'
-import { requirePerm } from '../middlewares/auth'
+import { requirePerm, requireAnyPerm } from '../middlewares/auth'
 
 const router = Router()
 
@@ -33,8 +33,8 @@ router.put('/manufacturers/:id',     manufacturer.updateManufacturer)
 router.delete('/manufacturers/:id',  manufacturer.deleteManufacturer)
 
 // Material
-router.get('/materials',            requirePerm('materials', 'view'),   material.listMaterials)
-router.get('/materials/categories', requirePerm('materials', 'view'),   material.listCategories)
+router.get('/materials',            requireAnyPerm(['materials', 'view'], ['inbound', 'view'], ['inbound', 'create']), material.listMaterials)
+router.get('/materials/categories', requireAnyPerm(['materials', 'view'], ['inbound', 'view'], ['inbound', 'create']), material.listCategories)
 router.post('/materials',           requirePerm('materials', 'create'), material.createMaterial)
 router.get('/materials/:id',        requirePerm('materials', 'view'),   material.getMaterial)
 router.put('/materials/:id',        requirePerm('materials', 'edit'),   material.updateMaterial)

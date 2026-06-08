@@ -32,7 +32,10 @@ const DialogContent = React.forwardRef<
     <DialogPrimitive.Content
       ref={ref}
       onPointerDownOutside={e => {
-        if ((e.target as HTMLElement)?.closest?.('[data-wh-portal]')) {
+        // Radix passes CustomEvent — clicked element is at detail.originalEvent.target, NOT e.target
+        const clickedEl = (e as unknown as CustomEvent<{ originalEvent: PointerEvent }>)
+          .detail?.originalEvent?.target as HTMLElement | null
+        if (clickedEl?.closest?.('[data-wh-portal]')) {
           e.preventDefault()
           return
         }

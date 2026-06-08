@@ -687,12 +687,16 @@ export async function confirmTransferReceipt(req: Request, res: Response) {
     const [vy, vm, vd] = vnDate.split('-')
     const ddmmyy = `${vd}${vm}${vy.slice(2)}`
     const importPrefix = `${nppWh.code}_N_${ddmmyy}_`
-    const { count: existingCount } = await (supabase.from('ProductionImport') as any)
-      .select('*', { count: 'exact', head: true }).ilike('import_code', `${importPrefix}%`)
+    const { data: existingCodes } = await (supabase.from('ProductionImport') as any)
+      .select('import_code').ilike('import_code', `${importPrefix}%`)
+    const maxSeq = (existingCodes ?? []).reduce((max: number, r: { import_code: string }) => {
+      const n = parseInt(r.import_code.slice(importPrefix.length), 10)
+      return isNaN(n) ? max : Math.max(max, n)
+    }, 0)
 
     const toInsert = [...matMap.values()].map((m, idx) => ({
       id: randomUUID(),
-      import_code: `${importPrefix}${String((existingCount ?? 0) + idx + 1).padStart(2, '0')}`,
+      import_code: `${importPrefix}${String(maxSeq + idx + 1).padStart(2, '0')}`,
       warehouse_id: tmsOrder.destination_warehouse_id,
       material_id: m.material_id,
       planned_cartons: m.cartons,

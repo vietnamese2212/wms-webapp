@@ -240,14 +240,17 @@ export async function createOrder(req: Request, res: Response) {
     const whCode = whRow?.code ? String(whRow.code) : 'XX'
     const importPrefix = `${whCode}_N_${ddmmyy}_`
 
-    // Retry khi 2 request song song lấy cùng count → cùng import_code → 23505
+    // Retry khi 2 request song song → cùng import_code → 23505
     let order: unknown = null
     for (let attempt = 0; attempt < 5; attempt++) {
-      const { count: todayCount } = await (supabase.from('ProductionImport') as any)
-        .select('*', { count: 'exact', head: true })
-        .ilike('import_code', `${importPrefix}%`)
+      const { data: existingCodes } = await (supabase.from('ProductionImport') as any)
+        .select('import_code').ilike('import_code', `${importPrefix}%`)
+      const maxSeq = (existingCodes ?? []).reduce((max: number, r: { import_code: string }) => {
+        const n = parseInt(r.import_code.slice(importPrefix.length), 10)
+        return isNaN(n) ? max : Math.max(max, n)
+      }, 0)
 
-      const import_code = generateImportCode(whCode, ddmmyy, (todayCount ?? 0) + 1)
+      const import_code = generateImportCode(whCode, ddmmyy, maxSeq + 1)
 
       const { data, error } = await supabase
         .from('ProductionImport')

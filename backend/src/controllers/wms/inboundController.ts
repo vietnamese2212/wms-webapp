@@ -131,7 +131,8 @@ export async function listOrders(req: Request, res: Response) {
     const scopeCategories = isNational ? [] : (req.user?.allowed_categories ?? []).map(normCat)
 
     if (material_category) {
-      query = query.eq('warehouse_type', material_category)
+      // TRANSFER imports always visible regardless of warehouse_type — use or() to bypass
+      query = query.or(`warehouse_type.eq."${material_category}",source_type.eq.TRANSFER`)
     }
     // scopeCategories: không lọc ở PostgREST — áp dụng sau khi có data (tránh lỗi .or() với tiếng Việt)
 

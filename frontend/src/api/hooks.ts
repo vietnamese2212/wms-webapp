@@ -1685,7 +1685,7 @@ export function useActiveImportsByGdo(gdoId?: string | null) {
   return useQuery({
     queryKey: ['inbound-by-gdo', gdoId],
     queryFn: async () => {
-      const { data } = await apiClient.get('/wms/orders', { params: { from_gdo_id: gdoId } })
+      const { data } = await apiClient.get('/wms/inbound-orders', { params: { from_gdo_id: gdoId } })
       return (data.data as { status: string }[]).filter(o => o.status !== 'CANCELLED')
     },
     enabled: !!gdoId,

@@ -812,26 +812,12 @@ export async function deleteOrder(req: Request, res: Response) {
     )
     if (hasBooked) return fail(res, 'Không thể xoá đơn đã có xe đặt khung giờ', 400)
 
-    if (order.source_type === 'TRANSFER' && order.transfer_gdo_id) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
-        .select('transfer_status').eq('id', order.transfer_gdo_id).single()
-      if (gdo?.transfer_status === 'RECEIVING')
-        return fail(res, 400, 'INBOUND_OPEN', 'Kho NPP đã tạo phiếu nhập — hủy phiếu trước khi xóa lệnh')
-      if (gdo?.transfer_status === 'DELIVERED')
-        return fail(res, 400, 'TRANSFER_DELIVERED', 'Kho NPP đã hoàn thành nhận hàng — không thể xóa lệnh')
-    }
+    if (order.source_type === 'TRANSFER')
+      return fail(res, 400, 'TRANSFER_ORDER', 'Lệnh chuyển kho được tạo tự động — gỡ hoàn thành ở Outbound để hủy')
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (supabase.from('TmsOrder') as any).delete().eq('id', id)
     if (error) return fail(res, error.message)
-
-    if (order.source_type === 'TRANSFER' && order.transfer_gdo_id) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (supabase.from('GroupDeliveryOrder') as any)
-        .update({ transfer_status: null, updated_at: new Date().toISOString() })
-        .eq('id', order.transfer_gdo_id)
-    }
 
     return ok(res, { id })
   } catch (e) { return fail(res, String(e)) }

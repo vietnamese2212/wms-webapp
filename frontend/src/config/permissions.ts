@@ -109,8 +109,9 @@ export const MODULES = {
   wms_settings: {
     label: 'Cài đặt WMS',
     actions: {
-      view:   'Xem cài đặt',
-      manage: 'Quản lý master data',
+      view:          'Xem cài đặt',
+      manage_zone:   'Quản lý khu vực kho (kho được assign)',
+      manage_global: 'Quản lý toàn bộ (kho, loại kho, khu vực)',
     },
   },
   tms_plan: {

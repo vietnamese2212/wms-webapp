@@ -113,7 +113,6 @@ function ZoneDialog({ zone, warehouseId, warehouses, warehouseTypes, open, onClo
 }) {
   const isEdit = !!zone
   const [selectedWhId, setSelectedWhId] = useState(zone?.warehouse_id ?? warehouseId)
-  const [code,     setCode]     = useState(zone?.code ?? '')
   const [name,     setName]     = useState(zone?.name ?? '')
   const [category, setCategory] = useState(zone?.category ?? '')
   const [isActive, setIsActive] = useState(zone?.is_active ?? true)
@@ -126,7 +125,7 @@ function ZoneDialog({ zone, warehouseId, warehouses, warehouseTypes, open, onClo
   function handleSubmit() {
     setErr('')
     if (!isEdit && !selectedWhId) { setErr('Chọn kho là bắt buộc'); return }
-    if (!code.trim() || !name.trim()) { setErr('Mã và tên khu vực là bắt buộc'); return }
+    if (!name.trim()) { setErr('Tên khu vực là bắt buộc'); return }
     if (isEdit) {
       update(
         { id: zone.id, name: name.trim(), category: category || null, is_active: isActive },
@@ -134,7 +133,7 @@ function ZoneDialog({ zone, warehouseId, warehouses, warehouseTypes, open, onClo
       )
     } else {
       create(
-        { warehouse_id: selectedWhId, code: code.trim(), name: name.trim(), category: category || undefined },
+        { warehouse_id: selectedWhId, name: name.trim(), category: category || undefined },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     }
@@ -188,16 +187,12 @@ function ZoneDialog({ zone, warehouseId, warehouses, warehouseTypes, open, onClo
             </Select>
           </div>
 
-          {/* Mã + Tên */}
-          <div className="space-y-1">
-            <Label className="text-xs">Mã khu vực *</Label>
-            <Input value={code} onChange={e => setCode(e.target.value.toUpperCase())} placeholder="TP, NL, POSM…" disabled={isEdit} />
-            {!isEdit && <p className="text-[10px] text-slate-400">Mã ngắn, không dấu. VD: TP, NVL, POSM, BB</p>}
-          </div>
+          {/* Tên */}
           <div className="space-y-1">
             <Label className="text-xs">Tên khu vực *</Label>
             <Input value={name} onChange={e => setName(e.target.value)} placeholder="Khu Thành phẩm, Khu NVL…" />
           </div>
+          {!isEdit && <p className="text-[10px] text-slate-400">Mã khu vực sẽ được hệ thống tự tạo (Z01, Z02…)</p>}
 
           {isEdit && (
             <div className="flex items-center gap-2">
@@ -208,7 +203,7 @@ function ZoneDialog({ zone, warehouseId, warehouses, warehouseTypes, open, onClo
         </div>
         <DialogFooter>
           <Button variant="outline" size="sm" onClick={onClose}>Huỷ</Button>
-          <Button size="sm" onClick={handleSubmit} disabled={isPending || !code.trim() || !name.trim() || (!isEdit && !selectedWhId)}>
+          <Button size="sm" onClick={handleSubmit} disabled={isPending || !name.trim() || (!isEdit && !selectedWhId)}>
             {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo'}
           </Button>
         </DialogFooter>
@@ -269,7 +264,8 @@ function TypeDialog({ type, open, onClose }: {
 export default function WMSSettings() {
   const user = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
-  const canManage = can(perms, 'wms_settings', 'manage')
+  const canManageGlobalGlobal = can(perms, 'wms_settings', 'manage_global')
+  const canManageGlobalZone   = can(perms, 'wms_settings', 'manage_zone') || canManageGlobalGlobal
 
   // Kho
   const { data: allWh = [], isLoading: loadingWh } = useWarehouses(false)
@@ -288,10 +284,13 @@ export default function WMSSettings() {
   const [detailType, setDetailType] = useState<{ id: string; value: string; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null } | null>(null)
   const [detailZone, setDetailZone] = useState<WarehouseZone | null>(null)
 
-  // Khu vực kho
+  // Khu vực kho — lọc theo warehouse_scope của user
   const activeWh = (allWh as WhRow[]).filter(w => w.is_active)
+  const zoneAccessWh = canManageGlobalGlobal
+    ? activeWh
+    : activeWh.filter(w => (user?.warehouse_ids ?? []).includes(w.id))
   const [selectedWhId, setSelectedWhId] = useState('')
-  const effectiveWhId = selectedWhId || activeWh[0]?.id || ''
+  const effectiveWhId = selectedWhId || zoneAccessWh[0]?.id || ''
   const { data: zones = [], isLoading: loadingZones } = useWarehouseZones(effectiveWhId || undefined)
   const { mutate: deleteZone, isPending: deletingZone } = useDeleteWarehouseZone()
   const [editingZone, setEditingZone] = useState<WarehouseZone | null>(null)
@@ -328,7 +327,7 @@ export default function WMSSettings() {
         <TabsContent value="warehouses" className="space-y-3">
           <div className="flex items-center justify-between">
             <p className="text-xs text-slate-500">{(allWh as WhRow[]).length} kho</p>
-            {canManage && (
+            {canManageGlobalGlobal && (
               <Button size="sm" className="gap-1.5" onClick={() => { setEditingWh(null); setShowWhDlg(true) }}>
                 <Plus className="h-4 w-4" /> Thêm kho
               </Button>
@@ -346,7 +345,7 @@ export default function WMSSettings() {
                         <TableHead className="px-3 py-2 text-xs">Chức năng</TableHead>
                         <TableHead className="px-3 py-2 text-xs">Địa chỉ</TableHead>
                         <TableHead className="px-3 py-2 text-xs">Trạng thái</TableHead>
-                        {canManage && <TableHead className="px-3 py-2 w-16" />}
+                        {canManageGlobalGlobal && <TableHead className="px-3 py-2 w-16" />}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -367,7 +366,7 @@ export default function WMSSettings() {
                               {wh.is_active ? 'Hoạt động' : 'Tạm dừng'}
                             </Badge>
                           </TableCell>
-                          {canManage && (
+                          {canManageGlobalGlobal && (
                             <TableCell className="px-2 py-2">
                               <div className="flex items-center gap-0.5">
                                 <button className="text-slate-400 hover:text-blue-500 p-1 transition-colors"
@@ -416,7 +415,7 @@ export default function WMSSettings() {
             <p className="text-xs text-slate-500">
               Danh sách loại kho — dùng cho phân loại vị trí, mã hàng, phân quyền nhân viên và đăng ký vận chuyển TMS.
             </p>
-            {canManage && (
+            {canManageGlobalGlobal && (
               <Button size="sm" className="gap-1.5 shrink-0" onClick={() => { setEditingType(null); setShowTypeDlg(true) }}>
                 <Plus className="h-4 w-4" /> Thêm loại kho
               </Button>
@@ -430,7 +429,7 @@ export default function WMSSettings() {
                   <div className="p-12 text-center text-slate-400 space-y-2">
                     <Tag className="h-10 w-10 mx-auto opacity-30" />
                     <p className="text-sm">Chưa có loại kho nào</p>
-                    {canManage && <p className="text-xs">Nhấn "Thêm loại kho" để tạo loại kho đầu tiên</p>}
+                    {canManageGlobal && <p className="text-xs">Nhấn "Thêm loại kho" để tạo loại kho đầu tiên</p>}
                   </div>
                 ) : (
                   <div className="overflow-x-auto">
@@ -438,7 +437,7 @@ export default function WMSSettings() {
                       <TableHeader>
                         <TableRow>
                           <TableHead className="px-3 py-2 text-xs">Tên loại kho</TableHead>
-                          {canManage && <TableHead className="px-3 py-2 w-16" />}
+                          {canManageGlobal && <TableHead className="px-3 py-2 w-16" />}
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -447,7 +446,7 @@ export default function WMSSettings() {
                             className={`text-sm cursor-pointer ${detailType?.id === t.id ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
                             onClick={() => setDetailType(prev => prev?.id === t.id ? null : t)}>
                             <TableCell className="px-3 py-2 font-medium text-slate-800">{t.value}</TableCell>
-                            {canManage && (
+                            {canManageGlobal && (
                               <TableCell className="px-2 py-2">
                                 <button className="text-slate-400 hover:text-red-500 p-1 transition-colors"
                                   disabled={deletingType}
@@ -496,12 +495,12 @@ export default function WMSSettings() {
                 <SelectValue placeholder="Chọn kho" />
               </SelectTrigger>
               <SelectContent>
-                {activeWh.map(w => (
+                {zoneAccessWh.map(w => (
                   <SelectItem key={w.id} value={w.id}>{w.name} ({w.code})</SelectItem>
                 ))}
               </SelectContent>
             </Select>
-            {canManage && (
+            {canManageZone && (
               <Button size="sm" className="gap-1.5 ml-auto" onClick={() => { setEditingZone(null); setShowZoneDlg(true) }}>
                 <Plus className="h-4 w-4" /> Thêm khu vực
               </Button>
@@ -518,7 +517,7 @@ export default function WMSSettings() {
                 <div className="p-12 text-center text-slate-400 space-y-2">
                   <MapPin className="h-10 w-10 mx-auto opacity-30" />
                   <p className="text-sm">Kho này chưa có khu vực nào</p>
-                  {canManage && <p className="text-xs">Nhấn "Thêm khu vực" để tạo khu vực đầu tiên</p>}
+                  {canManageZone && <p className="text-xs">Nhấn "Thêm khu vực" để tạo khu vực đầu tiên</p>}
                 </div>
               ) : (
                 <div className="overflow-x-auto">
@@ -529,7 +528,7 @@ export default function WMSSettings() {
                         <TableHead className="px-3 py-2 text-xs">Tên khu vực</TableHead>
                         <TableHead className="px-3 py-2 text-xs">Loại kho</TableHead>
                         <TableHead className="px-3 py-2 text-xs">Trạng thái</TableHead>
-                        {canManage && <TableHead className="px-3 py-2 w-16" />}
+                        {canManageZone && <TableHead className="px-3 py-2 w-16" />}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -545,7 +544,7 @@ export default function WMSSettings() {
                               {z.is_active ? 'Hoạt động' : 'Tạm dừng'}
                             </Badge>
                           </TableCell>
-                          {canManage && (
+                          {canManageZone && (
                             <TableCell className="px-2 py-2">
                               <div className="flex items-center gap-0.5">
                                 <button className="text-slate-400 hover:text-blue-500 p-1 transition-colors"
@@ -595,7 +594,7 @@ export default function WMSSettings() {
         <TypeDialog type={editingType} open={showTypeDlg} onClose={() => setShowTypeDlg(false)} />
       )}
       {showZoneDlg && (
-        <ZoneDialog zone={editingZone} warehouseId={effectiveWhId} warehouses={activeWh} warehouseTypes={warehouseTypes} open={showZoneDlg} onClose={() => setShowZoneDlg(false)} />
+        <ZoneDialog zone={editingZone} warehouseId={effectiveWhId} warehouses={zoneAccessWh} warehouseTypes={warehouseTypes} open={showZoneDlg} onClose={() => setShowZoneDlg(false)} />
       )}
     </div>
   )

@@ -23,41 +23,53 @@ export async function listZones(req: Request, res: Response) {
 }
 
 export async function createZone(req: Request, res: Response) {
-  const { warehouse_id, code, name, category } = req.body as { warehouse_id?: string; code?: string; name?: string; category?: string }
-  if (!warehouse_id || !code?.trim() || !name?.trim()) return fail(res, 'warehouse_id, code và name là bắt buộc')
+  const { warehouse_id, name, category } = req.body as { warehouse_id?: string; name?: string; category?: string }
+  if (!warehouse_id || !name?.trim()) return fail(res, 'warehouse_id và name là bắt buộc')
+
+  const reqUser = (req as any).user
+  if (reqUser?.warehouse_scope === 'ASSIGNED') {
+    const allowed: string[] = reqUser.warehouse_ids ?? []
+    if (!allowed.includes(warehouse_id)) return fail(res, 'Không có quyền thao tác trên kho này', 403)
+  }
 
   const t = new Date().toISOString()
 
+  // Lấy tất cả code hiện có để tìm số thứ tự tiếp theo
   const { data: existing } = await supabase
     .from('WarehouseZone')
-    .select('sort_order')
+    .select('code, sort_order')
     .eq('warehouse_id', warehouse_id)
     .order('sort_order', { ascending: false })
-    .limit(1)
 
   const nextSort = existing?.length ? (Number((existing[0] as any).sort_order ?? 0) + 1) : 1
 
-  const actor = (req as any).user?.name || null
+  // Tự sinh mã: Z01, Z02, ... tìm số chưa dùng
+  const usedCodes = new Set((existing ?? []).map((z: any) => z.code as string))
+  let seq = nextSort
+  let autoCode = `Z${String(seq).padStart(2, '0')}`
+  while (usedCodes.has(autoCode)) {
+    seq++
+    autoCode = `Z${String(seq).padStart(2, '0')}`
+  }
+
+  const actorName = reqUser?.name || null
   const { data, error } = await supabase
     .from('WarehouseZone')
     .insert({
       id:           randomUUID(),
       warehouse_id,
-      code:         code.trim().toUpperCase(),
+      code:         autoCode,
       name:         name.trim(),
       category:     category?.trim() || null,
       sort_order:   nextSort,
-      created_by:   actor,
-      updated_by:   actor,
+      created_by:   actorName,
+      updated_by:   actorName,
       updated_at:   t,
     })
     .select('id, warehouse_id, code, name, category, sort_order, is_active, created_at, updated_at, created_by, updated_by')
     .single()
 
-  if (error) {
-    if (error.code === '23505') return fail(res, `Mã khu vực "${code.trim().toUpperCase()}" đã tồn tại trong kho này`)
-    return fail(res, error.message, 500)
-  }
+  if (error) return fail(res, error.message, 500)
   res.json({ success: true, data })
 }
 
@@ -65,7 +77,14 @@ export async function updateZone(req: Request, res: Response) {
   const { id } = req.params
   const { name, category, is_active } = req.body as { name?: string; category?: string | null; is_active?: boolean }
 
-  const updates: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: (req as any).user?.name || null }
+  const actor = (req as any).user
+  if (actor?.warehouse_scope === 'ASSIGNED') {
+    const { data: target } = await supabase.from('WarehouseZone').select('warehouse_id').eq('id', id).single()
+    const allowed: string[] = actor.warehouse_ids ?? []
+    if (!target || !allowed.includes((target as any).warehouse_id)) return fail(res, 'Không có quyền thao tác trên kho này', 403)
+  }
+
+  const updates: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: actor?.name || null }
   if (name !== undefined) updates.name = name.trim()
   if (category !== undefined) updates.category = category?.trim() || null
   if (is_active !== undefined) updates.is_active = is_active
@@ -91,6 +110,12 @@ export async function deleteZone(req: Request, res: Response) {
     .single()
 
   if (zone) {
+    const deleteActor = (req as any).user
+    if (deleteActor?.warehouse_scope === 'ASSIGNED') {
+      const allowed: string[] = deleteActor.warehouse_ids ?? []
+      if (!allowed.includes((zone as any).warehouse_id)) return fail(res, 'Không có quyền thao tác trên kho này', 403)
+    }
+
     const { count } = await supabase
       .from('Location')
       .select('id', { count: 'exact', head: true })

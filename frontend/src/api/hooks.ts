@@ -474,7 +474,7 @@ export function useWarehouseZones(warehouseId?: string) {
 export function useCreateWarehouseZone() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { warehouse_id: string; code: string; name: string; category?: string }) =>
+    mutationFn: (body: { warehouse_id: string; name: string; category?: string }) =>
       apiClient.post('/wms/zones', body).then(r => r.data.data as WarehouseZone),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouse-zones'] }),
   })

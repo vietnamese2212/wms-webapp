@@ -34,15 +34,15 @@ router.get('/events', (req, res) => {
 
 // Lookup values (loại xuất, v.v.)
 router.get('/lookup',        lookup.listLookup)
-router.post('/lookup',       requirePerm('wms_settings', 'manage'), lookup.addLookup)
-router.put('/lookup/:id',    requirePerm('wms_settings', 'manage'), lookup.updateLookup)
-router.delete('/lookup/:id', requirePerm('wms_settings', 'manage'), lookup.deleteLookup)
+router.post('/lookup',       requirePerm('wms_settings', 'manage_global'), lookup.addLookup)
+router.put('/lookup/:id',    requirePerm('wms_settings', 'manage_global'), lookup.updateLookup)
+router.delete('/lookup/:id', requirePerm('wms_settings', 'manage_global'), lookup.deleteLookup)
 
 // Warehouse zones (khu vực kho)
 router.get('/zones',         zone.listZones)
-router.post('/zones',        requirePerm('wms_settings', 'manage'), zone.createZone)
-router.put('/zones/:id',     requirePerm('wms_settings', 'manage'), zone.updateZone)
-router.delete('/zones/:id',  requirePerm('wms_settings', 'manage'), zone.deleteZone)
+router.post('/zones',        requireAnyPerm(['wms_settings', 'manage_zone'], ['wms_settings', 'manage_global']), zone.createZone)
+router.put('/zones/:id',     requireAnyPerm(['wms_settings', 'manage_zone'], ['wms_settings', 'manage_global']), zone.updateZone)
+router.delete('/zones/:id',  requireAnyPerm(['wms_settings', 'manage_zone'], ['wms_settings', 'manage_global']), zone.deleteZone)
 
 // Inbound plan lines (kế hoạch nhập ngoài NCC)
 router.get('/inbound-plan',         requirePerm('inbound_plan', 'view'),   inboundPlan.listPlanLines)

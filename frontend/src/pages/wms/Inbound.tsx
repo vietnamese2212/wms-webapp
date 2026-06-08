@@ -1470,8 +1470,10 @@ function InboundRow({ order, onClick, onScan, onEditGroup, onPin, pinned }: {
           <span className="text-[10px] font-medium tabular-nums shrink-0">{dateFull}</span>
           {isRowToday && <span className="text-[9px] text-blue-600 font-medium shrink-0 ml-0.5">HN</span>}
           <span className={`text-[8px] px-1 py-0.5 rounded font-medium shrink-0 ml-0.5 ${
-            order.source_type === 'NCC' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-600'
-          }`}>{order.source_type === 'NCC' ? 'NCC' : 'SX'}</span>
+            order.source_type === 'NCC' ? 'bg-amber-100 text-amber-700'
+            : order.source_type === 'TRANSFER' ? 'bg-purple-100 text-purple-700'
+            : 'bg-blue-100 text-blue-600'
+          }`}>{order.source_type === 'NCC' ? 'NCC' : order.source_type === 'TRANSFER' ? 'VK' : 'SX'}</span>
           {onEditGroup && (
             <button onClick={onEditGroup} title="Sửa nhóm"
               className="text-slate-300 hover:text-blue-500 transition-colors shrink-0 ml-auto">
@@ -1482,6 +1484,11 @@ function InboundRow({ order, onClick, onScan, onEditGroup, onPin, pinned }: {
         {order.source_type === 'NCC' && (order as any).gate_registration?.license_plate && (
           <div className="text-[8px] font-mono font-semibold text-slate-600 truncate mt-0.5">
             {(order as any).gate_registration.license_plate}
+          </div>
+        )}
+        {order.source_type === 'TRANSFER' && (order as any).from_gdo?.license_plate && (
+          <div className="text-[8px] font-mono font-semibold text-purple-700 truncate mt-0.5">
+            {(order as any).from_gdo.license_plate}
           </div>
         )}
       </TableCell>

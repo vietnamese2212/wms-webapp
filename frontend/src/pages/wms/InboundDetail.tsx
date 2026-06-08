@@ -733,6 +733,20 @@ export default function InboundDetail() {
               </span>
             )}
 
+            {(order as any).source_type === 'TRANSFER' && (order as any).from_gdo && (() => {
+              const gdo = (order as any).from_gdo
+              const tms = (order as any).tms_order
+              return (
+                <span className="flex flex-wrap items-center gap-x-3 gap-y-0.5 w-full mt-0.5 px-2 py-1 rounded bg-purple-50 border border-purple-100 text-[10px]">
+                  <span className="font-semibold text-purple-700">Chuyển kho</span>
+                  {gdo.warehouse?.name && <span className="text-slate-500">Từ: <span className="font-medium text-slate-700">{gdo.warehouse.name}</span></span>}
+                  {tms?.order_code && <span className="text-slate-500">Lệnh: <span className="font-mono font-semibold text-purple-700">{tms.order_code}</span></span>}
+                  {gdo.license_plate && <span className="text-slate-500">Xe: <span className="font-mono font-semibold">{gdo.license_plate}</span></span>}
+                  {(gdo.delivery_codes?.length ?? 0) > 0 && <span className="text-slate-500">DO: <span className="font-mono">{gdo.delivery_codes.join(' · ')}</span></span>}
+                </span>
+              )
+            })()}
+
             {order.source_type === 'NCC' && (
               <span className="flex items-center gap-1">
                 <span className="text-slate-400 text-[10px]">KH:</span>

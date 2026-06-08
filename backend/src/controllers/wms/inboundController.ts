@@ -10,13 +10,14 @@ import { emitInboundChanged } from '../../lib/events'
 const ORDER_SELECT = `
   id, import_code, warehouse_id, location_id, material_id, planned_pallets, shift_id, status,
   imported_by, created_by, updated_by, import_date, notes, created_at, updated_at,
-  source_type, gate_registration_id, tms_order_id, planned_cartons, warehouse_type,
+  source_type, gate_registration_id, tms_order_id, planned_cartons, warehouse_type, from_gdo_id,
   warehouse:Warehouse(id, code, name),
   location:Location(id, location_code, sub_code, max_pallets),
   material:Material(id, material_code, short_name, material_description, cartons_per_pallet, cartons_per_pallet_mn, category),
   shift:ImportShift(id, code, name),
   gate_registration:gate_registrations!gate_registration_id(id, registration_number, date, license_plate, company_name_raw, driver_name, status, direction),
   tms_order:TmsOrder!tms_order_id(id, order_code, po_number, planned_boxes, planned_pallets),
+  from_gdo:GroupDeliveryOrder!from_gdo_id(group_code, license_plate, delivery_codes, warehouse:Warehouse!warehouse_id(name)),
   imported_by_emp:Employee!imported_by(id, name),
   created_by_emp:Employee!created_by(id, name),
   updated_by_emp:Employee!updated_by(id, name)
@@ -391,12 +392,28 @@ export async function cancelOrder(req: Request, res: Response) {
     if (entriesCount && entriesCount > 0)
       return fail(res, 400, 'HAS_ENTRIES', 'Phiếu đã có pallet nhập, xóa hết pallet trước khi hủy')
 
+    const nowTs = new Date().toISOString()
     const { data: updated, error } = await supabase
       .from('ProductionImport')
-      .update({ status: 'CANCELLED', updated_by: req.body.updated_by ?? null, updated_at: new Date().toISOString() })
+      .update({ status: 'CANCELLED', updated_by: req.body.updated_by ?? null, updated_at: nowTs })
       .eq('id', req.params.id)
       .select(ORDER_SELECT).maybeSingle()
     if (error) throw error
+
+    // Nếu là phiếu TRANSFER: kiểm tra còn phiếu nào active không
+    // Nếu hết → reset GDO transfer_status về IN_TRANSIT để NPP có thể bắt đầu lại
+    if (updated?.source_type === 'TRANSFER' && updated?.from_gdo_id) {
+      const { count: activeCount } = await supabase
+        .from('ProductionImport')
+        .select('id', { count: 'exact', head: true })
+        .eq('from_gdo_id', updated.from_gdo_id)
+        .neq('status', 'CANCELLED')
+      if (!activeCount || activeCount === 0) {
+        await (supabase.from('GroupDeliveryOrder') as any)
+          .update({ transfer_status: 'IN_TRANSIT', updated_at: nowTs })
+          .eq('id', updated.from_gdo_id)
+      }
+    }
 
     const withCount = await attachCount(updated)
     emitInboundChanged()

@@ -465,7 +465,7 @@ export async function checkScanQR(req: Request, res: Response) {
 
     const [matResult, dupResult, locResult] = await Promise.all([
       supabase.from('Material').select('id, material_code, cartons_per_pallet').eq('material_code', parsed.material_code).maybeSingle(),
-      supabase.from('InventoryEntry').select('id').eq('pallet_code', parsed.pallet_code).maybeSingle(),
+      supabase.from('InventoryEntry').select('id').eq('pallet_code', parsed.pallet_code).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']).maybeSingle(),
       supabase.from('Location').select('id, location_code, max_pallets, is_active').eq('id', location_id).maybeSingle(),
     ])
 
@@ -478,7 +478,7 @@ export async function checkScanQR(req: Request, res: Response) {
       const orderMat = order.material as { material_code?: string } | null
       return fail(res, 400, 'MATERIAL_MISMATCH', `Hàng hóa không khớp: QR có "${parsed.material_code}" nhưng phiếu nhập yêu cầu "${orderMat?.material_code}"`)
     }
-    if (existingPallet) return fail(res, 409, 'DUPLICATE_PALLET', `Pallet "${parsed.pallet_code}" đã được nhập kho`)
+    if (existingPallet) return fail(res, 409, 'DUPLICATE_PALLET', `Pallet "${parsed.pallet_code}" đang tồn kho, chưa được xuất`)
     if (!location)      return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy vị trí kho')
     if (!location.is_active) return fail(res, 400, 'LOCATION_INACTIVE', 'Vị trí kho không hoạt động')
 
@@ -541,7 +541,7 @@ export async function scanQR(req: Request, res: Response) {
     // Parallel: material lookup + duplicate check + location lookup
     const [matResult, dupResult, locResult] = await Promise.all([
       supabase.from('Material').select('*').eq('material_code', parsed.material_code).maybeSingle(),
-      supabase.from('InventoryEntry').select('id').eq('pallet_code', parsed.pallet_code).maybeSingle(),
+      supabase.from('InventoryEntry').select('id').eq('pallet_code', parsed.pallet_code).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']).maybeSingle(),
       supabase.from('Location').select('*').eq('id', location_id).maybeSingle(),
     ])
 
@@ -558,7 +558,7 @@ export async function scanQR(req: Request, res: Response) {
       return fail(res, 400, 'MATERIAL_MISMATCH',
         `Hàng hóa không khớp: QR có "${parsed.material_code}" (${material.material_description}) nhưng phiếu nhập yêu cầu "${orderMat?.material_code}"`)
     }
-    if (existingPallet) return fail(res, 409, 'DUPLICATE_PALLET', `Pallet "${parsed.pallet_code}" đã được nhập kho`)
+    if (existingPallet) return fail(res, 409, 'DUPLICATE_PALLET', `Pallet "${parsed.pallet_code}" đang tồn kho, chưa được xuất`)
     if (!location)      return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy vị trí kho')
     if (!location.is_active) return fail(res, 400, 'LOCATION_INACTIVE', 'Vị trí kho không hoạt động')
 

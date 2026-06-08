@@ -132,11 +132,8 @@ export async function listOrders(req: Request, res: Response) {
 
     if (material_category) {
       query = query.eq('warehouse_type', material_category)
-    } else if (scopeCategories.length > 0) {
-      // TRANSFER imports luôn hiển thị — dùng từng eq thay vì in.() để tránh PostgREST parse lỗi trong or()
-      const orClauses = ['source_type.eq.TRANSFER', ...scopeCategories.map(c => `warehouse_type.eq."${c}"`)]
-      query = query.or(orClauses.join(','))
     }
+    // scopeCategories: không lọc ở PostgREST — áp dụng sau khi có data (tránh lỗi .or() với tiếng Việt)
 
     // Date range – support legacy ?date= and new ?date_from= / ?date_to=
     const from = date_from || date
@@ -162,7 +159,17 @@ export async function listOrders(req: Request, res: Response) {
     const { data, error } = await query
     if (error) throw error
 
-    const result = await Promise.all((data ?? []).map(attachCount))
+    // Post-filter: TRANSFER luôn hiển thị bất kể category scope của user
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let filtered: any[] = data ?? []
+    if (!material_category && scopeCategories.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      filtered = filtered.filter((o: any) =>
+        o.source_type === 'TRANSFER' || scopeCategories.includes(o.warehouse_type ?? '')
+      )
+    }
+
+    const result = await Promise.all(filtered.map(attachCount))
     ok(res, result)
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }

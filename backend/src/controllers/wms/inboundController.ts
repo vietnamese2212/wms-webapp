@@ -457,13 +457,16 @@ export async function checkScanQR(req: Request, res: Response) {
 
     const [matResult, dupResult, locResult] = await Promise.all([
       supabase.from('Material').select('id, material_code, cartons_per_pallet').eq('material_code', parsed.material_code).maybeSingle(),
-      supabase.from('InventoryEntry').select('id, status, cartons_remaining').eq('pallet_code', parsed.pallet_code).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']).maybeSingle(),
+      supabase.from('InventoryEntry').select('id, status, cartons_remaining, location:Location!location_id(warehouse_id)').eq('pallet_code', parsed.pallet_code).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']),
       supabase.from('Location').select('id, location_code, max_pallets, is_active').eq('id', location_id).maybeSingle(),
     ])
 
-    const material      = matResult.data
-    const existingPallet = dupResult.data as { id: string; status: string; cartons_remaining: number } | null
-    const location      = locResult.data
+    const material = matResult.data
+    const orderWarehouseId = (order as any).warehouse_id as string
+    const existingPallet = ((dupResult.data ?? []) as any[]).find(
+      (e: any) => e.location?.warehouse_id === orderWarehouseId
+    ) as { id: string; status: string; cartons_remaining: number } | undefined
+    const location = locResult.data
 
     if (!material) return fail(res, 400, 'MATERIAL_NOT_FOUND', `Mã hàng "${parsed.material_code}" từ QR không tồn tại trong hệ thống`)
     if (material.id !== order.material_id) {
@@ -472,8 +475,8 @@ export async function checkScanQR(req: Request, res: Response) {
     }
     if (existingPallet) {
       const msg = existingPallet.status === 'PARTIAL'
-        ? `Pallet "${parsed.pallet_code}" còn ${existingPallet.cartons_remaining} thùng trong kho. Để cộng thêm thùng trả về, dùng chức năng điều chỉnh tồn kho.`
-        : `Pallet "${parsed.pallet_code}" đang tồn kho, chưa được xuất`
+        ? `Pallet "${parsed.pallet_code}" còn ${existingPallet.cartons_remaining} thùng trong kho này. Để cộng thêm thùng trả về, dùng chức năng điều chỉnh tồn kho.`
+        : `Pallet "${parsed.pallet_code}" đang tồn kho tại đây, chưa được xuất`
       return fail(res, 409, 'DUPLICATE_PALLET', msg)
     }
     if (!location)      return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy vị trí kho')
@@ -529,13 +532,16 @@ export async function scanQR(req: Request, res: Response) {
     // Parallel: material lookup + duplicate check + location lookup
     const [matResult, dupResult, locResult] = await Promise.all([
       supabase.from('Material').select('*').eq('material_code', parsed.material_code).maybeSingle(),
-      supabase.from('InventoryEntry').select('id, status, cartons_remaining').eq('pallet_code', parsed.pallet_code).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']).maybeSingle(),
+      supabase.from('InventoryEntry').select('id, status, cartons_remaining, location:Location!location_id(warehouse_id)').eq('pallet_code', parsed.pallet_code).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']),
       supabase.from('Location').select('*').eq('id', location_id).maybeSingle(),
     ])
 
-    const material     = matResult.data
-    const existingPallet = dupResult.data as { id: string; status: string; cartons_remaining: number } | null
-    const location     = locResult.data
+    const material = matResult.data
+    const orderWarehouseId = (order as any).warehouse_id as string
+    const existingPallet = ((dupResult.data ?? []) as any[]).find(
+      (e: any) => e.location?.warehouse_id === orderWarehouseId
+    ) as { id: string; status: string; cartons_remaining: number } | undefined
+    const location = locResult.data
 
     if (!material) {
       return fail(res, 400, 'MATERIAL_NOT_FOUND',
@@ -548,8 +554,8 @@ export async function scanQR(req: Request, res: Response) {
     }
     if (existingPallet) {
       const msg = existingPallet.status === 'PARTIAL'
-        ? `Pallet "${parsed.pallet_code}" còn ${existingPallet.cartons_remaining} thùng trong kho. Để cộng thêm thùng trả về, dùng chức năng điều chỉnh tồn kho.`
-        : `Pallet "${parsed.pallet_code}" đang tồn kho, chưa được xuất`
+        ? `Pallet "${parsed.pallet_code}" còn ${existingPallet.cartons_remaining} thùng trong kho này. Để cộng thêm thùng trả về, dùng chức năng điều chỉnh tồn kho.`
+        : `Pallet "${parsed.pallet_code}" đang tồn kho tại đây, chưa được xuất`
       return fail(res, 409, 'DUPLICATE_PALLET', msg)
     }
     if (!location)      return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy vị trí kho')

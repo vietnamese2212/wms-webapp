@@ -1,6 +1,6 @@
 import { createPortal } from 'react-dom'
 import { useState, useRef, useEffect } from 'react'
-import { ChevronDown, Check } from 'lucide-react'
+import { ChevronDown } from 'lucide-react'
 
 interface Warehouse {
   id: string
@@ -26,9 +26,9 @@ export function WarehouseSingleSelect({
   allLabel, placeholder = 'Chọn kho…',
   disabled, triggerClassName = '',
 }: WarehouseSingleSelectProps) {
-  const [open, setOpen]   = useState(false)
+  const [open, setOpen]     = useState(false)
   const [search, setSearch] = useState('')
-  const [pos, setPos]     = useState<DropPos | null>(null)
+  const [pos, setPos]       = useState<DropPos | null>(null)
   const triggerRef  = useRef<HTMLButtonElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
@@ -51,16 +51,13 @@ export function WarehouseSingleSelect({
     const spaceBelow = window.innerHeight - rect.bottom
     const spaceAbove = rect.top
     if (spaceBelow < 220 && spaceAbove > spaceBelow) {
-      // mở lên
-      setPos({ bottom: window.innerHeight - rect.top + 2, left: rect.left, width: Math.max(rect.width, 160) })
+      setPos({ bottom: window.innerHeight - rect.top + 2, left: rect.left, width: Math.max(rect.width, 180) })
     } else {
-      // mở xuống
-      setPos({ top: rect.bottom + 2, left: rect.left, width: Math.max(rect.width, 160) })
+      setPos({ top: rect.bottom + 2, left: rect.left, width: Math.max(rect.width, 180) })
     }
     setOpen(true)
   }
 
-  // Click-outside: kiểm tra cả trigger và portal dropdown
   useEffect(() => {
     if (!open) return
     const handler = (e: MouseEvent) => {
@@ -97,7 +94,8 @@ export function WarehouseSingleSelect({
       </button>
 
       {open && pos && createPortal(
-        <div ref={dropdownRef} style={dropStyle} className="bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden">
+        <div ref={dropdownRef} data-wh-portal="" style={dropStyle}
+          className="bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden">
           <div className="p-2 border-b border-slate-100">
             <input
               type="text"
@@ -105,38 +103,33 @@ export function WarehouseSingleSelect({
               onChange={e => setSearch(e.target.value)}
               placeholder="Tìm tên hoặc mã kho…"
               className="w-full text-xs border border-slate-200 rounded px-2 py-1 outline-none focus:border-blue-400"
-              autoFocus
             />
           </div>
           <div className="max-h-48 overflow-y-auto">
             {allLabel !== undefined && (
-              <button
-                type="button"
-                onMouseDown={e => e.preventDefault()}
-                onClick={() => { onChange(''); close() }}
-                className={`w-full flex items-center justify-between px-3 py-1.5 text-[11px] hover:bg-slate-50 transition-colors
-                  ${value === '' ? 'text-blue-600 font-medium' : 'text-slate-500'}`}
-              >
-                <span>{allLabel}</span>
-                {value === '' && <Check className="h-3 w-3 shrink-0" />}
-              </button>
+              <label className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={value === ''}
+                  onChange={() => { onChange(''); close() }}
+                  className="h-3.5 w-3.5 rounded accent-blue-600"
+                />
+                <span className="text-[11px] text-slate-700 flex-1 truncate">{allLabel}</span>
+              </label>
             )}
             {filtered.length === 0 ? (
               <p className="text-[11px] text-slate-400 text-center py-3">Không tìm thấy</p>
             ) : filtered.map(w => (
-              <button
-                key={w.id}
-                type="button"
-                onMouseDown={e => e.preventDefault()}
-                onClick={() => { onChange(w.id); close() }}
-                className={`w-full flex items-center justify-between px-3 py-1.5 text-[11px] hover:bg-slate-50 transition-colors
-                  ${w.id === value ? 'text-blue-600 font-medium bg-blue-50/50' : 'text-slate-700'}`}
-              >
-                <span className="flex-1 text-left truncate">
-                  {w.name}{w.code ? <span className="ml-1 text-slate-400">({w.code})</span> : null}
-                </span>
-                {w.id === value && <Check className="h-3 w-3 shrink-0" />}
-              </button>
+              <label key={w.id} className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={w.id === value}
+                  onChange={() => { onChange(w.id); close() }}
+                  className="h-3.5 w-3.5 rounded accent-blue-600"
+                />
+                <span className="text-[11px] text-slate-700 flex-1 truncate">{w.name}</span>
+                {w.code && <span className="text-[10px] text-slate-400 font-mono shrink-0">{w.code}</span>}
+              </label>
             ))}
           </div>
         </div>,

@@ -92,7 +92,6 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
   const [nccDropdownIdx, setNccDropdownIdx] = useState<number | null>(null)
   const [showMoreGates,    setShowMoreGates]    = useState(false)
   const [showGateDialog,   setShowGateDialog]   = useState(false)
-  const [factoryEmpId,     setFactoryEmpId]     = useState('')
 
   useEffect(() => {
     if (open) {
@@ -126,7 +125,6 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
         setLocationId(''); setShiftId('')
         setImportDate(format(new Date(), 'yyyy-MM-dd'))
         setNotes(''); setGateRegId('')
-        setFactoryEmpId('')
         setNccRows([emptyNccRow()]); setNccSaving(false); setNccErr(''); setNccDropdownIdx(null)
         setShowMoreGates(false)
         setEditRows([])
@@ -219,10 +217,6 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
     () => (allEmployees as EmpItem[]).find(e => e.name.toLowerCase() === (user?.name ?? '').toLowerCase())?.id ?? '',
     [allEmployees, user?.name]
   )
-
-  useEffect(() => {
-    if (importedByEmpId && !factoryEmpId) setFactoryEmpId(importedByEmpId)
-  }, [importedByEmpId]) // eslint-disable-line
 
   useEffect(() => {
     if (!open || warehouseId || !user?.warehouse_name || !warehouses.length) return
@@ -404,7 +398,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
     createOrder(
       { warehouse_id: warehouseId, material_id: materialId, location_id: locationId || undefined,
         shift_id: shiftId || undefined, import_date: importDate, notes: notes || undefined,
-        imported_by: factoryEmpId || undefined, source_type: 'FACTORY', warehouse_type: subType || undefined },
+        imported_by: importedByEmpId || undefined, source_type: 'FACTORY', warehouse_type: subType || undefined },
       { onSuccess: (data) => { onClose(); navigate(`/wms/inbound/${data.order.id}`) } }
     )
   }
@@ -528,16 +522,10 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
 
             <div className="space-y-2">
               <Label>Người nhập</Label>
-              <Select value={factoryEmpId} onValueChange={setFactoryEmpId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Chọn nhân viên..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {(allEmployees as EmpItem[]).map(e => (
-                    <SelectItem key={e.id} value={e.id}>{e.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="flex h-10 items-center rounded-md border bg-slate-50 px-3 text-sm text-slate-700 gap-2">
+                <User className="h-4 w-4 text-slate-400 shrink-0" />
+                <span className="truncate">{user?.name ?? '—'}</span>
+              </div>
             </div>
 
             <div className="space-y-2">

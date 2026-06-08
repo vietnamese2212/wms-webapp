@@ -79,6 +79,7 @@ router.patch('/inventory/bulk-location',          requirePerm('inventory', 'move
 router.patch('/inventory/bulk-material',          requirePerm('inventory', 'recode'), inventory.bulkTransferMaterial)
 router.patch('/inventory/bulk-production-date',   requirePerm('inventory', 'update_prod_date'), inventory.bulkUpdateProductionDate)
 router.patch('/inventory/:id/adjust',             requirePerm('inventory', 'adjust'), inventory.adjustInventory)
+router.get('/inventory/:id/adjustment-log',       inventory.listAdjustmentLog)
 router.patch('/inventory/:id/unflag',             inventory.unflagEntry)
 router.post('/inventory/:id/stocktake',           requirePerm('stocktake', 'scan'), inventory.stocktakeEntry)
 

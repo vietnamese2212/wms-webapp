@@ -559,14 +559,41 @@ export function useInventoryFacets(params?: { warehouse_ids?: string[]; categori
   })
 }
 
+export interface AdjustmentLog {
+  id: string
+  delta: number
+  cartons_before: number
+  cartons_after: number
+  note: string | null
+  actor_name: string | null
+  actor_id: string | null
+  adjusted_at: string
+}
+
 export function useAdjustInventory() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async ({ id, adjustment, employee_id }: { id: string; adjustment: number; employee_id?: string }) => {
-      const { data } = await apiClient.patch(`/wms/inventory/${id}/adjust`, { adjustment, employee_id })
+    mutationFn: async ({ id, adjustment, employee_id, note, actor_name }: {
+      id: string; adjustment: number; employee_id?: string; note?: string; actor_name?: string
+    }) => {
+      const { data } = await apiClient.patch(`/wms/inventory/${id}/adjust`, { adjustment, employee_id, note, actor_name })
       return data.data as { entry: InventoryEntry }
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['inventory-entries'] }) },
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: ['inventory-entries'] })
+      qc.invalidateQueries({ queryKey: ['adjustment-log', vars.id] })
+    },
+  })
+}
+
+export function useAdjustmentLog(entryId: string) {
+  return useQuery({
+    queryKey: ['adjustment-log', entryId],
+    queryFn: async () => {
+      const { data } = await apiClient.get(`/wms/inventory/${entryId}/adjustment-log`)
+      return data.data as AdjustmentLog[]
+    },
+    enabled: !!entryId,
   })
 }
 

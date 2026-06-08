@@ -9,6 +9,7 @@ import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { SearchInput } from '@/components/shared/SearchInput'
 import {
   useInventoryEntries, useInventoryFacets, useWarehouses, useQAStatuses, useAdjustInventory,
+  useAdjustmentLog,
   useLocationsReal, useMaterials, useWarehouseTypes,
   useBulkUpdateInventoryQA, useBulkTransferLocation, useBulkTransferMaterial,
   useBulkUpdateProductionDate,
@@ -1013,9 +1014,12 @@ function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick }: {
 function DetailPanel({ entry: e, onClose }: { entry: InventoryEntry; onClose: () => void }) {
   const user = useAuthStore(s => s.user)
   const [adjInput, setAdjInput]       = useState('')
+  const [adjNote, setAdjNote]         = useState('')
   const [showAdj, setShowAdj]         = useState(false)
+  const [showLog, setShowLog]         = useState(false)
   const [adjError, setAdjError]       = useState('')
   const { mutate: adjust, isPending } = useAdjustInventory()
+  const { data: adjLog }              = useAdjustmentLog(e.id)
 
   const loc       = formatLoc(e.location)
   const remaining = e.cartons_remaining ?? e.cartons_imported
@@ -1027,9 +1031,9 @@ function DetailPanel({ entry: e, onClose }: { entry: InventoryEntry; onClose: ()
     if (isNaN(val) || val === 0) { setAdjError('Nhập số khác 0'); return }
     setAdjError('')
     adjust(
-      { id: e.id, adjustment: val, employee_id: user?.id },
+      { id: e.id, adjustment: val, employee_id: user?.id, note: adjNote.trim() || undefined, actor_name: user?.name ?? undefined },
       {
-        onSuccess: () => { setAdjInput(''); setShowAdj(false) },
+        onSuccess: () => { setAdjInput(''); setAdjNote(''); setShowAdj(false) },
         onError: (err: any) => {
           setAdjError(err?.response?.data?.error?.message ?? 'Lỗi không xác định')
         },
@@ -1123,7 +1127,7 @@ function DetailPanel({ entry: e, onClose }: { entry: InventoryEntry; onClose: ()
         </Section>
 
         {/* Adjust block */}
-        <div className="border-t pt-3">
+        <div className="border-t pt-3 space-y-2">
           {!showAdj ? (
             <Button size="sm" variant="outline" className="w-full gap-1.5"
               onClick={() => setShowAdj(true)}>
@@ -1139,8 +1143,14 @@ function DetailPanel({ entry: e, onClose }: { entry: InventoryEntry; onClose: ()
                 type="number"
                 placeholder="Vd: -2 hoặc +5"
                 value={adjInput}
-                onChange={e => { setAdjInput(e.target.value); setAdjError('') }}
+                onChange={ev => { setAdjInput(ev.target.value); setAdjError('') }}
                 className="h-8 text-sm text-center"
+              />
+              <Input
+                placeholder="Lý do điều chỉnh (tùy chọn)"
+                value={adjNote}
+                onChange={ev => setAdjNote(ev.target.value)}
+                className="h-8 text-xs"
               />
               {adjInput && !isNaN(parseFloat(adjInput)) && (
                 <p className="text-[10px] text-slate-500 text-center">
@@ -1153,10 +1163,41 @@ function DetailPanel({ entry: e, onClose }: { entry: InventoryEntry; onClose: ()
                   {isPending ? '…' : 'Xác nhận'}
                 </Button>
                 <Button size="sm" variant="outline"
-                  onClick={() => { setShowAdj(false); setAdjInput(''); setAdjError('') }}>
+                  onClick={() => { setShowAdj(false); setAdjInput(''); setAdjNote(''); setAdjError('') }}>
                   Hủy
                 </Button>
               </div>
+            </div>
+          )}
+
+          {/* Lịch sử điều chỉnh */}
+          {adjLog && adjLog.length > 0 && (
+            <div>
+              <button
+                className="text-[10px] text-blue-600 hover:underline"
+                onClick={() => setShowLog(v => !v)}
+              >
+                {showLog ? 'Ẩn' : 'Xem'} lịch sử điều chỉnh ({adjLog.length})
+              </button>
+              {showLog && (
+                <div className="mt-1.5 space-y-1.5 max-h-48 overflow-y-auto">
+                  {adjLog.map(log => (
+                    <div key={log.id} className="rounded border px-2 py-1.5 text-[10px] bg-slate-50">
+                      <div className="flex items-center justify-between">
+                        <span className={`font-semibold font-mono ${log.delta > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                          {log.delta > 0 ? '+' : ''}{log.delta} thùng
+                        </span>
+                        <span className="text-slate-400">{formatTimestampDate(log.adjusted_at, true)} {formatTimestampTime(log.adjusted_at)}</span>
+                      </div>
+                      <div className="text-slate-500">
+                        {log.cartons_before} → {log.cartons_after} thùng
+                        {log.actor_name && <span className="ml-1">· {log.actor_name}</span>}
+                      </div>
+                      {log.note && <div className="text-slate-600 italic mt-0.5">{log.note}</div>}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>

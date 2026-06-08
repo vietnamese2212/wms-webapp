@@ -288,7 +288,9 @@ const ACTIVE_STATUSES = ['IN_STOCK', 'PARTIAL', 'EXPORTED']
 
 export async function adjustInventory(req: Request, res: Response) {
   const { id } = req.params
-  const { adjustment, stocktake_by, employee_id } = req.body as { adjustment: number; stocktake_by?: string; employee_id?: string }
+  const { adjustment, stocktake_by, employee_id, note, actor_name } = req.body as {
+    adjustment: number; stocktake_by?: string; employee_id?: string; note?: string; actor_name?: string
+  }
 
   if (typeof adjustment !== 'number' || adjustment === 0) {
     return fail(res, 400, 'INVALID_INPUT', 'adjustment phải là số khác 0')
@@ -301,7 +303,8 @@ export async function adjustInventory(req: Request, res: Response) {
 
   if (fetchErr || !entry) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy pallet')
 
-  const newRemaining = Number(entry.cartons_remaining ?? 0) + adjustment
+  const cartonsBeforeAdjust = Number(entry.cartons_remaining ?? 0)
+  const newRemaining = cartonsBeforeAdjust + adjustment
   if (newRemaining < 0) return fail(res, 400, 'INVALID_INPUT', 'Tồn kho không thể âm')
 
   const now    = new Date().toISOString()
@@ -313,6 +316,8 @@ export async function adjustInventory(req: Request, res: Response) {
     else if (newRemaining >= Number(entry.cartons_imported)) newStatus = 'IN_STOCK'
     else newStatus = 'PARTIAL'
   }
+
+  const isValidUUID = (s?: string) => !!s && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)
 
   const patch: Record<string, any> = {
     cartons_remaining: newRemaining,
@@ -326,7 +331,7 @@ export async function adjustInventory(req: Request, res: Response) {
     patch.stocktake_by = stocktake_by
     patch.stocktake_at = now
   }
-  if (employee_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employee_id)) patch.updated_by = employee_id
+  if (isValidUUID(employee_id)) patch.updated_by = employee_id
 
   const { data: updated, error: updateErr } = await (supabase.from('InventoryEntry') as any)
     .update(patch)
@@ -335,7 +340,33 @@ export async function adjustInventory(req: Request, res: Response) {
     .single()
 
   if (updateErr) return fail(res, 500, 'DB_ERROR', updateErr.message)
+
+  // Insert audit log
+  await supabase.from('InventoryAdjustmentLog' as any).insert({
+    id:             randomUUID(),
+    entry_id:       id,
+    delta:          adjustment,
+    cartons_before: cartonsBeforeAdjust,
+    cartons_after:  newRemaining,
+    note:           note?.trim() || null,
+    actor_name:     actor_name?.trim() || null,
+    actor_id:       isValidUUID(employee_id) ? employee_id : null,
+    adjusted_at:    now,
+  })
+
   return ok(res, { entry: updated })
+}
+
+export async function listAdjustmentLog(req: Request, res: Response) {
+  const { id } = req.params
+  const { data, error } = await supabase
+    .from('InventoryAdjustmentLog' as any)
+    .select('id, delta, cartons_before, cartons_after, note, actor_name, actor_id, adjusted_at')
+    .eq('entry_id', id)
+    .order('adjusted_at', { ascending: false })
+
+  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  res.json({ success: true, data })
 }
 
 // ─── Bulk actions ────────────────────────────────────────────

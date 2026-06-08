@@ -21,6 +21,7 @@ import {
   HelpCircle, XCircle,
 } from 'lucide-react'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
+import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -1107,29 +1108,21 @@ export default function GateRegistration() {
               </div>
               <div className="space-y-1">
                 <label className="text-xs text-slate-500">Kho <span className="text-red-500">*</span></label>
-                <Select value={form.warehouse_id || '__none__'} onValueChange={v => {
-                  const newId = v === '__none__' ? '' : v
-                  setForm(prev => {
+                <WarehouseSingleSelect
+                  warehouses={(allowedWhIds
+                    ? warehouses.filter((w: { id: string }) => allowedWhIds.has(w.id))
+                    : warehouses) as { id: string; name: string }[]}
+                  value={form.warehouse_id}
+                  onChange={newId => setForm(prev => {
                     const next = { ...prev, warehouse_id: newId, warehouse_type: '', vehicle_type: '' }
                     if (editReg) return next
                     const complete = !!(next.date && next.warehouse_id && next.direction &&
                                         next.warehouse_type && next.vehicle_type && (next.company_id || next.company_name_raw))
                     return complete ? next : { ...next, ...PHASE2_DEFAULT }
-                  })
-                }}>
-                  <SelectTrigger className="h-8 text-xs">
-                    <SelectValue placeholder="Chọn kho" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">— Chọn kho —</SelectItem>
-                    {(allowedWhIds
-                      ? warehouses.filter((w: { id: string }) => allowedWhIds.has(w.id))
-                      : warehouses
-                    ).map((w: { id: string; name: string }) => (
-                      <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  })}
+                  placeholder="Chọn kho"
+                  triggerClassName="h-8"
+                />
               </div>
             </div>
 

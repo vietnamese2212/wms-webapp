@@ -446,7 +446,7 @@ export async function checkScanQR(req: Request, res: Response) {
 
     const { data: order } = await supabase
       .from('ProductionImport')
-      .select('id, status, material_id, warehouse_id, material:Material(material_code, cartons_per_pallet), warehouse:Warehouse(id, nmsx_code)')
+      .select('id, import_code, status, source_type, material_id, warehouse_id, material:Material(material_code, cartons_per_pallet), warehouse:Warehouse(id, nmsx_code)')
       .eq('id', order_id).maybeSingle()
     if (!order)                  return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (order.status !== 'OPEN') return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập không còn ở trạng thái mở')
@@ -463,6 +463,7 @@ export async function checkScanQR(req: Request, res: Response) {
 
     const material = matResult.data
     const orderWarehouseId = (order as any).warehouse_id as string
+    const isTransfer = (order as any).source_type === 'TRANSFER'
     const existingPallet = ((dupResult.data ?? []) as any[]).find(
       (e: any) => e.location?.warehouse_id === orderWarehouseId
     ) as { id: string; status: string; cartons_remaining: number } | undefined
@@ -474,6 +475,19 @@ export async function checkScanQR(req: Request, res: Response) {
       return fail(res, 400, 'MATERIAL_MISMATCH', `Hàng hóa không khớp: QR có "${parsed.material_code}" nhưng phiếu nhập yêu cầu "${orderMat?.material_code}"`)
     }
     if (existingPallet) {
+      // Phiếu TRANSFER + pallet đang PARTIAL → cho phép merge, cảnh báo thay vì block
+      if (isTransfer && existingPallet.status === 'PARTIAL') {
+        const mat = material as { cartons_per_pallet?: number | null }
+        return ok(res, {
+          pallet_code:       parsed.pallet_code,
+          production_date:   parsed.production_date ?? null,
+          suggested_cartons: mat.cartons_per_pallet ?? 0,
+          will_merge:        true,
+          cartons_existing:  existingPallet.cartons_remaining,
+          existing_entry_id: existingPallet.id,
+          merge_warning:     `Pallet này còn ${existingPallet.cartons_remaining} thùng trong kho. Quét sẽ cộng thêm số thùng trả về vào tồn hiện tại.`,
+        })
+      }
       const msg = existingPallet.status === 'PARTIAL'
         ? `Pallet "${parsed.pallet_code}" còn ${existingPallet.cartons_remaining} thùng trong kho này. Để cộng thêm thùng trả về, dùng chức năng điều chỉnh tồn kho.`
         : `Pallet "${parsed.pallet_code}" đang tồn kho tại đây, chưa được xuất`
@@ -516,10 +530,10 @@ export async function scanQR(req: Request, res: Response) {
     if (!qr_code)     return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu qr_code')
     if (!location_id) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu location_id')
 
-    // Load order with material + warehouse nmsx_code
+    // Load order with material + source_type
     const { data: order } = await supabase
       .from('ProductionImport')
-      .select('id, status, material_id, warehouse_id, material:Material(material_code, cartons_per_pallet), warehouse:Warehouse(id, nmsx_code)')
+      .select('id, import_code, status, source_type, material_id, warehouse_id, material:Material(material_code, cartons_per_pallet), warehouse:Warehouse(id, nmsx_code)')
       .eq('id', order_id).maybeSingle()
     if (!order)                     return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (order.status !== 'OPEN')    return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập không còn ở trạng thái mở')
@@ -532,15 +546,16 @@ export async function scanQR(req: Request, res: Response) {
     // Parallel: material lookup + duplicate check + location lookup
     const [matResult, dupResult, locResult] = await Promise.all([
       supabase.from('Material').select('*').eq('material_code', parsed.material_code).maybeSingle(),
-      supabase.from('InventoryEntry').select('id, status, cartons_remaining, location:Location!location_id(warehouse_id)').eq('pallet_code', parsed.pallet_code).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']),
+      supabase.from('InventoryEntry').select('id, status, cartons_remaining, adjustment_qty, location:Location!location_id(warehouse_id)').eq('pallet_code', parsed.pallet_code).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']),
       supabase.from('Location').select('*').eq('id', location_id).maybeSingle(),
     ])
 
     const material = matResult.data
     const orderWarehouseId = (order as any).warehouse_id as string
+    const isTransfer = (order as any).source_type === 'TRANSFER'
     const existingPallet = ((dupResult.data ?? []) as any[]).find(
       (e: any) => e.location?.warehouse_id === orderWarehouseId
-    ) as { id: string; status: string; cartons_remaining: number } | undefined
+    ) as { id: string; status: string; cartons_remaining: number; adjustment_qty: number } | undefined
     const location = locResult.data
 
     if (!material) {
@@ -552,6 +567,47 @@ export async function scanQR(req: Request, res: Response) {
       return fail(res, 400, 'MATERIAL_MISMATCH',
         `Hàng hóa không khớp: QR có "${parsed.material_code}" (${material.material_description}) nhưng phiếu nhập yêu cầu "${orderMat?.material_code}"`)
     }
+
+    // Phiếu TRANSFER + pallet đang PARTIAL cùng kho → merge (cộng tồn, không tạo entry mới)
+    if (isTransfer && existingPallet?.status === 'PARTIAL') {
+      const addCartons = cartons_override ? Number(cartons_override) : (material.cartons_per_pallet ?? 0)
+      const cartonsBeforeAdjust = Number(existingPallet.cartons_remaining)
+      const newRemaining = cartonsBeforeAdjust + addCartons
+      const now = new Date().toISOString()
+      const importCode = (order as any).import_code as string
+
+      await Promise.all([
+        supabase.from('InventoryEntry').update({
+          cartons_remaining: newRemaining,
+          adjustment_qty:    Number(existingPallet.adjustment_qty ?? 0) + addCartons,
+          status:            'IN_STOCK',
+          updated_at:        now,
+          update_date:       vnDate(),
+          updated_by:        employee_id ?? null,
+        }).eq('id', existingPallet.id),
+        supabase.from('InventoryAdjustmentLog' as any).insert({
+          id:             randomUUID(),
+          entry_id:       existingPallet.id,
+          delta:          addCartons,
+          cartons_before: cartonsBeforeAdjust,
+          cartons_after:  newRemaining,
+          note:           `Nhập trả về từ phiếu transfer ${importCode}`,
+          actor_name:     null,
+          actor_id:       employee_id ?? null,
+          adjusted_at:    now,
+        }),
+      ])
+
+      emitInboundChanged()
+      return ok(res, {
+        merged:        true,
+        entry_id:      existingPallet.id,
+        added_cartons: addCartons,
+        new_remaining: newRemaining,
+        warnings:      [`Đã cộng ${addCartons} thùng vào tồn hiện tại (${cartonsBeforeAdjust} → ${newRemaining}). Log ghi nhận tại phiếu transfer ${importCode}.`],
+      })
+    }
+
     if (existingPallet) {
       const msg = existingPallet.status === 'PARTIAL'
         ? `Pallet "${parsed.pallet_code}" còn ${existingPallet.cartons_remaining} thùng trong kho này. Để cộng thêm thùng trả về, dùng chức năng điều chỉnh tồn kho.`

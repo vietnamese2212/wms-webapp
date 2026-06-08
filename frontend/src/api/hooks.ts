@@ -1207,13 +1207,23 @@ export function useCheckOutboundScan() {
   })
 }
 
+export interface CheckScanResult {
+  pallet_code: string
+  production_date: string | null
+  suggested_cartons: number
+  will_merge?: boolean
+  cartons_existing?: number
+  existing_entry_id?: string
+  merge_warning?: string
+}
+
 export function useCheckInboundScan() {
   return useMutation({
     mutationFn: ({ orderId, qr_code, location_id, stack_layer }: {
       orderId: string; qr_code: string; location_id: string; stack_layer: number
     }) =>
       apiClient.post(`/wms/inbound-orders/${orderId}/check-scan`, { qr_code, location_id, stack_layer })
-        .then(r => r.data.data as { pallet_code: string; production_date: string | null; suggested_cartons: number }),
+        .then(r => r.data.data as CheckScanResult),
   })
 }
 

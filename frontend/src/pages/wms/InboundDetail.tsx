@@ -126,6 +126,7 @@ function ScanDialog({ order, onClose, employeeId, allLocations }: ScanDialogProp
   const [pendingQR,        setPendingQR]        = useState<string | null>(null)
   const [validation,       setValidation]       = useState<ValidationResult | null>(null)
   const [serverCheckOk,    setServerCheckOk]    = useState(false)
+  const [mergeWarning,     setMergeWarning]     = useState<string | null>(null)
 
   // Đổi vị trí: activeLocationId có thể khác order.location_id khi overflow
   const [activeLocationId, setActiveLocationId] = useState<string>(order.location_id ?? '')
@@ -150,7 +151,10 @@ function ScanDialog({ order, onClose, employeeId, allLocations }: ScanDialogProp
     checkScan(
       { orderId: order.id, qr_code: raw, location_id: activeLocationId, stack_layer: Number(stackLayer) },
       {
-        onSuccess: () => setServerCheckOk(true),
+        onSuccess: (data) => {
+          setServerCheckOk(true)
+          setMergeWarning(data.will_merge ? (data.merge_warning ?? null) : null)
+        },
         onError: (err) => {
           const msg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
           setValidation({ ok: false, msg })
@@ -172,16 +176,18 @@ function ScanDialog({ order, onClose, employeeId, allLocations }: ScanDialogProp
           setPendingQR(null)
           setValidation(null)
           setServerCheckOk(false)
-          setFeedback({
-            type: 'success',
-            msg: `✓ ${data.entry.pallet_code} · ${data.entry.cartons_imported} thùng · ${data.entry.location?.location_code ?? ''}`,
-          })
+          setMergeWarning(null)
+          const successMsg = data.merged
+            ? `✓ Đã cộng ${data.added_cartons} thùng · Tồn mới: ${data.new_remaining} thùng`
+            : `✓ ${data.entry.pallet_code} · ${data.entry.cartons_imported} thùng · ${data.entry.location?.location_code ?? ''}`
+          setFeedback({ type: 'success', msg: successMsg })
           setTimeout(() => { scannerRef.current?.resume(); setFeedback(null) }, 1500)
         },
         onError: (err) => {
           setPendingQR(null)
           setValidation(null)
           setServerCheckOk(false)
+          setMergeWarning(null)
           const msg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
           setFeedback({ type: 'error', msg })
         },
@@ -194,6 +200,7 @@ function ScanDialog({ order, onClose, employeeId, allLocations }: ScanDialogProp
     setValidation(null)
     setFeedback(null)
     setServerCheckOk(false)
+    setMergeWarning(null)
     scannerRef.current?.resume()
   }
 
@@ -300,6 +307,17 @@ function ScanDialog({ order, onClose, employeeId, allLocations }: ScanDialogProp
               </button>
             )}
           </div>
+
+          {/* Merge warning banner */}
+          {mergeWarning && serverCheckOk && !feedback && (
+            <div className="rounded-lg bg-amber-50 border border-amber-300 px-3 py-2.5 flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-amber-800">Cảnh báo: Pallet đang tồn kho</p>
+                <p className="text-xs text-amber-700 mt-0.5">{mergeWarning}</p>
+              </div>
+            </div>
+          )}
 
           {/* Validation result */}
           {pendingQR && validation && !feedback && (

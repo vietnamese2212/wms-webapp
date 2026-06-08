@@ -264,8 +264,8 @@ function TypeDialog({ type, open, onClose }: {
 export default function WMSSettings() {
   const user = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
-  const canManageGlobalGlobal = can(perms, 'wms_settings', 'manage_global')
-  const canManageGlobalZone   = can(perms, 'wms_settings', 'manage_zone') || canManageGlobalGlobal
+  const canManageGlobal = can(perms, 'wms_settings', 'manage_global')
+  const canManageZone   = can(perms, 'wms_settings', 'manage_zone') || canManageGlobal
 
   // Kho
   const { data: allWh = [], isLoading: loadingWh } = useWarehouses(false)
@@ -286,7 +286,7 @@ export default function WMSSettings() {
 
   // Khu vực kho — lọc theo warehouse_scope của user
   const activeWh = (allWh as WhRow[]).filter(w => w.is_active)
-  const zoneAccessWh = canManageGlobalGlobal
+  const zoneAccessWh = canManageGlobal
     ? activeWh
     : activeWh.filter(w => (user?.warehouse_ids ?? []).includes(w.id))
   const [selectedWhId, setSelectedWhId] = useState('')
@@ -327,7 +327,7 @@ export default function WMSSettings() {
         <TabsContent value="warehouses" className="space-y-3">
           <div className="flex items-center justify-between">
             <p className="text-xs text-slate-500">{(allWh as WhRow[]).length} kho</p>
-            {canManageGlobalGlobal && (
+            {canManageGlobal && (
               <Button size="sm" className="gap-1.5" onClick={() => { setEditingWh(null); setShowWhDlg(true) }}>
                 <Plus className="h-4 w-4" /> Thêm kho
               </Button>
@@ -345,7 +345,7 @@ export default function WMSSettings() {
                         <TableHead className="px-3 py-2 text-xs">Chức năng</TableHead>
                         <TableHead className="px-3 py-2 text-xs">Địa chỉ</TableHead>
                         <TableHead className="px-3 py-2 text-xs">Trạng thái</TableHead>
-                        {canManageGlobalGlobal && <TableHead className="px-3 py-2 w-16" />}
+                        {canManageGlobal && <TableHead className="px-3 py-2 w-16" />}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -366,7 +366,7 @@ export default function WMSSettings() {
                               {wh.is_active ? 'Hoạt động' : 'Tạm dừng'}
                             </Badge>
                           </TableCell>
-                          {canManageGlobalGlobal && (
+                          {canManageGlobal && (
                             <TableCell className="px-2 py-2">
                               <div className="flex items-center gap-0.5">
                                 <button className="text-slate-400 hover:text-blue-500 p-1 transition-colors"
@@ -415,7 +415,7 @@ export default function WMSSettings() {
             <p className="text-xs text-slate-500">
               Danh sách loại kho — dùng cho phân loại vị trí, mã hàng, phân quyền nhân viên và đăng ký vận chuyển TMS.
             </p>
-            {canManageGlobalGlobal && (
+            {canManageGlobal && (
               <Button size="sm" className="gap-1.5 shrink-0" onClick={() => { setEditingType(null); setShowTypeDlg(true) }}>
                 <Plus className="h-4 w-4" /> Thêm loại kho
               </Button>

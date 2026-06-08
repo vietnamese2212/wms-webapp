@@ -1,13 +1,13 @@
 -- Audit log cho mỗi lần điều chỉnh tồn kho (tăng/giảm thủ công)
 CREATE TABLE "InventoryAdjustmentLog" (
-  id             UUID PRIMARY KEY,
-  entry_id       UUID NOT NULL REFERENCES "InventoryEntry"(id) ON DELETE CASCADE,
+  id             TEXT PRIMARY KEY,
+  entry_id       TEXT NOT NULL REFERENCES "InventoryEntry"(id) ON DELETE CASCADE,
   delta          INTEGER NOT NULL,          -- dương = thêm, âm = bớt
   cartons_before INTEGER NOT NULL,
   cartons_after  INTEGER NOT NULL,
   note           TEXT,                      -- lý do điều chỉnh
   actor_name     TEXT,                      -- tên người thực hiện
-  actor_id       UUID REFERENCES "Employee"(id) ON DELETE SET NULL,
+  actor_id       TEXT REFERENCES "Employee"(id) ON DELETE SET NULL,
   adjusted_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

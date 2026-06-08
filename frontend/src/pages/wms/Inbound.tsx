@@ -134,11 +134,6 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
     }
   }, [open, user?.warehouse_id, user?.warehouse_ids]) // eslint-disable-line
 
-  // Auto-fill factoryEmpId when employee list resolves
-  useEffect(() => {
-    if (importedByEmpId && !factoryEmpId) setFactoryEmpId(importedByEmpId)
-  }, [importedByEmpId]) // eslint-disable-line
-
   const { data: warehouses = [] } = useWarehouses(true)
   const { data: shifts     = [] } = useImportShifts()
 
@@ -224,6 +219,10 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
     () => (allEmployees as EmpItem[]).find(e => e.name.toLowerCase() === (user?.name ?? '').toLowerCase())?.id ?? '',
     [allEmployees, user?.name]
   )
+
+  useEffect(() => {
+    if (importedByEmpId && !factoryEmpId) setFactoryEmpId(importedByEmpId)
+  }, [importedByEmpId]) // eslint-disable-line
 
   useEffect(() => {
     if (!open || warehouseId || !user?.warehouse_name || !warehouses.length) return

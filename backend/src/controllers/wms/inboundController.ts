@@ -546,16 +546,18 @@ export async function scanQR(req: Request, res: Response) {
     // Parallel: material lookup + duplicate check + location lookup
     const [matResult, dupResult, locResult] = await Promise.all([
       supabase.from('Material').select('*').eq('material_code', parsed.material_code).maybeSingle(),
-      supabase.from('InventoryEntry').select('id, status, cartons_remaining, adjustment_qty, location:Location!location_id(warehouse_id)').eq('pallet_code', parsed.pallet_code).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']),
+      supabase.from('InventoryEntry').select('id, status, cartons_remaining, adjustment_qty, location:Location!location_id(warehouse_id)').eq('pallet_code', parsed.pallet_code).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING', 'EXPORTED']),
       supabase.from('Location').select('*').eq('id', location_id).maybeSingle(),
     ])
 
     const material = matResult.data
     const orderWarehouseId = (order as any).warehouse_id as string
     const isTransfer = (order as any).source_type === 'TRANSFER'
-    const existingPallet = ((dupResult.data ?? []) as any[]).find(
-      (e: any) => e.location?.warehouse_id === orderWarehouseId
+    const allPallets = (dupResult.data ?? []) as any[]
+    const existingPallet = allPallets.find(
+      (e: any) => e.location?.warehouse_id === orderWarehouseId && e.status !== 'EXPORTED'
     ) as { id: string; status: string; cartons_remaining: number; adjustment_qty: number } | undefined
+    const exportedEntry = allPallets.find((e: any) => e.status === 'EXPORTED') as { id: string } | undefined
     const location = locResult.data
 
     if (!material) {
@@ -640,6 +642,34 @@ export async function scanQR(req: Request, res: Response) {
         return fail(res, 422, 'NO_BASE_LAYER',
           `Không có pallet tầng ${stackLayerNum - 1} tại vị trí này để chồng lên`)
       }
+    }
+
+    // Pallet đã xuất/transfer trước đó → cập nhật entry hiện có, tránh vi phạm UNIQUE(pallet_code)
+    if (exportedEntry) {
+      const cartons_received = cartons_override ? Number(cartons_override) : (material.cartons_per_pallet ?? 0)
+      const { data: updEntry, error: updErr } = await supabase
+        .from('InventoryEntry')
+        .update({
+          location_id:       location_id,
+          import_order_id:   order_id,
+          status:            'IN_STOCK',
+          cartons_imported:  cartons_received,
+          cartons_remaining: cartons_received,
+          stack_layer:       stackLayerNum,
+          qa_status_id:      qa_status_id ?? null,
+          updated_by:        employee_id ?? null,
+          update_date:       vnDate(),
+          updated_at:        new Date().toISOString(),
+        })
+        .eq('id', exportedEntry.id)
+        .select(ENTRY_SELECT)
+        .maybeSingle()
+      if (updErr) throw updErr
+      if (!updEntry) return fail(res, 500, 'SERVER_ERROR', 'Không cập nhật được pallet')
+      const warnings: string[] = []
+      if (cartons_received === 0) warnings.push('Số thùng/pallet chưa được cấu hình – đã nhập 0')
+      emitInboundChanged()
+      return ok(res, { entry: updEntry, warnings })
     }
 
     // Lookup manufacturer by code

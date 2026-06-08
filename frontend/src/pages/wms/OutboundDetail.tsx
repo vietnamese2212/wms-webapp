@@ -15,6 +15,7 @@ import { Card }    from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   useGDO, useAssignGDO, useStartGDO, useWarehouseEmployees, usePatchGDO,
   useUnassignGDO, useUnstartGDO, useUncompleteGDO, useUpdateTransport,
@@ -939,16 +940,28 @@ export default function OutboundDetail() {
                 const blockedByTransfer = ts === 'RECEIVING' || ts === 'DELIVERED'
                 const tooltip = blockedByTransfer
                   ? `Tình trạng bên Booking chuyển kho là "${tsLabel[ts!]}" — hủy phiếu nhập ở kho NPP để có thể bỏ HT`
-                  : ts === 'IN_TRANSIT' ? 'Bỏ hoàn thành sẽ xóa lệnh TMS chuyển kho' : 'Bỏ hoàn thành'
-                return (
+                  : ts === 'IN_TRANSIT' ? 'Bỏ hoàn thành sẽ xóa lệnh TMS chuyển kho' : undefined
+                const btn = (
                   <Button size="sm" variant="outline"
                     className="h-7 text-xs gap-1 px-1.5 sm:px-2 border-slate-300 text-slate-500 hover:bg-slate-50 disabled:opacity-40"
                     disabled={uncompleting || blockedByTransfer}
-                    title={tooltip}
                     onClick={() => doUndo((id, opts) => uncompleteGDO(id, opts))}>
                     <RotateCcw className="h-3 w-3" />
                     <span className="hidden sm:inline">{uncompleting ? '…' : 'Bỏ HT'}</span>
                   </Button>
+                )
+                if (!tooltip) return btn
+                return (
+                  <TooltipProvider delayDuration={100}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className="inline-flex">{btn}</span>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" className="max-w-[260px] text-xs text-center">
+                        {tooltip}
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
                 )
               })()}
               {can(perms, 'outbound', 'unstart') && !!gdo.started_at && gdo.status !== 'COMPLETED' && gdo.status !== 'PAUSED' && (

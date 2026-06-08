@@ -205,18 +205,13 @@ function lsKey(prefix: string, params?: Record<string, string | undefined>): str
 }
 
 export function useInboundOrders(params?: { warehouse_id?: string; status?: string; search?: string; date?: string; date_from?: string; date_to?: string; shift_id?: string; material_category?: string }) {
-  const key = lsKey('wms:io', params)
   return useQuery({
     queryKey: ['inbound-orders', params],
     staleTime: 0,
     refetchInterval: 60_000,
     refetchOnWindowFocus: true,
-    // Shows last-known data instantly on refresh / cold start; always refetches in background
-    initialData: () => lsGet<InboundOrder[]>(key),
-    initialDataUpdatedAt: 0,
     queryFn: async () => {
       const { data } = await apiClient.get('/wms/inbound-orders', { params })
-      lsSet(key, data.data)
       return data.data as InboundOrder[]
     },
   })

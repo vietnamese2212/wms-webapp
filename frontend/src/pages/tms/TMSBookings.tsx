@@ -9,7 +9,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
-import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import type { MSOpt } from '@/components/shared/MultiSelectFilter'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useAuthStore } from '@/stores/authStore'
@@ -771,13 +770,17 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
             </div>
             <div>
               <Label className="text-xs">Kho *</Label>
-              <WarehouseSingleSelect
-                warehouses={warehouses as { id: string; name: string }[]}
-                value={form.warehouse_id}
-                onChange={newId => setForm(f => ({ ...f, warehouse_id: newId, warehouse_type: '', vehicle_type: '' }))}
-                placeholder="Chọn kho"
-                triggerClassName="mt-1 h-8"
-              />
+              <Select value={form.warehouse_id || '__none__'} onValueChange={v => {
+                const newId = v === '__none__' ? '' : v
+                setForm(f => ({ ...f, warehouse_id: newId, warehouse_type: '', vehicle_type: '' }))
+              }}>
+                <SelectTrigger className="h-8 text-sm mt-1"><SelectValue placeholder="Chọn kho" /></SelectTrigger>
+                <SelectContent>
+                  {(warehouses as { id: string; name: string }[]).map(w => (
+                    <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">

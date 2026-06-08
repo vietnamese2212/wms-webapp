@@ -705,7 +705,8 @@ export async function confirmTransferReceipt(req: Request, res: Response) {
       tms_order_id: id,
       updated_at: t,
     }))
-    await (supabase.from('ProductionImport') as any).insert(toInsert)
+    const { error: insertError } = await (supabase.from('ProductionImport') as any).insert(toInsert)
+    if (insertError) return fail(res, `Lỗi tạo phiếu nhập: ${insertError.message}`, 500)
 
     await (supabase.from('GroupDeliveryOrder') as any)
       .update({ transfer_status: 'RECEIVING', updated_at: t }).eq('id', gdoId)

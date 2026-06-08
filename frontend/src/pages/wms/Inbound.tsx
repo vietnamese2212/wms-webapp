@@ -1001,12 +1001,14 @@ function applyClientFilters(
   exclude?: 'mat' | 'cycle' | 'machine' | 'importer' | 'shift'
 ) {
   return orders.filter(order => {
+    // TRANSFER không có ca/máy/cycle — skip các filter này để không bị ẩn nhầm
+    const isTransfer = order.source_type === 'TRANSFER'
     const importerName = (order.imported_by_emp?.name ?? order.created_by_emp?.name ?? '').toLowerCase()
-    if (exclude !== 'mat'      && mats.length     > 0 && !mats.includes(order.material_id ?? ''))                      return false
-    if (exclude !== 'cycle'    && cycles.length   > 0 && !(order.cycles ?? []).some(c => cycles.includes(c)))           return false
-    if (exclude !== 'machine'  && machines.length > 0 && !(order.machine_codes ?? []).some(m => machines.includes(m)))  return false
-    if (exclude !== 'importer' && importer             && !importerName.includes(importer.toLowerCase()))               return false
-    if (exclude !== 'shift'    && shiftIds.length > 0 && !shiftIds.includes(order.shift_id ?? ''))                      return false
+    if (exclude !== 'mat'      && mats.length     > 0 && !mats.includes(order.material_id ?? ''))                            return false
+    if (!isTransfer && exclude !== 'cycle'   && cycles.length   > 0 && !(order.cycles ?? []).some(c => cycles.includes(c)))  return false
+    if (!isTransfer && exclude !== 'machine' && machines.length > 0 && !(order.machine_codes ?? []).some(m => machines.includes(m))) return false
+    if (exclude !== 'importer' && importer             && !importerName.includes(importer.toLowerCase()))                     return false
+    if (!isTransfer && exclude !== 'shift'   && shiftIds.length > 0 && !shiftIds.includes(order.shift_id ?? ''))              return false
     return true
   })
 }

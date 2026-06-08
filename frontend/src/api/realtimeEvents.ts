@@ -11,7 +11,7 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   Material:            [['materials']],
   Manufacturer:        [['manufacturers']],
   Warehouse:           [['warehouses']],
-  TmsOrder:            [['tms-orders']],
+  TmsOrder:            [['tms-orders'], ['tms-orders-transfer']],
   TmsVehicleSlot:      [['tms-orders'], ['gate-registrations'], ['gate-suggest']],
   DeliverySlot:        [['tms-delivery-slots']],
   gate_registrations:  [['gate-registrations']],

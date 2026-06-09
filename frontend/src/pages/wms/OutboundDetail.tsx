@@ -713,7 +713,7 @@ export default function OutboundDetail() {
   const navigate = useNavigate()
   const user     = useAuthStore(s => s.user)
 
-  const { data: gdo, isLoading } = useGDO(id)
+  const { data: gdo, isLoading, isError } = useGDO(id)
   const { mutate: assignGDO,    isPending: assigning   } = useAssignGDO()
   const { mutate: patchGDO,     isPending: patching    } = usePatchGDO()
   const { mutate: deleteGDO } = useDeleteGDO()
@@ -764,6 +764,13 @@ export default function OutboundDetail() {
   useEffect(() => {
     if (gdo) update(gdo.id, gdo.status)
   }, [gdo?.status, gdo?.id])
+
+  // Auto-redirect khi đơn không còn tồn tại (bị xóa, API trả 404)
+  useEffect(() => {
+    if (!isLoading && (isError || !gdo)) {
+      navigate('/wms/outbound', { replace: true })
+    }
+  }, [isLoading, isError, gdo, navigate])
 
   if (isLoading || !gdo) {
     return (

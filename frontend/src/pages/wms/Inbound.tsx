@@ -208,7 +208,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
     ? allLocs.filter(l => l.category === subType || (selectedZone && l.sub_code === selectedZone.code))
     : allLocs
 
-  const { data: materials    = [] } = useMaterials({ search: matSearch || undefined })
+  const { data: materials    = [] } = useMaterials({ search: matSearch || undefined, category: subType || undefined })
   const { data: allMaterials = [] } = useMaterials(undefined, sourceType === 'NCC')
 
   const { data: allEmployees = [] } = useEmployeeRecords({ is_active: 'true' })
@@ -503,10 +503,11 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
             <div className="space-y-2">
               <Label>Material <span className="text-red-500">*</span></Label>
               <div ref={matRef} className="relative">
-                <Input placeholder={subType ? `Tìm hàng ${subType}…` : 'Tìm mã hoặc tên hàng...'}
+                <Input placeholder={!subType ? 'Chọn loại kho trước' : `Tìm hàng ${subType}…`}
                   value={matInputValue}
+                  disabled={!subType}
                   onChange={e => { setMatSearch(e.target.value); setMaterialId(''); setMatOpen(true) }}
-                  onFocus={() => setMatOpen(true)}
+                  onFocus={() => { if (subType) setMatOpen(true) }}
                 />
                 {matOpen && (
                   <div className="absolute z-[100] w-full mt-1 max-h-52 overflow-y-auto rounded-md border bg-white shadow-lg">

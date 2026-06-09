@@ -341,7 +341,6 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
   const matMap = new Map<string, { material_id: string; planned_boxes: number; category: string | null }>()
   for (const item of (items ?? []) as any[]) {
     if (!item.material_id) continue
-    if (item.material_type === 'POSM' || item.material_type === 'Pallet Loscam') continue
     if (!matMap.has(item.material_id))
       matMap.set(item.material_id, { material_id: item.material_id, planned_boxes: 0, category: item.material?.category ?? null })
     matMap.get(item.material_id)!.planned_boxes += item.cartons_ordered || 0

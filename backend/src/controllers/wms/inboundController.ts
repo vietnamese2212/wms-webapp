@@ -754,6 +754,63 @@ export async function scanQR(req: Request, res: Response) {
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
+// ─── Manual scan (POSM / Loscam) — no QR format, location optional ───────────
+
+export async function scanManual(req: Request, res: Response) {
+  try {
+    const { id: order_id } = req.params
+    const { pallet_code, cartons, location_id, employee_id } = req.body
+
+    if (!pallet_code) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu pallet_code')
+    if (!cartons && cartons !== 0) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu số thùng')
+
+    const { data: order } = await supabase
+      .from('ProductionImport')
+      .select('id, status, material_id')
+      .eq('id', order_id).maybeSingle()
+    if (!order)                  return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
+    if (order.status !== 'OPEN') return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập không còn ở trạng thái mở')
+    if (!order.material_id)      return fail(res, 400, 'NO_MATERIAL', 'Phiếu nhập chưa có hàng hóa')
+
+    // Check duplicate pallet code
+    const { data: existing } = await supabase.from('InventoryEntry').select('id').eq('pallet_code', pallet_code).maybeSingle()
+    if (existing) return fail(res, 409, 'DUPLICATE_PALLET', `Mã pallet "${pallet_code}" đã tồn tại trong hệ thống`)
+
+    const now = new Date().toISOString()
+    const cartonsNum = Math.max(0, Number(cartons) || 0)
+
+    const { data: entry, error: entErr } = await supabase
+      .from('InventoryEntry')
+      .insert({
+        id:               randomUUID(),
+        pallet_code,
+        location_id:      location_id || null,
+        material_id:      order.material_id,
+        cartons_imported: cartonsNum,
+        cartons_remaining: cartonsNum,
+        stack_layer:      1,
+        import_order_id:  order_id,
+        created_by:       employee_id ?? null,
+        updated_by:       employee_id ?? null,
+        status:           'IN_STOCK',
+        import_date:      vnDate(),
+        update_date:      vnDate(),
+        created_at:       now,
+        updated_at:       now,
+      })
+      .select(ENTRY_SELECT)
+      .single()
+
+    if (entErr) {
+      if (entErr.code === '23505') return fail(res, 409, 'DUPLICATE_PALLET', 'Mã pallet đã tồn tại')
+      throw entErr
+    }
+
+    emitInboundChanged()
+    ok(res, { entry, warnings: [] })
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+}
+
 // ─── Update a pallet entry ───────────────────────────────────
 
 export async function updateEntry(req: Request, res: Response) {

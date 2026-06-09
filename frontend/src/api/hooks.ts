@@ -375,6 +375,20 @@ export function useScanPallet() {
   })
 }
 
+export function useScanManualPallet() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ orderId, ...body }: {
+      orderId: string
+      pallet_code: string
+      cartons: number
+      location_id?: string
+      employee_id?: string
+    }) => apiClient.post(`/wms/inbound-orders/${orderId}/scan-manual`, body).then((r) => r.data.data),
+    onSettled: (_d, _e, v) => qc.invalidateQueries({ queryKey: ['inbound-order', v.orderId] }),
+  })
+}
+
 export function useDeletePalletEntry() {
   const qc = useQueryClient()
   return useMutation({

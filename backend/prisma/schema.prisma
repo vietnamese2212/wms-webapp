@@ -212,8 +212,8 @@ model Vehicle {
 model InventoryEntry {
   id              String        @id @default(uuid())
   pallet_code     String        @unique  // Mã QR dán trên pallet
-  location_id     String
-  location        Location      @relation(fields: [location_id], references: [id])
+  location_id     String?
+  location        Location?     @relation(fields: [location_id], references: [id])
   material_id     String
   material        Material      @relation(fields: [material_id], references: [id])
   manufacturer_id String?

@@ -1177,7 +1177,29 @@ export function useManualCompleteItem() {
   return useMutation({
     mutationFn: ({ gdoId, itemId, cartons }: { gdoId: string; itemId: string; cartons?: number }) =>
       apiClient.post(`/wms/outbound/${gdoId}/items/${itemId}/manual-complete`, cartons != null ? { cartons } : {}).then(r => r.data.data),
-    onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ['gdo', v.gdoId] }),
+    onMutate: async ({ gdoId, itemId, cartons }) => {
+      await qc.cancelQueries({ queryKey: ['gdo', gdoId] })
+      const prev = qc.getQueryData(['gdo', gdoId])
+      qc.setQueryData(['gdo', gdoId], (old: any) => {
+        if (!old) return old
+        return {
+          ...old,
+          delivery_orders: old.delivery_orders?.map((d: any) => ({
+            ...d,
+            items: d.items?.map((item: any) =>
+              item.id === itemId
+                ? { ...item, status: 'COMPLETED', cartons_scanned: cartons ?? item.cartons_ordered }
+                : item
+            ),
+          })),
+        }
+      })
+      return { prev }
+    },
+    onError: (_e, { gdoId }, ctx: any) => {
+      if (ctx?.prev) qc.setQueryData(['gdo', gdoId], ctx.prev)
+    },
+    onSettled: (_d, _e, { gdoId }) => qc.invalidateQueries({ queryKey: ['gdo', gdoId] }),
   })
 }
 

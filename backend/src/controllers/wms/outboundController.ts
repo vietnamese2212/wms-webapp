@@ -1922,21 +1922,20 @@ export async function manualCompleteItem(req: Request, res: Response) {
     await (supabase.from('OutboundItem') as any)
       .update({ status: 'COMPLETED', cartons_scanned: ctn, updated_at: t }).eq('id', itemId)
 
-    const { data: siblingItems } = await (supabase.from('OutboundItem') as any)
-      .select('status').eq('do_id', item.do_id)
-    const doCompleted = (siblingItems ?? []).every((i: any) =>
-      i.id === itemId ? true : i.status === 'COMPLETED'
-    )
+    const { count: pendingItems } = await (supabase.from('OutboundItem') as any)
+      .select('id', { count: 'exact', head: true })
+      .eq('do_id', item.do_id).neq('status', 'COMPLETED').neq('id', itemId)
+    const doCompleted = pendingItems === 0
+
     const { data: doRow } = await (supabase.from('OutboundDelivery') as any)
       .update({ status: doCompleted ? 'COMPLETED' : 'IN_PROGRESS', updated_at: t })
       .eq('id', item.do_id).select('gdo_id').single()
 
     if (doRow?.gdo_id) {
-      const { data: siblingDOs } = await (supabase.from('OutboundDelivery') as any)
-        .select('status').eq('gdo_id', doRow.gdo_id)
-      const gdoCompleted = (siblingDOs ?? []).every((d: any) =>
-        d.id === item.do_id ? doCompleted : d.status === 'COMPLETED'
-      )
+      const { count: pendingDOs } = await (supabase.from('OutboundDelivery') as any)
+        .select('id', { count: 'exact', head: true })
+        .eq('gdo_id', doRow.gdo_id).neq('status', 'COMPLETED').neq('id', item.do_id)
+      const gdoCompleted = doCompleted && pendingDOs === 0
       await (supabase.from('GroupDeliveryOrder') as any)
         .update({
           status:     'IN_PROGRESS',

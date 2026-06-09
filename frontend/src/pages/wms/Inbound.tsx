@@ -1019,6 +1019,8 @@ function MultiSelectDropdown({ label, options, selected, onChange, searchable }:
 // Ca sort order: Ca 1 → Ca 2 → Ca 3 → HC → unknown last
 const SHIFT_ORDER: Record<string, number> = { 'Ca 1': 0, 'Ca 2': 1, 'Ca 3': 2, 'HC': 3 }
 
+type BracketPos = 'first' | 'middle' | 'last' | 'only' | 'none'
+
 // ─── Client-side cascade filter ───────────────────────────────
 
 function applyClientFilters(
@@ -1115,12 +1117,20 @@ export default function Inbound() {
     [shifts]
   )
 
-  // Sort: ngày desc → ca asc (Ca 1, Ca 2, Ca 3, HC) → giờ tạo asc
+  // Sort: ngày desc → nhóm theo TMS order → ca asc → giờ tạo asc
   const sortedOrders = useMemo(() =>
     [...filteredOrders].sort((a, b) => {
       const dateA = a.import_date ?? ''
       const dateB = b.import_date ?? ''
       if (dateA !== dateB) return dateB.localeCompare(dateA)
+      // Group by TMS order within same date (TMS-grouped rows first, sorted by TMS code)
+      const tmsA = (a as any).tms_order?.order_code ?? ''
+      const tmsB = (b as any).tms_order?.order_code ?? ''
+      if (tmsA !== tmsB) {
+        if (!tmsA && tmsB) return 1
+        if (tmsA && !tmsB) return -1
+        return tmsA.localeCompare(tmsB)
+      }
       const sA = SHIFT_ORDER[a.shift?.name ?? ''] ?? 99
       const sB = SHIFT_ORDER[b.shift?.name ?? ''] ?? 99
       if (sA !== sB) return sA - sB
@@ -1128,6 +1138,24 @@ export default function Inbound() {
     }),
     [filteredOrders]
   )
+
+  // Tính vị trí bracket cho mỗi row trong nhóm TMS
+  const bracketPositions = useMemo(() => {
+    const pos = new Map<string, BracketPos>()
+    const n = sortedOrders.length
+    for (let i = 0; i < n; i++) {
+      const o = sortedOrders[i]
+      const tms = (o as any).tms_order?.order_code
+      if (!tms) { pos.set(o.id, 'none'); continue }
+      const prevOk = i > 0 && sortedOrders[i - 1].import_date === o.import_date && (sortedOrders[i - 1] as any).tms_order?.order_code === tms
+      const nextOk = i < n - 1 && sortedOrders[i + 1].import_date === o.import_date && (sortedOrders[i + 1] as any).tms_order?.order_code === tms
+      if (!prevOk && !nextOk) pos.set(o.id, 'only')
+      else if (!prevOk) pos.set(o.id, 'first')
+      else if (!nextOk) pos.set(o.id, 'last')
+      else pos.set(o.id, 'middle')
+    }
+    return pos
+  }, [sortedOrders])
 
   function openEditNccGroup(order: InboundOrder) {
     const gateRegId = (order as any).gate_registration_id
@@ -1411,10 +1439,11 @@ export default function Inbound() {
             <Table className="min-w-max">
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-7 px-2 py-1.5" />
+                    <TableHead className="w-8 px-0 py-1.5" />
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Ngày nhập</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Vị trí</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Material</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Mã phiếu / Mã lệnh</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Pallet</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Thực nhập</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Thùng KH</TableHead>
@@ -1442,6 +1471,7 @@ export default function Inbound() {
                           ? unpin(order.id)
                           : pin({ id: order.id, import_code: order.import_code ?? order.id.slice(0, 8), status: order.status, location_code: order.location?.location_code, mat_code: order.material?.material_code })
                       }}
+                      bracketPos={bracketPositions.get(order.id) ?? 'none'}
                     />
                   ))}
                 </TableBody>
@@ -1467,12 +1497,13 @@ function rowBg(order: InboundOrder): string {
   return 'hover:bg-slate-50'
 }
 
-function InboundRow({ order, onClick, onScan, onEditGroup, onPin, pinned }: {
+function InboundRow({ order, onClick, onScan, onEditGroup, onPin, pinned, bracketPos = 'none' }: {
   order: InboundOrder; onClick: () => void
   onScan?: (e: React.MouseEvent) => void
   onEditGroup?: (e: React.MouseEvent) => void
   onPin?: (e: React.MouseEvent) => void
   pinned?: boolean
+  bracketPos?: BracketPos
 }) {
   const dateFull = order.import_date ? format(parseISO(order.import_date), 'dd-MM-yy', { locale: vi }) : '—'
   const isRowToday = order.import_date?.slice(0, 10) === TODAY
@@ -1480,53 +1511,72 @@ function InboundRow({ order, onClick, onScan, onEditGroup, onPin, pinned }: {
   const matName  = order.material?.short_name ?? order.material?.material_description ?? '—'
   const matCode  = order.material?.material_code ?? ''
   const pallets  = order._count.inventory_entries
+  const doCodes  = order.source_type === 'TRANSFER' ? (order as any).from_gdo_delivery_codes as string[] | undefined : undefined
+
+  const showBracket = bracketPos !== 'none' && bracketPos !== 'only'
 
   return (
     <TableRow className={`cursor-pointer ${rowBg(order)}`} onClick={onClick}>
-      <TableCell className="px-1 py-1 text-center">
-        {onPin && (
-          <button
-            onClick={onPin}
-            title={pinned ? 'Bỏ đánh dấu' : 'Đánh dấu đang làm'}
-            className="p-0.5 rounded hover:bg-slate-100 transition-colors"
-          >
-            <Bookmark className={`h-3.5 w-3.5 transition-colors ${pinned ? 'fill-amber-400 text-amber-500' : 'text-slate-300 hover:text-slate-500'}`} />
-          </button>
+      {/* Col 1: Pin + bracket connector */}
+      <TableCell className="w-8 px-0 py-0 relative">
+        {showBracket && (
+          <div className="absolute pointer-events-none" style={{
+            right: 0,
+            width: '10px',
+            top: bracketPos === 'first' ? '50%' : 0,
+            bottom: bracketPos === 'last' ? '50%' : 0,
+            borderRight: '1.5px solid #93C5FD',
+            ...(bracketPos === 'first' ? { borderTop: '1.5px solid #93C5FD', borderTopRightRadius: '3px' } : {}),
+            ...(bracketPos === 'last'  ? { borderBottom: '1.5px solid #93C5FD', borderBottomRightRadius: '3px' } : {}),
+          }} />
         )}
+        <div className="flex items-center justify-center py-1 pl-1 pr-3 h-full">
+          {onPin && (
+            <button
+              onClick={onPin}
+              title={pinned ? 'Bỏ đánh dấu' : 'Đánh dấu đang làm'}
+              className="p-0.5 rounded hover:bg-slate-100 transition-colors"
+            >
+              <Bookmark className={`h-3.5 w-3.5 transition-colors ${pinned ? 'fill-amber-400 text-amber-500' : 'text-slate-300 hover:text-slate-500'}`} />
+            </button>
+          )}
+        </div>
       </TableCell>
-      <TableCell className="px-2 py-1">
+
+      {/* Col 2: Ngày nhập + Số DO */}
+      <TableCell className="px-2 py-1 whitespace-nowrap">
         <div className="flex items-center gap-0.5">
-          <span className="text-[10px] font-medium tabular-nums shrink-0">{dateFull}</span>
-          {isRowToday && <span className="text-[9px] text-blue-600 font-medium shrink-0 ml-0.5">HN</span>}
-          <span className={`text-[8px] px-1 py-0.5 rounded font-medium shrink-0 ml-0.5 ${
-            order.source_type === 'NCC' ? 'bg-amber-100 text-amber-700'
+          <span className="text-[10px] font-medium tabular-nums">{dateFull}</span>
+          {isRowToday && <span className="text-[9px] text-blue-600 font-medium ml-0.5">HN</span>}
+          <span className={`text-[8px] px-1 py-0.5 rounded font-medium ml-0.5 ${
+            order.source_type === 'NCC'      ? 'bg-amber-100 text-amber-700'
             : order.source_type === 'TRANSFER' ? 'bg-purple-100 text-purple-700'
             : 'bg-blue-100 text-blue-600'
           }`}>{order.source_type === 'NCC' ? 'NCC' : order.source_type === 'TRANSFER' ? 'TF' : 'SX'}</span>
           {onEditGroup && (
             <button onClick={onEditGroup} title="Sửa nhóm"
-              className="text-slate-300 hover:text-blue-500 transition-colors shrink-0 ml-auto">
+              className="text-slate-300 hover:text-blue-500 transition-colors ml-1">
               <Pencil className="h-3 w-3" />
             </button>
           )}
         </div>
-        {order.import_code && (
-          <div className="text-[8px] font-mono text-slate-400 truncate mt-0.5">{order.import_code}</div>
-        )}
-        {(order as any).tms_order?.order_code && (
-          <div className="text-[8px] font-mono text-blue-600 truncate mt-0.5">{(order as any).tms_order.order_code}</div>
-        )}
-        {order.source_type === 'NCC' && (order as any).gate_registration?.license_plate && (
-          <div className="text-[8px] font-mono font-semibold text-slate-600 truncate mt-0.5">
+        {/* Số DO hoặc biển số xe (dòng 2) */}
+        {doCodes && doCodes.length > 0 ? (
+          <div className="text-[8px] text-slate-400 font-mono truncate mt-0.5 max-w-[130px]">
+            {doCodes.join(', ')}
+          </div>
+        ) : order.source_type === 'NCC' && (order as any).gate_registration?.license_plate ? (
+          <div className="text-[8px] font-mono text-slate-500 truncate mt-0.5">
             {(order as any).gate_registration.license_plate}
           </div>
-        )}
-        {order.source_type === 'TRANSFER' && (order as any).from_gdo?.license_plate && (
-          <div className="text-[8px] font-mono font-semibold text-purple-700 truncate mt-0.5">
+        ) : order.source_type === 'TRANSFER' && (order as any).from_gdo?.license_plate ? (
+          <div className="text-[8px] font-mono text-purple-600 truncate mt-0.5">
             {(order as any).from_gdo.license_plate}
           </div>
-        )}
+        ) : null}
       </TableCell>
+
+      {/* Col 3: Vị trí */}
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <div className="flex items-center justify-between gap-1 w-full">
           <span className="text-[10px] font-mono font-semibold">{order.location?.location_code ?? '—'}</span>
@@ -1541,23 +1591,39 @@ function InboundRow({ order, onClick, onScan, onEditGroup, onPin, pinned }: {
           )}
         </div>
       </TableCell>
+
+      {/* Col 4: Material */}
       <TableCell className="px-2 py-1">
         <div className="text-[10px] font-medium whitespace-nowrap">{matName}</div>
         {matCode && <div className="text-[9px] text-slate-400 font-mono whitespace-nowrap">{matCode}</div>}
-        {order.source_type === 'TRANSFER' && (order as any).from_gdo_delivery_codes?.length > 0 && (
-          <div className="text-[9px] text-purple-600 font-mono whitespace-nowrap">
-            DO: {(order as any).from_gdo_delivery_codes.join(' · ')}
-          </div>
+      </TableCell>
+
+      {/* Col 5: Mã phiếu / Mã lệnh (NEW) */}
+      <TableCell className="px-2 py-1">
+        {order.import_code ? (
+          <div className="text-[10px] font-mono font-semibold text-slate-700 whitespace-nowrap">{order.import_code}</div>
+        ) : null}
+        {(order as any).tms_order?.order_code ? (
+          <div className="text-[9px] font-mono text-blue-600 whitespace-nowrap mt-0.5">{(order as any).tms_order.order_code}</div>
+        ) : null}
+        {!order.import_code && !(order as any).tms_order?.order_code && (
+          <span className="text-[10px] text-slate-300">—</span>
         )}
       </TableCell>
+
+      {/* Col 6: Pallet */}
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         <span className="text-[10px] font-semibold tabular-nums">{pallets}</span>
         <span className="text-[9px] text-slate-400 ml-0.5">pl</span>
       </TableCell>
+
+      {/* Col 7: Thực nhập */}
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         <span className="text-[10px] font-semibold tabular-nums">{order.total_cartons ?? 0}</span>
         <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
       </TableCell>
+
+      {/* Col 8: Thùng KH */}
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         {order.planned_cartons != null ? (
           <>
@@ -1570,14 +1636,20 @@ function InboundRow({ order, onClick, onScan, onEditGroup, onPin, pinned }: {
           <span className="text-[10px] text-slate-300">—</span>
         )}
       </TableCell>
+
+      {/* Col 9: Người nhập */}
       <TableCell className="px-2 py-1">
         <div className="text-[10px] max-w-[90px] truncate">{importer}</div>
       </TableCell>
+
+      {/* Col 10: Ca */}
       <TableCell className="px-2 py-1 whitespace-nowrap">
         {order.shift
           ? <span className="text-[10px] font-medium">{order.shift.name}</span>
           : <span className="text-[10px] text-slate-300">—</span>}
       </TableCell>
+
+      {/* Col 11: Ghi chú */}
       <TableCell className="px-2 py-1">
         <div className="text-[10px] max-w-[90px] truncate">{order.notes ?? '—'}</div>
       </TableCell>

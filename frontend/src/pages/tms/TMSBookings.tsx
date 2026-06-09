@@ -2301,7 +2301,7 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt }: { canEdit: boolean;
                   <table className="min-w-max w-full">
                     <thead className="sticky top-0 z-10 bg-slate-50">
                       <tr>
-                        {['Mã lệnh', 'Ngày xuất', 'Kho xuất', 'Kho nhận', 'Ngày nhận', 'Thùng KH', 'Thực nhận', 'Chênh lệch', 'Tình trạng GN', 'Dự kiến giao', 'ĐVVT', 'Biển số', 'Số điện thoại', 'Tình trạng', 'Số GDO', 'Số DO', 'Ghi chú'].map(h => (
+                        {['Số DO', 'Ngày xuất', 'Kho xuất', 'Kho nhận', 'Ngày nhận', 'Thùng KH', 'Thực nhận', 'Chênh lệch', 'Tình trạng GN', 'Dự kiến giao', 'ĐVVT', 'Biển số', 'Số điện thoại', 'Tình trạng', 'Số GDO', 'Ghi chú', 'Mã lệnh'].map(h => (
                           <th key={h} className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
@@ -2323,7 +2323,9 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt }: { canEdit: boolean;
                           <tr key={o.id} className={`border-t border-slate-100 cursor-pointer ${rowCls}`}
                             onClick={() => setSelectedOrderId(o.id)}>
                             <td className="px-2 py-1 whitespace-nowrap">
-                              <span className="text-[10px] font-mono font-semibold">{o.order_code}</span>
+                              {(o.transfer_gdo?.delivery_codes?.length ?? 0) > 0
+                                ? <span className="text-[10px] font-mono font-semibold">{o.transfer_gdo!.delivery_codes!.join(', ')}</span>
+                                : <span className="text-slate-300 text-[10px]">—</span>}
                             </td>
                             <td className="px-2 py-1 whitespace-nowrap">
                               <span className="text-[10px] tabular-nums">{o.created_at ? formatDateTime(o.created_at).slice(0, 16) : '—'}</span>
@@ -2392,15 +2394,13 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt }: { canEdit: boolean;
                             <td className="px-2 py-1 whitespace-nowrap">
                               <span className="text-[10px] font-mono text-slate-500">{o.transfer_gdo?.group_code ?? '—'}</span>
                             </td>
-                            <td className="px-2 py-1 whitespace-nowrap">
-                              {(o.transfer_gdo?.delivery_codes?.length ?? 0) > 0
-                                ? <span className="text-[10px] font-mono font-semibold">{o.transfer_gdo!.delivery_codes!.join(', ')}</span>
-                                : <span className="text-slate-300 text-[10px]">—</span>}
-                            </td>
                             <td className="px-2 py-1 max-w-[160px]">
                               {o.notes
                                 ? <span className="text-[10px] text-slate-600 truncate block">{o.notes}</span>
                                 : <span className="text-slate-300 text-[10px]">—</span>}
+                            </td>
+                            <td className="px-2 py-1 whitespace-nowrap">
+                              <span className="text-[10px] font-mono font-semibold">{o.order_code}</span>
                             </td>
                           </tr>
                         )

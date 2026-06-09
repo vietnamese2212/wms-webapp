@@ -597,11 +597,9 @@ export async function createTransferOrder(req: Request, res: Response) {
           .in('do_id', doIds)
       : { data: [] }
 
-    // Gom theo material_id, bỏ POSM và Pallet Loscam
     const matMap = new Map<string, { material_id: string; planned_boxes: number; category: string | null }>()
     for (const item of (items ?? []) as { material_id: string; cartons_ordered: number; material_type: string; material: { category: string } | null }[]) {
       if (!item.material_id) continue
-      if (item.material_type === 'POSM' || item.material_type === 'Pallet Loscam') continue
       if (!matMap.has(item.material_id)) {
         matMap.set(item.material_id, { material_id: item.material_id, planned_boxes: 0, category: item.material?.category ?? null })
       }
@@ -713,7 +711,7 @@ export async function confirmTransferReceipt(req: Request, res: Response) {
 
     const matMap = new Map<string, { material_id: string; cartons: number; category: string | null }>()
     for (const item of (items ?? []) as any[]) {
-      if (!item.material_id || item.material_type === 'POSM' || item.material_type === 'Pallet Loscam') continue
+      if (!item.material_id) continue
       if (!matMap.has(item.material_id))
         matMap.set(item.material_id, { material_id: item.material_id, cartons: 0, category: item.material?.category ?? null })
       matMap.get(item.material_id)!.cartons += item.cartons_ordered || 0

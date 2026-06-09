@@ -824,6 +824,12 @@ export default function OutboundDetail() {
   )
   const totalOrdered = countable.reduce((s, i) => s + i.cartons_ordered, 0)
   const totalScanned = countable.reduce((s, i) => s + i.cartons_scanned, 0)
+  const manualItems  = allItems.filter(i =>
+    i.material_type === 'POSM' || i.material_type === 'Pallet Loscam' || (i.material_code_raw ?? '').includes('810000')
+  )
+  const allManualDone = manualItems.every(i => i.status === 'COMPLETED')
+  const scanComplete  = countable.length === 0 || (totalOrdered > 0 && totalScanned >= totalOrdered)
+  const canComplete   = allItems.length > 0 && scanComplete && allManualDone
 
   const npp = [...new Set(allDOs.map(d => d.distributor_name).filter(Boolean))].join(', ')
 
@@ -933,7 +939,7 @@ export default function OutboundDetail() {
                   <Play className="h-3 w-3" /><span className="hidden sm:inline">Bắt đầu</span>
                 </Button>
               )}
-              {gdo.status === 'IN_PROGRESS' && totalOrdered > 0 && totalScanned >= totalOrdered && can(perms, 'outbound', 'complete') && (
+              {gdo.status === 'IN_PROGRESS' && canComplete && can(perms, 'outbound', 'complete') && (
                 <Button size="sm"
                   className="h-7 text-xs gap-1 px-1.5 sm:px-2 bg-green-600 hover:bg-green-700"
                   disabled={patching}

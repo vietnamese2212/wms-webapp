@@ -4,7 +4,7 @@ import type { AxiosError }              from 'axios'
 import {
   ArrowLeft, Plus, CheckCircle2, XCircle, Trash2, Pencil,
   MapPin, Package, AlertTriangle, QrCode,
-  Clock, Calendar, User, Bookmark,
+  Clock, Calendar, User, Bookmark, RotateCcw,
 } from 'lucide-react'
 import { format, parseISO }    from 'date-fns'
 import { vi }                  from 'date-fns/locale'
@@ -20,6 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import {
   useInboundOrder, useInboundOrders, useCancelInboundOrder,
+  useCompleteInboundOrder, useUncompleteInboundOrder,
   useScanPallet, useScanManualPallet, useDeletePalletEntry, useDeletePalletEntries,
   useLocationsReal, useUpdateInboundOrder, useUpdatePalletEntry,
   useCheckInboundScan,
@@ -459,8 +460,10 @@ export default function InboundDetail() {
     if (order) update(order.id, order.status)
   }, [order?.id, order?.status]) // eslint-disable-line
 
-  const { mutate: cancelOrder, isPending: cancelling } = useCancelInboundOrder()
-  const { mutate: deleteEntry                           } = useDeletePalletEntry()
+  const { mutate: cancelOrder,     isPending: cancelling    } = useCancelInboundOrder()
+  const { mutate: completeOrder,   isPending: completing    } = useCompleteInboundOrder()
+  const { mutate: uncompleteOrder, isPending: uncompleting  } = useUncompleteInboundOrder()
+  const { mutate: deleteEntry                                } = useDeletePalletEntry()
   const { mutate: deleteEntries                         } = useDeletePalletEntries()
   const { mutate: updateOrder                           } = useUpdateInboundOrder()
   const { mutate: updateEntry, isPending: saving        } = useUpdatePalletEntry()
@@ -511,6 +514,7 @@ export default function InboundDetail() {
   }
 
   const isOpen      = order?.status === 'OPEN'
+  const isCompleted = order?.status === 'COMPLETED'
   const entries     = order?.inventory_entries ?? []
   const totalScanned = entries.reduce((sum, e) => sum + e.cartons_imported, 0)
   const isNccFull   = order?.source_type === 'NCC' && (order?.planned_cartons ?? 0) > 0 && totalScanned >= (order?.planned_cartons ?? 0)
@@ -762,12 +766,11 @@ export default function InboundDetail() {
               >
                 <Bookmark className={`h-4 w-4 transition-colors ${isPinned(order.id) ? 'fill-amber-400 text-amber-500' : 'text-slate-300 hover:text-slate-500'}`} />
               </button>
-              {isOpen && can(perms, 'inbound', 'cancel') && (
+              {isOpen && entries.length === 0 && can(perms, 'inbound', 'cancel') && (
                 <Button
                   size="sm" variant="outline"
                   className="h-7 text-xs px-2 text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700 disabled:opacity-40"
-                  disabled={cancelling || entries.length > 0}
-                  title={entries.length > 0 ? 'Xóa hết pallet trước khi hủy phiếu' : undefined}
+                  disabled={cancelling}
                   onClick={() => openConfirm(
                     'Hủy phiếu nhập',
                     `Xác nhận hủy phiếu "${order.import_code ?? order.id.slice(0, 8)}"? Thao tác này không thể hoàn tác.`,
@@ -776,6 +779,28 @@ export default function InboundDetail() {
                 >
                   <XCircle className="h-3.5 w-3.5 mr-1" />
                   {cancelling ? 'Đang hủy…' : 'Hủy phiếu'}
+                </Button>
+              )}
+              {isOpen && entries.length > 0 && can(perms, 'inbound', 'complete') && (
+                <Button
+                  size="sm" variant="outline"
+                  className="h-7 text-xs px-2 text-green-700 border-green-300 hover:bg-green-50 hover:text-green-800 disabled:opacity-40"
+                  disabled={completing}
+                  onClick={() => completeOrder(order.id)}
+                >
+                  <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
+                  {completing ? 'Đang lưu…' : 'Hoàn thành'}
+                </Button>
+              )}
+              {isCompleted && can(perms, 'inbound', 'uncomplete') && (
+                <Button
+                  size="sm" variant="outline"
+                  className="h-7 text-xs px-2 text-slate-600 border-slate-300 hover:bg-amber-50 hover:text-amber-700 disabled:opacity-40"
+                  disabled={uncompleting}
+                  onClick={() => uncompleteOrder(order.id)}
+                >
+                  <RotateCcw className="h-3.5 w-3.5 mr-1" />
+                  {uncompleting ? 'Đang gỡ…' : 'Gỡ hoàn thành'}
                 </Button>
               )}
             </div>

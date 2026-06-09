@@ -21,6 +21,7 @@ const ENTRY_SELECT = `
 interface FilterParams {
   status?: string
   locationFilter?: string[] | null
+  warehouseIds?: string[]
   materialFilter?: string[] | null
   categoryFilter?: string[]
   qa_status_ids?: string[]
@@ -36,7 +37,19 @@ function applyInventoryFilters(q: any, p: FilterParams): any {
   if (!p.status || p.status === '') q = q.in('status', ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'])
   else if (p.status !== 'ALL')       q = q.eq('status', p.status)
 
-  if (p.locationFilter)  q = q.in('location_id', p.locationFilter)
+  if (p.locationFilter !== null && p.locationFilter !== undefined) {
+    const whIds = p.warehouseIds ?? []
+    if (p.locationFilter.length > 0 && whIds.length > 0) {
+      const locStr = p.locationFilter.join(',')
+      const whStr  = whIds.join(',')
+      q = q.or(`location_id.in.(${locStr}),and(location_id.is.null,warehouse_id.in.(${whStr}))`)
+    } else if (p.locationFilter.length > 0) {
+      q = q.in('location_id', p.locationFilter)
+    } else if (whIds.length > 0) {
+      // Kho chưa có location nào nhưng có thể có POSM
+      q = q.is('location_id', null).in('warehouse_id', whIds)
+    }
+  }
   if (p.materialFilter)  q = q.in('material_id', p.materialFilter)
   // Dùng embedded filter thay vì IN (material_id) để tránh URL quá dài khi nhiều material
   if (p.categoryFilter && p.categoryFilter.length === 1)    q = q.eq('material.category', p.categoryFilter[0])
@@ -157,7 +170,9 @@ export async function listInventory(req: Request, res: Response) {
   if ((locResult as any).data !== null) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     locationFilter = ((locResult as any).data ?? []).map((l: any) => l.id as string)
-    if (locationFilter!.length === 0)
+    // Trả về rỗng nếu: không tìm được location VÀ (có filter location cụ thể HOẶC không có warehouse scope nào)
+    // → Không áp dụng khi chỉ có warehouse scope — vẫn có thể có POSM (location_id IS NULL)
+    if (locationFilter!.length === 0 && (filterLocations.length > 0 || effectiveWarehouseIds.length === 0))
       return ok(res, { entries: [], total: 0, page: pageNum, limit: limitNum, total_cartons_remaining: 0 })
   }
 
@@ -172,6 +187,7 @@ export async function listInventory(req: Request, res: Response) {
 
   const filterParams: FilterParams = {
     status, locationFilter, materialFilter,
+    warehouseIds: effectiveWarehouseIds.length > 0 ? effectiveWarehouseIds : undefined,
     categoryFilter: effectiveCategories.length > 0 ? effectiveCategories : undefined,
     qa_status_ids, search, manufacturer_id, filterCycles, filterMachines, import_date_from, import_date_to,
   }

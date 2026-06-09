@@ -777,7 +777,7 @@ export async function scanManual(req: Request, res: Response) {
 
     const { data: order } = await supabase
       .from('ProductionImport')
-      .select('id, status, material_id, posm_entry_id')
+      .select('id, status, material_id, warehouse_id, posm_entry_id')
       .eq('id', order_id).maybeSingle()
     if (!order)                  return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (order.status !== 'OPEN') return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập không còn ở trạng thái mở')
@@ -810,6 +810,7 @@ export async function scanManual(req: Request, res: Response) {
         .update({
           cartons_remaining: existingPallet.cartons_remaining + cartonsNum,
           cartons_imported:  existingPallet.cartons_imported  + cartonsNum,
+          warehouse_id:      (order as any).warehouse_id ?? null,
           update_date:       vnDate(),
           updated_at:        now,
           updated_by:        employee_id ?? null,
@@ -825,6 +826,7 @@ export async function scanManual(req: Request, res: Response) {
           id:                randomUUID(),
           pallet_code:       sharedPalletCode,
           location_id:       null,
+          warehouse_id:      (order as any).warehouse_id ?? null,
           material_id:       order.material_id,
           cartons_imported:  cartonsNum,
           cartons_remaining: cartonsNum,

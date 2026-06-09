@@ -482,18 +482,23 @@ function GDORow({ gdo, onClick, onAssign }: {
 
 type MatOption = { id: string; material_code: string; short_name: string | null; category: string | null; unit: string | null }
 
-function MatPicker({ value, matName, onSelect, disabled, onPaste }: {
+function MatPicker({ value, matName, onSelect, disabled, disabledNoType, filterCategory, onPaste }: {
   value: string
   matName: string
   onSelect: (code: string, name: string, category: string | null, unit: string) => void
   disabled?: boolean
+  disabledNoType?: boolean
+  filterCategory?: string
   onPaste?: (e: React.ClipboardEvent<HTMLInputElement>) => void
 }) {
   const [search, setSearch] = useState(value)
   const [open, setOpen] = useState(false)
   const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({})
   const inputRef = useRef<HTMLInputElement>(null)
-  const { data: mats = [] } = useMaterials({ search: !disabled && search.length > 1 ? search : undefined })
+  const { data: mats = [] } = useMaterials({
+    search: !disabled && !disabledNoType && search.length > 1 ? search : undefined,
+    category: filterCategory || undefined,
+  })
 
   useEffect(() => { setSearch(value) }, [value])
 
@@ -509,6 +514,19 @@ function MatPicker({ value, matName, onSelect, disabled, onPaste }: {
         zIndex: 9999,
       })
     }
+  }
+
+  if (disabledNoType) {
+    return (
+      <div className="min-w-[140px]">
+        <Input
+          className="h-7 text-[10px] font-mono px-2 w-full opacity-50 cursor-not-allowed"
+          value=""
+          disabled
+          placeholder="Chọn loại kho trước"
+        />
+      </div>
+    )
   }
 
   if (disabled) {
@@ -676,8 +694,17 @@ function GDOFormBody({
     setItems(rows => rows.map(r => r.id === id ? { ...r, ...patch } : r))
   }
 
+  const duplicateCodes = useMemo(() => {
+    const seen = new Map<string, number>()
+    for (const item of items) {
+      if (item.material_code) seen.set(item.material_code, (seen.get(item.material_code) ?? 0) + 1)
+    }
+    return new Set([...seen.entries()].filter(([, n]) => n > 1).map(([c]) => c))
+  }, [items])
+
   function lookupMat(code: string) {
-    return allMats.find(m => m.material_code === code.trim())
+    const mat = allMats.find(m => m.material_code === code.trim())
+    return mat && (!warehouseType || mat.category === warehouseType) ? mat : null
   }
 
   // Paste tab-separated Excel row(s) into material code cell — fills all columns
@@ -910,7 +937,8 @@ function GDOFormBody({
                 const fullScanned    = item.min_cartons > 0 && item.min_cartons >= item.cartons
                 const partScanned    = item.min_cartons > 0 && item.min_cartons < item.cartons
                 const cartonsInvalid = item.cartons > 0 && item.cartons < item.min_cartons
-                const rowCls = fullScanned ? 'bg-blue-50' : partScanned ? 'bg-amber-50' : ''
+                const isDup          = item.material_code !== '' && duplicateCodes.has(item.material_code)
+                const rowCls = fullScanned ? 'bg-blue-50' : partScanned ? 'bg-amber-50' : isDup ? 'bg-red-50' : ''
                 return (
                   <tr key={item.id} className={`border-t border-slate-100 ${rowCls}`}>
                     <td className="px-2 py-1 text-[9px] text-slate-400 tabular-nums">{idx + 1}</td>
@@ -920,6 +948,8 @@ function GDOFormBody({
                         matName=""
                         onSelect={(code, name, category, unit) => updateItem(item.id, { material_code: code, mat_name: name, category, unit })}
                         disabled={item.min_cartons > 0}
+                        disabledNoType={!warehouseType && item.min_cartons === 0}
+                        filterCategory={warehouseType || undefined}
                         onPaste={item.min_cartons === 0 ? e => handlePasteRowAt(idx, e) : undefined}
                       />
                       {item.min_cartons > 0 && (
@@ -985,6 +1015,9 @@ function GDOFormBody({
             <Plus className="h-3 w-3" /> Thêm dòng
           </button>
         )}
+        {duplicateCodes.size > 0 && (
+          <p className="text-[11px] text-red-600 mt-2">Mã hàng bị trùng: {[...duplicateCodes].join(', ')}</p>
+        )}
       </div>
 
       {/* Footer */}
@@ -1037,6 +1070,11 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
     if (!exportType)   return setError('Chọn loại xuất')
     const filledItems = items.filter(i => i.material_code.trim())
     if (filledItems.length === 0) return setError('Nhập ít nhất một mã hàng')
+    const seenCodes = new Set<string>()
+    for (const item of filledItems) {
+      if (seenCodes.has(item.material_code)) return setError(`Mã hàng bị trùng: ${item.material_code}`)
+      seenCodes.add(item.material_code)
+    }
     for (const item of filledItems) {
       if (!item.cartons || item.cartons <= 0) return setError(`Số thùng phải > 0 (${item.material_code})`)
     }

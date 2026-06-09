@@ -357,16 +357,26 @@ const EMPTY_PLAN_LINE = (): PlanLineRow => ({
 })
 
 // ── Material search combobox ──────────────────────────────────────────────────
-type MatItem = { id: string; material_code: string; short_name?: string | null; unit?: string | null }
+type MatItem = { id: string; material_code: string; short_name?: string | null; unit?: string | null; category?: string | null }
+
+function getDuplicateCodes(rows: { material_code: string }[]): Set<string> {
+  const seen = new Map<string, number>()
+  for (const r of rows) {
+    if (r.material_code) seen.set(r.material_code, (seen.get(r.material_code) ?? 0) + 1)
+  }
+  return new Set([...seen.entries()].filter(([, n]) => n > 1).map(([c]) => c))
+}
 
 function MatCombobox({
-  value, onSelect, allMats, onPaste, inputClassName,
+  value, onSelect, allMats, onPaste, inputClassName, filterCategory, disabled: disabledProp,
 }: {
   value: string
   onSelect: (code: string, id: string, name: string, unit: string) => void
   allMats: MatItem[]
   onPaste?: (e: React.ClipboardEvent<HTMLInputElement>) => void
   inputClassName?: string
+  filterCategory?: string
+  disabled?: boolean
 }) {
   const [q, setQ] = React.useState(value)
   const [open, setOpen] = React.useState(false)
@@ -376,26 +386,28 @@ function MatCombobox({
   const matches = React.useMemo(() => {
     if (!q) return []
     const lower = q.toLowerCase()
-    return allMats
+    const sourceMats = filterCategory ? allMats.filter(m => m.category === filterCategory) : allMats
+    return sourceMats
       .filter(m =>
         m.material_code.toLowerCase().includes(lower) ||
         (m.short_name ?? '').toLowerCase().includes(lower)
       )
       .slice(0, 10)
-  }, [q, allMats])
+  }, [q, allMats, filterCategory])
 
   return (
     <div className="relative">
       <input
         value={q}
-        onChange={e => { setQ(e.target.value); setOpen(true) }}
-        onFocus={() => setOpen(true)}
+        onChange={e => { if (!disabledProp) { setQ(e.target.value); setOpen(true) } }}
+        onFocus={() => { if (!disabledProp) setOpen(true) }}
         onBlur={() => setTimeout(() => setOpen(false), 120)}
-        onPaste={onPaste}
-        placeholder="Mã / Tên hàng"
-        className={inputClassName ?? 'h-6 w-32 rounded border border-slate-200 px-2 text-[10px] font-mono focus:outline-none focus:ring-1 focus:ring-blue-400'}
+        onPaste={disabledProp ? undefined : onPaste}
+        disabled={disabledProp}
+        placeholder={disabledProp ? 'Chọn loại kho trước' : 'Mã / Tên hàng'}
+        className={inputClassName ?? `h-6 w-32 rounded border border-slate-200 px-2 text-[10px] font-mono focus:outline-none focus:ring-1 focus:ring-blue-400 ${disabledProp ? 'opacity-50 cursor-not-allowed bg-slate-50' : ''}`}
       />
-      {open && matches.length > 0 && (
+      {!disabledProp && open && matches.length > 0 && (
         <div className="absolute z-[100] top-full left-0 mt-0.5 w-72 bg-white border border-slate-200 rounded-md shadow-lg max-h-48 overflow-auto">
           {matches.map(m => (
             <button
@@ -551,6 +563,8 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
   const planRowsInitRef = React.useRef(false)
   const set = (k: keyof OrderFormData) => (v: string) => setForm(f => ({ ...f, [k]: v }))
 
+  const duplicatePlanCodes = React.useMemo(() => getDuplicateCodes(planRows), [planRows])
+
   // Lọc loại xe theo kho + loại kho — warehouse_type dùng thẳng, không map
   const { data: filteredVehicleTypes = [] } = useVehicleTypesByWarehouse(form.warehouse_id || null, form.warehouse_type || undefined)
   // Đã chọn kho: dùng list lọc (rỗng = không có loại xe nào hợp lệ cho cargo_type này)
@@ -627,7 +641,9 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
         const code    = (cols[0] ?? '').trim()
         const boxes   = (cols[1] ?? '').trim().replace(/[^0-9]/g, '')
         const pallets = (cols[2] ?? '').trim().replace(/[^0-9]/g, '')
-        const mat = (allMats as import('@/types').Material[]).find(m => m.material_code === code)
+        const mat = (allMats as import('@/types').Material[]).find(m =>
+          m.material_code === code && (!form.warehouse_type || m.category === form.warehouse_type)
+        )
         rows[startIdx + offset] = {
           material_code: code,
           material_id:   mat?.id ?? '',
@@ -692,6 +708,10 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
     if (!form.ncc_id) { setErr('Vui lòng chọn ĐVVT'); return }
     if (!form.warehouse_type) { setErr('Vui lòng chọn loại kho'); return }
     if (!form.vehicle_type) { setErr('Vui lòng chọn loại xe'); return }
+    if (form.direction === 'INBOUND' && duplicatePlanCodes.size > 0) {
+      setErr(`Danh sách hàng có mã trùng: ${[...duplicatePlanCodes].join(', ')}`)
+      return
+    }
     const payload = {
       date: form.date, warehouse_id: form.warehouse_id,
       npp_name: form.npp_name || null, ncc_id: form.ncc_id || null,
@@ -860,7 +880,7 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
           {form.direction === 'INBOUND' && (
             <div>
               <div className="flex items-center justify-between mb-1.5">
-                <Label className="text-xs font-medium">Hàng hóa kế hoạch nhập</Label>
+                <Label className="text-xs font-medium">Danh sách hàng</Label>
                 <Button type="button" variant="outline" size="sm" className="h-6 text-[10px] px-2"
                   onClick={() => setPlanRows(prev => [...prev, EMPTY_PLAN_LINE()])}>
                   + Thêm dòng
@@ -877,7 +897,10 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
                   </thead>
                   <tbody>
                     {planRows.map((row, i) => (
-                      <tr key={i} className={`border-t border-slate-100 ${row.material_code && !row.material_id ? 'bg-red-50' : ''}`}>
+                      <tr key={i} className={`border-t border-slate-100 ${
+                        row.material_code && !row.material_id ? 'bg-red-50' :
+                        row.material_code && duplicatePlanCodes.has(row.material_code) ? 'bg-amber-50' : ''
+                      }`}>
                         <td className="px-1.5 py-0.5 text-[9px] text-slate-400">{i + 1}</td>
                         <td className="px-1 py-0.5">
                           <MatCombobox
@@ -885,6 +908,8 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
                             allMats={allMats as MatItem[]}
                             onSelect={(code, id, name, unit) => selectPlanMat(i, code, id, name, unit)}
                             onPaste={e => handlePasteAt(i, e)}
+                            filterCategory={form.warehouse_type || undefined}
+                            disabled={!form.warehouse_type}
                           />
                         </td>
                         <td className="px-1.5 py-0.5 text-[10px] text-slate-600 max-w-[140px] truncate">{row.material_name || <span className="text-slate-300">—</span>}</td>
@@ -919,7 +944,10 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
                 </table>
               </div>
               {planRows.some(r => r.material_code && !r.material_id) && (
-                <p className="text-[10px] text-amber-600 mt-1">Một số mã hàng không tìm thấy — các dòng này sẽ bị bỏ qua</p>
+                <p className="text-[10px] text-amber-600 mt-1">Một số mã hàng không tìm thấy hoặc không thuộc loại kho — các dòng này sẽ bị bỏ qua</p>
+              )}
+              {duplicatePlanCodes.size > 0 && (
+                <p className="text-[10px] text-red-600 mt-1">Mã hàng bị trùng: {[...duplicatePlanCodes].join(', ')}</p>
               )}
             </div>
           )}
@@ -1621,8 +1649,14 @@ function InboundPlanBulkUploadDialog({ open, date, warehouseId, onClose }: {
 
 // ── Upload Plan Lines Dialog (cho INBOUND booking) ───────────────────────────
 
-function UploadPlanLinesDialog({ orderId, onClose }: { orderId: string; onClose: () => void }) {
+function UploadPlanLinesDialog({ orderId, warehouseType, existingCodes, onClose }: {
+  orderId: string
+  warehouseType?: string
+  existingCodes?: Set<string>
+  onClose: () => void
+}) {
   const [rows, setRows] = useState<{ material_code: string; material_id?: string; planned_boxes: number; planned_pallets?: number; err?: string }[]>([])
+  const [dupError, setDupError] = useState('')
   const [saving, setSaving] = useState(false)
   const [apiError, setApiError] = useState('')
   const { mutateAsync: bulkCreate } = useBulkCreatePlanLinesForOrder()
@@ -1631,6 +1665,7 @@ function UploadPlanLinesDialog({ orderId, onClose }: { orderId: string; onClose:
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0]
     if (!f) return
+    setDupError('')
     const reader = new FileReader()
     reader.onload = (ev) => {
       const wb = XLSX.read(ev.target?.result, { type: 'binary' })
@@ -1642,21 +1677,42 @@ function UploadPlanLinesDialog({ orderId, onClose }: { orderId: string; onClose:
           const material_code = String(r[0] ?? '').trim()
           const planned_boxes = Number(r[1] ?? 0)
           const planned_pallets = r[2] != null && r[2] !== '' ? Number(r[2]) : undefined
-          const mat = (materials as import('@/types').Material[]).find(m => m.material_code === material_code)
+          const mat = (materials as import('@/types').Material[]).find(m =>
+            m.material_code === material_code &&
+            (!warehouseType || m.category === warehouseType)
+          )
+          const notFound = !(materials as import('@/types').Material[]).find(m => m.material_code === material_code)
           return {
             material_code,
             material_id: mat?.id,
             planned_boxes,
             planned_pallets,
-            err: !mat ? 'Không tìm thấy mã hàng' : planned_boxes <= 0 ? 'SL thùng phải > 0' : undefined,
+            err: notFound
+              ? 'Không tìm thấy mã hàng'
+              : !mat
+                ? `Mã hàng không thuộc loại kho ${warehouseType}`
+                : planned_boxes <= 0
+                  ? 'SL thùng phải > 0'
+                  : undefined,
           }
         })
+      // Detect duplicates within file
+      const codeCount = new Map<string, number>()
+      for (const r of parsed) { codeCount.set(r.material_code, (codeCount.get(r.material_code) ?? 0) + 1) }
+      const dupInFile = [...codeCount.entries()].filter(([, n]) => n > 1).map(([c]) => c)
+      // Detect duplicates vs existing plan lines
+      const dupVsExisting = existingCodes ? parsed.map(r => r.material_code).filter(c => existingCodes.has(c)) : []
+      const allDups = [...new Set([...dupInFile, ...dupVsExisting])]
+      if (allDups.length > 0) {
+        setDupError(`File bị block — mã hàng trùng: ${allDups.join(', ')}`)
+      }
       setRows(parsed)
     }
     reader.readAsBinaryString(f)
   }
 
   async function handleSave() {
+    if (dupError) return
     const valid = rows.filter(r => !r.err && r.material_id)
     if (!valid.length) return
     setSaving(true)
@@ -1675,24 +1731,26 @@ function UploadPlanLinesDialog({ orderId, onClose }: { orderId: string; onClose:
     }
   }
 
-  const validCount = rows.filter(r => !r.err).length
+  const validCount = dupError ? 0 : rows.filter(r => !r.err).length
   const errCount   = rows.filter(r => r.err).length
 
   return (
     <Dialog open onOpenChange={v => !v && onClose()}>
       <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="text-sm">Upload hàng hóa kế hoạch nhập</DialogTitle>
+          <DialogTitle className="text-sm">Upload danh sách hàng</DialogTitle>
         </DialogHeader>
         <div className="space-y-3 text-xs">
           <p className="text-slate-500">
             File Excel: cột A = <span className="font-mono">Mã hàng</span> · cột B = <span className="font-mono">SL thùng</span> · cột C = <span className="font-mono">SL pallet</span> (tùy chọn). Hàng đầu là tiêu đề, bỏ qua.
+            {warehouseType && <> · Chỉ nhận hàng loại <span className="font-medium text-slate-700">{warehouseType}</span>.</>}
           </p>
           <input type="file" accept=".xlsx,.xls" onChange={handleFile} className="text-xs" />
+          {dupError && <p className="text-red-600 text-[11px] bg-red-50 border border-red-200 px-3 py-2 rounded">{dupError}</p>}
           {rows.length > 0 && (
             <>
               <div className="flex gap-3 text-[10px]">
-                <span className="text-green-600 font-medium">{validCount} dòng hợp lệ</span>
+                {!dupError && <span className="text-green-600 font-medium">{validCount} dòng hợp lệ</span>}
                 {errCount > 0 && <span className="text-red-500">{errCount} dòng lỗi</span>}
               </div>
               <div className="rounded border overflow-auto max-h-52">
@@ -1724,7 +1782,7 @@ function UploadPlanLinesDialog({ orderId, onClose }: { orderId: string; onClose:
         </div>
         <DialogFooter>
           <Button variant="outline" size="sm" onClick={onClose}>Hủy</Button>
-          <Button size="sm" onClick={handleSave} disabled={saving || validCount === 0}>
+          <Button size="sm" onClick={handleSave} disabled={saving || validCount === 0 || !!dupError}>
             {saving ? 'Đang lưu...' : `Lưu ${validCount} dòng`}
           </Button>
         </DialogFooter>
@@ -2344,6 +2402,13 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
   const { mutateAsync: addLines }   = useBulkCreatePlanLinesForOrder()
   const { mutate: deleteLine }      = useDeletePlanLine()
 
+  const existingPlanCodes = useMemo(() =>
+    new Set((planLines as Record<string, unknown>[])
+      .map(l => ((l.material as Record<string, unknown>)?.material_code as string))
+      .filter(Boolean)),
+    [planLines]
+  )
+
   const mergedRows = useMemo(() => {
     type MR = { line_id: string | null; material_code: string; material_name: string; unit: string; planned_boxes: number; actual_boxes: number; status: string | null }
     const actualMap = new Map<string, number>()
@@ -2410,7 +2475,12 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
 
   return (
     <>
-    {showUpload && <UploadPlanLinesDialog orderId={order.id} onClose={() => setShowUpload(false)} />}
+    {showUpload && <UploadPlanLinesDialog
+      orderId={order.id}
+      warehouseType={order.warehouse_type ?? undefined}
+      existingCodes={existingPlanCodes}
+      onClose={() => setShowUpload(false)}
+    />}
     <Dialog open={!!order} onOpenChange={v => !v && onClose()}>
       <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>

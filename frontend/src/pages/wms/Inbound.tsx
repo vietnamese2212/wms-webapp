@@ -245,17 +245,32 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
     [allMaterials]
   )
 
+  const filteredNccMats = useMemo(() =>
+    (allMaterials as any[]).filter(m => !subType || m.category === subType),
+    [allMaterials, subType]
+  )
+
+  const nccDuplicateCodes = useMemo(() => {
+    const seen = new Map<string, number>()
+    for (const r of nccRows) {
+      if (r.material_code) seen.set(r.material_code, (seen.get(r.material_code) ?? 0) + 1)
+    }
+    return new Set([...seen.entries()].filter(([, n]) => n > 1).map(([c]) => c))
+  }, [nccRows])
+
   function lookupNccRow(code: string): NccMatRow {
     const found = nccMatByCode.get(code.trim().toUpperCase())
-    return { material_code: code, material_id: found?.id ?? '', mat_name: found?.short_name ?? '', mat_unit: found?.unit ?? '', unit_input: found?.unit ?? '', planned_qty: '' }
+    const valid = found && (!subType || found.category === subType) ? found : null
+    return { material_code: code, material_id: valid?.id ?? '', mat_name: valid?.short_name ?? '', mat_unit: valid?.unit ?? '', unit_input: valid?.unit ?? '', planned_qty: '' }
   }
 
   function handleNccMatCodeChange(idx: number, code: string) {
     const found = nccMatByCode.get(code.trim().toUpperCase())
+    const valid = found && (!subType || found.category === subType) ? found : null
     setNccRows(prev => prev.map((r, i) => i !== idx ? r : {
       ...r, material_code: code,
-      material_id: found?.id ?? '', mat_name: found?.short_name ?? '',
-      mat_unit: found?.unit ?? '', unit_input: found ? (found.unit ?? '') : r.unit_input,
+      material_id: valid?.id ?? '', mat_name: valid?.short_name ?? '',
+      mat_unit: valid?.unit ?? '', unit_input: valid ? (valid.unit ?? '') : r.unit_input,
     }))
   }
 
@@ -282,7 +297,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
   }
 
   function getNccDropdownMatches(code: string) {
-    const list = allMaterials as any[]
+    const list = filteredNccMats
     let filtered: any[]
     if (!code) {
       filtered = list.slice(0, 12)
@@ -369,6 +384,13 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
     if (!importDate)  { setNccErr('Vui lòng chọn Ngày nhập'); return }
     const validRows = nccRows.filter(r => r.material_id)
     if (!validRows.length) { setNccErr('Vui lòng nhập ít nhất 1 mã hàng hợp lệ'); return }
+    const dupCodes = new Set<string>()
+    const seenCodes = new Set<string>()
+    for (const r of validRows) {
+      if (seenCodes.has(r.material_code)) dupCodes.add(r.material_code)
+      seenCodes.add(r.material_code)
+    }
+    if (dupCodes.size > 0) { setNccErr(`Mã hàng bị trùng: ${[...dupCodes].join(', ')}`); return }
     setNccSaving(true); setNccErr('')
     try {
       await Promise.all(validRows.map(r => createOrderAsync({
@@ -763,10 +785,10 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
               </div>
             )}
 
-            {/* Section 2: Danh sách hàng hóa */}
+            {/* Section 2: Danh sách hàng */}
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
-                <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">{editGroup?.length ? 'Thêm hàng mới vào nhóm' : 'Danh sách hàng hóa'}</p>
+                <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">{editGroup?.length ? 'Thêm hàng mới vào nhóm' : 'Danh sách hàng'}</p>
                 {gateRegId && activePlanLines.length > 0 && (
                   <button type="button" onClick={loadFromPlan}
                     className="text-[10px] text-blue-600 hover:text-blue-700 underline">
@@ -787,19 +809,23 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {nccRows.map((row, idx) => {
-                      const invalid     = row.material_code !== '' && !row.material_id
+                      const invalid      = row.material_code !== '' && !row.material_id
+                      const isDup        = row.material_code !== '' && nccDuplicateCodes.has(row.material_code)
                       const unitMismatch = row.unit_input && row.mat_unit && row.unit_input !== row.mat_unit
+                      const noType       = !subType && !editGroup?.length
                       return (
-                        <tr key={idx} className={invalid ? 'bg-red-50' : ''}>
+                        <tr key={idx} className={invalid ? 'bg-red-50' : isDup ? 'bg-amber-50' : ''}>
                           <td className="px-1.5 py-1">
                             <div className="relative">
                               <input type="text" value={row.material_code}
                                 onChange={e => handleNccMatCodeChange(idx, e.target.value)}
                                 onPaste={e => handleNccMatCodePaste(idx, e)}
-                                onFocus={() => setNccDropdownIdx(idx)}
+                                onFocus={() => { if (!noType) setNccDropdownIdx(idx) }}
                                 onBlur={() => setTimeout(() => setNccDropdownIdx(prev => prev === idx ? null : prev), 150)}
-                                placeholder="Paste hoặc tìm mã"
+                                disabled={noType}
+                                placeholder={noType ? 'Chọn loại kho trước' : 'Paste hoặc tìm mã'}
                                 className={`w-full h-7 px-1.5 text-[10px] font-mono border rounded focus:outline-none focus:ring-1 ${
+                                  noType ? 'opacity-50 cursor-not-allowed bg-slate-50 border-slate-200' :
                                   invalid ? 'border-red-300 bg-red-50 focus:ring-red-400' : 'border-slate-200 bg-white focus:ring-blue-400'
                                 }`}
                               />
@@ -871,6 +897,9 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                 className="text-[10px] text-blue-600 hover:text-blue-800 flex items-center gap-1 transition-colors">
                 <Plus className="h-3 w-3" /> Thêm dòng hàng
               </button>
+              {nccDuplicateCodes.size > 0 && (
+                <p className="text-[10px] text-red-600">Mã hàng bị trùng: {[...nccDuplicateCodes].join(', ')}</p>
+              )}
             </div>
 
             {nccErr && <p className="text-xs text-red-500">{nccErr}</p>}

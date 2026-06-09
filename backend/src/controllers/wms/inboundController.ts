@@ -10,7 +10,7 @@ import { emitInboundChanged } from '../../lib/events'
 const ORDER_SELECT = `
   id, import_code, warehouse_id, location_id, material_id, planned_pallets, shift_id, status,
   imported_by, created_by, updated_by, import_date, notes, created_at, updated_at,
-  source_type, gate_registration_id, tms_order_id, planned_cartons, warehouse_type, from_gdo_id,
+  source_type, gate_registration_id, tms_order_id, planned_cartons, warehouse_type, from_gdo_id, posm_entry_id,
   warehouse:Warehouse(id, code, name),
   location:Location(id, location_code, sub_code, max_pallets),
   material:Material(id, material_code, short_name, material_description, cartons_per_pallet, cartons_per_pallet_mn, category),
@@ -347,10 +347,20 @@ export async function getOrder(req: Request, res: Response) {
     if (eErr) throw eErr
     if (!order) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
 
+    let allEntries = entries ?? []
+
+    // POSM/Loscam: shared pallet có thể có import_order_id khác → include thủ công
+    const posmEntryId = (order as any).posm_entry_id as string | null
+    if (posmEntryId && !allEntries.find((e: any) => e.id === posmEntryId)) {
+      const { data: posmEntry } = await supabase
+        .from('InventoryEntry').select(ENTRY_SELECT).eq('id', posmEntryId).maybeSingle()
+      if (posmEntry) allEntries = [posmEntry as any, ...allEntries]
+    }
+
     ok(res, {
       ...(order as unknown as Record<string, unknown>),
-      inventory_entries: entries ?? [],
-      _count: { inventory_entries: entries?.length ?? 0 },
+      inventory_entries: allEntries,
+      _count: { inventory_entries: allEntries.length },
     })
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
@@ -759,56 +769,92 @@ export async function scanQR(req: Request, res: Response) {
 export async function scanManual(req: Request, res: Response) {
   try {
     const { id: order_id } = req.params
-    const { pallet_code: rawPalletCode, cartons, location_id, employee_id } = req.body
+    const { cartons, employee_id } = req.body
 
     if (!cartons && cartons !== 0) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu số thùng')
 
     const { data: order } = await supabase
       .from('ProductionImport')
-      .select('id, status, material_id')
+      .select('id, status, material_id, posm_entry_id')
       .eq('id', order_id).maybeSingle()
     if (!order)                  return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (order.status !== 'OPEN') return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập không còn ở trạng thái mở')
     if (!order.material_id)      return fail(res, 400, 'NO_MATERIAL', 'Phiếu nhập chưa có hàng hóa')
 
-    const pallet_code = rawPalletCode?.trim() || `MNL-${order_id.slice(0, 8)}-${Date.now().toString(36)}`
-
-    // Check duplicate pallet code only when caller provided one explicitly
-    if (rawPalletCode?.trim()) {
-      const { data: existing } = await supabase.from('InventoryEntry').select('id').eq('pallet_code', pallet_code).maybeSingle()
-      if (existing) return fail(res, 409, 'DUPLICATE_PALLET', `Mã pallet "${pallet_code}" đã tồn tại trong hệ thống`)
+    // 1 lần mỗi phiếu — enforce qua posm_entry_id
+    if ((order as any).posm_entry_id) {
+      return fail(res, 409, 'ALREADY_SAVED', 'Phiếu nhập này đã được lưu thủ công rồi')
     }
 
     const now = new Date().toISOString()
     const cartonsNum = Math.max(0, Number(cartons) || 0)
 
-    const { data: entry, error: entErr } = await supabase
-      .from('InventoryEntry')
-      .insert({
-        id:               randomUUID(),
-        pallet_code,
-        location_id:      location_id || null,
-        material_id:      order.material_id,
-        cartons_imported: cartonsNum,
-        cartons_remaining: cartonsNum,
-        stack_layer:      1,
-        import_order_id:  order_id,
-        created_by:       employee_id ?? null,
-        updated_by:       employee_id ?? null,
-        status:           'IN_STOCK',
-        import_date:      vnDate(),
-        update_date:      vnDate(),
-        created_at:       now,
-        updated_at:       now,
-      })
-      .select(ENTRY_SELECT)
-      .single()
+    // Mã pallet chung theo material (deterministic, không phụ thuộc phiếu)
+    const sharedPalletCode = `POSM-${order.material_id.replace(/-/g, '').slice(0, 12)}`
 
-    if (entErr) {
-      if (entErr.code === '23505') return fail(res, 409, 'DUPLICATE_PALLET', 'Mã pallet đã tồn tại')
-      if (entErr.code === '23502') return fail(res, 400, 'MISSING_LOCATION', 'Cần chạy migration: ALTER TABLE "InventoryEntry" ALTER COLUMN "location_id" DROP NOT NULL trên Supabase Dashboard')
-      throw entErr
+    // Tìm pallet chung đã có chưa
+    const { data: existingPallet } = await supabase
+      .from('InventoryEntry')
+      .select('id, cartons_remaining, cartons_imported')
+      .eq('pallet_code', sharedPalletCode)
+      .maybeSingle()
+
+    let entryId: string
+
+    if (existingPallet) {
+      // Cộng dồn vào pallet chung
+      const { error: updErr } = await supabase
+        .from('InventoryEntry')
+        .update({
+          cartons_remaining: existingPallet.cartons_remaining + cartonsNum,
+          cartons_imported:  existingPallet.cartons_imported  + cartonsNum,
+          update_date:       vnDate(),
+          updated_at:        now,
+          updated_by:        employee_id ?? null,
+        })
+        .eq('id', existingPallet.id)
+      if (updErr) throw updErr
+      entryId = existingPallet.id
+    } else {
+      // Tạo pallet chung lần đầu
+      const { data: newEntry, error: insErr } = await supabase
+        .from('InventoryEntry')
+        .insert({
+          id:                randomUUID(),
+          pallet_code:       sharedPalletCode,
+          location_id:       null,
+          material_id:       order.material_id,
+          cartons_imported:  cartonsNum,
+          cartons_remaining: cartonsNum,
+          stack_layer:       1,
+          import_order_id:   order_id,
+          created_by:        employee_id ?? null,
+          updated_by:        employee_id ?? null,
+          status:            'IN_STOCK',
+          import_date:       vnDate(),
+          update_date:       vnDate(),
+          created_at:        now,
+          updated_at:        now,
+        })
+        .select('id')
+        .single()
+      if (insErr) {
+        if (insErr.code === '23505') return fail(res, 409, 'DUPLICATE_PALLET', 'Pallet chung đã tồn tại')
+        throw insErr
+      }
+      entryId = newEntry.id
     }
+
+    // Đánh dấu phiếu này đã lưu thủ công (block lần 2)
+    const { error: markErr } = await supabase
+      .from('ProductionImport')
+      .update({ posm_entry_id: entryId, updated_at: now })
+      .eq('id', order_id)
+    if (markErr) throw markErr
+
+    // Trả entry đã cập nhật
+    const { data: entry } = await supabase
+      .from('InventoryEntry').select(ENTRY_SELECT).eq('id', entryId).single()
 
     emitInboundChanged()
     ok(res, { entry, warnings: [] })

@@ -308,6 +308,7 @@ export interface InboundOrder {
   gate_registration_id?: string | null
   gate_registration?:   { id: string; registration_number: number; date: string; license_plate: string | null; company_name_raw: string | null; driver_name: string | null; status: string; direction: string } | null
   planned_cartons?:     number | null
+  posm_entry_id?:       string | null
   created_at:      string
   updated_at:      string
   inventory_entries?: PalletEntry[]

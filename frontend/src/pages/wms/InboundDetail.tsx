@@ -962,11 +962,12 @@ export default function InboundDetail() {
                   <Button
                     size="sm" variant="outline"
                     className="h-8 gap-1.5"
-                    disabled={isNccFull}
+                    disabled={isNccFull || !!order.posm_entry_id}
                     onClick={() => { setManualCartons(order.planned_cartons?.toString() ?? ''); setManualFeedback(null); setShowManualDialog(true) }}
+                    title={order.posm_entry_id ? 'Phiếu này đã lưu thủ công rồi' : undefined}
                   >
                     <Plus className="h-3.5 w-3.5" />
-                    {isNccFull ? 'Đủ kế hoạch' : 'Lưu thủ công'}
+                    {order.posm_entry_id ? 'Đã lưu thủ công' : isNccFull ? 'Đủ kế hoạch' : 'Lưu thủ công'}
                   </Button>
                 ) : (
                   <Button
@@ -995,9 +996,10 @@ export default function InboundDetail() {
                   isManualEntry ? (
                     <Button
                       size="sm" variant="outline"
+                      disabled={!!order.posm_entry_id}
                       onClick={() => { setManualCartons(order.planned_cartons?.toString() ?? ''); setManualFeedback(null); setShowManualDialog(true) }}
                     >
-                      <Plus className="h-4 w-4 mr-1" /> Lưu thủ công
+                      <Plus className="h-4 w-4 mr-1" /> {order.posm_entry_id ? 'Đã lưu thủ công' : 'Lưu thủ công'}
                     </Button>
                   ) : (
                     <Button

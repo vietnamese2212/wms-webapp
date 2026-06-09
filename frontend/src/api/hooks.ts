@@ -380,7 +380,7 @@ export function useScanManualPallet() {
   return useMutation({
     mutationFn: ({ orderId, ...body }: {
       orderId: string
-      pallet_code: string
+      pallet_code?: string
       cartons: number
       location_id?: string
       employee_id?: string

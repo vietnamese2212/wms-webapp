@@ -759,9 +759,8 @@ export async function scanQR(req: Request, res: Response) {
 export async function scanManual(req: Request, res: Response) {
   try {
     const { id: order_id } = req.params
-    const { pallet_code, cartons, location_id, employee_id } = req.body
+    const { pallet_code: rawPalletCode, cartons, location_id, employee_id } = req.body
 
-    if (!pallet_code) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu pallet_code')
     if (!cartons && cartons !== 0) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu số thùng')
 
     const { data: order } = await supabase
@@ -772,9 +771,13 @@ export async function scanManual(req: Request, res: Response) {
     if (order.status !== 'OPEN') return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập không còn ở trạng thái mở')
     if (!order.material_id)      return fail(res, 400, 'NO_MATERIAL', 'Phiếu nhập chưa có hàng hóa')
 
-    // Check duplicate pallet code
-    const { data: existing } = await supabase.from('InventoryEntry').select('id').eq('pallet_code', pallet_code).maybeSingle()
-    if (existing) return fail(res, 409, 'DUPLICATE_PALLET', `Mã pallet "${pallet_code}" đã tồn tại trong hệ thống`)
+    const pallet_code = rawPalletCode?.trim() || `MNL-${order_id.slice(0, 8)}-${Date.now().toString(36)}`
+
+    // Check duplicate pallet code only when caller provided one explicitly
+    if (rawPalletCode?.trim()) {
+      const { data: existing } = await supabase.from('InventoryEntry').select('id').eq('pallet_code', pallet_code).maybeSingle()
+      if (existing) return fail(res, 409, 'DUPLICATE_PALLET', `Mã pallet "${pallet_code}" đã tồn tại trong hệ thống`)
+    }
 
     const now = new Date().toISOString()
     const cartonsNum = Math.max(0, Number(cartons) || 0)

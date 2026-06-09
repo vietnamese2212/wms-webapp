@@ -470,10 +470,8 @@ export default function InboundDetail() {
 
   const [showScan,          setShowScan]          = useState(false)
   const [showManualDialog,  setShowManualDialog]  = useState(false)
-  const [manualPalletCode,  setManualPalletCode]  = useState('')
   const [manualCartons,     setManualCartons]     = useState('')
   const [manualFeedback,    setManualFeedback]    = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
-  const manualCodeRef = useRef<HTMLInputElement>(null)
 
   const [editState, setEditState] = useState<{ entry: PalletEntry; cartons: number; stack: number } | null>(null)
   const [editingPlannedCartons, setEditingPlannedCartons] = useState(false)
@@ -491,18 +489,12 @@ export default function InboundDetail() {
   }, [autoScan, order]) // eslint-disable-line
 
   function handleManualSave() {
-    if (!manualPalletCode.trim()) { setManualFeedback({ type: 'error', msg: 'Nhập mã pallet' }); return }
     const c = Number(manualCartons)
-    if (!manualCartons || isNaN(c)) { setManualFeedback({ type: 'error', msg: 'Nhập số thùng' }); return }
+    if (!manualCartons || isNaN(c) || c < 0) { setManualFeedback({ type: 'error', msg: 'Nhập số thùng hợp lệ' }); return }
     saveManual(
-      { orderId: order!.id, pallet_code: manualPalletCode.trim(), cartons: c, employee_id: user?.id },
+      { orderId: order!.id, cartons: c, employee_id: user?.id },
       {
-        onSuccess: () => {
-          setManualFeedback({ type: 'success', msg: `✓ ${manualPalletCode.trim()} · ${c} thùng` })
-          setManualPalletCode('')
-          setManualCartons(order?.material?.cartons_per_pallet?.toString() ?? '')
-          setTimeout(() => { setManualFeedback(null); manualCodeRef.current?.focus() }, 1500)
-        },
+        onSuccess: () => { setManualFeedback(null); setShowManualDialog(false) },
         onError: (err) => {
           const msg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi lưu'
           setManualFeedback({ type: 'error', msg })
@@ -585,35 +577,23 @@ export default function InboundDetail() {
       )}
 
       {/* ── Manual entry dialog (POSM / Loscam) ── */}
-      <Dialog open={showManualDialog} onOpenChange={(v) => {
-        if (!v) { setManualFeedback(null); setShowManualDialog(false) }
-        else setTimeout(() => manualCodeRef.current?.focus(), 50)
-      }}>
-        <DialogContent className="sm:max-w-xs" onOpenAutoFocus={(e) => { e.preventDefault(); setTimeout(() => manualCodeRef.current?.focus(), 50) }}>
-          <DialogHeader>
-            <DialogTitle className="text-sm">Lưu thủ công — {order?.material?.short_name ?? order?.material?.material_code ?? '—'}</DialogTitle>
-          </DialogHeader>
+      <Dialog open={showManualDialog} onOpenChange={v => { if (!v) { setManualFeedback(null); setShowManualDialog(false) } }}>
+        <DialogContent className="sm:max-w-xs">
+          <DialogHeader><DialogTitle className="text-base">Xác nhận số lượng</DialogTitle></DialogHeader>
           <div className="space-y-3 py-1">
-            <div className="space-y-1">
-              <Label className="text-xs">Mã pallet *</Label>
-              <Input
-                ref={manualCodeRef}
-                value={manualPalletCode}
-                onChange={e => setManualPalletCode(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleManualSave()}
-                placeholder="Nhập mã pallet..."
-                className="h-9 text-sm font-mono"
-              />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Số thùng *</Label>
+            <div className="space-y-1.5">
+              <p className="text-xs text-slate-500">Số thùng thực nhập</p>
               <Input
                 type="number" min={0}
                 value={manualCartons}
                 onChange={e => setManualCartons(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && handleManualSave()}
-                className="h-9 text-sm"
+                className="text-center font-semibold text-lg h-11"
+                autoFocus
               />
+              {(order?.planned_cartons ?? 0) > 0 && (
+                <p className="text-xs text-slate-400 text-center">Kế hoạch: {order.planned_cartons} thùng</p>
+              )}
             </div>
             {manualFeedback && (
               <div className={`rounded-lg p-2.5 text-sm ${manualFeedback.type === 'success' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
@@ -622,9 +602,9 @@ export default function InboundDetail() {
             )}
           </div>
           <DialogFooter className="gap-2">
-            <Button variant="outline" size="sm" onClick={() => { setManualFeedback(null); setShowManualDialog(false) }}>Đóng</Button>
+            <Button variant="outline" size="sm" disabled={savingManual} onClick={() => { setManualFeedback(null); setShowManualDialog(false) }}>Hủy</Button>
             <Button size="sm" disabled={savingManual} onClick={handleManualSave}>
-              {savingManual ? 'Đang lưu…' : 'Lưu thủ công'}
+              {savingManual ? 'Đang lưu…' : 'Xác nhận'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -983,7 +963,7 @@ export default function InboundDetail() {
                     size="sm" variant="outline"
                     className="h-8 gap-1.5"
                     disabled={isNccFull}
-                    onClick={() => { setManualCartons(order.material?.cartons_per_pallet?.toString() ?? ''); setShowManualDialog(true) }}
+                    onClick={() => { setManualCartons(order.planned_cartons?.toString() ?? ''); setManualFeedback(null); setShowManualDialog(true) }}
                   >
                     <Plus className="h-3.5 w-3.5" />
                     {isNccFull ? 'Đủ kế hoạch' : 'Lưu thủ công'}
@@ -1015,7 +995,7 @@ export default function InboundDetail() {
                   isManualEntry ? (
                     <Button
                       size="sm" variant="outline"
-                      onClick={() => { setManualCartons(order.material?.cartons_per_pallet?.toString() ?? ''); setShowManualDialog(true) }}
+                      onClick={() => { setManualCartons(order.planned_cartons?.toString() ?? ''); setManualFeedback(null); setShowManualDialog(true) }}
                     >
                       <Plus className="h-4 w-4 mr-1" /> Lưu thủ công
                     </Button>

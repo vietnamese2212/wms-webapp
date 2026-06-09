@@ -401,7 +401,7 @@ export async function updateOrder(req: Request, res: Response) {
 export async function completeOrder(req: Request, res: Response) {
   try {
     const { data: existing } = await supabase
-      .from('ProductionImport').select('id, status').eq('id', req.params.id).maybeSingle()
+      .from('ProductionImport').select('id, status, source_type, tms_order_id').eq('id', req.params.id).maybeSingle()
     if (!existing) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (existing.status === 'COMPLETED') return fail(res, 400, 'ALREADY_COMPLETED', 'Phiếu nhập đã hoàn thành')
     if (existing.status === 'CANCELLED') return fail(res, 400, 'ORDER_CANCELLED', 'Phiếu nhập đã bị hủy')
@@ -414,6 +414,28 @@ export async function completeOrder(req: Request, res: Response) {
       .select(ORDER_SELECT).maybeSingle()
     if (error) throw error
 
+    if (existing.tms_order_id) {
+      const { data: allSiblings } = await supabase
+        .from('ProductionImport').select('id, status').eq('tms_order_id', existing.tms_order_id)
+      const nonCancelled = (allSiblings ?? []).filter((s: { status: string }) => s.status !== 'CANCELLED')
+      const allDone = nonCancelled.length > 0 && nonCancelled.every((s: { status: string }) => s.status === 'COMPLETED')
+      if (allDone) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: tmsOrder } = await (supabase.from('TmsOrder') as any)
+          .select('transfer_gdo_id').eq('id', existing.tms_order_id).maybeSingle()
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (supabase.from('TmsOrder') as any)
+          .update({ status: 'DONE', completed_at: nowTs, updated_at: nowTs })
+          .eq('id', existing.tms_order_id)
+        if (existing.source_type === 'TRANSFER' && tmsOrder?.transfer_gdo_id) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (supabase.from('GroupDeliveryOrder') as any)
+            .update({ transfer_status: 'DELIVERED', updated_at: nowTs })
+            .eq('id', tmsOrder.transfer_gdo_id)
+        }
+      }
+    }
+
     const withCount = await attachCount(updated)
     emitInboundChanged()
     ok(res, withCount)
@@ -425,7 +447,7 @@ export async function completeOrder(req: Request, res: Response) {
 export async function uncompleteOrder(req: Request, res: Response) {
   try {
     const { data: existing } = await supabase
-      .from('ProductionImport').select('id, status').eq('id', req.params.id).maybeSingle()
+      .from('ProductionImport').select('id, status, source_type, tms_order_id').eq('id', req.params.id).maybeSingle()
     if (!existing) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (existing.status !== 'COMPLETED') return fail(res, 400, 'NOT_COMPLETED', 'Phiếu nhập chưa ở trạng thái hoàn thành')
 
@@ -436,6 +458,24 @@ export async function uncompleteOrder(req: Request, res: Response) {
       .eq('id', req.params.id)
       .select(ORDER_SELECT).maybeSingle()
     if (error) throw error
+
+    if (existing.tms_order_id) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: tmsOrder } = await (supabase.from('TmsOrder') as any)
+        .select('status, transfer_gdo_id').eq('id', existing.tms_order_id).maybeSingle()
+      if (tmsOrder?.status === 'DONE') {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (supabase.from('TmsOrder') as any)
+          .update({ status: 'PENDING', completed_at: null, updated_at: nowTs })
+          .eq('id', existing.tms_order_id)
+        if (existing.source_type === 'TRANSFER' && tmsOrder.transfer_gdo_id) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (supabase.from('GroupDeliveryOrder') as any)
+            .update({ transfer_status: 'IN_TRANSIT', updated_at: nowTs })
+            .eq('id', tmsOrder.transfer_gdo_id)
+        }
+      }
+    }
 
     const withCount = await attachCount(updated)
     emitInboundChanged()

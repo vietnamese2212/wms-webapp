@@ -704,7 +704,7 @@ function GDOFormBody({
 
   function lookupMat(code: string) {
     const mat = allMats.find(m => m.material_code === code.trim())
-    return mat && (!warehouseType || mat.category === warehouseType) ? mat : null
+    return mat ?? null
   }
 
   // Paste tab-separated Excel row(s) into material code cell — fills all columns
@@ -949,7 +949,7 @@ function GDOFormBody({
                         onSelect={(code, name, category, unit) => updateItem(item.id, { material_code: code, mat_name: name, category, unit })}
                         disabled={item.min_cartons > 0}
                         disabledNoType={!warehouseType && item.min_cartons === 0}
-                        filterCategory={warehouseType || undefined}
+                        filterCategory={undefined}
                         onPaste={item.min_cartons === 0 ? e => handlePasteRowAt(idx, e) : undefined}
                       />
                       {item.min_cartons > 0 && (

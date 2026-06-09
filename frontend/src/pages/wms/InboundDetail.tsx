@@ -710,7 +710,7 @@ export default function InboundDetail() {
                   onClick={() => openConfirm(
                     'Hủy phiếu nhập',
                     `Xác nhận hủy phiếu "${order.import_code ?? order.id.slice(0, 8)}"? Thao tác này không thể hoàn tác.`,
-                    () => cancelOrder(order.id)
+                    () => cancelOrder(order.id, { onSuccess: () => navigate('/wms/inbound') })
                   )}
                 >
                   <XCircle className="h-3.5 w-3.5 mr-1" />

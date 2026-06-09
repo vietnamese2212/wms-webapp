@@ -1544,6 +1544,11 @@ function InboundRow({ order, onClick, onScan, onEditGroup, onPin, pinned }: {
       <TableCell className="px-2 py-1">
         <div className="text-[10px] font-medium whitespace-nowrap">{matName}</div>
         {matCode && <div className="text-[9px] text-slate-400 font-mono whitespace-nowrap">{matCode}</div>}
+        {order.source_type === 'TRANSFER' && (order as any).from_gdo_delivery_codes?.length > 0 && (
+          <div className="text-[9px] text-purple-600 font-mono whitespace-nowrap">
+            DO: {(order as any).from_gdo_delivery_codes.join(' · ')}
+          </div>
+        )}
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         <span className="text-[10px] font-semibold tabular-nums">{pallets}</span>

@@ -191,7 +191,27 @@ export async function listOrders(req: Request, res: Response) {
       )
     }
 
-    const result = await Promise.all(filtered.map(attachCount))
+    const withCount = await Promise.all(filtered.map(attachCount))
+
+    // Batch-fetch delivery codes for TRANSFER orders
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const transferGdoIds = [...new Set(filtered.filter((o: any) => o.source_type === 'TRANSFER' && o.from_gdo_id).map((o: any) => o.from_gdo_id as string))]
+    const codesByGdo = new Map<string, string[]>()
+    if (transferGdoIds.length > 0) {
+      const { data: dos } = await (supabase.from('OutboundDelivery') as any).select('gdo_id, code').in('gdo_id', transferGdoIds)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      for (const d of (dos ?? []) as any[]) {
+        if (!d.code) continue
+        const arr = codesByGdo.get(d.gdo_id) ?? []
+        arr.push(d.code)
+        codesByGdo.set(d.gdo_id, arr)
+      }
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = withCount.map((o: any) => ({
+      ...o,
+      from_gdo_delivery_codes: o.from_gdo_id ? (codesByGdo.get(o.from_gdo_id) ?? []) : [],
+    }))
     ok(res, result)
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }

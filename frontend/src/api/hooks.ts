@@ -8,7 +8,7 @@ import { apiClient } from './client'
 import { suppressTmsOrdersRealtime } from './realtimeEvents'
 import { useActiveInboundStore } from '@/stores/activeInboundStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
-import type { InboundOrder, Department, JobTitle, EmployeeRecord, GDO, InventoryEntry, TmsVehicleType, SlotTemplate, TransportCompany, TmsVehicle } from '@/types'
+import type { InboundOrder, PalletEntry, Department, JobTitle, EmployeeRecord, GDO, InventoryEntry, TmsVehicleType, SlotTemplate, TransportCompany, TmsVehicle } from '@/types'
 
 const delay = (ms = 600) => new Promise((r) => setTimeout(r, ms))
 
@@ -385,6 +385,39 @@ export function useScanManualPallet() {
       location_id?: string
       employee_id?: string
     }) => apiClient.post(`/wms/inbound-orders/${orderId}/scan-manual`, body).then((r) => r.data.data),
+
+    onMutate: async ({ orderId, cartons }) => {
+      await qc.cancelQueries({ queryKey: ['inbound-order', orderId] })
+      const previous = qc.getQueryData<InboundOrder>(['inbound-order', orderId])
+      const tempEntry = {
+        id: `_temp_${Date.now()}`,
+        pallet_code: `MNL-${Date.now()}`,
+        location: { id: '', location_code: '—', sub_code: '' },
+        material: previous?.material ?? null,
+        manufacturer: null,
+        cycle: null, machine_code: null, pallet_sequence_no: null,
+        qa_status_id: null, qa_status: null, stack_layer: 1,
+        cartons_imported: cartons, cartons_remaining: cartons,
+        production_date: null, status: 'IN_STOCK',
+        created_by_emp: null, updated_by_emp: null,
+        import_date: new Date().toISOString(),
+        update_date: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      } as PalletEntry
+      qc.setQueryData<InboundOrder>(['inbound-order', orderId], (old) => {
+        if (!old) return old
+        return {
+          ...old,
+          inventory_entries: [...(old.inventory_entries ?? []), tempEntry],
+          _count: { inventory_entries: old._count.inventory_entries + 1 },
+        }
+      })
+      return { previous, orderId }
+    },
+    onError: (_e, _v, ctx: any) => {
+      if (ctx?.previous) qc.setQueryData(['inbound-order', ctx.orderId], ctx.previous)
+    },
     onSettled: (_d, _e, v) => qc.invalidateQueries({ queryKey: ['inbound-order', v.orderId] }),
   })
 }

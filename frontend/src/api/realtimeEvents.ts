@@ -16,7 +16,7 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   DeliverySlot:        [['tms-delivery-slots']],
   gate_registrations:  [['gate-registrations']],
   inbound_plan_lines:  [['inbound-plan-lines-by-order'], ['plan-vs-actual'], ['inbound-plan-lines'], ['inbound-report']],
-  GroupDeliveryOrder:  [['gdos'], ['gdo']],
+  GroupDeliveryOrder:  [['gdos'], ['gdo'], ['tms-orders-transfer']],
   OutboundDelivery:    [['gdo']],
   OutboundItem:        [['gdo']],
   OutboundScanEntry:   [['gdo']],

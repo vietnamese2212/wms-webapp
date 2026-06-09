@@ -6,6 +6,8 @@ import {
 } from '@/utils/mockData'
 import { apiClient } from './client'
 import { suppressTmsOrdersRealtime } from './realtimeEvents'
+import { useActiveInboundStore } from '@/stores/activeInboundStore'
+import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 import type { InboundOrder, Department, JobTitle, EmployeeRecord, GDO, InventoryEntry, TmsVehicleType, SlotTemplate, TransportCompany, TmsVehicle } from '@/types'
 
 const delay = (ms = 600) => new Promise((r) => setTimeout(r, ms))
@@ -302,6 +304,7 @@ export function useCancelInboundOrder() {
   return useMutation({
     mutationFn: (id: string) => apiClient.post(`/wms/inbound-orders/${id}/cancel`).then((r) => r.data.data),
     onSuccess: (_d, id) => {
+      useActiveInboundStore.getState().unpin(id)
       qc.invalidateQueries({ queryKey: ['inbound-orders'] })
       qc.invalidateQueries({ queryKey: ['inbound-order', id] })
     },
@@ -1079,7 +1082,10 @@ export function useDeleteGDO() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => apiClient.delete(`/wms/outbound/${id}`).then(r => r.data.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['gdos'] }),
+    onSuccess: (_d, id) => {
+      useActiveVehiclesStore.getState().unpin(id)
+      qc.invalidateQueries({ queryKey: ['gdos'] })
+    },
   })
 }
 

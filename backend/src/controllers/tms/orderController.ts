@@ -37,27 +37,64 @@ export async function listOrders(req: Request, res: Response) {
       const { data, error } = await q
       if (error) return fail(res, error.message)
 
-      // Gắn delivery_codes từ OutboundDelivery cho mỗi order
-      const gdoIds = [...new Set((data ?? []).map((o: any) => o.transfer_gdo_id).filter(Boolean))] as string[]
+      const orders = data ?? []
+      const orderIds = orders.map((o: any) => o.id as string)
+
+      // Gắn delivery_codes từ OutboundDelivery
+      const gdoIds = [...new Set(orders.map((o: any) => o.transfer_gdo_id).filter(Boolean))] as string[]
+      const codesByGdo = new Map<string, string[]>()
       if (gdoIds.length) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data: dos } = await (supabase.from('OutboundDelivery') as any)
           .select('gdo_id, delivery_code').in('gdo_id', gdoIds)
-        const codesByGdo = new Map<string, string[]>()
         for (const d of (dos ?? [])) {
           if (!d.delivery_code) continue
           const list = codesByGdo.get(d.gdo_id) ?? []
           list.push(d.delivery_code)
           codesByGdo.set(d.gdo_id, list)
         }
-        return ok(res, (data ?? []).map((o: any) => ({
-          ...o,
-          transfer_gdo: o.transfer_gdo
-            ? { ...o.transfer_gdo, delivery_codes: codesByGdo.get(o.transfer_gdo_id) ?? [] }
-            : o.transfer_gdo,
-        })))
       }
-      return ok(res, data)
+
+      // Tính receiving_started_at và actual_received từ phiếu nhập tại kho nhận
+      const receivingStartedAt = new Map<string, string>()   // tms_order_id → ISO
+      const importToOrder = new Map<string, string>()         // import_id → tms_order_id
+      const actualReceivedByOrder = new Map<string, number>() // tms_order_id → total cartons
+
+      if (orderIds.length) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: importOrders } = await (supabase.from('ProductionImport') as any)
+          .select('id, tms_order_id, created_at')
+          .in('tms_order_id', orderIds)
+          .eq('source_type', 'TRANSFER')
+          .neq('status', 'CANCELLED')
+
+        for (const imp of (importOrders ?? []) as any[]) {
+          importToOrder.set(imp.id, imp.tms_order_id)
+          const existing = receivingStartedAt.get(imp.tms_order_id)
+          if (!existing || imp.created_at < existing) receivingStartedAt.set(imp.tms_order_id, imp.created_at)
+        }
+
+        const importIds = [...importToOrder.keys()]
+        if (importIds.length) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: entries } = await (supabase.from('InventoryEntry') as any)
+            .select('import_order_id, cartons_imported').in('import_order_id', importIds)
+          for (const entry of (entries ?? []) as any[]) {
+            const ordId = importToOrder.get(entry.import_order_id)
+            if (!ordId) continue
+            actualReceivedByOrder.set(ordId, (actualReceivedByOrder.get(ordId) ?? 0) + (entry.cartons_imported ?? 0))
+          }
+        }
+      }
+
+      return ok(res, orders.map((o: any) => ({
+        ...o,
+        transfer_gdo: o.transfer_gdo
+          ? { ...o.transfer_gdo, delivery_codes: codesByGdo.get(o.transfer_gdo_id) ?? [] }
+          : o.transfer_gdo,
+        receiving_started_at: receivingStartedAt.get(o.id) ?? null,
+        actual_received: actualReceivedByOrder.get(o.id) ?? 0,
+      })))
     }
 
     if (!date) return fail(res, 'date là bắt buộc', 400)

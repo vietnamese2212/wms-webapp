@@ -2184,7 +2184,7 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                   <thead className="sticky top-0 z-10 bg-slate-50">
                     <tr>
                       <th className="w-6 px-2 py-1.5"></th>
-                      {['Mã hàng', 'Tên hàng', 'ĐVT', 'Thùng KH', 'Thùng thực', 'Pallet'].map(h => (
+                      {['Mã hàng', 'Tên hàng', 'ĐVT', 'Thùng KH', 'Thùng thực', 'Chênh lệch', 'Tình trạng GN', 'Pallet'].map(h => (
                         <th key={h} className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
                       ))}
                     </tr>
@@ -2219,6 +2219,25 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                                 {actualCartons > 0 ? actualCartons : '—'}
                               </span>
                             </td>
+                            {(() => {
+                              const diff = actualCartons - g.planned_boxes
+                              const hasData = actualCartons > 0
+                              const diffCls = diff === 0 ? 'text-green-700' : diff > 0 ? 'text-amber-600' : 'text-red-600'
+                              const gnLabel = diff === 0 ? 'Đủ' : diff > 0 ? `Thừa +${diff}` : `Thiếu ${diff}`
+                              const gnCls = diff === 0 ? 'bg-green-100 text-green-700' : diff > 0 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'
+                              return (<>
+                                <td className="px-2 py-1 whitespace-nowrap text-right">
+                                  {hasData
+                                    ? <span className={`text-[10px] font-semibold tabular-nums ${diffCls}`}>{diff > 0 ? `+${diff}` : diff}</span>
+                                    : <span className="text-slate-300 text-[10px]">—</span>}
+                                </td>
+                                <td className="px-2 py-1 whitespace-nowrap">
+                                  {hasData
+                                    ? <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${gnCls}`}>{gnLabel}</span>
+                                    : <span className="text-slate-300 text-[10px]">—</span>}
+                                </td>
+                              </>)
+                            })()}
                             <td className="px-2 py-1 whitespace-nowrap">
                               <span className="text-[10px] text-slate-500">{g.pallets.length > 0 ? `${g.pallets.length} pallet` : <span className="text-slate-300">—</span>}</span>
                             </td>
@@ -2236,7 +2255,7 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                               <td className="px-2 py-0.5 text-right">
                                 <span className="text-[10px] tabular-nums text-green-700 font-semibold">{p.cartons_scanned}</span>
                               </td>
-                              <td className="px-2 py-0.5">
+                              <td className="px-2 py-0.5" colSpan={2}>
                                 {p.scanned_at && <span className="text-[9px] text-slate-400">{formatDateTime(p.scanned_at)}</span>}
                               </td>
                             </tr>
@@ -2282,7 +2301,7 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt }: { canEdit: boolean;
                   <table className="min-w-max w-full">
                     <thead className="sticky top-0 z-10 bg-slate-50">
                       <tr>
-                        {['Mã lệnh', 'Ngày xuất', 'Kho xuất', 'Kho nhận', 'Thùng KH', 'Dự kiến giao', 'ĐVVT', 'Biển số', 'Số điện thoại', 'Tình trạng', 'Số GDO', 'Số DO', 'Ghi chú'].map(h => (
+                        {['Mã lệnh', 'Ngày xuất', 'Kho xuất', 'Kho nhận', 'Ngày nhận', 'Thùng KH', 'Thực nhận', 'Chênh lệch', 'Tình trạng GN', 'Dự kiến giao', 'ĐVVT', 'Biển số', 'Số điện thoại', 'Tình trạng', 'Số GDO', 'Số DO', 'Ghi chú'].map(h => (
                           <th key={h} className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
@@ -2315,9 +2334,40 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt }: { canEdit: boolean;
                             <td className="px-2 py-1 whitespace-nowrap">
                               <span className="text-[10px] font-semibold text-blue-700">{o.warehouse?.name ?? o.transfer_gdo?.shipto_party ?? '—'}</span>
                             </td>
+                            <td className="px-2 py-1 whitespace-nowrap">
+                              {o.receiving_started_at
+                                ? <span className="text-[10px] tabular-nums text-slate-600">{formatDateTime(o.receiving_started_at)}</span>
+                                : <span className="text-slate-300 text-[10px]">—</span>}
+                            </td>
                             <td className="px-2 py-1 whitespace-nowrap text-right">
                               <span className="text-[10px] font-semibold tabular-nums">{o.planned_boxes ?? 0}</span>
                             </td>
+                            {(() => {
+                              const actual = o.actual_received ?? 0
+                              const planned = o.planned_boxes ?? 0
+                              const hasStarted = !!o.receiving_started_at
+                              const diff = actual - planned
+                              const diffCls = diff === 0 ? 'text-green-700' : diff > 0 ? 'text-amber-600' : 'text-red-600'
+                              const gnLabel = diff === 0 ? 'Đủ' : diff > 0 ? `Thừa +${diff}` : `Thiếu ${diff}`
+                              const gnCls = diff === 0 ? 'bg-green-100 text-green-700' : diff > 0 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'
+                              return (<>
+                                <td className="px-2 py-1 whitespace-nowrap text-right">
+                                  {hasStarted
+                                    ? <span className="text-[10px] font-semibold tabular-nums text-blue-700">{actual}</span>
+                                    : <span className="text-slate-300 text-[10px]">—</span>}
+                                </td>
+                                <td className="px-2 py-1 whitespace-nowrap text-right">
+                                  {hasStarted
+                                    ? <span className={`text-[10px] font-semibold tabular-nums ${diffCls}`}>{diff > 0 ? `+${diff}` : diff}</span>
+                                    : <span className="text-slate-300 text-[10px]">—</span>}
+                                </td>
+                                <td className="px-2 py-1 whitespace-nowrap">
+                                  {hasStarted
+                                    ? <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${gnCls}`}>{gnLabel}</span>
+                                    : <span className="text-slate-300 text-[10px]">—</span>}
+                                </td>
+                              </>)
+                            })()}
                             <td className="px-2 py-1 whitespace-nowrap">
                               {o.eta
                                 ? <span className="text-[10px] font-semibold text-green-700">{formatDateTime(o.eta)}</span>

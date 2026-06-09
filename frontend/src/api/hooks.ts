@@ -1643,7 +1643,11 @@ export type TransferGDO = {
   warehouse?: { id: string; code: string; name: string } | null
   delivery_codes?: string[]
 }
-export type TransferOrder = import('@/types').TmsOrder & { transfer_gdo?: TransferGDO | null }
+export type TransferOrder = import('@/types').TmsOrder & {
+  transfer_gdo?: TransferGDO | null
+  receiving_started_at?: string | null
+  actual_received?: number
+}
 
 // destination_warehouse_id: nếu truyền, lọc theo kho nhận (dùng ở Inbound để hiển thị đúng kho)
 // Nếu không truyền: hiển thị tất cả lệnh TRANSFER (dùng ở TMS Bookings)

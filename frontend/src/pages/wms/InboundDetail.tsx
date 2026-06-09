@@ -484,9 +484,10 @@ export default function InboundDetail() {
   // Auto-redirect khi phiếu không còn tồn tại (bị xóa/hủy, ghost từ cache)
   useEffect(() => {
     if (!isLoading && !isPlaceholderData && !order) {
+      if (id) unpin(id)
       navigate('/wms/inbound', { replace: true })
     }
-  }, [isLoading, isPlaceholderData, order, navigate])
+  }, [isLoading, isPlaceholderData, order, navigate, id, unpin])
 
   if (isLoading && !order) {
     return <div className="p-6"><TableSkeleton rows={8} cols={7} /></div>

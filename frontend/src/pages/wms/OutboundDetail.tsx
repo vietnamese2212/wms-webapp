@@ -768,9 +768,10 @@ export default function OutboundDetail() {
   // Auto-redirect khi đơn không còn tồn tại (bị xóa, API trả 404)
   useEffect(() => {
     if (!isLoading && (isError || !gdo)) {
+      if (id) unpin(id)
       navigate('/wms/outbound', { replace: true })
     }
-  }, [isLoading, isError, gdo, navigate])
+  }, [isLoading, isError, gdo, navigate, id, unpin])
 
   if (isLoading || !gdo) {
     return (

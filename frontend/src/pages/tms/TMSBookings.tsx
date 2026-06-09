@@ -2326,7 +2326,7 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt }: { canEdit: boolean;
                               <span className="text-[10px] font-mono font-semibold">{o.order_code}</span>
                             </td>
                             <td className="px-2 py-1 whitespace-nowrap">
-                              <span className="text-[10px] tabular-nums">{o.transfer_gdo?.delivery_date ?? '—'}</span>
+                              <span className="text-[10px] tabular-nums">{o.created_at ? formatDateTime(o.created_at).slice(0, 16) : '—'}</span>
                             </td>
                             <td className="px-2 py-1 whitespace-nowrap">
                               <span className="text-[10px] text-slate-600">{o.transfer_gdo?.warehouse?.name ?? '—'}</span>

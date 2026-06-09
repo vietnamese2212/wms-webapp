@@ -806,6 +806,7 @@ export async function scanManual(req: Request, res: Response) {
 
     if (entErr) {
       if (entErr.code === '23505') return fail(res, 409, 'DUPLICATE_PALLET', 'Mã pallet đã tồn tại')
+      if (entErr.code === '23502') return fail(res, 400, 'MISSING_LOCATION', 'Cần chạy migration: ALTER TABLE "InventoryEntry" ALTER COLUMN "location_id" DROP NOT NULL trên Supabase Dashboard')
       throw entErr
     }
 

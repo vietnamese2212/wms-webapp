@@ -823,9 +823,14 @@ export async function scanManual(req: Request, res: Response) {
     if (order.status !== 'OPEN') return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập không còn ở trạng thái mở')
     if (!order.material_id)      return fail(res, 400, 'NO_MATERIAL', 'Phiếu nhập chưa có hàng hóa')
 
-    // 1 lần mỗi phiếu — enforce qua posm_entry_id
+    // 1 lần mỗi phiếu — enforce qua posm_entry_id (trừ khi entry bị xóa)
     if ((order as any).posm_entry_id) {
-      return fail(res, 409, 'ALREADY_SAVED', 'Phiếu nhập này đã được lưu thủ công rồi')
+      const { data: existingPosmEntry } = await supabase
+        .from('InventoryEntry').select('id').eq('id', (order as any).posm_entry_id).maybeSingle()
+      if (existingPosmEntry) {
+        return fail(res, 409, 'ALREADY_SAVED', 'Phiếu nhập này đã được lưu thủ công rồi')
+      }
+      // Entry đã bị xóa → cho phép scan lại, sẽ ghi đè posm_entry_id ở cuối
     }
 
     const now = new Date().toISOString()

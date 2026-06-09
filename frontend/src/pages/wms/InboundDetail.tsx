@@ -777,8 +777,8 @@ export default function InboundDetail() {
                     () => cancelOrder(order.id, { onSuccess: () => navigate('/wms/inbound') })
                   )}
                 >
-                  <XCircle className="h-3.5 w-3.5 mr-1" />
-                  {cancelling ? 'Đang hủy…' : 'Hủy phiếu'}
+                  <XCircle className="h-3.5 w-3.5 sm:mr-1" />
+                  <span className="hidden sm:inline">{cancelling ? 'Đang hủy…' : 'Hủy phiếu'}</span>
                 </Button>
               )}
               {isOpen && entries.length > 0 && can(perms, 'inbound', 'complete') && (
@@ -788,8 +788,8 @@ export default function InboundDetail() {
                   disabled={completing}
                   onClick={() => completeOrder(order.id)}
                 >
-                  <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
-                  {completing ? 'Đang lưu…' : 'Hoàn thành'}
+                  <CheckCircle2 className="h-3.5 w-3.5 sm:mr-1" />
+                  <span className="hidden sm:inline">{completing ? 'Đang lưu…' : 'Hoàn thành'}</span>
                 </Button>
               )}
               {isCompleted && can(perms, 'inbound', 'uncomplete') && (
@@ -799,8 +799,8 @@ export default function InboundDetail() {
                   disabled={uncompleting}
                   onClick={() => uncompleteOrder(order.id)}
                 >
-                  <RotateCcw className="h-3.5 w-3.5 mr-1" />
-                  {uncompleting ? 'Đang gỡ…' : 'Gỡ hoàn thành'}
+                  <RotateCcw className="h-3.5 w-3.5 sm:mr-1" />
+                  <span className="hidden sm:inline">{uncompleting ? 'Đang gỡ…' : 'Gỡ hoàn thành'}</span>
                 </Button>
               )}
             </div>

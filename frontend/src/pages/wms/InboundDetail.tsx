@@ -385,6 +385,47 @@ function ScanDialog({ order, onClose, employeeId, allLocations }: ScanDialogProp
   )
 }
 
+// ─── Pinned inbound btn — tự validate phiếu tồn tại, ẩn và unpin nếu đã bị xóa ──
+
+function PinnedInboundBtn({ o, isCurrent, onUnpin, onNavigate }: {
+  o: { id: string; import_code: string; status: string; location_code?: string; mat_code?: string }
+  isCurrent: boolean
+  onUnpin: (id: string) => void
+  onNavigate: (id: string) => void
+}) {
+  const { data: ord, isLoading, isPlaceholderData } = useInboundOrder(isCurrent ? undefined : o.id)
+  const isGone = !isCurrent && !isLoading && !isPlaceholderData && !ord
+
+  useEffect(() => {
+    if (isGone) onUnpin(o.id)
+  }, [isGone, o.id, onUnpin])
+
+  if (isGone) return null
+
+  const barLabel = (o.location_code || o.mat_code)
+    ? `${o.location_code ?? '—'}_${o.mat_code?.slice(-3) ?? '—'}`
+    : o.import_code
+
+  return (
+    <button
+      onClick={() => !isCurrent && onNavigate(o.id)}
+      className={[
+        'flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border transition-colors',
+        isCurrent
+          ? 'bg-amber-100 text-amber-800 border-amber-300 font-semibold cursor-default'
+          : 'bg-white text-slate-600 border-slate-200 hover:bg-amber-50 cursor-pointer',
+      ].join(' ')}
+    >
+      <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${
+        o.status === 'OPEN'        ? 'bg-amber-500'
+        : o.status === 'COMPLETED' ? 'bg-blue-500'
+        : 'bg-slate-400'
+      }`} />
+      {barLabel}
+    </button>
+  )
+}
+
 // ─── Main page ────────────────────────────────────────────────
 
 export default function InboundDetail() {
@@ -587,30 +628,15 @@ export default function InboundDetail() {
           <div className="shrink-0 border-b bg-amber-50/60 px-2 py-1">
             <div className="flex flex-wrap gap-1 items-center">
               <span className="text-[9px] text-amber-600 font-medium shrink-0">Đang làm:</span>
-              {pinnedOrders.map(o => {
-                const isCurrent = o.id === id
-                const barLabel = (o.location_code || o.mat_code)
-                  ? `${o.location_code ?? '—'}_${o.mat_code?.slice(-3) ?? '—'}`
-                  : o.import_code
-                return (
-                  <button key={o.id}
-                    onClick={() => !isCurrent && navigate(`/wms/inbound/${o.id}`)}
-                    className={[
-                      'flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border transition-colors',
-                      isCurrent
-                        ? 'bg-amber-100 text-amber-800 border-amber-300 font-semibold cursor-default'
-                        : 'bg-white text-slate-600 border-slate-200 hover:bg-amber-50 cursor-pointer',
-                    ].join(' ')}
-                  >
-                    <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${
-                      o.status === 'OPEN'        ? 'bg-amber-500'
-                      : o.status === 'COMPLETED' ? 'bg-blue-500'
-                      : 'bg-slate-400'
-                    }`} />
-                    {barLabel}
-                  </button>
-                )
-              })}
+              {pinnedOrders.map(o => (
+                <PinnedInboundBtn
+                  key={o.id}
+                  o={o}
+                  isCurrent={o.id === id}
+                  onUnpin={unpin}
+                  onNavigate={oid => navigate(`/wms/inbound/${oid}`)}
+                />
+              ))}
             </div>
           </div>
         )}

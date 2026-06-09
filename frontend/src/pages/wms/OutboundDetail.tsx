@@ -704,6 +704,44 @@ function ItemsTable({ doRecords, gdoId, canScan, expandedItemIds, toggleExpand }
   )
 }
 
+// ─── Pinned vehicle btn — tự validate GDO tồn tại, ẩn và unpin nếu đã bị xóa ──
+
+function PinnedVehicleBtn({ v, isCurrent, onUnpin, onNavigate }: {
+  v: { id: string; group_code: string; status: string }
+  isCurrent: boolean
+  onUnpin: (id: string) => void
+  onNavigate: (id: string) => void
+}) {
+  const { isError, isLoading } = useGDO(isCurrent ? undefined : v.id)
+  const isGone = !isCurrent && !isLoading && isError
+
+  useEffect(() => {
+    if (isGone) onUnpin(v.id)
+  }, [isGone, v.id, onUnpin])
+
+  if (isGone) return null
+
+  return (
+    <button
+      onClick={() => onNavigate(v.id)}
+      className={[
+        'flex items-center gap-1 px-3 py-1.5 text-[10px] border-b-2 transition-colors shrink-0',
+        isCurrent
+          ? 'border-amber-500 bg-amber-100 text-amber-800 font-semibold cursor-default'
+          : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-amber-50 cursor-pointer',
+      ].join(' ')}
+    >
+      <span className={`h-1.5 w-1.5 rounded-full shrink-0 mr-0.5 ${
+        v.status === 'IN_PROGRESS' ? 'bg-amber-500'
+        : v.status === 'COMPLETED'  ? 'bg-green-500'
+        : v.status === 'PAUSED'     ? 'bg-red-500'
+        : 'bg-slate-300'
+      }`} />
+      {v.group_code}
+    </button>
+  )
+}
+
 // ─── Main page ─────────────────────────────────────────────────
 
 export default function OutboundDetail() {
@@ -1083,24 +1121,13 @@ export default function OutboundDetail() {
           <div className="flex overflow-x-auto shrink-0 border-b bg-amber-50/60 gap-0 scrollbar-none">
             <span className="text-[9px] text-amber-600 font-medium px-2 py-1.5 shrink-0 border-r border-amber-200">Đang làm:</span>
             {vehicles.map(v => (
-              <button
+              <PinnedVehicleBtn
                 key={v.id}
-                onClick={() => navigate(`/wms/outbound/${v.id}`)}
-                className={[
-                  'flex items-center gap-1 px-3 py-1.5 text-[10px] border-b-2 transition-colors shrink-0',
-                  v.id === id
-                    ? 'border-amber-500 bg-amber-100 text-amber-800 font-semibold cursor-default'
-                    : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-amber-50 cursor-pointer',
-                ].join(' ')}
-              >
-                <span className={`h-1.5 w-1.5 rounded-full shrink-0 mr-0.5 ${
-                  v.status === 'IN_PROGRESS' ? 'bg-amber-500'
-                  : v.status === 'COMPLETED'  ? 'bg-green-500'
-                  : v.status === 'PAUSED'     ? 'bg-red-500'
-                  : 'bg-slate-300'
-                }`} />
-                {v.group_code}
-              </button>
+                v={v}
+                isCurrent={v.id === id}
+                onUnpin={unpin}
+                onNavigate={id => navigate(`/wms/outbound/${id}`)}
+              />
             ))}
           </div>
         )}

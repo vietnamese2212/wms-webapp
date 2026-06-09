@@ -1024,6 +1024,11 @@ export async function removeEntry(req: Request, res: Response) {
     const { error } = await supabase.from('InventoryEntry').delete().eq('id', entryId)
     if (error) throw error
 
+    // Nếu đây là POSM entry, clear posm_entry_id trên order để cho phép lưu thủ công lại
+    await supabase.from('ProductionImport')
+      .update({ posm_entry_id: null, updated_at: new Date().toISOString() })
+      .eq('id', order_id).eq('posm_entry_id', entryId)
+
     emitInboundChanged()
     ok(res, { deleted: true })
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }

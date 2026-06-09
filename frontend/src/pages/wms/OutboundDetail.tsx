@@ -554,9 +554,7 @@ function ItemsTable({ doRecords, gdoId, canScan, expandedItemIds, toggleExpand }
                 </TableCell>
                 <TableCell className={`px-2 py-1 align-top`}>
                   <div className={`text-[10px] font-medium leading-tight ${textCls}`}>{matName}</div>
-                  {item.material_type !== 'POSM' && (
-                    <ProgressBar compact scanned={item.cartons_scanned} ordered={item.cartons_ordered} looseUnconfirmed={looseUnconfirmed} />
-                  )}
+                  <ProgressBar compact scanned={item.cartons_scanned} ordered={item.cartons_ordered} looseUnconfirmed={looseUnconfirmed} />
                   {(item.scan_entries?.length ?? 0) > 0 && (
                     <div className="text-[9px] text-slate-400 mt-0.5">{item.scan_entries.length} pallet</div>
                   )}

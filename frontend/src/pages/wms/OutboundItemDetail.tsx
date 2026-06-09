@@ -446,7 +446,7 @@ export default function OutboundItemDetail() {
 
       <Dialog open={showLoscamDialog} onOpenChange={v => { if (!v) setShowLoscamDialog(false) }}>
         <DialogContent className="sm:max-w-xs">
-          <DialogHeader><DialogTitle className="text-base">Xác nhận Pallet Loscam</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle className="text-base">Xác nhận số lượng</DialogTitle></DialogHeader>
           <div className="space-y-3 py-1">
             <div className="space-y-1.5">
               <p className="text-xs text-slate-500">Số thùng thực xuất</p>
@@ -462,7 +462,7 @@ export default function OutboundItemDetail() {
           </div>
           <DialogFooter className="gap-2">
             <Button variant="outline" size="sm" onClick={() => setShowLoscamDialog(false)} disabled={completing}>Hủy</Button>
-            <Button size="sm" disabled={completing || isPaused}
+            <Button size="sm" disabled={completing || isPaused || !gdo.started_at}
               onClick={() => {
                 const c = Math.max(0, parseInt(loscamCartons) || 0)
                 manualComplete(
@@ -507,10 +507,8 @@ export default function OutboundItemDetail() {
                 <Package className="h-3.5 w-3.5" />
                 Tồn kho{inventoryData.length > 0 ? ` (${inventoryData.length})` : ''}
               </button>
-              {isPOSM ? (
-                !isDone && <span className="text-xs text-slate-400 italic">Tự bypass</span>
-              ) : isLoscam ? (
-                can(perms, 'outbound', 'complete') && <Button size="sm" variant="outline" className="h-7 text-xs" disabled={isPaused}
+              {(isPOSM || isLoscam) ? (
+                can(perms, 'outbound', 'complete') && <Button size="sm" variant="outline" className="h-7 text-xs" disabled={isPaused || !gdo.started_at}
                   onClick={() => { setLoscamCartons(String(isDone ? item.cartons_scanned : item.cartons_ordered)); setShowLoscamDialog(true) }}>
                   {isDone ? 'Sửa số lượng' : 'Lưu thủ công'}
                 </Button>
@@ -538,7 +536,7 @@ export default function OutboundItemDetail() {
           {/* Row 2: material name + progress */}
           <div className="space-y-1">
             <p className="text-sm font-medium text-slate-800 leading-tight">{matName}</p>
-            {!isPOSM && <ProgressBar scanned={item.cartons_scanned} ordered={item.cartons_ordered} looseUnconfirmed={looseUnconfirmedCount} />}
+            <ProgressBar scanned={item.cartons_scanned} ordered={item.cartons_ordered} looseUnconfirmed={looseUnconfirmedCount} />
           </div>
 
           {/* Row 3: số lượng + meta nhỏ */}
@@ -583,7 +581,7 @@ export default function OutboundItemDetail() {
           )}
 
           {/* Not-started warning */}
-          {notStartedMsg && !isDone && !isPOSM && !isPaused && (
+          {notStartedMsg && !isDone && !isPaused && (
             <div className="rounded bg-amber-50 border border-amber-200 px-2 py-1 text-xs text-amber-700 flex items-center gap-1.5">
               <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
               {notStartedMsg}

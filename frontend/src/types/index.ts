@@ -386,6 +386,7 @@ export interface InventoryEntry {
   id:                 string
   pallet_code:        string
   location_id:        string
+  warehouse_id:       string | null
   material_id:        string | null
   manufacturer_id:    string | null
   cycle:              string | null

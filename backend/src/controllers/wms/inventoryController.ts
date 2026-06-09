@@ -4,7 +4,7 @@ import { ok, fail } from '../../utils/response'
 import { randomUUID } from 'crypto'
 
 const ENTRY_SELECT = `
-  id, pallet_code, location_id, material_id, manufacturer_id, cycle, machine_code,
+  id, pallet_code, location_id, warehouse_id, material_id, manufacturer_id, cycle, machine_code,
   pallet_sequence_no, qa_status_id, stack_layer, cartons_imported, cartons_remaining, cartons_reserved,
   production_date, status, import_date, update_date, adjustment_qty,
   stocktake_at, stocktake_flagged, stocktake_flag_note,

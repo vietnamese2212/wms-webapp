@@ -574,6 +574,9 @@ export default function Inventory() {
   const warehouseOpts = (warehouses as any[])
     .filter((w: any) => !allowedWhIds || allowedWhIds.has(w.id))
     .map((w: any) => ({ value: w.id, label: w.name }))
+  const warehouseMap: Record<string, string> = Object.fromEntries(
+    (warehouses as any[]).map((w: any) => [w.id, w.name])
+  )
   // Merge DB categories with user's allowed categories so user can always toggle their scope even if no data yet
   const categoryOpts   = (categories as string[]).map(c => ({ value: c, label: c }))
   const qaOpts         = (qaStatuses as any[]).map((q: any) => ({ value: q.id, label: `${q.code} – ${q.name}` }))
@@ -815,6 +818,7 @@ export default function Inventory() {
                         isChecked={checkedIds.has(e.id)}
                         onCheck={ev => toggleCheck(e.id, ev)}
                         onClick={() => setSelected(prev => prev?.id === e.id ? null : e)}
+                        warehouseMap={warehouseMap}
                       />
                     ))}
                   </TableBody>
@@ -851,7 +855,7 @@ export default function Inventory() {
         ) : actionModal === 'production-date' ? (
           <ProductionDatePanel ids={checkedIdArr} onClose={closeActionModal} />
         ) : selected ? (
-          <DetailPanel entry={selected} onClose={() => setSelected(null)} />
+          <DetailPanel entry={selected} onClose={() => setSelected(null)} warehouseMap={warehouseMap} />
         ) : null}
       </div>
 
@@ -905,12 +909,13 @@ export default function Inventory() {
 
 // ─── EntryRow ─────────────────────────────────────────────────
 
-function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick }: {
+function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick, warehouseMap }: {
   entry: InventoryEntry
   isSelected: boolean
   isChecked: boolean
   onCheck: (ev: React.MouseEvent) => void
   onClick: () => void
+  warehouseMap: Record<string, string>
 }) {
   const loc           = formatLoc(e.location)
   const matCode       = e.material?.material_code ?? '—'
@@ -921,7 +926,7 @@ function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick }: {
   const pct           = calcDatePct(e.production_date, e.material?.shelf_life_days ?? null)
   const prodDateStr   = e.production_date ? formatTimestampDate(e.production_date, true) : '—'
   const adjQty        = e.adjustment_qty ?? 0
-  const warehouseNm   = e.location?.warehouse?.name ?? '—'
+  const warehouseNm   = e.location?.warehouse?.name ?? (e.warehouse_id ? warehouseMap[e.warehouse_id] : null) ?? '—'
   const loaiKho       = e.material?.category ?? '—'
 
   return (
@@ -1011,7 +1016,7 @@ function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick }: {
 
 // ─── Detail panel ─────────────────────────────────────────────
 
-function DetailPanel({ entry: e, onClose }: { entry: InventoryEntry; onClose: () => void }) {
+function DetailPanel({ entry: e, onClose, warehouseMap }: { entry: InventoryEntry; onClose: () => void; warehouseMap: Record<string, string> }) {
   const user = useAuthStore(s => s.user)
   const [adjInput, setAdjInput]       = useState('')
   const [adjNote, setAdjNote]         = useState('')
@@ -1041,7 +1046,7 @@ function DetailPanel({ entry: e, onClose }: { entry: InventoryEntry; onClose: ()
     )
   }
 
-  const warehouseNm = e.location?.warehouse?.name ?? '—'
+  const warehouseNm = e.location?.warehouse?.name ?? (e.warehouse_id ? warehouseMap[e.warehouse_id] : null) ?? '—'
   const loaiKho     = e.material?.category ?? '—'
 
   return (

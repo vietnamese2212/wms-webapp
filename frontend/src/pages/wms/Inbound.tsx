@@ -1521,16 +1521,16 @@ function InboundRow({ order, onClick, onScan, onEditGroup, onPin, pinned, bracke
       <TableCell className="w-8 px-0 py-0 relative">
         {showBracket && (
           <div className="absolute pointer-events-none" style={{
-            right: 0,
+            left: 0,
             width: '10px',
             top: bracketPos === 'first' ? '50%' : 0,
             bottom: bracketPos === 'last' ? '50%' : 0,
-            borderRight: '1.5px solid #93C5FD',
-            ...(bracketPos === 'first' ? { borderTop: '1.5px solid #93C5FD', borderTopRightRadius: '3px' } : {}),
-            ...(bracketPos === 'last'  ? { borderBottom: '1.5px solid #93C5FD', borderBottomRightRadius: '3px' } : {}),
+            borderLeft: '2px solid #0f172a',
+            ...(bracketPos === 'first' ? { borderTop: '2px solid #0f172a', borderTopLeftRadius: '3px' } : {}),
+            ...(bracketPos === 'last'  ? { borderBottom: '2px solid #0f172a', borderBottomLeftRadius: '3px' } : {}),
           }} />
         )}
-        <div className="flex items-center justify-center py-1 pl-1 pr-3 h-full">
+        <div className="flex items-center justify-center py-1 pl-3 pr-1 h-full">
           {onPin && (
             <button
               onClick={onPin}

@@ -3218,6 +3218,7 @@ export default function TMSBookings() {
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">SĐT</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Trạng thái</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Tình trạng XH</TableHead>
+                <TableHead className="text-[9px] font-medium text-green-600 px-2 py-1.5 whitespace-nowrap">Giờ HT</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Giờ ĐK</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Giờ vào</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Giờ ra</TableHead>
@@ -3419,6 +3420,13 @@ export default function TMSBookings() {
                   <TableCell className={`px-2 py-1 text-[10px] whitespace-nowrap ${cellHoverBg}`}>
                     {vslot.gate_export_status || <span className="text-slate-300">—</span>}
                   </TableCell>
+                  {stt !== null && (
+                    <TableCell rowSpan={sttRowspan > 1 ? sttRowspan : undefined} className={`px-2 py-1 text-[10px] font-mono whitespace-nowrap align-middle ${cellHoverBg}`}>
+                      {order.completed_at
+                        ? <span className="text-green-700 font-semibold">{fmtTime(order.completed_at)}</span>
+                        : <span className="text-slate-300">—</span>}
+                    </TableCell>
+                  )}
                   <TableCell className={`px-2 py-1 text-[10px] font-mono whitespace-nowrap ${cellHoverBg}`}>
                     {fmtTime(vslot.gate_registered_at)}
                   </TableCell>

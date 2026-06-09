@@ -480,6 +480,7 @@ export interface TmsOrder {
   updated_by:      string | null
   created_at:      string
   updated_at:      string
+  completed_at?:   string | null
   vehicle_slots:   TmsVehicleSlot[]
 }
 

@@ -1,6 +1,6 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, PackagePlus, CalendarDays, X, ChevronDown, User, MapPin, Filter, QrCode, Pencil, Bookmark } from 'lucide-react'
+import { Plus, PackagePlus, CalendarDays, X, ChevronDown, User, MapPin, Filter, QrCode, Pencil, Bookmark, CheckCircle, RotateCcw } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
@@ -21,6 +21,7 @@ import {
   useEmployeeRecords, useWarehouseTypes, useWarehouseZones,
   useActiveGateRegistrations, useInboundPlanLines,
   useUpdateInboundOrder, useCancelInboundOrder,
+  useCompleteInboundOrder, useUncompleteInboundOrder,
 } from '@/api/hooks'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { SearchInput } from '@/components/shared/SearchInput'
@@ -1067,6 +1068,9 @@ export default function Inbound() {
   const perms     = user?.module_permissions as ModulePermissions | null ?? null
   const { inbound: f, setInbound } = useWmsFilterStore()
   const { pin, unpin, isPinned } = useActiveInboundStore()
+  const completeOrder   = useCompleteInboundOrder()
+  const uncompleteOrder = useUncompleteInboundOrder()
+  const [tmsWarn, setTmsWarn] = useState<{ cancelled_count: number; order_code: string } | null>(null)
   const [showNew,      setShowNew]      = useState(false)
   const [locOpen,      setLocOpen]      = useState(false)
   const [showFilters,  setShowFilters]  = useState(false)
@@ -1450,6 +1454,7 @@ export default function Inbound() {
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Người nhập</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Ca</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Ghi chú</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap w-20"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1463,6 +1468,12 @@ export default function Inbound() {
                         : undefined}
                       onEditGroup={order.source_type === 'NCC' && order.status === 'OPEN' && can(perms, 'inbound', 'edit')
                         ? (e) => { e.stopPropagation(); openEditNccGroup(order) }
+                        : undefined}
+                      onComplete={order.status === 'OPEN' && can(perms, 'inbound', 'complete')
+                        ? (e) => { e.stopPropagation(); completeOrder.mutate(order.id, { onSuccess: (d: any) => { if (d?.tms_warning) setTmsWarn(d.tms_warning) } }) }
+                        : undefined}
+                      onUncomplete={order.status === 'COMPLETED' && can(perms, 'inbound', 'uncomplete')
+                        ? (e) => { e.stopPropagation(); uncompleteOrder.mutate(order.id) }
                         : undefined}
                       pinned={isPinned(order.id)}
                       onPin={(e) => {
@@ -1482,6 +1493,22 @@ export default function Inbound() {
       </div>
 
       <CreateOrderDialog open={showNew || !!editNccGroup} onClose={() => { setShowNew(false); setEditNccGroup(null) }} editGroup={editNccGroup} />
+
+      {/* TMS warning: có phiếu bị hủy → không auto-complete */}
+      <Dialog open={!!tmsWarn} onOpenChange={() => setTmsWarn(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-amber-600 text-base">Đơn TMS chưa tự hoàn thành</DialogTitle>
+          </DialogHeader>
+          <div className="text-sm text-slate-700 space-y-2 py-1">
+            <p>Đơn TMS <span className="font-mono font-semibold">{tmsWarn?.order_code}</span> có <span className="font-semibold text-red-600">{tmsWarn?.cancelled_count} phiếu đã bị hủy</span> — hệ thống không tự động hoàn thành đơn.</p>
+            <p className="text-slate-500 text-xs">Vào trang TMS Bookings để kiểm tra và xác nhận thủ công nếu cần.</p>
+          </div>
+          <DialogFooter>
+            <Button size="sm" onClick={() => setTmsWarn(null)}>Đã hiểu</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
@@ -1497,10 +1524,12 @@ function rowBg(order: InboundOrder): string {
   return 'hover:bg-slate-50'
 }
 
-function InboundRow({ order, onClick, onScan, onEditGroup, onPin, pinned, bracketPos = 'none' }: {
+function InboundRow({ order, onClick, onScan, onEditGroup, onComplete, onUncomplete, onPin, pinned, bracketPos = 'none' }: {
   order: InboundOrder; onClick: () => void
   onScan?: (e: React.MouseEvent) => void
   onEditGroup?: (e: React.MouseEvent) => void
+  onComplete?: (e: React.MouseEvent) => void
+  onUncomplete?: (e: React.MouseEvent) => void
   onPin?: (e: React.MouseEvent) => void
   pinned?: boolean
   bracketPos?: BracketPos
@@ -1652,6 +1681,33 @@ function InboundRow({ order, onClick, onScan, onEditGroup, onPin, pinned, bracke
       {/* Col 11: Ghi chú */}
       <TableCell className="px-2 py-1">
         <div className="text-[10px] max-w-[90px] truncate">{order.notes ?? '—'}</div>
+      </TableCell>
+
+      {/* Col 12: Hành động */}
+      <TableCell className="px-1 py-1 whitespace-nowrap">
+        {onComplete && (
+          <button
+            onClick={onComplete}
+            title="Hoàn thành phiếu nhập"
+            className="flex items-center gap-0.5 text-[9px] font-medium text-green-700 hover:text-green-800 bg-green-50 hover:bg-green-100 rounded px-1.5 py-0.5 transition-colors"
+          >
+            <CheckCircle className="h-3 w-3" />
+            <span>HT</span>
+          </button>
+        )}
+        {onUncomplete && (
+          <button
+            onClick={onUncomplete}
+            title="Gỡ hoàn thành"
+            className="flex items-center gap-0.5 text-[9px] font-medium text-slate-500 hover:text-amber-600 bg-slate-100 hover:bg-amber-50 rounded px-1.5 py-0.5 transition-colors"
+          >
+            <RotateCcw className="h-3 w-3" />
+            <span>Gỡ</span>
+          </button>
+        )}
+        {!onComplete && !onUncomplete && (
+          <span className="text-[9px] text-slate-300">—</span>
+        )}
       </TableCell>
     </TableRow>
   )

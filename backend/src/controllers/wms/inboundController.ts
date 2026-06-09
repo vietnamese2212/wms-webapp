@@ -414,22 +414,82 @@ export async function completeOrder(req: Request, res: Response) {
       .select(ORDER_SELECT).maybeSingle()
     if (error) throw error
 
-    // Nếu là phiếu TRANSFER — kiểm tra toàn bộ phiếu cùng TmsOrder đã COMPLETED chưa
-    if (existing.source_type === 'TRANSFER' && existing.tms_order_id) {
-      const { data: siblings } = await supabase
+    let tmsWarning: { cancelled_count: number; order_code: string } | null = null
+
+    if (existing.tms_order_id) {
+      // Lấy toàn bộ phiếu cùng TmsOrder (kể cả CANCELLED)
+      const { data: allSiblings } = await supabase
         .from('ProductionImport')
         .select('id, status')
         .eq('tms_order_id', existing.tms_order_id)
-        .neq('status', 'CANCELLED')
-      const allDone = (siblings ?? []).every((s: { status: string }) => s.status === 'COMPLETED')
+      const nonCancelled = (allSiblings ?? []).filter((s: { status: string }) => s.status !== 'CANCELLED')
+      const cancelledCount = (allSiblings ?? []).length - nonCancelled.length
+      const allDone = nonCancelled.every((s: { status: string }) => s.status === 'COMPLETED')
+
       if (allDone) {
+        if (cancelledCount > 0) {
+          // Có phiếu bị hủy → không auto-complete TmsOrder, cảnh báo
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: tmsO } = await (supabase.from('TmsOrder') as any)
+            .select('order_code').eq('id', existing.tms_order_id).maybeSingle()
+          tmsWarning = { cancelled_count: cancelledCount, order_code: tmsO?.order_code ?? '' }
+        } else {
+          // Auto-complete TmsOrder
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: tmsOrder } = await (supabase.from('TmsOrder') as any)
+            .select('transfer_gdo_id, order_code').eq('id', existing.tms_order_id).maybeSingle()
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (supabase.from('TmsOrder') as any)
+            .update({ status: 'DONE', completed_at: nowTs, updated_at: nowTs })
+            .eq('id', existing.tms_order_id)
+          // Nếu là TRANSFER: cập nhật GDO
+          if (existing.source_type === 'TRANSFER' && tmsOrder?.transfer_gdo_id) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            await (supabase.from('GroupDeliveryOrder') as any)
+              .update({ transfer_status: 'DELIVERED', updated_at: nowTs })
+              .eq('id', tmsOrder.transfer_gdo_id)
+          }
+        }
+      }
+    }
+
+    const withCount = await attachCount(updated)
+    emitInboundChanged()
+    ok(res, { ...withCount, tms_warning: tmsWarning })
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+}
+
+// ─── Uncomplete order (revert COMPLETED → OPEN) ───────────────
+
+export async function uncompleteOrder(req: Request, res: Response) {
+  try {
+    const { data: existing } = await supabase
+      .from('ProductionImport').select('id, status, source_type, tms_order_id').eq('id', req.params.id).maybeSingle()
+    if (!existing) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
+    if (existing.status !== 'COMPLETED') return fail(res, 400, 'NOT_COMPLETED', 'Phiếu nhập chưa ở trạng thái hoàn thành')
+
+    const nowTs = new Date().toISOString()
+    const { data: updated, error } = await supabase
+      .from('ProductionImport')
+      .update({ status: 'OPEN', updated_by: req.body.updated_by ?? null, updated_at: nowTs })
+      .eq('id', req.params.id)
+      .select(ORDER_SELECT).maybeSingle()
+    if (error) throw error
+
+    if (existing.tms_order_id) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: tmsOrder } = await (supabase.from('TmsOrder') as any)
+        .select('status, transfer_gdo_id').eq('id', existing.tms_order_id).maybeSingle()
+      if (tmsOrder?.status === 'DONE') {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: tmsOrder } = await (supabase.from('TmsOrder') as any)
-          .select('transfer_gdo_id').eq('id', existing.tms_order_id).single()
-        if (tmsOrder?.transfer_gdo_id) {
+        await (supabase.from('TmsOrder') as any)
+          .update({ status: 'PENDING', completed_at: null, updated_at: nowTs })
+          .eq('id', existing.tms_order_id)
+        // Nếu là TRANSFER: revert GDO transfer_status
+        if (existing.source_type === 'TRANSFER' && tmsOrder.transfer_gdo_id) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           await (supabase.from('GroupDeliveryOrder') as any)
-            .update({ transfer_status: 'DELIVERED', updated_at: nowTs })
+            .update({ transfer_status: 'IN_TRANSIT', updated_at: nowTs })
             .eq('id', tmsOrder.transfer_gdo_id)
         }
       }

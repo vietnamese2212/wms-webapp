@@ -295,6 +295,19 @@ export function useCompleteInboundOrder() {
     onSuccess: (_d, id) => {
       qc.invalidateQueries({ queryKey: ['inbound-orders'] })
       qc.invalidateQueries({ queryKey: ['inbound-order', id] })
+      qc.invalidateQueries({ queryKey: ['tms-orders'] })
+    },
+  })
+}
+
+export function useUncompleteInboundOrder() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.post(`/wms/inbound-orders/${id}/uncomplete`).then((r) => r.data.data),
+    onSuccess: (_d, id) => {
+      qc.invalidateQueries({ queryKey: ['inbound-orders'] })
+      qc.invalidateQueries({ queryKey: ['inbound-order', id] })
+      qc.invalidateQueries({ queryKey: ['tms-orders'] })
     },
   })
 }

@@ -27,6 +27,8 @@ export const MODULES = {
       delete_pallet:      'Xóa pallet (của mình)',
       force_delete_pallet:'Xóa pallet (bất kỳ)',
       cancel:             'Hủy phiếu',
+      complete:           'Hoàn thành phiếu',
+      uncomplete:         'Gỡ hoàn thành phiếu',
     },
   },
   outbound: {

@@ -198,12 +198,12 @@ export async function listOrders(req: Request, res: Response) {
     const transferGdoIds = [...new Set(filtered.filter((o: any) => o.source_type === 'TRANSFER' && o.from_gdo_id).map((o: any) => o.from_gdo_id as string))]
     const codesByGdo = new Map<string, string[]>()
     if (transferGdoIds.length > 0) {
-      const { data: dos } = await (supabase.from('OutboundDelivery') as any).select('gdo_id, code').in('gdo_id', transferGdoIds)
+      const { data: dos } = await (supabase.from('OutboundDelivery') as any).select('gdo_id, delivery_code').in('gdo_id', transferGdoIds)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       for (const d of (dos ?? []) as any[]) {
-        if (!d.code) continue
+        if (!d.delivery_code) continue
         const arr = codesByGdo.get(d.gdo_id) ?? []
-        arr.push(d.code)
+        arr.push(d.delivery_code)
         codesByGdo.set(d.gdo_id, arr)
       }
     }

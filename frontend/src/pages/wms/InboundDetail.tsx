@@ -808,6 +808,20 @@ export default function InboundDetail() {
 
           {/* Row 2: info chips */}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-600">
+            {((order as any).from_gdo_delivery_codes?.length ?? 0) > 0 && (
+              <span className="flex items-center gap-1">
+                <span className="text-slate-400 text-[10px]">Số DO:</span>
+                <span className="font-mono font-semibold text-blue-700">{(order as any).from_gdo_delivery_codes.join(' · ')}</span>
+              </span>
+            )}
+
+            {(order as any).tms_order?.order_code && (
+              <span className="flex items-center gap-1">
+                <span className="text-slate-400 text-[10px]">Mã lệnh:</span>
+                <span className="font-mono font-semibold text-purple-700">{(order as any).tms_order.order_code}</span>
+              </span>
+            )}
+
             <span className="flex items-center gap-1">
               <Package className="h-3 w-3 text-slate-400 shrink-0" />
               <span className="font-medium">{order.material?.material_code}</span>

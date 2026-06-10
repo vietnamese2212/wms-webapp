@@ -357,10 +357,20 @@ export async function getOrder(req: Request, res: Response) {
       if (posmEntry) allEntries = [posmEntry as any, ...allEntries]
     }
 
+    // Attach delivery codes (Số DO) for TRANSFER orders
+    const fromGdoId = (order as any).from_gdo_id as string | null
+    let fromGdoDeliveryCodes: string[] = []
+    if (fromGdoId) {
+      const { data: dos } = await (supabase.from('OutboundDelivery') as any)
+        .select('delivery_code').eq('gdo_id', fromGdoId)
+      fromGdoDeliveryCodes = ((dos ?? []) as any[]).map((d: any) => d.delivery_code).filter(Boolean)
+    }
+
     ok(res, {
       ...(order as unknown as Record<string, unknown>),
       inventory_entries: allEntries,
       _count: { inventory_entries: allEntries.length },
+      from_gdo_delivery_codes: fromGdoDeliveryCodes,
     })
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }

@@ -225,6 +225,7 @@ Không được hiển thị thiếu thông tin trong table ( kể cả dữ li�
 
 **Chung:** Desktop sidebar 240px · Mobile bottom nav · Cards `rounded-xl shadow-sm border border-slate-200 p-4`
 
+** App xây dựng để sử dụng giữa Kho tổng và Kho NPP, nếu kho nhận có trong danh sách NPP thì sẽ có inbound tại kho nhận, kho nhận có thể sử dụng chức năng nhập hàng, tồn kho bình thường
 ---
 
 ## Development

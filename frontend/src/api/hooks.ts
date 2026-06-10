@@ -324,16 +324,6 @@ export function useCancelInboundOrder() {
   })
 }
 
-export function useRecreateInboundOrder() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (id: string) => apiClient.post(`/wms/inbound-orders/${id}/recreate`).then((r) => r.data.data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['inbound-orders'] })
-    },
-  })
-}
-
 export function useScanPallet() {
   const qc = useQueryClient()
   return useMutation({
@@ -1821,12 +1811,25 @@ export function useCancelTransferReceipt() {
   })
 }
 
+export function useCreateOneInbound() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ tmsOrderId, material_id }: { tmsOrderId: string; material_id: string }) =>
+      apiClient.post(`/tms/orders/${tmsOrderId}/create-one-inbound`, { material_id }).then(r => r.data.data),
+    onSuccess: (_d, v) => {
+      qc.invalidateQueries({ queryKey: ['inbound-by-gdo'] })
+      qc.invalidateQueries({ queryKey: ['inbound-orders'] })
+      qc.invalidateQueries({ queryKey: ['transfer-goods', v.tmsOrderId] })
+    },
+  })
+}
+
 export function useActiveImportsByGdo(gdoId?: string | null) {
   return useQuery({
     queryKey: ['inbound-by-gdo', gdoId],
     queryFn: async () => {
       const { data } = await apiClient.get('/wms/inbound-orders', { params: { from_gdo_id: gdoId } })
-      return (data.data as { status: string }[]).filter(o => o.status !== 'CANCELLED')
+      return data.data as { material_id: string; status: string; id: string; import_code: string }[]
     },
     enabled: !!gdoId,
     staleTime: 15_000,

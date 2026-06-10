@@ -21,7 +21,7 @@ import {
   usePlanLinesByOrder, usePlanVsActual, useBulkCreatePlanLinesForOrder, useMaterials,
   useBulkCreatePlanLines, useUpdatePlanLine, useDeletePlanLine,
   useTransferOrders, useCreateTransferOrder, useConfirmTransferReceipt, useCancelTransferReceipt, useGDOs, useTransferGoods,
-  useActiveImportsByGdo,
+  useActiveImportsByGdo, useCreateOneInbound,
   type TransferOrder,
 } from '@/api/hooks'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -1997,6 +1997,11 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
   const [confirmErr, setConfirmErr]     = useState('')
   const { mutateAsync: confirmReceipt, isPending: confirming } = useConfirmTransferReceipt()
   const { mutateAsync: cancelReceipt,  isPending: cancelling } = useCancelTransferReceipt()
+  const { mutate: createOneInbound, isPending: creatingInbound, variables: creatingVar } = useCreateOneInbound()
+
+  const missingMaterials = tStatus === 'RECEIVING'
+    ? goods.filter(g => !activeImports.some((ai) => ai.material_id === g.material_id))
+    : []
 
   const hasPallets = goods.some(g => g.pallets.length > 0)
   const allExpanded = hasPallets && goods.filter(g => g.pallets.length > 0).every(g => expandedMats.has(g.material_id))
@@ -2171,6 +2176,27 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
               )}
             </div>
           </div>
+
+          {/* Missing inbound orders banner */}
+          {missingMaterials.length > 0 && (
+            <div className="px-4 py-2 border-b bg-amber-50 shrink-0">
+              <p className="text-[10px] font-medium text-amber-700 mb-1.5">
+                {missingMaterials.length} mã hàng chưa có phiếu nhập — bấm "Tạo phiếu" để tạo lại:
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {missingMaterials.map(g => (
+                  <button
+                    key={g.material_id}
+                    disabled={creatingInbound && creatingVar?.material_id === g.material_id}
+                    onClick={() => order && createOneInbound({ tmsOrderId: order.id, material_id: g.material_id })}
+                    className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded border border-amber-300 bg-white text-amber-800 hover:bg-amber-100 disabled:opacity-50 font-mono font-semibold"
+                  >
+                    {creatingInbound && creatingVar?.material_id === g.material_id ? 'Đang tạo…' : `+ ${g.material_code ?? g.material_id.slice(0, 8)}`}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Goods table */}
           <div className="flex-1 min-h-0 overflow-auto">

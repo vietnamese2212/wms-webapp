@@ -754,6 +754,81 @@ export async function confirmTransferReceipt(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
+// POST /api/tms/orders/:id/create-one-inbound — tạo phiếu nhập cho 1 mã hàng bị thiếu
+export async function createOneInbound(req: Request, res: Response) {
+  try {
+    const { id } = req.params
+    const { material_id } = req.body as { material_id: string }
+    if (!material_id) return fail(res, 'Thiếu material_id', 400)
+
+    const t = new Date().toISOString()
+    const { data: tmsOrder } = await (supabase.from('TmsOrder') as any)
+      .select('id, destination_warehouse_id, transfer_gdo_id, warehouse:Warehouse!destination_warehouse_id(id, code)')
+      .eq('id', id).single()
+    if (!tmsOrder) return fail(res, 'Không tìm thấy lệnh chuyển kho', 404)
+    if (!tmsOrder.transfer_gdo_id) return fail(res, 'Lệnh không phải chuyển kho', 400)
+    if (!tmsOrder.destination_warehouse_id) return fail(res, 'Lệnh chưa có kho nhận', 400)
+
+    const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
+      .select('id, transfer_status').eq('id', tmsOrder.transfer_gdo_id).single()
+    if (!gdo || gdo.transfer_status !== 'RECEIVING')
+      return fail(res, 'GDO phải đang ở trạng thái Đang nhận', 400)
+
+    // Kiểm tra chưa có phiếu active cho mã hàng này trong TMS order
+    const { data: existing } = await (supabase.from('ProductionImport') as any)
+      .select('id').eq('tms_order_id', id).eq('material_id', material_id)
+    if ((existing ?? []).length > 0)
+      return fail(res, 'Đã có phiếu nhập cho mã hàng này', 409)
+
+    // Lấy planned_cartons từ GDO outbound items
+    const { data: dos } = await (supabase.from('OutboundDelivery') as any)
+      .select('id').eq('gdo_id', tmsOrder.transfer_gdo_id)
+    const doIds = (dos ?? []).map((d: { id: string }) => d.id)
+    let plannedCartons = 0
+    if (doIds.length > 0) {
+      const { data: items } = await (supabase.from('OutboundItem') as any)
+        .select('cartons_ordered').in('do_id', doIds).eq('material_id', material_id)
+      plannedCartons = (items ?? []).reduce((s: number, i: { cartons_ordered: number }) => s + (i.cartons_ordered || 0), 0)
+    }
+
+    // Lấy category của material
+    const { data: mat } = await (supabase.from('Material') as any)
+      .select('category').eq('id', material_id).maybeSingle()
+
+    // Generate import_code
+    const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+    const [vy, vm, vd] = vnDate.split('-')
+    const ddmmyy = `${vd}${vm}${vy.slice(2)}`
+    const whCode = (tmsOrder.warehouse as { code: string })?.code ?? 'XX'
+    const prefix = `${whCode}_N_${ddmmyy}_`
+    const { data: existingCodes } = await (supabase.from('ProductionImport') as any)
+      .select('import_code').ilike('import_code', `${prefix}%`)
+    const maxSeq = (existingCodes ?? []).reduce((max: number, r: { import_code: string }) => {
+      const n = parseInt(r.import_code.slice(prefix.length), 10)
+      return isNaN(n) ? max : Math.max(max, n)
+    }, 0)
+
+    const { data: created, error } = await (supabase.from('ProductionImport') as any).insert({
+      id:              randomUUID(),
+      import_code:     `${prefix}${String(maxSeq + 1).padStart(2, '0')}`,
+      warehouse_id:    tmsOrder.destination_warehouse_id,
+      material_id,
+      planned_cartons: plannedCartons || null,
+      planned_pallets: 0,
+      status:          'OPEN',
+      source_type:     'TRANSFER',
+      warehouse_type:  (mat as any)?.category ?? null,
+      import_date:     vnDate,
+      from_gdo_id:     tmsOrder.transfer_gdo_id,
+      tms_order_id:    id,
+      updated_at:      t,
+    }).select('id, import_code, status, material_id').maybeSingle()
+    if (error) throw error
+
+    return ok(res, created, 201)
+  } catch (e) { return fail(res, String(e)) }
+}
+
 // POST /api/tms/orders/:id/cancel-receipt
 export async function cancelTransferReceipt(req: Request, res: Response) {
   try {

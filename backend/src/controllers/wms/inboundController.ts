@@ -497,10 +497,11 @@ export async function uncompleteOrder(req: Request, res: Response) {
 export async function cancelOrder(req: Request, res: Response) {
   try {
     const { data: existing } = await supabase
-      .from('ProductionImport').select('status').eq('id', req.params.id).maybeSingle()
+      .from('ProductionImport')
+      .select('status, source_type, from_gdo_id')
+      .eq('id', req.params.id).maybeSingle()
     if (!existing) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (existing.status === 'COMPLETED') return fail(res, 400, 'ALREADY_COMPLETED', 'Phiếu nhập đã hoàn thành, không thể hủy')
-    if (existing.status === 'CANCELLED') return fail(res, 400, 'ALREADY_CANCELLED', 'Phiếu nhập đã bị hủy')
 
     const { count: entriesCount } = await supabase
       .from('InventoryEntry').select('id', { count: 'exact', head: true }).eq('import_order_id', req.params.id)
@@ -508,97 +509,25 @@ export async function cancelOrder(req: Request, res: Response) {
       return fail(res, 400, 'HAS_ENTRIES', 'Phiếu đã có pallet nhập, xóa hết pallet trước khi hủy')
 
     const nowTs = new Date().toISOString()
-    const { data: updated, error } = await supabase
-      .from('ProductionImport')
-      .update({ status: 'CANCELLED', updated_by: req.body.updated_by ?? null, updated_at: nowTs })
-      .eq('id', req.params.id)
-      .select(ORDER_SELECT).maybeSingle()
+    const { error } = await supabase.from('ProductionImport').delete().eq('id', req.params.id)
     if (error) throw error
 
-    // Nếu là phiếu TRANSFER: kiểm tra còn phiếu nào active không
+    // Nếu là phiếu TRANSFER: kiểm tra còn phiếu nào không
     // Nếu hết → reset GDO transfer_status về IN_TRANSIT để NPP có thể bắt đầu lại
-    if (updated?.source_type === 'TRANSFER' && updated?.from_gdo_id) {
+    if (existing.source_type === 'TRANSFER' && existing.from_gdo_id) {
       const { count: activeCount } = await supabase
         .from('ProductionImport')
         .select('id', { count: 'exact', head: true })
-        .eq('from_gdo_id', updated.from_gdo_id)
-        .neq('status', 'CANCELLED')
+        .eq('from_gdo_id', existing.from_gdo_id)
       if (!activeCount || activeCount === 0) {
         await (supabase.from('GroupDeliveryOrder') as any)
           .update({ transfer_status: 'IN_TRANSIT', updated_at: nowTs })
-          .eq('id', updated.from_gdo_id)
+          .eq('id', existing.from_gdo_id)
       }
     }
 
-    const withCount = await attachCount(updated)
     emitInboundChanged()
-    ok(res, withCount)
-  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
-}
-
-// ─── Recreate a cancelled TRANSFER inbound order ────────────
-
-export async function recreateOrder(req: Request, res: Response) {
-  try {
-    const { data: existing } = await supabase
-      .from('ProductionImport')
-      .select('id, status, source_type, warehouse_id, material_id, planned_cartons, warehouse_type, from_gdo_id, tms_order_id')
-      .eq('id', req.params.id).maybeSingle()
-    if (!existing) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
-    if (existing.status !== 'CANCELLED') return fail(res, 400, 'NOT_CANCELLED', 'Chỉ có thể tạo lại phiếu đã hủy')
-    if (existing.source_type !== 'TRANSFER') return fail(res, 400, 'NOT_TRANSFER', 'Chỉ có thể tạo lại phiếu chuyển kho')
-    if (!existing.tms_order_id || !existing.from_gdo_id) return fail(res, 400, 'MISSING_LINK', 'Phiếu không có liên kết TMS/GDO')
-
-    // Kiểm tra chưa có phiếu OPEN/COMPLETED cho cùng material trong TMS order này
-    const { data: activeSiblings } = await supabase
-      .from('ProductionImport')
-      .select('id, status')
-      .eq('tms_order_id', existing.tms_order_id)
-      .eq('material_id', existing.material_id)
-      .neq('status', 'CANCELLED')
-    if ((activeSiblings ?? []).length > 0)
-      return fail(res, 409, 'ALREADY_EXISTS', 'Đã có phiếu nhập đang hoạt động cho mã hàng này')
-
-    // Generate import_code
-    const { data: wh } = await supabase.from('Warehouse').select('code').eq('id', existing.warehouse_id).maybeSingle()
-    const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
-    const [vy, vm, vd] = vnDate.split('-')
-    const ddmmyy = `${vd}${vm}${vy.slice(2)}`
-    const prefix = `${(wh as any)?.code ?? 'XX'}_N_${ddmmyy}_`
-    const { data: existingCodes } = await supabase
-      .from('ProductionImport').select('import_code').ilike('import_code', `${prefix}%`)
-    const maxSeq = (existingCodes ?? []).reduce((max: number, r: { import_code: string }) => {
-      const n = parseInt(r.import_code.slice(prefix.length), 10)
-      return isNaN(n) ? max : Math.max(max, n)
-    }, 0)
-
-    const nowTs = new Date().toISOString()
-    const newId = randomUUID()
-    const { data: created, error } = await supabase.from('ProductionImport').insert({
-      id: newId,
-      import_code:    `${prefix}${String(maxSeq + 1).padStart(2, '0')}`,
-      warehouse_id:   existing.warehouse_id,
-      material_id:    existing.material_id,
-      planned_cartons: existing.planned_cartons,
-      planned_pallets: 0,
-      status:          'OPEN',
-      source_type:     'TRANSFER',
-      warehouse_type:  existing.warehouse_type,
-      import_date:     vnDate,
-      from_gdo_id:     existing.from_gdo_id,
-      tms_order_id:    existing.tms_order_id,
-      updated_at:      nowTs,
-    }).select(ORDER_SELECT).maybeSingle()
-    if (error) throw error
-
-    // Nếu GDO đã về IN_TRANSIT do tất cả bị hủy, đưa về RECEIVING
-    await (supabase.from('GroupDeliveryOrder') as any)
-      .update({ transfer_status: 'RECEIVING', updated_at: nowTs })
-      .eq('id', existing.from_gdo_id)
-      .eq('transfer_status', 'IN_TRANSIT')
-
-    emitInboundChanged()
-    ok(res, created, 201)
+    ok(res, { deleted: true })
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 

@@ -2336,20 +2336,59 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt }: { canEdit: boolean;
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null)
   const selectedOrder = orders.find(o => o.id === selectedOrderId) ?? null
 
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo]     = useState('')
+  const [khoXuatFilter, setKhoXuatFilter] = useState<string[]>([])
+  const [khoNhanFilter, setKhoNhanFilter] = useState<string[]>([])
+
+  const khoXuatOptions = React.useMemo<MSOpt[]>(() =>
+    [...new Map(orders.map(o => o.transfer_gdo?.warehouse).filter(Boolean)
+      .map(w => [w!.id, { value: w!.id, label: w!.name }])).values()], [orders])
+
+  const khoNhanOptions = React.useMemo<MSOpt[]>(() =>
+    [...new Map((orders as TransferOrder[]).map(o => (o as any).warehouse).filter(Boolean)
+      .map((w: { id: string; name: string }) => [w.id, { value: w.id, label: w.name }])).values()], [orders])
+
+  const filtered = React.useMemo(() => {
+    let list = orders as TransferOrder[]
+    if (dateFrom) list = list.filter(o => o.date >= dateFrom)
+    if (dateTo)   list = list.filter(o => o.date <= dateTo)
+    if (khoXuatFilter.length) list = list.filter(o => o.transfer_gdo?.warehouse?.id && khoXuatFilter.includes(o.transfer_gdo.warehouse.id))
+    if (khoNhanFilter.length) list = list.filter(o => (o as any).warehouse?.id && khoNhanFilter.includes((o as any).warehouse.id))
+    return list
+  }, [orders, dateFrom, dateTo, khoXuatFilter, khoNhanFilter])
+
   return (
     <div className="flex flex-col h-full">
       <TransferOrderDetail order={selectedOrder} canEdit={canEdit} canConfirmReceipt={canConfirmReceipt} onClose={() => setSelectedOrderId(null)} />
+      {/* ── Filter bar ── */}
+      <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b bg-white shrink-0">
+        <div className="flex items-center gap-1">
+          <span className="text-[10px] text-slate-500 shrink-0">Ngày xuất</span>
+          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+            className="h-7 text-xs border border-slate-200 rounded px-1.5 font-mono" />
+          <span className="text-[10px] text-slate-400">—</span>
+          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+            className="h-7 text-xs border border-slate-200 rounded px-1.5 font-mono" />
+          {(dateFrom || dateTo) && (
+            <button onClick={() => { setDateFrom(''); setDateTo('') }}
+              className="text-[10px] text-slate-400 hover:text-red-500 px-1">✕</button>
+          )}
+        </div>
+        <MultiSelectFilter label="Kho xuất" options={khoXuatOptions} selected={khoXuatFilter} onChange={setKhoXuatFilter} searchable />
+        <MultiSelectFilter label="Kho nhận" options={khoNhanOptions} selected={khoNhanFilter} onChange={setKhoNhanFilter} searchable />
+      </div>
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
         {isLoading ? (
           <div className="py-24 text-center text-sm text-slate-400">Đang tải...</div>
-        ) : orders.length === 0 ? (
+        ) : filtered.length === 0 ? (
           <div className="py-24 text-center text-sm text-slate-400">Không có lệnh chuyển kho nào</div>
         ) : (
           <>
             {/* ── Lệnh chuyển kho ── */}
             <>
               <div className="px-3 py-1.5 border-b bg-slate-50">
-                <span className="text-[10px] font-semibold text-slate-500">Lệnh chuyển kho ({orders.length})</span>
+                <span className="text-[10px] font-semibold text-slate-500">Lệnh chuyển kho ({filtered.length}{filtered.length < orders.length ? `/${orders.length}` : ''})</span>
                 <span className="ml-2 text-[9px] text-slate-400">Click vào dòng để xem chi tiết</span>
               </div>
                 <div className="overflow-x-auto">
@@ -2362,7 +2401,7 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt }: { canEdit: boolean;
                       </tr>
                     </thead>
                     <tbody>
-                      {orders.map(o => {
+                      {filtered.map(o => {
                         const tStatus = o.transfer_gdo?.transfer_status
                         const cfg = tStatus ? TRANSFER_STATUS_CFG[tStatus] : null
                         const slot = o.vehicle_slots?.[0]

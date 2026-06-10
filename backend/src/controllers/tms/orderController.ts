@@ -133,8 +133,11 @@ export async function createOrder(req: Request, res: Response) {
     const now = new Date().toISOString()
     const orderId = randomUUID()
 
-    let order_code = rawOrderCode as string | undefined
-    if (!order_code) {
+    const autoGenerate = !rawOrderCode
+    let order_code = rawOrderCode as string
+    let codePrefix = ''
+
+    if (autoGenerate) {
       // Tự sinh mã: X/N_MãKho_ddmmyy_STT
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: wh } = await (supabase.from('Warehouse') as any)
@@ -143,16 +146,15 @@ export async function createOrder(req: Request, res: Response) {
       const dirPrefix = direction === 'OUTBOUND' ? 'X' : 'N'
       const d = new Date(date)
       const ddmmyy = `${String(d.getDate()).padStart(2, '0')}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getFullYear()).slice(-2)}`
-      const prefix = `${dirPrefix}_${whCode}_${ddmmyy}`
+      codePrefix = `${dirPrefix}_${whCode}_${ddmmyy}`
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { count } = await (supabase.from('TmsOrder') as any)
         .select('id', { count: 'exact', head: true })
-        .like('order_code', `${prefix}_%`)
-      order_code = `${prefix}_${(count ?? 0) + 1}`
+        .like('order_code', `${codePrefix}_%`)
+      order_code = `${codePrefix}_${(count ?? 0) + 1}`
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error: ordErr } = await (supabase.from('TmsOrder') as any).insert({
+    const row = {
       id: orderId, order_code, date, warehouse_id,
       ncc_id: ncc_id || null, npp_name: npp_name || null,
       vehicle_type: vehicle_type || null, direction: direction || null,
@@ -164,7 +166,28 @@ export async function createOrder(req: Request, res: Response) {
       status: 'PENDING',
       created_by: user?.name || null, updated_by: user?.name || null,
       created_at: now, updated_at: now,
-    })
+    }
+
+    // Retry tối đa 5 lần nếu trùng mã tự sinh (race condition)
+    let ordErr: { code?: string; message: string } | null = null
+    for (let attempt = 0; attempt < 5; attempt++) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const res2 = await (supabase.from('TmsOrder') as any).insert({ ...row, order_code })
+      ordErr = res2.error
+      if (!ordErr) break
+      if (ordErr.code !== '23505') break
+      if (!autoGenerate) break // mã nhập tay → không retry
+      // Lấy số thứ tự hiện tại cao nhất rồi +1
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: existing } = await (supabase.from('TmsOrder') as any)
+        .select('order_code')
+        .like('order_code', `${codePrefix}_%`)
+        .order('order_code', { ascending: false })
+        .limit(1)
+      const lastCode = (existing?.[0]?.order_code ?? '') as string
+      const lastSeq = parseInt(lastCode.split('_').pop() ?? '0') || 0
+      order_code = `${codePrefix}_${lastSeq + 1}`
+    }
     if (ordErr) {
       if (ordErr.code === '23505') return fail(res, `Mã đơn "${order_code}" đã tồn tại`, 409)
       return fail(res, ordErr.message)

@@ -826,7 +826,7 @@ export default function InboundDetail() {
               <Package className="h-3 w-3 text-slate-400 shrink-0" />
               <span className="font-medium">{order.material?.material_code}</span>
               {order.material?.short_name && (
-                <span className="text-slate-500 hidden sm:inline">– {order.material.short_name}</span>
+                <span className="text-slate-500">– {order.material.short_name}</span>
               )}
             </span>
 

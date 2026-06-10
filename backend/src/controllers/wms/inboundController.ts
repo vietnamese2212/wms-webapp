@@ -819,7 +819,7 @@ export async function scanManual(req: Request, res: Response) {
 
     const { data: order } = await supabase
       .from('ProductionImport')
-      .select('id, status, material_id, warehouse_id, posm_entry_id')
+      .select('id, status, material_id, warehouse_id, posm_entry_id, material:Material!material_id(material_code)')
       .eq('id', order_id).maybeSingle()
     if (!order)                  return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (order.status !== 'OPEN') return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập không còn ở trạng thái mở')
@@ -837,15 +837,18 @@ export async function scanManual(req: Request, res: Response) {
 
     const now = new Date().toISOString()
     const cartonsNum = Math.max(0, Number(cartons) || 0)
+    const warehouseId = (order as any).warehouse_id as string | null
 
-    // Mã pallet chung theo material (deterministic, không phụ thuộc phiếu)
-    const sharedPalletCode = `POSM-${order.material_id.replace(/-/g, '').slice(0, 12)}`
+    // Mã pallet = mã hàng (1 row mỗi kho mỗi vật tư)
+    const sharedPalletCode = ((order as any).material as any)?.material_code
+      ?? `POSM-${order.material_id.replace(/-/g, '').slice(0, 12)}`
 
-    // Tìm pallet chung đã có chưa
+    // Tìm pallet chung đã có chưa (filter theo warehouse để mỗi kho có 1 row)
     const { data: existingPallet } = await supabase
       .from('InventoryEntry')
       .select('id, cartons_remaining, cartons_imported')
       .eq('pallet_code', sharedPalletCode)
+      .eq('warehouse_id', warehouseId)
       .maybeSingle()
 
     let entryId: string
@@ -857,7 +860,6 @@ export async function scanManual(req: Request, res: Response) {
         .update({
           cartons_remaining: existingPallet.cartons_remaining + cartonsNum,
           cartons_imported:  existingPallet.cartons_imported  + cartonsNum,
-          warehouse_id:      (order as any).warehouse_id ?? null,
           update_date:       vnDate(),
           updated_at:        now,
           updated_by:        employee_id ?? null,

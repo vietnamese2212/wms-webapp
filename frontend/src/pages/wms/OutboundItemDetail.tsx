@@ -301,6 +301,7 @@ export default function OutboundItemDetail() {
   const [detailEntryId,    setDetailEntryId]    = useState<string | null>(null)
   const [showLoscamDialog, setShowLoscamDialog] = useState(false)
   const [loscamCartons,    setLoscamCartons]    = useState('')
+  const [loscamError,      setLoscamError]      = useState('')
 
   // Ref để auto-open scan chỉ chạy 1 lần khi trang load lần đầu (tránh tái kích hoạt sau mỗi lần delete/confirm)
   const hasAutoScanned = useRef(false)
@@ -444,7 +445,7 @@ export default function OutboundItemDetail() {
         error={looseError}
       />
 
-      <Dialog open={showLoscamDialog} onOpenChange={v => { if (!v) setShowLoscamDialog(false) }}>
+      <Dialog open={showLoscamDialog} onOpenChange={v => { if (!v) { setShowLoscamDialog(false); setLoscamError('') } }}>
         <DialogContent className="sm:max-w-xs">
           <DialogHeader><DialogTitle className="text-base">Xác nhận số lượng</DialogTitle></DialogHeader>
           <div className="space-y-3 py-1">
@@ -453,21 +454,29 @@ export default function OutboundItemDetail() {
               <Input
                 type="number" min={0}
                 value={loscamCartons}
-                onChange={e => setLoscamCartons(e.target.value)}
+                onChange={e => { setLoscamCartons(e.target.value); setLoscamError('') }}
                 className="text-center font-semibold text-lg h-11"
                 autoFocus
               />
               <p className="text-xs text-slate-400 text-center">Kế hoạch: {item.cartons_ordered} thùng</p>
             </div>
+            {loscamError && <p className="text-xs text-red-600 text-center">{loscamError}</p>}
           </div>
           <DialogFooter className="gap-2">
-            <Button variant="outline" size="sm" onClick={() => setShowLoscamDialog(false)} disabled={completing}>Hủy</Button>
+            <Button variant="outline" size="sm" onClick={() => { setShowLoscamDialog(false); setLoscamError('') }} disabled={completing}>Hủy</Button>
             <Button size="sm" disabled={completing || isPaused || !gdo.started_at}
               onClick={() => {
                 const c = Math.max(0, parseInt(loscamCartons) || 0)
+                setLoscamError('')
                 manualComplete(
                   { gdoId: gdoId!, itemId: item.id, cartons: c },
-                  { onSettled: () => setShowLoscamDialog(false) }
+                  {
+                    onSuccess: () => setShowLoscamDialog(false),
+                    onError: (err) => {
+                      const msg = (err as import('axios').AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message
+                      setLoscamError(msg ?? 'Lỗi lưu số lượng')
+                    },
+                  }
                 )
               }}>
               {completing ? '…' : 'Xác nhận'}

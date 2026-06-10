@@ -291,7 +291,6 @@ export async function createGDO(req: Request, res: Response) {
     const itemsToInsert = items.map(item => {
       const matInfo = matMap.get(item.material_code)
       const material_type = matInfo?.category ?? null
-      const isSpecial = material_type === 'POSM' || material_type === 'Pallet Loscam'
       return {
         id: randomUUID(), do_id: doId,
         material_id: matInfo?.id ?? null,
@@ -299,7 +298,7 @@ export async function createGDO(req: Request, res: Response) {
         cartons_ordered: item.cartons_ordered,
         boxes_display: 0, weight: null, pallets_estimated: 0, loose_picking: 0,
         material_type, export_type: export_type ?? null, cartons_scanned: 0,
-        status: isSpecial ? 'COMPLETED' : 'PENDING', updated_at: now(),
+        status: 'PENDING', updated_at: now(),
       }
     })
     const { error: itemErr } = await (supabase.from('OutboundItem') as any).insert(itemsToInsert)
@@ -577,8 +576,7 @@ export async function updateGDO(req: Request, res: Response) {
         } else {
           const matInfo = matMap.get(item.material_code)
           const material_type = matInfo?.category ?? null
-          const isSpecial = material_type === 'POSM' || material_type === 'Pallet Loscam'
-          toInsert.push({ id: randomUUID(), do_id: doId, material_id: matInfo?.id ?? null, material_code_raw: item.material_code, cartons_ordered: item.cartons_ordered, boxes_display: 0, weight: null, pallets_estimated: 0, loose_picking: item.loose_picking ?? 0, header_text: item.header_text ?? null, material_type, export_type: export_type ?? null, cartons_scanned: 0, status: isSpecial ? 'COMPLETED' : 'PENDING', updated_at: t })
+          toInsert.push({ id: randomUUID(), do_id: doId, material_id: matInfo?.id ?? null, material_code_raw: item.material_code, cartons_ordered: item.cartons_ordered, boxes_display: 0, weight: null, pallets_estimated: 0, loose_picking: item.loose_picking ?? 0, header_text: item.header_text ?? null, material_type, export_type: export_type ?? null, cartons_scanned: 0, status: 'PENDING', updated_at: t })
         }
       }
       await Promise.all([
@@ -970,8 +968,7 @@ async function mergePausedGDO(
       const existing = existingDO ? existingItemByKey.get(itemKey(existingDO.id, mat_code)) : null
       if (existing) {
         const scanned   = Number(existing.cartons_scanned)
-        const newStatus = material_type === 'POSM' ? 'COMPLETED'
-          : scanned >= newCartons ? 'COMPLETED'
+        const newStatus = scanned >= newCartons ? 'COMPLETED'
           : scanned > 0 ? 'IN_PROGRESS'
           : 'PENDING'
         await (supabase.from('OutboundItem') as any).update({ ...fields, status: newStatus }).eq('id', existing.id)
@@ -979,7 +976,7 @@ async function mergePausedGDO(
         await (supabase.from('OutboundItem') as any).insert({
           id: randomUUID(), do_id: doId, ...fields,
           cartons_scanned: 0,
-          status: material_type === 'POSM' ? 'COMPLETED' : 'PENDING',
+          status: 'PENDING',
         })
       }
     }
@@ -1179,7 +1176,7 @@ export async function uploadExcel(req: Request, res: Response) {
               date_required:  parseDecimal(row['%Date_Yêu cầu']) || null,
               cs_responsible: String(row['CS phụ trách']  ?? '').trim() || null,
               cartons_scanned: 0,
-              status: material_type === 'POSM' ? 'COMPLETED' : 'PENDING',
+              status: 'PENDING',
               updated_at: now(),
             })
           }
@@ -1909,13 +1906,55 @@ export async function manualCompleteItem(req: Request, res: Response) {
     const { cartons } = req.body as { cartons?: number }
 
     const [{ data: gdo }, { data: item }] = await Promise.all([
-      (supabase.from('GroupDeliveryOrder') as any).select('status').eq('id', gdoId).single(),
-      (supabase.from('OutboundItem') as any).select('*').eq('id', itemId).single(),
+      (supabase.from('GroupDeliveryOrder') as any).select('status, warehouse_id').eq('id', gdoId).single(),
+      (supabase.from('OutboundItem') as any)
+        .select('id, do_id, material_id, material_type, cartons_ordered, cartons_scanned')
+        .eq('id', itemId).single(),
     ])
     if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng — không thể cập nhật', 400)
     if (!item) return fail(res, 'Không tìm thấy mặt hàng', 404)
 
     const ctn = (cartons != null && Number(cartons) >= 0) ? Math.round(Number(cartons)) : Number(item.cartons_ordered)
+
+    // POSM / Pallet Loscam: kiểm tra và trừ tồn kho
+    const isSpecial = item.material_type === 'POSM' || item.material_type === 'Pallet Loscam'
+    if (isSpecial && item.material_id && gdo?.warehouse_id) {
+      const { data: invEntry } = await supabase
+        .from('InventoryEntry')
+        .select('id, cartons_remaining, cartons_imported')
+        .eq('material_id', item.material_id)
+        .eq('warehouse_id', gdo.warehouse_id)
+        .is('location_id', null)
+        .maybeSingle()
+
+      const oldCartons = Number(item.cartons_scanned) || 0
+      const delta = ctn - oldCartons
+
+      if (delta > 0) {
+        const available = Number(invEntry?.cartons_remaining ?? 0)
+        if (available < delta) {
+          return fail(res, 400, 'INSUFFICIENT_STOCK',
+            `Không đủ tồn kho — còn ${available} thùng${oldCartons > 0 ? `, cần thêm ${delta} thùng` : ''}`)
+        }
+        if (invEntry) {
+          const newRemaining = available - delta
+          const imported = Number(invEntry.cartons_imported)
+          await supabase.from('InventoryEntry').update({
+            cartons_remaining: newRemaining,
+            status: newRemaining === 0 ? 'EXPORTED' : newRemaining < imported ? 'PARTIAL' : 'IN_STOCK',
+            updated_at: now(),
+          }).eq('id', invEntry.id)
+        }
+      } else if (delta < 0 && invEntry) {
+        const newRemaining = Number(invEntry.cartons_remaining) + Math.abs(delta)
+        const imported = Number(invEntry.cartons_imported)
+        await supabase.from('InventoryEntry').update({
+          cartons_remaining: newRemaining,
+          status: newRemaining === 0 ? 'EXPORTED' : newRemaining < imported ? 'PARTIAL' : 'IN_STOCK',
+          updated_at: now(),
+        }).eq('id', invEntry.id)
+      }
+    }
 
     const t = now()
     await (supabase.from('OutboundItem') as any)

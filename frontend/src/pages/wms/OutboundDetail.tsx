@@ -337,7 +337,6 @@ function EditTransportDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; 
 // ─── Row color by item status ──────────────────────────────────
 
 function itemTextCls(item: OutboundItem): string {
-  if (item.material_type === 'POSM') return 'text-green-700'
   if (item.cartons_ordered === 0) return ''
   if (item.cartons_scanned >= item.cartons_ordered) return 'text-blue-700'
   if (item.cartons_scanned > 0) return 'text-amber-700'

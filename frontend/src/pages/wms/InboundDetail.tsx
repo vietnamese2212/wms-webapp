@@ -37,7 +37,6 @@ import type { InboundOrder, InboundOrderStatus, PalletEntry } from '@/types'
 const statusVariant: Record<InboundOrderStatus, string> = {
   OPEN:      'bg-amber-100 text-amber-800',
   COMPLETED: 'bg-green-100 text-green-800',
-  CANCELLED: 'bg-slate-100 text-slate-600',
 }
 function InboundStatusBadge({ status }: { status: string }) {
   const cls = statusVariant[status as InboundOrderStatus] ?? 'bg-slate-100 text-slate-600'

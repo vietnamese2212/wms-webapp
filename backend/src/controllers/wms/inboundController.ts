@@ -262,10 +262,9 @@ export async function createOrder(req: Request, res: Response) {
             .in('import_order_id', activeIds)
           if (entriesCount && entriesCount > 0)
             return fail(res, 409, 'GATE_REG_TAKEN', `Lượt vào này đã có phiếu nhập ${(activeImports as { import_code: string }[])[0].import_code}`)
-          // Không có pallet — tự động hủy phiếu rỗng để cho phép tạo lại
-          const now = new Date().toISOString()
+          // Không có pallet — xóa phiếu rỗng để cho phép tạo lại
           await supabase.from('ProductionImport')
-            .update({ status: 'CANCELLED', updated_at: now })
+            .delete()
             .in('id', activeIds)
         }
         // Propagate tms_order_id từ gate registration nếu chưa có
@@ -414,7 +413,6 @@ export async function completeOrder(req: Request, res: Response) {
       .from('ProductionImport').select('id, status, source_type, tms_order_id').eq('id', req.params.id).maybeSingle()
     if (!existing) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (existing.status === 'COMPLETED') return fail(res, 400, 'ALREADY_COMPLETED', 'Phiếu nhập đã hoàn thành')
-    if (existing.status === 'CANCELLED') return fail(res, 400, 'ORDER_CANCELLED', 'Phiếu nhập đã bị hủy')
 
     const nowTs = new Date().toISOString()
     const { data: updated, error } = await supabase

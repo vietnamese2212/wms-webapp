@@ -1488,7 +1488,6 @@ export default function Inbound() {
 }
 
 function rowBg(order: InboundOrder): string {
-  if (order.status === 'CANCELLED') return 'bg-slate-50 opacity-60'
   if (order.status === 'COMPLETED') return 'bg-blue-50 hover:bg-blue-100'
   // OPEN
   const used = order.location_used_slots ?? 0

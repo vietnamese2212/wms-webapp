@@ -115,7 +115,6 @@ export function getLocationCode(location: { zone: string; row: string; shelf: st
 export const inboundOrderStatusLabel: Record<string, string> = {
   OPEN:      'Đang mở',
   COMPLETED: 'Hoàn thành',
-  CANCELLED: 'Đã hủy',
 }
 
 export const palletStatusLabel: Record<string, string> = {

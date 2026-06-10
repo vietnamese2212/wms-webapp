@@ -1997,11 +1997,7 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
   const [confirmErr, setConfirmErr]     = useState('')
   const { mutateAsync: confirmReceipt, isPending: confirming } = useConfirmTransferReceipt()
   const { mutateAsync: cancelReceipt,  isPending: cancelling } = useCancelTransferReceipt()
-  const { mutate: createOneInbound, isPending: creatingInbound, variables: creatingVar } = useCreateOneInbound()
-
-  const missingMaterials = tStatus === 'RECEIVING'
-    ? goods.filter(g => !activeImports.some((ai) => ai.material_id === g.material_id))
-    : []
+  const { mutateAsync: createOneInbound, isPending: creatingInbound } = useCreateOneInbound()
 
   const hasPallets = goods.some(g => g.pallets.length > 0)
   const allExpanded = hasPallets && goods.filter(g => g.pallets.length > 0).every(g => expandedMats.has(g.material_id))
@@ -2024,6 +2020,9 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
 
   const slot = order?.vehicle_slots?.[0]
   const tStatus = order?.transfer_gdo?.transfer_status
+  const missingMaterials = tStatus === 'RECEIVING'
+    ? goods.filter(g => !activeImports.some((ai) => ai.material_id === g.material_id))
+    : []
   const cfg = tStatus ? TRANSFER_STATUS_CFG[tStatus] : null
   const totalScanned = goods.reduce((s, g) => s + g.pallets.reduce((ps, p) => ps + (p.cartons_scanned ?? 0), 0), 0)
   const dvvtDisplay = order?.ncc?.name ?? order?.transfer_gdo?.dvvt ?? null
@@ -2057,35 +2056,59 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                   </Button>
                 )}
                 {canConfirmReceipt && tStatus === 'RECEIVING' && (
-                  <TooltipProvider delayDuration={100}>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <span>
-                          <Button size="sm" variant="outline"
-                            className="h-7 text-xs border-red-200 text-red-600 hover:bg-red-50"
-                            disabled={cancelling || hasActiveImports}
-                            onClick={async () => {
-                              if (!order) return
-                              if (!confirm('Hủy nhận hàng? Trạng thái sẽ về Đang vận chuyển.')) return
-                              setConfirmErr('')
-                              try {
-                                await cancelReceipt(order.id)
-                              } catch (e: unknown) {
-                                const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
-                                setConfirmErr(msg ?? 'Lỗi hủy nhận hàng')
-                              }
-                            }}>
-                            {cancelling ? 'Đang hủy...' : 'Hủy nhận'}
-                          </Button>
-                        </span>
-                      </TooltipTrigger>
-                      {hasActiveImports && (
-                        <TooltipContent side="bottom">
-                          Còn {activeImports.length} phiếu nhập đang hoạt động — hủy từng phiếu ở Nhập kho trước
-                        </TooltipContent>
-                      )}
-                    </Tooltip>
-                  </TooltipProvider>
+                  <>
+                    <TooltipProvider delayDuration={100}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span>
+                            <Button size="sm" variant="outline"
+                              className="h-7 text-xs border-red-200 text-red-600 hover:bg-red-50"
+                              disabled={cancelling || hasActiveImports}
+                              onClick={async () => {
+                                if (!order) return
+                                if (!confirm('Hủy nhận hàng? Trạng thái sẽ về Đang vận chuyển.')) return
+                                setConfirmErr('')
+                                try {
+                                  await cancelReceipt(order.id)
+                                } catch (e: unknown) {
+                                  const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
+                                  setConfirmErr(msg ?? 'Lỗi hủy nhận hàng')
+                                }
+                              }}>
+                              {cancelling ? 'Đang hủy...' : 'Hủy nhận'}
+                            </Button>
+                          </span>
+                        </TooltipTrigger>
+                        {hasActiveImports && (
+                          <TooltipContent side="bottom">
+                            Còn {activeImports.length} phiếu nhập đang hoạt động — hủy từng phiếu ở Nhập kho trước
+                          </TooltipContent>
+                        )}
+                      </Tooltip>
+                    </TooltipProvider>
+                    {missingMaterials.length > 0 && (
+                      <TooltipProvider delayDuration={100}>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button size="sm" variant="outline"
+                              className="h-7 text-xs border-amber-400 text-amber-700 hover:bg-amber-50"
+                              disabled={creatingInbound}
+                              onClick={async () => {
+                                if (!order) return
+                                for (const g of missingMaterials) {
+                                  await createOneInbound({ tmsOrderId: order.id, material_id: g.material_id })
+                                }
+                              }}>
+                              {creatingInbound ? 'Đang tạo...' : 'Tạo phiếu lại'}
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent side="bottom">
+                            Mã hàng {missingMaterials.map(g => g.material_code ?? g.material_id.slice(0, 8)).join(', ')} đang không có phiếu nhập
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    )}
+                  </>
                 )}
                 {canEdit && (
                   <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setShowUpdate(true)}>
@@ -2176,27 +2199,6 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
               )}
             </div>
           </div>
-
-          {/* Missing inbound orders banner */}
-          {missingMaterials.length > 0 && (
-            <div className="px-4 py-2 border-b bg-amber-50 shrink-0">
-              <p className="text-[10px] font-medium text-amber-700 mb-1.5">
-                {missingMaterials.length} mã hàng chưa có phiếu nhập — bấm "Tạo phiếu" để tạo lại:
-              </p>
-              <div className="flex flex-wrap gap-1.5">
-                {missingMaterials.map(g => (
-                  <button
-                    key={g.material_id}
-                    disabled={creatingInbound && creatingVar?.material_id === g.material_id}
-                    onClick={() => order && createOneInbound({ tmsOrderId: order.id, material_id: g.material_id })}
-                    className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded border border-amber-300 bg-white text-amber-800 hover:bg-amber-100 disabled:opacity-50 font-mono font-semibold"
-                  >
-                    {creatingInbound && creatingVar?.material_id === g.material_id ? 'Đang tạo…' : `+ ${g.material_code ?? g.material_id.slice(0, 8)}`}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
 
           {/* Goods table */}
           <div className="flex-1 min-h-0 overflow-auto">

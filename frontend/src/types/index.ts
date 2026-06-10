@@ -277,7 +277,7 @@ export interface Material {
 }
 
 // WMS – Inbound
-export type InboundOrderStatus = 'OPEN' | 'COMPLETED' | 'CANCELLED'
+export type InboundOrderStatus = 'OPEN' | 'COMPLETED'
 
 export interface InboundOrder {
   id:              string

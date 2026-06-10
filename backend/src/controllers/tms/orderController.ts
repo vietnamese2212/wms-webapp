@@ -119,13 +119,12 @@ export async function listOrders(req: Request, res: Response) {
 export async function createOrder(req: Request, res: Response) {
   try {
     const {
-      order_code, date, warehouse_id, ncc_id, npp_name,
+      order_code: rawOrderCode, date, warehouse_id, ncc_id, npp_name,
       vehicle_type, direction, warehouse_type,
       planned_boxes, planned_pallets, planned_tons,
       gdo_refs, notes, priority,
     } = req.body
     if (!date || !warehouse_id) return fail(res, 'date và warehouse_id là bắt buộc', 400)
-    if (!order_code) return fail(res, 'order_code là bắt buộc', 400)
     if (!direction)  return fail(res, 'direction là bắt buộc', 400)
     if (!ncc_id)     return fail(res, 'ĐVVT là bắt buộc', 400)
 
@@ -133,6 +132,24 @@ export async function createOrder(req: Request, res: Response) {
     const user = (req as any).user
     const now = new Date().toISOString()
     const orderId = randomUUID()
+
+    let order_code = rawOrderCode as string | undefined
+    if (!order_code) {
+      // Tự sinh mã: X/N_MãKho_ddmmyy_STT
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: wh } = await (supabase.from('Warehouse') as any)
+        .select('code').eq('id', warehouse_id).maybeSingle()
+      const whCode = (wh?.code ?? 'KHO') as string
+      const dirPrefix = direction === 'OUTBOUND' ? 'X' : 'N'
+      const d = new Date(date)
+      const ddmmyy = `${String(d.getDate()).padStart(2, '0')}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getFullYear()).slice(-2)}`
+      const prefix = `${dirPrefix}_${whCode}_${ddmmyy}`
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { count } = await (supabase.from('TmsOrder') as any)
+        .select('id', { count: 'exact', head: true })
+        .like('order_code', `${prefix}_%`)
+      order_code = `${prefix}_${(count ?? 0) + 1}`
+    }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error: ordErr } = await (supabase.from('TmsOrder') as any).insert({

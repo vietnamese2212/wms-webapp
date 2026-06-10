@@ -330,7 +330,7 @@ function BookSlotDialog({ vslot, order, onClose, allOrders }: {
 
 type OrderFormData = {
   date: string; warehouse_id: string; npp_name: string; ncc_id: string
-  order_code: string; direction: 'OUTBOUND' | 'INBOUND' | ''
+  direction: 'OUTBOUND' | 'INBOUND' | ''
   warehouse_type: string; vehicle_type: string
   planned_boxes: string; planned_pallets: string; planned_tons: string
   gdo_refs: string; notes: string; priority: boolean
@@ -338,7 +338,7 @@ type OrderFormData = {
 
 const EMPTY_FORM = (date: string, warehouse_id: string): OrderFormData => ({
   date, warehouse_id, npp_name: '', ncc_id: '',
-  order_code: '', direction: 'OUTBOUND',
+  direction: 'OUTBOUND',
   warehouse_type: '', vehicle_type: '',
   planned_boxes: '', planned_pallets: '', planned_tons: '',
   gdo_refs: '', notes: '', priority: false,
@@ -663,7 +663,6 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
       setForm({
         date: order.date, warehouse_id: order.warehouse_id,
         npp_name: order.npp_name ?? '', ncc_id: order.ncc_id ?? '',
-        order_code: order.order_code,
         direction: (order.direction as 'OUTBOUND' | 'INBOUND') ?? 'OUTBOUND',
         warehouse_type: order.warehouse_type ?? '', vehicle_type: order.vehicle_type ?? '',
         planned_boxes: order.planned_boxes != null ? String(order.planned_boxes) : '',
@@ -702,8 +701,6 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
 
   const handleSubmit = async () => {
     if (!form.date || !form.warehouse_id) { setErr('Vui lòng chọn ngày và kho'); return }
-    if (!form.order_code) { setErr('Vui lòng nhập Mã đơn'); return }
-    if (!isEdit && !ORDER_CODE_RE.test(form.order_code)) { setErr('Mã đơn sai định dạng — ví dụ: X_BV_260610_1'); return }
     if (!form.direction) { setErr('Vui lòng chọn hướng vận chuyển'); return }
     if (!form.ncc_id) { setErr('Vui lòng chọn ĐVVT'); return }
     if (!form.warehouse_type) { setErr('Vui lòng chọn loại kho'); return }
@@ -715,7 +712,6 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
     const payload = {
       date: form.date, warehouse_id: form.warehouse_id,
       npp_name: form.npp_name || null, ncc_id: form.ncc_id || null,
-      ...(!isEdit ? { order_code: form.order_code } : {}),
       direction: form.direction || null,
       warehouse_type: form.warehouse_type || null,
       vehicle_type: form.vehicle_type || null,
@@ -801,10 +797,6 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label className="text-xs">Mã đơn * <span className="text-slate-400 font-normal">(vd: X_BV_260610_1)</span></Label>
-              <Input value={form.order_code} onChange={e => set('order_code')(e.target.value)} placeholder="X/N_Kho_ddmmyy_STT" className="h-8 text-sm mt-1 font-mono" disabled={isEdit} />
-            </div>
             <div>
               <Label className="text-xs">Hướng *</Label>
               <Select value={form.direction || '__none__'} onValueChange={v => set('direction')(v === '__none__' ? '' : v as 'OUTBOUND' | 'INBOUND')}>

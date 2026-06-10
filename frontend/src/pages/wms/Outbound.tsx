@@ -684,6 +684,7 @@ function GDOFormBody({
   const allMats = allMatsData as { id: string; material_code: string; short_name?: string | null; unit?: string | null; category?: string | null }[]
 
   const exportTypeOptions = warehouseId ? vtByWarehouse : allVehicleTypes
+  const isNPP = (warehouses as any[]).find(w => w.id === warehouseId)?.warehouse_type === 'NPP'
   const isMultiDO = (gdo?.delivery_orders?.length ?? 0) > 1
 
   const TODAY_STR = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -886,24 +887,26 @@ function GDOFormBody({
               )}
             </div>
           )}
-          <div className="space-y-1">
-            <label className="text-[10px] font-medium text-slate-500">Loại xe <span className="text-red-500">*</span></label>
-            <div className="flex flex-wrap gap-1.5">
-              {exportTypeOptions.map((vt: any) => (
-                <button key={vt.id} type="button" onClick={() => setExportType(vt.name)}
-                  className={`h-7 px-2.5 text-xs rounded border font-medium transition-colors ${
-                    exportType === vt.name ? 'bg-blue-600 border-blue-600 text-white' : 'border-slate-200 text-slate-600 hover:border-blue-300 hover:text-blue-600'
-                  }`}>
-                  {vt.name}
-                </button>
-              ))}
-              {exportTypeOptions.length === 0 && (
-                <p className="text-[10px] text-slate-400 italic leading-7">
-                  {warehouseId ? 'Chưa có loại xe — kiểm tra TMS' : 'Chọn kho để lọc'}
-                </p>
-              )}
+          {!isNPP && (
+            <div className="space-y-1">
+              <label className="text-[10px] font-medium text-slate-500">Loại xe <span className="text-red-500">*</span></label>
+              <div className="flex flex-wrap gap-1.5">
+                {exportTypeOptions.map((vt: any) => (
+                  <button key={vt.id} type="button" onClick={() => setExportType(vt.name)}
+                    className={`h-7 px-2.5 text-xs rounded border font-medium transition-colors ${
+                      exportType === vt.name ? 'bg-blue-600 border-blue-600 text-white' : 'border-slate-200 text-slate-600 hover:border-blue-300 hover:text-blue-600'
+                    }`}>
+                    {vt.name}
+                  </button>
+                ))}
+                {exportTypeOptions.length === 0 && (
+                  <p className="text-[10px] text-slate-400 italic leading-7">
+                    {warehouseId ? 'Chưa có loại xe — kiểm tra TMS' : 'Chọn kho để lọc'}
+                  </p>
+                )}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
 
@@ -1060,6 +1063,8 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
   const [error, setError]             = useState('')
 
   const { mutate: createGDO, isPending } = useCreateGDO()
+  const { data: warehousesForCreate = [] } = useWarehouses(true)
+  const isNPPCreate = (warehousesForCreate as any[]).find(w => w.id === warehouseId)?.warehouse_type === 'NPP'
 
   function handleSubmit() {
     if (!date)         return setError('Chọn ngày xuất')
@@ -1067,7 +1072,7 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
     if (!warehouseType) return setError('Chọn loại kho')
     if (!customerName.trim()) return setError('Nhập tên khách hàng')
     if (!dvvt.trim())  return setError('Nhập đơn vị vận tải')
-    if (!exportType)   return setError('Chọn loại xuất')
+    if (!isNPPCreate && !exportType) return setError('Chọn loại xuất')
     const filledItems = items.filter(i => i.material_code.trim())
     if (filledItems.length === 0) return setError('Nhập ít nhất một mã hàng')
     const seenCodes = new Set<string>()
@@ -1126,6 +1131,7 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
 export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: string; defaultWarehouseId: string; onClose: () => void }) {
   const { data: gdo, isLoading } = useGDO(gdoId)
   const { data: allVehicleTypes = [] } = useVehicleTypes()
+  const { data: warehousesForEdit = [] } = useWarehouses(true)
 
   const [date, setDate]               = useState('')
   const [warehouseId, setWarehouseId] = useState(defaultWarehouseId)
@@ -1174,12 +1180,14 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
     setItems(allItems.length ? allItems : [makeItem()])
   }, [gdo, initialized, allVehicleTypes])
 
+  const isNPPEdit = (warehousesForEdit as any[]).find(w => w.id === warehouseId)?.warehouse_type === 'NPP'
+
   function handleSubmit() {
     const isMultiDO = (gdo?.delivery_orders?.length ?? 0) > 1
     if (!date) return setError('Chọn ngày xuất')
     if (!isMultiDO && !deliveryCode.trim()) return setError('Nhập Số DO')
     if (!isMultiDO && !customerName.trim()) return setError('Nhập tên khách hàng')
-    if (!exportType) return setError('Chọn loại xe')
+    if (!isNPPEdit && !exportType) return setError('Chọn loại xe')
     for (const item of items) {
       if (!item.material_code.trim()) return setError('Chọn mã hàng cho tất cả dòng')
       if (!item.cartons || item.cartons <= 0) return setError('Số thùng phải > 0')

@@ -344,7 +344,7 @@ const EMPTY_FORM = (date: string, warehouse_id: string): OrderFormData => ({
   gdo_refs: '', notes: '', priority: false,
 })
 
-const ORDER_CODE_RE = /^\d{6}_[A-Za-z0-9]+_\d+$/
+const ORDER_CODE_RE = /^[XN]_[A-Za-z0-9]+_\d{6}_\d+$/
 
 
 type PlanLineRow = {
@@ -703,7 +703,7 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
   const handleSubmit = async () => {
     if (!form.date || !form.warehouse_id) { setErr('Vui lòng chọn ngày và kho'); return }
     if (!form.order_code) { setErr('Vui lòng nhập Mã đơn'); return }
-    if (!isEdit && !ORDER_CODE_RE.test(form.order_code)) { setErr('Mã đơn sai định dạng — ví dụ: 240526_BV_1'); return }
+    if (!isEdit && !ORDER_CODE_RE.test(form.order_code)) { setErr('Mã đơn sai định dạng — ví dụ: X_BV_260610_1'); return }
     if (!form.direction) { setErr('Vui lòng chọn hướng vận chuyển'); return }
     if (!form.ncc_id) { setErr('Vui lòng chọn ĐVVT'); return }
     if (!form.warehouse_type) { setErr('Vui lòng chọn loại kho'); return }
@@ -802,8 +802,8 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label className="text-xs">Mã đơn * <span className="text-slate-400 font-normal">(vd: 240526_BV_1)</span></Label>
-              <Input value={form.order_code} onChange={e => set('order_code')(e.target.value)} placeholder="ddmmyy_Kho_STT" className="h-8 text-sm mt-1 font-mono" disabled={isEdit} />
+              <Label className="text-xs">Mã đơn * <span className="text-slate-400 font-normal">(vd: X_BV_260610_1)</span></Label>
+              <Input value={form.order_code} onChange={e => set('order_code')(e.target.value)} placeholder="X/N_Kho_ddmmyy_STT" className="h-8 text-sm mt-1 font-mono" disabled={isEdit} />
             </div>
             <div>
               <Label className="text-xs">Hướng *</Label>
@@ -1093,7 +1093,7 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
           if (vtName && validVtNames.size > 0 && !validVtNames.has(vtName.toLowerCase())) errors.push(`loại xe "${vtName}" không hợp lệ`)
           if (nccCode && !nccId) errors.push(`ĐVVT "${nccCode}" không tìm thấy`)
           if (!orderCode) errors.push('thiếu mã đơn')
-          else if (!ORDER_CODE_RE.test(orderCode)) errors.push(`mã đơn "${orderCode}" sai định dạng (vd: 240526_BV_1)`)
+          else if (!ORDER_CODE_RE.test(orderCode)) errors.push(`mã đơn "${orderCode}" sai định dạng (vd: X_BV_260610_1)`)
           else if (seenCodes.has(orderCode.toUpperCase())) errors.push(`mã đơn "${orderCode}" bị trùng trong file`)
           else seenCodes.add(orderCode.toUpperCase())
 

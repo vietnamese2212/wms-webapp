@@ -146,7 +146,7 @@ export async function createOrder(req: Request, res: Response) {
       const dirPrefix = direction === 'OUTBOUND' ? 'X' : 'N'
       const d = new Date(date)
       const ddmmyy = `${String(d.getDate()).padStart(2, '0')}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getFullYear()).slice(-2)}`
-      codePrefix = `${dirPrefix}_${whCode}_${ddmmyy}`
+      codePrefix = `${whCode}_${dirPrefix}_${ddmmyy}`
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { count } = await (supabase.from('TmsOrder') as any)
         .select('id', { count: 'exact', head: true })

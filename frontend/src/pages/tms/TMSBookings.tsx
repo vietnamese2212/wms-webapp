@@ -344,7 +344,7 @@ const EMPTY_FORM = (date: string, warehouse_id: string): OrderFormData => ({
   gdo_refs: '', notes: '', priority: false,
 })
 
-const ORDER_CODE_RE = /^[XN]_[A-Za-z0-9]+_\d{6}_\d+$/
+const ORDER_CODE_RE = /^[A-Za-z0-9]+_[XN]_\d{6}_\d+$/
 
 
 type PlanLineRow = {
@@ -572,7 +572,7 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
     if (!form.date || dirPfx === '?') return ''
     const d = new Date(form.date)
     const ddmmyy = `${String(d.getDate()).padStart(2, '0')}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getFullYear()).slice(-2)}`
-    return `${dirPfx}_${whCode}_${ddmmyy}_*`
+    return `${whCode}_${dirPfx}_${ddmmyy}_*`
   }, [isEdit, order, form.direction, form.warehouse_id, form.date, warehouses])
 
   // Lọc loại xe theo kho + loại kho — warehouse_type dùng thẳng, không map
@@ -1103,7 +1103,7 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
           if (vtName && validVtNames.size > 0 && !validVtNames.has(vtName.toLowerCase())) errors.push(`loại xe "${vtName}" không hợp lệ`)
           if (nccCode && !nccId) errors.push(`ĐVVT "${nccCode}" không tìm thấy`)
           if (!orderCode) errors.push('thiếu mã đơn')
-          else if (!ORDER_CODE_RE.test(orderCode)) errors.push(`mã đơn "${orderCode}" sai định dạng (vd: X_BV_260610_1)`)
+          else if (!ORDER_CODE_RE.test(orderCode)) errors.push(`mã đơn "${orderCode}" sai định dạng (vd: BV_X_260610_1)`)
           else if (seenCodes.has(orderCode.toUpperCase())) errors.push(`mã đơn "${orderCode}" bị trùng trong file`)
           else seenCodes.add(orderCode.toUpperCase())
 

@@ -2331,7 +2331,12 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
 
 // ── TransferOrdersPanel ───────────────────────────────────────────────────────
 
-function TransferOrdersPanel({ canEdit, canConfirmReceipt }: { canEdit: boolean; canConfirmReceipt: boolean }) {
+function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWarehouseId, userWarehouseIds }: {
+  canEdit: boolean; canConfirmReceipt: boolean
+  userScope: 'NATIONAL' | 'ASSIGNED'
+  userWarehouseId: string | null
+  userWarehouseIds: string[]
+}) {
   const { data: orders = [], isLoading } = useTransferOrders()
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null)
   const selectedOrder = orders.find(o => o.id === selectedOrderId) ?? null
@@ -2341,22 +2346,43 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt }: { canEdit: boolean;
   const [khoXuatFilter, setKhoXuatFilter] = useState<string[]>([])
   const [khoNhanFilter, setKhoNhanFilter] = useState<string[]>([])
 
+  // Set các kho user có quyền truy cập (null = không giới hạn)
+  const accessibleIds = React.useMemo(() => {
+    if (userScope === 'NATIONAL') return null
+    const ids = new Set<string>()
+    if (userWarehouseId) ids.add(userWarehouseId)
+    userWarehouseIds.forEach(id => ids.add(id))
+    return ids
+  }, [userScope, userWarehouseId, userWarehouseIds])
+
+  const isSingle = accessibleIds !== null && accessibleIds.size <= 1
+
+  // Data pool: NATIONAL xem tất, ASSIGNED lọc OR logic (kho xuất hoặc kho nhận thuộc quyền)
+  const scopedOrders = React.useMemo(() => {
+    if (!accessibleIds) return orders as TransferOrder[]
+    return (orders as TransferOrder[]).filter(o => {
+      const srcId = o.transfer_gdo?.warehouse?.id
+      const dstId = (o as any).warehouse?.id
+      return (srcId && accessibleIds.has(srcId)) || (dstId && accessibleIds.has(dstId))
+    })
+  }, [orders, accessibleIds])
+
   const khoXuatOptions = React.useMemo<MSOpt[]>(() =>
-    [...new Map(orders.map(o => o.transfer_gdo?.warehouse).filter(Boolean)
-      .map(w => [w!.id, { value: w!.id, label: w!.name }])).values()], [orders])
+    [...new Map(scopedOrders.map(o => o.transfer_gdo?.warehouse).filter(Boolean)
+      .map(w => [w!.id, { value: w!.id, label: w!.name }])).values()], [scopedOrders])
 
   const khoNhanOptions = React.useMemo<MSOpt[]>(() =>
-    [...new Map((orders as TransferOrder[]).map(o => (o as any).warehouse).filter(Boolean)
-      .map((w: { id: string; name: string }) => [w.id, { value: w.id, label: w.name }])).values()], [orders])
+    [...new Map(scopedOrders.map(o => (o as any).warehouse).filter(Boolean)
+      .map((w: { id: string; name: string }) => [w.id, { value: w.id, label: w.name }])).values()], [scopedOrders])
 
   const filtered = React.useMemo(() => {
-    let list = orders as TransferOrder[]
+    let list = scopedOrders
     if (dateFrom) list = list.filter(o => o.date >= dateFrom)
     if (dateTo)   list = list.filter(o => o.date <= dateTo)
     if (khoXuatFilter.length) list = list.filter(o => o.transfer_gdo?.warehouse?.id && khoXuatFilter.includes(o.transfer_gdo.warehouse.id))
     if (khoNhanFilter.length) list = list.filter(o => (o as any).warehouse?.id && khoNhanFilter.includes((o as any).warehouse.id))
     return list
-  }, [orders, dateFrom, dateTo, khoXuatFilter, khoNhanFilter])
+  }, [scopedOrders, dateFrom, dateTo, khoXuatFilter, khoNhanFilter])
 
   return (
     <div className="flex flex-col h-full">
@@ -2375,8 +2401,8 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt }: { canEdit: boolean;
               className="text-[10px] text-slate-400 hover:text-red-500 px-1">✕</button>
           )}
         </div>
-        <MultiSelectFilter label="Kho xuất" options={khoXuatOptions} selected={khoXuatFilter} onChange={setKhoXuatFilter} searchable />
-        <MultiSelectFilter label="Kho nhận" options={khoNhanOptions} selected={khoNhanFilter} onChange={setKhoNhanFilter} searchable />
+        {!isSingle && <MultiSelectFilter label="Kho xuất" options={khoXuatOptions} selected={khoXuatFilter} onChange={setKhoXuatFilter} searchable />}
+        {!isSingle && <MultiSelectFilter label="Kho nhận" options={khoNhanOptions} selected={khoNhanFilter} onChange={setKhoNhanFilter} searchable />}
       </div>
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
         {isLoading ? (
@@ -3268,7 +3294,12 @@ export default function TMSBookings() {
       {/* Content */}
       {activeTab === 'transfer' ? (
         <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
-          <TransferOrdersPanel canEdit={canEdit} canConfirmReceipt={canConfirmReceipt} />
+          <TransferOrdersPanel
+            canEdit={canEdit} canConfirmReceipt={canConfirmReceipt}
+            userScope={user?.warehouse_scope ?? 'ASSIGNED'}
+            userWarehouseId={user?.warehouse_id ?? null}
+            userWarehouseIds={user?.warehouse_ids ?? []}
+          />
         </div>
       ) : null}
       <div className={`flex-1 min-h-0 overflow-auto pb-20 lg:pb-4 ${activeTab !== 'main' ? 'hidden' : ''}`}>

@@ -565,6 +565,16 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
 
   const duplicatePlanCodes = React.useMemo(() => getDuplicateCodes(planRows), [planRows])
 
+  const previewCode = React.useMemo(() => {
+    if (isEdit) return order?.order_code ?? ''
+    const whCode = (warehouses as { id: string; code?: string }[]).find(w => w.id === form.warehouse_id)?.code ?? '?'
+    const dirPfx = form.direction === 'OUTBOUND' ? 'X' : form.direction === 'INBOUND' ? 'N' : '?'
+    if (!form.date || dirPfx === '?') return ''
+    const d = new Date(form.date)
+    const ddmmyy = `${String(d.getDate()).padStart(2, '0')}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getFullYear()).slice(-2)}`
+    return `${dirPfx}_${whCode}_${ddmmyy}_*`
+  }, [isEdit, order, form.direction, form.warehouse_id, form.date, warehouses])
+
   // Lọc loại xe theo kho + loại kho — warehouse_type dùng thẳng, không map
   const { data: filteredVehicleTypes = [] } = useVehicleTypesByWarehouse(form.warehouse_id || null, form.warehouse_type || undefined)
   // Đã chọn kho: dùng list lọc (rỗng = không có loại xe nào hợp lệ cho cargo_type này)
@@ -806,6 +816,14 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
                   <SelectItem value="INBOUND">Nhập hàng</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+            <div>
+              <Label className="text-xs">Mã đơn {isEdit ? '' : <span className="text-slate-400 font-normal">(tự sinh)</span>}</Label>
+              <div className="h-8 mt-1 px-2 flex items-center rounded-md border border-slate-200 bg-slate-50">
+                {previewCode
+                  ? <span className="text-sm font-mono text-slate-700">{previewCode}</span>
+                  : <span className="text-sm text-slate-400 italic">Chọn hướng và ngày...</span>}
+              </div>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">

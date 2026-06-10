@@ -669,7 +669,7 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
   }
 
   useEffect(() => {
-    if (!open) { planRowsInitRef.current = false; return }
+    if (!open) { planRowsInitRef.current = false; setCreatedCode(null); return }
     if (order) {
       setForm({
         date: order.date, warehouse_id: order.warehouse_id,
@@ -776,7 +776,6 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
           }
         }
         setCreatedCode((created as import('@/types').TmsOrder).order_code)
-        setTimeout(onClose, 1500)
         return
       }
       onClose()
@@ -793,6 +792,15 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
       <DialogContent className={form.direction === 'INBOUND' ? 'max-w-3xl' : 'max-w-lg'}>
         <DialogHeader><DialogTitle>{isEdit ? 'Sửa đơn hàng' : 'Thêm đơn hàng'}</DialogTitle></DialogHeader>
+        {createdCode ? (
+          <div className="py-8 flex flex-col items-center gap-4">
+            <div className="text-center space-y-1">
+              <p className="text-sm text-slate-600">Đã tạo thành công phiếu</p>
+              <p className="text-xl font-mono font-bold text-green-700">{createdCode}</p>
+            </div>
+            <Button className="mt-2" onClick={onClose}>OK</Button>
+          </div>
+        ) : (
         <div className="space-y-3 py-2">
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -997,6 +1005,7 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
             {isSaving ? 'Đang lưu...' : isEdit ? 'Cập nhật' : 'Thêm đơn'}
           </Button>
         </DialogFooter>
+        )}
       </DialogContent>
     </Dialog>
   )

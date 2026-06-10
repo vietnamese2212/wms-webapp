@@ -560,6 +560,7 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
   const [planRows, setPlanRows] = useState<PlanLineRow[]>(() => Array.from({ length: 20 }, EMPTY_PLAN_LINE))
   const [planSaving, setPlanSaving] = useState(false)
   const [err, setErr] = useState('')
+  const [createdCode, setCreatedCode] = useState<string | null>(null)
   const planRowsInitRef = React.useRef(false)
   const set = (k: keyof OrderFormData) => (v: string) => setForm(f => ({ ...f, [k]: v }))
 
@@ -774,6 +775,9 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
             setPlanSaving(false)
           }
         }
+        setCreatedCode((created as import('@/types').TmsOrder).order_code)
+        setTimeout(onClose, 1500)
+        return
       }
       onClose()
     } catch (e: unknown) {
@@ -819,10 +823,12 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
             </div>
             <div>
               <Label className="text-xs">Mã đơn {isEdit ? '' : <span className="text-slate-400 font-normal">(tự sinh)</span>}</Label>
-              <div className="h-8 mt-1 px-2 flex items-center rounded-md border border-slate-200 bg-slate-50">
-                {previewCode
-                  ? <span className="text-sm font-mono text-slate-700">{previewCode}</span>
-                  : <span className="text-sm text-slate-400 italic">Chọn hướng và ngày...</span>}
+              <div className={`h-8 mt-1 px-2 flex items-center rounded-md border ${createdCode ? 'border-green-400 bg-green-50' : 'border-slate-200 bg-slate-50'}`}>
+                {createdCode
+                  ? <span className="text-sm font-mono font-semibold text-green-700">{createdCode} ✓</span>
+                  : previewCode
+                    ? <span className="text-sm font-mono text-slate-500">{previewCode}</span>
+                    : <span className="text-sm text-slate-400 italic">Chọn hướng và ngày...</span>}
               </div>
             </div>
           </div>

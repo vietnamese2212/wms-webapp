@@ -324,6 +324,16 @@ export function useCancelInboundOrder() {
   })
 }
 
+export function useRecreateInboundOrder() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.post(`/wms/inbound-orders/${id}/recreate`).then((r) => r.data.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['inbound-orders'] })
+    },
+  })
+}
+
 export function useScanPallet() {
   const qc = useQueryClient()
   return useMutation({

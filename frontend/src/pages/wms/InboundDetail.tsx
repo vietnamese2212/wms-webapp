@@ -4,7 +4,7 @@ import type { AxiosError }              from 'axios'
 import {
   ArrowLeft, Plus, CheckCircle2, XCircle, Trash2, Pencil,
   MapPin, Package, AlertTriangle, QrCode,
-  Clock, Calendar, User, Bookmark, RotateCcw,
+  Clock, Calendar, User, Bookmark, RotateCcw, RefreshCw,
 } from 'lucide-react'
 import { format, parseISO }    from 'date-fns'
 import { vi }                  from 'date-fns/locale'
@@ -20,7 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import {
   useInboundOrder, useInboundOrders, useCancelInboundOrder,
-  useCompleteInboundOrder, useUncompleteInboundOrder,
+  useCompleteInboundOrder, useUncompleteInboundOrder, useRecreateInboundOrder,
   useScanPallet, useScanManualPallet, useDeletePalletEntry, useDeletePalletEntries,
   useLocationsReal, useUpdateInboundOrder, useUpdatePalletEntry,
   useCheckInboundScan,
@@ -463,6 +463,7 @@ export default function InboundDetail() {
   const { mutate: cancelOrder,     isPending: cancelling    } = useCancelInboundOrder()
   const { mutate: completeOrder,   isPending: completing    } = useCompleteInboundOrder()
   const { mutate: uncompleteOrder, isPending: uncompleting  } = useUncompleteInboundOrder()
+  const { mutate: recreateOrder,   isPending: recreating    } = useRecreateInboundOrder()
   const { mutate: deleteEntry                                } = useDeletePalletEntry()
   const { mutate: deleteEntries                         } = useDeletePalletEntries()
   const { mutate: updateOrder                           } = useUpdateInboundOrder()
@@ -515,6 +516,7 @@ export default function InboundDetail() {
 
   const isOpen      = order?.status === 'OPEN'
   const isCompleted = order?.status === 'COMPLETED'
+  const isCancelled = order?.status === 'CANCELLED'
   const entries     = order?.inventory_entries ?? []
   const totalScanned = entries.reduce((sum, e) => sum + e.cartons_imported, 0)
   const isNccFull   = order?.source_type === 'NCC' && (order?.planned_cartons ?? 0) > 0 && totalScanned >= (order?.planned_cartons ?? 0)
@@ -801,6 +803,19 @@ export default function InboundDetail() {
                 >
                   <RotateCcw className="h-3.5 w-3.5 sm:mr-1" />
                   <span className="hidden sm:inline">{uncompleting ? 'Đang gỡ…' : 'Gỡ hoàn thành'}</span>
+                </Button>
+              )}
+              {isCancelled && order.source_type === 'TRANSFER' && can(perms, 'inbound', 'create') && (
+                <Button
+                  size="sm" variant="outline"
+                  className="h-7 text-xs px-2 text-blue-700 border-blue-300 hover:bg-blue-50 hover:text-blue-800 disabled:opacity-40"
+                  disabled={recreating}
+                  onClick={() => recreateOrder(order.id, {
+                    onSuccess: (newOrder: any) => navigate(`/wms/inbound/${newOrder.id}`)
+                  })}
+                >
+                  <RefreshCw className="h-3.5 w-3.5 sm:mr-1" />
+                  <span className="hidden sm:inline">{recreating ? 'Đang tạo…' : 'Tạo lại phiếu'}</span>
                 </Button>
               )}
             </div>

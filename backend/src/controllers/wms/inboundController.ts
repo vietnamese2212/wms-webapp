@@ -886,71 +886,42 @@ export async function scanManual(req: Request, res: Response) {
 
     const now = new Date().toISOString()
     const cartonsNum = Math.max(0, Number(cartons) || 0)
-    const warehouseId = (order as any).warehouse_id as string | null
 
-    // Mã pallet = mã hàng (1 row mỗi kho mỗi vật tư)
-    const sharedPalletCode = ((order as any).material as any)?.material_code
+    // Mỗi phiếu tạo entry riêng — không gộp chung — để detail phiếu hiển thị đúng đóng góp của từng phiếu
+    const matCode = ((order as any).material as any)?.material_code
       ?? `POSM-${order.material_id.replace(/-/g, '').slice(0, 12)}`
+    const entryUuid = randomUUID()
+    const palletCode = `${matCode}_M_${entryUuid.slice(0, 8)}`
 
-    // Tìm pallet chung đã có chưa (filter theo warehouse để mỗi kho có 1 row)
-    const { data: existingPallet } = await supabase
+    const { data: newEntry, error: insErr } = await supabase
       .from('InventoryEntry')
-      .select('id, cartons_remaining, cartons_imported')
-      .eq('pallet_code', sharedPalletCode)
-      .eq('warehouse_id', warehouseId)
-      .maybeSingle()
+      .insert({
+        id:                entryUuid,
+        pallet_code:       palletCode,
+        location_id:       null,
+        warehouse_id:      (order as any).warehouse_id ?? null,
+        material_id:       order.material_id,
+        cartons_imported:  cartonsNum,
+        cartons_remaining: cartonsNum,
+        stack_layer:       1,
+        import_order_id:   order_id,
+        created_by:        employee_id ?? null,
+        updated_by:        employee_id ?? null,
+        status:            'IN_STOCK',
+        import_date:       vnDate(),
+        update_date:       vnDate(),
+        created_at:        now,
+        updated_at:        now,
+      })
+      .select('id')
+      .single()
+    if (insErr) throw insErr
+    const entryId = newEntry.id
 
-    let entryId: string
-
-    if (existingPallet) {
-      // Cộng dồn vào pallet chung
-      const { error: updErr } = await supabase
-        .from('InventoryEntry')
-        .update({
-          cartons_remaining: existingPallet.cartons_remaining + cartonsNum,
-          cartons_imported:  existingPallet.cartons_imported  + cartonsNum,
-          update_date:       vnDate(),
-          updated_at:        now,
-          updated_by:        employee_id ?? null,
-        })
-        .eq('id', existingPallet.id)
-      if (updErr) throw updErr
-      entryId = existingPallet.id
-    } else {
-      // Tạo pallet chung lần đầu
-      const { data: newEntry, error: insErr } = await supabase
-        .from('InventoryEntry')
-        .insert({
-          id:                randomUUID(),
-          pallet_code:       sharedPalletCode,
-          location_id:       null,
-          warehouse_id:      (order as any).warehouse_id ?? null,
-          material_id:       order.material_id,
-          cartons_imported:  cartonsNum,
-          cartons_remaining: cartonsNum,
-          stack_layer:       1,
-          import_order_id:   order_id,
-          created_by:        employee_id ?? null,
-          updated_by:        employee_id ?? null,
-          status:            'IN_STOCK',
-          import_date:       vnDate(),
-          update_date:       vnDate(),
-          created_at:        now,
-          updated_at:        now,
-        })
-        .select('id')
-        .single()
-      if (insErr) {
-        if (insErr.code === '23505') return fail(res, 409, 'DUPLICATE_PALLET', 'Pallet chung đã tồn tại')
-        throw insErr
-      }
-      entryId = newEntry.id
-    }
-
-    // Đánh dấu phiếu này đã lưu thủ công + ghi đóng góp thực của phiếu vào posm_cartons
+    // Đánh dấu phiếu này đã lưu thủ công (lock tránh lưu 2 lần)
     const { error: markErr } = await supabase
       .from('ProductionImport')
-      .update({ posm_entry_id: entryId, posm_cartons: cartonsNum, updated_at: now })
+      .update({ posm_entry_id: entryId, updated_at: now })
       .eq('id', order_id)
     if (markErr) throw markErr
 

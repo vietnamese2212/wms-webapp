@@ -883,15 +883,32 @@ export default function InboundDetail() {
               )}
             </span>
 
-            <span className="flex items-center gap-1">
-              <MapPin className="h-3 w-3 text-slate-400 shrink-0" />
-              {order.location ? (
-                <span className="flex items-center gap-1">
-                  <span className="font-mono font-medium">{order.location.location_code}</span>
-                  {isOpen && can(perms, 'inbound', 'edit') && (
+            {!isManualEntry && (
+              <span className="flex items-center gap-1">
+                <MapPin className="h-3 w-3 text-slate-400 shrink-0" />
+                {order.location ? (
+                  <span className="flex items-center gap-1">
+                    <span className="font-mono font-medium">{order.location.location_code}</span>
+                    {isOpen && can(perms, 'inbound', 'edit') && (
+                      <Select onValueChange={(v) => updateOrder({ id: order.id, location_id: v })}>
+                        <SelectTrigger className="h-5 w-6 border-dashed px-1 text-slate-300 hover:text-slate-500">
+                          <Pencil className="h-2.5 w-2.5" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {(allLocations as { id: string; location_code: string }[]).map(l => (
+                            <SelectItem key={l.id} value={l.id}>{l.location_code}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                  </span>
+                ) : isOpen ? (
+                  <span className="text-amber-600 flex items-center gap-1">
+                    <AlertTriangle className="h-3 w-3" />
+                    Chưa chọn vị trí
                     <Select onValueChange={(v) => updateOrder({ id: order.id, location_id: v })}>
-                      <SelectTrigger className="h-5 w-6 border-dashed px-1 text-slate-300 hover:text-slate-500">
-                        <Pencil className="h-2.5 w-2.5" />
+                      <SelectTrigger className="h-5 text-[10px] w-auto border-dashed px-1 ml-1">
+                        <SelectValue placeholder="Chọn" />
                       </SelectTrigger>
                       <SelectContent>
                         {(allLocations as { id: string; location_code: string }[]).map(l => (
@@ -899,27 +916,12 @@ export default function InboundDetail() {
                         ))}
                       </SelectContent>
                     </Select>
-                  )}
-                </span>
-              ) : isOpen ? (
-                <span className="text-amber-600 flex items-center gap-1">
-                  <AlertTriangle className="h-3 w-3" />
-                  Chưa chọn vị trí
-                  <Select onValueChange={(v) => updateOrder({ id: order.id, location_id: v })}>
-                    <SelectTrigger className="h-5 text-[10px] w-auto border-dashed px-1 ml-1">
-                      <SelectValue placeholder="Chọn" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {(allLocations as { id: string; location_code: string }[]).map(l => (
-                        <SelectItem key={l.id} value={l.id}>{l.location_code}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </span>
-              ) : (
-                <span className="text-slate-400">Chưa chọn</span>
-              )}
-            </span>
+                  </span>
+                ) : (
+                  <span className="text-slate-400">Chưa chọn</span>
+                )}
+              </span>
+            )}
 
             {order.shift && (
               <span className="flex items-center gap-1">

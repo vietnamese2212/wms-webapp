@@ -228,6 +228,13 @@ export async function createOrder(req: Request, res: Response) {
     if (!material_id)  return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu material_id')
     const resolvedSourceType = source_type === 'NCC' ? 'NCC' : source_type === 'TRANSFER' ? 'TRANSFER' : 'FACTORY'
 
+    // Check no_qr_tracking: FACTORY không được tạo phiếu cho mã hàng này; NCC/TRANSFER → force location_id = null
+    const { data: matCheck } = await supabase.from('Material').select('no_qr_tracking').eq('id', material_id).maybeSingle()
+    if (matCheck?.no_qr_tracking === true && resolvedSourceType === 'FACTORY') {
+      return fail(res, 400, 'VALIDATION_ERROR', 'Hàng hóa không theo dõi QR không thể nhập theo luồng Nhập SX')
+    }
+    const resolvedLocationId = matCheck?.no_qr_tracking === true ? null : (location_id ?? null)
+
     const todayStr = vnDate()
 
     // Validate imported_by — skip if employee doesn't exist (e.g. mock/dev user IDs)
@@ -300,7 +307,7 @@ export async function createOrder(req: Request, res: Response) {
           import_code,
           warehouse_id,
           material_id,
-          location_id:          location_id ?? null,
+          location_id:          resolvedLocationId,
           planned_pallets:      planned_pallets ? Number(planned_pallets) : null,
           shift_id:             shift_id ?? null,
           import_date:          import_date ? import_date.slice(0, 10) : todayStr,

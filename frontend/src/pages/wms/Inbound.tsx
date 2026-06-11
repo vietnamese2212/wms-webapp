@@ -511,7 +511,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                 />
                 {matOpen && (
                   <div className="absolute z-[100] w-full mt-1 max-h-52 overflow-y-auto rounded-md border bg-white shadow-lg">
-                    {(materials as MatItem[]).map(m => (
+                    {(materials as any[]).filter(m => !m.no_qr_tracking).map(m => (
                       <button key={m.id} type="button"
                         className={`w-full text-left px-3 py-2 text-sm hover:bg-slate-100 flex items-baseline gap-2 ${m.id === materialId ? 'bg-slate-50 font-medium' : ''}`}
                         onMouseDown={e => { e.preventDefault(); e.stopPropagation() }}
@@ -520,7 +520,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                         <span className="text-slate-800 truncate">{m.short_name ?? m.material_description}</span>
                       </button>
                     ))}
-                    {(materials as MatItem[]).length === 0 && (
+                    {(materials as any[]).filter(m => !m.no_qr_tracking).length === 0 && (
                       <div className="px-3 py-3 text-sm text-slate-400 text-center">Không tìm thấy hàng hóa</div>
                     )}
                   </div>

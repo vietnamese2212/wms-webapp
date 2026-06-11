@@ -10,7 +10,7 @@ import { emitInboundChanged } from '../../lib/events'
 const ORDER_SELECT = `
   id, import_code, warehouse_id, location_id, material_id, planned_pallets, shift_id, status,
   imported_by, created_by, updated_by, import_date, notes, created_at, updated_at,
-  source_type, gate_registration_id, tms_order_id, planned_cartons, warehouse_type, from_gdo_id, posm_entry_id,
+  source_type, gate_registration_id, tms_order_id, planned_cartons, warehouse_type, from_gdo_id, posm_entry_id, posm_cartons,
   warehouse:Warehouse(id, code, name),
   location:Location(id, location_code, sub_code, max_pallets),
   material:Material(id, material_code, short_name, material_description, cartons_per_pallet, cartons_per_pallet_mn, category, no_qr_tracking),
@@ -70,7 +70,7 @@ async function attachCount(raw: unknown): Promise<Record<string, unknown>> {
 
   const [entriesRes, slotsRes, gdoCartons] = await Promise.all([
     supabase.from('InventoryEntry')
-      .select('cartons_imported, cycle, machine_code, location:Location(location_code, sub_code)')
+      .select('pallet_code, cartons_imported, cycle, machine_code, location:Location(location_code, sub_code)')
       .eq('import_order_id', order.id as string),
     locationId
       ? supabase.from('InventoryEntry').select('*', { count: 'exact', head: true })
@@ -82,6 +82,7 @@ async function attachCount(raw: unknown): Promise<Record<string, unknown>> {
   ])
 
   const entries = (entriesRes.data ?? []) as unknown as {
+    pallet_code: string | null
     cartons_imported: number
     cycle: string | null
     machine_code: string | null
@@ -101,11 +102,30 @@ async function attachCount(raw: unknown): Promise<Record<string, unknown>> {
   }
   const entries_by_location = [...locMap.entries()].map(([loc, v]) => ({ loc, ...v }))
 
+  // Tính đúng số pallet và thùng cho shared POSM/Loscam pallet
+  const posmEntryId  = (order as any).posm_entry_id as string | null
+  const posmCartons  = (order as any).posm_cartons  as number | null
+  const materialCode = (order as any).material?.material_code as string | null
+  let count        = entries.length
+  let total_cartons = entries.reduce((sum, e) => sum + (e.cartons_imported || 0), 0)
+
+  if (posmEntryId && posmCartons != null) {
+    const sharedInMyEntries = materialCode ? entries.find(e => e.pallet_code === materialCode) : null
+    if (sharedInMyEntries) {
+      // Phiếu này TẠO shared entry → thay thế tổng cộng dồn bằng đóng góp thực của phiếu
+      total_cartons = total_cartons - (sharedInMyEntries.cartons_imported || 0) + posmCartons
+    } else if (posmCartons > 0) {
+      // Phiếu này CỘNG VÀO shared entry có sẵn → thêm đóng góp vào tổng
+      total_cartons += posmCartons
+      count += 1
+    }
+  }
+
   return {
     ...order,
     planned_cartons: order.planned_cartons != null ? order.planned_cartons : (gdoCartons ?? null),
-    _count: { inventory_entries: entries.length },
-    total_cartons: entries.reduce((sum, e) => sum + (e.cartons_imported || 0), 0),
+    _count: { inventory_entries: count },
+    total_cartons,
     cycles,
     machine_codes,
     location_used_slots: slotsRes.count ?? 0,
@@ -355,12 +375,28 @@ export async function getOrder(req: Request, res: Response) {
 
     let allEntries = entries ?? []
 
-    // POSM/Loscam: shared pallet có thể có import_order_id khác → include thủ công
+    // POSM/Loscam: shared pallet — hiển thị đóng góp của từng phiếu (posm_cartons), không phải tổng cộng dồn
     const posmEntryId = (order as any).posm_entry_id as string | null
-    if (posmEntryId && !allEntries.find((e: any) => e.id === posmEntryId)) {
-      const { data: posmEntry } = await supabase
-        .from('InventoryEntry').select(ENTRY_SELECT).eq('id', posmEntryId).maybeSingle()
-      if (posmEntry) allEntries = [posmEntry as any, ...allEntries]
+    const posmCartons = (order as any).posm_cartons  as number | null
+    if (posmEntryId) {
+      const alreadyInList = allEntries.find((e: any) => e.id === posmEntryId)
+      if (alreadyInList) {
+        // Phiếu này TẠO shared entry — override cartons_imported bằng đóng góp thực (posm_cartons)
+        if (posmCartons != null) {
+          allEntries = allEntries.map((e: any) =>
+            e.id === posmEntryId ? { ...e, cartons_imported: posmCartons, cartons_remaining: posmCartons } : e
+          )
+        }
+        // posm_cartons = null (dữ liệu cũ trước migration) → giữ nguyên để không phá dữ liệu cũ
+      } else if (posmCartons != null && posmCartons > 0) {
+        // Phiếu này CỘNG VÀO shared entry có sẵn — fetch và hiển thị với đóng góp thực
+        const { data: posmEntry } = await supabase
+          .from('InventoryEntry').select(ENTRY_SELECT).eq('id', posmEntryId).maybeSingle()
+        if (posmEntry) {
+          allEntries = [{ ...posmEntry as any, cartons_imported: posmCartons, cartons_remaining: posmCartons }, ...allEntries]
+        }
+      }
+      // posmCartons = null hoặc = 0 và entry không do phiếu này tạo → không hiển thị (đã bấm nhầm hoặc 0 thùng)
     }
 
     // Attach delivery codes (Số DO) for TRANSFER orders
@@ -911,10 +947,10 @@ export async function scanManual(req: Request, res: Response) {
       entryId = newEntry.id
     }
 
-    // Đánh dấu phiếu này đã lưu thủ công (block lần 2)
+    // Đánh dấu phiếu này đã lưu thủ công + ghi đóng góp thực của phiếu vào posm_cartons
     const { error: markErr } = await supabase
       .from('ProductionImport')
-      .update({ posm_entry_id: entryId, updated_at: now })
+      .update({ posm_entry_id: entryId, posm_cartons: cartonsNum, updated_at: now })
       .eq('id', order_id)
     if (markErr) throw markErr
 

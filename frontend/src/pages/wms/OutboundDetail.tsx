@@ -656,14 +656,15 @@ function ItemsTable({ doRecords, gdoId, canScan, expandedItemIds, toggleExpand }
                     <span className={`text-[10px] font-semibold tabular-nums ${textCls}`}>{item.cartons_ordered}</span>
                     {(() => {
                       const isManual = item.material?.no_qr_tracking === true
-                      if (!canScan || item.status === 'COMPLETED') return null
+                      if (!canScan) return null
+                      if (!isManual && item.status === 'COMPLETED') return null
                       return isManual ? (
                         <button
-                          onClick={e => { e.stopPropagation(); setManualDlg({ itemId: item.id, matName: matName, cartons: item.cartons_ordered }) }}
+                          onClick={e => { e.stopPropagation(); setManualDlg({ itemId: item.id, matName: matName, cartons: item.status === 'COMPLETED' ? item.cartons_scanned : item.cartons_ordered }) }}
                           className="flex items-center gap-0.5 text-[9px] font-medium text-green-600 hover:text-green-700 bg-green-50 hover:bg-green-100 rounded px-1.5 py-0.5 transition-colors"
-                          title="Lưu số lượng"
+                          title={item.status === 'COMPLETED' ? 'Sửa số lượng' : 'Lưu thủ công'}
                         >
-                          <PenSquare className="h-2.5 w-2.5" /> Lưu SL
+                          <PenSquare className="h-2.5 w-2.5" /> {item.status === 'COMPLETED' ? 'Sửa SL' : 'Lưu thủ công'}
                         </button>
                       ) : (
                         <button

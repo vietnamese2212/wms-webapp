@@ -518,7 +518,7 @@ export default function OutboundItemDetail() {
               {isNoQr ? (
                 can(perms, 'outbound', 'complete') && <Button size="sm" variant="outline" className="h-7 text-xs" disabled={isPaused || !gdo.started_at}
                   onClick={() => { setLoscamCartons(String(isDone ? item.cartons_scanned : item.cartons_ordered)); setShowLoscamDialog(true) }}>
-                  {isDone ? 'Sửa số lượng' : 'Lưu thủ công'}
+                  {isDone ? 'Sửa SL' : 'Lưu thủ công'}
                 </Button>
               ) : !isDone && (canScan ? (
                 <Button size="sm" className="h-7 text-xs gap-1" onClick={openScan}>

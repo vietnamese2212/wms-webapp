@@ -3231,48 +3231,50 @@ export default function TMSBookings() {
             )}
           </div>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <Input type="date" value={date} onChange={e => setDate(e.target.value)} className="h-8 text-sm w-36" />
-          <Select value={warehouseId || '__none__'} onValueChange={v => setWarehouseId(v === '__none__' ? '' : v)}>
-            <SelectTrigger className="h-8 text-sm flex-1 min-w-[140px] max-w-[200px]"><SelectValue placeholder="— Chọn kho —" /></SelectTrigger>
-            <SelectContent>
-              {isNccUser && <SelectItem value="__none__">— Tất cả kho —</SelectItem>}
-              {!isNccUser && <SelectItem value="__none__">— Chọn kho —</SelectItem>}
-              {(warehouses as { id: string; name: string }[]).map(w => (
-                <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {(warehouseId || isNccUser) && (() => {
-            const activeCnt = [khungGioFilter.length > 0, huongFilter.length > 0, dvvtFilter.length > 0, loaiKhoFilter.length > 0, loaiXeFilter.length > 0].filter(Boolean).length
-            return (
-              <Button
-                variant="outline" size="sm"
-                className={`h-8 text-xs gap-1 ${showMoreFilters || activeCnt > 0 ? 'border-blue-400 text-blue-700 bg-blue-50' : ''}`}
-                onClick={() => setShowMoreFilters(v => !v)}
-              >
-                <SlidersHorizontal className="h-3.5 w-3.5" />
-                Bộ lọc
-                {activeCnt > 0 && (
-                  <span className="ml-0.5 bg-blue-500 text-white rounded-full text-[9px] px-1 leading-none py-0.5">{activeCnt}</span>
-                )}
-              </Button>
-            )
-          })()}
-          {canChangeDate && selectedOrderIds.size > 0 && (
-            <div className="flex items-center gap-2 w-full py-0.5">
-              <span className="text-xs text-slate-600 font-medium">{selectedOrderIds.size} đơn đã chọn</span>
-              <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => setChangeDateOpen(true)}>
-                <CalendarDays className="h-3.5 w-3.5 mr-1" />Đổi ngày
-              </Button>
-              <button onClick={() => setSelectedOrderIds(new Set())} className="text-xs text-slate-400 hover:text-slate-600">
-                Bỏ chọn
-              </button>
-            </div>
-          )}
-          {actionErr && <p className="text-xs text-red-600 w-full">{actionErr}</p>}
-        </div>
-        {(warehouseId || isNccUser) && showMoreFilters && (
+        {activeTab === 'main' && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <Input type="date" value={date} onChange={e => setDate(e.target.value)} className="h-8 text-sm w-36" />
+            <Select value={warehouseId || '__none__'} onValueChange={v => setWarehouseId(v === '__none__' ? '' : v)}>
+              <SelectTrigger className="h-8 text-sm flex-1 min-w-[140px] max-w-[200px]"><SelectValue placeholder="— Chọn kho —" /></SelectTrigger>
+              <SelectContent>
+                {isNccUser && <SelectItem value="__none__">— Tất cả kho —</SelectItem>}
+                {!isNccUser && <SelectItem value="__none__">— Chọn kho —</SelectItem>}
+                {(warehouses as { id: string; name: string }[]).map(w => (
+                  <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {(warehouseId || isNccUser) && (() => {
+              const activeCnt = [khungGioFilter.length > 0, huongFilter.length > 0, dvvtFilter.length > 0, loaiKhoFilter.length > 0, loaiXeFilter.length > 0].filter(Boolean).length
+              return (
+                <Button
+                  variant="outline" size="sm"
+                  className={`h-8 text-xs gap-1 ${showMoreFilters || activeCnt > 0 ? 'border-blue-400 text-blue-700 bg-blue-50' : ''}`}
+                  onClick={() => setShowMoreFilters(v => !v)}
+                >
+                  <SlidersHorizontal className="h-3.5 w-3.5" />
+                  Bộ lọc
+                  {activeCnt > 0 && (
+                    <span className="ml-0.5 bg-blue-500 text-white rounded-full text-[9px] px-1 leading-none py-0.5">{activeCnt}</span>
+                  )}
+                </Button>
+              )
+            })()}
+            {canChangeDate && selectedOrderIds.size > 0 && (
+              <div className="flex items-center gap-2 w-full py-0.5">
+                <span className="text-xs text-slate-600 font-medium">{selectedOrderIds.size} đơn đã chọn</span>
+                <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => setChangeDateOpen(true)}>
+                  <CalendarDays className="h-3.5 w-3.5 mr-1" />Đổi ngày
+                </Button>
+                <button onClick={() => setSelectedOrderIds(new Set())} className="text-xs text-slate-400 hover:text-slate-600">
+                  Bỏ chọn
+                </button>
+              </div>
+            )}
+            {actionErr && <p className="text-xs text-red-600 w-full">{actionErr}</p>}
+          </div>
+        )}
+        {activeTab === 'main' && (warehouseId || isNccUser) && showMoreFilters && (
           <div className="flex items-center gap-2 flex-wrap mt-2 pt-2 border-t">
             <MultiSelectFilter label="Khung giờ" options={khungGioOptions} selected={khungGioFilter} onChange={setKhungGioFilter} />
             <MultiSelectFilter label="Hướng" options={huongOptions} selected={huongFilter} onChange={setHuongFilter} />

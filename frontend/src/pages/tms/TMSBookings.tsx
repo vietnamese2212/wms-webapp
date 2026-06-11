@@ -2238,14 +2238,8 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                 <table className="min-w-max w-full">
                   <thead className="sticky top-0 z-10 bg-slate-50">
                     <tr>
-                      <th className="w-6 px-2 py-1.5">
-                        {hasPallets && (
-                          <button onClick={toggleAllPallets} className="text-[10px] text-blue-600 hover:text-blue-800 whitespace-nowrap font-medium">
-                            {allExpanded ? 'Thu gọn' : 'Mở rộng'}
-                          </button>
-                        )}
-                      </th>
-                      {['Mã hàng', 'Tên hàng', 'ĐVT', 'Thùng KH', 'Thùng thực', 'Chênh lệch', 'Tình trạng GN', 'Pallet'].map(h => (
+                      <th className="w-6 px-2 py-1.5"></th>
+                      {['Mã hàng', 'Tên hàng', 'ĐVT', 'Thùng KH', 'Thùng xuất', 'Chênh lệch', 'Tình trạng', 'Pallet'].map(h => (
                         <th key={h} className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
                       ))}
                     </tr>
@@ -2347,10 +2341,19 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null)
   const selectedOrder = orders.find(o => o.id === selectedOrderId) ?? null
 
-  const [dateFrom, setDateFrom] = useState('')
-  const [dateTo, setDateTo]     = useState('')
-  const [khoXuatFilter, setKhoXuatFilter] = useState<string[]>([])
-  const [khoNhanFilter, setKhoNhanFilter] = useState<string[]>([])
+  const [dateFrom, setDateFrom] = useState(() => localStorage.getItem('tmsb_tf_from') ?? '')
+  const [dateTo, setDateTo]     = useState(() => localStorage.getItem('tmsb_tf_to') ?? '')
+  const [khoXuatFilter, setKhoXuatFilter] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem('tmsb_tf_xuat') ?? '[]') } catch { return [] }
+  })
+  const [khoNhanFilter, setKhoNhanFilter] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem('tmsb_tf_nhan') ?? '[]') } catch { return [] }
+  })
+
+  useEffect(() => { localStorage.setItem('tmsb_tf_from', dateFrom) }, [dateFrom])
+  useEffect(() => { localStorage.setItem('tmsb_tf_to', dateTo) }, [dateTo])
+  useEffect(() => { localStorage.setItem('tmsb_tf_xuat', JSON.stringify(khoXuatFilter)) }, [khoXuatFilter])
+  useEffect(() => { localStorage.setItem('tmsb_tf_nhan', JSON.stringify(khoNhanFilter)) }, [khoNhanFilter])
 
   // Set các kho user có quyền truy cập (null = không giới hạn)
   const accessibleIds = React.useMemo(() => {
@@ -2885,9 +2888,12 @@ export default function TMSBookings() {
   useEffect(() => { localStorage.setItem('tmsb_huong', JSON.stringify(huongFilter)) }, [huongFilter])
   useEffect(() => { localStorage.setItem('tmsb_dvvt', JSON.stringify(dvvtFilter)) }, [dvvtFilter])
   useEffect(() => { localStorage.setItem('tmsb_khungio', JSON.stringify(khungGioFilter)) }, [khungGioFilter])
+  useEffect(() => { localStorage.setItem('tmsb_tab', activeTab) }, [activeTab])
   useEffect(() => { setSelectedOrderIds(new Set()) }, [date, warehouseId])
 
-  const [activeTab, setActiveTab] = useState<'main' | 'transfer'>('main')
+  const [activeTab, setActiveTab] = useState<'main' | 'transfer'>(() =>
+    (localStorage.getItem('tmsb_tab') as 'main' | 'transfer') ?? 'main'
+  )
   const [createOpen, setCreateOpen] = useState(false)
   const [uploadOpen, setUploadOpen] = useState(false)
   const [inboundPlanUploadOpen, setInboundPlanUploadOpen] = useState(false)

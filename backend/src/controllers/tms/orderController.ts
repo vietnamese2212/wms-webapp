@@ -910,41 +910,55 @@ export async function getTransferGoods(req: Request, res: Response) {
     const { id } = req.params
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: tmsOrder } = await (supabase.from('TmsOrder') as any)
+      .select('id, transfer_gdo_id').eq('id', id).maybeSingle()
+    if (!tmsOrder) return fail(res, 'Không tìm thấy lệnh', 404)
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: planLines } = await (supabase.from('inbound_plan_lines') as any)
       .select('material_id, planned_boxes, material:Material(id, material_code, short_name, unit)')
       .eq('tms_order_id', id)
       .neq('status', 'CANCELLED')
 
-    if (!(planLines ?? []).length) return fail(res, 'Không tìm thấy lệnh', 404)
+    if (!(planLines ?? []).length) return ok(res, [])
 
-    // Lấy ProductionImport tại kho nhận (source_type = TRANSFER, tms_order_id = id)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: importOrders } = await (supabase.from('ProductionImport') as any)
-      .select('id')
-      .eq('tms_order_id', id)
-      .eq('source_type', 'TRANSFER')
-
-    const importIds: string[] = (importOrders ?? []).map((o: any) => o.id)
-
-    // Lấy InventoryEntry (pallet đã nhập tại kho nhận) — cartons_imported là số thực nhận
-    const { data: entries } = importIds.length
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ? await (supabase.from('InventoryEntry') as any)
-          .select('material_id, pallet_code, cartons_imported, created_at')
-          .in('import_order_id', importIds)
-      : { data: [] as { material_id: string; pallet_code: string; cartons_imported: number; created_at: string }[] }
-
-    // Gom pallet theo material_id
+    // Pallet xuất từ kho nguồn: GDO → OutboundDelivery → OutboundItem → OutboundScanEntry
     type PalletInfo = { pallet_code: string; cartons_scanned: number; scanned_at: string | null }
     const palletsByMat = new Map<string, Map<string, PalletInfo>>()
-    for (const entry of entries ?? []) {
-      if (!entry.material_id || !entry.pallet_code) continue
-      if (!palletsByMat.has(entry.material_id)) palletsByMat.set(entry.material_id, new Map())
-      const byCode = palletsByMat.get(entry.material_id)!
-      if (!byCode.has(entry.pallet_code)) {
-        byCode.set(entry.pallet_code, { pallet_code: entry.pallet_code, cartons_scanned: 0, scanned_at: entry.created_at ?? null })
+
+    if (tmsOrder.transfer_gdo_id) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: dos } = await (supabase.from('OutboundDelivery') as any)
+        .select('id').eq('gdo_id', tmsOrder.transfer_gdo_id)
+      const doIds = (dos ?? []).map((d: any) => d.id as string)
+
+      if (doIds.length) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: items } = await (supabase.from('OutboundItem') as any)
+          .select('id, material_id').in('do_id', doIds)
+        const itemIds = (items ?? []).map((i: any) => i.id as string)
+        const itemMatMap = new Map<string, string>()
+        for (const item of items ?? []) itemMatMap.set(item.id, item.material_id)
+
+        if (itemIds.length) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: scans } = await (supabase.from('OutboundScanEntry') as any)
+            .select('item_id, pallet_code, cartons_scanned, created_at')
+            .in('item_id', itemIds)
+
+          for (const scan of scans ?? []) {
+            if (!scan.pallet_code) continue
+            const matId = itemMatMap.get(scan.item_id)
+            if (!matId) continue
+            if (!palletsByMat.has(matId)) palletsByMat.set(matId, new Map())
+            const byCode = palletsByMat.get(matId)!
+            if (!byCode.has(scan.pallet_code)) {
+              byCode.set(scan.pallet_code, { pallet_code: scan.pallet_code, cartons_scanned: 0, scanned_at: scan.created_at ?? null })
+            }
+            byCode.get(scan.pallet_code)!.cartons_scanned += (scan.cartons_scanned ?? 0)
+          }
+        }
       }
-      byCode.get(entry.pallet_code)!.cartons_scanned += (entry.cartons_imported ?? 0)
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

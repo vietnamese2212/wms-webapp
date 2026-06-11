@@ -615,7 +615,7 @@ export async function createTransferOrder(req: Request, res: Response) {
       .eq('id', gdo_id).single()
     if (gdoErr || !gdo) return fail(res, 'Không tìm thấy GDO', 404)
     if (gdo.status !== 'COMPLETED') return fail(res, 'GDO chưa hoàn thành xuất kho', 400)
-    if (!gdo.shipto_party) return fail(res, 'GDO không có kho đích (shipto_party) — chọn kho NPP khi tạo đơn xuất', 400)
+    if (!gdo.shipto_party) return fail(res, 'GDO không có kho đích (shipto_party) — chọn kho nhận khi tạo đơn xuất', 400)
     if (gdo.transfer_status === 'IN_TRANSIT' || gdo.transfer_status === 'DELIVERED')
       return fail(res, 'GDO này đã có lệnh chuyển kho', 409)
 

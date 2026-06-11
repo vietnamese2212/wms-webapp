@@ -602,7 +602,7 @@ function CustomerCombobox({ value, onChange, onNPPChange, warehouses }: {
               className="w-full text-left px-2.5 py-1.5 text-[11px] hover:bg-slate-50 flex items-center justify-between gap-2"
               onMouseDown={() => {
                 onChange(w.name)
-                onNPPChange(w.warehouse_type === 'NPP' ? w.code : '')
+                onNPPChange(w.code)
                 setOpen(false)
               }}
             >
@@ -863,7 +863,7 @@ function GDOFormBody({
             {shiptoPartyId && (
               <div className="flex items-center gap-1.5 rounded bg-amber-50 border border-amber-200 px-2 py-1 text-[10px] text-amber-800">
                 <AlertTriangle className="h-3 w-3 shrink-0" />
-                <span>Kho NPP · Ship-to: <span className="font-mono font-semibold">{shiptoPartyId}</span> — Hoàn thành đơn sẽ tạo phiếu nhập cho kho này</span>
+                <span>Chuyển kho · Ship-to: <span className="font-mono font-semibold">{shiptoPartyId}</span> — Hoàn thành đơn sẽ tạo phiếu nhập cho kho này</span>
               </div>
             )}
           </div>

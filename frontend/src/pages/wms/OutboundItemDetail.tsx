@@ -311,7 +311,7 @@ export default function OutboundItemDetail() {
     const allItems = (gdo.delivery_orders ?? []).flatMap(d => d.items)
     const currentItem = allItems.find(i => i.id === itemId)
     if (!currentItem) return
-    const canScanNow = !!gdo.started_at && gdo.status !== 'PAUSED'
+    const canScanNow = !!gdo.started_at && gdo.status !== 'PAUSED' && gdo.status !== 'COMPLETED'
     if (canScanNow && currentItem.status !== 'COMPLETED') {
       unlockAudio()
       setShowScan(true)
@@ -386,7 +386,7 @@ export default function OutboundItemDetail() {
 
   // Workflow: can only scan if GDO has been started and not paused, and user has scan permission
   const isPaused = gdo.status === 'PAUSED'
-  const canScan  = !!gdo.started_at && !isPaused && can(perms, 'outbound', 'scan')
+  const canScan  = !!gdo.started_at && !isPaused && gdo.status !== 'COMPLETED' && can(perms, 'outbound', 'scan')
   const notStartedMsg = !gdo.started_at
     ? (!gdo.assigned_at ? 'Cần Giao đơn → Bắt đầu trước khi quét' : 'Cần Bắt đầu xuất kho trước khi quét')
     : null

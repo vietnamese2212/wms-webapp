@@ -607,8 +607,10 @@ function CustomerCombobox({ value, onChange, onNPPChange, warehouses }: {
               }}
             >
               <span>{w.name} <span className="text-slate-400">({w.code})</span></span>
-              {w.warehouse_type === 'NPP' && (
-                <span className="text-[9px] font-medium text-amber-600 border border-amber-300 rounded px-1">NPP</span>
+              {w.warehouse_type && (
+                <span className={`text-[9px] font-medium rounded px-1 border ${w.warehouse_type === 'NPP' ? 'text-amber-600 border-amber-300' : 'text-blue-600 border-blue-300'}`}>
+                  {w.warehouse_type}
+                </span>
               )}
             </button>
           ))}

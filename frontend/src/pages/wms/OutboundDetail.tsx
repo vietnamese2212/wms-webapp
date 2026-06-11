@@ -19,7 +19,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import {
   useGDO, useAssignGDO, useStartGDO, useWarehouseEmployees, usePatchGDO,
   useUnassignGDO, useUnstartGDO, useUncompleteGDO, useUpdateTransport,
-  useItemInventory, useDeleteGDO, type ItemInventoryEntry,
+  useItemInventory, useDeleteGDO, useManualCompleteItem, type ItemInventoryEntry,
 } from '@/api/hooks'
 import { EditGDOModal } from './Outbound'
 import { PalletDetailDialog } from '@/components/shared/PalletDetailDialog'
@@ -489,6 +489,8 @@ function ItemsTable({ doRecords, gdoId, canScan, expandedItemIds, toggleExpand }
 }) {
   const navigate = useNavigate()
   const [inventoryItemId, setInventoryItemId] = useState<string | null>(null)
+  const [manualDlg, setManualDlg] = useState<{ itemId: string; matName: string; cartons: number } | null>(null)
+  const { mutate: manualComplete, isPending: savingManual } = useManualCompleteItem()
   const allItems = doRecords.flatMap(d =>
     d.items.map(i => ({ ...i, delivery_code: d.delivery_code, distributor_name: d.distributor_name }))
   )
@@ -513,6 +515,35 @@ function ItemsTable({ doRecords, gdoId, canScan, expandedItemIds, toggleExpand }
         matName={inventoryItem.material?.short_name ?? inventoryItem.material_code_raw ?? '—'}
         onClose={() => setInventoryItemId(null)}
       />
+    )}
+    {manualDlg && (
+      <Dialog open onOpenChange={v => { if (!v && !savingManual) setManualDlg(null) }}>
+        <DialogContent className="max-w-xs">
+          <DialogHeader><DialogTitle className="text-base">Lưu số lượng</DialogTitle></DialogHeader>
+          <div className="space-y-3 py-1">
+            <p className="text-sm text-slate-600 font-medium">{manualDlg.matName}</p>
+            <div className="space-y-1">
+              <Label className="text-xs">Số thùng</Label>
+              <Input
+                type="number" min="0"
+                className="text-lg h-10"
+                value={manualDlg.cartons}
+                onChange={e => setManualDlg(d => d ? { ...d, cartons: parseInt(e.target.value) || 0 } : d)}
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" size="sm" onClick={() => setManualDlg(null)} disabled={savingManual}>Hủy</Button>
+            <Button size="sm" disabled={savingManual}
+              onClick={() => manualComplete(
+                { gdoId, itemId: manualDlg.itemId, cartons: manualDlg.cartons },
+                { onSuccess: () => setManualDlg(null) }
+              )}>
+              {savingManual ? 'Đang lưu…' : 'Lưu'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     )}
     <Table className="min-w-[540px]">
         <TableHeader>
@@ -561,7 +592,16 @@ function ItemsTable({ doRecords, gdoId, canScan, expandedItemIds, toggleExpand }
                 <TableCell className={`px-2 py-1 align-top text-right whitespace-nowrap`}>
                   <div className="flex flex-col items-end gap-0.5">
                     <span className={`text-[10px] font-semibold tabular-nums ${textCls}`}>{item.cartons_ordered}</span>
-                    {canScan && item.status !== 'COMPLETED' && item.material_type !== 'POSM' && (
+                    {canScan && item.status !== 'COMPLETED' && (item.material_type === 'POSM' || item.material_type === 'Pallet Loscam') && (
+                      <button
+                        onClick={e => { e.stopPropagation(); setManualDlg({ itemId: item.id, matName: matName, cartons: item.cartons_ordered }) }}
+                        className="flex items-center gap-0.5 text-[9px] font-medium text-green-600 hover:text-green-700 bg-green-50 hover:bg-green-100 rounded px-1.5 py-0.5 transition-colors"
+                        title="Lưu số lượng"
+                      >
+                        <PenSquare className="h-2.5 w-2.5" /> Lưu SL
+                      </button>
+                    )}
+                    {canScan && item.status !== 'COMPLETED' && item.material_type !== 'POSM' && item.material_type !== 'Pallet Loscam' && (
                       <button
                         onClick={e => { e.stopPropagation(); navigate(`/wms/outbound/${gdoId}/items/${item.id}?scan=1`) }}
                         className="flex items-center gap-0.5 text-[9px] font-medium text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 rounded px-1.5 py-0.5 transition-colors"
@@ -1070,7 +1110,7 @@ export default function OutboundDetail() {
                   {gdo.loader_name      && <span><strong>Bốc:</strong> {gdo.loader_name}</span>}
                   <span className="text-slate-400">{formatDateTime(gdo.started_at)}</span>
                 </div>
-                {can(perms, 'outbound', 'edit') && (
+                {can(perms, 'outbound', 'edit') && gdo.status !== 'COMPLETED' && (
                   <button
                     onClick={() => setShowEditTransport(true)}
                     className="shrink-0 p-1 rounded hover:bg-blue-200 text-blue-600 transition-colors"
@@ -1148,7 +1188,7 @@ export default function OutboundDetail() {
             <ItemsTable
               doRecords={allDOs}
               gdoId={id!}
-              canScan={!!gdo.started_at && gdo.status !== 'PAUSED'}
+              canScan={!!gdo.started_at && gdo.status !== 'PAUSED' && gdo.status !== 'COMPLETED'}
               expandedItemIds={expandedItemIds}
               toggleExpand={toggleExpandItem}
             />

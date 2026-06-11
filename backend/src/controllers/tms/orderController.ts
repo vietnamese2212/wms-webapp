@@ -964,7 +964,7 @@ export async function getTransferGoods(req: Request, res: Response) {
     // Pallet đã nhận tại kho nhận: ProductionImport → InventoryEntry
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: importOrders } = await (supabase.from('ProductionImport') as any)
-      .select('id').eq('tms_order_id', id).eq('source_type', 'TRANSFER')
+      .select('id').eq('tms_order_id', id).eq('source_type', 'TRANSFER').eq('status', 'COMPLETED')
     const importIds: string[] = (importOrders ?? []).map((o: any) => o.id)
 
     type InboundPallet = { cartons_inbound: number; inbound_at: string | null }

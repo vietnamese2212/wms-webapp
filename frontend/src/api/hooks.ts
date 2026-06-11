@@ -296,6 +296,7 @@ export function useCompleteInboundOrder() {
       qc.invalidateQueries({ queryKey: ['inbound-orders'] })
       qc.invalidateQueries({ queryKey: ['inbound-order', id] })
       qc.invalidateQueries({ queryKey: ['tms-orders'] })
+      qc.invalidateQueries({ queryKey: ['transfer-goods'] })
     },
   })
 }
@@ -308,6 +309,7 @@ export function useUncompleteInboundOrder() {
       qc.invalidateQueries({ queryKey: ['inbound-orders'] })
       qc.invalidateQueries({ queryKey: ['inbound-order', id] })
       qc.invalidateQueries({ queryKey: ['tms-orders'] })
+      qc.invalidateQueries({ queryKey: ['transfer-goods'] })
     },
   })
 }

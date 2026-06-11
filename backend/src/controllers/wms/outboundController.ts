@@ -1946,15 +1946,19 @@ export async function manualCompleteItem(req: Request, res: Response) {
     }
 
     const isSpecial = (item.material as any)?.no_qr_tracking === true
+    const specialMatCode: string | null = isSpecial ? ((item.material as any)?.material_code ?? item.material_code_raw ?? null) : null
+    let specialInvEntryId: string | null = null
+
     if (isSpecial && item.material_id && gdo?.warehouse_id) {
-      // Dùng pallet_code = material_code (cách inbound tạo entry cho Loscam/POSM)
-      const materialCode = (item.material as any)?.material_code ?? item.material_code_raw
+      const materialCode = specialMatCode
       const { data: invEntry } = await supabase
         .from('InventoryEntry')
         .select('id, cartons_remaining, cartons_imported')
         .eq('pallet_code', materialCode)
         .eq('warehouse_id', gdo.warehouse_id)
         .maybeSingle()
+
+      specialInvEntryId = invEntry?.id ?? null
 
       const oldCartons = Number(item.cartons_scanned) || 0
       const delta = ctn - oldCartons
@@ -1988,6 +1992,23 @@ export async function manualCompleteItem(req: Request, res: Response) {
     const t = now()
     await (supabase.from('OutboundItem') as any)
       .update({ status: 'COMPLETED', cartons_scanned: ctn, updated_at: t }).eq('id', itemId)
+
+    // Upsert OutboundScanEntry cho no_qr items (1 dòng per item, pallet_code = material_code)
+    if (isSpecial && specialMatCode) {
+      const { data: existingScan } = await (supabase.from('OutboundScanEntry') as any)
+        .select('id').eq('item_id', itemId).maybeSingle()
+      if (existingScan) {
+        await (supabase.from('OutboundScanEntry') as any)
+          .update({ cartons_scanned: ctn, updated_at: t }).eq('id', existingScan.id)
+      } else {
+        await (supabase.from('OutboundScanEntry') as any).insert({
+          id: randomUUID(), item_id: itemId,
+          inventory_entry_id: specialInvEntryId,
+          pallet_code: specialMatCode, cartons_scanned: ctn,
+          is_loose_picking: false, scanned_at: t, created_at: t, updated_at: t,
+        })
+      }
+    }
 
     const { count: pendingItems } = await (supabase.from('OutboundItem') as any)
       .select('id', { count: 'exact', head: true })

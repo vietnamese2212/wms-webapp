@@ -446,7 +446,23 @@ export function useDeletePalletEntry() {
       apiClient.delete(`/wms/inbound-orders/${orderId}/entries/${entryId}`, {
         data: { employee_id: employeeId },
       }).then((r) => r.data.data),
-    onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ['inbound-order', v.orderId] }),
+    onMutate: async ({ orderId, entryId }) => {
+      await qc.cancelQueries({ queryKey: ['inbound-order', orderId] })
+      const prev = qc.getQueryData<InboundOrder>(['inbound-order', orderId])
+      qc.setQueryData<InboundOrder>(['inbound-order', orderId], (old) => {
+        if (!old) return old
+        return {
+          ...old,
+          inventory_entries: (old.inventory_entries ?? []).filter((e: PalletEntry) => e.id !== entryId),
+          _count: { inventory_entries: Math.max(0, (old._count?.inventory_entries ?? 1) - 1) },
+        }
+      })
+      return { prev, orderId }
+    },
+    onError: (_e, _v, ctx: any) => {
+      if (ctx?.prev) qc.setQueryData(['inbound-order', ctx.orderId], ctx.prev)
+    },
+    onSettled: (_d, _e, v) => qc.invalidateQueries({ queryKey: ['inbound-order', v.orderId] }),
   })
 }
 
@@ -1218,7 +1234,32 @@ export function useScanOutboundItem() {
     mutationFn: ({ gdoId, itemId, ...body }: {
       gdoId: string; itemId: string; qr_code: string; employee_id?: string; cartons_override?: number
     }) => apiClient.post(`/wms/outbound/${gdoId}/items/${itemId}/scan`, body).then(r => r.data.data),
-    onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ['gdo', v.gdoId] }),
+    onSuccess: (data: { scan_entry: { id: string; pallet_code: string; cartons_scanned: number }; item: { cartons_scanned: number; status: string } }, v) => {
+      qc.setQueryData(['gdo', v.gdoId], (old: any) => {
+        if (!old) return old
+        return {
+          ...old,
+          delivery_orders: old.delivery_orders?.map((d: any) => ({
+            ...d,
+            items: d.items?.map((item: any) => {
+              if (item.id !== v.itemId) return item
+              return {
+                ...item,
+                cartons_scanned: data.item.cartons_scanned,
+                status:          data.item.status,
+                scan_entries:    [...(item.scan_entries ?? []), {
+                  ...data.scan_entry,
+                  is_loose_picking: false, loose_confirmed: false, loose_confirmed_at: null,
+                  scanned_by: null, scanned_at: new Date().toISOString(),
+                  pct_date: null, production_date: null, best_available_date: null,
+                }],
+              }
+            }),
+          })),
+        }
+      })
+      qc.invalidateQueries({ queryKey: ['gdo', v.gdoId] })
+    },
   })
 }
 
@@ -1261,7 +1302,36 @@ export function useDeleteOutboundScanEntry() {
   return useMutation({
     mutationFn: ({ gdoId, itemId, scanId }: { gdoId: string; itemId: string; scanId: string }) =>
       apiClient.delete(`/wms/outbound/${gdoId}/items/${itemId}/scans/${scanId}`).then(r => r.data.data),
-    onSuccess: (_d, v) => {
+    onMutate: async ({ gdoId, itemId, scanId }) => {
+      await qc.cancelQueries({ queryKey: ['gdo', gdoId] })
+      const prev = qc.getQueryData(['gdo', gdoId])
+      qc.setQueryData(['gdo', gdoId], (old: any) => {
+        if (!old) return old
+        return {
+          ...old,
+          delivery_orders: old.delivery_orders?.map((d: any) => ({
+            ...d,
+            items: d.items?.map((item: any) => {
+              if (item.id !== itemId) return item
+              const entry = (item.scan_entries ?? []).find((e: any) => e.id === scanId)
+              const removed = Number(entry?.cartons_scanned ?? 0)
+              const newScanned = Math.max(0, Number(item.cartons_scanned) - removed)
+              return {
+                ...item,
+                cartons_scanned: newScanned,
+                status: newScanned === 0 ? 'PENDING' : newScanned < Number(item.cartons_ordered) ? 'IN_PROGRESS' : item.status,
+                scan_entries: (item.scan_entries ?? []).filter((e: any) => e.id !== scanId),
+              }
+            }),
+          })),
+        }
+      })
+      return { prev, gdoId }
+    },
+    onError: (_e, _v, ctx: any) => {
+      if (ctx?.prev) qc.setQueryData(['gdo', ctx.gdoId], ctx.prev)
+    },
+    onSettled: (_d, _e, v) => {
       qc.invalidateQueries({ queryKey: ['gdo', v.gdoId] })
       qc.invalidateQueries({ queryKey: ['manual-item-stock', v.gdoId, v.itemId] })
     },

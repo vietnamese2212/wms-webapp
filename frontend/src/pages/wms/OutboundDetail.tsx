@@ -534,7 +534,7 @@ function ManualCompleteDialog({ gdoId, itemId, matName, initialCartons, onClose 
         </div>
         <DialogFooter className="gap-2">
           <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>Hủy</Button>
-          <Button size="sm" disabled={saving || remaining === 0}
+          <Button size="sm" disabled={saving || remaining === 0 || overStock}
             onClick={() => manualComplete(
               { gdoId, itemId, cartons },
               {

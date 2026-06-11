@@ -923,8 +923,8 @@ export async function getTransferGoods(req: Request, res: Response) {
     if (!(planLines ?? []).length) return ok(res, [])
 
     // Pallet xuất từ kho nguồn: GDO → OutboundDelivery → OutboundItem → OutboundScanEntry
-    type PalletInfo = { pallet_code: string; cartons_scanned: number; scanned_at: string | null }
-    const palletsByMat = new Map<string, Map<string, PalletInfo>>()
+    type OutPallet = { pallet_code: string; cartons_outbound: number }
+    const outPalletsByMat = new Map<string, Map<string, OutPallet>>()
 
     if (tmsOrder.transfer_gdo_id) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -943,33 +943,72 @@ export async function getTransferGoods(req: Request, res: Response) {
         if (itemIds.length) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const { data: scans } = await (supabase.from('OutboundScanEntry') as any)
-            .select('item_id, pallet_code, cartons_scanned, created_at')
+            .select('item_id, pallet_code, cartons_scanned')
             .in('item_id', itemIds)
 
           for (const scan of scans ?? []) {
             if (!scan.pallet_code) continue
             const matId = itemMatMap.get(scan.item_id)
             if (!matId) continue
-            if (!palletsByMat.has(matId)) palletsByMat.set(matId, new Map())
-            const byCode = palletsByMat.get(matId)!
+            if (!outPalletsByMat.has(matId)) outPalletsByMat.set(matId, new Map())
+            const byCode = outPalletsByMat.get(matId)!
             if (!byCode.has(scan.pallet_code)) {
-              byCode.set(scan.pallet_code, { pallet_code: scan.pallet_code, cartons_scanned: 0, scanned_at: scan.created_at ?? null })
+              byCode.set(scan.pallet_code, { pallet_code: scan.pallet_code, cartons_outbound: 0 })
             }
-            byCode.get(scan.pallet_code)!.cartons_scanned += (scan.cartons_scanned ?? 0)
+            byCode.get(scan.pallet_code)!.cartons_outbound += (scan.cartons_scanned ?? 0)
           }
         }
       }
     }
 
+    // Pallet đã nhận tại kho nhận: ProductionImport → InventoryEntry (theo pallet_code)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return ok(res, (planLines ?? []).map((l: any) => ({
-      material_id: l.material_id,
-      material_code: l.material?.material_code ?? null,
-      material_name: l.material?.short_name ?? null,
-      unit: l.material?.unit ?? null,
-      planned_boxes: l.planned_boxes,
-      pallets: [...(palletsByMat.get(l.material_id)?.values() ?? [])],
-    })))
+    const { data: importOrders } = await (supabase.from('ProductionImport') as any)
+      .select('id').eq('tms_order_id', id).eq('source_type', 'TRANSFER')
+    const importIds: string[] = (importOrders ?? []).map((o: any) => o.id)
+
+    type InboundPallet = { cartons_inbound: number; inbound_at: string | null }
+    const inboundByPalletCode = new Map<string, InboundPallet>()
+
+    if (importIds.length) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: entries } = await (supabase.from('InventoryEntry') as any)
+        .select('material_id, pallet_code, cartons_imported, created_at')
+        .in('import_order_id', importIds)
+
+      for (const entry of entries ?? []) {
+        if (!entry.pallet_code) continue
+        const existing = inboundByPalletCode.get(entry.pallet_code)
+        inboundByPalletCode.set(entry.pallet_code, {
+          cartons_inbound: (existing?.cartons_inbound ?? 0) + (entry.cartons_imported ?? 0),
+          inbound_at: existing?.inbound_at ?? entry.created_at ?? null,
+        })
+      }
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return ok(res, (planLines ?? []).map((l: any) => {
+      const outPallets = [...(outPalletsByMat.get(l.material_id)?.values() ?? [])]
+      const pallets = outPallets.map(op => {
+        const inb = inboundByPalletCode.get(op.pallet_code)
+        return {
+          pallet_code: op.pallet_code,
+          cartons_outbound: op.cartons_outbound,
+          cartons_inbound: inb?.cartons_inbound ?? 0,
+          inbound_at: inb?.inbound_at ?? null,
+        }
+      })
+      const actual_boxes = pallets.reduce((s, p) => s + p.cartons_inbound, 0)
+      return {
+        material_id: l.material_id,
+        material_code: l.material?.material_code ?? null,
+        material_name: l.material?.short_name ?? null,
+        unit: l.material?.unit ?? null,
+        planned_boxes: l.planned_boxes,
+        actual_boxes,
+        pallets,
+      }
+    }))
   } catch (e) { return fail(res, String(e)) }
 }
 

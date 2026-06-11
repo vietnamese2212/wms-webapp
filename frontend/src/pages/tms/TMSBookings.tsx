@@ -2051,7 +2051,7 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
     ? goods.filter(g => !activeImports.some((ai) => ai.material_id === g.material_id))
     : []
   const cfg = tStatus ? TRANSFER_STATUS_CFG[tStatus] : null
-  const totalScanned = goods.reduce((s, g) => s + g.pallets.reduce((ps, p) => ps + (p.cartons_scanned ?? 0), 0), 0)
+  const totalScanned = goods.reduce((s, g) => s + (g.actual_boxes ?? 0), 0)
   const dvvtDisplay = order?.ncc?.name ?? order?.transfer_gdo?.dvvt ?? null
 
   return (
@@ -2247,7 +2247,7 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                   <tbody>
                     {goods.map(g => {
                       const isExpanded = expandedMats.has(g.material_id)
-                      const actualCartons = g.pallets.reduce((s, p) => s + (p.cartons_scanned ?? 0), 0)
+                      const actualCartons = g.actual_boxes ?? 0
                       return (
                         <React.Fragment key={g.material_id}>
                           <tr
@@ -2305,13 +2305,15 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                               </td>
                               <td className="px-2 py-0.5"></td>
                               <td className="px-2 py-0.5 text-right">
-                                <span className="text-[10px] tabular-nums text-slate-500">{p.cartons_scanned}</span>
+                                <span className="text-[10px] tabular-nums text-slate-500">{p.cartons_outbound}</span>
                               </td>
                               <td className="px-2 py-0.5 text-right">
-                                <span className="text-[10px] tabular-nums text-green-700 font-semibold">{p.cartons_scanned}</span>
+                                <span className={`text-[10px] tabular-nums font-semibold ${p.cartons_inbound > 0 ? 'text-green-700' : 'text-slate-300'}`}>
+                                  {p.cartons_inbound > 0 ? p.cartons_inbound : '—'}
+                                </span>
                               </td>
                               <td className="px-2 py-0.5" colSpan={2}>
-                                {p.scanned_at && <span className="text-[9px] text-slate-400">{formatDateTime(p.scanned_at)}</span>}
+                                {p.inbound_at && <span className="text-[9px] text-slate-400">{formatDateTime(p.inbound_at)}</span>}
                               </td>
                             </tr>
                           ))}

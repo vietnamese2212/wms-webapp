@@ -1757,7 +1757,8 @@ export type TransferGoodsRow = {
   material_name: string | null
   unit: string | null
   planned_boxes: number
-  pallets: { pallet_code: string; cartons_scanned: number; scanned_at: string | null }[]
+  actual_boxes: number
+  pallets: { pallet_code: string; cartons_outbound: number; cartons_inbound: number; inbound_at: string | null }[]
 }
 
 export function useTransferGoods(orderId?: string | null) {

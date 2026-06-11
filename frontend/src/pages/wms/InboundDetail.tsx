@@ -507,6 +507,7 @@ export default function InboundDetail() {
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [confirm, setConfirm] = useState<{ title: string; msg: string; onOk: () => void } | null>(null)
+  const [completeDlg, setCompleteDlg] = useState<'complete' | 'uncomplete' | null>(null)
 
   function openConfirm(title: string, msg: string, onOk: () => void) {
     setConfirm({ title, msg, onOk })
@@ -667,6 +668,59 @@ export default function InboundDetail() {
       )}
 
       {/* ── Confirm dialog ── */}
+      {completeDlg && order && (() => {
+        const planned = order.planned_cartons ?? 0
+        const actual  = totalScanned
+        const diff    = actual - planned
+        const hasPlan = planned > 0
+        const statusEl = !hasPlan
+          ? <span className="text-slate-400 text-xs">Không có kế hoạch số thùng</span>
+          : diff === 0
+            ? <span className="text-xs font-medium text-green-700 bg-green-50 px-2 py-0.5 rounded-full">Đúng kế hoạch</span>
+            : diff < 0
+              ? <span className="text-xs font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">Thiếu {Math.abs(diff)} thùng so với kế hoạch</span>
+              : <span className="text-xs font-medium text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full">Thừa {diff} thùng so với kế hoạch</span>
+        const isComplete = completeDlg === 'complete'
+        return (
+          <Dialog open onOpenChange={(v) => { if (!v) setCompleteDlg(null) }}>
+            <DialogContent className="sm:max-w-sm">
+              <DialogHeader>
+                <DialogTitle>{isComplete ? 'Xác nhận hoàn thành phiếu' : 'Gỡ hoàn thành phiếu'}</DialogTitle>
+              </DialogHeader>
+              {isComplete ? (
+                <div className="py-2 space-y-2 text-sm">
+                  <div className="flex justify-between text-slate-600">
+                    <span>Kế hoạch</span>
+                    <span className="font-medium">{hasPlan ? `${planned} thùng` : '—'}</span>
+                  </div>
+                  <div className="flex justify-between text-slate-600">
+                    <span>Thực nhập</span>
+                    <span className="font-semibold">{actual} thùng</span>
+                  </div>
+                  <div className="pt-1">{statusEl}</div>
+                </div>
+              ) : (
+                <p className="text-sm text-slate-600 py-1">Phiếu sẽ về trạng thái <strong>Đang nhập</strong> và có thể tiếp tục quét thêm.</p>
+              )}
+              <DialogFooter className="gap-2">
+                <Button variant="outline" onClick={() => setCompleteDlg(null)}>Hủy</Button>
+                <Button
+                  className={isComplete ? 'bg-green-600 hover:bg-green-700 text-white' : 'bg-slate-700 hover:bg-slate-800 text-white'}
+                  disabled={completing || uncompleting}
+                  onClick={() => {
+                    setCompleteDlg(null)
+                    if (isComplete) completeOrder(order.id)
+                    else uncompleteOrder(order.id)
+                  }}
+                >
+                  {isComplete ? 'Hoàn thành' : 'Xác nhận gỡ'}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        )
+      })()}
+
       {confirm && (
         <Dialog open onOpenChange={(v) => { if (!v) setConfirm(null) }}>
           <DialogContent className="sm:max-w-sm">
@@ -780,12 +834,12 @@ export default function InboundDetail() {
                   <span className="hidden sm:inline">{cancelling ? 'Đang hủy…' : 'Hủy phiếu'}</span>
                 </Button>
               )}
-              {isOpen && entries.length > 0 && can(perms, 'inbound', 'complete') && (
+              {isOpen && can(perms, 'inbound', 'complete') && (
                 <Button
                   size="sm" variant="outline"
                   className="h-7 text-xs px-2 text-green-700 border-green-300 hover:bg-green-50 hover:text-green-800 disabled:opacity-40"
                   disabled={completing}
-                  onClick={() => completeOrder(order.id)}
+                  onClick={() => setCompleteDlg('complete')}
                 >
                   <CheckCircle2 className="h-3.5 w-3.5 sm:mr-1" />
                   <span className="hidden sm:inline">{completing ? 'Đang lưu…' : 'Hoàn thành'}</span>
@@ -796,7 +850,7 @@ export default function InboundDetail() {
                   size="sm" variant="outline"
                   className="h-7 text-xs px-2 text-slate-600 border-slate-300 hover:bg-amber-50 hover:text-amber-700 disabled:opacity-40"
                   disabled={uncompleting}
-                  onClick={() => uncompleteOrder(order.id)}
+                  onClick={() => setCompleteDlg('uncomplete')}
                 >
                   <RotateCcw className="h-3.5 w-3.5 sm:mr-1" />
                   <span className="hidden sm:inline">{uncompleting ? 'Đang gỡ…' : 'Gỡ hoàn thành'}</span>

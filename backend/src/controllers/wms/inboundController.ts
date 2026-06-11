@@ -476,9 +476,10 @@ export async function uncompleteOrder(req: Request, res: Response) {
           .update({ status: 'PENDING', completed_at: null, updated_at: nowTs })
           .eq('id', existing.tms_order_id)
         if (existing.source_type === 'TRANSFER' && tmsOrder.transfer_gdo_id) {
+          // Còn phiếu nhập → vẫn đang nhận hàng; chỉ về IN_TRANSIT khi xóa hết phiếu
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           await (supabase.from('GroupDeliveryOrder') as any)
-            .update({ transfer_status: 'IN_TRANSIT', updated_at: nowTs })
+            .update({ transfer_status: 'RECEIVING', updated_at: nowTs })
             .eq('id', tmsOrder.transfer_gdo_id)
         }
       }

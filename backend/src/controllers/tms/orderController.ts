@@ -961,7 +961,7 @@ export async function getTransferGoods(req: Request, res: Response) {
       }
     }
 
-    // Pallet đã nhận tại kho nhận: ProductionImport → InventoryEntry (theo pallet_code)
+    // Pallet đã nhận tại kho nhận: ProductionImport → InventoryEntry
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: importOrders } = await (supabase.from('ProductionImport') as any)
       .select('id').eq('tms_order_id', id).eq('source_type', 'TRANSFER')
@@ -969,6 +969,8 @@ export async function getTransferGoods(req: Request, res: Response) {
 
     type InboundPallet = { cartons_inbound: number; inbound_at: string | null }
     const inboundByPalletCode = new Map<string, InboundPallet>()
+    // Fallback cho Loscam/POSM: không có OutboundScanEntry, lookup theo material_id
+    const inboundByMaterialId = new Map<string, InboundPallet & { pallet_code: string }>()
 
     if (importIds.length) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -983,21 +985,41 @@ export async function getTransferGoods(req: Request, res: Response) {
           cartons_inbound: (existing?.cartons_inbound ?? 0) + (entry.cartons_imported ?? 0),
           inbound_at: existing?.inbound_at ?? entry.created_at ?? null,
         })
+        if (entry.material_id) {
+          const existingM = inboundByMaterialId.get(entry.material_id)
+          inboundByMaterialId.set(entry.material_id, {
+            cartons_inbound: (existingM?.cartons_inbound ?? 0) + (entry.cartons_imported ?? 0),
+            inbound_at: existingM?.inbound_at ?? entry.created_at ?? null,
+            pallet_code: existingM?.pallet_code ?? entry.pallet_code,
+          })
+        }
       }
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return ok(res, (planLines ?? []).map((l: any) => {
       const outPallets = [...(outPalletsByMat.get(l.material_id)?.values() ?? [])]
-      const pallets = outPallets.map(op => {
-        const inb = inboundByPalletCode.get(op.pallet_code)
-        return {
-          pallet_code: op.pallet_code,
-          cartons_outbound: op.cartons_outbound,
-          cartons_inbound: inb?.cartons_inbound ?? 0,
-          inbound_at: inb?.inbound_at ?? null,
-        }
-      })
+      let pallets: { pallet_code: string; cartons_outbound: number; cartons_inbound: number; inbound_at: string | null }[]
+
+      if (outPallets.length > 0) {
+        // Regular pallets: khớp inbound theo pallet_code
+        pallets = outPallets.map(op => {
+          const inb = inboundByPalletCode.get(op.pallet_code)
+          return {
+            pallet_code: op.pallet_code,
+            cartons_outbound: op.cartons_outbound,
+            cartons_inbound: inb?.cartons_inbound ?? 0,
+            inbound_at: inb?.inbound_at ?? null,
+          }
+        })
+      } else {
+        // Loscam/POSM: không có OutboundScanEntry — fallback sang inbound by material_id
+        const inbM = inboundByMaterialId.get(l.material_id)
+        pallets = inbM
+          ? [{ pallet_code: inbM.pallet_code, cartons_outbound: 0, cartons_inbound: inbM.cartons_inbound, inbound_at: inbM.inbound_at }]
+          : []
+      }
+
       const actual_boxes = pallets.reduce((s, p) => s + p.cartons_inbound, 0)
       return {
         material_id: l.material_id,

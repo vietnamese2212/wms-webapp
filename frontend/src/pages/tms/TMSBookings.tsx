@@ -2300,7 +2300,8 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                           {isExpanded && g.pallets.map(p => (
                             <tr key={p.pallet_code} className="bg-blue-50/30 border-t border-blue-100">
                               <td className="px-2 py-0.5"></td>
-                              <td colSpan={2} className="px-2 py-0.5">
+                              <td className="px-2 py-0.5"></td>
+                              <td className="px-2 py-0.5">
                                 <span className="text-[10px] font-mono font-semibold text-blue-700">{p.pallet_code}</span>
                               </td>
                               <td className="px-2 py-0.5"></td>
@@ -2312,7 +2313,7 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                                   {p.cartons_inbound > 0 ? p.cartons_inbound : '—'}
                                 </span>
                               </td>
-                              <td className="px-2 py-0.5" colSpan={2}></td>
+                              <td className="px-2 py-0.5" colSpan={3}></td>
                             </tr>
                           ))}
                         </React.Fragment>

@@ -592,24 +592,27 @@ function ItemsTable({ doRecords, gdoId, canScan, expandedItemIds, toggleExpand }
                 <TableCell className={`px-2 py-1 align-top text-right whitespace-nowrap`}>
                   <div className="flex flex-col items-end gap-0.5">
                     <span className={`text-[10px] font-semibold tabular-nums ${textCls}`}>{item.cartons_ordered}</span>
-                    {canScan && item.status !== 'COMPLETED' && (item.material_type === 'POSM' || item.material_type === 'Pallet Loscam') && (
-                      <button
-                        onClick={e => { e.stopPropagation(); setManualDlg({ itemId: item.id, matName: matName, cartons: item.cartons_ordered }) }}
-                        className="flex items-center gap-0.5 text-[9px] font-medium text-green-600 hover:text-green-700 bg-green-50 hover:bg-green-100 rounded px-1.5 py-0.5 transition-colors"
-                        title="Lưu số lượng"
-                      >
-                        <PenSquare className="h-2.5 w-2.5" /> Lưu SL
-                      </button>
-                    )}
-                    {canScan && item.status !== 'COMPLETED' && item.material_type !== 'POSM' && item.material_type !== 'Pallet Loscam' && (
-                      <button
-                        onClick={e => { e.stopPropagation(); navigate(`/wms/outbound/${gdoId}/items/${item.id}?scan=1`) }}
-                        className="flex items-center gap-0.5 text-[9px] font-medium text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 rounded px-1.5 py-0.5 transition-colors"
-                        title="Quét pallet"
-                      >
-                        <QrCode className="h-2.5 w-2.5" /> Quét
-                      </button>
-                    )}
+                    {(() => {
+                      const isManual = item.material_type === 'POSM' || item.material_type === 'Pallet Loscam' || (item.material_code_raw ?? '').includes('810000')
+                      if (!canScan || item.status === 'COMPLETED') return null
+                      return isManual ? (
+                        <button
+                          onClick={e => { e.stopPropagation(); setManualDlg({ itemId: item.id, matName: matName, cartons: item.cartons_ordered }) }}
+                          className="flex items-center gap-0.5 text-[9px] font-medium text-green-600 hover:text-green-700 bg-green-50 hover:bg-green-100 rounded px-1.5 py-0.5 transition-colors"
+                          title="Lưu số lượng"
+                        >
+                          <PenSquare className="h-2.5 w-2.5" /> Lưu SL
+                        </button>
+                      ) : (
+                        <button
+                          onClick={e => { e.stopPropagation(); navigate(`/wms/outbound/${gdoId}/items/${item.id}?scan=1`) }}
+                          className="flex items-center gap-0.5 text-[9px] font-medium text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 rounded px-1.5 py-0.5 transition-colors"
+                          title="Quét pallet"
+                        >
+                          <QrCode className="h-2.5 w-2.5" /> Quét
+                        </button>
+                      )
+                    })()}
                   </div>
                 </TableCell>
                 <TableCell className="px-1 py-1 align-middle text-center">

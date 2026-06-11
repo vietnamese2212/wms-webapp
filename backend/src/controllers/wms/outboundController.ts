@@ -1908,7 +1908,7 @@ export async function manualCompleteItem(req: Request, res: Response) {
     const [{ data: gdo }, { data: item }] = await Promise.all([
       (supabase.from('GroupDeliveryOrder') as any).select('status, warehouse_id').eq('id', gdoId).single(),
       (supabase.from('OutboundItem') as any)
-        .select('id, do_id, material_id, material_type, cartons_ordered, cartons_scanned')
+        .select('id, do_id, material_id, material_type, material_code_raw, cartons_ordered, cartons_scanned, material:Material!material_id(material_code)')
         .eq('id', itemId).single(),
     ])
     if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng — không thể cập nhật', 400)
@@ -1916,15 +1916,17 @@ export async function manualCompleteItem(req: Request, res: Response) {
 
     const ctn = (cartons != null && Number(cartons) >= 0) ? Math.round(Number(cartons)) : Number(item.cartons_ordered)
 
-    // POSM / Pallet Loscam: kiểm tra và trừ tồn kho
+    // POSM / Pallet Loscam (bao gồm mã 810000): kiểm tra và trừ tồn kho
     const isSpecial = item.material_type === 'POSM' || item.material_type === 'Pallet Loscam'
+      || (item.material_code_raw ?? '').includes('810000')
     if (isSpecial && item.material_id && gdo?.warehouse_id) {
+      // Dùng pallet_code = material_code (cách inbound tạo entry cho Loscam/POSM)
+      const materialCode = (item.material as any)?.material_code ?? item.material_code_raw
       const { data: invEntry } = await supabase
         .from('InventoryEntry')
         .select('id, cartons_remaining, cartons_imported')
-        .eq('material_id', item.material_id)
+        .eq('pallet_code', materialCode)
         .eq('warehouse_id', gdo.warehouse_id)
-        .is('location_id', null)
         .maybeSingle()
 
       const oldCartons = Number(item.cartons_scanned) || 0

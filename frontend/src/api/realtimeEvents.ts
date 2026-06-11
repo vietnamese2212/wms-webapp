@@ -6,7 +6,7 @@ import type { DeliverySlot, TmsOrder } from '@/types'
 // Maps table name → query keys to invalidate (fallback refetch).
 const TABLE_QUERY_MAP: Record<string, string[][]> = {
   ProductionImport:    [['inbound-orders'], ['inbound-order'], ['inbound-report'], ['transfer-goods'], ['tms-orders-transfer']],
-  InventoryEntry:      [['inbound-order'], ['inventory-entries'], ['inventory-facets'], ['locations-real'], ['plan-vs-actual'], ['inbound-report']],
+  InventoryEntry:      [['inbound-order'], ['inventory-entries'], ['inventory-facets'], ['locations-real'], ['plan-vs-actual'], ['inbound-report'], ['manual-item-stock']],
   Location:            [['locations-real'], ['sub-groups']],
   Material:            [['materials']],
   Manufacturer:        [['manufacturers']],

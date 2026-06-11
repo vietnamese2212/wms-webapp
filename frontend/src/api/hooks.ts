@@ -1249,7 +1249,10 @@ export function useManualCompleteItem() {
     onError: (_e, { gdoId }, ctx: any) => {
       if (ctx?.prev) qc.setQueryData(['gdo', gdoId], ctx.prev)
     },
-    onSettled: (_d, _e, { gdoId }) => qc.invalidateQueries({ queryKey: ['gdo', gdoId] }),
+    onSettled: (_d, _e, { gdoId, itemId }) => {
+      qc.invalidateQueries({ queryKey: ['gdo', gdoId] })
+      qc.invalidateQueries({ queryKey: ['manual-item-stock', gdoId, itemId] })
+    },
   })
 }
 
@@ -1258,7 +1261,10 @@ export function useDeleteOutboundScanEntry() {
   return useMutation({
     mutationFn: ({ gdoId, itemId, scanId }: { gdoId: string; itemId: string; scanId: string }) =>
       apiClient.delete(`/wms/outbound/${gdoId}/items/${itemId}/scans/${scanId}`).then(r => r.data.data),
-    onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ['gdo', v.gdoId] }),
+    onSuccess: (_d, v) => {
+      qc.invalidateQueries({ queryKey: ['gdo', v.gdoId] })
+      qc.invalidateQueries({ queryKey: ['manual-item-stock', v.gdoId, v.itemId] })
+    },
   })
 }
 

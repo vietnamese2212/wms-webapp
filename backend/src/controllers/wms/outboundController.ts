@@ -61,12 +61,8 @@ function parseExcelDate(val: any): string | null {
   return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10)
 }
 
-// Exclude no_qr_tracking materials (and legacy POSM/Pallet Loscam/810000) from carton/pallet totals
 function isExcludedFromCount(item: any): boolean {
-  if (item.material?.no_qr_tracking) return true
-  return item.material_type === 'POSM' ||
-    item.material_type === 'Pallet Loscam' ||
-    (item.material_code_raw ?? '').includes('810000')
+  return item.material?.no_qr_tracking === true
 }
 
 // ─── Fetch full GDO ───────────────────────────────────────────
@@ -1917,10 +1913,7 @@ export async function manualCompleteItem(req: Request, res: Response) {
 
     const ctn = (cartons != null && Number(cartons) >= 0) ? Math.round(Number(cartons)) : Number(item.cartons_ordered)
 
-    // Mã không theo dõi QR: kiểm tra và trừ tồn kho
     const isSpecial = (item.material as any)?.no_qr_tracking === true
-      || item.material_type === 'POSM' || item.material_type === 'Pallet Loscam'
-      || (item.material_code_raw ?? '').includes('810000')
     if (isSpecial && item.material_id && gdo?.warehouse_id) {
       // Dùng pallet_code = material_code (cách inbound tạo entry cho Loscam/POSM)
       const materialCode = (item.material as any)?.material_code ?? item.material_code_raw

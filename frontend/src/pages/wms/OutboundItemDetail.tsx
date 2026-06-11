@@ -299,7 +299,6 @@ export default function OutboundItemDetail() {
   const [looseError,       setLooseError]       = useState<string | null>(null)
   const [expandedInvKeys,  setExpandedInvKeys]  = useState<Set<string>>(new Set())
   const [detailEntryId,    setDetailEntryId]    = useState<string | null>(null)
-  const [showLoscamDialog, setShowLoscamDialog] = useState(false)
   const [loscamCartons,    setLoscamCartons]    = useState('')
   const [loscamError,      setLoscamError]      = useState('')
 
@@ -318,6 +317,13 @@ export default function OutboundItemDetail() {
       hasAutoScanned.current = true
     }
   }, [autoScan, gdo]) // eslint-disable-line
+
+  useEffect(() => {
+    if (!gdo) return
+    const currentItem = (gdo.delivery_orders ?? []).flatMap(d => d.items).find(i => i.id === itemId)
+    if (!currentItem?.material?.no_qr_tracking) return
+    setLoscamCartons(String(currentItem.status === 'COMPLETED' ? currentItem.cartons_scanned : currentItem.cartons_ordered))
+  }, [gdo, itemId])
 
   // All useMemo hooks must be above early returns (Rules of Hooks)
   const scans = gdo
@@ -403,6 +409,20 @@ export default function OutboundItemDetail() {
     )
   }
 
+  function handleManualSave() {
+    const c = Math.max(0, parseInt(loscamCartons) || 0)
+    setLoscamError('')
+    manualComplete(
+      { gdoId: gdoId!, itemId: item!.id, cartons: c },
+      {
+        onError: (err) => {
+          const msg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message
+          setLoscamError(msg ?? 'Lỗi lưu số lượng')
+        },
+      }
+    )
+  }
+
   const confirmScan = scans.find(s => s.id === confirmScanId)
 
   return (
@@ -444,47 +464,7 @@ export default function OutboundItemDetail() {
         error={looseError}
       />
 
-      <Dialog open={showLoscamDialog} onOpenChange={v => { if (!v) { setShowLoscamDialog(false); setLoscamError('') } }}>
-        <DialogContent className="sm:max-w-xs">
-          <DialogHeader><DialogTitle className="text-base">Xác nhận số lượng</DialogTitle></DialogHeader>
-          <div className="space-y-3 py-1">
-            <div className="space-y-1.5">
-              <p className="text-xs text-slate-500">Số thùng thực xuất</p>
-              <Input
-                type="number" min={0}
-                value={loscamCartons}
-                onChange={e => { setLoscamCartons(e.target.value); setLoscamError('') }}
-                className="text-center font-semibold text-lg h-11"
-                autoFocus
-              />
-              <p className="text-xs text-slate-400 text-center">Kế hoạch: {item.cartons_ordered} thùng</p>
-            </div>
-            {loscamError && <p className="text-xs text-red-600 text-center">{loscamError}</p>}
-          </div>
-          <DialogFooter className="gap-2">
-            <Button variant="outline" size="sm" onClick={() => { setShowLoscamDialog(false); setLoscamError('') }} disabled={completing}>Hủy</Button>
-            <Button size="sm" disabled={completing || isPaused || !gdo.started_at}
-              onClick={() => {
-                const c = Math.max(0, parseInt(loscamCartons) || 0)
-                setLoscamError('')
-                manualComplete(
-                  { gdoId: gdoId!, itemId: item.id, cartons: c },
-                  {
-                    onSuccess: () => setShowLoscamDialog(false),
-                    onError: (err) => {
-                      const msg = (err as import('axios').AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message
-                      setLoscamError(msg ?? 'Lỗi lưu số lượng')
-                    },
-                  }
-                )
-              }}>
-              {completing ? '…' : 'Xác nhận'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <div className="flex flex-col h-full min-h-0">
+<div className="flex flex-col h-full min-h-0">
 
         {/* ── Header: ~30% ── */}
         <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5 overflow-y-auto" style={{ maxHeight: '30vh' }}>
@@ -515,12 +495,7 @@ export default function OutboundItemDetail() {
                 <Package className="h-3.5 w-3.5" />
                 Tồn kho{inventoryData.length > 0 ? ` (${inventoryData.length})` : ''}
               </button>
-              {isNoQr ? (
-                can(perms, 'outbound', 'complete') && <Button size="sm" variant="outline" className="h-7 text-xs" disabled={isPaused || !gdo.started_at}
-                  onClick={() => { setLoscamCartons(String(isDone ? item.cartons_scanned : item.cartons_ordered)); setShowLoscamDialog(true) }}>
-                  {isDone ? 'Sửa số lượng' : 'Lưu thủ công'}
-                </Button>
-              ) : !isDone && (canScan ? (
+              {!isNoQr && !isDone && (canScan ? (
                 <Button size="sm" className="h-7 text-xs gap-1" onClick={openScan}>
                   <QrCode className="h-3.5 w-3.5" /> Quét pallet
                 </Button>
@@ -705,9 +680,47 @@ export default function OutboundItemDetail() {
           </div>
         )}
 
-        {/* ── Scan list: ~70% ── */}
+        {/* ── Body: ~70% ── */}
         <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
         <div className="p-3">
+
+          {isNoQr ? (
+            <div className="max-w-sm space-y-3">
+              {isDone && (
+                <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-3 flex items-center gap-3">
+                  <CheckCircle2 className="h-5 w-5 text-green-600 shrink-0" />
+                  <div>
+                    <p className="text-sm font-semibold text-green-800">{item.cartons_scanned} thùng đã lưu</p>
+                    <p className="text-xs text-green-600">Kế hoạch: {item.cartons_ordered} thùng</p>
+                  </div>
+                </div>
+              )}
+              {canScan ? (
+                <Card className="p-4 space-y-3">
+                  <div className="space-y-1">
+                    <p className="text-xs text-slate-500">Số thùng thực xuất / kế hoạch {item.cartons_ordered} thùng</p>
+                    <Input
+                      type="number" min={0}
+                      value={loscamCartons}
+                      onChange={e => { setLoscamCartons(e.target.value); setLoscamError('') }}
+                      className="text-center font-bold text-2xl h-14"
+                    />
+                  </div>
+                  {loscamError && (
+                    <div className="rounded bg-red-50 border border-red-200 px-2 py-1 text-xs text-red-700">{loscamError}</div>
+                  )}
+                  <Button className="w-full" onClick={handleManualSave} disabled={completing || isPaused}>
+                    {completing ? 'Đang lưu…' : (isDone ? 'Cập nhật số lượng' : 'Lưu số lượng')}
+                  </Button>
+                </Card>
+              ) : !isDone && (
+                <div className="rounded bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-700 flex items-center gap-1.5">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                  {notStartedMsg ?? 'Cần bắt đầu xuất kho trước khi lưu'}
+                </div>
+              )}
+            </div>
+          ) : (<>
 
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-semibold text-slate-700">
@@ -721,7 +734,7 @@ export default function OutboundItemDetail() {
               <div className="flex flex-col items-center gap-2 py-12 text-slate-400">
                 <QrCode className="h-10 w-10 opacity-30" />
                 <p className="text-sm">Chưa có pallet nào được quét</p>
-                {!isDone && !isNoQr && canScan && (
+                {!isDone && canScan && (
                   <Button size="sm" variant="outline" onClick={openScan}>
                     <QrCode className="h-4 w-4 mr-1" /> Quét pallet đầu tiên
                   </Button>
@@ -809,6 +822,7 @@ export default function OutboundItemDetail() {
                 </Table>
             )}
           </Card>
+          </>)}
         </div>
         </div>
       </div>

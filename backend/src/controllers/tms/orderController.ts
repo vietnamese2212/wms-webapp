@@ -104,6 +104,7 @@ export async function listOrders(req: Request, res: Response) {
     let q = (supabase.from('TmsOrder') as any)
       .select(ORDER_SELECT)
       .eq('date', date)
+      .neq('source_type', 'TRANSFER')
       .order('created_at')
 
     if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)

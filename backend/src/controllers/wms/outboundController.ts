@@ -1894,7 +1894,35 @@ export async function listLoosePickingItems(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
-// ─── Manual complete item (Pallet Loscam) ────────────────────
+// ─── Get stock for manual-complete dialog ─────────────────────
+
+export async function getManualItemStock(req: Request, res: Response) {
+  try {
+    const { gdoId, itemId } = req.params
+    const [{ data: gdo }, { data: item }] = await Promise.all([
+      (supabase.from('GroupDeliveryOrder') as any).select('warehouse_id').eq('id', gdoId).single(),
+      (supabase.from('OutboundItem') as any)
+        .select('material_code_raw, cartons_ordered, cartons_scanned, material:Material!material_id(material_code)')
+        .eq('id', itemId).single(),
+    ])
+    if (!gdo || !item) return fail(res, 'Không tìm thấy', 404)
+    const materialCode = (item.material as any)?.material_code ?? item.material_code_raw
+    const { data: inv } = await supabase
+      .from('InventoryEntry')
+      .select('cartons_imported, cartons_remaining')
+      .eq('pallet_code', materialCode)
+      .eq('warehouse_id', gdo.warehouse_id)
+      .maybeSingle()
+    return ok(res, {
+      cartons_imported:  inv?.cartons_imported  ?? 0,
+      cartons_remaining: inv?.cartons_remaining ?? 0,
+      cartons_ordered:   item.cartons_ordered,
+      cartons_scanned:   item.cartons_scanned ?? 0,
+    })
+  } catch (e) { return fail(res, String(e)) }
+}
+
+// ─── Manual complete item ─────────────────────────────────────
 
 export async function manualCompleteItem(req: Request, res: Response) {
   try {

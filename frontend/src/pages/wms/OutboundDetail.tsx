@@ -19,7 +19,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import {
   useGDO, useAssignGDO, useStartGDO, useWarehouseEmployees, usePatchGDO,
   useUnassignGDO, useUnstartGDO, useUncompleteGDO, useUpdateTransport,
-  useItemInventory, useDeleteGDO, useManualCompleteItem, type ItemInventoryEntry,
+  useItemInventory, useManualItemStock, useDeleteGDO, useManualCompleteItem, type ItemInventoryEntry,
 } from '@/api/hooks'
 import { EditGDOModal } from './Outbound'
 import { PalletDetailDialog } from '@/components/shared/PalletDetailDialog'
@@ -478,6 +478,78 @@ function InventoryModal({ gdoId, itemId, matCode, matName, onClose }: {
   )
 }
 
+// ─── Manual complete dialog ────────────────────────────────────
+
+function ManualCompleteDialog({ gdoId, itemId, matName, initialCartons, onClose }: {
+  gdoId: string; itemId: string; matName: string; initialCartons: number; onClose: () => void
+}) {
+  const [cartons, setCartons] = useState(initialCartons)
+  const [err, setErr] = useState<string | null>(null)
+  const { data: stock, isLoading: loadingStock } = useManualItemStock(gdoId, itemId)
+  const { mutate: manualComplete, isPending: saving } = useManualCompleteItem()
+
+  const remaining = stock?.cartons_remaining ?? 0
+  const overStock  = cartons > remaining
+
+  return (
+    <Dialog open onOpenChange={v => { if (!v && !saving) onClose() }}>
+      <DialogContent className="max-w-xs">
+        <DialogHeader><DialogTitle className="text-base">Lưu số lượng</DialogTitle></DialogHeader>
+        <div className="space-y-3 py-1">
+          <p className="text-sm text-slate-600 font-medium">{matName}</p>
+
+          {/* Stock info */}
+          {loadingStock ? (
+            <p className="text-xs text-slate-400">Đang tải tồn kho…</p>
+          ) : (
+            <div className="flex gap-3 bg-slate-50 rounded-lg px-3 py-2">
+              <div className="flex-1 text-center">
+                <div className="text-[10px] text-slate-500 mb-0.5">Tồn thực tế</div>
+                <div className="text-base font-bold tabular-nums text-slate-700">{stock?.cartons_imported ?? 0}</div>
+                <div className="text-[9px] text-slate-400">thùng</div>
+              </div>
+              <div className="w-px bg-slate-200" />
+              <div className="flex-1 text-center">
+                <div className="text-[10px] text-slate-500 mb-0.5">Tồn khả dụng</div>
+                <div className={`text-base font-bold tabular-nums ${remaining === 0 ? 'text-red-600' : 'text-green-600'}`}>{remaining}</div>
+                <div className="text-[9px] text-slate-400">thùng</div>
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-1">
+            <Label className="text-xs">Số thùng xuất</Label>
+            <Input
+              type="number" min="0"
+              className={`text-lg h-10 ${overStock ? 'border-amber-400 focus-visible:ring-amber-400' : ''}`}
+              value={cartons}
+              onChange={e => { setCartons(parseInt(e.target.value) || 0); setErr(null) }}
+            />
+            {overStock && (
+              <p className="text-xs text-amber-600">Vượt tồn khả dụng ({remaining} thùng)</p>
+            )}
+          </div>
+
+          {err && <p className="text-xs text-red-600 bg-red-50 rounded px-2 py-1">{err}</p>}
+        </div>
+        <DialogFooter className="gap-2">
+          <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>Hủy</Button>
+          <Button size="sm" disabled={saving || remaining === 0}
+            onClick={() => manualComplete(
+              { gdoId, itemId, cartons },
+              {
+                onSuccess: onClose,
+                onError: (e: any) => setErr(e?.response?.data?.error?.message ?? 'Lỗi khi lưu'),
+              }
+            )}>
+            {saving ? 'Đang lưu…' : 'Lưu'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 // ─── Items table ───────────────────────────────────────────────
 
 function ItemsTable({ doRecords, gdoId, canScan, expandedItemIds, toggleExpand }: {
@@ -490,7 +562,6 @@ function ItemsTable({ doRecords, gdoId, canScan, expandedItemIds, toggleExpand }
   const navigate = useNavigate()
   const [inventoryItemId, setInventoryItemId] = useState<string | null>(null)
   const [manualDlg, setManualDlg] = useState<{ itemId: string; matName: string; cartons: number } | null>(null)
-  const { mutate: manualComplete, isPending: savingManual } = useManualCompleteItem()
   const allItems = doRecords.flatMap(d =>
     d.items.map(i => ({ ...i, delivery_code: d.delivery_code, distributor_name: d.distributor_name }))
   )
@@ -517,33 +588,13 @@ function ItemsTable({ doRecords, gdoId, canScan, expandedItemIds, toggleExpand }
       />
     )}
     {manualDlg && (
-      <Dialog open onOpenChange={v => { if (!v && !savingManual) setManualDlg(null) }}>
-        <DialogContent className="max-w-xs">
-          <DialogHeader><DialogTitle className="text-base">Lưu số lượng</DialogTitle></DialogHeader>
-          <div className="space-y-3 py-1">
-            <p className="text-sm text-slate-600 font-medium">{manualDlg.matName}</p>
-            <div className="space-y-1">
-              <Label className="text-xs">Số thùng</Label>
-              <Input
-                type="number" min="0"
-                className="text-lg h-10"
-                value={manualDlg.cartons}
-                onChange={e => setManualDlg(d => d ? { ...d, cartons: parseInt(e.target.value) || 0 } : d)}
-              />
-            </div>
-          </div>
-          <DialogFooter className="gap-2">
-            <Button variant="outline" size="sm" onClick={() => setManualDlg(null)} disabled={savingManual}>Hủy</Button>
-            <Button size="sm" disabled={savingManual}
-              onClick={() => manualComplete(
-                { gdoId, itemId: manualDlg.itemId, cartons: manualDlg.cartons },
-                { onSuccess: () => setManualDlg(null) }
-              )}>
-              {savingManual ? 'Đang lưu…' : 'Lưu'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ManualCompleteDialog
+        gdoId={gdoId}
+        itemId={manualDlg.itemId}
+        matName={manualDlg.matName}
+        initialCartons={manualDlg.cartons}
+        onClose={() => setManualDlg(null)}
+      />
     )}
     <Table className="min-w-[540px]">
         <TableHeader>

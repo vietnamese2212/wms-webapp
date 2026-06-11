@@ -1332,6 +1332,18 @@ export function useItemInventory(gdoId: string | undefined, itemId: string | und
   })
 }
 
+export function useManualItemStock(gdoId: string | undefined, itemId: string | undefined) {
+  return useQuery({
+    queryKey: ['manual-item-stock', gdoId, itemId],
+    queryFn: async () => {
+      const { data } = await apiClient.get(`/wms/outbound/${gdoId}/items/${itemId}/manual-stock`)
+      return data.data as { cartons_imported: number; cartons_remaining: number; cartons_ordered: number; cartons_scanned: number }
+    },
+    enabled: !!gdoId && !!itemId,
+    staleTime: 0,
+  })
+}
+
 export function useInventoryEntry(id?: string | null) {
   return useQuery({
     queryKey: ['inventory-entry', id],

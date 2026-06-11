@@ -111,5 +111,6 @@ router.delete('/outbound/:gdoId/items/:itemId/scans/:scanId', requirePerm('outbo
 router.post('/outbound/:gdoId/items/:itemId/manual-complete', requirePerm('outbound', 'complete'), outbound.manualCompleteItem)
 router.post('/outbound/:gdoId/items/:itemId/confirm-loose',   requirePerm('outbound', 'complete'), outbound.confirmLoosePickingItem)
 router.get('/outbound/:gdoId/items/:itemId/inventory',        outbound.getItemInventory)
+router.get('/outbound/:gdoId/items/:itemId/manual-stock',     outbound.getManualItemStock)
 
 export default router

@@ -2312,9 +2312,7 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                                   {p.cartons_inbound > 0 ? p.cartons_inbound : '—'}
                                 </span>
                               </td>
-                              <td className="px-2 py-0.5" colSpan={2}>
-                                {p.inbound_at && <span className="text-[9px] text-slate-400">{formatDateTime(p.inbound_at)}</span>}
-                              </td>
+                              <td className="px-2 py-0.5" colSpan={2}></td>
                             </tr>
                           ))}
                         </React.Fragment>

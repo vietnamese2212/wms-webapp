@@ -106,7 +106,7 @@ export async function updateMaterial(req: Request, res: Response) {
   try {
     const {
       material_description, custom_short_name, category, product_type, unit,
-      manufacturer_id, notes, is_active,
+      manufacturer_id, notes, is_active, no_qr_tracking,
       weight_kg, cartons_per_pallet, cartons_per_pallet_mn,
       units_per_carton, ea_per_pallet, shelf_life_days, storage_category, old_code, image_url,
       warehouse_pallet_overrides, supplier_shelf_life_overrides,
@@ -143,6 +143,7 @@ export async function updateMaterial(req: Request, res: Response) {
     if (manufacturer_id !== undefined) patch.manufacturer_id = manufacturer_id || null
     if (notes !== undefined) patch.notes = notes
     if (is_active !== undefined) patch.is_active = Boolean(is_active)
+    if (no_qr_tracking !== undefined) patch.no_qr_tracking = Boolean(no_qr_tracking)
     if (warehouse_pallet_overrides !== undefined) patch.warehouse_pallet_overrides = Array.isArray(warehouse_pallet_overrides) ? warehouse_pallet_overrides : []
     if (supplier_shelf_life_overrides !== undefined) patch.supplier_shelf_life_overrides = Array.isArray(supplier_shelf_life_overrides) ? supplier_shelf_life_overrides : []
     patch.updated_by = (req as any).user?.name || null

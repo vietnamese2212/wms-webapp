@@ -269,6 +269,7 @@ export interface Material {
   manufacturer_id:                string | null
   manufacturer?:              { id: string; code: string; name: string | null } | null
   notes:                      string | null
+  no_qr_tracking:             boolean
   is_active:                  boolean
   created_at?:                string
   updated_at?:                string | null

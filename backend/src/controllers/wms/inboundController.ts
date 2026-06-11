@@ -13,7 +13,7 @@ const ORDER_SELECT = `
   source_type, gate_registration_id, tms_order_id, planned_cartons, warehouse_type, from_gdo_id, posm_entry_id,
   warehouse:Warehouse(id, code, name),
   location:Location(id, location_code, sub_code, max_pallets),
-  material:Material(id, material_code, short_name, material_description, cartons_per_pallet, cartons_per_pallet_mn, category),
+  material:Material(id, material_code, short_name, material_description, cartons_per_pallet, cartons_per_pallet_mn, category, no_qr_tracking),
   shift:ImportShift(id, code, name),
   gate_registration:gate_registrations!gate_registration_id(id, registration_number, date, license_plate, company_name_raw, driver_name, status, direction),
   tms_order:TmsOrder!tms_order_id(id, order_code, planned_boxes, planned_pallets),

@@ -468,7 +468,7 @@ export default function InboundDetail() {
   const { mutate: updateEntry, isPending: saving        } = useUpdatePalletEntry()
   const { mutate: saveManual, isPending: savingManual   } = useScanManualPallet()
 
-  const isManualEntry = order?.warehouse_type === 'POSM' || (order?.material?.material_code ?? '').includes('810000')
+  const isManualEntry = (order?.material as any)?.no_qr_tracking === true
 
   const [showScan,          setShowScan]          = useState(false)
   const [showManualDialog,  setShowManualDialog]  = useState(false)

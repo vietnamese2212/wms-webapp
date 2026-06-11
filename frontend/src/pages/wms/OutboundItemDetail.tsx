@@ -376,12 +376,12 @@ export default function OutboundItemDetail() {
 
   const matName  = item.material?.short_name ?? item.material_code_raw ?? '—'
   const matCode  = item.material?.material_code ?? item.material_code_raw ?? '—'
-  const isPOSM   = item.material_type === 'POSM'
+  const isPOSM   = item.material?.no_qr_tracking === true
 
   function toggleInv(key: string) {
     setExpandedInvKeys(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n })
   }
-  const isLoscam = item.material_type === 'Pallet Loscam' || (item.material_code_raw ?? '').includes('810000')
+  const isLoscam = item.material?.no_qr_tracking === true
   const isDone   = item.status === 'COMPLETED'
 
   // Workflow: can only scan if GDO has been started and not paused, and user has scan permission

@@ -61,8 +61,9 @@ function parseExcelDate(val: any): string | null {
   return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10)
 }
 
-// Exclude POSM and Pallet Loscam from carton/pallet totals
+// Exclude no_qr_tracking materials (and legacy POSM/Pallet Loscam/810000) from carton/pallet totals
 function isExcludedFromCount(item: any): boolean {
+  if (item.material?.no_qr_tracking) return true
   return item.material_type === 'POSM' ||
     item.material_type === 'Pallet Loscam' ||
     (item.material_code_raw ?? '').includes('810000')
@@ -83,7 +84,7 @@ async function fetchGDOFull(id: string) {
 
   const { data: items } = doIds.length
     ? await (supabase.from('OutboundItem') as any)
-        .select('*, material:Material(id,material_code,short_name,custom_short_name,cartons_per_pallet,weight_kg,shelf_life_days)')
+        .select('*, material:Material(id,material_code,short_name,custom_short_name,cartons_per_pallet,weight_kg,shelf_life_days,no_qr_tracking)')
         .in('do_id', doIds)
         .order('id')
     : { data: [] }
@@ -180,7 +181,7 @@ export async function listGDOs(req: Request, res: Response) {
 
     const { data: items } = doIds.length
       ? await (supabase.from('OutboundItem') as any)
-          .select('do_id, cartons_ordered, pallets_estimated, material_type, export_type, material_code_raw')
+          .select('do_id, cartons_ordered, pallets_estimated, material_type, export_type, material_code_raw, material_id, material:Material!material_id(no_qr_tracking)')
           .in('do_id', doIds)
       : { data: [] }
 
@@ -732,7 +733,7 @@ export async function unstartGDO(req: Request, res: Response) {
     const doIds = (doList ?? []).map((d: any) => d.id)
     if (doIds.length) {
       const { data: items } = await (supabase.from('OutboundItem') as any)
-        .select('id, material_type, material_code_raw').in('do_id', doIds)
+        .select('id, material_type, material_code_raw, material_id, material:Material!material_id(no_qr_tracking)').in('do_id', doIds)
       // Chỉ kiểm tra item có thể scan thực sự (bỏ POSM, Pallet Loscam, 810000)
       const blockableIds = (items ?? [])
         .filter((i: any) => !isExcludedFromCount(i))
@@ -1908,7 +1909,7 @@ export async function manualCompleteItem(req: Request, res: Response) {
     const [{ data: gdo }, { data: item }] = await Promise.all([
       (supabase.from('GroupDeliveryOrder') as any).select('status, warehouse_id').eq('id', gdoId).single(),
       (supabase.from('OutboundItem') as any)
-        .select('id, do_id, material_id, material_type, material_code_raw, cartons_ordered, cartons_scanned, material:Material!material_id(material_code)')
+        .select('id, do_id, material_id, material_type, material_code_raw, cartons_ordered, cartons_scanned, material:Material!material_id(material_code, no_qr_tracking)')
         .eq('id', itemId).single(),
     ])
     if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng — không thể cập nhật', 400)
@@ -1916,8 +1917,9 @@ export async function manualCompleteItem(req: Request, res: Response) {
 
     const ctn = (cartons != null && Number(cartons) >= 0) ? Math.round(Number(cartons)) : Number(item.cartons_ordered)
 
-    // POSM / Pallet Loscam (bao gồm mã 810000): kiểm tra và trừ tồn kho
-    const isSpecial = item.material_type === 'POSM' || item.material_type === 'Pallet Loscam'
+    // Mã không theo dõi QR: kiểm tra và trừ tồn kho
+    const isSpecial = (item.material as any)?.no_qr_tracking === true
+      || item.material_type === 'POSM' || item.material_type === 'Pallet Loscam'
       || (item.material_code_raw ?? '').includes('810000')
     if (isSpecial && item.material_id && gdo?.warehouse_id) {
       // Dùng pallet_code = material_code (cách inbound tạo entry cho Loscam/POSM)

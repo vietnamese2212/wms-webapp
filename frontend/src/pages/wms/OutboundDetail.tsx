@@ -593,7 +593,7 @@ function ItemsTable({ doRecords, gdoId, canScan, expandedItemIds, toggleExpand }
                   <div className="flex flex-col items-end gap-0.5">
                     <span className={`text-[10px] font-semibold tabular-nums ${textCls}`}>{item.cartons_ordered}</span>
                     {(() => {
-                      const isManual = item.material_type === 'POSM' || item.material_type === 'Pallet Loscam' || (item.material_code_raw ?? '').includes('810000')
+                      const isManual = item.material?.no_qr_tracking === true
                       if (!canScan || item.status === 'COMPLETED') return null
                       return isManual ? (
                         <button
@@ -861,14 +861,10 @@ export default function OutboundDetail() {
 
   const allDOs    = gdo.delivery_orders ?? []
   const allItems  = allDOs.flatMap(d => d.items)
-  const countable = allItems.filter(i =>
-    i.material_type !== 'POSM' && i.material_type !== 'Pallet Loscam' && !(i.material_code_raw ?? '').includes('810000')
-  )
+  const countable = allItems.filter(i => !i.material?.no_qr_tracking)
   const totalOrdered = countable.reduce((s, i) => s + i.cartons_ordered, 0)
   const totalScanned = countable.reduce((s, i) => s + i.cartons_scanned, 0)
-  const manualItems  = allItems.filter(i =>
-    i.material_type === 'POSM' || i.material_type === 'Pallet Loscam' || (i.material_code_raw ?? '').includes('810000')
-  )
+  const manualItems  = allItems.filter(i => i.material?.no_qr_tracking === true)
   const allManualDone = manualItems.every(i => i.status === 'COMPLETED')
   const scanComplete  = countable.length === 0 || (totalOrdered > 0 && totalScanned >= totalOrdered)
   const canComplete   = allItems.length > 0 && scanComplete && allManualDone

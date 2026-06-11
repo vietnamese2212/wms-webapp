@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Tag, Plus, Pencil, Trash2, X, Search, Check, Minus, PlusCircle } from 'lucide-react'
+import { Tag, Plus, Pencil, Trash2, X, Search, Check, Minus, PlusCircle, QrCode } from 'lucide-react'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { TableSkeleton } from '@/components/shared/TableSkeleton'
@@ -114,6 +114,8 @@ export default function Materials() {
   const [selected,       setSelected]       = useState<Set<string>>(new Set())
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false)
   const [bulkDeleting,   setBulkDeleting]   = useState(false)
+  const [bulkQrOpen,     setBulkQrOpen]     = useState(false)
+  const [bulkQrSaving,   setBulkQrSaving]   = useState(false)
 
   // Data
   const { data: raw = [], isLoading }    = useMaterials(undefined)
@@ -284,6 +286,17 @@ export default function Materials() {
     }
   }
 
+  async function handleBulkNoQr() {
+    setBulkQrSaving(true)
+    try {
+      await Promise.all([...selected].map(id => updateMaterial.mutateAsync({ id, no_qr_tracking: true })))
+      setSelected(new Set())
+      setBulkQrOpen(false)
+    } finally {
+      setBulkQrSaving(false)
+    }
+  }
+
   function toggleSelect(id: string) {
     setSelected(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
   }
@@ -434,9 +447,14 @@ export default function Materials() {
                       {mat.weight_kg ?? <span className="text-slate-300">—</span>}
                     </TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap">
-                      <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${mat.is_active ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
-                        {mat.is_active ? 'Đang dùng' : 'Ẩn'}
-                      </span>
+                      <div className="flex flex-col gap-0.5">
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${mat.is_active ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
+                          {mat.is_active ? 'Đang dùng' : 'Ẩn'}
+                        </span>
+                        {mat.no_qr_tracking && (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700">Không QR</span>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap">
                       {mat.created_at ? (
@@ -481,6 +499,9 @@ export default function Materials() {
       {selected.size > 0 && (
         <div className="fixed bottom-20 lg:bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-800 text-white rounded-xl px-4 py-2.5 flex items-center gap-4 shadow-2xl">
           <span className="text-xs text-slate-300">{selected.size} mã đã chọn</span>
+          <button onClick={() => setBulkQrOpen(true)} className="flex items-center gap-1 text-xs text-amber-300 hover:text-amber-200 transition-colors">
+            <QrCode className="h-3.5 w-3.5" />Không theo dõi QR
+          </button>
           {canDel && (
             <button onClick={() => setBulkDeleteOpen(true)} className="flex items-center gap-1 text-xs text-red-300 hover:text-red-200 transition-colors">
               <Trash2 className="h-3.5 w-3.5" />Ẩn tất cả
@@ -865,6 +886,22 @@ export default function Materials() {
             <Button variant="outline" size="sm" onClick={() => setBulkDeleteOpen(false)} className="text-xs h-7">Hủy</Button>
             <Button variant="destructive" size="sm" onClick={handleBulkDelete} disabled={bulkDeleting} className="text-xs h-7">
               {bulkDeleting ? 'Đang ẩn…' : `Ẩn ${selected.size} mã`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Bulk no-QR confirm ────────────────────────────────────────── */}
+      <Dialog open={bulkQrOpen} onOpenChange={open => !open && setBulkQrOpen(false)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-base">Không theo dõi QR — {selected.size} mã hàng</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-slate-600 py-1">{selected.size} mã hàng sẽ được đánh dấu "Không theo dõi QR code". Tiếp tục?</p>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setBulkQrOpen(false)} className="text-xs h-7">Hủy</Button>
+            <Button size="sm" onClick={handleBulkNoQr} disabled={bulkQrSaving} className="text-xs h-7 bg-amber-500 hover:bg-amber-600 text-white">
+              {bulkQrSaving ? 'Đang lưu…' : `Xác nhận ${selected.size} mã`}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -2238,7 +2238,13 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                 <table className="min-w-max w-full">
                   <thead className="sticky top-0 z-10 bg-slate-50">
                     <tr>
-                      <th className="w-6 px-2 py-1.5"></th>
+                      <th className="w-6 px-2 py-1.5">
+                        {hasPallets && (
+                          <button onClick={toggleAllPallets} className="text-[10px] text-blue-600 hover:text-blue-800 whitespace-nowrap font-medium">
+                            {allExpanded ? 'Thu gọn' : 'Mở rộng'}
+                          </button>
+                        )}
+                      </th>
                       {['Mã hàng', 'Tên hàng', 'ĐVT', 'Thùng KH', 'Thùng thực', 'Chênh lệch', 'Tình trạng GN', 'Pallet'].map(h => (
                         <th key={h} className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
                       ))}

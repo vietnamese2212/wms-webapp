@@ -645,7 +645,7 @@ export interface OutboundItem {
   do_id:              string
   material_id:        string | null
   material_code_raw:  string | null
-  material:           { id: string; material_code: string; short_name: string | null; custom_short_name: string | null; cartons_per_pallet: number | null; weight_kg: number | null } | null
+  material:           { id: string; material_code: string; short_name: string | null; custom_short_name: string | null; cartons_per_pallet: number | null; weight_kg: number | null; no_qr_tracking?: boolean } | null
   cartons_ordered:    number
   boxes_display:      number
   weight:             number | null

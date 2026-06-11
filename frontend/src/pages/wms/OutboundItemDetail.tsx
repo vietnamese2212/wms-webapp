@@ -13,7 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { QRScanner } from '@/components/shared/QRScanner'
 import type { QRScannerHandle } from '@/components/shared/QRScanner'
-import { useGDO, useScanOutboundItem, useManualCompleteItem, useDeleteOutboundScanEntry, useItemInventory, useCheckOutboundScan, useConfirmLoosePickingItem, type ItemInventoryEntry, type CheckOutboundScanResult } from '@/api/hooks'
+import { useGDO, useScanOutboundItem, useManualCompleteItem, useManualItemStock, useDeleteOutboundScanEntry, useItemInventory, useCheckOutboundScan, useConfirmLoosePickingItem, type ItemInventoryEntry, type CheckOutboundScanResult } from '@/api/hooks'
 import { PalletDetailDialog } from '@/components/shared/PalletDetailDialog'
 import { useAuthStore } from '@/stores/authStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
@@ -290,6 +290,7 @@ export default function OutboundItemDetail() {
   const { mutate: deleteScanEntry,     isPending: deleting      } = useDeleteOutboundScanEntry()
   const { mutate: confirmLoose,        isPending: confirming    } = useConfirmLoosePickingItem()
   const { data: inventoryData = [], isLoading: invLoading } = useItemInventory(gdoId, itemId)
+  const { data: stock, isLoading: loadingStock } = useManualItemStock(gdoId, itemId)
   const { vehicles } = useActiveVehiclesStore()
 
   const [showScan,         setShowScan]         = useState(false)
@@ -405,6 +406,10 @@ export default function OutboundItemDetail() {
 
   const confirmScan = scans.find(s => s.id === confirmScanId)
 
+  const loscamCartonNum = parseInt(loscamCartons) || 0
+  const overStock = stock != null && loscamCartonNum > (stock.cartons_remaining ?? 0)
+  const overPlan  = stock != null && loscamCartonNum > (stock.cartons_ordered ?? 0)
+
   return (
     <>
       {showScan && (
@@ -445,25 +450,51 @@ export default function OutboundItemDetail() {
       />
 
       <Dialog open={showLoscamDialog} onOpenChange={v => { if (!v) { setShowLoscamDialog(false); setLoscamError('') } }}>
-        <DialogContent className="sm:max-w-xs">
-          <DialogHeader><DialogTitle className="text-base">Xác nhận số lượng</DialogTitle></DialogHeader>
+        <DialogContent className="max-w-xs">
+          <DialogHeader><DialogTitle className="text-base">Lưu số lượng</DialogTitle></DialogHeader>
           <div className="space-y-3 py-1">
-            <div className="space-y-1.5">
-              <p className="text-xs text-slate-500">Số thùng thực xuất</p>
+            <p className="text-sm text-slate-600 font-medium">{matName}</p>
+
+            {loadingStock ? (
+              <p className="text-xs text-slate-400">Đang tải tồn kho…</p>
+            ) : (
+              <div className="flex gap-3 bg-slate-50 rounded-lg px-3 py-2">
+                <div className="flex-1 text-center">
+                  <div className="text-[10px] text-slate-500 mb-0.5">Kế hoạch</div>
+                  <div className="text-base font-bold tabular-nums text-slate-700">{stock?.cartons_ordered ?? item.cartons_ordered}</div>
+                  <div className="text-[9px] text-slate-400">thùng</div>
+                </div>
+                <div className="w-px bg-slate-200" />
+                <div className="flex-1 text-center">
+                  <div className="text-[10px] text-slate-500 mb-0.5">Tồn khả dụng</div>
+                  <div className={`text-base font-bold tabular-nums ${(stock?.cartons_remaining ?? 0) === 0 ? 'text-red-600' : 'text-green-600'}`}>{stock?.cartons_remaining ?? 0}</div>
+                  <div className="text-[9px] text-slate-400">thùng</div>
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-1">
+              <p className="text-xs text-slate-600">Số thùng xuất</p>
               <Input
                 type="number" min={0}
                 value={loscamCartons}
                 onChange={e => { setLoscamCartons(e.target.value); setLoscamError('') }}
-                className="text-center font-semibold text-lg h-11"
+                className={`text-center font-semibold text-lg h-11 ${overPlan ? 'border-red-400 focus-visible:ring-red-400' : overStock ? 'border-amber-400 focus-visible:ring-amber-400' : ''}`}
                 autoFocus
               />
-              <p className="text-xs text-slate-400 text-center">Kế hoạch: {item.cartons_ordered} thùng</p>
+              {overPlan && (
+                <p className="text-xs text-red-600">Vượt kế hoạch ({stock?.cartons_ordered ?? item.cartons_ordered} thùng)</p>
+              )}
+              {!overPlan && overStock && (
+                <p className="text-xs text-amber-600">Vượt tồn khả dụng ({stock?.cartons_remaining ?? 0} thùng)</p>
+              )}
             </div>
-            {loscamError && <p className="text-xs text-red-600 text-center">{loscamError}</p>}
+
+            {loscamError && <p className="text-xs text-red-600 bg-red-50 rounded px-2 py-1">{loscamError}</p>}
           </div>
           <DialogFooter className="gap-2">
             <Button variant="outline" size="sm" onClick={() => { setShowLoscamDialog(false); setLoscamError('') }} disabled={completing}>Hủy</Button>
-            <Button size="sm" disabled={completing || isPaused || !gdo.started_at}
+            <Button size="sm" disabled={completing || isPaused || !gdo.started_at || (stock != null && (stock.cartons_remaining === 0 || overStock || overPlan))}
               onClick={() => {
                 const c = Math.max(0, parseInt(loscamCartons) || 0)
                 setLoscamError('')
@@ -478,7 +509,7 @@ export default function OutboundItemDetail() {
                   }
                 )
               }}>
-              {completing ? '…' : 'Xác nhận'}
+              {completing ? '…' : 'Lưu'}
             </Button>
           </DialogFooter>
         </DialogContent>

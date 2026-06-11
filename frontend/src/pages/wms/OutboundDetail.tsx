@@ -512,12 +512,6 @@ function ManualCompleteDialog({ gdoId, itemId, matName, initialCartons, onClose 
               </div>
               <div className="w-px bg-slate-200" />
               <div className="flex-1 text-center">
-                <div className="text-[10px] text-slate-500 mb-0.5">Tồn thực tế</div>
-                <div className="text-base font-bold tabular-nums text-slate-700">{stock?.cartons_imported ?? 0}</div>
-                <div className="text-[9px] text-slate-400">thùng</div>
-              </div>
-              <div className="w-px bg-slate-200" />
-              <div className="flex-1 text-center">
                 <div className="text-[10px] text-slate-500 mb-0.5">Tồn khả dụng</div>
                 <div className={`text-base font-bold tabular-nums ${remaining === 0 ? 'text-red-600' : 'text-green-600'}`}>{remaining}</div>
                 <div className="text-[9px] text-slate-400">thùng</div>

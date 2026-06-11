@@ -1941,6 +1941,10 @@ export async function manualCompleteItem(req: Request, res: Response) {
 
     const ctn = (cartons != null && Number(cartons) >= 0) ? Math.round(Number(cartons)) : Number(item.cartons_ordered)
 
+    if (ctn > Number(item.cartons_ordered)) {
+      return fail(res, 400, 'EXCEEDS_PLAN', `Số thùng (${ctn}) vượt kế hoạch (${item.cartons_ordered})`)
+    }
+
     const isSpecial = (item.material as any)?.no_qr_tracking === true
     if (isSpecial && item.material_id && gdo?.warehouse_id) {
       // Dùng pallet_code = material_code (cách inbound tạo entry cho Loscam/POSM)

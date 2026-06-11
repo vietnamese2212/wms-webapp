@@ -488,8 +488,10 @@ function ManualCompleteDialog({ gdoId, itemId, matName, initialCartons, onClose 
   const { data: stock, isLoading: loadingStock } = useManualItemStock(gdoId, itemId)
   const { mutate: manualComplete, isPending: saving } = useManualCompleteItem()
 
-  const remaining = stock?.cartons_remaining ?? 0
-  const overStock  = cartons > remaining
+  const remaining  = stock?.cartons_remaining ?? 0
+  const ordered    = stock?.cartons_ordered ?? 0
+  const overStock  = stock != null && cartons > remaining
+  const overPlan   = stock != null && cartons > ordered
 
   return (
     <Dialog open onOpenChange={v => { if (!v && !saving) onClose() }}>
@@ -503,6 +505,12 @@ function ManualCompleteDialog({ gdoId, itemId, matName, initialCartons, onClose 
             <p className="text-xs text-slate-400">Đang tải tồn kho…</p>
           ) : (
             <div className="flex gap-3 bg-slate-50 rounded-lg px-3 py-2">
+              <div className="flex-1 text-center">
+                <div className="text-[10px] text-slate-500 mb-0.5">Kế hoạch</div>
+                <div className="text-base font-bold tabular-nums text-slate-700">{ordered}</div>
+                <div className="text-[9px] text-slate-400">thùng</div>
+              </div>
+              <div className="w-px bg-slate-200" />
               <div className="flex-1 text-center">
                 <div className="text-[10px] text-slate-500 mb-0.5">Tồn thực tế</div>
                 <div className="text-base font-bold tabular-nums text-slate-700">{stock?.cartons_imported ?? 0}</div>
@@ -521,11 +529,14 @@ function ManualCompleteDialog({ gdoId, itemId, matName, initialCartons, onClose 
             <Label className="text-xs">Số thùng xuất</Label>
             <Input
               type="number" min="0"
-              className={`text-lg h-10 ${overStock ? 'border-amber-400 focus-visible:ring-amber-400' : ''}`}
+              className={`text-lg h-10 ${overPlan ? 'border-red-400 focus-visible:ring-red-400' : overStock ? 'border-amber-400 focus-visible:ring-amber-400' : ''}`}
               value={cartons}
               onChange={e => { setCartons(parseInt(e.target.value) || 0); setErr(null) }}
             />
-            {overStock && (
+            {overPlan && (
+              <p className="text-xs text-red-600">Vượt kế hoạch ({ordered} thùng)</p>
+            )}
+            {!overPlan && overStock && (
               <p className="text-xs text-amber-600">Vượt tồn khả dụng ({remaining} thùng)</p>
             )}
           </div>
@@ -534,7 +545,7 @@ function ManualCompleteDialog({ gdoId, itemId, matName, initialCartons, onClose 
         </div>
         <DialogFooter className="gap-2">
           <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>Hủy</Button>
-          <Button size="sm" disabled={saving || remaining === 0 || overStock}
+          <Button size="sm" disabled={saving || remaining === 0 || overStock || overPlan}
             onClick={() => manualComplete(
               { gdoId, itemId, cartons },
               {

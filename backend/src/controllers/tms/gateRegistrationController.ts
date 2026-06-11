@@ -652,7 +652,7 @@ export async function relinkAfterDelete(
       // Update export_status của order mới được link vào group này
       for (const vs of group) {
         if (!oldOrderIds.includes(vs.order_id)) {
-          ops.push(supabase.from('TmsOrder').update({ export_status: exportStatus, updated_at: now }).eq('id', vs.order_id))
+          ops.push(supabase.from('TmsOrder').update({ export_status: exportStatus, updated_at: now }).eq('id', vs.order_id) as unknown as Promise<unknown>)
         }
       }
       // Đánh dấu recalculate cho order cũ bị de-link
@@ -669,7 +669,7 @@ export async function relinkAfterDelete(
         gate_exit_at: gate.status === 'COMPLETED' ? (gate.exit_at ?? null) : null,
       }
       for (const vs of group) {
-        ops.push(supabase.from('TmsVehicleSlot').update({ gate_export_status: exportStatus, ...gateTimestamps, updated_at: now }).eq('id', vs.id))
+        ops.push(supabase.from('TmsVehicleSlot').update({ gate_export_status: exportStatus, ...gateTimestamps, updated_at: now }).eq('id', vs.id) as unknown as Promise<unknown>)
       }
       // Safety net: propagate sang secondary slots bị lọc ra khỏi group (ví dụ: ncc_id hoặc
       // vehicle_type khác primary) — tìm qua consolidation_group_id thay vì filter slot_id
@@ -680,7 +680,7 @@ export async function relinkAfterDelete(
       }
     }
 
-    ops.unshift(supabase.from('gate_registrations').update(patch).eq('id', gate.id))
+    ops.unshift(supabase.from('gate_registrations').update(patch).eq('id', gate.id) as unknown as Promise<unknown>)
     return Promise.all(ops)
   }))
 

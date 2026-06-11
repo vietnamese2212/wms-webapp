@@ -1020,7 +1020,8 @@ export async function getTransferGoods(req: Request, res: Response) {
           : []
       }
 
-      const actual_boxes = pallets.reduce((s, p) => s + p.cartons_inbound, 0)
+      // Thùng thực = tổng toàn bộ inbound của mã hàng, không chỉ các pallet khớp outbound
+      const actual_boxes = inboundByMaterialId.get(l.material_id)?.cartons_inbound ?? 0
       return {
         material_id: l.material_id,
         material_code: l.material?.material_code ?? null,

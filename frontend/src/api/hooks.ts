@@ -1771,7 +1771,7 @@ export function useTransferGoods(orderId?: string | null) {
       return data.data as TransferGoodsRow[]
     },
     enabled: !!orderId,
-    staleTime: 30_000,
+    staleTime: 0,
   })
 }
 

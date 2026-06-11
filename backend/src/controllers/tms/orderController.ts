@@ -66,7 +66,7 @@ export async function listOrders(req: Request, res: Response) {
           .select('id, tms_order_id, created_at')
           .in('tms_order_id', orderIds)
           .eq('source_type', 'TRANSFER')
-          .neq('status', 'CANCELLED')
+          .eq('status', 'COMPLETED')
 
         for (const imp of (importOrders ?? []) as any[]) {
           importToOrder.set(imp.id, imp.tms_order_id)

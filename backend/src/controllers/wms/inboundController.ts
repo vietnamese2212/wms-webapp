@@ -736,6 +736,11 @@ export async function scanQR(req: Request, res: Response) {
     if (!location)      return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy vị trí kho')
     if (!location.is_active) return fail(res, 400, 'LOCATION_INACTIVE', 'Vị trí kho không hoạt động')
 
+    // Fire manufacturer lookup now so it runs in parallel with the location capacity check below
+    const manufacturerP = parsed.manufacturer_code
+      ? supabase.from('Manufacturer').select('id, code, name').eq('code', parsed.manufacturer_code).maybeSingle()
+      : Promise.resolve({ data: null, error: null })
+
     const stackLayerNum = Number(stack_layer)
     if (stackLayerNum === 1) {
       const { count: usedSlots } = await supabase
@@ -761,9 +766,9 @@ export async function scanQR(req: Request, res: Response) {
       }
     }
 
-    // Lookup manufacturer by code
+    // Lookup manufacturer by code — start in parallel with the location check above
     const manufacturer = parsed.manufacturer_code
-      ? (await supabase.from('Manufacturer').select('id, code, name').eq('code', parsed.manufacturer_code).maybeSingle()).data
+      ? (await manufacturerP).data
       : null
 
     const cartons_imported = cartons_override

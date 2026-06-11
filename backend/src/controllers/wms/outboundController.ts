@@ -1436,11 +1436,30 @@ export async function scanItem(req: Request, res: Response) {
       return fail(res, `Pallet bị giữ QA: ${inv.qa_status?.name ?? inv.qa_status_id} — không được xuất`, 400)
     }
 
-    // Fetch shelf_life_days — dùng để validate %Date (nếu có yêu cầu) và lưu pct_date vào scan entry
+    // Fetch shelf_life_days và best_available_date song song (cả hai chỉ cần dữ liệu từ bước trên)
     const matId = item.material_id ?? inv.material_id
-    const { data: shelfMat } = matId
-      ? await (supabase.from('Material') as any).select('shelf_life_days').eq('id', matId).single()
-      : { data: null }
+    const [{ data: shelfMat }, best_available_date] = await Promise.all([
+      matId
+        ? (supabase.from('Material') as any).select('shelf_life_days').eq('id', matId).single()
+        : Promise.resolve({ data: null }),
+      (async (): Promise<string | null> => {
+        if (!inv.material_id || !gdo?.warehouse_id) return null
+        const { data: locs } = await (supabase.from('Location') as any)
+          .select('id').eq('warehouse_id', gdo.warehouse_id)
+        const locIds = (locs ?? []).map((l: any) => l.id as string)
+        if (!locIds.length) return null
+        const { data: bestEntries } = await (supabase.from('InventoryEntry') as any)
+          .select('production_date')
+          .eq('material_id', inv.material_id)
+          .in('location_id', locIds)
+          .in('status', ['IN_STOCK', 'PARTIAL'])
+          .is('qa_status_id', null)
+          .not('production_date', 'is', null)
+          .or('cartons_remaining.gt.0,cartons_remaining.is.null')
+        const dates = (bestEntries ?? []).map((e: any) => e.production_date as string).filter(Boolean)
+        return dates.length > 0 ? dates.reduce((a: string, b: string) => a < b ? a : b) : null
+      })(),
+    ])
     const shelfLifeDays = shelfMat?.shelf_life_days ? Number(shelfMat.shelf_life_days) : 0
 
     // Kiểm tra % shelf life còn lại nếu item có yêu cầu
@@ -1492,26 +1511,6 @@ export async function scanItem(req: Request, res: Response) {
     }
 
     const to_take = cartons_override ? Math.min(Math.max(1, Number(cartons_override)), cap) : cap
-
-    // Tìm production_date tốt nhất (cũ nhất, không bị QA) trong kho lúc này
-    let best_available_date: string | null = null
-    if (inv.material_id && gdo?.warehouse_id) {
-      const { data: locs } = await (supabase.from('Location') as any)
-        .select('id').eq('warehouse_id', gdo.warehouse_id)
-      const locIds = (locs ?? []).map((l: any) => l.id as string)
-      if (locIds.length > 0) {
-        const { data: bestEntries } = await (supabase.from('InventoryEntry') as any)
-          .select('production_date')
-          .eq('material_id', inv.material_id)
-          .in('location_id', locIds)
-          .in('status', ['IN_STOCK', 'PARTIAL'])
-          .is('qa_status_id', null)
-          .not('production_date', 'is', null)
-          .or('cartons_remaining.gt.0,cartons_remaining.is.null')
-        const dates = (bestEntries ?? []).map((e: any) => e.production_date as string).filter(Boolean)
-        if (dates.length > 0) best_available_date = dates.reduce((a: string, b: string) => a < b ? a : b)
-      }
-    }
 
     // Tính pct_date tại thời điểm quét — khóa cứng, không thay đổi theo thời gian
     let pct_date: number | null = null
@@ -1575,30 +1574,31 @@ export async function scanItem(req: Request, res: Response) {
     const skipCascade = !!loose_picking_mode && !gdo?.started_at
 
     if (!skipCascade) {
-      const { data: siblingItems } = await (supabase.from('OutboundItem') as any)
-        .select('status').eq('do_id', item.do_id)
-      const doCompleted = (siblingItems ?? []).every((i: any) =>
-        i.id === itemId ? new_item_status === 'COMPLETED' : i.status === 'COMPLETED'
-      )
-      const { data: doRow } = await (supabase.from('OutboundDelivery') as any)
-        .update({ status: doCompleted ? 'COMPLETED' : 'IN_PROGRESS', updated_at: t })
-        .eq('id', item.do_id).select('gdo_id').single()
-
-      if (doRow?.gdo_id) {
-        const { data: siblingDOs } = await (supabase.from('OutboundDelivery') as any)
-          .select('status').eq('gdo_id', doRow.gdo_id)
-        const gdoCompleted = (siblingDOs ?? []).every((d: any) =>
-          d.id === item.do_id ? doCompleted : d.status === 'COMPLETED'
-        )
-        await (supabase.from('GroupDeliveryOrder') as any)
+      // Parallel: count pending items in DO + count pending DOs in GDO (gdoId đã biết từ params)
+      // Item đã được UPDATE ở bước trên nên count phản ánh trạng thái mới
+      const [{ count: pendingItems }, { count: pendingDOs }] = await Promise.all([
+        (supabase.from('OutboundItem') as any)
+          .select('id', { count: 'exact', head: true })
+          .eq('do_id', item.do_id).neq('status', 'COMPLETED'),
+        (supabase.from('OutboundDelivery') as any)
+          .select('id', { count: 'exact', head: true })
+          .eq('gdo_id', gdoId).neq('status', 'COMPLETED').neq('id', item.do_id),
+      ])
+      const doCompleted = pendingItems === 0
+      const gdoCompleted = doCompleted && pendingDOs === 0
+      await Promise.all([
+        (supabase.from('OutboundDelivery') as any)
+          .update({ status: doCompleted ? 'COMPLETED' : 'IN_PROGRESS', updated_at: t })
+          .eq('id', item.do_id),
+        (supabase.from('GroupDeliveryOrder') as any)
           .update({
             status:          'IN_PROGRESS',
             last_scanned_at: t,
             ...(gdoCompleted ? { scan_completed_at: t } : {}),
             updated_at:      t,
           })
-          .eq('id', doRow.gdo_id)
-      }
+          .eq('id', gdoId),
+      ])
     }
 
     return ok(res, {
@@ -2010,28 +2010,29 @@ export async function manualCompleteItem(req: Request, res: Response) {
       }
     }
 
-    const { count: pendingItems } = await (supabase.from('OutboundItem') as any)
-      .select('id', { count: 'exact', head: true })
-      .eq('do_id', item.do_id).neq('status', 'COMPLETED').neq('id', itemId)
-    const doCompleted = pendingItems === 0
-
-    const { data: doRow } = await (supabase.from('OutboundDelivery') as any)
-      .update({ status: doCompleted ? 'COMPLETED' : 'IN_PROGRESS', updated_at: t })
-      .eq('id', item.do_id).select('gdo_id').single()
-
-    if (doRow?.gdo_id) {
-      const { count: pendingDOs } = await (supabase.from('OutboundDelivery') as any)
+    // Parallel: count pending items in DO + count pending DOs in GDO (gdoId đã biết từ params)
+    const [{ count: pendingItems }, { count: pendingDOs }] = await Promise.all([
+      (supabase.from('OutboundItem') as any)
         .select('id', { count: 'exact', head: true })
-        .eq('gdo_id', doRow.gdo_id).neq('status', 'COMPLETED').neq('id', item.do_id)
-      const gdoCompleted = doCompleted && pendingDOs === 0
-      await (supabase.from('GroupDeliveryOrder') as any)
+        .eq('do_id', item.do_id).neq('status', 'COMPLETED').neq('id', itemId),
+      (supabase.from('OutboundDelivery') as any)
+        .select('id', { count: 'exact', head: true })
+        .eq('gdo_id', gdoId).neq('status', 'COMPLETED').neq('id', item.do_id),
+    ])
+    const doCompleted = pendingItems === 0
+    const gdoCompleted = doCompleted && pendingDOs === 0
+    await Promise.all([
+      (supabase.from('OutboundDelivery') as any)
+        .update({ status: doCompleted ? 'COMPLETED' : 'IN_PROGRESS', updated_at: t })
+        .eq('id', item.do_id),
+      (supabase.from('GroupDeliveryOrder') as any)
         .update({
           status:     'IN_PROGRESS',
           ...(gdoCompleted ? { scan_completed_at: t } : {}),
           updated_at: t,
         })
-        .eq('id', doRow.gdo_id)
-    }
+        .eq('id', gdoId),
+    ])
 
     return ok(res, { success: true })
   } catch (e) { return fail(res, String(e)) }

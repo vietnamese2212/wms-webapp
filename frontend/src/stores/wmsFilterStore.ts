@@ -94,6 +94,7 @@ interface MaterialsFilters {
   search: string
   catFilter: string[]
   statusFilter: string[]
+  qrFilter: string[]
 }
 interface InboundReportFilters {
   dateFrom: string
@@ -161,7 +162,7 @@ export const useWmsFilterStore = create<WmsFilterState>()(
         fVehicleTypes: [], fCompany: '', fDirection: '', fStatus: '',
       },
       deliveries: { search: '', statusFilter: 'ALL' },
-      materials:  { search: '', catFilter: [], statusFilter: ['active'] },
+      materials:  { search: '', catFilter: [], statusFilter: ['active'], qrFilter: [] },
       inboundReport: {
         dateFrom: (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }) })(),
         dateTo: today(), warehouseId: '', selCategories: [],

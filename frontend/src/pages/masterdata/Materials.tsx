@@ -90,9 +90,11 @@ export default function Materials() {
   const search       = mf.search
   const catFilter    = mf.catFilter
   const statusFilter = mf.statusFilter
+  const qrFilter     = mf.qrFilter ?? []
   const setSearch       = (v: string)   => setMaterials({ search: v })
   const setCatFilter    = (v: string[]) => setMaterials({ catFilter: v })
   const setStatusFilter = (v: string[]) => setMaterials({ statusFilter: v })
+  const setQrFilter     = (v: string[]) => setMaterials({ qrFilter: v })
 
   // Detail sheet
   const [detailMat, setDetailMat] = useState<Material | null>(null)
@@ -143,9 +145,13 @@ export default function Materials() {
   const filtered = useMemo(() => {
     const showActive   = statusFilter.includes('active')   || statusFilter.length === 0
     const showInactive = statusFilter.includes('inactive') || statusFilter.length === 0
+    const showQr   = qrFilter.includes('has_qr')  || qrFilter.length === 0
+    const showNoQr = qrFilter.includes('no_qr')   || qrFilter.length === 0
     return (raw as Material[]).filter(m => {
       if (m.is_active  && !showActive)   return false
       if (!m.is_active && !showInactive) return false
+      if (m.no_qr_tracking  && !showNoQr) return false
+      if (!m.no_qr_tracking && !showQr)  return false
       if (catFilter.length > 0 && !catFilter.includes(m.category ?? '')) return false
       if (search) {
         const s = search.toLowerCase()
@@ -158,7 +164,7 @@ export default function Materials() {
       }
       return true
     })
-  }, [raw, catFilter, search, statusFilter])
+  }, [raw, catFilter, search, statusFilter, qrFilter])
 
   const allSelected  = filtered.length > 0 && filtered.every(m => selected.has(m.id))
   const someSelected = selected.size > 0 && !allSelected
@@ -380,6 +386,15 @@ export default function Materials() {
             selected={statusFilter}
             onChange={setStatusFilter}
           />
+          <MultiSelectFilter
+            label="QR"
+            options={[
+              { value: 'has_qr', label: 'Có QR' },
+              { value: 'no_qr',  label: 'Không QR' },
+            ]}
+            selected={qrFilter}
+            onChange={setQrFilter}
+          />
         </div>
       </div>
 
@@ -446,13 +461,13 @@ export default function Materials() {
                     <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] font-semibold tabular-nums text-right">
                       {mat.weight_kg ?? <span className="text-slate-300">—</span>}
                     </TableCell>
-                    <TableCell className="px-2 py-1 whitespace-nowrap">
-                      <div className="flex flex-col gap-0.5">
-                        <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${mat.is_active ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
+                    <TableCell className="px-2 py-1">
+                      <div className="flex flex-row flex-wrap gap-1 items-center">
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded-full whitespace-nowrap ${mat.is_active ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
                           {mat.is_active ? 'Đang dùng' : 'Ẩn'}
                         </span>
                         {mat.no_qr_tracking && (
-                          <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700">Không QR</span>
+                          <span className="text-[9px] px-1.5 py-0.5 rounded-full whitespace-nowrap bg-amber-100 text-amber-700">Không QR</span>
                         )}
                       </div>
                     </TableCell>

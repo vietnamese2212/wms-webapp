@@ -376,12 +376,11 @@ export default function OutboundItemDetail() {
 
   const matName  = item.material?.short_name ?? item.material_code_raw ?? '—'
   const matCode  = item.material?.material_code ?? item.material_code_raw ?? '—'
-  const isPOSM   = item.material?.no_qr_tracking === true
+  const isNoQr = item.material?.no_qr_tracking === true
 
   function toggleInv(key: string) {
     setExpandedInvKeys(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n })
   }
-  const isLoscam = item.material?.no_qr_tracking === true
   const isDone   = item.status === 'COMPLETED'
 
   // Workflow: can only scan if GDO has been started and not paused, and user has scan permission
@@ -516,7 +515,7 @@ export default function OutboundItemDetail() {
                 <Package className="h-3.5 w-3.5" />
                 Tồn kho{inventoryData.length > 0 ? ` (${inventoryData.length})` : ''}
               </button>
-              {(isPOSM || isLoscam) ? (
+              {isNoQr ? (
                 can(perms, 'outbound', 'complete') && <Button size="sm" variant="outline" className="h-7 text-xs" disabled={isPaused || !gdo.started_at}
                   onClick={() => { setLoscamCartons(String(isDone ? item.cartons_scanned : item.cartons_ordered)); setShowLoscamDialog(true) }}>
                   {isDone ? 'Sửa số lượng' : 'Lưu thủ công'}
@@ -722,7 +721,7 @@ export default function OutboundItemDetail() {
               <div className="flex flex-col items-center gap-2 py-12 text-slate-400">
                 <QrCode className="h-10 w-10 opacity-30" />
                 <p className="text-sm">Chưa có pallet nào được quét</p>
-                {!isDone && !isPOSM && !isLoscam && canScan && (
+                {!isDone && !isNoQr && canScan && (
                   <Button size="sm" variant="outline" onClick={openScan}>
                     <QrCode className="h-4 w-4 mr-1" /> Quét pallet đầu tiên
                   </Button>

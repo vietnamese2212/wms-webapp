@@ -2888,12 +2888,12 @@ export default function TMSBookings() {
   useEffect(() => { localStorage.setItem('tmsb_huong', JSON.stringify(huongFilter)) }, [huongFilter])
   useEffect(() => { localStorage.setItem('tmsb_dvvt', JSON.stringify(dvvtFilter)) }, [dvvtFilter])
   useEffect(() => { localStorage.setItem('tmsb_khungio', JSON.stringify(khungGioFilter)) }, [khungGioFilter])
-  useEffect(() => { localStorage.setItem('tmsb_tab', activeTab) }, [activeTab])
   useEffect(() => { setSelectedOrderIds(new Set()) }, [date, warehouseId])
 
   const [activeTab, setActiveTab] = useState<'main' | 'transfer'>(() =>
     (localStorage.getItem('tmsb_tab') as 'main' | 'transfer') ?? 'main'
   )
+  useEffect(() => { localStorage.setItem('tmsb_tab', activeTab) }, [activeTab])
   const [createOpen, setCreateOpen] = useState(false)
   const [uploadOpen, setUploadOpen] = useState(false)
   const [inboundPlanUploadOpen, setInboundPlanUploadOpen] = useState(false)

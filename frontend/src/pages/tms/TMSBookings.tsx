@@ -2239,7 +2239,7 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                   <thead className="sticky top-0 z-10 bg-slate-50">
                     <tr>
                       <th className="w-6 px-2 py-1.5"></th>
-                      {['Mã hàng', 'Tên hàng', 'ĐVT', 'Thùng KH', 'Thùng xuất', 'Chênh lệch', 'Tình trạng', 'Pallet'].map(h => (
+                      {['Mã hàng', 'Tên hàng', 'ĐVT', 'Thùng KH', 'Thùng thực', 'Chênh lệch', 'Tình trạng GN', 'Pallet'].map(h => (
                         <th key={h} className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
                       ))}
                     </tr>

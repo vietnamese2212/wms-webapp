@@ -389,11 +389,26 @@ export async function getOrder(req: Request, res: Response) {
         }
         // posm_cartons = null (dữ liệu cũ trước migration) → giữ nguyên để không phá dữ liệu cũ
       } else if (posmCartons != null && posmCartons > 0) {
-        // Phiếu này CỘNG VÀO shared entry có sẵn — fetch và hiển thị với đóng góp thực
+        // Phiếu này CỘNG VÀO entry chung có sẵn — hiển thị đóng góp với metadata của CHÍNH phiếu
+        // (entry chung chỉ có 1 bộ Ngày/Giờ/Người của phiếu tạo ra nó — không dùng cho phiếu này)
         const { data: posmEntry } = await supabase
           .from('InventoryEntry').select(ENTRY_SELECT).eq('id', posmEntryId).maybeSingle()
         if (posmEntry) {
-          allEntries = [{ ...posmEntry as any, cartons_imported: posmCartons, cartons_remaining: posmCartons }, ...allEntries]
+          const scannerId = (order as any).imported_by ?? (order as any).created_by ?? null
+          let scannerEmp: { id: string; name: string } | null = null
+          if (scannerId) {
+            const { data: emp } = await supabase.from('Employee').select('id, name').eq('id', scannerId).maybeSingle()
+            scannerEmp = (emp as any) ?? null
+          }
+          allEntries = [{
+            ...(posmEntry as any),
+            cartons_imported:  posmCartons,
+            cartons_remaining: posmCartons,
+            import_date:       (order as any).import_date ?? (posmEntry as any).import_date,
+            created_at:        (order as any).updated_at  ?? (posmEntry as any).created_at,
+            created_by:        scannerId,
+            created_by_emp:    scannerEmp,
+          }, ...allEntries]
         }
       }
       // posmCartons = null hoặc = 0 và entry không do phiếu này tạo → không hiển thị (đã bấm nhầm hoặc 0 thùng)
@@ -947,9 +962,12 @@ export async function scanManual(req: Request, res: Response) {
     }
 
     // Đánh dấu phiếu này đã lưu thủ công (lock tránh lưu 2 lần) + ghi đóng góp của phiếu
+    // imported_by = người quét thực tế (để detail hiển thị đúng người/giờ của phiếu này)
+    const orderPatch: Record<string, unknown> = { posm_entry_id: entryId, posm_cartons: cartonsNum, updated_at: now }
+    if (employee_id) orderPatch.imported_by = employee_id
     const { error: markErr } = await supabase
       .from('ProductionImport')
-      .update({ posm_entry_id: entryId, posm_cartons: cartonsNum, updated_at: now })
+      .update(orderPatch)
       .eq('id', order_id)
     if (markErr) throw markErr
 

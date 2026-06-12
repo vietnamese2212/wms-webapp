@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import * as XLSX from 'xlsx'
-import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, CalendarDays, ShieldX, Lock, FileSpreadsheet, X, SlidersHorizontal } from 'lucide-react'
+import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, CalendarDays, ShieldX, Lock, FileSpreadsheet, X, SlidersHorizontal, QrCode, CheckCircle2 } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -2125,7 +2125,7 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
         />
       )}
       <Dialog open={!!order} onOpenChange={v => !v && onClose()}>
-        <DialogContent className="w-screen max-w-[100vw] h-[100dvh] max-h-[100dvh] rounded-none flex flex-col p-0 gap-0 sm:w-auto sm:max-w-[88vw] sm:h-auto sm:max-h-[90vh] sm:rounded-lg">
+        <DialogContent className="w-screen max-w-[100vw] h-[100dvh] max-h-[100dvh] rounded-none flex flex-col p-0 gap-0 sm:w-[80vw] sm:max-w-[80vw] sm:h-[85vh] sm:max-h-[85vh] sm:rounded-lg">
           {/* Header — pr-10 để tránh nút X của shadcn */}
           <div className="px-4 pt-3 pb-2 border-b bg-white shrink-0 pr-10">
             {/* Dòng 1: Mã lệnh + trạng thái + actions (góc phải) */}
@@ -2335,8 +2335,8 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                             <td className="px-2 py-1 whitespace-nowrap">
                               <span className="text-[10px] font-mono font-semibold">{g.material_code ?? '—'}</span>
                             </td>
-                            <td className="px-2 py-1 max-w-[160px]">
-                              <span className="text-[10px] text-slate-700 block truncate" title={g.material_name ?? ''}>{g.material_name ?? '—'}</span>
+                            <td className="px-2 py-1 whitespace-nowrap">
+                              <span className="text-[10px] text-slate-700">{g.material_name ?? '—'}</span>
                             </td>
                             <td className="px-2 py-1 whitespace-nowrap">
                               <span className="text-[10px] text-slate-400">{g.unit ?? '—'}</span>
@@ -2373,47 +2373,47 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                               const busy = rowBusy === imp?.id
                               const hasQty = (imp?.total_cartons ?? 0) > 0 || !!imp?.posm_entry_id
                               return (
-                                <td className="px-2 py-1 whitespace-nowrap sticky right-0 bg-white border-l border-slate-200" onClick={e => e.stopPropagation()}>
+                                <td className="px-1.5 py-1 w-px sticky right-0 bg-white border-l border-slate-200" onClick={e => e.stopPropagation()}>
                                   {!imp ? (
-                                    <span className="text-[10px] text-slate-300">Chưa có phiếu</span>
+                                    <span className="text-[10px] text-slate-300 whitespace-nowrap">Chưa có phiếu</span>
                                   ) : imp.status === 'COMPLETED' ? (
-                                    <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-green-100 text-green-700">✓ Đã xong</span>
+                                    <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 whitespace-nowrap">✓ Đã xong</span>
                                   ) : (
-                                    <div className="flex items-center gap-1">
-                                      {/* Nhập số lượng — mã không QR: ô số + Xác nhận; mã QR: nút Quét */}
+                                    <div className="flex flex-col items-stretch gap-1 min-w-[84px]">
+                                      {/* Mã không QR: ô số + Lưu; mã QR: nút Quét chuẩn (QrCode) */}
                                       {isNoQr ? (
                                         !imp.posm_entry_id && canScan && (
-                                          <>
+                                          <div className="flex items-center gap-1">
                                             <input type="number" min={0}
                                               value={manualDraft[imp.id] ?? ''}
                                               onChange={e => setManualDraft(d => ({ ...d, [imp.id]: e.target.value }))}
                                               placeholder="thùng"
-                                              className="w-16 h-6 text-[10px] text-center rounded border border-slate-300 px-1" />
-                                            <Button size="sm" variant="outline" className="h-6 text-[10px] px-2"
+                                              className="w-14 h-6 text-[10px] text-center rounded border border-slate-300 px-1" />
+                                            <Button size="sm" variant="outline" className="h-6 text-[10px] px-1.5 flex-1"
                                               disabled={busy} onClick={() => handleManualConfirm(imp.id)}>
-                                              {busy ? '…' : 'Xác nhận'}
+                                              {busy ? '…' : 'Lưu'}
                                             </Button>
-                                          </>
+                                          </div>
                                         )
                                       ) : (
                                         canScan && (
-                                          <Button size="sm" className="h-6 text-[10px] px-2 gap-1"
+                                          <Button size="sm" className="h-6 text-[10px] px-1.5 gap-1"
                                             onClick={() => setScanImportId(imp.id)}>
-                                            📷 Quét
+                                            <QrCode className="h-3 w-3" /> Quét
                                           </Button>
                                         )
                                       )}
                                       {/* Hoàn thành — hiện khi đã có số liệu thực nhập */}
                                       {canComplete && hasQty && (
-                                        <Button size="sm" className="h-6 text-[10px] px-2 bg-green-600 hover:bg-green-700"
+                                        <Button size="sm" className="h-6 text-[10px] px-1.5 gap-1 bg-green-600 hover:bg-green-700"
                                           disabled={busy} onClick={() => handleCompleteOne(imp.id)}>
-                                          {busy ? '…' : '✓ Hoàn thành'}
+                                          <CheckCircle2 className="h-3 w-3" /> {busy ? '…' : 'Hoàn thành'}
                                         </Button>
                                       )}
-                                      <button type="button" className="text-[10px] text-blue-600 hover:text-blue-800 px-1"
+                                      <button type="button" className="text-[10px] text-blue-600 hover:text-blue-800 text-left whitespace-nowrap"
                                         title="Mở phiếu trong Nhập kho"
                                         onClick={() => navigate(`/wms/inbound/${imp.id}`)}>
-                                        Inbound ↗
+                                        Mở Inbound ↗
                                       </button>
                                     </div>
                                   )}

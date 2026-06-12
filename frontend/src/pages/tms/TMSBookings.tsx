@@ -2333,7 +2333,10 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                   <tbody>
                     {goods.map(g => {
                       const isExpanded = expandedMats.has(g.material_id)
-                      const actualCartons = g.actual_boxes ?? 0
+                      const imp = importByMat.get(g.material_id)
+                      const isNoQrRow = imp?.material?.no_qr_tracking === true
+                      // Mã không-QR: actual_boxes của transfer-goods=0 (pallet_code tổng hợp không khớp outbound) → lấy total_cartons của phiếu
+                      const actualCartons = isNoQrRow ? (imp?.total_cartons ?? 0) : (g.actual_boxes ?? 0)
                       return (
                         <React.Fragment key={g.material_id}>
                           <tr
@@ -2383,10 +2386,9 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                               <span className="text-[10px] text-slate-500">{g.pallets.length > 0 ? `${g.pallets.length} pallet` : <span className="text-slate-300">—</span>}</span>
                             </td>
                             {showActions && (() => {
-                              const imp = importByMat.get(g.material_id)
-                              const isNoQr = imp?.material?.no_qr_tracking === true
+                              const isNoQr = isNoQrRow
                               const busy = rowBusy === imp?.id
-                              const hasQty = (g.actual_boxes ?? 0) > 0
+                              const hasQty = (imp?.total_cartons ?? 0) > 0 || !!imp?.posm_entry_id
                               return (
                                 <td className="px-2 py-1 whitespace-nowrap" onClick={e => e.stopPropagation()}>
                                   {!imp ? (

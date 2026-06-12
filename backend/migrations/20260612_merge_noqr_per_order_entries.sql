@@ -30,7 +30,7 @@ BEGIN
     IF shared_id IS NULL THEN
       -- Chưa có entry chung → biến entry này thành entry chung (đổi pallet_code)
       UPDATE "InventoryEntry" SET pallet_code = r.material_code, updated_at = now() WHERE id = r.id;
-      UPDATE "ProductionImport" SET posm_cartons = r.cartons_imported WHERE posm_entry_id = r.id;
+      UPDATE "ProductionImport" SET posm_cartons = r.cartons_imported WHERE posm_entry_id::text = r.id;
     ELSE
       -- Cộng dồn vào entry chung, chuyển phiếu trỏ về entry chung, xoá entry per-phiếu
       UPDATE "InventoryEntry"
@@ -39,8 +39,8 @@ BEGIN
             updated_at = now()
         WHERE id = shared_id;
       UPDATE "ProductionImport"
-        SET posm_entry_id = shared_id, posm_cartons = r.cartons_imported
-        WHERE posm_entry_id = r.id;
+        SET posm_entry_id = shared_id::uuid, posm_cartons = r.cartons_imported
+        WHERE posm_entry_id::text = r.id;
       DELETE FROM "InventoryEntry" WHERE id = r.id;
     END IF;
   END LOOP;

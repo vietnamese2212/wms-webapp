@@ -178,7 +178,8 @@ export default function InboundDetail() {
 
   function canDeleteEntry(entry: PalletEntry): boolean {
     if (!isOpen) return false
-    if (entry.status !== 'IN_STOCK') return false
+    // Mã no-QR là pool dùng chung (có thể PARTIAL khi đã xuất 1 phần) — không chặn theo status; backend tự validate phần còn trống
+    if (!isManualEntry && entry.status !== 'IN_STOCK') return false
     if (can(perms, 'inbound', 'force_delete_pallet')) return true
     if (!can(perms, 'inbound', 'delete_pallet')) return false
     if (!user?.id || entry.created_by_emp?.id !== user.id) return false
@@ -188,7 +189,7 @@ export default function InboundDetail() {
 
   function canEditEntry(entry: PalletEntry): boolean {
     if (!isOpen) return false
-    if (entry.status !== 'IN_STOCK') return false
+    if (!isManualEntry && entry.status !== 'IN_STOCK') return false
     if (can(perms, 'inbound', 'force_edit_pallet')) return true
     if (!can(perms, 'inbound', 'edit_pallet')) return false
     if (!user?.id || entry.created_by_emp?.id !== user.id) return false

@@ -1011,20 +1011,21 @@ export async function updateEntry(req: Request, res: Response) {
     const perm = await checkDeletePermission(employee_id, permTarget, order.warehouse_id as string | null, hasForceEdit)
     if (!perm.allowed) return fail(res, 403, 'FORBIDDEN', perm.reason!)
 
-    const inv = checkInventoryUnchanged([entry])
-    if (!inv.allowed) return fail(res, 400, 'INVENTORY_CHANGED', inv.reason!)
-
     const nowTs = new Date().toISOString()
 
     if (isNoQrShared) {
-      // Sửa đóng góp POSM → cộng/trừ delta vào entry chung, cập nhật posm_cartons của phiếu
+      // Sửa đóng góp no-QR → cộng/trừ delta vào entry chung (cho phép kể cả khi PARTIAL)
       if (cartons_imported === undefined) { emitInboundChanged(); return ok(res, entry) }
       const oldContribution = (order as any).posm_cartons != null ? Number((order as any).posm_cartons) : Number(entry.cartons_imported)
       const newContribution = Math.max(0, Number(cartons_imported))
       const delta = newContribution - oldContribution
+      const newRemaining = Number(entry.cartons_remaining) + delta
+      // Không cho giảm xuống dưới phần đã xuất/giữ cho đơn xuất
+      if (newRemaining < Number(entry.cartons_reserved ?? 0))
+        return fail(res, 400, 'INVENTORY_CHANGED', 'Một phần hàng đã xuất hoặc đang được giữ — không thể giảm xuống mức này')
       const { data: updatedEntry, error } = await supabase
         .from('InventoryEntry')
-        .update({ cartons_imported: Number(entry.cartons_imported) + delta, cartons_remaining: Number(entry.cartons_remaining) + delta, update_date: vnDate(), updated_at: nowTs })
+        .update({ cartons_imported: Number(entry.cartons_imported) + delta, cartons_remaining: newRemaining, update_date: vnDate(), updated_at: nowTs })
         .eq('id', entryId).select(ENTRY_SELECT).maybeSingle()
       if (error) throw error
       await supabase.from('ProductionImport').update({ posm_cartons: newContribution, updated_at: nowTs }).eq('id', order_id)
@@ -1032,6 +1033,10 @@ export async function updateEntry(req: Request, res: Response) {
       // Trả về đóng góp của phiếu (không phải tổng entry chung) để detail hiển thị đúng
       return ok(res, { ...(updatedEntry as any), cartons_imported: newContribution, cartons_remaining: newContribution })
     }
+
+    // Pallet QR thường: phải còn nguyên IN_STOCK, chưa xuất/giữ/điều chỉnh
+    const inv = checkInventoryUnchanged([entry])
+    if (!inv.allowed) return fail(res, 400, 'INVENTORY_CHANGED', inv.reason!)
 
     const patch: Record<string, unknown> = { updated_at: nowTs, update_date: vnDate() }
     if (cartons_imported !== undefined) patch.cartons_imported = Number(cartons_imported)
@@ -1127,16 +1132,17 @@ export async function removeEntry(req: Request, res: Response) {
     const perm = await checkDeletePermission(employee_id, permTarget, order.warehouse_id as string | null, hasForceDelete)
     if (!perm.allowed) return fail(res, 403, 'FORBIDDEN', perm.reason!)
 
-    const inv = checkInventoryUnchanged([entry])
-    if (!inv.allowed) return fail(res, 400, 'INVENTORY_CHANGED', inv.reason!)
-
     const nowTs = new Date().toISOString()
 
     if (isNoQrShared) {
-      // Trừ đóng góp của phiếu khỏi entry chung; xoá hẳn entry khi không còn đóng góp nào
+      // Pool dùng chung: cho phép trừ kể cả khi entry đã PARTIAL (đã xuất 1 phần),
+      // miễn phần còn trống (remaining - reserved) đủ để trừ đóng góp của phiếu.
       const contribution = (order as any).posm_cartons != null
         ? Number((order as any).posm_cartons)
         : Number(entry.cartons_imported) // dữ liệu cũ chưa có posm_cartons → coi như phiếu này là toàn bộ
+      const available = Number(entry.cartons_remaining) - Number(entry.cartons_reserved ?? 0)
+      if (contribution > available)
+        return fail(res, 400, 'INVENTORY_CHANGED', 'Một phần hàng đã xuất hoặc đang được giữ cho đơn xuất — không thể xóa đóng góp của phiếu này')
       const newImported  = Number(entry.cartons_imported)  - contribution
       const newRemaining = Number(entry.cartons_remaining) - contribution
       if (newImported <= 0) {
@@ -1154,6 +1160,10 @@ export async function removeEntry(req: Request, res: Response) {
       emitInboundChanged()
       return ok(res, { deleted: true })
     }
+
+    // Pallet QR thường: phải còn nguyên IN_STOCK, chưa xuất/giữ/điều chỉnh
+    const inv = checkInventoryUnchanged([entry])
+    if (!inv.allowed) return fail(res, 400, 'INVENTORY_CHANGED', inv.reason!)
 
     const { error } = await supabase.from('InventoryEntry').delete().eq('id', entryId)
     if (error) throw error

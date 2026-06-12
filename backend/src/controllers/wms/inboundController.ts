@@ -886,42 +886,70 @@ export async function scanManual(req: Request, res: Response) {
 
     const now = new Date().toISOString()
     const cartonsNum = Math.max(0, Number(cartons) || 0)
+    const warehouseId = (order as any).warehouse_id as string | null
 
-    // Mỗi phiếu tạo entry riêng — không gộp chung — để detail phiếu hiển thị đúng đóng góp của từng phiếu
-    const matCode = ((order as any).material as any)?.material_code
+    // Mã không-QR: 1 entry shared cho mỗi (kho, vật tư), pallet_code = mã hàng.
+    // Đóng góp của từng phiếu lưu ở ProductionImport.posm_cartons (detail hiển thị đúng phần của phiếu).
+    const sharedPalletCode = ((order as any).material as any)?.material_code
       ?? `POSM-${order.material_id.replace(/-/g, '').slice(0, 12)}`
-    const entryUuid = randomUUID()
-    const palletCode = `${matCode}_M_${entryUuid.slice(0, 8)}`
 
-    const { data: newEntry, error: insErr } = await supabase
+    const { data: existingPallet } = await supabase
       .from('InventoryEntry')
-      .insert({
-        id:                entryUuid,
-        pallet_code:       palletCode,
-        location_id:       null,
-        warehouse_id:      (order as any).warehouse_id ?? null,
-        material_id:       order.material_id,
-        cartons_imported:  cartonsNum,
-        cartons_remaining: cartonsNum,
-        stack_layer:       1,
-        import_order_id:   order_id,
-        created_by:        employee_id ?? null,
-        updated_by:        employee_id ?? null,
-        status:            'IN_STOCK',
-        import_date:       vnDate(),
-        update_date:       vnDate(),
-        created_at:        now,
-        updated_at:        now,
-      })
-      .select('id')
-      .single()
-    if (insErr) throw insErr
-    const entryId = newEntry.id
+      .select('id, cartons_remaining, cartons_imported')
+      .eq('pallet_code', sharedPalletCode)
+      .eq('warehouse_id', warehouseId)
+      .maybeSingle()
 
-    // Đánh dấu phiếu này đã lưu thủ công (lock tránh lưu 2 lần)
+    let entryId: string
+    if (existingPallet) {
+      // Cộng dồn vào entry chung
+      const { error: updErr } = await supabase
+        .from('InventoryEntry')
+        .update({
+          cartons_remaining: existingPallet.cartons_remaining + cartonsNum,
+          cartons_imported:  existingPallet.cartons_imported  + cartonsNum,
+          update_date:       vnDate(),
+          updated_at:        now,
+          updated_by:        employee_id ?? null,
+        })
+        .eq('id', existingPallet.id)
+      if (updErr) throw updErr
+      entryId = existingPallet.id
+    } else {
+      // Tạo entry chung lần đầu
+      const { data: newEntry, error: insErr } = await supabase
+        .from('InventoryEntry')
+        .insert({
+          id:                randomUUID(),
+          pallet_code:       sharedPalletCode,
+          location_id:       null,
+          warehouse_id:      warehouseId,
+          material_id:       order.material_id,
+          cartons_imported:  cartonsNum,
+          cartons_remaining: cartonsNum,
+          stack_layer:       1,
+          import_order_id:   order_id,
+          created_by:        employee_id ?? null,
+          updated_by:        employee_id ?? null,
+          status:            'IN_STOCK',
+          import_date:       vnDate(),
+          update_date:       vnDate(),
+          created_at:        now,
+          updated_at:        now,
+        })
+        .select('id')
+        .single()
+      if (insErr) {
+        if (insErr.code === '23505') return fail(res, 409, 'DUPLICATE_PALLET', 'Pallet chung đã tồn tại')
+        throw insErr
+      }
+      entryId = newEntry.id
+    }
+
+    // Đánh dấu phiếu này đã lưu thủ công (lock tránh lưu 2 lần) + ghi đóng góp của phiếu
     const { error: markErr } = await supabase
       .from('ProductionImport')
-      .update({ posm_entry_id: entryId, updated_at: now })
+      .update({ posm_entry_id: entryId, posm_cartons: cartonsNum, updated_at: now })
       .eq('id', order_id)
     if (markErr) throw markErr
 
@@ -942,24 +970,52 @@ export async function updateEntry(req: Request, res: Response) {
     const { cartons_imported, stack_layer, employee_id } = req.body
 
     const [{ data: order }, { data: entry }] = await Promise.all([
-      supabase.from('ProductionImport').select('status, warehouse_id').eq('id', order_id).maybeSingle(),
+      supabase.from('ProductionImport')
+        .select('status, warehouse_id, posm_entry_id, posm_cartons, created_by, imported_by, import_date, created_at')
+        .eq('id', order_id).maybeSingle(),
       supabase.from('InventoryEntry')
-        .select('id, import_order_id, created_by, import_date, created_at, status, cartons_reserved, adjustment_qty')
+        .select('id, import_order_id, created_by, import_date, created_at, status, cartons_reserved, adjustment_qty, cartons_imported, cartons_remaining')
         .eq('id', entryId).maybeSingle(),
     ])
-    if (!order)                              return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
-    if (order.status !== 'OPEN')             return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập đã đóng')
-    if (!entry)                              return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy pallet')
-    if (entry.import_order_id !== order_id)  return fail(res, 400, 'ENTRY_NOT_IN_ORDER', 'Pallet không thuộc phiếu nhập này')
+    if (!order)                  return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
+    if (order.status !== 'OPEN') return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập đã đóng')
+    if (!entry)                  return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy pallet')
+
+    // posm_entry_id chỉ được set bởi scanManual (chỉ dùng cho mã no_qr_tracking) → đây chính là phân biệt theo no-QR
+    const isNoQrShared = (order as any).posm_entry_id === entryId
+    if (!isNoQrShared && entry.import_order_id !== order_id)
+      return fail(res, 400, 'ENTRY_NOT_IN_ORDER', 'Pallet không thuộc phiếu nhập này')
 
     const hasForceEdit = req.user?.module_permissions?.['inbound']?.includes('force_edit_pallet') ?? false
-    const perm = await checkDeletePermission(employee_id, [entry], order.warehouse_id as string | null, hasForceEdit)
+    const permTarget = isNoQrShared
+      ? [{ created_by: (order as any).imported_by ?? (order as any).created_by ?? null, import_date: (order as any).import_date as string | null, created_at: (order as any).created_at as string }]
+      : [entry]
+    const perm = await checkDeletePermission(employee_id, permTarget, order.warehouse_id as string | null, hasForceEdit)
     if (!perm.allowed) return fail(res, 403, 'FORBIDDEN', perm.reason!)
 
     const inv = checkInventoryUnchanged([entry])
     if (!inv.allowed) return fail(res, 400, 'INVENTORY_CHANGED', inv.reason!)
 
-    const patch: Record<string, unknown> = { updated_at: new Date().toISOString(), update_date: vnDate() }
+    const nowTs = new Date().toISOString()
+
+    if (isNoQrShared) {
+      // Sửa đóng góp POSM → cộng/trừ delta vào entry chung, cập nhật posm_cartons của phiếu
+      if (cartons_imported === undefined) { emitInboundChanged(); return ok(res, entry) }
+      const oldContribution = (order as any).posm_cartons != null ? Number((order as any).posm_cartons) : Number(entry.cartons_imported)
+      const newContribution = Math.max(0, Number(cartons_imported))
+      const delta = newContribution - oldContribution
+      const { data: updatedEntry, error } = await supabase
+        .from('InventoryEntry')
+        .update({ cartons_imported: Number(entry.cartons_imported) + delta, cartons_remaining: Number(entry.cartons_remaining) + delta, update_date: vnDate(), updated_at: nowTs })
+        .eq('id', entryId).select(ENTRY_SELECT).maybeSingle()
+      if (error) throw error
+      await supabase.from('ProductionImport').update({ posm_cartons: newContribution, updated_at: nowTs }).eq('id', order_id)
+      emitInboundChanged()
+      // Trả về đóng góp của phiếu (không phải tổng entry chung) để detail hiển thị đúng
+      return ok(res, { ...(updatedEntry as any), cartons_imported: newContribution, cartons_remaining: newContribution })
+    }
+
+    const patch: Record<string, unknown> = { updated_at: nowTs, update_date: vnDate() }
     if (cartons_imported !== undefined) patch.cartons_imported = Number(cartons_imported)
     if (stack_layer      !== undefined) patch.stack_layer = Number(stack_layer)
 
@@ -1028,30 +1084,61 @@ export async function removeEntry(req: Request, res: Response) {
     const { employee_id } = req.body ?? {}
 
     const [{ data: order }, { data: entry }] = await Promise.all([
-      supabase.from('ProductionImport').select('status, warehouse_id').eq('id', order_id).maybeSingle(),
+      supabase.from('ProductionImport')
+        .select('status, warehouse_id, posm_entry_id, posm_cartons, created_by, imported_by, import_date, created_at')
+        .eq('id', order_id).maybeSingle(),
       supabase.from('InventoryEntry')
-        .select('id, import_order_id, created_by, import_date, created_at, status, cartons_reserved, adjustment_qty')
+        .select('id, import_order_id, created_by, import_date, created_at, status, cartons_reserved, adjustment_qty, cartons_imported, cartons_remaining')
         .eq('id', entryId).maybeSingle(),
     ])
-    if (!order)                              return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
-    if (order.status !== 'OPEN')             return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập đã đóng')
-    if (!entry)                              return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy pallet')
-    if (entry.import_order_id !== order_id)  return fail(res, 400, 'ENTRY_NOT_IN_ORDER', 'Pallet không thuộc phiếu nhập này')
+    if (!order)                  return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
+    if (order.status !== 'OPEN') return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập đã đóng')
+    if (!entry)                  return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy pallet')
+
+    // posm_entry_id chỉ được set bởi scanManual (chỉ dùng cho mã no_qr_tracking) → đây chính là phân biệt theo no-QR
+    const isNoQrShared = (order as any).posm_entry_id === entryId
+    // Pallet thường phải thuộc đúng phiếu; POSM shared thì entry chung (import_order_id = phiếu tạo) nên bỏ qua check này
+    if (!isNoQrShared && entry.import_order_id !== order_id)
+      return fail(res, 400, 'ENTRY_NOT_IN_ORDER', 'Pallet không thuộc phiếu nhập này')
 
     const hasForceDelete = req.user?.module_permissions?.['inbound']?.includes('force_delete_pallet') ?? false
-    const perm = await checkDeletePermission(employee_id, [entry], order.warehouse_id as string | null, hasForceDelete)
+    // POSM: quyền/giới hạn 2 ngày tính theo phiếu (người nhập phiếu), không theo người tạo entry chung
+    const permTarget = isNoQrShared
+      ? [{ created_by: (order as any).imported_by ?? (order as any).created_by ?? null, import_date: (order as any).import_date as string | null, created_at: (order as any).created_at as string }]
+      : [entry]
+    const perm = await checkDeletePermission(employee_id, permTarget, order.warehouse_id as string | null, hasForceDelete)
     if (!perm.allowed) return fail(res, 403, 'FORBIDDEN', perm.reason!)
 
     const inv = checkInventoryUnchanged([entry])
     if (!inv.allowed) return fail(res, 400, 'INVENTORY_CHANGED', inv.reason!)
 
+    const nowTs = new Date().toISOString()
+
+    if (isNoQrShared) {
+      // Trừ đóng góp của phiếu khỏi entry chung; xoá hẳn entry khi không còn đóng góp nào
+      const contribution = (order as any).posm_cartons != null
+        ? Number((order as any).posm_cartons)
+        : Number(entry.cartons_imported) // dữ liệu cũ chưa có posm_cartons → coi như phiếu này là toàn bộ
+      const newImported  = Number(entry.cartons_imported)  - contribution
+      const newRemaining = Number(entry.cartons_remaining) - contribution
+      if (newImported <= 0) {
+        const { error } = await supabase.from('InventoryEntry').delete().eq('id', entryId)
+        if (error) throw error
+      } else {
+        const { error } = await supabase.from('InventoryEntry')
+          .update({ cartons_imported: newImported, cartons_remaining: newRemaining, update_date: vnDate(), updated_at: nowTs })
+          .eq('id', entryId)
+        if (error) throw error
+      }
+      await supabase.from('ProductionImport')
+        .update({ posm_entry_id: null, posm_cartons: null, updated_at: nowTs })
+        .eq('id', order_id)
+      emitInboundChanged()
+      return ok(res, { deleted: true })
+    }
+
     const { error } = await supabase.from('InventoryEntry').delete().eq('id', entryId)
     if (error) throw error
-
-    // Nếu đây là POSM entry, clear posm_entry_id trên order để cho phép lưu thủ công lại
-    await supabase.from('ProductionImport')
-      .update({ posm_entry_id: null, updated_at: new Date().toISOString() })
-      .eq('id', order_id).eq('posm_entry_id', entryId)
 
     emitInboundChanged()
     ok(res, { deleted: true })

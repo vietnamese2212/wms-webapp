@@ -2042,7 +2042,6 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
   const [scanImportId, setScanImportId] = useState<string | null>(null)
   const [manualDraft,  setManualDraft]  = useState<Record<string, string>>({})
   const [rowBusy,      setRowBusy]       = useState<string | null>(null)
-  const [bulkBusy,     setBulkBusy]      = useState(false)
   const [actionErr,    setActionErr]     = useState('')
 
   // material_id → phiếu nhập (ProductionImport) đang hoạt động
@@ -2080,18 +2079,6 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
     } finally { setRowBusy(null) }
   }
 
-  async function handleCompleteAll() {
-    const open = activeImports.filter(ai => ai.status === 'OPEN')
-    if (open.length === 0) return
-    setActionErr(''); setBulkBusy(true)
-    try {
-      await Promise.all(open.map(ai => completeInbound(ai.id)))
-      refreshPanel()
-    } catch (e) {
-      const msg = (e as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message
-      setActionErr(msg ?? 'Lỗi hoàn thành lệnh')
-    } finally { setBulkBusy(false) }
-  }
 
   const hasPallets = goods.some(g => g.pallets.length > 0)
   const allExpanded = hasPallets && goods.filter(g => g.pallets.length > 0).every(g => expandedMats.has(g.material_id))
@@ -2116,7 +2103,6 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
   const tStatus = order?.transfer_gdo?.transfer_status
   // Cột thao tác chỉ hiện khi đang nhận hàng và user có quyền nhập/hoàn thành
   const showActions = tStatus === 'RECEIVING' && canConfirmReceipt && (canScan || canComplete)
-  const openImportCount = activeImports.filter(ai => ai.status === 'OPEN').length
   const missingMaterials = tStatus === 'RECEIVING'
     ? goods.filter(g => !activeImports.some((ai) => ai.material_id === g.material_id))
     : []
@@ -2156,7 +2142,7 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                         setConfirmErr(msg ?? 'Lỗi xác nhận nhận hàng')
                       }
                     }}>
-                    {confirming ? 'Đang xử lý...' : 'NPP bắt đầu nhận'}
+                    {confirming ? 'Đang xử lý...' : 'Bắt đầu nhận hàng'}
                   </Button>
                 )}
                 {canConfirmReceipt && tStatus === 'RECEIVING' && (
@@ -2211,13 +2197,6 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                           </TooltipContent>
                         </Tooltip>
                       </TooltipProvider>
-                    )}
-                    {canComplete && openImportCount > 0 && (
-                      <Button size="sm" className="h-7 text-xs bg-blue-600 hover:bg-blue-700"
-                        disabled={bulkBusy}
-                        onClick={() => { if (confirm(`Hoàn thành tất cả ${openImportCount} phiếu còn lại của lệnh này?`)) handleCompleteAll() }}>
-                        {bulkBusy ? 'Đang xử lý...' : `Hoàn thành lệnh (${openImportCount})`}
-                      </Button>
                     )}
                   </>
                 )}

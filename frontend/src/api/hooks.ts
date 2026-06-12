@@ -1922,7 +1922,12 @@ export function useActiveImportsByGdo(gdoId?: string | null) {
     queryKey: ['inbound-by-gdo', gdoId],
     queryFn: async () => {
       const { data } = await apiClient.get('/wms/inbound-orders', { params: { from_gdo_id: gdoId } })
-      return data.data as { material_id: string; status: string; id: string; import_code: string }[]
+      return data.data as {
+        material_id: string; status: string; id: string; import_code: string
+        planned_cartons: number | null; total_cartons?: number
+        posm_entry_id?: string | null
+        material?: { no_qr_tracking?: boolean | null } | null
+      }[]
     },
     enabled: !!gdoId,
     staleTime: 15_000,

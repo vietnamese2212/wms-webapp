@@ -22,8 +22,12 @@ import {
   useBulkCreatePlanLines, useUpdatePlanLine, useDeletePlanLine,
   useTransferOrders, useCreateTransferOrder, useConfirmTransferReceipt, useCancelTransferReceipt, useGDOs, useTransferGoods,
   useActiveImportsByGdo, useCreateOneInbound,
+  useCompleteInboundOrder, useScanManualPallet,
   type TransferOrder,
 } from '@/api/hooks'
+import { useNavigate } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
+import { InboundScanSheetById } from '@/components/wms/InboundScanSheet'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { formatDate, formatDateTime } from '@/utils/formatters'
 import type { TmsOrder, TmsVehicleSlot, DeliverySlot, TmsVehicleType, TmsVehicle, TransportCompany } from '@/types'
@@ -2026,6 +2030,69 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
   const { mutateAsync: cancelReceipt,  isPending: cancelling } = useCancelTransferReceipt()
   const { mutateAsync: createOneInbound, isPending: creatingInbound } = useCreateOneInbound()
 
+  // ── Nhập hàng ngay tại panel (gọi đúng API Inbound) ──
+  const navigate = useNavigate()
+  const qc = useQueryClient()
+  const user  = useAuthStore(s => s.user)
+  const perms = (user?.module_permissions as ModulePermissions | null) ?? null
+  const canScan     = can(perms, 'inbound', 'scan')
+  const canComplete = can(perms, 'inbound', 'complete')
+  const { mutateAsync: completeInbound } = useCompleteInboundOrder()
+  const { mutateAsync: saveManual }      = useScanManualPallet()
+  const [scanImportId, setScanImportId] = useState<string | null>(null)
+  const [manualDraft,  setManualDraft]  = useState<Record<string, string>>({})
+  const [rowBusy,      setRowBusy]       = useState<string | null>(null)
+  const [bulkBusy,     setBulkBusy]      = useState(false)
+  const [actionErr,    setActionErr]     = useState('')
+
+  // material_id → phiếu nhập (ProductionImport) đang hoạt động
+  const importByMat = new Map(activeImports.map(ai => [ai.material_id, ai]))
+
+  function refreshPanel() {
+    qc.invalidateQueries({ queryKey: ['transfer-goods', order?.id] })
+    qc.invalidateQueries({ queryKey: ['inbound-by-gdo', order?.transfer_gdo?.id] })
+    qc.invalidateQueries({ queryKey: ['tms-orders-transfer'] })
+  }
+
+  async function handleManualConfirm(impId: string) {
+    const v = manualDraft[impId]
+    const c = Number(v)
+    if (!v || isNaN(c) || c < 0) { setActionErr('Nhập số thùng hợp lệ'); return }
+    setActionErr(''); setRowBusy(impId)
+    try {
+      await saveManual({ orderId: impId, cartons: c, employee_id: user?.id })
+      setManualDraft(d => { const n = { ...d }; delete n[impId]; return n })
+      refreshPanel()
+    } catch (e) {
+      const msg = (e as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message
+      setActionErr(msg ?? 'Lỗi lưu số lượng')
+    } finally { setRowBusy(null) }
+  }
+
+  async function handleCompleteOne(impId: string) {
+    setActionErr(''); setRowBusy(impId)
+    try {
+      await completeInbound(impId)
+      refreshPanel()
+    } catch (e) {
+      const msg = (e as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message
+      setActionErr(msg ?? 'Lỗi hoàn thành phiếu')
+    } finally { setRowBusy(null) }
+  }
+
+  async function handleCompleteAll() {
+    const open = activeImports.filter(ai => ai.status === 'OPEN')
+    if (open.length === 0) return
+    setActionErr(''); setBulkBusy(true)
+    try {
+      await Promise.all(open.map(ai => completeInbound(ai.id)))
+      refreshPanel()
+    } catch (e) {
+      const msg = (e as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message
+      setActionErr(msg ?? 'Lỗi hoàn thành lệnh')
+    } finally { setBulkBusy(false) }
+  }
+
   const hasPallets = goods.some(g => g.pallets.length > 0)
   const allExpanded = hasPallets && goods.filter(g => g.pallets.length > 0).every(g => expandedMats.has(g.material_id))
 
@@ -2047,6 +2114,9 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
 
   const slot = order?.vehicle_slots?.[0]
   const tStatus = order?.transfer_gdo?.transfer_status
+  // Cột thao tác chỉ hiện khi đang nhận hàng và user có quyền nhập/hoàn thành
+  const showActions = tStatus === 'RECEIVING' && canConfirmReceipt && (canScan || canComplete)
+  const openImportCount = activeImports.filter(ai => ai.status === 'OPEN').length
   const missingMaterials = tStatus === 'RECEIVING'
     ? goods.filter(g => !activeImports.some((ai) => ai.material_id === g.material_id))
     : []
@@ -2057,6 +2127,13 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
   return (
     <>
       <TransportUpdateDialog order={showUpdate ? order : null} onClose={() => setShowUpdate(false)} />
+      {scanImportId && (
+        <InboundScanSheetById
+          importId={scanImportId}
+          employeeId={user?.id}
+          onClose={() => { setScanImportId(null); refreshPanel() }}
+        />
+      )}
       <Dialog open={!!order} onOpenChange={v => !v && onClose()}>
         <DialogContent className="max-w-[88vw] max-h-[90vh] flex flex-col p-0 gap-0">
           {/* Header — pr-10 để tránh nút X của shadcn */}
@@ -2135,6 +2212,13 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                         </Tooltip>
                       </TooltipProvider>
                     )}
+                    {canComplete && openImportCount > 0 && (
+                      <Button size="sm" className="h-7 text-xs bg-blue-600 hover:bg-blue-700"
+                        disabled={bulkBusy}
+                        onClick={() => { if (confirm(`Hoàn thành tất cả ${openImportCount} phiếu còn lại của lệnh này?`)) handleCompleteAll() }}>
+                        {bulkBusy ? 'Đang xử lý...' : `Hoàn thành lệnh (${openImportCount})`}
+                      </Button>
+                    )}
                   </>
                 )}
                 {canEdit && (
@@ -2150,6 +2234,7 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
               </div>
             </div>
             {confirmErr && <p className="text-xs text-red-600 bg-red-50 px-2 py-1 rounded mt-1">{confirmErr}</p>}
+            {actionErr && <p className="text-xs text-red-600 bg-red-50 px-2 py-1 rounded mt-1">{actionErr}</p>}
             {/* Dòng 2: Info grid */}
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-0.5 text-[11px]">
               <div className="flex gap-2">
@@ -2242,6 +2327,7 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                       {['Mã hàng', 'Tên hàng', 'ĐVT', 'Thùng KH', 'Thùng thực', 'Chênh lệch', 'Tình trạng GN', 'Pallet'].map(h => (
                         <th key={h} className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
                       ))}
+                      {showActions && <th className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">Thao tác</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -2296,6 +2382,59 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                             <td className="px-2 py-1 whitespace-nowrap">
                               <span className="text-[10px] text-slate-500">{g.pallets.length > 0 ? `${g.pallets.length} pallet` : <span className="text-slate-300">—</span>}</span>
                             </td>
+                            {showActions && (() => {
+                              const imp = importByMat.get(g.material_id)
+                              const isNoQr = imp?.material?.no_qr_tracking === true
+                              const busy = rowBusy === imp?.id
+                              const hasQty = (g.actual_boxes ?? 0) > 0
+                              return (
+                                <td className="px-2 py-1 whitespace-nowrap" onClick={e => e.stopPropagation()}>
+                                  {!imp ? (
+                                    <span className="text-[10px] text-slate-300">Chưa có phiếu</span>
+                                  ) : imp.status === 'COMPLETED' ? (
+                                    <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-green-100 text-green-700">✓ Đã xong</span>
+                                  ) : (
+                                    <div className="flex items-center gap-1">
+                                      {/* Nhập số lượng — mã không QR: ô số + Xác nhận; mã QR: nút Quét */}
+                                      {isNoQr ? (
+                                        !imp.posm_entry_id && canScan && (
+                                          <>
+                                            <input type="number" min={0}
+                                              value={manualDraft[imp.id] ?? ''}
+                                              onChange={e => setManualDraft(d => ({ ...d, [imp.id]: e.target.value }))}
+                                              placeholder="thùng"
+                                              className="w-16 h-6 text-[10px] text-center rounded border border-slate-300 px-1" />
+                                            <Button size="sm" variant="outline" className="h-6 text-[10px] px-2"
+                                              disabled={busy} onClick={() => handleManualConfirm(imp.id)}>
+                                              {busy ? '…' : 'Xác nhận'}
+                                            </Button>
+                                          </>
+                                        )
+                                      ) : (
+                                        canScan && (
+                                          <Button size="sm" className="h-6 text-[10px] px-2 gap-1"
+                                            onClick={() => setScanImportId(imp.id)}>
+                                            📷 Quét
+                                          </Button>
+                                        )
+                                      )}
+                                      {/* Hoàn thành — hiện khi đã có số liệu thực nhập */}
+                                      {canComplete && hasQty && (
+                                        <Button size="sm" className="h-6 text-[10px] px-2 bg-green-600 hover:bg-green-700"
+                                          disabled={busy} onClick={() => handleCompleteOne(imp.id)}>
+                                          {busy ? '…' : '✓ Hoàn thành'}
+                                        </Button>
+                                      )}
+                                      <button type="button" className="text-[10px] text-blue-600 hover:text-blue-800 px-1"
+                                        title="Mở phiếu trong Nhập kho"
+                                        onClick={() => navigate(`/wms/inbound/${imp.id}`)}>
+                                        Inbound ↗
+                                      </button>
+                                    </div>
+                                  )}
+                                </td>
+                              )
+                            })()}
                           </tr>
                           {isExpanded && g.pallets.map(p => (
                             <tr key={p.pallet_code} className="bg-blue-50/30 border-t border-blue-100">
@@ -2313,7 +2452,7 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                                   {p.cartons_inbound > 0 ? p.cartons_inbound : '—'}
                                 </span>
                               </td>
-                              <td className="px-2 py-0.5" colSpan={3}></td>
+                              <td className="px-2 py-0.5" colSpan={showActions ? 4 : 3}></td>
                             </tr>
                           ))}
                         </React.Fragment>

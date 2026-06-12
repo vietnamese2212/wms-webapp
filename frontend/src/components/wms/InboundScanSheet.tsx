@@ -244,7 +244,21 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
             </div>
           )}
 
-          {/* Camera with floating buttons */}
+          {/* Chưa chọn vị trí → KHÔNG bật camera, buộc chọn vị trí trước */}
+          {!activeLocationId ? (
+            <div className="rounded-xl border-2 border-dashed border-amber-300 bg-amber-50 p-6 text-center space-y-2">
+              <MapPin className="h-7 w-7 text-amber-500 mx-auto" />
+              <p className="text-sm font-medium text-amber-800">Chọn vị trí nhập trước khi quét</p>
+              <button
+                type="button"
+                className="inline-flex items-center gap-1 text-xs text-white bg-blue-600 hover:bg-blue-700 rounded-md px-3 py-1.5"
+                onClick={() => setShowLocPicker(true)}
+              >
+                <MapPin className="h-3.5 w-3.5" /> Chọn vị trí
+              </button>
+            </div>
+          ) : (
+          /* Camera with floating buttons */
           <div className="relative">
             <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} />
 
@@ -280,6 +294,7 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
               </button>
             )}
           </div>
+          )}
 
           {/* Merge warning banner */}
           {mergeWarning && serverCheckOk && !feedback && (

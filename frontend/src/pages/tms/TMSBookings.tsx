@@ -2101,6 +2101,10 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
 
   const slot = order?.vehicle_slots?.[0]
   const tStatus = order?.transfer_gdo?.transfer_status
+  // Giữ trạng thái "đang bắt đầu nhận" liên tục từ lúc bấm tới khi panel chuyển sang RECEIVING
+  // (tránh nút nháy về 'Bắt đầu nhận hàng' rồi mới đổi — do refetch trễ)
+  const [starting, setStarting] = useState(false)
+  useEffect(() => { if (tStatus && tStatus !== 'IN_TRANSIT') setStarting(false) }, [tStatus])
   // Cột thao tác chỉ hiện khi đang nhận hàng và user có quyền nhập/hoàn thành
   const showActions = tStatus === 'RECEIVING' && canConfirmReceipt && (canScan || canComplete)
   const missingMaterials = tStatus === 'RECEIVING'
@@ -2121,7 +2125,7 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
         />
       )}
       <Dialog open={!!order} onOpenChange={v => !v && onClose()}>
-        <DialogContent className="max-w-[88vw] max-h-[90vh] flex flex-col p-0 gap-0">
+        <DialogContent className="w-screen max-w-[100vw] h-[100dvh] max-h-[100dvh] rounded-none flex flex-col p-0 gap-0 sm:w-auto sm:max-w-[88vw] sm:h-auto sm:max-h-[90vh] sm:rounded-lg">
           {/* Header — pr-10 để tránh nút X của shadcn */}
           <div className="px-4 pt-3 pb-2 border-b bg-white shrink-0 pr-10">
             {/* Dòng 1: Mã lệnh + trạng thái + actions (góc phải) */}
@@ -2130,19 +2134,22 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
               {cfg && <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${cfg.cls}`}>{cfg.label}</span>}
               <div className="ml-auto flex items-center gap-2 shrink-0">
                 {canConfirmReceipt && tStatus === 'IN_TRANSIT' && (
-                  <Button size="sm" className="h-7 text-xs bg-green-600 hover:bg-green-700"
-                    disabled={confirming}
+                  <Button size="sm" className={`h-7 text-xs bg-green-600 hover:bg-green-700 gap-1 ${(confirming || starting) ? 'animate-pulse' : ''}`}
+                    disabled={confirming || starting}
                     onClick={async () => {
                       if (!order) return
-                      setConfirmErr('')
+                      setConfirmErr(''); setStarting(true)
                       try {
                         await confirmReceipt(order.id)
                       } catch (e: unknown) {
+                        setStarting(false)
                         const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
                         setConfirmErr(msg ?? 'Lỗi xác nhận nhận hàng')
                       }
                     }}>
-                    {confirming ? 'Đang xử lý...' : 'Bắt đầu nhận hàng'}
+                    {(confirming || starting)
+                      ? <><RotateCcw className="h-3 w-3 animate-spin" /> Đang xử lý…</>
+                      : 'Bắt đầu nhận hàng'}
                   </Button>
                 )}
                 {canConfirmReceipt && tStatus === 'RECEIVING' && (
@@ -2303,10 +2310,10 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                   <thead className="sticky top-0 z-10 bg-slate-50">
                     <tr>
                       <th className="w-6 px-2 py-1.5"></th>
-                      {['Mã hàng', 'Tên hàng', 'ĐVT', 'Thùng KH', 'Thùng thực', 'Chênh lệch', 'Tình trạng GN', 'Pallet'].map(h => (
+                      {['Mã hàng', 'Tên hàng', 'ĐVT', 'Thùng KH', 'Thùng thực', 'Chênh lệch', 'Tình trạng GN'].map(h => (
                         <th key={h} className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
                       ))}
-                      {showActions && <th className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">Thao tác</th>}
+                      {showActions && <th className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap sticky right-0 bg-slate-50 border-l border-slate-200">Thao tác</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -2328,8 +2335,8 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                             <td className="px-2 py-1 whitespace-nowrap">
                               <span className="text-[10px] font-mono font-semibold">{g.material_code ?? '—'}</span>
                             </td>
-                            <td className="px-2 py-1 whitespace-nowrap max-w-[240px]">
-                              <span className="text-[10px] text-slate-700">{g.material_name ?? '—'}</span>
+                            <td className="px-2 py-1 max-w-[160px]">
+                              <span className="text-[10px] text-slate-700 block truncate" title={g.material_name ?? ''}>{g.material_name ?? '—'}</span>
                             </td>
                             <td className="px-2 py-1 whitespace-nowrap">
                               <span className="text-[10px] text-slate-400">{g.unit ?? '—'}</span>
@@ -2361,15 +2368,12 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                                 </td>
                               </>)
                             })()}
-                            <td className="px-2 py-1 whitespace-nowrap">
-                              <span className="text-[10px] text-slate-500">{g.pallets.length > 0 ? `${g.pallets.length} pallet` : <span className="text-slate-300">—</span>}</span>
-                            </td>
                             {showActions && (() => {
                               const isNoQr = isNoQrRow
                               const busy = rowBusy === imp?.id
                               const hasQty = (imp?.total_cartons ?? 0) > 0 || !!imp?.posm_entry_id
                               return (
-                                <td className="px-2 py-1 whitespace-nowrap" onClick={e => e.stopPropagation()}>
+                                <td className="px-2 py-1 whitespace-nowrap sticky right-0 bg-white border-l border-slate-200" onClick={e => e.stopPropagation()}>
                                   {!imp ? (
                                     <span className="text-[10px] text-slate-300">Chưa có phiếu</span>
                                   ) : imp.status === 'COMPLETED' ? (
@@ -2433,7 +2437,7 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                                   {p.cartons_inbound > 0 ? p.cartons_inbound : '—'}
                                 </span>
                               </td>
-                              <td className="px-2 py-0.5" colSpan={showActions ? 4 : 3}></td>
+                              <td className="px-2 py-0.5" colSpan={showActions ? 3 : 2}></td>
                             </tr>
                           ))}
                         </React.Fragment>

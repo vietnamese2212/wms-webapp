@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { AxiosError } from 'axios'
 import { MapPin, AlertTriangle, CheckCircle2 } from 'lucide-react'
 import { QRScanner }           from '@/components/shared/QRScanner'
@@ -179,8 +180,8 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
 
   const canSave = !!pendingQR && serverCheckOk && !saving && !serverChecking
 
-  return (
-    <div className="fixed inset-0 z-50 flex flex-col">
+  return createPortal(
+    <div className="fixed inset-0 z-[60] flex flex-col">
       {/* Backdrop */}
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
 
@@ -258,7 +259,31 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
               </button>
             </div>
           ) : (
-          /* Camera with floating buttons */
+          <>
+            {/* Số lượng đặt TRÊN camera — tránh bỏ sót / nhập mặc định sai */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label className="text-xs font-medium text-slate-700">Số thùng nhập</Label>
+                <Input type="number" min="0" value={cartons} onChange={(e) => setCartons(e.target.value)}
+                  className="h-11 text-center text-lg font-semibold" />
+                {outboundCartons != null && (
+                  <p className="text-[10px] text-slate-500">Phiếu xuất: <span className="font-semibold text-slate-700">{outboundCartons}</span> thùng</p>
+                )}
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Tầng chồng</Label>
+                <Select value={stackLayer} onValueChange={setStackLayer}>
+                  <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="1">Tầng 1 (sàn)</SelectItem>
+                    <SelectItem value="2">Tầng 2</SelectItem>
+                    <SelectItem value="3">Tầng 3</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+          {/* Camera with floating buttons */}
           <div className="relative">
             <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} />
 
@@ -290,10 +315,11 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
                            rounded-full px-6 py-2.5 text-sm font-semibold shadow-xl transition-all"
                 onClick={handleSave}
               >
-                {saving ? '…' : 'Lưu'}
+                {saving ? '…' : `Lưu ${cartons || 0} thùng`}
               </button>
             )}
           </div>
+          </>
           )}
 
           {/* Merge warning banner */}
@@ -336,31 +362,10 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
           <Button variant="outline" className="w-full" disabled={saving} onClick={onClose}>
             Huỷ
           </Button>
-
-          {/* Inputs */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <Label className="text-xs">Số thùng / pallet</Label>
-              <Input type="number" min="0" value={cartons} onChange={(e) => setCartons(e.target.value)} />
-              {outboundCartons != null && (
-                <p className="text-[10px] text-slate-500">Phiếu xuất: <span className="font-semibold text-slate-700">{outboundCartons}</span> thùng</p>
-              )}
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Tầng chồng</Label>
-              <Select value={stackLayer} onValueChange={setStackLayer}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="1">Tầng 1 (sàn)</SelectItem>
-                  <SelectItem value="2">Tầng 2</SelectItem>
-                  <SelectItem value="3">Tầng 3</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
 
@@ -375,13 +380,14 @@ export function InboundScanSheetById({ importId, employeeId, onClose }: { import
   )
 
   if (!order) {
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center">
+    return createPortal(
+      <div className="fixed inset-0 z-[60] flex items-center justify-center">
         <div className="absolute inset-0 bg-black/60" onClick={onClose} />
         <div className="relative bg-white rounded-xl px-6 py-4 text-sm text-slate-600">
           {isLoading ? 'Đang tải phiếu…' : 'Không tìm thấy phiếu nhập'}
         </div>
-      </div>
+      </div>,
+      document.body
     )
   }
 

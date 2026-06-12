@@ -1850,6 +1850,7 @@ export type TransferGoodsRow = {
   unit: string | null
   planned_boxes: number
   actual_boxes: number
+  no_qr_tracking?: boolean
   pallets: { pallet_code: string; cartons_outbound: number; cartons_inbound: number; inbound_at: string | null }[]
 }
 

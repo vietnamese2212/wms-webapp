@@ -962,10 +962,25 @@ export async function getTransferGoods(req: Request, res: Response) {
     }
 
     // Pallet đã nhận tại kho nhận: ProductionImport → InventoryEntry
+    // Lấy mọi phiếu non-cancelled (kể cả OPEN) để "Thùng thực" cập nhật live khi đang nhận.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: importOrders } = await (supabase.from('ProductionImport') as any)
-      .select('id').eq('tms_order_id', id).eq('source_type', 'TRANSFER').eq('status', 'COMPLETED')
+      .select('id, material_id, posm_cartons, material:Material!material_id(no_qr_tracking)')
+      .eq('tms_order_id', id).eq('source_type', 'TRANSFER').neq('status', 'CANCELLED')
     const importIds: string[] = (importOrders ?? []).map((o: any) => o.id)
+
+    // Mã no-QR (Loscam/POSM): nhận vào pool dùng chung (import_order_id ≠ phiếu) nên không khớp
+    // InventoryEntry theo phiếu → actual lấy theo posm_cartons (đóng góp thực của phiếu transfer).
+    const posmByMaterial = new Map<string, number>()
+    const noQrMat = new Set<string>()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const o of (importOrders ?? []) as any[]) {
+      if (o.material?.no_qr_tracking && o.material_id) {
+        noQrMat.add(o.material_id)
+        if (o.posm_cartons != null)
+          posmByMaterial.set(o.material_id, (posmByMaterial.get(o.material_id) ?? 0) + Number(o.posm_cartons))
+      }
+    }
 
     type InboundPallet = { cartons_inbound: number; inbound_at: string | null }
     const inboundByPalletCode = new Map<string, InboundPallet>()
@@ -1020,8 +1035,11 @@ export async function getTransferGoods(req: Request, res: Response) {
           : []
       }
 
-      // Thùng thực = tổng toàn bộ inbound của mã hàng, không chỉ các pallet khớp outbound
-      const actual_boxes = inboundByMaterialId.get(l.material_id)?.cartons_inbound ?? 0
+      // Thùng thực: no-QR lấy theo posm_cartons (pool dùng chung); còn lại tổng inbound theo mã hàng
+      const isNoQr = noQrMat.has(l.material_id)
+      const actual_boxes = isNoQr
+        ? (posmByMaterial.get(l.material_id) ?? 0)
+        : (inboundByMaterialId.get(l.material_id)?.cartons_inbound ?? 0)
       return {
         material_id: l.material_id,
         material_code: l.material?.material_code ?? null,
@@ -1029,6 +1047,7 @@ export async function getTransferGoods(req: Request, res: Response) {
         unit: l.material?.unit ?? null,
         planned_boxes: l.planned_boxes,
         actual_boxes,
+        no_qr_tracking: isNoQr,
         pallets,
       }
     }))

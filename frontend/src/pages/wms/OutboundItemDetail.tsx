@@ -1,4 +1,5 @@
 import { useRef, useState, useEffect, useMemo, Fragment } from 'react'
+import { createPortal } from 'react-dom'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
@@ -138,8 +139,8 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
   const isSubOptimal = !!(checkResult?.production_date && checkResult?.best_available_date &&
     checkResult.production_date > checkResult.best_available_date)
 
-  return (
-    <div className="fixed inset-0 z-50 flex flex-col">
+  return createPortal(
+    <div className="fixed inset-0 z-[60] flex flex-col">
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
       <div className="relative mt-auto bg-white rounded-t-2xl max-h-[90dvh] overflow-y-auto">
         <div className="p-4 space-y-3">
@@ -185,7 +186,7 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
                            rounded-full px-6 py-2.5 text-sm font-semibold shadow-xl transition-all"
                 onClick={handleSave}
               >
-                Lưu
+                Lưu {Math.max(1, parseInt(pendingCartons) || 1)} thùng
               </button>
             )}
             {saving && (
@@ -215,13 +216,13 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                <label className="text-sm text-slate-600 shrink-0">Số thùng:</label>
+                <label className="text-sm font-medium text-slate-700 shrink-0">Số thùng xuất:</label>
                 <Input
                   type="number"
                   min={1}
                   value={pendingCartons}
                   onChange={e => setPendingCartons(e.target.value)}
-                  className="h-9 text-center font-semibold text-base w-24"
+                  className="h-11 text-center font-semibold text-lg w-28"
                 />
                 <span className="text-sm text-slate-400">/ {remaining} cần xuất</span>
               </div>
@@ -242,7 +243,8 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
           <Button variant="outline" className="w-full" onClick={onClose} disabled={saving}>Đóng</Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
 

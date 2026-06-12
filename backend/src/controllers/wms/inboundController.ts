@@ -908,21 +908,25 @@ export async function scanManual(req: Request, res: Response) {
     const sharedPalletCode = ((order as any).material as any)?.material_code
       ?? `POSM-${order.material_id.replace(/-/g, '').slice(0, 12)}`
 
-    const { data: existingPallet } = await supabase
+    // Tìm entry chung theo KHO HIỆU DỤNG (cột warehouse_id, hoặc kho của vị trí nếu cột null)
+    // → tránh tạo trùng khi tồn tại entry data cũ có warehouse_id null nhưng gắn location.
+    const { data: candidates } = await supabase
       .from('InventoryEntry')
-      .select('id, cartons_remaining, cartons_imported')
+      .select('id, cartons_remaining, cartons_imported, warehouse_id, location:Location!location_id(warehouse_id)')
       .eq('pallet_code', sharedPalletCode)
-      .eq('warehouse_id', warehouseId)
-      .maybeSingle()
+      .in('status', ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'])
+    const existingPallet = ((candidates ?? []) as any[])
+      .find(e => (e.warehouse_id ?? e.location?.warehouse_id) === warehouseId) ?? null
 
     let entryId: string
     if (existingPallet) {
-      // Cộng dồn vào entry chung
+      // Cộng dồn vào entry chung + chuẩn hoá warehouse_id để lần sau khớp ngay
       const { error: updErr } = await supabase
         .from('InventoryEntry')
         .update({
           cartons_remaining: existingPallet.cartons_remaining + cartonsNum,
           cartons_imported:  existingPallet.cartons_imported  + cartonsNum,
+          warehouse_id:      warehouseId,
           update_date:       vnDate(),
           updated_at:        now,
           updated_by:        employee_id ?? null,

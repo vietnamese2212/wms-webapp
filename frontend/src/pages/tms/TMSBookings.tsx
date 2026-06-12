@@ -2321,8 +2321,10 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                       const isExpanded = expandedMats.has(g.material_id)
                       const imp = importByMat.get(g.material_id)
                       const isNoQrRow = g.no_qr_tracking === true || imp?.material?.no_qr_tracking === true
-                      // actual_boxes từ backend đã đúng cho cả QR lẫn no-QR (no-QR tính theo posm_cartons)
-                      const actualCartons = g.actual_boxes ?? 0
+                      // No-QR: lấy max(transfer-goods, total_cartons của phiếu) — robust nếu 1 nguồn chưa cập nhật
+                      const actualCartons = isNoQrRow
+                        ? Math.max(g.actual_boxes ?? 0, imp?.total_cartons ?? 0)
+                        : (g.actual_boxes ?? 0)
                       return (
                         <React.Fragment key={g.material_id}>
                           <tr

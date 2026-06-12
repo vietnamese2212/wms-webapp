@@ -63,22 +63,29 @@ export async function listOrders(req: Request, res: Response) {
       if (orderIds.length) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data: importOrders } = await (supabase.from('ProductionImport') as any)
-          .select('id, tms_order_id, created_at')
+          .select('id, tms_order_id, created_at, posm_cartons, material:Material!material_id(no_qr_tracking)')
           .in('tms_order_id', orderIds)
           .eq('source_type', 'TRANSFER')
-          .eq('status', 'COMPLETED')
+          .neq('status', 'CANCELLED')
 
+        const qrImportIds: string[] = []
         for (const imp of (importOrders ?? []) as any[]) {
           importToOrder.set(imp.id, imp.tms_order_id)
           const existing = receivingStartedAt.get(imp.tms_order_id)
           if (!existing || imp.created_at < existing) receivingStartedAt.set(imp.tms_order_id, imp.created_at)
+          if (imp.material?.no_qr_tracking) {
+            // No-QR: nhận vào pool dùng chung (import_order_id ≠ phiếu) → cộng theo posm_cartons
+            if (imp.posm_cartons != null)
+              actualReceivedByOrder.set(imp.tms_order_id, (actualReceivedByOrder.get(imp.tms_order_id) ?? 0) + Number(imp.posm_cartons))
+          } else {
+            qrImportIds.push(imp.id)
+          }
         }
 
-        const importIds = [...importToOrder.keys()]
-        if (importIds.length) {
+        if (qrImportIds.length) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const { data: entries } = await (supabase.from('InventoryEntry') as any)
-            .select('import_order_id, cartons_imported').in('import_order_id', importIds)
+            .select('import_order_id, cartons_imported').in('import_order_id', qrImportIds)
           for (const entry of (entries ?? []) as any[]) {
             const ordId = importToOrder.get(entry.import_order_id)
             if (!ordId) continue

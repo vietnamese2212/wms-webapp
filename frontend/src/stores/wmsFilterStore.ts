@@ -42,7 +42,8 @@ interface InventoryFilters {
 }
 interface LoosePickingFilters {
   warehouseId: string
-  date: string
+  dateFrom: string
+  dateTo: string
   search: string
   filterDvvts: string[]
   filterNpps: string[]
@@ -148,7 +149,7 @@ export const useWmsFilterStore = create<WmsFilterState>()(
         filterCycles: [], filterMachines: [], datePctRanges: [],
       },
       loosePicking: {
-        warehouseId: '', date: today(), search: '',
+        warehouseId: '', dateFrom: today(), dateTo: today(), search: '',
         filterDvvts: [], filterNpps: [], filterWarehouseTypes: [], filterTypes: [],
       },
       scanLogDraft: {
@@ -179,6 +180,6 @@ export const useWmsFilterStore = create<WmsFilterState>()(
       setMaterials:        (f) => set(s => ({ materials:        { ...s.materials,        ...f } })),
       setInboundReport:    (f) => set(s => ({ inboundReport:    { ...s.inboundReport,    ...f } })),
     }),
-    { name: 'wms-filters-v9', storage: createJSONStorage(() => sessionStorage) }
+    { name: 'wms-filters-v10', storage: createJSONStorage(() => sessionStorage) }
   )
 )

@@ -1109,7 +1109,7 @@ export type LoosePickingItem = {
   } | null
 }
 
-export function useLoosePickingItems(params: { warehouse_id?: string; date?: string }) {
+export function useLoosePickingItems(params: { warehouse_id?: string; date_from?: string; date_to?: string }) {
   return useQuery({
     queryKey: ['loosepicking', params],
     queryFn: async () => {

@@ -1815,7 +1815,7 @@ export async function confirmLoosePickingItem(req: Request, res: Response) {
 
 export async function listLoosePickingItems(req: Request, res: Response) {
   try {
-    const { warehouse_id, date } = req.query as { warehouse_id?: string; date?: string }
+    const { warehouse_id, date, date_from, date_to } = req.query as { warehouse_id?: string; date?: string; date_from?: string; date_to?: string }
 
     const scopeWhIds = req.user?.warehouse_scope !== 'NATIONAL'
       ? (req.user?.warehouse_ids ?? [])
@@ -1838,6 +1838,8 @@ export async function listLoosePickingItems(req: Request, res: Response) {
     }
 
     if (date) gdoQ = gdoQ.eq('delivery_date', date)
+    if (date_from) gdoQ = gdoQ.gte('delivery_date', date_from)
+    if (date_to)   gdoQ = gdoQ.lte('delivery_date', date_to)
     const { data: gdos } = await gdoQ
 
     if (!gdos?.length) return ok(res, [])

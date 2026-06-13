@@ -1407,15 +1407,23 @@ function InboundRow({ order, onClick, onScan, onEditGroup, onPin, pinned, bracke
   const st = inboundStatus(order)
 
   return (
-    <TableRow className={`cursor-pointer ${rowText(inboundKey(order))} ${dense ? '' : '[&_td]:py-2.5'}`} onClick={onClick}>
+    <TableRow
+      className={[
+        'cursor-pointer',
+        rowText(inboundKey(order)),
+        dense ? '' : '[&_td]:py-2.5',
+        // khoảng trống dọc tách cụm phiếu cùng nhóm (có ngoặc [) khỏi các row khác
+        bracketPos === 'first' ? '[&_td]:!pt-3' : '',
+        bracketPos === 'last'  ? '[&_td]:!pb-3' : '',
+      ].join(' ')}
+      onClick={onClick}
+    >
       {/* Col 1: Pin + bracket connector */}
       <TableCell className="w-8 px-0 py-0 relative">
         {showBracket && (
           <div className="absolute pointer-events-none" style={{
-            // chừa khoảng trống nhỏ bên phải để ngoặc [ tách khỏi cột dữ liệu, dễ phân biệt
-            // (top/bottom giữ 0 để đường dọc nối liền giữa các phiếu cùng nhóm)
-            right: '5px',
-            width: '9px',
+            right: 0,
+            width: '10px',
             top: bracketPos === 'first' ? '50%' : 0,
             bottom: bracketPos === 'last' ? '50%' : 0,
             borderLeft: '2px solid #0f172a',

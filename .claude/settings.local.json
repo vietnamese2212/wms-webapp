@@ -31,7 +31,14 @@
       "Bash(Format-Table FullName)",
       "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\vietn\\\\OneDrive - LOF JSC\\\\WAREHOUSE\\\\CLAUDECODE\\\\WMS webapp\" -Recurse -Directory)",
       "Bash(ConvertTo-Json)",
-      "Bash(grep -E \"\\\\.sql$\")"
+      "Bash(grep -E \"\\\\.sql$\")",
+      "PowerShell(npx tsc --noEmit)",
+      "Edit",
+      "Write",
+      "Bash(npm run build*)",
+      "Bash(git status*)",
+      "Bash(git log*)",
+      "PowerShell(npx tsc*)"
     ]
   }
 }

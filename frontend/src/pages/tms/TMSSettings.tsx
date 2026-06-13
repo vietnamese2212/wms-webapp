@@ -402,11 +402,12 @@ export default function TMSSettings() {
   const [detailV,  setDetailV]  = useState<TmsVehicle | null>(null)
 
   return (
-    <div className="p-4 space-y-4 max-w-7xl mx-auto">
+    <div className="h-full overflow-auto sm:p-3">
+     <div className="max-w-7xl mx-auto bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm p-4 space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold text-slate-800 flex items-center gap-2">
-            <Settings2 className="h-5 w-5 text-slate-500" />
+          <h1 className="text-base font-semibold text-slate-800 flex items-center gap-2">
+            <Settings2 className="h-4 w-4 text-slate-500" />
             Cài đặt TMS
           </h1>
           <p className="text-xs text-slate-400 mt-0.5">Loại xe, khung giờ booking, ĐVVT và phương tiện</p>
@@ -825,6 +826,7 @@ export default function TMSSettings() {
       {showSTDlg && warehouseId && <SlotTemplateDialog st={editingST} open={showSTDlg} onClose={() => setShowSTDlg(false)} vehicleTypes={vehicleTypes} warehouseId={warehouseId} cargoOptions={cargoOptions} />}
       {showCoDlg && <TransportCompanyDialog co={editingCo} open={showCoDlg} onClose={() => setShowCoDlg(false)} />}
       {showVDlg  && <VehicleDialog v={editingV} open={showVDlg} onClose={() => setShowVDlg(false)} companies={companies} vehicleTypes={vehicleTypes} lockedNccId={userNccId} />}
+     </div>
     </div>
   )
 }

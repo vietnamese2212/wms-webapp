@@ -1,12 +1,10 @@
-import React, { useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { Download, Check, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
+import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
+import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useWarehouses, useInboundReport, useUpdatePlanLine, type InboundReportRow } from '@/api/hooks'
 import { formatDate } from '@/utils/formatters'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
@@ -58,6 +56,16 @@ export default function TMSReport() {
   const overallPct = summary.totalPlan > 0
     ? Math.round(summary.totalActual / summary.totalPlan * 100) : 0
 
+  // ─── Filter chip bar (Manhattan) ───
+  const filterDefs: FilterDef[] = [
+    { key: 'date', label: 'Khoảng ngày', type: 'daterange', from: dateFrom, to: dateTo,
+      onChange: (from, to) => setInboundReport({ dateFrom: from, dateTo: to }) },
+    { key: 'warehouse', label: 'Kho', type: 'single', options: (warehouses as { id: string; name: string }[]).map(w => ({ value: w.id, label: w.name })), value: warehouseId, allLabel: 'Tất cả kho',
+      onChange: v => setInboundReport({ warehouseId: v }) },
+    { key: 'category', label: 'Loại hàng', type: 'multi', options: categoryOptions, selected: selCategories, searchable: false,
+      onChange: v => setInboundReport({ selCategories: v }) },
+  ]
+
   function exportExcel() {
     const data = filteredRows.map(r => ({
       'Ngày':             r.date,
@@ -85,61 +93,30 @@ export default function TMSReport() {
   }
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Filter bar */}
-      <div className="shrink-0 border-b bg-white px-4 py-2 flex items-center gap-3 flex-wrap">
-        <h1 className="text-sm font-semibold text-slate-700 shrink-0">Báo cáo nhập hàng</h1>
-        <div className="flex items-center gap-1.5">
-          <Label className="text-xs text-slate-500 shrink-0">Từ</Label>
-          <Input
-            type="date" value={dateFrom}
-            onChange={e => setInboundReport({ dateFrom: e.target.value })}
-            className="h-7 text-xs w-32"
-          />
-        </div>
-        <div className="flex items-center gap-1.5">
-          <Label className="text-xs text-slate-500 shrink-0">Đến</Label>
-          <Input
-            type="date" value={dateTo}
-            onChange={e => setInboundReport({ dateTo: e.target.value })}
-            className="h-7 text-xs w-32"
-          />
-        </div>
-        <Select value={warehouseId || '__all__'} onValueChange={v => setInboundReport({ warehouseId: v === '__all__' ? '' : v })}>
-          <SelectTrigger className="h-7 text-xs w-36"><SelectValue placeholder="Tất cả kho" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__all__">Tất cả kho</SelectItem>
-            {(warehouses as { id: string; name: string }[]).map(w => (
-              <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <MultiSelectFilter
-          label="Loại hàng"
-          options={categoryOptions}
-          selected={selCategories}
-          onChange={v => setInboundReport({ selCategories: v })}
-          searchable={false}
-          width="w-36"
-        />
-
-        <div className="ml-auto flex items-center gap-3">
-          {filteredRows.length > 0 && (
-            <span className="text-[10px] text-slate-500">
-              {filteredRows.length} dòng
-              &nbsp;·&nbsp;KH: <span className="font-semibold tabular-nums">{summary.totalPlan.toLocaleString()}</span> thùng
-              &nbsp;·&nbsp;Thực: <span className="font-semibold tabular-nums">{summary.totalActual.toLocaleString()}</span> thùng
-              &nbsp;·&nbsp;
-              <span className={overallPct >= 100 ? 'text-green-600 font-semibold' : overallPct >= 50 ? 'text-amber-600 font-semibold' : 'text-red-600 font-semibold'}>
-                {overallPct}%
-              </span>
-            </span>
-          )}
+    <div className="flex flex-col h-full sm:p-3">
+     <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
+      {/* Toolbar */}
+      <div className="shrink-0 border-b bg-white px-3 py-2 space-y-1.5 sm:rounded-t-xl">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm font-semibold text-slate-700 shrink-0">Báo cáo nhập hàng</span>
+          <div className="flex-1" />
+          <FilterSheetButton defs={filterDefs} className="sm:hidden" />
           <Button size="sm" variant="outline" className="h-7 text-xs" onClick={exportExcel} disabled={filteredRows.length === 0}>
             <Download className="h-3.5 w-3.5 mr-1" />Excel
           </Button>
         </div>
+        <div className="hidden sm:flex items-center gap-1.5 flex-wrap">
+          <FilterBar defs={filterDefs} />
+        </div>
       </div>
+
+      {/* Summary band (Manhattan) */}
+      <SummaryBand tiles={[
+        { label: 'Dòng', value: filteredRows.length },
+        { label: 'KH (thùng)', value: summary.totalPlan.toLocaleString('vi-VN') },
+        { label: 'Thực (thùng)', value: summary.totalActual.toLocaleString('vi-VN') },
+        { label: '% TT/KH', value: `${overallPct}%`, accent: overallPct >= 100 },
+      ]} />
 
       {/* Table */}
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
@@ -257,6 +234,12 @@ export default function TMSReport() {
           </TableBody>
         </Table>
       </div>
+
+      {/* Footer đếm bản ghi */}
+      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 sm:rounded-b-xl">
+        {filteredRows.length > 0 ? `1–${filteredRows.length} / ${filteredRows.length} dòng` : (dateFrom && dateTo ? '0 dòng' : 'Chọn khoảng ngày để xem báo cáo')}
+      </div>
+     </div>
     </div>
   )
 }

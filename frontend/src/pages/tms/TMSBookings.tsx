@@ -3338,12 +3338,13 @@ export default function TMSBookings() {
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full sm:p-3">
+     <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
       {/* Header */}
-      <div className="border-b bg-white px-3 py-2 shrink-0">
+      <div className="border-b bg-white px-3 py-2 shrink-0 sm:rounded-t-xl">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
-            <h1 className="text-base font-semibold md:text-xl">Kế hoạch vận chuyển</h1>
+            <span className="text-sm font-semibold text-slate-700">Kế hoạch vận chuyển</span>
             <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-medium">
               <button
                 onClick={() => setActiveTab('main')}
@@ -3792,6 +3793,14 @@ export default function TMSBookings() {
           </div>
         )}
       </div>
+
+      {/* Footer đếm bản ghi */}
+      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 sm:rounded-b-xl">
+        {activeTab === 'main'
+          ? `${(orders as TmsOrder[]).length} đơn`
+          : 'Chuyển kho'}
+      </div>
+     </div>
 
       <CreateEditDialog
         open={createOpen || !!editOrder}

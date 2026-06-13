@@ -1,20 +1,29 @@
 # Skill: Table Format (WMS Standard)
 
-## Cấu trúc layout bắt buộc
+> **Chuẩn tổng thể UI (card, toolbar, FilterBar, SavedViews, SummaryBand, header tối, Pane…) ở `CLAUDE.md` mục "UI Style — Manhattan" + "Checklist chuyển 1 module".** File này = chi tiết riêng cho TABLE. Module mẫu: `Inbound.tsx` / `InboundDetail.tsx`.
+
+## Cấu trúc layout bắt buộc (Manhattan)
 
 ```tsx
-{/* Container ngoài — list page */}
-<div className="flex flex-col h-full">
-  <div className="border-b bg-white px-3 py-2 shrink-0">{/* filter bar */}</div>
-  <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
-    <Table className="min-w-full">
+{/* List page = card trắng trên canvas xám */}
+<div className="flex flex-col h-full sm:p-3">
+ <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
+  <div className="border-b bg-white px-3 py-2 shrink-0 sm:rounded-t-xl">{/* toolbar + FilterBar */}</div>
+  <SummaryBand tiles={[...]} />
+  <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">   {/* MỘT overflow duy nhất */}
+    <Table className="...">...</Table>
+  </div>
+  {/* footer đếm bản ghi: 1–N / N */}
+ </div>
+</div>
 ```
 
-> **QUAN TRỌNG — sticky header**: KHÔNG bọc `<Table>` trong `<div className="overflow-x-auto">`.
-> CSS quirk: `overflow-x: auto` ngầm set `overflow-y: auto`, tạo ra scroll container mới → `sticky top-0` bám vào container đó (không scroll dọc) thay vì bám vào ngoài cùng → header KHÔNG freeze.
-> Dùng **một** `overflow-auto` duy nhất trên container ngoài — nó xử lý cả scroll dọc lẫn ngang. `min-w-full` đảm bảo bảng rộng hơn container sẽ tự scroll ngang.
+> **Sticky header**: KHÔNG bọc `<Table>` trong `<div className="overflow-x-auto">` riêng (overflow-x ngầm set overflow-y → tạo scroll container mới → `sticky top-0` hỏng). Dùng **một** `overflow-auto` duy nhất ở container ngoài (lo cả dọc + ngang).
+- `TableHead` base có sẵn `sticky top-0 z-10 bg-slate-50` — không thêm thủ công.
 
-- `TableHead` base component tự có `sticky top-0 z-10 bg-slate-50` — không thêm thủ công
+**2 kiểu bảng:**
+- **Đơn giản** (masterdata ít cột): `<Table className="min-w-full">`.
+- **Manhattan list (kéo giãn cột)** — mặc định cho list nghiệp vụ: `table-fixed` + `useColumnResize('<module>_col_widths', defaults)` (`@/components/shared/useColumnResize`) + `<colgroup>{widths.map(w=><col style={{width:w}}/>)}` + `style={{ width: totalWidth, minWidth: '100%' }}` (fill màn khi dư, scroll khi thiếu). Kẻ cột rõ: `[&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100 [&_td]:overflow-hidden [&_th]:overflow-hidden`. Tay kéo = `<span onPointerDown={e=>startResize(i,e)} className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-sky-400/70">` trong mỗi `<TableHead className="relative">`. Cột định danh đầu: header `sticky left-0 z-20 bg-slate-50`, cell `sticky left-0 z-10` + nền đặc theo trạng thái chọn/nhóm.
 
 ## Typography chuẩn
 
@@ -65,23 +74,22 @@
 - `formatTimestampTime(ts)` → `HH:mm:ss` — dùng trong sheet detail (không phải table)
 - Detail sheet hiển thị đầy đủ: `formatTimestampDate(ts) + ' ' + formatTimestampTime(ts)`
 
-## Màu row theo trạng thái — TEXT color, không dùng background
+## Màu row theo trạng thái — dùng helper chung `@/lib/rowStatus`
+
+KHÔNG fill nền — chỉ tô **màu chữ** + gạch ngang khi hoàn thành. Mỗi module export `<module>Key(record): RowStatusKey` (map trạng thái → key: `completed`/`full`/`scanDone`/`inProgress`/`assigned`/`paused`/`pending`).
 
 ```tsx
-const ROW_TEXT: Record<Status, string> = {
-  PENDING:   'hover:bg-slate-50',
-  CALLED:    'text-[#E85AA0] hover:bg-slate-50',   // hồng
-  IN:        'text-[#D8891C] hover:bg-slate-50',   // cam
-  COMPLETED: 'text-[#4A90D9] line-through hover:bg-slate-50', // xanh + gạch
-}
-// Áp dụng vào TableRow:
-<TableRow className={`cursor-pointer ${ROW_TEXT[item.status]} ${selected?.id === item.id ? 'ring-1 ring-inset ring-blue-400' : ''}`}>
+import { rowText, statusText } from '@/lib/rowStatus'
+<TableRow className={`cursor-pointer ${rowText(xxxKey(item))} ${selected ? 'bg-sky-50' : ''}`}>
 ```
 
-**Quy tắc override màu cell:**
-- Cell cần giữ màu riêng (không bị nhuộm theo row): thêm `text-slate-600` / `text-slate-700` vào cell
-- Cell muốn theo màu row: không thêm gì (kế thừa)
-- Cell có màu cố định (link, badge): dùng inline style hoặc class explicit
+**ĐỒNG BỘ MÀU CẢ ROW (bắt buộc — đừng phá):**
+- Cell **KHÔNG override màu** value → để kế thừa màu row. **Đừng** thêm `text-slate-700` / `text-blue-600` / `text-green-600`… vào giá trị (đây là lỗi cũ làm cả dòng lệch màu).
+- Chỉ tô màu khi là **cảnh báo semantic**, vd Thùng KH **đỏ** (`text-red-600`) khi thực nhập `<` kế hoạch.
+- Đơn vị phụ (thùng/pl) `text-slate-400`, dash `text-slate-300`, mã phụ làm mờ bằng `opacity-80` (vẫn kế thừa màu) — chấp nhận là secondary.
+- **Header trang detail (mọi cấp) kế thừa cùng màu**: `className={statusText(xxxKey(record))}`.
+
+**Nhóm dòng (vd theo lệnh TMS) — đóng khung như card:** cả cụm nền `bg-slate-50`; **dòng đầu** `[&_td]:border-t [&_td]:!border-t-slate-300`, **dòng cuối** `[&_td]:!border-b-slate-300`; chèn **hàng trống 10px** giữa các cụm (`<tr><td colSpan={N} className="p-0 border-0"><div className="h-2.5"/></td></tr>`). Dòng lẻ giữ nguyên.
 
 ## Cột trạng thái (TT / Status badge)
 
@@ -130,11 +138,14 @@ const displayItems = (() => {
 
 ## Filter chuẩn
 
-- **Multi-select checkbox**: `MultiSelectFilter` từ `@/components/shared/MultiSelectFilter` — dùng khi có ≥2 option cùng loại
-- **Single select**: `<Select>` shadcn — sentinel `'__all__'` thay vì `''` (Radix crash với `value=""`)
-- **Date range bug**: khi có cả `dateFrom` và `dateTo`, gửi `date_from` + `date_to` (không gửi `date`); backend dùng `gte/lte`. Nếu chỉ có `date`, gửi `date` → backend `eq`.
+- **List page → `FilterBar`** (`@/components/shared/FilterBar`) declarative `defs` (multi/single/daterange/text). KHÔNG dùng MultiSelectFilter/Select rời cho filter list nữa. Mobile tự gom thành nút "Lọc" + sheet (`FilterSheetButton`). Ngày luôn `daterange`. Xem CLAUDE.md "UI Style".
+- **Dialog/form** (không phải filter của list): vẫn dùng `MultiSelectFilter` / `<Select>` shadcn — sentinel `'__all__'` thay vì `''` (Radix crash với `value=""`).
+- **Backend date range**: gửi `date_from` + `date_to` → `gte`/`lte`.
+- Filter state lưu `useWmsFilterStore`; bộ lọc đặt tên qua `SavedViews` + `useSavedViewsStore`.
 
-## Detail Sheet (right slide-in)
+## Detail Sheet (right slide-in) — cho MASTERDATA xem nhanh
+
+> Detail **nghiệp vụ** (Inbound/Outbound…) dùng **trang carded đầy đủ** (section-band + SummaryBand + header kế thừa màu trạng thái), KHÔNG dùng Sheet này. Sheet dưới đây dành cho masterdata xem nhanh tại chỗ.
 
 Pattern: click row → Sheet trượt từ phải, hiển thị chi tiết đầy đủ. Click lại row đã chọn → đóng.
 
@@ -217,14 +228,17 @@ const [detailItem, setDetailItem] = useState<ItemType | null>(null)
 - `DRow label` width cố định `w-28` — đảm bảo alignment nhất quán
 - Timestamp dùng `formatTimestampDate` + `formatTimestampTime` từ `@/utils/formatters`
 
-## Checklist khi tạo table mới
+## Checklist khi tạo/sửa table (Manhattan)
 
+- [ ] List page bọc **card** trên canvas xám (`sm:p-3` + panel trắng bo góc)
+- [ ] Toolbar (Search + FilterSheetButton + SavedViews + density + action) + `FilterBar` (hàng 2) + `SummaryBand`
 - [ ] Container: `overflow-auto` duy nhất — KHÔNG bọc thêm `overflow-x-auto` (vỡ sticky)
-- [ ] Header: `text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap`
-- [ ] Cell: `px-2 py-1 text-[10px] whitespace-nowrap`
-- [ ] Row status dùng text color (ROW_TEXT), không dùng background
-- [ ] Cell cần màu riêng → thêm `text-slate-600/700` explicit
-- [ ] Cột action cuối cùng, `onClick={e => e.stopPropagation()}`
+- [ ] Bảng nghiệp vụ: `table-fixed` + `useColumnResize` + colgroup + kẻ cột (`border-r`) + tay kéo header + cột đầu sticky-left
+- [ ] Header: `text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap`; Cell: `px-2 py-1 text-[10px] whitespace-nowrap`
+- [ ] Row màu = `rowText(xxxKey(item))` (chữ, không fill). **Cell KHÔNG override màu** (kế thừa); chỉ tô khi cảnh báo semantic (vd đỏ khi thiếu KH)
+- [ ] Nhóm dòng (nếu có): nền `bg-slate-50` + viền trên/dưới đóng khung + hàng trống 10px ngăn cách
+- [ ] Footer đếm bản ghi `1–N / N`
+- [ ] Cột action cuối, `onClick={e => e.stopPropagation()}`
 - [ ] Cột Tạo + Sửa (created_by/updated_by + date) — bắt buộc với masterdata
-- [ ] Empty state: `<span className="text-slate-300">—</span>`
-- [ ] Stats bar dùng `displayItems` (đã filter), không dùng raw `items`
+- [ ] Empty: `<span className="text-slate-300">—</span>`; Stats/SummaryBand dùng `displayItems` (đã filter)
+- [ ] Detail: trang nghiệp vụ = **card + section-band + SummaryBand + header kế thừa màu trạng thái**; masterdata xem nhanh có thể dùng right Sheet (mục dưới)

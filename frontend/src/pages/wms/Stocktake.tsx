@@ -168,11 +168,12 @@ export default function Stocktake() {
   const locMismatch = !!entry && !!locationId && entry.location_id !== locationId
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full sm:p-3">
+     <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
       {/* Filters */}
-      <div className="border-b bg-white px-3 py-2 shrink-0 space-y-2">
+      <div className="border-b bg-white px-3 py-2 shrink-0 space-y-2 sm:rounded-t-xl">
         <div className="flex items-center gap-1.5">
-          <MapPin className="h-4 w-4 text-blue-600 shrink-0" />
+          <MapPin className="h-4 w-4 text-slate-500 shrink-0" />
           <p className="text-sm font-semibold text-slate-700">Check vị trí</p>
         </div>
         <div className="flex gap-1.5 flex-wrap items-center">
@@ -412,6 +413,7 @@ export default function Stocktake() {
           </>
         )}
       </div>
+     </div>
     </div>
   )
 }

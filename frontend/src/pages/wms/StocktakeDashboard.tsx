@@ -272,9 +272,10 @@ export default function StocktakeDashboard() {
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full sm:p-3">
+     <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
       {/* Filters — compact, ~70% kích thước cũ */}
-      <div className="border-b bg-white px-3 py-1.5 shrink-0 space-y-1.5">
+      <div className="border-b bg-white px-3 py-1.5 shrink-0 space-y-1.5 sm:rounded-t-xl">
         {/* Row 1: title + filters */}
         <div className="flex gap-1.5 flex-wrap items-center">
           <div className="flex items-center gap-1 shrink-0">
@@ -463,6 +464,12 @@ export default function StocktakeDashboard() {
           </>
         )}
       </div>
+
+      {/* Footer đếm bản ghi */}
+      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 sm:rounded-b-xl">
+        {locationId ? `${entries.length} pallet` : 'Chọn vị trí để xem tổng hợp'}
+      </div>
+     </div>
     </div>
   )
 }

@@ -6,6 +6,7 @@ import { Upload, Truck, CheckCircle2, AlertTriangle, X, Bookmark, Info, Plus, Tr
 import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
+import { SummaryBand } from '@/components/shared/SummaryBand'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
@@ -136,6 +137,13 @@ export default function Outbound() {
     if (ta !== tb) return tb.localeCompare(ta)
     return naturalSortCode(a.group_code, b.group_code)
   }), [filtered])
+
+  const summary = useMemo(() => ({
+    count:     sorted.length,
+    cartons:   sorted.reduce((s, g) => s + (g.total_cartons ?? 0), 0),
+    pallets:   sorted.reduce((s, g) => s + (g.total_pallets ?? 0), 0),
+    completed: sorted.filter(g => g.status === 'COMPLETED').length,
+  }), [sorted])
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -327,9 +335,16 @@ export default function Outbound() {
           ) : (
             <span className="italic">Hiển thị tất cả ngày</span>
           )}
-          <span className="ml-1.5">— {sorted.length} chuyến xe</span>
         </p>
       </div>
+
+      {/* Summary band (Manhattan) */}
+      <SummaryBand tiles={[
+        { label: 'Chuyến xe', value: summary.count },
+        { label: 'Tổng thùng', value: summary.cartons.toLocaleString('vi-VN') },
+        { label: 'Pallet', value: summary.pallets.toLocaleString('vi-VN') },
+        { label: 'Hoàn thành', value: summary.completed, accent: summary.completed > 0 },
+      ]} />
 
       {/* Table */}
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
@@ -383,6 +398,11 @@ export default function Outbound() {
             </TableBody>
           </Table>
         )}
+      </div>
+
+      {/* Footer đếm bản ghi */}
+      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 sm:rounded-b-xl">
+        {sorted.length > 0 ? `1–${sorted.length} / ${sorted.length} chuyến xe` : '0 chuyến xe'}
       </div>
      </div>
 

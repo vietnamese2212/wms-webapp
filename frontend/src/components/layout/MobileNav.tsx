@@ -2,7 +2,7 @@ import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Package, PackagePlus, PackageMinus, MapPin,
   Truck, Navigation, Calendar, Settings, Settings2, BarChart3, Scissors, ScanLine,
-  ClipboardCheck, BarChart2, UserCog, ClipboardList, ShieldCheck, Tag,
+  ClipboardCheck, BarChart2, UserCog, ClipboardList, ShieldCheck, Tag, QrCode,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/authStore'
@@ -19,6 +19,7 @@ const navGroups: { label: string; items: { to: string; icon: React.ElementType; 
     items: [
       { to: '/wms/inventory',         icon: Package,        label: 'Tồn kho',     module: 'inventory' },
       { to: '/wms/inbound',           icon: PackagePlus,    label: 'Nhập kho',     module: 'inbound' },
+      { to: '/wms/pallet-labels',     icon: QrCode,         label: 'In tem pallet', module: 'pallet_print' as ModuleKey },
       { to: '/wms/outbound',          icon: PackageMinus,   label: 'Xuất kho',     module: 'outbound' },
       { to: '/wms/loosepicking',      icon: Scissors,       label: 'Nhặt lẻ',      module: 'loosepicking' },
       { to: '/wms/outbound/scan-log', icon: ScanLine,       label: 'Lịch sử quét', module: 'scanlog' },

@@ -17,6 +17,7 @@ import LoosePickingItemDetail from '@/pages/wms/LoosePickingItemDetail'
 import Locations         from '@/pages/wms/Locations'
 import Stocktake         from '@/pages/wms/Stocktake'
 import StocktakeDashboard from '@/pages/wms/StocktakeDashboard'
+import PalletLabels      from '@/pages/wms/PalletLabels'
 import Deliveries from '@/pages/tms/Deliveries'
 import WMSSettings from '@/pages/wms/WMSSettings'
 import TMSSettings from '@/pages/tms/TMSSettings'
@@ -95,6 +96,8 @@ export default function App() {
 
         {/* WMS — settings */}
         <Route path="/wms/settings" element={<PermissionRoute module="wms_settings"><WMSSettings /></PermissionRoute>} />
+
+        <Route path="/wms/pallet-labels" element={<PermissionRoute module="pallet_print"><PalletLabels /></PermissionRoute>} />
 
         {/* TMS */}
         <Route path="/tms/bookings"   element={<PermissionRoute module="tms_plan"><TMSBookings /></PermissionRoute>} />

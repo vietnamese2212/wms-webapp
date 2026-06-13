@@ -192,6 +192,13 @@ export const MODULES = {
       delete: 'Ẩn mã hàng',
     },
   },
+  pallet_print: {
+    label: 'In tem pallet',
+    actions: {
+      view:  'Xem / tạo tem',
+      print: 'In tem',
+    },
+  },
 } as const
 
 export type ModuleKey = keyof typeof MODULES

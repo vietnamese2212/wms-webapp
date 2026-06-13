@@ -28,6 +28,7 @@ import { can, type ModulePermissions } from '@/config/permissions'
 import { useActiveInboundStore }  from '@/stores/activeInboundStore'
 import { statusText } from '@/lib/rowStatus'
 import { inboundKey } from './Inbound'
+import { SummaryBand } from '@/components/shared/SummaryBand'
 import { inboundOrderStatusLabel, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { unlockAudio }             from '@/utils/audio'
 import type { InboundOrder, InboundOrderStatus, PalletEntry } from '@/types'
@@ -683,6 +684,13 @@ export default function InboundDetail() {
             )}
           </div>
         </div>
+
+        {/* Dải tile tổng hợp (đồng bộ với list) */}
+        <SummaryBand tiles={[
+          { label: 'Pallet',    value: entries.length },
+          { label: 'Thực nhập', value: `${totalScanned.toLocaleString()} thùng` },
+          { label: 'Thùng KH',  value: order.planned_cartons != null ? `${order.planned_cartons}` : '—' },
+        ]} />
 
         {/* ── Pallet table (~80%) ── */}
         <div className="flex-1 p-4 overflow-auto pb-20 lg:pb-4">

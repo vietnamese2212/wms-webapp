@@ -26,6 +26,7 @@ import {
 import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
+import { SummaryBand } from '@/components/shared/SummaryBand'
 import { Badge } from '@/components/ui/badge'
 import { rowText, type RowStatusKey } from '@/lib/rowStatus'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
@@ -1220,7 +1221,7 @@ export default function Inbound() {
           )}
         </div>
 
-        {/* Summary */}
+        {/* Bối cảnh ngày (số liệu tổng đã đưa vào SummaryBand bên dưới) */}
         <p className="text-xs text-slate-500 -mt-1">
           {hasDate ? (
             <>
@@ -1230,10 +1231,6 @@ export default function Inbound() {
           ) : (
             <span className="italic">Hiển thị tất cả ngày</span>
           )}
-          {' '}—{' '}
-          <span className="font-medium text-slate-700">{filteredOrders.length}</span> phiếu nhập
-          {totalPallets > 0 && <> · <span className="font-medium text-slate-700">{totalPallets}</span> pallet</>}
-          {totalCartons > 0 && <> · <span className="font-medium text-slate-700">{totalCartons.toLocaleString()}</span> thùng</>}
         </p>
 
         {/* Vị trí hàng nhập – collapsible trong header */}
@@ -1290,6 +1287,14 @@ export default function Inbound() {
           </div>
         )}
       </div>
+
+      {/* Dải tile tổng hợp (Manhattan Insight) */}
+      <SummaryBand tiles={[
+        { label: 'Phiếu nhập', value: filteredOrders.length },
+        { label: 'Pallet',     value: totalPallets },
+        { label: 'Thực nhập',  value: totalCartons.toLocaleString() },
+        { label: 'Hoàn thành', value: filteredOrders.filter(o => o.status === 'COMPLETED').length },
+      ]} />
 
       {/* Scrollable content */}
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">

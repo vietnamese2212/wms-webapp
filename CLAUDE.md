@@ -198,6 +198,10 @@ Toàn app theo phong cách **Manhattan Active WMS**. Mọi list page mới/đư�
 - **Mobile (<sm):** FilterBar **tự** gom thành 1 nút **"Lọc (n)"** mở sheet full-screen dạng accordion — KHÔNG trải chip ngang (tránh chiếm chỗ). Đây là hành vi built-in, không cần code thêm.
 - `multi`/`single` có search-contains + "Tất cả"; `multi` có checkbox vuông + dấu tích.
 
+**App bar (global Header) tông tối** `bg-slate-900` đồng bộ dark rail; nội dung dưới sáng. **Footer đếm bản ghi** ở đáy bảng (`1–N / N`). **Detail = section-band**: mỗi khối có bar `bg-slate-100 border-b` + accent `bg-sky-500` + tiêu đề in hoa + Action menu riêng.
+
+**Pane phải + Live Tiles (`InboundPane` mẫu):** desktop (lg+) **click 1 dòng = chọn** → hiện pane phải (ảnh/mã/vị trí + ô số liệu `bg-sky-600/700` bấm được) ; **double-click = mở detail**. Mobile (không pane) click = mở detail. Dùng `useIsDesktop()` để phân nhánh.
+
 **Dải tile tổng hợp (`SummaryBand` — `@/components/shared/SummaryBand`):** chữ ký Manhattan SCALE Insight — dải xanh `bg-sky-800` full-width ngay TRÊN bảng, mỗi tile = nhãn nhỏ in hoa + số lớn (vd `Phiếu nhập | Pallet | Thực nhập | Hoàn thành`). Đặt giữa header và vùng bảng; **list và detail dùng chung** để đồng bộ. Số liệu tổng chuyển hết vào đây thay cho dòng text.
 
 **Saved Views (`SavedViews` + `useSavedViewsStore`):** lưu/áp tổ hợp filter đặt tên (localStorage, keyed theo module). Truyền `module`, `currentFilters` (snapshot), `onApply`, `activeId`.

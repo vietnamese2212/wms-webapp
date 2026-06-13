@@ -1,6 +1,6 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, PackagePlus, X, ChevronDown, User, MapPin, QrCode, Pencil, Bookmark, Rows3, AlignJustify } from 'lucide-react'
+import { Plus, PackagePlus, X, ChevronDown, User, MapPin, QrCode, Pencil, Bookmark, Rows3, AlignJustify, ArrowRight } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
@@ -28,7 +28,7 @@ import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/share
 import { SavedViews } from '@/components/shared/SavedViews'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { Badge } from '@/components/ui/badge'
-import { rowText, type RowStatusKey } from '@/lib/rowStatus'
+import { rowText, statusText, type RowStatusKey } from '@/lib/rowStatus'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import type { InboundOrder } from '@/types'
 import { unlockAudio } from '@/utils/audio'
@@ -960,6 +960,67 @@ function applyClientFilters(
   })
 }
 
+// Phát hiện desktop (lg+) để quyết định click row = chọn (hiện pane) hay điều hướng
+function useIsDesktop() {
+  const [d, setD] = useState(() => typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches)
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 1024px)')
+    const h = () => setD(mq.matches)
+    mq.addEventListener('change', h)
+    return () => mq.removeEventListener('change', h)
+  }, [])
+  return d
+}
+
+// ─── Pane phải + Live Tiles (Manhattan Insight) ───
+function InboundPane({ order, onClose, canScan }: { order: InboundOrder; onClose: () => void; canScan: boolean }) {
+  const navigate = useNavigate()
+  const matName = order.material?.short_name ?? order.material?.material_description ?? '—'
+  const matCode = order.material?.material_code ?? ''
+  const pallets = order._count.inventory_entries
+  const cartons = order.total_cartons ?? 0
+  const st = inboundStatus(order)
+  return (
+    <aside className="hidden lg:flex flex-col w-56 shrink-0 border-l border-slate-200 bg-slate-50">
+      <div className="px-3 py-2 border-b border-slate-200 bg-white">
+        <div className="flex items-center justify-between">
+          <Badge variant={st.variant} className="px-1.5 py-0 text-[9px] font-medium">{st.label}</Badge>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600" title="Đóng"><X className="h-3.5 w-3.5" /></button>
+        </div>
+        <div className={`mt-1 text-sm font-semibold leading-tight ${statusText(inboundKey(order))}`}>{matName}</div>
+        {matCode && <div className="text-[11px] font-mono text-slate-400">{matCode}</div>}
+        <div className="text-[11px] text-slate-500 mt-1">Vị trí: <span className="font-mono font-semibold text-slate-700">{order.location?.location_code ?? '—'}</span></div>
+        {order.import_code && <div className="text-[11px] text-slate-500">Phiếu: <span className="font-mono font-semibold text-slate-700">{order.import_code}</span></div>}
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-2 space-y-2">
+        <div className="grid grid-cols-2 gap-2">
+          <div className="rounded-lg bg-sky-600 text-white px-2 py-2.5 text-center">
+            <div className="text-xl font-bold leading-none">{pallets}</div>
+            <div className="text-[9px] mt-1 text-sky-100 uppercase tracking-wide">Pallet</div>
+          </div>
+          <div className="rounded-lg bg-sky-700 text-white px-2 py-2.5 text-center">
+            <div className="text-xl font-bold leading-none tabular-nums">{cartons.toLocaleString()}</div>
+            <div className="text-[9px] mt-1 text-sky-100 uppercase tracking-wide">Thực nhập</div>
+          </div>
+        </div>
+
+        <button onClick={() => navigate(`/wms/inbound/${order.id}`)}
+          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:border-blue-300 hover:text-blue-600 transition-colors flex items-center justify-between">
+          Mở chi tiết <ArrowRight className="h-3.5 w-3.5" />
+        </button>
+
+        {canScan && order.status === 'OPEN' && !!order.location_id && (
+          <button onClick={() => { unlockAudio(); navigate(`/wms/inbound/${order.id}?scan=1`) }}
+            className="w-full rounded-lg bg-blue-600 text-white px-3 py-2 text-xs font-medium hover:bg-blue-700 transition-colors flex items-center justify-center gap-1.5">
+            <QrCode className="h-3.5 w-3.5" /> Quét thêm pallet
+          </button>
+        )}
+      </div>
+    </aside>
+  )
+}
+
 // ─── Main page ───────────────────────────────────────────────
 
 export default function Inbound() {
@@ -972,6 +1033,8 @@ export default function Inbound() {
   const [locOpen,      setLocOpen]      = useState(false)
   const [dense,        setDense]        = useState(() => localStorage.getItem('inbound_density') !== 'comfortable')
   const [editNccGroup, setEditNccGroup] = useState<InboundOrder[] | null>(null)
+  const [selectedId,   setSelectedId]   = useState<string | null>(null)
+  const isDesktop = useIsDesktop()
 
   function toggleDensity() {
     setDense(d => { localStorage.setItem('inbound_density', d ? 'comfortable' : 'compact'); return !d })
@@ -1182,6 +1245,8 @@ export default function Inbound() {
     return savedViews.find(v => JSON.stringify(v.filters) === cur)?.id ?? null
   }, [savedViews, viewSnapshot])
 
+  const selectedOrder = selectedId ? (sortedOrders.find(o => o.id === selectedId) ?? null) : null
+
   return (
     <div className="flex flex-col h-full sm:p-3">
      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
@@ -1296,8 +1361,9 @@ export default function Inbound() {
         { label: 'Hoàn thành', value: filteredOrders.filter(o => o.status === 'COMPLETED').length },
       ]} />
 
-      {/* Scrollable content */}
-      <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+      {/* Scrollable content + Pane (Manhattan Insight) */}
+      <div className="flex flex-1 min-h-0">
+       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
         {isLoading ? (
           <div className="p-4"><TableSkeleton rows={5} cols={6} /></div>
         ) : filteredOrders.length === 0 ? (
@@ -1345,7 +1411,9 @@ export default function Inbound() {
                         key={order.id}
                         order={order}
                         dense={dense}
-                        onClick={() => navigate(`/wms/inbound/${order.id}`)}
+                        selected={order.id === selectedId}
+                        onClick={() => { if (isDesktop) setSelectedId(order.id); else navigate(`/wms/inbound/${order.id}`) }}
+                        onDoubleClick={() => navigate(`/wms/inbound/${order.id}`)}
                         onScan={order.status === 'OPEN' && !!order.location_id && can(perms, 'inbound', 'scan')
                           ? (e) => { e.stopPropagation(); unlockAudio(); navigate(`/wms/inbound/${order.id}?scan=1`) }
                           : undefined}
@@ -1369,6 +1437,10 @@ export default function Inbound() {
               </Table>
           </>
         )}
+       </div>
+       {selectedOrder && (
+         <InboundPane order={selectedOrder} onClose={() => setSelectedId(null)} canScan={can(perms, 'inbound', 'scan')} />
+       )}
       </div>
 
       {/* Footer đếm bản ghi (Manhattan) */}
@@ -1410,14 +1482,16 @@ function inboundStatus(order: InboundOrder): StatusInfo {
   return INBOUND_BADGE[inboundKey(order)]
 }
 
-function InboundRow({ order, onClick, onScan, onEditGroup, onPin, pinned, bracketPos = 'none', dense = true }: {
+function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin, pinned, bracketPos = 'none', dense = true, selected = false }: {
   order: InboundOrder; onClick: () => void
+  onDoubleClick?: () => void
   onScan?: (e: React.MouseEvent) => void
   onEditGroup?: (e: React.MouseEvent) => void
   onPin?: (e: React.MouseEvent) => void
   pinned?: boolean
   bracketPos?: BracketPos
   dense?: boolean
+  selected?: boolean
 }) {
   const dateFull = order.import_date ? format(parseISO(order.import_date), 'dd-MM-yy', { locale: vi }) : '—'
   const isRowToday = order.import_date?.slice(0, 10) === TODAY
@@ -1431,7 +1505,7 @@ function InboundRow({ order, onClick, onScan, onEditGroup, onPin, pinned, bracke
   const st = inboundStatus(order)
 
   return (
-    <TableRow className={`cursor-pointer ${rowText(inboundKey(order))} ${dense ? '' : '[&_td]:py-2.5'}`} onClick={onClick}>
+    <TableRow className={`cursor-pointer ${rowText(inboundKey(order))} ${dense ? '' : '[&_td]:py-2.5'} ${selected ? 'bg-sky-50' : ''}`} onClick={onClick} onDoubleClick={onDoubleClick}>
       {/* Col 1: Pin + bracket connector */}
       <TableCell className="w-8 px-0 py-0 relative">
         {showBracket && (
@@ -1459,7 +1533,7 @@ function InboundRow({ order, onClick, onScan, onEditGroup, onPin, pinned, bracke
       </TableCell>
 
       {/* Col 2: Ngày nhập + Số DO (sticky-left để giữ context khi scroll ngang) */}
-      <TableCell className="px-2 py-1 whitespace-nowrap sticky left-0 z-10 bg-white">
+      <TableCell className={`px-2 py-1 whitespace-nowrap sticky left-0 z-10 ${selected ? 'bg-sky-50' : 'bg-white'}`}>
         <div className="flex items-center gap-0.5">
           <span className="text-[10px] font-medium tabular-nums">{dateFull}</span>
           {isRowToday && <span className="text-[9px] text-blue-600 font-medium ml-0.5">HN</span>}

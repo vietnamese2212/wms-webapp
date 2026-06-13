@@ -2,16 +2,32 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { Navigation, MapPin, Package, User } from 'lucide-react'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
+import { SavedViews } from '@/components/shared/SavedViews'
+import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { SummaryBand } from '@/components/shared/SummaryBand'
+import { useColumnResize } from '@/components/shared/useColumnResize'
 import { DeliveryStatusBadge } from '@/components/shared/StatusBadge'
 import { TableSkeleton } from '@/components/shared/TableSkeleton'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { Button } from '@/components/ui/button'
+import { Rows3, AlignJustify } from 'lucide-react'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { useState, useMemo } from 'react'
 import { useDeliveries } from '@/api/hooks'
 import { formatDateTime, formatWeight, deliveryStatusLabel } from '@/utils/formatters'
 import { rowText, type RowStatusKey } from '@/lib/rowStatus'
 import type { DeliveryStatus } from '@/types'
+
+const DELIV_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
+  { id: 'code',   label: 'Mã lệnh',                w: 110 },
+  { id: 'cust',   label: 'Khách hàng / Điểm đến',  w: 190 },
+  { id: 'veh',    label: 'Xe / Tài xế',            w: 150 },
+  { id: 'goods',  label: 'Hàng hoá',               w: 96,  align: 'right' },
+  { id: 'sched',  label: 'Lịch giao',              w: 140 },
+  { id: 'status', label: 'Trạng thái',             w: 110 },
+  { id: 'action', label: 'Thao tác',               w: 84,  align: 'right' },
+]
+const DELIV_COL_DEFAULTS = DELIV_COLS.map(c => c.w)
 
 function deliveryKey(status: DeliveryStatus): RowStatusKey {
   if (status === 'DELIVERED')  return 'completed'
@@ -24,6 +40,11 @@ function deliveryKey(status: DeliveryStatus): RowStatusKey {
 export default function Deliveries() {
   const { data: deliveries, isLoading } = useDeliveries()
   const { deliveries: df, setDeliveries } = useWmsFilterStore()
+  const { widths: colW, startResize, totalWidth } = useColumnResize('deliveries_col_widths', DELIV_COL_DEFAULTS)
+  const [dense, setDense] = useState(() => localStorage.getItem('deliveries_density') !== 'comfortable')
+  function toggleDensity() {
+    setDense(d => { localStorage.setItem('deliveries_density', d ? 'comfortable' : 'compact'); return !d })
+  }
   const search       = df.search
   const statusFilter = (df.statusFilter || 'ALL') as DeliveryStatus | 'ALL'
   const setSearch       = (v: string) => setDeliveries({ search: v })
@@ -51,6 +72,13 @@ export default function Deliveries() {
       onChange: v => setDeliveries({ statusFilter: (v || 'ALL') }) },
   ]
 
+  const viewSnapshot = { search, statusFilter }
+  const savedViews = useSavedViewsStore(s => s.views['deliveries'] ?? [])
+  const activeViewId = useMemo(() => {
+    const cur = JSON.stringify(viewSnapshot)
+    return savedViews.find(v => JSON.stringify(v.filters) === cur)?.id ?? null
+  }, [savedViews, viewSnapshot])
+
   return (
     <div className="flex flex-col h-full sm:p-3">
      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
@@ -60,6 +88,17 @@ export default function Deliveries() {
           <span className="text-sm font-semibold text-slate-700 shrink-0">Giao hàng</span>
           <SearchInput value={search} onChange={setSearch} placeholder="Tìm mã đơn, khách hàng..." className="flex-1 min-w-[140px]" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
+          <SavedViews
+            module="deliveries"
+            currentFilters={viewSnapshot}
+            activeId={activeViewId}
+            onApply={(filters) => setDeliveries(filters as Partial<typeof df>)}
+          />
+          <button type="button" onClick={toggleDensity}
+            className="hidden sm:inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0"
+            title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
+            {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
+          </button>
         </div>
         <div className="hidden sm:flex items-center gap-1.5 flex-wrap">
           <FilterBar defs={filterDefs} />
@@ -80,23 +119,29 @@ export default function Deliveries() {
         ) : filtered.length === 0 ? (
           <EmptyState icon={Navigation} title="Không có lệnh giao hàng" />
         ) : (
-          <div className="overflow-x-auto">
-          <Table className="min-w-[700px]">
+          <Table className="table-fixed [&_td]:overflow-hidden [&_th]:overflow-hidden [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100" style={{ width: totalWidth, minWidth: '100%' }}>
+            <colgroup>
+              {colW.map((w, i) => <col key={i} style={{ width: w }} />)}
+            </colgroup>
             <TableHeader>
               <TableRow>
-                <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap">Mã lệnh</TableHead>
-                <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap">Khách hàng / Điểm đến</TableHead>
-                <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap">Xe / Tài xế</TableHead>
-                <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right whitespace-nowrap">Hàng hoá</TableHead>
-                <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap">Lịch giao</TableHead>
-                <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap">Trạng thái</TableHead>
-                <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right whitespace-nowrap">Thao tác</TableHead>
+                {DELIV_COLS.map((c, i) => (
+                  <TableHead key={c.id}
+                    className={`relative px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''} ${c.id === 'code' ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                    {c.label}
+                    {i > 0 && (
+                      <span onPointerDown={e => startResize(i, e)} onClick={e => e.stopPropagation()}
+                        className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70"
+                        title="Kéo để chỉnh độ rộng cột" />
+                    )}
+                  </TableHead>
+                ))}
               </TableRow>
             </TableHeader>
             <TableBody>
               {filtered.map((order) => (
-                <TableRow key={order.id} className={`cursor-pointer ${rowText(deliveryKey(order.status))}`}>
-                  <TableCell className="px-2 py-1 font-mono font-semibold text-[10px]">{order.orderNo}</TableCell>
+                <TableRow key={order.id} className={`cursor-pointer ${rowText(deliveryKey(order.status))} ${dense ? '' : '[&_td]:py-2.5'}`}>
+                  <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] sticky left-0 z-10 bg-white">{order.orderNo}</TableCell>
                   <TableCell className="px-2 py-1">
                     <p className="text-[10px] font-medium truncate max-w-[160px]">{order.customer}</p>
                     <p className="text-[10px] text-slate-400 flex items-center gap-1 truncate max-w-[160px]">
@@ -124,7 +169,6 @@ export default function Deliveries() {
               ))}
             </TableBody>
           </Table>
-          </div>
         )}
       </div>
 

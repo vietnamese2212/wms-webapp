@@ -173,13 +173,13 @@ Cả hai: thành công → feedback xanh + auto-resume 1.5s · lỗi → feedbac
 
 **Brand colors:** `blue-600` CTA · `green-500` OK · `amber-500` cảnh báo · `red-500` lỗi
 
-**Row colors theo trạng thái** (áp dụng nhất quán mọi module):
-```
-COMPLETED / đầy vị trí   →  bg-blue-50  hover:bg-blue-100
-IN_PROGRESS / đang xử lý →  bg-amber-50 hover:bg-amber-100
-Đã giao đơn (assigned)   →  bg-green-50 hover:bg-green-100
-PENDING / chưa xử lý     →  hover:bg-slate-50  (nền trắng)
-```
+**Row = HIGHLIGHT MÀU CHỮ theo trạng thái (KHÔNG fill nền)** — chuẩn Manhattan, dùng helper `@/lib/rowStatus`:
+- `rowText(key)` cho `<TableRow>` (màu chữ + `hover:bg-slate-50`, không fill); `statusText(key)` cho header detail/cell.
+- Key: `completed` (xanh + **gạch ngang**) · `full` (xanh, không gạch) · `scanDone` (hồng) · `inProgress` (cam) · `assigned` (xanh lá) · `paused` (đỏ) · `pending` (xám).
+- **Đồng màu cả dòng** — không tô màu riêng từng cell (vd cột giờ). Mỗi module viết hàm `xxxKey(record): RowStatusKey` và export để trang detail tái dùng.
+- **Header trang detail (mọi cấp) PHẢI kế thừa cùng màu**: `className={statusText(xxxKey(record))}` trên mã/tiêu đề.
+- Vẫn có thể kèm cột **Status badge** (pill) song song để rõ nhãn.
+- **Scroll ngang**: để bảng `min-w-max` trong container `flex-1 min-h-0 overflow-auto` (KHÔNG bọc thêm `overflow-x-auto`) → thanh cuộn ngang nằm ở đáy màn hình như Outbound.
 **Typography:** Page title `text-xl font-semibold` · Section `text-base font-medium` · Body `text-sm` · Label `text-xs text-slate-500`
 ---
 ## UI Style — Manhattan Active WMS (chuẩn mới, bắt buộc mọi list page)

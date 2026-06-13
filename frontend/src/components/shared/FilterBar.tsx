@@ -100,7 +100,7 @@ export function FilterBar({ defs, className }: { defs: FilterDef[]; className?: 
           <Plus className="h-3.5 w-3.5" /> Thêm lọc
         </button>
         {addOpen && (
-          <div className="absolute z-50 top-full left-0 mt-1 bg-white border rounded-md shadow-lg min-w-[160px] py-1"
+          <div className="absolute z-50 top-full left-0 mt-1 bg-white border rounded-md shadow-lg min-w-[160px] py-1 animate-in fade-in zoom-in-95 duration-100 origin-top-left"
             onMouseDown={e => e.stopPropagation()}>
             {inactiveDefs.length === 0 ? (
               <div className="px-3 py-2 text-xs text-slate-400 text-center">Đã thêm hết</div>
@@ -240,7 +240,7 @@ function FilterChip({ def, open, onToggle, onClose }: {
         )}
       </div>
       {open && (
-        <div className="absolute z-50 top-full left-0 mt-1" onMouseDown={e => e.stopPropagation()}>
+        <div className="absolute z-50 top-full left-0 mt-1 animate-in fade-in zoom-in-95 duration-100 origin-top-left" onMouseDown={e => e.stopPropagation()}>
           <FilterPopover def={def} onClose={onClose} />
         </div>
       )}

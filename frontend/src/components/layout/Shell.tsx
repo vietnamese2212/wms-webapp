@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Outlet } from 'react-router-dom'
+import { Outlet, useLocation } from 'react-router-dom'
 import { Sidebar } from './Sidebar'
 import { Header } from './Header'
 import { BottomNav } from './BottomNav'
@@ -11,6 +11,7 @@ import { useAuthStore } from '@/stores/authStore'
 
 export function Shell() {
   const qc = useQueryClient()
+  const location = useLocation()
   const refreshUser = useAuthStore(s => s.refreshUser)
 
   useEffect(() => {
@@ -41,7 +42,8 @@ export function Shell() {
       <div className="flex flex-1 flex-col min-w-0">
         <Header />
         <main className="flex-1 overflow-y-auto pb-16 lg:pb-0 bg-slate-100">
-          <div className="h-full">
+          {/* Page transition: fade + trượt nhẹ mỗi lần đổi route (key theo pathname) */}
+          <div key={location.pathname} className="h-full animate-in fade-in slide-in-from-bottom-1 duration-300 ease-out">
             <Outlet />
           </div>
         </main>

@@ -186,7 +186,11 @@ PENDING / chưa xử lý     →  hover:bg-slate-50  (nền trắng)
 
 Toàn app theo phong cách **Manhattan Active WMS**. Mọi list page mới/được sửa phải dùng bộ component dùng chung dưới đây thay cho panel lọc ẩn / dropdown rời rạc cũ. Module mẫu (tham chiếu): `frontend/src/pages/wms/Inbound.tsx`.
 
-**Toolbar (1 hàng trên cùng):** `Tiêu đề · SearchInput (flex-1) · SavedViews · nút density · [primary action]`.
+**Trang = panel trắng bo góc trên canvas xám (card):** root `flex flex-col h-full sm:p-3`, bọc nội dung trong `flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm` (header thêm `sm:rounded-t-xl`). Mobile bỏ padding/card (full-bleed cho gọn). KHÔNG để `overflow-hidden` trên card (clip popover filter).
+
+**Toolbar (1 hàng trên cùng):** `Tiêu đề · SearchInput (flex-1) · [FilterSheetButton sm:hidden] · SavedViews · nút density (hidden sm:inline-flex) · [primary action]`. Hàng 2 = `<FilterBar>` bọc `hidden sm:flex`. Mobile: nút **Lọc** nằm cùng hàng action (qua `FilterSheetButton`), không chiếm hàng riêng; density ẩn trên mobile.
+
+**Filter ngày: luôn dùng `daterange` (Từ ngày – Đến ngày)**, không dùng 1 ngày đơn. Backend list filter theo `date_from`/`date_to` (`gte`/`lte`).
 
 **Filter chip bar (`FilterBar` — `@/components/shared/FilterBar`):**
 - Filter khai báo **declarative** qua `defs: FilterDef[]`, 4 loại: `multi` | `single` | `daterange` | `text`. Không tự code dropdown filter rời nữa.

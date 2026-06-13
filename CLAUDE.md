@@ -76,6 +76,19 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 - Các câu hỏi làm rõ xuất hiện trước khi implement thay vì sau khi gây lỗi11
 ---
 ## Chuẩn code bắt buộc
+
+**Realtime & test bắt buộc cho mọi tính năng cập nhật số liệu:**
+- Mọi tính năng mới liên quan đến cập nhật số liệu (tồn kho, số lượng, trạng thái…) **phải được cập nhật realtime** — không để user phải refresh thủ công.
+- Sau khi implement, bắt buộc test đủ 4 tình huống:
+  1. **Bắt đầu làm** — tạo mới / thao tác lần đầu → số liệu cập nhật đúng ngay lập tức
+  2. **Sửa** — chỉnh sửa giá trị → số liệu phản ánh giá trị mới
+  3. **Xóa** — xóa record → số liệu được hoàn lại / cập nhật đúng
+  4. **Làm lại** — thao tác lại sau khi xóa → số liệu tích lũy chính xác, không bị stale cache
+- Checklist kỹ thuật khi thêm tính năng mới có mutation:
+  - `onSettled`/`onSuccess` của mutation phải `invalidateQueries` cho **tất cả** query key liên quan (không chỉ query chính)
+  - `TABLE_QUERY_MAP` trong `realtimeEvents.ts` phải thêm query key mới vào bảng DB tương ứng
+  - Nếu dùng optimistic update, phải rollback đúng khi lỗi
+
 **Database INSERT/UPDATE:**
 - Mọi INSERT phải có `id: randomUUID()` và `updated_at: new Date().toISOString()` — DB không có DEFAULT cho 2 cột này, thiếu → lỗi 23502
 - `import { randomUUID } from 'crypto'` ở đầu mọi controller có INSERT
@@ -164,14 +177,33 @@ PENDING / chưa xử lý     →  hover:bg-slate-50  (nền trắng)
 ```
 **Typography:** Page title `text-xl font-semibold` · Section `text-base font-medium` · Body `text-sm` · Label `text-xs text-slate-500`
 ---
-## Filter Standards (bắt buộc mọi module)
+## UI Style — Manhattan Active WMS (chuẩn mới, bắt buộc mọi list page)
+
+Toàn app theo phong cách **Manhattan Active WMS**. Mọi list page mới/được sửa phải dùng bộ component dùng chung dưới đây thay cho panel lọc ẩn / dropdown rời rạc cũ. Module mẫu (tham chiếu): `frontend/src/pages/wms/Inbound.tsx`.
+
+**Toolbar (1 hàng trên cùng):** `Tiêu đề · SearchInput (flex-1) · SavedViews · nút density · [primary action]`.
+
+**Filter chip bar (`FilterBar` — `@/components/shared/FilterBar`):**
+- Filter khai báo **declarative** qua `defs: FilterDef[]`, 4 loại: `multi` | `single` | `daterange` | `text`. Không tự code dropdown filter rời nữa.
+- **Desktop/tablet (≥sm):** filter đang áp hiện thành **chip có nút ✕** (luôn nhìn thấy đang lọc gì); filter trống nằm trong menu **"+ Thêm lọc"**; có nút "Xóa tất cả".
+- **Mobile (<sm):** FilterBar **tự** gom thành 1 nút **"Lọc (n)"** mở sheet full-screen dạng accordion — KHÔNG trải chip ngang (tránh chiếm chỗ). Đây là hành vi built-in, không cần code thêm.
+- `multi`/`single` có search-contains + "Tất cả"; `multi` có checkbox vuông + dấu tích.
+
+**Saved Views (`SavedViews` + `useSavedViewsStore`):** lưu/áp tổ hợp filter đặt tên (localStorage, keyed theo module). Truyền `module`, `currentFilters` (snapshot), `onApply`, `activeId`.
+
+**Density toggle:** nút đổi dòng thoáng/dày, lưu `localStorage['<module>_density']`; row dày dùng `[&_td]:py-2.5`.
+
+**Responsive bắt buộc:** mọi thay đổi UI phải đẹp ở **PC + Tablet + Phone**. Test cả 3 trước khi push. Popover/sheet không tràn màn 360px; toolbar co giãn (search `flex-1`, nhãn phụ `hidden sm:inline`).
+
+**Building block cũ (vẫn dùng được khi KHÔNG phải filter bar):** `MultiSelectFilter` từ `@/components/shared/MultiSelectFilter` — multi-select đứng riêng trong dialog/form. Filter của list page thì dùng `FilterBar`.
+
+---
+## Filter Standards (chi tiết)
 
 **Kiểu filter Excel** — mọi dropdown filter phải theo nguyên tắc:
 1. **Search contains** — ô tìm kiếm trong dropdown, không phân biệt hoa thường
-3. **Multi-select + "Tất cả"** — dùng `MultiSelectFilter` từ `@/components/shared/MultiSelectFilter`
+3. **Multi-select + "Tất cả"** — qua `FilterBar` (list page) hoặc `MultiSelectFilter` (dialog/form)
 4. **Checkbox vuông + dấu tích** — hiển thị trạng thái chọn từng item
-
-**Component:** `MultiSelectFilter` (props: `label`, `options: MSOpt[]`, `selected: string[]`, `onChange`, `searchable?`, `width?`)
 
 **Tình trạng Còn tồn (Inventory):** chỉ 2 option — `Còn tồn` (default, `status=''`) / `Tất cả` (`status='ALL'`). Không thêm per-status option.
 
@@ -194,6 +226,12 @@ Không được hiển thị thiếu thông tin trong table ( kể cả dữ li�
 **Padding data row:** `px-2 py-1`
 
 **Responsive:** Không ẩn cột trên mobile (`hidden sm:table-cell` bị cấm) — wrap `overflow-x-auto`, scroll ngang thay vì vỡ layout.
+
+**Status = badge (Manhattan):** trạng thái workflow hiển thị bằng `<Badge>` pill (variant `success`/`info`/`warning`/`slate`) thành **cột riêng**, không chỉ tô màu dòng. Vẫn giữ row-color theo trạng thái song song.
+
+**Cột đầu sticky-left:** cột định danh đầu tiên (Ngày / Mã) dùng `sticky left-0 z-10` + **nền đặc** (không hover, vd `bg-blue-50`/`bg-white` theo trạng thái) để giữ context khi scroll ngang trên phone. Header tương ứng: `sticky left-0 z-20 bg-slate-50`.
+
+**Density:** truyền `dense` xuống Row; row dày = `[&_td]:py-2.5` trên `<TableRow>`.
 
 **Ngày:** cell dùng `dd-MM-yy` · tiêu đề trang dùng `EEEE, dd-MM-yyyy` (locale `vi`).
 

@@ -1206,11 +1206,11 @@ export default function Inbound() {
           )}
         </div>
 
-        {/* Row 2: Filter chip bar (luôn hiện) */}
+        {/* Row 2: Filter chip bar (desktop) / nút Lọc (mobile) */}
         <div className="flex items-center gap-1.5 flex-wrap">
           <FilterBar defs={filterDefs} />
           {!isToday && (
-            <button className="h-7 px-2 text-[11px] text-blue-600 hover:text-blue-800 hover:underline whitespace-nowrap"
+            <button className="hidden sm:inline-flex h-7 px-2 text-[11px] text-blue-600 hover:text-blue-800 hover:underline whitespace-nowrap"
               onClick={() => setInbound({ dateFrom: TODAY, dateTo: TODAY })}>
               Hôm nay
             </button>

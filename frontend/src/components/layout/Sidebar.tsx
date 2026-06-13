@@ -10,7 +10,6 @@ import { useAuthStore } from '@/stores/authStore'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Separator } from '@/components/ui/separator'
 import { canAccess, canAccessAny, isAdmin, type ModuleKey, type ModulePermissions } from '@/config/permissions'
 
 interface NavItem {
@@ -90,19 +89,18 @@ function NavItemComponent({ item, collapsed }: { item: NavItem; collapsed: boole
     <NavLink
       to={item.to}
       className={cn(
-        'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all',
-        'hover:bg-accent hover:text-accent-foreground',
+        'relative flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
         isActive
-          ? 'bg-primary/10 text-primary dark:bg-primary/20'
-          : 'text-muted-foreground',
+          ? 'bg-white/10 text-white'
+          : 'text-slate-400 hover:bg-white/5 hover:text-slate-100',
         collapsed && 'justify-center px-2'
       )}
     >
-      <Icon className={cn('shrink-0', collapsed ? 'h-5 w-5' : 'h-4 w-4')} />
-      {!collapsed && <span className="truncate">{item.label}</span>}
-      {!collapsed && isActive && (
-        <span className="ml-auto h-1.5 w-1.5 rounded-full bg-primary" />
+      {isActive && (
+        <span className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r-full bg-sky-400" />
       )}
+      <Icon className={cn('shrink-0', collapsed ? 'h-5 w-5' : 'h-4 w-4', isActive && 'text-sky-300')} />
+      {!collapsed && <span className="truncate">{item.label}</span>}
     </NavLink>
   )
 
@@ -135,24 +133,24 @@ export function Sidebar() {
     <TooltipProvider delayDuration={0}>
       <aside
         className={cn(
-          'hidden lg:flex flex-col border-r bg-background transition-all duration-300 ease-in-out',
+          'hidden lg:flex flex-col bg-slate-900 text-slate-200 transition-all duration-300 ease-in-out',
           sidebarCollapsed ? 'w-16' : 'w-60'
         )}
       >
         {/* Header */}
-        <div className={cn('flex h-16 items-center border-b px-4', sidebarCollapsed && 'justify-center px-2')}>
+        <div className={cn('flex h-16 items-center border-b border-white/10 px-4', sidebarCollapsed && 'justify-center px-2')}>
           {!sidebarCollapsed ? (
             <div className="flex items-center gap-2.5">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-sky-500 text-white">
                 <BarChart3 className="h-4 w-4" />
               </div>
               <div>
-                <p className="text-sm font-bold leading-none text-foreground">WMS Pro</p>
-                <p className="text-[10px] text-muted-foreground">Supply Chain</p>
+                <p className="text-sm font-bold leading-none text-white">WMS Pro</p>
+                <p className="text-[10px] text-slate-400">Supply Chain</p>
               </div>
             </div>
           ) : (
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-sky-500 text-white">
               <BarChart3 className="h-4 w-4" />
             </div>
           )}
@@ -160,7 +158,7 @@ export function Sidebar() {
 
         {/* Navigation */}
         <ScrollArea className="flex-1 py-4">
-          <nav className="space-y-6 px-2">
+          <nav className="space-y-5 px-2">
             {navGroups.map((group) => {
               const visibleItems = group.items.filter(item => {
                 if (item.adminOnly) return admin
@@ -172,11 +170,11 @@ export function Sidebar() {
               return (
               <div key={group.label}>
                 {!sidebarCollapsed && (
-                  <p className="mb-1.5 px-3 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/70">
+                  <p className="mb-1.5 px-3 text-[10px] font-semibold uppercase tracking-widest text-slate-500">
                     {group.label}
                   </p>
                 )}
-                {sidebarCollapsed && <Separator className="mb-2" />}
+                {sidebarCollapsed && <div className="mb-2 mx-2 border-t border-white/10" />}
                 <div className="space-y-0.5">
                   {visibleItems.map((item) => (
                     <NavItemComponent key={item.to} item={item} collapsed={sidebarCollapsed} />
@@ -189,14 +187,14 @@ export function Sidebar() {
         </ScrollArea>
 
         {/* Footer */}
-        <div className="border-t p-2">
+        <div className="border-t border-white/10 p-2">
           {!sidebarCollapsed && (
             <NavLink
               to="/settings"
               className={({ isActive }) =>
                 cn(
-                  'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all hover:bg-accent',
-                  isActive ? 'bg-primary/10 text-primary' : 'text-muted-foreground'
+                  'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                  isActive ? 'bg-white/10 text-white' : 'text-slate-400 hover:bg-white/5 hover:text-slate-100'
                 )
               }
             >
@@ -206,13 +204,13 @@ export function Sidebar() {
           )}
 
           {!sidebarCollapsed && user && (
-            <div className="mt-2 flex items-center gap-3 rounded-lg px-3 py-2">
+            <div className="mt-2 flex items-center gap-3 rounded-md px-3 py-2">
               <Avatar className="h-7 w-7 text-xs">
-                <AvatarFallback>{initials}</AvatarFallback>
+                <AvatarFallback className="bg-slate-700 text-slate-100">{initials}</AvatarFallback>
               </Avatar>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-xs font-medium text-foreground">{user.name}</p>
-                <p className="truncate text-[10px] text-muted-foreground">{user.job_title_name ?? ''}</p>
+                <p className="truncate text-xs font-medium text-slate-100">{user.name}</p>
+                <p className="truncate text-[10px] text-slate-400">{user.job_title_name ?? ''}</p>
               </div>
             </div>
           )}
@@ -220,9 +218,7 @@ export function Sidebar() {
           {/* Collapse toggle */}
           <button
             onClick={toggleSidebar}
-            className={cn(
-              'mt-1 flex w-full items-center justify-center rounded-lg p-2 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground',
-            )}
+            className="mt-1 flex w-full items-center justify-center rounded-md p-2 text-slate-400 transition-colors hover:bg-white/5 hover:text-slate-100"
           >
             {sidebarCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
           </button>

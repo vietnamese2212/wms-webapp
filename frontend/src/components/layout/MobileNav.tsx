@@ -7,7 +7,6 @@ import {
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/authStore'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
-import { Separator } from '@/components/ui/separator'
 import { canAccess, canAccessAny, isAdmin, type ModuleKey, type ModulePermissions } from '@/config/permissions'
 
 const navGroups: { label: string; items: { to: string; icon: React.ElementType; label: string; module?: ModuleKey; modules?: ModuleKey[]; adminOnly?: boolean }[] }[] = [
@@ -59,20 +58,20 @@ export function MobileNav() {
   const initials = user?.name.split(' ').slice(-2).map((n) => n[0]).join('').toUpperCase() ?? 'U'
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full bg-slate-900 text-slate-200">
       {/* Brand */}
-      <div className="flex h-16 items-center gap-3 border-b px-6">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+      <div className="flex h-16 items-center gap-3 border-b border-white/10 px-6">
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-sky-500 text-white">
           <BarChart3 className="h-4 w-4" />
         </div>
         <div>
-          <p className="text-sm font-bold">WMS Pro</p>
-          <p className="text-[10px] text-muted-foreground">Supply Chain</p>
+          <p className="text-sm font-bold text-white">WMS Pro</p>
+          <p className="text-[10px] text-slate-400">Supply Chain</p>
         </div>
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 overflow-y-auto py-4 px-4 space-y-6">
+      <nav className="flex-1 overflow-y-auto py-4 px-4 space-y-5">
         {navGroups.map((group) => {
           const visibleItems = group.items.filter(item => {
             if (item.adminOnly) return admin
@@ -83,7 +82,7 @@ export function MobileNav() {
           if (visibleItems.length === 0) return null
           return (
           <div key={group.label}>
-            <p className="mb-1.5 px-3 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/70">
+            <p className="mb-1.5 px-3 text-[10px] font-semibold uppercase tracking-widest text-slate-500">
               {group.label}
             </p>
             <div className="space-y-0.5">
@@ -96,15 +95,20 @@ export function MobileNav() {
                     end={item.to === '/'}
                     className={({ isActive }) =>
                       cn(
-                        'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all',
+                        'relative flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors',
                         isActive
-                          ? 'bg-primary/10 text-primary'
-                          : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                          ? 'bg-white/10 text-white'
+                          : 'text-slate-400 hover:bg-white/5 hover:text-slate-100'
                       )
                     }
                   >
-                    <Icon className="h-4 w-4 shrink-0" />
-                    {item.label}
+                    {({ isActive }) => (
+                      <>
+                        {isActive && <span className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r-full bg-sky-400" />}
+                        <Icon className={cn('h-4 w-4 shrink-0', isActive && 'text-sky-300')} />
+                        {item.label}
+                      </>
+                    )}
                   </NavLink>
                 )
               })}
@@ -115,28 +119,28 @@ export function MobileNav() {
       </nav>
 
       {/* Footer */}
-      <div className="border-t p-4 space-y-2">
+      <div className="border-t border-white/10 p-4 space-y-2">
         <NavLink
           to="/settings"
           className={({ isActive }) =>
             cn(
-              'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all',
-              isActive ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-accent'
+              'flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors',
+              isActive ? 'bg-white/10 text-white' : 'text-slate-400 hover:bg-white/5 hover:text-slate-100'
             )
           }
         >
           <Settings className="h-4 w-4" />
           Cài đặt
         </NavLink>
-        <Separator />
+        <div className="border-t border-white/10" />
         {user && (
           <div className="flex items-center gap-3 px-3 py-2">
             <Avatar className="h-8 w-8 text-xs">
-              <AvatarFallback>{initials}</AvatarFallback>
+              <AvatarFallback className="bg-slate-700 text-slate-100">{initials}</AvatarFallback>
             </Avatar>
             <div className="min-w-0">
-              <p className="truncate text-sm font-medium">{user.name}</p>
-              <p className="truncate text-xs text-muted-foreground">{user.job_title_name ?? ''}</p>
+              <p className="truncate text-sm font-medium text-slate-100">{user.name}</p>
+              <p className="truncate text-xs text-slate-400">{user.job_title_name ?? ''}</p>
             </div>
           </div>
         )}

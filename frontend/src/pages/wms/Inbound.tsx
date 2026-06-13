@@ -1,12 +1,13 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, PackagePlus, CalendarDays, X, ChevronDown, User, MapPin, Filter, QrCode, Pencil, Bookmark } from 'lucide-react'
+import { Plus, PackagePlus, X, ChevronDown, User, MapPin, QrCode, Pencil, Bookmark, Rows3, AlignJustify } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
 import { useAuthStore }        from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useWmsFilterStore }  from '@/stores/wmsFilterStore'
+import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { TableSkeleton }       from '@/components/shared/TableSkeleton'
 import { EmptyState }          from '@/components/shared/EmptyState'
 import { Button }              from '@/components/ui/button'
@@ -22,8 +23,10 @@ import {
   useActiveGateRegistrations, useInboundPlanLines,
   useUpdateInboundOrder, useCancelInboundOrder,
 } from '@/api/hooks'
-import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { SearchInput } from '@/components/shared/SearchInput'
+import { FilterBar, type FilterDef } from '@/components/shared/FilterBar'
+import { SavedViews } from '@/components/shared/SavedViews'
+import { Badge } from '@/components/ui/badge'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import type { InboundOrder } from '@/types'
 import { unlockAudio } from '@/utils/audio'
@@ -930,92 +933,6 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
   )
 }
 
-// ─── Multi-select dropdown ────────────────────────────────────
-
-interface MultiOpt { value: string; label: string }
-
-function MultiSelectDropdown({ label, options, selected, onChange, searchable }: {
-  label: string; options: MultiOpt[]; selected: string[]; onChange: (v: string[]) => void; searchable?: boolean
-}) {
-  const [open,   setOpen]   = useState(false)
-  const [search, setSearch] = useState('')
-  const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!open) { setSearch(''); return }
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [open])
-
-  const active = selected.length > 0
-  const visible = searchable && search
-    ? options.filter(o => o.label.toLowerCase().includes(search.toLowerCase()))
-    : options
-
-  return (
-    <div ref={ref} className="relative">
-      <button type="button" onClick={() => setOpen(v => !v)}
-        className={`h-7 px-2 text-xs border rounded flex items-center gap-1 whitespace-nowrap transition-colors
-          ${active ? 'border-blue-400 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
-        {label}{active ? ` (${selected.length})` : ''}
-        <ChevronDown className="h-3 w-3 ml-0.5" />
-      </button>
-      {open && (
-        <div className="absolute z-50 top-full left-0 mt-1 bg-white border rounded-md shadow-lg min-w-[220px] max-h-64 flex flex-col">
-          {searchable && (
-            <div className="p-2 border-b shrink-0">
-              <input
-                autoFocus
-                className="w-full text-xs border border-slate-200 rounded px-2 py-1 outline-none focus:border-blue-400"
-                placeholder="Tìm…"
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                onMouseDown={e => e.stopPropagation()}
-              />
-            </div>
-          )}
-          <div className="overflow-y-auto flex-1">
-            {/* Tất cả */}
-            <label className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 cursor-pointer border-b border-slate-100">
-              <input type="checkbox" className="h-3 w-3 shrink-0"
-                checked={visible.length > 0 && visible.every(o => selected.includes(o.value))}
-                onChange={() => {
-                  const allSel = visible.every(o => selected.includes(o.value))
-                  if (allSel) onChange([])
-                  else onChange(visible.map(o => o.value))
-                }} />
-              <span className="text-[11px] text-slate-500 font-medium">Tất cả</span>
-            </label>
-            {visible.length === 0 && (
-              <div className="px-3 py-2 text-xs text-slate-400 text-center">Không tìm thấy</div>
-            )}
-            {visible.map(opt => (
-              <label key={opt.value} className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 cursor-pointer">
-                <input type="checkbox" className="h-3 w-3 shrink-0"
-                  checked={selected.includes(opt.value)}
-                  onChange={() => {
-                    const next = selected.includes(opt.value)
-                      ? selected.filter(v => v !== opt.value)
-                      : [...selected, opt.value]
-                    onChange(next)
-                  }} />
-                <span className="text-[11px] text-slate-700">{opt.label}</span>
-              </label>
-            ))}
-            {active && !search && (
-              <button type="button" className="w-full text-left px-3 py-1.5 text-[10px] text-red-500 hover:bg-red-50 border-t"
-                onClick={() => onChange([])}>Xóa lọc</button>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
 // Ca sort order: Ca 1 → Ca 2 → Ca 3 → HC → unknown last
 const SHIFT_ORDER: Record<string, number> = { 'Ca 1': 0, 'Ca 2': 1, 'Ca 3': 2, 'HC': 3 }
 
@@ -1041,24 +958,6 @@ function applyClientFilters(
   })
 }
 
-// ─── Date button: displays dd-MM-yyyy, overlays native date picker ──────────
-
-function DateBtn({ value, placeholder, onChange }: { value: string; placeholder: string; onChange: (v: string) => void }) {
-  const inputRef = useRef<HTMLInputElement>(null)
-  return (
-    <div className="relative inline-flex shrink-0 cursor-pointer"
-      onClick={() => inputRef.current?.showPicker()}>
-      <span className={`text-xs px-2.5 py-1 rounded-md border whitespace-nowrap select-none pointer-events-none ${
-        value ? 'bg-white border-blue-300 text-blue-900 font-semibold' : 'bg-white/70 border-blue-200 text-blue-400'
-      }`}>
-        {value ? format(parseISO(value), 'dd-MM-yyyy') : placeholder}
-      </span>
-      <input ref={inputRef} type="date" className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
-        value={value} onChange={e => onChange(e.target.value)} />
-    </div>
-  )
-}
-
 // ─── Main page ───────────────────────────────────────────────
 
 export default function Inbound() {
@@ -1069,8 +968,12 @@ export default function Inbound() {
   const { pin, unpin, isPinned } = useActiveInboundStore()
   const [showNew,      setShowNew]      = useState(false)
   const [locOpen,      setLocOpen]      = useState(false)
-  const [showFilters,  setShowFilters]  = useState(false)
+  const [dense,        setDense]        = useState(() => localStorage.getItem('inbound_density') !== 'comfortable')
   const [editNccGroup, setEditNccGroup] = useState<InboundOrder[] | null>(null)
+
+  function toggleDensity() {
+    setDense(d => { localStorage.setItem('inbound_density', d ? 'comfortable' : 'compact'); return !d })
+  }
 
   const { data: shifts     = [] } = useImportShifts()
   const { data: warehouses = [] } = useWarehouses(true)
@@ -1236,34 +1139,65 @@ export default function Inbound() {
 
   const hasClientFilters = filterMaterials.length > 0 || filterCycles.length > 0 || filterMachines.length > 0 || !!importerSearch || filterShiftIds.length > 0
 
-  const activeFilterCount = [
-    hasDate, !!f.warehouseId, !!f.materialCategory, filterShiftIds.length > 0,
-    filterMaterials.length > 0, filterCycles.length > 0, filterMachines.length > 0, !!importerSearch,
-  ].filter(Boolean).length
+  // ─── Filter chip bar (kiểu Manhattan Active WMS) ───
+  const warehouseOptions = useMemo(() =>
+    (warehouses as { id: string; name: string }[])
+      .filter(w => !inboundAllowedWhIds || inboundAllowedWhIds.has(w.id))
+      .map(w => ({ value: w.id, label: w.name })),
+    [warehouses, inboundAllowedWhIds])
+  const categoryOptions = (categories as string[])
+    .filter(c => !inboundAllowedCats || inboundAllowedCats.includes(c))
+    .map(c => ({ value: c, label: c }))
+
+  const filterDefs: FilterDef[] = [
+    { key: 'date',     label: 'Ngày',       type: 'daterange', from: f.dateFrom, to: f.dateTo,
+      onChange: (from, to) => setInbound({ dateFrom: from, dateTo: to }) },
+    { key: 'warehouse', label: 'Kho',       type: 'single', options: warehouseOptions, value: f.warehouseId || '', allLabel: 'Tất cả kho',
+      onChange: v => setInbound({ warehouseId: v, filterMaterials: [], filterCycles: [], filterMachines: [] }) },
+    { key: 'category', label: 'Loại kho',   type: 'single', options: categoryOptions, value: f.materialCategory || '', allLabel: 'Tất cả loại',
+      onChange: v => setInbound({ materialCategory: v, filterMaterials: [], filterCycles: [], filterMachines: [] }) },
+    { key: 'shift',    label: 'Ca',         type: 'multi', options: shiftOptions,    selected: filterShiftIds, searchable: false,
+      onChange: v => setInbound({ filterShiftIds: v }) },
+    { key: 'material', label: 'Material',   type: 'multi', options: materialOptions, selected: filterMaterials, searchable: true,
+      onChange: v => setInbound({ filterMaterials: v }) },
+    { key: 'cycle',    label: 'Chu kỳ',     type: 'multi', options: cycleOptions,    selected: filterCycles,
+      onChange: v => setInbound({ filterCycles: v }) },
+    { key: 'machine',  label: 'Máy',        type: 'multi', options: machineOptions,  selected: filterMachines,
+      onChange: v => setInbound({ filterMachines: v }) },
+    { key: 'importer', label: 'Người nhập', type: 'text',  value: importerSearch, placeholder: 'Tên người nhập…',
+      onChange: v => setInbound({ importerSearch: v }) },
+  ]
+
+  // ─── Saved Views ───
+  const viewSnapshot = {
+    search: f.search, dateFrom: f.dateFrom, dateTo: f.dateTo, filterShiftIds,
+    warehouseId: f.warehouseId, materialCategory: f.materialCategory,
+    filterMaterials, filterCycles, filterMachines, importerSearch,
+  }
+  const savedViews = useSavedViewsStore(s => s.views['inbound'] ?? [])
+  const activeViewId = useMemo(() => {
+    const cur = JSON.stringify(viewSnapshot)
+    return savedViews.find(v => JSON.stringify(v.filters) === cur)?.id ?? null
+  }, [savedViews, viewSnapshot])
 
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="border-b bg-white px-3 py-2 shrink-0 space-y-2">
-        {/* Row 1: Title + Search + Filter toggle + Create button */}
-        <div className="flex items-center gap-2">
+        {/* Row 1: Title + Search + Views + Density + Create */}
+        <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-semibold text-slate-700 shrink-0">Nhập kho</span>
-          <SearchInput value={f.search} onChange={v => setInbound({ search: v })} placeholder="Tìm mã phiếu, hàng hóa…" className="flex-1 min-w-[100px]" />
-          <button
-            className={`flex items-center gap-1 h-7 px-2 rounded-md border text-xs font-medium transition-colors shrink-0 ${
-              showFilters || activeFilterCount > 0
-                ? 'bg-blue-50 border-blue-200 text-blue-700'
-                : 'border-slate-200 text-slate-600 hover:bg-slate-50'
-            }`}
-            onClick={() => setShowFilters(v => !v)}
-          >
-            <Filter className="h-3.5 w-3.5" />
-            Lọc
-            {activeFilterCount > 0 && (
-              <span className="bg-blue-600 text-white text-[10px] rounded-full w-4 h-4 flex items-center justify-center leading-none">
-                {activeFilterCount}
-              </span>
-            )}
+          <SearchInput value={f.search} onChange={v => setInbound({ search: v })} placeholder="Tìm mã phiếu, hàng hóa…" className="flex-1 min-w-[140px]" />
+          <SavedViews
+            module="inbound"
+            currentFilters={viewSnapshot}
+            activeId={activeViewId}
+            onApply={(filters) => setInbound(filters as Partial<typeof f>)}
+          />
+          <button type="button" onClick={toggleDensity}
+            className="h-7 w-7 inline-flex items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0"
+            title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
+            {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
           {can(perms, 'inbound', 'create') && (
             <Button size="sm" className="h-7 text-xs gap-1 shrink-0" onClick={() => setShowNew(true)}>
@@ -1272,79 +1206,16 @@ export default function Inbound() {
           )}
         </div>
 
-        {/* Collapsible filter panel */}
-        {showFilters && (
-          <div className="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2.5 space-y-2">
-            {/* Hàng 1: Ngày + Kho + Loại kho + Ca */}
-            <div className="flex items-center gap-2 flex-wrap">
-              <CalendarDays className="h-3.5 w-3.5 text-blue-400 shrink-0" />
-              <DateBtn value={f.dateFrom} placeholder="Từ ngày" onChange={v => setInbound({ dateFrom: v })} />
-              <span className="text-blue-300 text-xs">–</span>
-              <DateBtn value={f.dateTo} placeholder="Đến ngày" onChange={v => setInbound({ dateTo: v })} />
-              {!isToday && (
-                <button className="text-xs text-blue-500 hover:text-blue-700 underline whitespace-nowrap"
-                  onClick={() => setInbound({ dateFrom: TODAY, dateTo: TODAY })}>
-                  HN
-                </button>
-              )}
-              {hasDate && (
-                <button className="p-0.5 rounded hover:bg-blue-100 text-blue-300 hover:text-blue-500"
-                  onClick={() => setInbound({ dateFrom: '', dateTo: '' })}>
-                  <X className="h-3 w-3" />
-                </button>
-              )}
-              <span className="w-px h-4 bg-blue-200 shrink-0" />
-              <WarehouseSingleSelect
-                warehouses={(warehouses as { id: string; name: string }[]).filter(w => !inboundAllowedWhIds || inboundAllowedWhIds.has(w.id))}
-                value={f.warehouseId || ''}
-                onChange={v => setInbound({ warehouseId: v, filterMaterials: [], filterCycles: [], filterMachines: [] })}
-                allLabel="Tất cả kho"
-                triggerClassName="h-7 w-[100px]"
-              />
-              <Select value={f.materialCategory || '__all__'} onValueChange={v => setInbound({ materialCategory: v === '__all__' ? '' : v, filterMaterials: [], filterCycles: [], filterMachines: [] })}>
-                <SelectTrigger className="h-7 text-xs w-[100px] bg-white">
-                  <SelectValue placeholder="Loại kho" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__all__">Tất cả loại</SelectItem>
-                  {(categories as string[])
-                    .filter(c => !inboundAllowedCats || inboundAllowedCats.includes(c))
-                    .map(c => (
-                      <SelectItem key={c} value={c}>{c}</SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
-              <MultiSelectFilter
-                label="Ca"
-                options={shiftOptions}
-                selected={filterShiftIds}
-                onChange={v => setInbound({ filterShiftIds: v })}
-                searchable={false}
-              />
-            </div>
-
-            {/* Hàng 2: Material / Chu kỳ / Máy / Người nhập */}
-            <div className="flex gap-2 flex-wrap items-center">
-              <MultiSelectDropdown label="Material" options={materialOptions} searchable
-                selected={filterMaterials} onChange={v => setInbound({ filterMaterials: v })} />
-              <MultiSelectDropdown label="Chu kỳ" options={cycleOptions}
-                selected={filterCycles} onChange={v => setInbound({ filterCycles: v })} />
-              <MultiSelectDropdown label="Máy" options={machineOptions}
-                selected={filterMachines} onChange={v => setInbound({ filterMachines: v })} />
-              <div className="relative">
-                <User className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
-                <Input className="pl-6 h-7 text-xs w-[120px] bg-white" placeholder="Người nhập…"
-                  value={importerSearch} onChange={e => setInbound({ importerSearch: e.target.value })} />
-              </div>
-              {hasClientFilters && (
-                <button className="flex items-center gap-1 text-[10px] text-red-400 hover:text-red-600 px-1"
-                  onClick={() => setInbound({ filterMaterials: [], filterCycles: [], filterMachines: [], filterShiftIds: [], importerSearch: '' })}>
-                  <X className="h-3 w-3" /> Xóa lọc
-                </button>
-              )}
-            </div>
-          </div>
-        )}
+        {/* Row 2: Filter chip bar (luôn hiện) */}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <FilterBar defs={filterDefs} />
+          {!isToday && (
+            <button className="h-7 px-2 text-[11px] text-blue-600 hover:text-blue-800 hover:underline whitespace-nowrap"
+              onClick={() => setInbound({ dateFrom: TODAY, dateTo: TODAY })}>
+              Hôm nay
+            </button>
+          )}
+        </div>
 
         {/* Summary */}
         <p className="text-xs text-slate-500 -mt-1">
@@ -1440,7 +1311,8 @@ export default function Inbound() {
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-8 px-0 py-1.5" />
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Ngày nhập</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap sticky left-0 z-20 bg-slate-50">Ngày nhập</TableHead>
+                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Trạng thái</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Vị trí</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Material</TableHead>
                     <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Mã phiếu / Mã lệnh</TableHead>
@@ -1457,6 +1329,7 @@ export default function Inbound() {
                     <InboundRow
                       key={order.id}
                       order={order}
+                      dense={dense}
                       onClick={() => navigate(`/wms/inbound/${order.id}`)}
                       onScan={order.status === 'OPEN' && !!order.location_id && can(perms, 'inbound', 'scan')
                         ? (e) => { e.stopPropagation(); unlockAudio(); navigate(`/wms/inbound/${order.id}?scan=1`) }
@@ -1497,13 +1370,34 @@ function rowBg(order: InboundOrder): string {
   return 'hover:bg-slate-50'
 }
 
-function InboundRow({ order, onClick, onScan, onEditGroup, onPin, pinned, bracketPos = 'none' }: {
+// Nền đặc (không hover) cho cell sticky-left — để nội dung dưới không lộ ra khi scroll ngang
+function rowBgSolid(order: InboundOrder): string {
+  if (order.status === 'COMPLETED') return 'bg-blue-50'
+  const used = order.location_used_slots ?? 0
+  const max  = order.location?.max_pallets ?? 0
+  if (max > 0 && used >= max) return 'bg-blue-50'
+  if ((order._count?.inventory_entries ?? 0) > 0) return 'bg-amber-50'
+  return 'bg-white'
+}
+
+type StatusInfo = { label: string; variant: 'success' | 'info' | 'warning' | 'slate' }
+function inboundStatus(order: InboundOrder): StatusInfo {
+  if (order.status === 'COMPLETED') return { label: 'Hoàn thành', variant: 'success' }
+  const used = order.location_used_slots ?? 0
+  const max  = order.location?.max_pallets ?? 0
+  if (max > 0 && used >= max) return { label: 'Đầy vị trí', variant: 'info' }
+  if ((order._count?.inventory_entries ?? 0) > 0) return { label: 'Đang nhập', variant: 'warning' }
+  return { label: 'Chưa nhập', variant: 'slate' }
+}
+
+function InboundRow({ order, onClick, onScan, onEditGroup, onPin, pinned, bracketPos = 'none', dense = true }: {
   order: InboundOrder; onClick: () => void
   onScan?: (e: React.MouseEvent) => void
   onEditGroup?: (e: React.MouseEvent) => void
   onPin?: (e: React.MouseEvent) => void
   pinned?: boolean
   bracketPos?: BracketPos
+  dense?: boolean
 }) {
   const dateFull = order.import_date ? format(parseISO(order.import_date), 'dd-MM-yy', { locale: vi }) : '—'
   const isRowToday = order.import_date?.slice(0, 10) === TODAY
@@ -1514,9 +1408,10 @@ function InboundRow({ order, onClick, onScan, onEditGroup, onPin, pinned, bracke
   const doCodes  = order.source_type === 'TRANSFER' ? (order as any).from_gdo_delivery_codes as string[] | undefined : undefined
 
   const showBracket = bracketPos !== 'none' && bracketPos !== 'only'
+  const st = inboundStatus(order)
 
   return (
-    <TableRow className={`cursor-pointer ${rowBg(order)}`} onClick={onClick}>
+    <TableRow className={`cursor-pointer ${rowBg(order)} ${dense ? '' : '[&_td]:py-2.5'}`} onClick={onClick}>
       {/* Col 1: Pin + bracket connector */}
       <TableCell className="w-8 px-0 py-0 relative">
         {showBracket && (
@@ -1543,8 +1438,8 @@ function InboundRow({ order, onClick, onScan, onEditGroup, onPin, pinned, bracke
         </div>
       </TableCell>
 
-      {/* Col 2: Ngày nhập + Số DO */}
-      <TableCell className="px-2 py-1 whitespace-nowrap">
+      {/* Col 2: Ngày nhập + Số DO (sticky-left để giữ context khi scroll ngang) */}
+      <TableCell className={`px-2 py-1 whitespace-nowrap sticky left-0 z-10 ${rowBgSolid(order)}`}>
         <div className="flex items-center gap-0.5">
           <span className="text-[10px] font-medium tabular-nums">{dateFull}</span>
           {isRowToday && <span className="text-[9px] text-blue-600 font-medium ml-0.5">HN</span>}
@@ -1574,6 +1469,11 @@ function InboundRow({ order, onClick, onScan, onEditGroup, onPin, pinned, bracke
             {(order as any).from_gdo.license_plate}
           </div>
         ) : null}
+      </TableCell>
+
+      {/* Col: Trạng thái */}
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        <Badge variant={st.variant} className="px-1.5 py-0 text-[9px] font-medium">{st.label}</Badge>
       </TableCell>
 
       {/* Col 3: Vị trí */}

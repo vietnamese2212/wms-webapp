@@ -1334,7 +1334,7 @@ export default function Inbound() {
                     const spacerBefore = bpos === 'first' && i > 0 && prevBpos !== 'last'
                     const spacerAfter  = bpos === 'last'
                     const nodes: React.ReactNode[] = []
-                    if (spacerBefore) nodes.push(<tr key={`sp-b-${order.id}`} aria-hidden><td colSpan={12} className="h-2.5 p-0 border-0" /></tr>)
+                    if (spacerBefore) nodes.push(<tr key={`sp-b-${order.id}`} aria-hidden><td colSpan={12} className="p-0 border-0 bg-transparent"><div className="h-2.5" /></td></tr>)
                     nodes.push(
                       <InboundRow
                         key={order.id}
@@ -1357,7 +1357,7 @@ export default function Inbound() {
                         bracketPos={bpos}
                       />
                     )
-                    if (spacerAfter) nodes.push(<tr key={`sp-a-${order.id}`} aria-hidden><td colSpan={12} className="h-2.5 p-0 border-0" /></tr>)
+                    if (spacerAfter) nodes.push(<tr key={`sp-a-${order.id}`} aria-hidden><td colSpan={12} className="p-0 border-0 bg-transparent"><div className="h-2.5" /></td></tr>)
                     return nodes
                   })}
                 </TableBody>

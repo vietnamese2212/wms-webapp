@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import {
-  useWarehouses, useManufacturers, useMaterials, useInventoryEntries,
+  useWarehouses, useWarehouseTypes, useMaterials, useInventoryEntries,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -65,32 +65,37 @@ function QRImg({ value, px = 320 }: { value: string; px?: number }) {
 // ─── 1 tem (1/4 A4 = 105mm × 148.5mm) ─────────────────────────
 function PalletLabel({ d }: { d: LabelData }) {
   return (
-    <div className="pl-label flex flex-col border border-dashed border-slate-300 p-[4mm] overflow-hidden">
-      {/* QR */}
+    <div className="pl-label flex flex-col border border-dashed border-slate-300 p-[3.5mm] overflow-hidden">
+      {/* QR — to, căn giữa */}
       <div className="flex justify-center shrink-0">
-        <div className="h-[64mm] w-[64mm]"><QRImg value={d.qr} /></div>
+        <div className="h-[72mm] w-[72mm]"><QRImg value={d.qr} px={480} /></div>
       </div>
 
-      {/* Thông tin */}
-      <div className="mt-[2mm] flex-1 min-h-0 text-[8.5pt] leading-[1.25] text-black">
-        <div className="border-t border-black pt-[1mm]">
-          <p><span className="font-semibold">Ngày</span> : {d.dateDisplay}</p>
-          <p><span className="font-semibold">Mã</span> : {d.materialCode}</p>
-          <p><span className="font-semibold">NMSX</span> : {d.nmsx || '—'}</p>
-          <p className="truncate"><span className="font-semibold">Loại hàng</span> : {d.category || '—'}</p>
-          <p className="line-clamp-2"><span className="font-semibold">Tên</span> : {d.fullName || '—'}</p>
-          <p className="truncate"><span className="font-semibold">Tên gói tắt</span> : {d.shortName || '—'}</p>
-          <p>Thời gian từ ……… đến ……… <span className="font-semibold">Kiểm tra</span></p>
-          <p><span className="font-semibold">Số lượng</span> : {d.qty === '' ? '……' : d.qty}</p>
-          <p>chữ ký ………… máy ………… p…</p>
+      {/* Thông tin — chữ lớn lấp khoảng trống */}
+      <div className="mt-[2mm] flex-1 min-h-0 flex flex-col justify-evenly text-[11pt] leading-[1.3] text-black border-t border-black pt-[1.5mm]">
+        <p className="truncate"><span className="font-semibold">Ngày</span> : {d.dateDisplay}</p>
+        <p className="truncate"><span className="font-semibold">Mã</span> : {d.materialCode}</p>
+        <p className="truncate"><span className="font-semibold">NMSX</span> : {d.nmsx || '—'}</p>
+        <p className="truncate"><span className="font-semibold">Loại hàng</span> : {d.category || '—'}</p>
+        <p className="truncate"><span className="font-semibold">Tên gói tắt</span> : {d.shortName || '—'}</p>
+        <p className="truncate">Thời gian từ ……… đến ……… <span className="font-semibold">Kiểm tra</span></p>
+        <p className="truncate"><span className="font-semibold">Số lượng</span> : {d.qty === '' ? '……' : d.qty}</p>
+      </div>
+
+      {/* Footer lớn — 3 cột tiêu đề + giá trị to để nhận diện từ xa */}
+      <div className="mt-[1.5mm] grid grid-cols-3 shrink-0 border-t-2 border-black text-center">
+        <div className="border-r border-black">
+          <div className="text-[8pt] font-semibold leading-tight">Chu kỳ</div>
+          <div className="text-[30pt] font-bold leading-none">{d.cycle || '—'}</div>
         </div>
-      </div>
-
-      {/* Footer lớn — nhận diện nhanh từ xa: Chu kỳ · Máy · Số thứ tự */}
-      <div className="mt-[1mm] flex shrink-0 items-end justify-between border-t-2 border-black px-[2mm] pt-[1mm] font-bold leading-none">
-        <span className="text-[26pt]">{d.cycle || '—'}</span>
-        <span className="text-[26pt]">{d.machine || '—'}</span>
-        <span className="text-[26pt]">{Number(d.seq) || d.seq}</span>
+        <div className="border-r border-black">
+          <div className="text-[8pt] font-semibold leading-tight">Máy</div>
+          <div className="text-[30pt] font-bold leading-none">{d.machine || '—'}</div>
+        </div>
+        <div>
+          <div className="text-[8pt] font-semibold leading-tight">Số pallet</div>
+          <div className="text-[30pt] font-bold leading-none">{Number(d.seq) || d.seq}</div>
+        </div>
       </div>
     </div>
   )
@@ -98,26 +103,28 @@ function PalletLabel({ d }: { d: LabelData }) {
 
 const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
-// ─── Material combobox ─────────────────────────────────────────
-function MatPicker({ value, label, onPick }: {
-  value: string; label: string; onPick: (m: Material | null) => void
+// ─── Material combobox (lọc theo Loại hàng nếu có) ─────────────
+function MatPicker({ value, label, category, onPick }: {
+  value: string; label: string; category?: string; onPick: (m: Material | null) => void
 }) {
   const [q, setQ] = useState('')
   const [open, setOpen] = useState(false)
-  const { data: mats = [] } = useMaterials({ search: q.length > 1 ? q : undefined }, q.length > 1)
+  const enabled = q.length > 1 || !!category
+  const { data: mats = [] } = useMaterials({ search: q.length > 1 ? q : undefined, category: category || undefined }, enabled)
+  const showList = open && enabled && mats.length > 0
   return (
     <div className="relative">
       <Input
         className="h-8 text-sm"
-        placeholder="Tìm mã / tên hàng…"
+        placeholder={category ? `Mã / tên hàng (${category})…` : 'Tìm mã / tên hàng…'}
         value={open ? q : (value ? `${value} — ${label}` : q)}
         onChange={e => { setQ(e.target.value); setOpen(true); onPick(null) }}
         onFocus={() => { setQ(''); setOpen(true) }}
         onBlur={() => setTimeout(() => setOpen(false), 150)}
       />
-      {open && q.length > 1 && mats.length > 0 && (
+      {showList && (
         <div className="absolute z-50 mt-0.5 w-full max-h-56 overflow-y-auto rounded-md border bg-white shadow-lg">
-          {(mats as Material[]).map(m => (
+          {(mats as Material[]).slice(0, 50).map(m => (
             <button key={m.id} type="button"
               onMouseDown={() => { onPick(m); setOpen(false) }}
               className="flex w-full items-center gap-2 border-b border-slate-50 px-2.5 py-1.5 text-left last:border-0 hover:bg-blue-50">
@@ -141,12 +148,16 @@ export default function PalletLabels() {
   const [tab, setTab] = useState<'generate' | 'reprint'>('generate')
 
   const { data: warehouses = [] } = useWarehouses(true)
-  const { data: manufacturers = [] } = useManufacturers()
+  const { data: whTypes = [] } = useWarehouseTypes()
+  const categoryOpts = (whTypes as { value: string }[]).map(t => t.value)
   const allowedWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
     ? new Set(user.warehouse_ids) : null
   const whOptions = (warehouses as any[]).filter(w => !allowedWhIds || allowedWhIds.has(w.id))
+  // NMSX = mã kho tổng (warehouse_type CENTRAL) theo WMS Settings
+  const nmsxOptions = (warehouses as any[]).filter(w => w.warehouse_type === 'CENTRAL')
 
   // ── Generate form ──
+  const [genCat, setGenCat]   = useState('')   // Loại hàng — lọc nhanh mã hàng
   const [mat, setMat]         = useState<Material | null>(null)
   const [prodDate, setProdDate] = useState(TODAY)
   const [cycle, setCycle]     = useState('')
@@ -243,12 +254,16 @@ export default function PalletLabels() {
     <div className="flex flex-col h-full sm:p-3">
       {/* CSS in: chỉ in vùng .pl-print-area, mỗi tem 1/4 A4 */}
       <style>{`
-        .pl-label { width: 105mm; height: 148.5mm; }
+        .pl-label { width: 105mm; height: 148.5mm; box-sizing: border-box; }
+        .pl-sheet { box-sizing: border-box; }
         @media print {
+          html, body { margin: 0 !important; padding: 0 !important; }
           body * { visibility: hidden !important; }
           .pl-print-area, .pl-print-area * { visibility: visible !important; }
-          .pl-print-area { position: absolute; left: 0; top: 0; width: 210mm; }
-          .pl-sheet { page-break-after: always; break-after: page; }
+          .pl-print-area { position: absolute; left: 0; top: 0; width: 210mm; margin: 0 !important; padding: 0 !important; }
+          .pl-print-area > * { margin: 0 !important; }
+          .pl-sheet { width: 210mm; height: 297mm; box-shadow: none !important; overflow: hidden; page-break-after: always; break-after: page; }
+          .pl-sheet:last-child { page-break-after: auto; break-after: auto; }
           .pl-label { border-style: solid !important; }
           @page { size: A4 portrait; margin: 0; }
         }
@@ -290,8 +305,18 @@ export default function PalletLabels() {
           {tab === 'generate' ? (
             <>
               <div className="space-y-1">
+                <Label className="text-xs">Loại hàng</Label>
+                <Select value={genCat || '__all__'} onValueChange={v => { setGenCat(v === '__all__' ? '' : v); setMat(null) }}>
+                  <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Tất cả loại" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all__">Tất cả loại</SelectItem>
+                    {categoryOpts.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
                 <Label className="text-xs">Mã hàng <span className="text-red-500">*</span></Label>
-                <MatPicker value={mat?.material_code ?? ''} label={mat?.short_name ?? mat?.material_description ?? ''} onPick={setMat} />
+                <MatPicker value={mat?.material_code ?? ''} label={mat?.short_name ?? mat?.material_description ?? ''} category={genCat} onPick={setMat} />
                 {mat && <p className="text-[10px] text-slate-400">Loại: {mat.category ?? '—'} · Thùng/pallet: {mat.cartons_per_pallet ?? '—'}</p>}
               </div>
               <div className="space-y-1">
@@ -309,13 +334,13 @@ export default function PalletLabels() {
                 </div>
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">NMSX (nhà sản xuất)</Label>
+                <Label className="text-xs">NMSX (mã kho tổng)</Label>
                 <Select value={nmsx || '__none__'} onValueChange={v => setNmsx(v === '__none__' ? '' : v)}>
-                  <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Chọn NMSX" /></SelectTrigger>
+                  <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Chọn kho tổng" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__none__">— Không —</SelectItem>
-                    {(manufacturers as any[]).map(m => (
-                      <SelectItem key={m.id} value={m.code}>{m.code}{m.name ? ` — ${m.name}` : ''}</SelectItem>
+                    {nmsxOptions.map((w: any) => (
+                      <SelectItem key={w.id} value={w.code}>{w.code}{w.name ? ` — ${w.name}` : ''}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -381,7 +406,7 @@ export default function PalletLabels() {
           ) : (
             <div ref={printRef} className="pl-print-area mx-auto space-y-4">
               {sheets.map((sheet, si) => (
-                <div key={si} className="pl-sheet mx-auto grid grid-cols-2 grid-rows-2 bg-white shadow-sm" style={{ width: '210mm', height: '297mm' }}>
+                <div key={si} className="pl-sheet mx-auto grid grid-cols-2 grid-rows-2 overflow-hidden bg-white shadow-sm" style={{ width: '210mm', height: '297mm' }}>
                   {sheet.map(d => <PalletLabel key={d.key} d={d} />)}
                 </div>
               ))}

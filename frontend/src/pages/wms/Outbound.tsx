@@ -19,6 +19,7 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 import { formatTimestampTime } from '@/utils/formatters'
+import { rowText, type RowStatusKey } from '@/lib/rowStatus'
 import type { GDO } from '@/types'
 
 const TODAY = new Date().toISOString().slice(0, 10)
@@ -28,15 +29,16 @@ const normalizeForMatch = (s: string) =>
 const canonicalExportType = (raw: string, types: { name: string }[]) =>
   types.find(t => normalizeForMatch(t.name) === normalizeForMatch(raw))?.name ?? raw
 
-// ─── Row text color by status (TEXT color, không dùng background) ────────────
-function gdoRowText(gdo: GDO) {
-  if (gdo.status === 'COMPLETED')   return 'text-[#4A90D9] line-through hover:bg-slate-50'
-  if (gdo.scan_completed_at)        return 'text-pink-600 hover:bg-slate-50'
-  if (gdo.status === 'IN_PROGRESS') return 'text-[#D8891C] hover:bg-slate-50'
-  if (gdo.status === 'PAUSED')      return 'text-red-500 hover:bg-slate-50'
-  if (gdo.assigned_at)              return 'text-green-600 hover:bg-slate-50'
-  return 'hover:bg-slate-50'
+// ─── Row text color by status (TEXT color, không fill nền) — dùng helper chung ──
+export function gdoKey(gdo: GDO): RowStatusKey {
+  if (gdo.status === 'COMPLETED')   return 'completed'
+  if (gdo.scan_completed_at)        return 'scanDone'
+  if (gdo.status === 'IN_PROGRESS') return 'inProgress'
+  if (gdo.status === 'PAUSED')      return 'paused'
+  if (gdo.assigned_at)              return 'assigned'
+  return 'pending'
 }
+function gdoRowText(gdo: GDO) { return rowText(gdoKey(gdo)) }
 
 function gdoStatusInfo(gdo: GDO): { label: string; cls: string } {
   if (gdo.status === 'COMPLETED')   return { label: 'Hoàn thành', cls: 'bg-blue-100 text-blue-700'   }
@@ -459,7 +461,7 @@ function GDORow({ gdo, onClick, onAssign, dense = true }: {
       {/* Giờ giao đơn — inline assign action */}
       <TableCell className="px-2 py-1 whitespace-nowrap" onClick={e => e.stopPropagation()}>
         {gdo.assigned_at ? (
-          <span className="text-[10px] tabular-nums text-green-600 font-medium">{fTime(gdo.assigned_at)}</span>
+          <span className="text-[10px] tabular-nums font-medium">{fTime(gdo.assigned_at)}</span>
         ) : isPending && onAssign ? (
           <button
             onClick={onAssign}
@@ -473,13 +475,13 @@ function GDORow({ gdo, onClick, onAssign, dense = true }: {
       </TableCell>
 
       <TableCell className="px-2 py-1 whitespace-nowrap">
-        <span className="text-[10px] tabular-nums text-[#D8891C]">{fTime(gdo.started_at)}</span>
+        <span className="text-[10px] tabular-nums">{fTime(gdo.started_at)}</span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
-        <span className="text-[10px] tabular-nums text-pink-600">{fTime(gdo.scan_completed_at)}</span>
+        <span className="text-[10px] tabular-nums">{fTime(gdo.scan_completed_at)}</span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
-        <span className="text-[10px] tabular-nums text-[#4A90D9]">{fTime(gdo.completed_at)}</span>
+        <span className="text-[10px] tabular-nums">{fTime(gdo.completed_at)}</span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${statusCls}`}>{statusLabel}</span>

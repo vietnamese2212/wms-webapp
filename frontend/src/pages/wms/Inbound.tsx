@@ -27,6 +27,7 @@ import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { Badge } from '@/components/ui/badge'
+import { rowText, type RowStatusKey } from '@/lib/rowStatus'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import type { InboundOrder } from '@/types'
 import { unlockAudio } from '@/utils/audio'
@@ -1307,8 +1308,7 @@ export default function Inbound() {
           />
         ) : (
           <>
-            {/* Orders table */}
-            <div className="overflow-x-auto">
+            {/* Orders table — scroll ngang ở đáy container (như Outbound) */}
             <Table className="min-w-max">
                 <TableHeader>
                   <TableRow>
@@ -1351,7 +1351,6 @@ export default function Inbound() {
                   ))}
                 </TableBody>
               </Table>
-            </div>
           </>
         )}
       </div>
@@ -1363,34 +1362,28 @@ export default function Inbound() {
   )
 }
 
-function rowBg(order: InboundOrder): string {
-  if (order.status === 'COMPLETED') return 'bg-blue-50 hover:bg-blue-100'
-  // OPEN
+// Trạng thái dòng nhập → key dùng chung (màu chữ + gạch ngang, không fill nền)
+export function inboundKey(order: InboundOrder): RowStatusKey {
+  if (order.status === 'COMPLETED') return 'completed'
   const used = order.location_used_slots ?? 0
   const max  = order.location?.max_pallets ?? 0
-  if (max > 0 && used >= max) return 'bg-blue-50 hover:bg-blue-100'
-  if ((order._count?.inventory_entries ?? 0) > 0) return 'bg-amber-50 hover:bg-amber-100'
-  return 'hover:bg-slate-50'
-}
-
-// Nền đặc (không hover) cho cell sticky-left — để nội dung dưới không lộ ra khi scroll ngang
-function rowBgSolid(order: InboundOrder): string {
-  if (order.status === 'COMPLETED') return 'bg-blue-50'
-  const used = order.location_used_slots ?? 0
-  const max  = order.location?.max_pallets ?? 0
-  if (max > 0 && used >= max) return 'bg-blue-50'
-  if ((order._count?.inventory_entries ?? 0) > 0) return 'bg-amber-50'
-  return 'bg-white'
+  if (max > 0 && used >= max) return 'full'
+  if ((order._count?.inventory_entries ?? 0) > 0) return 'inProgress'
+  return 'pending'
 }
 
 type StatusInfo = { label: string; variant: 'success' | 'info' | 'warning' | 'slate' }
+const INBOUND_BADGE: Record<RowStatusKey, StatusInfo> = {
+  completed:  { label: 'Hoàn thành', variant: 'success' },
+  full:       { label: 'Đầy vị trí', variant: 'info' },
+  inProgress: { label: 'Đang nhập',  variant: 'warning' },
+  pending:    { label: 'Chưa nhập',  variant: 'slate' },
+  scanDone:   { label: 'Đang nhập',  variant: 'warning' },
+  assigned:   { label: 'Đang nhập',  variant: 'warning' },
+  paused:     { label: 'Đang nhập',  variant: 'warning' },
+}
 function inboundStatus(order: InboundOrder): StatusInfo {
-  if (order.status === 'COMPLETED') return { label: 'Hoàn thành', variant: 'success' }
-  const used = order.location_used_slots ?? 0
-  const max  = order.location?.max_pallets ?? 0
-  if (max > 0 && used >= max) return { label: 'Đầy vị trí', variant: 'info' }
-  if ((order._count?.inventory_entries ?? 0) > 0) return { label: 'Đang nhập', variant: 'warning' }
-  return { label: 'Chưa nhập', variant: 'slate' }
+  return INBOUND_BADGE[inboundKey(order)]
 }
 
 function InboundRow({ order, onClick, onScan, onEditGroup, onPin, pinned, bracketPos = 'none', dense = true }: {
@@ -1414,7 +1407,7 @@ function InboundRow({ order, onClick, onScan, onEditGroup, onPin, pinned, bracke
   const st = inboundStatus(order)
 
   return (
-    <TableRow className={`cursor-pointer ${rowBg(order)} ${dense ? '' : '[&_td]:py-2.5'}`} onClick={onClick}>
+    <TableRow className={`cursor-pointer ${rowText(inboundKey(order))} ${dense ? '' : '[&_td]:py-2.5'}`} onClick={onClick}>
       {/* Col 1: Pin + bracket connector */}
       <TableCell className="w-8 px-0 py-0 relative">
         {showBracket && (
@@ -1442,7 +1435,7 @@ function InboundRow({ order, onClick, onScan, onEditGroup, onPin, pinned, bracke
       </TableCell>
 
       {/* Col 2: Ngày nhập + Số DO (sticky-left để giữ context khi scroll ngang) */}
-      <TableCell className={`px-2 py-1 whitespace-nowrap sticky left-0 z-10 ${rowBgSolid(order)}`}>
+      <TableCell className="px-2 py-1 whitespace-nowrap sticky left-0 z-10 bg-white">
         <div className="flex items-center gap-0.5">
           <span className="text-[10px] font-medium tabular-nums">{dateFull}</span>
           {isRowToday && <span className="text-[9px] text-blue-600 font-medium ml-0.5">HN</span>}

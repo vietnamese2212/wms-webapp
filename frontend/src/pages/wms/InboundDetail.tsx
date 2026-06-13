@@ -26,6 +26,8 @@ import {
 import { useAuthStore }            from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useActiveInboundStore }  from '@/stores/activeInboundStore'
+import { statusText } from '@/lib/rowStatus'
+import { inboundKey } from './Inbound'
 import { inboundOrderStatusLabel, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { unlockAudio }             from '@/utils/audio'
 import type { InboundOrder, InboundOrderStatus, PalletEntry } from '@/types'
@@ -397,7 +399,8 @@ export default function InboundDetail() {
         </Dialog>
       )}
 
-      <div className="flex flex-col h-full min-h-0">
+      <div className="flex flex-col h-full sm:p-3">
+       <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm overflow-hidden">
 
         {/* ── "Đang làm" quick-switch bar ── */}
         {pinnedOrders.length > 0 && (
@@ -461,7 +464,7 @@ export default function InboundDetail() {
               >
                 <ArrowLeft className="h-4 w-4" />
               </button>
-              <span className="font-semibold font-mono text-sm truncate">
+              <span className={`font-semibold font-mono text-sm truncate ${statusText(inboundKey(order))}`}>
                 {order.import_code ?? order.id.slice(0, 8)}
               </span>
             </div>
@@ -879,6 +882,7 @@ export default function InboundDetail() {
             )}
           </Card>
         </div>
+       </div>
       </div>
     </>
   )

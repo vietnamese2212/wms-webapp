@@ -21,7 +21,8 @@ import {
   useUnassignGDO, useUnstartGDO, useUncompleteGDO, useUpdateTransport,
   useItemInventory, useManualItemStock, useDeleteGDO, useManualCompleteItem, type ItemInventoryEntry,
 } from '@/api/hooks'
-import { EditGDOModal } from './Outbound'
+import { EditGDOModal, gdoKey } from './Outbound'
+import { statusText } from '@/lib/rowStatus'
 import { PalletDetailDialog } from '@/components/shared/PalletDetailDialog'
 import { useAuthStore } from '@/stores/authStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
@@ -973,7 +974,8 @@ export default function OutboundDetail() {
         </Dialog>
       )}
 
-      <div className="flex flex-col h-full min-h-0">
+      <div className="flex flex-col h-full sm:p-3">
+       <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm overflow-hidden">
 
         {/* ── Header: ~20% ── */}
         <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5 overflow-y-auto" style={{ maxHeight: '22vh' }}>
@@ -985,7 +987,7 @@ export default function OutboundDetail() {
                 className="p-1 rounded hover:bg-slate-100 text-slate-500 shrink-0">
                 <ArrowLeft className="h-4 w-4" />
               </button>
-              <span className="font-mono font-semibold text-sm">{gdo.group_code}</span>
+              <span className={`font-mono font-semibold text-sm ${statusText(gdoKey(gdo))}`}>{gdo.group_code}</span>
               <Badge status={gdo.status} />
               <button
                 onClick={() => pinned
@@ -1250,6 +1252,7 @@ export default function OutboundDetail() {
             />
           )}
         </div>
+       </div>
       </div>
     </>
   )

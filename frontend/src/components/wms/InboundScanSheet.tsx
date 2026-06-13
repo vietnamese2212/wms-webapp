@@ -280,22 +280,16 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">Tầng chồng</Label>
-                <div className="flex gap-1.5 h-11">
-                  {(['1', '2', '3'] as const).map(n => (
-                    <button
-                      key={n}
-                      type="button"
-                      onClick={() => setStackLayer(n)}
-                      className={`flex-1 rounded-md border text-sm font-semibold transition-colors ${
-                        stackLayer === n
-                          ? 'bg-blue-600 text-white border-blue-600'
-                          : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
-                      }`}
-                    >
-                      {n === '1' ? '1 (sàn)' : n}
-                    </button>
-                  ))}
-                </div>
+                {/* native select: dropdown trình duyệt (không qua portal) → bấm được khi scanner đè dialog */}
+                <select
+                  value={stackLayer}
+                  onChange={e => setStackLayer(e.target.value)}
+                  className="h-11 w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="1">Tầng 1 (sàn)</option>
+                  <option value="2">Tầng 2</option>
+                  <option value="3">Tầng 3</option>
+                </select>
               </div>
             </div>
 

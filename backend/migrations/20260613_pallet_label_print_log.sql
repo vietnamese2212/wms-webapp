@@ -25,5 +25,14 @@ CREATE TABLE IF NOT EXISTS "PalletLabelPrint" (
 CREATE INDEX IF NOT EXISTS idx_pallet_print_qr      ON "PalletLabelPrint" (qr_code);
 CREATE INDEX IF NOT EXISTS idx_pallet_print_created ON "PalletLabelPrint" (created_at DESC);
 
--- Bật realtime (đồng bộ các bảng public khác)
-ALTER PUBLICATION supabase_realtime ADD TABLE "PalletLabelPrint";
+-- Bật realtime (đồng bộ các bảng public khác) — guard để chạy lại không lỗi 42710.
+-- Lưu ý: project có event trigger tự add bảng public mới vào publication, nên thường đã là member.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'PalletLabelPrint'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE "PalletLabelPrint";
+  END IF;
+END $$;

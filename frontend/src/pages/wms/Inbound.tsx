@@ -27,6 +27,7 @@ import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { SummaryBand } from '@/components/shared/SummaryBand'
+import { useColumnResize } from '@/components/shared/useColumnResize'
 import { Badge } from '@/components/ui/badge'
 import { rowText, statusText, type RowStatusKey } from '@/lib/rowStatus'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
@@ -960,6 +961,23 @@ function applyClientFilters(
   })
 }
 
+// Cấu hình cột Inbound (thứ tự khớp với các <TableCell> trong InboundRow)
+const INBOUND_COLS: { id: string; label: string; w: number; align?: 'right'; resize?: false }[] = [
+  { id: 'pin',    label: '',                   w: 34,  resize: false },
+  { id: 'date',   label: 'Ngày nhập',          w: 96 },
+  { id: 'status', label: 'Trạng thái',         w: 92 },
+  { id: 'loc',    label: 'Vị trí',             w: 84 },
+  { id: 'mat',    label: 'Material',           w: 150 },
+  { id: 'code',   label: 'Mã phiếu / Mã lệnh', w: 130 },
+  { id: 'pallet', label: 'Pallet',             w: 64,  align: 'right' },
+  { id: 'actual', label: 'Thực nhập',          w: 84,  align: 'right' },
+  { id: 'plan',   label: 'Thùng KH',           w: 84,  align: 'right' },
+  { id: 'imp',    label: 'Người nhập',         w: 104 },
+  { id: 'shift',  label: 'Ca',                 w: 64 },
+  { id: 'note',   label: 'Ghi chú',            w: 120 },
+]
+const INBOUND_COL_DEFAULTS = INBOUND_COLS.map(c => c.w)
+
 // Phát hiện desktop (lg+) để quyết định click row = chọn (hiện pane) hay điều hướng
 function useIsDesktop() {
   const [d, setD] = useState(() => typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches)
@@ -1035,6 +1053,7 @@ export default function Inbound() {
   const [editNccGroup, setEditNccGroup] = useState<InboundOrder[] | null>(null)
   const [selectedId,   setSelectedId]   = useState<string | null>(null)
   const isDesktop = useIsDesktop()
+  const { widths: colW, startResize, totalWidth } = useColumnResize('inbound_col_widths', INBOUND_COL_DEFAULTS)
 
   function toggleDensity() {
     setDense(d => { localStorage.setItem('inbound_density', d ? 'comfortable' : 'compact'); return !d })
@@ -1379,22 +1398,27 @@ export default function Inbound() {
           />
         ) : (
           <>
-            {/* Orders table — scroll ngang ở đáy container (như Outbound) */}
-            <Table className="min-w-max">
+            {/* Orders table — cột kéo giãn được (colgroup + table-fixed), scroll ngang ở đáy */}
+            <Table className="table-fixed [&_td]:overflow-hidden [&_th]:overflow-hidden" style={{ width: totalWidth }}>
+                <colgroup>
+                  {colW.map((w, i) => <col key={i} style={{ width: w }} />)}
+                </colgroup>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-8 px-0 py-1.5" />
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap sticky left-0 z-20 bg-slate-50">Ngày nhập</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Trạng thái</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Vị trí</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Material</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Mã phiếu / Mã lệnh</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Pallet</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Thực nhập</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Thùng KH</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Người nhập</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Ca</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Ghi chú</TableHead>
+                    {INBOUND_COLS.map((c, i) => (
+                      <TableHead key={c.id}
+                        className={`relative text-[9px] font-medium text-slate-500 py-1.5 whitespace-nowrap ${i === 0 ? 'px-0' : 'px-2'} ${c.align === 'right' ? 'text-right' : ''} ${c.id === 'date' ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                        {c.label}
+                        {c.resize !== false && i > 0 && (
+                          <span
+                            onPointerDown={e => startResize(i, e)}
+                            onClick={e => e.stopPropagation()}
+                            className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70"
+                            title="Kéo để chỉnh độ rộng cột"
+                          />
+                        )}
+                      </TableHead>
+                    ))}
                   </TableRow>
                 </TableHeader>
                 <TableBody>

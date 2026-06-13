@@ -307,10 +307,11 @@ export default function WMSSettings() {
   }
 
   return (
-    <div className="p-4 space-y-4 max-w-5xl mx-auto">
+    <div className="h-full overflow-auto sm:p-3">
+     <div className="max-w-5xl mx-auto bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm p-4 space-y-4">
       <div>
-        <h1 className="text-xl font-semibold text-slate-800 flex items-center gap-2">
-          <Settings2 className="h-5 w-5 text-slate-500" />
+        <h1 className="text-base font-semibold text-slate-800 flex items-center gap-2">
+          <Settings2 className="h-4 w-4 text-slate-500" />
           Cài đặt WMS
         </h1>
         <p className="text-xs text-slate-400 mt-0.5">Kho, loại kho, khu vực kho — master data dùng chung cho toàn hệ thống</p>
@@ -596,6 +597,7 @@ export default function WMSSettings() {
       {showZoneDlg && (
         <ZoneDialog zone={editingZone} warehouseId={effectiveWhId} warehouses={zoneAccessWh} warehouseTypes={warehouseTypes} open={showZoneDlg} onClose={() => setShowZoneDlg(false)} />
       )}
+     </div>
     </div>
   )
 }

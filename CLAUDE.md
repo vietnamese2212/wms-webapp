@@ -166,6 +166,11 @@ Cả hai: thành công → feedback xanh + auto-resume 1.5s · lỗi → feedbac
 ---
 ## Design System
 
+**App shell (Manhattan Active WMS):**
+- **Sidebar / mobile drawer = dark rail** `bg-slate-900 text-slate-200`; mục active = `bg-white/10 text-white` + thanh accent trái `bg-sky-400` + icon `text-sky-300`; mục thường `text-slate-400 hover:bg-white/5`. Group label `text-slate-500`. Logo tile `bg-sky-500`. (`Sidebar.tsx`, `MobileNav.tsx`)
+- **Canvas vùng nội dung = `bg-slate-100`** (xám nhạt) để panel/bảng trắng nổi lên (`Shell.tsx` `<main>`). Header trang giữ `bg-white border-b`.
+- **Accent điều hướng: sky** (`sky-400/500`). CTA trong nội dung vẫn `blue-600`.
+
 **Brand colors:** `blue-600` CTA · `green-500` OK · `amber-500` cảnh báo · `red-500` lỗi
 
 **Row colors theo trạng thái** (áp dụng nhất quán mọi module):

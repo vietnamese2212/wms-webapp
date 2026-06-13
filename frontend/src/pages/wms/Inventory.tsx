@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Package, X, SlidersHorizontal, ChevronRight, Filter, Check } from 'lucide-react'
+import { Package, X, SlidersHorizontal, ChevronRight, Check, Rows3, AlignJustify } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Label } from '@/components/ui/label'
-import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { SearchInput } from '@/components/shared/SearchInput'
+import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
+import { SavedViews } from '@/components/shared/SavedViews'
+import { SummaryBand } from '@/components/shared/SummaryBand'
+import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import {
   useInventoryEntries, useInventoryFacets, useWarehouses, useQAStatuses, useAdjustInventory,
   useAdjustmentLog,
@@ -452,8 +454,11 @@ export default function Inventory() {
 
   const [selected,     setSelected]     = useState<InventoryEntry | null>(null)
   const [checkedIds,   setCheckedIds]   = useState<Set<string>>(new Set())
-  const [showFilters,  setShowFilters]  = useState(false)
   const [actionModal,  setActionModal]  = useState<'qa' | 'location' | 'material' | 'production-date' | null>(null)
+  const [dense, setDense] = useState(() => localStorage.getItem('inventory_density') !== 'comfortable')
+  function toggleDensity() {
+    setDense(d => { localStorage.setItem('inventory_density', d ? 'comfortable' : 'compact'); return !d })
+  }
 
   const { data: warehouses   = [] } = useWarehouses(true)
   const { data: qaStatuses   = [] } = useQAStatuses()
@@ -562,12 +567,7 @@ export default function Inventory() {
     || f.qaStatusIds.length > 0 || f.status || f.materialCategories.length > 0
     || f.manufacturerId || f.filterCycles.length > 0 || f.filterMachines.length > 0 || f.datePctRanges.length > 0)
 
-  const activeFilterCount = [
-    f.filterLocations.length > 0, f.filterMaterialIds.length > 0, f.qaStatusIds.length > 0,
-    !!f.status, f.filterCycles.length > 0, f.filterMachines.length > 0, f.datePctRanges.length > 0,
-  ].filter(Boolean).length
-
-  // MultiSelectFilter option lists
+  // Filter option lists
   const allowedWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
     ? new Set(user.warehouse_ids)
     : null
@@ -591,175 +591,83 @@ export default function Inventory() {
     setCheckedIds(new Set())
   }
 
+  // ─── Filter chip bar (Manhattan) ───
+  const filterDefs: FilterDef[] = [
+    { key: 'warehouse', label: 'Kho', type: 'multi', options: warehouseOpts, selected: f.warehouseIds, searchable: true,
+      onChange: v => setInventory({ warehouseIds: v, page: 1 }) },
+    { key: 'category', label: 'Loại kho', type: 'multi', options: categoryOpts, selected: f.materialCategories, searchable: false,
+      onChange: v => setInventory({ materialCategories: v, page: 1 }) },
+    { key: 'status', label: 'Tình trạng', type: 'single', options: [{ value: 'ALL', label: 'Tất cả' }], value: f.status === 'ALL' ? 'ALL' : '', allLabel: 'Còn tồn',
+      onChange: v => setInventory({ status: v === 'ALL' ? 'ALL' : '', page: 1 }) },
+    { key: 'material', label: 'Tên hàng', type: 'multi', options: materialOpts, selected: f.filterMaterialIds,
+      onChange: v => setInventory({ filterMaterialIds: v, page: 1 }) },
+    { key: 'location', label: 'Vị trí', type: 'multi', options: locationOpts, selected: f.filterLocations,
+      onChange: v => setInventory({ filterLocations: v, page: 1 }) },
+    { key: 'qa', label: 'QA Status', type: 'multi', options: qaOpts, selected: f.qaStatusIds,
+      onChange: v => setInventory({ qaStatusIds: v, page: 1 }) },
+    { key: 'cycle', label: 'Chu kỳ', type: 'multi', options: cycleOpts, selected: f.filterCycles, searchable: cycleOpts.length > 5,
+      onChange: v => setInventory({ filterCycles: v, page: 1 }) },
+    { key: 'machine', label: 'Máy', type: 'multi', options: machineOpts, selected: f.filterMachines, searchable: machineOpts.length > 5,
+      onChange: v => setInventory({ filterMachines: v, page: 1 }) },
+    { key: 'datePct', label: '% Date', type: 'multi', options: datePctOpts, selected: f.datePctRanges, searchable: false,
+      onChange: v => setInventory({ datePctRanges: v, page: 1 }) },
+  ]
+
+  const viewSnapshot = {
+    search: f.search, warehouseIds: f.warehouseIds, materialCategories: f.materialCategories,
+    status: f.status, filterMaterialIds: f.filterMaterialIds, filterLocations: f.filterLocations,
+    qaStatusIds: f.qaStatusIds, filterCycles: f.filterCycles, filterMachines: f.filterMachines,
+    datePctRanges: f.datePctRanges,
+  }
+  const savedViews = useSavedViewsStore(s => s.views['inventory'] ?? [])
+  const activeViewId = useMemo(() => {
+    const cur = JSON.stringify(viewSnapshot)
+    return savedViews.find(v => JSON.stringify(v.filters) === cur)?.id ?? null
+  }, [savedViews, viewSnapshot])
+
   return (
-    <div className="flex flex-col h-full">
-      {/* ── Filter header ── */}
-      <div className="border-b bg-white px-4 py-2 shrink-0 space-y-1.5">
-        {/* Row 1: Title + Kho + Loại kho + Filter toggle */}
-        <div className="flex items-center gap-2">
-          <h1 className="text-xl font-semibold flex items-center gap-2 shrink-0">
-            <Package className="h-5 w-5 text-slate-500" />
-            Tồn kho
-          </h1>
-
-          {/* Kho */}
-          <MultiSelectFilter
-            label="Kho"
-            options={warehouseOpts}
-            selected={f.warehouseIds}
-            onChange={v => setInventory({ warehouseIds: v, page: 1 })}
-            searchable={true}
-            width="min-w-[100px]"
+    <div className="flex flex-col h-full sm:p-3">
+     <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
+      {/* ── Toolbar ── */}
+      <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5 sm:rounded-t-xl">
+        {/* Row 1: Title + Search + Views + Density */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm font-semibold text-slate-700 shrink-0 flex items-center gap-1.5">
+            <Package className="h-4 w-4 text-slate-500" /> Tồn kho
+          </span>
+          <SearchInput
+            value={f.search}
+            onChange={v => setInventory({ search: v, page: 1 })}
+            placeholder="Tìm mã pallet…"
+            className="flex-1 min-w-[140px]"
           />
-
-          {/* Loại kho */}
-          <MultiSelectFilter
-            label="Loại kho"
-            options={categoryOpts}
-            selected={f.materialCategories}
-            onChange={v => setInventory({ materialCategories: v, page: 1 })}
-            searchable={false}
-            width="min-w-[90px]"
+          <FilterSheetButton defs={filterDefs} className="sm:hidden" />
+          <SavedViews
+            module="inventory"
+            currentFilters={viewSnapshot}
+            activeId={activeViewId}
+            onApply={(filters) => setInventory({ ...(filters as Partial<typeof f>), page: 1 })}
           />
-
-          <div className="flex-1" />
-
-          {/* Filter toggle */}
-          <button
-            className={`flex items-center gap-1 h-8 px-2.5 rounded-md border text-xs font-medium transition-colors shrink-0 ${
-              showFilters || activeFilterCount > 0
-                ? 'bg-blue-50 border-blue-200 text-blue-700'
-                : 'border-slate-200 text-slate-600 hover:bg-slate-50'
-            }`}
-            onClick={() => setShowFilters(v => !v)}
-          >
-            <Filter className="h-3.5 w-3.5" />
-            Lọc
-            {activeFilterCount > 0 && (
-              <span className="bg-blue-600 text-white text-[10px] rounded-full w-4 h-4 flex items-center justify-center leading-none">
-                {activeFilterCount}
-              </span>
-            )}
+          <button type="button" onClick={toggleDensity}
+            className="hidden sm:inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0"
+            title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
+            {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
         </div>
 
-        {/* Row 2: Search (hàng riêng để không bị đè trên mobile) */}
-        <SearchInput
-          value={f.search}
-          onChange={v => setInventory({ search: v, page: 1 })}
-          placeholder="Tìm mã pallet…"
-          className="w-full"
-        />
-
-        {/* Collapsible filter panel */}
-        {showFilters && (
-          <div className="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2">
-            <div className="flex gap-2 flex-wrap items-center">
-              {/* Tình trạng tồn kho — 2 option */}
-              <Select value={f.status || '__active__'}
-                onValueChange={v => setInventory({ status: v === '__active__' ? '' : v, page: 1 })}>
-                <SelectTrigger className="h-7 text-xs w-[110px] bg-white">
-                  <SelectValue placeholder="Còn tồn" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__active__">Còn tồn</SelectItem>
-                  <SelectItem value="ALL">Tất cả</SelectItem>
-                </SelectContent>
-              </Select>
-
-              {/* Tên hàng — multi-select từ facets */}
-              <MultiSelectFilter
-                label="Tên hàng"
-                options={materialOpts}
-                selected={f.filterMaterialIds}
-                onChange={v => setInventory({ filterMaterialIds: v, page: 1 })}
-                width="min-w-[120px]"
-              />
-
-              {/* Vị trí — multi-select từ facets */}
-              <MultiSelectFilter
-                label="Vị trí"
-                options={locationOpts}
-                selected={f.filterLocations}
-                onChange={v => setInventory({ filterLocations: v, page: 1 })}
-                width="min-w-[90px]"
-              />
-
-              {/* QA Status — multi-select */}
-              <MultiSelectFilter
-                label="QA Status"
-                options={qaOpts}
-                selected={f.qaStatusIds}
-                onChange={v => setInventory({ qaStatusIds: v, page: 1 })}
-                width="min-w-[100px]"
-              />
-
-              {/* Chu kỳ — multi-select từ facets */}
-              <MultiSelectFilter
-                label="Chu kỳ"
-                options={cycleOpts}
-                selected={f.filterCycles}
-                onChange={v => setInventory({ filterCycles: v, page: 1 })}
-                searchable={cycleOpts.length > 5}
-                width="min-w-[80px]"
-              />
-
-              {/* Máy — multi-select từ facets */}
-              <MultiSelectFilter
-                label="Máy"
-                options={machineOpts}
-                selected={f.filterMachines}
-                onChange={v => setInventory({ filterMachines: v, page: 1 })}
-                searchable={machineOpts.length > 5}
-                width="min-w-[70px]"
-              />
-
-              {/* % Date — multi-select, OR logic */}
-              <MultiSelectFilter
-                label="% Date"
-                options={datePctOpts}
-                selected={f.datePctRanges}
-                onChange={v => setInventory({ datePctRanges: v, page: 1 })}
-                searchable={false}
-                width="min-w-[80px]"
-              />
-
-              {hasFilters && (
-                <button onClick={resetFilters}
-                  className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-700 whitespace-nowrap">
-                  <X className="h-3.5 w-3.5" />Xóa lọc
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Totals bar */}
-        <p className="text-xs text-slate-500">
-          {isLoading ? 'Đang tải…' : (
-            <>
-              <span className="font-medium text-slate-700">{total.toLocaleString()}</span>
-              <span className="text-slate-400"> pallet</span>
-              {totalCartons > 0 && (
-                <>
-                  <span className="mx-1.5 text-slate-300">·</span>
-                  <span className="font-medium text-slate-700">{totalCartons.toLocaleString()}</span>
-                  <span className="text-slate-400"> thùng tồn</span>
-                </>
-              )}
-              {totalPages > 1 && (
-                <span className="ml-1.5 text-slate-400">— trang {f.page}/{totalPages}</span>
-              )}
-              {checkedCount > 0 && (
-                <span className="ml-2 text-green-600 font-medium">· {checkedCount} đang chọn</span>
-              )}
-              {selected && checkedCount === 0 && (
-                <span className="ml-2 text-blue-600">· 1 đang xem</span>
-              )}
-            </>
-          )}
-        </p>
+        {/* Row 2: Filter chip bar (desktop) */}
+        <div className="hidden sm:flex items-center gap-1.5 flex-wrap">
+          <FilterBar defs={filterDefs} />
+        </div>
       </div>
+
+      {/* Summary band (Manhattan) */}
+      <SummaryBand tiles={[
+        { label: 'Pallet', value: total.toLocaleString('vi-VN') },
+        { label: 'Thùng tồn', value: totalCartons.toLocaleString('vi-VN') },
+        { label: 'Đang chọn', value: checkedCount, accent: checkedCount > 0 },
+        { label: 'Trang', value: `${f.page}/${totalPages}` },
+      ]} />
 
       {/* ── Content: table + detail drawer ── */}
       <div className="flex-1 min-h-0 flex overflow-hidden">
@@ -819,6 +727,7 @@ export default function Inventory() {
                         onCheck={ev => toggleCheck(e.id, ev)}
                         onClick={() => setSelected(prev => prev?.id === e.id ? null : e)}
                         warehouseMap={warehouseMap}
+                        dense={dense}
                       />
                     ))}
                   </TableBody>
@@ -858,6 +767,15 @@ export default function Inventory() {
           <DetailPanel entry={selected} onClose={() => setSelected(null)} warehouseMap={warehouseMap} />
         ) : null}
       </div>
+
+      {/* Footer đếm bản ghi */}
+      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 sm:rounded-b-xl">
+        {total > 0
+          ? `${(f.page - 1) * LIMIT + 1}–${Math.min(f.page * LIMIT, total)} / ${total.toLocaleString('vi-VN')} pallet`
+          : '0 pallet'}
+        {selected && checkedCount === 0 && <span className="ml-2 text-blue-600">· 1 đang xem</span>}
+      </div>
+     </div>
 
       {/* ── Floating action bar (when items checked) ── */}
       {checkedCount > 0 && (
@@ -909,13 +827,14 @@ export default function Inventory() {
 
 // ─── EntryRow ─────────────────────────────────────────────────
 
-function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick, warehouseMap }: {
+function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick, warehouseMap, dense = true }: {
   entry: InventoryEntry
   isSelected: boolean
   isChecked: boolean
   onCheck: (ev: React.MouseEvent) => void
   onClick: () => void
   warehouseMap: Record<string, string>
+  dense?: boolean
 }) {
   const loc           = formatLoc(e.location)
   const matCode       = e.material?.material_code ?? '—'
@@ -931,7 +850,7 @@ function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick, warehouse
 
   return (
     <TableRow
-      className={`transition-colors cursor-pointer ${entryRowBg(e, isSelected, isChecked)}`}
+      className={`transition-colors cursor-pointer ${entryRowBg(e, isSelected, isChecked)} ${dense ? '' : '[&_td]:py-2.5'}`}
       onClick={onClick}
     >
       {/* Checkbox */}

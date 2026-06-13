@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from '@/api/client'
@@ -17,10 +17,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import {
   X, Plus, Pencil, Trash2, PhoneCall,
   LogIn, LogOut, Star, Package, ArrowRight, ArrowLeft,
-  ChevronDown, Loader2, SlidersHorizontal, Phone, RotateCcw,
+  ChevronDown, Loader2, Phone, RotateCcw,
   HelpCircle, XCircle,
 } from 'lucide-react'
-import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
+import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
+import { SavedViews } from '@/components/shared/SavedViews'
+import { SummaryBand } from '@/components/shared/SummaryBand'
+import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -298,7 +301,6 @@ export default function GateRegistration() {
   const setFCompany       = (v: string)   => setGateRegistration({ fCompany: v })
   const setFDirection     = (v: string)   => setGateRegistration({ fDirection: v })
   const setFStatus        = (v: string)   => setGateRegistration({ fStatus: v })
-  const [showMoreFilters, setShowMoreFilters] = useState(false)
 
   // Auto-set warehouse for single-warehouse users on first visit
   useEffect(() => {
@@ -670,153 +672,73 @@ export default function GateRegistration() {
     label: vt.name,
   }))
 
+  // ─── Filter chip bar (Manhattan) ───
+  const filterWhOptions = (allowedWhIds
+    ? warehouses.filter((w: { id: string }) => allowedWhIds.has(w.id))
+    : warehouses
+  ).map((w: { id: string; name: string }) => ({ value: w.id, label: w.name }))
+
+  const filterDefs: FilterDef[] = [
+    { key: 'date', label: 'Ngày', type: 'daterange', from: fDate, to: fDateTo,
+      onChange: (from, to) => { setFDate(from); setFDateTo(to) } },
+    { key: 'warehouse', label: 'Kho', type: 'single', options: filterWhOptions, value: fWarehouse, allLabel: 'Tất cả kho',
+      onChange: setFWarehouse },
+    { key: 'vehType', label: 'Loại xe', type: 'multi', options: vehicleTypes.map(vt => ({ value: vt.name, label: vt.name })), selected: fVehicleTypes, searchable: false,
+      onChange: setFVehicleTypes },
+    { key: 'company', label: 'ĐVVT/NCC', type: 'single', options: companies.map(c => ({ value: c.id, label: c.name })), value: fCompany, allLabel: 'Tất cả ĐVVT',
+      onChange: setFCompany },
+    { key: 'direction', label: 'Hướng', type: 'single', options: [{ value: 'OUTBOUND', label: 'Xuất' }, { value: 'INBOUND', label: 'Nhập' }], value: fDirection, allLabel: 'Cả hai',
+      onChange: setFDirection },
+    { key: 'status', label: 'Trạng thái', type: 'single', options: (['REGISTERED', 'CALLED', 'IN', 'COMPLETED'] as GateStatus[]).map(s => ({ value: s, label: STATUS_LABEL[s] })), value: fStatus, allLabel: 'Tất cả TT',
+      onChange: setFStatus },
+    { key: 'whType', label: 'Loại kho', type: 'single', options: whTypes.map((t: { id: string; value: string }) => ({ value: t.value, label: t.value })), value: fWarehouseType, allLabel: 'Tất cả loại kho',
+      onChange: setFWarehouseType },
+  ]
+
+  const viewSnapshot = {
+    fDate, fDateTo, fWarehouse, fWarehouseType, fVehicleTypes, fCompany, fDirection, fStatus,
+  }
+  const savedViews = useSavedViewsStore(s => s.views['gateRegistration'] ?? [])
+  const activeViewId = useMemo(() => {
+    const cur = JSON.stringify(viewSnapshot)
+    return savedViews.find(v => JSON.stringify(v.filters) === cur)?.id ?? null
+  }, [savedViews, viewSnapshot])
+
   return (
-    <div className="flex flex-col h-full">
-      {/* ── Filter bar */}
-      <div className="border-b bg-white px-3 py-2 shrink-0">
-        {/* Primary filters */}
+    <div className="flex flex-col h-full sm:p-3">
+     <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
+      {/* ── Toolbar */}
+      <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5 sm:rounded-t-xl">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-semibold text-slate-700 shrink-0">Đăng ký cổng</span>
-
-          <div className="flex items-center gap-1">
-            <Input
-              type="date" value={fDate}
-              onChange={e => setFDate(e.target.value)}
-              className="text-xs h-7 w-32"
-            />
-            <span className="text-xs text-slate-400">→</span>
-            <Input
-              type="date" value={fDateTo}
-              onChange={e => setFDateTo(e.target.value)}
-              className="text-xs h-7 w-32"
-            />
-          </div>
-
-          <Select value={fWarehouse || '__all__'} onValueChange={v => setFWarehouse(v === '__all__' ? '' : v)}>
-            <SelectTrigger className="h-7 text-xs w-36">
-              <SelectValue placeholder="Tất cả kho" />
-            </SelectTrigger>
-            <SelectContent>
-              {!allowedWhIds && <SelectItem value="__all__">Tất cả kho</SelectItem>}
-              {(allowedWhIds
-                ? warehouses.filter((w: { id: string }) => allowedWhIds.has(w.id))
-                : warehouses
-              ).map((w: { id: string; name: string }) => (
-                <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          {/* Bộ lọc thêm */}
-          <Button
-            variant="outline" size="sm"
-            className={`h-7 text-xs gap-1 ${showMoreFilters || fVehicleTypes.length > 0 || fCompany || fDirection || fStatus || fWarehouseType ? 'border-blue-400 text-blue-700 bg-blue-50' : ''}`}
-            onClick={() => setShowMoreFilters(v => !v)}
-          >
-            <SlidersHorizontal className="h-3 w-3" />
-            Bộ lọc
-            {(fVehicleTypes.length > 0 || fCompany || fDirection || fStatus || fWarehouseType) && (
-              <span className="ml-0.5 bg-blue-500 text-white rounded-full text-[9px] px-1 leading-none py-0.5">
-                {[fVehicleTypes.length > 0, !!fCompany, !!fDirection, !!fStatus, !!fWarehouseType].filter(Boolean).length}
-              </span>
-            )}
-          </Button>
-
-          <div className="ml-auto">
-            {can(perms, 'gate_registration', 'create') && (
-              <Button size="sm" className="h-7 text-xs" onClick={openCreate}>
-                <Plus className="h-3.5 w-3.5 mr-1" />Thêm
-              </Button>
-            )}
-          </div>
+          <div className="flex-1" />
+          <FilterSheetButton defs={filterDefs} className="sm:hidden" />
+          <SavedViews
+            module="gateRegistration"
+            currentFilters={viewSnapshot}
+            activeId={activeViewId}
+            onApply={(filters) => setGateRegistration(filters as Partial<typeof grf>)}
+          />
+          {can(perms, 'gate_registration', 'create') && (
+            <Button size="sm" className="h-7 text-xs" onClick={openCreate}>
+              <Plus className="h-3.5 w-3.5 mr-1" />Thêm
+            </Button>
+          )}
         </div>
 
-        {/* Advanced filters */}
-        {showMoreFilters && (
-          <div className="flex items-center gap-2 flex-wrap mt-2 pt-2 border-t">
-            <MultiSelectFilter
-              label="Loại xe"
-              options={vehicleTypes.map(vt => ({ value: vt.name, label: vt.name }))}
-              selected={fVehicleTypes}
-              onChange={setFVehicleTypes}
-              searchable={false}
-            />
-
-            <Select value={fCompany || '__all__'} onValueChange={v => setFCompany(v === '__all__' ? '' : v)}>
-              <SelectTrigger className="h-7 text-xs w-36">
-                <SelectValue placeholder="ĐVVT/NCC" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">Tất cả ĐVVT</SelectItem>
-                {companies.map(c => (
-                  <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            <Select value={fDirection || '__all__'} onValueChange={v => setFDirection(v === '__all__' ? '' : v)}>
-              <SelectTrigger className="h-7 text-xs w-24">
-                <SelectValue placeholder="Hướng" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">Cả hai</SelectItem>
-                <SelectItem value="OUTBOUND">Xuất</SelectItem>
-                <SelectItem value="INBOUND">Nhập</SelectItem>
-              </SelectContent>
-            </Select>
-
-            <Select value={fStatus || '__all__'} onValueChange={v => setFStatus(v === '__all__' ? '' : v)}>
-              <SelectTrigger className="h-7 text-xs w-32">
-                <SelectValue placeholder="Trạng thái" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">Tất cả TT</SelectItem>
-                <SelectItem value="REGISTERED">Đã đăng ký</SelectItem>
-                <SelectItem value="CALLED">Đã gọi xe</SelectItem>
-                <SelectItem value="IN">Đang trong</SelectItem>
-                <SelectItem value="COMPLETED">Đã ra</SelectItem>
-              </SelectContent>
-            </Select>
-
-            <Select value={fWarehouseType || '__all__'} onValueChange={v => setFWarehouseType(v === '__all__' ? '' : v)}>
-              <SelectTrigger className="h-7 text-xs w-32">
-                <SelectValue placeholder="Loại kho" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">Tất cả loại kho</SelectItem>
-                {whTypes.map((t: { id: string; value: string }) => (
-                  <SelectItem key={t.id} value={t.value}>{t.value}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            <button
-              className="text-[10px] text-slate-400 hover:text-red-500 underline"
-              onClick={() => { setFVehicleTypes([]); setFCompany(''); setFDirection(''); setFStatus(''); setFWarehouseType('') }}
-            >
-              Xóa bộ lọc
-            </button>
-          </div>
-        )}
-
-        {/* Stats */}
-        <div className="flex gap-3 mt-1.5 flex-wrap">
-          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-700 font-medium">
-            Tổng: {displayRegs.length}
-          </span>
-          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700">
-            Đang chờ: {displayRegs.filter(r => r.status === 'REGISTERED' || r.status === 'CALLED').length}
-          </span>
-          {(['REGISTERED','CALLED','IN','COMPLETED'] as GateStatus[]).map(s => {
-            const count = displayRegs.filter(r => r.status === s).length
-            return (
-              <span key={s} className={`text-[10px] px-1.5 py-0.5 rounded-full ${STATUS_BADGE[s]}`}>
-                {STATUS_LABEL[s]}: {count}
-              </span>
-            )
-          })}
+        {/* Filter chip bar (desktop) */}
+        <div className="hidden sm:flex items-center gap-1.5 flex-wrap">
+          <FilterBar defs={filterDefs} />
         </div>
       </div>
+
+      {/* Summary band (Manhattan) */}
+      <SummaryBand tiles={[
+        { label: 'Tổng xe', value: displayRegs.length },
+        { label: 'Đang chờ', value: displayRegs.filter(r => r.status === 'REGISTERED' || r.status === 'CALLED').length },
+        { label: 'Đang trong', value: displayRegs.filter(r => r.status === 'IN').length, accent: displayRegs.some(r => r.status === 'IN') },
+        { label: 'Đã ra', value: displayRegs.filter(r => r.status === 'COMPLETED').length },
+      ]} />
 
       {/* ── Main area: table */}
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
@@ -926,6 +848,12 @@ export default function GateRegistration() {
             </div>
           )}
       </div>
+
+      {/* Footer đếm bản ghi */}
+      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 sm:rounded-b-xl">
+        {displayRegs.length > 0 ? `1–${displayRegs.length} / ${displayRegs.length} lượt đăng ký` : '0 lượt đăng ký'}
+      </div>
+     </div>
 
       {/* Detail dialog — overlay, không ảnh hưởng layout bảng */}
       <Dialog open={!!selected} onOpenChange={open => { if (!open) setSelected(null) }}>

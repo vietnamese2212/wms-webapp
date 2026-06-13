@@ -179,7 +179,10 @@ Cả hai: thành công → feedback xanh + auto-resume 1.5s · lỗi → feedbac
 - **Đồng màu cả dòng** — không tô màu riêng từng cell (vd cột giờ). Mỗi module viết hàm `xxxKey(record): RowStatusKey` và export để trang detail tái dùng.
 - **Header trang detail (mọi cấp) PHẢI kế thừa cùng màu**: `className={statusText(xxxKey(record))}` trên mã/tiêu đề.
 - Vẫn có thể kèm cột **Status badge** (pill) song song để rõ nhãn.
-- **Scroll ngang**: để bảng `min-w-max` trong container `flex-1 min-h-0 overflow-auto` (KHÔNG bọc thêm `overflow-x-auto`) → thanh cuộn ngang nằm ở đáy màn hình như Outbound.
+- **Scroll ngang**: bảng trong container `flex-1 min-h-0 overflow-auto` (KHÔNG bọc thêm `overflow-x-auto`) → thanh cuộn ngang ở đáy màn hình.
+- **Cột kéo giãn được (`useColumnResize`)**: `table-fixed` + `<colgroup>` width từ hook + `style={{ width: totalWidth, minWidth: '100%' }}` (fill màn khi dư, scroll khi thiếu). Kẻ cột rõ: `[&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100` + `[&_td]:overflow-hidden`. Tay kéo = `<span onPointerDown={e=>startResize(i,e)}>` ở mép phải mỗi `<TableHead>` (relative).
+- **Nhóm dòng (vd nhóm theo lệnh TMS)**: cả cụm nền `bg-slate-50`; **dòng đầu** `[&_td]:border-t [&_td]:!border-t-slate-300`, **dòng cuối** `[&_td]:!border-b-slate-300` (đóng khung); chèn hàng trống 10px (`<td colSpan><div className="h-2.5"/></td>`) giữa các cụm. Dòng lẻ giữ nguyên.
+- **Số semantic chỉ tô khi cảnh báo** (vd Thùng KH **đỏ** khi thực nhập < kế hoạch); còn lại kế thừa màu row.
 **Typography:** Page title `text-xl font-semibold` · Section `text-base font-medium` · Body `text-sm` · Label `text-xs text-slate-500`
 ---
 ## UI Style — Manhattan Active WMS (chuẩn mới, bắt buộc mọi list page)
@@ -203,6 +206,22 @@ Toàn app theo phong cách **Manhattan Active WMS**. Mọi list page mới/đư�
 **Pane phải + Live Tiles (`InboundPane` mẫu):** desktop (lg+) **click 1 dòng = chọn** → hiện pane phải (ảnh/mã/vị trí + ô số liệu `bg-sky-600/700` bấm được) ; **double-click = mở detail**. Mobile (không pane) click = mở detail. Dùng `useIsDesktop()` để phân nhánh.
 
 **Dải tile tổng hợp (`SummaryBand` — `@/components/shared/SummaryBand`):** chữ ký Manhattan SCALE Insight — dải xanh `bg-sky-800` full-width ngay TRÊN bảng, mỗi tile = nhãn nhỏ in hoa + số lớn (vd `Phiếu nhập | Pallet | Thực nhập | Hoàn thành`). Đặt giữa header và vùng bảng; **list và detail dùng chung** để đồng bộ. Số liệu tổng chuyển hết vào đây thay cho dòng text.
+
+### ✅ Checklist chuyển 1 module sang Manhattan (mẫu tham chiếu: `Inbound.tsx` + `InboundDetail.tsx`)
+**List page:**
+1. Root card: `flex flex-col h-full sm:p-3` → bọc `flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:shadow-sm`.
+2. Toolbar: `SearchInput` + `<FilterSheetButton sm:hidden>` + `<SavedViews module="<key>">` + nút density + primary action. Hàng 2: `<FilterBar defs>` bọc `hidden sm:flex`.
+3. Filter: chuyển hết sang `FilterBar` `defs` (ngày = `daterange`). Bỏ `MultiSelectFilter`/Select rời.
+4. `<SummaryBand>` giữa header và bảng.
+5. Bảng: `table-fixed` + `useColumnResize` + colgroup + kẻ cột + sticky cột đầu. Row màu chữ qua `rowText(<module>Key(r))` (export `<module>Key`). Footer đếm bản ghi.
+6. (Tùy chọn) Pane phải + Live Tiles nếu có ảnh/thao tác nhanh.
+7. Filter state → `useWmsFilterStore`; density `localStorage['<module>_density']`; cột `'<module>_col_widths'`.
+
+**Detail (mọi cấp):** đóng khung card như list; header **kế thừa màu** `statusText(<module>Key(r))`; mỗi bảng = section-band; `<SummaryBand>` tổng.
+
+**Sau mỗi module:** `tsc --noEmit` + `npm run build` + push. Test realtime 4 case (tạo/sửa/xóa/làm lại).
+
+**Thứ tự rollout còn lại:** Outbound (hoàn thiện nốt) → Inventory → Nhặt lẻ → ScanLog → Deliveries → Đăng ký cổng → Materials → TMS Bookings/Report/Settings → Locations → Stocktake → HR.
 
 **Saved Views (`SavedViews` + `useSavedViewsStore`):** lưu/áp tổ hợp filter đặt tên (localStorage, keyed theo module). Truyền `module`, `currentFilters` (snapshot), `onApply`, `activeId`.
 

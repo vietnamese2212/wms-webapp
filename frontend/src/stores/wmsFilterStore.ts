@@ -5,7 +5,8 @@ const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_
 
 interface OutboundFilters {
   search: string
-  date: string
+  dateFrom: string
+  dateTo: string
   filterTypes: string[]
   filterDvvts: string[]
   filterNpps: string[]
@@ -135,7 +136,7 @@ export const useWmsFilterStore = create<WmsFilterState>()(
   persist(
     (set) => ({
       outbound: {
-        search: '', date: today(),
+        search: '', dateFrom: today(), dateTo: today(),
         filterTypes: [], filterDvvts: [], filterNpps: [],
         warehouseId: '', filterWarehouseTypes: [], filterStatuses: [],
       },
@@ -178,6 +179,6 @@ export const useWmsFilterStore = create<WmsFilterState>()(
       setMaterials:        (f) => set(s => ({ materials:        { ...s.materials,        ...f } })),
       setInboundReport:    (f) => set(s => ({ inboundReport:    { ...s.inboundReport,    ...f } })),
     }),
-    { name: 'wms-filters-v8', storage: createJSONStorage(() => sessionStorage) }
+    { name: 'wms-filters-v9', storage: createJSONStorage(() => sessionStorage) }
   )
 )

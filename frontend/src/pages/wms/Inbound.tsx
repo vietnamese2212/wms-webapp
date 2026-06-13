@@ -24,7 +24,7 @@ import {
   useUpdateInboundOrder, useCancelInboundOrder,
 } from '@/api/hooks'
 import { SearchInput } from '@/components/shared/SearchInput'
-import { FilterBar, type FilterDef } from '@/components/shared/FilterBar'
+import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { Badge } from '@/components/ui/badge'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
@@ -1181,13 +1181,15 @@ export default function Inbound() {
   }, [savedViews, viewSnapshot])
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full sm:p-3">
+     <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
       {/* Header */}
-      <div className="border-b bg-white px-3 py-2 shrink-0 space-y-2">
+      <div className="border-b bg-white px-3 py-2 shrink-0 space-y-2 sm:rounded-t-xl">
         {/* Row 1: Title + Search + Views + Density + Create */}
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-semibold text-slate-700 shrink-0">Nhập kho</span>
           <SearchInput value={f.search} onChange={v => setInbound({ search: v })} placeholder="Tìm mã phiếu, hàng hóa…" className="flex-1 min-w-[140px]" />
+          <FilterSheetButton defs={filterDefs} className="sm:hidden" />
           <SavedViews
             module="inbound"
             currentFilters={viewSnapshot}
@@ -1195,7 +1197,7 @@ export default function Inbound() {
             onApply={(filters) => setInbound(filters as Partial<typeof f>)}
           />
           <button type="button" onClick={toggleDensity}
-            className="h-7 w-7 inline-flex items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0"
+            className="hidden sm:inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0"
             title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
@@ -1206,11 +1208,11 @@ export default function Inbound() {
           )}
         </div>
 
-        {/* Row 2: Filter chip bar (desktop) / nút Lọc (mobile) */}
-        <div className="flex items-center gap-1.5 flex-wrap">
+        {/* Row 2: Filter chip bar (desktop) — mobile dùng nút Lọc ở hàng trên */}
+        <div className="hidden sm:flex items-center gap-1.5 flex-wrap">
           <FilterBar defs={filterDefs} />
           {!isToday && (
-            <button className="hidden sm:inline-flex h-7 px-2 text-[11px] text-blue-600 hover:text-blue-800 hover:underline whitespace-nowrap"
+            <button className="inline-flex h-7 px-2 text-[11px] text-blue-600 hover:text-blue-800 hover:underline whitespace-nowrap"
               onClick={() => setInbound({ dateFrom: TODAY, dateTo: TODAY })}>
               Hôm nay
             </button>
@@ -1353,6 +1355,7 @@ export default function Inbound() {
           </>
         )}
       </div>
+     </div>
 
       <CreateOrderDialog open={showNew || !!editNccGroup} onClose={() => { setShowNew(false); setEditNccGroup(null) }} editGroup={editNccGroup} />
 

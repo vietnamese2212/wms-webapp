@@ -138,7 +138,7 @@ async function fetchGDOFull(id: string) {
 
 export async function listGDOs(req: Request, res: Response) {
   try {
-    const { warehouse_id, status, date, search, transfer_status } = req.query as Record<string, string>
+    const { warehouse_id, status, date, date_from, date_to, search, transfer_status } = req.query as Record<string, string>
     const scopeWarehouseIds = req.user?.warehouse_scope !== 'NATIONAL'
       ? (req.user?.warehouse_ids ?? [])
       : []
@@ -161,6 +161,8 @@ export async function listGDOs(req: Request, res: Response) {
     if (status)          q = q.eq('status', status)
     if (transfer_status) q = q.eq('transfer_status', transfer_status)
     if (date)            q = q.eq('delivery_date', date)
+    if (date_from)       q = q.gte('delivery_date', date_from)
+    if (date_to)         q = q.lte('delivery_date', date_to)
     if (search)          q = q.ilike('group_code', `%${search}%`)
     const { data, error } = await q
     if (error) return fail(res, error.message)

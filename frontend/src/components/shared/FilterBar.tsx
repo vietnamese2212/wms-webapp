@@ -87,14 +87,8 @@ export function FilterBar({ defs, className }: { defs: FilterDef[]; className?: 
   const visibleDefs  = defs.filter(d => isActive(d) || d.key === openKey)
   const inactiveDefs = defs.filter(d => !isActive(d))
 
+  // Desktop/tablet: chip bar inline. Mobile dùng <FilterSheetButton/> riêng (đặt cùng hàng action).
   return (
-    <>
-    {/* Mobile: gom thành 1 nút "Lọc (n)" mở sheet — không trải chip ngang chiếm chỗ */}
-    <div className="sm:hidden w-full">
-      <MobileFilterSheet defs={defs} activeCount={activeDefs.length} onClearAll={() => activeDefs.forEach(clearDef)} />
-    </div>
-
-    {/* Desktop/tablet: chip bar inline */}
     <div ref={barRef} className={`hidden sm:flex items-center gap-1.5 flex-wrap ${className ?? ''}`}>
       {/* "+ Thêm lọc" */}
       <div className="relative">
@@ -143,13 +137,18 @@ export function FilterBar({ defs, className }: { defs: FilterDef[]; className?: 
         </button>
       )}
     </div>
-    </>
   )
 }
 
-// ─── Mobile: sheet chứa toàn bộ filter dạng accordion ───
-function MobileFilterSheet({ defs, activeCount, onClearAll }: {
-  defs: FilterDef[]; activeCount: number; onClearAll: () => void
+// ─── Mobile: nút "Lọc (n)" đặt cùng hàng action, mở sheet accordion ───
+export function FilterSheetButton({ defs, className }: { defs: FilterDef[]; className?: string }) {
+  const activeDefs = defs.filter(isActive)
+  return <MobileFilterSheet defs={defs} activeCount={activeDefs.length}
+    onClearAll={() => activeDefs.forEach(clearDef)} className={className} />
+}
+
+function MobileFilterSheet({ defs, activeCount, onClearAll, className }: {
+  defs: FilterDef[]; activeCount: number; onClearAll: () => void; className?: string
 }) {
   const [open, setOpen]         = useState(false)
   const [expanded, setExpanded] = useState<string | null>(null)
@@ -157,9 +156,9 @@ function MobileFilterSheet({ defs, activeCount, onClearAll }: {
   return (
     <>
       <button type="button" onClick={() => setOpen(true)}
-        className={`h-8 w-full inline-flex items-center justify-center gap-1.5 rounded-md border text-xs font-medium transition-colors ${
+        className={`h-7 px-2 inline-flex items-center justify-center gap-1 rounded-md border text-xs font-medium transition-colors ${
           activeCount > 0 ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600 bg-white'
-        }`}>
+        } ${className ?? ''}`}>
         <SlidersHorizontal className="h-3.5 w-3.5" />
         Lọc
         {activeCount > 0 && (

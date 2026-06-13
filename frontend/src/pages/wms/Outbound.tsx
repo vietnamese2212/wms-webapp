@@ -4,7 +4,7 @@ import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
 import { Upload, Truck, CheckCircle2, AlertTriangle, X, Bookmark, Info, Plus, Trash2, PenSquare, Rows3, AlignJustify } from 'lucide-react'
 import { SearchInput } from '@/components/shared/SearchInput'
-import { FilterBar, type FilterDef } from '@/components/shared/FilterBar'
+import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import type { AxiosError } from 'axios'
@@ -91,7 +91,8 @@ export default function Outbound() {
   const { data: gdos = [], isLoading, isFetching } = useGDOs({
     warehouse_id: f.warehouseId || undefined,
     search: f.search || undefined,
-    date:   f.date   || undefined,
+    date_from: f.dateFrom || undefined,
+    date_to:   f.dateTo   || undefined,
   })
   const { mutate: uploadExcel, isPending: uploading } = useUploadGDOExcel()
   const { mutate: assignGDO } = useAssignGDO()
@@ -203,9 +204,18 @@ export default function Outbound() {
     e.target.value = ''
   }
 
-  const dateLabel = f.date
-    ? format(parseISO(f.date), 'EEEE, dd-MM-yyyy', { locale: vi })
-    : 'Tất cả ngày'
+  const hasDate = f.dateFrom || f.dateTo
+  const isToday = f.dateFrom === TODAY && f.dateTo === TODAY
+  let dateLabel = 'Tất cả ngày'
+  if (f.dateFrom && f.dateTo) {
+    dateLabel = f.dateFrom === f.dateTo
+      ? format(parseISO(f.dateFrom), 'EEEE, dd-MM-yyyy', { locale: vi })
+      : `${format(parseISO(f.dateFrom), 'dd-MM-yyyy')} – ${format(parseISO(f.dateTo), 'dd-MM-yyyy')}`
+  } else if (f.dateFrom) {
+    dateLabel = `Từ ${format(parseISO(f.dateFrom), 'dd-MM-yyyy')}`
+  } else if (f.dateTo) {
+    dateLabel = `Đến ${format(parseISO(f.dateTo), 'dd-MM-yyyy')}`
+  }
 
   // ─── Filter chip bar (Manhattan) ───
   const warehouseOptions = (warehouses as any[])
@@ -213,7 +223,8 @@ export default function Outbound() {
     .map((w: any) => ({ value: w.id, label: w.name }))
 
   const filterDefs: FilterDef[] = [
-    { key: 'date',     label: 'Ngày xuất', type: 'date',   value: f.date, onChange: v => setOutbound({ date: v }) },
+    { key: 'date',     label: 'Ngày xuất', type: 'daterange', from: f.dateFrom, to: f.dateTo,
+      onChange: (from, to) => setOutbound({ dateFrom: from, dateTo: to }) },
     { key: 'warehouse', label: 'Kho xuất', type: 'single', options: warehouseOptions, value: f.warehouseId || '', allLabel: 'Tất cả kho',
       onChange: v => setOutbound({ warehouseId: v }) },
     { key: 'whType',   label: 'Loại kho',  type: 'multi',  options: warehouseTypeOpts.map(t => ({ value: t, label: t })), selected: filterWarehouseTypes,
@@ -229,7 +240,7 @@ export default function Outbound() {
   ]
 
   const viewSnapshot = {
-    search: f.search, date: f.date, warehouseId: f.warehouseId,
+    search: f.search, dateFrom: f.dateFrom, dateTo: f.dateTo, warehouseId: f.warehouseId,
     filterWarehouseTypes, filterTypes, filterDvvts, filterNpps, filterStatuses,
   }
   const savedViews = useSavedViewsStore(s => s.views['outbound'] ?? [])
@@ -239,13 +250,15 @@ export default function Outbound() {
   }, [savedViews, viewSnapshot])
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full sm:p-3">
+     <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
       {/* Header */}
-      <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5">
+      <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5 sm:rounded-t-xl">
         {/* Row 1: Title + Search + Views + Density + Actions */}
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-semibold text-slate-700 shrink-0">Xuất kho</span>
           <SearchInput value={f.search} onChange={v => setOutbound({ search: v })} placeholder="Tìm số xe…" className="flex-1 min-w-[140px]" />
+          <FilterSheetButton defs={filterDefs} className="sm:hidden" />
           <SavedViews
             module="outbound"
             currentFilters={viewSnapshot}
@@ -253,7 +266,7 @@ export default function Outbound() {
             onApply={(filters) => setOutbound(filters as Partial<typeof f>)}
           />
           <button type="button" onClick={toggleDensity}
-            className="h-7 w-7 inline-flex items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0"
+            className="hidden sm:inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0"
             title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
@@ -292,22 +305,22 @@ export default function Outbound() {
           </div>
         )}
 
-        {/* Row 2: Filter chip bar (desktop) / nút Lọc (mobile) */}
-        <div className="flex items-center gap-1.5 flex-wrap">
+        {/* Row 2: Filter chip bar (desktop) — mobile dùng nút Lọc ở hàng trên */}
+        <div className="hidden sm:flex items-center gap-1.5 flex-wrap">
           <FilterBar defs={filterDefs} />
-          {f.date && f.date !== TODAY && (
-            <button className="hidden sm:inline-flex h-7 px-2 text-[11px] text-blue-600 hover:text-blue-800 hover:underline whitespace-nowrap"
-              onClick={() => setOutbound({ date: TODAY })}>
+          {!isToday && (
+            <button className="inline-flex h-7 px-2 text-[11px] text-blue-600 hover:text-blue-800 hover:underline whitespace-nowrap"
+              onClick={() => setOutbound({ dateFrom: TODAY, dateTo: TODAY })}>
               Hôm nay
             </button>
           )}
         </div>
 
-        <p className="text-xs text-slate-500 -mt-1">
-          {f.date ? (
+        <p className="text-xs text-slate-500">
+          {hasDate ? (
             <>
               <span className="font-medium text-slate-700">{dateLabel}</span>
-              {f.date === TODAY && <span className="ml-1.5 text-blue-600 font-medium">· Hôm nay</span>}
+              {isToday && <span className="ml-1.5 text-blue-600 font-medium">· Hôm nay</span>}
             </>
           ) : (
             <span className="italic">Hiển thị tất cả ngày</span>
@@ -325,8 +338,8 @@ export default function Outbound() {
         ) : sorted.length === 0 ? (
           <div className="flex flex-col items-center gap-2 py-16 text-slate-400">
             <Truck className="h-10 w-10 opacity-30" />
-            <p className="text-sm">{f.search ? 'Không tìm thấy chuyến xe' : f.date ? `Không có chuyến xe ngày ${format(parseISO(f.date), 'dd-MM-yyyy')}` : 'Chưa có chuyến xe nào'}</p>
-            {!f.date && <p className="text-xs">Upload file Excel để bắt đầu</p>}
+            <p className="text-sm">{f.search ? 'Không tìm thấy chuyến xe' : hasDate ? `Không có chuyến xe (${dateLabel})` : 'Chưa có chuyến xe nào'}</p>
+            {!hasDate && <p className="text-xs">Upload file Excel để bắt đầu</p>}
           </div>
         ) : (
           <Table className="min-w-[1800px]">
@@ -369,6 +382,7 @@ export default function Outbound() {
           </Table>
         )}
       </div>
+     </div>
 
       {/* Modals */}
       {showCreate && (

@@ -75,7 +75,8 @@ function PalletLabel({ d }: { d: LabelData }) {
       <div className="mt-[2mm] flex-1 min-h-0 text-[8.5pt] leading-[1.25] text-black">
         <div className="border-t border-black pt-[1mm]">
           <p><span className="font-semibold">Ngày</span> : {d.dateDisplay}</p>
-          <p><span className="font-semibold">Mã</span> : {d.materialCode}{d.nmsx ? `_${d.nmsx}` : ''}</p>
+          <p><span className="font-semibold">Mã</span> : {d.materialCode}</p>
+          <p><span className="font-semibold">NMSX</span> : {d.nmsx || '—'}</p>
           <p className="truncate"><span className="font-semibold">Loại hàng</span> : {d.category || '—'}</p>
           <p className="line-clamp-2"><span className="font-semibold">Tên</span> : {d.fullName || '—'}</p>
           <p className="truncate"><span className="font-semibold">Tên gói tắt</span> : {d.shortName || '—'}</p>
@@ -85,10 +86,10 @@ function PalletLabel({ d }: { d: LabelData }) {
         </div>
       </div>
 
-      {/* Footer lớn — nhận diện nhanh từ xa: NMSX · Chu kỳ · Seq */}
+      {/* Footer lớn — nhận diện nhanh từ xa: Chu kỳ · Máy · Số thứ tự */}
       <div className="mt-[1mm] flex shrink-0 items-end justify-between border-t-2 border-black px-[2mm] pt-[1mm] font-bold leading-none">
-        <span className="text-[26pt]">{d.nmsx || '—'}</span>
         <span className="text-[26pt]">{d.cycle || '—'}</span>
+        <span className="text-[26pt]">{d.machine || '—'}</span>
         <span className="text-[26pt]">{Number(d.seq) || d.seq}</span>
       </div>
     </div>

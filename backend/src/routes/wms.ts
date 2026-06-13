@@ -6,6 +6,7 @@ import * as inventory from '../controllers/wms/inventoryController'
 import * as lookup from '../controllers/wms/lookupController'
 import * as zone from '../controllers/wms/zoneController'
 import * as inboundPlan from '../controllers/wms/inboundPlanController'
+import * as palletPrint from '../controllers/wms/palletPrintController'
 import { inboundEmitter } from '../lib/events'
 import { requirePerm, requireAnyPerm } from '../middlewares/auth'
 
@@ -37,6 +38,10 @@ router.get('/lookup',        lookup.listLookup)
 router.post('/lookup',       requirePerm('wms_settings', 'manage_global'), lookup.addLookup)
 router.put('/lookup/:id',    requirePerm('wms_settings', 'manage_global'), lookup.updateLookup)
 router.delete('/lookup/:id', requirePerm('wms_settings', 'manage_global'), lookup.deleteLookup)
+
+// In tem pallet — log truy vết (in mấy lần, ai in)
+router.post('/pallet-prints', requirePerm('pallet_print', 'print'), palletPrint.logPrints)
+router.get('/pallet-prints',  requirePerm('pallet_print', 'view'),  palletPrint.listPrints)
 
 // Warehouse zones (khu vực kho)
 router.get('/zones',         zone.listZones)

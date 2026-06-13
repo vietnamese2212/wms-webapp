@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import QRCode from 'qrcode'
-import { QrCode, Printer, Plus, Trash2, Search, AlertTriangle } from 'lucide-react'
+import { QrCode, Printer, Trash2, Search, AlertTriangle, History, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -9,9 +9,11 @@ import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import {
   useWarehouses, useWarehouseTypes, useMaterials, useInventoryEntries,
+  useLogPalletPrints, usePalletPrints,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
+import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import type { Material } from '@/types'
 
 // ─── Label data ───────────────────────────────────────────────
@@ -20,6 +22,7 @@ type LabelData = {
   qr: string            // chuỗi QR — PHẢI khớp parseInboundQR: ddmmyy_Mã_ChuKỳ_Máy_Seq_NMSX
   dateDisplay: string   // dd/MM/yyyy
   materialCode: string
+  materialId?: string
   nmsx: string
   category: string      // Loại hàng (Thành phẩm / POSM / Thùng / Giấy…)
   fullName: string
@@ -144,8 +147,9 @@ export default function PalletLabels() {
   const perms = user?.module_permissions as ModulePermissions | null ?? null
   const canPrint = can(perms, 'pallet_print', 'print')
   const printRef = useRef<HTMLDivElement>(null)
+  const logPrints = useLogPalletPrints()
 
-  const [tab, setTab] = useState<'generate' | 'reprint'>('generate')
+  const [tab, setTab] = useState<'generate' | 'reprint' | 'audit'>('generate')
 
   const { data: warehouses = [] } = useWarehouses(true)
   const { data: whTypes = [] } = useWarehouseTypes()
@@ -185,6 +189,7 @@ export default function PalletLabels() {
         qr: buildQR({ ddmmyy, code: mat.material_code, cycle, machine, seq, nmsx }),
         dateDisplay: toDisplayDate(prodDate),
         materialCode: mat.material_code,
+        materialId: mat.id,
         nmsx: clean(nmsx),
         category: mat.category ?? '',
         fullName: mat.material_description ?? '',
@@ -217,6 +222,7 @@ export default function PalletLabels() {
       qr: e.pallet_code,
       dateDisplay: disp,
       materialCode: e.material?.material_code ?? '',
+      materialId: e.material?.id,
       nmsx: e.manufacturer?.code ?? '',
       category: e.material?.category ?? '',
       fullName: e.material?.material_description ?? e.material?.short_name ?? '',
@@ -227,16 +233,30 @@ export default function PalletLabels() {
       seq: (e.pallet_code?.split('_')?.[4]) ?? '',
     }
   }
-  function togglePick(e: any) {
-    setPicked(prev => {
-      const next = { ...prev }
-      if (next[e.id]) delete next[e.id]
-      else next[e.id] = entryToLabel(e)
-      return next
-    })
+  function addEntry(e: any) {
+    setPicked(prev => prev[e.id] ? prev : { ...prev, [e.id]: entryToLabel(e) })
+  }
+  function removeEntry(id: string) {
+    setPicked(prev => { const n = { ...prev }; delete n[id]; return n })
+  }
+  // Quét/nhập đủ mã pallet → Enter để thêm nhanh
+  function onReprintEnter(ev: React.KeyboardEvent) {
+    if (ev.key !== 'Enter') return
+    const code = rpSearch.trim()
+    const hit = (invEntries as any[]).find(e => e.pallet_code === code) ?? (invEntries.length === 1 ? invEntries[0] : null)
+    if (hit) { addEntry(hit); setRpSearch('') }
   }
 
-  const labels = tab === 'generate' ? genLabels : Object.values(picked)
+  // ── Truy cứu ──
+  const [auditSearch, setAuditSearch] = useState('')
+  const { data: auditRows = [] } = usePalletPrints({ search: auditSearch || undefined }, tab === 'audit')
+  const auditCountByQr = useMemo(() => {
+    const m: Record<string, number> = {}
+    for (const r of auditRows) m[r.qr_code] = (m[r.qr_code] ?? 0) + 1
+    return m
+  }, [auditRows])
+
+  const labels = tab === 'generate' ? genLabels : tab === 'reprint' ? Object.values(picked) : []
 
   // Gom thành các trang A4 (4 tem / trang)
   const sheets: LabelData[][] = useMemo(() => {
@@ -247,7 +267,16 @@ export default function PalletLabels() {
 
   function handlePrint() {
     if (!labels.length) return
-    window.print()
+    // Ghi log truy vết (in mấy lần, ai in) — không chặn việc in nếu log lỗi
+    logPrints.mutate({
+      mode: tab === 'reprint' ? 'REPRINT' : 'GENERATE',
+      labels: labels.map(l => ({
+        qr_code: l.qr, material_code: l.materialCode, material_id: l.materialId ?? null,
+        category: l.category, cycle: l.cycle, machine: l.machine, seq: l.seq, nmsx: l.nmsx,
+        qty: l.qty === '' ? null : l.qty,
+      })),
+    })
+    setTimeout(() => window.print(), 150)
   }
 
   return (
@@ -281,9 +310,11 @@ export default function PalletLabels() {
               className={`px-3 py-1 transition-colors ${tab === 'generate' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>Sinh tem mới</button>
             <button onClick={() => setTab('reprint')}
               className={`px-3 py-1 border-l border-slate-200 transition-colors ${tab === 'reprint' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>In lại từ tồn kho</button>
+            <button onClick={() => setTab('audit')}
+              className={`px-3 py-1 border-l border-slate-200 transition-colors inline-flex items-center gap-1 ${tab === 'audit' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}><History className="h-3 w-3" />Truy cứu</button>
           </div>
           <div className="flex-1" />
-          {canPrint && (
+          {canPrint && tab !== 'audit' && (
             <Button size="sm" className="h-7 text-xs gap-1" disabled={!labels.length} onClick={handlePrint}>
               <Printer className="h-3.5 w-3.5" /> In {labels.length > 0 ? `(${labels.length})` : ''}
             </Button>
@@ -362,7 +393,7 @@ export default function PalletLabels() {
               </div>
               {!mat && <p className="flex items-start gap-1 text-[11px] text-amber-600"><AlertTriangle className="h-3.5 w-3.5 shrink-0" /> Chọn mã hàng để sinh tem.</p>}
             </>
-          ) : (
+          ) : tab === 'reprint' ? (
             <>
               <div className="space-y-1">
                 <Label className="text-xs">Kho</Label>
@@ -370,33 +401,92 @@ export default function PalletLabels() {
               </div>
               <div className="relative">
                 <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
-                <Input className="pl-7 h-8 text-sm" placeholder="Tìm mã pallet / mã hàng…" value={rpSearch} onChange={e => setRpSearch(e.target.value)} />
+                <Input className="pl-7 h-8 text-sm" placeholder="Quét QR / nhập mã pallet / tìm mã hàng…"
+                  value={rpSearch} onChange={e => setRpSearch(e.target.value)} onKeyDown={onReprintEnter} />
               </div>
-              <div className="flex items-center justify-between text-[11px] text-slate-500">
-                <span>{Object.keys(picked).length} đã chọn</span>
-                {Object.keys(picked).length > 0 && (
-                  <button onClick={() => setPicked({})} className="flex items-center gap-0.5 text-red-500 hover:text-red-700"><Trash2 className="h-3 w-3" />Bỏ chọn</button>
-                )}
-              </div>
-              <div className="border rounded-md divide-y divide-slate-100 max-h-[calc(100vh-320px)] overflow-y-auto">
-                {invEntries.length === 0 ? (
-                  <p className="px-2 py-3 text-center text-xs text-slate-400">Không có pallet</p>
-                ) : invEntries.map((e: any) => {
-                  const sel = !!picked[e.id]
-                  return (
-                    <label key={e.id} className={`flex items-center gap-2 px-2 py-1.5 cursor-pointer ${sel ? 'bg-blue-50' : 'hover:bg-slate-50'}`}>
-                      <input type="checkbox" className="h-3.5 w-3.5" checked={sel} onChange={() => togglePick(e)} />
+              <p className="text-[10px] text-slate-400 -mt-1.5">Quét QR rồi Enter để thêm nhanh, hoặc tìm rồi bấm chọn.</p>
+
+              {/* Kết quả tìm — chỉ hiện khi có từ khoá */}
+              {rpSearch.trim().length >= 2 && (
+                <div className="border rounded-md divide-y divide-slate-100 max-h-48 overflow-y-auto">
+                  {invEntries.length === 0 ? (
+                    <p className="px-2 py-3 text-center text-xs text-slate-400">Không tìm thấy pallet</p>
+                  ) : (invEntries as any[]).slice(0, 30).map(e => (
+                    <button key={e.id} type="button" onClick={() => addEntry(e)}
+                      className={`flex w-full items-center gap-2 px-2 py-1.5 text-left ${picked[e.id] ? 'bg-blue-50' : 'hover:bg-slate-50'}`}>
                       <span className="font-mono text-[10px] font-semibold truncate flex-1">{e.pallet_code}</span>
                       <span className="text-[9px] text-slate-400 shrink-0">{e.material?.material_code}</span>
-                    </label>
-                  )
-                })}
+                      {picked[e.id] && <span className="text-[9px] text-blue-600 shrink-0">đã thêm</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Lô đã chọn */}
+              <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1 border-t">
+                <span className="font-medium text-slate-700">Đã chọn: {Object.keys(picked).length}</span>
+                {Object.keys(picked).length > 0 && (
+                  <button onClick={() => setPicked({})} className="flex items-center gap-0.5 text-red-500 hover:text-red-700"><Trash2 className="h-3 w-3" />Bỏ hết</button>
+                )}
+              </div>
+              <div className="space-y-1 max-h-64 overflow-y-auto">
+                {Object.values(picked).map(l => (
+                  <div key={l.key} className="flex items-center gap-2 rounded border border-slate-200 px-2 py-1">
+                    <span className="font-mono text-[10px] font-semibold truncate flex-1">{l.qr}</span>
+                    <button onClick={() => removeEntry(l.key)} className="text-slate-400 hover:text-red-500 shrink-0"><X className="h-3 w-3" /></button>
+                  </div>
+                ))}
+                {Object.keys(picked).length === 0 && <p className="text-[11px] text-slate-400">Chưa chọn pallet nào.</p>}
               </div>
             </>
+          ) : (
+            /* Truy cứu */
+            <div className="relative">
+              <Label className="text-xs">Tra mã pallet / QR</Label>
+              <div className="relative mt-1">
+                <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
+                <Input className="pl-7 h-8 text-sm" placeholder="Nhập mã pallet…" value={auditSearch} onChange={e => setAuditSearch(e.target.value)} />
+              </div>
+              <p className="mt-2 text-[10px] text-slate-400">Xem tem in mấy lần, ai in, khi nào. Để trống = 300 lần in gần nhất.</p>
+            </div>
           )}
         </div>
 
-        {/* Preview + vùng in */}
+        {/* Vùng phải: preview in (generate/reprint) HOẶC bảng truy cứu */}
+        {tab === 'audit' ? (
+          <div className="flex-1 min-h-0 overflow-auto p-3">
+            <table className="min-w-full text-[11px]">
+              <thead className="bg-slate-50 sticky top-0">
+                <tr className="text-left text-[9px] font-medium text-slate-500">
+                  <th className="px-2 py-1.5">Mã pallet (QR)</th>
+                  <th className="px-2 py-1.5">Mã hàng</th>
+                  <th className="px-2 py-1.5 text-right">Đã in</th>
+                  <th className="px-2 py-1.5">Kiểu</th>
+                  <th className="px-2 py-1.5">Người in</th>
+                  <th className="px-2 py-1.5">Thời gian</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {auditRows.length === 0 ? (
+                  <tr><td colSpan={6} className="px-2 py-8 text-center text-slate-400">Chưa có dữ liệu in</td></tr>
+                ) : auditRows.map(r => (
+                  <tr key={r.id} className="hover:bg-slate-50">
+                    <td className="px-2 py-1 font-mono font-semibold">{r.qr_code}</td>
+                    <td className="px-2 py-1">{r.material_code ?? '—'}</td>
+                    <td className="px-2 py-1 text-right tabular-nums font-semibold">{auditCountByQr[r.qr_code]}</td>
+                    <td className="px-2 py-1">
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${r.mode === 'REPRINT' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>
+                        {r.mode === 'REPRINT' ? 'In lại' : 'Sinh mới'}
+                      </span>
+                    </td>
+                    <td className="px-2 py-1">{r.printed_by_name ?? '—'}</td>
+                    <td className="px-2 py-1 tabular-nums whitespace-nowrap">{formatTimestampDate(r.created_at, true)} {formatTimestampTime(r.created_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
         <div className="flex-1 min-h-0 overflow-auto bg-slate-100 p-4">
           {labels.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-slate-400">
@@ -413,6 +503,7 @@ export default function PalletLabels() {
             </div>
           )}
         </div>
+        )}
       </div>
      </div>
     </div>

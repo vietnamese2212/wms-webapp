@@ -36,6 +36,31 @@ export function useLocationsReal(params?: { warehouse_id?: string; sub_code?: st
   })
 }
 
+// ─── Pallet label prints (truy vết in tem) ───────────────────
+export type PalletPrintRow = {
+  id: string; qr_code: string; material_code: string | null; category: string | null
+  cycle: string | null; machine: string | null; seq: string | null; nmsx: string | null
+  qty: number | null; mode: string; printed_by_name: string | null; created_at: string
+}
+export function useLogPalletPrints() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { mode: 'GENERATE' | 'REPRINT'; labels: Record<string, unknown>[] }) =>
+      apiClient.post('/wms/pallet-prints', body).then(r => r.data.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['pallet-prints'] }),
+  })
+}
+export function usePalletPrints(params: { qr_code?: string; search?: string; date_from?: string; date_to?: string }, enabled = true) {
+  return useQuery({
+    queryKey: ['pallet-prints', params],
+    enabled,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/pallet-prints', { params })
+      return data.data as PalletPrintRow[]
+    },
+  })
+}
+
 export function useManufacturers() {
   return useQuery({
     queryKey: ['manufacturers'],

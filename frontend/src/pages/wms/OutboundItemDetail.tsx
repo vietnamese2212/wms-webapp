@@ -140,7 +140,7 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
     checkResult.production_date > checkResult.best_available_date)
 
   return createPortal(
-    <div className="fixed inset-0 z-[60] flex flex-col">
+    <div className="fixed inset-0 z-[60] flex flex-col pointer-events-auto">
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
       <div className="relative mt-auto bg-white rounded-t-2xl max-h-[90dvh] overflow-y-auto">
         <div className="p-4 space-y-3">

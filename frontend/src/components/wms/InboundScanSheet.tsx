@@ -181,7 +181,7 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
   const canSave = !!pendingQR && serverCheckOk && !saving && !serverChecking
 
   return createPortal(
-    <div className="fixed inset-0 z-[60] flex flex-col">
+    <div className="fixed inset-0 z-[60] flex flex-col pointer-events-auto">
       {/* Backdrop */}
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
 
@@ -381,7 +381,7 @@ export function InboundScanSheetById({ importId, employeeId, onClose }: { import
 
   if (!order) {
     return createPortal(
-      <div className="fixed inset-0 z-[60] flex items-center justify-center">
+      <div className="fixed inset-0 z-[60] flex items-center justify-center pointer-events-auto">
         <div className="absolute inset-0 bg-black/60" onClick={onClose} />
         <div className="relative bg-white rounded-xl px-6 py-4 text-sm text-slate-600">
           {isLoading ? 'Đang tải phiếu…' : 'Không tìm thấy phiếu nhập'}

@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import QrScanner from 'qr-scanner'
-import { Minus, Plus, X } from 'lucide-react'
+import { Minus, Plus } from 'lucide-react'
 
 interface QRScannerProps {
   onScan: (value: string) => void
@@ -28,7 +28,7 @@ function loadZoom(): number {
 }
 
 export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
-  function QRScanner({ onScan, onClose }, ref) {
+  function QRScanner({ onScan }, ref) {
     const videoRef     = useRef<HTMLVideoElement>(null)
     const containerRef = useRef<HTMLDivElement>(null)
     const rafRef       = useRef<number | null>(null)
@@ -244,13 +244,6 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
               {zoom.toFixed(1)}×
             </div>
           )}
-
-          <button
-            onClick={onClose}
-            className="absolute top-2 right-2 bg-black/40 text-white rounded-full p-1 hover:bg-black/60 transition-colors"
-          >
-            <X className="h-4 w-4" />
-          </button>
 
           <div className="absolute bottom-2 right-2 flex flex-col gap-1">
             <button

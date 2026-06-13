@@ -7,6 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { TableSkeleton } from '@/components/shared/TableSkeleton'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
+import { SummaryBand } from '@/components/shared/SummaryBand'
 import { QRScanner } from '@/components/shared/QRScanner'
 import type { QRScannerHandle } from '@/components/shared/QRScanner'
 import {
@@ -221,15 +222,16 @@ export default function OutboundScanLog() {
     : `${applied.from_date ? formatDate(applied.from_date) : '?'} – ${applied.to_date ? formatDate(applied.to_date) : '?'}`
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full sm:p-3">
+     <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
       {/* Header */}
-      <div className="border-b bg-white px-3 py-2 shrink-0 space-y-2">
+      <div className="border-b bg-white px-3 py-2 shrink-0 space-y-2 sm:rounded-t-xl">
         {/* Title row */}
         <div className="flex items-center gap-2">
-          <h1 className="text-xl font-semibold flex items-center gap-2 shrink-0">
-            <ClipboardList className="h-5 w-5 text-slate-500" />
+          <span className="text-sm font-semibold text-slate-700 flex items-center gap-1.5 shrink-0">
+            <ClipboardList className="h-4 w-4 text-slate-500" />
             Lịch sử quét xuất kho
-          </h1>
+          </span>
           <div className="flex-1" />
           <button
             className={`flex items-center gap-1 h-8 px-2.5 rounded-md border text-xs font-medium transition-colors shrink-0 ${
@@ -396,9 +398,6 @@ export default function OutboundScanLog() {
               : <>
                   <span className="font-medium text-slate-700">{applied.material_category}</span>
                   {dateLabel && <span className="ml-2 text-slate-500">· {dateLabel}</span>}
-                  {!isLoading && (
-                    <span className="ml-2 text-slate-400">· {total.toLocaleString()} bản ghi</span>
-                  )}
                 </>
             }
           </p>
@@ -421,6 +420,14 @@ export default function OutboundScanLog() {
           )}
         </div>
       </div>
+
+      {/* Summary band (Manhattan) */}
+      <SummaryBand tiles={[
+        { label: 'Bản ghi', value: canFetch && !isLoading ? total.toLocaleString('vi-VN') : '—' },
+        { label: 'Loại hàng', value: applied.material_category || '—' },
+        { label: 'Bộ lọc', value: activeCount, accent: activeCount > 0 },
+        { label: 'Trang', value: `${page}/${totalPages}` },
+      ]} />
 
       {/* QR Scanner Dialog */}
       <Dialog open={showScanner} onOpenChange={open => { if (!open) setShowScanner(false) }}>
@@ -569,6 +576,14 @@ export default function OutboundScanLog() {
           </Table>
         )}
       </div>
+
+      {/* Footer đếm bản ghi */}
+      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 sm:rounded-b-xl">
+        {canFetch && !isLoading && !isBlocked
+          ? `${total > 0 ? (page - 1) * PAGE_SIZE + 1 : 0}–${Math.min(page * PAGE_SIZE, total)} / ${total.toLocaleString('vi-VN')} bản ghi`
+          : 'Chọn Kho và Loại hàng rồi Áp dụng'}
+      </div>
+     </div>
     </div>
   )
 }

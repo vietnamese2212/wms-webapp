@@ -1399,7 +1399,7 @@ export default function Inbound() {
         ) : (
           <>
             {/* Orders table — cột kéo giãn được (colgroup + table-fixed), scroll ngang ở đáy */}
-            <Table className="table-fixed [&_td]:overflow-hidden [&_th]:overflow-hidden [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100" style={{ width: totalWidth }}>
+            <Table className="table-fixed [&_td]:overflow-hidden [&_th]:overflow-hidden [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100" style={{ width: totalWidth, minWidth: '100%' }}>
                 <colgroup>
                   {colW.map((w, i) => <col key={i} style={{ width: w }} />)}
                 </colgroup>

@@ -34,17 +34,17 @@ function Breadcrumb() {
 
   return (
     <nav className="flex items-center gap-1.5 text-sm">
-      <Link to="/" className="text-muted-foreground hover:text-foreground transition-colors">
+      <Link to="/" className="text-slate-400 hover:text-white transition-colors">
         WMS
       </Link>
       {crumb.parent && (
         <>
-          <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/50" />
-          <span className="text-muted-foreground">{crumb.parent}</span>
+          <ChevronRight className="h-3.5 w-3.5 text-slate-600" />
+          <span className="text-slate-400">{crumb.parent}</span>
         </>
       )}
-      <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/50" />
-      <span className="font-medium text-foreground">{crumb.label}</span>
+      <ChevronRight className="h-3.5 w-3.5 text-slate-600" />
+      <span className="font-medium text-white">{crumb.label}</span>
     </nav>
   )
 }
@@ -61,11 +61,11 @@ export function Header() {
     .toUpperCase() ?? 'U'
 
   return (
-    <header className="sticky top-0 z-40 flex h-16 items-center border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-4 gap-4">
+    <header className="sticky top-0 z-40 flex h-16 items-center border-b border-white/10 bg-slate-900 text-slate-200 px-4 gap-4">
       {/* Mobile menu */}
       <Sheet>
         <SheetTrigger asChild>
-          <Button variant="ghost" size="icon" className="lg:hidden">
+          <Button variant="ghost" size="icon" className="lg:hidden text-slate-300 hover:bg-white/10 hover:text-white">
             <Menu className="h-5 w-5" />
           </Button>
         </SheetTrigger>
@@ -79,10 +79,10 @@ export function Header() {
 
       {/* Logo (mobile only) */}
       <Link to="/" className="flex items-center gap-2 lg:hidden">
-        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-sky-500 text-white">
           <span className="text-xs font-bold">W</span>
         </div>
-        <span className="font-bold text-sm">WMS Pro</span>
+        <span className="font-bold text-sm text-white">WMS Pro</span>
       </Link>
 
       {/* Breadcrumb (desktop) */}
@@ -92,7 +92,7 @@ export function Header() {
 
       <div className="flex flex-1 lg:flex-none justify-end items-center gap-2">
         {/* Notifications */}
-        <Button variant="ghost" size="icon" className="relative">
+        <Button variant="ghost" size="icon" className="relative text-slate-300 hover:bg-white/10 hover:text-white">
           <Bell className="h-5 w-5" />
           <Badge
             variant="danger"
@@ -103,20 +103,20 @@ export function Header() {
         </Button>
 
         {/* Theme toggle */}
-        <Button variant="ghost" size="icon" onClick={toggleTheme}>
+        <Button variant="ghost" size="icon" onClick={toggleTheme} className="text-slate-300 hover:bg-white/10 hover:text-white">
           {theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
         </Button>
 
         {/* User menu */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" className="flex items-center gap-2 px-2 h-9">
+            <Button variant="ghost" className="flex items-center gap-2 px-2 h-9 text-slate-200 hover:bg-white/10 hover:text-white">
               <Avatar className="h-7 w-7 text-xs">
-                <AvatarFallback>{initials}</AvatarFallback>
+                <AvatarFallback className="bg-slate-700 text-slate-100">{initials}</AvatarFallback>
               </Avatar>
               <div className="hidden sm:flex flex-col items-start">
                 <span className="text-xs font-medium leading-none">{user?.name}</span>
-                <span className="text-[10px] text-muted-foreground leading-none mt-0.5">
+                <span className="text-[10px] text-slate-400 leading-none mt-0.5">
                   {user?.job_title_name ?? ''}
                 </span>
               </div>

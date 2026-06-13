@@ -1370,6 +1370,14 @@ export default function Inbound() {
           </>
         )}
       </div>
+
+      {/* Footer đếm bản ghi (Manhattan) */}
+      {!isLoading && filteredOrders.length > 0 && (
+        <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 flex items-center justify-between">
+          <span>1–{filteredOrders.length} / {filteredOrders.length} phiếu</span>
+          <span className="text-slate-400">{totalPallets} pallet · {totalCartons.toLocaleString()} thùng</span>
+        </div>
+      )}
      </div>
 
       <CreateOrderDialog open={showNew || !!editNccGroup} onClose={() => { setShowNew(false); setEditNccGroup(null) }} editGroup={editNccGroup} />

@@ -1,15 +1,25 @@
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { Navigation, MapPin, Package, User } from 'lucide-react'
 import { SearchInput } from '@/components/shared/SearchInput'
+import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
+import { SummaryBand } from '@/components/shared/SummaryBand'
 import { DeliveryStatusBadge } from '@/components/shared/StatusBadge'
 import { TableSkeleton } from '@/components/shared/TableSkeleton'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { Button } from '@/components/ui/button'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useDeliveries } from '@/api/hooks'
 import { formatDateTime, formatWeight, deliveryStatusLabel } from '@/utils/formatters'
+import { rowText, type RowStatusKey } from '@/lib/rowStatus'
 import type { DeliveryStatus } from '@/types'
+
+function deliveryKey(status: DeliveryStatus): RowStatusKey {
+  if (status === 'DELIVERED')  return 'completed'
+  if (status === 'IN_TRANSIT') return 'inProgress'
+  if (status === 'ASSIGNED')   return 'assigned'
+  if (status === 'FAILED')     return 'paused'
+  return 'pending'
+}
 
 export default function Deliveries() {
   const { data: deliveries, isLoading } = useDeliveries()
@@ -17,7 +27,6 @@ export default function Deliveries() {
   const search       = df.search
   const statusFilter = (df.statusFilter || 'ALL') as DeliveryStatus | 'ALL'
   const setSearch       = (v: string) => setDeliveries({ search: v })
-  const setStatusFilter = (v: DeliveryStatus | 'ALL') => setDeliveries({ statusFilter: v })
 
   const filtered = deliveries?.filter((d) => {
     const matchSearch =
@@ -30,47 +39,40 @@ export default function Deliveries() {
 
   const counts = {
     pending:   deliveries?.filter((d) => d.status === 'PENDING').length ?? 0,
-    assigned:  deliveries?.filter((d) => d.status === 'ASSIGNED').length ?? 0,
     inTransit: deliveries?.filter((d) => d.status === 'IN_TRANSIT').length ?? 0,
     delivered: deliveries?.filter((d) => d.status === 'DELIVERED').length ?? 0,
-    failed:    deliveries?.filter((d) => d.status === 'FAILED').length ?? 0,
   }
 
+  // ─── Filter chip bar (Manhattan) ───
+  const filterDefs: FilterDef[] = [
+    { key: 'status', label: 'Trạng thái', type: 'single',
+      options: (['PENDING', 'ASSIGNED', 'IN_TRANSIT', 'DELIVERED', 'FAILED'] as DeliveryStatus[]).map(s => ({ value: s, label: deliveryStatusLabel[s] })),
+      value: statusFilter === 'ALL' ? '' : statusFilter, allLabel: 'Tất cả',
+      onChange: v => setDeliveries({ statusFilter: (v || 'ALL') }) },
+  ]
+
   return (
-    <div className="flex flex-col h-full">
-      <div className="border-b bg-white px-3 py-2 shrink-0">
+    <div className="flex flex-col h-full sm:p-3">
+     <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
+      {/* Toolbar */}
+      <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5 sm:rounded-t-xl">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-semibold text-slate-700 shrink-0">Giao hàng</span>
-          <SearchInput value={search} onChange={setSearch} placeholder="Tìm mã đơn, khách hàng..." className="flex-1 max-w-sm" />
-          <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as DeliveryStatus | 'ALL')}>
-            <SelectTrigger className="h-7 text-xs w-36">
-              <SelectValue placeholder="Trạng thái" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="ALL">Tất cả</SelectItem>
-              {(['PENDING', 'ASSIGNED', 'IN_TRANSIT', 'DELIVERED', 'FAILED'] as DeliveryStatus[]).map((s) => (
-                <SelectItem key={s} value={s}>{deliveryStatusLabel[s]}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <SearchInput value={search} onChange={setSearch} placeholder="Tìm mã đơn, khách hàng..." className="flex-1 min-w-[140px]" />
+          <FilterSheetButton defs={filterDefs} className="sm:hidden" />
         </div>
-        <div className="flex gap-3 mt-1.5">
-          {Object.entries(counts).map(([key, count]) => {
-            const labels: Record<string, { label: string; cls: string }> = {
-              pending:   { label: 'Chờ giao',     cls: 'bg-amber-100 text-amber-700'   },
-              assigned:  { label: 'Đã phân công', cls: 'bg-blue-100 text-blue-700'     },
-              inTransit: { label: 'Đang giao',    cls: 'bg-purple-100 text-purple-700' },
-              delivered: { label: 'Hoàn thành',   cls: 'bg-green-100 text-green-700'   },
-              failed:    { label: 'Thất bại',     cls: 'bg-red-100 text-red-600'       },
-            }
-            return (
-              <span key={key} className={`text-[10px] px-1.5 py-0.5 rounded-full ${labels[key]?.cls}`}>
-                {labels[key]?.label}: {count}
-              </span>
-            )
-          })}
+        <div className="hidden sm:flex items-center gap-1.5 flex-wrap">
+          <FilterBar defs={filterDefs} />
         </div>
       </div>
+
+      {/* Summary band (Manhattan) */}
+      <SummaryBand tiles={[
+        { label: 'Tổng đơn', value: filtered.length },
+        { label: 'Chờ giao', value: counts.pending },
+        { label: 'Đang giao', value: counts.inTransit },
+        { label: 'Hoàn thành', value: counts.delivered, accent: counts.delivered > 0 },
+      ]} />
 
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
         {isLoading ? (
@@ -93,7 +95,7 @@ export default function Deliveries() {
             </TableHeader>
             <TableBody>
               {filtered.map((order) => (
-                <TableRow key={order.id} className="cursor-pointer hover:bg-slate-50">
+                <TableRow key={order.id} className={`cursor-pointer ${rowText(deliveryKey(order.status))}`}>
                   <TableCell className="px-2 py-1 font-mono font-semibold text-[10px]">{order.orderNo}</TableCell>
                   <TableCell className="px-2 py-1">
                     <p className="text-[10px] font-medium truncate max-w-[160px]">{order.customer}</p>
@@ -125,6 +127,12 @@ export default function Deliveries() {
           </div>
         )}
       </div>
+
+      {/* Footer đếm bản ghi */}
+      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 sm:rounded-b-xl">
+        {filtered.length > 0 ? `1–${filtered.length} / ${filtered.length} lệnh giao` : '0 lệnh giao'}
+      </div>
+     </div>
     </div>
   )
 }

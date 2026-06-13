@@ -1399,7 +1399,7 @@ export default function Inbound() {
         ) : (
           <>
             {/* Orders table — cột kéo giãn được (colgroup + table-fixed), scroll ngang ở đáy */}
-            <Table className="table-fixed [&_td]:overflow-hidden [&_th]:overflow-hidden" style={{ width: totalWidth }}>
+            <Table className="table-fixed [&_td]:overflow-hidden [&_th]:overflow-hidden [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100" style={{ width: totalWidth }}>
                 <colgroup>
                   {colW.map((w, i) => <col key={i} style={{ width: w }} />)}
                 </colgroup>
@@ -1529,7 +1529,7 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
   const st = inboundStatus(order)
 
   return (
-    <TableRow className={`cursor-pointer ${rowText(inboundKey(order))} ${dense ? '' : '[&_td]:py-2.5'} ${selected ? 'bg-sky-50' : ''}`} onClick={onClick} onDoubleClick={onDoubleClick}>
+    <TableRow className={`cursor-pointer ${rowText(inboundKey(order))} ${dense ? '' : '[&_td]:py-2.5'} ${selected ? 'bg-sky-50' : showBracket ? 'bg-slate-50' : ''}`} onClick={onClick} onDoubleClick={onDoubleClick}>
       {/* Col 1: Pin + bracket connector */}
       <TableCell className="w-8 px-0 py-0 relative">
         {showBracket && (
@@ -1557,7 +1557,7 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
       </TableCell>
 
       {/* Col 2: Ngày nhập + Số DO (sticky-left để giữ context khi scroll ngang) */}
-      <TableCell className={`px-2 py-1 whitespace-nowrap sticky left-0 z-10 ${selected ? 'bg-sky-50' : 'bg-white'}`}>
+      <TableCell className={`px-2 py-1 whitespace-nowrap sticky left-0 z-10 ${selected ? 'bg-sky-50' : showBracket ? 'bg-slate-50' : 'bg-white'}`}>
         <div className="flex items-center gap-0.5">
           <span className="text-[10px] font-medium tabular-nums">{dateFull}</span>
           {isRowToday && <span className="text-[9px] text-blue-600 font-medium ml-0.5">HN</span>}
@@ -1619,10 +1619,10 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
       {/* Col 5: Mã phiếu / Mã lệnh (NEW) */}
       <TableCell className="px-2 py-1">
         {order.import_code ? (
-          <div className="text-[10px] font-mono font-semibold text-slate-700 whitespace-nowrap">{order.import_code}</div>
+          <div className="text-[10px] font-mono font-semibold whitespace-nowrap">{order.import_code}</div>
         ) : null}
         {(order as any).tms_order?.order_code ? (
-          <div className="text-[9px] font-mono text-blue-600 whitespace-nowrap mt-0.5">{(order as any).tms_order.order_code}</div>
+          <div className="text-[9px] font-mono whitespace-nowrap mt-0.5 opacity-80">{(order as any).tms_order.order_code}</div>
         ) : null}
         {!order.import_code && !(order as any).tms_order?.order_code && (
           <span className="text-[10px] text-slate-300">—</span>
@@ -1645,7 +1645,7 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         {order.planned_cartons != null ? (
           <>
-            <span className={`text-[10px] font-semibold tabular-nums ${(order.total_cartons ?? 0) >= order.planned_cartons ? 'text-green-600' : 'text-slate-700'}`}>
+            <span className={`text-[10px] font-semibold tabular-nums ${(order.total_cartons ?? 0) < order.planned_cartons ? 'text-red-600' : ''}`}>
               {order.planned_cartons}
             </span>
             <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>

@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react'
 import { MapPin, Plus, Pencil, Trash2, Flag, X } from 'lucide-react'
 import { formatDateTime } from '@/utils/formatters'
-import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { SearchInput } from '@/components/shared/SearchInput'
+import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
+import { SummaryBand } from '@/components/shared/SummaryBand'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { TableSkeleton }  from '@/components/shared/TableSkeleton'
 import { EmptyState }     from '@/components/shared/EmptyState'
@@ -202,76 +203,49 @@ export default function Locations() {
 
   const isSaving = createLocation.isPending || updateLocation.isPending
 
+  // ─── Filter chip bar (Manhattan) ───
+  const filterDefs: FilterDef[] = [
+    { key: 'warehouse', label: 'Kho', type: 'single', options: warehouses.map(w => ({ value: w.id, label: w.name })), value: warehouseId || '', allLabel: 'Tất cả kho',
+      onChange: v => { setWarehouseId(v); setCatFilter('') } },
+    { key: 'category', label: 'Loại kho', type: 'single', options: categoryOptions.map((c: string) => ({ value: c, label: c })), value: catFilter, allLabel: 'Tất cả loại',
+      onChange: v => setCatFilter(v) },
+    { key: 'status', label: 'Trạng thái', type: 'multi', options: [{ value: 'inactive', label: 'Đã xóa' }], selected: statusFilter, searchable: false,
+      onChange: setStatusFilter },
+    { key: 'flag', label: 'Cần check hàng ngày', type: 'multi', options: [{ value: 'flag', label: 'Cần check hàng ngày' }], selected: flagFilter ? ['flag'] : [], searchable: false,
+      onChange: v => setFlagFilter(v.includes('flag')) },
+  ]
+
   return (
-    <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="border-b bg-white px-4 py-3 shrink-0 space-y-2">
-        <div className="flex items-center justify-between gap-2">
-          <h1 className="text-xl font-semibold flex items-center gap-2">
-            <MapPin className="h-5 w-5 text-slate-500" />
-            Vị trí kho
-          </h1>
-          <div className="flex gap-2">
-            {can(perms, 'locations', 'create') && (
-              <Button size="sm" onClick={openAdd} className="gap-1">
-                <Plus className="h-4 w-4" /> Thêm vị trí
-              </Button>
-            )}
-          </div>
-        </div>
-
-        {/* Filters */}
-        <div className="flex gap-2 flex-wrap items-center">
-          <WarehouseSingleSelect
-            warehouses={warehouses}
-            value={warehouseId || ''}
-            onChange={v => { setWarehouseId(v); setCatFilter('') }}
-            allLabel="Tất cả kho"
-            triggerClassName="h-8 w-[130px]"
-          />
-
-          <Select value={catFilter || '__all__'} onValueChange={v => setCatFilter(v === '__all__' ? '' : v)}>
-            <SelectTrigger className="h-8 text-sm w-[130px]">
-              <SelectValue placeholder="Loại kho" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">Tất cả loại</SelectItem>
-              {categoryOptions.map((c: string) => (
-                <SelectItem key={c} value={c}>{c}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <SearchInput value={search} onChange={setSearch} placeholder="Tìm mã vị trí…" className="flex-1 min-w-[120px]" />
-
-          <MultiSelectFilter
-            label="Trạng thái"
-            options={[{ value: 'inactive', label: 'Đã xóa' }]}
-            selected={statusFilter}
-            onChange={setStatusFilter}
-            searchable={false}
-          />
-
-          <label className="flex items-center gap-1.5 cursor-pointer select-none">
-            <input type="checkbox" checked={flagFilter} onChange={e => setFlagFilter(e.target.checked)}
-              className="h-3.5 w-3.5 cursor-pointer" />
-            <span className="text-sm text-slate-600 flex items-center gap-1">
-              <Flag className="h-3.5 w-3.5 text-red-500" /> Cần check hàng ngày
-            </span>
-          </label>
-        </div>
-
-        {/* Summary */}
-        <p className="text-xs text-slate-500 -mt-1">
-          <span className="font-medium text-slate-700">{activeFiltered.length}</span> vị trí
-          {' '}·{' '}
-          <span className="font-medium text-slate-700">{usedSlots}</span>
-          <span className="text-slate-400">/{totalSlots}</span> pallet đang dùng
-          {fullCount > 0 && (
-            <span className="ml-2 text-blue-600 font-medium">· {fullCount} đầy</span>
+    <div className="flex flex-col h-full sm:p-3">
+     <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
+      {/* Toolbar */}
+      <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5 sm:rounded-t-xl">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm font-semibold text-slate-700 shrink-0 flex items-center gap-1.5">
+            <MapPin className="h-4 w-4 text-slate-500" /> Vị trí kho
+          </span>
+          <SearchInput value={search} onChange={setSearch} placeholder="Tìm mã vị trí…" className="flex-1 min-w-[140px]" />
+          <FilterSheetButton defs={filterDefs} className="sm:hidden" />
+          {can(perms, 'locations', 'create') && (
+            <Button size="sm" onClick={openAdd} className="h-7 text-xs gap-1">
+              <Plus className="h-3.5 w-3.5" /> Thêm vị trí
+            </Button>
           )}
-        </p>
+        </div>
+
+        {/* Filter chip bar (desktop) */}
+        <div className="hidden sm:flex items-center gap-1.5 flex-wrap">
+          <FilterBar defs={filterDefs} />
+        </div>
       </div>
+
+      {/* Summary band (Manhattan) */}
+      <SummaryBand tiles={[
+        { label: 'Vị trí', value: activeFiltered.length },
+        { label: 'Pallet đang dùng', value: usedSlots },
+        { label: 'Sức chứa', value: totalSlots },
+        { label: 'Đầy', value: fullCount, accent: fullCount > 0 },
+      ]} />
 
       {/* Table + Detail panel */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
@@ -404,6 +378,12 @@ export default function Locations() {
           </div>
         )}
       </div>
+
+      {/* Footer đếm bản ghi */}
+      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 sm:rounded-b-xl">
+        {filtered.length > 0 ? `1–${filtered.length} / ${filtered.length} vị trí` : '0 vị trí'}
+      </div>
+     </div>
 
       {/* Add / Edit Dialog */}
       <Dialog open={dialogMode !== null} onOpenChange={open => !open && closeDialog()}>

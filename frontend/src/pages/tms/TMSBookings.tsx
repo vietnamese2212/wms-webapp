@@ -3501,7 +3501,11 @@ export default function TMSBookings() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {tableRows.map(({ order, vslot, slotIndex, isPrimary, secIndex, stt, sttRowspan, rowKey, spanRowKeys, isFirstOrderRow, groupStatus, groupParity, showSlotCell, slotCellRowspan }, rowIndex) => {
+              {tableRows.flatMap(({ order, vslot, slotIndex, isPrimary, secIndex, stt, sttRowspan, rowKey, spanRowKeys, isFirstOrderRow, groupStatus, groupParity, showSlotCell, slotCellRowspan }, rowIndex) => {
+                // Khoảng trống ~8px ngăn cách giữa các nhóm xe (xe chính/xe phụ/đơn gom) — như Inbound
+                const grpSpacer = isPrimary && rowIndex > 0
+                  ? <tr key={`sp-${rowKey}`} aria-hidden><td colSpan={23 + (isNccUser && !warehouseId ? 1 : 0)} className="p-0 border-0 bg-transparent"><div className="h-2" /></td></tr>
+                  : null
                 const isConsolidated = !!vslot.consolidation_group_id
                 const isGroupHovered = spanRowKeys.includes(hoveredRow ?? '')
                 const rowTextCls = (() => {
@@ -3517,7 +3521,7 @@ export default function TMSBookings() {
                   return ''
                 })()
                 const cellHoverBg = isGroupHovered ? 'bg-slate-50' : ''
-                return (
+                return [grpSpacer,
                 <TableRow key={rowKey}
                   onMouseEnter={() => setHoveredRow(rowKey)}
                   onMouseLeave={() => setHoveredRow(null)}
@@ -3786,7 +3790,7 @@ export default function TMSBookings() {
                     </div>
                   </TableCell>
                 </TableRow>
-                )
+                ]
               })}
             </TableBody>
           </Table>

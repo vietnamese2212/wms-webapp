@@ -1,6 +1,10 @@
 import { useMemo, useState } from 'react'
-import { Tag, Plus, Pencil, Trash2, X, Search, Check, Minus, PlusCircle, QrCode } from 'lucide-react'
-import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
+import { Tag, Plus, Pencil, Trash2, X, Check, Minus, PlusCircle, QrCode, Rows3, AlignJustify } from 'lucide-react'
+import { SearchInput } from '@/components/shared/SearchInput'
+import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
+import { SavedViews } from '@/components/shared/SavedViews'
+import { SummaryBand } from '@/components/shared/SummaryBand'
+import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { TableSkeleton } from '@/components/shared/TableSkeleton'
 import { EmptyState } from '@/components/shared/EmptyState'
@@ -95,6 +99,12 @@ export default function Materials() {
   const setCatFilter    = (v: string[]) => setMaterials({ catFilter: v })
   const setStatusFilter = (v: string[]) => setMaterials({ statusFilter: v })
   const setQrFilter     = (v: string[]) => setMaterials({ qrFilter: v })
+
+  // Density
+  const [dense, setDense] = useState(() => localStorage.getItem('materials_density') !== 'comfortable')
+  function toggleDensity() {
+    setDense(d => { localStorage.setItem('materials_density', d ? 'comfortable' : 'compact'); return !d })
+  }
 
   // Detail sheet
   const [detailMat, setDetailMat] = useState<Material | null>(null)
@@ -348,16 +358,54 @@ export default function Materials() {
 
   const colCount = (canDel ? 1 : 0) + 9 + 2 + (canEdit || canDel ? 1 : 0)
 
+  // ─── Filter chip bar (Manhattan) ───
+  const filterDefs: FilterDef[] = [
+    { key: 'cat', label: 'Loại hàng', type: 'multi', options: categories.map(c => ({ value: c, label: c })), selected: catFilter, searchable: true,
+      onChange: setCatFilter },
+    { key: 'status', label: 'Trạng thái', type: 'multi',
+      options: [{ value: 'active', label: 'Đang dùng' }, { value: 'inactive', label: 'Đã ẩn' }], selected: statusFilter,
+      onChange: setStatusFilter },
+    { key: 'qr', label: 'QR', type: 'multi',
+      options: [{ value: 'has_qr', label: 'Có QR' }, { value: 'no_qr', label: 'Không QR' }], selected: qrFilter,
+      onChange: setQrFilter },
+  ]
+
+  const viewSnapshot = { search, catFilter, statusFilter, qrFilter }
+  const savedViews = useSavedViewsStore(s => s.views['materials'] ?? [])
+  const activeViewId = useMemo(() => {
+    const cur = JSON.stringify(viewSnapshot)
+    return savedViews.find(v => JSON.stringify(v.filters) === cur)?.id ?? null
+  }, [savedViews, viewSnapshot])
+
+  const summary = useMemo(() => ({
+    total:    filtered.length,
+    active:   filtered.filter(m => m.is_active).length,
+    inactive: filtered.filter(m => !m.is_active).length,
+    noQr:     filtered.filter(m => m.no_qr_tracking).length,
+  }), [filtered])
+
   return (
-    <div className="flex flex-col h-full">
-      {/* ── Header + Filters ──────────────────────────────────────────── */}
-      <div className="border-b bg-white px-3 py-2 shrink-0">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <Tag className="h-4 w-4 text-blue-600" />
-            <span className="text-xl font-semibold">Mã hàng</span>
-            <span className="text-xs text-slate-400">{filtered.length}/{(raw as Material[]).length}</span>
-          </div>
+    <div className="flex flex-col h-full sm:p-3">
+     <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
+      {/* ── Toolbar ──────────────────────────────────────────── */}
+      <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5 sm:rounded-t-xl">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm font-semibold text-slate-700 shrink-0 flex items-center gap-1.5">
+            <Tag className="h-4 w-4 text-slate-500" /> Mã hàng
+          </span>
+          <SearchInput value={search} onChange={setSearch} placeholder="Tìm mã, tên…" className="flex-1 min-w-[140px]" />
+          <FilterSheetButton defs={filterDefs} className="sm:hidden" />
+          <SavedViews
+            module="materials"
+            currentFilters={viewSnapshot}
+            activeId={activeViewId}
+            onApply={(filters) => setMaterials(filters as Partial<typeof mf>)}
+          />
+          <button type="button" onClick={toggleDensity}
+            className="hidden sm:inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0"
+            title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
+            {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
+          </button>
           {can(perms, 'materials', 'create') && (
             <Button size="sm" onClick={openAdd} className="h-7 text-xs gap-1">
               <Plus className="h-3.5 w-3.5" />Thêm
@@ -365,38 +413,19 @@ export default function Materials() {
           )}
         </div>
 
-        <div className="flex flex-wrap gap-2 mt-2 items-center">
-          <div className="relative">
-            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
-            <Input className="pl-7 h-7 text-xs w-44" placeholder="Tìm mã, tên…" value={search} onChange={e => setSearch(e.target.value)} />
-          </div>
-          <MultiSelectFilter
-            label="Loại hàng"
-            options={categories.map(c => ({ value: c, label: c }))}
-            selected={catFilter}
-            onChange={setCatFilter}
-            searchable
-          />
-          <MultiSelectFilter
-            label="Trạng thái"
-            options={[
-              { value: 'active',   label: 'Đang dùng' },
-              { value: 'inactive', label: 'Đã ẩn'     },
-            ]}
-            selected={statusFilter}
-            onChange={setStatusFilter}
-          />
-          <MultiSelectFilter
-            label="QR"
-            options={[
-              { value: 'has_qr', label: 'Có QR' },
-              { value: 'no_qr',  label: 'Không QR' },
-            ]}
-            selected={qrFilter}
-            onChange={setQrFilter}
-          />
+        {/* Filter chip bar (desktop) */}
+        <div className="hidden sm:flex items-center gap-1.5 flex-wrap">
+          <FilterBar defs={filterDefs} />
         </div>
       </div>
+
+      {/* Summary band (Manhattan) */}
+      <SummaryBand tiles={[
+        { label: 'Tổng mã', value: summary.total },
+        { label: 'Đang dùng', value: summary.active },
+        { label: 'Đã ẩn', value: summary.inactive },
+        { label: 'Không QR', value: summary.noQr, accent: summary.noQr > 0 },
+      ]} />
 
       {/* ── Table ─────────────────────────────────────────────────────── */}
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
@@ -434,7 +463,7 @@ export default function Materials() {
                 return (
                   <TableRow
                     key={mat.id}
-                    className={`${!mat.is_active ? 'opacity-50' : ''} hover:bg-slate-50 cursor-pointer ${detailMat?.id === mat.id ? 'bg-blue-50 hover:bg-blue-50' : ''}`}
+                    className={`${!mat.is_active ? 'opacity-50' : ''} hover:bg-slate-50 cursor-pointer ${detailMat?.id === mat.id ? 'bg-blue-50 hover:bg-blue-50' : ''} ${dense ? '' : '[&_td]:py-2.5'}`}
                     onClick={() => setDetailMat(detailMat?.id === mat.id ? null : mat)}
                   >
                     {canDel && (
@@ -509,6 +538,13 @@ export default function Materials() {
             </TableBody>
           </Table>
       </div>
+
+      {/* Footer đếm bản ghi */}
+      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 sm:rounded-b-xl">
+        {summary.total > 0 ? `1–${summary.total} / ${(raw as Material[]).length} mã hàng` : '0 mã hàng'}
+        {selected.size > 0 && <span className="ml-2 text-green-600 font-medium">· {selected.size} đang chọn</span>}
+      </div>
+     </div>
 
       {/* ── Bulk action bar ────────────────────────────────────────────── */}
       {selected.size > 0 && (

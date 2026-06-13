@@ -7,7 +7,6 @@ import type { QRScannerHandle } from '@/components/shared/QRScanner'
 import { Button }              from '@/components/ui/button'
 import { Input }               from '@/components/ui/input'
 import { Label }               from '@/components/ui/label'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useScanPallet, useCheckInboundScan, useInboundOrder, useLocationsReal } from '@/api/hooks'
 import { playBeep } from '@/utils/audio'
 import type { InboundOrder } from '@/types'
@@ -113,6 +112,15 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
     const val = validateQR(raw, order)
     setValidation(val)
     if (!val.ok) return
+
+    // Tối ưu: mã thường (không phải chuyển kho) — số thùng đã biết tại client (cartons_per_pallet),
+    // bỏ qua round-trip "xác thực", để bước Lưu tự validate. Chuyển kho cần check để lấy số đã
+    // xuất (suggested) + cảnh báo gộp tồn.
+    if ((order as any).source_type !== 'TRANSFER') {
+      setCartons(defaultCartons)
+      setServerCheckOk(true)
+      return
+    }
 
     checkScan(
       { orderId: order.id, qr_code: raw, location_id: activeLocationId, stack_layer: Number(stackLayer) },
@@ -272,14 +280,22 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">Tầng chồng</Label>
-                <Select value={stackLayer} onValueChange={setStackLayer}>
-                  <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="1">Tầng 1 (sàn)</SelectItem>
-                    <SelectItem value="2">Tầng 2</SelectItem>
-                    <SelectItem value="3">Tầng 3</SelectItem>
-                  </SelectContent>
-                </Select>
+                <div className="flex gap-1.5 h-11">
+                  {(['1', '2', '3'] as const).map(n => (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => setStackLayer(n)}
+                      className={`flex-1 rounded-md border text-sm font-semibold transition-colors ${
+                        stackLayer === n
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
+                      }`}
+                    >
+                      {n === '1' ? '1 (sàn)' : n}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
@@ -333,27 +349,15 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
             </div>
           )}
 
-          {/* Validation result */}
-          {pendingQR && validation && !feedback && (
-            validation.ok ? (
-              <div className="rounded-lg bg-green-50 border border-green-200 px-3 py-2.5 flex items-center gap-2">
-                <CheckCircle2 className="h-4 w-4 text-green-600 shrink-0" />
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-green-800">
-                    {serverChecking ? 'Đang kiểm tra vị trí…' : validation.msg}
-                  </p>
-                  <p className="font-mono text-[10px] text-green-500 truncate">{pendingQR}</p>
-                </div>
+          {/* Chỉ báo khi LỖI — hợp lệ thì để nút "Lưu N thùng" tự nói (tránh user tưởng đã lưu xong) */}
+          {pendingQR && validation && !validation.ok && !feedback && (
+            <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2.5 flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-red-700">{validation.msg}</p>
+                <p className="font-mono text-[10px] text-red-400 truncate">{pendingQR}</p>
               </div>
-            ) : (
-              <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2.5 flex items-start gap-2">
-                <AlertTriangle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-red-700">{validation.msg}</p>
-                  <p className="font-mono text-[10px] text-red-400 truncate">{pendingQR}</p>
-                </div>
-              </div>
-            )
+            </div>
           )}
 
           {feedback && <ScanFeedback state={feedback} />}

@@ -2105,8 +2105,10 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
   // (tránh nút nháy về 'Bắt đầu nhận hàng' rồi mới đổi — do refetch trễ)
   const [starting, setStarting] = useState(false)
   useEffect(() => { if (tStatus && tStatus !== 'IN_TRANSIT') setStarting(false) }, [tStatus])
-  // Cột thao tác chỉ hiện khi đang nhận hàng và user có quyền nhập/hoàn thành
-  const showActions = tStatus === 'RECEIVING' && canConfirmReceipt && (canScan || canComplete)
+  // Cột Thao tác hiện khi có phiếu nhập (kể cả khi đã giao xong — để luôn mở được phiếu Inbound)
+  const showActions = activeImports.length > 0
+  // Chỉ cho quét/hoàn thành khi đang nhận hàng + có quyền
+  const canReceiveNow = tStatus === 'RECEIVING' && canConfirmReceipt
   const missingMaterials = tStatus === 'RECEIVING'
     ? goods.filter(g => !activeImports.some((ai) => ai.material_id === g.material_id))
     : []
@@ -2125,7 +2127,9 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
         />
       )}
       <Dialog open={!!order} onOpenChange={v => !v && onClose()}>
-        <DialogContent className="w-screen max-w-[100vw] h-[100dvh] max-h-[100dvh] rounded-none flex flex-col p-0 gap-0 sm:w-[80vw] sm:max-w-[80vw] sm:h-[85vh] sm:max-h-[85vh] sm:rounded-lg">
+        <DialogContent className="w-screen max-w-[100vw] h-[100dvh] max-h-[100dvh] rounded-none flex flex-col p-0 gap-0 sm:w-[80vw] sm:max-w-[80vw] sm:h-[85vh] sm:max-h-[85vh] sm:rounded-lg"
+          onInteractOutside={e => { if (scanImportId) e.preventDefault() }}
+          onEscapeKeyDown={e => { if (scanImportId) e.preventDefault() }}>
           {/* Header — pr-10 để tránh nút X của shadcn */}
           <div className="px-4 pt-3 pb-2 border-b bg-white shrink-0 pr-10">
             {/* Dòng 1: Mã lệnh + trạng thái + actions (góc phải) */}
@@ -2378,40 +2382,44 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                                 <td className="px-1.5 py-1 w-px sticky right-0 bg-white border-l border-slate-200" onClick={e => e.stopPropagation()}>
                                   {!imp ? (
                                     <span className="text-[10px] text-slate-300 whitespace-nowrap">Chưa có phiếu</span>
-                                  ) : imp.status === 'COMPLETED' ? (
-                                    <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 whitespace-nowrap">✓ Đã xong</span>
                                   ) : (
                                     <div className="flex flex-col items-stretch gap-1 min-w-[84px]">
-                                      {/* Mã không QR: ô số + Lưu; mã QR: nút Quét chuẩn (QrCode) */}
-                                      {isNoQr ? (
-                                        !imp.posm_entry_id && canScan && (
-                                          <div className="flex items-center gap-1">
-                                            <input type="number" min={0}
-                                              value={manualDraft[imp.id] ?? ''}
-                                              onChange={e => setManualDraft(d => ({ ...d, [imp.id]: e.target.value }))}
-                                              placeholder="thùng"
-                                              className="w-14 h-6 text-[10px] text-center rounded border border-slate-300 px-1" />
-                                            <Button size="sm" variant="outline" className="h-6 text-[10px] px-1.5 flex-1"
-                                              disabled={busy} onClick={() => handleManualConfirm(imp.id)}>
-                                              {busy ? '…' : 'Lưu'}
+                                      {imp.status === 'COMPLETED' ? (
+                                        <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 text-center whitespace-nowrap">✓ Đã xong</span>
+                                      ) : canReceiveNow ? (
+                                        <>
+                                          {/* Mã không QR: ô số + Lưu; mã QR: nút Quét chuẩn (QrCode) */}
+                                          {isNoQr ? (
+                                            !imp.posm_entry_id && canScan && (
+                                              <div className="flex items-center gap-1">
+                                                <input type="number" min={0}
+                                                  value={manualDraft[imp.id] ?? ''}
+                                                  onChange={e => setManualDraft(d => ({ ...d, [imp.id]: e.target.value }))}
+                                                  placeholder="thùng"
+                                                  className="w-14 h-6 text-[10px] text-center rounded border border-slate-300 px-1" />
+                                                <Button size="sm" variant="outline" className="h-6 text-[10px] px-1.5 flex-1"
+                                                  disabled={busy} onClick={() => handleManualConfirm(imp.id)}>
+                                                  {busy ? '…' : 'Lưu'}
+                                                </Button>
+                                              </div>
+                                            )
+                                          ) : (
+                                            canScan && (
+                                              <Button size="sm" className="h-6 text-[10px] px-1.5 gap-1"
+                                                onClick={() => setScanImportId(imp.id)}>
+                                                <QrCode className="h-3 w-3" /> Quét
+                                              </Button>
+                                            )
+                                          )}
+                                          {canComplete && hasQty && (
+                                            <Button size="sm" className="h-6 text-[10px] px-1.5 gap-1 bg-green-600 hover:bg-green-700"
+                                              disabled={busy} onClick={() => handleCompleteOne(imp.id)}>
+                                              <CheckCircle2 className="h-3 w-3" /> {busy ? '…' : 'Hoàn thành'}
                                             </Button>
-                                          </div>
-                                        )
-                                      ) : (
-                                        canScan && (
-                                          <Button size="sm" className="h-6 text-[10px] px-1.5 gap-1"
-                                            onClick={() => setScanImportId(imp.id)}>
-                                            <QrCode className="h-3 w-3" /> Quét
-                                          </Button>
-                                        )
-                                      )}
-                                      {/* Hoàn thành — hiện khi đã có số liệu thực nhập */}
-                                      {canComplete && hasQty && (
-                                        <Button size="sm" className="h-6 text-[10px] px-1.5 gap-1 bg-green-600 hover:bg-green-700"
-                                          disabled={busy} onClick={() => handleCompleteOne(imp.id)}>
-                                          <CheckCircle2 className="h-3 w-3" /> {busy ? '…' : 'Hoàn thành'}
-                                        </Button>
-                                      )}
+                                          )}
+                                        </>
+                                      ) : null}
+                                      {/* Link Inbound — luôn có, kể cả khi đã hoàn thành/giao xong */}
                                       <button type="button" className="text-[10px] text-blue-600 hover:text-blue-800 text-left whitespace-nowrap"
                                         title="Mở phiếu trong Nhập kho"
                                         onClick={() => navigate(`/wms/inbound/${imp.id}`)}>

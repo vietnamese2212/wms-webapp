@@ -1327,28 +1327,39 @@ export default function Inbound() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {sortedOrders.map(order => (
-                    <InboundRow
-                      key={order.id}
-                      order={order}
-                      dense={dense}
-                      onClick={() => navigate(`/wms/inbound/${order.id}`)}
-                      onScan={order.status === 'OPEN' && !!order.location_id && can(perms, 'inbound', 'scan')
-                        ? (e) => { e.stopPropagation(); unlockAudio(); navigate(`/wms/inbound/${order.id}?scan=1`) }
-                        : undefined}
-                      onEditGroup={order.source_type === 'NCC' && order.status === 'OPEN' && can(perms, 'inbound', 'edit')
-                        ? (e) => { e.stopPropagation(); openEditNccGroup(order) }
-                        : undefined}
-                      pinned={isPinned(order.id)}
-                      onPin={(e) => {
-                        e.stopPropagation()
-                        isPinned(order.id)
-                          ? unpin(order.id)
-                          : pin({ id: order.id, import_code: order.import_code ?? order.id.slice(0, 8), status: order.status, location_code: order.location?.location_code, mat_code: order.material?.material_code })
-                      }}
-                      bracketPos={bracketPositions.get(order.id) ?? 'none'}
-                    />
-                  ))}
+                  {sortedOrders.flatMap((order, i) => {
+                    const bpos     = bracketPositions.get(order.id) ?? 'none'
+                    const prevBpos = i > 0 ? (bracketPositions.get(sortedOrders[i - 1].id) ?? 'none') : 'none'
+                    // Hàng trống ~10px ngăn cách giữa các nhóm (không border, không nền) — như margin giữa 2 card
+                    const spacerBefore = bpos === 'first' && i > 0 && prevBpos !== 'last'
+                    const spacerAfter  = bpos === 'last'
+                    const nodes: React.ReactNode[] = []
+                    if (spacerBefore) nodes.push(<tr key={`sp-b-${order.id}`} aria-hidden><td colSpan={12} className="h-2.5 p-0 border-0" /></tr>)
+                    nodes.push(
+                      <InboundRow
+                        key={order.id}
+                        order={order}
+                        dense={dense}
+                        onClick={() => navigate(`/wms/inbound/${order.id}`)}
+                        onScan={order.status === 'OPEN' && !!order.location_id && can(perms, 'inbound', 'scan')
+                          ? (e) => { e.stopPropagation(); unlockAudio(); navigate(`/wms/inbound/${order.id}?scan=1`) }
+                          : undefined}
+                        onEditGroup={order.source_type === 'NCC' && order.status === 'OPEN' && can(perms, 'inbound', 'edit')
+                          ? (e) => { e.stopPropagation(); openEditNccGroup(order) }
+                          : undefined}
+                        pinned={isPinned(order.id)}
+                        onPin={(e) => {
+                          e.stopPropagation()
+                          isPinned(order.id)
+                            ? unpin(order.id)
+                            : pin({ id: order.id, import_code: order.import_code ?? order.id.slice(0, 8), status: order.status, location_code: order.location?.location_code, mat_code: order.material?.material_code })
+                        }}
+                        bracketPos={bpos}
+                      />
+                    )
+                    if (spacerAfter) nodes.push(<tr key={`sp-a-${order.id}`} aria-hidden><td colSpan={12} className="h-2.5 p-0 border-0" /></tr>)
+                    return nodes
+                  })}
                 </TableBody>
               </Table>
           </>
@@ -1407,17 +1418,7 @@ function InboundRow({ order, onClick, onScan, onEditGroup, onPin, pinned, bracke
   const st = inboundStatus(order)
 
   return (
-    <TableRow
-      className={[
-        'cursor-pointer',
-        rowText(inboundKey(order)),
-        dense ? '' : '[&_td]:py-2.5',
-        // khoảng trống dọc tách cụm phiếu cùng nhóm (có ngoặc [) khỏi các row khác
-        bracketPos === 'first' ? '[&_td]:!pt-3' : '',
-        bracketPos === 'last'  ? '[&_td]:!pb-3' : '',
-      ].join(' ')}
-      onClick={onClick}
-    >
+    <TableRow className={`cursor-pointer ${rowText(inboundKey(order))} ${dense ? '' : '[&_td]:py-2.5'}`} onClick={onClick}>
       {/* Col 1: Pin + bracket connector */}
       <TableCell className="w-8 px-0 py-0 relative">
         {showBracket && (

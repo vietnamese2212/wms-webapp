@@ -695,12 +695,13 @@ export default function InboundDetail() {
         {/* ── Pallet table (~80%) ── */}
         <div className="flex-1 p-4 overflow-auto pb-20 lg:pb-4">
 
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold text-slate-700">
-              Danh sách pallet đã quét
-              <span className="ml-2 text-xs font-normal text-slate-400">{entries.length} pallet</span>
+          <div className="-mx-4 -mt-4 mb-3 px-4 py-2 bg-slate-100 border-b border-slate-200 flex items-center justify-between gap-2">
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-600 flex items-center gap-1.5">
+              <span className="h-3.5 w-1 rounded-full bg-sky-500" />
+              Pallet đã quét
+              <span className="ml-1 text-[11px] font-normal normal-case text-slate-400">{entries.length} pallet</span>
               {selectedIds.size > 0 && (
-                <span className="ml-1.5 text-xs text-blue-600">· {selectedIds.size} đã chọn</span>
+                <span className="ml-1 text-[11px] font-normal normal-case text-blue-600">· {selectedIds.size} đã chọn</span>
               )}
             </h2>
             <div className="flex items-center gap-2">

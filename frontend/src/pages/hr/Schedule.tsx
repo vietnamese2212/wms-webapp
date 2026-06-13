@@ -41,7 +41,8 @@ export default function Schedule() {
     schedules?.filter((s) => isSameDay(parseISO(s.date), date)) ?? []
 
   return (
-    <div>
+    <div className="h-full overflow-auto sm:p-3">
+     <div className="bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm overflow-hidden">
       <PageHeader
         title="Lịch làm việc"
         description="Xếp ca và theo dõi chấm công nhân viên"
@@ -53,7 +54,7 @@ export default function Schedule() {
         }
       />
 
-      <div className="p-6">
+      <div className="p-4">
         <Tabs defaultValue="week">
           <div className="flex items-center justify-between mb-4">
             <TabsList>
@@ -236,6 +237,7 @@ export default function Schedule() {
           </TabsContent>
         </Tabs>
       </div>
+     </div>
     </div>
   )
 }

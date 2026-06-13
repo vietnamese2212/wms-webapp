@@ -14,6 +14,7 @@ export interface FBOpt { value: string; label: string }
 export type FilterDef =
   | { key: string; label: string; type: 'multi';     options: FBOpt[]; selected: string[]; onChange: (v: string[]) => void; searchable?: boolean }
   | { key: string; label: string; type: 'single';    options: FBOpt[]; value: string; onChange: (v: string) => void; allLabel?: string }
+  | { key: string; label: string; type: 'date';      value: string; onChange: (v: string) => void }
   | { key: string; label: string; type: 'daterange'; from: string; to: string; onChange: (from: string, to: string) => void }
   | { key: string; label: string; type: 'text';      value: string; onChange: (v: string) => void; placeholder?: string }
 
@@ -23,6 +24,7 @@ function isActive(def: FilterDef): boolean {
   switch (def.type) {
     case 'multi':     return def.selected.length > 0
     case 'single':    return def.value !== ''
+    case 'date':      return !!def.value
     case 'daterange': return !!def.from || !!def.to
     case 'text':      return def.value.trim() !== ''
   }
@@ -45,6 +47,7 @@ function chipValue(def: FilterDef): string {
       const o = def.options.find(o => o.value === def.value)
       return o?.label ?? def.value
     }
+    case 'date': return fmtDate(def.value)
     case 'daterange': {
       if (def.from && def.to) return def.from === def.to ? fmtDate(def.from) : `${fmtDate(def.from)} – ${fmtDate(def.to)}`
       if (def.from) return `Từ ${fmtDate(def.from)}`
@@ -58,6 +61,7 @@ function clearDef(def: FilterDef) {
   switch (def.type) {
     case 'multi':     def.onChange([]); break
     case 'single':    def.onChange(''); break
+    case 'date':      def.onChange(''); break
     case 'daterange': def.onChange('', ''); break
     case 'text':      def.onChange(''); break
   }
@@ -260,6 +264,25 @@ function FilterPopover({ def, onClose, fullWidth = false }: { def: FilterDef; on
           onChange={e => def.onChange(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') onClose() }}
         />
+      </div>
+    )
+  }
+
+  if (def.type === 'date') {
+    return (
+      <div className={`${shell} space-y-2 ${fullWidth ? '' : 'p-2.5 w-[200px]'}`}>
+        <div className="relative">
+          <Calendar className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
+          <input type="date" value={def.value}
+            onChange={e => def.onChange(e.target.value)}
+            className={`w-full pl-7 pr-2 border border-slate-200 rounded outline-none focus:border-blue-400 ${inputH}`} />
+        </div>
+        <div className="flex items-center justify-between pt-0.5">
+          <button type="button" className="text-xs text-blue-600 hover:text-blue-800"
+            onClick={() => def.onChange(todayVN())}>Hôm nay</button>
+          <button type="button" className="text-xs text-red-400 hover:text-red-600"
+            onClick={() => { def.onChange(''); onClose() }}>Xóa</button>
+        </div>
       </div>
     )
   }

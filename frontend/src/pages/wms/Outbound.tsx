@@ -2,9 +2,10 @@ import { useRef, useState, useMemo, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
-import { Upload, Truck, CheckCircle2, AlertTriangle, X, Bookmark, Info, Plus, Trash2, PenSquare } from 'lucide-react'
-import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
+import { Upload, Truck, CheckCircle2, AlertTriangle, X, Bookmark, Info, Plus, Trash2, PenSquare, Rows3, AlignJustify } from 'lucide-react'
 import { SearchInput } from '@/components/shared/SearchInput'
+import { FilterBar, type FilterDef } from '@/components/shared/FilterBar'
+import { SavedViews } from '@/components/shared/SavedViews'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
@@ -15,6 +16,7 @@ import { useGDOs, useUploadGDOExcel, useWarehouses, useWarehouseTypes, useCreate
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
+import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 import { formatTimestampTime } from '@/utils/formatters'
 import type { GDO } from '@/types'
@@ -68,6 +70,10 @@ export default function Outbound() {
   const [uploadWarn,      setUploadWarn]      = useState<string | null>(null)
   const [postUploadLoading, setPostUploadLoading] = useState(false)
   const [showCreate,  setShowCreate]  = useState(false)
+  const [dense, setDense] = useState(() => localStorage.getItem('outbound_density') !== 'comfortable')
+  function toggleDensity() {
+    setDense(d => { localStorage.setItem('outbound_density', d ? 'comfortable' : 'compact'); return !d })
+  }
 
   const { data: warehouses = [] } = useWarehouses(true)
 
@@ -201,35 +207,57 @@ export default function Outbound() {
     ? format(parseISO(f.date), 'EEEE, dd-MM-yyyy', { locale: vi })
     : 'Tất cả ngày'
 
+  // ─── Filter chip bar (Manhattan) ───
+  const warehouseOptions = (warehouses as any[])
+    .filter((w: any) => !outboundAllowedWhIds || outboundAllowedWhIds.has(w.id))
+    .map((w: any) => ({ value: w.id, label: w.name }))
+
+  const filterDefs: FilterDef[] = [
+    { key: 'date',     label: 'Ngày xuất', type: 'date',   value: f.date, onChange: v => setOutbound({ date: v }) },
+    { key: 'warehouse', label: 'Kho xuất', type: 'single', options: warehouseOptions, value: f.warehouseId || '', allLabel: 'Tất cả kho',
+      onChange: v => setOutbound({ warehouseId: v }) },
+    { key: 'whType',   label: 'Loại kho',  type: 'multi',  options: warehouseTypeOpts.map(t => ({ value: t, label: t })), selected: filterWarehouseTypes,
+      onChange: v => setOutbound({ filterWarehouseTypes: v }) },
+    { key: 'vehType',  label: 'Loại xe',   type: 'multi',  options: typeOptions.map(t => ({ value: t, label: t })), selected: filterTypes,
+      onChange: v => setOutbound({ filterTypes: v }) },
+    { key: 'dvvt',     label: 'ĐVVT',      type: 'multi',  options: dvvtOptions.map(d => ({ value: d, label: d })), selected: filterDvvts,
+      onChange: v => setOutbound({ filterDvvts: v }) },
+    { key: 'npp',      label: 'NPP',       type: 'multi',  options: nppOptions.map(n => ({ value: n, label: n })), selected: filterNpps, searchable: true,
+      onChange: v => setOutbound({ filterNpps: v }) },
+    { key: 'status',   label: 'Tình trạng', type: 'multi', options: statusOptions, selected: filterStatuses,
+      onChange: v => setOutbound({ filterStatuses: v }) },
+  ]
+
+  const viewSnapshot = {
+    search: f.search, date: f.date, warehouseId: f.warehouseId,
+    filterWarehouseTypes, filterTypes, filterDvvts, filterNpps, filterStatuses,
+  }
+  const savedViews = useSavedViewsStore(s => s.views['outbound'] ?? [])
+  const activeViewId = useMemo(() => {
+    const cur = JSON.stringify(viewSnapshot)
+    return savedViews.find(v => JSON.stringify(v.filters) === cur)?.id ?? null
+  }, [savedViews, viewSnapshot])
+
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5">
-        {/* Row 1: Title + Date + Search + Actions */}
+        {/* Row 1: Title + Search + Views + Density + Actions */}
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-semibold text-slate-700 shrink-0">Xuất kho</span>
-          <div className="flex items-center gap-1.5">
-            <Input
-              type="date"
-              className="h-7 text-xs w-[130px]"
-              value={f.date}
-              onChange={e => setOutbound({ date: e.target.value })}
-            />
-            {f.date && f.date !== TODAY && (
-              <button className="text-[10px] text-slate-400 hover:text-slate-700 underline whitespace-nowrap"
-                onClick={() => setOutbound({ date: TODAY })}>
-                Hôm nay
-              </button>
-            )}
-            {f.date && (
-              <button className="p-0.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-600"
-                title="Xem tất cả ngày" onClick={() => setOutbound({ date: '' })}>
-                <X className="h-3 w-3" />
-              </button>
-            )}
-          </div>
-          <SearchInput value={f.search} onChange={v => setOutbound({ search: v })} placeholder="Tìm số xe…" className="flex-1 min-w-[120px]" />
-          <div className="ml-auto flex gap-1.5">
+          <SearchInput value={f.search} onChange={v => setOutbound({ search: v })} placeholder="Tìm số xe…" className="flex-1 min-w-[140px]" />
+          <SavedViews
+            module="outbound"
+            currentFilters={viewSnapshot}
+            activeId={activeViewId}
+            onApply={(filters) => setOutbound(filters as Partial<typeof f>)}
+          />
+          <button type="button" onClick={toggleDensity}
+            className="h-7 w-7 inline-flex items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0"
+            title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
+            {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
+          </button>
+          <div className="flex gap-1.5 shrink-0">
             {can(perms, 'outbound', 'create') && (
               <Button size="sm" variant="outline" onClick={() => setShowCreate(true)} className="h-7 text-xs gap-1">
                 <PenSquare className="h-3.5 w-3.5" />
@@ -264,20 +292,15 @@ export default function Outbound() {
           </div>
         )}
 
-        {/* Row 2: Filters */}
-        <div className="flex gap-2 flex-wrap items-center">
-          <WarehouseSingleSelect
-            warehouses={(warehouses as any[]).filter((w: any) => !outboundAllowedWhIds || outboundAllowedWhIds.has(w.id))}
-            value={f.warehouseId || ''}
-            onChange={v => setOutbound({ warehouseId: v })}
-            allLabel="Tất cả kho"
-            triggerClassName="h-7 w-[130px]"
-          />
-          <MultiSelectFilter label="Loại kho" options={warehouseTypeOpts.map(t => ({ value: t, label: t }))} selected={filterWarehouseTypes} onChange={v => setOutbound({ filterWarehouseTypes: v })} />
-          <MultiSelectFilter label="Loại xe" options={typeOptions.map(t => ({ value: t, label: t }))} selected={filterTypes} onChange={v => setOutbound({ filterTypes: v })} />
-          <MultiSelectFilter label="ĐVVT" options={dvvtOptions.map(d => ({ value: d, label: d }))} selected={filterDvvts} onChange={v => setOutbound({ filterDvvts: v })} />
-          <MultiSelectFilter label="NPP" options={nppOptions.map(n => ({ value: n, label: n }))} selected={filterNpps} onChange={v => setOutbound({ filterNpps: v })} width="min-w-[140px]" />
-          <MultiSelectFilter label="Tình trạng" options={statusOptions} selected={filterStatuses} onChange={v => setOutbound({ filterStatuses: v })} />
+        {/* Row 2: Filter chip bar (desktop) / nút Lọc (mobile) */}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <FilterBar defs={filterDefs} />
+          {f.date && f.date !== TODAY && (
+            <button className="hidden sm:inline-flex h-7 px-2 text-[11px] text-blue-600 hover:text-blue-800 hover:underline whitespace-nowrap"
+              onClick={() => setOutbound({ date: TODAY })}>
+              Hôm nay
+            </button>
+          )}
         </div>
 
         <p className="text-xs text-slate-500 -mt-1">
@@ -310,7 +333,7 @@ export default function Outbound() {
             <TableHeader>
               <TableRow className="bg-slate-50">
                 <TableHead className="px-1.5 py-1.5 w-7" />
-                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Ngày xuất</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5 sticky left-0 z-20 bg-slate-50">Ngày xuất</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Số xe</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Tên NPP</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Ship-to</TableHead>
@@ -337,6 +360,7 @@ export default function Outbound() {
                 <GDORow
                   key={gdo.id}
                   gdo={gdo}
+                  dense={dense}
                   onClick={() => navigate(`/wms/outbound/${gdo.id}`)}
                   onAssign={can(perms, 'outbound', 'assign') ? (e => { e.stopPropagation(); assignGDO({ id: gdo.id }) }) : undefined}
                 />
@@ -359,10 +383,11 @@ export default function Outbound() {
 
 // ─── GDO Row ──────────────────────────────────────────────────
 
-function GDORow({ gdo, onClick, onAssign }: {
+function GDORow({ gdo, onClick, onAssign, dense = true }: {
   gdo: GDO
   onClick: () => void
   onAssign?: (e: React.MouseEvent) => void
+  dense?: boolean
 }) {
   const { pin, unpin, isPinned } = useActiveVehiclesStore()
   const pinned    = isPinned(gdo.id)
@@ -372,7 +397,7 @@ function GDORow({ gdo, onClick, onAssign }: {
   const isPending = gdo.status === 'PENDING'
 
   return (
-    <TableRow className={`cursor-pointer ${gdoRowText(gdo)}`} onClick={onClick}>
+    <TableRow className={`cursor-pointer ${gdoRowText(gdo)} ${dense ? '' : '[&_td]:py-2.5'}`} onClick={onClick}>
       {/* Bookmark */}
       <TableCell className="px-1.5 py-1" onClick={e => e.stopPropagation()}>
         <button
@@ -384,7 +409,7 @@ function GDORow({ gdo, onClick, onAssign }: {
         </button>
       </TableCell>
 
-      <TableCell className="px-2 py-1 whitespace-nowrap">
+      <TableCell className="px-2 py-1 whitespace-nowrap sticky left-0 z-10 bg-white">
         <span className="text-[10px] font-medium tabular-nums">{dateLabel}</span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">

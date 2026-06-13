@@ -8,6 +8,7 @@ import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { SummaryBand } from '@/components/shared/SummaryBand'
+import { useColumnResize } from '@/components/shared/useColumnResize'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import {
   useInventoryEntries, useInventoryFacets, useWarehouses, useQAStatuses, useAdjustInventory,
@@ -67,6 +68,29 @@ const STATUS_CLS: Record<string, string> = {
 }
 
 const LIMIT = 50
+
+// Cột bảng tồn kho — số phần tử PHẢI khớp số <TableCell> mỗi dòng EntryRow (17 cột)
+const INVENTORY_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
+  { id: 'check',     label: '',         w: 32 },
+  { id: 'warehouse', label: 'Kho',      w: 110 },
+  { id: 'category',  label: 'Loại kho', w: 90 },
+  { id: 'matCode',   label: 'Mã hàng',  w: 90 },
+  { id: 'matName',   label: 'Tên hàng', w: 150 },
+  { id: 'pallet',    label: 'Mã pallet',w: 110 },
+  { id: 'location',  label: 'Vị trí',   w: 90 },
+  { id: 'imported',  label: 'Nhập',     w: 60, align: 'right' },
+  { id: 'exported',  label: 'Xuất',     w: 60, align: 'right' },
+  { id: 'remaining', label: 'Tồn',      w: 70, align: 'right' },
+  { id: 'reserved',  label: 'Nhặt lẻ',  w: 64, align: 'right' },
+  { id: 'available', label: 'Khả dụng', w: 70, align: 'right' },
+  { id: 'date',      label: 'Date',     w: 70 },
+  { id: 'datePct',   label: '%Date',    w: 60, align: 'right' },
+  { id: 'qa',        label: 'QA',       w: 60 },
+  { id: 'adjust',    label: 'Đ.chỉnh',  w: 64, align: 'right' },
+  { id: 'chevron',   label: '',         w: 28 },
+]
+const INVENTORY_COL_DEFAULTS = INVENTORY_COLS.map(c => c.w)
+
 const DATE_PCT_OPTIONS = [
   { value: '80',   label: '> 80%'  },
   { value: '60',   label: '60–80%' },
@@ -459,6 +483,7 @@ export default function Inventory() {
   function toggleDensity() {
     setDense(d => { localStorage.setItem('inventory_density', d ? 'comfortable' : 'compact'); return !d })
   }
+  const { widths: colW, startResize, totalWidth } = useColumnResize('inventory_col_widths', INVENTORY_COL_DEFAULTS)
 
   const { data: warehouses   = [] } = useWarehouses(true)
   const { data: qaStatuses   = [] } = useQAStatuses()
@@ -687,34 +712,22 @@ export default function Inventory() {
             </div>
           ) : (
             <>
-              <Table className="min-w-[900px]">
+              <Table className="table-fixed [&_td]:overflow-hidden [&_th]:overflow-hidden [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100" style={{ width: totalWidth, minWidth: '100%' }}>
+                  <colgroup>{colW.map((w, i) => <col key={i} style={{ width: w }} />)}</colgroup>
                   <TableHeader>
                     <TableRow className="bg-slate-50">
-                      {/* Checkbox select-all */}
-                      <TableHead className="px-2 py-1.5 w-7">
-                        <input
-                          type="checkbox"
-                          className="h-3.5 w-3.5 cursor-pointer"
-                          checked={checkedIds.size === displayEntries.length && displayEntries.length > 0}
-                          onChange={toggleAll}
-                        />
-                      </TableHead>
-                      <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Kho</TableHead>
-                      <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Loại kho</TableHead>
-                      <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Mã hàng</TableHead>
-                      <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Tên hàng</TableHead>
-                      <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Mã pallet</TableHead>
-                      <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Vị trí</TableHead>
-                      <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Nhập</TableHead>
-                      <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Xuất</TableHead>
-                      <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Tồn</TableHead>
-                      <TableHead className="text-[9px] font-medium text-purple-500 px-2 py-1.5 text-right whitespace-nowrap">Nhặt lẻ</TableHead>
-                      <TableHead className="text-[9px] font-medium text-blue-500 px-2 py-1.5 text-right whitespace-nowrap">Khả dụng</TableHead>
-                      <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Date</TableHead>
-                      <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">%Date</TableHead>
-                      <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">QA</TableHead>
-                      <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Đ.chỉnh</TableHead>
-                      <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-5" />
+                      {INVENTORY_COLS.map((c, i) => (
+                        <TableHead key={c.id}
+                          className={`relative text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''} ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                          {c.id === 'check'
+                            ? <input type="checkbox" className="h-3.5 w-3.5 cursor-pointer" checked={checkedIds.size === displayEntries.length && displayEntries.length > 0} onChange={toggleAll} />
+                            : c.label}
+                          {i > 0 && c.id !== 'chevron' && (
+                            <span onPointerDown={e => startResize(i, e)} onClick={e => e.stopPropagation()}
+                              className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70" title="Kéo để chỉnh độ rộng cột" />
+                          )}
+                        </TableHead>
+                      ))}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -854,7 +867,7 @@ function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick, warehouse
       onClick={onClick}
     >
       {/* Checkbox */}
-      <TableCell className="px-2 py-1" onClick={onCheck}>
+      <TableCell className="px-2 py-1 sticky left-0 z-10 bg-inherit" onClick={onCheck}>
         <input type="checkbox" className="h-3.5 w-3.5 cursor-pointer"
           checked={isChecked} onChange={() => {}} />
       </TableCell>

@@ -4,6 +4,7 @@ import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { SummaryBand } from '@/components/shared/SummaryBand'
+import { useColumnResize } from '@/components/shared/useColumnResize'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { TableSkeleton } from '@/components/shared/TableSkeleton'
@@ -358,6 +359,28 @@ export default function Materials() {
 
   const colCount = (canDel ? 1 : 0) + 9 + 2 + (canEdit || canDel ? 1 : 0)
 
+  // Cột bảng — số phần tử khớp số <TableCell> mỗi dòng (tùy quyền canDel/canEdit)
+  const MAT_COLS = useMemo(() => {
+    const cols: { id: string; label: string; w: number; align?: 'right' }[] = []
+    if (canDel) cols.push({ id: 'check', label: '', w: 32 })
+    cols.push(
+      { id: 'code',    label: 'Mã hàng',      w: 120 },
+      { id: 'short',   label: 'Tên rút gọn',  w: 160 },
+      { id: 'desc',    label: 'Mô tả đầy đủ', w: 200 },
+      { id: 'cat',     label: 'Loại',         w: 90 },
+      { id: 'unit',    label: 'ĐVT',          w: 60 },
+      { id: 'pl',      label: 'PL',           w: 60, align: 'right' },
+      { id: 'ea',      label: 'EA/T',         w: 64, align: 'right' },
+      { id: 'kg',      label: 'KG',           w: 64, align: 'right' },
+      { id: 'tt',      label: 'TT',           w: 130 },
+      { id: 'created', label: 'Tạo',          w: 120 },
+      { id: 'updated', label: 'Sửa',          w: 120 },
+    )
+    if (canEdit || canDel) cols.push({ id: 'actions', label: '', w: 64 })
+    return cols
+  }, [canDel, canEdit])
+  const { widths: colW, startResize, totalWidth } = useColumnResize('materials_col_widths', MAT_COLS.map(c => c.w))
+
   // ─── Filter chip bar (Manhattan) ───
   const filterDefs: FilterDef[] = [
     { key: 'cat', label: 'Loại hàng', type: 'multi', options: categories.map(c => ({ value: c, label: c })), selected: catFilter, searchable: true,
@@ -429,28 +452,22 @@ export default function Materials() {
 
       {/* ── Table ─────────────────────────────────────────────────────── */}
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
-          <Table className="min-w-full">
+          <Table className="table-fixed [&_td]:overflow-hidden [&_th]:overflow-hidden [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100" style={{ width: totalWidth, minWidth: '100%' }}>
+            <colgroup>{colW.map((w, i) => <col key={i} style={{ width: w }} />)}</colgroup>
             <TableHeader>
               <TableRow>
-                {canDel && (
-                  <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-8 whitespace-nowrap">
-                    <RowCheck checked={allSelected} indeterminate={someSelected} onClick={toggleAll} />
+                {MAT_COLS.map((c, i) => (
+                  <TableHead key={c.id}
+                    className={`relative text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''} ${c.id === 'code' ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                    {c.id === 'check'
+                      ? <RowCheck checked={allSelected} indeterminate={someSelected} onClick={toggleAll} />
+                      : c.label}
+                    {i > 0 && c.id !== 'actions' && (
+                      <span onPointerDown={e => startResize(i, e)} onClick={e => e.stopPropagation()}
+                        className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70" title="Kéo để chỉnh độ rộng cột" />
+                    )}
                   </TableHead>
-                )}
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Mã hàng</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Tên rút gọn</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Mô tả đầy đủ</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Loại</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">ĐVT</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap text-right">PL</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap text-right">EA/T</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap text-right">KG</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">TT</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Tạo</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Sửa</TableHead>
-                {(canEdit || canDel) && (
-                  <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap w-14" />
-                )}
+                ))}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -471,7 +488,7 @@ export default function Materials() {
                         <RowCheck checked={selected.has(mat.id)} onClick={() => toggleSelect(mat.id)} />
                       </TableCell>
                     )}
-                    <TableCell className="px-2 py-1 whitespace-nowrap font-mono font-semibold text-[10px]">{mat.material_code}</TableCell>
+                    <TableCell className="px-2 py-1 whitespace-nowrap font-mono font-semibold text-[10px] sticky left-0 z-10 bg-inherit">{mat.material_code}</TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] max-w-[160px] truncate">
                       {mat.short_name ?? <span className="text-slate-300">—</span>}
                     </TableCell>

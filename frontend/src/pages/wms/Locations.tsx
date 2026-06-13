@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react'
-import { MapPin, Plus, Pencil, Trash2, Flag, X } from 'lucide-react'
+import { MapPin, Plus, Pencil, Trash2, Flag, X, Rows3, AlignJustify } from 'lucide-react'
 import { formatDateTime } from '@/utils/formatters'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SummaryBand } from '@/components/shared/SummaryBand'
+import { useColumnResize } from '@/components/shared/useColumnResize'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { TableSkeleton }  from '@/components/shared/TableSkeleton'
 import { EmptyState }     from '@/components/shared/EmptyState'
@@ -51,6 +52,18 @@ interface WhWithCount {
 
 const EMPTY_FORM = { warehouse_id: '', category: '', sub_code: '', sub_name: '', row: '', shelf: '', max_pallets: '' }
 
+const LOC_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
+  { id: 'wh',      label: 'Kho',             w: 160 },
+  { id: 'cat',     label: 'Loại kho',        w: 120 },
+  { id: 'zone',    label: 'Khu vực kho',     w: 150 },
+  { id: 'loc',     label: 'Vị trí',          w: 160 },
+  { id: 'max',     label: 'Sức chứa tối đa', w: 110, align: 'right' },
+  { id: 'used',    label: 'Đang dùng',       w: 100, align: 'right' },
+  { id: 'status',  label: 'Trạng thái',      w: 100 },
+  { id: 'actions', label: '',                w: 64 },
+]
+const LOC_COL_DEFAULTS = LOC_COLS.map(c => c.w)
+
 export default function Locations() {
   const user  = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
@@ -59,6 +72,11 @@ export default function Locations() {
   const [search,       setSearch]       = useState('')
   const [statusFilter, setStatusFilter] = useState<string[]>([])
   const [flagFilter,   setFlagFilter]   = useState(false)
+  const { widths: colW, startResize, totalWidth } = useColumnResize('locations_col_widths', LOC_COL_DEFAULTS)
+  const [dense, setDense] = useState(() => localStorage.getItem('locations_density') !== 'comfortable')
+  function toggleDensity() {
+    setDense(d => { localStorage.setItem('locations_density', d ? 'comfortable' : 'compact'); return !d })
+  }
 
   // Location add/edit dialog
   const [dialogMode,    setDialogMode]    = useState<'add' | 'edit' | null>(null)
@@ -226,6 +244,11 @@ export default function Locations() {
           </span>
           <SearchInput value={search} onChange={setSearch} placeholder="Tìm mã vị trí…" className="flex-1 min-w-[140px]" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
+          <button type="button" onClick={toggleDensity}
+            className="hidden sm:inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0"
+            title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
+            {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
+          </button>
           {can(perms, 'locations', 'create') && (
             <Button size="sm" onClick={openAdd} className="h-7 text-xs gap-1">
               <Plus className="h-3.5 w-3.5" /> Thêm vị trí
@@ -255,17 +278,23 @@ export default function Locations() {
           ) : filtered.length === 0 ? (
             <EmptyState icon={MapPin} title="Không tìm thấy vị trí" />
           ) : (
-            <Table className="min-w-full">
+            <Table className="table-fixed [&_td]:overflow-hidden [&_th]:overflow-hidden [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100" style={{ width: totalWidth, minWidth: '100%' }}>
+              <colgroup>
+                {colW.map((w, i) => <col key={i} style={{ width: w }} />)}
+              </colgroup>
               <TableHeader>
                 <TableRow className="bg-slate-50">
-                  <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Kho</TableHead>
-                  <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Loại kho</TableHead>
-                  <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Khu vực kho</TableHead>
-                  <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Vị trí</TableHead>
-                  <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right">Sức chứa tối đa</TableHead>
-                  <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right">Đang dùng</TableHead>
-                  <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Trạng thái</TableHead>
-                  <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 w-16"></TableHead>
+                  {LOC_COLS.map((c, i) => (
+                    <TableHead key={c.id}
+                      className={`relative px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''} ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                      {c.label}
+                      {i > 0 && c.id !== 'actions' && (
+                        <span onPointerDown={e => startResize(i, e)} onClick={e => e.stopPropagation()}
+                          className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70"
+                          title="Kéo để chỉnh độ rộng cột" />
+                      )}
+                    </TableHead>
+                  ))}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -280,8 +309,8 @@ export default function Locations() {
                     : `hover:bg-slate-50 cursor-pointer${isSelected ? ' bg-slate-100' : ''}`
                   const showSubName = loc.sub_name && loc.sub_name !== loc.sub_code
                   return (
-                    <TableRow key={loc.id} className={rowCls} onClick={() => setSelectedLoc(prev => prev?.id === loc.id ? null : loc)}>
-                      <TableCell className="px-2 py-1 text-[10px] text-slate-600">
+                    <TableRow key={loc.id} className={`${rowCls} ${dense ? '' : '[&_td]:py-2.5'}`} onClick={() => setSelectedLoc(prev => prev?.id === loc.id ? null : loc)}>
+                      <TableCell className="px-2 py-1 text-[10px] text-slate-600 sticky left-0 z-10 bg-inherit">
                         {loc.warehouse?.name ?? '—'}
                       </TableCell>
                       <TableCell className="px-2 py-1 text-[10px] text-slate-600">

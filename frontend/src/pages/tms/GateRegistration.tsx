@@ -23,6 +23,8 @@ import {
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { SummaryBand } from '@/components/shared/SummaryBand'
+import { useColumnResize } from '@/components/shared/useColumnResize'
+import { Rows3, AlignJustify } from 'lucide-react'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 
@@ -66,6 +68,32 @@ const ROW_TEXT: Record<GateStatus, string> = {
 }
 
 const TODAY_VN = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+
+// Cột bảng đăng ký cổng — số phần tử PHẢI khớp số <TableCell> mỗi dòng (22 cột)
+const GATE_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
+  { id: 'num',     label: '#',         w: 40 },
+  { id: 'date',    label: 'Ngày',      w: 90 },
+  { id: 'dir',     label: 'Hướng',     w: 64 },
+  { id: 'vtype',   label: 'Loại xe',   w: 90 },
+  { id: 'content', label: 'Nội dung',  w: 120 },
+  { id: 'booking', label: 'Booking',   w: 110 },
+  { id: 'order',   label: 'Mã đơn',    w: 120 },
+  { id: 'npp',     label: 'NPP',       w: 140 },
+  { id: 'gdo',     label: 'GDO',       w: 110 },
+  { id: 'company', label: 'ĐVVT',      w: 120 },
+  { id: 'plate',   label: 'Biển số',   w: 100 },
+  { id: 'driver',  label: 'Lái xe',    w: 110 },
+  { id: 'phone',   label: 'SĐT',       w: 100 },
+  { id: 'notes',   label: 'Ghi chú',   w: 120 },
+  { id: 'tReg',    label: 'Giờ ĐK',    w: 60 },
+  { id: 'tCall',   label: 'Giờ gọi',   w: 60 },
+  { id: 'tIn',     label: 'Giờ vào',   w: 60 },
+  { id: 'tOut',    label: 'Giờ ra',    w: 60 },
+  { id: 'wh',      label: 'Kho',       w: 120 },
+  { id: 'whType',  label: 'Loại kho',  w: 100 },
+  { id: 'status',  label: 'TT',        w: 90 },
+  { id: 'actions', label: '',          w: 160 },
+]
 
 
 function fmtDate(dateStr: string | null | undefined) {
@@ -301,6 +329,10 @@ export default function GateRegistration() {
   const setFCompany       = (v: string)   => setGateRegistration({ fCompany: v })
   const setFDirection     = (v: string)   => setGateRegistration({ fDirection: v })
   const setFStatus        = (v: string)   => setGateRegistration({ fStatus: v })
+  const [dense, setDense] = useState(() => localStorage.getItem('gate_density') !== 'comfortable')
+  function toggleDensity() {
+    setDense(d => { localStorage.setItem('gate_density', d ? 'comfortable' : 'compact'); return !d })
+  }
 
   // Auto-set warehouse for single-warehouse users on first visit
   useEffect(() => {
@@ -704,6 +736,9 @@ export default function GateRegistration() {
     return savedViews.find(v => JSON.stringify(v.filters) === cur)?.id ?? null
   }, [savedViews, viewSnapshot])
 
+  const { widths: gateColW, startResize: gateStartResize, totalWidth: gateTotalWidth } =
+    useColumnResize('gate_col_widths', GATE_COLS.map(c => c.w))
+
   return (
     <div className="flex flex-col h-full sm:p-3">
      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
@@ -719,6 +754,11 @@ export default function GateRegistration() {
             activeId={activeViewId}
             onApply={(filters) => setGateRegistration(filters as Partial<typeof grf>)}
           />
+          <button type="button" onClick={toggleDensity}
+            className="hidden sm:inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0"
+            title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
+            {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
+          </button>
           {can(perms, 'gate_registration', 'create') && (
             <Button size="sm" className="h-7 text-xs" onClick={openCreate}>
               <Plus className="h-3.5 w-3.5 mr-1" />Thêm
@@ -751,42 +791,30 @@ export default function GateRegistration() {
             Không có dữ liệu
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <Table className="min-w-full">
+          <Table className="table-fixed [&_td]:overflow-hidden [&_th]:overflow-hidden [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100" style={{ width: gateTotalWidth, minWidth: '100%' }}>
+                <colgroup>{gateColW.map((w, i) => <col key={i} style={{ width: w }} />)}</colgroup>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-8 whitespace-nowrap">#</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Ngày</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-14 whitespace-nowrap">Hướng</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Loại xe</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Nội dung</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Booking</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Mã đơn</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">NPP</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">GDO</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">ĐVVT</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Biển số</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Lái xe</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">SĐT</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Ghi chú</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-14 whitespace-nowrap">Giờ ĐK</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-14 whitespace-nowrap">Giờ gọi</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-14 whitespace-nowrap">Giờ vào</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-14 whitespace-nowrap">Giờ ra</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Kho</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Loại kho</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-20 whitespace-nowrap">TT</TableHead>
-                    <TableHead className="text-[9px] font-medium text-slate-500 px-1 py-1.5 w-40"></TableHead>
+                    {GATE_COLS.map((c, i) => (
+                      <TableHead key={c.id}
+                        className={`relative text-[9px] font-medium text-slate-500 whitespace-nowrap py-1.5 ${i === 21 ? 'px-1' : 'px-2'} ${c.align === 'right' ? 'text-right' : ''} ${c.id === 'num' ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                        {c.label}
+                        {i > 0 && c.id !== 'actions' && (
+                          <span onPointerDown={e => gateStartResize(i, e)} onClick={e => e.stopPropagation()}
+                            className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70" title="Kéo để chỉnh độ rộng cột" />
+                        )}
+                      </TableHead>
+                    ))}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {displayRegs.map(reg => (
                     <TableRow
                       key={reg.id}
-                      className={`cursor-pointer ${ROW_TEXT[reg.status]} ${selected?.id === reg.id ? 'ring-1 ring-inset ring-blue-400' : ''}`}
+                      className={`cursor-pointer ${ROW_TEXT[reg.status]} ${selected?.id === reg.id ? 'ring-1 ring-inset ring-blue-400' : ''} ${dense ? '' : '[&_td]:py-2.5'}`}
                       onClick={() => setSelected(prev => prev?.id === reg.id ? null : reg)}
                     >
-                      <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">
+                      <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap sticky left-0 z-10 bg-white">
                         {reg.registration_number}
                       </TableCell>
                       <TableCell className="px-2 py-1 text-[10px] font-mono whitespace-nowrap">{fmtDate(reg.date)}</TableCell>
@@ -845,7 +873,6 @@ export default function GateRegistration() {
                   ))}
                 </TableBody>
               </Table>
-            </div>
           )}
       </div>
 

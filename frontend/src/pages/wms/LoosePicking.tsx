@@ -7,6 +7,7 @@ import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { SummaryBand } from '@/components/shared/SummaryBand'
+import { useColumnResize } from '@/components/shared/useColumnResize'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useLoosePickingItems, useWarehouses, type LoosePickingItem } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
@@ -15,6 +16,21 @@ import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { useActiveLoosePickingStore } from '@/stores/activeLoosePickingStore'
 
 const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+
+const LOOSE_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
+  { id: 'pin',        label: '',             w: 34 },
+  { id: 'date',       label: 'Ngày xuất',    w: 90 },
+  { id: 'code',       label: 'Số xe',        w: 110 },
+  { id: 'npp',        label: 'NPP',          w: 160 },
+  { id: 'dvvt',       label: 'ĐVVT',         w: 90 },
+  { id: 'wh',         label: 'Kho xuất',     w: 140 },
+  { id: 'items',      label: 'Mặt hàng',     w: 110, align: 'right' },
+  { id: 'loose',      label: 'Nhặt lẻ',      w: 120, align: 'right' },
+  { id: 'progress',   label: 'Tiến độ',      w: 96 },
+  { id: 'gdoStatus',  label: 'T.T. đơn',     w: 96 },
+  { id: 'pickStatus', label: 'T.T. nhặt lẻ', w: 110 },
+]
+const LOOSE_COL_DEFAULTS = LOOSE_COLS.map(c => c.w)
 
 // ─── GDO-level summary ────────────────────────────────────────
 
@@ -63,6 +79,7 @@ export default function LoosePicking() {
   const { pin, unpin, isPinned } = useActiveLoosePickingStore()
   const { loosePicking: f, setLoosePicking } = useWmsFilterStore()
   const [dense, setDense] = useState(() => localStorage.getItem('loosePicking_density') !== 'comfortable')
+  const { widths: colW, startResize, totalWidth } = useColumnResize('loosePicking_col_widths', LOOSE_COL_DEFAULTS)
   function toggleDensity() {
     setDense(d => { localStorage.setItem('loosePicking_density', d ? 'comfortable' : 'compact'); return !d })
   }
@@ -245,21 +262,20 @@ export default function LoosePicking() {
             </p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-          <Table className="min-w-[900px]">
+          <Table className="table-fixed [&_td]:overflow-hidden [&_th]:overflow-hidden [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100" style={{ width: totalWidth, minWidth: '100%' }}>
+            <colgroup>{colW.map((w, i) => <col key={i} style={{ width: w }} />)}</colgroup>
             <TableHeader>
               <TableRow className="bg-slate-50">
-                <TableHead className="w-8 px-1 py-1.5" />
-                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Ngày xuất</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Số xe</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">NPP</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">ĐVVT</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Kho xuất</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 text-right whitespace-nowrap px-2 py-1.5">Mặt hàng</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 text-right whitespace-nowrap px-2 py-1.5">Nhặt lẻ</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5 min-w-[80px]">Tiến độ</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">T.T. đơn</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">T.T. nhặt lẻ</TableHead>
+                {LOOSE_COLS.map((c, i) => (
+                  <TableHead key={c.id}
+                    className={`relative text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5 ${c.align === 'right' ? 'text-right' : ''} ${i === 1 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                    {c.label}
+                    {i > 0 && (
+                      <span onPointerDown={e => startResize(i, e)} onClick={e => e.stopPropagation()}
+                        className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70" title="Kéo để chỉnh độ rộng cột" />
+                    )}
+                  </TableHead>
+                ))}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -295,7 +311,7 @@ export default function LoosePicking() {
                         <Bookmark className="h-3.5 w-3.5" fill={pinned ? 'currentColor' : 'none'} />
                       </button>
                     </TableCell>
-                    <TableCell className="px-2 py-1 whitespace-nowrap">
+                    <TableCell className="px-2 py-1 whitespace-nowrap sticky left-0 z-10 bg-white">
                       <span className="text-[10px] font-medium tabular-nums">{dateStr}</span>
                     </TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap">
@@ -343,7 +359,6 @@ export default function LoosePicking() {
               })}
             </TableBody>
           </Table>
-          </div>
         )}
       </div>
 

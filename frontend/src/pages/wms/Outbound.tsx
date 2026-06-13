@@ -21,6 +21,7 @@ import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 import { formatTimestampTime } from '@/utils/formatters'
 import { rowText, type RowStatusKey } from '@/lib/rowStatus'
+import { useColumnResize } from '@/components/shared/useColumnResize'
 import type { GDO } from '@/types'
 
 const TODAY = new Date().toISOString().slice(0, 10)
@@ -61,6 +62,31 @@ function fTime(ts: string | null | undefined): string {
   return formatTimestampTime(ts)
 }
 
+const OUTBOUND_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
+  { id: 'pin',       label: '',              w: 34 },
+  { id: 'date',      label: 'Ngày xuất',     w: 96 },
+  { id: 'code',      label: 'Số xe',         w: 120 },
+  { id: 'npp',       label: 'Tên NPP',       w: 150 },
+  { id: 'shipto',    label: 'Ship-to',       w: 96 },
+  { id: 'dvvt',      label: 'ĐVVT',          w: 80 },
+  { id: 'cartons',   label: 'Tổng thùng',    w: 90,  align: 'right' },
+  { id: 'pallets',   label: 'Pallet',        w: 72,  align: 'right' },
+  { id: 'warehouse', label: 'Kho xuất',      w: 110 },
+  { id: 'exptype',   label: 'Loại xe',       w: 100 },
+  { id: 'whtype',    label: 'Loại kho',      w: 96 },
+  { id: 'assigned',  label: 'Giờ giao đơn',  w: 96 },
+  { id: 'started',   label: 'Giờ bắt đầu',   w: 90 },
+  { id: 'scandone',  label: 'Giờ quét xong', w: 96 },
+  { id: 'completed', label: 'Giờ kết thúc',  w: 90 },
+  { id: 'status',    label: 'Tình trạng',    w: 92 },
+  { id: 'transfer',  label: 'Chuyển kho',    w: 92 },
+  { id: 'exporter',  label: 'Người xuất',    w: 104 },
+  { id: 'forklift',  label: 'Lái xe nâng',   w: 104 },
+  { id: 'loader',    label: 'Bốc xếp',       w: 104 },
+  { id: 'do',        label: 'Số DO',         w: 120 },
+]
+const OUTBOUND_COL_DEFAULTS = OUTBOUND_COLS.map(c => c.w)
+
 export default function Outbound() {
   const navigate = useNavigate()
   const user     = useAuthStore(s => s.user)
@@ -74,6 +100,7 @@ export default function Outbound() {
   const [postUploadLoading, setPostUploadLoading] = useState(false)
   const [showCreate,  setShowCreate]  = useState(false)
   const [dense, setDense] = useState(() => localStorage.getItem('outbound_density') !== 'comfortable')
+  const { widths: colW, startResize, totalWidth } = useColumnResize('outbound_col_widths', OUTBOUND_COL_DEFAULTS)
   function toggleDensity() {
     setDense(d => { localStorage.setItem('outbound_density', d ? 'comfortable' : 'compact'); return !d })
   }
@@ -359,30 +386,20 @@ export default function Outbound() {
             {!hasDate && <p className="text-xs">Upload file Excel để bắt đầu</p>}
           </div>
         ) : (
-          <Table className="min-w-[1800px]">
+          <Table className="table-fixed [&_td]:overflow-hidden [&_th]:overflow-hidden [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100" style={{ width: totalWidth, minWidth: '100%' }}>
+            <colgroup>{colW.map((w, i) => <col key={i} style={{ width: w }} />)}</colgroup>
             <TableHeader>
               <TableRow className="bg-slate-50">
-                <TableHead className="px-1.5 py-1.5 w-7" />
-                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5 sticky left-0 z-20 bg-slate-50">Ngày xuất</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Số xe</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Tên NPP</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Ship-to</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">ĐVVT</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 text-right whitespace-nowrap px-2 py-1.5">Tổng thùng</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 text-right whitespace-nowrap px-2 py-1.5">Pallet</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Kho xuất</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Loại xe</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Loại kho</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Giờ giao đơn</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Giờ bắt đầu</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Giờ quét xong</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Giờ kết thúc</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Tình trạng</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Chuyển kho</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Người xuất</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Lái xe nâng</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Bốc xếp</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5">Số DO</TableHead>
+                {OUTBOUND_COLS.map((c, i) => (
+                  <TableHead key={c.id}
+                    className={`relative text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5 ${c.align === 'right' ? 'text-right' : ''} ${i === 1 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                    {c.label}
+                    {i > 0 && (
+                      <span onPointerDown={e => startResize(i, e)} onClick={e => e.stopPropagation()}
+                        className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70" title="Kéo để chỉnh độ rộng cột" />
+                    )}
+                  </TableHead>
+                ))}
               </TableRow>
             </TableHeader>
             <TableBody>

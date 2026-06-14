@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import QRCode from 'qrcode'
-import { QrCode, Printer, Trash2, AlertTriangle, History, X } from 'lucide-react'
+import { QrCode, Printer, Trash2, AlertTriangle, History, X, Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -70,13 +70,13 @@ function QRImg({ value, px = 320 }: { value: string; px?: number }) {
 function PalletLabel({ d }: { d: LabelData }) {
   return (
     <div className="pl-label flex flex-col border border-dashed border-slate-300 p-[3.5mm] overflow-hidden">
-      {/* QR — to, căn giữa */}
-      <div className="flex justify-center shrink-0">
-        <div className="h-[72mm] w-[72mm]"><QRImg value={d.qr} px={480} /></div>
+      {/* QR — ~60% diện tích tem, căn giữa */}
+      <div className="flex justify-center items-center shrink-0 h-[60%]">
+        <div className="h-[86mm] w-[86mm] max-h-full"><QRImg value={d.qr} px={520} /></div>
       </div>
 
-      {/* Thông tin — 2 cột lấp khoảng trống bên phải */}
-      <div className="mt-[2mm] flex-1 min-h-0 flex flex-col text-[10.5pt] leading-[1.3] text-black border-t border-black pt-[1.5mm]">
+      {/* Thông tin — 2 cột (40% còn lại) */}
+      <div className="mt-[1mm] flex-1 min-h-0 flex flex-col text-[9.5pt] leading-[1.25] text-black border-t border-black pt-[1mm]">
         <div className="grid grid-cols-2 gap-x-[3mm] flex-1 min-h-0">
           <div className="space-y-[0.8mm] min-w-0">
             <p className="truncate"><span className="font-semibold">Ngày</span>: {d.dateDisplay}</p>
@@ -105,15 +105,15 @@ function PalletLabel({ d }: { d: LabelData }) {
       <div className="mt-[1.5mm] grid grid-cols-3 shrink-0 border-t-2 border-black text-center">
         <div className="border-r border-black">
           <div className="text-[8pt] font-semibold leading-tight">Chu kỳ</div>
-          <div className="text-[30pt] font-bold leading-none">{d.cycle || '—'}</div>
+          <div className="text-[24pt] font-bold leading-none">{d.cycle || '—'}</div>
         </div>
         <div className="border-r border-black">
           <div className="text-[8pt] font-semibold leading-tight">Máy</div>
-          <div className="text-[30pt] font-bold leading-none">{d.machine || '—'}</div>
+          <div className="text-[24pt] font-bold leading-none">{d.machine || '—'}</div>
         </div>
         <div>
           <div className="text-[8pt] font-semibold leading-tight">Số pallet</div>
-          <div className="text-[30pt] font-bold leading-none">{Number(d.seq) || d.seq}</div>
+          <div className="text-[24pt] font-bold leading-none">{Number(d.seq) || d.seq}</div>
         </div>
       </div>
     </div>
@@ -278,6 +278,19 @@ export default function PalletLabels() {
       return next
     })
   }
+  function addByEntry(e: any) {
+    setPicked(prev => ({ ...prev, [e.pallet_code]: entryToLabel(e) }))
+  }
+  // Quét / điền tay mã pallet (không phụ thuộc filter) — Enter để thêm
+  const [palletQ, setPalletQ] = useState('')
+  const { data: scanData } = useInventoryEntries({ search: palletQ.trim().length >= 3 ? palletQ.trim() : undefined, status: '', page: 1, limit: 10 })
+  const scanEntries = (palletQ.trim().length >= 3 ? scanData?.entries ?? [] : []) as any[]
+  function onScanEnter(ev: React.KeyboardEvent) {
+    if (ev.key !== 'Enter') return
+    const code = palletQ.trim()
+    const hit = scanEntries.find(e => e.pallet_code === code) ?? (scanEntries.length === 1 ? scanEntries[0] : null)
+    if (hit) { addByEntry(hit); setPalletQ('') }
+  }
 
   // ── Truy cứu — filter client-side + gộp theo mã pallet ──
   const [auWh, setAuWh]             = useState<string[]>([])  // theo NMSX (mã kho tổng)
@@ -285,6 +298,7 @@ export default function PalletLabels() {
   const [auMats, setAuMats]         = useState<string[]>([])  // material_code
   const [auCycles, setAuCycles]     = useState<string[]>([])
   const [auMachines, setAuMachines] = useState<string[]>([])
+  const [auQr, setAuQr]             = useState('')   // quét/điền tay mã pallet
   const [auOpen, setAuOpen]         = useState<string | null>(null)
   const { data: auditRows = [] } = usePalletPrints({}, tab === 'audit')
 
@@ -302,7 +316,9 @@ export default function PalletLabels() {
   }, [auditRows])
 
   const auditSummary = useMemo(() => {
+    const qq = auQr.trim().toLowerCase()
     const filtered = auditRows.filter(r =>
+      (!qq                || r.qr_code.toLowerCase().includes(qq)) &&
       (!auWh.length       || (r.nmsx && auWh.includes(r.nmsx))) &&
       (!auCats.length     || (r.category && auCats.includes(r.category))) &&
       (!auMats.length     || (r.material_code && auMats.includes(r.material_code))) &&
@@ -316,7 +332,7 @@ export default function PalletLabels() {
       else m.set(r.qr_code, { qr: r.qr_code, material_code: r.material_code, nmsx: r.nmsx, category: r.category, cycle: r.cycle, machine: r.machine, count: 1, last: r.created_at, events: [r] })
     }
     return [...m.values()].sort((a, b) => b.last.localeCompare(a.last))
-  }, [auditRows, auWh, auCats, auMats, auCycles, auMachines])
+  }, [auditRows, auQr, auWh, auCats, auMats, auCycles, auMachines])
 
   const labels = tab === 'generate' ? genLabels : tab === 'reprint' ? Object.values(picked) : []
 
@@ -457,18 +473,39 @@ export default function PalletLabels() {
             </>
           ) : tab === 'reprint' ? (
             <>
+              {/* Quét / điền tay mã pallet — thêm nhanh, không phụ thuộc filter */}
               <div className="space-y-1">
-                <Label className="text-xs">Kho</Label>
-                <WarehouseSingleSelect warehouses={whOptions} value={rpWh} onChange={v => { setRpWh(v); setRpMatIds([]); setRpCycles([]); setRpMachines([]) }} allLabel="Tất cả kho" triggerClassName="h-8" />
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                <MultiSelectFilter label="Loại hàng" options={categoryOpts.map(c => ({ value: c, label: c }))} selected={rpCats} onChange={v => { setRpCats(v); setRpMatIds([]) }} searchable={false} />
-                <MultiSelectFilter label="Tên hàng" options={(rpFacets?.materials ?? []).map((m: any) => ({ value: m.id, label: m.name ? `${m.code} – ${m.name}` : m.code }))} selected={rpMatIds} onChange={setRpMatIds} />
-                <MultiSelectFilter label="Chu kỳ" options={(rpFacets?.cycles ?? []).map((c: string) => ({ value: c, label: c }))} selected={rpCycles} onChange={setRpCycles} searchable={(rpFacets?.cycles ?? []).length > 6} />
-                <MultiSelectFilter label="Máy" options={(rpFacets?.machines ?? []).map((m: string) => ({ value: m, label: m }))} selected={rpMachines} onChange={setRpMachines} searchable={(rpFacets?.machines ?? []).length > 6} />
+                <Label className="text-xs">Quét / nhập mã pallet</Label>
+                <div className="relative">
+                  <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
+                  <Input className="pl-7 h-8 text-sm" placeholder="Quét QR hoặc gõ mã rồi Enter" value={palletQ} onChange={e => setPalletQ(e.target.value)} onKeyDown={onScanEnter} />
+                </div>
+                {scanEntries.length > 0 && (
+                  <div className="border rounded-md divide-y divide-slate-100 max-h-40 overflow-y-auto">
+                    {scanEntries.slice(0, 10).map(e => (
+                      <button key={e.id} type="button" onClick={() => { addByEntry(e); setPalletQ('') }}
+                        className={`flex w-full items-center gap-2 px-2 py-1.5 text-left ${picked[e.pallet_code] ? 'bg-blue-50' : 'hover:bg-slate-50'}`}>
+                        <span className="font-mono text-[10px] font-semibold truncate flex-1">{e.pallet_code}</span>
+                        <span className="text-[9px] text-slate-400 shrink-0">{e.material?.material_code}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="space-y-1 pt-1 border-t">
+                <Label className="text-xs">Hoặc lọc rồi chọn nhiều</Label>
+                <WarehouseSingleSelect warehouses={whOptions} value={rpWh} onChange={v => { setRpWh(v); setRpMatIds([]); setRpCycles([]); setRpMachines([]) }} allLabel="Tất cả kho" triggerClassName="h-8" />
+              </div>
+              {/* grid 2 cột cố định → không nhảy vị trí khi chọn */}
+              <div className="grid grid-cols-2 gap-1.5">
+                <MultiSelectFilter label="Loại hàng" options={categoryOpts.map(c => ({ value: c, label: c }))} selected={rpCats} onChange={v => { setRpCats(v); setRpMatIds([]) }} searchable={false} width="w-full" />
+                <MultiSelectFilter label="Tên hàng" options={(rpFacets?.materials ?? []).map((m: any) => ({ value: m.id, label: m.name ? `${m.code} – ${m.name}` : m.code }))} selected={rpMatIds} onChange={setRpMatIds} width="w-full" />
+                <MultiSelectFilter label="Chu kỳ" options={(rpFacets?.cycles ?? []).map((c: string) => ({ value: c, label: c }))} selected={rpCycles} onChange={setRpCycles} searchable={(rpFacets?.cycles ?? []).length > 6} width="w-full" />
+                <MultiSelectFilter label="Máy" options={(rpFacets?.machines ?? []).map((m: string) => ({ value: m, label: m }))} selected={rpMachines} onChange={setRpMachines} searchable={(rpFacets?.machines ?? []).length > 6} width="w-full" />
+              </div>
+
+              <div className="space-y-1">
                 <Label className="text-xs">Mã pallet (chọn nhiều) — {invEntries.length} kết quả</Label>
                 <MultiSelectFilter label="Chọn mã pallet" options={palletOptions} selected={Object.keys(picked)} onChange={onPickCodes} width="w-full" />
               </div>
@@ -490,15 +527,22 @@ export default function PalletLabels() {
               </div>
             </>
           ) : (
-            /* Truy cứu — filter */
+            /* Truy cứu — quét pallet + filter */
             <>
-              <p className="text-[11px] font-medium text-slate-600">Lọc lịch sử in</p>
-              <div className="flex flex-wrap gap-1.5">
-                <MultiSelectFilter label="Kho (NMSX)" options={auditOpts.nmsx} selected={auWh} onChange={setAuWh} searchable={auditOpts.nmsx.length > 6} />
-                <MultiSelectFilter label="Loại hàng" options={auditOpts.cats} selected={auCats} onChange={setAuCats} searchable={false} />
-                <MultiSelectFilter label="Tên hàng (mã)" options={auditOpts.mats} selected={auMats} onChange={setAuMats} />
-                <MultiSelectFilter label="Chu kỳ" options={auditOpts.cyc} selected={auCycles} onChange={setAuCycles} searchable={auditOpts.cyc.length > 6} />
-                <MultiSelectFilter label="Máy" options={auditOpts.mac} selected={auMachines} onChange={setAuMachines} searchable={auditOpts.mac.length > 6} />
+              <div className="space-y-1">
+                <Label className="text-xs">Quét / nhập mã pallet</Label>
+                <div className="relative">
+                  <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
+                  <Input className="pl-7 h-8 text-sm" placeholder="Quét QR hoặc gõ mã pallet…" value={auQr} onChange={e => setAuQr(e.target.value)} />
+                </div>
+                <p className="text-[10px] text-slate-400">Tra riêng 1 pallet, hoặc lọc theo nhóm bên dưới.</p>
+              </div>
+              <div className="grid grid-cols-2 gap-1.5 pt-1 border-t">
+                <MultiSelectFilter label="Kho (NMSX)" options={auditOpts.nmsx} selected={auWh} onChange={setAuWh} searchable={auditOpts.nmsx.length > 6} width="w-full" />
+                <MultiSelectFilter label="Loại hàng" options={auditOpts.cats} selected={auCats} onChange={setAuCats} searchable={false} width="w-full" />
+                <MultiSelectFilter label="Tên hàng (mã)" options={auditOpts.mats} selected={auMats} onChange={setAuMats} width="w-full" />
+                <MultiSelectFilter label="Chu kỳ" options={auditOpts.cyc} selected={auCycles} onChange={setAuCycles} searchable={auditOpts.cyc.length > 6} width="w-full" />
+                <MultiSelectFilter label="Máy" options={auditOpts.mac} selected={auMachines} onChange={setAuMachines} searchable={auditOpts.mac.length > 6} width="w-full" />
               </div>
               <p className="text-[10px] text-slate-400">Bảng bên phải gộp theo mã pallet — bấm 1 dòng để xem chi tiết các lần in.</p>
             </>

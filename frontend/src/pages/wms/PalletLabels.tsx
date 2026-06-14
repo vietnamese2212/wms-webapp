@@ -1,15 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import QRCode from 'qrcode'
-import { QrCode, Printer, Trash2, Search, AlertTriangle, History, X } from 'lucide-react'
+import { QrCode, Printer, Trash2, AlertTriangle, History, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
+import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import {
-  useWarehouses, useWarehouseTypes, useMaterials, useInventoryEntries,
-  useLogPalletPrints, usePalletPrints,
+  useWarehouses, useWarehouseTypes, useMaterials, useInventoryEntries, useInventoryFacets,
+  useLogPalletPrints, usePalletPrints, type PalletPrintRow,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -219,22 +220,11 @@ export default function PalletLabels() {
     return out
   }, [tab, mat, prodDate, cycle, machine, nmsx, seqStart, count, qty])
 
-  // ── Reprint từ tồn kho ──
-  const [rpWh, setRpWh]   = useState(allowedWhIds ? [...allowedWhIds][0] : '')
-  const [rpSearch, setRpSearch] = useState('')
-  const [picked, setPicked] = useState<Record<string, LabelData>>({})
-  const { data: invData } = useInventoryEntries({
-    warehouse_ids: rpWh ? [rpWh] : undefined,
-    search: rpSearch || undefined,
-    status: '', page: 1, limit: 60,
-  })
-  const invEntries = invData?.entries ?? []
-
   function entryToLabel(e: any): LabelData {
     const pd: string | null = e.production_date ?? null
     const disp = pd ? toDisplayDate(pd.slice(0, 10)) : '—'
     return {
-      key: e.id,
+      key: e.pallet_code,
       qr: e.pallet_code,
       dateDisplay: disp,
       materialCode: e.material?.material_code ?? '',
@@ -249,28 +239,84 @@ export default function PalletLabels() {
       seq: (e.pallet_code?.split('_')?.[4]) ?? '',
     }
   }
-  function addEntry(e: any) {
-    setPicked(prev => prev[e.id] ? prev : { ...prev, [e.id]: entryToLabel(e) })
-  }
-  function removeEntry(id: string) {
-    setPicked(prev => { const n = { ...prev }; delete n[id]; return n })
-  }
-  // Quét/nhập đủ mã pallet → Enter để thêm nhanh
-  function onReprintEnter(ev: React.KeyboardEvent) {
-    if (ev.key !== 'Enter') return
-    const code = rpSearch.trim()
-    const hit = (invEntries as any[]).find(e => e.pallet_code === code) ?? (invEntries.length === 1 ? invEntries[0] : null)
-    if (hit) { addEntry(hit); setRpSearch('') }
+
+  // ── In lại từ tồn kho — filter Kho/Loại hàng/Tên hàng/Chu kỳ/Máy → multi-select Mã pallet ──
+  const [rpWh, setRpWh]             = useState(allowedWhIds ? [...allowedWhIds][0] : '')
+  const [rpCats, setRpCats]         = useState<string[]>([])
+  const [rpMatIds, setRpMatIds]     = useState<string[]>([])
+  const [rpCycles, setRpCycles]     = useState<string[]>([])
+  const [rpMachines, setRpMachines] = useState<string[]>([])
+  const [picked, setPicked]         = useState<Record<string, LabelData>>({})
+
+  const rpFacets = useInventoryFacets({
+    warehouse_ids: rpWh ? [rpWh] : undefined,
+    categories: rpCats.length ? rpCats : undefined,
+  }).data
+  const { data: invData } = useInventoryEntries({
+    warehouse_ids: rpWh ? [rpWh] : undefined,
+    categories: rpCats.length ? rpCats : undefined,
+    filter_material_ids: rpMatIds.length ? rpMatIds : undefined,
+    filter_cycles: rpCycles.length ? rpCycles : undefined,
+    filter_machines: rpMachines.length ? rpMachines : undefined,
+    status: '', page: 1, limit: 500,
+  })
+  const invEntries = invData?.entries ?? []
+  const entryByCode = useMemo(() => {
+    const m: Record<string, any> = {}
+    for (const e of invEntries as any[]) m[e.pallet_code] = e
+    return m
+  }, [invEntries])
+  const palletOptions = useMemo(() => (invEntries as any[]).map(e => ({ value: e.pallet_code, label: e.pallet_code })), [invEntries])
+
+  function onPickCodes(codes: string[]) {
+    setPicked(prev => {
+      const next: Record<string, LabelData> = {}
+      for (const c of codes) {
+        const lbl = prev[c] ?? (entryByCode[c] ? entryToLabel(entryByCode[c]) : undefined)
+        if (lbl) next[c] = lbl
+      }
+      return next
+    })
   }
 
-  // ── Truy cứu ──
-  const [auditSearch, setAuditSearch] = useState('')
-  const { data: auditRows = [] } = usePalletPrints({ search: auditSearch || undefined }, tab === 'audit')
-  const auditCountByQr = useMemo(() => {
-    const m: Record<string, number> = {}
-    for (const r of auditRows) m[r.qr_code] = (m[r.qr_code] ?? 0) + 1
-    return m
+  // ── Truy cứu — filter client-side + gộp theo mã pallet ──
+  const [auWh, setAuWh]             = useState<string[]>([])  // theo NMSX (mã kho tổng)
+  const [auCats, setAuCats]         = useState<string[]>([])
+  const [auMats, setAuMats]         = useState<string[]>([])  // material_code
+  const [auCycles, setAuCycles]     = useState<string[]>([])
+  const [auMachines, setAuMachines] = useState<string[]>([])
+  const [auOpen, setAuOpen]         = useState<string | null>(null)
+  const { data: auditRows = [] } = usePalletPrints({}, tab === 'audit')
+
+  const auditOpts = useMemo(() => {
+    const sets = { nmsx: new Set<string>(), cats: new Set<string>(), mats: new Set<string>(), cyc: new Set<string>(), mac: new Set<string>() }
+    for (const r of auditRows) {
+      if (r.nmsx) sets.nmsx.add(r.nmsx)
+      if (r.category) sets.cats.add(r.category)
+      if (r.material_code) sets.mats.add(r.material_code)
+      if (r.cycle) sets.cyc.add(r.cycle)
+      if (r.machine) sets.mac.add(r.machine)
+    }
+    const opt = (s: Set<string>) => [...s].sort().map(v => ({ value: v, label: v }))
+    return { nmsx: opt(sets.nmsx), cats: opt(sets.cats), mats: opt(sets.mats), cyc: opt(sets.cyc), mac: opt(sets.mac) }
   }, [auditRows])
+
+  const auditSummary = useMemo(() => {
+    const filtered = auditRows.filter(r =>
+      (!auWh.length       || (r.nmsx && auWh.includes(r.nmsx))) &&
+      (!auCats.length     || (r.category && auCats.includes(r.category))) &&
+      (!auMats.length     || (r.material_code && auMats.includes(r.material_code))) &&
+      (!auCycles.length   || (r.cycle && auCycles.includes(r.cycle))) &&
+      (!auMachines.length || (r.machine && auMachines.includes(r.machine)))
+    )
+    const m = new Map<string, { qr: string; material_code: string | null; nmsx: string | null; category: string | null; cycle: string | null; machine: string | null; count: number; last: string; events: PalletPrintRow[] }>()
+    for (const r of filtered) {
+      const g = m.get(r.qr_code)
+      if (g) { g.count++; g.events.push(r); if (r.created_at > g.last) g.last = r.created_at }
+      else m.set(r.qr_code, { qr: r.qr_code, material_code: r.material_code, nmsx: r.nmsx, category: r.category, cycle: r.cycle, machine: r.machine, count: 1, last: r.created_at, events: [r] })
+    }
+    return [...m.values()].sort((a, b) => b.last.localeCompare(a.last))
+  }, [auditRows, auWh, auCats, auMats, auCycles, auMachines])
 
   const labels = tab === 'generate' ? genLabels : tab === 'reprint' ? Object.values(picked) : []
 
@@ -413,91 +459,103 @@ export default function PalletLabels() {
             <>
               <div className="space-y-1">
                 <Label className="text-xs">Kho</Label>
-                <WarehouseSingleSelect warehouses={whOptions} value={rpWh} onChange={setRpWh} allLabel="Tất cả kho" triggerClassName="h-8" />
+                <WarehouseSingleSelect warehouses={whOptions} value={rpWh} onChange={v => { setRpWh(v); setRpMatIds([]); setRpCycles([]); setRpMachines([]) }} allLabel="Tất cả kho" triggerClassName="h-8" />
               </div>
-              <div className="relative">
-                <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
-                <Input className="pl-7 h-8 text-sm" placeholder="Quét QR / nhập mã pallet / tìm mã hàng…"
-                  value={rpSearch} onChange={e => setRpSearch(e.target.value)} onKeyDown={onReprintEnter} />
+              <div className="flex flex-wrap gap-1.5">
+                <MultiSelectFilter label="Loại hàng" options={categoryOpts.map(c => ({ value: c, label: c }))} selected={rpCats} onChange={v => { setRpCats(v); setRpMatIds([]) }} searchable={false} />
+                <MultiSelectFilter label="Tên hàng" options={(rpFacets?.materials ?? []).map((m: any) => ({ value: m.id, label: m.name ? `${m.code} – ${m.name}` : m.code }))} selected={rpMatIds} onChange={setRpMatIds} />
+                <MultiSelectFilter label="Chu kỳ" options={(rpFacets?.cycles ?? []).map((c: string) => ({ value: c, label: c }))} selected={rpCycles} onChange={setRpCycles} searchable={(rpFacets?.cycles ?? []).length > 6} />
+                <MultiSelectFilter label="Máy" options={(rpFacets?.machines ?? []).map((m: string) => ({ value: m, label: m }))} selected={rpMachines} onChange={setRpMachines} searchable={(rpFacets?.machines ?? []).length > 6} />
               </div>
-              <p className="text-[10px] text-slate-400 -mt-1.5">Quét QR rồi Enter để thêm nhanh, hoặc tìm rồi bấm chọn.</p>
 
-              {/* Kết quả tìm — chỉ hiện khi có từ khoá */}
-              {rpSearch.trim().length >= 2 && (
-                <div className="border rounded-md divide-y divide-slate-100 max-h-48 overflow-y-auto">
-                  {invEntries.length === 0 ? (
-                    <p className="px-2 py-3 text-center text-xs text-slate-400">Không tìm thấy pallet</p>
-                  ) : (invEntries as any[]).slice(0, 30).map(e => (
-                    <button key={e.id} type="button" onClick={() => addEntry(e)}
-                      className={`flex w-full items-center gap-2 px-2 py-1.5 text-left ${picked[e.id] ? 'bg-blue-50' : 'hover:bg-slate-50'}`}>
-                      <span className="font-mono text-[10px] font-semibold truncate flex-1">{e.pallet_code}</span>
-                      <span className="text-[9px] text-slate-400 shrink-0">{e.material?.material_code}</span>
-                      {picked[e.id] && <span className="text-[9px] text-blue-600 shrink-0">đã thêm</span>}
-                    </button>
-                  ))}
-                </div>
-              )}
+              <div className="space-y-1 pt-1 border-t">
+                <Label className="text-xs">Mã pallet (chọn nhiều) — {invEntries.length} kết quả</Label>
+                <MultiSelectFilter label="Chọn mã pallet" options={palletOptions} selected={Object.keys(picked)} onChange={onPickCodes} width="w-full" />
+              </div>
 
-              {/* Lô đã chọn */}
               <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1 border-t">
                 <span className="font-medium text-slate-700">Đã chọn: {Object.keys(picked).length}</span>
                 {Object.keys(picked).length > 0 && (
                   <button onClick={() => setPicked({})} className="flex items-center gap-0.5 text-red-500 hover:text-red-700"><Trash2 className="h-3 w-3" />Bỏ hết</button>
                 )}
               </div>
-              <div className="space-y-1 max-h-64 overflow-y-auto">
+              <div className="space-y-1 max-h-56 overflow-y-auto">
                 {Object.values(picked).map(l => (
                   <div key={l.key} className="flex items-center gap-2 rounded border border-slate-200 px-2 py-1">
                     <span className="font-mono text-[10px] font-semibold truncate flex-1">{l.qr}</span>
-                    <button onClick={() => removeEntry(l.key)} className="text-slate-400 hover:text-red-500 shrink-0"><X className="h-3 w-3" /></button>
+                    <button onClick={() => onPickCodes(Object.keys(picked).filter(c => c !== l.key))} className="text-slate-400 hover:text-red-500 shrink-0"><X className="h-3 w-3" /></button>
                   </div>
                 ))}
-                {Object.keys(picked).length === 0 && <p className="text-[11px] text-slate-400">Chưa chọn pallet nào.</p>}
+                {Object.keys(picked).length === 0 && <p className="text-[11px] text-slate-400">Chọn mã pallet ở trên để in lại.</p>}
               </div>
             </>
           ) : (
-            /* Truy cứu */
-            <div className="relative">
-              <Label className="text-xs">Tra mã pallet / QR</Label>
-              <div className="relative mt-1">
-                <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
-                <Input className="pl-7 h-8 text-sm" placeholder="Nhập mã pallet…" value={auditSearch} onChange={e => setAuditSearch(e.target.value)} />
+            /* Truy cứu — filter */
+            <>
+              <p className="text-[11px] font-medium text-slate-600">Lọc lịch sử in</p>
+              <div className="flex flex-wrap gap-1.5">
+                <MultiSelectFilter label="Kho (NMSX)" options={auditOpts.nmsx} selected={auWh} onChange={setAuWh} searchable={auditOpts.nmsx.length > 6} />
+                <MultiSelectFilter label="Loại hàng" options={auditOpts.cats} selected={auCats} onChange={setAuCats} searchable={false} />
+                <MultiSelectFilter label="Tên hàng (mã)" options={auditOpts.mats} selected={auMats} onChange={setAuMats} />
+                <MultiSelectFilter label="Chu kỳ" options={auditOpts.cyc} selected={auCycles} onChange={setAuCycles} searchable={auditOpts.cyc.length > 6} />
+                <MultiSelectFilter label="Máy" options={auditOpts.mac} selected={auMachines} onChange={setAuMachines} searchable={auditOpts.mac.length > 6} />
               </div>
-              <p className="mt-2 text-[10px] text-slate-400">Xem tem in mấy lần, ai in, khi nào. Để trống = 300 lần in gần nhất.</p>
-            </div>
+              <p className="text-[10px] text-slate-400">Bảng bên phải gộp theo mã pallet — bấm 1 dòng để xem chi tiết các lần in.</p>
+            </>
           )}
         </div>
 
         {/* Vùng phải: preview in (generate/reprint) HOẶC bảng truy cứu */}
         {tab === 'audit' ? (
-          <div className="flex-1 min-h-0 overflow-auto p-3">
+          <div className="flex-1 min-h-0 overflow-auto">
             <table className="min-w-full text-[11px]">
-              <thead className="bg-slate-50 sticky top-0">
-                <tr className="text-left text-[9px] font-medium text-slate-500">
+              <thead className="sticky top-0 z-10">
+                <tr className="bg-slate-50 text-left text-[9px] font-medium text-slate-500">
                   <th className="px-2 py-1.5">Mã pallet (QR)</th>
                   <th className="px-2 py-1.5">Mã hàng</th>
-                  <th className="px-2 py-1.5 text-right">Đã in</th>
-                  <th className="px-2 py-1.5">Kiểu</th>
-                  <th className="px-2 py-1.5">Người in</th>
-                  <th className="px-2 py-1.5">Thời gian</th>
+                  <th className="px-2 py-1.5">Loại</th>
+                  <th className="px-2 py-1.5">NMSX</th>
+                  <th className="px-2 py-1.5">Chu kỳ</th>
+                  <th className="px-2 py-1.5">Máy</th>
+                  <th className="px-2 py-1.5 text-right">Số lần in</th>
+                  <th className="px-2 py-1.5">Lần in gần nhất</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {auditRows.length === 0 ? (
-                  <tr><td colSpan={6} className="px-2 py-8 text-center text-slate-400">Chưa có dữ liệu in</td></tr>
-                ) : auditRows.map(r => (
-                  <tr key={r.id} className="hover:bg-slate-50">
-                    <td className="px-2 py-1 font-mono font-semibold">{r.qr_code}</td>
-                    <td className="px-2 py-1">{r.material_code ?? '—'}</td>
-                    <td className="px-2 py-1 text-right tabular-nums font-semibold">{auditCountByQr[r.qr_code]}</td>
-                    <td className="px-2 py-1">
-                      <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${r.mode === 'REPRINT' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>
-                        {r.mode === 'REPRINT' ? 'In lại' : 'Sinh mới'}
-                      </span>
-                    </td>
-                    <td className="px-2 py-1">{r.printed_by_name ?? '—'}</td>
-                    <td className="px-2 py-1 tabular-nums whitespace-nowrap">{formatTimestampDate(r.created_at, true)} {formatTimestampTime(r.created_at)}</td>
-                  </tr>
+                {auditSummary.length === 0 ? (
+                  <tr><td colSpan={8} className="px-2 py-8 text-center text-slate-400">Chưa có dữ liệu in</td></tr>
+                ) : auditSummary.map(g => (
+                  <Fragment key={g.qr}>
+                    <tr className="hover:bg-slate-50 cursor-pointer" onClick={() => setAuOpen(auOpen === g.qr ? null : g.qr)}>
+                      <td className="px-2 py-1 font-mono font-semibold text-blue-600">{g.qr}</td>
+                      <td className="px-2 py-1">{g.material_code ?? '—'}</td>
+                      <td className="px-2 py-1">{g.category ?? '—'}</td>
+                      <td className="px-2 py-1">{g.nmsx ?? '—'}</td>
+                      <td className="px-2 py-1">{g.cycle ?? '—'}</td>
+                      <td className="px-2 py-1">{g.machine ?? '—'}</td>
+                      <td className="px-2 py-1 text-right tabular-nums font-bold">{g.count}</td>
+                      <td className="px-2 py-1 tabular-nums whitespace-nowrap">{formatTimestampDate(g.last, true)} {formatTimestampTime(g.last)}</td>
+                    </tr>
+                    {auOpen === g.qr && (
+                      <tr>
+                        <td colSpan={8} className="bg-slate-50 px-3 py-2">
+                          <p className="text-[10px] font-semibold text-slate-500 mb-1">Chi tiết {g.count} lần in</p>
+                          <div className="space-y-0.5">
+                            {g.events.map(ev => (
+                              <div key={ev.id} className="flex items-center gap-3 text-[10px]">
+                                <span className={`px-1.5 py-0.5 rounded-full ${ev.mode === 'REPRINT' ? 'bg-amber-100 text-amber-700' : 'bg-slate-200 text-slate-600'}`}>
+                                  {ev.mode === 'REPRINT' ? 'In lại' : 'Sinh mới'}
+                                </span>
+                                <span className="tabular-nums">{formatTimestampDate(ev.created_at, true)} {formatTimestampTime(ev.created_at)}</span>
+                                <span className="text-slate-500">· {ev.printed_by_name ?? '—'}</span>
+                                {ev.qty != null && <span className="text-slate-400">· {ev.qty} thùng</span>}
+                              </div>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>

@@ -10,6 +10,7 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   Location:            [['locations-real'], ['sub-groups']],
   Material:            [['materials']],
   Manufacturer:        [['manufacturers']],
+  PalletLabelPrint:    [['pallet-prints']],
   Warehouse:           [['warehouses']],
   TmsOrder:            [['tms-orders'], ['tms-orders-transfer']],
   TmsVehicleSlot:      [['tms-orders'], ['gate-registrations'], ['gate-suggest']],

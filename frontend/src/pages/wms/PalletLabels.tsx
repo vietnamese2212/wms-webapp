@@ -74,15 +74,30 @@ function PalletLabel({ d }: { d: LabelData }) {
         <div className="h-[72mm] w-[72mm]"><QRImg value={d.qr} px={480} /></div>
       </div>
 
-      {/* Thông tin — chữ lớn lấp khoảng trống */}
-      <div className="mt-[2mm] flex-1 min-h-0 flex flex-col justify-evenly text-[11pt] leading-[1.3] text-black border-t border-black pt-[1.5mm]">
-        <p className="truncate"><span className="font-semibold">Ngày</span> : {d.dateDisplay}</p>
-        <p className="truncate"><span className="font-semibold">Mã</span> : {d.materialCode}</p>
-        <p className="truncate"><span className="font-semibold">NMSX</span> : {d.nmsx || '—'}</p>
-        <p className="truncate"><span className="font-semibold">Loại hàng</span> : {d.category || '—'}</p>
-        <p className="truncate"><span className="font-semibold">Tên gói tắt</span> : {d.shortName || '—'}</p>
-        <p className="truncate">Thời gian từ ……… đến ……… <span className="font-semibold">Kiểm tra</span></p>
-        <p className="truncate"><span className="font-semibold">Số lượng</span> : {d.qty === '' ? '……' : d.qty}</p>
+      {/* Thông tin — 2 cột lấp khoảng trống bên phải */}
+      <div className="mt-[2mm] flex-1 min-h-0 flex flex-col text-[10.5pt] leading-[1.3] text-black border-t border-black pt-[1.5mm]">
+        <div className="grid grid-cols-2 gap-x-[3mm] flex-1 min-h-0">
+          <div className="space-y-[0.8mm] min-w-0">
+            <p className="truncate"><span className="font-semibold">Ngày</span>: {d.dateDisplay}</p>
+            <p className="truncate"><span className="font-semibold">Mã</span>: {d.materialCode}</p>
+            <p className="truncate"><span className="font-semibold">NMSX</span>: {d.nmsx || '—'}</p>
+            <p className="truncate"><span className="font-semibold">Số lượng</span>: {d.qty === '' ? '……' : d.qty}</p>
+          </div>
+          <div className="space-y-[0.8mm] min-w-0">
+            <p className="truncate"><span className="font-semibold">Loại hàng</span>: {d.category || '—'}</p>
+            <p className="line-clamp-3"><span className="font-semibold">Tên gói tắt</span>: {d.shortName || '—'}</p>
+          </div>
+        </div>
+        {/* Thời gian — chừa chỗ viết tay */}
+        <div className="mt-[1mm] border-t border-dashed border-slate-400 pt-[1.2mm] text-[10pt]">
+          <p className="flex items-end gap-1">Thời gian từ
+            <span className="inline-block flex-1 border-b border-black" />đến
+            <span className="inline-block flex-1 border-b border-black" />
+          </p>
+          <p className="mt-[2mm] flex items-end gap-1"><span className="font-semibold">Kiểm tra</span>:
+            <span className="inline-block flex-1 border-b border-black" />
+          </p>
+        </div>
       </div>
 
       {/* Footer lớn — 3 cột tiêu đề + giá trị to để nhận diện từ xa */}
@@ -176,8 +191,9 @@ export default function PalletLabels() {
     if (mat) setQty(mat.cartons_per_pallet != null ? String(mat.cartons_per_pallet) : '')
   }, [mat])
 
+  const genReady = !!(mat && prodDate && cycle.trim() && machine.trim() && nmsx.trim())
   const genLabels: LabelData[] = useMemo(() => {
-    if (tab !== 'generate' || !mat || !prodDate) return []
+    if (tab !== 'generate' || !genReady || !mat) return []
     const ddmmyy = toDdmmyy(prodDate)
     const start  = parseInt(seqStart, 10) || 1
     const n      = Math.min(Math.max(parseInt(count, 10) || 0, 0), 200)
@@ -356,16 +372,16 @@ export default function PalletLabels() {
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
-                  <Label className="text-xs">Chu kỳ</Label>
+                  <Label className="text-xs">Chu kỳ <span className="text-red-500">*</span></Label>
                   <Input className="h-8 text-sm" placeholder="C05" value={cycle} onChange={e => setCycle(e.target.value)} />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs">Máy</Label>
+                  <Label className="text-xs">Máy <span className="text-red-500">*</span></Label>
                   <Input className="h-8 text-sm" placeholder="M1" value={machine} onChange={e => setMachine(e.target.value)} />
                 </div>
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">NMSX (mã kho tổng)</Label>
+                <Label className="text-xs">NMSX (mã kho tổng) <span className="text-red-500">*</span></Label>
                 <Select value={nmsx || '__none__'} onValueChange={v => setNmsx(v === '__none__' ? '' : v)}>
                   <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Chọn kho tổng" /></SelectTrigger>
                   <SelectContent>
@@ -391,7 +407,7 @@ export default function PalletLabels() {
                 <Input type="number" min={0} className="h-8 text-sm" value={qty} onChange={e => setQty(e.target.value)} />
                 <p className="text-[10px] text-slate-400">Mặc định theo định mức thùng/pallet, sửa được.</p>
               </div>
-              {!mat && <p className="flex items-start gap-1 text-[11px] text-amber-600"><AlertTriangle className="h-3.5 w-3.5 shrink-0" /> Chọn mã hàng để sinh tem.</p>}
+              {!genReady && <p className="flex items-start gap-1 text-[11px] text-amber-600"><AlertTriangle className="h-3.5 w-3.5 shrink-0" /> Chọn đủ Mã hàng, Chu kỳ, Máy, NMSX để sinh tem.</p>}
             </>
           ) : tab === 'reprint' ? (
             <>

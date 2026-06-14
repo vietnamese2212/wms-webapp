@@ -186,8 +186,9 @@ export default function PalletLabels() {
   const allowedWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
     ? new Set(user.warehouse_ids) : null
   const whOptions = (warehouses as any[]).filter(w => !allowedWhIds || allowedWhIds.has(w.id))
-  // NMSX = mã kho tổng (warehouse_type CENTRAL) theo WMS Settings
-  const nmsxOptions = (warehouses as any[]).filter(w => w.warehouse_type === 'CENTRAL')
+  // NMSX = mã kho tổng theo WMS Settings (chức năng = Kho tổng).
+  // Toàn app coi mọi kho KHÔNG phải NPP là Kho tổng (kho cũ có thể NULL) → lọc !== 'NPP' cho khớp.
+  const nmsxOptions = (warehouses as any[]).filter(w => w.warehouse_type !== 'NPP')
 
   // ── Generate form ──
   const [genCat, setGenCat]   = useState<string>(SAVED.genCat ?? '')   // Loại hàng — lọc nhanh mã hàng
@@ -316,7 +317,10 @@ export default function PalletLabels() {
   const [auQr, setAuQr]             = useState('')   // quét/điền tay mã pallet
   const [auOpen, setAuOpen]         = useState<string | null>(null)
 
-  const auHasFilter = !!(auQr.trim() || auWh.length || auCats.length || auMats.length || auCycles.length || auMachines.length)
+  // Chỉ truy vấn khi quét/nhập 1 mã pallet, HOẶC chọn đủ Kho + Loại hàng + Tên hàng + Chu kỳ
+  // (dữ liệu có thể vài triệu dòng → bắt buộc thu hẹp trước khi query).
+  const auGroupReady = !!(auWh.length && auCats.length && auMats.length && auCycles.length)
+  const auHasFilter = !!(auQr.trim() || auGroupReady)
   // Option filter lấy từ MASTER DATA (không phải từ log)
   const allFacets = useInventoryFacets().data
   const { data: allMatsForAudit = [] } = useMaterials()
@@ -432,13 +436,20 @@ export default function PalletLabels() {
         </div>
       </div>
 
-      {/* Summary band */}
-      <SummaryBand tiles={[
-        { label: 'Số tem', value: labels.length, accent: labels.length > 0 },
-        { label: 'Số trang A4', value: sheets.length },
-        { label: 'Tem / trang', value: 4 },
-        { label: 'Khổ', value: '1/4 A4' },
-      ]} />
+      {/* Summary band — theo tab (Truy cứu hiện số liệu truy vết; còn lại hiện số tem) */}
+      <SummaryBand tiles={tab === 'audit'
+        ? [
+            { label: 'Số pallet', value: auditSummary.length, accent: auditSummary.length > 0 },
+            { label: 'Tổng lần in', value: auditRows.length },
+            { label: 'Sinh mới', value: auditRows.filter(r => r.mode !== 'REPRINT').length },
+            { label: 'In lại', value: auditRows.filter(r => r.mode === 'REPRINT').length },
+          ]
+        : [
+            { label: 'Số tem', value: labels.length, accent: labels.length > 0 },
+            { label: 'Số trang A4', value: sheets.length },
+            { label: 'Tem / trang', value: 4 },
+            { label: 'Khổ', value: '1/4 A4' },
+          ]} />
 
       <div className="flex-1 min-h-0 flex overflow-hidden">
         {/* Bảng điều khiển trái */}
@@ -589,7 +600,11 @@ export default function PalletLabels() {
                 <MultiSelectFilter label="Chu kỳ" options={auditOpts.cyc} selected={auCycles} onChange={setAuCycles} searchable={auditOpts.cyc.length > 6} width="w-full" />
                 <MultiSelectFilter label="Máy" options={auditOpts.mac} selected={auMachines} onChange={setAuMachines} searchable={auditOpts.mac.length > 6} width="w-full" />
               </div>
-              <p className="text-[10px] text-slate-400">Cần ít nhất 1 filter (hoặc quét mã) mới truy vấn — dữ liệu rất lớn. Bấm 1 dòng để xem chi tiết.</p>
+              <p className={`text-[10px] ${auHasFilter ? 'text-slate-400' : 'text-amber-600'}`}>
+                {auHasFilter
+                  ? 'Bấm 1 dòng để xem chi tiết các lần in.'
+                  : 'Chọn đủ Kho + Loại hàng + Tên hàng + Chu kỳ (hoặc quét/nhập mã pallet) mới truy vấn — dữ liệu rất lớn.'}
+              </p>
             </>
           )}
         </div>
@@ -612,7 +627,7 @@ export default function PalletLabels() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {!auHasFilter ? (
-                  <tr><td colSpan={8} className="px-2 py-10 text-center text-slate-400">Chọn ít nhất 1 filter hoặc quét/nhập mã pallet để tra cứu</td></tr>
+                  <tr><td colSpan={8} className="px-2 py-10 text-center text-slate-400">Chọn đủ <b>Kho + Loại hàng + Tên hàng + Chu kỳ</b> hoặc quét/nhập mã pallet để tra cứu</td></tr>
                 ) : auditSummary.length === 0 ? (
                   <tr><td colSpan={8} className="px-2 py-10 text-center text-slate-400">Không có lần in nào khớp</td></tr>
                 ) : auditSummary.map(g => (

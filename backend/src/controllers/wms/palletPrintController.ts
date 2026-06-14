@@ -59,21 +59,27 @@ export async function logPrints(req: Request, res: Response) {
   }
 }
 
-// GET /wms/pallet-prints?qr_code=&search=&date_from=&date_to=&limit=
-// Trả lịch sử in (mới nhất trước) để truy cứu.
+// GET /wms/pallet-prints?qr_code=&search=&categories=&cycles=&machines=&nmsx=&material_codes=&date_from=&date_to=&limit=
+// Lọc SERVER-SIDE (dữ liệu có thể vài triệu dòng) — frontend chỉ gọi khi đã có filter/quét mã.
 export async function listPrints(req: Request, res: Response) {
   try {
-    const { qr_code, search, date_from, date_to, limit } = req.query as {
-      qr_code?: string; search?: string; date_from?: string; date_to?: string; limit?: string
-    }
+    const { qr_code, search, categories, cycles, machines, nmsx, material_codes, date_from, date_to, limit } = req.query as Record<string, string | undefined>
+    const csv = (s?: string) => (s ? s.split(',').map(x => x.trim()).filter(Boolean) : [])
+
     let q = supabase
       .from('PalletLabelPrint')
       .select('id, qr_code, material_code, category, cycle, machine, seq, nmsx, qty, mode, printed_by_name, created_at')
       .order('created_at', { ascending: false })
-      .limit(Math.min(parseInt(limit ?? '300', 10) || 300, 1000))
+      .limit(Math.min(parseInt(limit ?? '2000', 10) || 2000, 5000))
 
     if (qr_code) q = q.eq('qr_code', qr_code)
     if (search)  q = q.ilike('qr_code', `%${search}%`)
+    const cats = csv(categories), cyc = csv(cycles), mac = csv(machines), nm = csv(nmsx), mats = csv(material_codes)
+    if (cats.length) q = q.in('category', cats)
+    if (cyc.length)  q = q.in('cycle', cyc)
+    if (mac.length)  q = q.in('machine', mac)
+    if (nm.length)   q = q.in('nmsx', nm)
+    if (mats.length) q = q.in('material_code', mats)
     if (date_from) q = q.gte('created_at', new Date(`${date_from}T00:00:00+07:00`).toISOString())
     if (date_to)   q = q.lte('created_at', new Date(`${date_to}T23:59:59+07:00`).toISOString())
 

@@ -50,7 +50,7 @@ export function useLogPalletPrints() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['pallet-prints'] }),
   })
 }
-export function usePalletPrints(params: { qr_code?: string; search?: string; date_from?: string; date_to?: string }, enabled = true) {
+export function usePalletPrints(params: { qr_code?: string; search?: string; date_from?: string; date_to?: string; categories?: string; cycles?: string; machines?: string; nmsx?: string; material_codes?: string }, enabled = true) {
   return useQuery({
     queryKey: ['pallet-prints', params],
     enabled,

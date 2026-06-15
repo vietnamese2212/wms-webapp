@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { QRScanner } from '@/components/shared/QRScanner'
+import { useColumnResize } from '@/components/shared/useColumnResize'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import {
@@ -416,11 +417,14 @@ export default function PalletLabels() {
   function handlePrint() { doPrint(tab === 'reprint' ? 'REPRINT' : 'GENERATE', labels) }
 
   // ── Lịch sử in — gom các tem theo batch_id (1 lệnh in) ──
-  const [histOpen, setHistOpen] = useState<string | null>(null)
+  const [histOpen, setHistOpen] = useState<Set<string>>(new Set())   // nhiều phiếu mở cùng lúc → tích tem chéo phiếu
+  const toggleHistOpen = (key: string) => setHistOpen(s => { const n = new Set(s); n.has(key) ? n.delete(key) : n.add(key); return n })
   const [histFrom, setHistFrom] = useState('')
   const [histTo, setHistTo]     = useState('')
   const [histMode, setHistMode] = useState<string[]>([])
   const [histMats, setHistMats] = useState<string[]>([])
+  const [histCycles, setHistCycles]   = useState<string[]>([])
+  const [histMachines, setHistMachines] = useState<string[]>([])
   const [histBy, setHistBy]     = useState<string[]>([])
   const { data: allMats = [] } = useMaterials(undefined, tab === 'history')
   const matByCode = useMemo(() => {
@@ -432,11 +436,15 @@ export default function PalletLabels() {
   const histMatOpts = useMemo(() => [...new Set(histRows.map(r => r.material_code).filter((x): x is string => !!x))]
     .map(c => ({ value: c, label: matByCode.get(c)?.short_name ? `${c} – ${matByCode.get(c)!.short_name}` : c })), [histRows, matByCode])
   const histByOpts = useMemo(() => [...new Set(histRows.map(r => r.printed_by_name).filter((x): x is string => !!x))].map(n => ({ value: n, label: n })), [histRows])
+  const histCycleOpts = useMemo(() => [...new Set(histRows.map(r => r.cycle).filter((x): x is string => !!x))].map(c => ({ value: c, label: c })), [histRows])
+  const histMachineOpts = useMemo(() => [...new Set(histRows.map(r => r.machine).filter((x): x is string => !!x))].map(m => ({ value: m, label: m })), [histRows])
   const histFiltered = useMemo(() => histRows.filter(r =>
     (!histMode.length || histMode.includes(r.mode)) &&
     (!histMats.length || (r.material_code != null && histMats.includes(r.material_code))) &&
+    (!histCycles.length || (r.cycle != null && histCycles.includes(r.cycle))) &&
+    (!histMachines.length || (r.machine != null && histMachines.includes(r.machine))) &&
     (!histBy.length || (r.printed_by_name != null && histBy.includes(r.printed_by_name)))
-  ), [histRows, histMode, histMats, histBy])
+  ), [histRows, histMode, histMats, histCycles, histMachines, histBy])
   const histBatches = useMemo(() => {
     const m = new Map<string, { key: string; at: string; mode: string; by: string | null; rows: PalletPrintRow[] }>()
     for (const r of histFiltered) {
@@ -483,6 +491,9 @@ export default function PalletLabels() {
     doPrint('REPRINT', rows.map(logRowToLabel))
     clearHistSel()
   }
+  // Kéo giãn cột (chuẩn Manhattan table-format)
+  const histCols = useColumnResize('palletHistory_col_widths', [150, 78, 58, 104, 150, 60, 56, 100])
+  const auCols   = useColumnResize('palletAudit_col_widths',   [190, 100, 88, 56, 56, 56, 92, 110, 72, 132])
 
   return (
     <div className="flex flex-col h-full sm:p-3">
@@ -741,23 +752,23 @@ export default function PalletLabels() {
                 <Label className="text-xs flex items-center gap-1"><Printer className="h-3.5 w-3.5 text-slate-400" />Lịch sử in</Label>
                 <p className="text-[11px] text-slate-500">Mỗi dòng = 1 lệnh in. Bấm 1 dòng để xem các tem & chọn in lại.</p>
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1">
-                  <Label className="text-xs">Từ ngày</Label>
-                  <Input type="date" className="h-8 text-sm" value={histFrom} max={histTo || undefined} onChange={e => setHistFrom(e.target.value)} />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Đến ngày</Label>
-                  <Input type="date" className="h-8 text-sm" value={histTo} min={histFrom || undefined} onChange={e => setHistTo(e.target.value)} />
-                </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Từ ngày</Label>
+                <Input type="date" className="h-8 text-sm w-full" value={histFrom} max={histTo || undefined} onChange={e => setHistFrom(e.target.value)} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Đến ngày</Label>
+                <Input type="date" className="h-8 text-sm w-full" value={histTo} min={histFrom || undefined} onChange={e => setHistTo(e.target.value)} />
               </div>
               <div className="flex flex-col gap-2">
                 <MultiSelectFilter label="Chế độ" options={[{ value: 'GENERATE', label: 'Sinh mới' }, { value: 'REPRINT', label: 'In lại' }]} selected={histMode} onChange={setHistMode} searchable={false} width="w-full" />
                 <MultiSelectFilter label="Tên hàng" options={histMatOpts} selected={histMats} onChange={setHistMats} width="w-full" />
+                <MultiSelectFilter label="Chu kỳ" options={histCycleOpts} selected={histCycles} onChange={setHistCycles} searchable={histCycleOpts.length > 6} width="w-full" />
+                <MultiSelectFilter label="Máy" options={histMachineOpts} selected={histMachines} onChange={setHistMachines} searchable={histMachineOpts.length > 6} width="w-full" />
                 <MultiSelectFilter label="Người in" options={histByOpts} selected={histBy} onChange={setHistBy} searchable={histByOpts.length > 6} width="w-full" />
               </div>
-              {(!!histFrom || !!histTo || histMode.length > 0 || histMats.length > 0 || histBy.length > 0) && (
-                <button onClick={() => { setHistFrom(''); setHistTo(''); setHistMode([]); setHistMats([]); setHistBy([]) }} className="text-[11px] text-red-500 hover:text-red-700">Xóa lọc</button>
+              {(!!histFrom || !!histTo || histMode.length > 0 || histMats.length > 0 || histCycles.length > 0 || histMachines.length > 0 || histBy.length > 0) && (
+                <button onClick={() => { setHistFrom(''); setHistTo(''); setHistMode([]); setHistMats([]); setHistCycles([]); setHistMachines([]); setHistBy([]) }} className="text-[11px] text-red-500 hover:text-red-700">Xóa lọc</button>
               )}
               {!canReprint && <p className="text-[10px] text-amber-600">Bạn không có quyền in lại — chỉ xem được lịch sử.</p>}
             </>
@@ -767,38 +778,35 @@ export default function PalletLabels() {
         {/* Vùng phải: preview in (generate/reprint) HOẶC bảng truy cứu */}
         {tab === 'audit' ? (
           <div className="flex-1 min-h-0 overflow-auto">
-            <table className="min-w-full text-[11px]">
-              <thead className="sticky top-0 z-10">
-                <tr className="bg-slate-50 text-left text-[9px] font-medium text-slate-500">
-                  <th className="px-2 py-1.5">Mã pallet (QR)</th>
-                  <th className="px-2 py-1.5">Mã hàng</th>
-                  <th className="px-2 py-1.5">Loại</th>
-                  <th className="px-2 py-1.5">NMSX</th>
-                  <th className="px-2 py-1.5">Chu kỳ</th>
-                  <th className="px-2 py-1.5">Máy</th>
-                  <th className="px-2 py-1.5">Ngày nhập</th>
-                  <th className="px-2 py-1.5">Người nhập</th>
-                  <th className="px-2 py-1.5 text-right">Số lần in</th>
-                  <th className="px-2 py-1.5">Lần in gần nhất</th>
+            <table className="text-[10px] border-collapse table-fixed [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100 [&_td]:overflow-hidden [&_th]:overflow-hidden" style={{ width: auCols.totalWidth, minWidth: '100%' }}>
+              <colgroup>{auCols.widths.map((w, i) => <col key={i} style={{ width: w }} />)}</colgroup>
+              <thead>
+                <tr className="text-left text-[9px] font-medium text-slate-500">
+                  {['Mã pallet (QR)', 'Mã hàng', 'Loại', 'NMSX', 'Chu kỳ', 'Máy', 'Ngày nhập', 'Người nhập', 'Số lần in', 'Lần in gần nhất'].map((h, i) => (
+                    <th key={i} className={`sticky top-0 bg-slate-50 px-2 py-1.5 whitespace-nowrap relative ${i === 0 ? 'left-0 z-20' : 'z-10'} ${i === 8 ? 'text-right' : ''}`}>
+                      {h}
+                      <span onPointerDown={e => auCols.startResize(i, e)} className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70" />
+                    </th>
+                  ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody>
                 {!auReady ? (
                   <tr><td colSpan={10} className="px-2 py-10 text-center text-slate-400">Chọn đủ <b>Kho + Loại hàng + Tên hàng + Chu kỳ</b> hoặc quét/nhập mã pallet để tra cứu</td></tr>
                 ) : auditSummary.length === 0 ? (
                   <tr><td colSpan={10} className="px-2 py-10 text-center text-slate-400">Không có pallet nào khớp trong tồn kho</td></tr>
                 ) : auditSummary.map(g => (
                   <Fragment key={g.qr}>
-                    <tr className="hover:bg-slate-50 cursor-pointer" onClick={() => setAuOpen(auOpen === g.qr ? null : g.qr)}>
-                      <td className="px-2 py-1 font-mono font-semibold text-blue-600">{g.qr}</td>
-                      <td className="px-2 py-1">{g.material_code ?? '—'}</td>
-                      <td className="px-2 py-1">{g.category ?? '—'}</td>
-                      <td className="px-2 py-1">{g.nmsx ?? '—'}</td>
-                      <td className="px-2 py-1">{g.cycle ?? '—'}</td>
-                      <td className="px-2 py-1">{g.machine ?? '—'}</td>
+                    <tr className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer" onClick={() => setAuOpen(auOpen === g.qr ? null : g.qr)}>
+                      <td className="px-2 py-1 font-mono font-semibold text-blue-600 whitespace-nowrap sticky left-0 z-10 bg-white">{g.qr}</td>
+                      <td className="px-2 py-1 whitespace-nowrap">{g.material_code ?? '—'}</td>
+                      <td className="px-2 py-1 whitespace-nowrap">{g.category ?? '—'}</td>
+                      <td className="px-2 py-1 whitespace-nowrap">{g.nmsx ?? '—'}</td>
+                      <td className="px-2 py-1 whitespace-nowrap">{g.cycle ?? '—'}</td>
+                      <td className="px-2 py-1 whitespace-nowrap">{g.machine ?? '—'}</td>
                       <td className="px-2 py-1 whitespace-nowrap">{g.import_date ? formatTimestampDate(g.import_date, true) : '—'}</td>
-                      <td className="px-2 py-1">{g.imported_by ?? '—'}</td>
-                      <td className={`px-2 py-1 text-right tabular-nums font-bold ${g.count === 0 ? 'text-slate-300' : g.count > 1 ? 'text-amber-600' : 'text-slate-700'}`}>{g.count}</td>
+                      <td className="px-2 py-1 whitespace-nowrap">{g.imported_by ?? '—'}</td>
+                      <td className={`px-2 py-1 text-right tabular-nums font-bold whitespace-nowrap ${g.count === 0 ? 'text-slate-300' : g.count > 1 ? 'text-amber-600' : 'text-slate-700'}`}>{g.count}</td>
                       <td className="px-2 py-1 tabular-nums whitespace-nowrap">
                         {g.count === 0 ? <span className="text-slate-400">Chưa in</span> : <>{formatTimestampDate(g.last, true)} {formatTimestampTime(g.last)}</>}
                       </td>
@@ -877,51 +885,56 @@ export default function PalletLabels() {
               )}
             </div>
             <div className="flex-1 min-h-0 overflow-auto">
-            <table className="min-w-full text-[11px]">
-              <thead className="sticky top-0 z-10">
-                <tr className="bg-slate-50 text-left text-[9px] font-medium text-slate-500">
-                  {canReprint && <th className="px-2 py-1.5 w-8" title="Chọn 1 lệnh để in lại cả lệnh"></th>}
-                  <th className="px-2 py-1.5">Thời gian in</th>
-                  <th className="px-2 py-1.5">Chế độ</th>
-                  <th className="px-2 py-1.5 text-right">Số tem</th>
-                  <th className="px-2 py-1.5">Mã hàng</th>
-                  <th className="px-2 py-1.5">Tên hàng</th>
-                  <th className="px-2 py-1.5">Chu kỳ · Máy</th>
-                  <th className="px-2 py-1.5">Người in</th>
+            <table className="text-[10px] border-collapse table-fixed [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100 [&_td]:overflow-hidden [&_th]:overflow-hidden" style={{ width: histCols.totalWidth + (canReprint ? 36 : 0), minWidth: '100%' }}>
+              <colgroup>
+                {canReprint && <col style={{ width: 36 }} />}
+                {histCols.widths.map((w, i) => <col key={i} style={{ width: w }} />)}
+              </colgroup>
+              <thead>
+                <tr className="text-left text-[9px] font-medium text-slate-500">
+                  {canReprint && <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5" />}
+                  {['Thời gian in', 'Chế độ', 'Số tem', 'Mã hàng', 'Tên hàng', 'Chu kỳ', 'Máy', 'Người in'].map((h, i) => (
+                    <th key={i} className={`sticky top-0 z-10 bg-slate-50 px-2 py-1.5 whitespace-nowrap relative ${i === 2 ? 'text-right' : ''}`}>
+                      {h}
+                      <span onPointerDown={e => histCols.startResize(i, e)} className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70" />
+                    </th>
+                  ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody>
                 {histBatches.length === 0 ? (
-                  <tr><td colSpan={canReprint ? 8 : 7} className="px-2 py-10 text-center text-slate-400">Chưa có lệnh in nào</td></tr>
+                  <tr><td colSpan={canReprint ? 9 : 8} className="px-2 py-10 text-center text-slate-400">Chưa có lệnh in nào</td></tr>
                 ) : histBatches.map(b => {
                   const mats  = [...new Set(b.rows.map(r => r.material_code).filter(Boolean))]
                   const names = [...new Set(b.rows.map(r => matByCode.get(r.material_code ?? '')?.short_name).filter(Boolean))]
                   const cycs  = [...new Set(b.rows.map(r => r.cycle).filter(Boolean))]
                   const macs  = [...new Set(b.rows.map(r => r.machine).filter(Boolean))]
+                  const open  = histOpen.has(b.key)
                   return (
                   <Fragment key={b.key}>
-                    <tr className={`hover:bg-slate-50 cursor-pointer ${histSelBatch === b.key ? 'bg-sky-50' : ''}`} onClick={() => setHistOpen(histOpen === b.key ? null : b.key)}>
+                    <tr className={`border-b border-slate-100 cursor-pointer ${histSelBatch === b.key ? 'bg-sky-50' : 'hover:bg-slate-50'}`} onClick={() => toggleHistOpen(b.key)}>
                       {canReprint && (
-                        <td className="px-2 py-1" onClick={e => e.stopPropagation()}>
+                        <td className="px-2 py-1 text-center" onClick={e => e.stopPropagation()}>
                           <input type="checkbox" title="In lại cả lệnh này" checked={histSelBatch === b.key} onChange={() => selectHistBatch(b.key)} />
                         </td>
                       )}
                       <td className="px-2 py-1 tabular-nums whitespace-nowrap">{formatTimestampDate(b.at, true)} {formatTimestampTime(b.at)}</td>
-                      <td className="px-2 py-1"><span className={`px-1.5 py-0.5 rounded-full text-[9px] ${b.mode === 'REPRINT' ? 'bg-amber-100 text-amber-700' : 'bg-slate-200 text-slate-600'}`}>{b.mode === 'REPRINT' ? 'In lại' : 'Sinh mới'}</span></td>
-                      <td className="px-2 py-1 text-right tabular-nums font-semibold">{b.rows.length}</td>
-                      <td className="px-2 py-1 font-mono">{mats.join(', ') || '—'}</td>
-                      <td className="px-2 py-1">{names.join(', ') || '—'}</td>
-                      <td className="px-2 py-1">{(cycs.join('/') || '—')} · {(macs.join('/') || '—')}</td>
-                      <td className="px-2 py-1">{b.by ?? '—'}</td>
+                      <td className="px-2 py-1 whitespace-nowrap"><span className={`px-1.5 py-0.5 rounded-full text-[9px] ${b.mode === 'REPRINT' ? 'bg-amber-100 text-amber-700' : 'bg-slate-200 text-slate-600'}`}>{b.mode === 'REPRINT' ? 'In lại' : 'Sinh mới'}</span></td>
+                      <td className="px-2 py-1 text-right tabular-nums font-semibold whitespace-nowrap">{b.rows.length}</td>
+                      <td className="px-2 py-1 font-mono whitespace-nowrap">{mats.join(', ') || '—'}</td>
+                      <td className="px-2 py-1 whitespace-nowrap" title={names.join(', ')}>{names.join(', ') || '—'}</td>
+                      <td className="px-2 py-1 whitespace-nowrap">{cycs.join('/') || '—'}</td>
+                      <td className="px-2 py-1 whitespace-nowrap">{macs.join('/') || '—'}</td>
+                      <td className="px-2 py-1 whitespace-nowrap">{b.by ?? '—'}</td>
                     </tr>
-                    {histOpen === b.key && (
+                    {open && (
                       <tr>
-                        <td colSpan={canReprint ? 8 : 7} className="bg-white px-0 py-0">
+                        <td colSpan={canReprint ? 9 : 8} className="bg-white p-0">
                           <div className="border-y border-slate-200">
                             <div className="px-3 py-1.5 bg-slate-100 border-b border-slate-200 flex items-center gap-1.5">
                               <span className="h-3.5 w-1 rounded-full bg-sky-500" />
                               <h3 className="text-[11px] font-semibold uppercase tracking-wide text-slate-600">Chi tiết {b.rows.length} tem — {b.mode === 'REPRINT' ? 'In lại' : 'Sinh mới'}</h3>
-                              {canReprint && <span className="ml-auto text-[10px] font-normal normal-case text-slate-400">Tích nhiều tem để in lại riêng</span>}
+                              {canReprint && <span className="ml-auto text-[10px] font-normal normal-case text-slate-400">Tích nhiều tem (kể cả khác phiếu) để in lại riêng</span>}
                             </div>
                             <div className="px-3 py-2 space-y-0.5 max-h-60 overflow-auto">
                               {b.rows.map(r => (

@@ -2398,13 +2398,14 @@ export type SkillRow = {
   name: string; shift_tag: string | null; sort_order: number; is_active: boolean
 }
 
-// Danh mục skill — theo chức danh (job_title_id) hoặc theo phòng (department_id, gộp các chức danh)
-export function useSkills(params: { job_title_id?: string; department_id?: string; include_inactive?: boolean }, enabled = true) {
+// Danh mục skill — theo chức danh (job_title_id), phòng (department_id), hoặc tất cả (all)
+export function useSkills(params: { job_title_id?: string; department_id?: string; all?: boolean; include_inactive?: boolean }, enabled = true) {
+  const { all, ...rest } = params
   return useQuery({
     queryKey: ['hr-skills', params],
-    enabled: enabled && !!(params.job_title_id || params.department_id),
+    enabled: enabled && !!(params.job_title_id || params.department_id || all),
     queryFn: async () => {
-      const { data } = await apiClient.get('/hr/skills', { params })
+      const { data } = await apiClient.get('/hr/skills', { params: rest })
       return data.data as SkillRow[]
     },
   })
@@ -2500,16 +2501,71 @@ export function useDeleteLeave() {
   })
 }
 
-// ── Phân công lịch làm việc ──
+// ── Layout (mẫu gom skill theo Kho) ──
+export type LayoutRow = { id: string; warehouse_id: string; name: string; note: string | null; is_active: boolean; positions: number; people: number }
+export type LayoutSkillRow = { id: string; skill_id: string; required_count: number; sort_order: number; name: string; shift_tag: string | null; job_title: string | null }
+export type LayoutDetail = { id: string; warehouse_id: string; name: string; note: string | null; is_active: boolean; skills: LayoutSkillRow[] }
+
+export function useLayouts(warehouse_id?: string, enabled = true) {
+  return useQuery({
+    queryKey: ['hr-layouts', warehouse_id],
+    enabled: enabled && !!warehouse_id,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/hr/layouts', { params: { warehouse_id } })
+      return data.data as LayoutRow[]
+    },
+  })
+}
+export function useLayout(id?: string) {
+  return useQuery({
+    queryKey: ['hr-layout', id],
+    enabled: !!id,
+    queryFn: async () => {
+      const { data } = await apiClient.get(`/hr/layouts/${id}`)
+      return data.data as LayoutDetail
+    },
+  })
+}
+export function useCreateLayout() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { warehouse_id: string; name: string; note?: string }) => apiClient.post('/hr/layouts', body).then(r => r.data.data as LayoutRow),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['hr-layouts'] }),
+  })
+}
+export function useUpdateLayout() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string; name?: string; note?: string; is_active?: boolean }) => apiClient.put(`/hr/layouts/${id}`, body).then(r => r.data.data),
+    onSettled: (_d, _e, v) => { qc.invalidateQueries({ queryKey: ['hr-layouts'] }); qc.invalidateQueries({ queryKey: ['hr-layout', v.id] }) },
+  })
+}
+export function useDeleteLayout() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.delete(`/hr/layouts/${id}`).then(r => r.data.data),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['hr-layouts'] }),
+  })
+}
+export function useSetLayoutSkills() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ layout_id, skills }: { layout_id: string; skills: { skill_id: string; required_count: number; sort_order?: number }[] }) =>
+      apiClient.put(`/hr/layouts/${layout_id}/skills`, { skills }).then(r => r.data.data),
+    onSettled: (_d, _e, v) => { qc.invalidateQueries({ queryKey: ['hr-layout', v.layout_id] }); qc.invalidateQueries({ queryKey: ['hr-layouts'] }) },
+  })
+}
+
+// ── Phân công lịch làm việc (theo layout) ──
 export type SheetRow = {
-  id: string; work_date: string; warehouse_id: string; department_id: string
+  id: string; work_date: string; warehouse_id: string; layout_id: string | null; layout_name: string | null
   status: 'DRAFT' | 'PUBLISHED'; note: string | null; published_at: string | null
   total_required: number; total_assigned: number
 }
 export type SheetDetail = {
-  id: string; work_date: string; warehouse_id: string; department_id: string
+  id: string; work_date: string; warehouse_id: string; layout_id: string | null; layout_name: string | null
   status: 'DRAFT' | 'PUBLISHED'; note: string | null; published_at: string | null
-  skills: { id: string; name: string; shift_tag: string | null; sort_order: number }[]
+  skills: { id: string; name: string; shift_tag: string | null; sort_order: number; job_title: string | null }[]
   demands: { id: string; skill_id: string; required_count: number }[]
   assignments: {
     id: string; employee_id: string; skill_id: string | null
@@ -2517,7 +2573,7 @@ export type SheetDetail = {
     employee: { id: string; name: string; employee_code: string; job_title: string | null } | null
   }[]
 }
-export function useSheets(params: { warehouse_id?: string; department_id?: string; date_from?: string; date_to?: string; status?: string }, enabled = true) {
+export function useSheets(params: { warehouse_id?: string; layout_id?: string; date_from?: string; date_to?: string; status?: string }, enabled = true) {
   return useQuery({
     queryKey: ['hr-sheets', params],
     enabled,
@@ -2540,9 +2596,9 @@ export function useSheet(id?: string) {
 export function useUpsertSheet() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { warehouse_id: string; department_id: string; work_date: string; note?: string; demands?: { skill_id: string; required_count: number }[] }) =>
+    mutationFn: (body: { layout_id: string; work_date: string; note?: string; demands?: { skill_id: string; required_count: number }[] }) =>
       apiClient.post('/hr/sheets', body).then(r => r.data.data as { id: string }),
-    onSettled: (_d, _e, _v, _c) => { qc.invalidateQueries({ queryKey: ['hr-sheets'] }); qc.invalidateQueries({ queryKey: ['hr-sheet'] }) },
+    onSettled: () => { qc.invalidateQueries({ queryKey: ['hr-sheets'] }); qc.invalidateQueries({ queryKey: ['hr-sheet'] }) },
   })
 }
 export function useAutoAssign() {

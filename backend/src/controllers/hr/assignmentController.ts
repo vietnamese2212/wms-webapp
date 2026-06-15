@@ -2,43 +2,41 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
+import { layoutSkillsDetailed } from './layoutController'
 
 type ReqUser = { sub?: string; name?: string }
 const userOf = (req: Request): ReqUser => (req as { user?: ReqUser }).user ?? {}
 const now = () => new Date().toISOString()
 
-const SHEET_SELECT = 'id, work_date, warehouse_id, department_id, status, note, published_at, created_at, updated_at'
+const SHEET_SELECT = 'id, work_date, warehouse_id, layout_id, status, note, published_at, created_at, updated_at'
 
-// chức danh + skill thuộc 1 phòng ban (skill gắn theo chức danh)
-async function deptJobTitlesAndSkills(department_id: string) {
-  const { data: jts } = await supabase.from('JobTitle').select('id, name').eq('department_id', department_id)
-  const jtList = (jts ?? []) as { id: string; name: string }[]
-  const jtIds = jtList.map(j => j.id)
-  const { data: skills } = jtIds.length
-    ? await supabase.from('Skill').select('id, name, shift_tag, sort_order, job_title_id').in('job_title_id', jtIds).eq('is_active', true).order('sort_order')
-    : { data: [] as { id: string; name: string; shift_tag: string | null; sort_order: number; job_title_id: string }[] }
-  const jtMap = new Map(jtList.map(j => [j.id, j.name]))
-  const skillList = (skills ?? []).map((s: { id: string; name: string; shift_tag: string | null; sort_order: number; job_title_id: string }) =>
-    ({ ...s, job_title: jtMap.get(s.job_title_id) ?? null }))
-  return { jtIds, skills: skillList }
+// Vị trí (skill) của phiếu = skill trong layout. Trả {id: skill_id, name, shift_tag, sort_order, job_title}
+async function sheetSkills(layout_id: string | null) {
+  if (!layout_id) return [] as { id: string; name: string; shift_tag: string | null; sort_order: number; job_title: string | null }[]
+  const rows = await layoutSkillsDetailed(layout_id)
+  return rows.map(r => ({ id: r.skill_id, name: r.name, shift_tag: r.shift_tag, sort_order: r.sort_order, job_title: r.job_title }))
 }
 
 // ─── List phiếu phân công ───────────────────────────────────────────────────
 export async function listSheets(req: Request, res: Response) {
   try {
-    const { warehouse_id, department_id, date_from, date_to, status } = req.query as Record<string, string>
+    const { warehouse_id, layout_id, date_from, date_to, status } = req.query as Record<string, string>
     let q = supabase.from('WorkAssignmentSheet').select(SHEET_SELECT).order('work_date', { ascending: false })
-    if (warehouse_id)  q = q.eq('warehouse_id', warehouse_id)
-    if (department_id) q = q.eq('department_id', department_id)
-    if (status)        q = q.eq('status', status)
-    if (date_from)     q = q.gte('work_date', date_from)
-    if (date_to)       q = q.lte('work_date', date_to)
+    if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
+    if (layout_id)    q = q.eq('layout_id', layout_id)
+    if (status)       q = q.eq('status', status)
+    if (date_from)    q = q.gte('work_date', date_from)
+    if (date_to)      q = q.lte('work_date', date_to)
     const { data, error } = await q
     if (error) return fail(res, error.message)
 
-    const sheets = (data ?? []) as { id: string }[]
+    const sheets = (data ?? []) as { id: string; layout_id: string | null }[]
     if (!sheets.length) return ok(res, [])
     const ids = sheets.map(s => s.id)
+    // tên layout
+    const lIds = [...new Set(sheets.map(s => s.layout_id).filter(Boolean))] as string[]
+    const { data: layouts } = lIds.length ? await supabase.from('WorkLayout').select('id, name').in('id', lIds) : { data: [] }
+    const lMap = new Map((layouts ?? []).map((l: { id: string; name: string }) => [l.id, l.name]))
 
     // đếm demand + assignment cho từng sheet
     const [{ data: demands }, { data: asgs }] = await Promise.all([
@@ -54,6 +52,7 @@ export async function listSheets(req: Request, res: Response) {
 
     return ok(res, sheets.map(s => ({
       ...s,
+      layout_name: s.layout_id ? lMap.get(s.layout_id) ?? null : null,
       total_required: demandBy.get(s.id) ?? 0,
       total_assigned: asgBy.get(s.id) ?? 0,
     })))
@@ -68,12 +67,11 @@ export async function getSheet(req: Request, res: Response) {
     if (error) return fail(res, error.message)
     if (!sheet) return fail(res, 'Không tìm thấy phiếu', 404)
 
-    const [{ data: demands }, { data: asgs }, skillBundle] = await Promise.all([
+    const [{ data: demands }, { data: asgs }, skills] = await Promise.all([
       supabase.from('WorkAssignmentDemand').select('id, skill_id, required_count').eq('sheet_id', id),
       supabase.from('WorkAssignment').select('id, employee_id, skill_id, status, is_manual, note').eq('sheet_id', id),
-      deptJobTitlesAndSkills((sheet as { department_id: string }).department_id),
+      sheetSkills((sheet as { layout_id: string | null }).layout_id),
     ])
-    const skills = skillBundle.skills
 
     // gắn thông tin NV
     const empIds = [...new Set(((asgs ?? []) as { employee_id: string }[]).map(a => a.employee_id))]
@@ -86,8 +84,12 @@ export async function getSheet(req: Request, res: Response) {
     const empMap = new Map((emps ?? []).map((e: { id: string; name: string; employee_code: string; job_title_id: string | null }) =>
       [e.id, { id: e.id, name: e.name, employee_code: e.employee_code, job_title: e.job_title_id ? jtMap.get(e.job_title_id) ?? null : null }]))
 
+    const layoutId = (sheet as { layout_id: string | null }).layout_id
+    const { data: layout } = layoutId ? await supabase.from('WorkLayout').select('name').eq('id', layoutId).maybeSingle() : { data: null }
+
     return ok(res, {
       ...sheet,
+      layout_name: (layout as { name: string } | null)?.name ?? null,
       skills: skills ?? [],
       demands: demands ?? [],
       assignments: ((asgs ?? []) as { employee_id: string }[]).map(a => ({ ...a, employee: empMap.get(a.employee_id) ?? null })),
@@ -95,37 +97,48 @@ export async function getSheet(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
-// ─── Tạo / cập nhật phiếu (upsert theo ngày+kho+phòng) + demands ────────────
+// ─── Tạo / cập nhật phiếu (upsert theo ngày + layout) + demands ─────────────
 export async function upsertSheet(req: Request, res: Response) {
   try {
     const u = userOf(req)
-    const { warehouse_id, department_id, work_date, note, demands } = req.body as {
-      warehouse_id?: string; department_id?: string; work_date?: string; note?: string
+    const { layout_id, work_date, note, demands } = req.body as {
+      layout_id?: string; work_date?: string; note?: string
       demands?: { skill_id: string; required_count: number }[]
     }
-    if (!warehouse_id || !department_id || !work_date) return fail(res, 'warehouse_id, department_id, work_date là bắt buộc', 400)
+    if (!layout_id || !work_date) return fail(res, 'layout_id, work_date là bắt buộc', 400)
 
-    // tìm phiếu sẵn có
+    // kho lấy từ layout
+    const { data: layout } = await supabase.from('WorkLayout').select('id, warehouse_id').eq('id', layout_id).maybeSingle()
+    if (!layout) return fail(res, 'Không tìm thấy layout', 404)
+    const warehouse_id = (layout as { warehouse_id: string }).warehouse_id
+
+    // tìm phiếu sẵn có (ngày + layout)
     const { data: existing } = await supabase.from('WorkAssignmentSheet').select('id, status')
-      .eq('work_date', work_date).eq('warehouse_id', warehouse_id).eq('department_id', department_id).maybeSingle()
+      .eq('work_date', work_date).eq('layout_id', layout_id).maybeSingle()
 
     let sheetId: string
+    const isNew = !existing
     if (existing) {
       sheetId = (existing as { id: string }).id
       await supabase.from('WorkAssignmentSheet').update({ note: note ?? null, updated_at: now(), updated_by: u.name || null }).eq('id', sheetId)
     } else {
       sheetId = randomUUID()
       const { error } = await supabase.from('WorkAssignmentSheet').insert({
-        id: sheetId, work_date, warehouse_id, department_id, status: 'DRAFT', note: note ?? null,
+        id: sheetId, work_date, warehouse_id, layout_id, status: 'DRAFT', note: note ?? null,
         created_at: now(), updated_at: now(), created_by: u.name || null, updated_by: u.name || null,
       })
       if (error) return fail(res, error.message)
     }
 
-    // replace demands
-    if (demands !== undefined) {
+    // demands: dùng demands truyền lên; nếu tạo mới mà không truyền → đổ từ layout
+    let demandRows = demands
+    if (demandRows === undefined && isNew) {
+      const ls = await layoutSkillsDetailed(layout_id)
+      demandRows = ls.map(r => ({ skill_id: r.skill_id, required_count: r.required_count }))
+    }
+    if (demandRows !== undefined) {
       await supabase.from('WorkAssignmentDemand').delete().eq('sheet_id', sheetId)
-      const valid = demands.filter(d => d.skill_id && d.required_count > 0)
+      const valid = demandRows.filter(d => d.skill_id && d.required_count > 0)
       if (valid.length) {
         await supabase.from('WorkAssignmentDemand').insert(valid.map(d => ({
           id: randomUUID(), sheet_id: sheetId, skill_id: d.skill_id, required_count: d.required_count,
@@ -133,7 +146,7 @@ export async function upsertSheet(req: Request, res: Response) {
         })))
       }
     }
-    return ok(res, { id: sheetId }, existing ? 200 : 201)
+    return ok(res, { id: sheetId }, isNew ? 201 : 200)
   } catch (e) { return fail(res, String(e)) }
 }
 
@@ -143,35 +156,40 @@ export async function autoAssign(req: Request, res: Response) {
     const { id } = req.params
     const { data: sheet } = await supabase.from('WorkAssignmentSheet').select(SHEET_SELECT).eq('id', id).maybeSingle()
     if (!sheet) return fail(res, 'Không tìm thấy phiếu', 404)
-    const { warehouse_id, department_id, work_date } = sheet as { warehouse_id: string; department_id: string; work_date: string }
+    const { warehouse_id, layout_id, work_date } = sheet as { warehouse_id: string; layout_id: string | null; work_date: string }
+    if (!layout_id) return fail(res, 'Phiếu chưa gắn layout', 400)
 
     const { data: demands } = await supabase.from('WorkAssignmentDemand').select('skill_id, required_count').eq('sheet_id', id)
     const demandList = (demands ?? []) as { skill_id: string; required_count: number }[]
     if (!demandList.length) return fail(res, 'Phiếu chưa có yêu cầu vị trí nào', 400)
 
-    // ── 1. Ứng viên: NV phòng + có quyền truy cập kho ──
+    // ── 1. Skill thuộc layout (phạm vi vị trí) ──
+    const layoutSkills = await layoutSkillsDetailed(layout_id)
+    const scopeSkillIds = new Set(layoutSkills.map(s => s.skill_id))
+
+    // ── 2. Ứng viên: NV có quyền truy cập kho + có ≥1 skill trong layout + đang hoạt động ──
     const { data: waRows } = await supabase.from('UserWarehouseAccess').select('employee_id').eq('warehouse_id', warehouse_id)
     const accessSet = new Set((waRows ?? []).map((r: { employee_id: string }) => r.employee_id))
-    const { data: emps } = await supabase.from('Employee').select('id')
-      .eq('department_id', department_id).eq('is_active', true).is('deleted_at', null)
-    const candidateIds = (emps ?? []).map((e: { id: string }) => e.id).filter((eid: string) => accessSet.has(eid))
+    const { data: esRows } = scopeSkillIds.size
+      ? await supabase.from('EmployeeSkill').select('employee_id, skill_id, priority').in('skill_id', [...scopeSkillIds])
+      : { data: [] as { employee_id: string; skill_id: string; priority: number }[] }
+    const empWithSkill = [...new Set(((esRows ?? []) as { employee_id: string }[]).map(r => r.employee_id))].filter(eid => accessSet.has(eid))
+    const { data: emps } = empWithSkill.length
+      ? await supabase.from('Employee').select('id').in('id', empWithSkill).eq('is_active', true).is('deleted_at', null)
+      : { data: [] as { id: string }[] }
+    const candidateIds = (emps ?? []).map((e: { id: string }) => e.id)
+    const candidateSet = new Set(candidateIds)
 
-    // ── 2. Nghỉ phép đã duyệt phủ work_date ──
+    // ── 3. Nghỉ phép đã duyệt phủ work_date ──
     const { data: leaves } = await supabase.from('LeaveRequest').select('employee_id')
       .eq('status', 'APPROVED').lte('date_from', work_date).gte('date_to', work_date).in('employee_id', candidateIds.length ? candidateIds : ['__none__'])
     const onLeave = new Set((leaves ?? []).map((l: { employee_id: string }) => l.employee_id))
     const available = candidateIds.filter((eid: string) => !onLeave.has(eid))
 
-    // ── 3. Skill của ứng viên (giới hạn trong skill các chức danh thuộc phòng) ──
-    const { skills: deptSkills } = await deptJobTitlesAndSkills(department_id)
-    const scopeSkillIds = new Set(deptSkills.map(s => s.id))
-    const { data: esRows } = available.length
-      ? await supabase.from('EmployeeSkill').select('employee_id, skill_id, priority').in('employee_id', available)
-      : { data: [] as { employee_id: string; skill_id: string; priority: number }[] }
-    // empSkills: empId -> Map(skillId -> priority); và đếm số quals của mỗi NV
+    // empSkills: empId -> Map(skillId -> priority) (chỉ NV ứng viên + skill trong layout)
     const empSkills = new Map<string, Map<string, number>>()
     for (const r of (esRows ?? []) as { employee_id: string; skill_id: string; priority: number }[]) {
-      if (!scopeSkillIds.has(r.skill_id)) continue
+      if (!candidateSet.has(r.employee_id) || !scopeSkillIds.has(r.skill_id)) continue
       const m = empSkills.get(r.employee_id) ?? new Map<string, number>()
       m.set(r.skill_id, r.priority)
       empSkills.set(r.employee_id, m)

@@ -27,6 +27,8 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   WorkAssignmentSheet:  [['hr-sheets'], ['hr-sheet']],
   WorkAssignmentDemand: [['hr-sheet']],
   WorkAssignment:       [['hr-sheet']],
+  WorkLayout:           [['hr-layouts'], ['hr-layout']],
+  WorkLayoutSkill:      [['hr-layout']],
   Attendance:           [['hr-attendance']],
 }
 

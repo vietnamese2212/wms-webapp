@@ -2,6 +2,7 @@ import { Router } from 'express'
 import * as skill from '../controllers/hr/skillController'
 import * as leave from '../controllers/hr/leaveController'
 import * as asg from '../controllers/hr/assignmentController'
+import * as layout from '../controllers/hr/layoutController'
 import { requirePerm } from '../middlewares/auth'
 
 const router = Router()
@@ -22,6 +23,14 @@ router.post('/leaves',           requirePerm('leave', 'request'), leave.createLe
 router.put('/leaves/:id',        requirePerm('leave', 'request'), leave.updateLeave)
 router.patch('/leaves/:id/decide', requirePerm('leave', 'approve'), leave.decideLeave)
 router.delete('/leaves/:id',     requirePerm('leave', 'delete'),  leave.deleteLeave)
+
+// ─── Layout (mẫu gom skill theo Kho) ─────────────────────────────────────────
+router.get('/layouts',               requirePerm('work_assignment', 'view'),   layout.listLayouts)
+router.get('/layouts/:id',           requirePerm('work_assignment', 'view'),   layout.getLayout)
+router.post('/layouts',              requirePerm('work_assignment', 'create'), layout.createLayout)
+router.put('/layouts/:id',           requirePerm('work_assignment', 'create'), layout.updateLayout)
+router.put('/layouts/:id/skills',    requirePerm('work_assignment', 'create'), layout.setLayoutSkills)
+router.delete('/layouts/:id',        requirePerm('work_assignment', 'create'), layout.deleteLayout)
 
 // ─── Phân công lịch làm việc ─────────────────────────────────────────────────
 router.get('/sheets',                 requirePerm('work_assignment', 'view'),    asg.listSheets)

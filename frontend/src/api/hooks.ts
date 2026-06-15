@@ -2394,21 +2394,15 @@ export function useInboundReport(params?: { date_from: string; date_to: string; 
 // ═══ HR — Lịch làm việc & Chấm công ═══════════════════════════════════════════
 
 export type SkillRow = {
-  id: string; warehouse_id: string; department_id: string
+  id: string; job_title_id: string | null; job_title: string | null
   name: string; shift_tag: string | null; sort_order: number; is_active: boolean
 }
-export type EmpSkillMatrix = {
-  skills: SkillRow[]
-  employees: {
-    id: string; name: string; employee_code: string; job_title: string | null
-    skills: { skill_id: string; priority: number }[]
-  }[]
-}
 
-export function useSkills(params: { warehouse_id?: string; department_id?: string; include_inactive?: boolean }, enabled = true) {
+// Danh mục skill — theo chức danh (job_title_id) hoặc theo phòng (department_id, gộp các chức danh)
+export function useSkills(params: { job_title_id?: string; department_id?: string; include_inactive?: boolean }, enabled = true) {
   return useQuery({
     queryKey: ['hr-skills', params],
-    enabled,
+    enabled: enabled && !!(params.job_title_id || params.department_id),
     queryFn: async () => {
       const { data } = await apiClient.get('/hr/skills', { params })
       return data.data as SkillRow[]
@@ -2419,7 +2413,7 @@ export function useSkills(params: { warehouse_id?: string; department_id?: strin
 export function useCreateSkill() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { warehouse_id: string; department_id: string; name: string; shift_tag?: string | null; sort_order?: number }) =>
+    mutationFn: (body: { job_title_id: string; name: string; shift_tag?: string | null; sort_order?: number }) =>
       apiClient.post('/hr/skills', body).then(r => r.data.data),
     onSettled: () => { qc.invalidateQueries({ queryKey: ['hr-skills'] }); qc.invalidateQueries({ queryKey: ['hr-emp-skills'] }) },
   })
@@ -2440,23 +2434,27 @@ export function useDeleteSkill() {
   })
 }
 
-export function useEmployeeSkillMatrix(warehouse_id?: string, department_id?: string, enabled = true) {
+// Skill của 1 nhân viên (theo chức danh) + ưu tiên hiện có
+export type EmpSkillsResp = {
+  job_title_id: string | null
+  skills: { id: string; name: string; shift_tag: string | null; sort_order: number; priority: number }[]
+}
+export function useEmployeeSkills(employeeId?: string, enabled = true) {
   return useQuery({
-    queryKey: ['hr-emp-skills', warehouse_id, department_id],
-    enabled: enabled && !!warehouse_id && !!department_id,
+    queryKey: ['hr-emp-skills', employeeId],
+    enabled: enabled && !!employeeId,
     queryFn: async () => {
-      const { data } = await apiClient.get('/hr/employee-skills', { params: { warehouse_id, department_id } })
-      return data.data as EmpSkillMatrix
+      const { data } = await apiClient.get(`/hr/employees/${employeeId}/skills`)
+      return data.data as EmpSkillsResp
     },
   })
 }
-
 export function useSetEmployeeSkills() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ employee_id, ...body }: { employee_id: string; warehouse_id: string; department_id: string; skills: { skill_id: string; priority: number }[] }) =>
-      apiClient.put(`/hr/employees/${employee_id}/skills`, body).then(r => r.data.data),
-    onSettled: () => qc.invalidateQueries({ queryKey: ['hr-emp-skills'] }),
+    mutationFn: ({ employee_id, skills }: { employee_id: string; skills: { skill_id: string; priority: number }[] }) =>
+      apiClient.put(`/hr/employees/${employee_id}/skills`, { skills }).then(r => r.data.data),
+    onSettled: (_d, _e, v) => qc.invalidateQueries({ queryKey: ['hr-emp-skills', v.employee_id] }),
   })
 }
 

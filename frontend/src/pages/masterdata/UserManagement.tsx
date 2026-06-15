@@ -24,6 +24,7 @@ import { apiClient } from '@/api/client'
 import { MODULES, can, type ModuleKey, type ModulePermissions } from '@/config/permissions'
 import { useAuthStore } from '@/stores/authStore'
 import type { EmployeeRecord, Department, JobTitle, TmsVehicle } from '@/types'
+import { JobTitleSkillSection, EmployeeSkillSection } from './hrSkillSections'
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -490,6 +491,12 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
                 )}
               </div>
 
+              {isEdit && jobTitleId && (
+                <div className="border-t border-slate-200 pt-3">
+                  <EmployeeSkillSection employeeId={emp.id} />
+                </div>
+              )}
+
               {isEdit && (
                 <div className="flex items-center gap-2">
                   <input id="is-active" type="checkbox" checked={isActive}
@@ -703,6 +710,12 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
               })}
             </div>
           </div>
+
+          {isEdit && (
+            <div className="border-t border-slate-200 pt-3">
+              <JobTitleSkillSection jobTitleId={jt.id} />
+            </div>
+          )}
 
           {isEdit && (
             <div className="flex items-center gap-2">

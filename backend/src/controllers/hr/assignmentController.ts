@@ -9,6 +9,20 @@ const now = () => new Date().toISOString()
 
 const SHEET_SELECT = 'id, work_date, warehouse_id, department_id, status, note, published_at, created_at, updated_at'
 
+// chức danh + skill thuộc 1 phòng ban (skill gắn theo chức danh)
+async function deptJobTitlesAndSkills(department_id: string) {
+  const { data: jts } = await supabase.from('JobTitle').select('id, name').eq('department_id', department_id)
+  const jtList = (jts ?? []) as { id: string; name: string }[]
+  const jtIds = jtList.map(j => j.id)
+  const { data: skills } = jtIds.length
+    ? await supabase.from('Skill').select('id, name, shift_tag, sort_order, job_title_id').in('job_title_id', jtIds).eq('is_active', true).order('sort_order')
+    : { data: [] as { id: string; name: string; shift_tag: string | null; sort_order: number; job_title_id: string }[] }
+  const jtMap = new Map(jtList.map(j => [j.id, j.name]))
+  const skillList = (skills ?? []).map((s: { id: string; name: string; shift_tag: string | null; sort_order: number; job_title_id: string }) =>
+    ({ ...s, job_title: jtMap.get(s.job_title_id) ?? null }))
+  return { jtIds, skills: skillList }
+}
+
 // ─── List phiếu phân công ───────────────────────────────────────────────────
 export async function listSheets(req: Request, res: Response) {
   try {
@@ -54,11 +68,12 @@ export async function getSheet(req: Request, res: Response) {
     if (error) return fail(res, error.message)
     if (!sheet) return fail(res, 'Không tìm thấy phiếu', 404)
 
-    const [{ data: demands }, { data: asgs }, { data: skills }] = await Promise.all([
+    const [{ data: demands }, { data: asgs }, skillBundle] = await Promise.all([
       supabase.from('WorkAssignmentDemand').select('id, skill_id, required_count').eq('sheet_id', id),
       supabase.from('WorkAssignment').select('id, employee_id, skill_id, status, is_manual, note').eq('sheet_id', id),
-      supabase.from('Skill').select('id, name, shift_tag, sort_order').eq('warehouse_id', (sheet as { warehouse_id: string }).warehouse_id).eq('department_id', (sheet as { department_id: string }).department_id),
+      deptJobTitlesAndSkills((sheet as { department_id: string }).department_id),
     ])
+    const skills = skillBundle.skills
 
     // gắn thông tin NV
     const empIds = [...new Set(((asgs ?? []) as { employee_id: string }[]).map(a => a.employee_id))]
@@ -147,9 +162,9 @@ export async function autoAssign(req: Request, res: Response) {
     const onLeave = new Set((leaves ?? []).map((l: { employee_id: string }) => l.employee_id))
     const available = candidateIds.filter((eid: string) => !onLeave.has(eid))
 
-    // ── 3. Skill của ứng viên (giới hạn trong skill kho+phòng) ──
-    const { data: scopeSkills } = await supabase.from('Skill').select('id').eq('warehouse_id', warehouse_id).eq('department_id', department_id)
-    const scopeSkillIds = new Set((scopeSkills ?? []).map((s: { id: string }) => s.id))
+    // ── 3. Skill của ứng viên (giới hạn trong skill các chức danh thuộc phòng) ──
+    const { skills: deptSkills } = await deptJobTitlesAndSkills(department_id)
+    const scopeSkillIds = new Set(deptSkills.map(s => s.id))
     const { data: esRows } = available.length
       ? await supabase.from('EmployeeSkill').select('employee_id, skill_id, priority').in('employee_id', available)
       : { data: [] as { employee_id: string; skill_id: string; priority: number }[] }

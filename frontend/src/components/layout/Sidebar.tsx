@@ -2,7 +2,7 @@ import { NavLink, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard, Package, PackagePlus, PackageMinus, MapPin,
   Truck, Navigation, Calendar, Settings, Settings2, ChevronLeft, ChevronRight,
-  BarChart3, ClipboardList, UserCog, Scissors, ScanLine, ClipboardCheck, BarChart2, ShieldCheck, Tag, QrCode, Award, CalendarOff, CalendarRange,
+  BarChart3, ClipboardList, UserCog, Scissors, ScanLine, ClipboardCheck, BarChart2, ShieldCheck, Tag, QrCode, CalendarOff, CalendarRange,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useUIStore } from '@/stores/uiStore'
@@ -62,7 +62,6 @@ const navGroups: NavGroup[] = [
   {
     label: 'Nhân sự (HR)',
     items: [
-      { to: '/hr/skills',      icon: Award,       label: 'Vị trí & Skill',  module: 'work_skill' as ModuleKey },
       { to: '/hr/leaves',      icon: CalendarOff, label: 'Nghỉ phép',       module: 'leave' as ModuleKey },
       { to: '/hr/assignments', icon: CalendarRange, label: 'Phân công',     module: 'work_assignment' as ModuleKey },
       { to: '/hr/schedule',    icon: Calendar,    label: 'Lịch làm việc',  module: 'schedule' },

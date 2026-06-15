@@ -12,8 +12,8 @@ router.post('/skills',       requirePerm('work_skill', 'manage'), skill.createSk
 router.put('/skills/:id',    requirePerm('work_skill', 'manage'), skill.updateSkill)
 router.delete('/skills/:id', requirePerm('work_skill', 'manage'), skill.deleteSkill)
 
-// ─── EmployeeSkill (gán skill cho NV) ───────────────────────────────────────
-router.get('/employee-skills',          requirePerm('work_skill', 'view'),   skill.employeeSkillMatrix)
+// ─── EmployeeSkill (NV pick skill từ chức danh) ─────────────────────────────
+router.get('/employees/:id/skills',     requirePerm('work_skill', 'view'),   skill.getEmployeeSkills)
 router.put('/employees/:id/skills',     requirePerm('work_skill', 'assign'), skill.setEmployeeSkills)
 
 // ─── Nghỉ phép ──────────────────────────────────────────────────────────────

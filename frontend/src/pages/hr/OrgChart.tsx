@@ -1,29 +1,29 @@
 import { useMemo, useState } from 'react'
-import { Network, AlertTriangle, Plus, Users, ChevronUp, ChevronDown, Trash2 } from 'lucide-react'
+import { Network, AlertTriangle, Plus, Users, ChevronUp, ChevronDown, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import {
-  useJobTitles, useDepartments, useWarehouses, useEmployeeRecords,
-  useSetJobTitleParent, useCreateJobTitle,
+  useJobTitles, useWarehouses, useEmployeeRecords, useSetJobTitleParent,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import type { JobTitle, EmployeeRecord } from '@/types'
 
 const ORG_CSS = `
-.orgchart { display:inline-block; min-width:100%; padding:14px 16px 28px; }
-.orgchart ul { position:relative; padding-top:24px; display:flex; justify-content:center; }
-.orgchart li { list-style:none; text-align:center; position:relative; padding:24px 10px 0; }
-.orgchart li::before, .orgchart li::after { content:''; position:absolute; top:0; right:50%; border-top:2px solid #cbd5e1; width:50%; height:24px; }
-.orgchart li::after { right:auto; left:50%; border-left:2px solid #cbd5e1; }
+.orgchart { display:inline-block; min-width:100%; padding:18px 24px 32px; }
+.orgchart ul { position:relative; padding-top:26px; display:flex; justify-content:center; }
+.orgchart li { list-style:none; text-align:center; position:relative; padding:26px 12px 0; }
+/* đường ngang nối các anh em + nhánh dọc xuống mỗi node */
+.orgchart li::before, .orgchart li::after { content:''; position:absolute; top:0; right:50%; border-top:2px solid #94a3b8; width:50%; height:26px; }
+.orgchart li::after { right:auto; left:50%; border-left:2px solid #94a3b8; }
 .orgchart li:only-child::after, .orgchart li:only-child::before { display:none; }
 .orgchart li:only-child { padding-top:0; }
 .orgchart li:first-child::before, .orgchart li:last-child::after { border:0 none; }
-.orgchart li:last-child::before { border-right:2px solid #cbd5e1; border-radius:0 6px 0 0; }
-.orgchart li:first-child::after { border-radius:6px 0 0 0; }
-.orgchart ul ul::before { content:''; position:absolute; top:0; left:50%; border-left:2px solid #cbd5e1; width:0; height:24px; }
+.orgchart li:last-child::before { border-right:2px solid #94a3b8; border-radius:0 8px 0 0; }
+.orgchart li:first-child::after { border-radius:8px 0 0 0; }
+/* nhánh dọc từ node cha xuống thanh ngang */
+.orgchart ul ul::before { content:''; position:absolute; top:0; left:50%; border-left:2px solid #94a3b8; width:0; height:26px; }
 .orgchart .node { display:inline-block; vertical-align:top; }
 `
 
@@ -35,13 +35,10 @@ export default function OrgChart() {
   const canEdit = can(perms, 'employees', 'edit')
 
   const { data: jobTitles = [], isLoading } = useJobTitles()
-  const { data: departments = [] } = useDepartments()
   const { data: warehouses = [] } = useWarehouses(true)
   const [wh, setWh] = useState('')
   const { data: emps = [] } = useEmployeeRecords()
-
   const setParent = useSetJobTitleParent()
-  const createJt  = useCreateJobTitle()
   const [err, setErr] = useState<string | null>(null)
 
   const placed = useMemo(() => jobTitles.filter(j => j.in_chart), [jobTitles])
@@ -67,23 +64,18 @@ export default function OrgChart() {
     return m
   }, [emps, wh])
 
-  // ── picker ──
+  // ── picker (chỉ chọn chức danh CÓ SẴN, chưa ở trong sơ đồ) ──
   const [pick, setPick] = useState<PickMode | null>(null)
-  const [tab, setTab] = useState<'exist' | 'new'>('exist')
-  const [selId, setSelId] = useState('')                 // above / root (chọn 1)
-  const [multi, setMulti] = useState<Set<string>>(new Set()) // below (chọn nhiều)
-  const [newName, setNewName] = useState('')
-  const [newDept, setNewDept] = useState('')
-
-  function openPick(mode: PickMode) {
-    setPick(mode); setTab('exist'); setSelId(''); setMulti(new Set()); setNewName(''); setErr(null)
-    setNewDept(mode.kind !== 'root' ? mode.anchor.department_id : (departments[0]?.id ?? ''))
-  }
-
-  // vị trí CHƯA đặt vào sơ đồ → được phép thêm
+  const [selId, setSelId] = useState('')
+  const [multi, setMulti] = useState<Set<string>>(new Set())
   const pickable = useMemo(() => jobTitles.filter(j => !j.in_chart), [jobTitles])
 
-  async function applyExisting() {
+  function openPick(mode: PickMode) { setPick(mode); setSelId(''); setMulti(new Set()); setErr(null) }
+  function showErr(e: unknown) {
+    const ax = e as { response?: { data?: { error?: { message?: string } } } }
+    setErr(ax.response?.data?.error?.message ?? String((e as { message?: string })?.message ?? e))
+  }
+  async function apply() {
     if (!pick) return
     setErr(null)
     try {
@@ -93,7 +85,7 @@ export default function OrgChart() {
       } else if (pick.kind === 'below') {
         if (!multi.size) { setErr('Chọn ít nhất 1 vị trí'); return }
         for (const id of multi) await setParent.mutateAsync({ id, parent_id: pick.anchor.id, in_chart: true })
-      } else { // above
+      } else {
         if (!selId) { setErr('Chọn 1 vị trí'); return }
         await setParent.mutateAsync({ id: selId, parent_id: pick.anchor.parent_id ?? null, in_chart: true })
         await setParent.mutateAsync({ id: pick.anchor.id, parent_id: selId })
@@ -101,27 +93,6 @@ export default function OrgChart() {
       setPick(null)
     } catch (e) { showErr(e) }
   }
-  async function applyNew() {
-    if (!pick || !newName.trim() || !newDept) { setErr('Nhập tên + phòng ban'); return }
-    setErr(null)
-    try {
-      if (pick.kind === 'root') {
-        await createJt.mutateAsync({ name: newName.trim(), department_id: newDept, parent_id: null, in_chart: true })
-      } else if (pick.kind === 'below') {
-        await createJt.mutateAsync({ name: newName.trim(), department_id: newDept, parent_id: pick.anchor.id, in_chart: true })
-      } else {
-        const created = await createJt.mutateAsync({ name: newName.trim(), department_id: newDept, parent_id: pick.anchor.parent_id ?? null, in_chart: true })
-        await setParent.mutateAsync({ id: pick.anchor.id, parent_id: (created as { id: string }).id })
-      }
-      setPick(null)
-    } catch (e) { showErr(e) }
-  }
-  function showErr(e: unknown) {
-    const ax = e as { response?: { data?: { error?: { message?: string } } } }
-    setErr(ax.response?.data?.error?.message ?? String((e as { message?: string })?.message ?? e))
-  }
-
-  // Bỏ khỏi sơ đồ (không xóa chức danh): con lên thế chỗ, rồi in_chart=false
   async function detach(jt: JobTitle) {
     if (!confirm(`Bỏ "${jt.name}" khỏi sơ đồ? (chức danh vẫn còn)`)) return
     setErr(null)
@@ -147,9 +118,9 @@ export default function OrgChart() {
           <div className="text-[10px] text-slate-400 truncate">{jt.department?.name ?? '—'}</div>
           {wh && <div className="mt-0.5 flex items-center gap-1 text-[10px] text-sky-600"><Users className="h-3 w-3" />{people.length ? `${people.length} người` : '—'}</div>}
           {canEdit && (
-            <button onClick={() => detach(jt)} title="Gỡ khỏi sơ đồ"
+            <button onClick={() => detach(jt)} title="Bỏ khỏi sơ đồ"
               className="absolute -top-2 -right-2 bg-white border border-slate-200 rounded-full p-0.5 text-slate-300 hover:text-red-500 hover:border-red-300 shadow-sm">
-              <Trash2 className="h-3 w-3" />
+              <X className="h-3 w-3" />
             </button>
           )}
         </div>
@@ -182,7 +153,7 @@ export default function OrgChart() {
         <div className="border-b border-slate-200 px-3 py-2.5 sm:rounded-t-xl flex flex-wrap items-center gap-2">
           <h1 className="text-base font-semibold text-slate-800 flex items-center gap-1.5"><Network className="h-4 w-4" /> Sơ đồ tổ chức (chức danh)</h1>
           <WarehouseSingleSelect warehouses={warehouses as { id: string; code?: string; name: string }[]} value={wh} onChange={setWh} allLabel="Không hiện người" placeholder="Xem người theo kho…" triggerClassName="w-44" />
-          {canEdit && <span className="text-[11px] text-slate-400">Bấm <b>＋</b> phía trên/dưới mỗi hộp để thêm cấp trên/cấp dưới.</span>}
+          {canEdit && <span className="text-[11px] text-slate-400">Bấm <b>＋</b> trên/dưới mỗi hộp để thêm cấp trên/cấp dưới (chọn từ chức danh có sẵn).</span>}
         </div>
 
         <div className="flex-1 min-h-0 overflow-auto">
@@ -198,7 +169,6 @@ export default function OrgChart() {
             <>
               <style>{ORG_CSS}</style>
               {canEdit && <div className="px-4 pt-3"><Button size="sm" variant="outline" className="h-7" onClick={() => openPick({ kind: 'root' })}><Plus className="h-3.5 w-3.5 mr-1" />Thêm sơ đồ (vị trí gốc)</Button></div>}
-              {/* mỗi vị trí gốc = 1 sơ đồ độc lập */}
               {roots.map((r, i) => (
                 <div key={r.id} className={i > 0 ? 'border-t border-dashed border-slate-200 mt-2' : ''}>
                   <div className="orgchart"><ul>{renderLi(r)}</ul></div>
@@ -215,59 +185,33 @@ export default function OrgChart() {
             <DialogHeader><DialogTitle>{pickTitle}</DialogTitle></DialogHeader>
             <div className="space-y-3">
               {err && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{err}</div>}
-              <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-medium w-fit">
-                <button onClick={() => setTab('exist')} className={`px-3 py-1.5 ${tab === 'exist' ? 'bg-sky-600 text-white' : 'text-slate-600'}`}>Vị trí có sẵn</button>
-                <button onClick={() => setTab('new')} className={`px-3 py-1.5 border-l border-slate-200 ${tab === 'new' ? 'bg-sky-600 text-white' : 'text-slate-600'}`}>Tạo mới</button>
-              </div>
-
-              {tab === 'exist' ? (
-                <>
-                  {pickable.length === 0 ? (
-                    <p className="text-[11px] text-slate-400">Mọi chức danh đã ở trong sơ đồ — hãy tạo mới.</p>
-                  ) : pick.kind === 'below' ? (
-                    // chọn NHIỀU vị trí cấp dưới cùng lúc
-                    <div className="border border-slate-200 rounded-lg max-h-56 overflow-y-auto divide-y divide-slate-100">
-                      {pickable.map(j => (
-                        <label key={j.id} className="flex items-center gap-2 px-2.5 py-1.5 hover:bg-slate-50 cursor-pointer">
-                          <input type="checkbox" checked={multi.has(j.id)} className="h-3.5 w-3.5 rounded accent-sky-600"
-                            onChange={e => setMulti(prev => { const n = new Set(prev); if (e.target.checked) n.add(j.id); else n.delete(j.id); return n })} />
-                          <span className="text-sm text-slate-700 flex-1 truncate">{j.name}</span>
-                          <span className="text-[10px] text-slate-400">{j.department?.name}</span>
-                        </label>
-                      ))}
-                    </div>
-                  ) : (
-                    <select value={selId} onChange={e => setSelId(e.target.value)} className="w-full border border-slate-200 rounded-md px-2 h-9 text-sm bg-white">
-                      <option value="">— Chọn vị trí —</option>
-                      {pickable.map(j => <option key={j.id} value={j.id}>{j.name}{j.department?.name ? ` · ${j.department.name}` : ''}</option>)}
-                    </select>
-                  )}
-                  <div className="flex justify-end gap-2">
-                    <Button variant="outline" className="h-8" onClick={() => setPick(null)}>Hủy</Button>
-                    <Button className="h-8" onClick={applyExisting} disabled={setParent.isPending || (pick.kind === 'below' ? multi.size === 0 : !selId)}>
-                      Đặt vào sơ đồ{pick.kind === 'below' && multi.size > 0 ? ` (${multi.size})` : ''}
-                    </Button>
-                  </div>
-                </>
+              {pickable.length === 0 ? (
+                <p className="text-xs text-slate-500">Mọi chức danh đã ở trong sơ đồ. Tạo chức danh mới ở <b>Quản lý người dùng → Chức danh</b> rồi quay lại thêm.</p>
+              ) : pick.kind === 'below' ? (
+                <div className="border border-slate-200 rounded-lg max-h-60 overflow-y-auto divide-y divide-slate-100">
+                  {pickable.map(j => (
+                    <label key={j.id} className="flex items-center gap-2 px-2.5 py-1.5 hover:bg-slate-50 cursor-pointer">
+                      <input type="checkbox" checked={multi.has(j.id)} className="h-3.5 w-3.5 rounded accent-sky-600"
+                        onChange={e => setMulti(prev => { const n = new Set(prev); if (e.target.checked) n.add(j.id); else n.delete(j.id); return n })} />
+                      <span className="text-sm text-slate-700 flex-1 truncate">{j.name}</span>
+                      <span className="text-[10px] text-slate-400">{j.department?.name}</span>
+                    </label>
+                  ))}
+                </div>
               ) : (
-                <>
-                  <div>
-                    <label className="text-[11px] text-slate-500">Tên chức danh</label>
-                    <Input autoFocus value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => e.key === 'Enter' && applyNew()} placeholder="VD: Giám sát kho TP" className="h-9 text-sm" />
-                  </div>
-                  <div>
-                    <label className="text-[11px] text-slate-500">Phòng ban</label>
-                    <select value={newDept} onChange={e => setNewDept(e.target.value)} className="w-full border border-slate-200 rounded-md px-2 h-9 text-sm bg-white">
-                      <option value="">— Chọn phòng ban —</option>
-                      {(departments as { id: string; name: string }[]).map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-                    </select>
-                  </div>
-                  <div className="flex justify-end gap-2">
-                    <Button variant="outline" className="h-8" onClick={() => setPick(null)}>Hủy</Button>
-                    <Button className="h-8" onClick={applyNew} disabled={createJt.isPending}>Tạo &amp; đặt</Button>
-                  </div>
-                </>
+                <select value={selId} onChange={e => setSelId(e.target.value)} className="w-full border border-slate-200 rounded-md px-2 h-9 text-sm bg-white">
+                  <option value="">— Chọn vị trí —</option>
+                  {pickable.map(j => <option key={j.id} value={j.id}>{j.name}{j.department?.name ? ` · ${j.department.name}` : ''}</option>)}
+                </select>
               )}
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" className="h-8" onClick={() => setPick(null)}>Hủy</Button>
+                {pickable.length > 0 && (
+                  <Button className="h-8" onClick={apply} disabled={setParent.isPending || (pick.kind === 'below' ? multi.size === 0 : !selId)}>
+                    Đặt vào sơ đồ{pick.kind === 'below' && multi.size > 0 ? ` (${multi.size})` : ''}
+                  </Button>
+                )}
+              </div>
             </div>
           </DialogContent>
         </Dialog>

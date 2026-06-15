@@ -2,7 +2,7 @@ import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Package, PackagePlus, PackageMinus, MapPin,
   Truck, Navigation, Calendar, Settings, Settings2, BarChart3, Scissors, ScanLine,
-  ClipboardCheck, BarChart2, UserCog, ClipboardList, ShieldCheck, Tag, QrCode, Award,
+  ClipboardCheck, BarChart2, UserCog, ClipboardList, ShieldCheck, Tag, QrCode, Award, CalendarOff,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/authStore'
@@ -41,8 +41,9 @@ const navGroups: { label: string; items: { to: string; icon: React.ElementType; 
   {
     label: 'Nhân sự (HR)',
     items: [
-      { to: '/hr/skills',   icon: Award,    label: 'Vị trí & Skill', module: 'work_skill' },
-      { to: '/hr/schedule', icon: Calendar, label: 'Lịch làm việc', module: 'schedule' },
+      { to: '/hr/skills',   icon: Award,       label: 'Vị trí & Skill', module: 'work_skill' },
+      { to: '/hr/leaves',   icon: CalendarOff, label: 'Nghỉ phép',      module: 'leave' },
+      { to: '/hr/schedule', icon: Calendar,    label: 'Lịch làm việc', module: 'schedule' },
     ],
   },
   {

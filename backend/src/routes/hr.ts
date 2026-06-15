@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import * as skill from '../controllers/hr/skillController'
+import * as leave from '../controllers/hr/leaveController'
 import { requirePerm } from '../middlewares/auth'
 
 const router = Router()
@@ -13,5 +14,12 @@ router.delete('/skills/:id', requirePerm('work_skill', 'manage'), skill.deleteSk
 // ─── EmployeeSkill (gán skill cho NV) ───────────────────────────────────────
 router.get('/employee-skills',          requirePerm('work_skill', 'view'),   skill.employeeSkillMatrix)
 router.put('/employees/:id/skills',     requirePerm('work_skill', 'assign'), skill.setEmployeeSkills)
+
+// ─── Nghỉ phép ──────────────────────────────────────────────────────────────
+router.get('/leaves',            requirePerm('leave', 'view'),    leave.listLeaves)
+router.post('/leaves',           requirePerm('leave', 'request'), leave.createLeave)
+router.put('/leaves/:id',        requirePerm('leave', 'request'), leave.updateLeave)
+router.patch('/leaves/:id/decide', requirePerm('leave', 'approve'), leave.decideLeave)
+router.delete('/leaves/:id',     requirePerm('leave', 'delete'),  leave.deleteLeave)
 
 export default router

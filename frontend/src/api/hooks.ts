@@ -2459,3 +2459,45 @@ export function useSetEmployeeSkills() {
     onSettled: () => qc.invalidateQueries({ queryKey: ['hr-emp-skills'] }),
   })
 }
+
+// ── Nghỉ phép ──
+export type LeaveRow = {
+  id: string; employee_id: string; warehouse_id: string | null
+  date_from: string; date_to: string; leave_type: string; reason: string | null
+  status: 'PENDING' | 'APPROVED' | 'REJECTED'; approved_by: string | null; approved_at: string | null
+  created_at: string
+  employee: { id: string; name: string; employee_code: string; department_id: string | null } | null
+}
+export function useLeaves(params: { warehouse_id?: string; department_id?: string; employee_id?: string; status?: string; date_from?: string; date_to?: string }, enabled = true) {
+  return useQuery({
+    queryKey: ['hr-leaves', params],
+    enabled,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/hr/leaves', { params })
+      return data.data as LeaveRow[]
+    },
+  })
+}
+export function useCreateLeave() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { employee_id?: string; warehouse_id?: string; date_from: string; date_to: string; leave_type?: string; reason?: string }) =>
+      apiClient.post('/hr/leaves', body).then(r => r.data.data),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['hr-leaves'] }),
+  })
+}
+export function useDecideLeave() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, status }: { id: string; status: 'APPROVED' | 'REJECTED' }) =>
+      apiClient.patch(`/hr/leaves/${id}/decide`, { status }).then(r => r.data.data),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['hr-leaves'] }),
+  })
+}
+export function useDeleteLeave() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.delete(`/hr/leaves/${id}`).then(r => r.data.data),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['hr-leaves'] }),
+  })
+}

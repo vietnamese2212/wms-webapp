@@ -4,7 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 
 const DEPT_SELECT = 'id, name, code, allowed_modules, requires_scheduling, is_active, created_at, updated_at, created_by, updated_by'
-const JT_SELECT   = 'id, name, department_id, parent_id, is_active, module_permissions, created_at, updated_at, created_by, updated_by, department:Department(id,name,code)'
+const JT_SELECT   = 'id, name, department_id, parent_id, in_chart, is_active, module_permissions, created_at, updated_at, created_by, updated_by, department:Department(id,name,code)'
 
 // ─── Departments ──────────────────────────────────────────────────────────────
 
@@ -70,11 +70,12 @@ export async function listJobTitles(req: Request, res: Response) {
 
 export async function createJobTitle(req: Request, res: Response) {
   try {
-    const { name, department_id, module_permissions, parent_id } = req.body as {
+    const { name, department_id, module_permissions, parent_id, in_chart } = req.body as {
       name: string
       department_id: string
       module_permissions?: Record<string, string[]>
       parent_id?: string | null
+      in_chart?: boolean
     }
     if (!name || !department_id) return fail(res, 'name và department_id là bắt buộc', 400)
 
@@ -86,6 +87,7 @@ export async function createJobTitle(req: Request, res: Response) {
         id: randomUUID(),
         name, department_id,
         parent_id: parent_id || null,
+        in_chart: in_chart ?? false,
         module_permissions: module_permissions ?? {},
         created_at: now, updated_at: now,
         created_by: actor, updated_by: actor,
@@ -101,7 +103,7 @@ export async function createJobTitle(req: Request, res: Response) {
 export async function setJobTitleParent(req: Request, res: Response) {
   try {
     const { id } = req.params
-    const { parent_id } = req.body as { parent_id?: string | null }
+    const { parent_id, in_chart } = req.body as { parent_id?: string | null; in_chart?: boolean }
     const parent = parent_id || null
     if (parent === id) return fail(res, 'Không thể đặt chính nó làm cấp trên', 400)
     if (parent) {
@@ -115,8 +117,10 @@ export async function setJobTitleParent(req: Request, res: Response) {
         cur = r.data?.parent_id ?? null
       }
     }
+    const upd: Record<string, unknown> = { parent_id: parent, updated_at: new Date().toISOString(), updated_by: (req as any).user?.name || null }
+    if (in_chart !== undefined) upd.in_chart = in_chart
     const { data, error } = await supabase.from('JobTitle')
-      .update({ parent_id: parent, updated_at: new Date().toISOString(), updated_by: (req as any).user?.name || null })
+      .update(upd)
       .eq('id', id).select(JT_SELECT).single()
     if (error) return fail(res, error.message)
     return ok(res, data)

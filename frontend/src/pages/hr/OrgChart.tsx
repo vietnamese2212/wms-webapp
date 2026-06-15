@@ -44,18 +44,18 @@ export default function OrgChart() {
   const createJt  = useCreateJobTitle()
   const [err, setErr] = useState<string | null>(null)
 
-  const byId = useMemo(() => new Map(jobTitles.map(j => [j.id, j])), [jobTitles])
+  const placed = useMemo(() => jobTitles.filter(j => j.in_chart), [jobTitles])
   const { roots, childrenOf } = useMemo(() => {
-    const ids = new Set(jobTitles.map(j => j.id))
+    const ids = new Set(placed.map(j => j.id))
     const childrenOf = new Map<string, JobTitle[]>()
     const roots: JobTitle[] = []
-    for (const j of jobTitles) {
+    for (const j of placed) {
       const p = j.parent_id && ids.has(j.parent_id) ? j.parent_id : null
       if (p) { const a = childrenOf.get(p) ?? []; a.push(j); childrenOf.set(p, a) }
       else roots.push(j)
     }
     return { roots, childrenOf }
-  }, [jobTitles])
+  }, [placed])
 
   const empsByJt = useMemo(() => {
     const m = new Map<string, EmployeeRecord[]>()
@@ -67,52 +67,35 @@ export default function OrgChart() {
     return m
   }, [emps, wh])
 
-  // tập hậu duệ / tổ tiên (để loại khỏi danh sách chọn, tránh vòng lặp)
-  function descendants(id: string): Set<string> {
-    const out = new Set<string>()
-    const walk = (x: string) => (childrenOf.get(x) ?? []).forEach(c => { if (!out.has(c.id)) { out.add(c.id); walk(c.id) } })
-    walk(id); return out
-  }
-  function ancestors(id: string): Set<string> {
-    const out = new Set<string>(); let cur = byId.get(id)?.parent_id ?? null
-    while (cur) { if (out.has(cur)) break; out.add(cur); cur = byId.get(cur)?.parent_id ?? null }
-    return out
-  }
-
   // ── picker ──
   const [pick, setPick] = useState<PickMode | null>(null)
   const [tab, setTab] = useState<'exist' | 'new'>('exist')
-  const [selId, setSelId] = useState('')
+  const [selId, setSelId] = useState('')                 // above / root (chọn 1)
+  const [multi, setMulti] = useState<Set<string>>(new Set()) // below (chọn nhiều)
   const [newName, setNewName] = useState('')
   const [newDept, setNewDept] = useState('')
 
   function openPick(mode: PickMode) {
-    setPick(mode); setTab('exist'); setSelId(''); setNewName(''); setErr(null)
+    setPick(mode); setTab('exist'); setSelId(''); setMulti(new Set()); setNewName(''); setErr(null)
     setNewDept(mode.kind !== 'root' ? mode.anchor.department_id : (departments[0]?.id ?? ''))
   }
 
-  // danh sách vị trí có sẵn được phép chọn
-  const pickable = useMemo(() => {
-    if (!pick) return []
-    if (pick.kind === 'root') return jobTitles.filter(j => j.parent_id) // đưa 1 vị trí đang là con lên gốc
-    const anchor = pick.anchor
-    const exclude = new Set<string>([anchor.id])
-    if (pick.kind === 'below') ancestors(anchor.id).forEach(x => exclude.add(x))
-    else descendants(anchor.id).forEach(x => exclude.add(x))
-    return jobTitles.filter(j => !exclude.has(j.id))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pick, jobTitles])
+  // vị trí CHƯA đặt vào sơ đồ → được phép thêm
+  const pickable = useMemo(() => jobTitles.filter(j => !j.in_chart), [jobTitles])
 
   async function applyExisting() {
-    if (!pick || !selId) { setErr('Chọn 1 vị trí'); return }
+    if (!pick) return
     setErr(null)
     try {
       if (pick.kind === 'root') {
-        await setParent.mutateAsync({ id: selId, parent_id: null })
+        if (!selId) { setErr('Chọn 1 vị trí'); return }
+        await setParent.mutateAsync({ id: selId, parent_id: null, in_chart: true })
       } else if (pick.kind === 'below') {
-        await setParent.mutateAsync({ id: selId, parent_id: pick.anchor.id })
-      } else { // above: chèn selId lên trên anchor
-        await setParent.mutateAsync({ id: selId, parent_id: pick.anchor.parent_id ?? null })
+        if (!multi.size) { setErr('Chọn ít nhất 1 vị trí'); return }
+        for (const id of multi) await setParent.mutateAsync({ id, parent_id: pick.anchor.id, in_chart: true })
+      } else { // above
+        if (!selId) { setErr('Chọn 1 vị trí'); return }
+        await setParent.mutateAsync({ id: selId, parent_id: pick.anchor.parent_id ?? null, in_chart: true })
         await setParent.mutateAsync({ id: pick.anchor.id, parent_id: selId })
       }
       setPick(null)
@@ -123,11 +106,11 @@ export default function OrgChart() {
     setErr(null)
     try {
       if (pick.kind === 'root') {
-        await createJt.mutateAsync({ name: newName.trim(), department_id: newDept, parent_id: null })
+        await createJt.mutateAsync({ name: newName.trim(), department_id: newDept, parent_id: null, in_chart: true })
       } else if (pick.kind === 'below') {
-        await createJt.mutateAsync({ name: newName.trim(), department_id: newDept, parent_id: pick.anchor.id })
+        await createJt.mutateAsync({ name: newName.trim(), department_id: newDept, parent_id: pick.anchor.id, in_chart: true })
       } else {
-        const created = await createJt.mutateAsync({ name: newName.trim(), department_id: newDept, parent_id: pick.anchor.parent_id ?? null })
+        const created = await createJt.mutateAsync({ name: newName.trim(), department_id: newDept, parent_id: pick.anchor.parent_id ?? null, in_chart: true })
         await setParent.mutateAsync({ id: pick.anchor.id, parent_id: (created as { id: string }).id })
       }
       setPick(null)
@@ -138,12 +121,13 @@ export default function OrgChart() {
     setErr(ax.response?.data?.error?.message ?? String((e as { message?: string })?.message ?? e))
   }
 
+  // Bỏ khỏi sơ đồ (không xóa chức danh): con lên thế chỗ, rồi in_chart=false
   async function detach(jt: JobTitle) {
-    // gỡ khỏi cây: đưa các con lên thế chỗ (con.parent = jt.parent) rồi jt thành gốc
+    if (!confirm(`Bỏ "${jt.name}" khỏi sơ đồ? (chức danh vẫn còn)`)) return
     setErr(null)
     try {
       for (const c of childrenOf.get(jt.id) ?? []) await setParent.mutateAsync({ id: c.id, parent_id: jt.parent_id ?? null })
-      if (jt.parent_id) await setParent.mutateAsync({ id: jt.id, parent_id: null })
+      await setParent.mutateAsync({ id: jt.id, parent_id: null, in_chart: false })
     } catch (e) { showErr(e) }
   }
 
@@ -238,14 +222,31 @@ export default function OrgChart() {
 
               {tab === 'exist' ? (
                 <>
-                  <select value={selId} onChange={e => setSelId(e.target.value)} className="w-full border border-slate-200 rounded-md px-2 h-9 text-sm bg-white">
-                    <option value="">— Chọn vị trí —</option>
-                    {pickable.map(j => <option key={j.id} value={j.id}>{j.name}{j.department?.name ? ` · ${j.department.name}` : ''}</option>)}
-                  </select>
-                  {pickable.length === 0 && <p className="text-[11px] text-slate-400">Không còn vị trí phù hợp — hãy tạo mới.</p>}
+                  {pickable.length === 0 ? (
+                    <p className="text-[11px] text-slate-400">Mọi chức danh đã ở trong sơ đồ — hãy tạo mới.</p>
+                  ) : pick.kind === 'below' ? (
+                    // chọn NHIỀU vị trí cấp dưới cùng lúc
+                    <div className="border border-slate-200 rounded-lg max-h-56 overflow-y-auto divide-y divide-slate-100">
+                      {pickable.map(j => (
+                        <label key={j.id} className="flex items-center gap-2 px-2.5 py-1.5 hover:bg-slate-50 cursor-pointer">
+                          <input type="checkbox" checked={multi.has(j.id)} className="h-3.5 w-3.5 rounded accent-sky-600"
+                            onChange={e => setMulti(prev => { const n = new Set(prev); if (e.target.checked) n.add(j.id); else n.delete(j.id); return n })} />
+                          <span className="text-sm text-slate-700 flex-1 truncate">{j.name}</span>
+                          <span className="text-[10px] text-slate-400">{j.department?.name}</span>
+                        </label>
+                      ))}
+                    </div>
+                  ) : (
+                    <select value={selId} onChange={e => setSelId(e.target.value)} className="w-full border border-slate-200 rounded-md px-2 h-9 text-sm bg-white">
+                      <option value="">— Chọn vị trí —</option>
+                      {pickable.map(j => <option key={j.id} value={j.id}>{j.name}{j.department?.name ? ` · ${j.department.name}` : ''}</option>)}
+                    </select>
+                  )}
                   <div className="flex justify-end gap-2">
                     <Button variant="outline" className="h-8" onClick={() => setPick(null)}>Hủy</Button>
-                    <Button className="h-8" onClick={applyExisting} disabled={!selId || setParent.isPending}>Đặt vào sơ đồ</Button>
+                    <Button className="h-8" onClick={applyExisting} disabled={setParent.isPending || (pick.kind === 'below' ? multi.size === 0 : !selId)}>
+                      Đặt vào sơ đồ{pick.kind === 'below' && multi.size > 0 ? ` (${multi.size})` : ''}
+                    </Button>
                   </div>
                 </>
               ) : (

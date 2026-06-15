@@ -39,6 +39,9 @@ const KIND_CELL: Record<string, string> = {
 }
 const KIND_SHORT: Record<string, string> = { CA1: 'Ca 1', CA2: 'Ca 2', CA3: 'Ca 3', HC: 'HC', LEAVE: 'Nghỉ' }
 const DOW = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN']
+// tổng công 1 ngày: nghỉ phép = 0; còn lại = 8h + OT − về sớm
+const rowTotal = (r: { kind: string; ot_hours: number; early_leave_hours: number }) =>
+  r.kind === 'LEAVE' ? 0 : Math.round((8 + (r.ot_hours || 0) - (r.early_leave_hours || 0)) * 10) / 10
 
 export default function Attendance() {
   const user  = useAuthStore(s => s.user)
@@ -57,8 +60,8 @@ export default function Attendance() {
           <h1 className="text-base font-semibold text-slate-800">Chấm công</h1>
           <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-medium">
             {canSelf && <button onClick={() => setTab('me')} className={`px-3 py-1.5 ${tab === 'me' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Của tôi</button>}
-            {canView && <button onClick={() => setTab('team')} className={`px-3 py-1.5 border-l border-slate-200 ${tab === 'team' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Bảng công</button>}
             {canLeave && <button onClick={() => setTab('leave')} className={`px-3 py-1.5 border-l border-slate-200 ${tab === 'leave' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Nghỉ phép</button>}
+            {canView && <button onClick={() => setTab('team')} className={`px-3 py-1.5 border-l border-slate-200 ${tab === 'team' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Bảng công</button>}
             {canReport && <button onClick={() => setTab('report')} className={`px-3 py-1.5 border-l border-slate-200 ${tab === 'report' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Báo cáo</button>}
           </div>
         </div>
@@ -218,6 +221,7 @@ function TeamSection({ perms }: { perms: ModulePermissions | null }) {
 
   const [wh, setWh]     = useState('')
   const [dept, setDept] = useState('')
+  const [q, setQ]       = useState('')
   const [from, setFrom] = useState(MONTH_START())
   const [to, setTo]     = useState(TODAY())
 
@@ -225,6 +229,10 @@ function TeamSection({ perms }: { perms: ModulePermissions | null }) {
     { warehouse_id: wh || undefined, department_id: dept || undefined, date_from: from, date_to: to },
     true,
   )
+  const ql = q.trim().toLowerCase()
+  const filtered = ql
+    ? rows.filter(r => (r.employee?.name ?? '').toLowerCase().includes(ql) || (r.employee?.employee_code ?? '').toLowerCase().includes(ql))
+    : rows
   const defs: FilterDef[] = [
     { key: 'range', label: 'Khoảng ngày', type: 'daterange', from, to, onChange: (f, t) => { setFrom(f); setTo(t) } },
   ]
@@ -237,12 +245,13 @@ function TeamSection({ perms }: { perms: ModulePermissions | null }) {
           <option value="">Tất cả phòng</option>
           {(departments as { id: string; name: string }[]).map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
         </select>
+        <Input value={q} onChange={e => setQ(e.target.value)} placeholder="Tìm tên / mã NV…" className="h-7 text-xs w-44" />
         <div className="flex-1" />
         <FilterSheetButton defs={defs} className="sm:hidden" />
         <div className="hidden sm:block"><FilterBar defs={defs} /></div>
       </div>
       {isLoading ? <p className="text-xs text-slate-400 py-8 text-center">Đang tải…</p>
-      : <AttTable rows={rows} onDelete={canEdit ? (id => del.mutate(id)) : undefined} showName />}
+      : <AttTable rows={filtered} onDelete={canEdit ? (id => del.mutate(id)) : undefined} showName />}
     </div>
   )
 }
@@ -320,23 +329,27 @@ function AttTable({ rows, onDelete, showName }: { rows: AttendanceRow[]; onDelet
         <thead className="bg-slate-50 text-[10px] text-slate-500">
           <tr>
             {showName && <th className="text-left px-2 py-2 font-medium">Nhân viên</th>}
+            {showName && <th className="text-left px-2 py-2 font-medium">Chức danh</th>}
             <th className="text-left px-2 py-2 font-medium">Ngày</th>
             <th className="text-left px-2 py-2 font-medium">Loại</th>
             <th className="text-right px-2 py-2 font-medium">Giờ OT</th>
             <th className="text-right px-2 py-2 font-medium">Về sớm</th>
+            <th className="text-right px-2 py-2 font-medium">Tổng công</th>
             {onDelete && <th className="px-2 py-2"></th>}
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
           {rows.length === 0 ? (
-            <tr><td colSpan={showName ? 6 : 5} className="text-center text-slate-400 py-6">Chưa có dữ liệu</td></tr>
+            <tr><td colSpan={showName ? 8 : 5} className="text-center text-slate-400 py-6">Chưa có dữ liệu</td></tr>
           ) : rows.map(r => (
             <tr key={r.id} className="hover:bg-slate-50/60">
               {showName && <td className="px-2 py-1.5"><span className="font-medium text-slate-700">{r.employee?.name ?? '—'}</span> <span className="text-[10px] text-slate-400">{r.employee?.employee_code}</span></td>}
+              {showName && <td className="px-2 py-1.5 text-slate-600">{r.employee?.job_title ?? '—'}</td>}
               <td className="px-2 py-1.5 tabular-nums">{formatDate(r.work_date)}</td>
               <td className="px-2 py-1.5"><Badge variant={kindVariant(r.kind)}>{kindLabel(r.kind)}</Badge></td>
               <td className="px-2 py-1.5 text-right tabular-nums">{r.ot_hours > 0 ? r.ot_hours : '—'}</td>
               <td className="px-2 py-1.5 text-right tabular-nums">{r.early_leave_hours > 0 ? r.early_leave_hours : '—'}</td>
+              <td className="px-2 py-1.5 text-right tabular-nums font-semibold text-slate-700">{rowTotal(r)}h</td>
               {onDelete && <td className="px-2 py-1.5 text-right"><button onClick={() => onDelete(r.id)} className="text-slate-400 hover:text-red-600 hover:bg-red-50 rounded p-1"><Trash2 className="h-3.5 w-3.5" /></button></td>}
             </tr>
           ))}

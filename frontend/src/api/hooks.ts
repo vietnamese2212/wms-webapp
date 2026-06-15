@@ -2661,7 +2661,7 @@ export function useDeleteSheet() {
 export type AttendanceRow = {
   id: string; employee_id: string; warehouse_id: string | null; work_date: string
   kind: 'CA1' | 'CA2' | 'CA3' | 'HC' | 'LEAVE'; ot_hours: number; early_leave_hours: number; note: string | null
-  employee: { id: string; name: string; employee_code: string; department_id: string | null } | null
+  employee: { id: string; name: string; employee_code: string; department_id: string | null; job_title: string | null } | null
 }
 export function useAttendance(params: { warehouse_id?: string; department_id?: string; employee_id?: string; date_from?: string; date_to?: string }, enabled = true) {
   return useQuery({
@@ -2691,7 +2691,7 @@ export function useDeleteAttendance() {
 export type AttReportRow = {
   employee_id: string; ca1: number; ca2: number; ca3: number; hc: number; leave: number
   ot_hours: number; early_hours: number; work_days: number; total_hours: number
-  employee: { id: string; name: string; employee_code: string; department_id: string | null } | null
+  employee: { id: string; name: string; employee_code: string; department_id: string | null; job_title: string | null } | null
 }
 export function useAttendanceReport(params: { warehouse_id?: string; department_id?: string; date_from: string; date_to: string }, enabled = true) {
   return useQuery({

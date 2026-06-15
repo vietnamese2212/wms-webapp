@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { QRScanner } from '@/components/shared/QRScanner'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
+import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { PalletPrintArea, PALLET_PRINT_CSS, qrToLabel, type LabelData } from '@/components/shared/palletLabel'
 import {
@@ -111,17 +112,31 @@ export default function PalletOps() {
   const [hType, setHType]     = useState('')   // '' | MERGE | SPLIT | UNGROUP
   const [hFrom, setHFrom]     = useState('')
   const [hTo, setHTo]         = useState('')
-  const { data: ops = [] } = usePalletOps(
-    { search: hSearch.trim() || undefined, type: hType || undefined, date_from: hFrom || undefined, date_to: hTo || undefined },
-    tab === 'history',
+  // Lịch sử: chỉ query khi đã chọn Kho (tránh tải quá nhiều); lọc thêm Loại kho phía client
+  const { data: opsRaw = [] } = usePalletOps(
+    { search: hSearch.trim() || undefined, type: hType || undefined, warehouse_id: opWh || undefined, date_from: hFrom || undefined, date_to: hTo || undefined },
+    tab === 'history' && !!opWh,
   )
   const undo = useUndoPalletOp()
   const opCols = useColumnResize('palletOps_col_widths', [150, 78, 180, 180, 150, 80, 100, 100, 110])
   const opLabel = (t: string) => t === 'MERGE' ? 'Dồn' : t === 'SPLIT' ? 'Tách' : t === 'UNGROUP' ? 'Gỡ nhóm' : t
   const canUndo = canMerge || canUngroup || canSplit
+  // Filter Lịch sử kiểu Manhattan (chip + sheet mobile) — Kho/Loại kho là scope riêng ở hàng trên
+  const histDefs: FilterDef[] = [
+    { key: 'type', label: 'Loại thao tác', type: 'single', value: hType, onChange: setHType, allLabel: 'Tất cả', options: [{ value: 'MERGE', label: 'Dồn' }, { value: 'SPLIT', label: 'Tách' }, { value: 'UNGROUP', label: 'Gỡ nhóm' }] },
+    { key: 'date', label: 'Khoảng ngày', type: 'daterange', from: hFrom, to: hTo, onChange: (f, t) => { setHFrom(f); setHTo(t) } },
+  ]
   // In tem từ Lịch sử (tách rồi chưa in được ngay → vào đây in)
   const { data: allMats = [] } = useMaterials(undefined, tab === 'history')
   const matByCode = useMemo(() => { const m = new Map<string, Material>(); for (const x of allMats as Material[]) m.set(x.material_code, x); return m }, [allMats])
+  // Lọc thêm theo Loại kho (client-side, suy từ mã hàng của pallet)
+  const ops = useMemo(() => {
+    if (!opCat) return opsRaw
+    return opsRaw.filter(o => {
+      const code = o.target_codes?.[0] || o.source_codes?.[0] || ''
+      return matByCode.get(code.split('_')[1])?.category === opCat
+    })
+  }, [opsRaw, opCat, matByCode])
   function printOp(o: PalletOpRow) {
     const qtyByCode = new Map<string, number>()
     for (const c of (o.detail?.children ?? []) as { code: string; qty: number }[]) qtyByCode.set(c.code, c.qty)
@@ -211,27 +226,22 @@ export default function PalletOps() {
                 {msg.ok ? <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5" /> : <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />}<span>{msg.text}</span>
               </div>
             )}
-            {/* Bộ lọc lịch sử */}
-            <div className="flex flex-wrap items-end gap-2 px-3 py-2 border-b border-slate-200">
-              <div className="flex gap-1.5">
-                <div className="relative">
+            {/* Bộ lọc lịch sử — chuẩn Manhattan: Kho/Loại kho (scope, bắt buộc chọn Kho) + Search + FilterBar */}
+            <div className="px-3 py-2 border-b border-slate-200 space-y-1.5">
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="w-36"><WarehouseSingleSelect warehouses={whOptions} value={opWh} onChange={setOpWh} allLabel="Chọn kho *" triggerClassName="h-8" /></div>
+                <Select value={opCat || '__all__'} onValueChange={v => setOpCat(v === '__all__' ? '' : v)}>
+                  <SelectTrigger className="h-8 text-sm w-32"><SelectValue placeholder="Loại kho" /></SelectTrigger>
+                  <SelectContent><SelectItem value="__all__">Tất cả loại</SelectItem>{categoryOpts.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
+                </Select>
+                <div className="relative flex-1 min-w-[120px]">
                   <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
-                  <Input className="pl-7 h-8 text-sm w-56" placeholder="Tìm / quét mã pallet (nguồn/đích)" value={hSearch} onChange={e => setHSearch(e.target.value)} />
+                  <Input className="pl-7 h-8 text-sm w-full" placeholder="Tìm / quét mã pallet" value={hSearch} onChange={e => setHSearch(e.target.value)} />
                 </div>
                 <Button type="button" variant="outline" size="sm" className="h-8 px-2 shrink-0" title="Quét QR" onClick={() => setScanFor('history')}><QrCode className="h-4 w-4" /></Button>
+                <FilterSheetButton defs={histDefs} className="sm:hidden" />
               </div>
-              <Select value={hType || '__all__'} onValueChange={v => setHType(v === '__all__' ? '' : v)}>
-                <SelectTrigger className="h-8 text-sm w-32"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__all__">Tất cả loại</SelectItem>
-                  <SelectItem value="MERGE">Dồn</SelectItem>
-                  <SelectItem value="SPLIT">Tách</SelectItem>
-                  <SelectItem value="UNGROUP">Gỡ nhóm</SelectItem>
-                </SelectContent>
-              </Select>
-              <div><Label className="text-[10px] text-slate-500 block">Từ ngày</Label><Input type="date" className="h-8 text-sm" value={hFrom} max={hTo || undefined} onChange={e => setHFrom(e.target.value)} /></div>
-              <div><Label className="text-[10px] text-slate-500 block">Đến ngày</Label><Input type="date" className="h-8 text-sm" value={hTo} min={hFrom || undefined} onChange={e => setHTo(e.target.value)} /></div>
-              {(hSearch || hType || hFrom || hTo) && <button onClick={() => { setHSearch(''); setHType(''); setHFrom(''); setHTo('') }} className="text-[11px] text-red-500 hover:text-red-700 h-8">Xóa lọc</button>}
+              <FilterBar defs={histDefs} className="hidden sm:flex" />
             </div>
             {/* Bảng lịch sử */}
             <div className="flex-1 min-h-0 overflow-auto">
@@ -247,8 +257,10 @@ export default function PalletOps() {
                   </tr>
                 </thead>
                 <tbody>
-                  {ops.length === 0 ? (
-                    <tr><td colSpan={9} className="px-2 py-10 text-center text-slate-400">Chưa có thao tác dồn/tách nào{(hSearch || hType || hFrom || hTo) ? ' khớp bộ lọc' : ''}</td></tr>
+                  {!opWh ? (
+                    <tr><td colSpan={9} className="px-2 py-10 text-center text-amber-600">Chọn <b>Kho</b> để xem lịch sử dồn/tách (tránh tải quá nhiều dữ liệu)</td></tr>
+                  ) : ops.length === 0 ? (
+                    <tr><td colSpan={9} className="px-2 py-10 text-center text-slate-400">Chưa có thao tác dồn/tách nào{(hSearch || hType || opCat || hFrom || hTo) ? ' khớp bộ lọc' : ''}</td></tr>
                   ) : ops.map(o => {
                     const aCode = (o.target_codes?.[0] || o.source_codes?.[0] || '')
                     const matName = matByCode.get(aCode.split('_')[1])?.short_name ?? aCode.split('_')[1] ?? '—'
@@ -415,10 +427,16 @@ export default function PalletOps() {
                     <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Vị trí" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="__src__">Cùng vị trí pallet gốc{srcEntry?.location ? ` (${srcEntry.location.location_code}-${srcEntry.location.sub_code})` : ''}</SelectItem>
-                      {(splitLocs as any[]).map(l => <SelectItem key={l.id} value={l.id}>{locName(l)}</SelectItem>)}
+                      {(splitLocs as any[]).map(l => {
+                        const max = Number(l.max_pallets ?? 0)
+                        const used = Number(l.used_slots ?? 0)
+                        const isFull = max > 0 && used >= max
+                        const stat = max > 0 ? (isFull ? 'ĐẦY' : `còn ${max - used}/${max}`) : 'không giới hạn'
+                        return <SelectItem key={l.id} value={l.id} disabled={isFull}>{locName(l)} · {stat}</SelectItem>
+                      })}
                     </SelectContent>
                   </Select>
-                  <p className="text-[10px] text-slate-400">Mặc định pallet con ở ngay vị trí pallet gốc. Chọn vị trí khác nếu muốn đặt chỗ khác.</p>
+                  <p className="text-[10px] text-slate-400">Mặc định ở vị trí pallet gốc. Vị trí <b>ĐẦY</b> bị mờ, không chọn được. Còn slot hiện "còn N/Max".</p>
                 </div>
 
                 <p className="text-[11px] text-slate-500">Tách = chia số lượng thật. Gốc giảm tồn, sinh pallet con mới (seq <code>x.1</code>). <b>Tách và in là 2 bước riêng</b> — tách xong có thể in ngay hoặc in sau ở tab Lịch sử. Không ảnh hưởng báo cáo nhập.</p>

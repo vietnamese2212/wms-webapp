@@ -181,12 +181,13 @@ export async function splitPallet(req: Request, res: Response) {
 // GET /wms/pallet-ops?search=&type=&date_from=&date_to=&limit=
 export async function listOps(req: Request, res: Response) {
   try {
-    const { search, type, date_from, date_to, limit } = req.query as Record<string, string | undefined>
+    const { search, type, warehouse_id, date_from, date_to, limit } = req.query as Record<string, string | undefined>
     let q = supabase.from('PalletOperation')
       .select('id, type, source_codes, target_codes, detail, operated_by_name, created_at, undone_at, undone_by_name')
       .order('created_at', { ascending: false })
       .limit(Math.min(parseInt(limit ?? '500', 10) || 500, 2000))
     if (type) q = q.eq('type', type)
+    if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
     if (search) {
       const s = search.trim()
       q = q.or(`source_codes.cs.{"${s}"},target_codes.cs.{"${s}"}`)

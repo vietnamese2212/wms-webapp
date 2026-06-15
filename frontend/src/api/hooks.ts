@@ -103,7 +103,7 @@ export type PalletOpRow = {
   detail: any; operated_by_name: string | null; created_at: string
   undone_at: string | null; undone_by_name: string | null
 }
-export function usePalletOps(params: { search?: string; type?: string; date_from?: string; date_to?: string }, enabled = true) {
+export function usePalletOps(params: { search?: string; type?: string; warehouse_id?: string; date_from?: string; date_to?: string }, enabled = true) {
   return useQuery({
     queryKey: ['pallet-ops-log', params],
     enabled,

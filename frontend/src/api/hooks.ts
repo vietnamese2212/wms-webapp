@@ -2478,7 +2478,7 @@ export type LeaveRow = {
   created_at: string
   employee: { id: string; name: string; employee_code: string; department_id: string | null } | null
 }
-export function useLeaves(params: { warehouse_id?: string; department_id?: string; employee_id?: string; status?: string; date_from?: string; date_to?: string }, enabled = true) {
+export function useLeaves(params: { warehouse_id?: string; department_id?: string; employee_id?: string; status?: string; date_from?: string; date_to?: string; to_approve?: boolean }, enabled = true) {
   return useQuery({
     queryKey: ['hr-leaves', params],
     enabled,

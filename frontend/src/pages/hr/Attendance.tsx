@@ -14,6 +14,7 @@ import {
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { formatDate } from '@/utils/formatters'
+import { LeaveSection } from './LeaveManagement'
 
 const KINDS: { value: string; label: string }[] = [
   { value: 'CA1', label: 'Ca 1' },
@@ -45,8 +46,9 @@ export default function Attendance() {
   const canSelf = can(perms, 'attendance', 'self_log')
   const canView = can(perms, 'attendance', 'view')
   const canReport = can(perms, 'attendance', 'report')
+  const canLeave = can(perms, 'leave', 'view') || can(perms, 'leave', 'request')
 
-  const [tab, setTab] = useState<'me' | 'team' | 'report'>(canSelf ? 'me' : canView ? 'team' : 'report')
+  const [tab, setTab] = useState<'me' | 'team' | 'report' | 'leave'>(canSelf ? 'me' : canView ? 'team' : canLeave ? 'leave' : 'report')
 
   return (
     <div className="flex flex-col h-full sm:p-3">
@@ -56,11 +58,13 @@ export default function Attendance() {
           <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-medium">
             {canSelf && <button onClick={() => setTab('me')} className={`px-3 py-1.5 ${tab === 'me' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Của tôi</button>}
             {canView && <button onClick={() => setTab('team')} className={`px-3 py-1.5 border-l border-slate-200 ${tab === 'team' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Bảng công</button>}
+            {canLeave && <button onClick={() => setTab('leave')} className={`px-3 py-1.5 border-l border-slate-200 ${tab === 'leave' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Nghỉ phép</button>}
             {canReport && <button onClick={() => setTab('report')} className={`px-3 py-1.5 border-l border-slate-200 ${tab === 'report' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Báo cáo</button>}
           </div>
         </div>
         <div className="flex-1 min-h-0 overflow-auto p-3">
           {tab === 'me' && canSelf ? <MySection />
+            : tab === 'leave' && canLeave ? <LeaveSection />
             : tab === 'report' && canReport ? <ReportSection />
             : canView ? <TeamSection perms={perms} />
             : <p className="text-sm text-slate-400 text-center py-16">Không có quyền.</p>}

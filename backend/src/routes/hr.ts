@@ -43,6 +43,7 @@ router.post('/sheets/:id/publish',    requirePerm('work_assignment', 'publish'),
 router.delete('/sheets/:id',          requirePerm('work_assignment', 'delete'),  asg.deleteSheet)
 
 // ─── Chấm công ───────────────────────────────────────────────────────────────
+router.get('/attendance/report', requirePerm('attendance', 'report'), att.reportAttendance)
 router.get('/attendance',     requireAnyPerm(['attendance', 'view'], ['attendance', 'self_log']), att.listAttendance)
 router.post('/attendance',    requireAnyPerm(['attendance', 'self_log'], ['attendance', 'edit']),  att.upsertAttendance)
 router.delete('/attendance/:id', requireAnyPerm(['attendance', 'self_log'], ['attendance', 'edit']), att.deleteAttendance)

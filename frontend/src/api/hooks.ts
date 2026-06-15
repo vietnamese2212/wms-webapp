@@ -2663,3 +2663,18 @@ export function useDeleteAttendance() {
     onSettled: () => qc.invalidateQueries({ queryKey: ['hr-attendance'] }),
   })
 }
+export type AttReportRow = {
+  employee_id: string; ca1: number; ca2: number; ca3: number; hc: number; leave: number
+  ot_hours: number; early_hours: number; work_days: number
+  employee: { id: string; name: string; employee_code: string; department_id: string | null } | null
+}
+export function useAttendanceReport(params: { warehouse_id?: string; department_id?: string; date_from: string; date_to: string }, enabled = true) {
+  return useQuery({
+    queryKey: ['hr-att-report', params],
+    enabled,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/hr/attendance/report', { params })
+      return data.data as AttReportRow[]
+    },
+  })
+}

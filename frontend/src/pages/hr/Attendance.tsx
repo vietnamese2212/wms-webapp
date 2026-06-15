@@ -7,7 +7,7 @@ import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import {
   useWarehouses, useDepartments,
-  useAttendance, useUpsertAttendance, useDeleteAttendance, type AttendanceRow,
+  useAttendance, useUpsertAttendance, useDeleteAttendance, useAttendanceReport, type AttendanceRow,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -31,8 +31,9 @@ export default function Attendance() {
   const perms = user?.module_permissions as ModulePermissions | null ?? null
   const canSelf = can(perms, 'attendance', 'self_log')
   const canView = can(perms, 'attendance', 'view')
+  const canReport = can(perms, 'attendance', 'report')
 
-  const [tab, setTab] = useState<'me' | 'team'>(canSelf ? 'me' : 'team')
+  const [tab, setTab] = useState<'me' | 'team' | 'report'>(canSelf ? 'me' : canView ? 'team' : 'report')
 
   return (
     <div className="flex flex-col h-full sm:p-3">
@@ -42,10 +43,14 @@ export default function Attendance() {
           <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-medium">
             {canSelf && <button onClick={() => setTab('me')} className={`px-3 py-1.5 ${tab === 'me' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Của tôi</button>}
             {canView && <button onClick={() => setTab('team')} className={`px-3 py-1.5 border-l border-slate-200 ${tab === 'team' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Bảng công</button>}
+            {canReport && <button onClick={() => setTab('report')} className={`px-3 py-1.5 border-l border-slate-200 ${tab === 'report' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Báo cáo</button>}
           </div>
         </div>
         <div className="flex-1 min-h-0 overflow-auto p-3">
-          {tab === 'me' && canSelf ? <MySection /> : canView ? <TeamSection perms={perms} /> : <p className="text-sm text-slate-400 text-center py-16">Không có quyền.</p>}
+          {tab === 'me' && canSelf ? <MySection />
+            : tab === 'report' && canReport ? <ReportSection />
+            : canView ? <TeamSection perms={perms} />
+            : <p className="text-sm text-slate-400 text-center py-16">Không có quyền.</p>}
         </div>
       </div>
     </div>
@@ -132,6 +137,72 @@ function TeamSection({ perms }: { perms: ModulePermissions | null }) {
         <div className="flex flex-col items-center justify-center text-slate-400 gap-2 py-16"><Clock className="h-8 w-8" /><p className="text-sm">Chọn <b>Kho</b> để xem bảng công</p></div>
       ) : isLoading ? <p className="text-xs text-slate-400 py-8 text-center">Đang tải…</p>
       : <AttTable rows={rows} onDelete={canEdit ? (id => del.mutate(id)) : undefined} showName />}
+    </div>
+  )
+}
+
+// ─── Báo cáo công ───────────────────────────────────────────────────────────
+function ReportSection() {
+  const { data: warehouses = [] } = useWarehouses(true)
+  const { data: departments = [] } = useDepartments()
+  const [wh, setWh]     = useState('')
+  const [dept, setDept] = useState('')
+  const [from, setFrom] = useState(MONTH_START())
+  const [to, setTo]     = useState(TODAY())
+  const { data: rows = [], isLoading } = useAttendanceReport({ warehouse_id: wh || undefined, department_id: dept || undefined, date_from: from, date_to: to }, !!wh)
+  const defs: FilterDef[] = [{ key: 'range', label: 'Khoảng ngày', type: 'daterange', from, to, onChange: (f, t) => { setFrom(f); setTo(t) } }]
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <WarehouseSingleSelect warehouses={warehouses as { id: string; code?: string; name: string }[]} value={wh} onChange={setWh} placeholder="Chọn kho…" triggerClassName="w-40" />
+        <select value={dept} onChange={e => setDept(e.target.value)} className="border border-slate-200 rounded-md px-2.5 text-xs h-7 bg-white text-slate-700">
+          <option value="">Tất cả phòng</option>
+          {(departments as { id: string; name: string }[]).map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+        </select>
+        <div className="flex-1" />
+        <FilterSheetButton defs={defs} className="sm:hidden" />
+        <div className="hidden sm:block"><FilterBar defs={defs} /></div>
+      </div>
+      {!wh ? (
+        <div className="flex flex-col items-center justify-center text-slate-400 gap-2 py-16"><Clock className="h-8 w-8" /><p className="text-sm">Chọn <b>Kho</b> để xem báo cáo</p></div>
+      ) : isLoading ? <p className="text-xs text-slate-400 py-8 text-center">Đang tải…</p>
+      : (
+        <div className="border border-slate-200 rounded-lg overflow-x-auto">
+          <table className="w-full text-xs min-w-max">
+            <thead className="bg-slate-50 text-[10px] text-slate-500">
+              <tr>
+                <th className="text-left px-2 py-2 font-medium sticky left-0 bg-slate-50">Nhân viên</th>
+                <th className="text-right px-2 py-2 font-medium">Ca 1</th>
+                <th className="text-right px-2 py-2 font-medium">Ca 2</th>
+                <th className="text-right px-2 py-2 font-medium">Ca 3</th>
+                <th className="text-right px-2 py-2 font-medium">HC</th>
+                <th className="text-right px-2 py-2 font-medium">Tổng công</th>
+                <th className="text-right px-2 py-2 font-medium">Nghỉ phép</th>
+                <th className="text-right px-2 py-2 font-medium">Giờ OT</th>
+                <th className="text-right px-2 py-2 font-medium">Giờ về sớm</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {rows.length === 0 ? (
+                <tr><td colSpan={9} className="text-center text-slate-400 py-6">Chưa có dữ liệu</td></tr>
+              ) : rows.map(r => (
+                <tr key={r.employee_id} className="hover:bg-slate-50/60">
+                  <td className="px-2 py-1.5 sticky left-0 bg-white"><span className="font-medium text-slate-700">{r.employee?.name ?? '—'}</span> <span className="text-[10px] text-slate-400">{r.employee?.employee_code}</span></td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{r.ca1 || '—'}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{r.ca2 || '—'}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{r.ca3 || '—'}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{r.hc || '—'}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums font-semibold text-slate-700">{r.work_days || '—'}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{r.leave || '—'}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{r.ot_hours > 0 ? r.ot_hours : '—'}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{r.early_hours > 0 ? r.early_hours : '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }

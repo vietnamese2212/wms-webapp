@@ -65,6 +65,38 @@ export async function upsertAttendance(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
+// Báo cáo tổng hợp công theo nhân viên trong khoảng ngày
+export async function reportAttendance(req: Request, res: Response) {
+  try {
+    const { warehouse_id, department_id, date_from, date_to } = req.query as Record<string, string>
+    if (!date_from || !date_to) return fail(res, 'date_from, date_to là bắt buộc', 400)
+    let q = supabase.from('Attendance').select('employee_id, warehouse_id, kind, ot_hours, early_leave_hours')
+      .gte('work_date', date_from).lte('work_date', date_to)
+    if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
+    const { data, error } = await q
+    if (error) return fail(res, error.message)
+    const rows = (data ?? []) as { employee_id: string; kind: string; ot_hours: number; early_leave_hours: number }[]
+
+    type Agg = { employee_id: string; ca1: number; ca2: number; ca3: number; hc: number; leave: number; ot_hours: number; early_hours: number }
+    const map = new Map<string, Agg>()
+    for (const r of rows) {
+      const a = map.get(r.employee_id) ?? { employee_id: r.employee_id, ca1: 0, ca2: 0, ca3: 0, hc: 0, leave: 0, ot_hours: 0, early_hours: 0 }
+      if (r.kind === 'CA1') a.ca1++; else if (r.kind === 'CA2') a.ca2++; else if (r.kind === 'CA3') a.ca3++
+      else if (r.kind === 'HC') a.hc++; else if (r.kind === 'LEAVE') a.leave++
+      a.ot_hours += Number(r.ot_hours) || 0
+      a.early_hours += Number(r.early_leave_hours) || 0
+      map.set(r.employee_id, a)
+    }
+    let list = await attachEmp([...map.values()])
+    if (department_id) list = list.filter(r => (r.employee as { department_id?: string } | null)?.department_id === department_id)
+    // work_days = ca1+ca2+ca3+hc
+    const nameOf = (r: { employee: unknown }) => ((r.employee as { name?: string } | null)?.name ?? '')
+    const out = list.map(r => ({ ...r, work_days: r.ca1 + r.ca2 + r.ca3 + r.hc }))
+      .sort((a, b) => nameOf(a).localeCompare(nameOf(b)))
+    return ok(res, out)
+  } catch (e) { return fail(res, String(e)) }
+}
+
 export async function deleteAttendance(req: Request, res: Response) {
   try {
     const { error } = await supabase.from('Attendance').delete().eq('id', req.params.id)

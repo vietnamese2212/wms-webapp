@@ -1,5 +1,7 @@
-import { useState } from 'react'
-import { Clock, Save, Trash2, CalendarCheck } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Clock, Save, Trash2, ChevronLeft, ChevronRight } from 'lucide-react'
+import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, addDays, addMonths, subMonths, isSameMonth } from 'date-fns'
+import { vi } from 'date-fns/locale'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -25,6 +27,17 @@ const kindVariant = (k: string): 'info' | 'success' | 'warning' | 'slate' =>
   k === 'LEAVE' ? 'slate' : k === 'HC' ? 'success' : 'info'
 const TODAY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 const MONTH_START = () => { const d = TODAY(); return d.slice(0, 8) + '01' }
+
+// màu ô lịch theo loại công
+const KIND_CELL: Record<string, string> = {
+  CA1:   'bg-sky-100 text-sky-700',
+  CA2:   'bg-indigo-100 text-indigo-700',
+  CA3:   'bg-violet-100 text-violet-700',
+  HC:    'bg-green-100 text-green-700',
+  LEAVE: 'bg-slate-200 text-slate-600',
+}
+const KIND_SHORT: Record<string, string> = { CA1: 'Ca 1', CA2: 'Ca 2', CA3: 'Ca 3', HC: 'HC', LEAVE: 'Nghỉ' }
+const DOW = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN']
 
 export default function Attendance() {
   const user  = useAuthStore(s => s.user)
@@ -57,46 +70,121 @@ export default function Attendance() {
   )
 }
 
-// ─── Của tôi ────────────────────────────────────────────────────────────────
+// ─── Của tôi (lịch tháng) ───────────────────────────────────────────────────
 function MySection() {
   const user = useAuthStore(s => s.user)
   const upsert = useUpsertAttendance()
   const del = useDeleteAttendance()
-  const { data: rows = [] } = useAttendance({ employee_id: user?.id, date_from: MONTH_START(), date_to: TODAY() }, !!user?.id)
 
-  const [date, setDate]   = useState(TODAY())
+  const [month, setMonth] = useState(() => new Date())
+  const monthStart = startOfMonth(month)
+  const monthEnd   = endOfMonth(month)
+  const gridStart  = startOfWeek(monthStart, { weekStartsOn: 1 })
+  const gridEnd    = endOfWeek(monthEnd, { weekStartsOn: 1 })
+  const days: Date[] = []
+  for (let d = gridStart; d <= gridEnd; d = addDays(d, 1)) days.push(d)
+
+  const { data: rows = [] } = useAttendance(
+    { employee_id: user?.id, date_from: format(monthStart, 'yyyy-MM-dd'), date_to: format(monthEnd, 'yyyy-MM-dd') },
+    !!user?.id,
+  )
+  const byDate = new Map(rows.map(r => [r.work_date, r]))
+
+  const today = TODAY()
+  const [sel, setSel]     = useState<string | null>(null)
   const [kind, setKind]   = useState('CA1')
   const [ot, setOt]       = useState(0)
   const [early, setEarly] = useState(0)
   const [err, setErr]     = useState<string | null>(null)
 
+  // seed form khi chọn ngày
+  useEffect(() => {
+    if (!sel) return
+    const e = byDate.get(sel)
+    setKind(e?.kind ?? 'CA1'); setOt(e?.ot_hours ?? 0); setEarly(e?.early_leave_hours ?? 0)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sel])
+
+  const selEntry = sel ? byDate.get(sel) : undefined
+
   async function save() {
+    if (!sel) return
     setErr(null)
-    try {
-      await upsert.mutateAsync({ employee_id: user?.id, warehouse_id: user?.warehouse_id, work_date: date, kind, ot_hours: ot, early_leave_hours: early })
-    } catch (e) { setErr(String((e as { message?: string })?.message ?? e)) }
+    try { await upsert.mutateAsync({ employee_id: user?.id, warehouse_id: user?.warehouse_id, work_date: sel, kind, ot_hours: ot, early_leave_hours: early }) }
+    catch (e) { setErr(String((e as { message?: string })?.message ?? e)) }
+  }
+  async function remove() {
+    if (!selEntry) return
+    setErr(null)
+    try { await del.mutateAsync(selEntry.id); setSel(null) } catch (e) { setErr(String((e as { message?: string })?.message ?? e)) }
   }
 
   return (
-    <div className="max-w-2xl space-y-3">
-      {err && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{err}</div>}
-      <div className="border border-slate-200 rounded-lg p-3 bg-slate-50/50 space-y-2">
-        <p className="text-xs font-medium text-slate-600 flex items-center gap-1"><CalendarCheck className="h-3.5 w-3.5" /> Chấm công ngày</p>
-        <div className="flex flex-wrap items-end gap-2">
-          <div><label className="text-[11px] text-slate-500">Ngày</label><Input type="date" value={date} max={TODAY()} onChange={e => setDate(e.target.value)} className="h-8 text-sm w-36" /></div>
-          <div><label className="text-[11px] text-slate-500">Loại</label>
-            <select value={kind} onChange={e => setKind(e.target.value)} className="border border-slate-200 rounded-md px-2 h-8 text-sm bg-white block">
-              {KINDS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
-          </div>
-          <div><label className="text-[11px] text-slate-500">Giờ OT</label><Input type="number" min={0} step={0.5} value={ot || ''} onChange={e => setOt(Number(e.target.value) || 0)} className="h-8 text-sm w-20" /></div>
-          <div><label className="text-[11px] text-slate-500">Giờ về sớm</label><Input type="number" min={0} step={0.5} value={early || ''} onChange={e => setEarly(Number(e.target.value) || 0)} className="h-8 text-sm w-20" /></div>
-          <Button onClick={save} disabled={upsert.isPending} className="h-8"><Save className="h-4 w-4 mr-1" />Lưu</Button>
+    <div className="flex flex-col lg:flex-row gap-4 max-w-4xl">
+      {/* Lịch */}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 mb-2">
+          <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => setMonth(m => subMonths(m, 1))}><ChevronLeft className="h-4 w-4" /></Button>
+          <div className="text-sm font-semibold text-slate-700 w-32 text-center">{format(month, 'MMMM yyyy', { locale: vi })}</div>
+          <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => setMonth(m => addMonths(m, 1))}><ChevronRight className="h-4 w-4" /></Button>
+          <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => { setMonth(new Date()); setSel(today) }}>Hôm nay</Button>
+        </div>
+        <div className="grid grid-cols-7 gap-1">
+          {DOW.map(d => <div key={d} className="text-center text-[10px] font-medium text-slate-400 py-1">{d}</div>)}
+          {days.map(day => {
+            const ds = format(day, 'yyyy-MM-dd')
+            const e = byDate.get(ds)
+            const inMonth = isSameMonth(day, month)
+            const isToday = ds === today
+            const isFuture = ds > today
+            const isSel = ds === sel
+            return (
+              <button key={ds} type="button" disabled={isFuture}
+                onClick={() => setSel(ds)}
+                className={`min-h-[52px] rounded-lg border p-1 text-left flex flex-col gap-0.5 transition-colors
+                  ${isSel ? 'border-sky-500 ring-1 ring-sky-400' : 'border-slate-200'}
+                  ${!inMonth ? 'opacity-40' : ''} ${isFuture ? 'bg-slate-50 cursor-not-allowed' : 'hover:border-sky-300'}
+                  ${e ? KIND_CELL[e.kind] : 'bg-white'}`}>
+                <span className={`text-[11px] font-semibold leading-none ${isToday ? 'text-sky-600' : ''}`}>{format(day, 'd')}</span>
+                {e && <span className="text-[10px] leading-tight font-medium">{KIND_SHORT[e.kind]}</span>}
+                {e && (e.ot_hours > 0 || e.early_leave_hours > 0) && (
+                  <span className="text-[8px] leading-none text-slate-500">{e.ot_hours > 0 ? `OT${e.ot_hours}` : ''}{e.early_leave_hours > 0 ? ` -${e.early_leave_hours}h` : ''}</span>
+                )}
+              </button>
+            )
+          })}
+        </div>
+        {/* chú thích */}
+        <div className="flex flex-wrap gap-2 mt-2">
+          {KINDS.map(k => <span key={k.value} className={`text-[10px] px-1.5 py-0.5 rounded ${KIND_CELL[k.value]}`}>{k.label}</span>)}
         </div>
       </div>
 
-      <p className="text-[11px] text-slate-500">Chấm công tháng này</p>
-      <AttTable rows={rows} onDelete={id => del.mutate(id)} showName={false} />
+      {/* Form ngày đã chọn */}
+      <div className="lg:w-64 shrink-0">
+        {err && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2 mb-2">{err}</div>}
+        {!sel ? (
+          <div className="border border-dashed border-slate-200 rounded-lg p-4 text-center text-xs text-slate-400">Chọn 1 ngày trên lịch để chấm công</div>
+        ) : (
+          <div className="border border-slate-200 rounded-lg p-3 bg-slate-50/50 space-y-2.5">
+            <p className="text-sm font-medium text-slate-700">{formatDate(sel)}</p>
+            <div>
+              <label className="text-[11px] text-slate-500">Loại công</label>
+              <select value={kind} onChange={e => setKind(e.target.value)} className="border border-slate-200 rounded-md px-2 h-8 text-sm bg-white block w-full">
+                {KINDS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div><label className="text-[11px] text-slate-500">Giờ OT</label><Input type="number" min={0} step={0.5} value={ot || ''} onChange={e => setOt(Number(e.target.value) || 0)} className="h-8 text-sm" /></div>
+              <div><label className="text-[11px] text-slate-500">Giờ về sớm</label><Input type="number" min={0} step={0.5} value={early || ''} onChange={e => setEarly(Number(e.target.value) || 0)} className="h-8 text-sm" /></div>
+            </div>
+            <div className="flex gap-2 pt-1">
+              <Button onClick={save} disabled={upsert.isPending} className="h-8 flex-1"><Save className="h-4 w-4 mr-1" />{selEntry ? 'Cập nhật' : 'Lưu'}</Button>
+              {selEntry && <Button variant="outline" onClick={remove} disabled={del.isPending} className="h-8 text-red-600"><Trash2 className="h-4 w-4" /></Button>}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

@@ -9,6 +9,12 @@ const now = () => new Date().toISOString()
 const SEL = 'id, employee_id, warehouse_id, work_date, kind, ot_hours, early_leave_hours, note, created_at, updated_at'
 const KINDS = ['CA1', 'CA2', 'CA3', 'HC', 'LEAVE']
 
+// NV thuộc 1 kho (qua quyền truy cập kho) — dùng để lọc Bảng công/Báo cáo theo kho
+async function employeeIdsOfWarehouse(warehouse_id: string): Promise<string[]> {
+  const { data } = await supabase.from('UserWarehouseAccess').select('employee_id').eq('warehouse_id', warehouse_id)
+  return (data ?? []).map((r: { employee_id: string }) => r.employee_id)
+}
+
 async function attachEmp<T extends { employee_id: string }>(rows: T[]) {
   if (!rows.length) return rows.map(r => ({ ...r, employee: null }))
   const ids = [...new Set(rows.map(r => r.employee_id))]
@@ -21,7 +27,10 @@ export async function listAttendance(req: Request, res: Response) {
   try {
     const { warehouse_id, department_id, employee_id, date_from, date_to } = req.query as Record<string, string>
     let q = supabase.from('Attendance').select(SEL).order('work_date', { ascending: false })
-    if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
+    if (warehouse_id) {
+      const empIds = await employeeIdsOfWarehouse(warehouse_id)
+      q = q.in('employee_id', empIds.length ? empIds : ['__none__'])
+    }
     if (employee_id)  q = q.eq('employee_id', employee_id)
     if (date_from)    q = q.gte('work_date', date_from)
     if (date_to)      q = q.lte('work_date', date_to)
@@ -72,7 +81,10 @@ export async function reportAttendance(req: Request, res: Response) {
     if (!date_from || !date_to) return fail(res, 'date_from, date_to là bắt buộc', 400)
     let q = supabase.from('Attendance').select('employee_id, warehouse_id, kind, ot_hours, early_leave_hours')
       .gte('work_date', date_from).lte('work_date', date_to)
-    if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
+    if (warehouse_id) {
+      const empIds = await employeeIdsOfWarehouse(warehouse_id)
+      q = q.in('employee_id', empIds.length ? empIds : ['__none__'])
+    }
     const { data, error } = await q
     if (error) return fail(res, error.message)
     const rows = (data ?? []) as { employee_id: string; kind: string; ot_hours: number; early_leave_hours: number }[]

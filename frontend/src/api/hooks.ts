@@ -2631,3 +2631,35 @@ export function useDeleteSheet() {
     onSettled: () => qc.invalidateQueries({ queryKey: ['hr-sheets'] }),
   })
 }
+
+// ── Chấm công ──
+export type AttendanceRow = {
+  id: string; employee_id: string; warehouse_id: string | null; work_date: string
+  kind: 'CA1' | 'CA2' | 'CA3' | 'HC' | 'LEAVE'; ot_hours: number; early_leave_hours: number; note: string | null
+  employee: { id: string; name: string; employee_code: string; department_id: string | null } | null
+}
+export function useAttendance(params: { warehouse_id?: string; department_id?: string; employee_id?: string; date_from?: string; date_to?: string }, enabled = true) {
+  return useQuery({
+    queryKey: ['hr-attendance', params],
+    enabled,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/hr/attendance', { params })
+      return data.data as AttendanceRow[]
+    },
+  })
+}
+export function useUpsertAttendance() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { employee_id?: string; warehouse_id?: string; work_date: string; kind: string; ot_hours?: number; early_leave_hours?: number; note?: string }) =>
+      apiClient.post('/hr/attendance', body).then(r => r.data.data),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['hr-attendance'] }),
+  })
+}
+export function useDeleteAttendance() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.delete(`/hr/attendance/${id}`).then(r => r.data.data),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['hr-attendance'] }),
+  })
+}

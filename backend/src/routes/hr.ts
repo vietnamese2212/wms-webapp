@@ -3,7 +3,8 @@ import * as skill from '../controllers/hr/skillController'
 import * as leave from '../controllers/hr/leaveController'
 import * as asg from '../controllers/hr/assignmentController'
 import * as layout from '../controllers/hr/layoutController'
-import { requirePerm } from '../middlewares/auth'
+import * as att from '../controllers/hr/attendanceController'
+import { requirePerm, requireAnyPerm } from '../middlewares/auth'
 
 const router = Router()
 
@@ -40,5 +41,10 @@ router.post('/sheets/:id/auto-assign',requirePerm('work_assignment', 'create'), 
 router.post('/sheets/:id/assign-one', requirePerm('work_assignment', 'edit'),    asg.assignOne)
 router.post('/sheets/:id/publish',    requirePerm('work_assignment', 'publish'), asg.publishSheet)
 router.delete('/sheets/:id',          requirePerm('work_assignment', 'delete'),  asg.deleteSheet)
+
+// ─── Chấm công ───────────────────────────────────────────────────────────────
+router.get('/attendance',     requireAnyPerm(['attendance', 'view'], ['attendance', 'self_log']), att.listAttendance)
+router.post('/attendance',    requireAnyPerm(['attendance', 'self_log'], ['attendance', 'edit']),  att.upsertAttendance)
+router.delete('/attendance/:id', requireAnyPerm(['attendance', 'self_log'], ['attendance', 'edit']), att.deleteAttendance)
 
 export default router

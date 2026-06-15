@@ -59,21 +59,24 @@ export async function logPrints(req: Request, res: Response) {
   }
 }
 
-// GET /wms/pallet-prints?qr_code=&search=&categories=&cycles=&machines=&nmsx=&material_codes=&date_from=&date_to=&limit=
+// GET /wms/pallet-prints?qr_code=&qr_codes=&search=&categories=&cycles=&machines=&nmsx=&material_codes=&date_from=&date_to=&limit=
+// qr_codes (csv): lấy log cho 1 TẬP mã pallet — dùng cho Truy cứu (base = tồn kho, LEFT JOIN số lần in).
 // Lọc SERVER-SIDE (dữ liệu có thể vài triệu dòng) — frontend chỉ gọi khi đã có filter/quét mã.
 export async function listPrints(req: Request, res: Response) {
   try {
-    const { qr_code, search, categories, cycles, machines, nmsx, material_codes, date_from, date_to, limit } = req.query as Record<string, string | undefined>
+    const { qr_code, qr_codes, search, categories, cycles, machines, nmsx, material_codes, date_from, date_to, limit } = req.query as Record<string, string | undefined>
     const csv = (s?: string) => (s ? s.split(',').map(x => x.trim()).filter(Boolean) : [])
 
     let q = supabase
       .from('PalletLabelPrint')
       .select('id, qr_code, material_code, category, cycle, machine, seq, nmsx, qty, mode, printed_by_name, created_at')
       .order('created_at', { ascending: false })
-      .limit(Math.min(parseInt(limit ?? '2000', 10) || 2000, 5000))
+      .limit(Math.min(parseInt(limit ?? '5000', 10) || 5000, 5000))
 
     if (qr_code) q = q.eq('qr_code', qr_code)
     if (search)  q = q.ilike('qr_code', `%${search}%`)
+    const codes = csv(qr_codes)
+    if (codes.length) q = q.in('qr_code', codes)
     const cats = csv(categories), cyc = csv(cycles), mac = csv(machines), nm = csv(nmsx), mats = csv(material_codes)
     if (cats.length) q = q.in('category', cats)
     if (cyc.length)  q = q.in('cycle', cyc)

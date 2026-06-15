@@ -307,49 +307,71 @@ export default function PalletLabels() {
     const hit = scanEntries.find(e => e.pallet_code === code) ?? (scanEntries.length === 1 ? scanEntries[0] : null)
     if (hit) { addByEntry(hit); setPalletQ('') }
   }
+  // Cảnh báo IN LẠI: pallet đã chọn nào từng được in trước đó (tránh in trùng tem)
+  const pickedCodes = Object.keys(picked)
+  const { data: rpPrintLog = [] } = usePalletPrints({ qr_codes: pickedCodes.join(',') }, tab === 'reprint' && pickedCodes.length > 0)
+  const rpPrintCount = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const r of rpPrintLog) m.set(r.qr_code, (m.get(r.qr_code) ?? 0) + 1)
+    return m
+  }, [rpPrintLog])
+  const rpAlreadyPrinted = pickedCodes.filter(c => (rpPrintCount.get(c) ?? 0) > 0)
 
-  // ── Truy cứu — LỌC SERVER-SIDE, chỉ truy vấn khi có filter/quét (data có thể vài triệu dòng) ──
-  const [auWh, setAuWh]             = useState<string[]>(SAVED.auWh ?? [])  // theo NMSX (mã kho tổng)
+  // ── Truy cứu — BASE = TỒN KHO (LEFT JOIN số lần in); pallet chưa in vẫn hiện count 0 ──
+  const [auWh, setAuWh]             = useState<string>(SAVED.auWh ?? (allowedWhIds ? [...allowedWhIds][0] : ''))
   const [auCats, setAuCats]         = useState<string[]>(SAVED.auCats ?? [])
-  const [auMats, setAuMats]         = useState<string[]>(SAVED.auMats ?? [])  // material_code
+  const [auMatIds, setAuMatIds]     = useState<string[]>(SAVED.auMatIds ?? [])
   const [auCycles, setAuCycles]     = useState<string[]>(SAVED.auCycles ?? [])
   const [auMachines, setAuMachines] = useState<string[]>(SAVED.auMachines ?? [])
   const [auQr, setAuQr]             = useState('')   // quét/điền tay mã pallet
   const [auOpen, setAuOpen]         = useState<string | null>(null)
 
-  // Chỉ truy vấn khi quét/nhập 1 mã pallet, HOẶC chọn đủ Kho + Loại hàng + Tên hàng + Chu kỳ
-  // (dữ liệu có thể vài triệu dòng → bắt buộc thu hẹp trước khi query).
-  const auGroupReady = !!(auWh.length && auCats.length && auMats.length && auCycles.length)
-  const auHasFilter = !!(auQr.trim() || auGroupReady)
-  // Option filter lấy từ MASTER DATA (không phải từ log)
-  const allFacets = useInventoryFacets().data
-  const { data: allMatsForAudit = [] } = useMaterials()
-  const auditOpts = useMemo(() => ({
-    nmsx: nmsxOptions.map((w: any) => ({ value: w.code, label: w.code })),
-    cats: categoryOpts.map(c => ({ value: c, label: c })),
-    mats: (allMatsForAudit as Material[]).map(m => ({ value: m.material_code, label: m.short_name ? `${m.material_code} – ${m.short_name}` : m.material_code })),
-    cyc:  ((allFacets?.cycles ?? []) as string[]).map(c => ({ value: c, label: c })),
-    mac:  ((allFacets?.machines ?? []) as string[]).map(m => ({ value: m, label: m })),
-  }), [nmsxOptions, categoryOpts, allMatsForAudit, allFacets])
+  // Cần đủ Kho + Loại hàng + Tên hàng + Chu kỳ HOẶC quét/nhập mã pallet mới truy vấn (data lớn)
+  const auReady = !!(auQr.trim() || (auWh && auCats.length && auMatIds.length && auCycles.length))
+  const auFacets = useInventoryFacets({
+    warehouse_ids: auWh ? [auWh] : undefined,
+    categories: auCats.length ? auCats : undefined,
+  }).data
 
-  const { data: auditRows = [] } = usePalletPrints({
-    search:         auQr.trim() || undefined,
-    nmsx:           auWh.length ? auWh.join(',') : undefined,
-    categories:     auCats.length ? auCats.join(',') : undefined,
-    material_codes: auMats.length ? auMats.join(',') : undefined,
-    cycles:         auCycles.length ? auCycles.join(',') : undefined,
-    machines:       auMachines.length ? auMachines.join(',') : undefined,
-  }, tab === 'audit' && auHasFilter)
+  // (1) Lấy pallet THẬT từ tồn kho theo filter
+  const { data: auInvData } = useInventoryEntries({
+    warehouse_ids: auWh ? [auWh] : undefined,
+    categories: auCats.length ? auCats : undefined,
+    filter_material_ids: auMatIds.length ? auMatIds : undefined,
+    filter_cycles: auCycles.length ? auCycles : undefined,
+    filter_machines: auMachines.length ? auMachines : undefined,
+    search: auQr.trim().length >= 3 ? auQr.trim() : undefined,
+    status: '', page: 1, limit: 500,
+  }, tab === 'audit' && auReady)
+  const auPallets = (auInvData?.entries ?? []) as any[]
 
-  const auditSummary = useMemo(() => {
-    const m = new Map<string, { qr: string; material_code: string | null; nmsx: string | null; category: string | null; cycle: string | null; machine: string | null; count: number; last: string; events: PalletPrintRow[] }>()
-    for (const r of auditRows) {
-      const g = m.get(r.qr_code)
-      if (g) { g.count++; g.events.push(r); if (r.created_at > g.last) g.last = r.created_at }
-      else m.set(r.qr_code, { qr: r.qr_code, material_code: r.material_code, nmsx: r.nmsx, category: r.category, cycle: r.cycle, machine: r.machine, count: 1, last: r.created_at, events: [r] })
+  // (2) Lấy log in cho đúng tập mã pallet đó → ghép số lần in (0 nếu chưa in)
+  const auCodes = useMemo(() => auPallets.map(e => e.pallet_code), [auPallets])
+  const { data: auEvents = [] } = usePalletPrints(
+    { qr_codes: auCodes.join(',') },
+    tab === 'audit' && auReady && auCodes.length > 0,
+  )
+  const auEventMap = useMemo(() => {
+    const m = new Map<string, PalletPrintRow[]>()
+    for (const r of auEvents) { const a = m.get(r.qr_code) ?? []; a.push(r); m.set(r.qr_code, a) }
+    return m
+  }, [auEvents])
+
+  const auditSummary = useMemo(() => auPallets.map(e => {
+    const parts = String(e.pallet_code).split('_')
+    const events = (auEventMap.get(e.pallet_code) ?? []).slice().sort((a, b) => b.created_at.localeCompare(a.created_at))
+    return {
+      qr: e.pallet_code as string,
+      material_code: e.material?.material_code ?? parts[1] ?? null,
+      category: (e.material?.category ?? null) as string | null,
+      nmsx: (parts[5] ?? e.manufacturer?.code ?? null) as string | null,
+      cycle: (e.cycle ?? parts[2] ?? null) as string | null,
+      machine: (e.machine_code ?? parts[3] ?? null) as string | null,
+      count: events.length,
+      last: events[0]?.created_at ?? '',
+      events,
     }
-    return [...m.values()].sort((a, b) => b.last.localeCompare(a.last))
-  }, [auditRows])
+  }), [auPallets, auEventMap])
 
   // Lưu snapshot filter để giữ qua lần sau
   useEffect(() => {
@@ -357,10 +379,10 @@ export default function PalletLabels() {
       localStorage.setItem('palletLabels_filters', JSON.stringify({
         genCat, cycle, machine, nmsx,
         rpWh, rpCats, rpMatIds, rpCycles, rpMachines,
-        auWh, auCats, auMats, auCycles, auMachines,
+        auWh, auCats, auMatIds, auCycles, auMachines,
       }))
     } catch { /* ignore */ }
-  }, [genCat, cycle, machine, nmsx, rpWh, rpCats, rpMatIds, rpCycles, rpMachines, auWh, auCats, auMats, auCycles, auMachines])
+  }, [genCat, cycle, machine, nmsx, rpWh, rpCats, rpMatIds, rpCycles, rpMachines, auWh, auCats, auMatIds, auCycles, auMachines])
 
   const labels = tab === 'generate' ? genLabels : tab === 'reprint' ? Object.values(picked) : []
 
@@ -440,9 +462,9 @@ export default function PalletLabels() {
       <SummaryBand tiles={tab === 'audit'
         ? [
             { label: 'Số pallet', value: auditSummary.length, accent: auditSummary.length > 0 },
-            { label: 'Tổng lần in', value: auditRows.length },
-            { label: 'Sinh mới', value: auditRows.filter(r => r.mode !== 'REPRINT').length },
-            { label: 'In lại', value: auditRows.filter(r => r.mode === 'REPRINT').length },
+            { label: 'Chưa in', value: auditSummary.filter(g => g.count === 0).length },
+            { label: 'Tổng lần in', value: auEvents.length },
+            { label: 'In lại', value: auEvents.filter(r => r.mode === 'REPRINT').length },
           ]
         : [
             { label: 'Số tem', value: labels.length, accent: labels.length > 0 },
@@ -567,13 +589,23 @@ export default function PalletLabels() {
                   <button onClick={() => setPicked({})} className="flex items-center gap-0.5 text-red-500 hover:text-red-700"><Trash2 className="h-3 w-3" />Bỏ hết</button>
                 )}
               </div>
+              {rpAlreadyPrinted.length > 0 && (
+                <div className="flex items-start gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-800">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                  <span><b>{rpAlreadyPrinted.length}</b> pallet đã được in trước đó — in lại sẽ tạo tem trùng. Kiểm tra kỹ trước khi in.</span>
+                </div>
+              )}
               <div className="space-y-1 max-h-56 overflow-y-auto">
-                {Object.values(picked).map(l => (
+                {Object.values(picked).map(l => {
+                  const n = rpPrintCount.get(l.qr) ?? 0
+                  return (
                   <div key={l.key} className="flex items-center gap-2 rounded border border-slate-200 px-2 py-1">
                     <span className="font-mono text-[10px] font-semibold truncate flex-1">{l.qr}</span>
+                    {n > 0 && <span className="shrink-0 inline-flex items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] text-amber-700" title={`Đã in ${n} lần`}><AlertTriangle className="h-2.5 w-2.5" />đã in {n}</span>}
                     <button onClick={() => onPickCodes(Object.keys(picked).filter(c => c !== l.key))} className="text-slate-400 hover:text-red-500 shrink-0"><X className="h-3 w-3" /></button>
                   </div>
-                ))}
+                  )
+                })}
                 {Object.keys(picked).length === 0 && <p className="text-[11px] text-slate-400">Chọn mã pallet ở trên để in lại.</p>}
               </div>
             </>
@@ -593,16 +625,19 @@ export default function PalletLabels() {
                 </div>
                 <p className="text-[10px] text-slate-400">Tra riêng 1 pallet, hoặc lọc theo nhóm bên dưới.</p>
               </div>
-              <div className="flex flex-col gap-2 pt-1 border-t">
-                <MultiSelectFilter label="Kho (NMSX)" options={auditOpts.nmsx} selected={auWh} onChange={setAuWh} searchable={auditOpts.nmsx.length > 6} width="w-full" />
-                <MultiSelectFilter label="Loại hàng" options={auditOpts.cats} selected={auCats} onChange={setAuCats} searchable={false} width="w-full" />
-                <MultiSelectFilter label="Tên hàng" options={auditOpts.mats} selected={auMats} onChange={setAuMats} width="w-full" />
-                <MultiSelectFilter label="Chu kỳ" options={auditOpts.cyc} selected={auCycles} onChange={setAuCycles} searchable={auditOpts.cyc.length > 6} width="w-full" />
-                <MultiSelectFilter label="Máy" options={auditOpts.mac} selected={auMachines} onChange={setAuMachines} searchable={auditOpts.mac.length > 6} width="w-full" />
+              <div className="space-y-1 pt-1 border-t">
+                <Label className="text-xs">Hoặc lọc theo nhóm</Label>
+                <WarehouseSingleSelect warehouses={whOptions} value={auWh} onChange={v => { setAuWh(v); setAuMatIds([]); setAuCycles([]); setAuMachines([]) }} allLabel="Chọn kho" triggerClassName="h-8" />
               </div>
-              <p className={`text-[10px] ${auHasFilter ? 'text-slate-400' : 'text-amber-600'}`}>
-                {auHasFilter
-                  ? 'Bấm 1 dòng để xem chi tiết các lần in.'
+              <div className="flex flex-col gap-2">
+                <MultiSelectFilter label="Loại hàng" options={categoryOpts.map(c => ({ value: c, label: c }))} selected={auCats} onChange={v => { setAuCats(v); setAuMatIds([]) }} searchable={false} width="w-full" />
+                <MultiSelectFilter label="Tên hàng" options={(auFacets?.materials ?? []).map((m: any) => ({ value: m.id, label: m.name ? `${m.code} – ${m.name}` : m.code }))} selected={auMatIds} onChange={setAuMatIds} width="w-full" />
+                <MultiSelectFilter label="Chu kỳ" options={(auFacets?.cycles ?? []).map((c: string) => ({ value: c, label: c }))} selected={auCycles} onChange={setAuCycles} searchable={(auFacets?.cycles ?? []).length > 6} width="w-full" />
+                <MultiSelectFilter label="Máy" options={(auFacets?.machines ?? []).map((m: string) => ({ value: m, label: m }))} selected={auMachines} onChange={setAuMachines} searchable={(auFacets?.machines ?? []).length > 6} width="w-full" />
+              </div>
+              <p className={`text-[10px] ${auReady ? 'text-slate-400' : 'text-amber-600'}`}>
+                {auReady
+                  ? 'Pallet chưa in vẫn hiện với số lần = 0. Bấm 1 dòng để xem ai in, lúc nào.'
                   : 'Chọn đủ Kho + Loại hàng + Tên hàng + Chu kỳ (hoặc quét/nhập mã pallet) mới truy vấn — dữ liệu rất lớn.'}
               </p>
             </>
@@ -626,10 +661,10 @@ export default function PalletLabels() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {!auHasFilter ? (
+                {!auReady ? (
                   <tr><td colSpan={8} className="px-2 py-10 text-center text-slate-400">Chọn đủ <b>Kho + Loại hàng + Tên hàng + Chu kỳ</b> hoặc quét/nhập mã pallet để tra cứu</td></tr>
                 ) : auditSummary.length === 0 ? (
-                  <tr><td colSpan={8} className="px-2 py-10 text-center text-slate-400">Không có lần in nào khớp</td></tr>
+                  <tr><td colSpan={8} className="px-2 py-10 text-center text-slate-400">Không có pallet nào khớp trong tồn kho</td></tr>
                 ) : auditSummary.map(g => (
                   <Fragment key={g.qr}>
                     <tr className="hover:bg-slate-50 cursor-pointer" onClick={() => setAuOpen(auOpen === g.qr ? null : g.qr)}>
@@ -639,25 +674,36 @@ export default function PalletLabels() {
                       <td className="px-2 py-1">{g.nmsx ?? '—'}</td>
                       <td className="px-2 py-1">{g.cycle ?? '—'}</td>
                       <td className="px-2 py-1">{g.machine ?? '—'}</td>
-                      <td className="px-2 py-1 text-right tabular-nums font-bold">{g.count}</td>
-                      <td className="px-2 py-1 tabular-nums whitespace-nowrap">{formatTimestampDate(g.last, true)} {formatTimestampTime(g.last)}</td>
+                      <td className={`px-2 py-1 text-right tabular-nums font-bold ${g.count === 0 ? 'text-slate-300' : g.count > 1 ? 'text-amber-600' : 'text-slate-700'}`}>{g.count}</td>
+                      <td className="px-2 py-1 tabular-nums whitespace-nowrap">
+                        {g.count === 0 ? <span className="text-slate-400">Chưa in</span> : <>{formatTimestampDate(g.last, true)} {formatTimestampTime(g.last)}</>}
+                      </td>
                     </tr>
                     {auOpen === g.qr && (
                       <tr>
                         <td colSpan={8} className="bg-slate-50 px-3 py-2">
-                          <p className="text-[10px] font-semibold text-slate-500 mb-1">Chi tiết {g.count} lần in</p>
-                          <div className="space-y-0.5">
-                            {g.events.map(ev => (
-                              <div key={ev.id} className="flex items-center gap-3 text-[10px]">
-                                <span className={`px-1.5 py-0.5 rounded-full ${ev.mode === 'REPRINT' ? 'bg-amber-100 text-amber-700' : 'bg-slate-200 text-slate-600'}`}>
-                                  {ev.mode === 'REPRINT' ? 'In lại' : 'Sinh mới'}
-                                </span>
-                                <span className="tabular-nums">{formatTimestampDate(ev.created_at, true)} {formatTimestampTime(ev.created_at)}</span>
-                                <span className="text-slate-500">· {ev.printed_by_name ?? '—'}</span>
-                                {ev.qty != null && <span className="text-slate-400">· {ev.qty} thùng</span>}
+                          {g.count === 0 ? (
+                            <p className="text-[10px] text-slate-500">Pallet này <b>chưa được in lần nào</b>.</p>
+                          ) : (
+                            <>
+                              <p className="text-[10px] font-semibold text-slate-500 mb-1">
+                                Chi tiết {g.count} lần in — ai in, lúc nào
+                                {g.count > 1 && <span className="ml-2 inline-flex items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-amber-700"><AlertTriangle className="h-3 w-3" />Đã in lại {g.count - 1} lần</span>}
+                              </p>
+                              <div className="space-y-0.5">
+                                {g.events.map(ev => (
+                                  <div key={ev.id} className="flex items-center gap-3 text-[10px]">
+                                    <span className={`px-1.5 py-0.5 rounded-full ${ev.mode === 'REPRINT' ? 'bg-amber-100 text-amber-700' : 'bg-slate-200 text-slate-600'}`}>
+                                      {ev.mode === 'REPRINT' ? 'In lại' : 'Sinh mới'}
+                                    </span>
+                                    <span className="tabular-nums">{formatTimestampDate(ev.created_at, true)} {formatTimestampTime(ev.created_at)}</span>
+                                    <span className="text-slate-500">· {ev.printed_by_name ?? '—'}</span>
+                                    {ev.qty != null && <span className="text-slate-400">· {ev.qty} thùng</span>}
+                                  </div>
+                                ))}
                               </div>
-                            ))}
-                          </div>
+                            </>
+                          )}
                         </td>
                       </tr>
                     )}

@@ -9,7 +9,20 @@
       "Bash(findstr \"LISTENING\")",
       "Bash(taskkill /PID 31908 /F)",
       "Bash(node -e ' *)",
-      "Bash(node scripts/gen_outbound_template.js)"
+      "Bash(node scripts/gen_outbound_template.js)",
+      "Bash(node -e \"const jwt=require\\('jsonwebtoken'\\);console.log\\(jwt.sign\\({sub:'admin-test',name:'Admin',email:'admin',warehouse_scope:'NATIONAL',warehouse_id:null,allowed_categories:[],warehouse_ids:[],module_permissions:{inbound:['scan','delete_pallet','force_delete_pallet','edit_pallet']},ncc_id:null},'dev-secret-change-in-production',{expiresIn:'1d'}\\)\\)\")",
+      "Bash(curl -s http://localhost:4000/api/wms/inbound-orders?status=OPEN -H 'Authorization: Bearer __CMDSUB_OUTPUT__' -o C:/Temp/orders3.json)",
+      "Bash(node -e \"const j=require\\('C:/Temp/orders3.json'\\); const d=j.data||[]; console.log\\('success:', j.success, 'count:', d.length\\); if\\(d.length\\) { const nq=d.filter\\(o=>o.material&&o.material.no_qr_tracking\\); console.log\\('no_qr orders:', nq.length\\); nq.slice\\(0,3\\).forEach\\(o=>console.log\\(' -',o.id.slice\\(0,8\\),o.import_code,'mat:',o.material.material_code,'posm_entry_id:',o.posm_entry_id,'cartons:',o.total_cartons\\)\\); }\")",
+      "Bash(node -e \"const j=require\\('C:/Temp/orders3.json'\\); console.log\\(JSON.stringify\\(j\\)\\);\")",
+      "Bash(dir /s /b backend\\\\src\\\\controllers)",
+      "Bash(findstr -i \"inbound\\\\|inventory\")",
+      "Bash(xargs grep -l \"CREATE TABLE.*ProductionImport\")",
+      "Bash(curl -s -m 5 http://localhost:4000/api/health)",
+      "Bash(echo \"---EXIT $?---\")",
+      "Bash(node -e 'let s=\"\";process.stdin.on\\(\"data\",d=>s+=d\\).on\\(\"end\",\\(\\)=>{const a=JSON.parse\\(s\\).data;console.log\\(\"count:\",a.length\\);a.forEach\\(o=>console.log\\(JSON.stringify\\({id:o.id.slice\\(0,8\\),status:o.status,planned_cartons:o.planned_cartons,total_cartons:o.total_cartons,posm_entry_id:o.posm_entry_id,no_qr:o.material?.no_qr_tracking,mat:o.material?.material_code}\\)\\)\\)}\\)')",
+      "Bash(node -e 'let s=\"\";process.stdin.on\\(\"data\",d=>s+=d\\).on\\(\"end\",\\(\\)=>{const a=JSON.parse\\(s\\).data;a.forEach\\(g=>console.log\\(JSON.stringify\\({mat_id:g.material_id.slice\\(0,8\\),code:g.material_code,planned:g.planned_boxes,actual:g.actual_boxes,pallets:g.pallets.length}\\)\\)\\)}\\)')",
+      "Bash(grep -E \"^pg$|^@prisma$|^pg-\")",
+      "Bash(npm i *)"
     ]
   }
 }

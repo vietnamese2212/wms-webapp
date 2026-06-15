@@ -50,7 +50,7 @@ export function useLogPalletPrints() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['pallet-prints'] }),
   })
 }
-export function usePalletPrints(params: { qr_code?: string; search?: string; date_from?: string; date_to?: string; categories?: string; cycles?: string; machines?: string; nmsx?: string; material_codes?: string }, enabled = true) {
+export function usePalletPrints(params: { qr_code?: string; qr_codes?: string; search?: string; date_from?: string; date_to?: string; categories?: string; cycles?: string; machines?: string; nmsx?: string; material_codes?: string }, enabled = true) {
   return useQuery({
     queryKey: ['pallet-prints', params],
     enabled,
@@ -621,9 +621,10 @@ export function useInventoryEntries(params?: {
   filter_cycles?: string[]
   filter_machines?: string[]
   date_pct_ranges?: string[]
-}) {
+}, enabled = true) {
   return useQuery({
     queryKey: ['inventory-entries', params],
+    enabled,
     staleTime: 30_000,
     queryFn: async () => {
       const { warehouse_ids, categories, filter_locations, filter_material_ids, qa_status_ids, filter_cycles, filter_machines, date_pct_ranges, ...rest } = params ?? {}

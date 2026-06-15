@@ -3,9 +3,11 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 
-type ReqUser = { sub?: string; name?: string }
+type ReqUser = { sub?: string; name?: string; module_permissions?: Record<string, string[]> }
 const userOf = (req: Request): ReqUser => (req as { user?: ReqUser }).user ?? {}
 const now = () => new Date().toISOString()
+const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+const hasAttEdit = (u: ReqUser) => u.name === 'Admin' || !!u.module_permissions?.attendance?.includes('edit')
 const SEL = 'id, employee_id, warehouse_id, work_date, kind, ot_hours, early_leave_hours, note, created_at, updated_at'
 const KINDS = ['CA1', 'CA2', 'CA3', 'HC', 'LEAVE']
 
@@ -54,9 +56,22 @@ export async function upsertAttendance(req: Request, res: Response) {
     if (!empId || !work_date || !kind) return fail(res, 'employee_id, work_date, kind là bắt buộc', 400)
     if (!KINDS.includes(kind)) return fail(res, 'kind không hợp lệ', 400)
 
+    // ── Rule ngày ──
+    const today = todayVN()
+    if (work_date > today) return fail(res, 'Không thể chấm công cho ngày tương lai', 400)
+    // chấm công ngày đã qua (hoặc của người khác) cần quyền sửa
+    const isSelfToday = empId === u.sub && work_date === today
+    if (!isSelfToday && !hasAttEdit(u)) return fail(res, 'Ngày đã qua hoặc của người khác — cần quyền "Sửa công" (attendance.edit)', 403)
+
+    // ── Rule loại công ──
+    let ot = Number(ot_hours) || 0
+    let early = Number(early_leave_hours) || 0
+    if (kind === 'LEAVE') { ot = 0; early = 0 }              // nghỉ phép: không OT/về sớm
+    else if (ot > 0 && early > 0) return fail(res, 'Một ngày chỉ có OT hoặc về sớm, không có cả hai', 400)
+
     const { data: existing } = await supabase.from('Attendance').select('id').eq('employee_id', empId).eq('work_date', work_date).maybeSingle()
     const payload = {
-      kind, ot_hours: ot_hours ?? 0, early_leave_hours: early_leave_hours ?? 0,
+      kind, ot_hours: ot, early_leave_hours: early,
       note: note || null, warehouse_id: warehouse_id || null, updated_at: now(),
     }
     if (existing) {
@@ -103,14 +118,24 @@ export async function reportAttendance(req: Request, res: Response) {
     if (department_id) list = list.filter(r => (r.employee as { department_id?: string } | null)?.department_id === department_id)
     // work_days = ca1+ca2+ca3+hc
     const nameOf = (r: { employee: unknown }) => ((r.employee as { name?: string } | null)?.name ?? '')
-    const out = list.map(r => ({ ...r, work_days: r.ca1 + r.ca2 + r.ca3 + r.hc }))
-      .sort((a, b) => nameOf(a).localeCompare(nameOf(b)))
+    // Tổng công (giờ) = 8h × số ngày công + OT − về sớm
+    const out = list.map(r => {
+      const work_days = r.ca1 + r.ca2 + r.ca3 + r.hc
+      return { ...r, work_days, total_hours: Math.round((work_days * 8 + r.ot_hours - r.early_hours) * 10) / 10 }
+    }).sort((a, b) => nameOf(a).localeCompare(nameOf(b)))
     return ok(res, out)
   } catch (e) { return fail(res, String(e)) }
 }
 
 export async function deleteAttendance(req: Request, res: Response) {
   try {
+    const u = userOf(req)
+    const { data: row } = await supabase.from('Attendance').select('employee_id, work_date').eq('id', req.params.id).maybeSingle()
+    if (row) {
+      const r = row as { employee_id: string; work_date: string }
+      const isSelfToday = r.employee_id === u.sub && r.work_date === todayVN()
+      if (!isSelfToday && !hasAttEdit(u)) return fail(res, 'Ngày đã qua hoặc của người khác — cần quyền "Sửa công"', 403)
+    }
     const { error } = await supabase.from('Attendance').delete().eq('id', req.params.id)
     if (error) return fail(res, error.message)
     return ok(res, { deleted: true })

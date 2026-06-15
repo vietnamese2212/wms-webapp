@@ -26,7 +26,7 @@ interface EmpRow {
   department_id: string | null; job_title_id: string | null
   allowed_categories: string[] | null; warehouse_scope: string | null
   warehouse_id: string | null; is_active: boolean; created_at: string; deleted_at: string | null
-  ncc_id: string | null; is_driver: boolean
+  ncc_id: string | null; is_driver: boolean; manager_id: string | null
 }
 
 const EMP_BASE = [
@@ -35,7 +35,7 @@ const EMP_BASE = [
   'allowed_categories', 'warehouse_scope',
   'warehouse_id', 'is_active', 'created_at', 'updated_at', 'deleted_at',
   'created_by', 'updated_by',
-  'ncc_id', 'is_driver',
+  'ncc_id', 'is_driver', 'manager_id',
 ].join(', ')
 
 // Fetch employees và join dept / job_title / warehouse_access thủ công
@@ -98,11 +98,20 @@ async function fetchFull(opts: {
     waByEmp.set(wa.employee_id, list)
   }
 
+  // ── Quản lý trực tiếp ────────────────────────────────────────────────────
+  const mgrIds = [...new Set(emps.map(e => e.manager_id).filter((x): x is string => !!x))]
+  const { data: mgrs } = mgrIds.length
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ? await (supabase.from('Employee') as any).select('id, name, employee_code').in('id', mgrIds)
+    : { data: [] as { id: string; name: string; employee_code: string }[] }
+  const mgrMap = new Map(((mgrs ?? []) as { id: string; name: string; employee_code: string }[]).map(m => [m.id, m]))
+
   return emps.map(emp => ({
     ...emp,
     dept:             deptMap.get(emp.department_id ?? '') ?? null,
     job_title:        jtMap.get(emp.job_title_id ?? '')   ?? null,
     warehouse_access: waByEmp.get(emp.id)                 ?? [],
+    manager:          mgrMap.get(emp.manager_id ?? '')    ?? null,
   }))
 }
 
@@ -138,13 +147,13 @@ export async function createEmployee(req: Request, res: Response) {
       department_id, job_title_id,
       allowed_categories, warehouse_scope,
       warehouse_ids = [],
-      ncc_id, is_driver = false,
+      ncc_id, is_driver = false, manager_id,
     } = req.body as {
       name: string; employee_code: string; email?: string; phone?: string
       department_id?: string | null; job_title_id?: string | null
       allowed_categories?: string[]; warehouse_scope?: string
       warehouse_ids?: string[]
-      ncc_id?: string | null; is_driver?: boolean
+      ncc_id?: string | null; is_driver?: boolean; manager_id?: string | null
     }
 
     if (!name || !employee_code) return fail(res, 'name và employee_code là bắt buộc', 400)
@@ -165,6 +174,7 @@ export async function createEmployee(req: Request, res: Response) {
       warehouse_scope: warehouse_scope ?? 'ASSIGNED',
       ncc_id: ncc_id || null,
       is_driver: is_driver ?? false,
+      manager_id: manager_id || null,
       password: hashedPw,
       is_active: true,
       created_at: now,
@@ -199,14 +209,14 @@ export async function updateEmployee(req: Request, res: Response) {
       allowed_categories, warehouse_scope,
       warehouse_ids,
       is_active,
-      ncc_id, is_driver,
+      ncc_id, is_driver, manager_id,
     } = req.body as {
       name?: string; phone?: string; email?: string; employee_code?: string
       department_id?: string | null; job_title_id?: string | null
       allowed_categories?: string[]; warehouse_scope?: string
       warehouse_ids?: string[]
       is_active?: boolean
-      ncc_id?: string | null; is_driver?: boolean
+      ncc_id?: string | null; is_driver?: boolean; manager_id?: string | null
     }
 
     // Build update object explicitly — exclude undefined fields so Supabase doesn't overwrite them with null
@@ -222,6 +232,7 @@ export async function updateEmployee(req: Request, res: Response) {
     if (is_active         !== undefined) updates.is_active         = is_active
     if (ncc_id            !== undefined) updates.ncc_id            = ncc_id
     if (is_driver         !== undefined) updates.is_driver         = is_driver
+    if (manager_id        !== undefined) updates.manager_id        = manager_id || null
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (supabase.from('Employee') as any)
@@ -240,6 +251,39 @@ export async function updateEmployee(req: Request, res: Response) {
       }
     }
 
+    const rows = await fetchFull({ ids: [id] })
+    return ok(res, rows[0])
+  } catch (e) { return fail(res, String(e)) }
+}
+
+// ─── Set quản lý trực tiếp (kéo-thả sơ đồ tổ chức) ─────────────────────────────
+
+export async function setManager(req: Request, res: Response) {
+  try {
+    const { id } = req.params
+    const { manager_id } = req.body as { manager_id?: string | null }
+    const mgr = manager_id || null
+    if (mgr === id) return fail(res, 'Không thể đặt chính mình làm quản lý', 400)
+
+    // chống vòng lặp: mgr không được là cấp dưới (hậu duệ) của id
+    if (mgr) {
+      let cur: string | null = mgr
+      const seen = new Set<string>()
+      while (cur) {
+        if (cur === id) return fail(res, 'Không thể tạo vòng lặp quản lý', 400)
+        if (seen.has(cur)) break
+        seen.add(cur)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const r: { data: { manager_id: string | null } | null } = await (supabase.from('Employee') as any).select('manager_id').eq('id', cur).maybeSingle()
+        cur = r.data?.manager_id ?? null
+      }
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (supabase.from('Employee') as any)
+      .update({ manager_id: mgr, updated_at: new Date().toISOString(), updated_by: (req as any).user?.name || null })
+      .eq('id', id)
+    if (error) return fail(res, error.message)
     const rows = await fetchFull({ ids: [id] })
     return ok(res, rows[0])
   } catch (e) { return fail(res, String(e)) }

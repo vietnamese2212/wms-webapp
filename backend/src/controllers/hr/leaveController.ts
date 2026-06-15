@@ -13,14 +13,14 @@ async function attachEmployees<T extends { employee_id: string }>(rows: T[]) {
   if (!rows.length) return rows.map(r => ({ ...r, employee: null }))
   const ids = [...new Set(rows.map(r => r.employee_id))]
   const { data: emps } = await supabase.from('Employee')
-    .select('id, name, employee_code, department_id').in('id', ids)
+    .select('id, name, employee_code, department_id, manager_id').in('id', ids)
   const map = new Map((emps ?? []).map((e: { id: string }) => [e.id, e]))
   return rows.map(r => ({ ...r, employee: map.get(r.employee_id) ?? null }))
 }
 
 export async function listLeaves(req: Request, res: Response) {
   try {
-    const { warehouse_id, department_id, employee_id, status, date_from, date_to } = req.query as Record<string, string>
+    const { warehouse_id, department_id, employee_id, status, date_from, date_to, to_approve } = req.query as Record<string, string>
     let q = supabase.from('LeaveRequest').select(LEAVE_SELECT).order('date_from', { ascending: false })
     if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
     if (employee_id)  q = q.eq('employee_id', employee_id)
@@ -32,10 +32,14 @@ export async function listLeaves(req: Request, res: Response) {
     if (error) return fail(res, error.message)
 
     let rows = (data ?? []) as { employee_id: string; [k: string]: unknown }[]
-    // filter theo phòng ban (qua employee) — làm phía server sau khi attach
     let withEmp = await attachEmployees(rows)
     if (department_id) {
       withEmp = withEmp.filter(r => (r.employee as { department_id?: string } | null)?.department_id === department_id)
+    }
+    // chỉ đơn của cấp dưới trực tiếp của người đăng nhập (chờ tôi duyệt)
+    if (to_approve === 'true') {
+      const me = userOf(req).sub
+      withEmp = withEmp.filter(r => (r.employee as { manager_id?: string } | null)?.manager_id === me)
     }
     return ok(res, withEmp)
   } catch (e) { return fail(res, String(e)) }
@@ -95,6 +99,17 @@ export async function decideLeave(req: Request, res: Response) {
     const { status } = req.body as { status?: 'APPROVED' | 'REJECTED' }
     if (status !== 'APPROVED' && status !== 'REJECTED') return fail(res, 'status phải là APPROVED hoặc REJECTED', 400)
     const u = userOf(req)
+
+    // chỉ quản lý trực tiếp (hoặc Admin) mới được duyệt
+    if (u.name !== 'Admin') {
+      const { data: lv } = await supabase.from('LeaveRequest').select('employee_id').eq('id', id).maybeSingle()
+      const empId = (lv as { employee_id: string } | null)?.employee_id
+      if (!empId) return fail(res, 'Không tìm thấy đơn', 404)
+      const { data: emp } = await supabase.from('Employee').select('manager_id').eq('id', empId).maybeSingle()
+      const mgr = (emp as { manager_id: string | null } | null)?.manager_id
+      if (mgr !== u.sub) return fail(res, 'Chỉ quản lý trực tiếp của nhân viên này mới được duyệt', 403)
+    }
+
     const { data, error } = await supabase.from('LeaveRequest').update({
       status,
       approved_by: u.name || null,

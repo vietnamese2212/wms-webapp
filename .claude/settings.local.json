@@ -39,7 +39,24 @@
       "Bash(npm run build*)",
       "Bash(git status*)",
       "Bash(git log*)",
-      "PowerShell(npx tsc*)"
+      "PowerShell(npx tsc*)",
+      "Bash(cd *)",
+      "Bash(node -e *)",
+      "Bash(node *)",
+      "Bash(npm run *)",
+      "Bash(npx tsc*)",
+      "Bash(echo *)",
+      "Bash(ls *)",
+      "Bash(cat *)",
+      "Bash(head *)",
+      "Bash(tail *)",
+      "Bash(wc *)",
+      "Bash(grep *)",
+      "Bash(mkdir *)",
+      "Bash(git diff*)",
+      "Bash(git add*)",
+      "Bash(git commit*)",
+      "Bash(git push*)"
     ]
   }
 }

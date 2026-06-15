@@ -65,6 +65,7 @@ router.get('/employees/:id',        requirePerm('employees', 'view'), employee.g
 router.patch('/employees/:id',              requirePerm('employees', 'edit'), employee.updateEmployee)
 router.patch('/employees/:id/set-password', requirePerm('employees', 'set_password'), employee.setPassword)
 router.put('/employees/:id/warehouses',     requirePerm('employees', 'edit'), employee.setWarehouseAccess)
+router.patch('/employees/:id/manager',      requirePerm('employees', 'edit'), employee.setManager)
 router.delete('/employees/:id',             requirePerm('employees', 'delete'), employee.deleteEmployee)
 router.post('/employees/:id/restore',       requirePerm('employees', 'delete'), employee.restoreEmployee)
 

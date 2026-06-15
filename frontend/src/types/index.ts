@@ -63,6 +63,7 @@ export interface EmployeeRecord {
   is_active:          boolean
   ncc_id:             string | null
   is_driver:          boolean
+  manager_id:         string | null
   created_at:         string
   updated_at?:        string
   created_by?:        string | null
@@ -71,6 +72,7 @@ export interface EmployeeRecord {
   dept?:              Pick<Department, 'id' | 'name' | 'code'> | null
   job_title?:         Pick<JobTitle, 'id' | 'name'> | null
   warehouse_access?:  { warehouse_id: string; warehouse: { id: string; code: string; name: string } }[]
+  manager?:           { id: string; name: string; employee_code: string } | null
 }
 
 // WMS

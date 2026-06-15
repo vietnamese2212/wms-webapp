@@ -191,6 +191,8 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
   const { data: whTypes = [] }        = useWarehouseTypes()
   const categoryOptions                = whTypes.map(t => t.value)
   const { data: transportCompanies = [] } = useTransportCompanies(true)
+  const { data: allEmps = [] } = useEmployeeRecords()
+  const [managerId, setManagerId] = useState(emp?.manager_id ?? '')
 
   const [name,         setName]         = useState(emp?.name          ?? '')
   const [empCode,      setEmpCode]      = useState(emp?.employee_code ?? '')
@@ -263,6 +265,7 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
       phone: phone || undefined,
       department_id: deptId || null,
       job_title_id: jobTitleId || null,
+      manager_id: managerId || null,
       allowed_categories: categories,
       warehouse_scope: scope,
       warehouse_ids: scope === 'ASSIGNED' ? warehouseIds : [],
@@ -489,6 +492,17 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
                     />
                   </div>
                 )}
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-xs">Quản lý trực tiếp (duyệt nghỉ phép)</Label>
+                <select value={managerId} onChange={e => setManagerId(e.target.value)}
+                  className="w-full border border-slate-200 rounded-md px-2 h-9 text-sm bg-white">
+                  <option value="">— Không có —</option>
+                  {(allEmps as EmployeeRecord[]).filter(e => e.id !== emp?.id).map(e => (
+                    <option key={e.id} value={e.id}>{e.name} ({e.employee_code})</option>
+                  ))}
+                </select>
               </div>
 
               {isEdit && jobTitleId && (

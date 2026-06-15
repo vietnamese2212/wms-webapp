@@ -2665,7 +2665,7 @@ export function useDeleteAttendance() {
 }
 export type AttReportRow = {
   employee_id: string; ca1: number; ca2: number; ca3: number; hc: number; leave: number
-  ot_hours: number; early_hours: number; work_days: number
+  ot_hours: number; early_hours: number; work_days: number; total_hours: number
   employee: { id: string; name: string; employee_code: string; department_id: string | null } | null
 }
 export function useAttendanceReport(params: { warehouse_id?: string; department_id?: string; date_from: string; date_to: string }, enabled = true) {

@@ -106,9 +106,19 @@ function MySection() {
   }, [sel])
 
   const selEntry = sel ? byDate.get(sel) : undefined
+  const perms = user?.module_permissions as ModulePermissions | null ?? null
+  const canEditPast = can(perms, 'attendance', 'edit')
+  const isPast = !!sel && sel < today
+  const locked = isPast && !canEditPast            // ngày đã qua + không có quyền sửa
+  const isLeave = kind === 'LEAVE'
+  const totalCong = isLeave ? 0 : Math.round((8 + ot - early) * 10) / 10
+
+  function pickKind(k: string) { setKind(k); if (k === 'LEAVE') { setOt(0); setEarly(0) } }
+  function pickOt(v: number) { setOt(v); if (v > 0) setEarly(0) }
+  function pickEarly(v: number) { setEarly(v); if (v > 0) setOt(0) }
 
   async function save() {
-    if (!sel) return
+    if (!sel || locked) return
     setErr(null)
     try { await upsert.mutateAsync({ employee_id: user?.id, warehouse_id: user?.warehouse_id, work_date: sel, kind, ot_hours: ot, early_leave_hours: early }) }
     catch (e) { setErr(String((e as { message?: string })?.message ?? e)) }
@@ -167,20 +177,26 @@ function MySection() {
           <div className="border border-dashed border-slate-200 rounded-lg p-4 text-center text-xs text-slate-400">Chọn 1 ngày trên lịch để chấm công</div>
         ) : (
           <div className="border border-slate-200 rounded-lg p-3 bg-slate-50/50 space-y-2.5">
-            <p className="text-sm font-medium text-slate-700">{formatDate(sel)}</p>
+            <p className="text-sm font-medium text-slate-700">{formatDate(sel)}{isPast && <span className="text-[10px] text-slate-400 ml-1">(ngày đã qua)</span>}</p>
+            {locked && <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">Ngày đã qua — cần quyền "Sửa công" mới chỉnh được.</div>}
             <div>
               <label className="text-[11px] text-slate-500">Loại công</label>
-              <select value={kind} onChange={e => setKind(e.target.value)} className="border border-slate-200 rounded-md px-2 h-8 text-sm bg-white block w-full">
+              <select value={kind} disabled={locked} onChange={e => pickKind(e.target.value)} className="border border-slate-200 rounded-md px-2 h-8 text-sm bg-white block w-full disabled:bg-slate-100">
                 {KINDS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
             </div>
             <div className="grid grid-cols-2 gap-2">
-              <div><label className="text-[11px] text-slate-500">Giờ OT</label><Input type="number" min={0} step={0.5} value={ot || ''} onChange={e => setOt(Number(e.target.value) || 0)} className="h-8 text-sm" /></div>
-              <div><label className="text-[11px] text-slate-500">Giờ về sớm</label><Input type="number" min={0} step={0.5} value={early || ''} onChange={e => setEarly(Number(e.target.value) || 0)} className="h-8 text-sm" /></div>
+              <div><label className="text-[11px] text-slate-500">Giờ OT</label>
+                <Input type="number" min={0} step={0.5} value={ot || ''} disabled={locked || isLeave || early > 0}
+                  onChange={e => pickOt(Number(e.target.value) || 0)} className="h-8 text-sm disabled:bg-slate-100" /></div>
+              <div><label className="text-[11px] text-slate-500">Giờ về sớm</label>
+                <Input type="number" min={0} step={0.5} value={early || ''} disabled={locked || isLeave || ot > 0}
+                  onChange={e => pickEarly(Number(e.target.value) || 0)} className="h-8 text-sm disabled:bg-slate-100" /></div>
             </div>
+            <div className="text-xs text-slate-600">Tổng công: <b className="text-slate-800">{totalCong}h</b> {!isLeave && <span className="text-[10px] text-slate-400">(8h{ot > 0 ? ` + OT ${ot}` : ''}{early > 0 ? ` − về sớm ${early}` : ''})</span>}</div>
             <div className="flex gap-2 pt-1">
-              <Button onClick={save} disabled={upsert.isPending} className="h-8 flex-1"><Save className="h-4 w-4 mr-1" />{selEntry ? 'Cập nhật' : 'Lưu'}</Button>
-              {selEntry && <Button variant="outline" onClick={remove} disabled={del.isPending} className="h-8 text-red-600"><Trash2 className="h-4 w-4" /></Button>}
+              <Button onClick={save} disabled={upsert.isPending || locked} className="h-8 flex-1"><Save className="h-4 w-4 mr-1" />{selEntry ? 'Cập nhật' : 'Lưu'}</Button>
+              {selEntry && <Button variant="outline" onClick={remove} disabled={del.isPending || locked} className="h-8 text-red-600"><Trash2 className="h-4 w-4" /></Button>}
             </div>
           </div>
         )}
@@ -261,15 +277,16 @@ function ReportSection() {
                 <th className="text-right px-2 py-2 font-medium">Ca 2</th>
                 <th className="text-right px-2 py-2 font-medium">Ca 3</th>
                 <th className="text-right px-2 py-2 font-medium">HC</th>
-                <th className="text-right px-2 py-2 font-medium">Tổng công</th>
+                <th className="text-right px-2 py-2 font-medium">Ngày công</th>
                 <th className="text-right px-2 py-2 font-medium">Nghỉ phép</th>
                 <th className="text-right px-2 py-2 font-medium">Giờ OT</th>
                 <th className="text-right px-2 py-2 font-medium">Giờ về sớm</th>
+                <th className="text-right px-2 py-2 font-medium">Tổng giờ công</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {rows.length === 0 ? (
-                <tr><td colSpan={9} className="text-center text-slate-400 py-6">Chưa có dữ liệu</td></tr>
+                <tr><td colSpan={10} className="text-center text-slate-400 py-6">Chưa có dữ liệu</td></tr>
               ) : rows.map(r => (
                 <tr key={r.employee_id} className="hover:bg-slate-50/60">
                   <td className="px-2 py-1.5 sticky left-0 bg-white"><span className="font-medium text-slate-700">{r.employee?.name ?? '—'}</span> <span className="text-[10px] text-slate-400">{r.employee?.employee_code}</span></td>
@@ -277,10 +294,11 @@ function ReportSection() {
                   <td className="px-2 py-1.5 text-right tabular-nums">{r.ca2 || '—'}</td>
                   <td className="px-2 py-1.5 text-right tabular-nums">{r.ca3 || '—'}</td>
                   <td className="px-2 py-1.5 text-right tabular-nums">{r.hc || '—'}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums font-semibold text-slate-700">{r.work_days || '—'}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{r.work_days || '—'}</td>
                   <td className="px-2 py-1.5 text-right tabular-nums">{r.leave || '—'}</td>
                   <td className="px-2 py-1.5 text-right tabular-nums">{r.ot_hours > 0 ? r.ot_hours : '—'}</td>
                   <td className="px-2 py-1.5 text-right tabular-nums">{r.early_hours > 0 ? r.early_hours : '—'}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums font-semibold text-slate-700">{r.total_hours}h</td>
                 </tr>
               ))}
             </tbody>

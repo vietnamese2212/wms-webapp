@@ -1048,6 +1048,17 @@ export function useUpdateEmployee() {
   })
 }
 
+export function useSetManager() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, manager_id }: { id: string; manager_id: string | null }) =>
+      apiClient.patch(`/masterdata/employees/${id}/manager`, { manager_id }).then(r => r.data.data as EmployeeRecord),
+    onSuccess: (updated, v) => {
+      qc.setQueriesData<EmployeeRecord[]>({ queryKey: ['employee-records'] }, old => old?.map(e => e.id === v.id ? updated : e))
+    },
+  })
+}
+
 export function useDeleteEmployee() {
   const qc = useQueryClient()
   return useMutation({

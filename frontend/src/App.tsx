@@ -29,6 +29,7 @@ import Schedule from '@/pages/hr/Schedule'
 import LeaveManagement from '@/pages/hr/LeaveManagement'
 import Assignments from '@/pages/hr/Assignments'
 import Attendance from '@/pages/hr/Attendance'
+import OrgChart from '@/pages/hr/OrgChart'
 import UserManagement from '@/pages/masterdata/UserManagement'
 import Materials       from '@/pages/masterdata/Materials'
 import Settings from '@/pages/Settings'
@@ -115,6 +116,7 @@ export default function App() {
         <Route path="/hr/leaves"   element={<PermissionRoute module="leave"><LeaveManagement /></PermissionRoute>} />
         <Route path="/hr/assignments" element={<PermissionRoute module="work_assignment"><Assignments /></PermissionRoute>} />
         <Route path="/hr/attendance" element={<PermissionRoute module="attendance"><Attendance /></PermissionRoute>} />
+        <Route path="/hr/org" element={<PermissionRoute module="employees"><OrgChart /></PermissionRoute>} />
         <Route path="/hr/schedule" element={<PermissionRoute module="schedule"><Schedule /></PermissionRoute>} />
 
         {/* Masterdata */}

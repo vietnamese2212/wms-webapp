@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Clock, Save, Trash2, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Save, Trash2, ChevronLeft, ChevronRight } from 'lucide-react'
 import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, addDays, addMonths, subMonths, isSameMonth } from 'date-fns'
 import { vi } from 'date-fns/locale'
 import { Button } from '@/components/ui/button'
@@ -203,7 +203,7 @@ function TeamSection({ perms }: { perms: ModulePermissions | null }) {
 
   const { data: rows = [], isLoading } = useAttendance(
     { warehouse_id: wh || undefined, department_id: dept || undefined, date_from: from, date_to: to },
-    !!wh,
+    true,
   )
   const defs: FilterDef[] = [
     { key: 'range', label: 'Khoảng ngày', type: 'daterange', from, to, onChange: (f, t) => { setFrom(f); setTo(t) } },
@@ -212,7 +212,7 @@ function TeamSection({ perms }: { perms: ModulePermissions | null }) {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
-        <WarehouseSingleSelect warehouses={warehouses as { id: string; code?: string; name: string }[]} value={wh} onChange={setWh} placeholder="Chọn kho…" triggerClassName="w-40" />
+        <WarehouseSingleSelect warehouses={warehouses as { id: string; code?: string; name: string }[]} value={wh} onChange={setWh} allLabel="Tất cả kho" placeholder="Tất cả kho" triggerClassName="w-40" />
         <select value={dept} onChange={e => setDept(e.target.value)} className="border border-slate-200 rounded-md px-2.5 text-xs h-7 bg-white text-slate-700">
           <option value="">Tất cả phòng</option>
           {(departments as { id: string; name: string }[]).map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
@@ -221,9 +221,7 @@ function TeamSection({ perms }: { perms: ModulePermissions | null }) {
         <FilterSheetButton defs={defs} className="sm:hidden" />
         <div className="hidden sm:block"><FilterBar defs={defs} /></div>
       </div>
-      {!wh ? (
-        <div className="flex flex-col items-center justify-center text-slate-400 gap-2 py-16"><Clock className="h-8 w-8" /><p className="text-sm">Chọn <b>Kho</b> để xem bảng công</p></div>
-      ) : isLoading ? <p className="text-xs text-slate-400 py-8 text-center">Đang tải…</p>
+      {isLoading ? <p className="text-xs text-slate-400 py-8 text-center">Đang tải…</p>
       : <AttTable rows={rows} onDelete={canEdit ? (id => del.mutate(id)) : undefined} showName />}
     </div>
   )
@@ -237,13 +235,13 @@ function ReportSection() {
   const [dept, setDept] = useState('')
   const [from, setFrom] = useState(MONTH_START())
   const [to, setTo]     = useState(TODAY())
-  const { data: rows = [], isLoading } = useAttendanceReport({ warehouse_id: wh || undefined, department_id: dept || undefined, date_from: from, date_to: to }, !!wh)
+  const { data: rows = [], isLoading } = useAttendanceReport({ warehouse_id: wh || undefined, department_id: dept || undefined, date_from: from, date_to: to }, true)
   const defs: FilterDef[] = [{ key: 'range', label: 'Khoảng ngày', type: 'daterange', from, to, onChange: (f, t) => { setFrom(f); setTo(t) } }]
 
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
-        <WarehouseSingleSelect warehouses={warehouses as { id: string; code?: string; name: string }[]} value={wh} onChange={setWh} placeholder="Chọn kho…" triggerClassName="w-40" />
+        <WarehouseSingleSelect warehouses={warehouses as { id: string; code?: string; name: string }[]} value={wh} onChange={setWh} allLabel="Tất cả kho" placeholder="Tất cả kho" triggerClassName="w-40" />
         <select value={dept} onChange={e => setDept(e.target.value)} className="border border-slate-200 rounded-md px-2.5 text-xs h-7 bg-white text-slate-700">
           <option value="">Tất cả phòng</option>
           {(departments as { id: string; name: string }[]).map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
@@ -252,9 +250,7 @@ function ReportSection() {
         <FilterSheetButton defs={defs} className="sm:hidden" />
         <div className="hidden sm:block"><FilterBar defs={defs} /></div>
       </div>
-      {!wh ? (
-        <div className="flex flex-col items-center justify-center text-slate-400 gap-2 py-16"><Clock className="h-8 w-8" /><p className="text-sm">Chọn <b>Kho</b> để xem báo cáo</p></div>
-      ) : isLoading ? <p className="text-xs text-slate-400 py-8 text-center">Đang tải…</p>
+      {isLoading ? <p className="text-xs text-slate-400 py-8 text-center">Đang tải…</p>
       : (
         <div className="border border-slate-200 rounded-lg overflow-x-auto">
           <table className="w-full text-xs min-w-max">

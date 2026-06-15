@@ -427,7 +427,9 @@ export default function PalletLabels() {
   const histBatches = useMemo(() => {
     const m = new Map<string, { key: string; at: string; mode: string; by: string | null; rows: PalletPrintRow[] }>()
     for (const r of histRows) {
-      const key = r.batch_id ?? r.id
+      // Có batch_id thì gom theo batch; chưa có (log cũ) → gom theo created_at+mode+người in
+      // (mọi tem trong 1 lần bấm In chia sẻ cùng created_at vì backend set 1 lần)
+      const key = r.batch_id ?? `${r.created_at}|${r.mode}|${r.printed_by_name ?? ''}`
       const g = m.get(key)
       if (g) { g.rows.push(r); if (r.created_at > g.at) g.at = r.created_at }
       else m.set(key, { key, at: r.created_at, mode: r.mode, by: r.printed_by_name, rows: [r] })

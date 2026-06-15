@@ -399,6 +399,8 @@ export interface InventoryEntry {
   cartons_remaining:  number | null
   cartons_reserved:   number | null
   production_date:    string | null
+  parent_pallet_code: string | null
+  origin:             string | null
   status:             InventoryStatus | string
   import_date:        string | null
   update_date:        string | null

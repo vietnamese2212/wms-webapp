@@ -7,6 +7,7 @@ const ENTRY_SELECT = `
   id, pallet_code, location_id, warehouse_id, material_id, manufacturer_id, cycle, machine_code,
   pallet_sequence_no, qa_status_id, stack_layer, cartons_imported, cartons_remaining, cartons_reserved,
   production_date, status, import_date, update_date, adjustment_qty,
+  parent_pallet_code, origin,
   stocktake_at, stocktake_flagged, stocktake_flag_note,
   created_at, updated_at,
   location:Location(id, location_code, sub_code, sub_name, sub_type, warehouse:Warehouse(id, name, code)),

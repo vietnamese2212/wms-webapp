@@ -31,7 +31,7 @@ export default function PalletOps() {
   // ── Dồn ──
   const [mergeTarget, setMergeTarget] = useState(params.get('target') ?? '')
   const [childInput, setChildInput]   = useState('')
-  const [mergeChildren, setMergeChildren] = useState<string[]>([])
+  const [mergeChildren, setMergeChildren] = useState<string[]>(() => (params.get('children') ?? '').split(',').map(c => c.trim()).filter(Boolean))
   const merge = useMergePallets()
   const ungroup = useUngroupPallets()
   function addChild(code: string) {

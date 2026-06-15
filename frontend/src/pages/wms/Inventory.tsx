@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Package, X, SlidersHorizontal, ChevronRight, Check, Rows3, AlignJustify } from 'lucide-react'
+import { Package, X, SlidersHorizontal, ChevronRight, Check, Rows3, AlignJustify, Scissors, Layers } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -476,6 +477,7 @@ export default function Inventory() {
   const user = useAuthStore(s => s.user)
   const { inventory: f, setInventory } = useWmsFilterStore()
 
+  const navigate = useNavigate()
   const [selected,     setSelected]     = useState<InventoryEntry | null>(null)
   const [checkedIds,   setCheckedIds]   = useState<Set<string>>(new Set())
   const [actionModal,  setActionModal]  = useState<'qa' | 'location' | 'material' | 'production-date' | null>(null)
@@ -825,6 +827,24 @@ export default function Inventory() {
               Ngày SX
             </button>
           )}
+          {/* Dồn / Tách pallet — điều hướng sang trang thao tác, prefill mã */}
+          {can(user?.module_permissions, 'pallet_ops', 'split') && checkedCount === 1 && (
+            <button
+              className="flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-sky-700 hover:bg-sky-600 transition-colors"
+              onClick={() => { const c = displayEntries.find(e => checkedIds.has(e.id))?.pallet_code; if (c) navigate(`/wms/pallet-ops?tab=split&source=${encodeURIComponent(c)}`) }}>
+              <Scissors className="h-3 w-3" />Tách
+            </button>
+          )}
+          {can(user?.module_permissions, 'pallet_ops', 'merge') && checkedCount >= 2 && (
+            <button
+              className="flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-sky-700 hover:bg-sky-600 transition-colors"
+              onClick={() => {
+                const codes = displayEntries.filter(e => checkedIds.has(e.id)).map(e => e.pallet_code)
+                if (codes.length >= 2) navigate(`/wms/pallet-ops?tab=merge&target=${encodeURIComponent(codes[0])}&children=${encodeURIComponent(codes.slice(1).join(','))}`)
+              }}>
+              <Layers className="h-3 w-3" />Dồn
+            </button>
+          )}
           <div className="w-px h-4 bg-slate-600" />
           <button
             className="text-slate-400 hover:text-white transition-colors"
@@ -890,6 +910,16 @@ function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick, warehouse
       {/* Mã pallet */}
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px] font-mono font-semibold">{e.pallet_code}</span>
+        {e.parent_pallet_code && (
+          <span className="ml-1 inline-flex items-center gap-0.5 rounded-full bg-sky-100 px-1 py-0.5 text-[8px] text-sky-700" title={`Đã dồn vào ${e.parent_pallet_code}`}>
+            <Layers className="h-2 w-2" />dồn
+          </span>
+        )}
+        {e.origin === 'SPLIT' && (
+          <span className="ml-1 inline-flex items-center gap-0.5 rounded-full bg-violet-100 px-1 py-0.5 text-[8px] text-violet-700" title="Pallet tách ra">
+            <Scissors className="h-2 w-2" />tách
+          </span>
+        )}
       </TableCell>
       {/* Vị trí */}
       <TableCell className="px-2 py-1 whitespace-nowrap">

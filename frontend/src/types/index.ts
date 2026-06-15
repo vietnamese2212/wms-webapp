@@ -40,6 +40,7 @@ export interface JobTitle {
   id:                 string
   name:               string
   department_id:      string
+  parent_id:          string | null
   is_active:          boolean
   department?:        Pick<Department, 'id' | 'name' | 'code'>
   module_permissions?: ModulePermissions

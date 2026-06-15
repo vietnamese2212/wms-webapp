@@ -4,7 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 
 const DEPT_SELECT = 'id, name, code, allowed_modules, requires_scheduling, is_active, created_at, updated_at, created_by, updated_by'
-const JT_SELECT   = 'id, name, department_id, is_active, module_permissions, created_at, updated_at, created_by, updated_by, department:Department(id,name,code)'
+const JT_SELECT   = 'id, name, department_id, parent_id, is_active, module_permissions, created_at, updated_at, created_by, updated_by, department:Department(id,name,code)'
 
 // ─── Departments ──────────────────────────────────────────────────────────────
 
@@ -70,10 +70,11 @@ export async function listJobTitles(req: Request, res: Response) {
 
 export async function createJobTitle(req: Request, res: Response) {
   try {
-    const { name, department_id, module_permissions } = req.body as {
+    const { name, department_id, module_permissions, parent_id } = req.body as {
       name: string
       department_id: string
       module_permissions?: Record<string, string[]>
+      parent_id?: string | null
     }
     if (!name || !department_id) return fail(res, 'name và department_id là bắt buộc', 400)
 
@@ -84,6 +85,7 @@ export async function createJobTitle(req: Request, res: Response) {
       .insert({
         id: randomUUID(),
         name, department_id,
+        parent_id: parent_id || null,
         module_permissions: module_permissions ?? {},
         created_at: now, updated_at: now,
         created_by: actor, updated_by: actor,
@@ -92,6 +94,32 @@ export async function createJobTitle(req: Request, res: Response) {
       .single()
     if (error) return fail(res, error.message)
     return ok(res, data, 201)
+  } catch (e) { return fail(res, String(e)) }
+}
+
+// Đặt chức danh cấp trên (kéo-thả sơ đồ tổ chức) — chống vòng lặp
+export async function setJobTitleParent(req: Request, res: Response) {
+  try {
+    const { id } = req.params
+    const { parent_id } = req.body as { parent_id?: string | null }
+    const parent = parent_id || null
+    if (parent === id) return fail(res, 'Không thể đặt chính nó làm cấp trên', 400)
+    if (parent) {
+      let cur: string | null = parent
+      const seen = new Set<string>()
+      while (cur) {
+        if (cur === id) return fail(res, 'Không thể tạo vòng lặp phân cấp', 400)
+        if (seen.has(cur)) break
+        seen.add(cur)
+        const r: { data: { parent_id: string | null } | null } = await supabase.from('JobTitle').select('parent_id').eq('id', cur).maybeSingle()
+        cur = r.data?.parent_id ?? null
+      }
+    }
+    const { data, error } = await supabase.from('JobTitle')
+      .update({ parent_id: parent, updated_at: new Date().toISOString(), updated_by: (req as any).user?.name || null })
+      .eq('id', id).select(JT_SELECT).single()
+    if (error) return fail(res, error.message)
+    return ok(res, data)
   } catch (e) { return fail(res, String(e)) }
 }
 

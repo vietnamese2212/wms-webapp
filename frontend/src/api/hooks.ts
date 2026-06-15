@@ -1109,11 +1109,20 @@ export function useCreateJobTitle() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (body: {
-      name: string; department_id: string
+      name: string; department_id: string; parent_id?: string | null
       allowed_categories?: string[]; warehouse_scope?: string
       module_permissions?: Record<string, string[]>
     }) => apiClient.post('/masterdata/job-titles', body).then(r => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['job-titles'] }),
+  })
+}
+
+export function useSetJobTitleParent() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, parent_id }: { id: string; parent_id: string | null }) =>
+      apiClient.patch(`/masterdata/job-titles/${id}/parent`, { parent_id }).then(r => r.data.data),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['job-titles'] }),
   })
 }
 

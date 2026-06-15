@@ -57,6 +57,7 @@ router.put('/departments/:id',      department.updateDepartment)
 router.get('/job-titles',           department.listJobTitles)    // ?department_id=
 router.post('/job-titles',          department.createJobTitle)
 router.put('/job-titles/:id',       department.updateJobTitle)
+router.patch('/job-titles/:id/parent', department.setJobTitleParent)
 
 // Employee (nhân sự + phân quyền)
 router.get('/employees',            requirePerm('employees', 'view'), employee.listEmployees)

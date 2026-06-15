@@ -18,32 +18,48 @@ async function attachEmployees<T extends { employee_id: string }>(rows: T[]) {
   return rows.map(r => ({ ...r, employee: map.get(r.employee_id) ?? null }))
 }
 
-// ── Quyền duyệt: chức danh cấp trên trực tiếp của người xin + CHUNG KHO ──
-type ApproverCtx = { job_title_id: string | null; scope: string | null; whs: Set<string> }
+// ── Quyền duyệt: chức danh cấp trên (TRỰC TIẾP hoặc CAO HƠN) của người xin + CHUNG KHO ──
+type ApproverCtx = { sub: string | null; job_title_id: string | null; scope: string | null; whs: Set<string> }
 async function approverContext(sub?: string): Promise<ApproverCtx> {
-  if (!sub) return { job_title_id: null, scope: null, whs: new Set() }
+  if (!sub) return { sub: null, job_title_id: null, scope: null, whs: new Set() }
   const { data: a } = await supabase.from('Employee').select('job_title_id, warehouse_scope').eq('id', sub).maybeSingle()
   const { data: wa } = await supabase.from('UserWarehouseAccess').select('warehouse_id').eq('employee_id', sub)
   const e = a as { job_title_id: string | null; warehouse_scope: string | null } | null
-  return { job_title_id: e?.job_title_id ?? null, scope: e?.warehouse_scope ?? null, whs: new Set((wa ?? []).map((r: { warehouse_id: string }) => r.warehouse_id)) }
+  return { sub, job_title_id: e?.job_title_id ?? null, scope: e?.warehouse_scope ?? null, whs: new Set((wa ?? []).map((r: { warehouse_id: string }) => r.warehouse_id)) }
 }
-// employeeId có phải cấp dưới (theo chức danh) + chung kho với approver?
-async function isSubordinate(ctx: ApproverCtx, employeeId: string): Promise<boolean> {
+// map chức danh -> cấp trên trực tiếp (1 query)
+async function loadParentMap(): Promise<Map<string, string | null>> {
+  const { data } = await supabase.from('JobTitle').select('id, parent_id')
+  return new Map(((data ?? []) as { id: string; parent_id: string | null }[]).map(j => [j.id, j.parent_id]))
+}
+// jt có nằm dưới quyền ancestorJt? directOnly = chỉ cấp dưới trực tiếp
+function jtUnder(pm: Map<string, string | null>, ancestorJt: string, jt: string | null, directOnly: boolean): boolean {
+  if (!jt) return false
+  if (directOnly) return pm.get(jt) === ancestorJt
+  let cur = pm.get(jt) ?? null
+  const seen = new Set<string>()
+  while (cur) { if (cur === ancestorJt) return true; if (seen.has(cur)) break; seen.add(cur); cur = pm.get(cur) ?? null }
+  return false
+}
+// chung kho (NATIONAL = mọi kho)
+function sharesKho(ctx: ApproverCtx, empScope: string | null, empWhs: Set<string>): boolean {
+  if (ctx.scope === 'NATIONAL' || empScope === 'NATIONAL') return true
+  for (const w of ctx.whs) if (empWhs.has(w)) return true
+  return false
+}
+// 1 nhân viên có dưới quyền duyệt của approver không
+async function canApprove(ctx: ApproverCtx, employeeId: string, pm: Map<string, string | null>, directOnly: boolean): Promise<boolean> {
   if (!ctx.job_title_id) return false
   const { data: emp } = await supabase.from('Employee').select('job_title_id, warehouse_scope').eq('id', employeeId).maybeSingle()
   const e = emp as { job_title_id: string | null; warehouse_scope: string | null } | null
-  if (!e?.job_title_id) return false
-  const { data: jt } = await supabase.from('JobTitle').select('parent_id').eq('id', e.job_title_id).maybeSingle()
-  if ((jt as { parent_id: string | null } | null)?.parent_id !== ctx.job_title_id) return false
-  // chung kho (NATIONAL = mọi kho)
-  if (ctx.scope === 'NATIONAL' || e.warehouse_scope === 'NATIONAL') return true
+  if (!jtUnder(pm, ctx.job_title_id, e?.job_title_id ?? null, directOnly)) return false
   const { data: wa } = await supabase.from('UserWarehouseAccess').select('warehouse_id').eq('employee_id', employeeId)
-  return (wa ?? []).some((r: { warehouse_id: string }) => ctx.whs.has(r.warehouse_id))
+  return sharesKho(ctx, e?.warehouse_scope ?? null, new Set((wa ?? []).map((r: { warehouse_id: string }) => r.warehouse_id)))
 }
 
 export async function listLeaves(req: Request, res: Response) {
   try {
-    const { warehouse_id, department_id, employee_id, status, date_from, date_to, to_approve } = req.query as Record<string, string>
+    const { warehouse_id, department_id, employee_id, status, date_from, date_to, to_approve, direct } = req.query as Record<string, string>
     let q = supabase.from('LeaveRequest').select(LEAVE_SELECT).order('date_from', { ascending: false })
     if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
     if (employee_id)  q = q.eq('employee_id', employee_id)
@@ -59,10 +75,11 @@ export async function listLeaves(req: Request, res: Response) {
     if (department_id) {
       withEmp = withEmp.filter(r => (r.employee as { department_id?: string } | null)?.department_id === department_id)
     }
-    // chỉ đơn của cấp dưới (chức danh con + chung kho) của người đăng nhập
+    // chỉ đơn của người dưới quyền (chức danh dưới + chung kho); direct=chỉ cấp dưới trực tiếp
     if (to_approve === 'true') {
       const ctx = await approverContext(userOf(req).sub)
-      const flags = await Promise.all(withEmp.map(r => isSubordinate(ctx, (r as { employee_id: string }).employee_id)))
+      const pm = await loadParentMap()
+      const flags = await Promise.all(withEmp.map(r => canApprove(ctx, (r as { employee_id: string }).employee_id, pm, direct === 'true')))
       withEmp = withEmp.filter((_, i) => flags[i])
     }
     return ok(res, withEmp)
@@ -130,7 +147,8 @@ export async function decideLeave(req: Request, res: Response) {
       const empId = (lv as { employee_id: string } | null)?.employee_id
       if (!empId) return fail(res, 'Không tìm thấy đơn', 404)
       const ctx = await approverContext(u.sub)
-      if (!(await isSubordinate(ctx, empId))) return fail(res, 'Chỉ cấp trên trực tiếp (cùng kho) của nhân viên này mới được duyệt', 403)
+      const pm = await loadParentMap()
+      if (!(await canApprove(ctx, empId, pm, false))) return fail(res, 'Chỉ cấp trên (cùng kho) của nhân viên này mới được duyệt', 403)
     }
 
     const { data, error } = await supabase.from('LeaveRequest').update({

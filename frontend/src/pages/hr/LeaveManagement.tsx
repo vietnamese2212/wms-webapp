@@ -48,11 +48,12 @@ export function LeaveSection() {
   const [status, setStatus] = useState<string>('')
   const [from, setFrom]   = useState<string>('')
   const [to, setTo]       = useState<string>('')
-  const [mine, setMine]   = useState(false)   // chờ tôi duyệt (cấp dưới trực tiếp)
+  const [mine, setMine]   = useState(false)   // chờ tôi duyệt (toàn bộ cấp dưới)
+  const [direct, setDirect] = useState(false) // chỉ cấp dưới trực tiếp
   useEffect(() => { localStorage.setItem(SCOPE_KEY, JSON.stringify({ wh, dept })) }, [wh, dept])
 
   const { data: leaves = [], isLoading } = useLeaves(
-    { warehouse_id: wh || undefined, department_id: dept || undefined, status: status || undefined, date_from: from || undefined, date_to: to || undefined, to_approve: mine || undefined },
+    { warehouse_id: wh || undefined, department_id: dept || undefined, status: status || undefined, date_from: from || undefined, date_to: to || undefined, to_approve: mine || undefined, direct: (mine && direct) || undefined },
     true,
   )
   const decide = useDecideLeave()
@@ -92,6 +93,12 @@ export function LeaveSection() {
           <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
             <input type="checkbox" checked={mine} onChange={e => setMine(e.target.checked)} className="h-3.5 w-3.5 rounded accent-sky-600" />
             Chờ tôi duyệt
+          </label>
+        )}
+        {canApprove && mine && (
+          <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
+            <input type="checkbox" checked={direct} onChange={e => setDirect(e.target.checked)} className="h-3.5 w-3.5 rounded accent-sky-600" />
+            Chỉ cấp dưới trực tiếp
           </label>
         )}
         <div className="flex-1" />

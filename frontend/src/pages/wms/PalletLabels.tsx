@@ -417,16 +417,29 @@ export default function PalletLabels() {
 
   // ── Lịch sử in — gom các tem theo batch_id (1 lệnh in) ──
   const [histOpen, setHistOpen] = useState<string | null>(null)
+  const [histFrom, setHistFrom] = useState('')
+  const [histTo, setHistTo]     = useState('')
+  const [histMode, setHistMode] = useState<string[]>([])
+  const [histMats, setHistMats] = useState<string[]>([])
+  const [histBy, setHistBy]     = useState<string[]>([])
   const { data: allMats = [] } = useMaterials(undefined, tab === 'history')
   const matByCode = useMemo(() => {
     const m = new Map<string, Material>()
     for (const x of allMats as Material[]) m.set(x.material_code, x)
     return m
   }, [allMats])
-  const { data: histRows = [] } = usePalletPrints({}, tab === 'history')
+  const { data: histRows = [] } = usePalletPrints({ date_from: histFrom || undefined, date_to: histTo || undefined }, tab === 'history')
+  const histMatOpts = useMemo(() => [...new Set(histRows.map(r => r.material_code).filter((x): x is string => !!x))]
+    .map(c => ({ value: c, label: matByCode.get(c)?.short_name ? `${c} – ${matByCode.get(c)!.short_name}` : c })), [histRows, matByCode])
+  const histByOpts = useMemo(() => [...new Set(histRows.map(r => r.printed_by_name).filter((x): x is string => !!x))].map(n => ({ value: n, label: n })), [histRows])
+  const histFiltered = useMemo(() => histRows.filter(r =>
+    (!histMode.length || histMode.includes(r.mode)) &&
+    (!histMats.length || (r.material_code != null && histMats.includes(r.material_code))) &&
+    (!histBy.length || (r.printed_by_name != null && histBy.includes(r.printed_by_name)))
+  ), [histRows, histMode, histMats, histBy])
   const histBatches = useMemo(() => {
     const m = new Map<string, { key: string; at: string; mode: string; by: string | null; rows: PalletPrintRow[] }>()
-    for (const r of histRows) {
+    for (const r of histFiltered) {
       // Có batch_id thì gom theo batch; chưa có (log cũ) → gom theo created_at+mode+người in
       // (mọi tem trong 1 lần bấm In chia sẻ cùng created_at vì backend set 1 lần)
       const key = r.batch_id ?? `${r.created_at}|${r.mode}|${r.printed_by_name ?? ''}`
@@ -435,7 +448,7 @@ export default function PalletLabels() {
       else m.set(key, { key, at: r.created_at, mode: r.mode, by: r.printed_by_name, rows: [r] })
     }
     return [...m.values()].sort((a, b) => b.at.localeCompare(a.at))
-  }, [histRows])
+  }, [histFiltered])
 
   function logRowToLabel(r: PalletPrintRow): LabelData {
     const parts = String(r.qr_code).split('_')
@@ -457,13 +470,13 @@ export default function PalletLabels() {
       seq: r.seq ?? parts[4] ?? '',
     }
   }
-  // Chọn để in lại: theo LỆNH GOM (batch) hoặc theo TỪNG TEM (row id)
-  const [histSelBatches, setHistSelBatches] = useState<Set<string>>(new Set())
-  const [histSelTems, setHistSelTems]       = useState<Set<string>>(new Set())
-  const toggleHistBatch = (key: string) => setHistSelBatches(s => { const n = new Set(s); n.has(key) ? n.delete(key) : n.add(key); return n })
-  const toggleHistTem   = (id: string)  => setHistSelTems(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
-  const clearHistSel = () => { setHistSelBatches(new Set()); setHistSelTems(new Set()) }
-  const histSelBatchRows = histBatches.filter(b => histSelBatches.has(b.key)).flatMap(b => b.rows)
+  // Chọn in lại: 1 LỆNH GOM (single) HOẶC nhiều TEM — loại trừ lẫn nhau
+  const [histSelBatch, setHistSelBatch] = useState<string | null>(null)
+  const [histSelTems, setHistSelTems]   = useState<Set<string>>(new Set())
+  const selectHistBatch = (key: string) => { setHistSelBatch(p => (p === key ? null : key)); setHistSelTems(new Set()) }
+  const toggleHistTem   = (id: string)  => { setHistSelTems(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n }); setHistSelBatch(null) }
+  const clearHistSel = () => { setHistSelBatch(null); setHistSelTems(new Set()) }
+  const histSelBatchRows = histBatches.find(b => b.key === histSelBatch)?.rows ?? []
   const histSelTemRows   = histBatches.flatMap(b => b.rows).filter(r => histSelTems.has(r.id))
   function reprintRows(rows: PalletPrintRow[]) {
     if (!rows.length) return
@@ -722,17 +735,30 @@ export default function PalletLabels() {
               </p>
             </>
           ) : (
-            /* Lịch sử in — danh sách lệnh đã in */
+            /* Lịch sử in — bộ lọc */
             <>
               <div className="space-y-1">
                 <Label className="text-xs flex items-center gap-1"><Printer className="h-3.5 w-3.5 text-slate-400" />Lịch sử in</Label>
-                <p className="text-[11px] text-slate-500">Mỗi dòng = 1 lệnh in (1 lần bấm In). Bấm 1 dòng để xem chi tiết & in lại.</p>
+                <p className="text-[11px] text-slate-500">Mỗi dòng = 1 lệnh in. Bấm 1 dòng để xem các tem & chọn in lại.</p>
               </div>
-              <div className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-[10px] text-slate-500 space-y-0.5">
-                <p>• <b>Sinh mới</b>: tem tạo mới từ tab Sinh tem mới.</p>
-                <p>• <b>In lại</b>: tem in lại từ tồn kho / lịch sử.</p>
-                <p>• Hiển thị các lệnh in gần đây nhất.</p>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-xs">Từ ngày</Label>
+                  <Input type="date" className="h-8 text-sm" value={histFrom} max={histTo || undefined} onChange={e => setHistFrom(e.target.value)} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Đến ngày</Label>
+                  <Input type="date" className="h-8 text-sm" value={histTo} min={histFrom || undefined} onChange={e => setHistTo(e.target.value)} />
+                </div>
               </div>
+              <div className="flex flex-col gap-2">
+                <MultiSelectFilter label="Chế độ" options={[{ value: 'GENERATE', label: 'Sinh mới' }, { value: 'REPRINT', label: 'In lại' }]} selected={histMode} onChange={setHistMode} searchable={false} width="w-full" />
+                <MultiSelectFilter label="Tên hàng" options={histMatOpts} selected={histMats} onChange={setHistMats} width="w-full" />
+                <MultiSelectFilter label="Người in" options={histByOpts} selected={histBy} onChange={setHistBy} searchable={histByOpts.length > 6} width="w-full" />
+              </div>
+              {(!!histFrom || !!histTo || histMode.length > 0 || histMats.length > 0 || histBy.length > 0) && (
+                <button onClick={() => { setHistFrom(''); setHistTo(''); setHistMode([]); setHistMats([]); setHistBy([]) }} className="text-[11px] text-red-500 hover:text-red-700">Xóa lọc</button>
+              )}
               {!canReprint && <p className="text-[10px] text-amber-600">Bạn không có quyền in lại — chỉ xem được lịch sử.</p>}
             </>
           )}
@@ -828,71 +854,74 @@ export default function PalletLabels() {
           </div>
         ) : tab === 'history' ? (
           <div className="flex-1 min-h-0 flex flex-col">
-            {/* Action bar — hiện khi đã chọn lệnh gom hoặc tem (cần quyền In lại) */}
-            {canReprint && (histSelBatches.size > 0 || histSelTems.size > 0) && (
-              <div className="flex items-center gap-2 border-b border-slate-200 bg-sky-50 px-3 py-1.5 flex-wrap">
-                {histSelBatches.size > 0 && (
+            {/* Action bar — LUÔN render (cao cố định) → click chọn KHÔNG làm resize bảng */}
+            <div className="flex items-center gap-2 border-b border-slate-200 bg-slate-50 px-3 min-h-[40px] py-1.5 flex-wrap">
+              {!canReprint ? (
+                <span className="text-[11px] text-slate-400">Bạn không có quyền in lại — chỉ xem lịch sử.</span>
+              ) : histSelBatch ? (
+                <>
                   <Button size="sm" className="h-7 text-xs gap-1" onClick={() => reprintRows(histSelBatchRows)}>
-                    <Printer className="h-3.5 w-3.5" />In lại {histSelBatches.size} lệnh ({histSelBatchRows.length} tem)
+                    <Printer className="h-3.5 w-3.5" />In lại cả lệnh ({histSelBatchRows.length} tem)
                   </Button>
-                )}
-                {histSelTems.size > 0 && (
+                  <button onClick={clearHistSel} className="text-[11px] text-slate-500 hover:text-slate-700">Bỏ chọn</button>
+                </>
+              ) : histSelTems.size > 0 ? (
+                <>
                   <Button size="sm" className="h-7 text-xs gap-1" onClick={() => reprintRows(histSelTemRows)}>
                     <Printer className="h-3.5 w-3.5" />In lại {histSelTems.size} tem đã chọn
                   </Button>
-                )}
-                <button onClick={clearHistSel} className="text-[11px] text-slate-500 hover:text-slate-700 ml-auto">Bỏ chọn</button>
-              </div>
-            )}
+                  <button onClick={clearHistSel} className="text-[11px] text-slate-500 hover:text-slate-700">Bỏ chọn</button>
+                </>
+              ) : (
+                <span className="text-[11px] text-slate-400">Chọn <b>1 lệnh</b> (in cả lệnh) hoặc tích <b>nhiều tem</b> trong chi tiết (in từng tem) để in lại.</span>
+              )}
+            </div>
             <div className="flex-1 min-h-0 overflow-auto">
             <table className="min-w-full text-[11px]">
               <thead className="sticky top-0 z-10">
                 <tr className="bg-slate-50 text-left text-[9px] font-medium text-slate-500">
-                  {canReprint && (
-                    <th className="px-2 py-1.5 w-8">
-                      <input type="checkbox" className="align-middle" title="Chọn tất cả lệnh"
-                        checked={histBatches.length > 0 && histSelBatches.size === histBatches.length}
-                        onChange={e => setHistSelBatches(e.target.checked ? new Set(histBatches.map(b => b.key)) : new Set())} />
-                    </th>
-                  )}
+                  {canReprint && <th className="px-2 py-1.5 w-8" title="Chọn 1 lệnh để in lại cả lệnh"></th>}
                   <th className="px-2 py-1.5">Thời gian in</th>
                   <th className="px-2 py-1.5">Chế độ</th>
                   <th className="px-2 py-1.5 text-right">Số tem</th>
                   <th className="px-2 py-1.5">Mã hàng</th>
+                  <th className="px-2 py-1.5">Tên hàng</th>
                   <th className="px-2 py-1.5">Chu kỳ · Máy</th>
                   <th className="px-2 py-1.5">Người in</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {histBatches.length === 0 ? (
-                  <tr><td colSpan={canReprint ? 7 : 6} className="px-2 py-10 text-center text-slate-400">Chưa có lệnh in nào</td></tr>
+                  <tr><td colSpan={canReprint ? 8 : 7} className="px-2 py-10 text-center text-slate-400">Chưa có lệnh in nào</td></tr>
                 ) : histBatches.map(b => {
-                  const mats = [...new Set(b.rows.map(r => r.material_code).filter(Boolean))]
-                  const cycs = [...new Set(b.rows.map(r => r.cycle).filter(Boolean))]
-                  const macs = [...new Set(b.rows.map(r => r.machine).filter(Boolean))]
+                  const mats  = [...new Set(b.rows.map(r => r.material_code).filter(Boolean))]
+                  const names = [...new Set(b.rows.map(r => matByCode.get(r.material_code ?? '')?.short_name).filter(Boolean))]
+                  const cycs  = [...new Set(b.rows.map(r => r.cycle).filter(Boolean))]
+                  const macs  = [...new Set(b.rows.map(r => r.machine).filter(Boolean))]
                   return (
                   <Fragment key={b.key}>
-                    <tr className={`hover:bg-slate-50 cursor-pointer ${histSelBatches.has(b.key) ? 'bg-sky-50' : ''}`} onClick={() => setHistOpen(histOpen === b.key ? null : b.key)}>
+                    <tr className={`hover:bg-slate-50 cursor-pointer ${histSelBatch === b.key ? 'bg-sky-50' : ''}`} onClick={() => setHistOpen(histOpen === b.key ? null : b.key)}>
                       {canReprint && (
                         <td className="px-2 py-1" onClick={e => e.stopPropagation()}>
-                          <input type="checkbox" checked={histSelBatches.has(b.key)} onChange={() => toggleHistBatch(b.key)} />
+                          <input type="checkbox" title="In lại cả lệnh này" checked={histSelBatch === b.key} onChange={() => selectHistBatch(b.key)} />
                         </td>
                       )}
                       <td className="px-2 py-1 tabular-nums whitespace-nowrap">{formatTimestampDate(b.at, true)} {formatTimestampTime(b.at)}</td>
                       <td className="px-2 py-1"><span className={`px-1.5 py-0.5 rounded-full text-[9px] ${b.mode === 'REPRINT' ? 'bg-amber-100 text-amber-700' : 'bg-slate-200 text-slate-600'}`}>{b.mode === 'REPRINT' ? 'In lại' : 'Sinh mới'}</span></td>
                       <td className="px-2 py-1 text-right tabular-nums font-semibold">{b.rows.length}</td>
                       <td className="px-2 py-1 font-mono">{mats.join(', ') || '—'}</td>
+                      <td className="px-2 py-1">{names.join(', ') || '—'}</td>
                       <td className="px-2 py-1">{(cycs.join('/') || '—')} · {(macs.join('/') || '—')}</td>
                       <td className="px-2 py-1">{b.by ?? '—'}</td>
                     </tr>
                     {histOpen === b.key && (
                       <tr>
-                        <td colSpan={canReprint ? 7 : 6} className="bg-white px-0 py-0">
+                        <td colSpan={canReprint ? 8 : 7} className="bg-white px-0 py-0">
                           <div className="border-y border-slate-200">
                             <div className="px-3 py-1.5 bg-slate-100 border-b border-slate-200 flex items-center gap-1.5">
                               <span className="h-3.5 w-1 rounded-full bg-sky-500" />
                               <h3 className="text-[11px] font-semibold uppercase tracking-wide text-slate-600">Chi tiết {b.rows.length} tem — {b.mode === 'REPRINT' ? 'In lại' : 'Sinh mới'}</h3>
-                              {canReprint && <span className="ml-auto text-[10px] font-normal normal-case text-slate-400">Tích từng tem để in lại riêng</span>}
+                              {canReprint && <span className="ml-auto text-[10px] font-normal normal-case text-slate-400">Tích nhiều tem để in lại riêng</span>}
                             </div>
                             <div className="px-3 py-2 space-y-0.5 max-h-60 overflow-auto">
                               {b.rows.map(r => (

@@ -186,7 +186,7 @@ export default function PalletOps() {
         <div className="border-b bg-white px-3 py-2 shrink-0 sm:rounded-t-xl">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-sm font-semibold text-slate-700 shrink-0 flex items-center gap-1.5"><Layers className="h-4 w-4 text-slate-500" />Dồn / Tách pallet</span>
-            <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-medium">
+            <div className="flex rounded-lg border border-slate-200 overflow-x-auto text-xs font-medium max-w-full [&>button]:shrink-0 [&>button]:whitespace-nowrap">
               <button onClick={() => { setTab('merge'); setMsg(null) }}
                 className={`px-3 py-1 inline-flex items-center gap-1 transition-colors ${tab === 'merge' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}><Layers className="h-3 w-3" />Dồn (gom nhóm)</button>
               <button onClick={() => { setTab('split'); setMsg(null) }}

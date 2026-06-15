@@ -531,7 +531,7 @@ export default function PalletLabels() {
           <span className="text-sm font-semibold text-slate-700 shrink-0 flex items-center gap-1.5">
             <QrCode className="h-4 w-4 text-slate-500" /> In tem pallet
           </span>
-          <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-medium">
+          <div className="flex rounded-lg border border-slate-200 overflow-x-auto text-xs font-medium max-w-full [&>button]:shrink-0 [&>button]:whitespace-nowrap">
             <button onClick={() => setTab('generate')}
               className={`px-3 py-1 transition-colors ${tab === 'generate' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>Sinh tem mới</button>
             <button onClick={() => setTab('history')}
@@ -577,9 +577,9 @@ export default function PalletLabels() {
             { label: 'Khổ', value: '1/4 A4' },
           ]} />
 
-      <div className="flex-1 min-h-0 flex overflow-hidden">
-        {/* Bảng điều khiển trái */}
-        <div className="w-72 shrink-0 border-r bg-white overflow-y-auto p-3 space-y-3 no-print">
+      <div className="flex-1 min-h-0 flex flex-col lg:flex-row overflow-y-auto lg:overflow-hidden">
+        {/* Bảng điều khiển trái — full-width trên mobile, cột 288px trên desktop */}
+        <div className="w-full lg:w-72 lg:shrink-0 border-b lg:border-b-0 lg:border-r bg-white lg:overflow-y-auto p-3 space-y-3 no-print">
           {tab === 'generate' ? (
             <>
               <div className="space-y-1">
@@ -777,7 +777,7 @@ export default function PalletLabels() {
 
         {/* Vùng phải: preview in (generate/reprint) HOẶC bảng truy cứu */}
         {tab === 'audit' ? (
-          <div className="flex-1 min-h-0 overflow-auto">
+          <div className="lg:flex-1 min-h-[55vh] lg:min-h-0 overflow-auto">
             <table className="text-[10px] border-collapse table-fixed [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100 [&_td]:overflow-hidden [&_th]:overflow-hidden" style={{ width: auCols.totalWidth, minWidth: '100%' }}>
               <colgroup>{auCols.widths.map((w, i) => <col key={i} style={{ width: w }} />)}</colgroup>
               <thead>
@@ -861,7 +861,7 @@ export default function PalletLabels() {
             </table>
           </div>
         ) : tab === 'history' ? (
-          <div className="flex-1 min-h-0 flex flex-col">
+          <div className="lg:flex-1 min-h-[55vh] lg:min-h-0 flex flex-col">
             {/* Action bar — LUÔN render (cao cố định) → click chọn KHÔNG làm resize bảng */}
             <div className="flex items-center gap-2 border-b border-slate-200 bg-slate-50 px-3 min-h-[40px] py-1.5 flex-wrap">
               {!canReprint ? (
@@ -956,11 +956,11 @@ export default function PalletLabels() {
             </div>
           </div>
         ) : (
-        <div className="flex-1 min-h-0 overflow-auto bg-slate-100 p-4">
+        <div className="lg:flex-1 min-h-[40vh] lg:min-h-0 overflow-auto bg-slate-100 p-2 sm:p-4">
           {labels.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-slate-400">
+            <div className="flex flex-col items-center justify-center h-full min-h-[30vh] text-slate-400">
               <QrCode className="h-10 w-10 opacity-30 mb-2" />
-              <p className="text-sm">{tab === 'generate' ? 'Nhập thông tin để xem trước tem' : 'Chọn pallet để in lại tem'}</p>
+              <p className="text-sm text-center px-4">{tab === 'generate' ? 'Nhập thông tin để xem trước tem' : 'Chọn pallet để in lại tem'}</p>
             </div>
           ) : (
             <div className="mx-auto space-y-4">

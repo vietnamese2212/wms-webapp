@@ -74,7 +74,7 @@ export function useMergePallets() {
   const inv = useInvalidateInventory()
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { target_pallet_code: string; child_pallet_codes: string[] }) =>
+    mutationFn: (body: { target_pallet_code: string; child_pallet_codes: string[]; warehouse_id?: string }) =>
       apiClient.post('/wms/pallet-ops/merge', body).then(r => r.data.data),
     onSuccess: () => { inv(); qc.invalidateQueries({ queryKey: ['pallet-ops-log'] }) },
   })
@@ -92,7 +92,7 @@ export function useSplitPallet() {
   const inv = useInvalidateInventory()
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { source_pallet_code: string; children: { qty: number }[] }) =>
+    mutationFn: (body: { source_pallet_code: string; children: { qty: number }[]; warehouse_id?: string; location_id?: string }) =>
       apiClient.post('/wms/pallet-ops/split', body).then(r => r.data.data as { source: string; source_remaining: number; children: InventoryEntry[] }),
     onSuccess: () => { inv(); qc.invalidateQueries({ queryKey: ['pallet-ops-log'] }) },
   })

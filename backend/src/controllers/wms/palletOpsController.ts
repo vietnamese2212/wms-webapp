@@ -24,22 +24,27 @@ async function logOp(req: Request, type: string, source_codes: string[], target_
 // POST /wms/pallet-ops/merge  { target_pallet_code, child_pallet_codes: string[] }
 export async function mergePallets(req: Request, res: Response) {
   try {
-    const { target_pallet_code, child_pallet_codes } = req.body as { target_pallet_code?: string; child_pallet_codes?: string[] }
+    const { target_pallet_code, child_pallet_codes, warehouse_id } = req.body as { target_pallet_code?: string; child_pallet_codes?: string[]; warehouse_id?: string }
     const target = (target_pallet_code ?? '').trim()
     const children = Array.isArray(child_pallet_codes) ? [...new Set(child_pallet_codes.map(c => (c ?? '').trim()).filter(Boolean))] : []
     if (!target) return fail(res, 'Thiếu mã pallet đích')
     if (!children.length) return fail(res, 'Chưa chọn pallet con để dồn')
     if (children.includes(target)) return fail(res, 'Pallet đích không thể vừa là pallet con')
 
-    const { data: tgt, error: tErr } = await (supabase.from('InventoryEntry') as any)
+    // Scope theo KHO — mỗi kho chỉ có 1 tem unique → tránh trùng mã giữa kho tổng/NPP
+    let tq = (supabase.from('InventoryEntry') as any)
       .select('id, pallet_code, location_id, warehouse_id, parent_pallet_code')
-      .eq('pallet_code', target).in('status', ACTIVE).maybeSingle()
-    if (tErr) return fail(res, tErr.message, 500)
-    if (!tgt) return fail(res, `Không tìm thấy pallet đích "${target}" đang tồn kho`, 404)
+      .eq('pallet_code', target).in('status', ACTIVE)
+    if (warehouse_id) tq = tq.eq('warehouse_id', warehouse_id)
+    const { data: tgt, error: tErr } = await tq.maybeSingle()
+    if (tErr) return fail(res, tErr.message.includes('multiple') ? `Mã "${target}" có ở nhiều kho — chọn Kho trước khi dồn` : tErr.message, 500)
+    if (!tgt) return fail(res, `Không tìm thấy pallet đích "${target}" đang tồn ${warehouse_id ? 'trong kho đã chọn' : 'kho'}`, 404)
     if (tgt.parent_pallet_code) return fail(res, 'Pallet đích đang là pallet con của nhóm khác — chọn pallet đầu nhóm')
 
-    const { data: kids, error: kErr } = await (supabase.from('InventoryEntry') as any)
+    let kq = (supabase.from('InventoryEntry') as any)
       .select('id, pallet_code, parent_pallet_code, location_id').in('pallet_code', children).in('status', ACTIVE)
+    if (warehouse_id) kq = kq.eq('warehouse_id', warehouse_id)
+    const { data: kids, error: kErr } = await kq
     if (kErr) return fail(res, kErr.message, 500)
     const found = (kids ?? []).map((k: any) => k.pallet_code)
     const missing = children.filter(c => !found.includes(c))
@@ -48,9 +53,11 @@ export async function mergePallets(req: Request, res: Response) {
     const now = new Date().toISOString()
     // Lưu trạng thái cũ (parent + vị trí) để hoàn tác
     const prev = (kids ?? []).map((k: any) => ({ code: k.pallet_code, parent: k.parent_pallet_code, location_id: k.location_id }))
-    const { error: uErr } = await (supabase.from('InventoryEntry') as any)
+    let uq = (supabase.from('InventoryEntry') as any)
       .update({ parent_pallet_code: target, location_id: tgt.location_id, update_date: vnDate(), updated_at: now })
-      .in('pallet_code', children)
+      .in('pallet_code', children).in('status', ACTIVE)
+    if (warehouse_id) uq = uq.eq('warehouse_id', warehouse_id)
+    const { error: uErr } = await uq
     if (uErr) return fail(res, uErr.message, 500)
 
     await logOp(req, 'MERGE', children, [target], { count: children.length, prev }, tgt.warehouse_id ?? null)
@@ -84,7 +91,7 @@ export async function ungroupPallets(req: Request, res: Response) {
 // POST /wms/pallet-ops/split  { source_pallet_code, children: [{ qty }] }
 export async function splitPallet(req: Request, res: Response) {
   try {
-    const { source_pallet_code, children } = req.body as { source_pallet_code?: string; children?: { qty: number }[] }
+    const { source_pallet_code, children, warehouse_id, location_id } = req.body as { source_pallet_code?: string; children?: { qty: number }[]; warehouse_id?: string; location_id?: string }
     const src = (source_pallet_code ?? '').trim()
     const parts = src.split('_')
     const items = Array.isArray(children) ? children.map(c => Math.floor(Number(c?.qty) || 0)).filter(q => q > 0) : []
@@ -92,11 +99,14 @@ export async function splitPallet(req: Request, res: Response) {
     if (parts.length < 6) return fail(res, 'Mã pallet gốc không đúng định dạng QR')
     if (!items.length) return fail(res, 'Chưa nhập số lượng tách')
 
-    const { data: source, error: sErr } = await (supabase.from('InventoryEntry') as any)
+    // Scope theo KHO — mỗi kho 1 tem unique
+    let sq = (supabase.from('InventoryEntry') as any)
       .select('id, pallet_code, location_id, warehouse_id, material_id, manufacturer_id, cycle, machine_code, pallet_sequence_no, qa_status_id, stack_layer, cartons_imported, cartons_remaining, cartons_reserved, production_date')
-      .eq('pallet_code', src).in('status', ACTIVE).maybeSingle()
-    if (sErr) return fail(res, sErr.message, 500)
-    if (!source) return fail(res, `Không tìm thấy pallet gốc "${src}" đang tồn kho`, 404)
+      .eq('pallet_code', src).in('status', ACTIVE)
+    if (warehouse_id) sq = sq.eq('warehouse_id', warehouse_id)
+    const { data: source, error: sErr } = await sq.maybeSingle()
+    if (sErr) return fail(res, sErr.message.includes('multiple') ? `Mã "${src}" có ở nhiều kho — chọn Kho trước khi tách` : sErr.message, 500)
+    if (!source) return fail(res, `Không tìm thấy pallet gốc "${src}" đang tồn ${warehouse_id ? 'trong kho đã chọn' : 'kho'}`, 404)
 
     const remaining = Number(source.cartons_remaining ?? 0)
     const reserved = Number(source.cartons_reserved ?? 0)
@@ -123,7 +133,7 @@ export async function splitPallet(req: Request, res: Response) {
       return {
         id: randomUUID(),
         pallet_code: childParts.join('_'),
-        location_id: source.location_id,
+        location_id: location_id || source.location_id,   // vị trí chọn, mặc định = vị trí pallet nguồn
         warehouse_id: source.warehouse_id ?? null,
         material_id: source.material_id,
         manufacturer_id: source.manufacturer_id ?? null,

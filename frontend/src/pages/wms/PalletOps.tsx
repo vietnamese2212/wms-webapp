@@ -1,6 +1,6 @@
 import { Fragment, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Layers, Scissors, QrCode, Search, X, Plus, Trash2, AlertTriangle, CheckCircle2, History, RotateCcw } from 'lucide-react'
+import { Layers, Scissors, QrCode, Search, X, Plus, Trash2, AlertTriangle, CheckCircle2, History, RotateCcw, Printer } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -12,8 +12,9 @@ import { useColumnResize } from '@/components/shared/useColumnResize'
 import { PalletPrintArea, PALLET_PRINT_CSS, qrToLabel, type LabelData } from '@/components/shared/palletLabel'
 import {
   useInventoryEntries, useMergePallets, useUngroupPallets, useSplitPallet, useLogPalletPrints,
-  usePalletOps, useUndoPalletOp, type PalletOpRow,
+  usePalletOps, useUndoPalletOp, useMaterials, type PalletOpRow,
 } from '@/api/hooks'
+import type { Material } from '@/types'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
@@ -80,26 +81,39 @@ export default function PalletOps() {
   const opCols = useColumnResize('palletOps_col_widths', [150, 84, 200, 200, 100, 110, 90])
   const opLabel = (t: string) => t === 'MERGE' ? 'Dồn' : t === 'SPLIT' ? 'Tách' : t === 'UNGROUP' ? 'Gỡ nhóm' : t
   const canUndo = canMerge || canUngroup || canSplit
+  // In tem từ Lịch sử (tách rồi chưa in được ngay → vào đây in)
+  const { data: allMats = [] } = useMaterials(undefined, tab === 'history')
+  const matByCode = useMemo(() => { const m = new Map<string, Material>(); for (const x of allMats as Material[]) m.set(x.material_code, x); return m }, [allMats])
+  function printOp(o: PalletOpRow) {
+    const qtyByCode = new Map<string, number>()
+    for (const c of (o.detail?.children ?? []) as { code: string; qty: number }[]) qtyByCode.set(c.code, c.qty)
+    const labels = (o.target_codes ?? []).map(code => qrToLabel(code, matByCode.get(code.split('_')[1]), qtyByCode.get(code) ?? null))
+    printTems(labels, 'REPRINT')
+  }
   async function doUndo(o: PalletOpRow) {
     setMsg(null)
     try { await undo.mutateAsync(o.id); setMsg({ ok: true, text: `Đã hoàn tác thao tác ${opLabel(o.type)}` }) }
     catch (e: any) { setMsg({ ok: false, text: e?.response?.data?.error?.message ?? 'Không hoàn tác được' }) }
   }
 
+  const [splitDone, setSplitDone] = useState<LabelData[] | null>(null)   // tem con vừa tách — chờ in (có thể in ngay hoặc in sau ở Lịch sử)
+  function printTems(labels: LabelData[], mode: 'GENERATE' | 'REPRINT') {
+    if (!labels.length) return
+    logPrints.mutate({
+      mode,
+      labels: labels.map(l => ({ qr_code: l.qr, material_code: l.materialCode, material_id: l.materialId ?? null, category: l.category, cycle: l.cycle, machine: l.machine, seq: l.seq, nmsx: l.nmsx, qty: l.qty === '' ? null : l.qty })),
+    })
+    setPrintLabels(labels)
+    setTimeout(() => window.print(), 150)
+  }
   async function doSplit() {
-    setMsg(null)
+    setMsg(null); setSplitDone(null)
     const children = splitQtys.map(q => Math.floor(Number(q) || 0)).filter(q => q > 0).map(qty => ({ qty }))
     try {
       const res = await split.mutateAsync({ source_pallet_code: srcQ, children })
       const labels = res.children.map((c: any) => qrToLabel(c.pallet_code, srcEntry?.material, c.cartons_remaining))
-      // Ghi log in (tem mới) — không chặn nếu lỗi quyền
-      logPrints.mutate({
-        mode: 'GENERATE',
-        labels: labels.map(l => ({ qr_code: l.qr, material_code: l.materialCode, material_id: l.materialId ?? null, category: l.category, cycle: l.cycle, machine: l.machine, seq: l.seq, nmsx: l.nmsx, qty: l.qty === '' ? null : l.qty })),
-      })
-      setPrintLabels(labels)
-      setTimeout(() => window.print(), 150)
-      setMsg({ ok: true, text: `Đã tách ${labels.length} pallet con (gốc còn ${res.source_remaining} thùng) — đang in tem` })
+      setSplitDone(labels)   // KHÔNG tự in — chờ người dùng bấm "In tem" (hoặc in sau ở tab Lịch sử)
+      setMsg({ ok: true, text: `Đã tách ${labels.length} pallet con (gốc còn ${res.source_remaining} thùng). Bấm "In tem" để in ngay, hoặc vào tab Lịch sử in sau.` })
       setSplitQtys([''])
     } catch (e: any) { setMsg({ ok: false, text: e?.response?.data?.error?.message ?? 'Lỗi tách pallet' }) }
   }
@@ -181,7 +195,7 @@ export default function PalletOps() {
                 <colgroup>{opCols.widths.map((w, i) => <col key={i} style={{ width: w }} />)}</colgroup>
                 <thead>
                   <tr className="text-left text-[9px] font-medium text-slate-500">
-                    {['Thời gian', 'Loại', 'Pallet nguồn', 'Pallet đích', 'Người làm', 'Trạng thái', 'Hoàn tác'].map((h, i) => (
+                    {['Thời gian', 'Loại', 'Pallet nguồn', 'Pallet đích', 'Người làm', 'Trạng thái', 'Thao tác'].map((h, i) => (
                       <th key={i} className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 whitespace-nowrap relative">{h}
                         <span onPointerDown={e => opCols.startResize(i, e)} className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70" />
                       </th>
@@ -200,9 +214,14 @@ export default function PalletOps() {
                       <td className="px-2 py-1 whitespace-nowrap">{o.operated_by_name ?? '—'}</td>
                       <td className="px-2 py-1 whitespace-nowrap">{o.undone_at ? <span className="text-amber-600">Đã hoàn tác</span> : <span className="text-green-600">Hiệu lực</span>}</td>
                       <td className="px-2 py-1 whitespace-nowrap">
-                        {!o.undone_at && canUndo && (
-                          <Button size="sm" variant="outline" className="h-6 text-[10px] gap-1" disabled={undo.isPending} onClick={() => doUndo(o)}><RotateCcw className="h-3 w-3" />Hoàn tác</Button>
-                        )}
+                        <div className="flex items-center gap-1">
+                          {o.type === 'SPLIT' && !o.undone_at && canSplit && (
+                            <Button size="sm" variant="outline" className="h-6 text-[10px] gap-1" title="In tem các pallet con" onClick={() => printOp(o)}><Printer className="h-3 w-3" />In tem</Button>
+                          )}
+                          {!o.undone_at && canUndo && (
+                            <Button size="sm" variant="outline" className="h-6 text-[10px] gap-1" disabled={undo.isPending} onClick={() => doUndo(o)}><RotateCcw className="h-3 w-3" />Hoàn tác</Button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -307,13 +326,29 @@ export default function PalletOps() {
                   )}
                 </div>
 
-                <p className="text-[11px] text-slate-500">Tách = chia số lượng thật. Gốc giảm tồn, sinh pallet con mới (seq <code>x.1</code>) và <b>in tem ngay</b>. Không ảnh hưởng báo cáo nhập.</p>
+                <p className="text-[11px] text-slate-500">Tách = chia số lượng thật. Gốc giảm tồn, sinh pallet con mới (seq <code>x.1</code>). <b>Tách và in là 2 bước riêng</b> — tách xong có thể in ngay hoặc in sau ở tab Lịch sử. Không ảnh hưởng báo cáo nhập.</p>
 
                 {canSplit ? (
                   <Button className="w-full gap-1.5" disabled={!splitReady || split.isPending} onClick={doSplit}>
-                    <Scissors className="h-4 w-4" />{split.isPending ? 'Đang tách…' : 'Tách & in tem'}
+                    <Scissors className="h-4 w-4" />{split.isPending ? 'Đang tách…' : 'Tách pallet'}
                   </Button>
                 ) : <p className="text-xs text-amber-600">Bạn không có quyền tách pallet.</p>}
+
+                {/* Sau khi tách: tem con chờ in — in ngay hoặc để dành in ở Lịch sử */}
+                {splitDone && splitDone.length > 0 && (
+                  <div className="rounded-lg border border-violet-300 bg-violet-50 p-3 space-y-2">
+                    <p className="text-xs font-semibold text-violet-800">Đã tách {splitDone.length} pallet con — chờ in tem:</p>
+                    <div className="space-y-0.5 max-h-32 overflow-y-auto">
+                      {splitDone.map(l => <div key={l.key} className="font-mono text-[10px] text-violet-700">{l.qr} · {l.qty} thùng</div>)}
+                    </div>
+                    <div className="flex gap-2">
+                      <Button size="sm" className="flex-1 gap-1.5" onClick={() => { printTems(splitDone, 'GENERATE'); setSplitDone(null) }}>
+                        <Printer className="h-3.5 w-3.5" />In tem ngay
+                      </Button>
+                      <Button size="sm" variant="outline" className="flex-1" onClick={() => setSplitDone(null)}>Để in sau (ở Lịch sử)</Button>
+                    </div>
+                  </div>
+                )}
               </>
             )}
           </div>

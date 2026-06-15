@@ -45,9 +45,11 @@ router.post('/pallet-prints', requireAnyPerm(['pallet_print', 'generate'], ['pal
 router.get('/pallet-prints',  requirePerm('pallet_print', 'view'),  palletPrint.listPrints)
 
 // Dồn / Tách pallet
+router.get('/pallet-ops',          requirePerm('pallet_ops', 'view'),    palletOps.listOps)
 router.post('/pallet-ops/merge',   requirePerm('pallet_ops', 'merge'),   palletOps.mergePallets)
 router.post('/pallet-ops/ungroup', requirePerm('pallet_ops', 'ungroup'), palletOps.ungroupPallets)
 router.post('/pallet-ops/split',   requirePerm('pallet_ops', 'split'),   palletOps.splitPallet)
+router.post('/pallet-ops/:id/undo', requireAnyPerm(['pallet_ops', 'merge'], ['pallet_ops', 'ungroup'], ['pallet_ops', 'split']), palletOps.undoOp)
 
 // Warehouse zones (khu vực kho)
 router.get('/zones',         zone.listZones)

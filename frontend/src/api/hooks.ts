@@ -72,26 +72,53 @@ function useInvalidateInventory() {
 }
 export function useMergePallets() {
   const inv = useInvalidateInventory()
+  const qc = useQueryClient()
   return useMutation({
     mutationFn: (body: { target_pallet_code: string; child_pallet_codes: string[] }) =>
       apiClient.post('/wms/pallet-ops/merge', body).then(r => r.data.data),
-    onSuccess: inv,
+    onSuccess: () => { inv(); qc.invalidateQueries({ queryKey: ['pallet-ops-log'] }) },
   })
 }
 export function useUngroupPallets() {
   const inv = useInvalidateInventory()
+  const qc = useQueryClient()
   return useMutation({
     mutationFn: (body: { pallet_codes: string[] }) =>
       apiClient.post('/wms/pallet-ops/ungroup', body).then(r => r.data.data),
-    onSuccess: inv,
+    onSuccess: () => { inv(); qc.invalidateQueries({ queryKey: ['pallet-ops-log'] }) },
   })
 }
 export function useSplitPallet() {
   const inv = useInvalidateInventory()
+  const qc = useQueryClient()
   return useMutation({
     mutationFn: (body: { source_pallet_code: string; children: { qty: number }[] }) =>
       apiClient.post('/wms/pallet-ops/split', body).then(r => r.data.data as { source: string; source_remaining: number; children: InventoryEntry[] }),
-    onSuccess: inv,
+    onSuccess: () => { inv(); qc.invalidateQueries({ queryKey: ['pallet-ops-log'] }) },
+  })
+}
+
+export type PalletOpRow = {
+  id: string; type: string; source_codes: string[]; target_codes: string[]
+  detail: any; operated_by_name: string | null; created_at: string
+  undone_at: string | null; undone_by_name: string | null
+}
+export function usePalletOps(params: { search?: string; type?: string; date_from?: string; date_to?: string }, enabled = true) {
+  return useQuery({
+    queryKey: ['pallet-ops-log', params],
+    enabled,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/pallet-ops', { params })
+      return data.data as PalletOpRow[]
+    },
+  })
+}
+export function useUndoPalletOp() {
+  const inv = useInvalidateInventory()
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.post(`/wms/pallet-ops/${id}/undo`).then(r => r.data.data),
+    onSuccess: () => { inv(); qc.invalidateQueries({ queryKey: ['pallet-ops-log'] }) },
   })
 }
 

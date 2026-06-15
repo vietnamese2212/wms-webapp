@@ -41,8 +41,12 @@ export default function PalletOps() {
   const categoryOpts = (whTypes as { value: string }[]).map(t => t.value)
   const allowedWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length ? new Set(user.warehouse_ids) : null
   const whOptions = (warehouses as any[]).filter(w => !allowedWhIds || allowedWhIds.has(w.id))
-  const [opWh, setOpWh]   = useState<string>(allowedWhIds ? [...allowedWhIds][0] : '')
-  const [opCat, setOpCat] = useState<string>('')
+  // Lưu/khôi phục lựa chọn Kho + Loại kho (không phải chọn lại)
+  const SCOPE = useMemo<{ opWh?: string; opCat?: string }>(() => { try { return JSON.parse(localStorage.getItem('palletOps_scope') || '{}') } catch { return {} } }, [])
+  const [opWh, setOpWh]   = useState<string>(SCOPE.opWh ?? (allowedWhIds ? [...allowedWhIds][0] : ''))
+  const [opCat, setOpCat] = useState<string>(SCOPE.opCat ?? '')
+  useEffect(() => { try { localStorage.setItem('palletOps_scope', JSON.stringify({ opWh, opCat })) } catch { /* ignore */ } }, [opWh, opCat])
+  const scopeReady = !!(opWh && opCat)   // bắt buộc đủ Kho + Loại kho mới cho quét/thao tác
 
   // ── Dồn ──
   const [mergeTarget, setMergeTarget] = useState(params.get('target') ?? '')
@@ -64,7 +68,7 @@ export default function PalletOps() {
   }, [mergeChildren, childInput, mergeTarget])
   async function doMerge() {
     setMsg(null)
-    if (!opWh) { setMsg({ ok: false, text: 'Chọn Kho trước khi dồn' }); return }
+    if (!scopeReady) { setMsg({ ok: false, text: 'Chọn Kho và Loại kho trước khi dồn' }); return }
     try {
       const r = await merge.mutateAsync({ target_pallet_code: mergeTarget.trim(), child_pallet_codes: allChildren, warehouse_id: opWh })
       setMsg({ ok: true, text: `Đã dồn ${r.merged} pallet vào ${r.target}` })
@@ -95,6 +99,12 @@ export default function PalletOps() {
   const [splitLoc, setSplitLoc] = useState('')
   const { data: splitLocs = [] } = useLocationsReal({ warehouse_id: opWh || undefined, category: opCat || undefined })
   useEffect(() => { if (srcEntry?.location_id) setSplitLoc(srcEntry.location_id) }, [srcEntry?.location_id])
+  // Các pallet con ĐÃ tách trước đó từ chính pallet gốc này (để user biết lịch sử tách của nó)
+  const { data: srcOps = [] } = usePalletOps({ search: srcQ, type: 'SPLIT' }, tab === 'split' && srcQ.length >= 3)
+  const srcSplitChildren = useMemo(() =>
+    srcOps.filter(o => !o.undone_at && (o.source_codes ?? []).includes(srcQ))
+      .flatMap(o => (o.detail?.children ?? []).map((c: any) => ({ code: c.code as string, qty: c.qty as number, at: o.created_at }))),
+    [srcOps, srcQ])
 
   // ── Lịch sử dồn/tách + tìm kiếm + hoàn tác ──
   const [hSearch, setHSearch] = useState('')
@@ -136,7 +146,7 @@ export default function PalletOps() {
   }
   async function doSplit() {
     setMsg(null); setSplitDone(null)
-    if (!opWh) { setMsg({ ok: false, text: 'Chọn Kho trước khi tách' }); return }
+    if (!scopeReady) { setMsg({ ok: false, text: 'Chọn Kho và Loại kho trước khi tách' }); return }
     const children = splitQtys.map(q => Math.floor(Number(q) || 0)).filter(q => q > 0).map(qty => ({ qty }))
     try {
       const res = await split.mutateAsync({ source_pallet_code: srcQ, children, warehouse_id: opWh, location_id: splitLoc || undefined })
@@ -156,8 +166,8 @@ export default function PalletOps() {
     setScanFor(null)
   }
 
-  const mergeReady = !!(opWh && mergeTarget.trim() && allChildren.length)
-  const splitReady = !!(opWh && srcEntry && totalSplit > 0 && totalSplit <= free)
+  const mergeReady = !!(scopeReady && mergeTarget.trim() && allChildren.length)
+  const splitReady = !!(scopeReady && srcEntry && totalSplit > 0 && totalSplit <= free)
   const locName = (l: any) => `${l.location_code ?? ''}${l.sub_code ? '-' + l.sub_code : ''}`.trim() || l.location_code || l.id
 
   return (
@@ -273,7 +283,7 @@ export default function PalletOps() {
          ) : (
           <div className="p-4">
           <div className="mx-auto max-w-xl space-y-4">
-            {!opWh && <p className="text-[11px] text-amber-600 flex items-center gap-1"><AlertTriangle className="h-3.5 w-3.5" />Chọn Kho trước khi dồn/tách.</p>}
+            {!scopeReady && <p className="text-[11px] text-amber-600 flex items-center gap-1"><AlertTriangle className="h-3.5 w-3.5" />Chọn <b>Kho</b> và <b>Loại kho</b> trước mới quét/thao tác được.</p>}
             {/* Chọn Kho + Loại kho (scope thao tác) */}
             <div className="rounded-lg border border-slate-200 p-3 grid grid-cols-2 gap-2">
               <div className="space-y-1">
@@ -305,9 +315,9 @@ export default function PalletOps() {
                   <div className="flex gap-1.5">
                     <div className="relative flex-1">
                       <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
-                      <Input className="pl-7 h-9 text-sm font-mono" placeholder="Quét/nhập mã pallet đích" value={mergeTarget} onChange={e => setMergeTarget(e.target.value)} />
+                      <Input className="pl-7 h-9 text-sm font-mono" placeholder="Quét/nhập mã pallet đích" value={mergeTarget} disabled={!scopeReady} onChange={e => setMergeTarget(e.target.value)} />
                     </div>
-                    <Button type="button" variant="outline" size="sm" className="h-9 px-2.5 shrink-0" onClick={() => setScanFor('target')}><QrCode className="h-4 w-4" /></Button>
+                    <Button type="button" variant="outline" size="sm" className="h-9 px-2.5 shrink-0" disabled={!scopeReady} onClick={() => setScanFor('target')}><QrCode className="h-4 w-4" /></Button>
                   </div>
                 </div>
 
@@ -316,10 +326,10 @@ export default function PalletOps() {
                   <div className="flex gap-1.5">
                     <div className="relative flex-1">
                       <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
-                      <Input className="pl-7 h-9 text-sm font-mono" placeholder="Quét/gõ mã rồi Enter" value={childInput}
+                      <Input className="pl-7 h-9 text-sm font-mono" placeholder="Quét/gõ mã rồi Enter" value={childInput} disabled={!scopeReady}
                         onChange={e => setChildInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addChild(childInput) }} onBlur={() => addChild(childInput)} />
                     </div>
-                    <Button type="button" variant="outline" size="sm" className="h-9 px-2.5 shrink-0" onClick={() => setScanFor('child')}><QrCode className="h-4 w-4" /></Button>
+                    <Button type="button" variant="outline" size="sm" className="h-9 px-2.5 shrink-0" disabled={!scopeReady} onClick={() => setScanFor('child')}><QrCode className="h-4 w-4" /></Button>
                   </div>
                   <div className="space-y-1 max-h-60 overflow-y-auto">
                     {allChildren.map(c => (
@@ -354,15 +364,28 @@ export default function PalletOps() {
                   <div className="flex gap-1.5">
                     <div className="relative flex-1">
                       <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
-                      <Input className="pl-7 h-9 text-sm font-mono" placeholder="Quét/nhập mã pallet gốc" value={splitSrc} onChange={e => setSplitSrc(e.target.value)} />
+                      <Input className="pl-7 h-9 text-sm font-mono" placeholder="Quét/nhập mã pallet gốc" value={splitSrc} disabled={!scopeReady} onChange={e => setSplitSrc(e.target.value)} />
                     </div>
-                    <Button type="button" variant="outline" size="sm" className="h-9 px-2.5 shrink-0" onClick={() => setScanFor('source')}><QrCode className="h-4 w-4" /></Button>
+                    <Button type="button" variant="outline" size="sm" className="h-9 px-2.5 shrink-0" disabled={!scopeReady} onClick={() => setScanFor('source')}><QrCode className="h-4 w-4" /></Button>
                   </div>
                   {srcQ.length >= 3 && !srcEntry && <p className="text-xs text-amber-600">Không tìm thấy pallet này đang tồn kho.</p>}
                   {srcEntry && (
                     <div className="rounded bg-slate-50 border border-slate-200 px-2.5 py-1.5 text-xs text-slate-600 space-y-0.5">
                       <div><span className="text-slate-400">Hàng:</span> <b>{srcEntry.material?.material_code}</b> — {srcEntry.material?.short_name ?? '—'}</div>
                       <div className="tabular-nums"><span className="text-slate-400">Tồn:</span> <b>{remaining}</b> thùng{reserved > 0 && <span className="text-amber-600"> · giữ chỗ {reserved} (không tách được)</span>}</div>
+                    </div>
+                  )}
+                  {srcEntry && srcSplitChildren.length > 0 && (
+                    <div className="rounded border border-violet-200 bg-violet-50 px-2.5 py-1.5 text-xs space-y-1">
+                      <div className="font-semibold text-violet-800 flex items-center gap-1"><Scissors className="h-3 w-3" />Đã tách {srcSplitChildren.length} pallet con từ pallet này:</div>
+                      <div className="space-y-0.5 max-h-28 overflow-y-auto">
+                        {srcSplitChildren.map((c, i) => (
+                          <div key={i} className="flex items-center justify-between gap-2 text-[10px] text-violet-700">
+                            <span className="font-mono truncate">{c.code}</span>
+                            <span className="tabular-nums shrink-0">{c.qty} thùng · {formatTimestampDate(c.at, true)}</span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   )}
                 </div>

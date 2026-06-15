@@ -20,6 +20,7 @@ const navGroups: { label: string; items: { to: string; icon: React.ElementType; 
       { to: '/wms/inventory',         icon: Package,        label: 'Tồn kho',     module: 'inventory' },
       { to: '/wms/inbound',           icon: PackagePlus,    label: 'Nhập kho',     module: 'inbound' },
       { to: '/wms/pallet-labels',     icon: QrCode,         label: 'In tem pallet', module: 'pallet_print' as ModuleKey },
+      { to: '/wms/pallet-ops',        icon: Scissors,       label: 'Dồn / Tách pallet', module: 'pallet_ops' as ModuleKey },
       { to: '/wms/outbound',          icon: PackageMinus,   label: 'Xuất kho',     module: 'outbound' },
       { to: '/wms/loosepicking',      icon: Scissors,       label: 'Nhặt lẻ',      module: 'loosepicking' },
       { to: '/wms/outbound/scan-log', icon: ScanLine,       label: 'Lịch sử quét', module: 'scanlog' },

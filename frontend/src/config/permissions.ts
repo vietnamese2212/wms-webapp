@@ -200,6 +200,15 @@ export const MODULES = {
       reprint: 'In lại (tồn kho / lịch sử)',
     },
   },
+  pallet_ops: {
+    label: 'Dồn / Tách pallet',
+    actions: {
+      view:    'Xem trang',
+      merge:   'Dồn (gom nhóm)',
+      ungroup: 'Tách nhóm (gỡ dồn)',
+      split:   'Tách số lượng',
+    },
+  },
 } as const
 
 export type ModuleKey = keyof typeof MODULES

@@ -20,4 +20,5 @@ export const ALL_PERMISSIONS: Record<string, string[]> = {
   inbound_plan:      ['view', 'create', 'edit', 'delete', 'cancel'],
   materials:         ['view', 'create', 'edit', 'delete'],
   pallet_print:      ['view', 'generate', 'reprint'],
+  pallet_ops:        ['view', 'merge', 'ungroup', 'split'],
 }

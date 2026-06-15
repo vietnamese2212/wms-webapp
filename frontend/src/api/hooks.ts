@@ -61,6 +61,40 @@ export function usePalletPrints(params: { qr_code?: string; qr_codes?: string; s
   })
 }
 
+// ── Dồn / Tách pallet ──
+function useInvalidateInventory() {
+  const qc = useQueryClient()
+  return () => {
+    qc.invalidateQueries({ queryKey: ['inventory-entries'] })
+    qc.invalidateQueries({ queryKey: ['inventory-facets'] })
+    qc.invalidateQueries({ queryKey: ['inventory'] })
+  }
+}
+export function useMergePallets() {
+  const inv = useInvalidateInventory()
+  return useMutation({
+    mutationFn: (body: { target_pallet_code: string; child_pallet_codes: string[] }) =>
+      apiClient.post('/wms/pallet-ops/merge', body).then(r => r.data.data),
+    onSuccess: inv,
+  })
+}
+export function useUngroupPallets() {
+  const inv = useInvalidateInventory()
+  return useMutation({
+    mutationFn: (body: { pallet_codes: string[] }) =>
+      apiClient.post('/wms/pallet-ops/ungroup', body).then(r => r.data.data),
+    onSuccess: inv,
+  })
+}
+export function useSplitPallet() {
+  const inv = useInvalidateInventory()
+  return useMutation({
+    mutationFn: (body: { source_pallet_code: string; children: { qty: number }[] }) =>
+      apiClient.post('/wms/pallet-ops/split', body).then(r => r.data.data as { source: string; source_remaining: number; children: InventoryEntry[] }),
+    onSuccess: inv,
+  })
+}
+
 export function useManufacturers() {
   return useQuery({
     queryKey: ['manufacturers'],

@@ -7,6 +7,7 @@ import * as lookup from '../controllers/wms/lookupController'
 import * as zone from '../controllers/wms/zoneController'
 import * as inboundPlan from '../controllers/wms/inboundPlanController'
 import * as palletPrint from '../controllers/wms/palletPrintController'
+import * as palletOps from '../controllers/wms/palletOpsController'
 import { inboundEmitter } from '../lib/events'
 import { requirePerm, requireAnyPerm } from '../middlewares/auth'
 
@@ -42,6 +43,11 @@ router.delete('/lookup/:id', requirePerm('wms_settings', 'manage_global'), looku
 // In tem pallet — log truy vết (in mấy lần, ai in)
 router.post('/pallet-prints', requireAnyPerm(['pallet_print', 'generate'], ['pallet_print', 'reprint']), palletPrint.logPrints)
 router.get('/pallet-prints',  requirePerm('pallet_print', 'view'),  palletPrint.listPrints)
+
+// Dồn / Tách pallet
+router.post('/pallet-ops/merge',   requirePerm('pallet_ops', 'merge'),   palletOps.mergePallets)
+router.post('/pallet-ops/ungroup', requirePerm('pallet_ops', 'ungroup'), palletOps.ungroupPallets)
+router.post('/pallet-ops/split',   requirePerm('pallet_ops', 'split'),   palletOps.splitPallet)
 
 // Warehouse zones (khu vực kho)
 router.get('/zones',         zone.listZones)

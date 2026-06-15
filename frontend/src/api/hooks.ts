@@ -38,7 +38,7 @@ export function useLocationsReal(params?: { warehouse_id?: string; sub_code?: st
 
 // ─── Pallet label prints (truy vết in tem) ───────────────────
 export type PalletPrintRow = {
-  id: string; qr_code: string; material_code: string | null; category: string | null
+  id: string; batch_id: string | null; qr_code: string; material_code: string | null; category: string | null
   cycle: string | null; machine: string | null; seq: string | null; nmsx: string | null
   qty: number | null; mode: string; printed_by_name: string | null; created_at: string
 }

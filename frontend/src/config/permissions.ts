@@ -195,8 +195,9 @@ export const MODULES = {
   pallet_print: {
     label: 'In tem pallet',
     actions: {
-      view:  'Xem / tạo tem',
-      print: 'In tem',
+      view:    'Xem trang',
+      generate:'Sinh tem mới (in)',
+      reprint: 'In lại (tồn kho / lịch sử)',
     },
   },
 } as const

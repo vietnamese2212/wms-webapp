@@ -22,17 +22,25 @@ type LabelIn = {
   warehouse_id?: string | null
 }
 
-// POST /wms/pallet-prints  — ghi log 1 lần in (mỗi tem = 1 dòng)
+// POST /wms/pallet-prints  — ghi log 1 lần in (mỗi tem = 1 dòng; cùng 1 lệnh in = cùng batch_id)
 export async function logPrints(req: Request, res: Response) {
   try {
     const { mode, labels } = req.body as { mode?: string; labels?: LabelIn[] }
     if (!Array.isArray(labels) || labels.length === 0) return fail(res, 'Không có tem để ghi log')
     const printMode = mode === 'REPRINT' ? 'REPRINT' : 'GENERATE'
+    // Quyền theo mode: sinh tem mới cần 'generate', in lại cần 'reprint'
+    const action = printMode === 'REPRINT' ? 'reprint' : 'generate'
+    const isAdmin = req.user?.name === 'Admin'
+    if (!isAdmin && !req.user?.module_permissions?.['pallet_print']?.includes(action)) {
+      return fail(res, printMode === 'REPRINT' ? 'Bạn không có quyền in lại' : 'Bạn không có quyền sinh tem mới', 403)
+    }
+    const batchId = randomUUID()
     const now = new Date().toISOString()
     const rows = labels
       .filter(l => l && typeof l.qr_code === 'string' && l.qr_code.trim())
       .map(l => ({
         id:              randomUUID(),
+        batch_id:        batchId,
         qr_code:         l.qr_code.trim(),
         material_code:   l.material_code ?? null,
         material_id:     l.material_id ?? null,
@@ -69,7 +77,7 @@ export async function listPrints(req: Request, res: Response) {
 
     let q = supabase
       .from('PalletLabelPrint')
-      .select('id, qr_code, material_code, category, cycle, machine, seq, nmsx, qty, mode, printed_by_name, created_at')
+      .select('id, batch_id, qr_code, material_code, category, cycle, machine, seq, nmsx, qty, mode, printed_by_name, created_at')
       .order('created_at', { ascending: false })
       .limit(Math.min(parseInt(limit ?? '5000', 10) || 5000, 5000))
 

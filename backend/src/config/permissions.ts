@@ -19,5 +19,5 @@ export const ALL_PERMISSIONS: Record<string, string[]> = {
   gate_registration: ['view', 'create', 'edit', 'delete', 'call', 'entry', 'exit'],
   inbound_plan:      ['view', 'create', 'edit', 'delete', 'cancel'],
   materials:         ['view', 'create', 'edit', 'delete'],
-  pallet_print:      ['view', 'print'],
+  pallet_print:      ['view', 'generate', 'reprint'],
 }

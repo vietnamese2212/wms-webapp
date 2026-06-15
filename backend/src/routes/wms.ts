@@ -40,7 +40,7 @@ router.put('/lookup/:id',    requirePerm('wms_settings', 'manage_global'), looku
 router.delete('/lookup/:id', requirePerm('wms_settings', 'manage_global'), lookup.deleteLookup)
 
 // In tem pallet — log truy vết (in mấy lần, ai in)
-router.post('/pallet-prints', requirePerm('pallet_print', 'print'), palletPrint.logPrints)
+router.post('/pallet-prints', requireAnyPerm(['pallet_print', 'generate'], ['pallet_print', 'reprint']), palletPrint.logPrints)
 router.get('/pallet-prints',  requirePerm('pallet_print', 'view'),  palletPrint.listPrints)
 
 // Warehouse zones (khu vực kho)

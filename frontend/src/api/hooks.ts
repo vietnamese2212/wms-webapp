@@ -2505,12 +2505,17 @@ export function useCreateLeave() {
     onSettled: () => qc.invalidateQueries({ queryKey: ['hr-leaves'] }),
   })
 }
+export type DecideLeaveResult = LeaveRow & { conflicts: { work_date: string; prev_kind: string }[] }
 export function useDecideLeave() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ id, status }: { id: string; status: 'APPROVED' | 'REJECTED' }) =>
-      apiClient.patch(`/hr/leaves/${id}/decide`, { status }).then(r => r.data.data),
-    onSettled: () => qc.invalidateQueries({ queryKey: ['hr-leaves'] }),
+      apiClient.patch(`/hr/leaves/${id}/decide`, { status }).then(r => r.data.data as DecideLeaveResult),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['hr-leaves'] })
+      qc.invalidateQueries({ queryKey: ['hr-attendance'] })
+      qc.invalidateQueries({ queryKey: ['hr-att-report'] })
+    },
   })
 }
 export function useDeleteLeave() {

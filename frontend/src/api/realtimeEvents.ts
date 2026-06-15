@@ -29,7 +29,7 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   WorkAssignment:       [['hr-sheet']],
   WorkLayout:           [['hr-layouts'], ['hr-layout']],
   WorkLayoutSkill:      [['hr-layout']],
-  Attendance:           [['hr-attendance']],
+  Attendance:           [['hr-attendance'], ['hr-att-report']],
 }
 
 type Payload = RealtimePostgresChangesPayload<Record<string, unknown>>

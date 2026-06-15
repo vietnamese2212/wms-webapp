@@ -47,6 +47,46 @@ function sharesKho(ctx: ApproverCtx, empScope: string | null, empWhs: Set<string
   for (const w of ctx.whs) if (empWhs.has(w)) return true
   return false
 }
+// liệt kê các ngày YYYY-MM-DD trong khoảng [from, to] (bao gồm 2 đầu)
+function eachDate(from: string, to: string): string[] {
+  const out: string[] = []
+  const d = new Date(`${from}T00:00:00Z`)
+  const end = new Date(`${to}T00:00:00Z`)
+  while (d <= end) { out.push(d.toISOString().slice(0, 10)); d.setUTCDate(d.getUTCDate() + 1) }
+  return out
+}
+
+// Khi duyệt: tự ghi chấm công LEAVE cho mọi ngày trong đơn.
+// Trả về các ngày đã có chấm công KHÁC LEAVE (bị ghi đè) để cảnh báo.
+async function applyLeaveAttendance(leave: {
+  employee_id: string; warehouse_id: string | null; date_from: string; date_to: string
+}): Promise<{ work_date: string; prev_kind: string }[]> {
+  const days = eachDate(leave.date_from, leave.date_to)
+  if (!days.length) return []
+  const { data: existing } = await supabase.from('Attendance')
+    .select('id, work_date, kind').eq('employee_id', leave.employee_id).in('work_date', days)
+  const exMap = new Map(((existing ?? []) as { id: string; work_date: string; kind: string }[]).map(r => [r.work_date, r]))
+  const ts = new Date().toISOString()
+  const conflicts: { work_date: string; prev_kind: string }[] = []
+  await Promise.all(days.map(async day => {
+    const ex = exMap.get(day)
+    if (ex) {
+      if (ex.kind !== 'LEAVE') conflicts.push({ work_date: day, prev_kind: ex.kind })
+      await supabase.from('Attendance').update({
+        kind: 'LEAVE', ot_hours: 0, early_leave_hours: 0,
+        warehouse_id: leave.warehouse_id || null, updated_at: ts,
+      }).eq('id', ex.id)
+    } else {
+      await supabase.from('Attendance').insert({
+        id: randomUUID(), employee_id: leave.employee_id, warehouse_id: leave.warehouse_id || null,
+        work_date: day, kind: 'LEAVE', ot_hours: 0, early_leave_hours: 0,
+        note: 'Tự động từ nghỉ phép đã duyệt', created_at: ts, updated_at: ts,
+      })
+    }
+  }))
+  return conflicts.sort((a, b) => a.work_date.localeCompare(b.work_date))
+}
+
 // 1 nhân viên có dưới quyền duyệt của approver không
 async function canApprove(ctx: ApproverCtx, employeeId: string, pm: Map<string, string | null>, directOnly: boolean): Promise<boolean> {
   if (!ctx.job_title_id) return false
@@ -158,8 +198,16 @@ export async function decideLeave(req: Request, res: Response) {
       updated_at: new Date().toISOString(), updated_by: u.name || null,
     }).eq('id', id).select(LEAVE_SELECT).single()
     if (error) return fail(res, error.message)
+
+    // Duyệt → tự ghi chấm công LEAVE; thu thập ngày bị ghi đè để cảnh báo
+    let conflicts: { work_date: string; prev_kind: string }[] = []
+    if (status === 'APPROVED') {
+      const lv = data as { employee_id: string; warehouse_id: string | null; date_from: string; date_to: string }
+      conflicts = await applyLeaveAttendance(lv)
+    }
+
     const [withEmp] = await attachEmployees([data as { employee_id: string }])
-    return ok(res, withEmp)
+    return ok(res, { ...withEmp, conflicts })
   } catch (e) { return fail(res, String(e)) }
 }
 

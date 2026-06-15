@@ -23,6 +23,7 @@ const LEAVE_TYPES: { value: string; label: string }[] = [
 ]
 const typeLabel = (t: string) => LEAVE_TYPES.find(o => o.value === t)?.label ?? t
 const TODAY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+const KIND_LABEL: Record<string, string> = { CA1: 'Ca 1', CA2: 'Ca 2', CA3: 'Ca 3', HC: 'Hành chính', LEAVE: 'Nghỉ phép' }
 
 const STATUS_META: Record<string, { label: string; variant: 'warning' | 'success' | 'slate' }> = {
   PENDING:  { label: 'Chờ duyệt', variant: 'warning' },
@@ -59,6 +60,7 @@ export function LeaveSection() {
   const decide = useDecideLeave()
   const del    = useDeleteLeave()
   const [err, setErr] = useState<string | null>(null)
+  const [warn, setWarn] = useState<string | null>(null)
   const [openCreate, setOpenCreate] = useState(false)
 
   const defs: FilterDef[] = [
@@ -68,8 +70,14 @@ export function LeaveSection() {
   ]
 
   async function onDecide(id: string, s: 'APPROVED' | 'REJECTED') {
-    setErr(null)
-    try { await decide.mutateAsync({ id, status: s }) }
+    setErr(null); setWarn(null)
+    try {
+      const r = await decide.mutateAsync({ id, status: s })
+      if (s === 'APPROVED' && r.conflicts?.length) {
+        const days = r.conflicts.map(c => `${formatDate(c.work_date)} (${KIND_LABEL[c.prev_kind] ?? c.prev_kind})`).join(', ')
+        setWarn(`Đã duyệt và ghi đè chấm công thành Nghỉ phép. Trước đó các ngày sau đã chấm công khác: ${days}`)
+      }
+    }
     catch (e) {
       const ax = e as { response?: { data?: { error?: { message?: string } } } }
       setErr(ax.response?.data?.error?.message ?? String((e as { message?: string })?.message ?? e))
@@ -108,6 +116,13 @@ export function LeaveSection() {
       <FilterBar defs={defs} className="hidden sm:flex" />
 
       {err && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{err}</div>}
+      {warn && (
+        <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2 flex items-start gap-1.5">
+          <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+          <span className="flex-1">{warn}</span>
+          <button onClick={() => setWarn(null)} className="text-amber-500 hover:text-amber-700"><X className="h-3.5 w-3.5" /></button>
+        </div>
+      )}
       <div className="border border-slate-200 rounded-lg overflow-x-auto">
         <table className="w-full text-xs min-w-max">
           <thead className="bg-slate-50 text-[10px] text-slate-500">

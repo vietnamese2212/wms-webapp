@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import * as skill from '../controllers/hr/skillController'
 import * as leave from '../controllers/hr/leaveController'
+import * as asg from '../controllers/hr/assignmentController'
 import { requirePerm } from '../middlewares/auth'
 
 const router = Router()
@@ -21,5 +22,14 @@ router.post('/leaves',           requirePerm('leave', 'request'), leave.createLe
 router.put('/leaves/:id',        requirePerm('leave', 'request'), leave.updateLeave)
 router.patch('/leaves/:id/decide', requirePerm('leave', 'approve'), leave.decideLeave)
 router.delete('/leaves/:id',     requirePerm('leave', 'delete'),  leave.deleteLeave)
+
+// ─── Phân công lịch làm việc ─────────────────────────────────────────────────
+router.get('/sheets',                 requirePerm('work_assignment', 'view'),    asg.listSheets)
+router.get('/sheets/:id',             requirePerm('work_assignment', 'view'),    asg.getSheet)
+router.post('/sheets',                requirePerm('work_assignment', 'create'),  asg.upsertSheet)
+router.post('/sheets/:id/auto-assign',requirePerm('work_assignment', 'create'),  asg.autoAssign)
+router.post('/sheets/:id/assign-one', requirePerm('work_assignment', 'edit'),    asg.assignOne)
+router.post('/sheets/:id/publish',    requirePerm('work_assignment', 'publish'), asg.publishSheet)
+router.delete('/sheets/:id',          requirePerm('work_assignment', 'delete'),  asg.deleteSheet)
 
 export default router

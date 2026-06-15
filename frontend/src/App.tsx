@@ -28,6 +28,7 @@ import GateRegistration from '@/pages/tms/GateRegistration'
 import Schedule from '@/pages/hr/Schedule'
 import SkillManagement from '@/pages/hr/SkillManagement'
 import LeaveManagement from '@/pages/hr/LeaveManagement'
+import Assignments from '@/pages/hr/Assignments'
 import UserManagement from '@/pages/masterdata/UserManagement'
 import Materials       from '@/pages/masterdata/Materials'
 import Settings from '@/pages/Settings'
@@ -113,6 +114,7 @@ export default function App() {
         {/* HR */}
         <Route path="/hr/skills"   element={<PermissionRoute module="work_skill"><SkillManagement /></PermissionRoute>} />
         <Route path="/hr/leaves"   element={<PermissionRoute module="leave"><LeaveManagement /></PermissionRoute>} />
+        <Route path="/hr/assignments" element={<PermissionRoute module="work_assignment"><Assignments /></PermissionRoute>} />
         <Route path="/hr/schedule" element={<PermissionRoute module="schedule"><Schedule /></PermissionRoute>} />
 
         {/* Masterdata */}

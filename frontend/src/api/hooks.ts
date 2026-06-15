@@ -2501,3 +2501,79 @@ export function useDeleteLeave() {
     onSettled: () => qc.invalidateQueries({ queryKey: ['hr-leaves'] }),
   })
 }
+
+// ── Phân công lịch làm việc ──
+export type SheetRow = {
+  id: string; work_date: string; warehouse_id: string; department_id: string
+  status: 'DRAFT' | 'PUBLISHED'; note: string | null; published_at: string | null
+  total_required: number; total_assigned: number
+}
+export type SheetDetail = {
+  id: string; work_date: string; warehouse_id: string; department_id: string
+  status: 'DRAFT' | 'PUBLISHED'; note: string | null; published_at: string | null
+  skills: { id: string; name: string; shift_tag: string | null; sort_order: number }[]
+  demands: { id: string; skill_id: string; required_count: number }[]
+  assignments: {
+    id: string; employee_id: string; skill_id: string | null
+    status: 'ASSIGNED' | 'LEAVE' | 'UNASSIGNED'; is_manual: boolean; note: string | null
+    employee: { id: string; name: string; employee_code: string; job_title: string | null } | null
+  }[]
+}
+export function useSheets(params: { warehouse_id?: string; department_id?: string; date_from?: string; date_to?: string; status?: string }, enabled = true) {
+  return useQuery({
+    queryKey: ['hr-sheets', params],
+    enabled,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/hr/sheets', { params })
+      return data.data as SheetRow[]
+    },
+  })
+}
+export function useSheet(id?: string) {
+  return useQuery({
+    queryKey: ['hr-sheet', id],
+    enabled: !!id,
+    queryFn: async () => {
+      const { data } = await apiClient.get(`/hr/sheets/${id}`)
+      return data.data as SheetDetail
+    },
+  })
+}
+export function useUpsertSheet() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { warehouse_id: string; department_id: string; work_date: string; note?: string; demands?: { skill_id: string; required_count: number }[] }) =>
+      apiClient.post('/hr/sheets', body).then(r => r.data.data as { id: string }),
+    onSettled: (_d, _e, _v, _c) => { qc.invalidateQueries({ queryKey: ['hr-sheets'] }); qc.invalidateQueries({ queryKey: ['hr-sheet'] }) },
+  })
+}
+export function useAutoAssign() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (sheetId: string) => apiClient.post(`/hr/sheets/${sheetId}/auto-assign`).then(r => r.data.data as { assigned: number; on_leave: number; shortfalls: { skill_id: string; required: number; short: number }[] }),
+    onSettled: (_d, _e, sheetId) => { qc.invalidateQueries({ queryKey: ['hr-sheet', sheetId] }); qc.invalidateQueries({ queryKey: ['hr-sheets'] }) },
+  })
+}
+export function useAssignOne() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ sheet_id, employee_id, skill_id }: { sheet_id: string; employee_id: string; skill_id: string | null }) =>
+      apiClient.post(`/hr/sheets/${sheet_id}/assign-one`, { employee_id, skill_id }).then(r => r.data.data),
+    onSettled: (_d, _e, v) => { qc.invalidateQueries({ queryKey: ['hr-sheet', v.sheet_id] }); qc.invalidateQueries({ queryKey: ['hr-sheets'] }) },
+  })
+}
+export function usePublishSheet() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, publish }: { id: string; publish: boolean }) =>
+      apiClient.post(`/hr/sheets/${id}/publish`, { publish }).then(r => r.data.data),
+    onSettled: (_d, _e, v) => { qc.invalidateQueries({ queryKey: ['hr-sheet', v.id] }); qc.invalidateQueries({ queryKey: ['hr-sheets'] }) },
+  })
+}
+export function useDeleteSheet() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.delete(`/hr/sheets/${id}`).then(r => r.data.data),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['hr-sheets'] }),
+  })
+}

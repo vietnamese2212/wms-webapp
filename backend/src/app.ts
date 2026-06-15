@@ -5,6 +5,7 @@ import authRouter from './routes/auth'
 import masterdataRouter from './routes/masterdata'
 import wmsRouter from './routes/wms'
 import tmsRouter from './routes/tms'
+import hrRouter from './routes/hr'
 import { verifyToken } from './middlewares/auth'
 import { supabase } from './lib/supabase'
 
@@ -35,5 +36,6 @@ app.use('/api/auth',       authRouter)
 app.use('/api/masterdata', verifyToken, masterdataRouter)
 app.use('/api/wms',        verifyToken, wmsRouter)
 app.use('/api/tms',        verifyToken, tmsRouter)
+app.use('/api/hr',         verifyToken, hrRouter)
 
 export default app

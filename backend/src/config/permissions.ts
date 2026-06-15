@@ -21,4 +21,8 @@ export const ALL_PERMISSIONS: Record<string, string[]> = {
   materials:         ['view', 'create', 'edit', 'delete'],
   pallet_print:      ['view', 'generate', 'reprint'],
   pallet_ops:        ['view', 'merge', 'ungroup', 'split'],
+  work_skill:        ['view', 'manage', 'assign'],
+  leave:             ['view', 'request', 'approve', 'delete'],
+  work_assignment:   ['view', 'create', 'edit', 'publish', 'delete'],
+  attendance:        ['view', 'self_log', 'edit', 'report'],
 }

@@ -23,6 +23,7 @@ const breadcrumbMap: Record<string, { label: string; parent?: string; parentPath
   '/tms/bookings':  { label: 'Kế hoạch VC',  parent: 'Vận tải', parentPath: '/tms/bookings' },
   '/tms/settings':  { label: 'Cài đặt TMS', parent: 'Vận tải', parentPath: '/tms/settings' },
   '/tms/deliveries':{ label: 'Giao hàng',   parent: 'Vận tải', parentPath: '/tms/deliveries' },
+  '/hr/skills':   { label: 'Vị trí & Skill', parent: 'Nhân sự', parentPath: '/hr/skills' },
   '/hr/schedule': { label: 'Lịch làm việc', parent: 'Nhân sự', parentPath: '/hr/schedule' },
   '/settings': { label: 'Cài đặt' },
 }

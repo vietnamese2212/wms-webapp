@@ -21,6 +21,13 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   OutboundDelivery:    [['gdo']],
   OutboundItem:        [['gdo']],
   OutboundScanEntry:   [['gdo']],
+  Skill:                [['hr-skills'], ['hr-emp-skills']],
+  EmployeeSkill:        [['hr-emp-skills']],
+  LeaveRequest:         [['hr-leaves']],
+  WorkAssignmentSheet:  [['hr-sheets'], ['hr-sheet']],
+  WorkAssignmentDemand: [['hr-sheet']],
+  WorkAssignment:       [['hr-sheet']],
+  Attendance:           [['hr-attendance']],
 }
 
 type Payload = RealtimePostgresChangesPayload<Record<string, unknown>>

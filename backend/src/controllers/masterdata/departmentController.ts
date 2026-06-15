@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 
-const DEPT_SELECT = 'id, name, code, allowed_modules, is_active, created_at, updated_at, created_by, updated_by'
+const DEPT_SELECT = 'id, name, code, allowed_modules, requires_scheduling, is_active, created_at, updated_at, created_by, updated_by'
 const JT_SELECT   = 'id, name, department_id, is_active, module_permissions, created_at, updated_at, created_by, updated_by, department:Department(id,name,code)'
 
 // ─── Departments ──────────────────────────────────────────────────────────────
@@ -41,12 +41,12 @@ export async function createDepartment(req: Request, res: Response) {
 export async function updateDepartment(req: Request, res: Response) {
   try {
     const { id } = req.params
-    const { name, code, allowed_modules, is_active } = req.body as {
-      name?: string; code?: string; allowed_modules?: string[]; is_active?: boolean
+    const { name, code, allowed_modules, is_active, requires_scheduling } = req.body as {
+      name?: string; code?: string; allowed_modules?: string[]; is_active?: boolean; requires_scheduling?: boolean
     }
     const { data, error } = await supabase
       .from('Department')
-      .update({ name, code: code?.toUpperCase(), allowed_modules, is_active, updated_at: new Date().toISOString(), updated_by: (req as any).user?.name || null })
+      .update({ name, code: code?.toUpperCase(), allowed_modules, is_active, requires_scheduling, updated_at: new Date().toISOString(), updated_by: (req as any).user?.name || null })
       .eq('id', id)
       .select(DEPT_SELECT)
       .single()

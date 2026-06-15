@@ -209,6 +209,42 @@ export const MODULES = {
       split:   'Tách số lượng',
     },
   },
+  work_skill: {
+    label: 'Vị trí & Skill',
+    actions: {
+      view:   'Xem danh sách',
+      manage: 'Thêm / Sửa / Xóa vị trí',
+      assign: 'Gán skill cho nhân viên',
+    },
+  },
+  leave: {
+    label: 'Nghỉ phép',
+    actions: {
+      view:    'Xem danh sách',
+      request: 'Gửi đơn nghỉ',
+      approve: 'Duyệt / Từ chối',
+      delete:  'Xóa đơn',
+    },
+  },
+  work_assignment: {
+    label: 'Phân công lịch làm việc',
+    actions: {
+      view:    'Xem phân công',
+      create:  'Tạo phiếu + Tự xếp',
+      edit:    'Sửa tay (đổi người)',
+      publish: 'Phát hành',
+      delete:  'Xóa phiếu',
+    },
+  },
+  attendance: {
+    label: 'Chấm công',
+    actions: {
+      view:     'Xem bảng công',
+      self_log: 'Tự chấm công (của mình)',
+      edit:     'Sửa công người khác',
+      report:   'Xem báo cáo',
+    },
+  },
 } as const
 
 export type ModuleKey = keyof typeof MODULES

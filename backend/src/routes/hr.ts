@@ -4,6 +4,7 @@ import * as leave from '../controllers/hr/leaveController'
 import * as asg from '../controllers/hr/assignmentController'
 import * as layout from '../controllers/hr/layoutController'
 import * as att from '../controllers/hr/attendanceController'
+import * as shiftRule from '../controllers/hr/shiftRuleController'
 import { requirePerm, requireAnyPerm } from '../middlewares/auth'
 
 const router = Router()
@@ -42,6 +43,11 @@ router.post('/sheets/:id/auto-assign',requirePerm('work_assignment', 'create'), 
 router.post('/sheets/:id/assign-one', requirePerm('work_assignment', 'edit'),    asg.assignOne)
 router.post('/sheets/:id/publish',    requirePerm('work_assignment', 'publish'), asg.publishSheet)
 router.delete('/sheets/:id',          requirePerm('work_assignment', 'delete'),  asg.deleteSheet)
+
+// ─── Quy tắc nghỉ giữa ca ────────────────────────────────────────────────────
+router.get('/shift-rules',        requirePerm('work_assignment', 'view'),   shiftRule.listShiftRules)
+router.post('/shift-rules',       requirePerm('work_assignment', 'create'), shiftRule.createShiftRule)
+router.delete('/shift-rules/:id', requirePerm('work_assignment', 'create'), shiftRule.deleteShiftRule)
 
 // ─── Chấm công ───────────────────────────────────────────────────────────────
 router.get('/attendance/report', requirePerm('attendance', 'report'), att.reportAttendance)

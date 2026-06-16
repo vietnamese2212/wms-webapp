@@ -2659,6 +2659,29 @@ export function usePublishSheet() {
     onSettled: (_d, _e, v) => { qc.invalidateQueries({ queryKey: ['hr-sheet', v.id] }); qc.invalidateQueries({ queryKey: ['hr-sheets'] }) },
   })
 }
+// ── Quy tắc nghỉ giữa ca ──
+export type ShiftRuleRow = { id: string; from_shift: string; to_shift: string }
+export function useShiftRules(enabled = true) {
+  return useQuery({
+    queryKey: ['hr-shift-rules'], enabled,
+    queryFn: async () => { const { data } = await apiClient.get('/hr/shift-rules'); return data.data as ShiftRuleRow[] },
+  })
+}
+export function useCreateShiftRule() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (b: { from_shift: string; to_shift: string }) => apiClient.post('/hr/shift-rules', b).then(r => r.data.data),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['hr-shift-rules'] }),
+  })
+}
+export function useDeleteShiftRule() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.delete(`/hr/shift-rules/${id}`).then(r => r.data.data),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['hr-shift-rules'] }),
+  })
+}
+
 export function useDeleteSheet() {
   const qc = useQueryClient()
   return useMutation({

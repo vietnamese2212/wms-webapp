@@ -30,6 +30,7 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   WorkLayout:           [['hr-layouts'], ['hr-layout']],
   WorkLayoutSkill:      [['hr-layout']],
   WorkLayoutJobTitle:   [['hr-layout']],
+  ShiftRestRule:        [['hr-shift-rules']],
   Attendance:           [['hr-attendance'], ['hr-att-report']],
 }
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Plus, Wand2, Send, Trash2, CalendarDays, Pencil, Save, Layers } from 'lucide-react'
+import { Plus, Wand2, Send, Trash2, CalendarDays, Pencil, Save, Layers, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -9,6 +9,7 @@ import {
   useWarehouses,
   useSheets, useSheet, useUpsertSheet, useAutoAssign, useAssignOne, usePublishSheet, useDeleteSheet,
   useLayouts, useLayout, useCreateLayout, useUpdateLayout, useDeleteLayout, useSetLayoutSkills, useSetLayoutJobTitles, useSkills, useJobTitles,
+  useShiftRules, useCreateShiftRule, useDeleteShiftRule,
   type SheetDetail, type LayoutRow,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
@@ -45,7 +46,7 @@ export default function Assignments() {
   const perms = user?.module_permissions as ModulePermissions | null ?? null
   const canCreate = can(perms, 'work_assignment', 'create')
 
-  const [tab, setTab] = useState<'daily' | 'layout'>('daily')
+  const [tab, setTab] = useState<'daily' | 'layout' | 'rules'>('daily')
 
   return (
     <div className="flex flex-col h-full sm:p-3">
@@ -55,12 +56,72 @@ export default function Assignments() {
           <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-medium">
             <button onClick={() => setTab('daily')} className={`px-3 py-1.5 ${tab === 'daily' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Phân công</button>
             <button onClick={() => setTab('layout')} className={`px-3 py-1.5 border-l border-slate-200 ${tab === 'layout' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Layout</button>
+            <button onClick={() => setTab('rules')} className={`px-3 py-1.5 border-l border-slate-200 ${tab === 'rules' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Quy tắc ca</button>
           </div>
         </div>
         <div className="flex-1 min-h-0 overflow-auto">
-          {tab === 'daily' ? <DailyTab canCreate={canCreate} perms={perms} /> : <LayoutTab canCreate={canCreate} />}
+          {tab === 'daily' ? <DailyTab canCreate={canCreate} perms={perms} />
+            : tab === 'layout' ? <LayoutTab canCreate={canCreate} />
+            : <ShiftRulesTab canManage={canCreate} />}
         </div>
       </div>
+    </div>
+  )
+}
+
+// ════════ TAB QUY TẮC CA (nghỉ giữa ca — không hardcode) ════════
+const RULE_SHIFTS = [{ v: 'CA1', l: 'Ca 1' }, { v: 'CA2', l: 'Ca 2' }, { v: 'CA3', l: 'Ca 3' }, { v: 'HC', l: 'Hành chính' }]
+const ruleLabel = (v: string) => RULE_SHIFTS.find(s => s.v === v)?.l ?? v
+function ShiftRulesTab({ canManage }: { canManage: boolean }) {
+  const { data: rules = [], isLoading } = useShiftRules()
+  const create = useCreateShiftRule()
+  const del = useDeleteShiftRule()
+  const [from, setFrom] = useState('CA3')
+  const [to, setTo] = useState('CA1')
+  const [err, setErr] = useState<string | null>(null)
+
+  async function add() {
+    setErr(null)
+    try { await create.mutateAsync({ from_shift: from, to_shift: to }) }
+    catch (e) { setErr(String((e as { response?: { data?: { error?: { message?: string } } } }).response?.data?.error?.message ?? (e as { message?: string })?.message ?? e)) }
+  }
+
+  // gom theo from_shift để hiển thị "làm X → cấm Y, Z"
+  const byFrom = new Map<string, typeof rules>()
+  for (const r of rules) { const a = byFrom.get(r.from_shift) ?? []; a.push(r); byFrom.set(r.from_shift, a) }
+
+  return (
+    <div className="p-3 space-y-3 max-w-3xl">
+      <p className="text-xs text-slate-500">Luật nghỉ giữa ca: làm <b>ca hôm trước</b> thì hôm sau <b>KHÔNG được</b> làm ca đã cấm (auto-xếp sẽ tránh). Sửa ở đây, không cần đụng code.</p>
+      {canManage && (
+        <div className="flex flex-wrap items-center gap-2 border border-slate-200 rounded-lg p-2 bg-slate-50/50">
+          <span className="text-xs font-medium text-slate-600">Thêm luật: làm</span>
+          <select value={from} onChange={e => setFrom(e.target.value)} className="border border-slate-200 rounded-md px-2 text-xs h-7 bg-white">{RULE_SHIFTS.map(s => <option key={s.v} value={s.v}>{s.l}</option>)}</select>
+          <span className="text-xs text-slate-600">hôm trước → hôm sau KHÔNG được</span>
+          <select value={to} onChange={e => setTo(e.target.value)} className="border border-slate-200 rounded-md px-2 text-xs h-7 bg-white">{RULE_SHIFTS.map(s => <option key={s.v} value={s.v}>{s.l}</option>)}</select>
+          <Button size="sm" className="h-7" onClick={add} disabled={from === to || create.isPending}><Plus className="h-4 w-4 mr-1" />Thêm</Button>
+        </div>
+      )}
+      {err && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{err}</div>}
+      {isLoading ? <p className="text-xs text-slate-400 py-6 text-center">Đang tải…</p>
+      : rules.length === 0 ? <p className="text-xs text-slate-400 py-6 text-center">Chưa có luật nào — auto-xếp không ràng buộc ca.</p>
+      : (
+        <div className="space-y-2">
+          {[...byFrom.entries()].map(([f, rs]) => (
+            <div key={f} className="border border-slate-200 rounded-lg p-2">
+              <div className="text-xs"><span className="text-slate-500">Làm</span> <b className="text-slate-700">{ruleLabel(f)}</b> <span className="text-slate-500">hôm trước → hôm sau không được:</span></div>
+              <div className="flex flex-wrap gap-1.5 mt-1.5">
+                {rs.map(r => (
+                  <span key={r.id} className="inline-flex items-center gap-1 text-xs bg-red-50 text-red-700 border border-red-200 rounded px-2 py-0.5">
+                    {ruleLabel(r.to_shift)}
+                    {canManage && <button onClick={() => del.mutate(r.id)} className="text-red-400 hover:text-red-700"><X className="h-3 w-3" /></button>}
+                  </span>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

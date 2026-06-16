@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { layoutSkillsDetailed, layoutJobTitleIds } from './layoutController'
+import { loadShiftRuleMap } from './shiftRuleController'
 
 type ReqUser = { sub?: string; name?: string }
 const userOf = (req: Request): ReqUser => (req as { user?: ReqUser }).user ?? {}
@@ -229,15 +230,47 @@ export async function autoAssign(req: Request, res: Response) {
     for (const d of demandList) remainingNeed.set(d.skill_id, d.required_count)
     for (const a of manualRows) if (a.skill_id) remainingNeed.set(a.skill_id, (remainingNeed.get(a.skill_id) ?? 0) - 1)
 
+    // ── 4b. Ràng buộc nghỉ giữa ca: ca ngày D-1 cấm 1 số ca ngày D (đọc từ ShiftRestRule) ──
+    const shiftTagOf = new Map(layoutSkills.map(s => [s.skill_id, s.shift_tag]))
+    const restRules = await loadShiftRuleMap()   // from_shift -> Set(to_shift bị cấm)
+    const empPrevShifts = new Map<string, Set<string>>()
+    if (restRules.size && candidateIds.length) {
+      const prevDate = (() => { const d = new Date(`${work_date}T00:00:00Z`); d.setUTCDate(d.getUTCDate() - 1); return d.toISOString().slice(0, 10) })()
+      const { data: pSheets } = await supabase.from('WorkAssignmentSheet').select('id').eq('warehouse_id', warehouse_id).eq('work_date', prevDate)
+      const pSheetIds = (pSheets ?? []).map((s: { id: string }) => s.id)
+      if (pSheetIds.length) {
+        const { data: pAsg } = await supabase.from('WorkAssignment').select('employee_id, skill_id')
+          .in('sheet_id', pSheetIds).eq('status', 'ASSIGNED').in('employee_id', candidateIds)
+        const pSkillIds = [...new Set(((pAsg ?? []) as { skill_id: string | null }[]).map(a => a.skill_id).filter(Boolean))] as string[]
+        const { data: pSkills } = pSkillIds.length ? await supabase.from('Skill').select('id, shift_tag').in('id', pSkillIds) : { data: [] }
+        const pShiftOf = new Map(((pSkills ?? []) as { id: string; shift_tag: string | null }[]).map(s => [s.id, s.shift_tag]))
+        for (const a of (pAsg ?? []) as { employee_id: string; skill_id: string | null }[]) {
+          const tag = a.skill_id ? pShiftOf.get(a.skill_id) : null
+          if (!tag) continue
+          const set = empPrevShifts.get(a.employee_id) ?? new Set<string>()
+          set.add(tag); empPrevShifts.set(a.employee_id, set)
+        }
+      }
+    }
+    const violatesRest = (eid: string, todayTag: string | null): boolean => {
+      if (!todayTag) return false
+      const prev = empPrevShifts.get(eid)
+      if (!prev) return false
+      for (const f of prev) if (restRules.get(f)?.has(todayTag)) return true
+      return false
+    }
+
     // ── 5. Greedy: vị trí khan hiếm trước ──
     const assignedEmp = new Set<string>(lockedEmp)
     const result = new Map<string, string>() // empId -> skillId (auto)
-    // candidates per skill (available, qualified, not locked)
+    // candidates per skill (available, qualified, not locked, không vi phạm nghỉ ca)
     const candBySkill = new Map<string, { eid: string; pri: number }[]>()
     for (const d of demandList) {
+      const todayTag = shiftTagOf.get(d.skill_id) ?? null
       const list: { eid: string; pri: number }[] = []
       for (const eid of available) {
         if (lockedEmp.has(eid)) continue
+        if (violatesRest(eid, todayTag)) continue
         const pri = empSkills.get(eid)?.get(d.skill_id)
         if (pri !== undefined) list.push({ eid, pri })
       }

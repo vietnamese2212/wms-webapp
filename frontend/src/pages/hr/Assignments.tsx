@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { Plus, Wand2, Send, Trash2, CalendarDays, Pencil, Save, Layers, X, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -231,6 +232,7 @@ function DailyTab({ canCreate, perms }: { canCreate: boolean; perms: ModulePermi
 // ─── Chi tiết 1 phiếu: bước Yêu cầu nhân lực → Kết quả phân công ─────────────
 function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; warehouses: { id: string; name: string }[]; perms: ModulePermissions | null; onBack: () => void }) {
   const { data: sheet, refetch } = useSheet(sheetId)
+  const qc = useQueryClient()
   const canCreate  = can(perms, 'work_assignment', 'create')
   const canEdit    = can(perms, 'work_assignment', 'edit')
   const canPublish = can(perms, 'work_assignment', 'publish')
@@ -264,6 +266,7 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
   const labelOf = (id: string | null) => { const s = id ? skillById.get(id) : null; return s ? positionLabel(s.job_title, s.name, s.shift_tag) : '— Chưa phân —' }
   const whName = warehouses.find(w => w.id === sheet.warehouse_id)?.name ?? ''
   const noteBySkill = new Map(sheet.demands.map(d => [d.skill_id, d.note]))
+  const shiftBySkill = new Map(sheet.skills.map(s => [s.id, s.shift_tag]))
   const assignedBySkill = new Map<string, number>()
   for (const a of sheet.assignments) if (a.status === 'ASSIGNED' && a.skill_id) assignedBySkill.set(a.skill_id, (assignedBySkill.get(a.skill_id) ?? 0) + 1)
   const totalRequired = Object.values(demands).reduce((a, b) => a + (b || 0), 0)
@@ -296,7 +299,18 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
   async function changePositions(employee_id: string, skill_ids: string[]) {
     if (locked) return
     setErr(null)
-    try { await setPositions.mutateAsync({ sheet_id: sheet!.id, employee_id, skill_ids }); await refetch() } catch (e) { setErr(String((e as { message?: string })?.message ?? e)) }
+    // Cập nhật cache NGAY (optimistic) → chips đổi tức thì, không chờ mạng
+    const emp = sheet!.assignments.find(a => a.employee_id === employee_id)?.employee ?? null
+    qc.setQueryData<SheetDetail>(['hr-sheet', sheetId], old => {
+      if (!old) return old
+      const others = old.assignments.filter(a => a.employee_id !== employee_id)
+      const rows = skill_ids.length
+        ? skill_ids.map(sk => ({ id: `tmp-${employee_id}-${sk}`, employee_id, skill_id: sk, status: 'ASSIGNED' as const, is_manual: true, note: null, employee: emp }))
+        : [{ id: `tmp-un-${employee_id}`, employee_id, skill_id: null, status: 'UNASSIGNED' as const, is_manual: true, note: null, employee: emp }]
+      return { ...old, assignments: [...others, ...rows] }
+    })
+    try { await setPositions.mutateAsync({ sheet_id: sheet!.id, employee_id, skill_ids }) }
+    catch (e) { setErr(String((e as { message?: string })?.message ?? e)); refetch() }
   }
   async function onDelete() {
     if (!confirm('Xóa phiếu phân công này?')) return
@@ -452,16 +466,19 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
               </table>
             </div>
           )}
-          {hasResult && <PrintArea sheet={sheet} whName={whName} labelOf={labelOf} sortedAsg={sortedAsg} noteBySkill={noteBySkill} />}
+          {hasResult && <PrintArea sheet={sheet} whName={whName} labelOf={labelOf} sortedAsg={sortedAsg} noteBySkill={noteBySkill} shiftBySkill={shiftBySkill} />}
         </div>
       )}
     </div>
   )
 }
 
-// ─── Bảng in ────────────────────────────────────────────────────────────────
-function PrintArea({ sheet, whName, labelOf, sortedAsg, noteBySkill }: {
-  sheet: SheetDetail; whName: string; labelOf: (id: string | null) => string; sortedAsg: SheetDetail['assignments']; noteBySkill: Map<string, string | null>
+// ─── Bảng in (giống mẫu Lịch làm việc) ──────────────────────────────────────
+// nền dòng theo ca: Ca 2 = vàng nhạt, Ca 3 = đỏ nhạt; còn lại trắng/zebra
+const PRINT_ROW_BG: Record<string, string> = { CA2: '#fef3c7', CA3: '#fee2e2' }
+function PrintArea({ sheet, whName, labelOf, sortedAsg, noteBySkill, shiftBySkill }: {
+  sheet: SheetDetail; whName: string; labelOf: (id: string | null) => string
+  sortedAsg: SheetDetail['assignments']; noteBySkill: Map<string, string | null>; shiftBySkill: Map<string, string | null>
 }) {
   return (
     <>
@@ -472,25 +489,37 @@ function PrintArea({ sheet, whName, labelOf, sortedAsg, noteBySkill }: {
           .hr-print-area, .hr-print-area * { visibility: visible; }
           .hr-print-area { position: absolute; left: 0 !important; top: 0; width: 100%; padding: 16px; }
           @page { size: A4 portrait; margin: 12mm; }
+          tr { page-break-inside: avoid; }
         }
+        .hr-print-area, .hr-print-area * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
         .hr-print-area table { width: 100%; border-collapse: collapse; font-size: 12px; }
-        .hr-print-area th, .hr-print-area td { border: 1px solid #555; padding: 4px 8px; text-align: left; }
-        .hr-print-area thead th { background: #1e293b; color: #fff; }
+        .hr-print-area th, .hr-print-area td { border: 1px solid #cbd5e1; padding: 5px 8px; text-align: left; }
+        .hr-print-area thead th { background: #1e293b; color: #fff; font-weight: 600; }
       `}</style>
       <div className="hr-print-area">
-        <h2 style={{ textAlign: 'center', fontWeight: 700, fontSize: 16, margin: 0 }}>BẢNG PHÂN CÔNG LỊCH LÀM VIỆC CHI TIẾT</h2>
-        <p style={{ textAlign: 'center', fontSize: 12, margin: '4px 0 2px' }}><b>Ngày: {formatDate(sheet.work_date)}</b> &nbsp;|&nbsp; <b>Bộ phận: {sheet.layout_name}</b></p>
-        <p style={{ textAlign: 'center', fontSize: 12, margin: '0 0 10px' }}>Kho: {whName}</p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
+          <div style={{ width: 56, height: 40, background: '#e11d48', color: '#fff', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontStyle: 'italic', fontSize: 18 }}>lof</div>
+          <div style={{ flex: 1, textAlign: 'center' }}>
+            <div style={{ fontWeight: 700, fontSize: 16 }}>BẢNG PHÂN CÔNG LỊCH LÀM VIỆC CHI TIẾT</div>
+            <div style={{ fontSize: 12, marginTop: 2 }}><b>Ngày: {formatDate(sheet.work_date)}</b> &nbsp;|&nbsp; <b>Bộ phận: {sheet.layout_name}</b></div>
+            <div style={{ fontSize: 12 }}>Kho: {whName}</div>
+          </div>
+          <div style={{ width: 56 }} />
+        </div>
         <table>
           <thead><tr><th style={{ width: 36 }}>STT</th><th>Họ và Tên</th><th>Chức danh</th><th>Vị trí phân công</th><th style={{ width: 120 }}>Note</th></tr></thead>
           <tbody>
-            {sortedAsg.map((a, i) => (
-              <tr key={a.id}>
-                <td>{i + 1}</td><td>{a.employee?.name ?? '—'}</td><td>{a.employee?.job_title ?? '—'}</td>
-                <td>{a.status === 'LEAVE' ? 'Nghỉ phép' : a.skill_id ? labelOf(a.skill_id) : 'Chưa phân công'}</td>
-                <td>{a.skill_id ? (noteBySkill.get(a.skill_id) ?? '') : ''}</td>
-              </tr>
-            ))}
+            {sortedAsg.map((a, i) => {
+              const tag = a.skill_id ? shiftBySkill.get(a.skill_id) : null
+              const bg = (a.status === 'ASSIGNED' && tag && PRINT_ROW_BG[tag]) ? PRINT_ROW_BG[tag] : (i % 2 ? '#f8fafc' : '#fff')
+              return (
+                <tr key={a.id} style={{ background: bg }}>
+                  <td>{i + 1}</td><td>{a.employee?.name ?? '—'}</td><td>{a.employee?.job_title ?? '—'}</td>
+                  <td>{a.status === 'LEAVE' ? 'Nghỉ phép' : a.skill_id ? labelOf(a.skill_id) : 'Chưa phân công'}</td>
+                  <td>{a.skill_id ? (noteBySkill.get(a.skill_id) ?? '') : ''}</td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>

@@ -181,12 +181,13 @@ export function EmployeeSkillSection({ employeeId }: { employeeId: string }) {
               return (
                 <div key={s.id} className="flex items-center gap-2 px-2.5 py-1.5">
                   <span className="text-sm text-slate-700 flex-1">{s.name}{s.shift_tag && <span className="ml-1 text-[10px] text-slate-400">{shiftLabel(s.shift_tag)}</span>}</span>
-                  <div className="flex items-center gap-1">
-                    <button type="button" disabled={!canAssign || v <= 0} onClick={() => setCell(s.id, v - 1)}
-                      className="h-6 w-6 rounded border border-slate-200 text-slate-500 hover:bg-slate-100 disabled:opacity-40 leading-none">−</button>
-                    <span className={`w-6 text-center text-xs font-semibold tabular-nums ${v > 0 ? 'text-sky-700' : 'text-slate-400'}`}>{v}</span>
-                    <button type="button" disabled={!canAssign || v >= 3} onClick={() => setCell(s.id, v + 1)}
-                      className="h-6 w-6 rounded border border-slate-200 text-slate-500 hover:bg-slate-100 disabled:opacity-40 leading-none">+</button>
+                  <div className="flex rounded border border-slate-200 overflow-hidden shrink-0">
+                    {[0, 1, 2, 3].map(n => (
+                      <button key={n} type="button" disabled={!canAssign} onClick={() => setCell(s.id, n)}
+                        className={`h-6 w-6 text-xs font-semibold tabular-nums leading-none ${n < 3 ? 'border-r border-slate-200' : ''} ${v === n ? 'bg-sky-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-100'} disabled:opacity-50`}>
+                        {n}
+                      </button>
+                    ))}
                   </div>
                 </div>
               )

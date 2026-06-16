@@ -2419,7 +2419,7 @@ export type SkillRow = {
 }
 
 // Danh mục skill — theo chức danh (job_title_id), phòng (department_id), hoặc tất cả (all)
-export function useSkills(params: { job_title_id?: string; department_id?: string; all?: boolean; include_inactive?: boolean }, enabled = true) {
+export function useSkills(params: { job_title_id?: string; department_id?: string; all?: boolean; include_inactive?: boolean; with_descendants?: boolean }, enabled = true) {
   const { all, ...rest } = params
   return useQuery({
     queryKey: ['hr-skills', params],

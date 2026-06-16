@@ -25,6 +25,9 @@ export function JobTitleSkillSection({ jobTitleId }: { jobTitleId: string }) {
   const canManage = can(perms, 'work_skill', 'manage')
 
   const { data: skills = [], isLoading } = useSkills({ job_title_id: jobTitleId, include_inactive: true })
+  // skill kế thừa từ chức danh cấp dưới (chỉ đọc — quản lý ở chức danh con)
+  const { data: withDesc = [] } = useSkills({ job_title_id: jobTitleId, with_descendants: true })
+  const inherited = withDesc.filter(s => s.job_title_id !== jobTitleId)
   const createSkill = useCreateSkill()
   const updateSkill = useUpdateSkill()
   const deleteSkill = useDeleteSkill()
@@ -94,6 +97,21 @@ export function JobTitleSkillSection({ jobTitleId }: { jobTitleId: string }) {
           </div>
         ))}
       </div>
+
+      {inherited.length > 0 && (
+        <div className="space-y-1">
+          <p className="text-[11px] font-medium text-amber-700">Skill kế thừa từ cấp dưới (chỉ đọc — quản lý ở chức danh con)</p>
+          <div className="border border-amber-200 bg-amber-50/40 rounded-lg divide-y divide-amber-100 max-h-40 overflow-y-auto">
+            {inherited.map(s => (
+              <div key={s.id} className="flex items-center gap-2 px-2.5 py-1 text-slate-500">
+                <span className="text-xs flex-1">{s.name}{!s.is_active && <span className="ml-1 text-[10px]">(ẩn)</span>}</span>
+                <span className="text-[10px] text-amber-600">{s.job_title}</span>
+                <span className="text-[10px] text-slate-400">{shiftLabel(s.shift_tag)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

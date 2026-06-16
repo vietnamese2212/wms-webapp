@@ -37,9 +37,9 @@ async function scopeJobTitleIds(rootJtId: string): Promise<string[]> {
 
 export async function listSkills(req: Request, res: Response) {
   try {
-    const { job_title_id, department_id, include_inactive } = req.query as Record<string, string>
+    const { job_title_id, department_id, include_inactive, with_descendants } = req.query as Record<string, string>
     let jtIds: string[] | null = null
-    if (job_title_id)      jtIds = [job_title_id]
+    if (job_title_id)      jtIds = with_descendants === 'true' ? await scopeJobTitleIds(job_title_id) : [job_title_id]
     else if (department_id) jtIds = await jobTitleIdsOfDept(department_id)
 
     let q = supabase.from('Skill').select(SKILL_SELECT).order('sort_order').order('name')

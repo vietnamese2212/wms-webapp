@@ -133,11 +133,11 @@ function DailyTab({ canCreate, perms }: { canCreate: boolean; perms: ModulePermi
   const [wh, setWh]             = useState<string>(saved.wh ?? '')
   const [layoutId, setLayoutId] = useState<string>(saved.layout ?? '')
   const [from, setFrom]         = useState<string>(saved.from ?? MONTH_START())
-  const [to, setTo]             = useState<string>(TODAY())
+  const [to, setTo]             = useState<string>(saved.to ?? TODAY())
   const [cDate, setCDate]       = useState<string>(TODAY())
   const [sel, setSel]           = useState<string | null>(null)
   const [err, setErr]           = useState<string | null>(null)
-  useEffect(() => { localStorage.setItem(SCOPE_KEY, JSON.stringify({ wh, layout: layoutId, from })) }, [wh, layoutId, from])
+  useEffect(() => { localStorage.setItem(SCOPE_KEY, JSON.stringify({ wh, layout: layoutId, from, to })) }, [wh, layoutId, from, to])
 
   const { data: layouts = [] } = useLayouts(wh || undefined)
   useEffect(() => { if (layoutId && !layouts.some(l => l.id === layoutId)) setLayoutId('') }, [layouts, layoutId])
@@ -230,7 +230,7 @@ function DailyTab({ canCreate, perms }: { canCreate: boolean; perms: ModulePermi
 
 // ─── Chi tiết 1 phiếu: bước Yêu cầu nhân lực → Kết quả phân công ─────────────
 function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; warehouses: { id: string; name: string }[]; perms: ModulePermissions | null; onBack: () => void }) {
-  const { data: sheet } = useSheet(sheetId)
+  const { data: sheet, refetch } = useSheet(sheetId)
   const canCreate  = can(perms, 'work_assignment', 'create')
   const canEdit    = can(perms, 'work_assignment', 'edit')
   const canPublish = can(perms, 'work_assignment', 'publish')
@@ -287,12 +287,13 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
     try {
       // gộp lưu yêu cầu + tự xếp trong 1 request
       await auto.mutateAsync({ sheetId: sheet!.id, demands: demandList() })
+      await refetch()   // chờ tải lại kết quả trước khi chuyển bước (tránh hiện "chưa có kết quả")
       setStep('result')
     } catch (e) { setErr(String((e as { message?: string })?.message ?? e)) }
   }
   async function changePos(employee_id: string, skill_id: string | null) {
     setErr(null)
-    try { await assignOne.mutateAsync({ sheet_id: sheet!.id, employee_id, skill_id }) } catch (e) { setErr(String((e as { message?: string })?.message ?? e)) }
+    try { await assignOne.mutateAsync({ sheet_id: sheet!.id, employee_id, skill_id }); await refetch() } catch (e) { setErr(String((e as { message?: string })?.message ?? e)) }
   }
   async function onDelete() {
     if (!confirm('Xóa phiếu phân công này?')) return

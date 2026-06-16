@@ -2485,7 +2485,7 @@ export type LeaveRow = {
   date_from: string; date_to: string; leave_type: string; reason: string | null
   status: 'PENDING' | 'APPROVED' | 'REJECTED'; approved_by: string | null; approved_at: string | null
   created_at: string
-  employee: { id: string; name: string; employee_code: string; department_id: string | null } | null
+  employee: { id: string; name: string; employee_code: string; department_id: string | null; job_title: string | null } | null
 }
 export function useLeaves(params: { warehouse_id?: string; department_id?: string; employee_id?: string; status?: string; date_from?: string; date_to?: string; to_approve?: boolean; direct?: boolean }, enabled = true) {
   return useQuery({

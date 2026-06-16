@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Save, Trash2, ChevronLeft, ChevronRight, Plus, CheckCircle2, Clock } from 'lucide-react'
+import { Save, Trash2, ChevronLeft, ChevronRight, Plus, CheckCircle2, Clock, Flag } from 'lucide-react'
 import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, addDays, addMonths, subMonths, isSameMonth } from 'date-fns'
 import { vi } from 'date-fns/locale'
 import { Button } from '@/components/ui/button'
@@ -9,7 +9,7 @@ import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import {
-  useWarehouses, useDepartments,
+  useWarehouses, useDepartments, useJobTitles,
   useAttendance, useUpsertAttendance, useDeleteAttendance, type AttendanceRow,
   useLeaves,
 } from '@/api/hooks'
@@ -56,6 +56,26 @@ const KIND_CELL: Record<string, string> = {
 const KIND_SHORT: Record<string, string> = { CA1: 'Ca 1', CA2: 'Ca 2', CA3: 'Ca 3', HC: 'HC', LEAVE: 'Nghỉ' }
 const DOW = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN']
 const dowOf = (ds: string) => DOW[(new Date(`${ds}T00:00:00`).getDay() + 6) % 7]
+
+// Ngày nghỉ lễ VN — dương lịch cố định (lặp hằng năm, khớp MM-DD)
+const VN_HOLIDAYS_FIXED: Record<string, string> = {
+  '01-01': 'Tết Dương lịch',
+  '04-30': 'Giải phóng miền Nam',
+  '05-01': 'Quốc tế Lao động',
+  '09-02': 'Quốc khánh',
+}
+// Ngày lễ âm lịch đã quy đổi sang dương lịch — CẦN CẬP NHẬT THEO TỪNG NĂM
+const VN_HOLIDAYS_DATE: Record<string, string> = {
+  // 2026 (Bính Ngọ)
+  '2026-02-16': 'Giao thừa (30 Tết)',
+  '2026-02-17': 'Tết Nguyên đán (mùng 1)',
+  '2026-02-18': 'Tết Nguyên đán (mùng 2)',
+  '2026-02-19': 'Tết Nguyên đán (mùng 3)',
+  '2026-02-20': 'Tết Nguyên đán (mùng 4)',
+  '2026-02-21': 'Tết Nguyên đán (mùng 5)',
+  '2026-04-26': 'Giỗ Tổ Hùng Vương (10/3 ÂL)',
+}
+const holidayOf = (ds: string): string | null => VN_HOLIDAYS_DATE[ds] ?? VN_HOLIDAYS_FIXED[ds.slice(5)] ?? null
 
 export default function Attendance() {
   const user  = useAuthStore(s => s.user)
@@ -145,6 +165,7 @@ function MySection() {
 
   const selEntry = sel ? byDate.get(sel) : undefined
   const selLeave = sel ? leaveByDate.get(sel) : undefined
+  const selHoliday = sel ? holidayOf(sel) : null
   const isPast = !!sel && sel < today
   const approvedLeave = selLeave === 'APPROVED'                 // đã duyệt nghỉ → khỏi chấm công
   const locked = (isPast && !canEditPast) || approvedLeave
@@ -194,22 +215,27 @@ function MySection() {
               const isFuture = ds > today
               const isSel = ds === sel
               const cong = e ? toCong(rowTotal(e)) : 0
+              const hol = holidayOf(ds)
               return (
                 <button key={ds} type="button" disabled={isFuture}
                   onClick={() => setSel(ds)}
-                  className={`relative min-h-[58px] rounded-lg border p-1 text-left flex flex-col gap-0.5 transition-colors
+                  className={`relative min-h-[58px] rounded-lg border p-1 text-left flex flex-col transition-colors
                     ${isSel ? 'border-sky-500 ring-1 ring-sky-400' : 'border-slate-200'}
                     ${!inMonth ? 'opacity-40' : ''} ${isFuture ? 'bg-slate-50 cursor-not-allowed' : 'hover:border-sky-300'}
                     ${e ? KIND_CELL[e.kind] : 'bg-white'}`}>
-                  <div className="flex items-center justify-between">
-                    <span className={`text-[11px] font-semibold leading-none ${isToday ? 'text-sky-600' : ''}`}>{format(day, 'd')}</span>
-                    {lv === 'APPROVED' && <CheckCircle2 className="h-3 w-3 text-slate-500" aria-label="Đã duyệt nghỉ" />}
-                    {lv === 'PENDING' && <Clock className="h-3 w-3 text-amber-500" aria-label="Chờ duyệt nghỉ" />}
+                  <div className="flex items-center justify-between gap-0.5">
+                    <span className={`text-[11px] font-semibold leading-none ${hol ? 'text-red-600' : isToday ? 'text-sky-600' : ''}`}>{format(day, 'd')}</span>
+                    <span className="flex items-center gap-0.5">
+                      {hol && <Flag className="h-2.5 w-2.5 text-red-500" aria-label={hol} />}
+                      {lv === 'APPROVED' && <CheckCircle2 className="h-3 w-3 text-slate-500" aria-label="Đã duyệt nghỉ" />}
+                      {lv === 'PENDING' && <Clock className="h-3 w-3 text-amber-500" aria-label="Chờ duyệt nghỉ" />}
+                    </span>
                   </div>
-                  {e && <span className="text-[10px] leading-tight font-medium">{KIND_SHORT[e.kind]}</span>}
-                  {e && e.kind !== 'LEAVE' && <span className="mt-auto text-sm font-bold leading-none tabular-nums">{cong}<span className="text-[8px] font-normal text-slate-400 ml-0.5">công</span></span>}
-                  {e && (e.ot_hours > 0 || e.early_leave_hours > 0) && (
-                    <span className="text-[8px] leading-none text-slate-500">{e.ot_hours > 0 ? `OT ${e.ot_hours}h` : ''}{e.early_leave_hours > 0 ? ` −${e.early_leave_hours}h` : ''}</span>
+                  {e && (
+                    <div className="mt-auto flex items-end justify-between gap-0.5 leading-none">
+                      <span className="text-[10px] font-medium">{KIND_SHORT[e.kind]}{(e.ot_hours > 0 || e.early_leave_hours > 0) && <span className="text-[8px] text-slate-500 ml-0.5">{e.ot_hours > 0 ? `+${e.ot_hours}` : `−${e.early_leave_hours}`}</span>}</span>
+                      {e.kind !== 'LEAVE' && <span className="text-xs font-bold tabular-nums">{cong}</span>}
+                    </div>
                   )}
                 </button>
               )
@@ -229,7 +255,8 @@ function MySection() {
             <div className="border border-dashed border-slate-200 rounded-lg p-4 text-center text-xs text-slate-400">Chọn 1 ngày trên lịch để chấm công</div>
           ) : (
             <div className="border border-slate-200 rounded-lg p-3 bg-slate-50/50 space-y-2.5">
-              <p className="text-sm font-medium text-slate-700">{formatDate(sel)}{isPast && <span className="text-[10px] text-slate-400 ml-1">(ngày đã qua)</span>}</p>
+              <p className="text-sm font-medium text-slate-700">{formatDate(sel)} <span className="text-[11px] text-slate-400">({dowOf(sel)})</span>{isPast && <span className="text-[10px] text-slate-400 ml-1">(ngày đã qua)</span>}</p>
+              {selHoliday && <div className="text-[11px] text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5 flex items-center gap-1.5"><Flag className="h-3.5 w-3.5 shrink-0" /> {selHoliday}</div>}
               {approvedLeave ? (
                 <div className="text-[11px] text-slate-700 bg-slate-100 border border-slate-200 rounded px-2 py-1.5 flex items-start gap-1.5"><CheckCircle2 className="h-3.5 w-3.5 mt-0.5 text-slate-500 shrink-0" /> Đơn nghỉ phép đã được duyệt — ngày này tự tính là Nghỉ phép, không cần chấm công.</div>
               ) : (
@@ -324,25 +351,28 @@ function TeamSection({ perms }: { perms: ModulePermissions | null }) {
   const canEdit = can(perms, 'attendance', 'edit')
   const { data: warehouses = [] } = useWarehouses(true)
   const { data: departments = [] } = useDepartments()
+  const { data: jobTitles = [] } = useJobTitles()
   const del = useDeleteAttendance()
 
-  // nhớ filter cũ (kho/phòng/tìm/Tới ngày); riêng Từ ngày luôn mặc định hôm nay
+  // nhớ filter cũ (kho/phòng/tìm/chức danh/Từ ngày); riêng Tới ngày luôn mặc định hôm nay
   const saved = (() => { try { return JSON.parse(localStorage.getItem(TEAM_FILTER_KEY) || '{}') } catch { return {} } })()
   const [view, setView] = useState<'matrix' | 'raw'>('matrix')
   const [wh, setWh]     = useState<string>(saved.wh ?? '')
   const [dept, setDept] = useState<string>(saved.dept ?? '')
+  const [jt, setJt]     = useState<string>(saved.jt ?? '')
   const [q, setQ]       = useState<string>(saved.q ?? '')
-  const [from, setFrom] = useState(TODAY())
-  const [to, setTo]     = useState<string>(saved.to ?? TODAY())
-  useEffect(() => { localStorage.setItem(TEAM_FILTER_KEY, JSON.stringify({ wh, dept, q, to })) }, [wh, dept, q, to])
+  const [from, setFrom] = useState<string>(saved.from ?? MONTH_START())
+  const [to, setTo]     = useState(TODAY())
+  useEffect(() => { localStorage.setItem(TEAM_FILTER_KEY, JSON.stringify({ wh, dept, jt, q, from })) }, [wh, dept, jt, q, from])
 
   const { data: rows = [], isLoading } = useAttendance(
     { warehouse_id: wh || undefined, department_id: dept || undefined, date_from: from, date_to: to }, true,
   )
   const ql = q.trim().toLowerCase()
-  const filtered = ql
-    ? rows.filter(r => (r.employee?.name ?? '').toLowerCase().includes(ql) || (r.employee?.employee_code ?? '').toLowerCase().includes(ql))
-    : rows
+  const filtered = rows.filter(r =>
+    (!jt || r.employee?.job_title === jt) &&
+    (!ql || (r.employee?.name ?? '').toLowerCase().includes(ql) || (r.employee?.employee_code ?? '').toLowerCase().includes(ql)),
+  )
 
   const sum = useMemo(() => {
     let workDays = 0, ot = 0, early = 0, leave = 0
@@ -371,6 +401,10 @@ function TeamSection({ perms }: { perms: ModulePermissions | null }) {
         <select value={dept} onChange={e => setDept(e.target.value)} className="border border-slate-200 rounded-md px-2.5 text-xs h-7 bg-white text-slate-700">
           <option value="">Tất cả phòng</option>
           {(departments as { id: string; name: string }[]).map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+        </select>
+        <select value={jt} onChange={e => setJt(e.target.value)} className="border border-slate-200 rounded-md px-2.5 text-xs h-7 bg-white text-slate-700">
+          <option value="">Tất cả chức danh</option>
+          {jobTitles.map(j => <option key={j.id} value={j.name}>{j.name}</option>)}
         </select>
         <Input value={q} onChange={e => setQ(e.target.value)} placeholder="Tìm tên / mã NV…" className="h-7 text-xs w-44" />
         <div className="flex-1" />
@@ -414,7 +448,9 @@ function MatrixTable({ rows, from, to }: { rows: AttendanceRow[]; from: string; 
       <table className="text-xs min-w-max border-collapse">
         <thead className="bg-slate-50 text-[10px] text-slate-500">
           <tr>
-            <th className="text-left px-2 py-1.5 font-medium sticky left-0 z-20 bg-slate-50 border-r border-slate-200 min-w-[160px]">Nhân viên · Mã NV</th>
+            <th className="text-left px-2 py-1.5 font-medium sticky left-0 z-20 bg-slate-50 border-r border-slate-200 min-w-[120px]">Nhân viên</th>
+            <th className="text-left px-2 py-1.5 font-medium border-r border-slate-100 min-w-[70px]">Mã NV</th>
+            <th className="text-left px-2 py-1.5 font-medium border-r border-slate-200 min-w-[100px]">Chức danh</th>
             {dates.map(d => (
               <th key={d} className="px-1 py-1 font-medium text-center border-r border-slate-100 min-w-[42px]">
                 <div className="text-[9px] text-slate-400">{dowOf(d)}</div>
@@ -426,13 +462,12 @@ function MatrixTable({ rows, from, to }: { rows: AttendanceRow[]; from: string; 
         </thead>
         <tbody className="divide-y divide-slate-100">
           {emps.length === 0 ? (
-            <tr><td colSpan={dates.length + 2} className="text-center text-slate-400 py-6">Chưa có dữ liệu</td></tr>
+            <tr><td colSpan={dates.length + 4} className="text-center text-slate-400 py-6">Chưa có dữ liệu</td></tr>
           ) : emps.map(g => (
             <tr key={g.emp?.id ?? Math.random()} className="hover:bg-slate-50/60">
-              <td className="px-2 py-1 sticky left-0 z-10 bg-white border-r border-slate-200">
-                <div className="font-medium text-slate-700 leading-tight">{g.emp?.name ?? '—'}</div>
-                <div className="text-[10px] text-slate-400 leading-tight"><span className="font-mono">{g.emp?.employee_code ?? '—'}</span>{g.emp?.job_title ? ` · ${g.emp.job_title}` : ''}</div>
-              </td>
+              <td className="px-2 py-1 sticky left-0 z-10 bg-white border-r border-slate-200 font-medium text-slate-700">{g.emp?.name ?? '—'}</td>
+              <td className="px-2 py-1 font-mono text-slate-500 border-r border-slate-100">{g.emp?.employee_code ?? '—'}</td>
+              <td className="px-2 py-1 text-slate-600 border-r border-slate-200">{g.emp?.job_title ?? '—'}</td>
               {dates.map(d => {
                 const e = g.byDate.get(d)
                 return (
@@ -465,6 +500,7 @@ function AttTable({ rows, onDelete, showName }: { rows: AttendanceRow[]; onDelet
             {showName && <th className="text-left px-2 py-2 font-medium">Mã NV</th>}
             {showName && <th className="text-left px-2 py-2 font-medium">Chức danh</th>}
             <th className="text-left px-2 py-2 font-medium">Ngày</th>
+            <th className="text-left px-2 py-2 font-medium">Thứ</th>
             <th className="text-left px-2 py-2 font-medium">Loại</th>
             <th className="text-right px-2 py-2 font-medium">Giờ OT</th>
             <th className="text-right px-2 py-2 font-medium">Về sớm</th>
@@ -475,13 +511,14 @@ function AttTable({ rows, onDelete, showName }: { rows: AttendanceRow[]; onDelet
         </thead>
         <tbody className="divide-y divide-slate-100">
           {rows.length === 0 ? (
-            <tr><td colSpan={showName ? 9 : 6} className="text-center text-slate-400 py-6">Chưa có dữ liệu</td></tr>
+            <tr><td colSpan={showName ? 10 : 7} className="text-center text-slate-400 py-6">Chưa có dữ liệu</td></tr>
           ) : rows.map(r => (
             <tr key={r.id} className="hover:bg-slate-50/60">
               {showName && <td className="px-2 py-1.5 font-medium text-slate-700">{r.employee?.name ?? '—'}</td>}
               {showName && <td className="px-2 py-1.5 font-mono text-slate-500">{r.employee?.employee_code ?? '—'}</td>}
               {showName && <td className="px-2 py-1.5 text-slate-600">{r.employee?.job_title ?? '—'}</td>}
               <td className="px-2 py-1.5 tabular-nums">{formatDate(r.work_date)}</td>
+              <td className="px-2 py-1.5 text-slate-500">{dowOf(r.work_date)}</td>
               <td className="px-2 py-1.5"><Badge variant={kindVariant(r.kind)}>{kindLabel(r.kind)}</Badge></td>
               <td className="px-2 py-1.5 text-right tabular-nums">{r.ot_hours > 0 ? r.ot_hours : '—'}</td>
               <td className="px-2 py-1.5 text-right tabular-nums">{r.early_leave_hours > 0 ? r.early_leave_hours : '—'}</td>

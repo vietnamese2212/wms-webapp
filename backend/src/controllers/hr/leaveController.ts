@@ -8,13 +8,20 @@ const userOf = (req: Request): ReqUser => (req as { user?: ReqUser }).user ?? {}
 
 const LEAVE_SELECT = 'id, employee_id, warehouse_id, date_from, date_to, leave_type, reason, status, approved_by, approved_at, created_at, updated_at'
 
-// gắn thông tin NV (tên, mã, phòng)
+// gắn thông tin NV (tên, mã, phòng, chức danh)
 async function attachEmployees<T extends { employee_id: string }>(rows: T[]) {
   if (!rows.length) return rows.map(r => ({ ...r, employee: null }))
   const ids = [...new Set(rows.map(r => r.employee_id))]
   const { data: emps } = await supabase.from('Employee')
     .select('id, name, employee_code, department_id, job_title_id, warehouse_scope').in('id', ids)
-  const map = new Map((emps ?? []).map((e: { id: string }) => [e.id, e]))
+  const empList = (emps ?? []) as { id: string; job_title_id: string | null }[]
+  // join tên chức danh
+  const jtIds = [...new Set(empList.map(e => e.job_title_id).filter((x): x is string => !!x))]
+  const { data: jts } = jtIds.length
+    ? await supabase.from('JobTitle').select('id, name').in('id', jtIds)
+    : { data: [] as { id: string; name: string }[] }
+  const jtMap = new Map(((jts ?? []) as { id: string; name: string }[]).map(j => [j.id, j.name]))
+  const map = new Map(empList.map(e => [e.id, { ...e, job_title: jtMap.get(e.job_title_id ?? '') ?? null }]))
   return rows.map(r => ({ ...r, employee: map.get(r.employee_id) ?? null }))
 }
 

@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import {
-  useWarehouses, useDepartments, useEmployeeRecords,
+  useWarehouses, useDepartments, useEmployeeRecords, useJobTitles,
   useLeaves, useCreateLeave, useDecideLeave, useDeleteLeave,
   type LeaveRow,
 } from '@/api/hooks'
@@ -42,21 +42,24 @@ export function LeaveSection() {
 
   const { data: warehouses = [] } = useWarehouses(true)
   const { data: departments = [] } = useDepartments()
+  const { data: jobTitles = [] } = useJobTitles()
 
   const saved = (() => { try { return JSON.parse(localStorage.getItem(SCOPE_KEY) || '{}') } catch { return {} } })()
   const [wh, setWh]       = useState<string>(saved.wh ?? '')
   const [dept, setDept]   = useState<string>(saved.dept ?? '')
+  const [jt, setJt]       = useState<string>(saved.jt ?? '')   // lọc theo tên chức danh
   const [status, setStatus] = useState<string>('')
   const [from, setFrom]   = useState<string>('')
   const [to, setTo]       = useState<string>('')
   const [mine, setMine]   = useState(false)   // chờ tôi duyệt (toàn bộ cấp dưới)
   const [direct, setDirect] = useState(false) // chỉ cấp dưới trực tiếp
-  useEffect(() => { localStorage.setItem(SCOPE_KEY, JSON.stringify({ wh, dept })) }, [wh, dept])
+  useEffect(() => { localStorage.setItem(SCOPE_KEY, JSON.stringify({ wh, dept, jt })) }, [wh, dept, jt])
 
-  const { data: leaves = [], isLoading } = useLeaves(
+  const { data: leavesRaw = [], isLoading } = useLeaves(
     { warehouse_id: wh || undefined, department_id: dept || undefined, status: status || undefined, date_from: from || undefined, date_to: to || undefined, to_approve: mine || undefined, direct: (mine && direct) || undefined },
     true,
   )
+  const leaves = jt ? leavesRaw.filter(l => l.employee?.job_title === jt) : leavesRaw
   const decide = useDecideLeave()
   const del    = useDeleteLeave()
   const [err, setErr] = useState<string | null>(null)
@@ -97,6 +100,10 @@ export function LeaveSection() {
           <option value="">Tất cả phòng</option>
           {(departments as { id: string; name: string }[]).map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
         </select>
+        <select value={jt} onChange={e => setJt(e.target.value)} className="border border-slate-200 rounded-md px-2.5 text-xs h-7 bg-white text-slate-700">
+          <option value="">Tất cả chức danh</option>
+          {jobTitles.map(j => <option key={j.id} value={j.name}>{j.name}</option>)}
+        </select>
         {canApprove && (
           <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
             <input type="checkbox" checked={mine} onChange={e => setMine(e.target.checked)} className="h-3.5 w-3.5 rounded accent-sky-600" />
@@ -128,6 +135,8 @@ export function LeaveSection() {
           <thead className="bg-slate-50 text-[10px] text-slate-500">
             <tr>
               <th className="text-left px-2 py-2 font-medium">Nhân viên</th>
+              <th className="text-left px-2 py-2 font-medium">Mã NV</th>
+              <th className="text-left px-2 py-2 font-medium">Chức danh</th>
               <th className="text-left px-2 py-2 font-medium">Từ ngày</th>
               <th className="text-left px-2 py-2 font-medium">Đến ngày</th>
               <th className="text-left px-2 py-2 font-medium">Loại</th>
@@ -139,17 +148,16 @@ export function LeaveSection() {
           </thead>
           <tbody className="divide-y divide-slate-100">
             {isLoading ? (
-              <tr><td colSpan={8} className="text-center text-slate-400 py-6">Đang tải…</td></tr>
+              <tr><td colSpan={10} className="text-center text-slate-400 py-6">Đang tải…</td></tr>
             ) : leaves.length === 0 ? (
-              <tr><td colSpan={8} className="text-center text-slate-400 py-6">Không có đơn nghỉ</td></tr>
+              <tr><td colSpan={10} className="text-center text-slate-400 py-6">Không có đơn nghỉ</td></tr>
             ) : leaves.map(l => {
               const meta = STATUS_META[l.status]
               return (
                 <tr key={l.id} className="hover:bg-slate-50/60">
-                  <td className="px-2 py-1.5">
-                    <div className="font-medium text-slate-700">{l.employee?.name ?? '—'}</div>
-                    <div className="text-[10px] text-slate-400">{l.employee?.employee_code}</div>
-                  </td>
+                  <td className="px-2 py-1.5 font-medium text-slate-700">{l.employee?.name ?? '—'}</td>
+                  <td className="px-2 py-1.5 font-mono text-slate-500">{l.employee?.employee_code ?? '—'}</td>
+                  <td className="px-2 py-1.5 text-slate-600">{l.employee?.job_title ?? '—'}</td>
                   <td className="px-2 py-1.5 tabular-nums">{formatDate(l.date_from)}</td>
                   <td className="px-2 py-1.5 tabular-nums">{formatDate(l.date_to)}</td>
                   <td className="px-2 py-1.5">{typeLabel(l.leave_type)}</td>

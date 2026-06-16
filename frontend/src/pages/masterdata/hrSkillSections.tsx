@@ -130,12 +130,14 @@ export function EmployeeSkillSection({ employeeId }: { employeeId: string }) {
 
   useEffect(() => {
     if (!data) return
+    // Lần đầu (chưa cấu hình skill nào) → mặc định tất cả = 1; nếu đã có → giữ giá trị đã lưu
+    const hasSaved = data.skills.some(s => s.priority > 0)
     const m: Record<string, number> = {}
-    for (const s of data.skills) m[s.id] = s.priority
-    setEdits(m); setDirty(false)
+    for (const s of data.skills) m[s.id] = hasSaved ? s.priority : 1
+    setEdits(m); setDirty(!hasSaved)
   }, [data])
 
-  function setCell(skillId: string, v: number) { setEdits(p => ({ ...p, [skillId]: v })); setDirty(true) }
+  function setCell(skillId: string, v: number) { setEdits(p => ({ ...p, [skillId]: Math.max(0, Math.min(3, v)) })); setDirty(true) }
   async function save() {
     setErr(null)
     try {
@@ -164,7 +166,7 @@ export function EmployeeSkillSection({ employeeId }: { employeeId: string }) {
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <p className="text-xs font-medium text-slate-600 flex items-center gap-1"><Award className="h-3.5 w-3.5" /> Kỹ năng / Vị trí (ưu tiên 1 = chính)</p>
+        <p className="text-xs font-medium text-slate-600 flex items-center gap-1"><Award className="h-3.5 w-3.5" /> Kỹ năng / Vị trí (0 = không làm · 1 = chính · 2–3 = phụ)</p>
         {canAssign && <Button size="sm" variant={dirty ? 'default' : 'outline'} disabled={!dirty || setSkills.isPending} onClick={save} className="h-7"><Save className="h-3.5 w-3.5 mr-1" />Lưu</Button>}
       </div>
       {err && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</div>}
@@ -179,9 +181,13 @@ export function EmployeeSkillSection({ employeeId }: { employeeId: string }) {
               return (
                 <div key={s.id} className="flex items-center gap-2 px-2.5 py-1.5">
                   <span className="text-sm text-slate-700 flex-1">{s.name}{s.shift_tag && <span className="ml-1 text-[10px] text-slate-400">{shiftLabel(s.shift_tag)}</span>}</span>
-                  <input type="number" min={0} max={9} value={v || ''} disabled={!canAssign} placeholder="·"
-                    onChange={e => setCell(s.id, Math.max(0, Math.min(9, Number(e.target.value) || 0)))}
-                    className={`w-10 h-7 text-center text-xs rounded border outline-none ${v > 0 ? 'border-sky-300 bg-sky-50 text-sky-700 font-semibold' : 'border-slate-200 text-slate-400'} focus:border-sky-500 disabled:bg-slate-50`} />
+                  <div className="flex items-center gap-1">
+                    <button type="button" disabled={!canAssign || v <= 0} onClick={() => setCell(s.id, v - 1)}
+                      className="h-6 w-6 rounded border border-slate-200 text-slate-500 hover:bg-slate-100 disabled:opacity-40 leading-none">−</button>
+                    <span className={`w-6 text-center text-xs font-semibold tabular-nums ${v > 0 ? 'text-sky-700' : 'text-slate-400'}`}>{v}</span>
+                    <button type="button" disabled={!canAssign || v >= 3} onClick={() => setCell(s.id, v + 1)}
+                      className="h-6 w-6 rounded border border-slate-200 text-slate-500 hover:bg-slate-100 disabled:opacity-40 leading-none">+</button>
+                  </div>
                 </div>
               )
             })}

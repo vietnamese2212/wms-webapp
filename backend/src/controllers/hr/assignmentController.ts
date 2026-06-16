@@ -167,6 +167,7 @@ export async function autoAssign(req: Request, res: Response) {
     if (!sheet) return fail(res, 'Không tìm thấy phiếu', 404)
     const { warehouse_id, layout_id, work_date } = sheet as { warehouse_id: string; layout_id: string | null; work_date: string }
     if (!layout_id) return fail(res, 'Phiếu chưa gắn layout', 400)
+    if ((sheet as { status: string }).status === 'PUBLISHED') return fail(res, 'Phiếu đã phát hành — Hoàn tác trước khi xếp lại', 409)
 
     // Gộp lưu yêu cầu vào luôn (1 round-trip): nếu body có demands → cập nhật trước khi xếp
     const bodyDemands = (req.body as { demands?: { skill_id: string; required_count: number; note?: string }[] })?.demands
@@ -293,6 +294,9 @@ export async function assignOne(req: Request, res: Response) {
     const { id } = req.params // sheet_id
     const { employee_id, skill_id } = req.body as { employee_id?: string; skill_id?: string | null }
     if (!employee_id) return fail(res, 'employee_id là bắt buộc', 400)
+
+    const { data: sh } = await supabase.from('WorkAssignmentSheet').select('status').eq('id', id).maybeSingle()
+    if ((sh as { status: string } | null)?.status === 'PUBLISHED') return fail(res, 'Phiếu đã phát hành — Hoàn tác trước khi sửa', 409)
 
     const { data: existing } = await supabase.from('WorkAssignment').select('id, status')
       .eq('sheet_id', id).eq('employee_id', employee_id).maybeSingle()

@@ -197,6 +197,7 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
   if (!sheet) return <div className="p-3 space-y-2"><Button size="sm" variant="ghost" className="h-7" onClick={onBack}>← Danh sách</Button><p className="text-xs text-slate-400 py-8 text-center">Đang tải phiếu…</p></div>
 
   const published = sheet.status === 'PUBLISHED'
+  const locked = published   // đã phát hành → khóa sửa/tự xếp; phải Hoàn tác mới sửa
   const skillById = new Map(sheet.skills.map(s => [s.id, s]))
   const labelOf = (id: string | null) => { const s = id ? skillById.get(id) : null; return s ? positionLabel(s.job_title, s.name, s.shift_tag) : '— Chưa phân —' }
   const whName = warehouses.find(w => w.id === sheet.warehouse_id)?.name ?? ''
@@ -220,8 +221,7 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
     } catch (e) { setErr(String((e as { message?: string })?.message ?? e)) }
   }
   async function runAuto() {
-    // phiếu đã phát hành → xác nhận trước khi xếp lại (tránh đổi lịch đã công bố)
-    if (published && !confirm('Phiếu đã phát hành. Tự xếp lại sẽ thay đổi phân công đã công bố (vẫn giữ các phân công sửa tay). Tiếp tục?')) return
+    if (locked) return   // đã phát hành → không cho tự xếp (phải Hoàn tác)
     setErr(null)
     try {
       // gộp lưu yêu cầu + tự xếp trong 1 request
@@ -259,6 +259,7 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
         {canDelete && <Button size="sm" variant="outline" className="h-7 text-red-600" onClick={onDelete}><Trash2 className="h-3.5 w-3.5" /></Button>}
       </div>
       {err && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{err}</div>}
+      {locked && <div className="text-xs text-slate-600 bg-slate-100 border border-slate-200 rounded px-3 py-2">🔒 Phiếu đã phát hành — đã khóa. Bấm <b>Hoàn tác</b> ở "Kết quả phân công" để chỉnh sửa / xếp lại.</div>}
 
       {/* Điều hướng bước */}
       <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-medium w-fit">
@@ -270,8 +271,8 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex-1" />
-            {canCreate && <Button size="sm" variant="outline" className="h-7" onClick={saveLayout} disabled={upsert.isPending || setLayoutSkills.isPending}><Save className="h-3.5 w-3.5 mr-1" />Lưu layout</Button>}
-            {canCreate && <Button size="sm" className="h-7" onClick={runAuto} disabled={auto.isPending || totalRequired === 0}><Wand2 className="h-3.5 w-3.5 mr-1" />{auto.isPending ? 'Đang xếp…' : 'Tự xếp người'}</Button>}
+            {canCreate && <Button size="sm" variant="outline" className="h-7" onClick={saveLayout} disabled={locked || upsert.isPending || setLayoutSkills.isPending}><Save className="h-3.5 w-3.5 mr-1" />Lưu layout</Button>}
+            {canCreate && <Button size="sm" className="h-7" onClick={runAuto} disabled={locked || auto.isPending || totalRequired === 0}><Wand2 className="h-3.5 w-3.5 mr-1" />{auto.isPending ? 'Đang xếp…' : 'Tự xếp người'}</Button>}
             {hasResult && <Button size="sm" variant="outline" className="h-7" onClick={() => setStep('result')}>Kết quả →</Button>}
           </div>
           {sheet.skills.length === 0 ? (
@@ -298,10 +299,10 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
                       <tr key={s.id} className="hover:bg-slate-50/60">
                         <td className="px-2 py-1 text-slate-700">{s.name}{s.shift_tag && <span className="text-[10px] text-slate-400 ml-1">{shiftOf(s.shift_tag)}</span>}</td>
                         <td className="px-2 py-1 text-slate-500">{s.job_title ?? '—'}</td>
-                        <td className="px-2 py-1"><QtyCell value={req} disabled={!canCreate} onChange={v => setDemands(prev => ({ ...prev, [s.id]: v }))} /></td>
+                        <td className="px-2 py-1"><QtyCell value={req} disabled={!canCreate || locked} onChange={v => setDemands(prev => ({ ...prev, [s.id]: v }))} /></td>
                         <td className="px-2 py-1 text-right tabular-nums">{hasResult ? got : '—'}</td>
                         <td className={`px-2 py-1 text-right tabular-nums font-semibold ${hasResult && short > 0 ? 'text-red-600' : 'text-slate-400'}`}>{hasResult ? (short || '—') : '—'}</td>
-                        <td className="px-2 py-1"><Input value={demandNotes[s.id] ?? ''} disabled={!canCreate} onChange={e => setDemandNotes(prev => ({ ...prev, [s.id]: e.target.value }))} placeholder="—" className="h-6 text-xs" /></td>
+                        <td className="px-2 py-1"><Input value={demandNotes[s.id] ?? ''} disabled={!canCreate || locked} onChange={e => setDemandNotes(prev => ({ ...prev, [s.id]: e.target.value }))} placeholder="—" className="h-6 text-xs" /></td>
                       </tr>
                     )
                   })}
@@ -316,7 +317,7 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
             <Button size="sm" variant="ghost" className="h-7" onClick={() => setStep('demand')}>← Yêu cầu nhân lực</Button>
             <div className="flex-1" />
             {canPublish && <Button size="sm" className="h-7" onClick={publishAndPrint} disabled={publish.isPending}><Send className="h-3.5 w-3.5 mr-1" />{published ? 'In lại' : 'Phát hành & In'}</Button>}
-            {canPublish && published && <Button size="sm" variant="outline" className="h-7" onClick={() => publish.mutate({ id: sheet.id, publish: false })} disabled={publish.isPending}>Thu hồi</Button>}
+            {canPublish && published && <Button size="sm" variant="outline" className="h-7" onClick={() => publish.mutate({ id: sheet.id, publish: false })} disabled={publish.isPending}>↩ Hoàn tác (sửa lại)</Button>}
           </div>
           {!hasResult ? (
             <p className="text-xs text-slate-400 p-3 border border-slate-200 rounded-lg">Chưa có kết quả — quay lại bước 1 và bấm "Tự xếp người".</p>
@@ -341,7 +342,7 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
                       <td className="px-2 py-1.5">{a.employee?.job_title ?? '—'}</td>
                       <td className="px-2 py-1.5">
                         {a.status === 'LEAVE' ? <span className="italic">Nghỉ phép</span>
-                          : canEdit ? (
+                          : canEdit && !locked ? (
                           <select value={a.skill_id ?? ''} onChange={e => changePos(a.employee_id, e.target.value || null)} className="border border-slate-200 rounded px-1.5 py-0.5 text-xs bg-white max-w-[240px]">
                             <option value="">— Chưa phân —</option>
                             {sheet.skills.map(s => <option key={s.id} value={s.id}>{positionLabel(s.job_title, s.name, s.shift_tag)}</option>)}

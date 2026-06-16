@@ -191,12 +191,12 @@ export default function LeaveManagement() {
   )
 }
 
-function CreateLeaveDialog({ wh, dept, onClose }: { wh: string; dept: string; onClose: () => void }) {
+export function CreateLeaveDialog({ wh, dept, onClose, fixedEmployeeId }: { wh: string; dept: string; onClose: () => void; fixedEmployeeId?: string }) {
   const user = useAuthStore(s => s.user)
   const create = useCreateLeave()
   const { data: emps = [] } = useEmployeeRecords(dept ? { department_id: dept } : undefined)
 
-  const [empId, setEmpId]   = useState<string>(user?.id ?? '')
+  const [empId, setEmpId]   = useState<string>(fixedEmployeeId ?? user?.id ?? '')
   const [from, setFrom]     = useState<string>(TODAY())
   const [to, setTo]         = useState<string>(TODAY())
   const [ltype, setLtype]   = useState<string>('ANNUAL')
@@ -229,15 +229,17 @@ function CreateLeaveDialog({ wh, dept, onClose }: { wh: string; dept: string; on
         <DialogHeader><DialogTitle>Gửi đơn nghỉ phép</DialogTitle></DialogHeader>
         <div className="space-y-3">
           {err && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{err}</div>}
-          <div>
-            <label className="text-[11px] text-slate-500">Nhân viên</label>
-            <select value={empId} onChange={e => setEmpId(e.target.value)} className="w-full border border-slate-200 rounded-md px-2 h-9 text-sm bg-white">
-              <option value="">— Chọn nhân viên —</option>
-              {(emps as { id: string; name: string; employee_code: string }[]).map(e => (
-                <option key={e.id} value={e.id}>{e.name} ({e.employee_code})</option>
-              ))}
-            </select>
-          </div>
+          {!fixedEmployeeId && (
+            <div>
+              <label className="text-[11px] text-slate-500">Nhân viên</label>
+              <select value={empId} onChange={e => setEmpId(e.target.value)} className="w-full border border-slate-200 rounded-md px-2 h-9 text-sm bg-white">
+                <option value="">— Chọn nhân viên —</option>
+                {(emps as { id: string; name: string; employee_code: string }[]).map(e => (
+                  <option key={e.id} value={e.id}>{e.name} ({e.employee_code})</option>
+                ))}
+              </select>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label className="text-[11px] text-slate-500">Từ ngày</label>

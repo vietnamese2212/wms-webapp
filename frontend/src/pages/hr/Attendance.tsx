@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { Save, Trash2, ChevronLeft, ChevronRight } from 'lucide-react'
+import { useState, useEffect, useMemo } from 'react'
+import { Save, Trash2, ChevronLeft, ChevronRight, Plus, CheckCircle2, Clock } from 'lucide-react'
 import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, addDays, addMonths, subMonths, isSameMonth } from 'date-fns'
 import { vi } from 'date-fns/locale'
 import { Button } from '@/components/ui/button'
@@ -7,14 +7,16 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
+import { SummaryBand } from '@/components/shared/SummaryBand'
 import {
   useWarehouses, useDepartments,
-  useAttendance, useUpsertAttendance, useDeleteAttendance, useAttendanceReport, type AttendanceRow,
+  useAttendance, useUpsertAttendance, useDeleteAttendance, useAttendanceReport, type AttendanceRow, type AttReportRow,
+  useLeaves,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { formatDate } from '@/utils/formatters'
-import { LeaveSection } from './LeaveManagement'
+import { LeaveSection, CreateLeaveDialog } from './LeaveManagement'
 
 const KINDS: { value: string; label: string }[] = [
   { value: 'CA1', label: 'Ca 1' },
@@ -29,6 +31,20 @@ const kindVariant = (k: string): 'info' | 'success' | 'warning' | 'slate' =>
 const TODAY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 const MONTH_START = () => { const d = TODAY(); return d.slice(0, 8) + '01' }
 
+// tổng công 1 ngày (giờ): nghỉ phép = 0; còn lại = 8h + OT − về sớm
+const rowTotal = (r: { kind: string; ot_hours: number; early_leave_hours: number }) =>
+  r.kind === 'LEAVE' ? 0 : Math.round((8 + (r.ot_hours || 0) - (r.early_leave_hours || 0)) * 10) / 10
+// đơn vị công = giờ ÷ 8 (decimal, làm tròn 2 chữ số)
+const toCong = (hours: number) => Math.round((hours / 8) * 100) / 100
+// liệt kê ngày YYYY-MM-DD trong [from, to]
+function eachDate(from: string, to: string): string[] {
+  const out: string[] = []
+  let d = new Date(`${from}T00:00:00`)
+  const end = new Date(`${to}T00:00:00`)
+  while (d <= end) { out.push(format(d, 'yyyy-MM-dd')); d = addDays(d, 1) }
+  return out
+}
+
 // màu ô lịch theo loại công
 const KIND_CELL: Record<string, string> = {
   CA1:   'bg-sky-100 text-sky-700',
@@ -39,9 +55,6 @@ const KIND_CELL: Record<string, string> = {
 }
 const KIND_SHORT: Record<string, string> = { CA1: 'Ca 1', CA2: 'Ca 2', CA3: 'Ca 3', HC: 'HC', LEAVE: 'Nghỉ' }
 const DOW = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN']
-// tổng công 1 ngày: nghỉ phép = 0; còn lại = 8h + OT − về sớm
-const rowTotal = (r: { kind: string; ot_hours: number; early_leave_hours: number }) =>
-  r.kind === 'LEAVE' ? 0 : Math.round((8 + (r.ot_hours || 0) - (r.early_leave_hours || 0)) * 10) / 10
 
 export default function Attendance() {
   const user  = useAuthStore(s => s.user)
@@ -51,7 +64,9 @@ export default function Attendance() {
   const canReport = can(perms, 'attendance', 'report')
   const canLeave = can(perms, 'leave', 'view') || can(perms, 'leave', 'request')
 
-  const [tab, setTab] = useState<'me' | 'team' | 'report' | 'leave'>(canSelf ? 'me' : canView ? 'team' : canLeave ? 'leave' : 'report')
+  // Bảng công gộp cả Tổng hợp (report) lẫn Chi tiết (view)
+  const canSheet = canView || canReport
+  const [tab, setTab] = useState<'me' | 'leave' | 'team'>(canSelf ? 'me' : canLeave ? 'leave' : 'team')
 
   return (
     <div className="flex flex-col h-full sm:p-3">
@@ -61,15 +76,13 @@ export default function Attendance() {
           <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-medium">
             {canSelf && <button onClick={() => setTab('me')} className={`px-3 py-1.5 ${tab === 'me' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Của tôi</button>}
             {canLeave && <button onClick={() => setTab('leave')} className={`px-3 py-1.5 border-l border-slate-200 ${tab === 'leave' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Nghỉ phép</button>}
-            {canView && <button onClick={() => setTab('team')} className={`px-3 py-1.5 border-l border-slate-200 ${tab === 'team' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Bảng công</button>}
-            {canReport && <button onClick={() => setTab('report')} className={`px-3 py-1.5 border-l border-slate-200 ${tab === 'report' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Báo cáo</button>}
+            {canSheet && <button onClick={() => setTab('team')} className={`px-3 py-1.5 border-l border-slate-200 ${tab === 'team' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Bảng công</button>}
           </div>
         </div>
         <div className="flex-1 min-h-0 overflow-auto p-3">
           {tab === 'me' && canSelf ? <MySection />
             : tab === 'leave' && canLeave ? <LeaveSection />
-            : tab === 'report' && canReport ? <ReportSection />
-            : canView ? <TeamSection perms={perms} />
+            : canSheet ? <TeamSection perms={perms} canView={canView} canReport={canReport} />
             : <p className="text-sm text-slate-400 text-center py-16">Không có quyền.</p>}
         </div>
       </div>
@@ -80,6 +93,9 @@ export default function Attendance() {
 // ─── Của tôi (lịch tháng) ───────────────────────────────────────────────────
 function MySection() {
   const user = useAuthStore(s => s.user)
+  const perms = user?.module_permissions as ModulePermissions | null ?? null
+  const canEditPast = can(perms, 'attendance', 'edit')
+  const canRequestLeave = can(perms, 'leave', 'request')
   const upsert = useUpsertAttendance()
   const del = useDeleteAttendance()
 
@@ -88,14 +104,37 @@ function MySection() {
   const monthEnd   = endOfMonth(month)
   const gridStart  = startOfWeek(monthStart, { weekStartsOn: 1 })
   const gridEnd    = endOfWeek(monthEnd, { weekStartsOn: 1 })
+  const fromStr = format(monthStart, 'yyyy-MM-dd')
+  const toStr   = format(monthEnd, 'yyyy-MM-dd')
   const days: Date[] = []
   for (let d = gridStart; d <= gridEnd; d = addDays(d, 1)) days.push(d)
 
-  const { data: rows = [] } = useAttendance(
-    { employee_id: user?.id, date_from: format(monthStart, 'yyyy-MM-dd'), date_to: format(monthEnd, 'yyyy-MM-dd') },
-    !!user?.id,
-  )
+  const { data: rows = [] } = useAttendance({ employee_id: user?.id, date_from: fromStr, date_to: toStr }, !!user?.id)
   const byDate = new Map(rows.map(r => [r.work_date, r]))
+
+  // đơn xin nghỉ của bản thân trong tháng → map ngày -> trạng thái (ưu tiên APPROVED)
+  const { data: myLeaves = [] } = useLeaves({ employee_id: user?.id, date_from: fromStr, date_to: toStr }, !!user?.id)
+  const leaveByDate = useMemo(() => {
+    const m = new Map<string, 'APPROVED' | 'PENDING'>()
+    for (const l of myLeaves) {
+      if (l.status === 'REJECTED') continue
+      for (const d of eachDate(l.date_from, l.date_to)) {
+        if (l.status === 'APPROVED' || m.get(d) !== 'APPROVED') m.set(d, l.status as 'APPROVED' | 'PENDING')
+      }
+    }
+    return m
+  }, [myLeaves])
+
+  // tổng hợp tháng
+  const sum = useMemo(() => {
+    let workDays = 0, ot = 0, early = 0, leave = 0
+    for (const r of rows) {
+      if (r.kind === 'LEAVE') { leave++; continue }
+      workDays++; ot += r.ot_hours || 0; early += r.early_leave_hours || 0
+    }
+    const hours = workDays * 8 + ot - early
+    return { workDays, ot, early, leave, hours, cong: toCong(hours) }
+  }, [rows])
 
   const today = TODAY()
   const [sel, setSel]     = useState<string | null>(null)
@@ -103,6 +142,7 @@ function MySection() {
   const [ot, setOt]       = useState(0)
   const [early, setEarly] = useState(0)
   const [err, setErr]     = useState<string | null>(null)
+  const [openLeave, setOpenLeave] = useState(false)
 
   // seed form khi chọn ngày
   useEffect(() => {
@@ -113,10 +153,10 @@ function MySection() {
   }, [sel])
 
   const selEntry = sel ? byDate.get(sel) : undefined
-  const perms = user?.module_permissions as ModulePermissions | null ?? null
-  const canEditPast = can(perms, 'attendance', 'edit')
+  const selLeave = sel ? leaveByDate.get(sel) : undefined
   const isPast = !!sel && sel < today
-  const locked = isPast && !canEditPast            // ngày đã qua + không có quyền sửa
+  const approvedLeave = selLeave === 'APPROVED'                 // đã duyệt nghỉ → khỏi chấm công
+  const locked = (isPast && !canEditPast) || approvedLeave
   const isLeave = kind === 'LEAVE'
   const totalCong = isLeave ? 0 : Math.round((8 + ot - early) * 10) / 10
 
@@ -137,109 +177,169 @@ function MySection() {
   }
 
   return (
-    <div className="flex flex-col lg:flex-row gap-4 max-w-4xl">
-      {/* Lịch */}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-2">
-          <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => setMonth(m => subMonths(m, 1))}><ChevronLeft className="h-4 w-4" /></Button>
-          <div className="text-sm font-semibold text-slate-700 w-32 text-center">{format(month, 'MMMM yyyy', { locale: vi })}</div>
-          <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => setMonth(m => addMonths(m, 1))}><ChevronRight className="h-4 w-4" /></Button>
-          <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => { setMonth(new Date()); setSel(today) }}>Hôm nay</Button>
+    <div className="space-y-3 max-w-4xl">
+      {/* Tổng hợp tháng — chuẩn Manhattan */}
+      <SummaryBand className="rounded-lg" tiles={[
+        { label: 'Tổng công', value: sum.cong, accent: true },
+        { label: 'Ngày công', value: sum.workDays },
+        { label: 'Giờ OT', value: sum.ot || '—' },
+        { label: 'Giờ về sớm', value: sum.early || '—' },
+        { label: 'Nghỉ phép', value: sum.leave || '—' },
+      ]} />
+
+      <div className="flex flex-col lg:flex-row gap-4">
+        {/* Lịch */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-2">
+            <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => setMonth(m => subMonths(m, 1))}><ChevronLeft className="h-4 w-4" /></Button>
+            <div className="text-sm font-semibold text-slate-700 w-32 text-center">{format(month, 'MMMM yyyy', { locale: vi })}</div>
+            <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => setMonth(m => addMonths(m, 1))}><ChevronRight className="h-4 w-4" /></Button>
+            <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => { setMonth(new Date()); setSel(today) }}>Hôm nay</Button>
+            <div className="flex-1" />
+            {canRequestLeave && <Button size="sm" className="h-7" onClick={() => setOpenLeave(true)}><Plus className="h-4 w-4 mr-1" />Xin nghỉ phép</Button>}
+          </div>
+          <div className="grid grid-cols-7 gap-1">
+            {DOW.map(d => <div key={d} className="text-center text-[10px] font-medium text-slate-400 py-1">{d}</div>)}
+            {days.map(day => {
+              const ds = format(day, 'yyyy-MM-dd')
+              const e = byDate.get(ds)
+              const lv = leaveByDate.get(ds)
+              const inMonth = isSameMonth(day, month)
+              const isToday = ds === today
+              const isFuture = ds > today
+              const isSel = ds === sel
+              const cong = e ? toCong(rowTotal(e)) : 0
+              return (
+                <button key={ds} type="button" disabled={isFuture}
+                  onClick={() => setSel(ds)}
+                  className={`relative min-h-[58px] rounded-lg border p-1 text-left flex flex-col gap-0.5 transition-colors
+                    ${isSel ? 'border-sky-500 ring-1 ring-sky-400' : 'border-slate-200'}
+                    ${!inMonth ? 'opacity-40' : ''} ${isFuture ? 'bg-slate-50 cursor-not-allowed' : 'hover:border-sky-300'}
+                    ${e ? KIND_CELL[e.kind] : 'bg-white'}`}>
+                  <div className="flex items-center justify-between">
+                    <span className={`text-[11px] font-semibold leading-none ${isToday ? 'text-sky-600' : ''}`}>{format(day, 'd')}</span>
+                    {/* dấu trạng thái nghỉ phép */}
+                    {lv === 'APPROVED' && <CheckCircle2 className="h-3 w-3 text-slate-500" aria-label="Đã duyệt nghỉ" />}
+                    {lv === 'PENDING' && <Clock className="h-3 w-3 text-amber-500" aria-label="Chờ duyệt nghỉ" />}
+                  </div>
+                  {e && <span className="text-[10px] leading-tight font-medium">{KIND_SHORT[e.kind]}</span>}
+                  {/* Tổng công — nổi bật nhất trong ô */}
+                  {e && e.kind !== 'LEAVE' && <span className="mt-auto text-sm font-bold leading-none tabular-nums">{cong}<span className="text-[8px] font-normal text-slate-400 ml-0.5">công</span></span>}
+                  {e && (e.ot_hours > 0 || e.early_leave_hours > 0) && (
+                    <span className="text-[8px] leading-none text-slate-500">{e.ot_hours > 0 ? `OT ${e.ot_hours}h` : ''}{e.early_leave_hours > 0 ? ` −${e.early_leave_hours}h` : ''}</span>
+                  )}
+                </button>
+              )
+            })}
+          </div>
+          {/* chú thích */}
+          <div className="flex flex-wrap gap-2 mt-2 items-center">
+            {KINDS.map(k => <span key={k.value} className={`text-[10px] px-1.5 py-0.5 rounded ${KIND_CELL[k.value]}`}>{k.label}</span>)}
+            <span className="text-[10px] text-slate-500 flex items-center gap-0.5"><CheckCircle2 className="h-3 w-3 text-slate-500" /> Nghỉ đã duyệt</span>
+            <span className="text-[10px] text-slate-500 flex items-center gap-0.5"><Clock className="h-3 w-3 text-amber-500" /> Chờ duyệt</span>
+          </div>
         </div>
-        <div className="grid grid-cols-7 gap-1">
-          {DOW.map(d => <div key={d} className="text-center text-[10px] font-medium text-slate-400 py-1">{d}</div>)}
-          {days.map(day => {
-            const ds = format(day, 'yyyy-MM-dd')
-            const e = byDate.get(ds)
-            const inMonth = isSameMonth(day, month)
-            const isToday = ds === today
-            const isFuture = ds > today
-            const isSel = ds === sel
-            return (
-              <button key={ds} type="button" disabled={isFuture}
-                onClick={() => setSel(ds)}
-                className={`min-h-[52px] rounded-lg border p-1 text-left flex flex-col gap-0.5 transition-colors
-                  ${isSel ? 'border-sky-500 ring-1 ring-sky-400' : 'border-slate-200'}
-                  ${!inMonth ? 'opacity-40' : ''} ${isFuture ? 'bg-slate-50 cursor-not-allowed' : 'hover:border-sky-300'}
-                  ${e ? KIND_CELL[e.kind] : 'bg-white'}`}>
-                <span className={`text-[11px] font-semibold leading-none ${isToday ? 'text-sky-600' : ''}`}>{format(day, 'd')}</span>
-                {e && <span className="text-[10px] leading-tight font-medium">{KIND_SHORT[e.kind]}</span>}
-                {e && (e.ot_hours > 0 || e.early_leave_hours > 0) && (
-                  <span className="text-[8px] leading-none text-slate-500">{e.ot_hours > 0 ? `OT${e.ot_hours}` : ''}{e.early_leave_hours > 0 ? ` -${e.early_leave_hours}h` : ''}</span>
-                )}
-              </button>
-            )
-          })}
-        </div>
-        {/* chú thích */}
-        <div className="flex flex-wrap gap-2 mt-2">
-          {KINDS.map(k => <span key={k.value} className={`text-[10px] px-1.5 py-0.5 rounded ${KIND_CELL[k.value]}`}>{k.label}</span>)}
+
+        {/* Form ngày đã chọn */}
+        <div className="lg:w-64 shrink-0">
+          {err && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2 mb-2">{err}</div>}
+          {!sel ? (
+            <div className="border border-dashed border-slate-200 rounded-lg p-4 text-center text-xs text-slate-400">Chọn 1 ngày trên lịch để chấm công</div>
+          ) : (
+            <div className="border border-slate-200 rounded-lg p-3 bg-slate-50/50 space-y-2.5">
+              <p className="text-sm font-medium text-slate-700">{formatDate(sel)}{isPast && <span className="text-[10px] text-slate-400 ml-1">(ngày đã qua)</span>}</p>
+              {approvedLeave ? (
+                <div className="text-[11px] text-slate-700 bg-slate-100 border border-slate-200 rounded px-2 py-1.5 flex items-start gap-1.5"><CheckCircle2 className="h-3.5 w-3.5 mt-0.5 text-slate-500 shrink-0" /> Đơn nghỉ phép đã được duyệt — ngày này tự tính là Nghỉ phép, không cần chấm công.</div>
+              ) : (
+                <>
+                  {selLeave === 'PENDING' && <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 flex items-start gap-1.5"><Clock className="h-3.5 w-3.5 mt-0.5 shrink-0" /> Đơn nghỉ đang chờ duyệt — bạn vẫn có thể chấm công cho tới khi được duyệt.</div>}
+                  {locked && <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">Ngày đã qua — cần quyền "Sửa công" mới chỉnh được.</div>}
+                  <div>
+                    <label className="text-[11px] text-slate-500">Loại công</label>
+                    <select value={kind} disabled={locked} onChange={e => pickKind(e.target.value)} className="border border-slate-200 rounded-md px-2 h-8 text-sm bg-white block w-full disabled:bg-slate-100">
+                      {KINDS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div><label className="text-[11px] text-slate-500">Giờ OT</label>
+                      <Input type="number" min={0} step={0.5} value={ot || ''} disabled={locked || isLeave || early > 0}
+                        onChange={e => pickOt(Number(e.target.value) || 0)} className="h-8 text-sm disabled:bg-slate-100" /></div>
+                    <div><label className="text-[11px] text-slate-500">Giờ về sớm</label>
+                      <Input type="number" min={0} step={0.5} value={early || ''} disabled={locked || isLeave || ot > 0}
+                        onChange={e => pickEarly(Number(e.target.value) || 0)} className="h-8 text-sm disabled:bg-slate-100" /></div>
+                  </div>
+                  <div className="text-xs text-slate-600">Tổng công: <b className="text-slate-800">{toCong(totalCong)} công</b> <span className="text-[10px] text-slate-400">({totalCong}h{!isLeave && ot > 0 ? ` · OT ${ot}` : ''}{!isLeave && early > 0 ? ` · về sớm ${early}` : ''})</span></div>
+                  <div className="flex gap-2 pt-1">
+                    <Button onClick={save} disabled={upsert.isPending || locked} className="h-8 flex-1"><Save className="h-4 w-4 mr-1" />{selEntry ? 'Cập nhật' : 'Lưu'}</Button>
+                    {selEntry && <Button variant="outline" onClick={remove} disabled={del.isPending || locked} className="h-8 text-red-600"><Trash2 className="h-4 w-4" /></Button>}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Form ngày đã chọn */}
-      <div className="lg:w-64 shrink-0">
-        {err && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2 mb-2">{err}</div>}
-        {!sel ? (
-          <div className="border border-dashed border-slate-200 rounded-lg p-4 text-center text-xs text-slate-400">Chọn 1 ngày trên lịch để chấm công</div>
-        ) : (
-          <div className="border border-slate-200 rounded-lg p-3 bg-slate-50/50 space-y-2.5">
-            <p className="text-sm font-medium text-slate-700">{formatDate(sel)}{isPast && <span className="text-[10px] text-slate-400 ml-1">(ngày đã qua)</span>}</p>
-            {locked && <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">Ngày đã qua — cần quyền "Sửa công" mới chỉnh được.</div>}
-            <div>
-              <label className="text-[11px] text-slate-500">Loại công</label>
-              <select value={kind} disabled={locked} onChange={e => pickKind(e.target.value)} className="border border-slate-200 rounded-md px-2 h-8 text-sm bg-white block w-full disabled:bg-slate-100">
-                {KINDS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div><label className="text-[11px] text-slate-500">Giờ OT</label>
-                <Input type="number" min={0} step={0.5} value={ot || ''} disabled={locked || isLeave || early > 0}
-                  onChange={e => pickOt(Number(e.target.value) || 0)} className="h-8 text-sm disabled:bg-slate-100" /></div>
-              <div><label className="text-[11px] text-slate-500">Giờ về sớm</label>
-                <Input type="number" min={0} step={0.5} value={early || ''} disabled={locked || isLeave || ot > 0}
-                  onChange={e => pickEarly(Number(e.target.value) || 0)} className="h-8 text-sm disabled:bg-slate-100" /></div>
-            </div>
-            <div className="text-xs text-slate-600">Tổng công: <b className="text-slate-800">{totalCong}h</b> {!isLeave && <span className="text-[10px] text-slate-400">(8h{ot > 0 ? ` + OT ${ot}` : ''}{early > 0 ? ` − về sớm ${early}` : ''})</span>}</div>
-            <div className="flex gap-2 pt-1">
-              <Button onClick={save} disabled={upsert.isPending || locked} className="h-8 flex-1"><Save className="h-4 w-4 mr-1" />{selEntry ? 'Cập nhật' : 'Lưu'}</Button>
-              {selEntry && <Button variant="outline" onClick={remove} disabled={del.isPending || locked} className="h-8 text-red-600"><Trash2 className="h-4 w-4" /></Button>}
-            </div>
-          </div>
-        )}
-      </div>
+      {openLeave && <CreateLeaveDialog wh={user?.warehouse_id ?? ''} dept="" fixedEmployeeId={user?.id} onClose={() => setOpenLeave(false)} />}
     </div>
   )
 }
 
-// ─── Bảng công (team) ───────────────────────────────────────────────────────
-function TeamSection({ perms }: { perms: ModulePermissions | null }) {
+// ─── Bảng công (gộp Tổng hợp theo người + Chi tiết theo ngày) ────────────────
+function TeamSection({ perms, canView, canReport }: { perms: ModulePermissions | null; canView: boolean; canReport: boolean }) {
   const canEdit = can(perms, 'attendance', 'edit')
   const { data: warehouses = [] } = useWarehouses(true)
   const { data: departments = [] } = useDepartments()
   const del = useDeleteAttendance()
 
+  const [view, setView] = useState<'summary' | 'detail'>(canReport ? 'summary' : 'detail')
   const [wh, setWh]     = useState('')
   const [dept, setDept] = useState('')
   const [q, setQ]       = useState('')
   const [from, setFrom] = useState(MONTH_START())
   const [to, setTo]     = useState(TODAY())
 
-  const { data: rows = [], isLoading } = useAttendance(
-    { warehouse_id: wh || undefined, department_id: dept || undefined, date_from: from, date_to: to },
-    true,
+  // chi tiết (luôn lấy — dùng cho SummaryBand + view chi tiết)
+  const { data: rows = [], isLoading: loadingRows } = useAttendance(
+    { warehouse_id: wh || undefined, department_id: dept || undefined, date_from: from, date_to: to }, true,
   )
+  // tổng hợp theo người
+  const { data: report = [], isLoading: loadingReport } = useAttendanceReport(
+    { warehouse_id: wh || undefined, department_id: dept || undefined, date_from: from, date_to: to }, canReport,
+  )
+
   const ql = q.trim().toLowerCase()
-  const filtered = ql
-    ? rows.filter(r => (r.employee?.name ?? '').toLowerCase().includes(ql) || (r.employee?.employee_code ?? '').toLowerCase().includes(ql))
-    : rows
+  const matchName = (name?: string | null, code?: string | null) =>
+    !ql || (name ?? '').toLowerCase().includes(ql) || (code ?? '').toLowerCase().includes(ql)
+  const filteredRows = rows.filter(r => matchName(r.employee?.name, r.employee?.employee_code))
+  const filteredReport = report.filter(r => matchName(r.employee?.name, r.employee?.employee_code))
+
+  // tổng hợp toàn dải (cho SummaryBand) — tính từ chi tiết
+  const sum = useMemo(() => {
+    let workDays = 0, ot = 0, early = 0, leave = 0
+    const people = new Set<string>()
+    for (const r of filteredRows) {
+      people.add(r.employee_id)
+      if (r.kind === 'LEAVE') { leave++; continue }
+      workDays++; ot += r.ot_hours || 0; early += r.early_leave_hours || 0
+    }
+    const hours = workDays * 8 + ot - early
+    return { people: people.size, workDays, ot, early, leave, cong: toCong(hours) }
+  }, [filteredRows])
+
   const defs: FilterDef[] = [
     { key: 'range', label: 'Khoảng ngày', type: 'daterange', from, to, onChange: (f, t) => { setFrom(f); setTo(t) } },
   ]
+  const isLoading = view === 'summary' ? loadingReport : loadingRows
 
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
+        {/* chuyển chế độ xem */}
+        <div className="flex rounded-md border border-slate-200 overflow-hidden text-xs font-medium">
+          {canReport && <button onClick={() => setView('summary')} className={`px-2.5 py-1 ${view === 'summary' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Tổng hợp</button>}
+          {canView && <button onClick={() => setView('detail')} className={`px-2.5 py-1 border-l border-slate-200 ${view === 'detail' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Chi tiết</button>}
+        </div>
         <WarehouseSingleSelect warehouses={warehouses as { id: string; code?: string; name: string }[]} value={wh} onChange={setWh} allLabel="Tất cả kho" placeholder="Tất cả kho" triggerClassName="w-40" />
         <select value={dept} onChange={e => setDept(e.target.value)} className="border border-slate-200 rounded-md px-2.5 text-xs h-7 bg-white text-slate-700">
           <option value="">Tất cả phòng</option>
@@ -250,74 +350,65 @@ function TeamSection({ perms }: { perms: ModulePermissions | null }) {
         <FilterSheetButton defs={defs} className="sm:hidden" />
         <div className="hidden sm:block"><FilterBar defs={defs} /></div>
       </div>
+
+      {/* Tổng hợp toàn dải — chuẩn Manhattan */}
+      <SummaryBand className="rounded-lg" tiles={[
+        { label: 'Số người', value: sum.people },
+        { label: 'Tổng công', value: sum.cong, accent: true },
+        { label: 'Ngày công', value: sum.workDays },
+        { label: 'Giờ OT', value: sum.ot || '—' },
+        { label: 'Giờ về sớm', value: sum.early || '—' },
+        { label: 'Nghỉ phép', value: sum.leave || '—' },
+      ]} />
+
       {isLoading ? <p className="text-xs text-slate-400 py-8 text-center">Đang tải…</p>
-      : <AttTable rows={filtered} onDelete={canEdit ? (id => del.mutate(id)) : undefined} showName />}
+        : view === 'summary'
+          ? <SummaryTable rows={filteredReport} />
+          : <AttTable rows={filteredRows} onDelete={canEdit ? (id => del.mutate(id)) : undefined} showName />}
     </div>
   )
 }
 
-// ─── Báo cáo công ───────────────────────────────────────────────────────────
-function ReportSection() {
-  const { data: warehouses = [] } = useWarehouses(true)
-  const { data: departments = [] } = useDepartments()
-  const [wh, setWh]     = useState('')
-  const [dept, setDept] = useState('')
-  const [from, setFrom] = useState(MONTH_START())
-  const [to, setTo]     = useState(TODAY())
-  const { data: rows = [], isLoading } = useAttendanceReport({ warehouse_id: wh || undefined, department_id: dept || undefined, date_from: from, date_to: to }, true)
-  const defs: FilterDef[] = [{ key: 'range', label: 'Khoảng ngày', type: 'daterange', from, to, onChange: (f, t) => { setFrom(f); setTo(t) } }]
-
+// Bảng tổng hợp theo người (gộp từ Báo cáo cũ) — thêm cột Công (decimal)
+function SummaryTable({ rows }: { rows: AttReportRow[] }) {
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <WarehouseSingleSelect warehouses={warehouses as { id: string; code?: string; name: string }[]} value={wh} onChange={setWh} allLabel="Tất cả kho" placeholder="Tất cả kho" triggerClassName="w-40" />
-        <select value={dept} onChange={e => setDept(e.target.value)} className="border border-slate-200 rounded-md px-2.5 text-xs h-7 bg-white text-slate-700">
-          <option value="">Tất cả phòng</option>
-          {(departments as { id: string; name: string }[]).map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-        </select>
-        <div className="flex-1" />
-        <FilterSheetButton defs={defs} className="sm:hidden" />
-        <div className="hidden sm:block"><FilterBar defs={defs} /></div>
-      </div>
-      {isLoading ? <p className="text-xs text-slate-400 py-8 text-center">Đang tải…</p>
-      : (
-        <div className="border border-slate-200 rounded-lg overflow-x-auto">
-          <table className="w-full text-xs min-w-max">
-            <thead className="bg-slate-50 text-[10px] text-slate-500">
-              <tr>
-                <th className="text-left px-2 py-2 font-medium sticky left-0 bg-slate-50">Nhân viên</th>
-                <th className="text-right px-2 py-2 font-medium">Ca 1</th>
-                <th className="text-right px-2 py-2 font-medium">Ca 2</th>
-                <th className="text-right px-2 py-2 font-medium">Ca 3</th>
-                <th className="text-right px-2 py-2 font-medium">HC</th>
-                <th className="text-right px-2 py-2 font-medium">Ngày công</th>
-                <th className="text-right px-2 py-2 font-medium">Nghỉ phép</th>
-                <th className="text-right px-2 py-2 font-medium">Giờ OT</th>
-                <th className="text-right px-2 py-2 font-medium">Giờ về sớm</th>
-                <th className="text-right px-2 py-2 font-medium">Tổng giờ công</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {rows.length === 0 ? (
-                <tr><td colSpan={10} className="text-center text-slate-400 py-6">Chưa có dữ liệu</td></tr>
-              ) : rows.map(r => (
-                <tr key={r.employee_id} className="hover:bg-slate-50/60">
-                  <td className="px-2 py-1.5 sticky left-0 bg-white"><span className="font-medium text-slate-700">{r.employee?.name ?? '—'}</span> <span className="text-[10px] text-slate-400">{r.employee?.employee_code}</span></td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{r.ca1 || '—'}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{r.ca2 || '—'}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{r.ca3 || '—'}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{r.hc || '—'}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{r.work_days || '—'}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{r.leave || '—'}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{r.ot_hours > 0 ? r.ot_hours : '—'}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{r.early_hours > 0 ? r.early_hours : '—'}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums font-semibold text-slate-700">{r.total_hours}h</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+    <div className="border border-slate-200 rounded-lg overflow-x-auto">
+      <table className="w-full text-xs min-w-max">
+        <thead className="bg-slate-50 text-[10px] text-slate-500">
+          <tr>
+            <th className="text-left px-2 py-2 font-medium sticky left-0 bg-slate-50">Nhân viên</th>
+            <th className="text-right px-2 py-2 font-medium">Ca 1</th>
+            <th className="text-right px-2 py-2 font-medium">Ca 2</th>
+            <th className="text-right px-2 py-2 font-medium">Ca 3</th>
+            <th className="text-right px-2 py-2 font-medium">HC</th>
+            <th className="text-right px-2 py-2 font-medium">Ngày công</th>
+            <th className="text-right px-2 py-2 font-medium">Nghỉ phép</th>
+            <th className="text-right px-2 py-2 font-medium">Giờ OT</th>
+            <th className="text-right px-2 py-2 font-medium">Giờ về sớm</th>
+            <th className="text-right px-2 py-2 font-medium">Tổng giờ</th>
+            <th className="text-right px-2 py-2 font-medium">Tổng công</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {rows.length === 0 ? (
+            <tr><td colSpan={11} className="text-center text-slate-400 py-6">Chưa có dữ liệu</td></tr>
+          ) : rows.map(r => (
+            <tr key={r.employee_id} className="hover:bg-slate-50/60">
+              <td className="px-2 py-1.5 sticky left-0 bg-white"><span className="font-medium text-slate-700">{r.employee?.name ?? '—'}</span> <span className="text-[10px] text-slate-400">{r.employee?.employee_code}</span></td>
+              <td className="px-2 py-1.5 text-right tabular-nums">{r.ca1 || '—'}</td>
+              <td className="px-2 py-1.5 text-right tabular-nums">{r.ca2 || '—'}</td>
+              <td className="px-2 py-1.5 text-right tabular-nums">{r.ca3 || '—'}</td>
+              <td className="px-2 py-1.5 text-right tabular-nums">{r.hc || '—'}</td>
+              <td className="px-2 py-1.5 text-right tabular-nums">{r.work_days || '—'}</td>
+              <td className="px-2 py-1.5 text-right tabular-nums">{r.leave || '—'}</td>
+              <td className="px-2 py-1.5 text-right tabular-nums">{r.ot_hours > 0 ? r.ot_hours : '—'}</td>
+              <td className="px-2 py-1.5 text-right tabular-nums">{r.early_hours > 0 ? r.early_hours : '—'}</td>
+              <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{r.total_hours}h</td>
+              <td className="px-2 py-1.5 text-right tabular-nums font-semibold text-slate-700">{toCong(r.total_hours)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }
@@ -334,13 +425,14 @@ function AttTable({ rows, onDelete, showName }: { rows: AttendanceRow[]; onDelet
             <th className="text-left px-2 py-2 font-medium">Loại</th>
             <th className="text-right px-2 py-2 font-medium">Giờ OT</th>
             <th className="text-right px-2 py-2 font-medium">Về sớm</th>
+            <th className="text-right px-2 py-2 font-medium">Tổng giờ</th>
             <th className="text-right px-2 py-2 font-medium">Tổng công</th>
             {onDelete && <th className="px-2 py-2"></th>}
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
           {rows.length === 0 ? (
-            <tr><td colSpan={showName ? 8 : 5} className="text-center text-slate-400 py-6">Chưa có dữ liệu</td></tr>
+            <tr><td colSpan={showName ? 9 : 6} className="text-center text-slate-400 py-6">Chưa có dữ liệu</td></tr>
           ) : rows.map(r => (
             <tr key={r.id} className="hover:bg-slate-50/60">
               {showName && <td className="px-2 py-1.5"><span className="font-medium text-slate-700">{r.employee?.name ?? '—'}</span> <span className="text-[10px] text-slate-400">{r.employee?.employee_code}</span></td>}
@@ -349,7 +441,8 @@ function AttTable({ rows, onDelete, showName }: { rows: AttendanceRow[]; onDelet
               <td className="px-2 py-1.5"><Badge variant={kindVariant(r.kind)}>{kindLabel(r.kind)}</Badge></td>
               <td className="px-2 py-1.5 text-right tabular-nums">{r.ot_hours > 0 ? r.ot_hours : '—'}</td>
               <td className="px-2 py-1.5 text-right tabular-nums">{r.early_leave_hours > 0 ? r.early_leave_hours : '—'}</td>
-              <td className="px-2 py-1.5 text-right tabular-nums font-semibold text-slate-700">{rowTotal(r)}h</td>
+              <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{rowTotal(r)}h</td>
+              <td className="px-2 py-1.5 text-right tabular-nums font-semibold text-slate-700">{toCong(rowTotal(r))}</td>
               {onDelete && <td className="px-2 py-1.5 text-right"><button onClick={() => onDelete(r.id)} className="text-slate-400 hover:text-red-600 hover:bg-red-50 rounded p-1"><Trash2 className="h-3.5 w-3.5" /></button></td>}
             </tr>
           ))}

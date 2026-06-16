@@ -220,6 +220,8 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
     } catch (e) { setErr(String((e as { message?: string })?.message ?? e)) }
   }
   async function runAuto() {
+    // phiếu đã phát hành → xác nhận trước khi xếp lại (tránh đổi lịch đã công bố)
+    if (published && !confirm('Phiếu đã phát hành. Tự xếp lại sẽ thay đổi phân công đã công bố (vẫn giữ các phân công sửa tay). Tiếp tục?')) return
     setErr(null)
     try {
       // gộp lưu yêu cầu + tự xếp trong 1 request

@@ -2528,7 +2528,7 @@ export function useDeleteLeave() {
 
 // ── Layout (mẫu gom skill theo Kho) ──
 export type LayoutRow = { id: string; warehouse_id: string; name: string; note: string | null; is_active: boolean; positions: number; people: number }
-export type LayoutSkillRow = { id: string; skill_id: string; required_count: number; sort_order: number; name: string; shift_tag: string | null; job_title: string | null }
+export type LayoutSkillRow = { id: string; skill_id: string; required_count: number; sort_order: number; name: string; shift_tag: string | null; job_title: string | null; note: string | null }
 export type LayoutDetail = { id: string; warehouse_id: string; name: string; note: string | null; is_active: boolean; skills: LayoutSkillRow[]; job_title_ids: string[] }
 
 export function useLayouts(warehouse_id?: string, enabled = true) {
@@ -2575,7 +2575,7 @@ export function useDeleteLayout() {
 export function useSetLayoutSkills() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ layout_id, skills }: { layout_id: string; skills: { skill_id: string; required_count: number; sort_order?: number }[] }) =>
+    mutationFn: ({ layout_id, skills }: { layout_id: string; skills: { skill_id: string; required_count: number; sort_order?: number; note?: string }[] }) =>
       apiClient.put(`/hr/layouts/${layout_id}/skills`, { skills }).then(r => r.data.data),
     onSettled: (_d, _e, v) => { qc.invalidateQueries({ queryKey: ['hr-layout', v.layout_id] }); qc.invalidateQueries({ queryKey: ['hr-layouts'] }) },
   })
@@ -2599,7 +2599,7 @@ export type SheetDetail = {
   id: string; work_date: string; warehouse_id: string; layout_id: string | null; layout_name: string | null
   status: 'DRAFT' | 'PUBLISHED'; note: string | null; published_at: string | null
   skills: { id: string; name: string; shift_tag: string | null; sort_order: number; job_title: string | null }[]
-  demands: { id: string; skill_id: string; required_count: number }[]
+  demands: { id: string; skill_id: string; required_count: number; note: string | null }[]
   assignments: {
     id: string; employee_id: string; skill_id: string | null
     status: 'ASSIGNED' | 'LEAVE' | 'UNASSIGNED'; is_manual: boolean; note: string | null
@@ -2629,7 +2629,7 @@ export function useSheet(id?: string) {
 export function useUpsertSheet() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { layout_id: string; work_date: string; note?: string; demands?: { skill_id: string; required_count: number }[] }) =>
+    mutationFn: (body: { layout_id: string; work_date: string; note?: string; demands?: { skill_id: string; required_count: number; note?: string }[] }) =>
       apiClient.post('/hr/sheets', body).then(r => r.data.data as { id: string }),
     onSettled: () => { qc.invalidateQueries({ queryKey: ['hr-sheets'] }); qc.invalidateQueries({ queryKey: ['hr-sheet'] }) },
   })

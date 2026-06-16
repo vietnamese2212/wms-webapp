@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
+import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import {
   useWarehouses,
   useSheets, useSheet, useUpsertSheet, useAutoAssign, useAssignOne, usePublishSheet, useDeleteSheet,
@@ -22,6 +23,20 @@ const SCOPE_KEY = 'hr_assign_scope'
 // nhãn "Vị trí phân công": {Chức danh}_{Ca}_{Vị trí}  →  "Lái xe nâng_HC_Pallet"
 function positionLabel(jobTitle: string | null, skillName: string, shiftTag: string | null) {
   return [jobTitle, shiftOf(shiftTag), skillName].filter(Boolean).join('_')
+}
+
+// Ô số lượng: gõ tay được + nút tăng/giảm
+function QtyCell({ value, onChange, disabled }: { value: number; onChange: (v: number) => void; disabled?: boolean }) {
+  const set = (v: number) => onChange(Math.max(0, Math.min(99, v)))
+  return (
+    <div className="inline-flex items-center gap-1">
+      <button type="button" disabled={disabled || value <= 0} onClick={() => set(value - 1)} className="h-6 w-6 rounded border border-slate-200 text-slate-500 hover:bg-slate-100 disabled:opacity-40 leading-none">−</button>
+      <input type="number" min={0} max={99} value={value || ''} placeholder="0" disabled={disabled}
+        onChange={e => set(Number(e.target.value) || 0)}
+        className="w-12 h-6 text-center text-xs rounded border border-slate-200 focus:border-sky-500 outline-none disabled:bg-slate-50" />
+      <button type="button" disabled={disabled} onClick={() => set(value + 1)} className="h-6 w-6 rounded border border-slate-200 text-slate-500 hover:bg-slate-100 disabled:opacity-40 leading-none">+</button>
+    </div>
+  )
 }
 
 export default function Assignments() {
@@ -127,24 +142,24 @@ function SheetEditor({ sheet, warehouses, perms }: { sheet: SheetDetail; warehou
   const whName = warehouses.find(w => w.id === sheet.warehouse_id)?.name ?? ''
 
   const [demands, setDemands] = useState<Record<string, number>>({})
+  const [demandNotes, setDemandNotes] = useState<Record<string, string>>({})
   useEffect(() => {
-    const d: Record<string, number> = {}
-    for (const dm of sheet.demands) d[dm.skill_id] = dm.required_count
-    setDemands(d)
+    const d: Record<string, number> = {}, n: Record<string, string> = {}
+    for (const dm of sheet.demands) { d[dm.skill_id] = dm.required_count; if (dm.note) n[dm.skill_id] = dm.note }
+    setDemands(d); setDemandNotes(n)
   }, [sheet.id, sheet.demands])
   const totalRequired = useMemo(() => Object.values(demands).reduce((a, b) => a + (b || 0), 0), [demands])
+  const demandList = () => Object.entries(demands).filter(([, n]) => n > 0).map(([skill_id, required_count]) => ({ skill_id, required_count, note: demandNotes[skill_id] || undefined }))
 
   async function saveDemands() {
     setErr(null)
-    const list = Object.entries(demands).filter(([, n]) => n > 0).map(([skill_id, required_count]) => ({ skill_id, required_count }))
-    try { await upsert.mutateAsync({ layout_id: sheet.layout_id!, work_date: sheet.work_date, demands: list }) }
+    try { await upsert.mutateAsync({ layout_id: sheet.layout_id!, work_date: sheet.work_date, demands: demandList() }) }
     catch (e) { setErr(String((e as { message?: string })?.message ?? e)) }
   }
   async function runAuto() {
     setErr(null); setResult(null)
     try {
-      const list = Object.entries(demands).filter(([, n]) => n > 0).map(([skill_id, required_count]) => ({ skill_id, required_count }))
-      await upsert.mutateAsync({ layout_id: sheet.layout_id!, work_date: sheet.work_date, demands: list })
+      await upsert.mutateAsync({ layout_id: sheet.layout_id!, work_date: sheet.work_date, demands: demandList() })
       setResult(await auto.mutateAsync(sheet.id))
     } catch (e) { setErr(String((e as { message?: string })?.message ?? e)) }
   }
@@ -197,15 +212,27 @@ function SheetEditor({ sheet, warehouses, perms }: { sheet: SheetDetail; warehou
         {sheet.skills.length === 0 ? (
           <p className="text-xs text-slate-400 p-3">Layout chưa có vị trí nào.</p>
         ) : (
-          <div className="p-2 flex flex-wrap gap-2">
-            {sheet.skills.map(s => (
-              <div key={s.id} className="flex items-center gap-1.5 border border-slate-200 rounded-md px-2 py-1 bg-white">
-                <span className="text-xs text-slate-600">{s.name}{s.shift_tag && <span className="text-[10px] text-slate-400 ml-1">{shiftOf(s.shift_tag)}</span>}{s.job_title && <span className="text-[9px] text-slate-300 ml-1">{s.job_title}</span>}</span>
-                <input type="number" min={0} max={99} value={demands[s.id] || ''} placeholder="0" disabled={!canCreate}
-                  onChange={e => setDemands(prev => ({ ...prev, [s.id]: Math.max(0, Number(e.target.value) || 0) }))}
-                  className="w-12 h-6 text-center text-xs rounded border border-slate-200 focus:border-sky-500 outline-none disabled:bg-slate-50" />
-              </div>
-            ))}
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs min-w-max">
+              <thead className="bg-slate-50 text-[10px] text-slate-500">
+                <tr>
+                  <th className="text-left px-2 py-1.5 font-medium">Vị trí</th>
+                  <th className="text-left px-2 py-1.5 font-medium">Chức danh</th>
+                  <th className="text-left px-2 py-1.5 font-medium w-36">Số lượng</th>
+                  <th className="text-left px-2 py-1.5 font-medium">Ghi chú</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {sheet.skills.map(s => (
+                  <tr key={s.id} className="hover:bg-slate-50/60">
+                    <td className="px-2 py-1 text-slate-700">{s.name}{s.shift_tag && <span className="text-[10px] text-slate-400 ml-1">{shiftOf(s.shift_tag)}</span>}</td>
+                    <td className="px-2 py-1 text-slate-500">{s.job_title ?? '—'}</td>
+                    <td className="px-2 py-1"><QtyCell value={demands[s.id] ?? 0} disabled={!canCreate} onChange={v => setDemands(prev => ({ ...prev, [s.id]: v }))} /></td>
+                    <td className="px-2 py-1"><Input value={demandNotes[s.id] ?? ''} disabled={!canCreate} onChange={e => setDemandNotes(prev => ({ ...prev, [s.id]: e.target.value }))} placeholder="—" className="h-6 text-xs" /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </div>
@@ -368,33 +395,30 @@ function LayoutEditor({ layoutId }: { layoutId: string }) {
   const update = useUpdateLayout()
   const [jts, setJtSel] = useState<string[]>([])
   const [counts, setCounts] = useState<Record<string, number>>({})
+  const [notes, setNotes] = useState<Record<string, string>>({})
   const [note, setNote] = useState('')
   const [dirty, setDirty] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
   useEffect(() => {
     if (!layout) return
-    const m: Record<string, number> = {}
-    for (const s of layout.skills) m[s.skill_id] = s.required_count
-    setCounts(m); setNote(layout.note ?? ''); setJtSel(layout.job_title_ids ?? []); setDirty(false)
+    const m: Record<string, number> = {}, n: Record<string, string> = {}
+    for (const s of layout.skills) { m[s.skill_id] = s.required_count; if (s.note) n[s.skill_id] = s.note }
+    setCounts(m); setNotes(n); setNote(layout.note ?? ''); setJtSel(layout.job_title_ids ?? []); setDirty(false)
   }, [layout])
 
   // danh mục skill của các chức danh đã chọn (gồm cả skill kế thừa từ cấp dưới, gộp theo skill_id)
   const { data: catalog = [] } = useSkills({ job_title_ids: jts.join(','), with_descendants: true }, jts.length > 0)
-  const grouped = useMemo(() => {
-    const g = new Map<string, typeof catalog>()
-    for (const s of catalog) { const k = s.job_title ?? '(Không chức danh)'; const arr = g.get(k) ?? []; arr.push(s); g.set(k, arr) }
-    return [...g.entries()]
-  }, [catalog])
 
-  function toggleJt(id: string) { setJtSel(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id]); setDirty(true) }
   function setCount(skillId: string, v: number) { setCounts(p => ({ ...p, [skillId]: v })); setDirty(true) }
+  function setSkillNote(skillId: string, v: string) { setNotes(p => ({ ...p, [skillId]: v })); setDirty(true) }
   async function save() {
     setErr(null)
     try {
       await setJts.mutateAsync({ layout_id: layoutId, job_title_ids: jts })
       const catalogIds = new Set(catalog.map(s => s.id))
-      const skills = Object.entries(counts).filter(([id, c]) => c > 0 && catalogIds.has(id)).map(([skill_id, required_count], i) => ({ skill_id, required_count, sort_order: i }))
+      const skills = Object.entries(counts).filter(([id, c]) => c > 0 && catalogIds.has(id))
+        .map(([skill_id, required_count], i) => ({ skill_id, required_count, sort_order: i, note: notes[skill_id] || undefined }))
       await setSkills.mutateAsync({ layout_id: layoutId, skills })
       if (layout && note !== (layout.note ?? '')) await update.mutateAsync({ id: layoutId, note })
       setDirty(false)
@@ -410,45 +434,43 @@ function LayoutEditor({ layoutId }: { layoutId: string }) {
         <Button size="sm" variant={dirty ? 'default' : 'outline'} className="h-7" disabled={!dirty || setSkills.isPending || setJts.isPending} onClick={save}><Save className="h-3.5 w-3.5 mr-1" />Lưu</Button>
       </div>
 
-      {/* Bước 1: chọn chức danh */}
+      {/* Bước 1: chọn chức danh (dropdown multi-select) */}
       <div className="space-y-1">
         <p className="text-[11px] font-semibold text-slate-600">1. Chọn chức danh (gọi nhóm người cho layout)</p>
-        <div className="flex flex-wrap gap-1.5">
-          {jobTitles.map(j => {
-            const on = jts.includes(j.id)
-            return (
-              <button key={j.id} type="button" onClick={() => toggleJt(j.id)}
-                className={`text-xs px-2 py-1 rounded border ${on ? 'bg-sky-600 text-white border-sky-600' : 'bg-white text-slate-600 border-slate-200 hover:border-sky-300'}`}>
-                {j.name}
-              </button>
-            )
-          })}
-        </div>
+        <MultiSelectFilter label="Chức danh" width="w-64"
+          options={jobTitles.map(j => ({ value: j.id, label: j.name }))}
+          selected={jts} onChange={v => { setJtSel(v); setDirty(true) }} />
       </div>
 
-      {/* Bước 2: số người mỗi vị trí */}
+      {/* Bước 2: bảng vị trí — số lượng — ghi chú */}
       <div className="space-y-1">
-        <p className="text-[11px] font-semibold text-slate-600">2. Số người mặc định mỗi vị trí (để trống = không dùng)</p>
+        <p className="text-[11px] font-semibold text-slate-600">2. Vị trí & số người mặc định (để trống = không dùng)</p>
         {jts.length === 0 ? <p className="text-xs text-slate-400">Chọn chức danh ở bước 1 để hiện danh mục vị trí.</p>
-        : grouped.length === 0 ? <p className="text-xs text-slate-400">Chức danh đã chọn chưa có vị trí/skill nào.</p>
-        : grouped.map(([jt, skills]) => (
-          <div key={jt} className="border border-slate-200 rounded-md bg-white">
-            <div className="px-2 py-1 text-[11px] font-semibold text-slate-500 border-b border-slate-100">{jt}</div>
-            <div className="p-2 flex flex-wrap gap-2">
-              {skills.map(s => {
-                const v = counts[s.id] ?? 0
-                return (
-                  <div key={s.id} className="flex items-center gap-1.5 border border-slate-200 rounded px-2 py-1">
-                    <span className="text-xs text-slate-600">{s.name}{s.shift_tag && <span className="text-[10px] text-slate-400 ml-1">{shiftOf(s.shift_tag)}</span>}</span>
-                    <input type="number" min={0} max={99} value={v || ''} placeholder="0"
-                      onChange={e => setCount(s.id, Math.max(0, Number(e.target.value) || 0))}
-                      className="w-11 h-6 text-center text-xs rounded border border-slate-200 focus:border-sky-500 outline-none" />
-                  </div>
-                )
-              })}
-            </div>
+        : catalog.length === 0 ? <p className="text-xs text-slate-400">Chức danh đã chọn chưa có vị trí/skill nào.</p>
+        : (
+          <div className="border border-slate-200 rounded-lg overflow-x-auto bg-white">
+            <table className="w-full text-xs min-w-max">
+              <thead className="bg-slate-50 text-[10px] text-slate-500">
+                <tr>
+                  <th className="text-left px-2 py-1.5 font-medium">Vị trí</th>
+                  <th className="text-left px-2 py-1.5 font-medium">Chức danh</th>
+                  <th className="text-left px-2 py-1.5 font-medium w-36">Số lượng</th>
+                  <th className="text-left px-2 py-1.5 font-medium">Ghi chú</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {catalog.map(s => (
+                  <tr key={s.id} className="hover:bg-slate-50/60">
+                    <td className="px-2 py-1 text-slate-700">{s.name}{s.shift_tag && <span className="text-[10px] text-slate-400 ml-1">{shiftOf(s.shift_tag)}</span>}</td>
+                    <td className="px-2 py-1 text-slate-500">{s.job_title ?? '—'}</td>
+                    <td className="px-2 py-1"><QtyCell value={counts[s.id] ?? 0} onChange={v => setCount(s.id, v)} /></td>
+                    <td className="px-2 py-1"><Input value={notes[s.id] ?? ''} onChange={e => setSkillNote(s.id, e.target.value)} placeholder="—" className="h-6 text-xs" /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        ))}
+        )}
       </div>
     </div>
   )

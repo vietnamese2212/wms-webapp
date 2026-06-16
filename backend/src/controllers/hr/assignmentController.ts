@@ -68,7 +68,7 @@ export async function getSheet(req: Request, res: Response) {
     if (!sheet) return fail(res, 'Không tìm thấy phiếu', 404)
 
     const [{ data: demands }, { data: asgs }, skills] = await Promise.all([
-      supabase.from('WorkAssignmentDemand').select('id, skill_id, required_count').eq('sheet_id', id),
+      supabase.from('WorkAssignmentDemand').select('id, skill_id, required_count, note').eq('sheet_id', id),
       supabase.from('WorkAssignment').select('id, employee_id, skill_id, status, is_manual, note').eq('sheet_id', id),
       sheetSkills((sheet as { layout_id: string | null }).layout_id),
     ])
@@ -103,7 +103,7 @@ export async function upsertSheet(req: Request, res: Response) {
     const u = userOf(req)
     const { layout_id, work_date, note, demands } = req.body as {
       layout_id?: string; work_date?: string; note?: string
-      demands?: { skill_id: string; required_count: number }[]
+      demands?: { skill_id: string; required_count: number; note?: string }[]
     }
     if (!layout_id || !work_date) return fail(res, 'layout_id, work_date là bắt buộc', 400)
 
@@ -131,10 +131,10 @@ export async function upsertSheet(req: Request, res: Response) {
     }
 
     // demands: dùng demands truyền lên; nếu tạo mới mà không truyền → đổ từ layout
-    let demandRows = demands
+    let demandRows: { skill_id: string; required_count: number; note?: string }[] | undefined = demands
     if (demandRows === undefined && isNew) {
       const ls = await layoutSkillsDetailed(layout_id)
-      demandRows = ls.map(r => ({ skill_id: r.skill_id, required_count: r.required_count }))
+      demandRows = ls.map(r => ({ skill_id: r.skill_id, required_count: r.required_count, note: r.note ?? undefined }))
     }
     if (demandRows !== undefined) {
       await supabase.from('WorkAssignmentDemand').delete().eq('sheet_id', sheetId)
@@ -142,7 +142,7 @@ export async function upsertSheet(req: Request, res: Response) {
       if (valid.length) {
         await supabase.from('WorkAssignmentDemand').insert(valid.map(d => ({
           id: randomUUID(), sheet_id: sheetId, skill_id: d.skill_id, required_count: d.required_count,
-          created_at: now(), updated_at: now(),
+          note: d.note || null, created_at: now(), updated_at: now(),
         })))
       }
     }

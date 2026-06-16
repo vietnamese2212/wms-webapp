@@ -10,8 +10,8 @@ const LAYOUT_SELECT = 'id, warehouse_id, name, note, is_active, created_at, upda
 // skill của layout, kèm tên skill + chức danh (phục vụ nhãn vị trí)
 export async function layoutSkillsDetailed(layout_id: string) {
   const { data: ls } = await supabase.from('WorkLayoutSkill')
-    .select('id, skill_id, required_count, sort_order').eq('layout_id', layout_id).order('sort_order')
-  const rows = (ls ?? []) as { id: string; skill_id: string; required_count: number; sort_order: number }[]
+    .select('id, skill_id, required_count, sort_order, note').eq('layout_id', layout_id).order('sort_order')
+  const rows = (ls ?? []) as { id: string; skill_id: string; required_count: number; sort_order: number; note: string | null }[]
   if (!rows.length) return []
   const skillIds = rows.map(r => r.skill_id)
   const { data: skills } = await supabase.from('Skill').select('id, name, shift_tag, job_title_id').in('id', skillIds)
@@ -126,13 +126,13 @@ export async function deleteLayout(req: Request, res: Response) {
 export async function setLayoutSkills(req: Request, res: Response) {
   try {
     const { id } = req.params
-    const { skills } = req.body as { skills?: { skill_id: string; required_count: number; sort_order?: number }[] }
+    const { skills } = req.body as { skills?: { skill_id: string; required_count: number; sort_order?: number; note?: string }[] }
     await supabase.from('WorkLayoutSkill').delete().eq('layout_id', id)
     const valid = (skills ?? []).filter(s => s.skill_id && s.required_count > 0)
     if (valid.length) {
       const { error } = await supabase.from('WorkLayoutSkill').insert(valid.map((s, i) => ({
         id: randomUUID(), layout_id: id, skill_id: s.skill_id, required_count: s.required_count,
-        sort_order: s.sort_order ?? i, created_at: now(), updated_at: now(),
+        sort_order: s.sort_order ?? i, note: s.note || null, created_at: now(), updated_at: now(),
       })))
       if (error) return fail(res, error.message)
     }

@@ -30,13 +30,17 @@ export async function listSheets(req: Request, res: Response) {
     const { data, error } = await q
     if (error) return fail(res, error.message)
 
-    const sheets = (data ?? []) as { id: string; layout_id: string | null }[]
+    const sheets = (data ?? []) as { id: string; layout_id: string | null; warehouse_id: string }[]
     if (!sheets.length) return ok(res, [])
     const ids = sheets.map(s => s.id)
     // tên layout
     const lIds = [...new Set(sheets.map(s => s.layout_id).filter(Boolean))] as string[]
     const { data: layouts } = lIds.length ? await supabase.from('WorkLayout').select('id, name').in('id', lIds) : { data: [] }
     const lMap = new Map((layouts ?? []).map((l: { id: string; name: string }) => [l.id, l.name]))
+    // tên kho
+    const wIds = [...new Set(sheets.map(s => s.warehouse_id).filter(Boolean))]
+    const { data: whs } = wIds.length ? await supabase.from('Warehouse').select('id, name').in('id', wIds) : { data: [] }
+    const wMap = new Map((whs ?? []).map((w: { id: string; name: string }) => [w.id, w.name]))
 
     // đếm demand + assignment cho từng sheet
     const [{ data: demands }, { data: asgs }] = await Promise.all([
@@ -47,14 +51,19 @@ export async function listSheets(req: Request, res: Response) {
     for (const d of (demands ?? []) as { sheet_id: string; required_count: number }[])
       demandBy.set(d.sheet_id, (demandBy.get(d.sheet_id) ?? 0) + d.required_count)
     const asgBy = new Map<string, number>()
-    for (const a of (asgs ?? []) as { sheet_id: string; status: string }[])
+    const leaveBy = new Map<string, number>()
+    for (const a of (asgs ?? []) as { sheet_id: string; status: string }[]) {
       if (a.status === 'ASSIGNED') asgBy.set(a.sheet_id, (asgBy.get(a.sheet_id) ?? 0) + 1)
+      else if (a.status === 'LEAVE') leaveBy.set(a.sheet_id, (leaveBy.get(a.sheet_id) ?? 0) + 1)
+    }
 
     return ok(res, sheets.map(s => ({
       ...s,
       layout_name: s.layout_id ? lMap.get(s.layout_id) ?? null : null,
+      warehouse_name: wMap.get(s.warehouse_id) ?? null,
       total_required: demandBy.get(s.id) ?? 0,
       total_assigned: asgBy.get(s.id) ?? 0,
+      total_on_leave: leaveBy.get(s.id) ?? 0,
     })))
   } catch (e) { return fail(res, String(e)) }
 }

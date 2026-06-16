@@ -2592,8 +2592,9 @@ export function useSetLayoutJobTitles() {
 // ── Phân công lịch làm việc (theo layout) ──
 export type SheetRow = {
   id: string; work_date: string; warehouse_id: string; layout_id: string | null; layout_name: string | null
+  warehouse_name: string | null
   status: 'DRAFT' | 'PUBLISHED'; note: string | null; published_at: string | null
-  total_required: number; total_assigned: number
+  total_required: number; total_assigned: number; total_on_leave: number
 }
 export type SheetDetail = {
   id: string; work_date: string; warehouse_id: string; layout_id: string | null; layout_name: string | null

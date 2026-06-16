@@ -2651,6 +2651,15 @@ export function useAssignOne() {
     onSettled: (_d, _e, v) => { qc.invalidateQueries({ queryKey: ['hr-sheet', v.sheet_id] }); qc.invalidateQueries({ queryKey: ['hr-sheets'] }) },
   })
 }
+// đặt danh sách vị trí cho 1 NV (1 người làm nhiều vị trí)
+export function useSetPositions() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ sheet_id, employee_id, skill_ids }: { sheet_id: string; employee_id: string; skill_ids: string[] }) =>
+      apiClient.post(`/hr/sheets/${sheet_id}/assign-positions`, { employee_id, skill_ids }).then(r => r.data.data),
+    onSettled: (_d, _e, v) => { qc.invalidateQueries({ queryKey: ['hr-sheet', v.sheet_id] }); qc.invalidateQueries({ queryKey: ['hr-sheets'] }) },
+  })
+}
 export function usePublishSheet() {
   const qc = useQueryClient()
   return useMutation({

@@ -7,7 +7,7 @@ import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import {
   useWarehouses,
-  useSheets, useSheet, useUpsertSheet, useAutoAssign, useAssignOne, usePublishSheet, useDeleteSheet,
+  useSheets, useSheet, useUpsertSheet, useAutoAssign, useSetPositions, usePublishSheet, useDeleteSheet,
   useLayouts, useLayout, useCreateLayout, useUpdateLayout, useDeleteLayout, useSetLayoutSkills, useSetLayoutJobTitles, useSkills, useJobTitles,
   useShiftRules, useCreateShiftRule, useDeleteShiftRule,
   type SheetDetail, type LayoutRow,
@@ -239,7 +239,7 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
   const upsert = useUpsertSheet()
   const setLayoutSkills = useSetLayoutSkills()
   const auto   = useAutoAssign()
-  const assignOne = useAssignOne()
+  const setPositions = useSetPositions()
   const publish = usePublishSheet()
   const del = useDeleteSheet()
   const [err, setErr] = useState<string | null>(null)
@@ -291,9 +291,10 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
       setStep('result')
     } catch (e) { setErr(String((e as { message?: string })?.message ?? e)) }
   }
-  async function changePos(employee_id: string, skill_id: string | null) {
+  async function changePositions(employee_id: string, skill_ids: string[]) {
+    if (locked) return
     setErr(null)
-    try { await assignOne.mutateAsync({ sheet_id: sheet!.id, employee_id, skill_id }); await refetch() } catch (e) { setErr(String((e as { message?: string })?.message ?? e)) }
+    try { await setPositions.mutateAsync({ sheet_id: sheet!.id, employee_id, skill_ids }); await refetch() } catch (e) { setErr(String((e as { message?: string })?.message ?? e)) }
   }
   async function onDelete() {
     if (!confirm('Xóa phiếu phân công này?')) return
@@ -307,7 +308,20 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
 
   const order = new Map(sheet.skills.map((s, i) => [s.id, i]))
   const rank = (a: SheetDetail['assignments'][number]) => a.status === 'ASSIGNED' ? (order.get(a.skill_id ?? '') ?? 999) : a.status === 'UNASSIGNED' ? 10000 : 20000
-  const sortedAsg = [...sheet.assignments].sort((x, y) => rank(x) - rank(y) || (x.employee?.name ?? '').localeCompare(y.employee?.name ?? ''))
+  const sortedAsg = [...sheet.assignments].sort((x, y) => rank(x) - rank(y) || (x.employee?.name ?? '').localeCompare(y.employee?.name ?? '')) // dùng cho In
+
+  // gom theo NGƯỜI (1 người có thể nhiều vị trí)
+  type EmpRow = { eid: string; employee: SheetDetail['assignments'][number]['employee']; positions: string[]; leave: boolean; manual: boolean }
+  const empMap = new Map<string, EmpRow>()
+  for (const a of sheet.assignments) {
+    let g = empMap.get(a.employee_id)
+    if (!g) { g = { eid: a.employee_id, employee: a.employee, positions: [], leave: false, manual: false }; empMap.set(a.employee_id, g) }
+    if (a.status === 'LEAVE') g.leave = true
+    else if (a.status === 'ASSIGNED' && a.skill_id) { g.positions.push(a.skill_id); if (a.is_manual) g.manual = true }
+  }
+  const empFirst = (g: EmpRow) => g.leave ? 30000 : g.positions.length ? Math.min(...g.positions.map(s => order.get(s) ?? 999)) : 20000
+  const empRows = [...empMap.values()].sort((a, b) => empFirst(a) - empFirst(b) || (a.employee?.name ?? '').localeCompare(b.employee?.name ?? ''))
+  const skillOpts = sheet.skills.map(s => ({ value: s.id, label: positionLabel(s.job_title, s.name, s.shift_tag) }))
 
   return (
     <div className="p-3 space-y-3 max-w-5xl">
@@ -397,24 +411,24 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {sortedAsg.map((a, i) => (
-                    <tr key={a.id} className={a.status === 'LEAVE' ? 'text-red-600' : a.status === 'UNASSIGNED' ? 'text-slate-400' : ''}>
-                      <td className="px-2 py-1.5 tabular-nums">{i + 1}</td>
-                      <td className="px-2 py-1.5 font-medium">{a.employee?.name ?? '—'}<span className="text-[10px] text-slate-400 ml-1">{a.employee?.employee_code}</span></td>
-                      <td className="px-2 py-1.5">{a.employee?.job_title ?? '—'}</td>
-                      <td className="px-2 py-1.5">
-                        {a.status === 'LEAVE' ? <span className="italic">Nghỉ phép</span>
+                  {empRows.map((g, i) => (
+                    <tr key={g.eid} className={g.leave ? 'text-red-600' : !g.positions.length ? 'text-slate-400' : ''}>
+                      <td className="px-2 py-1.5 tabular-nums align-top">{i + 1}</td>
+                      <td className="px-2 py-1.5 font-medium align-top">{g.employee?.name ?? '—'}<span className="text-[10px] text-slate-400 ml-1">{g.employee?.employee_code}</span></td>
+                      <td className="px-2 py-1.5 align-top">{g.employee?.job_title ?? '—'}</td>
+                      <td className="px-2 py-1.5 align-top">
+                        {g.leave ? <span className="italic">Nghỉ phép</span>
                           : canEdit && !locked ? (
-                          <select value={a.skill_id ?? ''} onChange={e => changePos(a.employee_id, e.target.value || null)} className="border border-slate-200 rounded px-1.5 py-0.5 text-xs bg-white max-w-[240px]">
-                            <option value="">— Chưa phân —</option>
-                            {sheet.skills.map(s => <option key={s.id} value={s.id}>{positionLabel(s.job_title, s.name, s.shift_tag)}</option>)}
-                          </select>
-                        ) : labelOf(a.skill_id)}
-                        {a.is_manual && a.status === 'ASSIGNED' && <span className="text-[9px] text-sky-500 ml-1">(tay)</span>}
+                            <MultiSelectFilter label="Chọn vị trí" width="w-56" options={skillOpts}
+                              selected={g.positions} onChange={ids => changePositions(g.eid, ids)} />
+                          ) : (
+                            g.positions.length ? <div className="flex flex-wrap gap-1">{g.positions.map(s => <span key={s} className="text-[11px] bg-sky-50 text-sky-700 border border-sky-200 rounded px-1.5 py-0.5">{labelOf(s)}</span>)}</div> : <span>— Chưa phân —</span>
+                          )}
+                        {g.manual && g.positions.length > 0 && <span className="text-[9px] text-sky-500 ml-1">(tay)</span>}
                       </td>
-                      <td className="px-2 py-1.5 text-slate-500">{a.skill_id ? (noteBySkill.get(a.skill_id) ?? '—') : '—'}</td>
-                      <td className="px-2 py-1.5">
-                        {a.status === 'ASSIGNED' ? <Badge variant="info">Đã xếp</Badge> : a.status === 'LEAVE' ? <Badge variant="slate">Nghỉ phép</Badge> : <Badge variant="warning">Chưa phân</Badge>}
+                      <td className="px-2 py-1.5 text-slate-500 align-top">{g.positions.map(s => noteBySkill.get(s)).filter(Boolean).join('; ') || '—'}</td>
+                      <td className="px-2 py-1.5 align-top">
+                        {g.leave ? <Badge variant="slate">Nghỉ phép</Badge> : g.positions.length ? <Badge variant="info">Đã xếp{g.positions.length > 1 ? ` (${g.positions.length})` : ''}</Badge> : <Badge variant="warning">Chưa phân</Badge>}
                       </td>
                     </tr>
                   ))}

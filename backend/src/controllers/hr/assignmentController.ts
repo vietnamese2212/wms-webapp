@@ -346,6 +346,34 @@ export async function assignOne(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
+// ─── Sửa tay: đặt DANH SÁCH vị trí cho 1 NV (1 người có thể làm nhiều vị trí) ──
+export async function setPositions(req: Request, res: Response) {
+  try {
+    const { id } = req.params // sheet_id
+    const { employee_id, skill_ids } = req.body as { employee_id?: string; skill_ids?: string[] }
+    if (!employee_id) return fail(res, 'employee_id là bắt buộc', 400)
+
+    const { data: sh } = await supabase.from('WorkAssignmentSheet').select('status').eq('id', id).maybeSingle()
+    if ((sh as { status: string } | null)?.status === 'PUBLISHED') return fail(res, 'Phiếu đã phát hành — Hoàn tác trước khi sửa', 409)
+
+    // thay toàn bộ phân công của NV này trong phiếu bằng danh sách vị trí mới (mỗi vị trí 1 dòng)
+    await supabase.from('WorkAssignment').delete().eq('sheet_id', id).eq('employee_id', employee_id)
+    const ids = [...new Set((skill_ids ?? []).filter(Boolean))]
+    const ts = now()
+    if (ids.length) {
+      await supabase.from('WorkAssignment').insert(ids.map(sk => ({
+        id: randomUUID(), sheet_id: id, employee_id, skill_id: sk, status: 'ASSIGNED', is_manual: true, created_at: ts, updated_at: ts,
+      })))
+    } else {
+      await supabase.from('WorkAssignment').insert({
+        id: randomUUID(), sheet_id: id, employee_id, skill_id: null, status: 'UNASSIGNED', is_manual: true, created_at: ts, updated_at: ts,
+      })
+    }
+    await supabase.from('WorkAssignmentSheet').update({ updated_at: ts, updated_by: userOf(req).name || null }).eq('id', id)
+    return ok(res, { employee_id, count: ids.length })
+  } catch (e) { return fail(res, String(e)) }
+}
+
 // ─── Phát hành ──────────────────────────────────────────────────────────────
 export async function publishSheet(req: Request, res: Response) {
   try {

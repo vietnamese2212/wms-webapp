@@ -41,6 +41,7 @@ router.get('/sheets/:id',             requirePerm('work_assignment', 'view'),   
 router.post('/sheets',                requirePerm('work_assignment', 'create'),  asg.upsertSheet)
 router.post('/sheets/:id/auto-assign',requirePerm('work_assignment', 'create'),  asg.autoAssign)
 router.post('/sheets/:id/assign-one', requirePerm('work_assignment', 'edit'),    asg.assignOne)
+router.post('/sheets/:id/assign-positions', requirePerm('work_assignment', 'edit'), asg.setPositions)
 router.post('/sheets/:id/publish',    requirePerm('work_assignment', 'publish'), asg.publishSheet)
 router.delete('/sheets/:id',          requirePerm('work_assignment', 'delete'),  asg.deleteSheet)
 

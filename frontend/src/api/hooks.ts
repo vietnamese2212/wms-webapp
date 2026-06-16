@@ -2419,11 +2419,11 @@ export type SkillRow = {
 }
 
 // Danh mục skill — theo chức danh (job_title_id), phòng (department_id), hoặc tất cả (all)
-export function useSkills(params: { job_title_id?: string; department_id?: string; all?: boolean; include_inactive?: boolean; with_descendants?: boolean }, enabled = true) {
+export function useSkills(params: { job_title_id?: string; job_title_ids?: string; department_id?: string; all?: boolean; include_inactive?: boolean; with_descendants?: boolean }, enabled = true) {
   const { all, ...rest } = params
   return useQuery({
     queryKey: ['hr-skills', params],
-    enabled: enabled && !!(params.job_title_id || params.department_id || all),
+    enabled: enabled && !!(params.job_title_id || params.job_title_ids || params.department_id || all),
     queryFn: async () => {
       const { data } = await apiClient.get('/hr/skills', { params: rest })
       return data.data as SkillRow[]
@@ -2529,7 +2529,7 @@ export function useDeleteLeave() {
 // ── Layout (mẫu gom skill theo Kho) ──
 export type LayoutRow = { id: string; warehouse_id: string; name: string; note: string | null; is_active: boolean; positions: number; people: number }
 export type LayoutSkillRow = { id: string; skill_id: string; required_count: number; sort_order: number; name: string; shift_tag: string | null; job_title: string | null }
-export type LayoutDetail = { id: string; warehouse_id: string; name: string; note: string | null; is_active: boolean; skills: LayoutSkillRow[] }
+export type LayoutDetail = { id: string; warehouse_id: string; name: string; note: string | null; is_active: boolean; skills: LayoutSkillRow[]; job_title_ids: string[] }
 
 export function useLayouts(warehouse_id?: string, enabled = true) {
   return useQuery({
@@ -2577,6 +2577,14 @@ export function useSetLayoutSkills() {
   return useMutation({
     mutationFn: ({ layout_id, skills }: { layout_id: string; skills: { skill_id: string; required_count: number; sort_order?: number }[] }) =>
       apiClient.put(`/hr/layouts/${layout_id}/skills`, { skills }).then(r => r.data.data),
+    onSettled: (_d, _e, v) => { qc.invalidateQueries({ queryKey: ['hr-layout', v.layout_id] }); qc.invalidateQueries({ queryKey: ['hr-layouts'] }) },
+  })
+}
+export function useSetLayoutJobTitles() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ layout_id, job_title_ids }: { layout_id: string; job_title_ids: string[] }) =>
+      apiClient.put(`/hr/layouts/${layout_id}/job-titles`, { job_title_ids }).then(r => r.data.data),
     onSettled: (_d, _e, v) => { qc.invalidateQueries({ queryKey: ['hr-layout', v.layout_id] }); qc.invalidateQueries({ queryKey: ['hr-layouts'] }) },
   })
 }

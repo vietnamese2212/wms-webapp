@@ -44,13 +44,38 @@ export async function listLayouts(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
+// chức danh gắn với layout (để gọi đúng nhóm người khi tự xếp)
+export async function layoutJobTitleIds(layout_id: string): Promise<string[]> {
+  const { data } = await supabase.from('WorkLayoutJobTitle').select('job_title_id').eq('layout_id', layout_id)
+  return (data ?? []).map((r: { job_title_id: string }) => r.job_title_id)
+}
+
 export async function getLayout(req: Request, res: Response) {
   try {
     const { id } = req.params
     const { data: layout } = await supabase.from('WorkLayout').select(LAYOUT_SELECT).eq('id', id).maybeSingle()
     if (!layout) return fail(res, 'Không tìm thấy layout', 404)
     const skills = await layoutSkillsDetailed(id)
-    return ok(res, { ...layout, skills })
+    const job_title_ids = await layoutJobTitleIds(id)
+    return ok(res, { ...layout, skills, job_title_ids })
+  } catch (e) { return fail(res, String(e)) }
+}
+
+// Thay toàn bộ chức danh của layout
+export async function setLayoutJobTitles(req: Request, res: Response) {
+  try {
+    const { id } = req.params
+    const { job_title_ids } = req.body as { job_title_ids?: string[] }
+    await supabase.from('WorkLayoutJobTitle').delete().eq('layout_id', id)
+    const ids = [...new Set((job_title_ids ?? []).filter(Boolean))]
+    if (ids.length) {
+      const { error } = await supabase.from('WorkLayoutJobTitle').insert(
+        ids.map(jt => ({ id: randomUUID(), layout_id: id, job_title_id: jt, created_at: now() }))
+      )
+      if (error) return fail(res, error.message)
+    }
+    await supabase.from('WorkLayout').update({ updated_at: now(), updated_by: actorOf(req) }).eq('id', id)
+    return ok(res, { layout_id: id, count: ids.length })
   } catch (e) { return fail(res, String(e)) }
 }
 

@@ -31,6 +31,7 @@ router.get('/layouts/:id',           requirePerm('work_assignment', 'view'),   l
 router.post('/layouts',              requirePerm('work_assignment', 'create'), layout.createLayout)
 router.put('/layouts/:id',           requirePerm('work_assignment', 'create'), layout.updateLayout)
 router.put('/layouts/:id/skills',    requirePerm('work_assignment', 'create'), layout.setLayoutSkills)
+router.put('/layouts/:id/job-titles', requirePerm('work_assignment', 'create'), layout.setLayoutJobTitles)
 router.delete('/layouts/:id',        requirePerm('work_assignment', 'create'), layout.deleteLayout)
 
 // ─── Phân công lịch làm việc ─────────────────────────────────────────────────

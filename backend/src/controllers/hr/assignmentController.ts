@@ -2,7 +2,7 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
-import { layoutSkillsDetailed } from './layoutController'
+import { layoutSkillsDetailed, layoutJobTitleIds } from './layoutController'
 
 type ReqUser = { sub?: string; name?: string }
 const userOf = (req: Request): ReqUser => (req as { user?: ReqUser }).user ?? {}
@@ -175,9 +175,13 @@ export async function autoAssign(req: Request, res: Response) {
       : { data: [] as { employee_id: string; skill_id: string; priority: number }[] }
     const empWithSkill = [...new Set(((esRows ?? []) as { employee_id: string }[]).map(r => r.employee_id))].filter(eid => accessSet.has(eid))
     const { data: emps } = empWithSkill.length
-      ? await supabase.from('Employee').select('id').in('id', empWithSkill).eq('is_active', true).is('deleted_at', null)
-      : { data: [] as { id: string }[] }
-    const candidateIds = (emps ?? []).map((e: { id: string }) => e.id)
+      ? await supabase.from('Employee').select('id, job_title_id').in('id', empWithSkill).eq('is_active', true).is('deleted_at', null)
+      : { data: [] as { id: string; job_title_id: string | null }[] }
+    // pool theo chức danh trong layout (nếu layout có khai báo chức danh) — "gọi đúng người"
+    const ljtSet = new Set(await layoutJobTitleIds(layout_id))
+    const candidateIds = ((emps ?? []) as { id: string; job_title_id: string | null }[])
+      .filter(e => ljtSet.size === 0 || (e.job_title_id != null && ljtSet.has(e.job_title_id)))
+      .map(e => e.id)
     const candidateSet = new Set(candidateIds)
 
     // ── 3. Nghỉ phép đã duyệt phủ work_date ──

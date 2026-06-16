@@ -2458,7 +2458,7 @@ export function useDeleteSkill() {
 // Skill của 1 nhân viên (theo chức danh) + ưu tiên hiện có
 export type EmpSkillsResp = {
   job_title_id: string | null
-  skills: { id: string; name: string; shift_tag: string | null; sort_order: number; priority: number }[]
+  skills: { id: string; name: string; shift_tag: string | null; sort_order: number; priority: number; job_title_id: string | null; job_title: string | null }[]
 }
 export function useEmployeeSkills(employeeId?: string, enabled = true) {
   return useQuery({

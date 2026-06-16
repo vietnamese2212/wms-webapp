@@ -130,6 +130,19 @@ export function EmployeeSkillSection({ employeeId }: { employeeId: string }) {
   if (!data?.job_title_id) return <p className="text-xs text-slate-400">Chọn chức danh để gán kỹ năng.</p>
   if (!data.skills.length) return <p className="text-xs text-slate-400">Chức danh này chưa có danh mục skill (thêm ở Chức danh).</p>
 
+  // nhóm skill theo chức danh: của chính NV trước, rồi tới chức danh cấp dưới
+  const groups: { jtId: string | null; name: string; own: boolean; items: typeof data.skills }[] = []
+  const idx = new Map<string, number>()
+  for (const s of data.skills) {
+    const key = s.job_title_id ?? '—'
+    if (!idx.has(key)) {
+      idx.set(key, groups.length)
+      groups.push({ jtId: s.job_title_id, name: s.job_title ?? 'Khác', own: s.job_title_id === data.job_title_id, items: [] })
+    }
+    groups[idx.get(key) as number].items.push(s)
+  }
+  groups.sort((a, b) => (a.own === b.own ? 0 : a.own ? -1 : 1))
+
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
@@ -138,17 +151,24 @@ export function EmployeeSkillSection({ employeeId }: { employeeId: string }) {
       </div>
       {err && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</div>}
       <div className="border border-slate-200 rounded-lg divide-y divide-slate-100 max-h-56 overflow-y-auto">
-        {data.skills.map(s => {
-          const v = edits[s.id] ?? 0
-          return (
-            <div key={s.id} className="flex items-center gap-2 px-2.5 py-1.5">
-              <span className="text-sm text-slate-700 flex-1">{s.name}{s.shift_tag && <span className="ml-1 text-[10px] text-slate-400">{shiftLabel(s.shift_tag)}</span>}</span>
-              <input type="number" min={0} max={9} value={v || ''} disabled={!canAssign} placeholder="·"
-                onChange={e => setCell(s.id, Math.max(0, Math.min(9, Number(e.target.value) || 0)))}
-                className={`w-10 h-7 text-center text-xs rounded border outline-none ${v > 0 ? 'border-sky-300 bg-sky-50 text-sky-700 font-semibold' : 'border-slate-200 text-slate-400'} focus:border-sky-500 disabled:bg-slate-50`} />
+        {groups.map(g => (
+          <div key={g.jtId ?? '—'}>
+            <div className="px-2.5 py-1 bg-slate-50 text-[10px] font-medium text-slate-500 uppercase tracking-wide flex items-center gap-1">
+              {g.name}{!g.own && <span className="text-[9px] normal-case text-amber-600 font-normal">(cấp dưới)</span>}
             </div>
-          )
-        })}
+            {g.items.map(s => {
+              const v = edits[s.id] ?? 0
+              return (
+                <div key={s.id} className="flex items-center gap-2 px-2.5 py-1.5">
+                  <span className="text-sm text-slate-700 flex-1">{s.name}{s.shift_tag && <span className="ml-1 text-[10px] text-slate-400">{shiftLabel(s.shift_tag)}</span>}</span>
+                  <input type="number" min={0} max={9} value={v || ''} disabled={!canAssign} placeholder="·"
+                    onChange={e => setCell(s.id, Math.max(0, Math.min(9, Number(e.target.value) || 0)))}
+                    className={`w-10 h-7 text-center text-xs rounded border outline-none ${v > 0 ? 'border-sky-300 bg-sky-50 text-sky-700 font-semibold' : 'border-slate-200 text-slate-400'} focus:border-sky-500 disabled:bg-slate-50`} />
+                </div>
+              )
+            })}
+          </div>
+        ))}
       </div>
     </div>
   )

@@ -13,6 +13,26 @@ async function jobTitleIdsOfDept(department_id: string): Promise<string[]> {
   return (data ?? []).map((j: { id: string }) => j.id)
 }
 
+// chức danh root + TẤT CẢ chức danh cấp dưới (theo sơ đồ tổ chức parent_id)
+// → cấp trên có thể được gán skill của cấp dưới
+async function scopeJobTitleIds(rootJtId: string): Promise<string[]> {
+  const { data } = await supabase.from('JobTitle').select('id, parent_id')
+  const rows = (data ?? []) as { id: string; parent_id: string | null }[]
+  const childrenOf = new Map<string, string[]>()
+  for (const r of rows) {
+    if (!r.parent_id) continue
+    const arr = childrenOf.get(r.parent_id) ?? []
+    arr.push(r.id); childrenOf.set(r.parent_id, arr)
+  }
+  const out = new Set<string>([rootJtId])
+  const stack = [rootJtId]
+  while (stack.length) {
+    const cur = stack.pop() as string
+    for (const c of childrenOf.get(cur) ?? []) if (!out.has(c)) { out.add(c); stack.push(c) }
+  }
+  return [...out]
+}
+
 // ─── Skill (Vị trí phân công / kỹ năng) — thuộc Chức danh ────────────────────
 
 export async function listSkills(req: Request, res: Response) {
@@ -102,13 +122,20 @@ export async function getEmployeeSkills(req: Request, res: Response) {
     const jtId = (emp as { job_title_id: string | null }).job_title_id
     if (!jtId) return ok(res, { job_title_id: null, skills: [] })
 
+    // scope = chức danh NV + chức danh cấp dưới (cấp trên được dùng skill cấp dưới)
+    const scopeJts = await scopeJobTitleIds(jtId)
     const { data: skills } = await supabase.from('Skill').select(SKILL_SELECT)
-      .eq('job_title_id', jtId).eq('is_active', true).order('sort_order').order('name')
+      .in('job_title_id', scopeJts).eq('is_active', true).order('sort_order').order('name')
     const { data: es } = await supabase.from('EmployeeSkill').select('skill_id, priority').eq('employee_id', id)
     const priMap = new Map((es ?? []).map((r: { skill_id: string; priority: number }) => [r.skill_id, r.priority]))
+    // tên chức danh để nhóm (skill của mình vs cấp dưới)
+    const { data: jts } = await supabase.from('JobTitle').select('id, name').in('id', scopeJts)
+    const jtMap = new Map((jts ?? []).map((j: { id: string; name: string }) => [j.id, j.name]))
     return ok(res, {
       job_title_id: jtId,
-      skills: (skills ?? []).map((s: { id: string }) => ({ ...s, priority: priMap.get(s.id) ?? 0 })),
+      skills: (skills ?? []).map((s: { id: string; job_title_id: string | null }) => ({
+        ...s, job_title: s.job_title_id ? jtMap.get(s.job_title_id) ?? null : null, priority: priMap.get(s.id) ?? 0,
+      })),
     })
   } catch (e) { return fail(res, String(e)) }
 }
@@ -123,7 +150,8 @@ export async function setEmployeeSkills(req: Request, res: Response) {
     const jtId = (emp as { job_title_id: string | null } | null)?.job_title_id
     if (!jtId) return fail(res, 'Nhân viên chưa có chức danh', 400)
 
-    const { data: scopeSkills } = await supabase.from('Skill').select('id').eq('job_title_id', jtId)
+    const scopeJts = await scopeJobTitleIds(jtId)
+    const { data: scopeSkills } = await supabase.from('Skill').select('id').in('job_title_id', scopeJts)
     const scopeIds = new Set((scopeSkills ?? []).map((s: { id: string }) => s.id))
 
     if (scopeIds.size) await supabase.from('EmployeeSkill').delete().eq('employee_id', id).in('skill_id', [...scopeIds])

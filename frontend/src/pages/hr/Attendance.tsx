@@ -10,7 +10,7 @@ import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/share
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import {
   useWarehouses, useDepartments,
-  useAttendance, useUpsertAttendance, useDeleteAttendance, useAttendanceReport, type AttendanceRow, type AttReportRow,
+  useAttendance, useUpsertAttendance, useDeleteAttendance, type AttendanceRow,
   useLeaves,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
@@ -55,6 +55,7 @@ const KIND_CELL: Record<string, string> = {
 }
 const KIND_SHORT: Record<string, string> = { CA1: 'Ca 1', CA2: 'Ca 2', CA3: 'Ca 3', HC: 'HC', LEAVE: 'Nghỉ' }
 const DOW = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN']
+const dowOf = (ds: string) => DOW[(new Date(`${ds}T00:00:00`).getDay() + 6) % 7]
 
 export default function Attendance() {
   const user  = useAuthStore(s => s.user)
@@ -64,7 +65,6 @@ export default function Attendance() {
   const canReport = can(perms, 'attendance', 'report')
   const canLeave = can(perms, 'leave', 'view') || can(perms, 'leave', 'request')
 
-  // Bảng công gộp cả Tổng hợp (report) lẫn Chi tiết (view)
   const canSheet = canView || canReport
   const [tab, setTab] = useState<'me' | 'leave' | 'team'>(canSelf ? 'me' : canLeave ? 'leave' : 'team')
 
@@ -82,7 +82,7 @@ export default function Attendance() {
         <div className="flex-1 min-h-0 overflow-auto p-3">
           {tab === 'me' && canSelf ? <MySection />
             : tab === 'leave' && canLeave ? <LeaveSection />
-            : canSheet ? <TeamSection perms={perms} canView={canView} canReport={canReport} />
+            : canSheet ? <TeamSection perms={perms} />
             : <p className="text-sm text-slate-400 text-center py-16">Không có quyền.</p>}
         </div>
       </div>
@@ -90,7 +90,9 @@ export default function Attendance() {
   )
 }
 
-// ─── Của tôi (lịch tháng) ───────────────────────────────────────────────────
+// ─── Của tôi (lịch tháng để chấm công + bảng công theo khoảng ngày) ──────────
+const MY_FROM_KEY = 'hr_my_att_from'
+
 function MySection() {
   const user = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
@@ -125,17 +127,6 @@ function MySection() {
     return m
   }, [myLeaves])
 
-  // tổng hợp tháng
-  const sum = useMemo(() => {
-    let workDays = 0, ot = 0, early = 0, leave = 0
-    for (const r of rows) {
-      if (r.kind === 'LEAVE') { leave++; continue }
-      workDays++; ot += r.ot_hours || 0; early += r.early_leave_hours || 0
-    }
-    const hours = workDays * 8 + ot - early
-    return { workDays, ot, early, leave, hours, cong: toCong(hours) }
-  }, [rows])
-
   const today = TODAY()
   const [sel, setSel]     = useState<string | null>(null)
   const [kind, setKind]   = useState('CA1')
@@ -159,6 +150,9 @@ function MySection() {
   const locked = (isPast && !canEditPast) || approvedLeave
   const isLeave = kind === 'LEAVE'
   const totalCong = isLeave ? 0 : Math.round((8 + ot - early) * 10) / 10
+  // Chỉ cho chọn "Nghỉ phép" khi ngày đó đã có đơn nghỉ (chờ/đã duyệt) hoặc bản ghi sẵn là LEAVE
+  const canPickLeave = !!selLeave || selEntry?.kind === 'LEAVE'
+  const kindOptions = canPickLeave ? KINDS : KINDS.filter(k => k.value !== 'LEAVE')
 
   function pickKind(k: string) { setKind(k); if (k === 'LEAVE') { setOt(0); setEarly(0) } }
   function pickOt(v: number) { setOt(v); if (v > 0) setEarly(0) }
@@ -177,18 +171,9 @@ function MySection() {
   }
 
   return (
-    <div className="space-y-3 max-w-4xl">
-      {/* Tổng hợp tháng — chuẩn Manhattan */}
-      <SummaryBand className="rounded-lg" tiles={[
-        { label: 'Tổng công', value: sum.cong, accent: true },
-        { label: 'Ngày công', value: sum.workDays },
-        { label: 'Giờ OT', value: sum.ot || '—' },
-        { label: 'Giờ về sớm', value: sum.early || '—' },
-        { label: 'Nghỉ phép', value: sum.leave || '—' },
-      ]} />
-
-      <div className="flex flex-col lg:flex-row gap-4">
-        {/* Lịch */}
+    <div className="space-y-4">
+      {/* Khối 1: Lịch tháng + form chấm công */}
+      <div className="flex flex-col lg:flex-row gap-4 max-w-4xl">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-2">
             <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => setMonth(m => subMonths(m, 1))}><ChevronLeft className="h-4 w-4" /></Button>
@@ -218,12 +203,10 @@ function MySection() {
                     ${e ? KIND_CELL[e.kind] : 'bg-white'}`}>
                   <div className="flex items-center justify-between">
                     <span className={`text-[11px] font-semibold leading-none ${isToday ? 'text-sky-600' : ''}`}>{format(day, 'd')}</span>
-                    {/* dấu trạng thái nghỉ phép */}
                     {lv === 'APPROVED' && <CheckCircle2 className="h-3 w-3 text-slate-500" aria-label="Đã duyệt nghỉ" />}
                     {lv === 'PENDING' && <Clock className="h-3 w-3 text-amber-500" aria-label="Chờ duyệt nghỉ" />}
                   </div>
                   {e && <span className="text-[10px] leading-tight font-medium">{KIND_SHORT[e.kind]}</span>}
-                  {/* Tổng công — nổi bật nhất trong ô */}
                   {e && e.kind !== 'LEAVE' && <span className="mt-auto text-sm font-bold leading-none tabular-nums">{cong}<span className="text-[8px] font-normal text-slate-400 ml-0.5">công</span></span>}
                   {e && (e.ot_hours > 0 || e.early_leave_hours > 0) && (
                     <span className="text-[8px] leading-none text-slate-500">{e.ot_hours > 0 ? `OT ${e.ot_hours}h` : ''}{e.early_leave_hours > 0 ? ` −${e.early_leave_hours}h` : ''}</span>
@@ -232,7 +215,6 @@ function MySection() {
               )
             })}
           </div>
-          {/* chú thích */}
           <div className="flex flex-wrap gap-2 mt-2 items-center">
             {KINDS.map(k => <span key={k.value} className={`text-[10px] px-1.5 py-0.5 rounded ${KIND_CELL[k.value]}`}>{k.label}</span>)}
             <span className="text-[10px] text-slate-500 flex items-center gap-0.5"><CheckCircle2 className="h-3 w-3 text-slate-500" /> Nghỉ đã duyệt</span>
@@ -257,8 +239,9 @@ function MySection() {
                   <div>
                     <label className="text-[11px] text-slate-500">Loại công</label>
                     <select value={kind} disabled={locked} onChange={e => pickKind(e.target.value)} className="border border-slate-200 rounded-md px-2 h-8 text-sm bg-white block w-full disabled:bg-slate-100">
-                      {KINDS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      {kindOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                     </select>
+                    {!canPickLeave && <p className="text-[10px] text-slate-400 mt-0.5">Muốn chấm Nghỉ phép? Hãy gửi đơn xin nghỉ trước.</p>}
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     <div><label className="text-[11px] text-slate-500">Giờ OT</label>
@@ -280,65 +263,104 @@ function MySection() {
         </div>
       </div>
 
+      {/* Khối 2: Bảng công của tôi theo khoảng ngày (độc lập với lịch) */}
+      <MyRangeSheet employeeId={user?.id} />
+
       {openLeave && <CreateLeaveDialog wh={user?.warehouse_id ?? ''} dept="" fixedEmployeeId={user?.id} onClose={() => setOpenLeave(false)} />}
     </div>
   )
 }
 
-// ─── Bảng công (gộp Tổng hợp theo người + Chi tiết theo ngày) ────────────────
-function TeamSection({ perms, canView, canReport }: { perms: ModulePermissions | null; canView: boolean; canReport: boolean }) {
+// Bảng công của bản thân theo khoảng ngày tùy chọn (chu kỳ công không tròn tháng)
+function MyRangeSheet({ employeeId }: { employeeId?: string }) {
+  const [from, setFrom] = useState<string>(() => localStorage.getItem(MY_FROM_KEY) || MONTH_START())
+  const [to, setTo]     = useState<string>(TODAY())
+  useEffect(() => { localStorage.setItem(MY_FROM_KEY, from) }, [from])
+
+  const { data: rows = [], isLoading } = useAttendance(
+    { employee_id: employeeId, date_from: from, date_to: to }, !!employeeId,
+  )
+  const sorted = [...rows].sort((a, b) => a.work_date.localeCompare(b.work_date))
+  const sum = useMemo(() => {
+    let workDays = 0, ot = 0, early = 0, leave = 0
+    for (const r of rows) {
+      if (r.kind === 'LEAVE') { leave++; continue }
+      workDays++; ot += r.ot_hours || 0; early += r.early_leave_hours || 0
+    }
+    const hours = workDays * 8 + ot - early
+    return { workDays, ot, early, leave, cong: toCong(hours) }
+  }, [rows])
+
+  return (
+    <div className="border-t border-slate-200 pt-3 space-y-2 max-w-4xl">
+      <div className="flex flex-wrap items-end gap-2">
+        <h2 className="text-base font-medium text-slate-700 mr-2">Bảng công của tôi</h2>
+        <div>
+          <label className="text-[11px] text-slate-500 block">Từ ngày</label>
+          <Input type="date" value={from} onChange={e => setFrom(e.target.value)} className="h-7 text-xs w-36" />
+        </div>
+        <div>
+          <label className="text-[11px] text-slate-500 block">Tới ngày</label>
+          <Input type="date" value={to} onChange={e => setTo(e.target.value)} className="h-7 text-xs w-36" />
+        </div>
+      </div>
+      <SummaryBand className="rounded-lg" tiles={[
+        { label: 'Tổng công', value: sum.cong, accent: true },
+        { label: 'Ngày công', value: sum.workDays },
+        { label: 'Giờ OT', value: sum.ot || '—' },
+        { label: 'Giờ về sớm', value: sum.early || '—' },
+        { label: 'Nghỉ phép', value: sum.leave || '—' },
+      ]} />
+      {isLoading ? <p className="text-xs text-slate-400 py-6 text-center">Đang tải…</p>
+        : <AttTable rows={sorted} showName={false} />}
+    </div>
+  )
+}
+
+// ─── Bảng công chung (ma trận người × ngày + raw data) ───────────────────────
+function TeamSection({ perms }: { perms: ModulePermissions | null }) {
   const canEdit = can(perms, 'attendance', 'edit')
   const { data: warehouses = [] } = useWarehouses(true)
   const { data: departments = [] } = useDepartments()
   const del = useDeleteAttendance()
 
-  const [view, setView] = useState<'summary' | 'detail'>(canReport ? 'summary' : 'detail')
+  const [view, setView] = useState<'matrix' | 'raw'>('matrix')
   const [wh, setWh]     = useState('')
   const [dept, setDept] = useState('')
   const [q, setQ]       = useState('')
   const [from, setFrom] = useState(MONTH_START())
   const [to, setTo]     = useState(TODAY())
 
-  // chi tiết (luôn lấy — dùng cho SummaryBand + view chi tiết)
-  const { data: rows = [], isLoading: loadingRows } = useAttendance(
+  const { data: rows = [], isLoading } = useAttendance(
     { warehouse_id: wh || undefined, department_id: dept || undefined, date_from: from, date_to: to }, true,
   )
-  // tổng hợp theo người
-  const { data: report = [], isLoading: loadingReport } = useAttendanceReport(
-    { warehouse_id: wh || undefined, department_id: dept || undefined, date_from: from, date_to: to }, canReport,
-  )
-
   const ql = q.trim().toLowerCase()
-  const matchName = (name?: string | null, code?: string | null) =>
-    !ql || (name ?? '').toLowerCase().includes(ql) || (code ?? '').toLowerCase().includes(ql)
-  const filteredRows = rows.filter(r => matchName(r.employee?.name, r.employee?.employee_code))
-  const filteredReport = report.filter(r => matchName(r.employee?.name, r.employee?.employee_code))
+  const filtered = ql
+    ? rows.filter(r => (r.employee?.name ?? '').toLowerCase().includes(ql) || (r.employee?.employee_code ?? '').toLowerCase().includes(ql))
+    : rows
 
-  // tổng hợp toàn dải (cho SummaryBand) — tính từ chi tiết
   const sum = useMemo(() => {
     let workDays = 0, ot = 0, early = 0, leave = 0
     const people = new Set<string>()
-    for (const r of filteredRows) {
+    for (const r of filtered) {
       people.add(r.employee_id)
       if (r.kind === 'LEAVE') { leave++; continue }
       workDays++; ot += r.ot_hours || 0; early += r.early_leave_hours || 0
     }
     const hours = workDays * 8 + ot - early
     return { people: people.size, workDays, ot, early, leave, cong: toCong(hours) }
-  }, [filteredRows])
+  }, [filtered])
 
   const defs: FilterDef[] = [
     { key: 'range', label: 'Khoảng ngày', type: 'daterange', from, to, onChange: (f, t) => { setFrom(f); setTo(t) } },
   ]
-  const isLoading = view === 'summary' ? loadingReport : loadingRows
 
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
-        {/* chuyển chế độ xem */}
         <div className="flex rounded-md border border-slate-200 overflow-hidden text-xs font-medium">
-          {canReport && <button onClick={() => setView('summary')} className={`px-2.5 py-1 ${view === 'summary' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Tổng hợp</button>}
-          {canView && <button onClick={() => setView('detail')} className={`px-2.5 py-1 border-l border-slate-200 ${view === 'detail' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Chi tiết</button>}
+          <button onClick={() => setView('matrix')} className={`px-2.5 py-1 ${view === 'matrix' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Ma trận</button>
+          <button onClick={() => setView('raw')} className={`px-2.5 py-1 border-l border-slate-200 ${view === 'raw' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Raw data</button>
         </div>
         <WarehouseSingleSelect warehouses={warehouses as { id: string; code?: string; name: string }[]} value={wh} onChange={setWh} allLabel="Tất cả kho" placeholder="Tất cả kho" triggerClassName="w-40" />
         <select value={dept} onChange={e => setDept(e.target.value)} className="border border-slate-200 rounded-md px-2.5 text-xs h-7 bg-white text-slate-700">
@@ -351,7 +373,6 @@ function TeamSection({ perms, canView, canReport }: { perms: ModulePermissions |
         <div className="hidden sm:block"><FilterBar defs={defs} /></div>
       </div>
 
-      {/* Tổng hợp toàn dải — chuẩn Manhattan */}
       <SummaryBand className="rounded-lg" tiles={[
         { label: 'Số người', value: sum.people },
         { label: 'Tổng công', value: sum.cong, accent: true },
@@ -362,49 +383,65 @@ function TeamSection({ perms, canView, canReport }: { perms: ModulePermissions |
       ]} />
 
       {isLoading ? <p className="text-xs text-slate-400 py-8 text-center">Đang tải…</p>
-        : view === 'summary'
-          ? <SummaryTable rows={filteredReport} />
-          : <AttTable rows={filteredRows} onDelete={canEdit ? (id => del.mutate(id)) : undefined} showName />}
+        : view === 'matrix'
+          ? <MatrixTable rows={filtered} from={from} to={to} />
+          : <AttTable rows={filtered} onDelete={canEdit ? (id => del.mutate(id)) : undefined} showName />}
     </div>
   )
 }
 
-// Bảng tổng hợp theo người (gộp từ Báo cáo cũ) — thêm cột Công (decimal)
-function SummaryTable({ rows }: { rows: AttReportRow[] }) {
+// Ma trận: dòng = người, cột = từng ngày, ô = ca làm + (OT/về sớm); cột cuối = tổng công
+function MatrixTable({ rows, from, to }: { rows: AttendanceRow[]; from: string; to: string }) {
+  const dates = eachDate(from, to)
+  const emps = useMemo(() => {
+    const m = new Map<string, { emp: AttendanceRow['employee']; byDate: Map<string, AttendanceRow>; hours: number }>()
+    for (const r of rows) {
+      let g = m.get(r.employee_id)
+      if (!g) { g = { emp: r.employee, byDate: new Map(), hours: 0 }; m.set(r.employee_id, g) }
+      g.byDate.set(r.work_date, r)
+      g.hours += rowTotal(r)
+    }
+    return [...m.values()].sort((a, b) => (a.emp?.name ?? '').localeCompare(b.emp?.name ?? ''))
+  }, [rows])
+
   return (
     <div className="border border-slate-200 rounded-lg overflow-x-auto">
-      <table className="w-full text-xs min-w-max">
+      <table className="text-xs min-w-max border-collapse">
         <thead className="bg-slate-50 text-[10px] text-slate-500">
           <tr>
-            <th className="text-left px-2 py-2 font-medium sticky left-0 bg-slate-50">Nhân viên</th>
-            <th className="text-right px-2 py-2 font-medium">Ca 1</th>
-            <th className="text-right px-2 py-2 font-medium">Ca 2</th>
-            <th className="text-right px-2 py-2 font-medium">Ca 3</th>
-            <th className="text-right px-2 py-2 font-medium">HC</th>
-            <th className="text-right px-2 py-2 font-medium">Ngày công</th>
-            <th className="text-right px-2 py-2 font-medium">Nghỉ phép</th>
-            <th className="text-right px-2 py-2 font-medium">Giờ OT</th>
-            <th className="text-right px-2 py-2 font-medium">Giờ về sớm</th>
-            <th className="text-right px-2 py-2 font-medium">Tổng giờ</th>
-            <th className="text-right px-2 py-2 font-medium">Tổng công</th>
+            <th className="text-left px-2 py-1.5 font-medium sticky left-0 z-20 bg-slate-50 border-r border-slate-200 min-w-[150px]">Nhân viên</th>
+            {dates.map(d => (
+              <th key={d} className="px-1 py-1 font-medium text-center border-r border-slate-100 min-w-[42px]">
+                <div className="text-[9px] text-slate-400">{dowOf(d)}</div>
+                <div className="tabular-nums">{format(new Date(`${d}T00:00:00`), 'dd/MM')}</div>
+              </th>
+            ))}
+            <th className="text-right px-2 py-1.5 font-medium sticky right-0 z-20 bg-slate-50 border-l border-slate-200">Tổng công</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
-          {rows.length === 0 ? (
-            <tr><td colSpan={11} className="text-center text-slate-400 py-6">Chưa có dữ liệu</td></tr>
-          ) : rows.map(r => (
-            <tr key={r.employee_id} className="hover:bg-slate-50/60">
-              <td className="px-2 py-1.5 sticky left-0 bg-white"><span className="font-medium text-slate-700">{r.employee?.name ?? '—'}</span> <span className="text-[10px] text-slate-400">{r.employee?.employee_code}</span></td>
-              <td className="px-2 py-1.5 text-right tabular-nums">{r.ca1 || '—'}</td>
-              <td className="px-2 py-1.5 text-right tabular-nums">{r.ca2 || '—'}</td>
-              <td className="px-2 py-1.5 text-right tabular-nums">{r.ca3 || '—'}</td>
-              <td className="px-2 py-1.5 text-right tabular-nums">{r.hc || '—'}</td>
-              <td className="px-2 py-1.5 text-right tabular-nums">{r.work_days || '—'}</td>
-              <td className="px-2 py-1.5 text-right tabular-nums">{r.leave || '—'}</td>
-              <td className="px-2 py-1.5 text-right tabular-nums">{r.ot_hours > 0 ? r.ot_hours : '—'}</td>
-              <td className="px-2 py-1.5 text-right tabular-nums">{r.early_hours > 0 ? r.early_hours : '—'}</td>
-              <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{r.total_hours}h</td>
-              <td className="px-2 py-1.5 text-right tabular-nums font-semibold text-slate-700">{toCong(r.total_hours)}</td>
+          {emps.length === 0 ? (
+            <tr><td colSpan={dates.length + 2} className="text-center text-slate-400 py-6">Chưa có dữ liệu</td></tr>
+          ) : emps.map(g => (
+            <tr key={g.emp?.id ?? Math.random()} className="hover:bg-slate-50/60">
+              <td className="px-2 py-1 sticky left-0 z-10 bg-white border-r border-slate-200">
+                <div className="font-medium text-slate-700 leading-tight">{g.emp?.name ?? '—'}</div>
+                <div className="text-[10px] text-slate-400 leading-tight">{g.emp?.job_title ?? g.emp?.employee_code ?? ''}</div>
+              </td>
+              {dates.map(d => {
+                const e = g.byDate.get(d)
+                return (
+                  <td key={d} className={`px-1 py-1 text-center border-r border-slate-100 ${e ? KIND_CELL[e.kind] : ''}`}>
+                    {e ? (
+                      <div className="leading-none">
+                        <div className="text-[10px] font-medium">{KIND_SHORT[e.kind]}</div>
+                        {(e.ot_hours > 0 || e.early_leave_hours > 0) && <div className="text-[8px] text-slate-500">{e.ot_hours > 0 ? `+${e.ot_hours}` : `−${e.early_leave_hours}`}</div>}
+                      </div>
+                    ) : <span className="text-slate-300">·</span>}
+                  </td>
+                )
+              })}
+              <td className="px-2 py-1 text-right sticky right-0 z-10 bg-white border-l border-slate-200 font-semibold text-slate-700 tabular-nums">{toCong(g.hours)}</td>
             </tr>
           ))}
         </tbody>

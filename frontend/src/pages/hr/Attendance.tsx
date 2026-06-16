@@ -16,6 +16,7 @@ import {
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { formatDate } from '@/utils/formatters'
+import { getHoliday } from '@/utils/vnHolidays'
 import { LeaveSection, CreateLeaveDialog } from './LeaveManagement'
 
 const KINDS: { value: string; label: string }[] = [
@@ -56,26 +57,6 @@ const KIND_CELL: Record<string, string> = {
 const KIND_SHORT: Record<string, string> = { CA1: 'Ca 1', CA2: 'Ca 2', CA3: 'Ca 3', HC: 'HC', LEAVE: 'Nghỉ' }
 const DOW = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN']
 const dowOf = (ds: string) => DOW[(new Date(`${ds}T00:00:00`).getDay() + 6) % 7]
-
-// Ngày nghỉ lễ VN — dương lịch cố định (lặp hằng năm, khớp MM-DD)
-const VN_HOLIDAYS_FIXED: Record<string, string> = {
-  '01-01': 'Tết Dương lịch',
-  '04-30': 'Giải phóng miền Nam',
-  '05-01': 'Quốc tế Lao động',
-  '09-02': 'Quốc khánh',
-}
-// Ngày lễ âm lịch đã quy đổi sang dương lịch — CẦN CẬP NHẬT THEO TỪNG NĂM
-const VN_HOLIDAYS_DATE: Record<string, string> = {
-  // 2026 (Bính Ngọ)
-  '2026-02-16': 'Giao thừa (30 Tết)',
-  '2026-02-17': 'Tết Nguyên đán (mùng 1)',
-  '2026-02-18': 'Tết Nguyên đán (mùng 2)',
-  '2026-02-19': 'Tết Nguyên đán (mùng 3)',
-  '2026-02-20': 'Tết Nguyên đán (mùng 4)',
-  '2026-02-21': 'Tết Nguyên đán (mùng 5)',
-  '2026-04-26': 'Giỗ Tổ Hùng Vương (10/3 ÂL)',
-}
-const holidayOf = (ds: string): string | null => VN_HOLIDAYS_DATE[ds] ?? VN_HOLIDAYS_FIXED[ds.slice(5)] ?? null
 
 export default function Attendance() {
   const user  = useAuthStore(s => s.user)
@@ -165,7 +146,7 @@ function MySection() {
 
   const selEntry = sel ? byDate.get(sel) : undefined
   const selLeave = sel ? leaveByDate.get(sel) : undefined
-  const selHoliday = sel ? holidayOf(sel) : null
+  const selHoliday = sel ? getHoliday(sel) : null
   const isPast = !!sel && sel < today
   const approvedLeave = selLeave === 'APPROVED'                 // đã duyệt nghỉ → khỏi chấm công
   const locked = (isPast && !canEditPast) || approvedLeave
@@ -215,7 +196,7 @@ function MySection() {
               const isFuture = ds > today
               const isSel = ds === sel
               const cong = e ? toCong(rowTotal(e)) : 0
-              const hol = holidayOf(ds)
+              const hol = getHoliday(ds)
               return (
                 <button key={ds} type="button" disabled={isFuture}
                   onClick={() => setSel(ds)}

@@ -175,9 +175,9 @@ function MySection() {
       {/* Khối 1: Lịch tháng + form chấm công */}
       <div className="flex flex-col lg:flex-row gap-4 max-w-4xl">
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-2">
+          <div className="flex flex-wrap items-center gap-2 mb-2">
             <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => setMonth(m => subMonths(m, 1))}><ChevronLeft className="h-4 w-4" /></Button>
-            <div className="text-sm font-semibold text-slate-700 w-32 text-center">{format(month, 'MMMM yyyy', { locale: vi })}</div>
+            <div className="text-sm font-semibold text-slate-700 w-28 sm:w-32 text-center">{format(month, 'MMMM yyyy', { locale: vi })}</div>
             <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => setMonth(m => addMonths(m, 1))}><ChevronRight className="h-4 w-4" /></Button>
             <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => { setMonth(new Date()); setSel(today) }}>Hôm nay</Button>
             <div className="flex-1" />
@@ -318,18 +318,23 @@ function MyRangeSheet({ employeeId }: { employeeId?: string }) {
 }
 
 // ─── Bảng công chung (ma trận người × ngày + raw data) ───────────────────────
+const TEAM_FILTER_KEY = 'hr_team_att_filter'
+
 function TeamSection({ perms }: { perms: ModulePermissions | null }) {
   const canEdit = can(perms, 'attendance', 'edit')
   const { data: warehouses = [] } = useWarehouses(true)
   const { data: departments = [] } = useDepartments()
   const del = useDeleteAttendance()
 
+  // nhớ filter cũ (kho/phòng/tìm/Tới ngày); riêng Từ ngày luôn mặc định hôm nay
+  const saved = (() => { try { return JSON.parse(localStorage.getItem(TEAM_FILTER_KEY) || '{}') } catch { return {} } })()
   const [view, setView] = useState<'matrix' | 'raw'>('matrix')
-  const [wh, setWh]     = useState('')
-  const [dept, setDept] = useState('')
-  const [q, setQ]       = useState('')
-  const [from, setFrom] = useState(MONTH_START())
-  const [to, setTo]     = useState(TODAY())
+  const [wh, setWh]     = useState<string>(saved.wh ?? '')
+  const [dept, setDept] = useState<string>(saved.dept ?? '')
+  const [q, setQ]       = useState<string>(saved.q ?? '')
+  const [from, setFrom] = useState(TODAY())
+  const [to, setTo]     = useState<string>(saved.to ?? TODAY())
+  useEffect(() => { localStorage.setItem(TEAM_FILTER_KEY, JSON.stringify({ wh, dept, q, to })) }, [wh, dept, q, to])
 
   const { data: rows = [], isLoading } = useAttendance(
     { warehouse_id: wh || undefined, department_id: dept || undefined, date_from: from, date_to: to }, true,
@@ -409,7 +414,7 @@ function MatrixTable({ rows, from, to }: { rows: AttendanceRow[]; from: string; 
       <table className="text-xs min-w-max border-collapse">
         <thead className="bg-slate-50 text-[10px] text-slate-500">
           <tr>
-            <th className="text-left px-2 py-1.5 font-medium sticky left-0 z-20 bg-slate-50 border-r border-slate-200 min-w-[150px]">Nhân viên</th>
+            <th className="text-left px-2 py-1.5 font-medium sticky left-0 z-20 bg-slate-50 border-r border-slate-200 min-w-[160px]">Nhân viên · Mã NV</th>
             {dates.map(d => (
               <th key={d} className="px-1 py-1 font-medium text-center border-r border-slate-100 min-w-[42px]">
                 <div className="text-[9px] text-slate-400">{dowOf(d)}</div>
@@ -426,7 +431,7 @@ function MatrixTable({ rows, from, to }: { rows: AttendanceRow[]; from: string; 
             <tr key={g.emp?.id ?? Math.random()} className="hover:bg-slate-50/60">
               <td className="px-2 py-1 sticky left-0 z-10 bg-white border-r border-slate-200">
                 <div className="font-medium text-slate-700 leading-tight">{g.emp?.name ?? '—'}</div>
-                <div className="text-[10px] text-slate-400 leading-tight">{g.emp?.job_title ?? g.emp?.employee_code ?? ''}</div>
+                <div className="text-[10px] text-slate-400 leading-tight"><span className="font-mono">{g.emp?.employee_code ?? '—'}</span>{g.emp?.job_title ? ` · ${g.emp.job_title}` : ''}</div>
               </td>
               {dates.map(d => {
                 const e = g.byDate.get(d)
@@ -457,6 +462,7 @@ function AttTable({ rows, onDelete, showName }: { rows: AttendanceRow[]; onDelet
         <thead className="bg-slate-50 text-[10px] text-slate-500">
           <tr>
             {showName && <th className="text-left px-2 py-2 font-medium">Nhân viên</th>}
+            {showName && <th className="text-left px-2 py-2 font-medium">Mã NV</th>}
             {showName && <th className="text-left px-2 py-2 font-medium">Chức danh</th>}
             <th className="text-left px-2 py-2 font-medium">Ngày</th>
             <th className="text-left px-2 py-2 font-medium">Loại</th>
@@ -472,7 +478,8 @@ function AttTable({ rows, onDelete, showName }: { rows: AttendanceRow[]; onDelet
             <tr><td colSpan={showName ? 9 : 6} className="text-center text-slate-400 py-6">Chưa có dữ liệu</td></tr>
           ) : rows.map(r => (
             <tr key={r.id} className="hover:bg-slate-50/60">
-              {showName && <td className="px-2 py-1.5"><span className="font-medium text-slate-700">{r.employee?.name ?? '—'}</span> <span className="text-[10px] text-slate-400">{r.employee?.employee_code}</span></td>}
+              {showName && <td className="px-2 py-1.5 font-medium text-slate-700">{r.employee?.name ?? '—'}</td>}
+              {showName && <td className="px-2 py-1.5 font-mono text-slate-500">{r.employee?.employee_code ?? '—'}</td>}
               {showName && <td className="px-2 py-1.5 text-slate-600">{r.employee?.job_title ?? '—'}</td>}
               <td className="px-2 py-1.5 tabular-nums">{formatDate(r.work_date)}</td>
               <td className="px-2 py-1.5"><Badge variant={kindVariant(r.kind)}>{kindLabel(r.kind)}</Badge></td>

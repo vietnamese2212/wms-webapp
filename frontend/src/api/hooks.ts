@@ -2638,8 +2638,9 @@ export function useUpsertSheet() {
 export function useAutoAssign() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (sheetId: string) => apiClient.post(`/hr/sheets/${sheetId}/auto-assign`).then(r => r.data.data as { assigned: number; on_leave: number; shortfalls: { skill_id: string; required: number; short: number }[] }),
-    onSettled: (_d, _e, sheetId) => { qc.invalidateQueries({ queryKey: ['hr-sheet', sheetId] }); qc.invalidateQueries({ queryKey: ['hr-sheets'] }) },
+    mutationFn: ({ sheetId, demands }: { sheetId: string; demands?: { skill_id: string; required_count: number; note?: string }[] }) =>
+      apiClient.post(`/hr/sheets/${sheetId}/auto-assign`, { demands }).then(r => r.data.data as { assigned: number; on_leave: number; shortfalls: { skill_id: string; required: number; short: number }[] }),
+    onSettled: (_d, _e, v) => { qc.invalidateQueries({ queryKey: ['hr-sheet', v.sheetId] }); qc.invalidateQueries({ queryKey: ['hr-sheets'] }) },
   })
 }
 export function useAssignOne() {
@@ -2662,6 +2663,8 @@ export function useDeleteSheet() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => apiClient.delete(`/hr/sheets/${id}`).then(r => r.data.data),
+    // xóa lạc quan: bỏ phiếu khỏi mọi cache danh sách ngay, không chờ refetch
+    onMutate: (id) => { qc.setQueriesData<SheetRow[]>({ queryKey: ['hr-sheets'] }, old => Array.isArray(old) ? old.filter(s => s.id !== id) : old) },
     onSettled: () => qc.invalidateQueries({ queryKey: ['hr-sheets'] }),
   })
 }

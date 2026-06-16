@@ -212,15 +212,18 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
     setErr(null)
     try {
       const list = demandList()
-      await upsert.mutateAsync({ layout_id: sheet!.layout_id!, work_date: sheet!.work_date, demands: list })
-      await setLayoutSkills.mutateAsync({ layout_id: sheet!.layout_id!, skills: list.map((d, i) => ({ skill_id: d.skill_id, required_count: d.required_count, sort_order: i, note: d.note })) })
+      // 2 thao tác độc lập → chạy song song cho nhanh
+      await Promise.all([
+        upsert.mutateAsync({ layout_id: sheet!.layout_id!, work_date: sheet!.work_date, demands: list }),
+        setLayoutSkills.mutateAsync({ layout_id: sheet!.layout_id!, skills: list.map((d, i) => ({ skill_id: d.skill_id, required_count: d.required_count, sort_order: i, note: d.note })) }),
+      ])
     } catch (e) { setErr(String((e as { message?: string })?.message ?? e)) }
   }
   async function runAuto() {
     setErr(null)
     try {
-      await upsert.mutateAsync({ layout_id: sheet!.layout_id!, work_date: sheet!.work_date, demands: demandList() })
-      await auto.mutateAsync(sheet!.id)
+      // gộp lưu yêu cầu + tự xếp trong 1 request
+      await auto.mutateAsync({ sheetId: sheet!.id, demands: demandList() })
       setStep('result')
     } catch (e) { setErr(String((e as { message?: string })?.message ?? e)) }
   }

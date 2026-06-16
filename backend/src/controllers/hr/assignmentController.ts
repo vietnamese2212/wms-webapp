@@ -168,6 +168,16 @@ export async function autoAssign(req: Request, res: Response) {
     const { warehouse_id, layout_id, work_date } = sheet as { warehouse_id: string; layout_id: string | null; work_date: string }
     if (!layout_id) return fail(res, 'Phiếu chưa gắn layout', 400)
 
+    // Gộp lưu yêu cầu vào luôn (1 round-trip): nếu body có demands → cập nhật trước khi xếp
+    const bodyDemands = (req.body as { demands?: { skill_id: string; required_count: number; note?: string }[] })?.demands
+    if (Array.isArray(bodyDemands)) {
+      await supabase.from('WorkAssignmentDemand').delete().eq('sheet_id', id)
+      const valid = bodyDemands.filter(d => d.skill_id && d.required_count > 0)
+      if (valid.length) await supabase.from('WorkAssignmentDemand').insert(valid.map(d => ({
+        id: randomUUID(), sheet_id: id, skill_id: d.skill_id, required_count: d.required_count, note: d.note || null, created_at: now(), updated_at: now(),
+      })))
+    }
+
     const { data: demands } = await supabase.from('WorkAssignmentDemand').select('skill_id, required_count').eq('sheet_id', id)
     const demandList = (demands ?? []) as { skill_id: string; required_count: number }[]
     if (!demandList.length) return fail(res, 'Phiếu chưa có yêu cầu vị trí nào', 400)

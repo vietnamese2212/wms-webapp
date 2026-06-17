@@ -137,11 +137,11 @@ function DailyTab({ canCreate, perms }: { canCreate: boolean; perms: ModulePermi
   const [wh, setWh]             = useState<string>(saved.wh ?? '')
   const [layoutId, setLayoutId] = useState<string>(saved.layout ?? '')
   const [from, setFrom]         = useState<string>(saved.from ?? MONTH_START())
-  const [to, setTo]             = useState<string>(saved.to ?? DATE_PLUS(15))   // mặc định: hôm nay + 15 ngày
+  const [to, setTo]             = useState<string>(DATE_PLUS(15))   // luôn mặc định: hôm nay + 15 ngày (không nhớ giá trị cũ)
   const [cDate, setCDate]       = useState<string>(TODAY())
   const [sel, setSel]           = useState<string | null>(null)
   const [err, setErr]           = useState<string | null>(null)
-  useEffect(() => { localStorage.setItem(SCOPE_KEY, JSON.stringify({ wh, layout: layoutId, from, to })) }, [wh, layoutId, from, to])
+  useEffect(() => { localStorage.setItem(SCOPE_KEY, JSON.stringify({ wh, layout: layoutId, from })) }, [wh, layoutId, from])
 
   const { data: layouts = [] } = useLayouts(wh || undefined)
   useEffect(() => { if (layoutId && !layouts.some(l => l.id === layoutId)) setLayoutId('') }, [layouts, layoutId])

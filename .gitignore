@@ -43,3 +43,6 @@ vite.config.ts.timestamp-*
 # Claude Code local settings
 .claude/settings.local.json
 backend/C*Tempbackend_test.log
+
+# MCP config (chứa URL DB) — không commit
+.mcp.json

@@ -46,3 +46,7 @@ backend/C*Tempbackend_test.log
 
 # MCP config (chứa URL DB) — không commit
 .mcp.json
+
+# Playwright MCP test artifacts
+.playwright-mcp/
+login-check.png

@@ -60,5 +60,17 @@
       "Bash(git commit*)",
       "Bash(git push*)"
     ]
+  },
+  "enableAllProjectMcpServers": true,
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          { "type": "command", "if": "Edit(backend/src/**)", "command": "echo '{\"systemMessage\":\"⚠️ Đã sửa backend/src — nhớ bump rebuild-token trong api/index.ts để Vercel rebuild backend.\"}'" },
+          { "type": "command", "if": "Write(backend/src/**)", "command": "echo '{\"systemMessage\":\"⚠️ Đã sửa backend/src — nhớ bump rebuild-token trong api/index.ts để Vercel rebuild backend.\"}'" }
+        ]
+      }
+    ]
   }
 }

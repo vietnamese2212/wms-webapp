@@ -27,7 +27,11 @@ Kiểm đủ: **1) Bắt đầu làm** (tạo mới → số liệu cập nhật
 - **Login**: đọc `frontend/.env` (gitignored) → `TEST_EMAIL` + `TEST_PASSWORD` (hiện là tài khoản Admin toàn quyền). Trang login dùng **email + mật khẩu**. KHÔNG hardcode credential vào skill/repo/commit.
 - **DB dùng chung (quan trọng)**: local dev và prod trỏ về CÙNG 1 Supabase — KHÔNG có DB test riêng. Nên thao tác GHI qua UI là đụng dữ liệu thật → ưu tiên smoke/đọc + verify bằng Postgres MCP; nếu cần test ghi thật thì dùng bản ghi nháp rõ ràng và DỌN sau, hoặc xin phép user.
 - Thao tác đúng luồng vừa code (nút action, dialog, scan…) → `browser_snapshot`/`browser_take_screenshot` xác nhận hiển thị đúng.
-- **Responsive**: resize kiểm PC + tablet + phone (≤360px không tràn).
+- **BẮT BUỘC test CẢ desktop VÀ mobile** (không chỉ 1 cỡ) — dùng `browser_resize` rồi chụp từng cỡ:
+  - **Desktop browser**: `1280×800` (kiểm bố cục đầy đủ, pane phải/cột, hover).
+  - **Mobile**: `390×844` (iPhone) **và** `360×800` (Android nhỏ — mốc tràn màn) — kiểm FilterBar gom thành nút "Lọc", bottom nav, dialog/sheet không vỡ, KHÔNG tràn ngang.
+  - (Có pane/tablet-specific) thêm `768×1024`.
+  - Đọc lại ảnh từng cỡ để xác nhận, không chỉ chụp.
 - Kiểm phân quyền: nút write có bị ẩn đúng khi thiếu `can(perms,…)` không.
 
 ## Cổng 5 — Báo cáo trung thực
@@ -38,5 +42,5 @@ Liệt kê từng cổng: ✅ pass (bằng chứng: số liệu DB / screenshot)
 - [ ] (BE thay đổi) bump rebuild-token
 - [ ] Postgres MCP: row đúng, id+updated_at đủ
 - [ ] Realtime 4 case + invalidateQueries + TABLE_QUERY_MAP
-- [ ] Playwright: luồng UI thật + responsive 3 cỡ + phân quyền
+- [ ] Playwright: luồng UI thật, chụp CẢ desktop (1280) VÀ mobile (390 + 360) + phân quyền
 - [ ] Báo cáo pass/fail/skip kèm bằng chứng

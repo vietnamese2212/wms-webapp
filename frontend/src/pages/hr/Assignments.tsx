@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Plus, Wand2, Send, Trash2, CalendarDays, Pencil, Save, Layers, X, Loader2 } from 'lucide-react'
+import { Plus, Wand2, Send, Trash2, CalendarDays, Pencil, Save, Layers, X, Loader2, Image as ImageIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -247,6 +247,7 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
   const [err, setErr] = useState<string | null>(null)
   const [step, setStep] = useState<'demand' | 'result'>('demand')
   const [assigning, setAssigning] = useState(false)
+  const [showImg, setShowImg] = useState(false)   // xem ảnh phiếu để chụp màn hình (mobile)
   const [demands, setDemands] = useState<Record<string, number>>({})
   const [demandNotes, setDemandNotes] = useState<Record<string, string>>({})
 
@@ -315,11 +316,6 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
   async function onDelete() {
     if (!confirm('Xóa phiếu phân công này?')) return
     try { await del.mutateAsync(sheet!.id); onBack() } catch (e) { setErr(String((e as { message?: string })?.message ?? e)) }
-  }
-  async function publishAndPrint() {
-    setErr(null)
-    try { if (!published) await publish.mutateAsync({ id: sheet!.id, publish: true }); setTimeout(() => window.print(), 150) }
-    catch (e) { setErr(String((e as { message?: string })?.message ?? e)) }
   }
 
   // thứ tự vị trí: ca (CA1<CA2<CA3) trên cùng, rồi HC, rồi khác — trong cùng nhóm theo sort_order
@@ -410,7 +406,8 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
           <div className="flex flex-wrap items-center gap-2">
             <Button size="sm" variant="ghost" className="h-7" onClick={() => setStep('demand')}>← Yêu cầu nhân lực</Button>
             <div className="flex-1" />
-            {canPublish && <Button size="sm" className="h-7" onClick={publishAndPrint} disabled={publish.isPending}><Send className="h-3.5 w-3.5 mr-1" />{published ? 'In lại' : 'Phát hành & In'}</Button>}
+            {hasResult && <Button size="sm" variant="outline" className="h-7" onClick={() => setShowImg(true)}><ImageIcon className="h-3.5 w-3.5 mr-1" />Xem lịch</Button>}
+            {canPublish && !published && <Button size="sm" className="h-7" onClick={() => publish.mutate({ id: sheet.id, publish: true })} disabled={publish.isPending}><Send className="h-3.5 w-3.5 mr-1" />Phát hành</Button>}
             {canPublish && published && <Button size="sm" variant="outline" className="h-7" onClick={() => publish.mutate({ id: sheet.id, publish: false })} disabled={publish.isPending}>↩ Hoàn tác (sửa lại)</Button>}
           </div>
           {!hasResult ? (
@@ -466,64 +463,72 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
               </table>
             </div>
           )}
-          {hasResult && <PrintArea sheet={sheet} whName={whName} labelOf={labelOf} sortedAsg={sortedAsg} noteBySkill={noteBySkill} shiftBySkill={shiftBySkill} />}
+          {showImg && <ImagePreview onClose={() => setShowImg(false)} sheet={sheet} whName={whName} labelOf={labelOf} sortedAsg={sortedAsg} noteBySkill={noteBySkill} shiftBySkill={shiftBySkill} />}
         </div>
       )}
     </div>
   )
 }
 
-// ─── Bảng in (giống mẫu Lịch làm việc) ──────────────────────────────────────
+// ─── Nội dung phiếu (giống mẫu Lịch làm việc) — dùng chung cho In + Xem ảnh ───
 // nền dòng theo ca: Ca 2 = vàng nhạt, Ca 3 = đỏ nhạt; còn lại trắng/zebra
 const PRINT_ROW_BG: Record<string, string> = { CA2: '#fef3c7', CA3: '#fee2e2' }
-function PrintArea({ sheet, whName, labelOf, sortedAsg, noteBySkill, shiftBySkill }: {
+type DocProps = {
   sheet: SheetDetail; whName: string; labelOf: (id: string | null) => string
   sortedAsg: SheetDetail['assignments']; noteBySkill: Map<string, string | null>; shiftBySkill: Map<string, string | null>
-}) {
+}
+function ScheduleDoc({ sheet, whName, labelOf, sortedAsg, noteBySkill, shiftBySkill }: DocProps) {
   return (
-    <>
+    <div className="sheet-doc">
       <style>{`
-        .hr-print-area { position: absolute; left: -99999px; top: 0; }
-        @media print {
-          body * { visibility: hidden; }
-          .hr-print-area, .hr-print-area * { visibility: visible; }
-          .hr-print-area { position: absolute; left: 0 !important; top: 0; width: 100%; padding: 16px; }
-          @page { size: A4 portrait; margin: 12mm; }
-          tr { page-break-inside: avoid; }
-        }
-        .hr-print-area, .hr-print-area * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-        .hr-print-area table { width: 100%; border-collapse: collapse; font-size: 12px; }
-        .hr-print-area th, .hr-print-area td { border: 1px solid #cbd5e1; padding: 5px 8px; text-align: left; }
-        .hr-print-area thead th { background: #1e293b; color: #fff; font-weight: 600; }
+        .sheet-doc, .sheet-doc * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        .sheet-doc table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        .sheet-doc th, .sheet-doc td { border: 1px solid #cbd5e1; padding: 5px 8px; text-align: left; }
+        .sheet-doc thead th { background: #1e293b; color: #fff; font-weight: 600; }
       `}</style>
-      <div className="hr-print-area">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
-          <div style={{ width: 56, height: 40, background: '#e11d48', color: '#fff', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontStyle: 'italic', fontSize: 18 }}>lof</div>
-          <div style={{ flex: 1, textAlign: 'center' }}>
-            <div style={{ fontWeight: 700, fontSize: 16 }}>BẢNG PHÂN CÔNG LỊCH LÀM VIỆC CHI TIẾT</div>
-            <div style={{ fontSize: 12, marginTop: 2 }}><b>Ngày: {formatDate(sheet.work_date)}</b> &nbsp;|&nbsp; <b>Bộ phận: {sheet.layout_name}</b></div>
-            <div style={{ fontSize: 12 }}>Kho: {whName}</div>
-          </div>
-          <div style={{ width: 56 }} />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
+        <div style={{ width: 56, height: 40, background: '#e11d48', color: '#fff', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontStyle: 'italic', fontSize: 18 }}>lof</div>
+        <div style={{ flex: 1, textAlign: 'center' }}>
+          <div style={{ fontWeight: 700, fontSize: 16 }}>BẢNG PHÂN CÔNG LỊCH LÀM VIỆC CHI TIẾT</div>
+          <div style={{ fontSize: 12, marginTop: 2 }}><b>Ngày: {formatDate(sheet.work_date)}</b> &nbsp;|&nbsp; <b>Bộ phận: {sheet.layout_name}</b></div>
+          <div style={{ fontSize: 12 }}>Kho: {whName}</div>
         </div>
-        <table>
-          <thead><tr><th style={{ width: 36 }}>STT</th><th>Họ và Tên</th><th>Chức danh</th><th>Vị trí phân công</th><th style={{ width: 120 }}>Note</th></tr></thead>
-          <tbody>
-            {sortedAsg.map((a, i) => {
-              const tag = a.skill_id ? shiftBySkill.get(a.skill_id) : null
-              const bg = (a.status === 'ASSIGNED' && tag && PRINT_ROW_BG[tag]) ? PRINT_ROW_BG[tag] : (i % 2 ? '#f8fafc' : '#fff')
-              return (
-                <tr key={a.id} style={{ background: bg }}>
-                  <td>{i + 1}</td><td>{a.employee?.name ?? '—'}</td><td>{a.employee?.job_title ?? '—'}</td>
-                  <td>{a.status === 'LEAVE' ? 'Nghỉ phép' : a.skill_id ? labelOf(a.skill_id) : 'Chưa phân công'}</td>
-                  <td>{a.skill_id ? (noteBySkill.get(a.skill_id) ?? '') : ''}</td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
+        <div style={{ width: 56 }} />
       </div>
-    </>
+      <table>
+        <thead><tr><th style={{ width: 36 }}>STT</th><th>Họ và Tên</th><th>Chức danh</th><th>Vị trí phân công</th><th style={{ width: 120 }}>Note</th></tr></thead>
+        <tbody>
+          {sortedAsg.map((a, i) => {
+            const tag = a.skill_id ? shiftBySkill.get(a.skill_id) : null
+            const bg = (a.status === 'ASSIGNED' && tag && PRINT_ROW_BG[tag]) ? PRINT_ROW_BG[tag] : (i % 2 ? '#f8fafc' : '#fff')
+            return (
+              <tr key={a.id} style={{ background: bg }}>
+                <td>{i + 1}</td><td>{a.employee?.name ?? '—'}</td><td>{a.employee?.job_title ?? '—'}</td>
+                <td>{a.status === 'LEAVE' ? 'Nghỉ phép' : a.skill_id ? labelOf(a.skill_id) : 'Chưa phân công'}</td>
+                <td>{a.skill_id ? (noteBySkill.get(a.skill_id) ?? '') : ''}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+// Xem LỊCH toàn màn hình để CHỤP gửi (không cần in)
+function ImagePreview({ onClose, ...props }: DocProps & { onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 overflow-auto" onClick={onClose}>
+      <div className="sticky top-0 z-10 flex items-center justify-between gap-2 bg-slate-900 text-white px-3 py-2 text-xs">
+        <span>📸 Chụp màn hình bảng dưới đây để gửi kế hoạch</span>
+        <button onClick={onClose} className="inline-flex items-center gap-1 bg-white/15 hover:bg-white/25 rounded px-2 py-1"><X className="h-3.5 w-3.5" />Đóng</button>
+      </div>
+      <div className="p-2 sm:p-4">
+        <div className="bg-white mx-auto max-w-2xl p-3 rounded-lg shadow-lg" onClick={e => e.stopPropagation()}>
+          <ScheduleDoc {...props} />
+        </div>
+      </div>
+    </div>
   )
 }
 

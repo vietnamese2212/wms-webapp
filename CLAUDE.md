@@ -6,25 +6,69 @@
 - **Đổi DB schema**: SQL → `backend/migrations/YYYYMMDD_<desc>.sql` → apply qua Supabase Dashboard → push → cập nhật `SCHEMA_REVIEW.md`. (Chi tiết: skill `mutation-realtime`.)
 
 ---
-## Nguyên tắc hành vi
+## Nguyên tắc hành vi khi xây dựng app
 
-**1. Suy nghĩ trước khi code** — Đừng suy diễn, đừng giấu sự không chắc, nêu rõ đánh đổi.
-- Nêu giả định; không chắc thì hỏi. Nhiều cách hiểu → trình bày hết, đừng tự chọn ngầm.
-- Có cách đơn giản hơn → nói ra, sẵn sàng phản biện. Chưa rõ → dừng, chỉ điểm mơ hồ, hỏi lại.
+### 1. Suy nghĩ trước khi code
+> **Đừng tự suy diễn. Đừng che giấu sự không chắc chắn. Hãy nêu rõ các đánh đổi.**
 
-**2. Ưu tiên đơn giản** — Chỉ viết lượng code tối thiểu giải quyết vấn đề.
-- Không thêm tính năng/abstraction/“linh hoạt”/xử lý lỗi cho trường hợp gần như không xảy ra, nếu chưa được yêu cầu.
-- Tự hỏi: “Senior engineer có thấy đoạn này over-engineering không?” — có thì đơn giản hóa.
+Trước khi triển khai:
+- Nêu rõ các giả định của bạn. Nếu không chắc, hãy hỏi.
+- Nếu có nhiều cách hiểu khác nhau, hãy trình bày chúng — đừng tự âm thầm chọn một.
+- Nếu có cách đơn giản hơn, hãy nói ra. Sẵn sàng phản biện khi cần.
+- Nếu có điều gì chưa rõ, hãy dừng lại. Chỉ rõ điểm gây mơ hồ. Hỏi lại.
 
-**3. Thay đổi có chủ đích, phạm vi nhỏ** — Chỉ chạm thứ cần thiết.
-- Đừng “tiện tay” cải thiện/refactor/format vùng liên quan. Theo style hiện có.
-- Chỉ xóa import/var/function mà CHÍNH thay đổi của bạn làm thừa. Dead code có sẵn → ghi chú, đừng tự xóa.
-- Mỗi dòng thay đổi truy ngược được tới yêu cầu user.
+### 2. Ưu tiên sự đơn giản
+> **Chỉ viết lượng code tối thiểu để giải quyết vấn đề. Không thêm thứ chưa cần.**
 
-**4. Mục tiêu kiểm chứng được** — Định nghĩa tiêu chí thành công, lặp tới khi xác minh.
-- “Thêm validation” → nhập sai bị chặn, nhập đúng qua. “Fix bug” → tái hiện được rồi sửa hết (skill `debug-systematic`). “Refactor” → hành vi trước/sau giống nhau.
-- Task nhiều bước → nêu kế hoạch ngắn `[Bước] → kiểm tra: [điều verify]`.
-- **Verify bằng `tsc`/`build` + Postgres MCP + Playwright + realtime 4 case — dự án KHÔNG có unit-test framework.** Chi tiết: skill `verify-feature`.
+- Không thêm tính năng ngoài yêu cầu.
+- Không tạo abstraction cho thứ chỉ dùng một lần.
+- Không thêm “tính linh hoạt” hay “khả năng cấu hình” nếu chưa được yêu cầu.
+- Không viết xử lý lỗi cho các trường hợp gần như không thể xảy ra.
+- Nếu bạn viết 200 dòng nhưng thực tế có thể giải bằng 50 dòng, hãy viết lại.
+
+Tự hỏi:
+> “Một senior engineer có thấy đoạn này bị over-engineering không?”
+
+Nếu có, hãy đơn giản hóa.
+
+### 3. Thay đổi có chủ đích, phạm vi nhỏ
+> **Chỉ chạm vào thứ cần thiết. Chỉ dọn dẹp phần bạn gây ảnh hưởng.**
+
+Khi chỉnh sửa code hiện có:
+- Đừng “tiện tay cải thiện” code, comment hay format ở vùng liên quan.
+- Đừng refactor thứ chưa hỏng.
+- Hãy theo style hiện có, kể cả khi bạn thích cách khác hơn.
+- Nếu thấy dead code không liên quan, hãy ghi chú — đừng tự xóa.
+
+Khi thay đổi của bạn tạo ra phần thừa:
+- Xóa import/variable/function mà CHÍNH thay đổi của bạn làm thành không dùng nữa.
+- Đừng xóa dead code có sẵn từ trước nếu chưa được yêu cầu.
+
+Nguyên tắc kiểm tra:
+> Mỗi dòng thay đổi đều phải truy ngược được tới yêu cầu của người dùng.
+
+### 4. Thực thi theo mục tiêu rõ ràng
+> **Định nghĩa tiêu chí thành công. Lặp lại cho tới khi xác minh được.**
+
+Biến task thành các mục tiêu có thể kiểm chứng:
+- “Thêm validation” → “Viết test cho input không hợp lệ, sau đó làm cho test pass”
+- “Fix bug” → “Viết test tái hiện bug, sau đó sửa để test pass”
+- “Refactor X” → “Đảm bảo test pass cả trước và sau refactor”
+
+Với task nhiều bước, hãy nêu kế hoạch ngắn gọn:
+```txt
+1. [Bước] → kiểm tra: [điều cần verify]
+2. [Bước] → kiểm tra: [điều cần verify]
+3. [Bước] → kiểm tra: [điều cần verify]
+```
+
+Tiêu chí thành công rõ ràng giúp bạn làm việc độc lập tốt hơn.
+Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phải hỏi lại liên tục.
+
+### Các nguyên tắc này đang hiệu quả nếu:
+- Diff có ít thay đổi thừa hơn
+- Ít phải viết lại do over-engineering
+- Các câu hỏi làm rõ xuất hiện trước khi implement thay vì sau khi gây lỗi
 
 ---
 ## Chuẩn code bắt buộc (luật cốt tử — chi tiết nằm trong skill)

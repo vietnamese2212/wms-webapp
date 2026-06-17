@@ -18,7 +18,8 @@ const HEADERS = [
 const NOTE = [
   '* Bắt buộc: ma_nhan_vien, ho_ten, ten_dang_nhap, mat_khau, chuc_danh, kho',
   'ten_dang_nhap = tên dùng để ĐĂNG NHẬP (duy nhất). chuc_danh & kho phải khớp danh mục (sheet DanhMuc).',
-  'kho: nhiều kho cách nhau bằng dấu phẩy. pham_vi_kho: ASSIGNED (mặc định) hoặc NATIONAL. la_tai_xe: ghi x nếu là tài xế.',
+  'kho: nhiều kho cách nhau bằng dấu phẩy. pham_vi_kho: ASSIGNED (mặc định, chỉ thấy kho được gán) hoặc NATIONAL (không giới hạn kho).',
+  'bo_phan: phải khớp danh mục Phòng ban (sheet DanhMuc), vd "Kho". la_tai_xe: ghi x nếu là tài xế.',
 ]
 
 ;(async () => {
@@ -26,6 +27,7 @@ const NOTE = [
   await c.connect()
   const jts = (await c.query(`SELECT name FROM "JobTitle" ORDER BY name`)).rows.map(r => r.name)
   const whs = (await c.query(`SELECT name FROM "Warehouse" ORDER BY name`)).rows.map(r => r.name)
+  const depts = (await c.query(`SELECT name FROM "Department" ORDER BY name`)).rows.map(r => r.name)
   await c.end()
 
   // Sheet 1: NhanVien — header + 2 dòng ví dụ
@@ -38,11 +40,11 @@ const NOTE = [
   wsData['!cols'] = HEADERS.map(h => ({ wch: Math.max(14, h.length + 2) }))
 
   // Sheet 2: DanhMuc — giá trị hợp lệ
-  const maxLen = Math.max(jts.length, whs.length)
-  const ref = [['chuc_danh (hợp lệ)', 'kho (hợp lệ)']]
-  for (let i = 0; i < maxLen; i++) ref.push([jts[i] || '', whs[i] || ''])
+  const maxLen = Math.max(jts.length, whs.length, depts.length)
+  const ref = [['chuc_danh (hợp lệ)', 'kho (hợp lệ)', 'bo_phan (hợp lệ)']]
+  for (let i = 0; i < maxLen; i++) ref.push([jts[i] || '', whs[i] || '', depts[i] || ''])
   const wsRef = XLSX.utils.aoa_to_sheet(ref)
-  wsRef['!cols'] = [{ wch: 28 }, { wch: 20 }]
+  wsRef['!cols'] = [{ wch: 28 }, { wch: 20 }, { wch: 20 }]
 
   // Sheet 3: HuongDan
   const wsNote = XLSX.utils.aoa_to_sheet(NOTE.map(l => [l]))

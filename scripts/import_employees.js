@@ -30,6 +30,7 @@ const S = v => String(v ?? '').trim()
   await c.connect()
   const jtMap = new Map((await c.query(`SELECT id, lower(name) n FROM "JobTitle"`)).rows.map(r => [r.n, r.id]))
   const whMap = new Map((await c.query(`SELECT id, lower(name) n FROM "Warehouse"`)).rows.map(r => [r.n, r.id]))
+  const deptMap = new Map((await c.query(`SELECT id, lower(name) n FROM "Department"`)).rows.map(r => [r.n, r.id]))
   const existCode = new Set((await c.query(`SELECT lower(employee_code) x FROM "Employee" WHERE employee_code IS NOT NULL`)).rows.map(r => r.x))
   const existLogin = new Set((await c.query(`SELECT lower(email) x FROM "Employee" WHERE email IS NOT NULL`)).rows.map(r => r.x))
 
@@ -50,16 +51,22 @@ const S = v => String(v ?? '').trim()
     for (const k of khoNames) { const id = whMap.get(k.toLowerCase()); if (!id) { bad = k; break } whIds.push(id) }
     if (bad) { errs.push(`Dòng ${ln}: kho "${bad}" không khớp danh mục`); continue }
 
+    const deptName = S(r.bo_phan)
+    let deptId = null
+    if (deptName) {
+      deptId = deptMap.get(deptName.toLowerCase())
+      if (!deptId) { errs.push(`Dòng ${ln}: bo_phan "${deptName}" không khớp danh mục Phòng ban`); continue }
+    }
     const scope = S(r.pham_vi_kho).toUpperCase() === 'NATIONAL' ? 'NATIONAL' : 'ASSIGNED'
     const now = new Date().toISOString()
     const empId = randomUUID()
     try {
       await c.query('BEGIN')
       await c.query(
-        `INSERT INTO "Employee"(id,name,employee_code,email,password,job_title_id,warehouse_id,warehouse_scope,department,phone,is_driver,allowed_categories,is_active,created_at,updated_at)
+        `INSERT INTO "Employee"(id,name,employee_code,email,password,job_title_id,warehouse_id,warehouse_scope,department_id,phone,is_driver,allowed_categories,is_active,created_at,updated_at)
          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,true,$13,$13)`,
         [empId, name, code, login, await bcrypt.hash(pass, 10), jtId, whIds[0], scope,
-         S(r.bo_phan) || null, S(r.sdt) || null, truthy(r.la_tai_xe), ALL_CATS, now]
+         deptId, S(r.sdt) || null, truthy(r.la_tai_xe), ALL_CATS, now]
       )
       for (const wid of whIds)
         await c.query(`INSERT INTO "UserWarehouseAccess"(id,employee_id,warehouse_id) VALUES($1,$2,$3)`, [randomUUID(), empId, wid])

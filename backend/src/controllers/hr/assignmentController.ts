@@ -260,6 +260,36 @@ export async function autoAssign(req: Request, res: Response) {
       return false
     }
 
+    // ── 4c. Tải tháng theo ca (để cân bằng công bằng) ──
+    // Đếm số lần mỗi ứng viên đã được xếp từng shift_tag trong THÁNG của work_date,
+    // cùng kho, mọi phiếu (DRAFT+PUBLISHED), trừ chính phiếu này. Dùng làm tie-breaker.
+    const monthLoad = new Map<string, Map<string, number>>() // empId -> (shift_tag -> count)
+    if (candidateIds.length) {
+      const [yy, mm] = work_date.split('-').map(Number)
+      const pad = (n: number) => String(n).padStart(2, '0')
+      const monthStart = `${yy}-${pad(mm)}-01`
+      const nextMonthStart = mm === 12 ? `${yy + 1}-01-01` : `${yy}-${pad(mm + 1)}-01`
+      const { data: mSheets } = await supabase.from('WorkAssignmentSheet').select('id')
+        .eq('warehouse_id', warehouse_id).gte('work_date', monthStart).lt('work_date', nextMonthStart).neq('id', id)
+      const mSheetIds = (mSheets ?? []).map((s: { id: string }) => s.id)
+      if (mSheetIds.length) {
+        const { data: mAsg } = await supabase.from('WorkAssignment').select('employee_id, skill_id')
+          .in('sheet_id', mSheetIds).eq('status', 'ASSIGNED').in('employee_id', candidateIds)
+        const mSkillIds = [...new Set(((mAsg ?? []) as { skill_id: string | null }[]).map(a => a.skill_id).filter(Boolean))] as string[]
+        const { data: mSkills } = mSkillIds.length ? await supabase.from('Skill').select('id, shift_tag').in('id', mSkillIds) : { data: [] }
+        const mShiftOf = new Map(((mSkills ?? []) as { id: string; shift_tag: string | null }[]).map(s => [s.id, s.shift_tag]))
+        for (const a of (mAsg ?? []) as { employee_id: string; skill_id: string | null }[]) {
+          const tag = a.skill_id ? mShiftOf.get(a.skill_id) : null
+          if (!tag) continue
+          const m = monthLoad.get(a.employee_id) ?? new Map<string, number>()
+          m.set(tag, (m.get(tag) ?? 0) + 1)
+          monthLoad.set(a.employee_id, m)
+        }
+      }
+    }
+    const tagLoad = (eid: string, tag: string | null) => (tag ? (monthLoad.get(eid)?.get(tag) ?? 0) : 0)
+    const totalLoad = (eid: string) => { let s = 0; const m = monthLoad.get(eid); if (m) for (const v of m.values()) s += v; return s }
+
     // ── 5. Greedy: vị trí khan hiếm trước ──
     const assignedEmp = new Set<string>(lockedEmp)
     const result = new Map<string, string>() // empId -> skillId (auto)
@@ -283,10 +313,17 @@ export async function autoAssign(req: Request, res: Response) {
     for (const d of order) {
       let need = remainingNeed.get(d.skill_id) ?? 0
       if (need <= 0) continue
+      const todayTag = shiftTagOf.get(d.skill_id) ?? null
       const cands = (candBySkill.get(d.skill_id) ?? [])
         .filter(c => !assignedEmp.has(c.eid))
-        // ưu tiên: priority thấp (sở trường chính) trước; rồi NV ít quals (giữ người đa năng cho vị trí khác)
-        .sort((a, b) => a.pri - b.pri || qualCount(a.eid) - qualCount(b.eid))
+        // ưu tiên: priority thấp (sở trường chính) → NV ít quals (giữ người đa năng cho vị trí khác)
+        // → tie-breaker CÂN BẰNG: ít lần làm ca này trong tháng hơn → tổng tải tháng ít hơn → ổn định
+        .sort((a, b) =>
+          a.pri - b.pri
+          || qualCount(a.eid) - qualCount(b.eid)
+          || tagLoad(a.eid, todayTag) - tagLoad(b.eid, todayTag)
+          || totalLoad(a.eid) - totalLoad(b.eid)
+          || (a.eid < b.eid ? -1 : 1))
       for (const c of cands) {
         if (need <= 0) break
         result.set(c.eid, d.skill_id)

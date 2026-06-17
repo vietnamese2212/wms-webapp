@@ -316,13 +316,14 @@ export async function autoAssign(req: Request, res: Response) {
       const todayTag = shiftTagOf.get(d.skill_id) ?? null
       const cands = (candBySkill.get(d.skill_id) ?? [])
         .filter(c => !assignedEmp.has(c.eid))
-        // ưu tiên: priority thấp (sở trường chính) → NV ít quals (giữ người đa năng cho vị trí khác)
-        // → tie-breaker CÂN BẰNG: ít lần làm ca này trong tháng hơn → tổng tải tháng ít hơn → ổn định
+        // ưu tiên: priority thấp (sở trường chính, theo rule skill) trước
+        // → CÂN BẰNG: ít lần làm ca này trong tháng hơn → tổng tải tháng ít hơn
+        // → NV ít quals (giữ người đa năng cho vị trí khác) → ổn định
         .sort((a, b) =>
           a.pri - b.pri
-          || qualCount(a.eid) - qualCount(b.eid)
           || tagLoad(a.eid, todayTag) - tagLoad(b.eid, todayTag)
           || totalLoad(a.eid) - totalLoad(b.eid)
+          || qualCount(a.eid) - qualCount(b.eid)
           || (a.eid < b.eid ? -1 : 1))
       for (const c of cands) {
         if (need <= 0) break

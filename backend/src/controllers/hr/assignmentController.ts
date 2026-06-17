@@ -219,7 +219,6 @@ export async function autoAssign(req: Request, res: Response) {
       m.set(r.skill_id, r.priority)
       empSkills.set(r.employee_id, m)
     }
-    const qualCount = (eid: string) => empSkills.get(eid)?.size ?? 0
 
     // ── 4. Giữ các dòng xếp tay (is_manual) → khóa NV + giảm demand ──
     const { data: prevAsg } = await supabase.from('WorkAssignment').select('employee_id, skill_id, status, is_manual').eq('sheet_id', id)
@@ -290,49 +289,55 @@ export async function autoAssign(req: Request, res: Response) {
     const tagLoad = (eid: string, tag: string | null) => (tag ? (monthLoad.get(eid)?.get(tag) ?? 0) : 0)
     const totalLoad = (eid: string) => { let s = 0; const m = monthLoad.get(eid); if (m) for (const v of m.values()) s += v; return s }
 
-    // ── 5. Greedy: vị trí khan hiếm trước ──
+    // ── 5. Ghép TỐI ĐA (maximum bipartite matching) — lấp nhiều chỗ nhất, KHÔNG bỏ sót người sẵn sàng ──
+    // (greedy cũ để người đa năng giành mất chỗ của người skill hiếm → vừa sót người vừa thiếu chỗ)
+    const skillOrder = new Map(layoutSkills.map(s => [s.skill_id, s.sort_order]))
+    const people = available.filter(eid => !lockedEmp.has(eid))
+    // mỗi vị trí mở 'need' slot; người nối tới mọi slot của skill mình làm được
+    const slotsOfSkill = new Map<string, string[]>()
+    for (const [sid, n] of remainingNeed) if (n > 0) slotsOfSkill.set(sid, Array.from({ length: n }, (_, k) => `${sid}#${k}`))
+    const skillOfSlot = (slot: string) => slot.slice(0, slot.lastIndexOf('#'))
+    // adjacency người → slot đủ điều kiện; thứ tự slot trong 1 người: priority (sở trường) → cân bằng ca tháng → thứ tự vị trí
+    const adj = new Map<string, string[]>()
+    for (const eid of people) {
+      const sk = empSkills.get(eid)
+      if (!sk) continue
+      const quals = [...sk.entries()]
+        .filter(([sid]) => slotsOfSkill.has(sid) && !violatesRest(eid, shiftTagOf.get(sid) ?? null))
+        .sort(([sa, pa], [sb, pb]) =>
+          pa - pb
+          || tagLoad(eid, shiftTagOf.get(sa) ?? null) - tagLoad(eid, shiftTagOf.get(sb) ?? null)
+          || (skillOrder.get(sa) ?? 9999) - (skillOrder.get(sb) ?? 9999))
+      const slots: string[] = []
+      for (const [sid] of quals) slots.push(...(slotsOfSkill.get(sid) ?? []))
+      if (slots.length) adj.set(eid, slots)
+    }
+    // thứ tự xét người: ít lựa chọn trước (skill hiếm được giữ chỗ) → tải tháng ít (cân bằng) → ổn định
+    const peopleOrder = [...adj.keys()].sort((a, b) =>
+      (adj.get(a)!.length - adj.get(b)!.length)
+      || totalLoad(a) - totalLoad(b)
+      || (a < b ? -1 : 1))
+    const slotMatch = new Map<string, string>() // slot -> empId
+    const augment = (eid: string, seen: Set<string>): boolean => {
+      for (const slot of adj.get(eid) ?? []) {
+        if (seen.has(slot)) continue
+        seen.add(slot)
+        const occ = slotMatch.get(slot)
+        if (occ === undefined || augment(occ, seen)) { slotMatch.set(slot, eid); return true }
+      }
+      return false
+    }
+    for (const eid of peopleOrder) augment(eid, new Set())
+    // kết quả + cập nhật nhu cầu còn thiếu (cho shortfalls)
     const assignedEmp = new Set<string>(lockedEmp)
-    const result = new Map<string, string>() // empId -> skillId (auto)
-    // candidates per skill (available, qualified, not locked, không vi phạm nghỉ ca)
-    const candBySkill = new Map<string, { eid: string; pri: number }[]>()
-    for (const d of demandList) {
-      const todayTag = shiftTagOf.get(d.skill_id) ?? null
-      const list: { eid: string; pri: number }[] = []
-      for (const eid of available) {
-        if (lockedEmp.has(eid)) continue
-        if (violatesRest(eid, todayTag)) continue
-        const pri = empSkills.get(eid)?.get(d.skill_id)
-        if (pri !== undefined) list.push({ eid, pri })
-      }
-      candBySkill.set(d.skill_id, list)
+    const result = new Map<string, string>() // empId -> skillId
+    const filledBySkill = new Map<string, number>()
+    for (const [slot, eid] of slotMatch) {
+      const sid = skillOfSlot(slot)
+      result.set(eid, sid); assignedEmp.add(eid)
+      filledBySkill.set(sid, (filledBySkill.get(sid) ?? 0) + 1)
     }
-    // thứ tự: số ứng viên còn lại ít → ưu tiên lấp trước
-    const order = [...demandList].sort((a, b) =>
-      (candBySkill.get(a.skill_id)?.length ?? 0) - (candBySkill.get(b.skill_id)?.length ?? 0))
-
-    for (const d of order) {
-      let need = remainingNeed.get(d.skill_id) ?? 0
-      if (need <= 0) continue
-      const todayTag = shiftTagOf.get(d.skill_id) ?? null
-      const cands = (candBySkill.get(d.skill_id) ?? [])
-        .filter(c => !assignedEmp.has(c.eid))
-        // ưu tiên: priority thấp (sở trường chính, theo rule skill) trước
-        // → CÂN BẰNG: ít lần làm ca này trong tháng hơn → tổng tải tháng ít hơn
-        // → NV ít quals (giữ người đa năng cho vị trí khác) → ổn định
-        .sort((a, b) =>
-          a.pri - b.pri
-          || tagLoad(a.eid, todayTag) - tagLoad(b.eid, todayTag)
-          || totalLoad(a.eid) - totalLoad(b.eid)
-          || qualCount(a.eid) - qualCount(b.eid)
-          || (a.eid < b.eid ? -1 : 1))
-      for (const c of cands) {
-        if (need <= 0) break
-        result.set(c.eid, d.skill_id)
-        assignedEmp.add(c.eid)
-        need--
-      }
-      remainingNeed.set(d.skill_id, need)
-    }
+    for (const [sid, n] of remainingNeed) remainingNeed.set(sid, n - (filledBySkill.get(sid) ?? 0))
 
     // ── 6. Ghi DB: xóa các dòng auto cũ (giữ manual), tạo mới ──
     await supabase.from('WorkAssignment').delete().eq('sheet_id', id).eq('is_manual', false)

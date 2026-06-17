@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { toPng } from 'html-to-image'
+import { toBlob } from 'html-to-image'
 import { Plus, Wand2, Send, Trash2, CalendarDays, Pencil, Save, Layers, X, Loader2, Image as ImageIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -331,8 +331,13 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
   // thứ tự vị trí: ca (CA1<CA2<CA3) trên cùng, rồi HC, rồi khác — trong cùng nhóm theo sort_order
   const SHIFT_RANK: Record<string, number> = { CA1: 0, CA2: 1, CA3: 2, HC: 3 }
   const order = new Map(sheet.skills.map((s, i) => [s.id, (SHIFT_RANK[s.shift_tag ?? ''] ?? 4) * 1000 + i]))
+  // cho LỊCH (Xem lịch): mỗi vị trí = 1 dòng (người 2 vị trí → 2 dòng)
+  const rank = (a: SheetDetail['assignments'][number]) => a.status === 'ASSIGNED' ? (order.get(a.skill_id ?? '') ?? 99999) : a.status === 'UNASSIGNED' ? 100000 : 200000
+  const sortedAsg = [...sheet.assignments].sort((x, y) => rank(x) - rank(y) || (x.employee?.name ?? '').localeCompare(y.employee?.name ?? ''))
+  const posCount = new Map<string, number>()   // số vị trí ASSIGNED của mỗi người → ★ nếu ≥2
+  for (const a of sheet.assignments) if (a.status === 'ASSIGNED' && a.skill_id) posCount.set(a.employee_id, (posCount.get(a.employee_id) ?? 0) + 1)
 
-  // gom theo NGƯỜI (1 người có thể nhiều vị trí)
+  // gom theo NGƯỜI (1 người có thể nhiều vị trí) — dùng cho bảng Kết quả (sửa tay)
   const empMap = new Map<string, EmpRow>()
   for (const a of sheet.assignments) {
     let g = empMap.get(a.employee_id)
@@ -483,23 +488,24 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
               </table>
             </div>
           )}
-          {showImg && <ImagePreview onClose={() => setShowImg(false)} sheet={sheet} whName={whName} labelOf={labelOf} empRows={empRows} noteBySkill={noteBySkill} shiftBySkill={shiftBySkill} currentUserId={currentUserId} />}
+          {showImg && <ImagePreview onClose={() => setShowImg(false)} sheet={sheet} whName={whName} labelOf={labelOf} sortedAsg={sortedAsg} posCount={posCount} noteBySkill={noteBySkill} shiftBySkill={shiftBySkill} currentUserId={currentUserId} />}
         </div>
       )}
     </div>
   )
 }
 
-// ─── Nội dung phiếu (giống mẫu Lịch làm việc) — gom theo NGƯỜI ───
+// ─── Nội dung phiếu (giống mẫu Lịch làm việc) — mỗi VỊ TRÍ 1 dòng ───
 // nền dòng theo ca: Ca 2 = vàng nhạt, Ca 3 = đỏ nhạt; còn lại trắng/zebra
 const PRINT_ROW_BG: Record<string, string> = { CA2: '#fef3c7', CA3: '#fee2e2' }
 type EmpRow = { eid: string; employee: SheetDetail['assignments'][number]['employee']; positions: string[]; leave: boolean; manual: boolean }
 type DocProps = {
   sheet: SheetDetail; whName: string; labelOf: (id: string | null) => string
-  empRows: EmpRow[]; noteBySkill: Map<string, string | null>; shiftBySkill: Map<string, string | null>
+  sortedAsg: SheetDetail['assignments']; posCount: Map<string, number>
+  noteBySkill: Map<string, string | null>; shiftBySkill: Map<string, string | null>
   currentUserId: string | null
 }
-function ScheduleDoc({ sheet, whName, labelOf, empRows, noteBySkill, shiftBySkill, currentUserId }: DocProps) {
+function ScheduleDoc({ sheet, whName, labelOf, sortedAsg, posCount, noteBySkill, shiftBySkill, currentUserId }: DocProps) {
   return (
     <div className="sheet-doc">
       <style>{`
@@ -520,20 +526,21 @@ function ScheduleDoc({ sheet, whName, labelOf, empRows, noteBySkill, shiftBySkil
       <table>
         <thead><tr><th style={{ width: 36 }}>STT</th><th>Họ và Tên</th><th>Chức danh</th><th>Vị trí phân công</th><th style={{ width: 120 }}>Note</th></tr></thead>
         <tbody>
-          {empRows.map((g, i) => {
-            const tag = g.positions.length ? shiftBySkill.get(g.positions[0]) : null
-            const bg = (!g.leave && tag && PRINT_ROW_BG[tag]) ? PRINT_ROW_BG[tag] : (i % 2 ? '#f8fafc' : '#fff')
-            const isMe = !!currentUserId && g.eid === currentUserId
+          {sortedAsg.map((a, i) => {
+            const tag = a.skill_id ? shiftBySkill.get(a.skill_id) : null
+            const bg = (a.status === 'ASSIGNED' && tag && PRINT_ROW_BG[tag]) ? PRINT_ROW_BG[tag] : (i % 2 ? '#f8fafc' : '#fff')
+            const isMe = !!currentUserId && a.employee_id === currentUserId
+            const multi = a.status === 'ASSIGNED' && (posCount.get(a.employee_id) ?? 0) >= 2
             return (
-              <tr key={g.eid} style={{ background: bg }}>
+              <tr key={a.id} style={{ background: bg }}>
                 <td>{i + 1}</td>
                 <td>
-                  <span style={isMe ? { textDecoration: 'underline' } : undefined}>{g.employee?.name ?? '—'}</span>
-                  {g.positions.length >= 2 && <span style={{ color: '#e11d48', marginLeft: 4 }}>★</span>}
+                  <span style={isMe ? { textDecoration: 'underline' } : undefined}>{a.employee?.name ?? '—'}</span>
+                  {multi && <span style={{ color: '#e11d48', marginLeft: 4 }}>★</span>}
                 </td>
-                <td>{g.employee?.job_title ?? '—'}</td>
-                <td>{g.leave ? 'Nghỉ phép' : g.positions.length ? g.positions.map(labelOf).join(', ') : 'Chưa phân công'}</td>
-                <td>{g.positions.map(s => noteBySkill.get(s)).filter(Boolean).join('; ')}</td>
+                <td>{a.employee?.job_title ?? '—'}</td>
+                <td>{a.status === 'LEAVE' ? 'Nghỉ phép' : a.skill_id ? labelOf(a.skill_id) : 'Chưa phân công'}</td>
+                <td>{a.skill_id ? (noteBySkill.get(a.skill_id) ?? '') : ''}</td>
               </tr>
             )
           })}
@@ -551,11 +558,14 @@ function ImagePreview({ onClose, ...props }: DocProps & { onClose: () => void })
     if (!ref.current) return
     setSaving(true)
     try {
-      const dataUrl = await toPng(ref.current, { pixelRatio: 2, backgroundColor: '#ffffff' })
+      const blob = await toBlob(ref.current, { pixelRatio: 2, backgroundColor: '#ffffff' })
+      if (!blob) return
+      const urlObj = URL.createObjectURL(blob)
       const a = document.createElement('a')
-      a.href = dataUrl
+      a.href = urlObj
       a.download = `PhanCong_${(props.sheet.layout_name || 'lich').replace(/\s+/g, '_')}_${props.sheet.work_date}.png`
-      a.click()
+      document.body.appendChild(a); a.click(); a.remove()
+      setTimeout(() => URL.revokeObjectURL(urlObj), 1500)
     } finally { setSaving(false) }
   }
   return (

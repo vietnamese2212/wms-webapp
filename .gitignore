@@ -50,3 +50,6 @@ backend/C*Tempbackend_test.log
 # Playwright MCP test artifacts
 .playwright-mcp/
 login-check.png
+
+# Dữ liệu nhân viên thật + mật khẩu — không commit
+Employee_Template.xlsx

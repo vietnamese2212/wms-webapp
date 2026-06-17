@@ -162,3 +162,4 @@ created_at, updated_at
 | 2026-06-16 | — | HR: `JobTitle.parent_id` + `in_chart` (sơ đồ tổ chức). Skill `EmployeeSkill` scope mở rộng: cấp trên gán được skill của chức danh cấp dưới (walk parent_id). Migrations `_jobtitle_hierarchy.sql`, `_jobtitle_in_chart.sql`. |
 | 2026-06-16 | — | HR Layout: `WorkLayoutJobTitle` (layout ↔ chức danh, để gọi đúng pool người). `WorkLayoutSkill.note` + `WorkAssignmentDemand.note` (ghi chú vị trí). Migrations `20260616_layout_jobtitle.sql`, `20260616_layout_demand_note.sql`. |
 | 2026-06-16 | — | HR: `ShiftRestRule` (from_shift→to_shift bị cấm) — luật nghỉ giữa ca, KHÔNG hardcode; auto-assign đọc phân công ngày D-1 + bảng này để loại ca vi phạm. Seed: CA3→{CA1,CA3,HC}. Migration `20260616_shift_rest_rule.sql`. |
+| 2026-06-17 | — | HR Phân công: UNIQUE index `(work_date, layout_id)` — mỗi layout chỉ 1 phiếu/ngày. Migration `20260617_uniq_assignment_sheet_per_day.sql`. |

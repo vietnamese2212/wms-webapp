@@ -2599,6 +2599,7 @@ export type SheetRow = {
 export type SheetDetail = {
   id: string; work_date: string; warehouse_id: string; layout_id: string | null; layout_name: string | null
   status: 'DRAFT' | 'PUBLISHED'; note: string | null; published_at: string | null
+  created_at: string | null; updated_at: string | null; created_by: string | null; updated_by: string | null
   skills: { id: string; name: string; shift_tag: string | null; sort_order: number; job_title: string | null }[]
   demands: { id: string; skill_id: string; required_count: number; note: string | null }[]
   assignments: {

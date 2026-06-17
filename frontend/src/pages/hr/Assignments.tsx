@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import { toPng } from 'html-to-image'
 import { Plus, Wand2, Send, Trash2, CalendarDays, Pencil, Save, Layers, X, Loader2, Image as ImageIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -15,11 +16,13 @@ import {
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
-import { formatDate } from '@/utils/formatters'
+import { formatDate, formatDateTime } from '@/utils/formatters'
 
 const SHIFT_LABEL: Record<string, string> = { CA1: 'Ca 1', CA2: 'Ca 2', CA3: 'Ca 3', HC: 'HC' }
 const shiftOf = (t: string | null) => (t ? SHIFT_LABEL[t] ?? t : '')
 const TODAY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+// ngày VN + n ngày (mặc định filter "đến ngày")
+const DATE_PLUS = (days: number) => { const d = new Date(`${TODAY()}T00:00:00+07:00`); d.setDate(d.getDate() + days); return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }) }
 const MONTH_START = () => TODAY().slice(0, 8) + '01'
 const SCOPE_KEY = 'hr_assign_scope'
 
@@ -134,7 +137,7 @@ function DailyTab({ canCreate, perms }: { canCreate: boolean; perms: ModulePermi
   const [wh, setWh]             = useState<string>(saved.wh ?? '')
   const [layoutId, setLayoutId] = useState<string>(saved.layout ?? '')
   const [from, setFrom]         = useState<string>(saved.from ?? MONTH_START())
-  const [to, setTo]             = useState<string>(saved.to ?? TODAY())
+  const [to, setTo]             = useState<string>(saved.to ?? DATE_PLUS(15))   // mặc định: hôm nay + 15 ngày
   const [cDate, setCDate]       = useState<string>(TODAY())
   const [sel, setSel]           = useState<string | null>(null)
   const [err, setErr]           = useState<string | null>(null)
@@ -247,7 +250,8 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
   const [err, setErr] = useState<string | null>(null)
   const [step, setStep] = useState<'demand' | 'result'>('demand')
   const [assigning, setAssigning] = useState(false)
-  const [showImg, setShowImg] = useState(false)   // xem ảnh phiếu để chụp màn hình (mobile)
+  const [showImg, setShowImg] = useState(false)   // xem lịch (ảnh) để chụp/tải gửi
+  const currentUserId = useAuthStore(s => s.user?.id ?? null)   // để gạch chân tên người đang đăng nhập
   const [demands, setDemands] = useState<Record<string, number>>({})
   const [demandNotes, setDemandNotes] = useState<Record<string, string>>({})
 
@@ -317,15 +321,18 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
     if (!confirm('Xóa phiếu phân công này?')) return
     try { await del.mutateAsync(sheet!.id); onBack() } catch (e) { setErr(String((e as { message?: string })?.message ?? e)) }
   }
+  // Phát hành (nếu chưa) rồi mở lịch — không cho xem lịch khi chưa phát hành
+  async function publishAndView() {
+    setErr(null)
+    try { if (!published) await publish.mutateAsync({ id: sheet!.id, publish: true }); setShowImg(true) }
+    catch (e) { setErr(String((e as { message?: string })?.message ?? e)) }
+  }
 
   // thứ tự vị trí: ca (CA1<CA2<CA3) trên cùng, rồi HC, rồi khác — trong cùng nhóm theo sort_order
   const SHIFT_RANK: Record<string, number> = { CA1: 0, CA2: 1, CA3: 2, HC: 3 }
   const order = new Map(sheet.skills.map((s, i) => [s.id, (SHIFT_RANK[s.shift_tag ?? ''] ?? 4) * 1000 + i]))
-  const rank = (a: SheetDetail['assignments'][number]) => a.status === 'ASSIGNED' ? (order.get(a.skill_id ?? '') ?? 99999) : a.status === 'UNASSIGNED' ? 100000 : 200000
-  const sortedAsg = [...sheet.assignments].sort((x, y) => rank(x) - rank(y) || (x.employee?.name ?? '').localeCompare(y.employee?.name ?? '')) // dùng cho In
 
   // gom theo NGƯỜI (1 người có thể nhiều vị trí)
-  type EmpRow = { eid: string; employee: SheetDetail['assignments'][number]['employee']; positions: string[]; leave: boolean; manual: boolean }
   const empMap = new Map<string, EmpRow>()
   for (const a of sheet.assignments) {
     let g = empMap.get(a.employee_id)
@@ -333,6 +340,7 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
     if (a.status === 'LEAVE') g.leave = true
     else if (a.status === 'ASSIGNED' && a.skill_id) { g.positions.push(a.skill_id); if (a.is_manual) g.manual = true }
   }
+  for (const g of empMap.values()) g.positions.sort((x, y) => (order.get(x) ?? 99999) - (order.get(y) ?? 99999))
   const empFirst = (g: EmpRow) => g.leave ? 300000 : g.positions.length ? Math.min(...g.positions.map(s => order.get(s) ?? 99999)) : 200000
   const empRows = [...empMap.values()].sort((a, b) => empFirst(a) - empFirst(b) || (a.employee?.name ?? '').localeCompare(b.employee?.name ?? ''))
 
@@ -350,6 +358,12 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
       {err && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{err}</div>}
       {assigning && <div className="text-xs text-sky-700 bg-sky-50 border border-sky-200 rounded px-3 py-2 flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Đang tự xếp người… có thể mất vài giây, vui lòng đợi.</div>}
       {locked && <div className="text-xs text-slate-600 bg-slate-100 border border-slate-200 rounded px-3 py-2">🔒 Phiếu đã phát hành — đã khóa. Bấm <b>Hoàn tác</b> ở "Kết quả phân công" để chỉnh sửa / xếp lại.</div>}
+      {(sheet.created_by || sheet.updated_by) && (
+        <div className="text-[11px] text-slate-400 flex flex-wrap gap-x-3">
+          {sheet.created_by && <span>Tạo: <b className="text-slate-500">{sheet.created_by}</b>{sheet.created_at && ` · ${formatDateTime(sheet.created_at)}`}</span>}
+          {sheet.updated_by && <span>Sửa: <b className="text-slate-500">{sheet.updated_by}</b>{sheet.updated_at && ` · ${formatDateTime(sheet.updated_at)}`}</span>}
+        </div>
+      )}
 
       {/* Điều hướng bước */}
       <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-medium w-fit">
@@ -364,6 +378,12 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
             {canCreate && <Button size="sm" variant="outline" className="h-7" onClick={saveLayout} disabled={locked || upsert.isPending || setLayoutSkills.isPending}><Save className="h-3.5 w-3.5 mr-1" />Lưu layout</Button>}
             {canCreate && <Button size="sm" className="h-7" onClick={runAuto} disabled={locked || assigning || totalRequired === 0}>{assigning ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Wand2 className="h-3.5 w-3.5 mr-1" />}{assigning ? 'Đang xếp…' : 'Tự xếp người'}</Button>}
             {hasResult && <Button size="sm" variant="outline" className="h-7" onClick={() => setStep('result')}>Kết quả →</Button>}
+          </div>
+          {/* Dải tổng hợp */}
+          <div className="flex flex-wrap gap-2">
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs"><span className="text-slate-500">Tổng yêu cầu</span> <b className="text-slate-700 tabular-nums">{totalRequired}</b></div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs"><span className="text-slate-500">Tổng đáp ứng</span> <b className="text-slate-700 tabular-nums">{hasResult ? totalAssigned : '—'}</b></div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs"><span className="text-slate-500">Tổng chênh lệch</span> <b className={`tabular-nums ${hasResult ? (totalAssigned - totalRequired < 0 ? 'text-red-600' : 'text-green-600') : 'text-slate-400'}`}>{hasResult ? (totalAssigned - totalRequired > 0 ? `+${totalAssigned - totalRequired}` : totalAssigned - totalRequired) : '—'}</b></div>
           </div>
           {sheet.skills.length === 0 ? (
             <p className="text-xs text-slate-400 p-3 border border-slate-200 rounded-lg">Layout chưa có vị trí nào.</p>
@@ -406,8 +426,8 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
           <div className="flex flex-wrap items-center gap-2">
             <Button size="sm" variant="ghost" className="h-7" onClick={() => setStep('demand')}>← Yêu cầu nhân lực</Button>
             <div className="flex-1" />
-            {hasResult && <Button size="sm" variant="outline" className="h-7" onClick={() => setShowImg(true)}><ImageIcon className="h-3.5 w-3.5 mr-1" />Xem lịch</Button>}
-            {canPublish && !published && <Button size="sm" className="h-7" onClick={() => publish.mutate({ id: sheet.id, publish: true })} disabled={publish.isPending}><Send className="h-3.5 w-3.5 mr-1" />Phát hành</Button>}
+            {canPublish && !published && hasResult && <Button size="sm" className="h-7" onClick={publishAndView} disabled={publish.isPending}><Send className="h-3.5 w-3.5 mr-1" />Phát hành & Xem lịch</Button>}
+            {published && hasResult && <Button size="sm" variant="outline" className="h-7" onClick={() => setShowImg(true)}><ImageIcon className="h-3.5 w-3.5 mr-1" />Xem lịch</Button>}
             {canPublish && published && <Button size="sm" variant="outline" className="h-7" onClick={() => publish.mutate({ id: sheet.id, publish: false })} disabled={publish.isPending}>↩ Hoàn tác (sửa lại)</Button>}
           </div>
           {!hasResult ? (
@@ -463,21 +483,23 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
               </table>
             </div>
           )}
-          {showImg && <ImagePreview onClose={() => setShowImg(false)} sheet={sheet} whName={whName} labelOf={labelOf} sortedAsg={sortedAsg} noteBySkill={noteBySkill} shiftBySkill={shiftBySkill} />}
+          {showImg && <ImagePreview onClose={() => setShowImg(false)} sheet={sheet} whName={whName} labelOf={labelOf} empRows={empRows} noteBySkill={noteBySkill} shiftBySkill={shiftBySkill} currentUserId={currentUserId} />}
         </div>
       )}
     </div>
   )
 }
 
-// ─── Nội dung phiếu (giống mẫu Lịch làm việc) — dùng chung cho In + Xem ảnh ───
+// ─── Nội dung phiếu (giống mẫu Lịch làm việc) — gom theo NGƯỜI ───
 // nền dòng theo ca: Ca 2 = vàng nhạt, Ca 3 = đỏ nhạt; còn lại trắng/zebra
 const PRINT_ROW_BG: Record<string, string> = { CA2: '#fef3c7', CA3: '#fee2e2' }
+type EmpRow = { eid: string; employee: SheetDetail['assignments'][number]['employee']; positions: string[]; leave: boolean; manual: boolean }
 type DocProps = {
   sheet: SheetDetail; whName: string; labelOf: (id: string | null) => string
-  sortedAsg: SheetDetail['assignments']; noteBySkill: Map<string, string | null>; shiftBySkill: Map<string, string | null>
+  empRows: EmpRow[]; noteBySkill: Map<string, string | null>; shiftBySkill: Map<string, string | null>
+  currentUserId: string | null
 }
-function ScheduleDoc({ sheet, whName, labelOf, sortedAsg, noteBySkill, shiftBySkill }: DocProps) {
+function ScheduleDoc({ sheet, whName, labelOf, empRows, noteBySkill, shiftBySkill, currentUserId }: DocProps) {
   return (
     <div className="sheet-doc">
       <style>{`
@@ -498,14 +520,20 @@ function ScheduleDoc({ sheet, whName, labelOf, sortedAsg, noteBySkill, shiftBySk
       <table>
         <thead><tr><th style={{ width: 36 }}>STT</th><th>Họ và Tên</th><th>Chức danh</th><th>Vị trí phân công</th><th style={{ width: 120 }}>Note</th></tr></thead>
         <tbody>
-          {sortedAsg.map((a, i) => {
-            const tag = a.skill_id ? shiftBySkill.get(a.skill_id) : null
-            const bg = (a.status === 'ASSIGNED' && tag && PRINT_ROW_BG[tag]) ? PRINT_ROW_BG[tag] : (i % 2 ? '#f8fafc' : '#fff')
+          {empRows.map((g, i) => {
+            const tag = g.positions.length ? shiftBySkill.get(g.positions[0]) : null
+            const bg = (!g.leave && tag && PRINT_ROW_BG[tag]) ? PRINT_ROW_BG[tag] : (i % 2 ? '#f8fafc' : '#fff')
+            const isMe = !!currentUserId && g.eid === currentUserId
             return (
-              <tr key={a.id} style={{ background: bg }}>
-                <td>{i + 1}</td><td>{a.employee?.name ?? '—'}</td><td>{a.employee?.job_title ?? '—'}</td>
-                <td>{a.status === 'LEAVE' ? 'Nghỉ phép' : a.skill_id ? labelOf(a.skill_id) : 'Chưa phân công'}</td>
-                <td>{a.skill_id ? (noteBySkill.get(a.skill_id) ?? '') : ''}</td>
+              <tr key={g.eid} style={{ background: bg }}>
+                <td>{i + 1}</td>
+                <td>
+                  <span style={isMe ? { textDecoration: 'underline' } : undefined}>{g.employee?.name ?? '—'}</span>
+                  {g.positions.length >= 2 && <span style={{ color: '#e11d48', marginLeft: 4 }}>★</span>}
+                </td>
+                <td>{g.employee?.job_title ?? '—'}</td>
+                <td>{g.leave ? 'Nghỉ phép' : g.positions.length ? g.positions.map(labelOf).join(', ') : 'Chưa phân công'}</td>
+                <td>{g.positions.map(s => noteBySkill.get(s)).filter(Boolean).join('; ')}</td>
               </tr>
             )
           })}
@@ -515,16 +543,32 @@ function ScheduleDoc({ sheet, whName, labelOf, sortedAsg, noteBySkill, shiftBySk
   )
 }
 
-// Xem LỊCH toàn màn hình để CHỤP gửi (không cần in)
+// Xem LỊCH toàn màn hình để CHỤP / TẢI ảnh gửi (không cần in)
 function ImagePreview({ onClose, ...props }: DocProps & { onClose: () => void }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [saving, setSaving] = useState(false)
+  async function download() {
+    if (!ref.current) return
+    setSaving(true)
+    try {
+      const dataUrl = await toPng(ref.current, { pixelRatio: 2, backgroundColor: '#ffffff' })
+      const a = document.createElement('a')
+      a.href = dataUrl
+      a.download = `PhanCong_${(props.sheet.layout_name || 'lich').replace(/\s+/g, '_')}_${props.sheet.work_date}.png`
+      a.click()
+    } finally { setSaving(false) }
+  }
   return (
     <div className="fixed inset-0 z-50 bg-black/60 overflow-auto" onClick={onClose}>
       <div className="sticky top-0 z-10 flex items-center justify-between gap-2 bg-slate-900 text-white px-3 py-2 text-xs">
-        <span>📸 Chụp màn hình bảng dưới đây để gửi kế hoạch</span>
-        <button onClick={onClose} className="inline-flex items-center gap-1 bg-white/15 hover:bg-white/25 rounded px-2 py-1"><X className="h-3.5 w-3.5" />Đóng</button>
+        <span className="truncate">📸 Chụp màn hình, hoặc bấm Tải ảnh để gửi</span>
+        <div className="flex items-center gap-2 shrink-0">
+          <button onClick={download} disabled={saving} className="inline-flex items-center gap-1 bg-sky-600 hover:bg-sky-500 disabled:opacity-60 rounded px-2 py-1"><ImageIcon className="h-3.5 w-3.5" />{saving ? 'Đang tạo…' : 'Tải ảnh'}</button>
+          <button onClick={onClose} className="inline-flex items-center gap-1 bg-white/15 hover:bg-white/25 rounded px-2 py-1"><X className="h-3.5 w-3.5" />Đóng</button>
+        </div>
       </div>
       <div className="p-2 sm:p-4">
-        <div className="bg-white mx-auto max-w-2xl p-3 rounded-lg shadow-lg" onClick={e => e.stopPropagation()}>
+        <div ref={ref} className="bg-white mx-auto max-w-2xl p-3 rounded-lg shadow-lg" onClick={e => e.stopPropagation()}>
           <ScheduleDoc {...props} />
         </div>
       </div>

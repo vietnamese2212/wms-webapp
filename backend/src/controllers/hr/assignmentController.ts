@@ -9,7 +9,7 @@ type ReqUser = { sub?: string; name?: string }
 const userOf = (req: Request): ReqUser => (req as { user?: ReqUser }).user ?? {}
 const now = () => new Date().toISOString()
 
-const SHEET_SELECT = 'id, work_date, warehouse_id, layout_id, status, note, published_at, created_at, updated_at'
+const SHEET_SELECT = 'id, work_date, warehouse_id, layout_id, status, note, published_at, created_at, updated_at, created_by, updated_by'
 
 // Vị trí (skill) của phiếu = skill trong layout. Trả {id: skill_id, name, shift_tag, sort_order, job_title}
 async function sheetSkills(layout_id: string | null) {

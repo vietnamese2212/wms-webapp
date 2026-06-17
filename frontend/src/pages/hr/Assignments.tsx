@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toBlob } from 'html-to-image'
-import { Plus, Wand2, Send, Trash2, CalendarDays, Pencil, Save, Layers, X, Loader2, Image as ImageIcon } from 'lucide-react'
+import { Plus, Wand2, Send, Trash2, CalendarDays, Pencil, Save, Layers, X, Loader2, Image as ImageIcon, Share2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -550,30 +550,41 @@ function ScheduleDoc({ sheet, whName, labelOf, sortedAsg, posCount, noteBySkill,
   )
 }
 
-// Xem LỊCH toàn màn hình để CHỤP / TẢI ảnh gửi (không cần in)
+// Xem LỊCH toàn màn hình → CHIA SẺ thẳng (Zalo…) hoặc tải ảnh (không cần in)
 function ImagePreview({ onClose, ...props }: DocProps & { onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null)
   const [saving, setSaving] = useState(false)
-  async function download() {
-    if (!ref.current) return
+  const fileName = `PhanCong_${(props.sheet.layout_name || 'lich').replace(/\s+/g, '_')}_${props.sheet.work_date}.png`
+  const canShare = typeof navigator !== 'undefined' && !!navigator.canShare   // mobile mới có
+  const renderBlob = async () => ref.current ? await toBlob(ref.current, { pixelRatio: 2, backgroundColor: '#ffffff' }) : null
+  const saveFile = (blob: Blob) => {
+    const urlObj = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = urlObj; a.download = fileName
+    document.body.appendChild(a); a.click(); a.remove()
+    setTimeout(() => URL.revokeObjectURL(urlObj), 1500)
+  }
+  async function share() {
     setSaving(true)
     try {
-      const blob = await toBlob(ref.current, { pixelRatio: 2, backgroundColor: '#ffffff' })
-      if (!blob) return
-      const urlObj = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = urlObj
-      a.download = `PhanCong_${(props.sheet.layout_name || 'lich').replace(/\s+/g, '_')}_${props.sheet.work_date}.png`
-      document.body.appendChild(a); a.click(); a.remove()
-      setTimeout(() => URL.revokeObjectURL(urlObj), 1500)
-    } finally { setSaving(false) }
+      const blob = await renderBlob(); if (!blob) return
+      const file = new File([blob], fileName, { type: 'image/png' })
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: 'Lịch phân công' })   // mở khung chia sẻ → Zalo…
+      } else { saveFile(blob) }
+    } catch { /* user huỷ chia sẻ → bỏ qua */ } finally { setSaving(false) }
+  }
+  async function download() {
+    setSaving(true)
+    try { const blob = await renderBlob(); if (blob) saveFile(blob) } finally { setSaving(false) }
   }
   return (
     <div className="fixed inset-0 z-50 bg-black/60 overflow-auto" onClick={onClose}>
       <div className="sticky top-0 z-10 flex items-center justify-between gap-2 bg-slate-900 text-white px-3 py-2 text-xs">
-        <span className="truncate">📸 Chụp màn hình, hoặc bấm Tải ảnh để gửi</span>
+        <span className="truncate">{canShare ? '📤 Bấm Chia sẻ để gửi thẳng (Zalo…)' : '📸 Chụp màn hình hoặc Tải ảnh để gửi'}</span>
         <div className="flex items-center gap-2 shrink-0">
-          <button onClick={download} disabled={saving} className="inline-flex items-center gap-1 bg-sky-600 hover:bg-sky-500 disabled:opacity-60 rounded px-2 py-1"><ImageIcon className="h-3.5 w-3.5" />{saving ? 'Đang tạo…' : 'Tải ảnh'}</button>
+          {canShare && <button onClick={share} disabled={saving} className="inline-flex items-center gap-1 bg-green-600 hover:bg-green-500 disabled:opacity-60 rounded px-2 py-1"><Share2 className="h-3.5 w-3.5" />{saving ? 'Đang tạo…' : 'Chia sẻ'}</button>}
+          <button onClick={download} disabled={saving} className="inline-flex items-center gap-1 bg-sky-600 hover:bg-sky-500 disabled:opacity-60 rounded px-2 py-1"><ImageIcon className="h-3.5 w-3.5" />Tải ảnh</button>
           <button onClick={onClose} className="inline-flex items-center gap-1 bg-white/15 hover:bg-white/25 rounded px-2 py-1"><X className="h-3.5 w-3.5" />Đóng</button>
         </div>
       </div>

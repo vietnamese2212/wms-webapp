@@ -1,4 +1,9 @@
-# Skill: QR Scan Flow
+---
+name: qr-scan-flow
+description: BẮT BUỘC áp dụng khi làm/ sửa BẤT KỲ tính năng quét QR (scan camera) nào — Inbound, Outbound, Inventory, Attendance. Gồm flow confirm vs instant, camera keep-alive (CSS hidden tránh hỏi quyền lại), unlockAudio/playBeep, auto-resume 1.5s, nút "Quét tiếp" khi lỗi, parse QR string.
+---
+
+# QR Scan Flow
 
 ## Hai loại flow
 - **Confirm** (Inbound): Scan → pause → preview → "Lưu" → API → auto-resume 1.5s
@@ -44,7 +49,7 @@ playBeep()     // trong handleScan
 ```
 
 ## QR string format (Inbound)
-`ddmmyy_MATERIAL_CYCLE_MACHINE_SEQUENCE_...` — split by `_`, min 5 parts.
+`ddmmyy_MATERIAL_CYCLE_MACHINE_SEQUENCE_...` — split by `_`, min 5 parts. Sau parse ngày: `isNaN(date.getTime())` trước khi dùng.
 
 ## Checklist implement QR mới
 - [ ] Mount camera một lần (CSS hidden)

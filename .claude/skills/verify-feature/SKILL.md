@@ -24,7 +24,8 @@ Kiểm đủ: **1) Bắt đầu làm** (tạo mới → số liệu cập nhật
 
 ## Cổng 4 — UI flow thật (Playwright MCP)
 - **Ưu tiên local dev**: nếu `localhost:5173` (FE) + `:4000` (BE) đang chạy thì test ở đó (an toàn, không đụng prod). Không chạy → hỏi user bật `npm run dev` hoặc cho phép test trên prod `wms-webapp.vercel.app` (lưu ý: thao tác ghi đụng DB production).
-- **Login**: lấy tài khoản từ `.env` (TEST_USER/TEST_PASS nếu có) hoặc hỏi user; không hardcode credential vào skill/repo.
+- **Login**: đọc `frontend/.env` (gitignored) → `TEST_EMAIL` + `TEST_PASSWORD` (hiện là tài khoản Admin toàn quyền). Trang login dùng **email + mật khẩu**. KHÔNG hardcode credential vào skill/repo/commit.
+- **DB dùng chung (quan trọng)**: local dev và prod trỏ về CÙNG 1 Supabase — KHÔNG có DB test riêng. Nên thao tác GHI qua UI là đụng dữ liệu thật → ưu tiên smoke/đọc + verify bằng Postgres MCP; nếu cần test ghi thật thì dùng bản ghi nháp rõ ràng và DỌN sau, hoặc xin phép user.
 - Thao tác đúng luồng vừa code (nút action, dialog, scan…) → `browser_snapshot`/`browser_take_screenshot` xác nhận hiển thị đúng.
 - **Responsive**: resize kiểm PC + tablet + phone (≤360px không tràn).
 - Kiểm phân quyền: nút write có bị ẩn đúng khi thiếu `can(perms,…)` không.

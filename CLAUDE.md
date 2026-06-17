@@ -119,8 +119,19 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 ---
 ## Công cụ (skill · MCP · hook)
 
-**Skill** (`.claude/skills/<tên>/SKILL.md` — tự kích hoạt theo ngữ cảnh, hoặc gọi tay `/<tên>`):
-`brainstorm-plan` (plan việc lớn) · `table-format` (list/table/detail) · `qr-scan-flow` (quét QR) · `add-permission` (thêm quyền 4 nơi) · `mutation-realtime` (INSERT/realtime/migration) · `verify-feature` (kiểm chứng trước khi báo xong) · `debug-systematic` (tìm nguyên nhân gốc).
+**Skill — BẮT BUỘC gọi đúng skill TRƯỚC khi làm** (đừng dựa vào trí nhớ, đừng tự suy luận lại chuẩn). Gọi qua công cụ Skill hoặc `/<tên>`; file ở `.claude/skills/<tên>/SKILL.md`:
+
+| Khi… | BẮT BUỘC gọi skill |
+|---|---|
+| Bắt đầu việc lớn (module mới, đổi schema, refactor nhiều file, yêu cầu mơ hồ) | `brainstorm-plan` |
+| Tạo/sửa list page · table · trang detail | `table-format` |
+| Làm/sửa tính năng quét QR | `qr-scan-flow` |
+| Thêm/sửa nút hay route gọi API write (tạo/sửa/xóa/quét/duyệt/phát hành…) | `add-permission` |
+| Thêm/sửa INSERT/UPDATE · mutation số liệu · đổi DB schema | `mutation-realtime` |
+| Trước khi báo “đã xong” bất kỳ tính năng/sửa lỗi nào | `verify-feature` |
+| Gặp bug / hành vi sai chưa rõ nguyên nhân | `debug-systematic` |
+
+**Một việc thường chạm NHIỀU skill — gọi đủ.** Vd thêm nút Xóa trong table = `table-format` + `add-permission` + `mutation-realtime`, xong `verify-feature`.
 
 **MCP:** Postgres (query DB read-only — `mcp__postgres__query`) · Playwright (test UI thật, login đọc từ `frontend/.env`) · Vercel (trạng thái deploy/log). Cấu hình ở `.mcp.json` — **gitignored** (chứa DATABASE_URL, không commit).
 

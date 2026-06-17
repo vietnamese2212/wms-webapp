@@ -111,8 +111,8 @@ export async function getSheet(req: Request, res: Response) {
 export async function upsertSheet(req: Request, res: Response) {
   try {
     const u = userOf(req)
-    const { layout_id, work_date, note, demands } = req.body as {
-      layout_id?: string; work_date?: string; note?: string
+    const { layout_id, work_date, note, demands, create_only } = req.body as {
+      layout_id?: string; work_date?: string; note?: string; create_only?: boolean
       demands?: { skill_id: string; required_count: number; note?: string }[]
     }
     if (!layout_id || !work_date) return fail(res, 'layout_id, work_date là bắt buộc', 400)
@@ -122,9 +122,11 @@ export async function upsertSheet(req: Request, res: Response) {
     if (!layout) return fail(res, 'Không tìm thấy layout', 404)
     const warehouse_id = (layout as { warehouse_id: string }).warehouse_id
 
-    // tìm phiếu sẵn có (ngày + layout)
+    // tìm phiếu sẵn có (ngày + layout) — mỗi layout chỉ 1 phiếu/ngày
     const { data: existing } = await supabase.from('WorkAssignmentSheet').select('id, status')
       .eq('work_date', work_date).eq('layout_id', layout_id).maybeSingle()
+    // tạo mới: nếu đã có phiếu cho (ngày+layout) → chặn, không tạo trùng
+    if (create_only && existing) return fail(res, 'Ngày này đã có phiếu cho layout đã chọn — không thể tạo trùng.', 409)
 
     let sheetId: string
     const isNew = !existing

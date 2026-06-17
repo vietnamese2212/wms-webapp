@@ -2631,7 +2631,7 @@ export function useSheet(id?: string) {
 export function useUpsertSheet() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { layout_id: string; work_date: string; note?: string; demands?: { skill_id: string; required_count: number; note?: string }[] }) =>
+    mutationFn: (body: { layout_id: string; work_date: string; note?: string; create_only?: boolean; demands?: { skill_id: string; required_count: number; note?: string }[] }) =>
       apiClient.post('/hr/sheets', body).then(r => r.data.data as { id: string }),
     onSettled: () => { qc.invalidateQueries({ queryKey: ['hr-sheets'] }); qc.invalidateQueries({ queryKey: ['hr-sheet'] }) },
   })

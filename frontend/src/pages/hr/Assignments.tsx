@@ -5,6 +5,8 @@ import { Plus, Wand2, Send, Trash2, CalendarDays, Pencil, Save, Layers, X, Loade
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { SummaryBand } from '@/components/shared/SummaryBand'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import {
@@ -138,31 +140,23 @@ function DailyTab({ canCreate, perms }: { canCreate: boolean; perms: ModulePermi
   const [layoutId, setLayoutId] = useState<string>(saved.layout ?? '')
   const [from, setFrom]         = useState<string>(saved.from ?? MONTH_START())
   const [to, setTo]             = useState<string>(DATE_PLUS(15))   // luôn mặc định: hôm nay + 15 ngày (không nhớ giá trị cũ)
-  const [cDate, setCDate]       = useState<string>(TODAY())
   const [sel, setSel]           = useState<string | null>(null)
-  const [err, setErr]           = useState<string | null>(null)
+  const [openCreate, setOpenCreate] = useState(false)
   useEffect(() => { localStorage.setItem(SCOPE_KEY, JSON.stringify({ wh, layout: layoutId, from })) }, [wh, layoutId, from])
 
   const { data: layouts = [] } = useLayouts(wh || undefined)
   useEffect(() => { if (layoutId && !layouts.some(l => l.id === layoutId)) setLayoutId('') }, [layouts, layoutId])
 
   const { data: sheets = [], isLoading } = useSheets({ warehouse_id: wh || undefined, layout_id: layoutId || undefined, date_from: from, date_to: to }, true)
-  const upsert = useUpsertSheet()
-  const [creating, setCreating] = useState(false)
-
-  async function createSheet() {
-    if (!layoutId || !cDate) { setErr('Chọn Layout và Ngày để tạo phiếu'); return }
-    setErr(null); setCreating(true)
-    try { const r = await upsert.mutateAsync({ layout_id: layoutId, work_date: cDate }); setSel(r.id) }
-    catch (e) { setErr(String((e as { message?: string })?.message ?? e)) }
-    finally { setCreating(false) }
-  }
 
   if (sel) return <SheetPanel sheetId={sel} warehouses={warehouses as { id: string; name: string }[]} perms={perms} onBack={() => setSel(null)} />
 
+  const published = sheets.filter(s => s.status === 'PUBLISHED').length
+  const totalLeave = sheets.reduce((n, s) => n + (s.total_on_leave || 0), 0)
+
   return (
     <div className="p-3 space-y-3">
-      {/* Bộ lọc */}
+      {/* Toolbar: lọc + tạo */}
       <div className="flex flex-wrap items-center gap-2">
         <WarehouseSingleSelect warehouses={warehouses as { id: string; code?: string; name: string }[]} value={wh} onChange={setWh} allLabel="Tất cả kho" placeholder="Tất cả kho" triggerClassName="w-40" />
         <select value={layoutId} onChange={e => setLayoutId(e.target.value)} disabled={!wh} className="border border-slate-200 rounded-md px-2.5 text-xs h-7 bg-white text-slate-700 disabled:opacity-50">
@@ -173,39 +167,35 @@ function DailyTab({ canCreate, perms }: { canCreate: boolean; perms: ModulePermi
           <span>Từ</span><Input type="date" value={from} onChange={e => setFrom(e.target.value)} className="h-7 w-32 text-xs" />
           <span>đến</span><Input type="date" value={to} onChange={e => setTo(e.target.value)} className="h-7 w-32 text-xs" />
         </div>
+        <div className="flex-1" />
+        {canCreate && <Button size="sm" className="h-7" onClick={() => setOpenCreate(true)}><Plus className="h-4 w-4 mr-1" />Tạo phiếu</Button>}
       </div>
 
-      {/* Tạo phiếu */}
-      {canCreate && (
-        <div className="flex flex-wrap items-center gap-2 border border-slate-200 rounded-lg p-2 bg-slate-50/50">
-          <span className="text-xs font-medium text-slate-600">Tạo phiếu mới:</span>
-          <select value={layoutId} onChange={e => setLayoutId(e.target.value)} disabled={!wh} className="border border-slate-200 rounded-md px-2.5 text-xs h-7 bg-white text-slate-700 disabled:opacity-50">
-            <option value="">{wh ? 'Chọn layout…' : 'Chọn kho trước'}</option>
-            {layouts.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
-          </select>
-          <Input type="date" value={cDate} onChange={e => setCDate(e.target.value)} className="h-7 w-36 text-xs" />
-          <Button size="sm" className="h-7" onClick={createSheet} disabled={!layoutId || creating}><Plus className="h-4 w-4 mr-1" />Tạo phiếu</Button>
-        </div>
-      )}
-      {err && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{err}</div>}
+      {/* Dải tổng hợp */}
+      {sheets.length > 0 && <SummaryBand className="rounded-lg" tiles={[
+        { label: 'Tổng phiếu', value: sheets.length },
+        { label: 'Đã phát hành', value: published },
+        { label: 'Nháp', value: sheets.length - published },
+        { label: 'Tổng nghỉ phép', value: totalLeave, accent: totalLeave > 0 },
+      ]} />}
 
       {/* Danh sách phiếu */}
       {isLoading ? <p className="text-xs text-slate-400 py-8 text-center">Đang tải…</p>
       : sheets.length === 0 ? (
-        <div className="flex flex-col items-center justify-center text-slate-400 gap-2 py-16"><CalendarDays className="h-8 w-8" /><p className="text-sm">Chưa có phiếu nào trong khoảng ngày — tạo phiếu mới ở trên.</p></div>
+        <div className="flex flex-col items-center justify-center text-slate-400 gap-2 py-16"><CalendarDays className="h-8 w-8" /><p className="text-sm">Chưa có phiếu nào trong khoảng ngày — bấm <b>Tạo phiếu</b>.</p></div>
       ) : (
         <div className="border border-slate-200 rounded-lg overflow-x-auto">
           <table className="w-full text-xs min-w-max">
             <thead className="bg-slate-50 text-[10px] text-slate-500">
               <tr>
-                <th className="text-left px-2 py-2 font-medium">Ngày</th>
-                <th className="text-left px-2 py-2 font-medium">Kho</th>
-                <th className="text-left px-2 py-2 font-medium">Layout</th>
-                <th className="text-right px-2 py-2 font-medium">Nghỉ phép</th>
-                <th className="text-right px-2 py-2 font-medium">Yêu cầu</th>
-                <th className="text-right px-2 py-2 font-medium">Đáp ứng</th>
-                <th className="text-right px-2 py-2 font-medium">Chênh lệch</th>
-                <th className="text-left px-2 py-2 font-medium w-28">Trạng thái</th>
+                <th className="text-left px-2 py-2 font-medium whitespace-nowrap">Ngày</th>
+                <th className="text-left px-2 py-2 font-medium whitespace-nowrap">Kho</th>
+                <th className="text-left px-2 py-2 font-medium whitespace-nowrap">Layout</th>
+                <th className="text-right px-2 py-2 font-medium whitespace-nowrap">Nghỉ phép</th>
+                <th className="text-right px-2 py-2 font-medium whitespace-nowrap">Yêu cầu</th>
+                <th className="text-right px-2 py-2 font-medium whitespace-nowrap">Đáp ứng</th>
+                <th className="text-right px-2 py-2 font-medium whitespace-nowrap">Chênh lệch</th>
+                <th className="text-left px-2 py-2 font-medium w-28 whitespace-nowrap">Trạng thái</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -213,22 +203,81 @@ function DailyTab({ canCreate, perms }: { canCreate: boolean; perms: ModulePermi
                 const diff = s.total_assigned - s.total_required
                 return (
                   <tr key={s.id} onClick={() => setSel(s.id)} className="hover:bg-sky-50 cursor-pointer">
-                    <td className="px-2 py-1.5 tabular-nums font-medium text-slate-700">{formatDate(s.work_date)}</td>
-                    <td className="px-2 py-1.5 text-slate-600">{s.warehouse_name ?? '—'}</td>
-                    <td className="px-2 py-1.5 text-slate-600">{s.layout_name ?? '—'}</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums">{s.total_on_leave || '—'}</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums">{s.total_required}</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums">{s.total_assigned}</td>
-                    <td className={`px-2 py-1.5 text-right tabular-nums font-semibold ${diff < 0 ? 'text-red-600' : 'text-green-600'}`}>{diff > 0 ? `+${diff}` : diff}</td>
-                    <td className="px-2 py-1.5"><Badge variant={s.status === 'PUBLISHED' ? 'success' : 'warning'}>{s.status === 'PUBLISHED' ? 'Đã phát hành' : 'Nháp'}</Badge></td>
+                    <td className="px-2 py-1.5 tabular-nums font-medium text-slate-700 whitespace-nowrap">{formatDate(s.work_date)}</td>
+                    <td className="px-2 py-1.5 text-slate-600 whitespace-nowrap">{s.warehouse_name ?? '—'}</td>
+                    <td className="px-2 py-1.5 text-slate-600 whitespace-nowrap">{s.layout_name ?? '—'}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">{s.total_on_leave || '—'}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">{s.total_required}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">{s.total_assigned}</td>
+                    <td className={`px-2 py-1.5 text-right tabular-nums font-semibold whitespace-nowrap ${diff < 0 ? 'text-red-600' : 'text-green-600'}`}>{diff > 0 ? `+${diff}` : diff}</td>
+                    <td className="px-2 py-1.5 whitespace-nowrap"><Badge variant={s.status === 'PUBLISHED' ? 'success' : 'warning'}>{s.status === 'PUBLISHED' ? 'Đã phát hành' : 'Nháp'}</Badge></td>
                   </tr>
                 )
               })}
             </tbody>
           </table>
+          <div className="border-t border-slate-100 px-2 py-1.5 text-[11px] text-slate-400">{sheets.length} phiếu</div>
         </div>
       )}
+
+      {openCreate && <CreateSheetDialog warehouses={warehouses as { id: string; name: string; code?: string }[]} defaultWh={wh} onClose={() => setOpenCreate(false)} onCreated={id => { setOpenCreate(false); setSel(id) }} />}
     </div>
+  )
+}
+
+// ─── Dialog tạo phiếu mới (Kho → Layout → Ngày); trùng ngày+layout → chặn + cảnh báo ───
+function CreateSheetDialog({ warehouses, defaultWh, onClose, onCreated }: {
+  warehouses: { id: string; name: string; code?: string }[]; defaultWh: string; onClose: () => void; onCreated: (id: string) => void
+}) {
+  const [wh, setWh] = useState(defaultWh)
+  const [layoutId, setLayoutId] = useState('')
+  const [date, setDate] = useState(TODAY())
+  const [err, setErr] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const { data: layouts = [] } = useLayouts(wh || undefined)
+  const upsert = useUpsertSheet()
+  useEffect(() => { if (layoutId && !layouts.some(l => l.id === layoutId)) setLayoutId('') }, [layouts, layoutId])
+
+  async function submit() {
+    if (!wh || !layoutId || !date) { setErr('Chọn đủ Kho, Layout và Ngày'); return }
+    setErr(null); setSaving(true)
+    try {
+      const r = await upsert.mutateAsync({ layout_id: layoutId, work_date: date, create_only: true })
+      onCreated(r.id)
+    } catch (e) {
+      const msg = (e as { response?: { data?: { error?: { message?: string } } } }).response?.data?.error?.message ?? (e as { message?: string })?.message ?? String(e)
+      setErr(msg)
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <Dialog open onOpenChange={o => !o && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader><DialogTitle>Tạo phiếu phân công</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          <div>
+            <label className="text-xs font-medium text-slate-600 block mb-1">Kho</label>
+            <WarehouseSingleSelect warehouses={warehouses} value={wh} onChange={v => { setWh(v); setLayoutId('') }} allLabel="Chọn kho" placeholder="Chọn kho" triggerClassName="w-full" />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-slate-600 block mb-1">Layout</label>
+            <select value={layoutId} onChange={e => setLayoutId(e.target.value)} disabled={!wh} className="w-full border border-slate-200 rounded-md px-2.5 text-xs h-9 bg-white text-slate-700 disabled:opacity-50">
+              <option value="">{wh ? 'Chọn layout…' : 'Chọn kho trước'}</option>
+              {layouts.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-slate-600 block mb-1">Ngày</label>
+            <Input type="date" min={TODAY()} value={date} onChange={e => setDate(e.target.value)} className="h-9 text-xs" />
+          </div>
+          {err && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">⚠ {err}</div>}
+          <div className="flex justify-end gap-2 pt-1">
+            <Button size="sm" variant="outline" className="h-8" onClick={onClose}>Hủy</Button>
+            <Button size="sm" className="h-8" onClick={submit} disabled={!wh || !layoutId || saving}>{saving ? 'Đang tạo…' : 'Tạo phiếu'}</Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 

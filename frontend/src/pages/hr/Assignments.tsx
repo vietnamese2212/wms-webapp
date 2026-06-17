@@ -1,12 +1,22 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useMemo } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toBlob } from 'html-to-image'
-import { Plus, Wand2, Send, Trash2, CalendarDays, Pencil, Save, Layers, X, Loader2, Image as ImageIcon, Share2 } from 'lucide-react'
+import { Plus, Wand2, Send, Trash2, CalendarDays, Pencil, Save, Layers, X, Loader2, Image as ImageIcon, Share2, Rows3, AlignJustify } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { SummaryBand } from '@/components/shared/SummaryBand'
+import { SearchInput } from '@/components/shared/SearchInput'
+import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
+import { SavedViews } from '@/components/shared/SavedViews'
+import { useSavedViewsStore } from '@/stores/savedViewsStore'
+import { useColumnResize } from '@/components/shared/useColumnResize'
+import { EmptyState } from '@/components/shared/EmptyState'
+import { TableSkeleton } from '@/components/shared/TableSkeleton'
+import { rowText, type RowStatusKey } from '@/lib/rowStatus'
+import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import {
@@ -18,14 +28,13 @@ import {
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
-import { formatDate, formatDateTime } from '@/utils/formatters'
+import { formatDate, formatDateTime, formatTimestampDate } from '@/utils/formatters'
 
 const SHIFT_LABEL: Record<string, string> = { CA1: 'Ca 1', CA2: 'Ca 2', CA3: 'Ca 3', HC: 'HC' }
 const shiftOf = (t: string | null) => (t ? SHIFT_LABEL[t] ?? t : '')
 const TODAY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 // ngày VN + n ngày (mặc định filter "đến ngày")
 const DATE_PLUS = (days: number) => { const d = new Date(`${TODAY()}T00:00:00+07:00`); d.setDate(d.getDate() + days); return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }) }
-const MONTH_START = () => TODAY().slice(0, 8) + '01'
 const SCOPE_KEY = 'hr_assign_scope'
 
 // nhãn "Vị trí phân công": {Chức danh}_{Ca}_{Vị trí}  →  "Lái xe nâng_HC_Pallet"
@@ -65,10 +74,9 @@ export default function Assignments() {
             <button onClick={() => setTab('rules')} className={`px-3 py-1.5 border-l border-slate-200 ${tab === 'rules' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Quy tắc ca</button>
           </div>
         </div>
-        <div className="flex-1 min-h-0 overflow-auto">
+        <div className="flex-1 min-h-0 flex flex-col">
           {tab === 'daily' ? <DailyTab canCreate={canCreate} perms={perms} />
-            : tab === 'layout' ? <LayoutTab canCreate={canCreate} />
-            : <ShiftRulesTab canManage={canCreate} />}
+            : <div className="flex-1 min-h-0 overflow-auto">{tab === 'layout' ? <LayoutTab canCreate={canCreate} /> : <ShiftRulesTab canManage={canCreate} />}</div>}
         </div>
       </div>
     </div>
@@ -133,94 +141,134 @@ function ShiftRulesTab({ canManage }: { canManage: boolean }) {
 }
 
 // ════════ TAB PHÂN CÔNG (danh sách phiếu → chi tiết) ════════
+const SHEET_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
+  { id: 'date',    label: 'Ngày',       w: 116 },
+  { id: 'wh',      label: 'Kho',        w: 130 },
+  { id: 'layout',  label: 'Layout',     w: 180 },
+  { id: 'leave',   label: 'Nghỉ phép',  w: 78, align: 'right' },
+  { id: 'req',     label: 'Yêu cầu',    w: 78, align: 'right' },
+  { id: 'got',     label: 'Đáp ứng',    w: 78, align: 'right' },
+  { id: 'diff',    label: 'Chênh lệch', w: 90, align: 'right' },
+  { id: 'status',  label: 'Trạng thái', w: 104 },
+  { id: 'created', label: 'Tạo',        w: 116 },
+  { id: 'updated', label: 'Sửa',        w: 116 },
+]
+const SHEET_COL_DEFAULTS = SHEET_COLS.map(c => c.w)
+const sheetKey = (status: 'DRAFT' | 'PUBLISHED'): RowStatusKey => status === 'PUBLISHED' ? 'full' : 'pending'
+
 function DailyTab({ canCreate, perms }: { canCreate: boolean; perms: ModulePermissions | null }) {
   const { data: warehouses = [] } = useWarehouses(true)
-  const saved = (() => { try { return JSON.parse(localStorage.getItem(SCOPE_KEY) || '{}') } catch { return {} } })()
-  const [wh, setWh]             = useState<string>(saved.wh ?? '')
-  const [layoutId, setLayoutId] = useState<string>(saved.layout ?? '')
-  const [from, setFrom]         = useState<string>(saved.from ?? MONTH_START())
-  const [to, setTo]             = useState<string>(DATE_PLUS(15))   // luôn mặc định: hôm nay + 15 ngày (không nhớ giá trị cũ)
-  const [sel, setSel]           = useState<string | null>(null)
+  const { assignment: af, setAssignment } = useWmsFilterStore()
+  const { search, warehouseId, layoutId, dateFrom } = af
+  const [dateTo, setDateTo] = useState<string>(DATE_PLUS(15))   // luôn mặc định +15, không nhớ giá trị cũ
+  const [sel, setSel] = useState<string | null>(null)
   const [openCreate, setOpenCreate] = useState(false)
-  useEffect(() => { localStorage.setItem(SCOPE_KEY, JSON.stringify({ wh, layout: layoutId, from })) }, [wh, layoutId, from])
+  const { widths: colW, startResize, totalWidth } = useColumnResize('assignment_col_widths', SHEET_COL_DEFAULTS)
+  const [dense, setDense] = useState(() => localStorage.getItem('assignment_density') !== 'comfortable')
+  const toggleDensity = () => setDense(d => { localStorage.setItem('assignment_density', d ? 'comfortable' : 'compact'); return !d })
 
-  const { data: layouts = [] } = useLayouts(wh || undefined)
-  useEffect(() => { if (layoutId && !layouts.some(l => l.id === layoutId)) setLayoutId('') }, [layouts, layoutId])
+  const { data: layouts = [] } = useLayouts(warehouseId || undefined)
+  useEffect(() => { if (layoutId && !layouts.some(l => l.id === layoutId)) setAssignment({ layoutId: '' }) }, [layouts, layoutId, setAssignment])
 
-  const { data: sheets = [], isLoading } = useSheets({ warehouse_id: wh || undefined, layout_id: layoutId || undefined, date_from: from, date_to: to }, true)
+  const { data: sheets = [], isLoading } = useSheets({ warehouse_id: warehouseId || undefined, layout_id: layoutId || undefined, date_from: dateFrom, date_to: dateTo }, true)
 
-  if (sel) return <SheetPanel sheetId={sel} warehouses={warehouses as { id: string; name: string }[]} perms={perms} onBack={() => setSel(null)} />
+  const filtered = sheets.filter(s => {
+    if (!search.trim()) return true
+    const q = search.toLowerCase()
+    return (s.layout_name ?? '').toLowerCase().includes(q) || (s.warehouse_name ?? '').toLowerCase().includes(q)
+  })
+  const published = filtered.filter(s => s.status === 'PUBLISHED').length
+  const totalLeave = filtered.reduce((n, s) => n + (s.total_on_leave || 0), 0)
 
-  const published = sheets.filter(s => s.status === 'PUBLISHED').length
-  const totalLeave = sheets.reduce((n, s) => n + (s.total_on_leave || 0), 0)
+  const filterDefs: FilterDef[] = [
+    { key: 'wh', label: 'Kho', type: 'single', allLabel: 'Tất cả kho',
+      options: (warehouses as { id: string; name: string }[]).map(w => ({ value: w.id, label: w.name })),
+      value: warehouseId, onChange: v => setAssignment({ warehouseId: v, layoutId: '' }) },
+    { key: 'layout', label: 'Layout', type: 'single', allLabel: 'Tất cả layout',
+      options: layouts.map(l => ({ value: l.id, label: l.name })),
+      value: layoutId, onChange: v => setAssignment({ layoutId: v }) },
+    { key: 'date', label: 'Ngày', type: 'daterange', from: dateFrom, to: dateTo,
+      onChange: (f, t) => { setAssignment({ dateFrom: f }); setDateTo(t) } },
+  ]
+
+  const viewSnapshot = { search, warehouseId, layoutId, dateFrom }
+  const savedViews = useSavedViewsStore(s => s.views['assignment'] ?? [])
+  const activeViewId = useMemo(() => {
+    const cur = JSON.stringify(viewSnapshot)
+    return savedViews.find(v => JSON.stringify(v.filters) === cur)?.id ?? null
+  }, [savedViews, viewSnapshot])
+
+  if (sel) return <div className="flex-1 min-h-0 overflow-auto"><SheetPanel sheetId={sel} warehouses={warehouses as { id: string; name: string }[]} perms={perms} onBack={() => setSel(null)} /></div>
 
   return (
-    <div className="p-3 space-y-3">
-      {/* Toolbar: lọc + tạo */}
-      <div className="flex flex-wrap items-center gap-2">
-        <WarehouseSingleSelect warehouses={warehouses as { id: string; code?: string; name: string }[]} value={wh} onChange={setWh} allLabel="Tất cả kho" placeholder="Tất cả kho" triggerClassName="w-40" />
-        <select value={layoutId} onChange={e => setLayoutId(e.target.value)} disabled={!wh} className="border border-slate-200 rounded-md px-2.5 text-xs h-7 bg-white text-slate-700 disabled:opacity-50">
-          <option value="">{wh ? 'Tất cả layout' : 'Chọn kho trước'}</option>
-          {layouts.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
-        </select>
-        <div className="flex items-center gap-1 text-xs text-slate-500">
-          <span>Từ</span><Input type="date" value={from} onChange={e => setFrom(e.target.value)} className="h-7 w-32 text-xs" />
-          <span>đến</span><Input type="date" value={to} onChange={e => setTo(e.target.value)} className="h-7 w-32 text-xs" />
+    <div className="flex flex-col h-full">
+      {/* Toolbar */}
+      <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5">
+        <div className="flex items-center gap-2 flex-wrap">
+          <SearchInput value={search} onChange={v => setAssignment({ search: v })} placeholder="Tìm kho, layout..." className="flex-1 min-w-[140px]" />
+          <FilterSheetButton defs={filterDefs} className="sm:hidden" />
+          <SavedViews module="assignment" currentFilters={viewSnapshot} activeId={activeViewId} onApply={f => setAssignment(f as Partial<typeof af>)} />
+          <button type="button" onClick={toggleDensity}
+            className="hidden sm:inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 shrink-0"
+            title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
+            {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
+          </button>
+          {canCreate && <Button size="sm" className="h-7" onClick={() => setOpenCreate(true)}><Plus className="h-4 w-4 mr-1" />Tạo phiếu</Button>}
         </div>
-        <div className="flex-1" />
-        {canCreate && <Button size="sm" className="h-7" onClick={() => setOpenCreate(true)}><Plus className="h-4 w-4 mr-1" />Tạo phiếu</Button>}
+        <div className="hidden sm:flex items-center gap-1.5 flex-wrap"><FilterBar defs={filterDefs} /></div>
       </div>
 
-      {/* Dải tổng hợp */}
-      {sheets.length > 0 && <SummaryBand className="rounded-lg" tiles={[
-        { label: 'Tổng phiếu', value: sheets.length },
+      <SummaryBand tiles={[
+        { label: 'Tổng phiếu', value: filtered.length },
         { label: 'Đã phát hành', value: published },
-        { label: 'Nháp', value: sheets.length - published },
+        { label: 'Nháp', value: filtered.length - published },
         { label: 'Tổng nghỉ phép', value: totalLeave, accent: totalLeave > 0 },
-      ]} />}
+      ]} />
 
-      {/* Danh sách phiếu */}
-      {isLoading ? <p className="text-xs text-slate-400 py-8 text-center">Đang tải…</p>
-      : sheets.length === 0 ? (
-        <div className="flex flex-col items-center justify-center text-slate-400 gap-2 py-16"><CalendarDays className="h-8 w-8" /><p className="text-sm">Chưa có phiếu nào trong khoảng ngày — bấm <b>Tạo phiếu</b>.</p></div>
-      ) : (
-        <div className="border border-slate-200 rounded-lg overflow-x-auto">
-          <table className="w-full text-xs min-w-max">
-            <thead className="bg-slate-50 text-[10px] text-slate-500">
-              <tr>
-                <th className="text-left px-2 py-2 font-medium whitespace-nowrap">Ngày</th>
-                <th className="text-left px-2 py-2 font-medium whitespace-nowrap">Kho</th>
-                <th className="text-left px-2 py-2 font-medium whitespace-nowrap">Layout</th>
-                <th className="text-right px-2 py-2 font-medium whitespace-nowrap">Nghỉ phép</th>
-                <th className="text-right px-2 py-2 font-medium whitespace-nowrap">Yêu cầu</th>
-                <th className="text-right px-2 py-2 font-medium whitespace-nowrap">Đáp ứng</th>
-                <th className="text-right px-2 py-2 font-medium whitespace-nowrap">Chênh lệch</th>
-                <th className="text-left px-2 py-2 font-medium w-28 whitespace-nowrap">Trạng thái</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {sheets.map(s => {
+      <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+        {isLoading ? <div className="p-4"><TableSkeleton rows={6} cols={6} /></div>
+        : filtered.length === 0 ? <EmptyState icon={CalendarDays} title="Chưa có phiếu nào — bấm 'Tạo phiếu'" />
+        : (
+          <Table className="table-fixed [&_td]:overflow-hidden [&_th]:overflow-hidden [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100" style={{ width: totalWidth, minWidth: '100%' }}>
+            <colgroup>{colW.map((w, i) => <col key={i} style={{ width: w }} />)}</colgroup>
+            <TableHeader>
+              <TableRow>
+                {SHEET_COLS.map((c, i) => (
+                  <TableHead key={c.id} className={`relative px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''} ${c.id === 'date' ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                    {c.label}
+                    {i > 0 && <span onPointerDown={e => startResize(i, e)} onClick={e => e.stopPropagation()} className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70" title="Kéo để chỉnh độ rộng cột" />}
+                  </TableHead>
+                ))}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filtered.map(s => {
                 const diff = s.total_assigned - s.total_required
                 return (
-                  <tr key={s.id} onClick={() => setSel(s.id)} className="hover:bg-sky-50 cursor-pointer">
-                    <td className="px-2 py-1.5 tabular-nums font-medium text-slate-700 whitespace-nowrap">{formatDate(s.work_date)}</td>
-                    <td className="px-2 py-1.5 text-slate-600 whitespace-nowrap">{s.warehouse_name ?? '—'}</td>
-                    <td className="px-2 py-1.5 text-slate-600 whitespace-nowrap">{s.layout_name ?? '—'}</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">{s.total_on_leave || '—'}</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">{s.total_required}</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">{s.total_assigned}</td>
-                    <td className={`px-2 py-1.5 text-right tabular-nums font-semibold whitespace-nowrap ${diff < 0 ? 'text-red-600' : 'text-green-600'}`}>{diff > 0 ? `+${diff}` : diff}</td>
-                    <td className="px-2 py-1.5 whitespace-nowrap"><Badge variant={s.status === 'PUBLISHED' ? 'success' : 'warning'}>{s.status === 'PUBLISHED' ? 'Đã phát hành' : 'Nháp'}</Badge></td>
-                  </tr>
+                  <TableRow key={s.id} onClick={() => setSel(s.id)} className={`cursor-pointer ${rowText(sheetKey(s.status))} ${dense ? '' : '[&_td]:py-2.5'}`}>
+                    <TableCell className="px-2 py-1 text-[10px] font-semibold tabular-nums whitespace-nowrap sticky left-0 z-10 bg-white">{formatDate(s.work_date)}</TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap truncate">{s.warehouse_name ?? <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap truncate">{s.layout_name ?? <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums whitespace-nowrap">{s.total_on_leave || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums whitespace-nowrap">{s.total_required}</TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums whitespace-nowrap">{s.total_assigned}</TableCell>
+                    <TableCell className={`px-2 py-1 text-[10px] text-right tabular-nums font-semibold whitespace-nowrap ${diff < 0 ? 'text-red-600' : ''}`}>{diff > 0 ? `+${diff}` : diff}</TableCell>
+                    <TableCell className="px-2 py-1 whitespace-nowrap"><span className={`text-[9px] px-1.5 py-0.5 rounded-full ${s.status === 'PUBLISHED' ? 'bg-sky-100 text-sky-700' : 'bg-amber-100 text-amber-700'}`}>{s.status === 'PUBLISHED' ? 'Đã phát hành' : 'Nháp'}</span></TableCell>
+                    <TableCell className="px-2 py-1 whitespace-nowrap">{s.created_at ? <div className="leading-tight"><div className="text-[10px]">{s.created_by ?? <span className="text-slate-300">—</span>}</div><div className="text-[9px] text-slate-400">{formatTimestampDate(s.created_at, true)}</div></div> : <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className="px-2 py-1 whitespace-nowrap">{s.updated_at ? <div className="leading-tight"><div className="text-[10px]">{s.updated_by ?? <span className="text-slate-300">—</span>}</div><div className="text-[9px] text-slate-400">{formatTimestampDate(s.updated_at, true)}</div></div> : <span className="text-slate-300">—</span>}</TableCell>
+                  </TableRow>
                 )
               })}
-            </tbody>
-          </table>
-          <div className="border-t border-slate-100 px-2 py-1.5 text-[11px] text-slate-400">{sheets.length} phiếu</div>
-        </div>
-      )}
+            </TableBody>
+          </Table>
+        )}
+      </div>
 
-      {openCreate && <CreateSheetDialog warehouses={warehouses as { id: string; name: string; code?: string }[]} defaultWh={wh} onClose={() => setOpenCreate(false)} onCreated={id => { setOpenCreate(false); setSel(id) }} />}
+      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500">
+        {filtered.length > 0 ? `1–${filtered.length} / ${filtered.length} phiếu` : '0 phiếu'}
+      </div>
+
+      {openCreate && <CreateSheetDialog warehouses={warehouses as { id: string; name: string; code?: string }[]} defaultWh={warehouseId} onClose={() => setOpenCreate(false)} onCreated={id => { setOpenCreate(false); setSel(id) }} />}
     </div>
   )
 }

@@ -104,7 +104,14 @@ interface InboundReportFilters {
   warehouseId: string
   selCategories: string[]
 }
+interface AssignmentFilters {
+  search: string
+  warehouseId: string
+  layoutId: string
+  dateFrom: string
+}
 interface WmsFilterState {
+  assignment:        AssignmentFilters
   outbound:          OutboundFilters
   inbound:           InboundFilters
   inventory:         InventoryFilters
@@ -125,6 +132,7 @@ interface WmsFilterState {
   setDeliveries:        (f: Partial<DeliveriesFilters>)        => void
   setMaterials:         (f: Partial<MaterialsFilters>)         => void
   setInboundReport:     (f: Partial<InboundReportFilters>)     => void
+  setAssignment:        (f: Partial<AssignmentFilters>)        => void
 }
 
 const INBOUND_DEFAULT: InboundFilters = {
@@ -136,6 +144,7 @@ const INBOUND_DEFAULT: InboundFilters = {
 export const useWmsFilterStore = create<WmsFilterState>()(
   persist(
     (set) => ({
+      assignment: { search: '', warehouseId: '', layoutId: '', dateFrom: today().slice(0, 8) + '01' },
       outbound: {
         search: '', dateFrom: today(), dateTo: today(),
         filterTypes: [], filterDvvts: [], filterNpps: [],
@@ -179,6 +188,7 @@ export const useWmsFilterStore = create<WmsFilterState>()(
       setDeliveries:       (f) => set(s => ({ deliveries:       { ...s.deliveries,       ...f } })),
       setMaterials:        (f) => set(s => ({ materials:        { ...s.materials,        ...f } })),
       setInboundReport:    (f) => set(s => ({ inboundReport:    { ...s.inboundReport,    ...f } })),
+      setAssignment:       (f) => set(s => ({ assignment:       { ...s.assignment,       ...f } })),
     }),
     { name: 'wms-filters-v10', storage: createJSONStorage(() => sessionStorage) }
   )

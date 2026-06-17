@@ -171,7 +171,7 @@ function MobileFilterSheet({ defs, activeCount, onClearAll, className }: {
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-[100vw] w-screen h-[100dvh] sm:h-auto sm:max-w-md sm:w-full rounded-none sm:rounded-lg p-0 gap-0 flex flex-col">
           <DialogHeader className="px-4 py-3 border-b shrink-0">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between pr-7">
               <DialogTitle className="text-base">Bộ lọc</DialogTitle>
               {activeCount > 0 && (
                 <button type="button" onClick={() => { onClearAll(); setExpanded(null) }}

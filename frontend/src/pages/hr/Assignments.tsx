@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { SearchInput } from '@/components/shared/SearchInput'
@@ -286,8 +287,13 @@ function CreateSheetDialog({ warehouses, defaultWh, onClose, onCreated }: {
   const upsert = useUpsertSheet()
   useEffect(() => { if (layoutId && !layouts.some(l => l.id === layoutId)) setLayoutId('') }, [layouts, layoutId])
 
+  // Kiểm tra trùng NGAY khi chọn ngày + layout (chặn trước, không đợi bấm)
+  const { data: sameDay = [] } = useSheets({ layout_id: layoutId || undefined, date_from: date, date_to: date }, !!(layoutId && date))
+  const dup = !!(layoutId && date) && sameDay.some(s => s.layout_id === layoutId && s.work_date === date)
+  const layoutName = layouts.find(l => l.id === layoutId)?.name ?? ''
+
   async function submit() {
-    if (!wh || !layoutId || !date) { setErr('Chọn đủ Kho, Layout và Ngày'); return }
+    if (!wh || !layoutId || !date || dup) return
     setErr(null); setSaving(true)
     try {
       const r = await upsert.mutateAsync({ layout_id: layoutId, work_date: date, create_only: true })
@@ -309,19 +315,23 @@ function CreateSheetDialog({ warehouses, defaultWh, onClose, onCreated }: {
           </div>
           <div>
             <label className="text-xs font-medium text-slate-600 block mb-1">Layout</label>
-            <select value={layoutId} onChange={e => setLayoutId(e.target.value)} disabled={!wh} className="w-full border border-slate-200 rounded-md px-2.5 text-xs h-9 bg-white text-slate-700 disabled:opacity-50">
-              <option value="">{wh ? 'Chọn layout…' : 'Chọn kho trước'}</option>
-              {layouts.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
-            </select>
+            <Select value={layoutId || undefined} onValueChange={setLayoutId} disabled={!wh}>
+              <SelectTrigger className="w-full h-9 text-sm"><SelectValue placeholder={wh ? 'Chọn layout…' : 'Chọn kho trước'} /></SelectTrigger>
+              <SelectContent>
+                {layouts.map(l => <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
           </div>
           <div>
             <label className="text-xs font-medium text-slate-600 block mb-1">Ngày</label>
             <Input type="date" min={TODAY()} value={date} onChange={e => setDate(e.target.value)} className="h-9 text-xs" />
           </div>
-          {err && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">⚠ {err}</div>}
+          {dup
+            ? <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">⚠ Ngày <b>{formatDate(date)}</b> đã có phiếu cho layout <b>{layoutName}</b> — không thể tạo trùng.</div>
+            : err && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">⚠ {err}</div>}
           <div className="flex justify-end gap-2 pt-1">
             <Button size="sm" variant="outline" className="h-8" onClick={onClose}>Hủy</Button>
-            <Button size="sm" className="h-8" onClick={submit} disabled={!wh || !layoutId || saving}>{saving ? 'Đang tạo…' : 'Tạo phiếu'}</Button>
+            <Button size="sm" className="h-8" onClick={submit} disabled={!wh || !layoutId || dup || saving}>{saving ? 'Đang tạo…' : 'Tạo phiếu'}</Button>
           </div>
         </div>
       </DialogContent>

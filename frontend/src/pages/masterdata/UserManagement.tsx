@@ -21,7 +21,7 @@ import {
   useTransportCompanies, useTmsVehicles,
 } from '@/api/hooks'
 import { apiClient } from '@/api/client'
-import { MODULES, can, type ModuleKey, type ModulePermissions } from '@/config/permissions'
+import { MODULES, can, isAdmin, type ModuleKey, type ModulePermissions } from '@/config/permissions'
 import { useAuthStore } from '@/stores/authStore'
 import type { EmployeeRecord, Department, JobTitle, TmsVehicle } from '@/types'
 import { JobTitleSkillSection, EmployeeSkillSection } from './hrSkillSections'
@@ -183,6 +183,9 @@ function ConfirmDeleteDialog({ emp, open, onClose }: { emp: EmployeeRecord; open
 
 function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null; open: boolean; onClose: () => void }) {
   const isEdit = !!emp
+  const me = useAuthStore(s => s.user)
+  const fullEdit = isAdmin(me?.name)          // chỉ Admin được sửa toàn bộ hồ sơ
+  const skillOnly = isEdit && !fullEdit        // non-admin: chỉ chỉnh Kỹ năng / Vị trí
 
   const { data: departments = [] } = useDepartments()
   const [deptId, setDeptId]   = useState(emp?.department_id ?? '')
@@ -330,6 +333,32 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
           </div>
           <DialogFooter>
             <Button onClick={onClose}>Đóng</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    )
+  }
+
+  // Non-admin: chỉ cho chỉnh Kỹ năng / Vị trí, không sửa hồ sơ
+  if (skillOnly && emp) {
+    return (
+      <Dialog open={open} onOpenChange={v => { if (!v) onClose() }}>
+        <DialogContent className="sm:max-w-lg max-h-[90dvh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Kỹ năng / Vị trí — {emp.name}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-1">
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+              <p className="font-medium text-slate-800">{emp.name}</p>
+              <p className="text-xs text-slate-500">{emp.employee_code} · {emp.dept?.name ?? '—'} · {emp.job_title?.name ?? '—'}</p>
+            </div>
+            {emp.job_title_id
+              ? <EmployeeSkillSection employeeId={emp.id} />
+              : <p className="text-xs text-amber-600">Nhân viên chưa có chức danh — không thể gán kỹ năng.</p>}
+            <p className="text-[11px] text-slate-400">Chỉ Admin mới sửa được hồ sơ. Bạn chỉ chỉnh Kỹ năng / Vị trí.</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={onClose}>Đóng</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -280,7 +280,7 @@ export async function createEmployee(req: Request, res: Response) {
 
 export async function updateEmployee(req: Request, res: Response) {
   try {
-    if (await blockIfTargetSuperadmin(req, res)) return
+    if (!isSuperadmin(req)) return fail(res, 'Chỉ Admin được sửa hồ sơ nhân viên', 403)
     const { id } = req.params
     const {
       name, phone, email, employee_code,
@@ -465,7 +465,7 @@ export async function restoreEmployee(req: Request, res: Response) {
 
 export async function setWarehouseAccess(req: Request, res: Response) {
   try {
-    if (await blockIfTargetSuperadmin(req, res)) return
+    if (!isSuperadmin(req)) return fail(res, 'Chỉ Admin được sửa phạm vi kho', 403)
     const { id } = req.params
     const { warehouse_ids } = req.body as { warehouse_ids: string[] }
 

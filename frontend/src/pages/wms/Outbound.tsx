@@ -20,6 +20,7 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 import { formatTimestampTime } from '@/utils/formatters'
+import { omniMatch } from '@/utils/omniSearch'
 import { rowText, type RowStatusKey } from '@/lib/rowStatus'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import type { GDO } from '@/types'
@@ -120,7 +121,7 @@ export default function Outbound() {
 
   const { data: gdos = [], isLoading, isFetching } = useGDOs({
     warehouse_id: f.warehouseId || undefined,
-    search: f.search || undefined,
+    // search lọc client-side (omni đa cột) — không gửi lên BE để không bị thu hẹp theo mỗi group_code
     date_from: f.dateFrom || undefined,
     date_to:   f.dateTo   || undefined,
   })
@@ -154,8 +155,9 @@ export default function Outbound() {
     if (filterNpps.length           > 0 && !(g.distributor_names ?? []).some(n => filterNpps.includes(n)))          return false
     if (filterWarehouseTypes.length > 0 && !filterWarehouseTypes.includes(g.warehouse_type ?? ''))                  return false
     if (filterStatuses.length       > 0 && !filterStatuses.includes(gdoStatusInfo(g).label))                        return false
+    if (!omniMatch([g.group_code, g.export_type, g.dvvt, g.warehouse_type, gdoStatusInfo(g).label, ...(g.distributor_names ?? [])], f.search)) return false
     return true
-  }), [gdos, filterTypes, filterDvvts, filterNpps, filterWarehouseTypes, filterStatuses])
+  }), [gdos, f.search, filterTypes, filterDvvts, filterNpps, filterWarehouseTypes, filterStatuses])
 
   const sorted = useMemo(() => [...filtered].sort((a, b) => {
     if (a.delivery_date !== b.delivery_date)
@@ -294,7 +296,7 @@ export default function Outbound() {
         {/* Row 1: Title + Search + Views + Density + Actions */}
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-semibold text-slate-700 shrink-0">Xuất kho</span>
-          <SearchInput value={f.search} onChange={v => setOutbound({ search: v })} placeholder="Tìm số xe…" className="flex-1 min-w-[140px]" />
+          <SearchInput value={f.search} onChange={v => setOutbound({ search: v })} placeholder="Tìm số xe, ĐVVT, NPP, trạng thái…" className="flex-1 min-w-[140px]" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
           <SavedViews
             module="outbound"

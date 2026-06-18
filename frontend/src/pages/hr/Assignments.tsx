@@ -1,6 +1,5 @@
-import { useEffect, useState, useRef, useMemo, type CSSProperties } from 'react'
+import { useEffect, useState, useRef, useMemo } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { toBlob } from 'html-to-image'
 import { Plus, Wand2, Send, Trash2, CalendarDays, Pencil, Save, Layers, X, Loader2, Image as ImageIcon, Share2, Rows3, AlignJustify } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -612,96 +611,123 @@ type DocProps = {
   noteBySkill: Map<string, string | null>; shiftBySkill: Map<string, string | null>
   currentUserId: string | null
 }
-// màu để INLINE (html-to-image bắt được → ảnh share/tải giữ đúng màu như bản xem)
-const DOC_TH: CSSProperties = { border: '1px solid #cbd5e1', padding: '6px 8px', textAlign: 'left', whiteSpace: 'nowrap', background: '#1e293b', color: '#ffffff', fontWeight: 600 }
-const docTd = (bg: string): CSSProperties => ({ border: '1px solid #cbd5e1', padding: '6px 8px', textAlign: 'left', whiteSpace: 'nowrap', background: bg })
-function ScheduleDoc({ sheet, whName, labelOf, sortedAsg, posCount, noteBySkill, shiftBySkill, currentUserId }: DocProps) {
-  return (
-    <div className="sheet-doc">
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
-        <div style={{ width: 56, height: 40, background: '#e11d48', color: '#fff', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontStyle: 'italic', fontSize: 18 }}>lof</div>
-        <div style={{ flex: 1, textAlign: 'center' }}>
-          <div style={{ fontWeight: 700, fontSize: 17 }}>BẢNG PHÂN CÔNG LỊCH LÀM VIỆC CHI TIẾT</div>
-          <div style={{ fontSize: 13, marginTop: 2 }}><b>Ngày: {formatDate(sheet.work_date)}</b> &nbsp;|&nbsp; <b>Bộ phận: {sheet.layout_name}</b></div>
-          <div style={{ fontSize: 13 }}>Kho: {whName}</div>
-        </div>
-        <div style={{ width: 56 }} />
-      </div>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-        <thead><tr>
-          <th style={{ ...DOC_TH, width: 40 }}>STT</th>
-          <th style={DOC_TH}>Họ và Tên</th>
-          <th style={DOC_TH}>Chức danh</th>
-          <th style={DOC_TH}>Vị trí phân công</th>
-          <th style={{ ...DOC_TH, width: 140 }}>Note</th>
-        </tr></thead>
-        <tbody>
-          {sortedAsg.map((a, i) => {
-            const tag = a.skill_id ? shiftBySkill.get(a.skill_id) : null
-            const bg = (a.status === 'ASSIGNED' && tag && PRINT_ROW_BG[tag]) ? PRINT_ROW_BG[tag] : (i % 2 ? '#f8fafc' : '#ffffff')
-            const isMe = !!currentUserId && a.employee_id === currentUserId
-            const multi = a.status === 'ASSIGNED' && (posCount.get(a.employee_id) ?? 0) >= 2
-            return (
-              <tr key={a.id}>
-                <td style={docTd(bg)}>{i + 1}</td>
-                <td style={docTd(bg)}>
-                  <span style={isMe ? { textDecoration: 'underline', fontWeight: 700 } : undefined}>{a.employee?.name ?? '—'}</span>
-                  {multi && <span style={{ color: '#e11d48', marginLeft: 4 }}>★</span>}
-                </td>
-                <td style={docTd(bg)}>{a.employee?.job_title ?? '—'}</td>
-                <td style={docTd(bg)}>{a.status === 'LEAVE' ? 'Nghỉ phép' : a.skill_id ? labelOf(a.skill_id) : 'Chưa phân công'}</td>
-                <td style={docTd(bg)}>{a.skill_id ? (noteBySkill.get(a.skill_id) ?? '') : ''}</td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
-    </div>
-  )
+// Phiếu → ẢNH bằng Canvas 2D (chuẩn xác màu/viền/KHÔNG wrap trên MỌI máy; html-to-image lỗi trên mobile)
+type DocRow = { stt: string; name: string; job: string; pos: string; note: string; bg: string; multi: boolean; isMe: boolean }
+function buildDocRows(p: DocProps): DocRow[] {
+  return p.sortedAsg.map((a, i) => {
+    const tag = a.skill_id ? p.shiftBySkill.get(a.skill_id) : null
+    const bg = (a.status === 'ASSIGNED' && tag && PRINT_ROW_BG[tag]) ? PRINT_ROW_BG[tag] : (i % 2 ? '#f8fafc' : '#ffffff')
+    return {
+      stt: String(i + 1),
+      name: a.employee?.name ?? '—',
+      job: a.employee?.job_title ?? '—',
+      pos: a.status === 'LEAVE' ? 'Nghỉ phép' : a.skill_id ? p.labelOf(a.skill_id) : 'Chưa phân công',
+      note: a.skill_id ? (p.noteBySkill.get(a.skill_id) ?? '') : '',
+      bg,
+      multi: a.status === 'ASSIGNED' && (p.posCount.get(a.employee_id) ?? 0) >= 2,
+      isMe: !!p.currentUserId && a.employee_id === p.currentUserId,
+    }
+  })
+}
+function drawScheduleCanvas(p: DocProps): HTMLCanvasElement {
+  const rows = buildDocRows(p)
+  const S = 2, FS = 13, TITLE = 16, SUB = 13, padX = 10, padY = 8
+  const cols = ['STT', 'Họ và Tên', 'Chức danh', 'Vị trí phân công', 'Note']
+  const m = document.createElement('canvas').getContext('2d')!
+  const cellFont = `${FS}px Arial`, headFont = `600 ${FS}px Arial`, boldFont = `700 ${FS}px Arial`
+  const tw = (t: string, f: string) => { m.font = f; return m.measureText(t).width }
+  const colW = cols.map((c, ci) => {
+    let w = tw(c, headFont)
+    for (const r of rows) {
+      const v = ci === 0 ? r.stt : ci === 1 ? r.name : ci === 2 ? r.job : ci === 3 ? r.pos : r.note
+      const ww = tw(v, ci === 1 && r.isMe ? boldFont : cellFont) + (ci === 1 && r.multi ? 16 : 0)
+      if (ww > w) w = ww
+    }
+    return Math.ceil(w) + padX * 2
+  })
+  const rowH = FS + padY * 2, headerH = 58
+  let tableW = colW.reduce((a, b) => a + b, 0)
+  const titleW = Math.ceil(tw('BẢNG PHÂN CÔNG LỊCH LÀM VIỆC CHI TIẾT', `700 ${TITLE}px Arial`))
+  const W = Math.max(tableW, titleW + 24, 340)
+  if (W > tableW) { colW[3] += W - tableW; tableW = W }
+  const H = headerH + rowH * (rows.length + 1) + 4
+  const cv = document.createElement('canvas')
+  cv.width = Math.round(W * S); cv.height = Math.round(H * S)
+  const ctx = cv.getContext('2d')!
+  ctx.scale(S, S); ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, W, H); ctx.textBaseline = 'middle'
+  // logo + tiêu đề
+  ctx.fillStyle = '#e11d48'; ctx.fillRect(0, 2, 46, 32)
+  ctx.fillStyle = '#ffffff'; ctx.font = '800 italic 15px Arial'; ctx.textAlign = 'center'; ctx.fillText('lof', 23, 18)
+  ctx.fillStyle = '#0f172a'; ctx.textAlign = 'center'
+  ctx.font = `700 ${TITLE}px Arial`; ctx.fillText('BẢNG PHÂN CÔNG LỊCH LÀM VIỆC CHI TIẾT', W / 2, 11)
+  ctx.font = `${SUB}px Arial`
+  ctx.fillText(`Ngày: ${formatDate(p.sheet.work_date)}    |    Bộ phận: ${p.sheet.layout_name ?? ''}`, W / 2, 30)
+  ctx.fillText(`Kho: ${p.whName}`, W / 2, 46)
+  // bảng
+  const drawRow = (y: number, cells: string[], bg: string, head: boolean, multi: boolean, me: boolean) => {
+    ctx.fillStyle = bg; ctx.fillRect(0, y, tableW, rowH)
+    let x = 0
+    for (let ci = 0; ci < cells.length; ci++) {
+      ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y + 0.5, colW[ci], rowH)
+      ctx.textAlign = 'left'; ctx.fillStyle = head ? '#ffffff' : '#0f172a'
+      ctx.font = head ? headFont : (ci === 1 && me ? boldFont : cellFont)
+      const tx = x + padX, ty = y + rowH / 2
+      ctx.fillText(cells[ci], tx, ty)
+      if (!head && ci === 1) {
+        const nameW = tw(cells[1], me ? boldFont : cellFont)
+        if (me) { ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(tx, ty + 8); ctx.lineTo(tx + nameW, ty + 8); ctx.stroke() }
+        if (multi) { ctx.fillStyle = '#e11d48'; ctx.font = cellFont; ctx.fillText('★', tx + nameW + 4, ty) }
+      }
+      x += colW[ci]
+    }
+  }
+  let y = headerH
+  drawRow(y, cols, '#1e293b', true, false, false); y += rowH
+  for (const r of rows) { drawRow(y, [r.stt, r.name, r.job, r.pos, r.note], r.bg, false, r.multi, r.isMe); y += rowH }
+  return cv
 }
 
-// Xem LỊCH toàn màn hình → CHIA SẺ thẳng (Zalo…) hoặc tải ảnh (không cần in)
+// Xem LỊCH (ảnh canvas) → CHIA SẺ thẳng (Zalo…) hoặc tải ảnh. Thấy sao gửi vậy (cùng 1 canvas).
 function ImagePreview({ onClose, ...props }: DocProps & { onClose: () => void }) {
-  const ref = useRef<HTMLDivElement>(null)
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const [img, setImg] = useState('')
   const [saving, setSaving] = useState(false)
   const fileName = `PhanCong_${(props.sheet.layout_name || 'lich').replace(/\s+/g, '_')}_${props.sheet.work_date}.png`
-  const canShare = typeof navigator !== 'undefined' && !!navigator.canShare   // mobile mới có
-  const renderBlob = async () => ref.current ? await toBlob(ref.current, { pixelRatio: 2, backgroundColor: '#ffffff' }) : null
+  const canShare = typeof navigator !== 'undefined' && !!navigator.canShare
+  useEffect(() => {
+    const cv = drawScheduleCanvas(props)
+    canvasRef.current = cv
+    setImg(cv.toDataURL('image/png'))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  const getBlob = () => new Promise<Blob | null>(res => canvasRef.current ? canvasRef.current.toBlob(res, 'image/png') : res(null))
   const saveFile = (blob: Blob) => {
-    const urlObj = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = urlObj; a.download = fileName
-    document.body.appendChild(a); a.click(); a.remove()
-    setTimeout(() => URL.revokeObjectURL(urlObj), 1500)
+    const u = URL.createObjectURL(blob); const a = document.createElement('a')
+    a.href = u; a.download = fileName; document.body.appendChild(a); a.click(); a.remove()
+    setTimeout(() => URL.revokeObjectURL(u), 1500)
   }
   async function share() {
     setSaving(true)
     try {
-      const blob = await renderBlob(); if (!blob) return
+      const blob = await getBlob(); if (!blob) return
       const file = new File([blob], fileName, { type: 'image/png' })
-      if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        await navigator.share({ files: [file], title: 'Lịch phân công' })   // mở khung chia sẻ → Zalo…
-      } else { saveFile(blob) }
-    } catch { /* user huỷ chia sẻ → bỏ qua */ } finally { setSaving(false) }
+      if (navigator.canShare && navigator.canShare({ files: [file] })) await navigator.share({ files: [file], title: 'Lịch phân công' })
+      else saveFile(blob)
+    } catch { /* user huỷ */ } finally { setSaving(false) }
   }
-  async function download() {
-    setSaving(true)
-    try { const blob = await renderBlob(); if (blob) saveFile(blob) } finally { setSaving(false) }
-  }
+  async function download() { setSaving(true); try { const b = await getBlob(); if (b) saveFile(b) } finally { setSaving(false) } }
   return (
     <div className="fixed inset-0 z-50 bg-black/60 overflow-auto" onClick={onClose}>
       <div className="sticky top-0 z-10 flex items-center justify-between gap-2 bg-slate-900 text-white px-3 py-2 text-xs">
-        <span className="truncate">{canShare ? '📤 Bấm Chia sẻ để gửi thẳng (Zalo…)' : '📸 Chụp màn hình hoặc Tải ảnh để gửi'}</span>
+        <span className="truncate">{canShare ? '📤 Bấm Chia sẻ để gửi thẳng (Zalo…)' : '📸 Tải ảnh để gửi'}</span>
         <div className="flex items-center gap-2 shrink-0">
-          {canShare && <button onClick={share} disabled={saving} className="inline-flex items-center gap-1 bg-green-600 hover:bg-green-500 disabled:opacity-60 rounded px-2 py-1"><Share2 className="h-3.5 w-3.5" />{saving ? 'Đang tạo…' : 'Chia sẻ'}</button>}
+          {canShare && <button onClick={share} disabled={saving} className="inline-flex items-center gap-1 bg-green-600 hover:bg-green-500 disabled:opacity-60 rounded px-2 py-1"><Share2 className="h-3.5 w-3.5" />{saving ? '…' : 'Chia sẻ'}</button>}
           <button onClick={download} disabled={saving} className="inline-flex items-center gap-1 bg-sky-600 hover:bg-sky-500 disabled:opacity-60 rounded px-2 py-1"><ImageIcon className="h-3.5 w-3.5" />Tải ảnh</button>
           <button onClick={onClose} className="inline-flex items-center gap-1 bg-white/15 hover:bg-white/25 rounded px-2 py-1"><X className="h-3.5 w-3.5" />Đóng</button>
         </div>
       </div>
-      <div className="p-2 sm:p-4">
-        <div ref={ref} className="bg-white mx-auto w-full sm:w-[80vw] sm:max-w-[1100px] p-4 rounded-lg shadow-lg" onClick={e => e.stopPropagation()}>
-          <ScheduleDoc {...props} />
-        </div>
+      <div className="p-2 sm:p-4" onClick={e => e.stopPropagation()}>
+        {img && <img src={img} alt="Lịch phân công" className="block mx-auto w-full sm:w-[80vw] sm:max-w-[1100px] h-auto rounded-lg shadow-lg bg-white" />}
       </div>
     </div>
   )

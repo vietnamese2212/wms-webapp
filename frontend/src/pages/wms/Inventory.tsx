@@ -665,7 +665,7 @@ export default function Inventory() {
           <SearchInput
             value={f.search}
             onChange={v => setInventory({ search: v, page: 1 })}
-            placeholder="Tìm mã pallet…"
+            placeholder="Tìm pallet, mã/tên hàng, vị trí…"
             className="flex-1 min-w-[140px]"
           />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />

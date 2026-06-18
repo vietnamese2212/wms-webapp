@@ -27,6 +27,8 @@ interface FilterParams {
   categoryFilter?: string[]
   qa_status_ids?: string[]
   search?: string
+  searchMatIds?: string[]   // material_id khớp omni-search (resolve trước) → OR vào search
+  searchLocIds?: string[]   // location_id khớp omni-search
   manufacturer_id?: string
   filterCycles?: string[]
   filterMachines?: string[]
@@ -56,7 +58,14 @@ function applyInventoryFilters(q: any, p: FilterParams): any {
   if (p.categoryFilter && p.categoryFilter.length === 1)    q = q.eq('material.category', p.categoryFilter[0])
   else if (p.categoryFilter && p.categoryFilter.length > 1) q = q.in('material.category', p.categoryFilter)
   if (p.qa_status_ids && p.qa_status_ids.length > 0) q = q.in('qa_status_id', p.qa_status_ids)
-  if (p.search)          q = q.ilike('pallet_code', `%${p.search}%`)
+  if (p.search) {
+    // Omni-search: khớp mã pallet HOẶC mã/tên hàng HOẶC mã vị trí (đã resolve ID trước)
+    const term = p.search.replace(/[,()]/g, ' ').trim()
+    const ors = [`pallet_code.ilike.%${term}%`]
+    if (p.searchMatIds?.length) ors.push(`material_id.in.(${p.searchMatIds.join(',')})`)
+    if (p.searchLocIds?.length) ors.push(`location_id.in.(${p.searchLocIds.join(',')})`)
+    q = q.or(ors.join(','))
+  }
   if (p.manufacturer_id) q = q.eq('manufacturer_id', p.manufacturer_id)
   const fCyc = p.filterCycles ?? []
   if (fCyc.length === 1)    q = q.eq('cycle', fCyc[0])
@@ -186,11 +195,31 @@ export async function listInventory(req: Request, res: Response) {
       return ok(res, { entries: [], total: 0, page: pageNum, limit: limitNum, total_cartons_remaining: 0 })
   }
 
+  // Omni-search 1 ô: resolve material/location ID khớp term → search tìm cả mã pallet / mã+tên hàng / mã vị trí.
+  // (ilike Postgres KHÔNG bỏ dấu — bỏ dấu server-side cần extension unaccent, xem ghi chú.)
+  let searchMatIds: string[] | undefined
+  let searchLocIds: string[] | undefined
+  if (search) {
+    const term = search.replace(/[,()]/g, ' ').trim()
+    if (term) {
+      const [smat, sloc] = await Promise.all([
+        (supabase.from('Material') as any).select('id')
+          .or(`material_code.ilike.%${term}%,material_description.ilike.%${term}%,short_name.ilike.%${term}%,old_code.ilike.%${term}%`).limit(500),
+        (supabase.from('Location') as any).select('id')
+          .or(`location_code.ilike.%${term}%,sub_code.ilike.%${term}%`).limit(500),
+      ])
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      searchMatIds = ((smat as any).data ?? []).map((m: any) => m.id as string)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      searchLocIds = ((sloc as any).data ?? []).map((l: any) => l.id as string)
+    }
+  }
+
   const filterParams: FilterParams = {
     status, locationFilter, materialFilter,
     warehouseIds: effectiveWarehouseIds.length > 0 ? effectiveWarehouseIds : undefined,
     categoryFilter: effectiveCategories.length > 0 ? effectiveCategories : undefined,
-    qa_status_ids, search, manufacturer_id, filterCycles, filterMachines, import_date_from, import_date_to,
+    qa_status_ids, search, searchMatIds, searchLocIds, manufacturer_id, filterCycles, filterMachines, import_date_from, import_date_to,
   }
 
   // Pre-filter by %date: fetch ALL IDs (no pagination) with same filters, compute pct in JS

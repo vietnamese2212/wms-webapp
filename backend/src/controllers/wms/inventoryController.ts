@@ -202,16 +202,29 @@ export async function listInventory(req: Request, res: Response) {
   if (search) {
     const term = search.replace(/[,()]/g, ' ').trim()
     if (term) {
+      // Ưu tiên RPC unaccent (bỏ dấu). Nếu chưa apply migration → fallback ilike (phân biệt dấu).
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const [smat, sloc] = await Promise.all([
-        (supabase.from('Material') as any).select('id')
-          .or(`material_code.ilike.%${term}%,material_description.ilike.%${term}%,short_name.ilike.%${term}%,old_code.ilike.%${term}%`).limit(500),
-        (supabase.from('Location') as any).select('id')
-          .or(`location_code.ilike.%${term}%,sub_code.ilike.%${term}%`).limit(500),
+        (supabase.rpc('omni_material_ids', { term }) as any),
+        (supabase.rpc('omni_location_ids', { term }) as any),
       ])
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      searchMatIds = ((smat as any).data ?? []).map((m: any) => m.id as string)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      searchLocIds = ((sloc as any).data ?? []).map((l: any) => l.id as string)
+      if (!smat.error && !sloc.error) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        searchMatIds = (smat.data ?? []).map((m: any) => m.id as string)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        searchLocIds = (sloc.data ?? []).map((l: any) => l.id as string)
+      } else {
+        const [fmat, floc] = await Promise.all([
+          (supabase.from('Material') as any).select('id')
+            .or(`material_code.ilike.%${term}%,material_description.ilike.%${term}%,short_name.ilike.%${term}%,old_code.ilike.%${term}%`).limit(500),
+          (supabase.from('Location') as any).select('id')
+            .or(`location_code.ilike.%${term}%,sub_code.ilike.%${term}%,sub_name.ilike.%${term}%`).limit(500),
+        ])
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        searchMatIds = ((fmat as any).data ?? []).map((m: any) => m.id as string)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        searchLocIds = ((floc as any).data ?? []).map((l: any) => l.id as string)
+      }
     }
   }
 

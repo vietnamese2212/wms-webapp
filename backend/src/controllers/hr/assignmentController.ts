@@ -370,13 +370,46 @@ export async function autoAssign(req: Request, res: Response) {
       })
       for (const eid of order) if (!empSlot.has(eid)) augment(eid, new Set(), allow)
     }
-    // kết quả + cập nhật nhu cầu còn thiếu (cho shortfalls)
+
+    // ── 5b. THIẾU người: cho người CA1 ôm thêm CA2 (1 người 2 vị trí) để giải phóng
+    //        người đang ở CA2 xuống lấp vị trí trống (HC…). Lặp đến hết chỗ trống = "vừa đủ bù thiếu". ──
+    if (short) {
+      const allSlots = [...slotsOfSkill.values()].flat()
+      const ca1Slots = allSlots.filter(s => tagOfSlot(s) === 'CA1')
+      const ca2Slots = allSlots.filter(s => tagOfSlot(s) === 'CA2')
+      const onCA1 = (e: string) => ca1Slots.some(c => slotMatch.get(c) === e)
+      const onCA2 = (e: string) => ca2Slots.some(c => slotMatch.get(c) === e)
+      let progress = true
+      while (progress) {
+        progress = false
+        const empty = allSlots.filter(s => !slotMatch.has(s))
+        if (!empty.length) break
+        for (const ca2 of ca2Slots) {
+          const B = slotMatch.get(ca2)
+          if (!B || onCA1(B)) continue   // B phải là người CA2 thuần (không phải người đã ôm 2 ca)
+          // B (đang CA2) lấp được vị trí trống nào (đủ skill + nghỉ-ca ok)?
+          const fillE = empty.find(e => (empSkills.get(B)?.has(skillOfSlot(e)) ?? false) && !violatesRest(B, tagOfSlot(e)))
+          if (!fillE) continue
+          // A đang ở CA1, chưa ôm CA2, có skill của slot CA2 này + nghỉ-ca ok → ôm thêm CA2
+          const A = ca1Slots.map(s => slotMatch.get(s)).find(a =>
+            !!a && a !== B && !onCA2(a) &&
+            (empSkills.get(a)?.has(skillOfSlot(ca2)) ?? false) && !violatesRest(a, 'CA2'))
+          if (!A) continue
+          slotMatch.set(ca2, A)      // A giữ CA1 + ôm thêm CA2
+          slotMatch.set(fillE, B)    // B xuống lấp vị trí trống
+          progress = true
+          break
+        }
+      }
+    }
+
+    // kết quả + cập nhật nhu cầu còn thiếu (cho shortfalls). 1 dòng / vị trí → 1 người có thể nhiều vị trí.
     const assignedEmp = new Set<string>(lockedEmp)
-    const result = new Map<string, string>() // empId -> skillId
+    const autoRows: { eid: string; sid: string }[] = []
     const filledBySkill = new Map<string, number>()
     for (const [slot, eid] of slotMatch) {
       const sid = skillOfSlot(slot)
-      result.set(eid, sid); assignedEmp.add(eid)
+      autoRows.push({ eid, sid }); assignedEmp.add(eid)
       filledBySkill.set(sid, (filledBySkill.get(sid) ?? 0) + 1)
     }
     for (const [sid, n] of remainingNeed) remainingNeed.set(sid, n - (filledBySkill.get(sid) ?? 0))
@@ -384,9 +417,9 @@ export async function autoAssign(req: Request, res: Response) {
     // ── 6. Ghi DB: xóa các dòng auto cũ (giữ manual), tạo mới ──
     await supabase.from('WorkAssignment').delete().eq('sheet_id', id).eq('is_manual', false)
     const rows: Record<string, unknown>[] = []
-    // auto assigned
-    for (const [eid, skillId] of result.entries())
-      rows.push({ id: randomUUID(), sheet_id: id, employee_id: eid, skill_id: skillId, status: 'ASSIGNED', is_manual: false, created_at: now(), updated_at: now() })
+    // auto assigned (1 dòng / vị trí)
+    for (const { eid, sid } of autoRows)
+      rows.push({ id: randomUUID(), sheet_id: id, employee_id: eid, skill_id: sid, status: 'ASSIGNED', is_manual: false, created_at: now(), updated_at: now() })
     // nghỉ phép
     for (const eid of candidateIds.filter((x: string) => onLeave.has(x)))
       rows.push({ id: randomUUID(), sheet_id: id, employee_id: eid, skill_id: null, status: 'LEAVE', is_manual: false, created_at: now(), updated_at: now() })
@@ -402,7 +435,7 @@ export async function autoAssign(req: Request, res: Response) {
     })).filter(s => s.short > 0)
 
     await supabase.from('WorkAssignmentSheet').update({ updated_at: now(), updated_by: userOf(req).name || null }).eq('id', id)
-    return ok(res, { assigned: result.size + manualRows.length, on_leave: onLeave.size, shortfalls })
+    return ok(res, { assigned: assignedEmp.size, on_leave: onLeave.size, shortfalls })
   } catch (e) { return fail(res, String(e)) }
 }
 

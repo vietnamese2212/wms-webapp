@@ -535,10 +535,10 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
                 <tr>
                   <th className="text-left px-3 py-2 font-medium whitespace-nowrap w-10">STT</th>
                   <th className="text-left px-2 py-2 font-medium whitespace-nowrap">Họ và tên</th>
-                  <th className="text-left px-2 py-2 font-medium whitespace-nowrap">Chức danh</th>
                   <th className="text-left px-2 py-2 font-medium whitespace-nowrap">Vị trí phân công</th>
                   <th className="text-left px-2 py-2 font-medium whitespace-nowrap">Ghi chú</th>
                   <th className="text-left px-2 py-2 font-medium whitespace-nowrap w-24">Trạng thái</th>
+                  <th className="text-left px-2 py-2 font-medium whitespace-nowrap">Chức danh</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -548,7 +548,6 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
                     <tr key={g.eid} className={`${rowCls} hover:bg-slate-50`}>
                       <td className="px-3 py-1.5 text-[10px] tabular-nums whitespace-nowrap align-top">{i + 1}</td>
                       <td className="px-2 py-1.5 text-[10px] font-medium whitespace-nowrap align-top">{g.employee?.name ?? '—'}<span className="text-slate-400 font-normal ml-1">{g.employee?.employee_code}</span></td>
-                      <td className="px-2 py-1.5 text-[10px] whitespace-nowrap align-top">{g.employee?.job_title ?? '—'}</td>
                       <td className="px-2 py-1.5 text-[10px] align-top">
                         {g.leave ? <span className="italic whitespace-nowrap">Nghỉ phép</span>
                           : canEdit && !locked ? (
@@ -576,6 +575,7 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
                       <td className="px-2 py-1.5 whitespace-nowrap align-top">
                         {g.leave ? <Badge variant="slate">Nghỉ phép</Badge> : g.positions.length ? <Badge variant="info">Đã xếp{g.positions.length > 1 ? ` (${g.positions.length})` : ''}</Badge> : <Badge variant="warning">Chưa phân</Badge>}
                       </td>
+                      <td className="px-2 py-1.5 text-[10px] whitespace-nowrap align-top">{g.employee?.job_title ?? '—'}</td>
                     </tr>
                   )
                 })}
@@ -621,14 +621,14 @@ function buildDocRows(p: DocProps): DocRow[] {
 function drawScheduleCanvas(p: DocProps): HTMLCanvasElement {
   const rows = buildDocRows(p)
   const S = 2, FS = 13, TITLE = 16, SUB = 13, padX = 10, padY = 8
-  const cols = ['STT', 'Họ và Tên', 'Chức danh', 'Vị trí phân công', 'Note']
+  const cols = ['STT', 'Họ và Tên', 'Vị trí phân công', 'Note', 'Chức danh']
   const m = document.createElement('canvas').getContext('2d')!
   const cellFont = `${FS}px Arial`, headFont = `600 ${FS}px Arial`, boldFont = `700 ${FS}px Arial`
   const tw = (t: string, f: string) => { m.font = f; return m.measureText(t).width }
   const colW = cols.map((c, ci) => {
     let w = tw(c, headFont)
     for (const r of rows) {
-      const v = ci === 0 ? r.stt : ci === 1 ? r.name : ci === 2 ? r.job : ci === 3 ? r.pos : r.note
+      const v = ci === 0 ? r.stt : ci === 1 ? r.name : ci === 2 ? r.pos : ci === 3 ? r.note : r.job
       const ww = tw(v, ci === 1 && r.isMe ? boldFont : cellFont) + (ci === 1 && r.multi ? 16 : 0)
       if (ww > w) w = ww
     }
@@ -638,7 +638,7 @@ function drawScheduleCanvas(p: DocProps): HTMLCanvasElement {
   let tableW = colW.reduce((a, b) => a + b, 0)
   const titleW = Math.ceil(tw('BẢNG PHÂN CÔNG LỊCH LÀM VIỆC CHI TIẾT', `700 ${TITLE}px Arial`))
   const W = Math.max(tableW, titleW + 24, 340)
-  if (W > tableW) { colW[3] += W - tableW; tableW = W }
+  if (W > tableW) { colW[2] += W - tableW; tableW = W }   // nới cột Vị trí cho khớp bề rộng
   const H = headerH + rowH * (rows.length + 1) + 4
   const cv = document.createElement('canvas')
   cv.width = Math.round(W * S); cv.height = Math.round(H * S)
@@ -672,7 +672,7 @@ function drawScheduleCanvas(p: DocProps): HTMLCanvasElement {
   }
   let y = headerH
   drawRow(y, cols, '#1e293b', true, false, false); y += rowH
-  for (const r of rows) { drawRow(y, [r.stt, r.name, r.job, r.pos, r.note], r.bg, false, r.multi, r.isMe); y += rowH }
+  for (const r of rows) { drawRow(y, [r.stt, r.name, r.pos, r.note, r.job], r.bg, false, r.multi, r.isMe); y += rowH }
   return cv
 }
 

@@ -2,7 +2,6 @@ import { useState, useEffect, useRef } from 'react'
 import type { AxiosError } from 'axios'
 import { Plus, Pencil, ShieldCheck, Building2, User2, KeyRound, Check, Briefcase, Copy, CheckCheck, Trash2, RotateCcw, X, Warehouse } from 'lucide-react'
 import { WarehouseMultiSelect } from '@/components/shared/WarehouseMultiSelect'
-import { MultiSelect } from '@/components/shared/MultiSelect'
 import { formatDateTime } from '@/utils/formatters'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { Button }   from '@/components/ui/button'
@@ -823,8 +822,8 @@ export default function UserManagement() {
   const [search,       setSearch]       = useState('')
   const [filterDept,   setFilterDept]   = useState('__all__')
   const [statusFilter, setStatusFilter] = useState<'active' | 'hidden' | 'all'>('active')
-  const [filterJts,    setFilterJts]    = useState<string[]>([])
-  const [filterWhs,    setFilterWhs]    = useState<string[]>([])
+  const [filterJt,     setFilterJt]     = useState('__all__')
+  const [filterWh,     setFilterWh]     = useState('__all__')
   const [editingEmp,   setEditingEmp]   = useState<EmployeeRecord | null>(null)
   const [showEmpDlg,   setShowEmpDlg]   = useState(false)
   const [pwdEmp,       setPwdEmp]       = useState<EmployeeRecord | null>(null)
@@ -864,8 +863,8 @@ export default function UserManagement() {
   })()
   // Lọc thêm theo Chức danh + Kho (multi-select, client-side)
   const matchExtra = (e: EmployeeRecord) =>
-    (filterJts.length === 0 || (e.job_title_id != null && filterJts.includes(e.job_title_id))) &&
-    (filterWhs.length === 0 || (e.warehouse_access ?? []).some(wa => filterWhs.includes(wa.warehouse_id)))
+    (filterJt === '__all__' || e.job_title_id === filterJt) &&
+    (filterWh === '__all__' || (e.warehouse_access ?? []).some(wa => wa.warehouse_id === filterWh))
   const scopedRaw = rawEmployees.filter(matchExtra)
   const employees = statusFilter === 'hidden'
     ? scopedRaw.filter(e => !!e.deleted_at)
@@ -912,7 +911,20 @@ export default function UserManagement() {
 
           <div className="flex gap-2 flex-wrap">
             <SearchInput value={search} onChange={setSearch} placeholder="Tìm tên, mã, đăng nhập…" className="flex-1 min-w-[200px]" />
-            <Select value={filterDept} onValueChange={v => { setFilterDept(v); setFilterJts([]); setFilterWhs([]) }}>
+            {/* Thứ tự: Kho · Phòng ban · Chức danh · Tình trạng */}
+            <Select value={filterWh} onValueChange={setFilterWh}>
+              <SelectTrigger className="h-8 text-sm w-[160px]">
+                <Warehouse className="h-3.5 w-3.5 mr-1.5 text-slate-400 shrink-0" />
+                <SelectValue placeholder="Tất cả kho" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">Tất cả kho</SelectItem>
+                {whOptions.map(o => (
+                  <SelectItem key={o.id} value={o.id}>{o.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={filterDept} onValueChange={v => { setFilterDept(v); setFilterJt('__all__'); setFilterWh('__all__') }}>
               <SelectTrigger className="h-8 text-sm w-[180px]">
                 <Building2 className="h-3.5 w-3.5 mr-1.5 text-slate-400 shrink-0" />
                 <SelectValue placeholder="Tất cả phòng ban" />
@@ -921,6 +933,18 @@ export default function UserManagement() {
                 <SelectItem value="__all__">Tất cả phòng ban</SelectItem>
                 {departments.map(d => (
                   <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={filterJt} onValueChange={setFilterJt}>
+              <SelectTrigger className="h-8 text-sm w-[180px]">
+                <Briefcase className="h-3.5 w-3.5 mr-1.5 text-slate-400 shrink-0" />
+                <SelectValue placeholder="Tất cả chức danh" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">Tất cả chức danh</SelectItem>
+                {jtOptions.map(o => (
+                  <SelectItem key={o.id} value={o.id}>{o.label}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -934,28 +958,6 @@ export default function UserManagement() {
                 <SelectItem value="all">Toàn bộ</SelectItem>
               </SelectContent>
             </Select>
-            <MultiSelect
-              className="w-[180px]"
-              icon={<Briefcase className="h-3.5 w-3.5 text-slate-400 shrink-0" />}
-              options={jtOptions}
-              selected={filterJts}
-              onChange={setFilterJts}
-              placeholder="Tất cả chức danh"
-              searchPlaceholder="Tìm chức danh…"
-              unit="chức danh"
-              showTags={false}
-            />
-            <MultiSelect
-              className="w-[160px]"
-              icon={<Warehouse className="h-3.5 w-3.5 text-slate-400 shrink-0" />}
-              options={whOptions}
-              selected={filterWhs}
-              onChange={setFilterWhs}
-              placeholder="Tất cả kho"
-              searchPlaceholder="Tìm kho…"
-              unit="kho"
-              showTags={false}
-            />
           </div>
 
           {isError && (

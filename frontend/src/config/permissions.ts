@@ -92,11 +92,11 @@ export const MODULES = {
     label: 'Quản lý người dùng',
     actions: {
       view:         'Mở trang / xem danh sách',
-      create:       'Thêm tài khoản',
-      edit:         'Sửa thông tin',
-      set_password: 'Đặt mật khẩu',
-      delete:       'Xóa / khôi phục',
-      manage_roles: 'Sửa phòng ban / chức danh & sơ đồ + phân quyền',
+      create:       'Thêm tài khoản [Nhân viên]',
+      edit:         'Sửa thông tin [Nhân viên]',
+      set_password: 'Đặt mật khẩu [Nhân viên]',
+      delete:       'Xóa / khôi phục [Nhân viên]',
+      manage_roles: 'Sửa & phân quyền [Phòng ban · Chức danh]',
     },
   },
   deliveries: {
@@ -137,7 +137,7 @@ export const MODULES = {
       revoke:          'Thu hồi booking (bỏ qua giờ)',
       upload_outbound: 'Upload kế hoạch xuất',
       upload_inbound:  'Upload kế hoạch nhập',
-      confirm_receipt: 'Nhận hàng chuyển kho (xác nhận / quét / hoàn thành) — tab Chuyển kho',
+      confirm_receipt: 'Nhận hàng chuyển kho: xác nhận / quét / hoàn thành [Chuyển kho]',
     },
   },
   tms_vehicle_types: {
@@ -246,10 +246,10 @@ export const MODULES = {
   attendance: {
     label: 'Chấm công',
     actions: {
-      view:     'Xem bảng công',
-      self_log: 'Tự chấm công (của mình)',
-      edit:     'Sửa công người khác',
-      report:   'Xem báo cáo',
+      view:     'Xem bảng công [Bảng công]',
+      self_log: 'Tự chấm công (của mình) [Của tôi]',
+      edit:     'Sửa công người khác [Bảng công]',
+      report:   'Xem báo cáo [Bảng công]',
     },
   },
 } as const

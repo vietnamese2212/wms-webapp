@@ -46,23 +46,24 @@ function datePctCls(pct: number): string {
   return 'text-red-600 font-semibold'
 }
 
-// Nền dòng: dữ liệu KHÔNG tô màu theo trạng thái. Chỉ giữ màu cho trạng thái tương tác.
+// Nền dòng: dữ liệu KHÔNG tô màu theo trạng thái. Dòng đang xem (selected) nền xanh đậm để chữ
+// trắng đọc rõ; dòng đã tick nền xanh nhạt; còn lại trong suốt.
 function entryRowBg(selected: boolean, checked: boolean): string {
+  if (selected) return 'bg-blue-600 hover:bg-blue-700'
   if (checked)  return 'bg-green-50 hover:bg-green-100'
-  if (selected) return 'bg-blue-100'
   return 'hover:bg-slate-50'
 }
 
-// Màu CHỮ cả dòng (highlight), ưu tiên QA status. `[&_td_span]` override màu span trong dòng.
-//  - Có QA status (cờ chất lượng, OK = không có qa_status) → đỏ.
-//  - < 60% date → tím · 60–80% date → cam · ≥ 80% → bình thường.
-function entryRowText(e: InventoryEntry): string {
+// Màu CHỮ CHUNG cả dòng — mọi cột theo 1 màu (không có màu riêng từng cột). `[&_td_span]` override
+// màu mọi span trong dòng. Ưu tiên: đang xem (trắng) > QA status (đỏ) > % date (tím/cam) > thường.
+//   QA status = cờ chất lượng (OK = không có qa_status). < 60% date → tím · 60–80% → cam.
+function entryRowText(e: InventoryEntry, selected: boolean): string {
+  if (selected)    return '[&_td_span]:text-white'
   if (e.qa_status) return '[&_td_span]:text-red-600'
   const pct = calcDatePct(e.production_date, e.material?.shelf_life_days ?? null)
-  if (pct === null) return ''
-  if (pct < 60) return '[&_td_span]:text-purple-600'
-  if (pct < 80) return '[&_td_span]:text-orange-600'
-  return ''
+  if (pct !== null && pct < 60) return '[&_td_span]:text-purple-600'
+  if (pct !== null && pct < 80) return '[&_td_span]:text-orange-600'
+  return '[&_td_span]:text-slate-700'
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -892,7 +893,7 @@ function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick, warehouse
 
   return (
     <TableRow
-      className={`transition-colors cursor-pointer ${entryRowBg(isSelected, isChecked)} ${entryRowText(e)} ${dense ? '' : '[&_td]:py-2.5'}`}
+      className={`transition-colors cursor-pointer ${entryRowBg(isSelected, isChecked)} ${entryRowText(e, isSelected)} ${dense ? '' : '[&_td]:py-2.5'}`}
       onClick={onClick}
     >
       {/* Checkbox */}
@@ -979,7 +980,7 @@ function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick, warehouse
         )}
       </TableCell>
       <TableCell className="px-1 py-1">
-        <ChevronRight className={`h-3 w-3 text-slate-300 transition-transform ${isSelected ? 'rotate-90 text-blue-500' : ''}`} />
+        <ChevronRight className={`h-3 w-3 text-slate-300 transition-transform ${isSelected ? 'rotate-90 text-white' : ''}`} />
       </TableCell>
     </TableRow>
   )

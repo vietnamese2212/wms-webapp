@@ -1472,7 +1472,12 @@ export function useConfirmLoosePickingItem() {
   return useMutation({
     mutationFn: ({ gdoId, itemId, employee_id }: { gdoId: string; itemId: string; employee_id?: string }) =>
       apiClient.post(`/wms/outbound/${gdoId}/items/${itemId}/confirm-loose`, { employee_id }).then(r => r.data.data),
-    onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ['gdo', v.gdoId] }),
+    onSuccess: (_d, v) => {
+      // confirm-loose giảm tồn InventoryEntry → làm mới cả tồn kho & list nhặt lẻ
+      qc.invalidateQueries({ queryKey: ['gdo', v.gdoId] })
+      qc.invalidateQueries({ queryKey: ['inventory-entries'] })
+      qc.invalidateQueries({ queryKey: ['loosepicking'] })
+    },
   })
 }
 

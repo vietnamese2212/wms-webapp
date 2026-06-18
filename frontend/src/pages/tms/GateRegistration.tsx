@@ -445,6 +445,9 @@ export default function GateRegistration() {
   // ── Mutations
   function invalidate() {
     qc.invalidateQueries({ queryKey: ['gate-registrations'] })
+    // call/entry/exit cập nhật TmsOrder.export_status + slot → làm mới trang Bookings đang mở song song
+    qc.invalidateQueries({ queryKey: ['tms-orders'] })
+    qc.invalidateQueries({ queryKey: ['gate-suggest'] })
   }
 
   const createMut = useMutation({

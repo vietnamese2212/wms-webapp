@@ -155,6 +155,7 @@ export default function Stocktake() {
       await apiClient.post(`/wms/inventory/${resultState.entry.id}/stocktake`, body)
       qc.invalidateQueries({ queryKey: ['inventory-entries'] })
       qc.invalidateQueries({ queryKey: ['stocktake-summary'] })
+      qc.invalidateQueries({ queryKey: ['stocktake-entries'] })
       setResultState({ mode: 'success' })
       setTimeout(clearResult, 1500)
     } catch (e: any) {

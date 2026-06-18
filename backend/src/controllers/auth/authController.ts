@@ -3,10 +3,9 @@ import bcrypt from 'bcrypt'
 import jwt from 'jsonwebtoken'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
-import type { JwtPayload } from '../../middlewares/auth'
+import { JWT_SECRET, type JwtPayload } from '../../middlewares/auth'
 import { ALL_PERMISSIONS } from '../../config/permissions'
 
-const JWT_SECRET = () => process.env.JWT_SECRET ?? 'dev-secret-change-in-production'
 const JWT_EXPIRY = '7d'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

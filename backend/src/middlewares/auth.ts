@@ -22,7 +22,13 @@ declare global {
   }
 }
 
-const JWT_SECRET = () => process.env.JWT_SECRET ?? 'dev-secret-change-in-production'
+// Bắt buộc có JWT_SECRET — không fallback ra chuỗi công khai (tránh giả mạo token).
+// Thiếu env → throw, server từ chối phục vụ thay vì ký bằng secret ai cũng biết.
+export const JWT_SECRET = () => {
+  const s = process.env.JWT_SECRET
+  if (!s) throw new Error('JWT_SECRET chưa được cấu hình — từ chối khởi động vì lý do bảo mật')
+  return s
+}
 
 export function requirePerm(module: string, action: string) {
   return (req: Request, res: Response, next: NextFunction) => {

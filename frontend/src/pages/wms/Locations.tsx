@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { MapPin, Plus, Pencil, Trash2, Flag, X, Rows3, AlignJustify } from 'lucide-react'
 import { formatDateTime } from '@/utils/formatters'
+import { omniMatch } from '@/utils/omniSearch'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SummaryBand } from '@/components/shared/SummaryBand'
@@ -117,7 +118,7 @@ export default function Locations() {
   const filtered = useMemo(() => {
     return locations.filter(l => {
       if (catFilter && l.category !== catFilter) return false
-      if (search && !l.location_code.toLowerCase().includes(search.toLowerCase())) return false
+      if (!omniMatch([l.location_code, l.sub_code, l.sub_name, l.sub_type, l.category, l.row, l.shelf, l.warehouse?.code, l.warehouse?.name], search)) return false
       if (flagFilter && !l.requires_stocktake) return false
       return true
     })
@@ -242,7 +243,7 @@ export default function Locations() {
           <span className="text-sm font-semibold text-slate-700 shrink-0 flex items-center gap-1.5">
             <MapPin className="h-4 w-4 text-slate-500" /> Vị trí kho
           </span>
-          <SearchInput value={search} onChange={setSearch} placeholder="Tìm mã vị trí…" className="flex-1 min-w-[140px]" />
+          <SearchInput value={search} onChange={setSearch} placeholder="Tìm vị trí, kho, loại, hàng/kệ…" className="flex-1 min-w-[140px]" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
           <button type="button" onClick={toggleDensity}
             className="hidden sm:inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0"

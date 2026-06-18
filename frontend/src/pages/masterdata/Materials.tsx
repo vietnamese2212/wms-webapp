@@ -17,6 +17,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
+import { omniMatch } from '@/utils/omniSearch'
 import {
   useMaterials, useWarehouses, useWarehouseTypes, useTransportCompanies,
   useCreateMaterial, useUpdateMaterial, useDeleteMaterial,
@@ -164,15 +165,7 @@ export default function Materials() {
       if (m.no_qr_tracking  && !showNoQr) return false
       if (!m.no_qr_tracking && !showQr)  return false
       if (catFilter.length > 0 && !catFilter.includes(m.category ?? '')) return false
-      if (search) {
-        const s = search.toLowerCase()
-        if (
-          !m.material_code.toLowerCase().includes(s) &&
-          !m.material_description.toLowerCase().includes(s) &&
-          !(m.short_name ?? '').toLowerCase().includes(s) &&
-          !(m.old_code ?? '').toLowerCase().includes(s)
-        ) return false
-      }
+      if (!omniMatch([m.material_code, m.material_description, m.short_name, m.old_code, m.category, m.unit], search)) return false
       return true
     })
   }, [raw, catFilter, search, statusFilter, qrFilter])

@@ -4,6 +4,7 @@ import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
 import { Scissors, Bookmark, Rows3, AlignJustify } from 'lucide-react'
 import { SearchInput } from '@/components/shared/SearchInput'
+import { omniMatch } from '@/utils/omniSearch'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { SummaryBand } from '@/components/shared/SummaryBand'
@@ -135,17 +136,13 @@ export default function LoosePicking() {
       if (filterTypes.length          > 0 && !filterTypes.includes(s.gdo?.export_type ?? ''))             return false
       if (filterDvvts.length          > 0 && !filterDvvts.includes(s.gdo?.dvvt ?? ''))                   return false
       if (filterNpps.length           > 0 && !(s.gdo?.distributor_names ?? []).some(n => filterNpps.includes(n))) return false
-      if (f.search.trim()) {
-        const q = f.search.trim().toLowerCase()
-        if (
-          !s.gdo?.group_code?.toLowerCase().includes(q) &&
-          !s.gdo?.distributor_names?.some(n => n.toLowerCase().includes(q)) &&
-          !s.items.some(i =>
-            (i.material?.material_code ?? i.material_code_raw ?? '').toLowerCase().includes(q) ||
-            (i.material?.short_name ?? '').toLowerCase().includes(q)
-          )
-        ) return false
-      }
+      if (!omniMatch([
+        s.gdo?.group_code,
+        s.gdo?.export_type,
+        s.gdo?.dvvt,
+        ...(s.gdo?.distributor_names ?? []),
+        ...s.items.flatMap(i => [i.material?.material_code ?? i.material_code_raw, i.material?.short_name]),
+      ], f.search)) return false
       return true
     })
   }, [grouped, f.search, filterDvvts, filterNpps, filterWarehouseTypes, filterTypes])

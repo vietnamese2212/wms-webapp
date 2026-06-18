@@ -614,6 +614,9 @@ function DepartmentFormDialog({ dept, open, onClose }: { dept: Department | null
 
 function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: boolean; onClose: () => void }) {
   const isEdit = !!jt
+  const me = useAuthStore(s => s.user)
+  const fullEdit = isAdmin(me?.name)            // chỉ Admin sửa tên/phòng ban/phân quyền
+  const skillOnly = isEdit && !fullEdit          // non-admin: chỉ Danh mục Vị trí/Skill (chức danh cấp dưới)
   const { data: departments = [] } = useDepartments()
 
   const [name,       setName]       = useState(jt?.name          ?? '')
@@ -652,6 +655,30 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
     } else {
       create(payload, { onSuccess: onClose })
     }
+  }
+
+  // Non-admin: chỉ cho sửa Danh mục Vị trí/Skill (BE đã chặn chỉ chức danh cấp dưới)
+  if (skillOnly && jt) {
+    return (
+      <Dialog open={open} onOpenChange={v => { if (!v) onClose() }}>
+        <DialogContent className="sm:max-w-lg max-h-[90dvh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Vị trí / Skill — {jt.name}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-1">
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+              <p className="font-medium text-slate-800">{jt.name}</p>
+              <p className="text-xs text-slate-500">{jt.department?.name ?? '—'}</p>
+            </div>
+            <JobTitleSkillSection jobTitleId={jt.id} />
+            <p className="text-[11px] text-slate-400">Chỉ Admin mới sửa tên/phòng ban/phân quyền. Bạn chỉ chỉnh Danh mục Vị trí/Skill của chức danh cấp dưới.</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={onClose}>Đóng</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    )
   }
 
   return (
@@ -775,7 +802,22 @@ export default function UserManagement() {
   const canEditEmp   = can(perms, 'user_admin', 'edit')
   const canSetPwd    = can(perms, 'user_admin', 'set_password')
   const canDeleteEmp = can(perms, 'user_admin', 'delete')
-  const canManageRoles = can(perms, 'user_admin', 'manage_roles')
+  // Cấu trúc phòng ban/chức danh & phân quyền: chỉ Admin. Danh mục Vị trí/Skill: Admin hoặc người có
+  // work_skill.manage cho chức danh CẤP DƯỚI mình (theo sơ đồ chức danh).
+  const isAdminUser    = isAdmin(user?.name)
+  const canManageSkill = can(perms, 'work_skill', 'manage')
+  const { data: allJts = [] } = useJobTitles()
+  const subordinateJtIds = (() => {
+    const set = new Set<string>()
+    const myJt = user?.job_title_id
+    if (!myJt) return set
+    const childrenOf = new Map<string, string[]>()
+    for (const j of allJts) if (j.parent_id) { const a = childrenOf.get(j.parent_id) ?? []; a.push(j.id); childrenOf.set(j.parent_id, a) }
+    const stack = [...(childrenOf.get(myJt) ?? [])]
+    while (stack.length) { const c = stack.pop() as string; if (!set.has(c)) { set.add(c); for (const k of childrenOf.get(c) ?? []) stack.push(k) } }
+    return set
+  })()
+  const canEditJt = (jtId: string) => isAdminUser || (canManageSkill && subordinateJtIds.has(jtId))
 
   const [search,       setSearch]       = useState('')
   const [filterDept,   setFilterDept]   = useState('__all__')
@@ -1027,7 +1069,7 @@ export default function UserManagement() {
         <TabsContent value="departments" className="space-y-3">
           <div className="flex items-center justify-between">
             <p className="text-xs text-slate-500">{departments.length} phòng ban</p>
-            {canManageRoles && (
+            {isAdminUser && (
               <Button size="sm" className="gap-1.5" onClick={() => { setEditingDept(null); setShowDeptDlg(true) }}>
                 <Plus className="h-4 w-4" /> Thêm phòng ban
               </Button>
@@ -1039,7 +1081,7 @@ export default function UserManagement() {
                 <div className="p-12 text-center text-slate-400 space-y-2">
                   <Building2 className="h-10 w-10 mx-auto opacity-30" />
                   <p className="text-sm">Chưa có phòng ban nào</p>
-                  {canManageRoles && (
+                  {isAdminUser && (
                     <Button size="sm" variant="outline" onClick={() => { setEditingDept(null); setShowDeptDlg(true) }}>
                       <Plus className="h-4 w-4 mr-1" /> Thêm phòng ban đầu tiên
                     </Button>
@@ -1069,7 +1111,7 @@ export default function UserManagement() {
                             </Badge>
                           </TableCell>
                           <TableCell className="px-2 py-2">
-                            {canManageRoles && (
+                            {isAdminUser && (
                               <button title="Sửa" className="text-slate-400 hover:text-blue-500 transition-colors p-1"
                                 onClick={e => { e.stopPropagation(); setEditingDept(d); setShowDeptDlg(true) }}>
                                 <Pencil className="h-3.5 w-3.5" />
@@ -1106,7 +1148,7 @@ export default function UserManagement() {
         <TabsContent value="job-titles" className="space-y-3">
           <div className="flex items-center justify-between">
             <p className="text-xs text-slate-500">{jobTitles.length} chức danh</p>
-            {canManageRoles && (
+            {isAdminUser && (
               <Button size="sm" className="gap-1.5" onClick={() => { setEditingJt(null); setShowJtDlg(true) }}>
                 <Plus className="h-4 w-4" /> Thêm chức danh
               </Button>
@@ -1130,7 +1172,7 @@ export default function UserManagement() {
                 <div className="p-12 text-center text-slate-400 space-y-2">
                   <Briefcase className="h-10 w-10 mx-auto opacity-30" />
                   <p className="text-sm">Chưa có chức danh nào</p>
-                  {canManageRoles && (
+                  {isAdminUser && (
                     <Button size="sm" variant="outline" onClick={() => { setEditingJt(null); setShowJtDlg(true) }}>
                       <Plus className="h-4 w-4 mr-1" /> Thêm chức danh đầu tiên
                     </Button>
@@ -1160,7 +1202,7 @@ export default function UserManagement() {
                             </Badge>
                           </TableCell>
                           <TableCell className="px-2 py-2">
-                            {canManageRoles && (
+                            {canEditJt(jt.id) && (
                               <button title="Sửa" className="text-slate-400 hover:text-blue-500 transition-colors p-1"
                                 onClick={e => { e.stopPropagation(); setEditingJt(jt); setShowJtDlg(true) }}>
                                 <Pencil className="h-3.5 w-3.5" />

@@ -125,6 +125,7 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 - **Định nghĩa quyền** ở 2 file PHẢI khớp: FE `frontend/src/config/permissions.ts` (`MODULES` — có label/actions, hiển thị trong trình phân quyền) · BE `backend/src/config/permissions.ts` (`ALL_PERMISSIONS` — thiếu → **superadmin mất quyền** đó). Helper FE: `can(perms, module, action)` / `canAccess` / `isAdmin`. BE: `requirePerm` / `requireAnyPerm`.
 - **Scope dữ liệu nhân sự** (`employeeController.visibleEmployeeIds`): non-admin chỉ thấy (kho được gán nếu `warehouse_scope==='ASSIGNED'`) ∩ (cấp dưới theo **`JobTitle.parent_id`** đệ quy + chính mình). Sơ đồ ở JobTitle, KHÔNG ở `Employee.manager_id`.
 - **Bảo vệ Admin**: chỉ superadmin sửa hồ sơ/đặt-MK/xóa/đổi-kho tài khoản Admin (`blockIfTargetSuperadmin`, `isSuperadmin`). Sửa **hồ sơ** nhân viên = superadmin; non-admin chỉ chỉnh **Kỹ năng/Vị trí**. **Chống leo thang**: non-admin không cấp cho chức danh quyền vượt quyền mình (`escalationError`).
+- **Sửa chức danh / phòng ban**: tên / phân quyền / cấu trúc (`createJobTitle`/`updateJobTitle`/`setJobTitleParent`/`create|updateDepartment`) = **chỉ superadmin**. Non-admin chỉ sửa **Danh mục Vị trí/Skill** của chức danh **CẤP DƯỚI mình** — `skillController` scope create/update/delete skill theo `JobTitle.parent_id` (cấp dưới của job_title người gọi, qua `writableJobTitleIds`); FE `JobTitleFormDialog` chỉ hiện phần Vị trí/Skill cho non-admin + ẩn nút Sửa nếu không phải chức danh cấp dưới.
 
 **Bản đồ module → trang (để biết nút nào dùng quyền nào):**
 

@@ -11,6 +11,7 @@ export interface User {
   department?: string
   warehouse_id?: string
   warehouse_name?: string
+  job_title_id?: string | null
   job_title_name?: string | null
   ncc_id?: string | null
   employee_code?: string | null

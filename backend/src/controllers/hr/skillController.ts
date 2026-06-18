@@ -33,6 +33,20 @@ async function scopeJobTitleIds(rootJtId: string): Promise<string[]> {
   return [...out]
 }
 
+// Non-superadmin chỉ được sửa Danh mục Vị trí/Skill của chức danh CẤP DƯỚI mình.
+// Trả Set chức danh được phép (cấp dưới, KHÔNG gồm chức danh của chính mình); null = superadmin (không giới hạn).
+async function writableJobTitleIds(req: Request): Promise<Set<string> | null> {
+  const u = (req as { user?: { name?: string; sub?: string } }).user
+  if (u?.name === 'Admin') return null
+  const { data: emp } = await supabase.from('Employee').select('job_title_id').eq('id', u?.sub ?? '').maybeSingle()
+  const jtId = (emp as { job_title_id: string | null } | null)?.job_title_id
+  if (!jtId) return new Set<string>()
+  const scope = await scopeJobTitleIds(jtId)        // gồm cả chức danh của mình
+  return new Set(scope.filter(id => id !== jtId))    // chỉ giữ cấp dưới
+}
+
+const NO_PERM_MSG = 'Chỉ được sửa Danh mục Vị trí/Skill của chức danh cấp dưới bạn'
+
 // ─── Skill (Vị trí phân công / kỹ năng) — thuộc Chức danh ────────────────────
 
 export async function listSkills(req: Request, res: Response) {
@@ -69,6 +83,8 @@ export async function createSkill(req: Request, res: Response) {
       job_title_id?: string; name?: string; shift_tag?: string | null; sort_order?: number
     }
     if (!job_title_id || !name?.trim()) return fail(res, 'job_title_id và name là bắt buộc', 400)
+    const allowed = await writableJobTitleIds(req)
+    if (allowed && !allowed.has(job_title_id)) return fail(res, NO_PERM_MSG, 403)
     const now = new Date().toISOString()
     const actor = actorOf(req)
     const { data, error } = await supabase.from('Skill').insert({
@@ -84,6 +100,12 @@ export async function createSkill(req: Request, res: Response) {
 export async function updateSkill(req: Request, res: Response) {
   try {
     const { id } = req.params
+    const allowed = await writableJobTitleIds(req)
+    if (allowed) {
+      const { data: sk } = await supabase.from('Skill').select('job_title_id').eq('id', id).maybeSingle()
+      const jt = (sk as { job_title_id: string | null } | null)?.job_title_id
+      if (!jt || !allowed.has(jt)) return fail(res, NO_PERM_MSG, 403)
+    }
     const { name, shift_tag, sort_order, is_active } = req.body as {
       name?: string; shift_tag?: string | null; sort_order?: number; is_active?: boolean
     }
@@ -101,6 +123,12 @@ export async function updateSkill(req: Request, res: Response) {
 export async function deleteSkill(req: Request, res: Response) {
   try {
     const { id } = req.params
+    const allowed = await writableJobTitleIds(req)
+    if (allowed) {
+      const { data: sk } = await supabase.from('Skill').select('job_title_id').eq('id', id).maybeSingle()
+      const jt = (sk as { job_title_id: string | null } | null)?.job_title_id
+      if (!jt || !allowed.has(jt)) return fail(res, NO_PERM_MSG, 403)
+    }
     const [{ count: esCount }, { count: dmCount }] = await Promise.all([
       supabase.from('EmployeeSkill').select('id', { count: 'exact', head: true }).eq('skill_id', id),
       supabase.from('WorkAssignmentDemand').select('id', { count: 'exact', head: true }).eq('skill_id', id),

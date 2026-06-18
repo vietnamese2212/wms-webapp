@@ -3,6 +3,11 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 
+function isSuperadmin(req: Request): boolean {
+  return (req as { user?: { name?: string } }).user?.name === 'Admin'
+}
+const ADMIN_ONLY_MSG = 'Chỉ Admin được sửa cấu trúc phòng ban / chức danh & phân quyền'
+
 // Chống leo thang: non-superadmin không được cấp cho chức danh quyền mà CHÍNH MÌNH không có.
 // Trả message lỗi nếu vi phạm, null nếu hợp lệ.
 function escalationError(req: Request, perms?: Record<string, string[]>): string | null {
@@ -37,6 +42,7 @@ export async function listDepartments(_req: Request, res: Response) {
 
 export async function createDepartment(req: Request, res: Response) {
   try {
+    if (!isSuperadmin(req)) return fail(res, ADMIN_ONLY_MSG, 403)
     const { name, code, allowed_modules = [] } = req.body as {
       name: string; code: string; allowed_modules?: string[]
     }
@@ -55,6 +61,7 @@ export async function createDepartment(req: Request, res: Response) {
 
 export async function updateDepartment(req: Request, res: Response) {
   try {
+    if (!isSuperadmin(req)) return fail(res, ADMIN_ONLY_MSG, 403)
     const { id } = req.params
     const { name, code, allowed_modules, is_active, requires_scheduling } = req.body as {
       name?: string; code?: string; allowed_modules?: string[]; is_active?: boolean; requires_scheduling?: boolean
@@ -85,6 +92,7 @@ export async function listJobTitles(req: Request, res: Response) {
 
 export async function createJobTitle(req: Request, res: Response) {
   try {
+    if (!isSuperadmin(req)) return fail(res, ADMIN_ONLY_MSG, 403)
     const { name, department_id, module_permissions, parent_id, in_chart } = req.body as {
       name: string
       department_id: string
@@ -119,6 +127,7 @@ export async function createJobTitle(req: Request, res: Response) {
 // Đặt chức danh cấp trên (kéo-thả sơ đồ tổ chức) — chống vòng lặp
 export async function setJobTitleParent(req: Request, res: Response) {
   try {
+    if (!isSuperadmin(req)) return fail(res, ADMIN_ONLY_MSG, 403)
     const { id } = req.params
     const { parent_id, in_chart } = req.body as { parent_id?: string | null; in_chart?: boolean }
     const parent = parent_id || null
@@ -146,6 +155,7 @@ export async function setJobTitleParent(req: Request, res: Response) {
 
 export async function updateJobTitle(req: Request, res: Response) {
   try {
+    if (!isSuperadmin(req)) return fail(res, ADMIN_ONLY_MSG, 403)
     const { id } = req.params
     const { name, is_active, module_permissions } = req.body as {
       name?: string; is_active?: boolean

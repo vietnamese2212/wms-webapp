@@ -291,7 +291,7 @@ export async function autoAssign(req: Request, res: Response) {
     const tagLoad = (eid: string, tag: string | null) => (tag ? (monthLoad.get(eid)?.get(tag) ?? 0) : 0)
     const caLoad = (eid: string) => tagLoad(eid, 'CA1') + tagLoad(eid, 'CA2') + tagLoad(eid, 'CA3')   // tổng ngày ĐI CA trong tháng
     const hcLoad = (eid: string) => tagLoad(eid, 'HC')
-    const didCA3Yesterday = (eid: string) => (empPrevShifts.get(eid)?.has('CA3') ? 1 : 0)   // nghỉ sau ca đêm (chỉ khi dư người)
+    const didCA3Yesterday = (eid: string) => (empPrevShifts.get(eid)?.has('CA3') ? 1 : 0)   // trực CA3 hôm qua → dư:nghỉ · đủ:CA2 · thiếu:CA3
 
     // ── 5. Ghép TỐI ĐA theo TẦNG ƯU TIÊN PHỦ + CÂN BẰNG ──
     // Tầng phủ: lấp CA1+CA2 trước → CA3 → HC. Thiếu người thì hụt rơi vào HC/CA3, KHÔNG hụt CA1/CA2.
@@ -300,23 +300,27 @@ export async function autoAssign(req: Request, res: Response) {
     const skillOrder = new Map(layoutSkills.map(s => [s.skill_id, s.sort_order]))
     const people = available.filter(eid => !lockedEmp.has(eid))
     const totalNeed = [...remainingNeed.values()].reduce((s, n) => s + Math.max(0, n), 0)
-    const surplus = people.length > totalNeed   // DƯ người (đủ cho mọi nhu cầu) hay THIẾU?
+    const short   = people.length < totalNeed    // THIẾU người
+    const surplus = people.length > totalNeed     // DƯ người
+    const exact   = !short && !surplus            // vừa ĐỦ người = nhu cầu
     const slotsOfSkill = new Map<string, string[]>()
     for (const [sid, n] of remainingNeed) if (n > 0) slotsOfSkill.set(sid, Array.from({ length: n }, (_, k) => `${sid}#${k}`))
     const skillOfSlot = (slot: string) => slot.slice(0, slot.lastIndexOf('#'))
     const tagOfSlot = (slot: string) => shiftTagOf.get(skillOfSlot(slot)) ?? null
-    // adjacency người → slot đủ điều kiện; trong 1 người: priority → (thiếu+CA3 hôm qua: ưu tiên CA3) → cân bằng từng-ca → thứ tự vị trí
+    // adjacency người → slot đủ điều kiện; trong 1 người: priority → (CA3 hôm qua: thiếu→ưu tiên CA3, đủ→ưu tiên CA2) → cân bằng từng-ca → thứ tự vị trí
     const adj = new Map<string, string[]>()
     for (const eid of people) {
       const sk = empSkills.get(eid)
       if (!sk) continue
-      const wantCA3 = !surplus && didCA3Yesterday(eid) === 1   // thiếu người + trực CA3 hôm qua → làm tiếp CA3
+      const wantCA3 = short && didCA3Yesterday(eid) === 1   // THIẾU người + trực CA3 hôm qua → làm tiếp CA3
+      const wantCA2 = exact && didCA3Yesterday(eid) === 1   // ĐỦ người + trực CA3 hôm qua → xuống CA2
       const quals = [...sk.entries()]
         .filter(([sid]) => slotsOfSkill.has(sid) && !violatesRest(eid, shiftTagOf.get(sid) ?? null))
         .sort(([sa, pa], [sb, pb]) => {
           const ta = shiftTagOf.get(sa) ?? null, tb = shiftTagOf.get(sb) ?? null
           return pa - pb
             || (wantCA3 ? ((tb === 'CA3' ? 1 : 0) - (ta === 'CA3' ? 1 : 0)) : 0)
+            || (wantCA2 ? ((tb === 'CA2' ? 1 : 0) - (ta === 'CA2' ? 1 : 0)) : 0)
             || tagLoad(eid, ta) - tagLoad(eid, tb)
             || (skillOrder.get(sa) ?? 9999) - (skillOrder.get(sb) ?? 9999)
         })
@@ -347,10 +351,15 @@ export async function autoAssign(req: Request, res: Response) {
     for (const tier of TIERS) {
       for (const tg of tier.tags) allow.add(tg)
       if (!tier.ca) for (const e of empSlot.keys()) frozen.add(e)   // vào tầng HC: chốt mọi người đã xếp ca (không bị HC bứng ra)
+      if (tier.isCA3 && exact) for (const e of empSlot.keys()) if (didCA3Yesterday(e) === 1) frozen.add(e)   // ĐỦ người: giữ CA3-hôm-qua đã xuống CA2, không cho tầng CA3 bứng về CA3
       const order = [...people].sort((a, b) => {
-        // Dư người: CA3 hôm qua xét SAU mọi tầng (để được nghỉ).
-        // Thiếu người: tầng CA3 → CA3 hôm qua xét TRƯỚC (làm tiếp CA3); tầng khác → xét SAU (để DÀNH họ cho CA3).
+        // CA3 hôm qua xếp theo trạng thái người:
+        //  Dư    → xét SAU mọi tầng (được nghỉ).
+        //  Đủ    → tầng có CA2 xét TRƯỚC (xuống CA2); tầng CA3 xét SAU (nhường CA3 cho người mới).
+        //  Thiếu → tầng CA3 xét TRƯỚC (làm tiếp CA3); tầng khác xét SAU (để DÀNH họ cho CA3).
         const r = surplus ? (didCA3Yesterday(a) - didCA3Yesterday(b))
+          : exact ? (tier.tags.includes('CA2') ? (didCA3Yesterday(b) - didCA3Yesterday(a))
+                                                : (didCA3Yesterday(a) - didCA3Yesterday(b)))
           : tier.isCA3 ? (didCA3Yesterday(b) - didCA3Yesterday(a))
           : (didCA3Yesterday(a) - didCA3Yesterday(b))
         return r

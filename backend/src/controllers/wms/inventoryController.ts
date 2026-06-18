@@ -515,7 +515,7 @@ export async function stocktakeEntry(req: Request, res: Response) {
   if (new_location_id) patch.location_id = new_location_id
 
   if (physical_count !== undefined && physical_count !== null) {
-    const appCount = Number(existing.cartons_remaining) ?? 0
+    const appCount = Number(existing.cartons_remaining ?? 0)
     if (Number(physical_count) !== appCount) {
       patch.stocktake_flagged   = true
       patch.stocktake_flag_note = `Thực tế: ${physical_count} / App: ${appCount}`

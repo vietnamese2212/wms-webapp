@@ -1095,7 +1095,8 @@ function DetailPanel({ entry: e, onClose, warehouseMap }: { entry: InventoryEntr
 
         {/* Adjust block */}
         <div className="border-t pt-3 space-y-2">
-          {!showAdj ? (
+          {/* Nút + form điều chỉnh: chỉ hiện nếu có quyền inventory.adjust (tránh bấm rồi 403). Lịch sử bên dưới vẫn xem được. */}
+          {can(user?.module_permissions, 'inventory', 'adjust') && (!showAdj ? (
             <Button size="sm" variant="outline" className="w-full gap-1.5"
               onClick={() => setShowAdj(true)}>
               <SlidersHorizontal className="h-3.5 w-3.5" />
@@ -1135,7 +1136,7 @@ function DetailPanel({ entry: e, onClose, warehouseMap }: { entry: InventoryEntr
                 </Button>
               </div>
             </div>
-          )}
+          ))}
 
           {/* Lịch sử điều chỉnh */}
           {adjLog && adjLog.length > 0 && (

@@ -8,6 +8,9 @@ import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useWarehouses, useInboundReport, useUpdatePlanLine, type InboundReportRow } from '@/api/hooks'
 import { formatDate } from '@/utils/formatters'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
+import { useAuthStore } from '@/stores/authStore'
+import { can, isAdmin, type ModulePermissions } from '@/config/permissions'
+import type { AxiosError } from 'axios'
 
 const TH = 'text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap'
 const TD = 'px-2 py-1 text-[10px] whitespace-nowrap'
@@ -24,15 +27,24 @@ export default function TMSReport() {
   )
   const { mutateAsync: updatePlanLine } = useUpdatePlanLine()
 
+  const user = useAuthStore(s => s.user)
+  const perms = (user?.module_permissions as ModulePermissions | null) ?? null
+  const canEditPoPerm = isAdmin(user?.name) || can(perms, 'inbound_plan', 'edit')
+
   const [editingPoId, setEditingPoId] = useState<string | null>(null)
   const [editingPoValue, setEditingPoValue] = useState('')
   const [poSaving, setPoSaving] = useState(false)
+  const [poError, setPoError] = useState<string | null>(null)
 
   async function savePo(planLineId: string) {
     setPoSaving(true)
+    setPoError(null)
     try {
       await updatePlanLine({ id: planLineId, po_number: editingPoValue })
       setEditingPoId(null)
+    } catch (e) {
+      const err = e as AxiosError<{ error?: { message?: string } }>
+      setPoError(err.response?.data?.error?.message || 'Không lưu được số PO')
     } finally {
       setPoSaving(false)
     }
@@ -108,6 +120,11 @@ export default function TMSReport() {
         <div className="hidden sm:flex items-center gap-1.5 flex-wrap">
           <FilterBar defs={filterDefs} />
         </div>
+        {poError && (
+          <div className="rounded-md border border-red-300 bg-red-50 px-3 py-1.5 text-xs text-red-700">
+            {poError}
+          </div>
+        )}
       </div>
 
       {/* Summary band (Manhattan) */}
@@ -163,7 +180,7 @@ export default function TMSReport() {
                 : pct >= 100   ? 'text-green-700'
                 : pct >= 50    ? 'text-amber-700'
                 :                'text-red-600'
-              const canEditPo = !!row.plan_line_id
+              const canEditPo = !!row.plan_line_id && canEditPoPerm
               return (
                 <TableRow key={i} className={rowCls}>
                   <TableCell className={`${TD} text-slate-400 tabular-nums`}>{i + 1}</TableCell>

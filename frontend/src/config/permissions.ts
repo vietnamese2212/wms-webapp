@@ -124,7 +124,7 @@ export const MODULES = {
     },
   },
   tms_plan: {
-    label: 'Kế hoạch vận chuyển',
+    label: 'Vận chuyển: Đặt lịch & Chuyển kho (trang TMS Bookings)',
     actions: {
       view:            'Xem kế hoạch',
       create:          'Thêm đơn',
@@ -137,7 +137,7 @@ export const MODULES = {
       revoke:          'Thu hồi booking (bỏ qua giờ)',
       upload_outbound: 'Upload kế hoạch xuất',
       upload_inbound:  'Upload kế hoạch nhập',
-      confirm_receipt: 'NPP xác nhận nhận hàng',
+      confirm_receipt: 'Nhận hàng chuyển kho (xác nhận / quét / hoàn thành) — tab Chuyển kho',
     },
   },
   tms_vehicle_types: {
@@ -181,7 +181,7 @@ export const MODULES = {
     },
   },
   inbound_plan: {
-    label: 'KH nhập ngoài',
+    label: 'Kế hoạch nhập (từ ngoài) — trang KH nhập',
     actions: {
       view:   'Xem kế hoạch',
       create: 'Thêm / Upload dòng kế hoạch',

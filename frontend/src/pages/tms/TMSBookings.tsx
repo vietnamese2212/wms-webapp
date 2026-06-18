@@ -2034,9 +2034,10 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
   const navigate = useNavigate()
   const qc = useQueryClient()
   const user  = useAuthStore(s => s.user)
-  const perms = (user?.module_permissions as ModulePermissions | null) ?? null
-  const canScan     = can(perms, 'inbound', 'scan')
-  const canComplete = can(perms, 'inbound', 'complete')
+  // Nhận hàng chuyển kho (quét + hoàn thành) thuộc quyền TMS "Xác nhận nhận hàng",
+  // KHÔNG đòi quyền module Nhập kho (nút nằm trong tab Chuyển kho của TMS).
+  const canScan     = canConfirmReceipt
+  const canComplete = canConfirmReceipt
   const { mutateAsync: completeInbound } = useCompleteInboundOrder()
   const { mutateAsync: saveManual }      = useScanManualPallet()
   const [scanImportId, setScanImportId] = useState<string | null>(null)

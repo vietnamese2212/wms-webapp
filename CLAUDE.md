@@ -117,6 +117,56 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 **Bối cảnh:** App dùng giữa Kho tổng và Kho NPP. Kho nhận có trong danh sách NPP → có inbound tại kho nhận, dùng nhập hàng / tồn kho bình thường.
 
 ---
+## Phân quyền (RBAC) — chi tiết skill `add-permission`
+
+**Kiến trúc:**
+- Quyền lưu trên **`JobTitle.module_permissions`** (KHÔNG phải Employee). Resolve khi login/`/me` (`authController`): superadmin → `ALL_PERMISSIONS`; còn lại → quyền của chức danh. Cột `Employee.module_permissions` không dùng (dead).
+- **Superadmin** = `name === 'Admin'` (hoặc `employee_code === 'ADMIN'`). Bỏ qua mọi `requirePerm`. *(Nợ kỹ thuật: nên đổi sang cột `is_superadmin`.)*
+- **Định nghĩa quyền** ở 2 file PHẢI khớp: FE `frontend/src/config/permissions.ts` (`MODULES` — có label/actions, hiển thị trong trình phân quyền) · BE `backend/src/config/permissions.ts` (`ALL_PERMISSIONS` — thiếu → **superadmin mất quyền** đó). Helper FE: `can(perms, module, action)` / `canAccess` / `isAdmin`. BE: `requirePerm` / `requireAnyPerm`.
+- **Scope dữ liệu nhân sự** (`employeeController.visibleEmployeeIds`): non-admin chỉ thấy (kho được gán nếu `warehouse_scope==='ASSIGNED'`) ∩ (cấp dưới theo **`JobTitle.parent_id`** đệ quy + chính mình). Sơ đồ ở JobTitle, KHÔNG ở `Employee.manager_id`.
+- **Bảo vệ Admin**: chỉ superadmin sửa hồ sơ/đặt-MK/xóa/đổi-kho tài khoản Admin (`blockIfTargetSuperadmin`, `isSuperadmin`). Sửa **hồ sơ** nhân viên = superadmin; non-admin chỉ chỉnh **Kỹ năng/Vị trí**. **Chống leo thang**: non-admin không cấp cho chức danh quyền vượt quyền mình (`escalationError`).
+
+**Bản đồ module → trang (để biết nút nào dùng quyền nào):**
+
+| Module key | Nhãn (bảng quyền) | Trang / Menu | Actions |
+|---|---|---|---|
+| `inventory` | Tồn kho | Tồn kho | view, adjust, move_location, recode, qa_update, update_prod_date, export |
+| `inbound` | Nhập kho | Nhập kho | view, create, edit, scan, edit_pallet, force_edit_pallet, delete_pallet, force_delete_pallet, cancel, complete, uncomplete |
+| `outbound` | Xuất kho | Xuất kho | view, create, edit, assign, unassign, start, unstart, scan, complete, uncomplete, cancel |
+| `scanlog` | Lịch sử quét | Lịch sử quét | view |
+| `loosepicking` | Nhặt lẻ | Nhặt lẻ | view, create, start, scan, complete, cancel |
+| `stocktake` | Kiểm kho | Kiểm kho | view, create, scan, complete |
+| `locations` | Vị trí kho | Vị trí kho | view, create, edit, delete |
+| `materials` | Mã hàng | Mã hàng (+ Nhà sản xuất) | view, create, edit, delete |
+| `pallet_print` | In tem pallet | In tem pallet | view, generate, reprint |
+| `pallet_ops` | Dồn / Tách pallet | Dồn / Tách pallet | view, merge, ungroup, split |
+| `wms_settings` | Cài đặt WMS | Cài đặt WMS (kho, ca nhập, QA) | view, manage_zone, manage_global |
+| `employees` | Sơ đồ tổ chức (xem) | Sơ đồ tổ chức + xem DS nhân sự | view |
+| `user_admin` | Quản lý người dùng | Quản lý người dùng | view, create, edit, set_password, delete, manage_roles |
+| `work_skill` | Vị trí & Skill | trong Quản lý người dùng (gán skill) | view, manage, assign |
+| `schedule` | Lịch làm việc | Lịch làm việc | view, create, approve |
+| `work_assignment` | Phân công lịch làm việc | Phân công | view, create, edit, publish, delete |
+| `attendance` | Chấm công | Chấm công | view, self_log, edit, report |
+| `leave` | Nghỉ phép | Chấm công (tab Nghỉ phép) | view, request, approve, delete |
+| `tms_plan` | Vận chuyển: Đặt lịch & Chuyển kho | TMS Bookings (tab Đặt lịch + Chuyển kho) | view, create, edit, delete, add_vehicle, release, change_date, book, revoke, upload_outbound, upload_inbound, **confirm_receipt**=nhận hàng chuyển kho (xác nhận/quét/hoàn thành) |
+| `tms_vehicle_types` | TMS — Loại xe | Cài đặt TMS | view, manage |
+| `tms_slots` | TMS — Khung giờ | Cài đặt TMS | view, manage |
+| `tms_companies` | TMS — ĐVVT / NCC | Cài đặt TMS | view, manage |
+| `tms_vehicles` | TMS — Xe | Cài đặt TMS | view, manage |
+| `gate_registration` | Đăng ký cổng | Đăng ký cổng | view, create, edit, delete, call, entry, exit |
+| `inbound_plan` | Kế hoạch nhập (từ ngoài) | KH nhập | view, create, edit, delete, cancel |
+| `deliveries` | Giao hàng | Giao hàng | view, create, edit |
+
+> **Cross-module**: nút "Quét/Hoàn thành" trong tab **Chuyển kho** gọi API Inbound nhưng được điều khiển bằng `tms_plan.confirm_receipt` (FE + BE `requireAnyPerm(['inbound',...],['tms_plan','confirm_receipt'])`). Khi nút ở trang A nhưng thao tác chạm module B → dùng `requireAnyPerm` + ghi nhãn cho rõ, đừng bắt user đoán.
+
+**LUẬT khi thêm/sửa tính năng có nút/route write — BẮT BUỘC đủ 5 việc:**
+1. Thêm action vào **FE `MODULES`** (label phải mô tả đúng TRANG nó điều khiển — để admin biết link tới đâu).
+2. Thêm action vào **BE `ALL_PERMISSIONS`** (thiếu → superadmin mất quyền).
+3. Gate nút FE: `can(perms, module, action)`.
+4. Gate route BE: `requirePerm` / `requireAnyPerm`.
+5. Cập nhật bảng bản đồ ở trên. Nếu nút nằm khác module với quyền nó cần → dùng `requireAnyPerm` + nhãn rõ.
+
+---
 ## Công cụ (skill · MCP · hook)
 
 **Skill — BẮT BUỘC gọi đúng skill TRƯỚC khi làm** (đừng dựa vào trí nhớ, đừng tự suy luận lại chuẩn). Gọi qua công cụ Skill hoặc `/<tên>`; file ở `.claude/skills/<tên>/SKILL.md`:

@@ -14,6 +14,7 @@ import { Badge } from '@/components/ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { toast } from '@/components/ui/use-toast'
 import {
   X, Plus, Pencil, Trash2, PhoneCall,
   LogIn, LogOut, Star, Package, ArrowRight, ArrowLeft,
@@ -478,7 +479,7 @@ export default function GateRegistration() {
       apiClient.patch(`/tms/gate-registrations/${id}/call`, { custom_time }).then(r => r.data),
     onSuccess: (d: { data: GateRegistration }) => { invalidate(); syncSelected(d.data); setCallTarget(null) },
     onError: (e: { response?: { data?: { error?: { message?: string } } } }) =>
-      alert(e.response?.data?.error?.message ?? 'Lỗi gọi xe'),
+      toast({ variant: 'destructive', title: e.response?.data?.error?.message ?? 'Lỗi gọi xe' }),
   })
 
   const entryMut = useMutation({
@@ -486,7 +487,7 @@ export default function GateRegistration() {
       apiClient.patch(`/tms/gate-registrations/${id}/entry`, { custom_time }).then(r => r.data),
     onSuccess: (d: { data: GateRegistration }) => { invalidate(); syncSelected(d.data); setEntryTarget(null) },
     onError: (e: { response?: { data?: { error?: { message?: string } } } }) =>
-      alert(e.response?.data?.error?.message ?? 'Lỗi xác nhận vào'),
+      toast({ variant: 'destructive', title: e.response?.data?.error?.message ?? 'Lỗi xác nhận vào' }),
   })
 
   const exitMut = useMutation({
@@ -496,35 +497,35 @@ export default function GateRegistration() {
       invalidate(); syncSelected(d.data); setExitTarget(null); setExitWeight('')
     },
     onError: (e: { response?: { data?: { error?: { message?: string } } } }) =>
-      alert(e.response?.data?.error?.message ?? 'Lỗi xác nhận ra'),
+      toast({ variant: 'destructive', title: e.response?.data?.error?.message ?? 'Lỗi xác nhận ra' }),
   })
 
   const revertCallMut = useMutation({
     mutationFn: (id: string) => apiClient.patch(`/tms/gate-registrations/${id}/revert-call`).then(r => r.data),
     onSuccess: (d: { data: GateRegistration }) => { invalidate(); syncSelected(d.data) },
     onError: (e: { response?: { data?: { error?: { message?: string } } } }) =>
-      alert(e.response?.data?.error?.message ?? 'Lỗi huỷ gọi xe'),
+      toast({ variant: 'destructive', title: e.response?.data?.error?.message ?? 'Lỗi huỷ gọi xe' }),
   })
 
   const revertEntryMut = useMutation({
     mutationFn: (id: string) => apiClient.patch(`/tms/gate-registrations/${id}/revert-entry`).then(r => r.data),
     onSuccess: (d: { data: GateRegistration }) => { invalidate(); syncSelected(d.data) },
     onError: (e: { response?: { data?: { error?: { message?: string } } } }) =>
-      alert(e.response?.data?.error?.message ?? 'Lỗi huỷ xác nhận vào'),
+      toast({ variant: 'destructive', title: e.response?.data?.error?.message ?? 'Lỗi huỷ xác nhận vào' }),
   })
 
   const revertExitMut = useMutation({
     mutationFn: (id: string) => apiClient.patch(`/tms/gate-registrations/${id}/revert-exit`).then(r => r.data),
     onSuccess: (d: { data: GateRegistration }) => { invalidate(); syncSelected(d.data) },
     onError: (e: { response?: { data?: { error?: { message?: string } } } }) =>
-      alert(e.response?.data?.error?.message ?? 'Lỗi huỷ xác nhận ra'),
+      toast({ variant: 'destructive', title: e.response?.data?.error?.message ?? 'Lỗi huỷ xác nhận ra' }),
   })
 
   const deleteMut = useMutation({
     mutationFn: (id: string) => apiClient.delete(`/tms/gate-registrations/${id}`).then(r => r.data),
     onSuccess: () => { invalidate(); setSelected(null) },
     onError: (e: { response?: { data?: { error?: { message?: string } } } }) =>
-      alert(e.response?.data?.error?.message ?? 'Lỗi xóa'),
+      toast({ variant: 'destructive', title: e.response?.data?.error?.message ?? 'Lỗi xóa' }),
   })
 
   // ── Modal helpers

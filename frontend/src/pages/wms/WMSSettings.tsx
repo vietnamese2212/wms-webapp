@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
+import { toast } from '@/components/ui/use-toast'
 import {
   useWarehouses, useCreateWarehouse, useUpdateWarehouse, useDeleteWarehouse,
   useWarehouseTypes, useAddWarehouseType, useUpdateWarehouseType, useDeleteWarehouseType,
@@ -298,12 +299,12 @@ export default function WMSSettings() {
 
   function handleDeleteWh(wh: WhRow) {
     if (!confirm(`Xóa kho "${wh.name}"?\nChỉ xóa được kho chưa có vị trí nào.`)) return
-    deleteWh(wh.id, { onError: e => alert(apiMsg(e)) })
+    deleteWh(wh.id, { onError: e => toast({ variant: 'destructive', title: 'Không xóa được kho', description: apiMsg(e) }) })
   }
 
   function handleDeleteZone(z: WarehouseZone) {
     if (!confirm(`Xóa khu vực "${z.code} – ${z.name}"?`)) return
-    deleteZone(z.id, { onError: e => alert(apiMsg(e)) })
+    deleteZone(z.id, { onError: e => toast({ variant: 'destructive', title: 'Không xóa được khu vực', description: apiMsg(e) }) })
   }
 
   return (
@@ -456,7 +457,7 @@ export default function WMSSettings() {
                                   </button>
                                   <button className="text-slate-400 hover:text-red-500 p-1 transition-colors"
                                     disabled={deletingType}
-                                    onClick={e => { e.stopPropagation(); if (confirm(`Xóa loại kho "${t.value}"?`)) deleteType(t.id) }}>
+                                    onClick={e => { e.stopPropagation(); if (confirm(`Xóa loại kho "${t.value}"?`)) deleteType(t.id, { onSuccess: () => setDetailType(prev => prev?.id === t.id ? null : prev), onError: e2 => toast({ variant: 'destructive', title: 'Không xóa được loại kho', description: apiMsg(e2) }) }) }}>
                                     <Trash2 className="h-3.5 w-3.5" />
                                   </button>
                                 </div>

@@ -14,6 +14,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { QRScanner } from '@/components/shared/QRScanner'
 import type { QRScannerHandle } from '@/components/shared/QRScanner'
+import { toast } from '@/components/ui/use-toast'
 import { useGDO, useScanOutboundItem, useManualCompleteItem, useManualItemStock, useDeleteOutboundScanEntry, useItemInventory, useCheckOutboundScan, useConfirmLoosePickingItem, type ItemInventoryEntry, type CheckOutboundScanResult } from '@/api/hooks'
 import { PalletDetailDialog } from '@/components/shared/PalletDetailDialog'
 import { useAuthStore } from '@/stores/authStore'
@@ -402,7 +403,13 @@ export default function OutboundItemDetail() {
     if (!confirmScanId) return
     deleteScanEntry(
       { gdoId: gdoId!, itemId: item!.id, scanId: confirmScanId },
-      { onSettled: () => setConfirmScanId(null) }
+      {
+        onError: (err) => {
+          const msg = (err as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Lỗi xóa pallet đã quét'
+          toast({ variant: 'destructive', title: 'Không xóa được pallet', description: msg })
+        },
+        onSettled: () => setConfirmScanId(null),
+      }
     )
   }
 

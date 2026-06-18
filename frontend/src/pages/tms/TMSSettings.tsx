@@ -12,6 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
+import { toast } from '@/components/ui/use-toast'
 import {
   useWarehouses, useWarehouseTypes,
   useVehicleTypes, useCreateVehicleType, useUpdateVehicleType,
@@ -587,7 +588,7 @@ export default function TMSSettings() {
                                     </button>
                                     <button className="text-slate-400 hover:text-red-500 p-1"
                                       disabled={deletingST}
-                                      onClick={e => { e.stopPropagation(); if (confirm('Xóa template này?')) deleteST(st.id) }}>
+                                      onClick={e => { e.stopPropagation(); if (confirm('Xóa template này?')) deleteST(st.id, { onError: e2 => toast({ variant: 'destructive', title: 'Không xóa được template', description: apiMsg(e2) }) }) }}>
                                       <Trash2 className="h-3.5 w-3.5" />
                                     </button>
                                   </div>
@@ -688,7 +689,7 @@ export default function TMSSettings() {
                                 {!userNccId && (
                                   <button className="text-slate-400 hover:text-red-500 transition-colors p-1"
                                     disabled={deletingCo}
-                                    onClick={e => { e.stopPropagation(); if (confirm(`Xóa ĐVVT "${co.name}"?\nTất cả xe và tài khoản lái xe liên kết sẽ bị xóa vĩnh viễn.`)) deleteCo(co.id, { onError: e2 => alert(apiMsg(e2)) }) }}>
+                                    onClick={e => { e.stopPropagation(); if (confirm(`Xóa ĐVVT "${co.name}"?\nTất cả xe và tài khoản lái xe liên kết sẽ bị xóa vĩnh viễn.`)) deleteCo(co.id, { onError: e2 => toast({ variant: 'destructive', title: 'Không xóa được ĐVVT', description: apiMsg(e2) }) }) }}>
                                     <Trash2 className="h-3.5 w-3.5" />
                                   </button>
                                 )}
@@ -787,7 +788,7 @@ export default function TMSSettings() {
                                 </button>
                                 <button className="text-slate-400 hover:text-red-500 transition-colors p-1"
                                   disabled={deletingV}
-                                  onClick={e => { e.stopPropagation(); if (confirm(`Xóa xe "${v.license_plate}"?\nTài khoản lái xe liên kết (nếu có) sẽ bị xóa vĩnh viễn.`)) deleteV(v.id, { onError: e2 => alert(apiMsg(e2)) }) }}>
+                                  onClick={e => { e.stopPropagation(); if (confirm(`Xóa xe "${v.license_plate}"?\nTài khoản lái xe liên kết (nếu có) sẽ bị xóa vĩnh viễn.`)) deleteV(v.id, { onError: e2 => toast({ variant: 'destructive', title: 'Không xóa được xe', description: apiMsg(e2) }) }) }}>
                                   <Trash2 className="h-3.5 w-3.5" />
                                 </button>
                               </div>

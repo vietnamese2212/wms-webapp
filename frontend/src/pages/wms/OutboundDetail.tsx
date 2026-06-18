@@ -12,6 +12,7 @@ import { Button }  from '@/components/ui/button'
 import { Input }   from '@/components/ui/input'
 import { Label }   from '@/components/ui/label'
 import { Card }    from '@/components/ui/card'
+import { toast }   from '@/components/ui/use-toast'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
@@ -892,7 +893,7 @@ export default function OutboundDetail() {
       onSuccess: () => navigate('/wms/outbound'),
       onError: (err) => {
         const msg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi xóa đơn'
-        alert(msg)
+        toast({ variant: 'destructive', title: 'Không xóa được đơn', description: msg })
       },
     })
   }

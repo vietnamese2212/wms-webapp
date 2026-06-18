@@ -133,6 +133,7 @@ interface WmsFilterState {
   setMaterials:         (f: Partial<MaterialsFilters>)         => void
   setInboundReport:     (f: Partial<InboundReportFilters>)     => void
   setAssignment:        (f: Partial<AssignmentFilters>)        => void
+  reset:                ()                                     => void
 }
 
 const INBOUND_DEFAULT: InboundFilters = {
@@ -141,43 +142,51 @@ const INBOUND_DEFAULT: InboundFilters = {
   filterMaterials: [], filterCycles: [], filterMachines: [], importerSearch: '',
 }
 
+// Giá trị mặc định cho TẤT CẢ filter — gói trong hàm để reset() lấy được `today()` mới
+// và để scopedPersist reset về default khi đổi user (tránh user kế thừa filter người trước).
+function initialFilters() {
+  return {
+    assignment: { search: '', warehouseId: '', layoutId: '', dateFrom: today().slice(0, 8) + '01' },
+    outbound: {
+      search: '', dateFrom: today(), dateTo: today(),
+      filterTypes: [], filterDvvts: [], filterNpps: [],
+      warehouseId: '', filterWarehouseTypes: [], filterStatuses: [],
+    },
+    inbound:   { ...INBOUND_DEFAULT },
+    inventory: {
+      search: '', warehouseIds: [], materialCategories: [],
+      filterLocations: [], filterMaterialIds: [],
+      qaStatusIds: [], status: '', page: 1, manufacturerId: '',
+      filterCycles: [], filterMachines: [], datePctRanges: [],
+    },
+    loosePicking: {
+      warehouseId: '', dateFrom: today(), dateTo: today(), search: '',
+      filterDvvts: [], filterNpps: [], filterWarehouseTypes: [], filterTypes: [],
+    },
+    scanLogDraft: {
+      from_date: today(), to_date: today(),
+      warehouses: [], material_category: '',
+      group_code: '', distributor: '', delivery_code: '',
+      pallet_code: '', materials: [], machines: [], cycles: [], scanner_name: '',
+    },
+    scanLogApplied: { from_date: today(), to_date: today() } as ScanLogApplied,
+    gateRegistration: {
+      fDate: today(), fDateTo: '', fWarehouse: '', fWarehouseType: '',
+      fVehicleTypes: [], fCompany: '', fDirection: '', fStatus: '',
+    },
+    deliveries: { search: '', statusFilter: 'ALL' },
+    materials:  { search: '', catFilter: [], statusFilter: ['active'], qrFilter: [] },
+    inboundReport: {
+      dateFrom: (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }) })(),
+      dateTo: today(), warehouseId: '', selCategories: [],
+    },
+  }
+}
+
 export const useWmsFilterStore = create<WmsFilterState>()(
   persist(
     (set) => ({
-      assignment: { search: '', warehouseId: '', layoutId: '', dateFrom: today().slice(0, 8) + '01' },
-      outbound: {
-        search: '', dateFrom: today(), dateTo: today(),
-        filterTypes: [], filterDvvts: [], filterNpps: [],
-        warehouseId: '', filterWarehouseTypes: [], filterStatuses: [],
-      },
-      inbound:   INBOUND_DEFAULT,
-      inventory: {
-        search: '', warehouseIds: [], materialCategories: [],
-        filterLocations: [], filterMaterialIds: [],
-        qaStatusIds: [], status: '', page: 1, manufacturerId: '',
-        filterCycles: [], filterMachines: [], datePctRanges: [],
-      },
-      loosePicking: {
-        warehouseId: '', dateFrom: today(), dateTo: today(), search: '',
-        filterDvvts: [], filterNpps: [], filterWarehouseTypes: [], filterTypes: [],
-      },
-      scanLogDraft: {
-        from_date: today(), to_date: today(),
-        warehouses: [], material_category: '',
-        group_code: '', distributor: '', delivery_code: '',
-        pallet_code: '', materials: [], machines: [], cycles: [], scanner_name: '',
-      },
-      scanLogApplied: { from_date: today(), to_date: today() },
-      gateRegistration: {
-        fDate: today(), fDateTo: '', fWarehouse: '', fWarehouseType: '',
-        fVehicleTypes: [], fCompany: '', fDirection: '', fStatus: '',
-      },
-      deliveries: { search: '', statusFilter: 'ALL' },
-      materials:  { search: '', catFilter: [], statusFilter: ['active'], qrFilter: [] },
-      inboundReport: {
-        dateFrom: (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }) })(),
-        dateTo: today(), warehouseId: '', selCategories: [],
-      },
+      ...initialFilters(),
       setOutbound:         (f) => set(s => ({ outbound:         { ...s.outbound,         ...f } })),
       setInbound:          (f) => set(s => ({ inbound:          { ...INBOUND_DEFAULT, ...s.inbound, ...f } })),
       setInventory:        (f) => set(s => ({ inventory:        { ...s.inventory,        ...f } })),
@@ -189,6 +198,7 @@ export const useWmsFilterStore = create<WmsFilterState>()(
       setMaterials:        (f) => set(s => ({ materials:        { ...s.materials,        ...f } })),
       setInboundReport:    (f) => set(s => ({ inboundReport:    { ...s.inboundReport,    ...f } })),
       setAssignment:       (f) => set(s => ({ assignment:       { ...s.assignment,       ...f } })),
+      reset:               ()  => set(() => initialFilters()),
     }),
     { name: 'wms-filters-v10', storage: createJSONStorage(() => sessionStorage) }
   )

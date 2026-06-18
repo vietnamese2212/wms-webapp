@@ -18,6 +18,7 @@ interface SavedViewsState {
   addView:    (module: string, view: SavedView) => void
   removeView: (module: string, id: string) => void
   renameView: (module: string, id: string, name: string) => void
+  reset:      () => void
 }
 
 export const useSavedViewsStore = create<SavedViewsState>()(
@@ -33,6 +34,7 @@ export const useSavedViewsStore = create<SavedViewsState>()(
       renameView: (module, id, name) => set(s => ({
         views: { ...s.views, [module]: (s.views[module] ?? []).map(v => v.id === id ? { ...v, name } : v) },
       })),
+      reset: () => set({ views: {} }),
     }),
     { name: 'wms-saved-views', storage: createJSONStorage(() => localStorage) }
   )

@@ -6,6 +6,7 @@ import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import App from './App'
 import { queryClient } from './api/queryClient'
 import { initTheme } from './stores/uiStore'
+import './stores/scopedPersist' // scope filter/saved-views theo user (side-effect)
 import './index.css'
 
 initTheme()

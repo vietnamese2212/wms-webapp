@@ -558,14 +558,17 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
                                   <button onClick={() => changePositions(g.eid, g.positions.filter(x => x !== s))} className="text-sky-400 hover:text-sky-700"><X className="h-3 w-3" /></button>
                                 </span>
                               ))}
-                              <select value="" onChange={e => { if (e.target.value) changePositions(g.eid, [...g.positions, e.target.value]) }}
-                                className="border border-slate-200 rounded px-1 h-6 bg-white text-slate-500">
-                                <option value="">+ Thêm…</option>
-                                {sheet.skills.filter(s => !g.positions.includes(s.id)).map(s => {
-                                  const cnt = assignedBySkill.get(s.id) ?? 0
-                                  return <option key={s.id} value={s.id} style={{ whiteSpace: 'nowrap', color: cnt > 0 ? '#ea580c' : undefined }}>{positionLabel(s.job_title, s.name, s.shift_tag)} [{cnt}]</option>
-                                })}
-                              </select>
+                              <Select key={g.positions.join(',')} onValueChange={v => { if (v) changePositions(g.eid, [...g.positions, v]) }}>
+                                <SelectTrigger className="h-6 w-auto gap-1 px-1.5 text-[10px] text-slate-500 border-slate-200"><SelectValue placeholder="+ Thêm…" /></SelectTrigger>
+                                <SelectContent>
+                                  {sheet.skills.filter(s => !g.positions.includes(s.id)).map(s => {
+                                    const cnt = assignedBySkill.get(s.id) ?? 0
+                                    return <SelectItem key={s.id} value={s.id} className="text-[11px] whitespace-nowrap">
+                                      {positionLabel(s.job_title, s.name, s.shift_tag)} <span className={cnt > 0 ? 'text-orange-600 font-semibold' : 'text-slate-400'}>[{cnt}]</span>
+                                    </SelectItem>
+                                  })}
+                                </SelectContent>
+                              </Select>
                               {!g.positions.length && <span className="text-slate-400">Chưa phân</span>}
                             </div>
                           ) : (

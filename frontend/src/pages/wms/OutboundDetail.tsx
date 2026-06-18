@@ -861,7 +861,7 @@ export default function OutboundDetail() {
   const pinned = isPinned(id ?? '')
 
   const perms = user?.module_permissions as ModulePermissions | null ?? null
-  const canManagePause = can(perms, 'outbound', 'start')
+  const canManagePause = can(perms, 'outbound', 'edit')  // Tạm dừng/Tiếp tục = patchGDO → route đòi outbound.edit
 
   const [showStart,         setShowStart]         = useState(false)
   const [showEditTransport, setShowEditTransport] = useState(false)

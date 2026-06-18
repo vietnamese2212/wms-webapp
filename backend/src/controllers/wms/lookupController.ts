@@ -70,6 +70,19 @@ export async function updateLookup(req: Request, res: Response) {
 
 export async function deleteLookup(req: Request, res: Response) {
   const { id } = req.params
+
+  // Chặn xóa loại kho đang được dùng làm category ở Location/Material/WarehouseZone → tránh category mồ côi
+  const { data: lk } = await supabase.from('LookupValue').select('value, type').eq('id', id).maybeSingle()
+  if (lk?.type === 'warehouse_type' && lk.value) {
+    const [loc, mat, zone] = await Promise.all([
+      supabase.from('Location').select('id', { count: 'exact', head: true }).eq('category', lk.value),
+      supabase.from('Material').select('id', { count: 'exact', head: true }).eq('category', lk.value),
+      supabase.from('WarehouseZone').select('id', { count: 'exact', head: true }).eq('category', lk.value),
+    ])
+    const total = (loc.count ?? 0) + (mat.count ?? 0) + (zone.count ?? 0)
+    if (total > 0) return fail(res, `Loại kho "${lk.value}" đang được dùng (${total} bản ghi) — không thể xóa`, 409)
+  }
+
   const { error } = await supabase.from('LookupValue').delete().eq('id', id)
   if (error) return fail(res, error.message, 500)
   res.json({ success: true })

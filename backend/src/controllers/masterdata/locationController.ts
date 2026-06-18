@@ -157,6 +157,14 @@ export async function updateLocation(req: Request, res: Response) {
 
 export async function deleteLocation(req: Request, res: Response) {
   try {
+    // Chặn xóa vị trí đang chứa hàng → tránh tồn kho mồ côi trên location inactive
+    const { count } = await supabase
+      .from('InventoryEntry')
+      .select('id', { count: 'exact', head: true })
+      .eq('location_id', req.params.id)
+      .in('status', ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'])
+    if ((count ?? 0) > 0) return fail(res, 409, 'IN_USE', `Vị trí đang chứa ${count} pallet tồn — không thể xóa`)
+
     const { data, error } = await supabase
       .from('Location').update({ is_active: false, updated_at: new Date().toISOString() }).eq('id', req.params.id).select().maybeSingle()
     if (error) throw error

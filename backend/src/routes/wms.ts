@@ -119,10 +119,11 @@ router.patch('/outbound/:id/transport',                       requirePerm('outbo
 router.post('/outbound/:id/unstart',                          requirePerm('outbound', 'unstart'), outbound.unstartGDO)
 router.post('/outbound/:id/uncomplete',                       requirePerm('outbound', 'uncomplete'), outbound.uncompleteGDO)
 router.post('/outbound/:gdoId/items/:itemId/check-scan',      outbound.checkScanItem)
-router.post('/outbound/:gdoId/items/:itemId/scan',            requirePerm('outbound', 'scan'), outbound.scanItem)
-router.delete('/outbound/:gdoId/items/:itemId/scans/:scanId', requirePerm('outbound', 'scan'), outbound.deleteScanEntry)
+// Scan/xóa-scan dùng chung cho trang Xuất kho VÀ Nhặt lẻ → chấp nhận quyền của cả 2 module
+router.post('/outbound/:gdoId/items/:itemId/scan',            requireAnyPerm(['outbound', 'scan'], ['loosepicking', 'scan']), outbound.scanItem)
+router.delete('/outbound/:gdoId/items/:itemId/scans/:scanId', requireAnyPerm(['outbound', 'scan'], ['loosepicking', 'scan']), outbound.deleteScanEntry)
 router.post('/outbound/:gdoId/items/:itemId/manual-complete', requirePerm('outbound', 'complete'), outbound.manualCompleteItem)
-router.post('/outbound/:gdoId/items/:itemId/confirm-loose',   requirePerm('outbound', 'complete'), outbound.confirmLoosePickingItem)
+router.post('/outbound/:gdoId/items/:itemId/confirm-loose',   requireAnyPerm(['outbound', 'complete'], ['loosepicking', 'complete']), outbound.confirmLoosePickingItem)
 router.get('/outbound/:gdoId/items/:itemId/inventory',        outbound.getItemInventory)
 router.get('/outbound/:gdoId/items/:itemId/manual-stock',     outbound.getManualItemStock)
 

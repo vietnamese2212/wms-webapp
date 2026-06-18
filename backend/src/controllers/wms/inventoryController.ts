@@ -311,23 +311,21 @@ export async function listFacets(req: Request, res: Response) {
 
   const [{ data: matData }, { data: locData }] = await Promise.all([matQ, locQ])
 
-  // Cycles & machines: no reference table — query InventoryEntry scalar-only (no joins)
-  // Distinct values are few (< 50), so a sample easily covers them all
-  const locIds = (locData ?? []).map((l: any) => l.id as string)
-  const matIds = (matData ?? []).map((m: any) => m.id as string)
+  // Cycles & machines: no reference table — query InventoryEntry, lọc theo category/warehouse
+  // bằng INNER JOIN (Material/Location) thay vì nhồi hàng nghìn id vào .in() (URL quá dài → 500).
+  // Distinct values are few (< 50), so a sample easily covers them all.
+  const invSelect = 'cycle, machine_code'
+    + (categories.length > 0   ? ', material:Material!inner(category)'    : '')
+    + (warehouseIds.length > 0 ? ', location:Location!inner(warehouse_id)' : '')
 
   let invQ = (supabase.from('InventoryEntry') as any)
-    .select('cycle, machine_code')
+    .select(invSelect)
     .in('status', ['IN_STOCK', 'PARTIAL'])
     .limit(10000)
-  if (warehouseIds.length > 0) {
-    if (locIds.length === 0) return ok(res, { cycles: [], machines: [], locations: [], materials: [] })
-    invQ = invQ.in('location_id', locIds)
-  }
-  if (categories.length > 0) {
-    if (matIds.length === 0) return ok(res, { cycles: [], machines: [], locations: [], materials: [] })
-    invQ = invQ.in('material_id', matIds)
-  }
+  if (warehouseIds.length === 1)    invQ = invQ.eq('location.warehouse_id', warehouseIds[0])
+  else if (warehouseIds.length > 1) invQ = invQ.in('location.warehouse_id', warehouseIds)
+  if (categories.length === 1)      invQ = invQ.eq('material.category', categories[0])
+  else if (categories.length > 1)   invQ = invQ.in('material.category', categories)
 
   const { data: invData, error } = await invQ
   if (error) return fail(res, 500, 'DB_ERROR', error.message)

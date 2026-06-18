@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import type { AxiosError } from 'axios'
-import { Plus, Pencil, ShieldCheck, Building2, User2, KeyRound, Check, Briefcase, Copy, CheckCheck, Trash2, RotateCcw, X } from 'lucide-react'
+import { Plus, Pencil, ShieldCheck, Building2, User2, KeyRound, Check, Briefcase, Copy, CheckCheck, Trash2, RotateCcw, X, Warehouse } from 'lucide-react'
 import { WarehouseMultiSelect } from '@/components/shared/WarehouseMultiSelect'
 import { MultiSelect } from '@/components/shared/MultiSelect'
 import { formatDateTime } from '@/utils/formatters'
@@ -846,12 +846,22 @@ export default function UserManagement() {
   const { data: jobTitles = [] }   = useJobTitles(filterDeptJt === '__all__' ? undefined : filterDeptJt)
   // Tab Chức danh: chỉ hiện chức danh được phép sửa (Admin: tất cả · non-admin: chỉ cấp dưới mình)
   const visibleJobTitles = jobTitles.filter(jt => canEditJt(jt.id))
-  const { data: warehouses = [] } = useWarehouses()
   const { data: rawEmployees = [], isLoading, isError, error } = useEmployeeRecords({
     department_id: filterDept === '__all__' ? undefined : filterDept,
     search: search || undefined,
     include_deleted: statusFilter !== 'active' ? true : undefined,
   })
+  // Options 2 filter dẫn xuất từ DS nhân viên đang tải (đã lọc Phòng ban + phạm vi) → tự liên kết
+  const jtOptions = (() => {
+    const m = new Map<string, { id: string; label: string; sub?: string }>()
+    for (const e of rawEmployees) if (e.job_title_id) m.set(e.job_title_id, { id: e.job_title_id, label: e.job_title?.name ?? '—', sub: e.dept?.name })
+    return [...m.values()].sort((a, b) => a.label.localeCompare(b.label))
+  })()
+  const whOptions = (() => {
+    const m = new Map<string, { id: string; label: string; sub?: string }>()
+    for (const e of rawEmployees) for (const wa of (e.warehouse_access ?? [])) m.set(wa.warehouse_id, { id: wa.warehouse_id, label: wa.warehouse?.name ?? wa.warehouse_id, sub: wa.warehouse?.code })
+    return [...m.values()].sort((a, b) => a.label.localeCompare(b.label))
+  })()
   // Lọc thêm theo Chức danh + Kho (multi-select, client-side)
   const matchExtra = (e: EmployeeRecord) =>
     (filterJts.length === 0 || (e.job_title_id != null && filterJts.includes(e.job_title_id))) &&
@@ -902,7 +912,7 @@ export default function UserManagement() {
 
           <div className="flex gap-2 flex-wrap">
             <SearchInput value={search} onChange={setSearch} placeholder="Tìm tên, mã, đăng nhập…" className="flex-1 min-w-[200px]" />
-            <Select value={filterDept} onValueChange={setFilterDept}>
+            <Select value={filterDept} onValueChange={v => { setFilterDept(v); setFilterJts([]); setFilterWhs([]) }}>
               <SelectTrigger className="h-8 text-sm w-[180px]">
                 <Building2 className="h-3.5 w-3.5 mr-1.5 text-slate-400 shrink-0" />
                 <SelectValue placeholder="Tất cả phòng ban" />
@@ -926,7 +936,8 @@ export default function UserManagement() {
             </Select>
             <MultiSelect
               className="w-[180px]"
-              options={allJts.map(j => ({ id: j.id, label: j.name, sub: j.department?.name }))}
+              icon={<Briefcase className="h-3.5 w-3.5 text-slate-400 shrink-0" />}
+              options={jtOptions}
               selected={filterJts}
               onChange={setFilterJts}
               placeholder="Tất cả chức danh"
@@ -936,7 +947,8 @@ export default function UserManagement() {
             />
             <MultiSelect
               className="w-[160px]"
-              options={warehouses.map(w => ({ id: w.id, label: w.name, sub: w.code }))}
+              icon={<Warehouse className="h-3.5 w-3.5 text-slate-400 shrink-0" />}
+              options={whOptions}
               selected={filterWhs}
               onChange={setFilterWhs}
               placeholder="Tất cả kho"

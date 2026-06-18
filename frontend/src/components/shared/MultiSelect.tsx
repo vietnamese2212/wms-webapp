@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { ChevronDown, X } from 'lucide-react'
 
 export interface MultiSelectOption {
@@ -14,6 +14,7 @@ interface MultiSelectProps {
   placeholder?: string       // khi chưa chọn gì
   searchPlaceholder?: string
   unit?: string              // "N <unit> đã chọn"
+  icon?: ReactNode           // icon trái (đồng bộ với SelectTrigger)
   dropUp?: boolean
   showTags?: boolean         // hiện tags bên dưới (default true)
   className?: string         // wrapper (vd w-[180px])
@@ -25,6 +26,7 @@ export function MultiSelect({
   placeholder = 'Chọn…',
   searchPlaceholder = 'Tìm…',
   unit = 'mục',
+  icon,
   dropUp, showTags = true, className = '',
 }: MultiSelectProps) {
   const [open, setOpen]     = useState(false)
@@ -46,13 +48,15 @@ export function MultiSelect({
         <button
           type="button"
           onClick={() => setOpen(o => !o)}
-          className="w-full flex items-center justify-between bg-white border border-slate-200 rounded-md px-3 py-1.5 text-xs hover:border-slate-300 transition-colors"
-          style={{ minHeight: '32px' }}
+          className="w-full flex h-8 items-center justify-between rounded-md border border-input bg-background px-3 text-sm hover:border-slate-300 transition-colors"
         >
-          <span className={selected.length === 0 ? 'text-slate-400' : 'text-slate-700'}>
-            {selected.length === 0 ? placeholder : `${selected.length} ${unit} đã chọn`}
+          <span className="flex items-center gap-1.5 min-w-0">
+            {icon}
+            <span className={`truncate ${selected.length === 0 ? 'text-slate-400' : 'text-slate-700'}`}>
+              {selected.length === 0 ? placeholder : `${selected.length} ${unit} đã chọn`}
+            </span>
           </span>
-          <ChevronDown className={`h-3.5 w-3.5 text-slate-400 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+          <ChevronDown className={`h-4 w-4 opacity-50 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
         </button>
 
         {open && (

@@ -841,6 +841,8 @@ export default function UserManagement() {
 
   const { data: departments = [] } = useDepartments()
   const { data: jobTitles = [] }   = useJobTitles(filterDeptJt === '__all__' ? undefined : filterDeptJt)
+  // Tab Chức danh: chỉ hiện chức danh được phép sửa (Admin: tất cả · non-admin: chỉ cấp dưới mình)
+  const visibleJobTitles = jobTitles.filter(jt => canEditJt(jt.id))
   const { data: rawEmployees = [], isLoading, isError, error } = useEmployeeRecords({
     department_id: filterDept === '__all__' ? undefined : filterDept,
     search: search || undefined,
@@ -1147,7 +1149,7 @@ export default function UserManagement() {
         {/* ── Tab: Chức danh ── */}
         <TabsContent value="job-titles" className="space-y-3">
           <div className="flex items-center justify-between">
-            <p className="text-xs text-slate-500">{jobTitles.length} chức danh</p>
+            <p className="text-xs text-slate-500">{visibleJobTitles.length} chức danh</p>
             {isAdminUser && (
               <Button size="sm" className="gap-1.5" onClick={() => { setEditingJt(null); setShowJtDlg(true) }}>
                 <Plus className="h-4 w-4" /> Thêm chức danh
@@ -1168,7 +1170,7 @@ export default function UserManagement() {
           </Select>
           <div className="flex gap-3 items-start">
             <Card className="flex-1 min-w-0">
-              {jobTitles.length === 0 ? (
+              {visibleJobTitles.length === 0 ? (
                 <div className="p-12 text-center text-slate-400 space-y-2">
                   <Briefcase className="h-10 w-10 mx-auto opacity-30" />
                   <p className="text-sm">Chưa có chức danh nào</p>
@@ -1190,7 +1192,7 @@ export default function UserManagement() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {jobTitles.map(jt => (
+                      {visibleJobTitles.map(jt => (
                         <TableRow key={jt.id}
                           className={`text-sm cursor-pointer ${selectedJt?.id === jt.id ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
                           onClick={() => setSelectedJt(prev => prev?.id === jt.id ? null : jt)}>

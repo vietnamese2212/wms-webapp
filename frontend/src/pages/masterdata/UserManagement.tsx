@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import type { AxiosError } from 'axios'
 import { Plus, Pencil, ShieldCheck, Building2, User2, KeyRound, Check, Briefcase, Copy, CheckCheck, Trash2, RotateCcw, X } from 'lucide-react'
 import { WarehouseMultiSelect } from '@/components/shared/WarehouseMultiSelect'
+import { MultiSelect } from '@/components/shared/MultiSelect'
 import { formatDateTime } from '@/utils/formatters'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { Button }   from '@/components/ui/button'
@@ -822,6 +823,8 @@ export default function UserManagement() {
   const [search,       setSearch]       = useState('')
   const [filterDept,   setFilterDept]   = useState('__all__')
   const [statusFilter, setStatusFilter] = useState<'active' | 'hidden' | 'all'>('active')
+  const [filterJts,    setFilterJts]    = useState<string[]>([])
+  const [filterWhs,    setFilterWhs]    = useState<string[]>([])
   const [editingEmp,   setEditingEmp]   = useState<EmployeeRecord | null>(null)
   const [showEmpDlg,   setShowEmpDlg]   = useState(false)
   const [pwdEmp,       setPwdEmp]       = useState<EmployeeRecord | null>(null)
@@ -843,14 +846,20 @@ export default function UserManagement() {
   const { data: jobTitles = [] }   = useJobTitles(filterDeptJt === '__all__' ? undefined : filterDeptJt)
   // Tab Chức danh: chỉ hiện chức danh được phép sửa (Admin: tất cả · non-admin: chỉ cấp dưới mình)
   const visibleJobTitles = jobTitles.filter(jt => canEditJt(jt.id))
+  const { data: warehouses = [] } = useWarehouses()
   const { data: rawEmployees = [], isLoading, isError, error } = useEmployeeRecords({
     department_id: filterDept === '__all__' ? undefined : filterDept,
     search: search || undefined,
     include_deleted: statusFilter !== 'active' ? true : undefined,
   })
+  // Lọc thêm theo Chức danh + Kho (multi-select, client-side)
+  const matchExtra = (e: EmployeeRecord) =>
+    (filterJts.length === 0 || (e.job_title_id != null && filterJts.includes(e.job_title_id))) &&
+    (filterWhs.length === 0 || (e.warehouse_access ?? []).some(wa => filterWhs.includes(wa.warehouse_id)))
+  const scopedRaw = rawEmployees.filter(matchExtra)
   const employees = statusFilter === 'hidden'
-    ? rawEmployees.filter(e => !!e.deleted_at)
-    : rawEmployees
+    ? scopedRaw.filter(e => !!e.deleted_at)
+    : scopedRaw
 
   return (
     <div className="p-4 space-y-4 max-w-7xl mx-auto">
@@ -881,7 +890,7 @@ export default function UserManagement() {
               {statusFilter === 'hidden'
                 ? `${employees.length} đã ẩn`
                 : statusFilter === 'all'
-                  ? `${rawEmployees.filter(e => !e.deleted_at).length} nhân viên · ${rawEmployees.filter(e => !!e.deleted_at).length} đã ẩn`
+                  ? `${scopedRaw.filter(e => !e.deleted_at).length} nhân viên · ${scopedRaw.filter(e => !!e.deleted_at).length} đã ẩn`
                   : `${employees.length} nhân viên`}
             </p>
             {canCreateEmp && (
@@ -915,6 +924,26 @@ export default function UserManagement() {
                 <SelectItem value="all">Toàn bộ</SelectItem>
               </SelectContent>
             </Select>
+            <MultiSelect
+              className="w-[180px]"
+              options={allJts.map(j => ({ id: j.id, label: j.name, sub: j.department?.name }))}
+              selected={filterJts}
+              onChange={setFilterJts}
+              placeholder="Tất cả chức danh"
+              searchPlaceholder="Tìm chức danh…"
+              unit="chức danh"
+              showTags={false}
+            />
+            <MultiSelect
+              className="w-[160px]"
+              options={warehouses.map(w => ({ id: w.id, label: w.name, sub: w.code }))}
+              selected={filterWhs}
+              onChange={setFilterWhs}
+              placeholder="Tất cả kho"
+              searchPlaceholder="Tìm kho…"
+              unit="kho"
+              showTags={false}
+            />
           </div>
 
           {isError && (

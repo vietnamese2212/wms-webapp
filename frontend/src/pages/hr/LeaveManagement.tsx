@@ -217,6 +217,7 @@ export function CreateLeaveDialog({ wh, dept, onClose, fixedEmployeeId }: { wh: 
     !!(wh && dept && from && to),
   )
   const conflicts = (overlap as LeaveRow[]).filter(l => l.employee_id !== empId && l.status !== 'REJECTED')
+  const selfDup = !!empId && (overlap as LeaveRow[]).some(l => l.employee_id === empId && l.status !== 'REJECTED')   // chính NV đã có đơn trùng → chặn
 
   async function submit() {
     setErr(null)
@@ -262,6 +263,13 @@ export function CreateLeaveDialog({ wh, dept, onClose, fixedEmployeeId }: { wh: 
             </div>
           </div>
 
+          {/* Chính nhân viên đã có đơn trùng ngày → chặn */}
+          {selfDup && (
+            <div className="text-[11px] text-red-600 bg-red-50 border border-red-200 rounded px-2.5 py-2 flex items-center gap-1">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" /> Nhân viên này đã có đơn nghỉ trùng/chồng ngày — không thể tạo trùng.
+            </div>
+          )}
+
           {/* Cảnh báo trùng nghỉ cùng kho + bộ phận */}
           {conflicts.length > 0 && (
             <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2.5 py-2">
@@ -287,7 +295,7 @@ export function CreateLeaveDialog({ wh, dept, onClose, fixedEmployeeId }: { wh: 
           </div>
           <div className="flex justify-end gap-2 pt-1">
             <Button variant="outline" onClick={onClose} className="h-8">Hủy</Button>
-            <Button onClick={submit} disabled={create.isPending} className="h-8">{create.isPending ? 'Đang gửi…' : 'Gửi đơn'}</Button>
+            <Button onClick={submit} disabled={create.isPending || selfDup} className="h-8">{create.isPending ? 'Đang gửi…' : 'Gửi đơn'}</Button>
           </div>
         </div>
       </DialogContent>

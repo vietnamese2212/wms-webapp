@@ -299,51 +299,66 @@ export async function autoAssign(req: Request, res: Response) {
     //           tầng ca thêm tie-break tổng-ngày-đi-ca để cân "đi ca vs HC". Vẫn theo rule skill (priority) + nghỉ ca.
     const skillOrder = new Map(layoutSkills.map(s => [s.skill_id, s.sort_order]))
     const people = available.filter(eid => !lockedEmp.has(eid))
+    const totalNeed = [...remainingNeed.values()].reduce((s, n) => s + Math.max(0, n), 0)
+    const surplus = people.length > totalNeed   // DƯ người (đủ cho mọi nhu cầu) hay THIẾU?
     const slotsOfSkill = new Map<string, string[]>()
     for (const [sid, n] of remainingNeed) if (n > 0) slotsOfSkill.set(sid, Array.from({ length: n }, (_, k) => `${sid}#${k}`))
     const skillOfSlot = (slot: string) => slot.slice(0, slot.lastIndexOf('#'))
     const tagOfSlot = (slot: string) => shiftTagOf.get(skillOfSlot(slot)) ?? null
-    // adjacency người → slot đủ điều kiện; trong 1 người: priority (sở trường) → cân bằng từng-ca → thứ tự vị trí
+    // adjacency người → slot đủ điều kiện; trong 1 người: priority → (thiếu+CA3 hôm qua: ưu tiên CA3) → cân bằng từng-ca → thứ tự vị trí
     const adj = new Map<string, string[]>()
     for (const eid of people) {
       const sk = empSkills.get(eid)
       if (!sk) continue
+      const wantCA3 = !surplus && didCA3Yesterday(eid) === 1   // thiếu người + trực CA3 hôm qua → làm tiếp CA3
       const quals = [...sk.entries()]
         .filter(([sid]) => slotsOfSkill.has(sid) && !violatesRest(eid, shiftTagOf.get(sid) ?? null))
-        .sort(([sa, pa], [sb, pb]) =>
-          pa - pb
-          || tagLoad(eid, shiftTagOf.get(sa) ?? null) - tagLoad(eid, shiftTagOf.get(sb) ?? null)
-          || (skillOrder.get(sa) ?? 9999) - (skillOrder.get(sb) ?? 9999))
+        .sort(([sa, pa], [sb, pb]) => {
+          const ta = shiftTagOf.get(sa) ?? null, tb = shiftTagOf.get(sb) ?? null
+          return pa - pb
+            || (wantCA3 ? ((tb === 'CA3' ? 1 : 0) - (ta === 'CA3' ? 1 : 0)) : 0)
+            || tagLoad(eid, ta) - tagLoad(eid, tb)
+            || (skillOrder.get(sa) ?? 9999) - (skillOrder.get(sb) ?? 9999)
+        })
       const slots: string[] = []
       for (const [sid] of quals) slots.push(...(slotsOfSkill.get(sid) ?? []))
       if (slots.length) adj.set(eid, slots)
     }
     const slotMatch = new Map<string, string>()  // slot -> empId
     const empSlot = new Map<string, string>()     // empId -> slot
+    const frozen = new Set<string>()              // người đã chốt ở tầng CA → tầng HC KHÔNG được đẩy ra (giữ liên tục CA + ưu tiên ca)
     const augment = (eid: string, seen: Set<string>, allow: Set<string>): boolean => {
       for (const slot of adj.get(eid) ?? []) {
         const tag = tagOfSlot(slot)
         if (!tag || !allow.has(tag) || seen.has(slot)) continue
         seen.add(slot)
         const occ = slotMatch.get(slot)
+        if (occ !== undefined && frozen.has(occ)) continue   // không bứng người đã chốt
         if (occ === undefined || augment(occ, seen, allow)) { slotMatch.set(slot, eid); empSlot.set(eid, slot); return true }
       }
       return false
     }
-    const TIERS: { tags: string[]; key: (e: string) => number; ca: boolean }[] = [
+    const TIERS: { tags: string[]; key: (e: string) => number; ca: boolean; isCA3?: boolean }[] = [
       { tags: ['CA1', 'CA2'], key: e => tagLoad(e, 'CA1') + tagLoad(e, 'CA2'), ca: true },
-      { tags: ['CA3'],        key: e => tagLoad(e, 'CA3'),                     ca: true },
+      { tags: ['CA3'],        key: e => tagLoad(e, 'CA3'),                     ca: true, isCA3: true },
       { tags: ['HC'],         key: e => hcLoad(e),                            ca: false },
     ]
     const allow = new Set<string>()
     for (const tier of TIERS) {
       for (const tg of tier.tags) allow.add(tg)
-      const order = [...people].sort((a, b) =>
-        (didCA3Yesterday(a) - didCA3Yesterday(b))          // trực đêm hôm qua → xét sau (dư người thì cho nghỉ)
-        || tier.key(a) - tier.key(b)
-        || (tier.ca ? caLoad(a) - caLoad(b) : 0)            // tầng ca: cân thêm "đi ca vs HC"
-        || (adj.get(a)?.length ?? 0) - (adj.get(b)?.length ?? 0)
-        || (a < b ? -1 : 1))
+      if (!tier.ca) for (const e of empSlot.keys()) frozen.add(e)   // vào tầng HC: chốt mọi người đã xếp ca (không bị HC bứng ra)
+      const order = [...people].sort((a, b) => {
+        // Dư người: CA3 hôm qua xét SAU mọi tầng (để được nghỉ).
+        // Thiếu người: tầng CA3 → CA3 hôm qua xét TRƯỚC (làm tiếp CA3); tầng khác → xét SAU (để DÀNH họ cho CA3).
+        const r = surplus ? (didCA3Yesterday(a) - didCA3Yesterday(b))
+          : tier.isCA3 ? (didCA3Yesterday(b) - didCA3Yesterday(a))
+          : (didCA3Yesterday(a) - didCA3Yesterday(b))
+        return r
+          || tier.key(a) - tier.key(b)
+          || (tier.ca ? caLoad(a) - caLoad(b) : 0)            // tầng ca: cân thêm "đi ca vs HC"
+          || (adj.get(a)?.length ?? 0) - (adj.get(b)?.length ?? 0)
+          || (a < b ? -1 : 1)
+      })
       for (const eid of order) if (!empSlot.has(eid)) augment(eid, new Set(), allow)
     }
     // kết quả + cập nhật nhu cầu còn thiếu (cho shortfalls)

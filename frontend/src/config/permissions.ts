@@ -83,9 +83,9 @@ export const MODULES = {
     },
   },
   employees: {
-    label: 'Nhân sự (xem)',
+    label: 'Sơ đồ tổ chức (xem)',
     actions: {
-      view: 'Xem danh sách / sơ đồ tổ chức',
+      view: 'Xem sơ đồ tổ chức / danh sách nhân sự',
     },
   },
   user_admin: {

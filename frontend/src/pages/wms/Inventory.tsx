@@ -47,12 +47,11 @@ function datePctCls(pct: number): string {
 }
 
 function entryRowBg(e: InventoryEntry, selected: boolean, checked: boolean): string {
-  if (checked)   return 'bg-green-50 hover:bg-green-100'
-  if (selected)  return 'bg-blue-100'
-  if (e.status === 'LOOSE_PICKING') return 'bg-purple-50 hover:bg-purple-100'
-  if (e.status === 'PARTIAL')    return 'bg-amber-50 hover:bg-amber-100'
-  if (e.status === 'QUARANTINE') return 'bg-red-50 hover:bg-red-100'
-  if (e.status === 'EXPORTED' || e.status === 'TRANSFERRED') return 'bg-blue-50 hover:bg-blue-100'
+  // Dữ liệu không tô màu theo trạng thái. Chỉ highlight đỏ khi pallet có QA status (cờ chất lượng,
+  // OK = không có qa_status). Checked/selected là trạng thái tương tác nên vẫn giữ màu.
+  if (checked)     return 'bg-green-50 hover:bg-green-100'
+  if (selected)    return 'bg-blue-100'
+  if (e.qa_status) return 'bg-red-50 hover:bg-red-100'
   return 'hover:bg-slate-50'
 }
 
@@ -720,7 +719,7 @@ export default function Inventory() {
                     <TableRow className="bg-slate-50">
                       {INVENTORY_COLS.map((c, i) => (
                         <TableHead key={c.id}
-                          className={`relative text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''} ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                          className={`text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap sticky top-0 bg-slate-50 ${c.align === 'right' ? 'text-right' : ''} ${i === 0 ? 'left-0 z-30' : 'z-20'}`}>
                           {c.id === 'check'
                             ? <input type="checkbox" className="h-3.5 w-3.5 cursor-pointer" checked={checkedIds.size === displayEntries.length && displayEntries.length > 0} onChange={toggleAll} />
                             : c.label}

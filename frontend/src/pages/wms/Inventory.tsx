@@ -46,13 +46,23 @@ function datePctCls(pct: number): string {
   return 'text-red-600 font-semibold'
 }
 
-function entryRowBg(e: InventoryEntry, selected: boolean, checked: boolean): string {
-  // Dữ liệu không tô màu theo trạng thái. Chỉ highlight đỏ khi pallet có QA status (cờ chất lượng,
-  // OK = không có qa_status). Checked/selected là trạng thái tương tác nên vẫn giữ màu.
-  if (checked)     return 'bg-green-50 hover:bg-green-100'
-  if (selected)    return 'bg-blue-100'
-  if (e.qa_status) return 'bg-red-50 hover:bg-red-100'
+// Nền dòng: dữ liệu KHÔNG tô màu theo trạng thái. Chỉ giữ màu cho trạng thái tương tác.
+function entryRowBg(selected: boolean, checked: boolean): string {
+  if (checked)  return 'bg-green-50 hover:bg-green-100'
+  if (selected) return 'bg-blue-100'
   return 'hover:bg-slate-50'
+}
+
+// Màu CHỮ cả dòng (highlight), ưu tiên QA status. `[&_td_span]` override màu span trong dòng.
+//  - Có QA status (cờ chất lượng, OK = không có qa_status) → đỏ.
+//  - < 60% date → tím · 60–80% date → cam · ≥ 80% → bình thường.
+function entryRowText(e: InventoryEntry): string {
+  if (e.qa_status) return '[&_td_span]:text-red-600'
+  const pct = calcDatePct(e.production_date, e.material?.shelf_life_days ?? null)
+  if (pct === null) return ''
+  if (pct < 60) return '[&_td_span]:text-purple-600'
+  if (pct < 80) return '[&_td_span]:text-orange-600'
+  return ''
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -882,7 +892,7 @@ function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick, warehouse
 
   return (
     <TableRow
-      className={`transition-colors cursor-pointer ${entryRowBg(e, isSelected, isChecked)} ${dense ? '' : '[&_td]:py-2.5'}`}
+      className={`transition-colors cursor-pointer ${entryRowBg(isSelected, isChecked)} ${entryRowText(e)} ${dense ? '' : '[&_td]:py-2.5'}`}
       onClick={onClick}
     >
       {/* Checkbox */}

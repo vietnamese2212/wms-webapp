@@ -54,6 +54,16 @@ function sharesKho(ctx: ApproverCtx, empScope: string | null, empWhs: Set<string
   for (const w of ctx.whs) if (empWhs.has(w)) return true
   return false
 }
+// Đơn nghỉ phép trùng/chồng ngày của CÙNG nhân viên (bỏ qua đơn đã Từ chối). Trả đơn đầu tiên bị trùng.
+async function overlappingLeave(employeeId: string, dateFrom: string, dateTo: string, excludeId?: string) {
+  let q = supabase.from('LeaveRequest').select('id, date_from, date_to, status')
+    .eq('employee_id', employeeId).neq('status', 'REJECTED')
+    .lte('date_from', dateTo).gte('date_to', dateFrom)   // overlap: existing.from <= new.to AND existing.to >= new.from
+  if (excludeId) q = q.neq('id', excludeId)
+  const { data } = await q
+  return ((data ?? []) as { id: string; date_from: string; date_to: string }[])[0] ?? null
+}
+
 // liệt kê các ngày YYYY-MM-DD trong khoảng [from, to] (bao gồm 2 đầu)
 function eachDate(from: string, to: string): string[] {
   const out: string[] = []
@@ -144,6 +154,9 @@ export async function createLeave(req: Request, res: Response) {
     if (!empId || !date_from || !date_to) return fail(res, 'employee_id, date_from, date_to là bắt buộc', 400)
     if (date_to < date_from) return fail(res, 'Đến ngày phải >= Từ ngày', 400)
 
+    const dup = await overlappingLeave(empId, date_from, date_to)
+    if (dup) return fail(res, `Nhân viên đã có đơn nghỉ phép trùng/chồng ngày (${dup.date_from} → ${dup.date_to}). Không thể tạo trùng.`, 409)
+
     const now = new Date().toISOString()
     const { data, error } = await supabase.from('LeaveRequest').insert({
       id: randomUUID(),
@@ -167,6 +180,16 @@ export async function updateLeave(req: Request, res: Response) {
     const { id } = req.params
     const { date_from, date_to, leave_type, reason } = req.body as {
       date_from?: string; date_to?: string; leave_type?: string; reason?: string
+    }
+    // nếu đổi ngày → kiểm tra trùng/chồng với đơn khác của cùng NV (trừ chính đơn này)
+    if (date_from !== undefined || date_to !== undefined) {
+      const { data: cur } = await supabase.from('LeaveRequest').select('employee_id, date_from, date_to').eq('id', id).maybeSingle()
+      if (!cur) return fail(res, 'Không tìm thấy đơn', 404)
+      const c = cur as { employee_id: string; date_from: string; date_to: string }
+      const nf = date_from ?? c.date_from, nt = date_to ?? c.date_to
+      if (nt < nf) return fail(res, 'Đến ngày phải >= Từ ngày', 400)
+      const dup = await overlappingLeave(c.employee_id, nf, nt, id)
+      if (dup) return fail(res, `Trùng/chồng ngày với đơn nghỉ phép khác (${dup.date_from} → ${dup.date_to}).`, 409)
     }
     const updates: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: userOf(req).name || null }
     if (date_from  !== undefined) updates.date_from  = date_from

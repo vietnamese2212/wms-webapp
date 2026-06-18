@@ -228,7 +228,10 @@ export function CreateLeaveDialog({ wh, dept, onClose, fixedEmployeeId }: { wh: 
         date_from: from, date_to: to, leave_type: ltype, reason: reason || undefined,
       })
       onClose()
-    } catch (e) { setErr(String((e as { message?: string })?.message ?? e)) }
+    } catch (e) {
+      const ax = e as { response?: { data?: { error?: { message?: string } } } }
+      setErr(ax.response?.data?.error?.message ?? String((e as { message?: string })?.message ?? e))
+    }
   }
 
   return (

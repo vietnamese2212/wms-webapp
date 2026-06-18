@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useMemo } from 'react'
+import { useEffect, useState, useRef, useMemo, type CSSProperties } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toBlob } from 'html-to-image'
 import { Plus, Wand2, Send, Trash2, CalendarDays, Pencil, Save, Layers, X, Loader2, Image as ImageIcon, Share2, Rows3, AlignJustify } from 'lucide-react'
@@ -612,42 +612,45 @@ type DocProps = {
   noteBySkill: Map<string, string | null>; shiftBySkill: Map<string, string | null>
   currentUserId: string | null
 }
+// màu để INLINE (html-to-image bắt được → ảnh share/tải giữ đúng màu như bản xem)
+const DOC_TH: CSSProperties = { border: '1px solid #cbd5e1', padding: '6px 8px', textAlign: 'left', whiteSpace: 'nowrap', background: '#1e293b', color: '#ffffff', fontWeight: 600 }
+const docTd = (bg: string): CSSProperties => ({ border: '1px solid #cbd5e1', padding: '6px 8px', textAlign: 'left', whiteSpace: 'nowrap', background: bg })
 function ScheduleDoc({ sheet, whName, labelOf, sortedAsg, posCount, noteBySkill, shiftBySkill, currentUserId }: DocProps) {
   return (
     <div className="sheet-doc">
-      <style>{`
-        .sheet-doc, .sheet-doc * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-        .sheet-doc table { width: 100%; border-collapse: collapse; font-size: 12px; }
-        .sheet-doc th, .sheet-doc td { border: 1px solid #cbd5e1; padding: 5px 8px; text-align: left; }
-        .sheet-doc thead th { background: #1e293b; color: #fff; font-weight: 600; }
-      `}</style>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
         <div style={{ width: 56, height: 40, background: '#e11d48', color: '#fff', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontStyle: 'italic', fontSize: 18 }}>lof</div>
         <div style={{ flex: 1, textAlign: 'center' }}>
-          <div style={{ fontWeight: 700, fontSize: 16 }}>BẢNG PHÂN CÔNG LỊCH LÀM VIỆC CHI TIẾT</div>
-          <div style={{ fontSize: 12, marginTop: 2 }}><b>Ngày: {formatDate(sheet.work_date)}</b> &nbsp;|&nbsp; <b>Bộ phận: {sheet.layout_name}</b></div>
-          <div style={{ fontSize: 12 }}>Kho: {whName}</div>
+          <div style={{ fontWeight: 700, fontSize: 17 }}>BẢNG PHÂN CÔNG LỊCH LÀM VIỆC CHI TIẾT</div>
+          <div style={{ fontSize: 13, marginTop: 2 }}><b>Ngày: {formatDate(sheet.work_date)}</b> &nbsp;|&nbsp; <b>Bộ phận: {sheet.layout_name}</b></div>
+          <div style={{ fontSize: 13 }}>Kho: {whName}</div>
         </div>
         <div style={{ width: 56 }} />
       </div>
-      <table>
-        <thead><tr><th style={{ width: 36 }}>STT</th><th>Họ và Tên</th><th>Chức danh</th><th>Vị trí phân công</th><th style={{ width: 120 }}>Note</th></tr></thead>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+        <thead><tr>
+          <th style={{ ...DOC_TH, width: 40 }}>STT</th>
+          <th style={DOC_TH}>Họ và Tên</th>
+          <th style={DOC_TH}>Chức danh</th>
+          <th style={DOC_TH}>Vị trí phân công</th>
+          <th style={{ ...DOC_TH, width: 140 }}>Note</th>
+        </tr></thead>
         <tbody>
           {sortedAsg.map((a, i) => {
             const tag = a.skill_id ? shiftBySkill.get(a.skill_id) : null
-            const bg = (a.status === 'ASSIGNED' && tag && PRINT_ROW_BG[tag]) ? PRINT_ROW_BG[tag] : (i % 2 ? '#f8fafc' : '#fff')
+            const bg = (a.status === 'ASSIGNED' && tag && PRINT_ROW_BG[tag]) ? PRINT_ROW_BG[tag] : (i % 2 ? '#f8fafc' : '#ffffff')
             const isMe = !!currentUserId && a.employee_id === currentUserId
             const multi = a.status === 'ASSIGNED' && (posCount.get(a.employee_id) ?? 0) >= 2
             return (
-              <tr key={a.id} style={{ background: bg }}>
-                <td>{i + 1}</td>
-                <td>
-                  <span style={isMe ? { textDecoration: 'underline' } : undefined}>{a.employee?.name ?? '—'}</span>
+              <tr key={a.id}>
+                <td style={docTd(bg)}>{i + 1}</td>
+                <td style={docTd(bg)}>
+                  <span style={isMe ? { textDecoration: 'underline', fontWeight: 700 } : undefined}>{a.employee?.name ?? '—'}</span>
                   {multi && <span style={{ color: '#e11d48', marginLeft: 4 }}>★</span>}
                 </td>
-                <td>{a.employee?.job_title ?? '—'}</td>
-                <td>{a.status === 'LEAVE' ? 'Nghỉ phép' : a.skill_id ? labelOf(a.skill_id) : 'Chưa phân công'}</td>
-                <td>{a.skill_id ? (noteBySkill.get(a.skill_id) ?? '') : ''}</td>
+                <td style={docTd(bg)}>{a.employee?.job_title ?? '—'}</td>
+                <td style={docTd(bg)}>{a.status === 'LEAVE' ? 'Nghỉ phép' : a.skill_id ? labelOf(a.skill_id) : 'Chưa phân công'}</td>
+                <td style={docTd(bg)}>{a.skill_id ? (noteBySkill.get(a.skill_id) ?? '') : ''}</td>
               </tr>
             )
           })}
@@ -696,7 +699,7 @@ function ImagePreview({ onClose, ...props }: DocProps & { onClose: () => void })
         </div>
       </div>
       <div className="p-2 sm:p-4">
-        <div ref={ref} className="bg-white mx-auto max-w-2xl p-3 rounded-lg shadow-lg" onClick={e => e.stopPropagation()}>
+        <div ref={ref} className="bg-white mx-auto w-full sm:w-[80vw] sm:max-w-[1100px] p-4 rounded-lg shadow-lg" onClick={e => e.stopPropagation()}>
           <ScheduleDoc {...props} />
         </div>
       </div>

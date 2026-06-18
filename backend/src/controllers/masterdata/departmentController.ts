@@ -3,6 +3,21 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 
+// Chống leo thang: non-superadmin không được cấp cho chức danh quyền mà CHÍNH MÌNH không có.
+// Trả message lỗi nếu vi phạm, null nếu hợp lệ.
+function escalationError(req: Request, perms?: Record<string, string[]>): string | null {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const u = (req as any).user
+  if (u?.name === 'Admin') return null
+  const mine: Record<string, string[]> = u?.module_permissions ?? {}
+  for (const [mod, actions] of Object.entries(perms ?? {})) {
+    for (const a of (actions ?? [])) {
+      if (!mine[mod]?.includes(a)) return `Không thể cấp quyền vượt quá quyền của bạn: ${mod}.${a}`
+    }
+  }
+  return null
+}
+
 const DEPT_SELECT = 'id, name, code, allowed_modules, requires_scheduling, is_active, created_at, updated_at, created_by, updated_by'
 const JT_SELECT   = 'id, name, department_id, parent_id, in_chart, is_active, module_permissions, created_at, updated_at, created_by, updated_by, department:Department(id,name,code)'
 
@@ -78,6 +93,8 @@ export async function createJobTitle(req: Request, res: Response) {
       in_chart?: boolean
     }
     if (!name || !department_id) return fail(res, 'name và department_id là bắt buộc', 400)
+    const escErr = escalationError(req, module_permissions)
+    if (escErr) return fail(res, escErr, 403)
 
     const actor = (req as any).user?.name || null
     const now = new Date().toISOString()
@@ -134,6 +151,8 @@ export async function updateJobTitle(req: Request, res: Response) {
       name?: string; is_active?: boolean
       module_permissions?: Record<string, string[]>
     }
+    const escErr = escalationError(req, module_permissions)
+    if (escErr) return fail(res, escErr, 403)
     const { data, error } = await supabase
       .from('JobTitle')
       .update({ name, is_active, module_permissions, updated_at: new Date().toISOString(), updated_by: (req as any).user?.name || null })

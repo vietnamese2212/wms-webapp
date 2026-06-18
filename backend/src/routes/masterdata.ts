@@ -59,15 +59,15 @@ router.post('/job-titles',          requirePerm('user_admin', 'manage_roles'), d
 router.put('/job-titles/:id',       requirePerm('user_admin', 'manage_roles'), department.updateJobTitle)
 router.patch('/job-titles/:id/parent', requirePerm('user_admin', 'manage_roles'), department.setJobTitleParent)
 
-// Employee (nhân sự + phân quyền)
+// Employee (tài khoản người dùng + phân quyền)
 router.get('/employees',            requireAnyPerm(['employees', 'view'], ['user_admin', 'view']), employee.listEmployees)
-router.post('/employees',           requirePerm('employees', 'create'), employee.createEmployee)
+router.post('/employees',           requirePerm('user_admin', 'create'), employee.createEmployee)
 router.get('/employees/:id',        requireAnyPerm(['employees', 'view'], ['user_admin', 'view']), employee.getEmployee)
-router.patch('/employees/:id',              requirePerm('employees', 'edit'), employee.updateEmployee)
-router.patch('/employees/:id/set-password', requirePerm('employees', 'set_password'), employee.setPassword)
-router.put('/employees/:id/warehouses',     requirePerm('employees', 'edit'), employee.setWarehouseAccess)
-router.patch('/employees/:id/manager',      requirePerm('employees', 'edit'), employee.setManager)
-router.delete('/employees/:id',             requirePerm('employees', 'delete'), employee.deleteEmployee)
-router.post('/employees/:id/restore',       requirePerm('employees', 'delete'), employee.restoreEmployee)
+router.patch('/employees/:id',              requirePerm('user_admin', 'edit'), employee.updateEmployee)
+router.patch('/employees/:id/set-password', requirePerm('user_admin', 'set_password'), employee.setPassword)
+router.put('/employees/:id/warehouses',     requirePerm('user_admin', 'edit'), employee.setWarehouseAccess)
+router.patch('/employees/:id/manager',      requirePerm('user_admin', 'manage_roles'), employee.setManager)
+router.delete('/employees/:id',             requirePerm('user_admin', 'delete'), employee.deleteEmployee)
+router.post('/employees/:id/restore',       requirePerm('user_admin', 'delete'), employee.restoreEmployee)
 
 export default router

@@ -742,9 +742,10 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
 export default function UserManagement() {
   const user = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
-  const canCreateEmp = can(perms, 'employees', 'create')
-  const canEditEmp   = can(perms, 'employees', 'edit')
-  const canSetPwd    = can(perms, 'employees', 'set_password')
+  const canCreateEmp = can(perms, 'user_admin', 'create')
+  const canEditEmp   = can(perms, 'user_admin', 'edit')
+  const canSetPwd    = can(perms, 'user_admin', 'set_password')
+  const canDeleteEmp = can(perms, 'user_admin', 'delete')
   const canManageRoles = can(perms, 'user_admin', 'manage_roles')
 
   const [search,       setSearch]       = useState('')
@@ -927,7 +928,7 @@ export default function UserManagement() {
                           </TableCell>
                           <TableCell className="px-2 py-2">
                             {isDeleted ? (
-                              can(perms, 'employees', 'delete') && (
+                              canDeleteEmp && (
                                 <button title="Khôi phục"
                                   disabled={restoring}
                                   className="text-slate-400 hover:text-green-600 transition-colors p-1 disabled:opacity-50"
@@ -951,7 +952,7 @@ export default function UserManagement() {
                                     <Pencil className="h-3.5 w-3.5" />
                                   </button>
                                 )}
-                                {can(perms, 'employees', 'delete') && emp.id !== user?.id && (
+                                {canDeleteEmp && emp.id !== user?.id && (
                                   <button title="Xóa nhân viên"
                                     className="text-slate-400 hover:text-red-500 transition-colors p-1"
                                     onClick={e => { e.stopPropagation(); setConfirmDeleteEmp(emp) }}>

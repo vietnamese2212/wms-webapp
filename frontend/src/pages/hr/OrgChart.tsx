@@ -32,7 +32,7 @@ type PickMode = { kind: 'root' } | { kind: 'below'; anchor: JobTitle } | { kind:
 export default function OrgChart() {
   const user  = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
-  const canEdit = can(perms, 'employees', 'edit')
+  const canEdit = can(perms, 'user_admin', 'manage_roles')
 
   const { data: jobTitles = [], isLoading } = useJobTitles()
   const { data: warehouses = [] } = useWarehouses(true)

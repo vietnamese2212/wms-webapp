@@ -4,6 +4,62 @@ import bcrypt from 'bcrypt'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 
+// ─── Phân quyền: bảo vệ tài khoản Admin + giới hạn phạm vi thấy nhân sự ─────────
+function isSuperadmin(req: Request): boolean {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (req as any).user?.name === 'Admin'
+}
+
+// Chặn non-superadmin thao tác trên tài khoản superadmin (Admin). true = đã chặn (đã trả lỗi).
+async function blockIfTargetSuperadmin(req: Request, res: Response): Promise<boolean> {
+  if (isSuperadmin(req)) return false
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data } = await (supabase.from('Employee') as any)
+    .select('name, employee_code').eq('id', req.params.id).maybeSingle()
+  if (data?.name === 'Admin' || data?.employee_code === 'ADMIN') {
+    fail(res, 'Chỉ Admin mới được thao tác trên tài khoản Admin', 403)
+    return true
+  }
+  return false
+}
+
+// Tập employee id được phép thấy: (cùng kho được gán) ∩ (cấp dưới đệ quy + chính mình).
+// null = thấy tất cả (superadmin).
+async function visibleEmployeeIds(req: Request): Promise<Set<string> | null> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const u = (req as any).user
+  if (!u) return new Set<string>()
+  if (u.name === 'Admin') return null
+
+  // 1. Cây cấp dưới (đệ quy) của chính mình + bản thân
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: graph } = await (supabase.from('Employee') as any).select('id, manager_id')
+  const childrenOf = new Map<string, string[]>()
+  for (const r of ((graph ?? []) as { id: string; manager_id: string | null }[])) {
+    if (!r.manager_id) continue
+    const arr = childrenOf.get(r.manager_id) ?? []
+    arr.push(r.id); childrenOf.set(r.manager_id, arr)
+  }
+  const subtree = new Set<string>([u.sub])
+  const stack: string[] = [u.sub]
+  while (stack.length) {
+    const cur = stack.pop() as string
+    for (const c of (childrenOf.get(cur) ?? [])) if (!subtree.has(c)) { subtree.add(c); stack.push(c) }
+  }
+
+  // 2. Giao với phạm vi kho (nếu ASSIGNED — NATIONAL thì không giới hạn kho)
+  if (u.warehouse_scope === 'ASSIGNED') {
+    const whIds: string[] = u.warehouse_ids ?? []
+    if (!whIds.length) return new Set<string>([u.sub])
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: wa } = await (supabase.from('UserWarehouseAccess') as any)
+      .select('employee_id').in('warehouse_id', whIds)
+    const inWh = new Set(((wa ?? []) as { employee_id: string }[]).map(r => r.employee_id))
+    return new Set<string>([...subtree].filter(id => id === u.sub || inWh.has(id)))
+  }
+  return subtree
+}
+
 function generateTempPassword(): string {
   const upper  = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
   const lower  = 'abcdefghjkmnpqrstuvwxyz'
@@ -120,19 +176,22 @@ async function fetchFull(opts: {
 export async function listEmployees(req: Request, res: Response) {
   try {
     const { department_id, is_active, search, include_deleted } = req.query as Record<string, string>
+    const scope = await visibleEmployeeIds(req)
     const data = await fetchFull({
       department_id: department_id || undefined,
       is_active: is_active !== undefined ? is_active === 'true' : undefined,
       search: search || undefined,
       include_deleted: include_deleted === 'true',
     })
-    return ok(res, data)
+    return ok(res, scope === null ? data : data.filter(e => scope.has(e.id)))
   } catch (e) { return fail(res, String(e)) }
 }
 
 export async function getEmployee(req: Request, res: Response) {
   try {
-    const rows = await fetchFull({ ids: [req.params.id] })
+    const scope = await visibleEmployeeIds(req)
+    if (scope !== null && !scope.has(req.params.id)) return fail(res, 'Không có quyền xem nhân viên này', 403)
+    const rows = await fetchFull({ ids: [req.params.id], include_deleted: true })
     if (!rows.length) return fail(res, 'Không tìm thấy nhân viên', 404)
     return ok(res, rows[0])
   } catch (e) { return fail(res, String(e)) }
@@ -202,6 +261,7 @@ export async function createEmployee(req: Request, res: Response) {
 
 export async function updateEmployee(req: Request, res: Response) {
   try {
+    if (await blockIfTargetSuperadmin(req, res)) return
     const { id } = req.params
     const {
       name, phone, email, employee_code,
@@ -261,6 +321,7 @@ export async function updateEmployee(req: Request, res: Response) {
 
 export async function setManager(req: Request, res: Response) {
   try {
+    if (await blockIfTargetSuperadmin(req, res)) return
     const { id } = req.params
     const { manager_id } = req.body as { manager_id?: string | null }
     const mgr = manager_id || null
@@ -294,6 +355,7 @@ export async function setManager(req: Request, res: Response) {
 
 export async function setPassword(req: Request, res: Response) {
   try {
+    if (await blockIfTargetSuperadmin(req, res)) return
     const { id } = req.params
     const { password } = req.body as { password?: string }
     if (!password || password.length < 6) return fail(res, 'Mật khẩu phải có ít nhất 6 ký tự', 400)
@@ -332,6 +394,7 @@ async function employeeHasHistory(id: string): Promise<boolean> {
 
 export async function deleteEmployee(req: Request, res: Response) {
   try {
+    if (await blockIfTargetSuperadmin(req, res)) return
     const { id } = req.params
 
     const hasHistory = await employeeHasHistory(id)
@@ -367,6 +430,7 @@ export async function deleteEmployee(req: Request, res: Response) {
 
 export async function restoreEmployee(req: Request, res: Response) {
   try {
+    if (await blockIfTargetSuperadmin(req, res)) return
     const { id } = req.params
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (supabase.from('Employee') as any)
@@ -382,6 +446,7 @@ export async function restoreEmployee(req: Request, res: Response) {
 
 export async function setWarehouseAccess(req: Request, res: Response) {
   try {
+    if (await blockIfTargetSuperadmin(req, res)) return
     const { id } = req.params
     const { warehouse_ids } = req.body as { warehouse_ids: string[] }
 

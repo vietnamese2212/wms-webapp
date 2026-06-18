@@ -83,20 +83,20 @@ export const MODULES = {
     },
   },
   employees: {
-    label: 'Quản lý nhân sự',
+    label: 'Nhân sự (xem)',
     actions: {
-      view:         'Xem danh sách',
-      create:       'Thêm nhân viên',
-      edit:         'Sửa thông tin',
-      set_password: 'Đặt mật khẩu',
-      delete:       'Xóa nhân viên',
+      view: 'Xem danh sách / sơ đồ tổ chức',
     },
   },
   user_admin: {
     label: 'Quản lý người dùng',
     actions: {
-      view:         'Mở trang Quản lý người dùng',
-      manage_roles: 'Sửa phòng ban / chức danh & phân quyền',
+      view:         'Mở trang / xem danh sách',
+      create:       'Thêm tài khoản',
+      edit:         'Sửa thông tin',
+      set_password: 'Đặt mật khẩu',
+      delete:       'Xóa / khôi phục',
+      manage_roles: 'Sửa phòng ban / chức danh & sơ đồ + phân quyền',
     },
   },
   deliveries: {

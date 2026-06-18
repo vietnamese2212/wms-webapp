@@ -50,7 +50,7 @@ export function SavedViews({ module, currentFilters, onApply, activeId }: {
       </button>
 
       {open && (
-        <div className="absolute z-50 top-full right-0 sm:left-0 mt-1 bg-white border rounded-md shadow-lg w-[220px] py-1 animate-in fade-in zoom-in-95 duration-100 origin-top"
+        <div className="absolute z-50 top-full right-0 mt-1 bg-white border rounded-md shadow-lg w-[220px] py-1 animate-in fade-in zoom-in-95 duration-100 origin-top-right"
           onMouseDown={e => e.stopPropagation()}>
           {views.length === 0 ? (
             <div className="px-3 py-2 text-[11px] text-slate-400 text-center">Chưa có view nào</div>

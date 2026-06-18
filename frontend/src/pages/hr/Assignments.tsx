@@ -561,7 +561,10 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
                               <select value="" onChange={e => { if (e.target.value) changePositions(g.eid, [...g.positions, e.target.value]) }}
                                 className="border border-slate-200 rounded px-1 h-6 bg-white text-slate-500">
                                 <option value="">+ Thêm…</option>
-                                {sheet.skills.filter(s => !g.positions.includes(s.id)).map(s => <option key={s.id} value={s.id}>{positionLabel(s.job_title, s.name, s.shift_tag)}</option>)}
+                                {sheet.skills.filter(s => !g.positions.includes(s.id)).map(s => {
+                                  const cnt = assignedBySkill.get(s.id) ?? 0
+                                  return <option key={s.id} value={s.id} style={{ whiteSpace: 'nowrap', color: cnt > 0 ? '#ea580c' : undefined }}>{positionLabel(s.job_title, s.name, s.shift_tag)} [{cnt}]</option>
+                                })}
                               </select>
                               {!g.positions.length && <span className="text-slate-400">Chưa phân</span>}
                             </div>

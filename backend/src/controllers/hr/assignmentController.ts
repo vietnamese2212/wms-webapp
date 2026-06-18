@@ -291,6 +291,7 @@ export async function autoAssign(req: Request, res: Response) {
     const tagLoad = (eid: string, tag: string | null) => (tag ? (monthLoad.get(eid)?.get(tag) ?? 0) : 0)
     const caLoad = (eid: string) => tagLoad(eid, 'CA1') + tagLoad(eid, 'CA2') + tagLoad(eid, 'CA3')   // tổng ngày ĐI CA trong tháng
     const hcLoad = (eid: string) => tagLoad(eid, 'HC')
+    const didCA3Yesterday = (eid: string) => (empPrevShifts.get(eid)?.has('CA3') ? 1 : 0)   // nghỉ sau ca đêm (chỉ khi dư người)
 
     // ── 5. Ghép TỐI ĐA theo TẦNG ƯU TIÊN PHỦ + CÂN BẰNG ──
     // Tầng phủ: lấp CA1+CA2 trước → CA3 → HC. Thiếu người thì hụt rơi vào HC/CA3, KHÔNG hụt CA1/CA2.
@@ -338,7 +339,8 @@ export async function autoAssign(req: Request, res: Response) {
     for (const tier of TIERS) {
       for (const tg of tier.tags) allow.add(tg)
       const order = [...people].sort((a, b) =>
-        tier.key(a) - tier.key(b)
+        (didCA3Yesterday(a) - didCA3Yesterday(b))          // trực đêm hôm qua → xét sau (dư người thì cho nghỉ)
+        || tier.key(a) - tier.key(b)
         || (tier.ca ? caLoad(a) - caLoad(b) : 0)            // tầng ca: cân thêm "đi ca vs HC"
         || (adj.get(a)?.length ?? 0) - (adj.get(b)?.length ?? 0)
         || (a < b ? -1 : 1))

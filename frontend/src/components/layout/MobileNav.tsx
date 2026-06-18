@@ -51,7 +51,7 @@ const navGroups: { label: string; items: { to: string; icon: React.ElementType; 
     label: 'Quản trị',
     items: [
       { to: '/masterdata/materials', icon: Tag,     label: 'Mã hàng',            module: 'materials' as ModuleKey },
-      { to: '/masterdata/users',     icon: UserCog, label: 'Quản lý người dùng', adminOnly: true },
+      { to: '/masterdata/users',     icon: UserCog, label: 'Quản lý người dùng', module: 'employees' as ModuleKey },
     ],
   },
 ]

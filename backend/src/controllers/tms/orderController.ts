@@ -336,11 +336,14 @@ export async function bulkUpdateOrderDate(req: Request, res: Response) {
     const now = new Date().toISOString()
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await (supabase.from('TmsOrder') as any)
+    // Chỉ đổi ngày đơn PENDING (đơn đã BOOKED/ARRIVED không được đổi → tránh lệch slot booked_count)
+    const { data, error } = await (supabase.from('TmsOrder') as any)
       .update({ date, updated_by: user?.name || null, updated_at: now })
       .in('id', ids)
+      .eq('status', 'PENDING')
+      .select('id')
     if (error) return fail(res, error.message)
-    return ok(res, { updated: ids.length })
+    return ok(res, { updated: (data ?? []).length })
   } catch (e) { return fail(res, String(e)) }
 }
 

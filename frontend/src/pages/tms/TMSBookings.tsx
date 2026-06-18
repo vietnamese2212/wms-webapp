@@ -2197,9 +2197,10 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                               disabled={creatingInbound}
                               onClick={async () => {
                                 if (!order) return
-                                for (const g of missingMaterials) {
-                                  await createOneInbound({ tmsOrderId: order.id, material_id: g.material_id })
-                                }
+                                // Bulk song song (CLAUDE.md): không for...of await tuần tự
+                                await Promise.all(missingMaterials.map(g =>
+                                  createOneInbound({ tmsOrderId: order.id, material_id: g.material_id })
+                                ))
                               }}>
                               {creatingInbound ? 'Đang tạo...' : 'Tạo phiếu lại'}
                             </Button>

@@ -742,6 +742,10 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
 export default function UserManagement() {
   const user = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
+  const canCreateEmp = can(perms, 'employees', 'create')
+  const canEditEmp   = can(perms, 'employees', 'edit')
+  const canSetPwd    = can(perms, 'employees', 'set_password')
+  const canManageRoles = can(perms, 'user_admin', 'manage_roles')
 
   const [search,       setSearch]       = useState('')
   const [filterDept,   setFilterDept]   = useState('__all__')
@@ -806,9 +810,11 @@ export default function UserManagement() {
                   ? `${rawEmployees.filter(e => !e.deleted_at).length} nhân viên · ${rawEmployees.filter(e => !!e.deleted_at).length} đã ẩn`
                   : `${employees.length} nhân viên`}
             </p>
-            <Button size="sm" className="gap-1.5" onClick={() => { setEditingEmp(null); setShowEmpDlg(true) }}>
-              <Plus className="h-4 w-4" /> Thêm nhân viên
-            </Button>
+            {canCreateEmp && (
+              <Button size="sm" className="gap-1.5" onClick={() => { setEditingEmp(null); setShowEmpDlg(true) }}>
+                <Plus className="h-4 w-4" /> Thêm nhân viên
+              </Button>
+            )}
           </div>
 
           <div className="flex gap-2 flex-wrap">
@@ -851,9 +857,11 @@ export default function UserManagement() {
                 <div className="p-12 text-center text-slate-400 space-y-2">
                   <User2 className="h-10 w-10 mx-auto opacity-30" />
                   <p className="text-sm">Chưa có nhân viên nào</p>
-                  <Button size="sm" variant="outline" onClick={() => { setEditingEmp(null); setShowEmpDlg(true) }}>
-                    <Plus className="h-4 w-4 mr-1" /> Thêm nhân viên đầu tiên
-                  </Button>
+                  {canCreateEmp && (
+                    <Button size="sm" variant="outline" onClick={() => { setEditingEmp(null); setShowEmpDlg(true) }}>
+                      <Plus className="h-4 w-4 mr-1" /> Thêm nhân viên đầu tiên
+                    </Button>
+                  )}
                 </div>
               ) : (
                 <div className="overflow-x-auto">
@@ -929,16 +937,20 @@ export default function UserManagement() {
                               )
                             ) : (
                               <div className="flex items-center gap-1">
-                                <button title="Đặt mật khẩu"
-                                  className="text-slate-400 hover:text-amber-500 transition-colors p-1"
-                                  onClick={e => { e.stopPropagation(); setPwdEmp(emp) }}>
-                                  <KeyRound className="h-3.5 w-3.5" />
-                                </button>
-                                <button title="Sửa thông tin"
-                                  className="text-slate-400 hover:text-blue-500 transition-colors p-1"
-                                  onClick={e => { e.stopPropagation(); setEditingEmp(emp); setShowEmpDlg(true) }}>
-                                  <Pencil className="h-3.5 w-3.5" />
-                                </button>
+                                {canSetPwd && (
+                                  <button title="Đặt mật khẩu"
+                                    className="text-slate-400 hover:text-amber-500 transition-colors p-1"
+                                    onClick={e => { e.stopPropagation(); setPwdEmp(emp) }}>
+                                    <KeyRound className="h-3.5 w-3.5" />
+                                  </button>
+                                )}
+                                {canEditEmp && (
+                                  <button title="Sửa thông tin"
+                                    className="text-slate-400 hover:text-blue-500 transition-colors p-1"
+                                    onClick={e => { e.stopPropagation(); setEditingEmp(emp); setShowEmpDlg(true) }}>
+                                    <Pencil className="h-3.5 w-3.5" />
+                                  </button>
+                                )}
                                 {can(perms, 'employees', 'delete') && emp.id !== user?.id && (
                                   <button title="Xóa nhân viên"
                                     className="text-slate-400 hover:text-red-500 transition-colors p-1"
@@ -985,9 +997,11 @@ export default function UserManagement() {
         <TabsContent value="departments" className="space-y-3">
           <div className="flex items-center justify-between">
             <p className="text-xs text-slate-500">{departments.length} phòng ban</p>
-            <Button size="sm" className="gap-1.5" onClick={() => { setEditingDept(null); setShowDeptDlg(true) }}>
-              <Plus className="h-4 w-4" /> Thêm phòng ban
-            </Button>
+            {canManageRoles && (
+              <Button size="sm" className="gap-1.5" onClick={() => { setEditingDept(null); setShowDeptDlg(true) }}>
+                <Plus className="h-4 w-4" /> Thêm phòng ban
+              </Button>
+            )}
           </div>
           <div className="flex gap-3 items-start">
             <Card className="flex-1 min-w-0">
@@ -995,9 +1009,11 @@ export default function UserManagement() {
                 <div className="p-12 text-center text-slate-400 space-y-2">
                   <Building2 className="h-10 w-10 mx-auto opacity-30" />
                   <p className="text-sm">Chưa có phòng ban nào</p>
-                  <Button size="sm" variant="outline" onClick={() => { setEditingDept(null); setShowDeptDlg(true) }}>
-                    <Plus className="h-4 w-4 mr-1" /> Thêm phòng ban đầu tiên
-                  </Button>
+                  {canManageRoles && (
+                    <Button size="sm" variant="outline" onClick={() => { setEditingDept(null); setShowDeptDlg(true) }}>
+                      <Plus className="h-4 w-4 mr-1" /> Thêm phòng ban đầu tiên
+                    </Button>
+                  )}
                 </div>
               ) : (
                 <div className="overflow-x-auto">
@@ -1023,10 +1039,12 @@ export default function UserManagement() {
                             </Badge>
                           </TableCell>
                           <TableCell className="px-2 py-2">
-                            <button title="Sửa" className="text-slate-400 hover:text-blue-500 transition-colors p-1"
-                              onClick={e => { e.stopPropagation(); setEditingDept(d); setShowDeptDlg(true) }}>
-                              <Pencil className="h-3.5 w-3.5" />
-                            </button>
+                            {canManageRoles && (
+                              <button title="Sửa" className="text-slate-400 hover:text-blue-500 transition-colors p-1"
+                                onClick={e => { e.stopPropagation(); setEditingDept(d); setShowDeptDlg(true) }}>
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                            )}
                           </TableCell>
                         </TableRow>
                       ))}
@@ -1058,9 +1076,11 @@ export default function UserManagement() {
         <TabsContent value="job-titles" className="space-y-3">
           <div className="flex items-center justify-between">
             <p className="text-xs text-slate-500">{jobTitles.length} chức danh</p>
-            <Button size="sm" className="gap-1.5" onClick={() => { setEditingJt(null); setShowJtDlg(true) }}>
-              <Plus className="h-4 w-4" /> Thêm chức danh
-            </Button>
+            {canManageRoles && (
+              <Button size="sm" className="gap-1.5" onClick={() => { setEditingJt(null); setShowJtDlg(true) }}>
+                <Plus className="h-4 w-4" /> Thêm chức danh
+              </Button>
+            )}
           </div>
           <Select value={filterDeptJt} onValueChange={setFilterDeptJt}>
             <SelectTrigger className="h-8 text-sm w-[200px]">
@@ -1080,9 +1100,11 @@ export default function UserManagement() {
                 <div className="p-12 text-center text-slate-400 space-y-2">
                   <Briefcase className="h-10 w-10 mx-auto opacity-30" />
                   <p className="text-sm">Chưa có chức danh nào</p>
-                  <Button size="sm" variant="outline" onClick={() => { setEditingJt(null); setShowJtDlg(true) }}>
-                    <Plus className="h-4 w-4 mr-1" /> Thêm chức danh đầu tiên
-                  </Button>
+                  {canManageRoles && (
+                    <Button size="sm" variant="outline" onClick={() => { setEditingJt(null); setShowJtDlg(true) }}>
+                      <Plus className="h-4 w-4 mr-1" /> Thêm chức danh đầu tiên
+                    </Button>
+                  )}
                 </div>
               ) : (
                 <div className="overflow-x-auto">
@@ -1108,10 +1130,12 @@ export default function UserManagement() {
                             </Badge>
                           </TableCell>
                           <TableCell className="px-2 py-2">
-                            <button title="Sửa" className="text-slate-400 hover:text-blue-500 transition-colors p-1"
-                              onClick={e => { e.stopPropagation(); setEditingJt(jt); setShowJtDlg(true) }}>
-                              <Pencil className="h-3.5 w-3.5" />
-                            </button>
+                            {canManageRoles && (
+                              <button title="Sửa" className="text-slate-400 hover:text-blue-500 transition-colors p-1"
+                                onClick={e => { e.stopPropagation(); setEditingJt(jt); setShowJtDlg(true) }}>
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                            )}
                           </TableCell>
                         </TableRow>
                       ))}

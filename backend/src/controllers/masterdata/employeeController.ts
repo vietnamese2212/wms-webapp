@@ -220,7 +220,8 @@ export async function updateEmployee(req: Request, res: Response) {
     }
 
     // Build update object explicitly — exclude undefined fields so Supabase doesn't overwrite them with null
-    const updates: Record<string, unknown> = { module_permissions: null, updated_at: new Date().toISOString(), updated_by: (req as any).user?.name || null }
+    // (quyền nằm trên JobTitle, không phải Employee — không đụng module_permissions ở đây)
+    const updates: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: (req as any).user?.name || null }
     if (name              !== undefined) updates.name              = name
     if (phone             !== undefined) updates.phone             = phone
     if (email             !== undefined) updates.email             = email

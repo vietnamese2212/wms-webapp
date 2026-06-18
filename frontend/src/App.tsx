@@ -122,7 +122,7 @@ export default function App() {
         {/* Masterdata */}
         <Route
           path="/masterdata/users"
-          element={<PermissionRoute module="employees"><UserManagement /></PermissionRoute>}
+          element={<PermissionRoute module="user_admin"><UserManagement /></PermissionRoute>}
         />
         <Route
           path="/masterdata/materials"

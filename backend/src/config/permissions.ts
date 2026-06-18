@@ -7,7 +7,7 @@ export const ALL_PERMISSIONS: Record<string, string[]> = {
   stocktake:    ['view', 'create', 'scan', 'complete'],
   locations:    ['view', 'create', 'edit', 'delete'],
   employees:    ['view', 'create', 'edit', 'set_password', 'delete'],
-  vehicles:     ['view', 'create', 'edit'],
+  user_admin:   ['view', 'manage_roles'],
   deliveries:   ['view', 'create', 'edit'],
   schedule:     ['view', 'create', 'approve'],
   wms_settings: ['view', 'manage_zone', 'manage_global'],

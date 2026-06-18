@@ -12,10 +12,10 @@ const router = Router()
 
 // Warehouse
 router.get('/warehouses',        warehouse.listWarehouses)
-router.post('/warehouses',       warehouse.createWarehouse)
+router.post('/warehouses',       requirePerm('wms_settings', 'manage_global'), warehouse.createWarehouse)
 router.get('/warehouses/:id',    warehouse.getWarehouse)
-router.put('/warehouses/:id',    warehouse.updateWarehouse)
-router.delete('/warehouses/:id', warehouse.deleteWarehouse)
+router.put('/warehouses/:id',    requirePerm('wms_settings', 'manage_global'), warehouse.updateWarehouse)
+router.delete('/warehouses/:id', requirePerm('wms_settings', 'manage_global'), warehouse.deleteWarehouse)
 
 // Location
 router.get('/locations/sub-groups',  location.listSubGroups)   // ?warehouse_id=xxx
@@ -27,10 +27,10 @@ router.delete('/locations/:id',      requirePerm('locations', 'delete'), locatio
 
 // Manufacturer
 router.get('/manufacturers',         manufacturer.listManufacturers)
-router.post('/manufacturers',        manufacturer.createManufacturer)
+router.post('/manufacturers',        requirePerm('materials', 'create'), manufacturer.createManufacturer)
 router.get('/manufacturers/:id',     manufacturer.getManufacturer)
-router.put('/manufacturers/:id',     manufacturer.updateManufacturer)
-router.delete('/manufacturers/:id',  manufacturer.deleteManufacturer)
+router.put('/manufacturers/:id',     requirePerm('materials', 'edit'),   manufacturer.updateManufacturer)
+router.delete('/manufacturers/:id',  requirePerm('materials', 'delete'), manufacturer.deleteManufacturer)
 
 // Material
 router.get('/materials',            requireAnyPerm(['materials', 'view'], ['inbound', 'view'], ['inbound', 'create']), material.listMaterials)
@@ -42,27 +42,27 @@ router.delete('/materials/:id',     requirePerm('materials', 'delete'), material
 
 // ImportShift (Ca nhập)
 router.get('/import-shifts',        shiftQa.listImportShifts)
-router.post('/import-shifts',       shiftQa.createImportShift)
-router.put('/import-shifts/:id',    shiftQa.updateImportShift)
+router.post('/import-shifts',       requirePerm('wms_settings', 'manage_global'), shiftQa.createImportShift)
+router.put('/import-shifts/:id',    requirePerm('wms_settings', 'manage_global'), shiftQa.updateImportShift)
 
 // QAStatus (Tình trạng QA)
 router.get('/qa-statuses',          shiftQa.listQAStatuses)
-router.post('/qa-statuses',         shiftQa.createQAStatus)
-router.put('/qa-statuses/:id',      shiftQa.updateQAStatus)
+router.post('/qa-statuses',         requirePerm('wms_settings', 'manage_global'), shiftQa.createQAStatus)
+router.put('/qa-statuses/:id',      requirePerm('wms_settings', 'manage_global'), shiftQa.updateQAStatus)
 
-// Department + JobTitle
+// Department + JobTitle (cấu trúc tổ chức + phân quyền chức danh)
 router.get('/departments',          department.listDepartments)
-router.post('/departments',         department.createDepartment)
-router.put('/departments/:id',      department.updateDepartment)
+router.post('/departments',         requirePerm('user_admin', 'manage_roles'), department.createDepartment)
+router.put('/departments/:id',      requirePerm('user_admin', 'manage_roles'), department.updateDepartment)
 router.get('/job-titles',           department.listJobTitles)    // ?department_id=
-router.post('/job-titles',          department.createJobTitle)
-router.put('/job-titles/:id',       department.updateJobTitle)
-router.patch('/job-titles/:id/parent', department.setJobTitleParent)
+router.post('/job-titles',          requirePerm('user_admin', 'manage_roles'), department.createJobTitle)
+router.put('/job-titles/:id',       requirePerm('user_admin', 'manage_roles'), department.updateJobTitle)
+router.patch('/job-titles/:id/parent', requirePerm('user_admin', 'manage_roles'), department.setJobTitleParent)
 
 // Employee (nhân sự + phân quyền)
-router.get('/employees',            requirePerm('employees', 'view'), employee.listEmployees)
+router.get('/employees',            requireAnyPerm(['employees', 'view'], ['user_admin', 'view']), employee.listEmployees)
 router.post('/employees',           requirePerm('employees', 'create'), employee.createEmployee)
-router.get('/employees/:id',        requirePerm('employees', 'view'), employee.getEmployee)
+router.get('/employees/:id',        requireAnyPerm(['employees', 'view'], ['user_admin', 'view']), employee.getEmployee)
 router.patch('/employees/:id',              requirePerm('employees', 'edit'), employee.updateEmployee)
 router.patch('/employees/:id/set-password', requirePerm('employees', 'set_password'), employee.setPassword)
 router.put('/employees/:id/warehouses',     requirePerm('employees', 'edit'), employee.setWarehouseAccess)

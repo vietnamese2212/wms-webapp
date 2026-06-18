@@ -92,6 +92,13 @@ export const MODULES = {
       delete:       'Xóa nhân viên',
     },
   },
+  user_admin: {
+    label: 'Quản lý người dùng',
+    actions: {
+      view:         'Mở trang Quản lý người dùng',
+      manage_roles: 'Sửa phòng ban / chức danh & phân quyền',
+    },
+  },
   deliveries: {
     label: 'Giao hàng',
     actions: {

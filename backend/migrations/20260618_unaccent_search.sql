@@ -6,7 +6,7 @@ CREATE EXTENSION IF NOT EXISTS unaccent;
 
 -- Trả id Material khớp term trên mã / mô tả / tên ngắn / mã cũ (bỏ dấu + không phân biệt hoa thường).
 CREATE OR REPLACE FUNCTION omni_material_ids(term text)
-RETURNS TABLE(id uuid)
+RETURNS TABLE(id text)
 LANGUAGE sql STABLE AS $$
   SELECT m.id FROM "Material" m
   WHERE unaccent(lower(coalesce(m.material_code, '')))        LIKE unaccent(lower('%' || term || '%'))
@@ -18,7 +18,7 @@ $$;
 
 -- Trả id Location khớp term trên mã vị trí / sub_code / sub_name.
 CREATE OR REPLACE FUNCTION omni_location_ids(term text)
-RETURNS TABLE(id uuid)
+RETURNS TABLE(id text)
 LANGUAGE sql STABLE AS $$
   SELECT l.id FROM "Location" l
   WHERE unaccent(lower(coalesce(l.location_code, ''))) LIKE unaccent(lower('%' || term || '%'))

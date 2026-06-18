@@ -23,41 +23,60 @@ async function blockIfTargetSuperadmin(req: Request, res: Response): Promise<boo
   return false
 }
 
-// Tập employee id được phép thấy: (cùng kho được gán) ∩ (cấp dưới đệ quy + chính mình).
-// null = thấy tất cả (superadmin).
+// Tập employee id được phép thấy: (cùng kho được gán) ∩ (cấp dưới theo sơ đồ chức danh + chính mình).
+// Sơ đồ tổ chức nằm ở JobTitle.parent_id (KHÔNG phải Employee.manager_id). null = thấy tất cả (superadmin).
 async function visibleEmployeeIds(req: Request): Promise<Set<string> | null> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const u = (req as any).user
   if (!u) return new Set<string>()
   if (u.name === 'Admin') return null
 
-  // 1. Cây cấp dưới (đệ quy) của chính mình + bản thân
+  const self: string = u.sub
+  const allowed = new Set<string>([self]) // luôn thấy chính mình
+
+  // 1. Chức danh của người dùng (JWT không có job_title_id → đọc từ DB)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: graph } = await (supabase.from('Employee') as any).select('id, manager_id')
-  const childrenOf = new Map<string, string[]>()
-  for (const r of ((graph ?? []) as { id: string; manager_id: string | null }[])) {
-    if (!r.manager_id) continue
-    const arr = childrenOf.get(r.manager_id) ?? []
-    arr.push(r.id); childrenOf.set(r.manager_id, arr)
-  }
-  const subtree = new Set<string>([u.sub])
-  const stack: string[] = [u.sub]
-  while (stack.length) {
-    const cur = stack.pop() as string
-    for (const c of (childrenOf.get(cur) ?? [])) if (!subtree.has(c)) { subtree.add(c); stack.push(c) }
+  const { data: me } = await (supabase.from('Employee') as any)
+    .select('job_title_id').eq('id', self).maybeSingle()
+  const myJt: string | null = me?.job_title_id ?? null
+
+  if (myJt) {
+    // Tập chức danh cấp dưới (đệ quy) của chức danh mình — không gồm chính chức danh mình (chỉ cấp dưới)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: jts } = await (supabase.from('JobTitle') as any).select('id, parent_id')
+    const childrenOf = new Map<string, string[]>()
+    for (const r of ((jts ?? []) as { id: string; parent_id: string | null }[])) {
+      if (!r.parent_id) continue
+      const arr = childrenOf.get(r.parent_id) ?? []
+      arr.push(r.id); childrenOf.set(r.parent_id, arr)
+    }
+    const descJt = new Set<string>()
+    const stack: string[] = [...(childrenOf.get(myJt) ?? [])]
+    while (stack.length) {
+      const cur = stack.pop() as string
+      if (descJt.has(cur)) continue
+      descJt.add(cur)
+      for (const c of (childrenOf.get(cur) ?? [])) stack.push(c)
+    }
+    if (descJt.size) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: subs } = await (supabase.from('Employee') as any)
+        .select('id').in('job_title_id', [...descJt])
+      for (const s of ((subs ?? []) as { id: string }[])) allowed.add(s.id)
+    }
   }
 
   // 2. Giao với phạm vi kho (nếu ASSIGNED — NATIONAL thì không giới hạn kho)
   if (u.warehouse_scope === 'ASSIGNED') {
     const whIds: string[] = u.warehouse_ids ?? []
-    if (!whIds.length) return new Set<string>([u.sub])
+    if (!whIds.length) return new Set<string>([self])
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: wa } = await (supabase.from('UserWarehouseAccess') as any)
       .select('employee_id').in('warehouse_id', whIds)
     const inWh = new Set(((wa ?? []) as { employee_id: string }[]).map(r => r.employee_id))
-    return new Set<string>([...subtree].filter(id => id === u.sub || inWh.has(id)))
+    return new Set<string>([...allowed].filter(id => id === self || inWh.has(id)))
   }
-  return subtree
+  return allowed
 }
 
 function generateTempPassword(): string {

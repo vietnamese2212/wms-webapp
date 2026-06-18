@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import {
   mockInventory, mockTransactions, mockVehicles,
   mockDeliveries, mockEmployees, mockSchedules,
@@ -687,6 +687,7 @@ export function useInventoryEntries(params?: {
     queryKey: ['inventory-entries', params],
     enabled,
     staleTime: 30_000,
+    placeholderData: keepPreviousData, // đổi trang/lọc: giữ dữ liệu cũ, không trắng bảng (cảm giác tức thì)
     queryFn: async () => {
       const { warehouse_ids, categories, filter_locations, filter_material_ids, qa_status_ids, filter_cycles, filter_machines, date_pct_ranges, ...rest } = params ?? {}
       const { data } = await apiClient.get('/wms/inventory', {
@@ -1701,6 +1702,7 @@ export function useOutboundScanLog(params: ScanLogParams, enabled = true) {
       return data.data as { rows: OutboundScanLogEntry[]; total: number; page: number; limit: number }
     },
     staleTime: 30_000,
+    placeholderData: keepPreviousData, // đổi trang/lọc: giữ dữ liệu cũ, không trắng bảng
   })
 }
 

@@ -2,38 +2,21 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import { Shell } from '@/components/layout/Shell'
 import { useAuthStore } from '@/stores/authStore'
 import { canAccess, canAccessAny, isAdmin, type ModuleKey, type ModulePermissions } from '@/config/permissions'
+import { Pages } from '@/routes/lazyPages'
 
-import Dashboard from '@/pages/Dashboard'
-import Inventory from '@/pages/wms/Inventory'
-import Inbound       from '@/pages/wms/Inbound'
-import InboundDetail from '@/pages/wms/InboundDetail'
-import Outbound           from '@/pages/wms/Outbound'
-import OutboundDetail     from '@/pages/wms/OutboundDetail'
-import OutboundItemDetail from '@/pages/wms/OutboundItemDetail'
-import OutboundScanLog    from '@/pages/wms/OutboundScanLog'
-import LoosePicking           from '@/pages/wms/LoosePicking'
-import LoosePickingDetail     from '@/pages/wms/LoosePickingDetail'
-import LoosePickingItemDetail from '@/pages/wms/LoosePickingItemDetail'
-import Locations         from '@/pages/wms/Locations'
-import Stocktake         from '@/pages/wms/Stocktake'
-import StocktakeDashboard from '@/pages/wms/StocktakeDashboard'
-import PalletLabels      from '@/pages/wms/PalletLabels'
-import PalletOps         from '@/pages/wms/PalletOps'
-import Deliveries from '@/pages/tms/Deliveries'
-import WMSSettings from '@/pages/wms/WMSSettings'
-import TMSSettings from '@/pages/tms/TMSSettings'
-import TMSBookings from '@/pages/tms/TMSBookings'
-import TMSReport   from '@/pages/tms/TMSReport'
-import GateRegistration from '@/pages/tms/GateRegistration'
-import Schedule from '@/pages/hr/Schedule'
-import LeaveManagement from '@/pages/hr/LeaveManagement'
-import Assignments from '@/pages/hr/Assignments'
-import Attendance from '@/pages/hr/Attendance'
-import OrgChart from '@/pages/hr/OrgChart'
-import UserManagement from '@/pages/masterdata/UserManagement'
-import Materials       from '@/pages/masterdata/Materials'
-import Settings from '@/pages/Settings'
+// Login giữ eager (màn đầu khi chưa đăng nhập). Mọi trang còn lại tách chunk
+// theo route (code-splitting, xem routes/lazyPages.ts) → bundle đầu nhỏ.
 import Login from '@/pages/Login'
+
+const {
+  Dashboard, Inventory, Inbound, InboundDetail,
+  Outbound, OutboundDetail, OutboundItemDetail, OutboundScanLog,
+  LoosePicking, LoosePickingDetail, LoosePickingItemDetail,
+  Locations, Stocktake, StocktakeDashboard, PalletLabels, PalletOps,
+  Deliveries, WMSSettings, TMSSettings, TMSBookings, TMSReport, GateRegistration,
+  Schedule, LeaveManagement, Assignments, Attendance, OrgChart,
+  UserManagement, Materials, Settings,
+} = Pages
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore()

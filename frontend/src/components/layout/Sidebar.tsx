@@ -5,6 +5,7 @@ import {
   BarChart3, ClipboardList, UserCog, Scissors, ScanLine, ClipboardCheck, BarChart2, ShieldCheck, Tag, QrCode, CalendarRange, CalendarCheck, Network,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { prefetchPage } from '@/routes/lazyPages'
 import { useUIStore } from '@/stores/uiStore'
 import { useAuthStore } from '@/stores/authStore'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -93,6 +94,8 @@ function NavItemComponent({ item, collapsed }: { item: NavItem; collapsed: boole
   const linkContent = (
     <NavLink
       to={item.to}
+      onMouseEnter={() => prefetchPage(item.to)}
+      onFocus={() => prefetchPage(item.to)}
       className={cn(
         'relative flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
         isActive

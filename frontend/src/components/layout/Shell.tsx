@@ -1,9 +1,10 @@
-import { useEffect } from 'react'
+import { Suspense, useEffect } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Outlet, useLocation } from 'react-router-dom'
 import { Sidebar } from './Sidebar'
 import { Header } from './Header'
 import { BottomNav } from './BottomNav'
+import { PageFallback } from '@/components/shared/PageFallback'
 import { Toaster } from '@/components/ui/toaster'
 import { apiClient } from '@/api/client'
 import { connectRealtimeEvents } from '@/api/realtimeEvents'
@@ -44,7 +45,9 @@ export function Shell() {
         <main className="flex-1 overflow-y-auto pb-16 lg:pb-0 bg-slate-100">
           {/* Page transition: fade + trượt nhẹ mỗi lần đổi route (key theo pathname) */}
           <div key={location.pathname} className="h-full animate-in fade-in slide-in-from-bottom-1 duration-300 ease-out">
-            <Outlet />
+            <Suspense fallback={<PageFallback />}>
+              <Outlet />
+            </Suspense>
           </div>
         </main>
       </div>

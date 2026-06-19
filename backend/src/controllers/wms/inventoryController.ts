@@ -322,7 +322,8 @@ export async function summaryInventory(req: Request, res: Response) {
     (supabase.from('InventoryEntry') as any).select(
       'id, warehouse_id, production_date, cartons_imported, cartons_remaining, material_id, '
       + 'location:Location(warehouse:Warehouse(id, name)), '
-      + 'material:Material(material_code, short_name, category, shelf_life_days)'
+      // !inner: lọc category (material.category) phải loại HẲN entry khác loại, không để lọt với material=null
+      + 'material:Material!inner(material_code, short_name, category, shelf_life_days)'
     ).limit(100_000),
     r.params
   )

@@ -785,7 +785,8 @@ export default function Inventory() {
                         g={g}
                         dense={dense}
                         onClick={() => {
-                          setInventory({ filterMaterialIds: [g.material_id], warehouseIds: g.warehouse_id ? [g.warehouse_id] : f.warehouseIds, page: 1 })
+                          // Drill-down "xem pallet của mã đó": chỉ lọc theo mã hàng, giữ nguyên filter kho hiện có.
+                          setInventory({ filterMaterialIds: [g.material_id], page: 1 })
                           localStorage.setItem('inventory_view_mode', 'pallet')
                           setAggregate(false)
                         }}

@@ -139,31 +139,18 @@ export async function listOrders(req: Request, res: Response) {
   try {
     const { warehouse_id, status, material_id, material_category, search, date, date_from, date_to, shift_id, from_gdo_id } = req.query as Record<string, string>
 
-    let query = supabase.from('ProductionImport').select(ORDER_SELECT)
-      .order('import_date', { ascending: false })
-      .order('created_at',  { ascending: false })
-
     // Enforce user's warehouse scope from JWT
     const scopeWarehouses = req.user?.warehouse_scope !== 'NATIONAL'
       ? (req.user?.warehouse_ids ?? [])
       : []
+    let effectiveWarehouses: string[] | null = null
     if (scopeWarehouses.length > 0) {
       const effective = warehouse_id
         ? scopeWarehouses.filter(id => id === warehouse_id)
         : scopeWarehouses
       if (effective.length === 0) { ok(res, []); return }
-      query = effective.length === 1
-        ? query.eq('warehouse_id', effective[0])
-        : query.in('warehouse_id', effective)
-    } else if (warehouse_id) {
-      query = query.eq('warehouse_id', warehouse_id)
+      effectiveWarehouses = effective
     }
-
-    if (status)      query = query.eq('status', status)
-    else             query = query.neq('status', 'CANCELLED')
-    if (material_id) query = query.eq('material_id', material_id)
-    if (shift_id)    query = query.eq('shift_id', shift_id)
-    if (from_gdo_id) query = query.eq('from_gdo_id', from_gdo_id)
 
     // Lọc theo warehouse_type lưu trực tiếp trên order
     // NATIONAL scope: không giới hạn category, chỉ lọc theo query param nếu có
@@ -171,35 +158,61 @@ export async function listOrders(req: Request, res: Response) {
     const isNational = req.user?.warehouse_scope === 'NATIONAL'
     const scopeCategories = isNational ? [] : (req.user?.allowed_categories ?? []).map(normCat)
 
-    if (material_category) {
-      // TRANSFER imports always visible regardless of warehouse_type — use or() to bypass
-      query = query.or(`warehouse_type.eq."${material_category}",source_type.eq.TRANSFER`)
-    }
-    // scopeCategories: không lọc ở PostgREST — áp dụng sau khi có data (tránh lỗi .or() với tiếng Việt)
-
     // Date range – support legacy ?date= and new ?date_from= / ?date_to=
     const from = date_from || date
     const to   = date_to   || date
-    if (from) query = query.gte('import_date', from)
+    let nextDay: string | null = null
     if (to) {
       const [y, m, d] = to.split('-').map(Number)
-      const nextDay = new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10)
-      query = query.lt('import_date', nextDay)
+      nextDay = new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10)
     }
 
+    // Search → resolve material ids ONCE (trước khi phân trang)
+    let searchFilters: string | null = null
     if (search) {
       const { data: mats } = await supabase
         .from('Material').select('id')
         .or(`material_code.ilike.%${search}%,short_name.ilike.%${search}%`)
       const matIds = (mats ?? []).map((m: { id: string }) => m.id)
-
       const filters = [`import_code.ilike.%${search}%`]
       if (matIds.length > 0) filters.push(`material_id.in.(${matIds.join(',')})`)
-      query = query.or(filters.join(','))
+      searchFilters = filters.join(',')
     }
 
-    const { data, error } = await query
-    if (error) throw error
+    // Rebuild query mỗi trang (PostgREST builder dùng 1 lần) — phân trang để vượt cap ~1000 dòng/response.
+    const buildQuery = () => {
+      let q = supabase.from('ProductionImport').select(ORDER_SELECT)
+        .order('import_date', { ascending: false })
+        .order('created_at',  { ascending: false })
+      if (effectiveWarehouses) {
+        q = effectiveWarehouses.length === 1
+          ? q.eq('warehouse_id', effectiveWarehouses[0])
+          : q.in('warehouse_id', effectiveWarehouses)
+      } else if (warehouse_id) {
+        q = q.eq('warehouse_id', warehouse_id)
+      }
+      if (status)      q = q.eq('status', status)
+      else             q = q.neq('status', 'CANCELLED')
+      if (material_id) q = q.eq('material_id', material_id)
+      if (shift_id)    q = q.eq('shift_id', shift_id)
+      if (from_gdo_id) q = q.eq('from_gdo_id', from_gdo_id)
+      if (material_category) q = q.or(`warehouse_type.eq."${material_category}",source_type.eq.TRANSFER`)
+      if (from)      q = q.gte('import_date', from)
+      if (nextDay)   q = q.lt('import_date', nextDay)
+      if (searchFilters) q = q.or(searchFilters)
+      return q
+    }
+
+    const PAGE = 1000
+    const rows: unknown[] = []
+    for (let page = 0; ; page++) {
+      const { data: batch, error } = await buildQuery().range(page * PAGE, page * PAGE + PAGE - 1)
+      if (error) throw error
+      const arr = batch ?? []
+      rows.push(...arr)
+      if (arr.length < PAGE) break
+    }
+    const data = rows
 
     // Post-filter: TRANSFER luôn hiển thị bất kể category scope của user
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

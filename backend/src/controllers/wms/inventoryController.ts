@@ -96,6 +96,41 @@ function matchDatePct(pct: number, range: string): boolean {
   return false
 }
 
+// PostgREST ở project này TẮT aggregate functions + cap ~1000 dòng/response → không dùng được
+// sum()/.limit(N) lớn. Helper lấy TẤT CẢ dòng khớp filter bằng cách phân trang 1000 (song song theo
+// count đã biết) rồi gộp ở Node. Dùng cho summary (gom nhóm) và tổng thùng tồn. Throw nếu lỗi.
+// (Tối ưu sau: chuyển sang RPC để gom phía DB trong 1 call.)
+async function fetchAllInventory(select: string, params: FilterParams, datePctIds: string[] | null): Promise<any[]> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let cq = applyInventoryFilters((supabase.from('InventoryEntry') as any).select(select, { count: 'exact', head: true }), params)
+  if (datePctIds !== null) cq = cq.in('id', datePctIds)
+  const { count, error: cErr } = await cq
+  if (cErr) throw new Error(cErr.message)
+  const n = count ?? 0
+  if (n === 0) return []
+
+  const PAGE = 1000
+  const reqs = []
+  for (let p = 0; p * PAGE < n; p++) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let q = applyInventoryFilters((supabase.from('InventoryEntry') as any).select(select), params)
+      .order('id', { ascending: true })
+      .range(p * PAGE, p * PAGE + PAGE - 1)
+    if (datePctIds !== null) q = q.in('id', datePctIds)
+    reqs.push(q)
+  }
+  const results = await Promise.all(reqs)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rows: any[] = []
+  for (const r of results) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if ((r as any).error) throw new Error((r as any).error.message)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    rows.push(...((r as any).data ?? []))
+  }
+  return rows
+}
+
 // Resolve scope (kho/loại kho theo JWT) + tất cả filter + pre-filter %date → dùng CHUNG cho cả
 // view pallet (listInventory) lẫn view tổng hợp (summaryInventory) để filter khớp tuyệt đối.
 interface ResolvedFilter {
@@ -251,14 +286,14 @@ async function resolveInventoryFilter(req: Request): Promise<ResolvedFilter> {
   // Pre-filter by %date: fetch ALL IDs (no pagination) with same filters, compute pct in JS
   let datePctIds: string[] | null = null
   if (datePctRanges.length > 0) {
-    // Always restrict pre-filter to active stock — %date on EXPORTED entries is meaningless
-    // and would inflate row count beyond the 100k limit unnecessarily
-    const { data: preEntries } = await applyInventoryFilters(
-      (supabase.from('InventoryEntry') as any)
-        .select('id, production_date, material:Material(shelf_life_days)')
-        .limit(100_000),
-      { ...params, status: '' }
-    )
+    // Always restrict pre-filter to active stock — %date on EXPORTED entries is meaningless.
+    // Phân trang 1000 (cap response) để lấy ĐỦ dòng tính pct, không bị thiếu khi >1000 dòng.
+    let preEntries: any[]
+    try {
+      preEntries = await fetchAllInventory('id, production_date, material:Material(shelf_life_days)', { ...params, status: '' }, null)
+    } catch (e) {
+      return { ...base, error: (e as Error).message }
+    }
     const now = Date.now()
     datePctIds = (preEntries ?? [])
       .filter((e: any) => {
@@ -297,24 +332,19 @@ export async function listInventory(req: Request, res: Response) {
     .order('id', { ascending: true })
     .range(r.offset, r.offset + r.limitNum - 1)
 
-  // Tổng thùng tồn = SQL sum() — server-side aggregate, KHÔNG bị cap 1000 dòng như khi fetch rows.
-  // Khi lọc category, thêm Material!inner để filter loại đúng entry (embedded non-inner làm sum lỗi → 0);
-  // PostgREST khi đó gom theo category nên reduce tổng các dòng trả về. Không lọc category: 1 dòng tổng.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let aggQ = applyInventoryFilters(
-    (supabase.from('InventoryEntry') as any).select(
-      catActive ? 'cartons_remaining.sum(), material:Material!inner(category)' : 'cartons_remaining.sum()'
-    ),
-    r.params)
-  if (r.datePctIds !== null) aggQ = aggQ.in('id', r.datePctIds)
+  const { data, count, error } = await mainQ
+  if (error) return fail(res, 500, 'DB_ERROR', error.message)
 
-  const [{ data, count, error }, { data: aggData, error: aggErr }] = await Promise.all([mainQ, aggQ])
-
-  if (error)  return fail(res, 500, 'DB_ERROR', error.message)
-  if (aggErr) return fail(res, 500, 'DB_ERROR', aggErr.message)
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const total_cartons_remaining = ((aggData as any[]) ?? []).reduce((s, row) => s + Number(row?.sum ?? 0), 0)
+  // Tổng thùng tồn: aggregate functions bị tắt + cap 1000 dòng → cộng theo trang (helper). Lỗi sum
+  // KHÔNG chặn list (rows vẫn hiện), chỉ để tổng = 0 và log.
+  const sumSelect = catActive ? 'cartons_remaining, material:Material!inner(category)' : 'cartons_remaining'
+  let total_cartons_remaining = 0
+  try {
+    const sumRows = await fetchAllInventory(sumSelect, r.params, r.datePctIds)
+    total_cartons_remaining = sumRows.reduce((s, row) => s + Number(row.cartons_remaining ?? 0), 0)
+  } catch (e) {
+    console.error('[inventory] tính tổng thùng tồn lỗi:', (e as Error).message)
+  }
 
   return ok(res, { entries: data ?? [], total: count ?? 0, page: r.pageNum, limit: r.limitNum, total_cartons_remaining })
 }
@@ -326,24 +356,20 @@ export async function summaryInventory(req: Request, res: Response) {
   if (r.error) return fail(res, 500, 'DB_ERROR', r.error)
   if (r.empty) return ok(res, { groups: [], total: 0, total_cartons_remaining: 0 })
 
-  // Lấy toàn bộ entry khớp filter (chỉ cột cần để gom) — gom trong JS (giống pre-filter %date đã có).
-  let entQ = applyInventoryFilters(
-    (supabase.from('InventoryEntry') as any).select(
-      'id, warehouse_id, production_date, cartons_imported, cartons_remaining, material_id, '
-      + 'location:Location(warehouse:Warehouse(id, name)), '
-      // !inner: lọc category (material.category) phải loại HẲN entry khác loại, không để lọt với material=null
-      + 'material:Material!inner(material_code, short_name, category, shelf_life_days)'
-    ).limit(100_000),
-    r.params
-  )
-  if (r.datePctIds !== null) entQ = entQ.in('id', r.datePctIds)
-
+  // Lấy TOÀN BỘ entry khớp filter (phân trang 1000 — cap response + aggregate tắt) rồi gom JS.
+  // !inner: lọc category phải loại HẲN entry khác loại, không để lọt với material=null.
+  const summarySelect = 'id, warehouse_id, production_date, cartons_imported, cartons_remaining, material_id, '
+    + 'location:Location(warehouse:Warehouse(id, name)), '
+    + 'material:Material!inner(material_code, short_name, category, shelf_life_days)'
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let rows: any[]
+  try {
+    rows = await fetchAllInventory(summarySelect, r.params, r.datePctIds)
+  } catch (e) {
+    return fail(res, 500, 'DB_ERROR', (e as Error).message)
+  }
   // Map id→tên kho (fallback cho POSM: location_id null nhưng có warehouse_id)
-  const [{ data: rows, error }, { data: whRows }] = await Promise.all([
-    entQ,
-    (supabase.from('Warehouse') as any).select('id, name'),
-  ])
-  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  const { data: whRows } = await (supabase.from('Warehouse') as any).select('id, name')
 
   const whMap: Record<string, string> = Object.fromEntries(((whRows ?? []) as any[]).map(w => [w.id, w.name]))
   const now = Date.now()

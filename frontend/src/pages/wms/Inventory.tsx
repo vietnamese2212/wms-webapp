@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Package, X, SlidersHorizontal, ChevronRight, Check, Rows3, AlignJustify, Scissors, Layers, Sigma } from 'lucide-react'
+import * as XLSX from 'xlsx'
+import type { AxiosError } from 'axios'
+import { Package, X, SlidersHorizontal, ChevronRight, Check, Rows3, AlignJustify, Scissors, Layers, Sigma, Download } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -16,7 +18,7 @@ import {
   useAdjustmentLog,
   useLocationsReal, useMaterials, useWarehouseTypes,
   useBulkUpdateInventoryQA, useBulkTransferLocation, useBulkTransferMaterial,
-  useBulkUpdateProductionDate, useInventorySummary, type InventorySummaryGroup,
+  useBulkUpdateProductionDate, useInventorySummary, type InventorySummaryGroup, fetchInventoryExport,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { can } from '@/config/permissions'
@@ -79,6 +81,14 @@ const STATUS_CLS: Record<string, string> = {
 }
 
 const LIMIT = 50
+const EXPORT_MAX = 50_000  // chặn export nếu vượt — yêu cầu lọc hẹp lại (tránh treo trình duyệt)
+
+function writeXlsx(rows: Record<string, unknown>[], baseName: string) {
+  const ws = XLSX.utils.json_to_sheet(rows)
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, 'Tồn kho')
+  XLSX.writeFile(wb, `${baseName}.xlsx`)
+}
 
 // Cột bảng tồn kho — số phần tử PHẢI khớp số <TableCell> mỗi dòng EntryRow (17 cột)
 const INVENTORY_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
@@ -511,6 +521,8 @@ export default function Inventory() {
     setDense(d => { localStorage.setItem('inventory_density', d ? 'comfortable' : 'compact'); return !d })
   }
   const [aggregate, setAggregate] = useState(() => localStorage.getItem('inventory_view_mode') === 'summary')
+  const [exporting, setExporting]     = useState(false)
+  const [exportError, setExportError] = useState('')
   function toggleAggregate() {
     const next = !aggregate
     localStorage.setItem('inventory_view_mode', next ? 'summary' : 'pallet')
@@ -586,6 +598,51 @@ export default function Inventory() {
   const totalPages        = Math.max(1, Math.ceil(total / LIMIT))
   const checkedCount      = checkedIds.size
   const checkedIdArr      = useMemo(() => [...checkedIds], [checkedIds])
+
+  // Export Excel theo VIEW đang xem (pallet chi tiết / tổng hợp), tôn trọng filter. Chặn nếu > EXPORT_MAX.
+  async function handleExport() {
+    setExportError('')
+    const stamp = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+    try {
+      if (aggregate) {
+        const groups = summaryData?.groups ?? []
+        if (groups.length === 0) { setExportError('Không có dữ liệu để xuất'); return }
+        if (groups.length > EXPORT_MAX) { setExportError(`Quá nhiều dòng (${groups.length.toLocaleString('vi-VN')}). Hãy lọc hẹp lại rồi xuất.`); return }
+        setExporting(true)
+        writeXlsx(groups.map(g => ({
+          'Kho': g.warehouse_name, 'Loại kho': g.category ?? '', 'Mã hàng': g.material_code ?? '',
+          'Tên hàng': g.short_name ?? '', 'Ngày SX': g.production_date ? formatTimestampDate(g.production_date) : '',
+          '% Date': g.date_pct ?? '', 'Nhập': g.cartons_imported, 'Xuất': g.cartons_exported,
+          'Tồn': g.cartons_remaining, 'Số pallet': g.pallet_count,
+        })), `ton_kho_tong_hop_${stamp}`)
+      } else {
+        if (total === 0) { setExportError('Không có dữ liệu để xuất'); return }
+        if (total > EXPORT_MAX) { setExportError(`Quá nhiều dòng (${total.toLocaleString('vi-VN')}). Hãy lọc hẹp lại (kho/loại/mã) rồi xuất.`); return }
+        setExporting(true)
+        const entries = await fetchInventoryExport(queryParams)
+        writeXlsx(entries.map(e => {
+          const remaining = e.cartons_remaining ?? e.cartons_imported
+          const exported  = Math.max(0, Number(e.cartons_imported) - Number(remaining))
+          const reserved  = e.cartons_reserved ?? 0
+          const pct       = calcDatePct(e.production_date, e.material?.shelf_life_days ?? null)
+          return {
+            'Kho': e.location?.warehouse?.name ?? '', 'Loại kho': e.material?.category ?? '',
+            'Mã hàng': e.material?.material_code ?? '', 'Tên hàng': e.material?.short_name ?? '',
+            'Mã pallet': e.pallet_code, 'Vị trí': e.location?.location_code ?? '',
+            'Nhập': e.cartons_imported, 'Xuất': exported, 'Tồn': remaining,
+            'Nhặt lẻ': reserved, 'Khả dụng': Math.max(0, Number(remaining) - Number(reserved)),
+            'Ngày SX': e.production_date ? formatTimestampDate(e.production_date) : '',
+            '% Date': pct ?? '', 'QA': e.qa_status?.code ?? '', 'Điều chỉnh': e.adjustment_qty ?? 0,
+          }
+        }), `ton_kho_chi_tiet_${stamp}`)
+      }
+    } catch (e) {
+      const err = e as AxiosError<{ error?: { message?: string } }>
+      setExportError(err?.response?.data?.error?.message ?? 'Xuất Excel lỗi')
+    } finally {
+      setExporting(false)
+    }
+  }
 
   // Derive pallet context for action modals (from first checked entry on current page)
   const firstCheckedEntry = useMemo(() =>
@@ -723,7 +780,17 @@ export default function Inventory() {
             title={aggregate ? 'Đang xem TỔNG HỢP theo mã — bấm để về chi tiết pallet' : 'Xem tổng hợp tồn kho theo mã hàng (không tới pallet)'}>
             <Sigma className="h-3.5 w-3.5" />Tổng hợp
           </button>
+          {can(user?.module_permissions, 'inventory', 'export') && (
+            <button type="button" onClick={handleExport} disabled={exporting}
+              className="inline-flex h-7 items-center gap-1 px-2 rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0 disabled:opacity-50"
+              title={`Xuất Excel ${aggregate ? 'bảng tổng hợp' : 'chi tiết pallet'} theo bộ lọc hiện tại`}>
+              <Download className="h-3.5 w-3.5" />{exporting ? 'Đang xuất…' : 'Excel'}
+            </button>
+          )}
         </div>
+        {exportError && (
+          <div className="text-[11px] text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">{exportError}</div>
+        )}
 
         {/* Row 2: Filter chip bar (desktop) */}
         <div className="hidden sm:flex items-center gap-1.5 flex-wrap">

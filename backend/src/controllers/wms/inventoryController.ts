@@ -422,6 +422,23 @@ export async function summaryInventory(req: Request, res: Response) {
   return ok(res, { groups, total: groups.length, total_cartons_remaining })
 }
 
+// Export chi tiết pallet: trả TOÀN BỘ entry khớp filter (phân trang 1000) để FE dựng Excel.
+// Cùng resolveInventoryFilter → khớp tuyệt đối view pallet. (Summary export dùng dữ liệu /summary sẵn có ở FE.)
+export async function exportInventory(req: Request, res: Response) {
+  const r = await resolveInventoryFilter(req)
+  if (r.error) return fail(res, 500, 'DB_ERROR', r.error)
+  if (r.empty) return ok(res, { entries: [] })
+
+  const catActive = !!(r.params.categoryFilter && r.params.categoryFilter.length)
+  const sel = catActive ? ENTRY_SELECT.replace('material:Material(', 'material:Material!inner(') : ENTRY_SELECT
+  try {
+    const entries = await fetchAllInventory(sel, r.params, r.datePctIds)
+    return ok(res, { entries })
+  } catch (e) {
+    return fail(res, 500, 'DB_ERROR', (e as Error).message)
+  }
+}
+
 export async function listFacets(req: Request, res: Response) {
   const q = req.query as Record<string, string>
   const warehouseIds = parseArr(q.warehouse_ids)

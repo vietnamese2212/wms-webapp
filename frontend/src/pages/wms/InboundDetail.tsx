@@ -200,6 +200,12 @@ export default function InboundDetail() {
   const isCompleted = order?.status === 'COMPLETED'
   const entries     = order?.inventory_entries ?? []
   const totalScanned = entries.reduce((sum, e) => sum + e.cartons_imported, 0)
+  // Vị trí THỰC TẾ của pallet (có thể tràn sang nhiều vị trí khi quét) — hiện đa vị trí.
+  const actualLocCodes = [...new Set(entries.map(e => (e as any).location?.location_code).filter(Boolean))] as string[]
+  const headerLocText = actualLocCodes.length > 0
+    ? (actualLocCodes.length === 1 ? actualLocCodes[0] : `${actualLocCodes[0]} +${actualLocCodes.length - 1}`)
+    : (order?.location?.location_code ?? null)
+  const headerLocTitle = actualLocCodes.length > 1 ? actualLocCodes.join(', ') : undefined
   const isNccFull   = order?.source_type === 'NCC' && (order?.planned_cartons ?? 0) > 0 && totalScanned >= (order?.planned_cartons ?? 0)
 
   function canDeleteEntry(entry: PalletEntry): boolean {
@@ -571,9 +577,9 @@ export default function InboundDetail() {
             {!isManualEntry && (
               <span className="flex items-center gap-1">
                 <MapPin className="h-3 w-3 text-slate-400 shrink-0" />
-                {order.location ? (
+                {headerLocText ? (
                   <span className="flex items-center gap-1">
-                    <span className="font-mono font-medium">{order.location.location_code}</span>
+                    <span className="font-mono font-medium" title={headerLocTitle}>{headerLocText}</span>
                     {isOpen && canSetLocation && (
                       <Select onValueChange={(v) => setOrderLocation({ id: order.id, location_id: v })}>
                         <SelectTrigger className="h-5 w-6 border-dashed px-1 text-slate-300 hover:text-slate-500">

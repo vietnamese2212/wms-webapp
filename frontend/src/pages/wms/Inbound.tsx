@@ -1563,6 +1563,18 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
   const pallets  = order._count.inventory_entries
   const doCodes  = order.source_type === 'TRANSFER' ? (order as any).from_gdo_delivery_codes as string[] | undefined : undefined
 
+  // Vị trí THỰC TẾ của pallet (entries_by_location) — không chỉ vị trí mục tiêu của phiếu.
+  // Pallet có thể tràn sang vị trí khác khi quét → hiện đa vị trí ("A +N", tooltip đủ).
+  const actualLocs = [...new Set(
+    (((order as any).entries_by_location ?? []) as { loc: string }[])
+      .map(e => e.loc.split('-')[0])
+      .filter(c => c && c !== '(chưa xác định)')
+  )]
+  const locText  = actualLocs.length > 0
+    ? (actualLocs.length === 1 ? actualLocs[0] : `${actualLocs[0]} +${actualLocs.length - 1}`)
+    : (order.location?.location_code ?? '—')
+  const locTitle = actualLocs.length > 1 ? actualLocs.join(', ') : undefined
+
   const showBracket = bracketPos !== 'none' && bracketPos !== 'only'
   const st = inboundStatus(order)
 
@@ -1630,7 +1642,7 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
       {/* Col 3: Vị trí */}
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <div className="flex items-center justify-between gap-1 w-full">
-          <span className="text-[10px] font-mono font-semibold">{order.location?.location_code ?? '—'}</span>
+          <span className="text-[10px] font-mono font-semibold truncate" title={locTitle}>{locText}</span>
           {onScan && (
             <button
               onClick={onScan}

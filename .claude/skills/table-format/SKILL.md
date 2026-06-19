@@ -118,6 +118,7 @@ const displayItems = [...filtered].sort((a, b) => {
 
 ## 14. Filter persistence — bắt buộc mọi list page
 Mọi filter state (search, date, dropdown…) lưu `useWmsFilterStore` (`frontend/src/stores/wmsFilterStore.ts`) — KHÔNG `useState` thuần (mất khi navigate). Thêm interface + setter, key theo module (`inbound`, `outbound`, `inventory`…). Density `localStorage['<module>_density']`; cột `'<module>_col_widths'`.
+- **Nhớ filter theo TỪNG USER — tự động, KHÔNG cần code thêm:** `scopedPersist.ts` (import side-effect ở `main.tsx`) gắn key persist theo `user.id` (`wms-filters-v10:<uid>` + `wms-saved-views:<uid>`); đổi user → reset default rồi nạp filter riêng của user đó. ⇒ Field mới chỉ cần khai trong slice của `wmsFilterStore` là **tự được nhớ riêng từng user**. Đừng tự gắn `localStorage`/`useState` cho filter (sẽ dùng chung giữa các user). Mỗi field thêm phải có default trong `initialFilters()` (để reset khi đổi user) — vd `inbound` dùng `INBOUND_DEFAULT`.
 
 ## 15. Trang Detail nghiệp vụ
 - Đóng khung card như list. Header **kế thừa màu** `statusText(<module>Key(r))` trên mã/tiêu đề.

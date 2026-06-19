@@ -945,13 +945,14 @@ type BracketPos = 'first' | 'middle' | 'last' | 'only' | 'none'
 
 function applyClientFilters(
   orders: InboundOrder[],
-  mats: string[], cycles: string[], machines: string[], importer: string, shiftIds: string[],
-  exclude?: 'mat' | 'cycle' | 'machine' | 'importer' | 'shift'
+  mats: string[], cycles: string[], machines: string[], importer: string, shiftIds: string[], sourceTypes: string[],
+  exclude?: 'mat' | 'cycle' | 'machine' | 'importer' | 'shift' | 'source'
 ) {
   return orders.filter(order => {
     // TRANSFER không có ca/máy/cycle — skip các filter này để không bị ẩn nhầm
     const isTransfer = order.source_type === 'TRANSFER'
     const importerName = (order.imported_by_emp?.name ?? order.created_by_emp?.name ?? '').toLowerCase()
+    if (exclude !== 'source'   && sourceTypes.length > 0 && !sourceTypes.includes(order.source_type ?? ''))                  return false
     if (exclude !== 'mat'      && mats.length     > 0 && !mats.includes(order.material_id ?? ''))                            return false
     if (!isTransfer && exclude !== 'cycle'   && cycles.length   > 0 && !(order.cycles ?? []).some(c => cycles.includes(c)))  return false
     if (!isTransfer && exclude !== 'machine' && machines.length > 0 && !(order.machine_codes ?? []).some(m => machines.includes(m))) return false
@@ -1090,12 +1091,13 @@ export default function Inbound() {
   const filterCycles    = f.filterCycles    ?? []
   const filterMachines  = f.filterMachines  ?? []
   const filterShiftIds  = f.filterShiftIds  ?? []
+  const filterSourceTypes = f.filterSourceTypes ?? []
   const importerSearch  = f.importerSearch  ?? ''
 
   // Cascade-filtered orders
   const filteredOrders = useMemo(
-    () => applyClientFilters(serverOrders, filterMaterials, filterCycles, filterMachines, importerSearch, filterShiftIds),
-    [serverOrders, filterMaterials, filterCycles, filterMachines, importerSearch, filterShiftIds]
+    () => applyClientFilters(serverOrders, filterMaterials, filterCycles, filterMachines, importerSearch, filterShiftIds, filterSourceTypes),
+    [serverOrders, filterMaterials, filterCycles, filterMachines, importerSearch, filterShiftIds, filterSourceTypes]
   )
 
   // Shift options for multi-select (from master data, not derived from orders)
@@ -1158,23 +1160,23 @@ export default function Inbound() {
 
   // Options for each multi-select — computed from subset excluding that filter's own selection
   const materialOptions = useMemo(() => {
-    const sub = applyClientFilters(serverOrders, filterMaterials, filterCycles, filterMachines, importerSearch, filterShiftIds, 'mat')
+    const sub = applyClientFilters(serverOrders, filterMaterials, filterCycles, filterMachines, importerSearch, filterShiftIds, filterSourceTypes, 'mat')
     const seen = new Map<string, string>()
     for (const o of sub)
       if (o.material_id && !seen.has(o.material_id))
         seen.set(o.material_id, o.material?.short_name ?? o.material?.material_description ?? o.material_id)
     return [...seen.entries()].map(([value, label]) => ({ value, label }))
-  }, [serverOrders, filterCycles, filterMachines, importerSearch, filterShiftIds])
+  }, [serverOrders, filterCycles, filterMachines, importerSearch, filterShiftIds, filterSourceTypes])
 
   const cycleOptions = useMemo(() => {
-    const sub = applyClientFilters(serverOrders, filterMaterials, filterCycles, filterMachines, importerSearch, filterShiftIds, 'cycle')
+    const sub = applyClientFilters(serverOrders, filterMaterials, filterCycles, filterMachines, importerSearch, filterShiftIds, filterSourceTypes, 'cycle')
     return [...new Set(sub.flatMap(o => o.cycles ?? []))].map(c => ({ value: c, label: c }))
-  }, [serverOrders, filterMaterials, filterMachines, importerSearch, filterShiftIds])
+  }, [serverOrders, filterMaterials, filterMachines, importerSearch, filterShiftIds, filterSourceTypes])
 
   const machineOptions = useMemo(() => {
-    const sub = applyClientFilters(serverOrders, filterMaterials, filterCycles, filterMachines, importerSearch, filterShiftIds, 'machine')
+    const sub = applyClientFilters(serverOrders, filterMaterials, filterCycles, filterMachines, importerSearch, filterShiftIds, filterSourceTypes, 'machine')
     return [...new Set(sub.flatMap(o => o.machine_codes ?? []))].map(m => ({ value: m, label: m }))
-  }, [serverOrders, filterMaterials, filterCycles, importerSearch, filterShiftIds])
+  }, [serverOrders, filterMaterials, filterCycles, importerSearch, filterShiftIds, filterSourceTypes])
 
   // Totals
   const totalPallets = useMemo(() => filteredOrders.reduce((s, o) => s + o._count.inventory_entries, 0), [filteredOrders])
@@ -1221,7 +1223,7 @@ export default function Inbound() {
     dateLabel = `Đến ${format(parseISO(f.dateTo), 'dd-MM-yyyy')}`
   }
 
-  const hasClientFilters = filterMaterials.length > 0 || filterCycles.length > 0 || filterMachines.length > 0 || !!importerSearch || filterShiftIds.length > 0
+  const hasClientFilters = filterMaterials.length > 0 || filterCycles.length > 0 || filterMachines.length > 0 || !!importerSearch || filterShiftIds.length > 0 || filterSourceTypes.length > 0
 
   // ─── Filter chip bar (kiểu Manhattan Active WMS) ───
   const warehouseOptions = useMemo(() =>
@@ -1240,6 +1242,9 @@ export default function Inbound() {
       onChange: v => setInbound({ warehouseId: v, filterMaterials: [], filterCycles: [], filterMachines: [] }) },
     { key: 'category', label: 'Loại kho',   type: 'single', options: categoryOptions, value: f.materialCategory || '', allLabel: 'Tất cả loại',
       onChange: v => setInbound({ materialCategory: v, filterMaterials: [], filterCycles: [], filterMachines: [] }) },
+    { key: 'source',   label: 'Nguồn gốc',  type: 'multi', searchable: false, selected: filterSourceTypes,
+      options: [{ value: 'FACTORY', label: 'SX' }, { value: 'NCC', label: 'NCC' }, { value: 'TRANSFER', label: 'TF' }],
+      onChange: v => setInbound({ filterSourceTypes: v }) },
     { key: 'shift',    label: 'Ca',         type: 'multi', options: shiftOptions,    selected: filterShiftIds, searchable: false,
       onChange: v => setInbound({ filterShiftIds: v }) },
     { key: 'material', label: 'Material',   type: 'multi', options: materialOptions, selected: filterMaterials, searchable: true,
@@ -1254,7 +1259,7 @@ export default function Inbound() {
 
   // ─── Saved Views ───
   const viewSnapshot = {
-    search: f.search, dateFrom: f.dateFrom, dateTo: f.dateTo, filterShiftIds,
+    search: f.search, dateFrom: f.dateFrom, dateTo: f.dateTo, filterShiftIds, filterSourceTypes,
     warehouseId: f.warehouseId, materialCategory: f.materialCategory,
     filterMaterials, filterCycles, filterMachines, importerSearch,
   }

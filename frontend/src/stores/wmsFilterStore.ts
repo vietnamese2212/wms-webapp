@@ -19,6 +19,7 @@ interface InboundFilters {
   dateFrom: string
   dateTo: string
   filterShiftIds: string[]
+  filterSourceTypes: string[]
   warehouseId: string
   materialCategory: string
   filterMaterials: string[]
@@ -137,7 +138,7 @@ interface WmsFilterState {
 }
 
 const INBOUND_DEFAULT: InboundFilters = {
-  search: '', dateFrom: today(), dateTo: today(), filterShiftIds: [],
+  search: '', dateFrom: today(), dateTo: today(), filterShiftIds: [], filterSourceTypes: [],
   warehouseId: '', materialCategory: '',
   filterMaterials: [], filterCycles: [], filterMachines: [], importerSearch: '',
 }

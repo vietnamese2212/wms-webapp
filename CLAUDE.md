@@ -90,7 +90,7 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 - Lỗi API: banner đỏ inline trong component (không chỉ `console.error`).
 - Bulk action **song song** `Promise.all(ids.map(...))` (không `for...of await`). Button gọi API: `disabled={saving}` + text chờ.
 - Date input form tạo & sửa: `min={TODAY}` (sửa vẫn pre-fill & lưu được giá trị cũ).
-- Filter state mọi list page → `useWmsFilterStore` (không `useState` thuần). QR: sau parse ngày kiểm `isNaN(date.getTime())`.
+- Filter state mọi list page → `useWmsFilterStore` (không `useState` thuần). **Nhớ filter theo từng user là TỰ ĐỘNG** qua `scopedPersist.ts` (key persist gắn `user.id`) — field mới chỉ cần khai trong slice + có default trong `initialFilters()`; KHÔNG tự gắn `localStorage`/`useState` cho filter (sẽ dùng chung giữa các user). QR: sau parse ngày kiểm `isNaN(date.getTime())`.
 
 ---
 ## UI — Manhattan Active WMS

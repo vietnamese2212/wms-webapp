@@ -96,7 +96,19 @@ function matchDatePct(pct: number, range: string): boolean {
   return false
 }
 
-export async function listInventory(req: Request, res: Response) {
+// Resolve scope (kho/loại kho theo JWT) + tất cả filter + pre-filter %date → dùng CHUNG cho cả
+// view pallet (listInventory) lẫn view tổng hợp (summaryInventory) để filter khớp tuyệt đối.
+interface ResolvedFilter {
+  empty?: boolean
+  error?: string
+  params: FilterParams
+  datePctIds: string[] | null
+  pageNum: number
+  limitNum: number
+  offset: number
+}
+
+async function resolveInventoryFilter(req: Request): Promise<ResolvedFilter> {
   const q = req.query as Record<string, string>
   const status           = q.status
   const search           = q.search
@@ -139,11 +151,13 @@ export async function listInventory(req: Request, res: Response) {
   const limitNum = Math.min(200, Math.max(1, parseInt(limit) || 50))
   const offset   = (pageNum - 1) * limitNum
 
+  const base = { params: {} as FilterParams, datePctIds: null as string[] | null, pageNum, limitNum, offset }
+
   // Empty intersection → user's scope and UI filter don't overlap → return empty immediately
   if (scopeWarehouses.length > 0 && warehouseIds.length > 0 && effectiveWarehouseIds.length === 0)
-    return ok(res, { entries: [], total: 0, page: pageNum, limit: limitNum, total_cartons_remaining: 0 })
+    return { ...base, empty: true }
   if (scopeCategories.length > 0 && categories.length > 0 && effectiveCategories.length === 0)
-    return ok(res, { entries: [], total: 0, page: pageNum, limit: limitNum, total_cartons_remaining: 0 })
+    return { ...base, empty: true }
 
   const needLocFilter = effectiveWarehouseIds.length > 0 || filterLocations.length > 0
   // Category filter dùng embedded resource filter — không cần pre-query material IDs
@@ -171,9 +185,9 @@ export async function listInventory(req: Request, res: Response) {
   ])
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  if ((locResult as any).error) return fail(res, 500, 'DB_ERROR', (locResult as any).error.message)
+  if ((locResult as any).error) return { ...base, error: (locResult as any).error.message }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  if ((matResult as any).error) return fail(res, 500, 'DB_ERROR', (matResult as any).error.message)
+  if ((matResult as any).error) return { ...base, error: (matResult as any).error.message }
 
   let locationFilter: string[] | null = null
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -183,7 +197,7 @@ export async function listInventory(req: Request, res: Response) {
     // Trả về rỗng nếu: không tìm được location VÀ (có filter location cụ thể HOẶC không có warehouse scope nào)
     // → Không áp dụng khi chỉ có warehouse scope — vẫn có thể có POSM (location_id IS NULL)
     if (locationFilter!.length === 0 && (filterLocations.length > 0 || effectiveWarehouseIds.length === 0))
-      return ok(res, { entries: [], total: 0, page: pageNum, limit: limitNum, total_cartons_remaining: 0 })
+      return { ...base, empty: true }
   }
 
   let materialFilter: string[] | null = null
@@ -191,8 +205,7 @@ export async function listInventory(req: Request, res: Response) {
   if ((matResult as any).data !== null) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     materialFilter = ((matResult as any).data ?? []).map((m: any) => m.id as string)
-    if (materialFilter!.length === 0)
-      return ok(res, { entries: [], total: 0, page: pageNum, limit: limitNum, total_cartons_remaining: 0 })
+    if (materialFilter!.length === 0) return { ...base, empty: true }
   }
 
   // Omni-search 1 ô: resolve material/location ID khớp term → search tìm cả mã pallet / mã+tên hàng / mã vị trí.
@@ -228,7 +241,7 @@ export async function listInventory(req: Request, res: Response) {
     }
   }
 
-  const filterParams: FilterParams = {
+  const params: FilterParams = {
     status, locationFilter, materialFilter,
     warehouseIds: effectiveWarehouseIds.length > 0 ? effectiveWarehouseIds : undefined,
     categoryFilter: effectiveCategories.length > 0 ? effectiveCategories : undefined,
@@ -244,7 +257,7 @@ export async function listInventory(req: Request, res: Response) {
       (supabase.from('InventoryEntry') as any)
         .select('id, production_date, material:Material(shelf_life_days)')
         .limit(100_000),
-      { ...filterParams, status: '' }
+      { ...params, status: '' }
     )
     const now = Date.now()
     datePctIds = (preEntries ?? [])
@@ -256,29 +269,36 @@ export async function listInventory(req: Request, res: Response) {
       })
       .map((e: any) => e.id as string)
 
-    if (datePctIds!.length === 0)
-      return ok(res, { entries: [], total: 0, page: pageNum, limit: limitNum, total_cartons_remaining: 0 })
+    if (datePctIds!.length === 0) return { ...base, params, empty: true }
   }
+
+  return { params, datePctIds, pageNum, limitNum, offset }
+}
+
+export async function listInventory(req: Request, res: Response) {
+  const r = await resolveInventoryFilter(req)
+  if (r.error) return fail(res, 500, 'DB_ERROR', r.error)
+  if (r.empty) return ok(res, { entries: [], total: 0, page: r.pageNum, limit: r.limitNum, total_cartons_remaining: 0 })
 
   // Main paginated query — sort by import_date desc + id asc để đảm bảo thứ tự ổn định giữa các trang
   let mainQ = applyInventoryFilters(
     (supabase.from('InventoryEntry') as any).select(ENTRY_SELECT, { count: 'exact' }),
-    filterParams
+    r.params
   )
-  if (datePctIds !== null) mainQ = mainQ.in('id', datePctIds)
+  if (r.datePctIds !== null) mainQ = mainQ.in('id', r.datePctIds)
   mainQ = mainQ
     .order('import_date', { ascending: false, nullsFirst: false })
     .order('id', { ascending: true })
-    .range(offset, offset + limitNum - 1)
+    .range(r.offset, r.offset + r.limitNum - 1)
 
   // Aggregate: use SQL SUM() instead of fetching all rows and summing in JS
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let aggQ = applyInventoryFilters(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (supabase.from('InventoryEntry') as any).select('cartons_remaining.sum()'),
-    filterParams
+    r.params
   )
-  if (datePctIds !== null) aggQ = aggQ.in('id', datePctIds)
+  if (r.datePctIds !== null) aggQ = aggQ.in('id', r.datePctIds)
 
   const [{ data, count, error }, { data: aggData }] = await Promise.all([mainQ, aggQ])
 
@@ -287,7 +307,83 @@ export async function listInventory(req: Request, res: Response) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const total_cartons_remaining = Number((aggData as any[])?.[0]?.sum ?? 0)
 
-  return ok(res, { entries: data ?? [], total: count ?? 0, page: pageNum, limit: limitNum, total_cartons_remaining })
+  return ok(res, { entries: data ?? [], total: count ?? 0, page: r.pageNum, limit: r.limitNum, total_cartons_remaining })
+}
+
+// View tổng hợp: gom tồn kho theo (Kho × Mã hàng × Ngày SX) — KHÔNG chi tiết tới pallet.
+// Vì %date suy ra từ ngày SX + hạn dùng nên mỗi nhóm có 1 giá trị %date duy nhất.
+export async function summaryInventory(req: Request, res: Response) {
+  const r = await resolveInventoryFilter(req)
+  if (r.error) return fail(res, 500, 'DB_ERROR', r.error)
+  if (r.empty) return ok(res, { groups: [], total: 0, total_cartons_remaining: 0 })
+
+  // Lấy toàn bộ entry khớp filter (chỉ cột cần để gom) — gom trong JS (giống pre-filter %date đã có).
+  let entQ = applyInventoryFilters(
+    (supabase.from('InventoryEntry') as any).select(
+      'id, warehouse_id, production_date, cartons_imported, cartons_remaining, material_id, '
+      + 'location:Location(warehouse:Warehouse(id, name)), '
+      + 'material:Material(material_code, short_name, category, shelf_life_days)'
+    ).limit(100_000),
+    r.params
+  )
+  if (r.datePctIds !== null) entQ = entQ.in('id', r.datePctIds)
+
+  // Map id→tên kho (fallback cho POSM: location_id null nhưng có warehouse_id)
+  const [{ data: rows, error }, { data: whRows }] = await Promise.all([
+    entQ,
+    (supabase.from('Warehouse') as any).select('id, name'),
+  ])
+  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+
+  const whMap: Record<string, string> = Object.fromEntries(((whRows ?? []) as any[]).map(w => [w.id, w.name]))
+  const now = Date.now()
+
+  interface Group {
+    warehouse_id: string | null; warehouse_name: string; material_id: string
+    material_code: string | null; short_name: string | null; category: string | null
+    production_date: string | null; date_pct: number | null
+    cartons_imported: number; cartons_remaining: number; pallet_count: number
+  }
+  const map = new Map<string, Group>()
+
+  for (const e of (rows ?? []) as any[]) {
+    const whId   = (e.location?.warehouse?.id ?? e.warehouse_id ?? null) as string | null
+    const whName = e.location?.warehouse?.name ?? (whId ? whMap[whId] : null) ?? '—'
+    const matId  = e.material_id as string
+    const prod   = (e.production_date ?? null) as string | null
+    const key    = `${whId}|${matId}|${prod}`
+
+    let g = map.get(key)
+    if (!g) {
+      const shelf = Number(e.material?.shelf_life_days)
+      g = {
+        warehouse_id: whId, warehouse_name: whName, material_id: matId,
+        material_code: e.material?.material_code ?? null,
+        short_name:    e.material?.short_name ?? null,
+        category:      e.material?.category ?? null,
+        production_date: prod,
+        date_pct: prod && shelf > 0 ? calcPct(prod, shelf, now) : null,
+        cartons_imported: 0, cartons_remaining: 0, pallet_count: 0,
+      }
+      map.set(key, g)
+    }
+    g.cartons_imported  += Number(e.cartons_imported ?? 0)
+    g.cartons_remaining += Number(e.cartons_remaining ?? 0)
+    g.pallet_count      += 1
+  }
+
+  const groups = [...map.values()]
+    .map(g => ({ ...g, cartons_exported: Math.max(0, g.cartons_imported - g.cartons_remaining) }))
+    .sort((a, b) => {
+      const mc = (a.material_code ?? '').localeCompare(b.material_code ?? '')
+      if (mc !== 0) return mc
+      const wn = a.warehouse_name.localeCompare(b.warehouse_name)
+      if (wn !== 0) return wn
+      return (b.production_date ?? '').localeCompare(a.production_date ?? '') // ngày SX mới nhất trước
+    })
+
+  const total_cartons_remaining = groups.reduce((s, g) => s + g.cartons_remaining, 0)
+  return ok(res, { groups, total: groups.length, total_cartons_remaining })
 }
 
 export async function listFacets(req: Request, res: Response) {

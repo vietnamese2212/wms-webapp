@@ -708,6 +708,49 @@ export function useInventoryEntries(params?: {
   })
 }
 
+export interface InventorySummaryGroup {
+  warehouse_id: string | null
+  warehouse_name: string
+  material_id: string
+  material_code: string | null
+  short_name: string | null
+  category: string | null
+  production_date: string | null
+  date_pct: number | null
+  cartons_imported: number
+  cartons_remaining: number
+  cartons_exported: number
+  pallet_count: number
+}
+
+// View tổng hợp tồn kho theo Kho × Mã hàng × Ngày SX. Dùng CHUNG params filter với useInventoryEntries.
+export function useInventorySummary(params?: Parameters<typeof useInventoryEntries>[0], enabled = true) {
+  return useQuery({
+    queryKey: ['inventory-summary', params],
+    enabled,
+    staleTime: 30_000,
+    placeholderData: keepPreviousData,
+    queryFn: async () => {
+      const { warehouse_ids, categories, filter_locations, filter_material_ids, qa_status_ids, filter_cycles, filter_machines, date_pct_ranges, page, limit, ...rest } = params ?? {}
+      void page; void limit // tổng hợp trả tất cả nhóm, phân trang client-side
+      const { data } = await apiClient.get('/wms/inventory/summary', {
+        params: {
+          ...rest,
+          ...(warehouse_ids?.length       ? { warehouse_ids:      warehouse_ids.join(',')       } : {}),
+          ...(categories?.length          ? { categories:         categories.join(',')          } : {}),
+          ...(filter_locations?.length    ? { filter_locations:   filter_locations.join(',')    } : {}),
+          ...(filter_material_ids?.length ? { filter_material_ids:filter_material_ids.join(',') } : {}),
+          ...(qa_status_ids?.length       ? { qa_status_ids:      qa_status_ids.join(',')       } : {}),
+          ...(filter_cycles?.length       ? { filter_cycles:      filter_cycles.join(',')       } : {}),
+          ...(filter_machines?.length     ? { filter_machines:    filter_machines.join(',')     } : {}),
+          ...(date_pct_ranges?.length     ? { date_pct_ranges:    date_pct_ranges.join(',')     } : {}),
+        },
+      })
+      return data.data as { groups: InventorySummaryGroup[]; total: number; total_cartons_remaining: number }
+    },
+  })
+}
+
 export function useInventoryFacets(params?: { warehouse_ids?: string[]; categories?: string[] }) {
   return useQuery({
     queryKey: ['inventory-facets', params],

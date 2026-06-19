@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Package, X, SlidersHorizontal, ChevronRight, Check, Rows3, AlignJustify, Scissors, Layers } from 'lucide-react'
+import { Package, X, SlidersHorizontal, ChevronRight, Check, Rows3, AlignJustify, Scissors, Layers, Sigma } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -16,7 +16,7 @@ import {
   useAdjustmentLog,
   useLocationsReal, useMaterials, useWarehouseTypes,
   useBulkUpdateInventoryQA, useBulkTransferLocation, useBulkTransferMaterial,
-  useBulkUpdateProductionDate,
+  useBulkUpdateProductionDate, useInventorySummary, type InventorySummaryGroup,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { can } from '@/config/permissions'
@@ -101,6 +101,21 @@ const INVENTORY_COLS: { id: string; label: string; w: number; align?: 'right' }[
   { id: 'chevron',   label: '',         w: 28 },
 ]
 const INVENTORY_COL_DEFAULTS = INVENTORY_COLS.map(c => c.w)
+
+// Cột bảng TỔNG HỢP (gom theo Kho × Mã hàng × Ngày SX) — số phần tử phải khớp số <TableCell> ở SummaryRow (10 cột)
+const SUMMARY_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
+  { id: 'warehouse', label: 'Kho',      w: 120 },
+  { id: 'category',  label: 'Loại kho', w: 90 },
+  { id: 'matCode',   label: 'Mã hàng',  w: 100 },
+  { id: 'matName',   label: 'Tên hàng', w: 180 },
+  { id: 'date',      label: 'Date',     w: 80 },
+  { id: 'datePct',   label: '%Date',    w: 64, align: 'right' },
+  { id: 'imported',  label: 'Nhập',     w: 70, align: 'right' },
+  { id: 'exported',  label: 'Xuất',     w: 70, align: 'right' },
+  { id: 'remaining', label: 'Tồn',      w: 80, align: 'right' },
+  { id: 'pallets',   label: 'Số pallet',w: 72, align: 'right' },
+]
+const SUMMARY_COL_DEFAULTS = SUMMARY_COLS.map(c => c.w)
 
 const DATE_PCT_OPTIONS = [
   { value: '80',   label: '> 80%'  },
@@ -495,7 +510,17 @@ export default function Inventory() {
   function toggleDensity() {
     setDense(d => { localStorage.setItem('inventory_density', d ? 'comfortable' : 'compact'); return !d })
   }
-  const { widths: colW, startResize, totalWidth } = useColumnResize('inventory_col_widths', INVENTORY_COL_DEFAULTS)
+  const [aggregate, setAggregate] = useState(() => localStorage.getItem('inventory_view_mode') === 'summary')
+  function toggleAggregate() {
+    const next = !aggregate
+    localStorage.setItem('inventory_view_mode', next ? 'summary' : 'pallet')
+    setAggregate(next)
+    setSelected(null)
+    setCheckedIds(new Set())
+    setInventory({ page: 1 })
+  }
+  const { widths: colW,  startResize,                  totalWidth                } = useColumnResize('inventory_col_widths',         INVENTORY_COL_DEFAULTS)
+  const { widths: sColW, startResize: sStartResize, totalWidth: sTotalWidth } = useColumnResize('inventory_summary_col_widths', SUMMARY_COL_DEFAULTS)
 
   const { data: warehouses   = [] } = useWarehouses(true)
   const { data: qaStatuses   = [] } = useQAStatuses()
@@ -536,7 +561,7 @@ export default function Inventory() {
     }
   }, [categories]) // eslint-disable-line
 
-  const { data, isLoading } = useInventoryEntries({
+  const queryParams = {
     warehouse_ids:      f.warehouseIds.length > 0 ? f.warehouseIds : undefined,
     categories:         f.materialCategories.length > 0 ? f.materialCategories : undefined,
     filter_locations:   f.filterLocations.length > 0 ? f.filterLocations : undefined,
@@ -548,13 +573,16 @@ export default function Inventory() {
     filter_cycles:      f.filterCycles.length > 0 ? f.filterCycles : undefined,
     filter_machines:    f.filterMachines.length > 0 ? f.filterMachines : undefined,
     date_pct_ranges:    f.datePctRanges.length > 0 ? f.datePctRanges : undefined,
-    page:               f.page,
-    limit:              LIMIT,
-  })
+  }
+  const { data, isLoading } = useInventoryEntries({ ...queryParams, page: f.page, limit: LIMIT }, !aggregate)
+  const { data: summaryData, isLoading: summaryLoading } = useInventorySummary(queryParams, aggregate)
 
   const displayEntries    = data?.entries               ?? []
-  const total             = data?.total                 ?? 0
-  const totalCartons      = data?.total_cartons_remaining ?? 0
+  const summaryGroups     = summaryData?.groups          ?? []
+  const pagedGroups       = useMemo(() => summaryGroups.slice((f.page - 1) * LIMIT, f.page * LIMIT), [summaryGroups, f.page])
+  const loading           = aggregate ? summaryLoading : isLoading
+  const total             = aggregate ? (summaryData?.total ?? 0) : (data?.total ?? 0)
+  const totalCartons      = aggregate ? (summaryData?.total_cartons_remaining ?? 0) : (data?.total_cartons_remaining ?? 0)
   const totalPages        = Math.max(1, Math.ceil(total / LIMIT))
   const checkedCount      = checkedIds.size
   const checkedIdArr      = useMemo(() => [...checkedIds], [checkedIds])
@@ -690,6 +718,11 @@ export default function Inventory() {
             title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
+          <button type="button" onClick={toggleAggregate}
+            className={`inline-flex h-7 items-center gap-1 px-2 rounded-md border text-[11px] font-medium transition-colors shrink-0 ${aggregate ? 'border-sky-500 bg-sky-50 text-sky-700' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}
+            title={aggregate ? 'Đang xem TỔNG HỢP theo mã — bấm để về chi tiết pallet' : 'Xem tổng hợp tồn kho theo mã hàng (không tới pallet)'}>
+            <Sigma className="h-3.5 w-3.5" />Tổng hợp
+          </button>
         </div>
 
         {/* Row 2: Filter chip bar (desktop) */}
@@ -699,7 +732,11 @@ export default function Inventory() {
       </div>
 
       {/* Summary band (Manhattan) */}
-      <SummaryBand tiles={[
+      <SummaryBand tiles={aggregate ? [
+        { label: 'Nhóm (mã×kho×ngày)', value: total.toLocaleString('vi-VN') },
+        { label: 'Thùng tồn', value: totalCartons.toLocaleString('vi-VN') },
+        { label: 'Trang', value: `${f.page}/${totalPages}` },
+      ] : [
         { label: 'Pallet', value: total.toLocaleString('vi-VN') },
         { label: 'Thùng tồn', value: totalCartons.toLocaleString('vi-VN') },
         { label: 'Đang chọn', value: checkedCount, accent: checkedCount > 0 },
@@ -710,20 +747,53 @@ export default function Inventory() {
       <div className="flex-1 min-h-0 flex overflow-hidden">
         {/* Table */}
         <div className="flex-1 overflow-auto pb-20 lg:pb-4">
-          {isLoading ? (
+          {loading ? (
             <div className="p-4 space-y-2">
               {[1,2,3,4,5].map(i => <div key={i} className="h-9 rounded bg-slate-100 animate-pulse" />)}
             </div>
-          ) : displayEntries.length === 0 ? (
+          ) : (aggregate ? pagedGroups.length === 0 : displayEntries.length === 0) ? (
             <div className="flex flex-col items-center gap-2 py-16 text-slate-400">
               <Package className="h-10 w-10 opacity-30" />
-              <p className="text-sm">Không tìm thấy pallet nào</p>
+              <p className="text-sm">Không tìm thấy {aggregate ? 'mã hàng' : 'pallet'} nào</p>
               {hasFilters && (
                 <button onClick={resetFilters} className="text-xs text-blue-500 underline">Xóa bộ lọc</button>
               )}
             </div>
           ) : (
             <>
+              {aggregate ? (
+              <Table className="table-fixed [&_td]:overflow-hidden [&_th]:overflow-hidden [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100" style={{ width: sTotalWidth, minWidth: '100%' }}>
+                  <colgroup>{sColW.map((w, i) => <col key={i} style={{ width: w }} />)}</colgroup>
+                  <TableHeader>
+                    <TableRow className="bg-slate-50">
+                      {SUMMARY_COLS.map((c, i) => (
+                        <TableHead key={c.id}
+                          className={`text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap sticky top-0 bg-slate-50 ${c.align === 'right' ? 'text-right' : ''} ${i === 0 ? 'left-0 z-30' : 'z-20'}`}>
+                          {c.label}
+                          {i > 0 && (
+                            <span onPointerDown={e => sStartResize(i, e)} onClick={e => e.stopPropagation()}
+                              className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70" title="Kéo để chỉnh độ rộng cột" />
+                          )}
+                        </TableHead>
+                      ))}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {pagedGroups.map(g => (
+                      <SummaryRow
+                        key={`${g.warehouse_id}|${g.material_id}|${g.production_date}`}
+                        g={g}
+                        dense={dense}
+                        onClick={() => {
+                          setInventory({ filterMaterialIds: [g.material_id], warehouseIds: g.warehouse_id ? [g.warehouse_id] : f.warehouseIds, page: 1 })
+                          localStorage.setItem('inventory_view_mode', 'pallet')
+                          setAggregate(false)
+                        }}
+                      />
+                    ))}
+                  </TableBody>
+              </Table>
+              ) : (
               <Table className="table-fixed [&_td]:overflow-hidden [&_th]:overflow-hidden [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100" style={{ width: totalWidth, minWidth: '100%' }}>
                   <colgroup>{colW.map((w, i) => <col key={i} style={{ width: w }} />)}</colgroup>
                   <TableHeader>
@@ -757,6 +827,7 @@ export default function Inventory() {
                     ))}
                   </TableBody>
               </Table>
+              )}
 
               {totalPages > 1 && (
                 <div className="flex items-center justify-center gap-3 py-3 border-t bg-white">
@@ -796,8 +867,8 @@ export default function Inventory() {
       {/* Footer đếm bản ghi */}
       <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 sm:rounded-b-xl">
         {total > 0
-          ? `${(f.page - 1) * LIMIT + 1}–${Math.min(f.page * LIMIT, total)} / ${total.toLocaleString('vi-VN')} pallet`
-          : '0 pallet'}
+          ? `${(f.page - 1) * LIMIT + 1}–${Math.min(f.page * LIMIT, total)} / ${total.toLocaleString('vi-VN')} ${aggregate ? 'nhóm' : 'pallet'}`
+          : (aggregate ? '0 nhóm' : '0 pallet')}
         {selected && checkedCount === 0 && <span className="ml-2 text-blue-600">· 1 đang xem</span>}
       </div>
      </div>
@@ -981,6 +1052,56 @@ function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick, warehouse
       </TableCell>
       <TableCell className="px-1 py-1">
         <ChevronRight className={`h-3 w-3 text-slate-300 transition-transform ${isSelected ? 'rotate-90 text-white' : ''}`} />
+      </TableCell>
+    </TableRow>
+  )
+}
+
+// ─── SummaryRow (view tổng hợp theo mã) ──────────────────────
+
+// Màu CHỮ chung cả dòng tổng hợp theo %date: < 60% tím · 60–80% cam · còn lại slate.
+function summaryRowText(pct: number | null): string {
+  if (pct !== null && pct < 60) return '[&_td_span]:text-purple-600'
+  if (pct !== null && pct < 80) return '[&_td_span]:text-orange-600'
+  return '[&_td_span]:text-slate-700'
+}
+
+function SummaryRow({ g, dense, onClick }: { g: InventorySummaryGroup; dense: boolean; onClick: () => void }) {
+  const dateStr = g.production_date ? formatTimestampDate(g.production_date, true) : '—'
+  return (
+    <TableRow className={`transition-colors cursor-pointer hover:bg-slate-50 ${summaryRowText(g.date_pct)} ${dense ? '' : '[&_td]:py-2.5'}`} onClick={onClick}>
+      <TableCell className="px-2 py-1 whitespace-nowrap sticky left-0 z-10 bg-inherit">
+        <span className="text-[10px] text-slate-600 truncate block" title={g.warehouse_name}>{g.warehouse_name}</span>
+      </TableCell>
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        <span className="text-[10px] text-slate-500 truncate block" title={g.category ?? ''}>{g.category ?? '—'}</span>
+      </TableCell>
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        <span className="text-[10px] font-mono font-semibold text-slate-700">{g.material_code ?? '—'}</span>
+      </TableCell>
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        <span className="text-[10px] text-slate-700 truncate block" title={g.short_name ?? ''}>{g.short_name ?? '—'}</span>
+      </TableCell>
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        <span className="text-[10px] tabular-nums text-slate-600">{dateStr}</span>
+      </TableCell>
+      <TableCell className="px-2 py-1 text-right whitespace-nowrap">
+        {g.date_pct !== null
+          ? <span className={`text-[10px] tabular-nums ${datePctCls(g.date_pct)}`}>{g.date_pct}%</span>
+          : <span className="text-[10px] text-slate-300">—</span>}
+      </TableCell>
+      <TableCell className="px-2 py-1 text-right whitespace-nowrap">
+        <span className="text-[10px] tabular-nums text-slate-500">{g.cartons_imported}</span>
+      </TableCell>
+      <TableCell className="px-2 py-1 text-right whitespace-nowrap">
+        <span className="text-[10px] tabular-nums text-slate-500">{g.cartons_exported > 0 ? g.cartons_exported : '—'}</span>
+      </TableCell>
+      <TableCell className="px-2 py-1 text-right whitespace-nowrap">
+        <span className="text-[10px] font-semibold tabular-nums">{g.cartons_remaining}</span>
+        <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
+      </TableCell>
+      <TableCell className="px-2 py-1 text-right whitespace-nowrap">
+        <span className="text-[10px] font-semibold tabular-nums text-slate-700">{g.pallet_count}</span>
       </TableCell>
     </TableRow>
   )

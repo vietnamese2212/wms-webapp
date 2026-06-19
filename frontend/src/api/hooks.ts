@@ -374,6 +374,19 @@ export function useUpdateInboundOrder() {
   })
 }
 
+// Đổi vị trí phiếu — endpoint riêng (gate edit_pallet/force_edit_pallet, KHÔNG dùng quyền edit)
+export function useSetInboundOrderLocation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, location_id }: { id: string; location_id: string }) =>
+      apiClient.patch(`/wms/inbound-orders/${id}/location`, { location_id }).then((r) => r.data.data),
+    onSuccess: (_d, v) => {
+      qc.invalidateQueries({ queryKey: ['inbound-orders'] })
+      qc.invalidateQueries({ queryKey: ['inbound-order', v.id] })
+    },
+  })
+}
+
 export function useCompleteInboundOrder() {
   const qc = useQueryClient()
   return useMutation({

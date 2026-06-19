@@ -21,7 +21,7 @@ import {
   useInboundOrder, useInboundOrders, useCancelInboundOrder,
   useCompleteInboundOrder, useUncompleteInboundOrder,
   useScanManualPallet, useDeletePalletEntry, useDeletePalletEntries,
-  useLocationsReal, useUpdateInboundOrder, useUpdatePalletEntry,
+  useLocationsReal, useUpdateInboundOrder, useUpdatePalletEntry, useSetInboundOrderLocation,
 } from '@/api/hooks'
 import { useAuthStore }            from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -100,14 +100,14 @@ export default function InboundDetail() {
   const { data: order, isLoading, isPlaceholderData } = useInboundOrder(id)
   const { data: allLocations = [] } = useLocationsReal(
     order?.warehouse_id
-      ? { warehouse_id: order.warehouse_id, ...(order.warehouse_type ? { category: order.warehouse_type } : {}) }
+      ? { warehouse_id: order.warehouse_id, ...(order.warehouse_type ? { category: order.warehouse_type } : {}), ...(order.material_id ? { material_id: order.material_id } : {}) }
       : undefined
   )
 
   // Tab bar: tất cả phiếu OPEN của kho + ngày này (để lái xe nâng nhảy qua lại)
   const { data: openOrders = [] } = useInboundOrders(
     order?.warehouse_id && order?.import_date
-      ? { warehouse_id: order.warehouse_id, date: order.import_date }
+      ? { warehouse_id: order.warehouse_id, date: order.import_date.slice(0, 10) }
       : undefined
   )
 
@@ -125,7 +125,30 @@ export default function InboundDetail() {
   const { mutate: deleteEntry                                } = useDeletePalletEntry()
   const { mutate: deleteEntries                         } = useDeletePalletEntries()
   const { mutate: updateOrder                           } = useUpdateInboundOrder()
+  const { mutate: setOrderLocation                      } = useSetInboundOrderLocation()
   const { mutate: updateEntry, isPending: saving        } = useUpdatePalletEntry()
+  // Đổi vị trí phiếu = thao tác đặt pallet → quyền edit_pallet (của mình) / force_edit_pallet (bất kỳ),
+  // KHÔNG dùng quyền `edit` (vốn là "Sửa nhóm phiếu NCC"). Tách riêng theo chuẩn 1 action = 1 quyền.
+  const canSetLocation = can(perms, 'inbound', 'edit_pallet') || can(perms, 'inbound', 'force_edit_pallet')
+
+  // Vị trí cho dropdown đổi vị trí: hiện (đã dùng/sức chứa) + ★ khuyến nghị (đang để dở cùng loại,
+  // còn chỗ) — đồng bộ với form tạo phiếu. ★ đẩy lên đầu, còn lại giữ thứ tự.
+  type LocOpt = { id: string; location_code: string; used_slots?: number; max_pallets: number; has_same_material?: boolean }
+  const locFull = (l: LocOpt) => l.max_pallets > 0 && (l.used_slots ?? 0) >= l.max_pallets
+  const locRec  = (l: LocOpt) => !!l.has_same_material && !locFull(l)
+  const locOptions = [...(allLocations as LocOpt[])].sort((a, b) => (locRec(b) ? 1 : 0) - (locRec(a) ? 1 : 0))
+  function renderLocItems() {
+    return locOptions.map(l => {
+      const isPartial = (l.used_slots ?? 0) > 0 && !locFull(l)
+      return (
+        <SelectItem key={l.id} value={l.id}>
+          {locRec(l) && <span className="text-amber-500 font-bold mr-1">★</span>}
+          <span className={locFull(l) ? 'text-blue-700 font-semibold' : isPartial ? 'text-amber-600' : ''}>{l.location_code}</span>
+          <span className="ml-2 text-xs text-slate-400">({l.used_slots ?? 0}/{l.max_pallets}{l.has_same_material ? ' · đang để' : ''})</span>
+        </SelectItem>
+      )
+    })
+  }
   const { mutate: saveManual, isPending: savingManual   } = useScanManualPallet()
 
   const isManualEntry = (order?.material as any)?.no_qr_tracking === true
@@ -551,15 +574,13 @@ export default function InboundDetail() {
                 {order.location ? (
                   <span className="flex items-center gap-1">
                     <span className="font-mono font-medium">{order.location.location_code}</span>
-                    {isOpen && can(perms, 'inbound', 'edit') && (
-                      <Select onValueChange={(v) => updateOrder({ id: order.id, location_id: v })}>
+                    {isOpen && canSetLocation && (
+                      <Select onValueChange={(v) => setOrderLocation({ id: order.id, location_id: v })}>
                         <SelectTrigger className="h-5 w-6 border-dashed px-1 text-slate-300 hover:text-slate-500">
                           <Pencil className="h-2.5 w-2.5" />
                         </SelectTrigger>
                         <SelectContent>
-                          {(allLocations as { id: string; location_code: string }[]).map(l => (
-                            <SelectItem key={l.id} value={l.id}>{l.location_code}</SelectItem>
-                          ))}
+                          {renderLocItems()}
                         </SelectContent>
                       </Select>
                     )}
@@ -568,16 +589,16 @@ export default function InboundDetail() {
                   <span className="text-amber-600 flex items-center gap-1">
                     <AlertTriangle className="h-3 w-3" />
                     Chưa chọn vị trí
-                    <Select onValueChange={(v) => updateOrder({ id: order.id, location_id: v })}>
-                      <SelectTrigger className="h-5 text-[10px] w-auto border-dashed px-1 ml-1">
-                        <SelectValue placeholder="Chọn" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {(allLocations as { id: string; location_code: string }[]).map(l => (
-                          <SelectItem key={l.id} value={l.id}>{l.location_code}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    {canSetLocation && (
+                      <Select onValueChange={(v) => setOrderLocation({ id: order.id, location_id: v })}>
+                        <SelectTrigger className="h-5 text-[10px] w-auto border-dashed px-1 ml-1">
+                          <SelectValue placeholder="Chọn" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {renderLocItems()}
+                        </SelectContent>
+                      </Select>
+                    )}
                   </span>
                 ) : (
                   <span className="text-slate-400">Chưa chọn</span>

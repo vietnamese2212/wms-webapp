@@ -158,13 +158,17 @@ export async function listOrders(req: Request, res: Response) {
     const isNational = req.user?.warehouse_scope === 'NATIONAL'
     const scopeCategories = isNational ? [] : (req.user?.allowed_categories ?? []).map(normCat)
 
-    // Date range – support legacy ?date= and new ?date_from= / ?date_to=
-    const from = date_from || date
-    const to   = date_to   || date
+    // Date range – support legacy ?date= và ?date_from=/?date_to=. Chuẩn hoá về YYYY-MM-DD
+    // (slice 10) để robust khi client lỡ gửi kèm time (vd "2026-06-18T00:00:00") → tránh nextDay
+    // parse ra Invalid Date làm .toISOString() ném 500.
+    const from = (date_from || date || '').slice(0, 10) || null
+    const to   = (date_to   || date || '').slice(0, 10) || null
     let nextDay: string | null = null
     if (to) {
       const [y, m, d] = to.split('-').map(Number)
-      nextDay = new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10)
+      if (!isNaN(y) && !isNaN(m) && !isNaN(d)) {
+        nextDay = new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10)
+      }
     }
 
     // Search → resolve material ids ONCE (trước khi phân trang)
@@ -467,6 +471,43 @@ export async function updateOrder(req: Request, res: Response) {
 
     const { data: updated, error } = await supabase
       .from('ProductionImport').update(patch).eq('id', req.params.id).select(ORDER_SELECT).maybeSingle()
+    if (error) throw error
+    if (!updated) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
+
+    const withCount = await attachCount(updated)
+    emitInboundChanged()
+    ok(res, withCount)
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+}
+
+// ─── Set order location (TÁCH RIÊNG khỏi updateOrder) ────────
+// Đổi vị trí phiếu = thao tác đặt/định tuyến pallet, KHÔNG phải "sửa nhóm phiếu NCC".
+// Gate bằng edit_pallet/force_edit_pallet (xem route) — không gộp vào quyền `edit`.
+export async function setOrderLocation(req: Request, res: Response) {
+  try {
+    const { location_id, updated_by } = req.body as { location_id?: string; updated_by?: string }
+    if (!location_id) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu location_id')
+
+    const { data: order } = await supabase
+      .from('ProductionImport').select('status, warehouse_id, warehouse_type').eq('id', req.params.id).maybeSingle()
+    if (!order) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
+    if (order.status !== 'OPEN') return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập đã đóng, không thể đổi vị trí')
+
+    const { data: location } = await supabase
+      .from('Location').select('id, location_code, is_active, category, warehouse_id').eq('id', location_id).maybeSingle()
+    if (!location) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy vị trí kho')
+    if (!location.is_active) return fail(res, 400, 'LOCATION_INACTIVE', 'Vị trí kho không hoạt động')
+    if ((order as any).warehouse_id && location.warehouse_id !== (order as any).warehouse_id)
+      return fail(res, 400, 'WRONG_WAREHOUSE', 'Vị trí không thuộc kho của phiếu')
+    const orderCategory = (order as any).warehouse_type as string | null
+    if (location.category && orderCategory && location.category !== orderCategory)
+      return fail(res, 422, 'LOCATION_CATEGORY_MISMATCH',
+        `Vị trí ${location.location_code} thuộc loại "${location.category}" — không khớp loại hàng "${orderCategory}". Chọn vị trí đúng loại.`)
+
+    const { data: updated, error } = await supabase
+      .from('ProductionImport')
+      .update({ location_id, updated_by: updated_by ?? null, updated_at: new Date().toISOString() })
+      .eq('id', req.params.id).select(ORDER_SELECT).maybeSingle()
     if (error) throw error
     if (!updated) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
 

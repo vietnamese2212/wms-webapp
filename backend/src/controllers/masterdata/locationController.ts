@@ -9,7 +9,7 @@ function buildLocationCode(warehouseCode: string, subCode: string, row: string, 
 
 export async function listLocations(req: Request, res: Response) {
   try {
-    const { warehouse_id, sub_code, active, category } = req.query
+    const { warehouse_id, sub_code, active, category, material_id } = req.query
 
     let query = supabase
       .from('Location')
@@ -39,9 +39,26 @@ export async function listLocations(req: Request, res: Response) {
           ...rest,
           _count: { inventory_entries: Array.isArray(InventoryEntry) ? ((InventoryEntry[0] as { count: number })?.count ?? 0) : 0 },
           used_slots: count ?? 0,
-        }
+          has_same_material: false,
+        } as Record<string, unknown>
       })
     )
+
+    // has_same_material: vị trí đang chứa (layer-1, IN_STOCK/PARTIAL) đúng material_id này
+    // → để FE gợi ý "nơi loại hàng đó đang để dở". 1 query gộp cho tất cả vị trí.
+    if (material_id && withUsage.length > 0) {
+      const locIds = withUsage.map(l => l.id as string)
+      const { data: sameMat } = await supabase
+        .from('InventoryEntry')
+        .select('location_id')
+        .in('location_id', locIds)
+        .eq('material_id', String(material_id))
+        .eq('stack_layer', 1)
+        .in('status', ['IN_STOCK', 'PARTIAL'])
+      const sameSet = new Set((sameMat ?? []).map((e: { location_id: string }) => e.location_id))
+      for (const l of withUsage) l.has_same_material = sameSet.has(l.id as string)
+    }
+
     ok(res, withUsage)
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }

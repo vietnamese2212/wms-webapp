@@ -45,6 +45,7 @@ interface LocationWithCapacity {
   category: string | null
   max_pallets: number
   used_slots: number
+  has_same_material?: boolean
 }
 
 const normCatFe = (c: string) => c === 'TP' ? 'Thành phẩm' : c === 'BAO_BI' ? 'Bao bì' : c
@@ -203,16 +204,31 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
     [activePlanLines]
   )
 
-  const { data: locations = [] } = useLocationsReal(warehouseId ? { warehouse_id: warehouseId } : undefined)
+  const { data: locations = [] } = useLocationsReal(warehouseId ? { warehouse_id: warehouseId, material_id: materialId || undefined } : undefined)
   const { data: zones     = [] } = useWarehouseZones(warehouseId || undefined)
   const allLocs = locations as LocationWithCapacity[]
 
   const { data: allWhTypes = [] } = useWarehouseTypes()
   const loaiKhoOpts = allWhTypes.map(t => t.value)
   const selectedZone = zones.find(z => z.name === subType)
-  const filteredLocs = subType
-    ? allLocs.filter(l => l.category === subType || (selectedZone && l.sub_code === selectedZone.code))
-    : allLocs
+  // Hạng ưu tiên gợi ý vị trí (sau khi đã chọn Mã hàng):
+  // 0 = còn chỗ + đang để dở đúng loại hàng (gom pallet) · 1 = còn chỗ + trống
+  // 2 = còn chỗ nhưng đang để loại khác · 3 = đầy. Hạng 0–1 = "khuyến nghị" (★).
+  const locRank = (l: LocationWithCapacity) => {
+    const isFull = l.max_pallets > 0 && l.used_slots >= l.max_pallets
+    if (isFull) return 3
+    if (l.has_same_material) return 0
+    if (l.used_slots === 0) return 1
+    return 2
+  }
+  const isRecommended = (l: LocationWithCapacity) => materialId !== '' && locRank(l) <= 1
+  const filteredLocs = useMemo(() => {
+    const base = subType
+      ? allLocs.filter(l => l.category === subType || (selectedZone && l.sub_code === selectedZone.code))
+      : allLocs
+    if (!materialId) return base
+    return [...base].sort((a, b) => locRank(a) - locRank(b) || a.location_code.localeCompare(b.location_code))
+  }, [allLocs, subType, selectedZone, materialId])
 
   const { data: materials    = [] } = useMaterials({ search: matSearch || undefined, category: subType || undefined })
   const { data: allMaterials = [] } = useMaterials(undefined, sourceType === 'NCC')
@@ -485,34 +501,14 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
               </Select>
             </div>
 
-            <div className="space-y-2">
-              <Label>Vị trí nhập <span className="text-red-500">*</span>
-                <span className="ml-2 text-xs font-normal text-slate-400">đầy=xanh · một phần=cam</span>
-              </Label>
-              <Select value={locationId} onValueChange={setLocationId} disabled={!warehouseId}>
-                <SelectTrigger><SelectValue placeholder={!warehouseId ? 'Chọn kho trước' : !subType ? 'Chọn loại kho trước' : 'Chọn vị trí'} /></SelectTrigger>
-                <SelectContent>
-                  {filteredLocs.map(l => {
-                    const isFull = l.max_pallets > 0 && l.used_slots >= l.max_pallets
-                    const isPartial = l.used_slots > 0 && !isFull
-                    return (
-                      <SelectItem key={l.id} value={l.id}>
-                        <span className={isFull ? 'text-blue-700 font-semibold' : isPartial ? 'text-amber-600' : ''}>{l.location_code}</span>
-                        <span className="ml-2 text-xs text-slate-400">({l.used_slots}/{l.max_pallets})</span>
-                      </SelectItem>
-                    )
-                  })}
-                </SelectContent>
-              </Select>
-            </div>
-
+            {/* Chọn Mã hàng TRƯỚC → từ đó gợi ý vị trí phù hợp */}
             <div className="space-y-2">
               <Label>Material <span className="text-red-500">*</span></Label>
               <div ref={matRef} className="relative">
                 <Input placeholder={!subType ? 'Chọn loại kho trước' : `Tìm hàng ${subType}…`}
                   value={matInputValue}
                   disabled={!subType}
-                  onChange={e => { setMatSearch(e.target.value); setMaterialId(''); setMatOpen(true) }}
+                  onChange={e => { setMatSearch(e.target.value); setMaterialId(''); setLocationId(''); setMatOpen(true) }}
                   onFocus={() => { if (subType) setMatOpen(true) }}
                 />
                 {matOpen && (
@@ -521,7 +517,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                       <button key={m.id} type="button"
                         className={`w-full text-left px-3 py-2 text-sm hover:bg-slate-100 flex items-baseline gap-2 ${m.id === materialId ? 'bg-slate-50 font-medium' : ''}`}
                         onMouseDown={e => { e.preventDefault(); e.stopPropagation() }}
-                        onClick={() => { setMaterialId(m.id); setMatSearch(''); setMatOpen(false) }}>
+                        onClick={() => { setMaterialId(m.id); setMatSearch(''); setMatOpen(false); setLocationId('') }}>
                         <span className="font-mono text-xs text-slate-500 shrink-0">{m.material_code}</span>
                         <span className="text-slate-800 truncate">{m.short_name ?? m.material_description}</span>
                       </button>
@@ -532,6 +528,29 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                   </div>
                 )}
               </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Vị trí nhập <span className="text-red-500">*</span>
+                <span className="ml-2 text-xs font-normal text-slate-400">★ = khuyến nghị (còn chỗ · cùng loại đang để dở / trống)</span>
+              </Label>
+              <Select value={locationId} onValueChange={setLocationId} disabled={!subType || !materialId}>
+                <SelectTrigger><SelectValue placeholder={!warehouseId ? 'Chọn kho trước' : !subType ? 'Chọn loại kho trước' : !materialId ? 'Chọn Mã hàng trước' : 'Chọn vị trí'} /></SelectTrigger>
+                <SelectContent>
+                  {filteredLocs.map(l => {
+                    const isFull = l.max_pallets > 0 && l.used_slots >= l.max_pallets
+                    const isPartial = l.used_slots > 0 && !isFull
+                    const rec = isRecommended(l)
+                    return (
+                      <SelectItem key={l.id} value={l.id}>
+                        {rec && <span className="text-amber-500 font-bold mr-1">★</span>}
+                        <span className={isFull ? 'text-blue-700 font-semibold' : isPartial ? 'text-amber-600' : ''}>{l.location_code}</span>
+                        <span className="ml-2 text-xs text-slate-400">({l.used_slots}/{l.max_pallets}{l.has_same_material ? ' · đang để' : ''})</span>
+                      </SelectItem>
+                    )
+                  })}
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="grid grid-cols-2 gap-3">

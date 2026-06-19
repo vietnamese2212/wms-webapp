@@ -26,7 +26,7 @@ export function useWarehouses(onlyActive = false) {
   })
 }
 
-export function useLocationsReal(params?: { warehouse_id?: string; sub_code?: string; category?: string }) {
+export function useLocationsReal(params?: { warehouse_id?: string; sub_code?: string; category?: string; material_id?: string }) {
   return useQuery({
     queryKey: ['locations-real', params],
     queryFn: async () => {

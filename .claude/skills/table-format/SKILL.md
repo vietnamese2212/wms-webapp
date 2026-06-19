@@ -134,6 +134,9 @@ Mọi filter state (search, date, dropdown…) lưu `useWmsFilterStore` (`fronte
 - Table trong dialog bị cắt: wrapper `overflow-x-auto border rounded-lg` + table `min-w-max`.
 - Dropdown trong dialog có `overflow-y-auto`: mở hướng lên (`bottom-full mb-1`).
 
+## 17b. Nút icon inline trong cell (chuẩn kích thước — dùng chung mọi module)
+Nút thao tác nhanh trong cell (vd QR "Thêm pallet", icon nhỏ): **icon `h-3.5 w-3.5`** + nút `px-1.5 py-1 rounded` (đủ to cân đối, dễ bấm trên tablet). KHÔNG dùng `h-2.5`/`px-1 py-0.5` (quá nhỏ). Nút phải `onClick={e => e.stopPropagation()}` (hoặc handler tự stopPropagation) để không kích hoạt click-row. Nút mở luồng quét QR ngay trên list → mở **overlay/popup** (vd `InboundScanSheetById`), KHÔNG điều hướng sang trang chi tiết (giữ nguyên giao diện danh sách).
+
 ## 18. Phân quyền + loading (bắt buộc mọi nút action)
 - Mọi nút gọi API write bọc `can(perms, 'module', 'action')` (mỗi action = 1 permission riêng, không gộp `manage`). `perms` từ `useAuthStore(s => s.user)`.
 - Mọi button gọi API: `disabled={saving}` + text phản hồi. Bulk action chạy song song `Promise.all(ids.map(...))`. Lỗi API: banner đỏ inline (không chỉ console).

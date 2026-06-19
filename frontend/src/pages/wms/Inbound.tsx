@@ -31,6 +31,7 @@ import { useColumnResize } from '@/components/shared/useColumnResize'
 import { Badge } from '@/components/ui/badge'
 import { rowText, statusText, type RowStatusKey } from '@/lib/rowStatus'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
+import { InboundScanSheetById } from '@/components/wms/InboundScanSheet'
 import type { InboundOrder } from '@/types'
 import { unlockAudio } from '@/utils/audio'
 import { useActiveInboundStore } from '@/stores/activeInboundStore'
@@ -211,23 +212,17 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
   const { data: allWhTypes = [] } = useWarehouseTypes()
   const loaiKhoOpts = allWhTypes.map(t => t.value)
   const selectedZone = zones.find(z => z.name === subType)
-  // Hạng ưu tiên gợi ý vị trí (sau khi đã chọn Mã hàng):
-  // 0 = còn chỗ + đang để dở đúng loại hàng (gom pallet) · 1 = còn chỗ + trống
-  // 2 = còn chỗ nhưng đang để loại khác · 3 = đầy. Hạng 0–1 = "khuyến nghị" (★).
-  const locRank = (l: LocationWithCapacity) => {
-    const isFull = l.max_pallets > 0 && l.used_slots >= l.max_pallets
-    if (isFull) return 3
-    if (l.has_same_material) return 0
-    if (l.used_slots === 0) return 1
-    return 2
-  }
-  const isRecommended = (l: LocationWithCapacity) => materialId !== '' && locRank(l) <= 1
+  // Khuyến nghị vị trí (sau khi chọn Mã hàng): CHỈ vị trí còn chỗ + đang để dở đúng loại
+  // hàng (gom pallet) → đánh dấu ★ + đẩy lên đầu. Còn trống / loại khác giữ thứ tự bình thường.
+  const isRecommended = (l: LocationWithCapacity) =>
+    materialId !== '' && !!l.has_same_material && !(l.max_pallets > 0 && l.used_slots >= l.max_pallets)
   const filteredLocs = useMemo(() => {
     const base = subType
       ? allLocs.filter(l => l.category === subType || (selectedZone && l.sub_code === selectedZone.code))
       : allLocs
     if (!materialId) return base
-    return [...base].sort((a, b) => locRank(a) - locRank(b) || a.location_code.localeCompare(b.location_code))
+    // sort ổn định: vị trí khuyến nghị lên đầu, phần còn lại giữ nguyên thứ tự gốc
+    return [...base].sort((a, b) => (isRecommended(b) ? 1 : 0) - (isRecommended(a) ? 1 : 0))
   }, [allLocs, subType, selectedZone, materialId])
 
   const { data: materials    = [] } = useMaterials({ search: matSearch || undefined, category: subType || undefined })
@@ -532,7 +527,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
 
             <div className="space-y-2">
               <Label>Vị trí nhập <span className="text-red-500">*</span>
-                <span className="ml-2 text-xs font-normal text-slate-400">★ = khuyến nghị (còn chỗ · cùng loại đang để dở / trống)</span>
+                <span className="ml-2 text-xs font-normal text-slate-400">★ = còn chỗ · đang để dở cùng loại hàng</span>
               </Label>
               <Select value={locationId} onValueChange={setLocationId} disabled={!subType || !materialId}>
                 <SelectTrigger><SelectValue placeholder={!warehouseId ? 'Chọn kho trước' : !subType ? 'Chọn loại kho trước' : !materialId ? 'Chọn Mã hàng trước' : 'Chọn vị trí'} /></SelectTrigger>
@@ -1073,6 +1068,7 @@ export default function Inbound() {
   const [dense,        setDense]        = useState(() => localStorage.getItem('inbound_density') !== 'comfortable')
   const [editNccGroup, setEditNccGroup] = useState<InboundOrder[] | null>(null)
   const [selectedId,   setSelectedId]   = useState<string | null>(null)
+  const [scanOrderId,  setScanOrderId]  = useState<string | null>(null)
   const isDesktop = useIsDesktop()
   const { widths: colW, startResize, totalWidth } = useColumnResize('inbound_col_widths', INBOUND_COL_DEFAULTS)
 
@@ -1444,13 +1440,13 @@ export default function Inbound() {
                   <TableRow>
                     {INBOUND_COLS.map((c, i) => (
                       <TableHead key={c.id}
-                        className={`relative text-[9px] font-medium text-slate-500 py-1.5 whitespace-nowrap ${i === 0 ? 'px-0' : 'px-2'} ${c.align === 'right' ? 'text-right' : ''} ${c.id === 'date' ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                        className={`text-[9px] font-medium text-slate-500 py-1.5 whitespace-nowrap ${i === 0 ? 'px-0' : 'px-2'} ${c.align === 'right' ? 'text-right' : ''} ${c.id === 'date' ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
                         {c.label}
                         {c.resize !== false && i > 0 && (
                           <span
                             onPointerDown={e => startResize(i, e)}
                             onClick={e => e.stopPropagation()}
-                            className="absolute top-0 right-0 z-30 h-full w-2.5 cursor-col-resize touch-none bg-slate-200/40 hover:bg-sky-400/70"
+                            className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70"
                             title="Kéo để chỉnh độ rộng cột"
                           />
                         )}
@@ -1476,7 +1472,7 @@ export default function Inbound() {
                         onClick={() => { if (isDesktop) setSelectedId(order.id); else navigate(`/wms/inbound/${order.id}`) }}
                         onDoubleClick={() => navigate(`/wms/inbound/${order.id}`)}
                         onScan={order.status === 'OPEN' && !!order.location_id && can(perms, 'inbound', 'scan')
-                          ? (e) => { e.stopPropagation(); unlockAudio(); navigate(`/wms/inbound/${order.id}?scan=1`) }
+                          ? (e) => { e.stopPropagation(); unlockAudio(); setScanOrderId(order.id) }
                           : undefined}
                         onEditGroup={order.source_type === 'NCC' && order.status === 'OPEN' && can(perms, 'inbound', 'edit')
                           ? (e) => { e.stopPropagation(); openEditNccGroup(order) }
@@ -1514,6 +1510,11 @@ export default function Inbound() {
      </div>
 
       <CreateOrderDialog open={showNew || !!editNccGroup} onClose={() => { setShowNew(false); setEditNccGroup(null) }} editGroup={editNccGroup} />
+
+      {/* Quét QR ngay trên trang danh sách (không rời sang chi tiết) */}
+      {scanOrderId && (
+        <InboundScanSheetById importId={scanOrderId} employeeId={user?.id} onClose={() => setScanOrderId(null)} />
+      )}
 
     </div>
   )
@@ -1633,10 +1634,10 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
           {onScan && (
             <button
               onClick={onScan}
-              className="flex items-center gap-0.5 text-[9px] font-medium text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 rounded px-1 py-0.5 transition-colors"
+              className="flex items-center gap-0.5 text-[9px] font-medium text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 rounded px-1.5 py-1 transition-colors"
               title="Thêm pallet"
             >
-              <QrCode className="h-2.5 w-2.5" />
+              <QrCode className="h-3.5 w-3.5" />
             </button>
           )}
         </div>

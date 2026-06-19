@@ -280,9 +280,15 @@ export async function listInventory(req: Request, res: Response) {
   if (r.error) return fail(res, 500, 'DB_ERROR', r.error)
   if (r.empty) return ok(res, { entries: [], total: 0, page: r.pageNum, limit: r.limitNum, total_cartons_remaining: 0 })
 
+  // Khi lọc Loại kho: dùng Material!inner để filter category loại HẲN entry khác loại. Embedded filter
+  // non-inner (material:Material(...)) chỉ left-join → entry khác category vẫn trả về với material=null
+  // (lọt "dòng ma" + phình count). Không lọc category → giữ select gốc (không loại entry material null).
+  const catActive = !!(r.params.categoryFilter && r.params.categoryFilter.length)
+  const mainSelect = catActive ? ENTRY_SELECT.replace('material:Material(', 'material:Material!inner(') : ENTRY_SELECT
+
   // Main paginated query — sort by import_date desc + id asc để đảm bảo thứ tự ổn định giữa các trang
   let mainQ = applyInventoryFilters(
-    (supabase.from('InventoryEntry') as any).select(ENTRY_SELECT, { count: 'exact' }),
+    (supabase.from('InventoryEntry') as any).select(mainSelect, { count: 'exact' }),
     r.params
   )
   if (r.datePctIds !== null) mainQ = mainQ.in('id', r.datePctIds)
@@ -291,21 +297,28 @@ export async function listInventory(req: Request, res: Response) {
     .order('id', { ascending: true })
     .range(r.offset, r.offset + r.limitNum - 1)
 
-  // Aggregate: use SQL SUM() instead of fetching all rows and summing in JS
+  // Tổng thùng tồn. Khi lọc category: SQL sum() qua embedded filter non-inner BỊ LỖI (material không có
+  // trong select) → trả 0; nên inner-join rồi sum JS trên tập đã lọc (giống pre-filter %date). Không lọc
+  // category: dùng SQL sum() nhanh.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let aggQ = applyInventoryFilters(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (supabase.from('InventoryEntry') as any).select('cartons_remaining.sum()'),
-    r.params
-  )
+  let aggQ = catActive
+    ? applyInventoryFilters(
+        (supabase.from('InventoryEntry') as any).select('cartons_remaining, material:Material!inner(category)').limit(100_000),
+        r.params)
+    : applyInventoryFilters(
+        (supabase.from('InventoryEntry') as any).select('cartons_remaining.sum()'),
+        r.params)
   if (r.datePctIds !== null) aggQ = aggQ.in('id', r.datePctIds)
 
-  const [{ data, count, error }, { data: aggData }] = await Promise.all([mainQ, aggQ])
+  const [{ data, count, error }, { data: aggData, error: aggErr }] = await Promise.all([mainQ, aggQ])
 
-  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  if (error)   return fail(res, 500, 'DB_ERROR', error.message)
+  if (aggErr)  return fail(res, 500, 'DB_ERROR', aggErr.message)
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const total_cartons_remaining = Number((aggData as any[])?.[0]?.sum ?? 0)
+  const total_cartons_remaining = catActive
+    ? ((aggData as any[]) ?? []).reduce((s, e) => s + Number(e.cartons_remaining ?? 0), 0)
+    : Number((aggData as any[])?.[0]?.sum ?? 0)
 
   return ok(res, { entries: data ?? [], total: count ?? 0, page: r.pageNum, limit: r.limitNum, total_cartons_remaining })
 }

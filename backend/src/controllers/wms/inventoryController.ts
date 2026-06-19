@@ -131,6 +131,23 @@ async function fetchAllInventory(select: string, params: FilterParams, datePctId
   return rows
 }
 
+// Phân trang TUẦN TỰ cho 1 query bất kỳ (không gắn applyInventoryFilters) — né cap ~1000 dòng/response.
+// `makeQuery`: hàm trả về query MỚI mỗi lần (đã .select + filter + .order ổn định), CHƯA .range. Throw nếu lỗi.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function fetchAllPaged(makeQuery: () => any, pageSize = 1000): Promise<any[]> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rows: any[] = []
+  for (let p = 0; ; p++) {
+    const { data, error } = await makeQuery().range(p * pageSize, p * pageSize + pageSize - 1)
+    if (error) throw new Error(error.message)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const batch = (data ?? []) as any[]
+    rows.push(...batch)
+    if (batch.length < pageSize) break
+  }
+  return rows
+}
+
 // Resolve scope (kho/loại kho theo JWT) + tất cả filter + pre-filter %date → dùng CHUNG cho cả
 // view pallet (listInventory) lẫn view tổng hợp (summaryInventory) để filter khớp tuyệt đối.
 interface ResolvedFilter {
@@ -462,25 +479,30 @@ export async function listFacets(req: Request, res: Response) {
 
   // Cycles & machines: no reference table — query InventoryEntry, lọc theo category/warehouse
   // bằng INNER JOIN (Material/Location) thay vì nhồi hàng nghìn id vào .in() (URL quá dài → 500).
-  // Distinct values are few (< 50), so a sample easily covers them all.
-  const invSelect = 'cycle, machine_code'
+  // Phân trang ĐỦ dòng (cap ~1000/response) — không lấy mẫu, tránh sót giá trị Chu kỳ/Máy.
+  const invSelect = 'id, cycle, machine_code'
     + (categories.length > 0   ? ', material:Material!inner(category)'    : '')
     + (warehouseIds.length > 0 ? ', location:Location!inner(warehouse_id)' : '')
 
-  let invQ = (supabase.from('InventoryEntry') as any)
-    .select(invSelect)
-    .in('status', ['IN_STOCK', 'PARTIAL'])
-    .limit(10000)
-  if (warehouseIds.length === 1)    invQ = invQ.eq('location.warehouse_id', warehouseIds[0])
-  else if (warehouseIds.length > 1) invQ = invQ.in('location.warehouse_id', warehouseIds)
-  if (categories.length === 1)      invQ = invQ.eq('material.category', categories[0])
-  else if (categories.length > 1)   invQ = invQ.in('material.category', categories)
+  let invData: any[]
+  try {
+    invData = await fetchAllPaged(() => {
+      let q = (supabase.from('InventoryEntry') as any)
+        .select(invSelect)
+        .in('status', ['IN_STOCK', 'PARTIAL'])
+        .order('id', { ascending: true })
+      if (warehouseIds.length === 1)    q = q.eq('location.warehouse_id', warehouseIds[0])
+      else if (warehouseIds.length > 1) q = q.in('location.warehouse_id', warehouseIds)
+      if (categories.length === 1)      q = q.eq('material.category', categories[0])
+      else if (categories.length > 1)   q = q.in('material.category', categories)
+      return q
+    })
+  } catch (e) {
+    return fail(res, 500, 'DB_ERROR', (e as Error).message)
+  }
 
-  const { data: invData, error } = await invQ
-  if (error) return fail(res, 500, 'DB_ERROR', error.message)
-
-  const cycles   = [...new Set((invData ?? []).map((e: any) => e.cycle).filter(Boolean))].sort() as string[]
-  const machines = [...new Set((invData ?? []).map((e: any) => e.machine_code).filter(Boolean))].sort() as string[]
+  const cycles   = [...new Set(invData.map((e: any) => e.cycle).filter(Boolean))].sort() as string[]
+  const machines = [...new Set(invData.map((e: any) => e.machine_code).filter(Boolean))].sort() as string[]
 
   const materials = ((matData ?? []) as any[])
     .map((m: any) => ({ id: m.id as string, code: m.material_code as string, name: (m.short_name ?? null) as string | null }))
@@ -753,12 +775,18 @@ export async function stocktakeSummary(req: Request, res: Response) {
   const todayVN    = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   const todayStart = new Date(`${todayVN}T00:00:00+07:00`).toISOString()
 
-  const { data: entries, error: entError } = await (supabase.from('InventoryEntry') as any)
-    .select('id, location_id, stocktake_at, stocktake_flagged, import_date')
-    .in('location_id', locationIds)
-    .in('status', ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'])
-
-  if (entError) return fail(res, 500, 'DB_ERROR', entError.message)
+  // Phân trang lấy ĐỦ (cap ~1000/response) — nếu không, kho >1000 pallet sẽ đếm thiếu total/checked/flagged.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let entries: any[]
+  try {
+    entries = await fetchAllPaged(() => (supabase.from('InventoryEntry') as any)
+      .select('id, location_id, stocktake_at, stocktake_flagged, import_date')
+      .in('location_id', locationIds)
+      .in('status', ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'])
+      .order('id', { ascending: true }))
+  } catch (e) {
+    return fail(res, 500, 'DB_ERROR', (e as Error).message)
+  }
 
   type Stats = { total: number; checked: number; flagged: number }
   const statsMap = new Map<string, Stats>()
@@ -828,19 +856,24 @@ export async function stocktakeEntries(req: Request, res: Response) {
   const todayVN    = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   const todayStart = new Date(`${todayVN}T00:00:00+07:00`).toISOString()
 
-  // Use range(0, 9999) to bypass Supabase default 1000-row limit
-  const { data: entries, error: entErr } = await (supabase.from('InventoryEntry') as any)
-    .select(`
-      id, pallet_code, cartons_remaining, import_date,
-      stocktake_flagged, stocktake_flag_note, stocktake_at,
-      location:Location(id, location_code),
-      material:Material(material_code, short_name),
-      stocktake_by_emp:Employee!stocktake_by(id, name)
-    `)
-    .in('location_id', resolvedLocationIds)
-    .in('status', ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'])
-    .range(0, 9999)
-  if (entErr) return fail(res, 500, 'DB_ERROR', entErr.message)
+  // Phân trang lấy ĐỦ — PostgREST cap ~1000 dòng/response, range(0,9999) KHÔNG bypass (đã xác minh).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let entries: any[]
+  try {
+    entries = await fetchAllPaged(() => (supabase.from('InventoryEntry') as any)
+      .select(`
+        id, pallet_code, cartons_remaining, import_date,
+        stocktake_flagged, stocktake_flag_note, stocktake_at,
+        location:Location(id, location_code),
+        material:Material(material_code, short_name),
+        stocktake_by_emp:Employee!stocktake_by(id, name)
+      `)
+      .in('location_id', resolvedLocationIds)
+      .in('status', ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'])
+      .order('id', { ascending: true }))
+  } catch (e) {
+    return fail(res, 500, 'DB_ERROR', (e as Error).message)
+  }
 
   type E = { id: string; import_date: string; stocktake_at: string | null; stocktake_flagged: boolean }
   const all = (entries ?? []) as E[]

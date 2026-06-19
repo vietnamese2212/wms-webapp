@@ -480,18 +480,10 @@ export async function updateOrder(req: Request, res: Response) {
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
-// ─── Giới hạn & lịch sử vị trí ───────────────────────────────
-const INBOUND_LOCATION_LIMIT = 3
+// ─── Lịch sử vị trí ──────────────────────────────────────────
+// Mô hình "1 phiếu = 1 vị trí": vị trí phiếu = vị trí CHỌN CUỐI CÙNG (persist order.location_id).
+// KHÔNG giới hạn số vị trí (không có khái niệm "tràn"). Mỗi lần đổi → ghi location_history.
 type LocHistoryEntry = { location_code: string; by_id: string | null; by_name: string | null; at: string; source: 'scan' | 'detail' }
-
-// Giới hạn ≤3 vị trí KHÁC NHAU/phiếu: tính LIVE từ vị trí thật của pallet (InventoryEntry).
-// Trả true nếu thêm newLocId sẽ vượt 3 vị trí khác nhau (newLocId chưa từng có pallet & đã đủ 3).
-async function exceedsLocationLimit(orderId: string, newLocId: string): Promise<boolean> {
-  const { data: rows } = await supabase
-    .from('InventoryEntry').select('location_id').eq('import_order_id', orderId)
-  const set = new Set((rows ?? []).map((r: { location_id: string | null }) => r.location_id).filter(Boolean) as string[])
-  return !set.has(newLocId) && set.size >= INBOUND_LOCATION_LIMIT
-}
 
 function appendLocHistory(order: unknown, location_code: string, source: 'scan' | 'detail', user: { sub?: string; name?: string } | undefined): LocHistoryEntry[] {
   const cur = Array.isArray((order as any).location_history) ? (order as any).location_history as LocHistoryEntry[] : []
@@ -521,10 +513,6 @@ export async function setOrderLocation(req: Request, res: Response) {
     if (location.category && orderCategory && location.category !== orderCategory)
       return fail(res, 422, 'LOCATION_CATEGORY_MISMATCH',
         `Vị trí ${location.location_code} thuộc loại "${location.category}" — không khớp loại hàng "${orderCategory}". Chọn vị trí đúng loại.`)
-    if (await exceedsLocationLimit(req.params.id, location_id))
-      return fail(res, 422, 'LOCATION_LIMIT',
-        `Phiếu đã dùng tối đa ${INBOUND_LOCATION_LIMIT} vị trí khác nhau — không thể thêm vị trí mới (chỉ chọn lại vị trí đã dùng).`)
-
     const changed = location_id !== (order as any).location_id
     const patch: Record<string, unknown> = { location_id, updated_by: updated_by ?? null, updated_at: new Date().toISOString() }
     if (changed) patch.location_history = appendLocHistory(order, location.location_code, 'detail', req.user)
@@ -748,11 +736,6 @@ export async function checkScanQR(req: Request, res: Response) {
         `Vị trí ${location.location_code} thuộc loại "${(location as any).category}" — không khớp loại hàng "${orderCategory}" của phiếu. Chọn vị trí đúng loại.`)
     }
 
-    // Giới hạn ≤3 vị trí khác nhau/phiếu
-    if (await exceedsLocationLimit(order_id, location_id))
-      return fail(res, 422, 'LOCATION_LIMIT',
-        `Phiếu đã dùng tối đa ${INBOUND_LOCATION_LIMIT} vị trí khác nhau — không thể quét sang vị trí mới (chỉ quét vào vị trí đã dùng).`)
-
     const stackLayerNum = Number(stack_layer)
     if (stackLayerNum === 1) {
       const { count: usedSlots } = await supabase
@@ -885,11 +868,6 @@ export async function scanQR(req: Request, res: Response) {
       return fail(res, 422, 'LOCATION_CATEGORY_MISMATCH',
         `Vị trí ${location.location_code} thuộc loại "${location.category}" — không khớp loại hàng "${orderCategory}" của phiếu. Chọn vị trí đúng loại.`)
     }
-
-    // Giới hạn ≤3 vị trí khác nhau/phiếu
-    if (await exceedsLocationLimit(order_id, location_id))
-      return fail(res, 422, 'LOCATION_LIMIT',
-        `Phiếu đã dùng tối đa ${INBOUND_LOCATION_LIMIT} vị trí khác nhau — không thể quét sang vị trí mới (chỉ quét vào vị trí đã dùng).`)
 
     // Fire manufacturer lookup now so it runs in parallel with the location capacity check below
     const manufacturerP = parsed.manufacturer_code

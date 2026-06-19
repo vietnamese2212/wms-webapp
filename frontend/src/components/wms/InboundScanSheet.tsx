@@ -98,9 +98,6 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
   const [showLocPicker,    setShowLocPicker]    = useState(!order.location_id) // NCC: mở picker ngay
 
   const activeLoc = allLocations.find(l => l.id === activeLocationId)
-  // Giới hạn ≤3 vị trí khác nhau/phiếu: đủ 3 → chặn chọn vị trí MỚI ngay ở picker.
-  const usedLocIds = new Set(((order.inventory_entries ?? []) as { location_id?: string }[]).map(e => e.location_id).filter(Boolean) as string[])
-  const locLimitReached = usedLocIds.size >= 3
 
   function handleScan(raw: string) {
     if (!activeLocationId) {
@@ -221,23 +218,18 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
           {/* Location picker dialog */}
           {showLocPicker && (
             <div className="border rounded-lg bg-slate-50 p-3 space-y-2">
-              <p className="text-xs font-medium text-slate-600">
-                Chọn vị trí{activeLocationId ? ' mới' : ''}:
-                {locLimitReached && <span className="ml-1 font-normal text-amber-600">đã đủ 3 vị trí — chỉ chọn lại vị trí đã dùng</span>}
-              </p>
+              <p className="text-xs font-medium text-slate-600">Chọn vị trí{activeLocationId ? ' mới' : ''}:</p>
               <div className="max-h-36 overflow-y-auto space-y-1">
                 {allLocations.map(l => {
                     const isFull    = l.max_pallets > 0 && (l.used_slots ?? 0) >= l.max_pallets
                     const isPartial = (l.used_slots ?? 0) > 0 && !isFull
-                    const blocked   = locLimitReached && !usedLocIds.has(l.id)
                     return (
                       <button
                         key={l.id}
                         type="button"
-                        disabled={blocked}
                         onClick={() => { setActiveLocationId(l.id); setShowLocPicker(false) }}
                         className={[
-                          'w-full text-left px-2 py-1.5 rounded text-xs flex items-center justify-between disabled:opacity-40 disabled:cursor-not-allowed',
+                          'w-full text-left px-2 py-1.5 rounded text-xs flex items-center justify-between',
                           l.id === activeLocationId
                             ? 'bg-blue-100 text-blue-700 font-medium'
                             : isFull
@@ -248,7 +240,7 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
                         ].join(' ')}
                       >
                         <span className="font-mono">{l.location_code}</span>
-                        <span className="text-[10px] text-slate-400">{l.used_slots ?? 0}/{l.max_pallets}{blocked ? ' · đủ 3 VT' : ''}</span>
+                        <span className="text-[10px] text-slate-400">{l.used_slots ?? 0}/{l.max_pallets}</span>
                       </button>
                     )
                   })}

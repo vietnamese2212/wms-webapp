@@ -1,6 +1,6 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, PackagePlus, X, ChevronDown, User, MapPin, QrCode, Pencil, Bookmark, Rows3, AlignJustify, ArrowRight } from 'lucide-react'
+import { Plus, PackagePlus, X, ChevronDown, User, MapPin, QrCode, Pencil, Bookmark, Rows3, AlignJustify, ArrowRight, AlertTriangle } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
@@ -1563,22 +1563,18 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
   const pallets  = order._count.inventory_entries
   const doCodes  = order.source_type === 'TRANSFER' ? (order as any).from_gdo_delivery_codes as string[] | undefined : undefined
 
-  // Vị trí THỰC TẾ của pallet (entries_by_location) — không chỉ vị trí mục tiêu của phiếu.
-  // Pallet có thể tràn sang vị trí khác khi quét → hiện đa vị trí ("A +N", tooltip đủ).
-  const actualLocsRaw = [...new Set(
+  // Mô hình "1 phiếu = 1 vị trí": ô Vị trí hiện vị trí HIỆN TẠI của phiếu (order.location, =vị trí
+  // chọn cuối). Nếu có pallet đang nằm ở vị trí KHÁC (lệch) → CẢNH BÁO (không tự dời dữ liệu).
+  const curLocCode = order.location?.location_code ?? null
+  const palletLocs = [...new Set(
     (((order as any).entries_by_location ?? []) as { loc: string }[])
       .map(e => e.loc.split('-')[0])
       .filter(c => c && c !== '(chưa xác định)')
   )]
-  // Vị trí dùng SAU CÙNG hiện trước: order.location_id đã persist = vị trí mới nhất → đẩy lên đầu
-  const curLocCode = order.location?.location_code
-  const actualLocs = curLocCode && actualLocsRaw.includes(curLocCode)
-    ? [curLocCode, ...actualLocsRaw.filter(c => c !== curLocCode)]
-    : actualLocsRaw
-  const locText  = actualLocs.length > 0
-    ? (actualLocs.length === 1 ? actualLocs[0] : `${actualLocs[0]} +${actualLocs.length - 1}`)
-    : (order.location?.location_code ?? '—')
-  const locTitle = actualLocs.length > 1 ? actualLocs.join(', ') : undefined
+  const offLocs   = palletLocs.filter(c => c !== curLocCode)
+  const locText   = curLocCode ?? (palletLocs[0] ?? '—')
+  const locMismatch = offLocs.length > 0
+  const locTitle  = locMismatch ? `⚠ Pallet đang ở vị trí khác: ${offLocs.join(', ')}` : undefined
 
   const showBracket = bracketPos !== 'none' && bracketPos !== 'only'
   const st = inboundStatus(order)
@@ -1647,7 +1643,10 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
       {/* Col 3: Vị trí */}
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <div className="flex items-center justify-between gap-1 w-full">
-          <span className="text-[10px] font-mono font-semibold truncate" title={locTitle}>{locText}</span>
+          <span className="flex items-center gap-0.5 min-w-0">
+            <span className="text-[10px] font-mono font-semibold truncate" title={locTitle}>{locText}</span>
+            {locMismatch && <AlertTriangle className="h-3 w-3 text-amber-500 shrink-0" />}
+          </span>
           {onScan && (
             <button
               onClick={onScan}

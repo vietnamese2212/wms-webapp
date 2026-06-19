@@ -113,7 +113,7 @@ imported_by TEXT FK(Employee), created_by TEXT FK(Employee), updated_by TEXT FK(
 location_history JSONB DEFAULT '[]',  -- lịch sử đổi vị trí: [{location_code, by_id, by_name, at, source:'scan'|'detail'}] (migration 20260619)
 notes TEXT, created_at, updated_at
 ```
-> Giới hạn **≤3 vị trí khác nhau/phiếu** (vị trí thật của pallet) — enforce LIVE ở `scanQR`/`setOrderLocation`/`checkScanQR` (`exceedsLocationLimit`), không lưu count riêng. Đổi vị trí ở quét/detail → persist `location_id` (vị trí hiện tại) + append `location_history`.
+> Mô hình **"1 phiếu = 1 vị trí" = vị trí CHỌN CUỐI CÙNG**: quét/đổi vị trí → persist `location_id` (vị trí hiện tại) + append `location_history`. KHÔNG giới hạn số vị trí (không có "tràn"). UI hiện 1 vị trí (order.location) + **cảnh báo ⚠** nếu có pallet nằm ở vị trí khác (không tự dời dữ liệu).
 
 ### InventoryEntry (pallet tồn kho)
 ```sql

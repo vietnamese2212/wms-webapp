@@ -33,8 +33,6 @@ import { inboundOrderStatusLabel, formatTimestampDate, formatTimestampTime } fro
 import { unlockAudio }             from '@/utils/audio'
 import type { InboundOrder, InboundOrderStatus, PalletEntry } from '@/types'
 
-const INBOUND_LOC_LIMIT = 3   // ≤3 vị trí khác nhau/phiếu (khớp BE INBOUND_LOCATION_LIMIT)
-
 // ─── Status badge ─────────────────────────────────────────────
 
 const statusVariant: Record<InboundOrderStatus, string> = {
@@ -145,19 +143,14 @@ export default function InboundDetail() {
   const locFull = (l: LocOpt) => l.max_pallets > 0 && (l.used_slots ?? 0) >= l.max_pallets
   const locRec  = (l: LocOpt) => !!l.has_same_material && !locFull(l)
   const locOptions = [...(allLocations as LocOpt[])].sort((a, b) => (locRec(b) ? 1 : 0) - (locRec(a) ? 1 : 0))
-  // Giới hạn ≤3 vị trí khác nhau: tính từ vị trí thật của pallet. Đủ 3 → chặn chọn vị trí MỚI
-  // ngay ở dropdown (chỉ cho chọn lại 1 trong 3 vị trí đã dùng). BE là lớp chặn cuối.
-  const usedLocIds = new Set(((order?.inventory_entries ?? []) as { location_id?: string }[]).map(e => e.location_id).filter(Boolean) as string[])
-  const locLimitReached = usedLocIds.size >= INBOUND_LOC_LIMIT
   function renderLocItems() {
     return locOptions.map(l => {
       const isPartial = (l.used_slots ?? 0) > 0 && !locFull(l)
-      const blocked = locLimitReached && !usedLocIds.has(l.id)
       return (
-        <SelectItem key={l.id} value={l.id} disabled={blocked}>
+        <SelectItem key={l.id} value={l.id}>
           {locRec(l) && <span className="text-amber-500 font-bold mr-1">★</span>}
           <span className={locFull(l) ? 'text-blue-700 font-semibold' : isPartial ? 'text-amber-600' : ''}>{l.location_code}</span>
-          <span className="ml-2 text-xs text-slate-400">({l.used_slots ?? 0}/{l.max_pallets}{l.has_same_material ? ' · đang để' : ''}{blocked ? ' · đủ 3 VT' : ''})</span>
+          <span className="ml-2 text-xs text-slate-400">({l.used_slots ?? 0}/{l.max_pallets}{l.has_same_material ? ' · đang để' : ''})</span>
         </SelectItem>
       )
     })
@@ -213,17 +206,14 @@ export default function InboundDetail() {
   const isCompleted = order?.status === 'COMPLETED'
   const entries     = order?.inventory_entries ?? []
   const totalScanned = entries.reduce((sum, e) => sum + e.cartons_imported, 0)
-  // Vị trí THỰC TẾ của pallet (có thể tràn sang nhiều vị trí khi quét) — hiện đa vị trí.
-  const actualLocCodesRaw = [...new Set(entries.map(e => (e as any).location?.location_code).filter(Boolean))] as string[]
-  // Vị trí dùng SAU CÙNG hiện trước: order.location_id đã persist = vị trí mới nhất → đẩy lên đầu
-  const curLocCode = order?.location?.location_code
-  const actualLocCodes = curLocCode && actualLocCodesRaw.includes(curLocCode)
-    ? [curLocCode, ...actualLocCodesRaw.filter(c => c !== curLocCode)]
-    : actualLocCodesRaw
-  const headerLocText = actualLocCodes.length > 0
-    ? (actualLocCodes.length === 1 ? actualLocCodes[0] : `${actualLocCodes[0]} +${actualLocCodes.length - 1}`)
-    : (order?.location?.location_code ?? null)
-  const headerLocTitle = actualLocCodes.length > 1 ? actualLocCodes.join(', ') : undefined
+  // Mô hình "1 phiếu = 1 vị trí": header hiện vị trí HIỆN TẠI (order.location, =vị trí chọn cuối).
+  // Pallet nằm ở vị trí KHÁC → CẢNH BÁO lệch (không tự dời dữ liệu).
+  const curLocCode = order?.location?.location_code ?? null
+  const palletLocCodes = [...new Set(entries.map(e => (e as any).location?.location_code).filter(Boolean))] as string[]
+  const offLocCodes = palletLocCodes.filter(c => c !== curLocCode)
+  const headerLocText = curLocCode ?? (palletLocCodes[0] ?? null)
+  const headerLocMismatch = offLocCodes.length > 0
+  const headerLocTitle = headerLocMismatch ? `⚠ Pallet đang ở vị trí khác: ${offLocCodes.join(', ')}` : undefined
   const locHistory = ((order as any)?.location_history ?? []) as { location_code: string; by_name: string | null; at: string; source: string }[]
   const isNccFull   = order?.source_type === 'NCC' && (order?.planned_cartons ?? 0) > 0 && totalScanned >= (order?.planned_cartons ?? 0)
 
@@ -599,6 +589,7 @@ export default function InboundDetail() {
                 {headerLocText ? (
                   <span className="flex items-center gap-1">
                     <span className="font-mono font-medium" title={headerLocTitle}>{headerLocText}</span>
+                    {headerLocMismatch && <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0" />}
                     {isOpen && canSetLocation && (
                       <Select onValueChange={changeLoc}>
                         <SelectTrigger className="h-6 w-auto gap-1 rounded-md border-0 bg-sky-600 px-2 text-[10px] font-semibold text-white shadow-sm hover:bg-sky-700">
@@ -739,7 +730,7 @@ export default function InboundDetail() {
         {locHistory.length > 0 && (
           <div className="px-4 py-1.5 border-y border-slate-200 bg-slate-50 flex items-center gap-2 text-[11px] overflow-x-auto">
             <span className="shrink-0 font-medium text-slate-500 inline-flex items-center gap-1">
-              <MapPin className="h-3 w-3 text-slate-400" /> Lịch sử vị trí ({actualLocCodes.length}/3):
+              <MapPin className="h-3 w-3 text-slate-400" /> Lịch sử vị trí:
             </span>
             {locHistory.map((h, i) => (
               <span key={i} className="shrink-0 inline-flex items-center gap-1">

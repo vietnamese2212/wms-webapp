@@ -964,18 +964,19 @@ function applyClientFilters(
 
 // Cấu hình cột Inbound (thứ tự khớp với các <TableCell> trong InboundRow)
 const INBOUND_COLS: { id: string; label: string; w: number; align?: 'right'; resize?: false }[] = [
-  { id: 'pin',    label: '',                   w: 34,  resize: false },
-  { id: 'date',   label: 'Ngày nhập',          w: 96 },
-  { id: 'status', label: 'Trạng thái',         w: 92 },
-  { id: 'loc',    label: 'Vị trí',             w: 84 },
-  { id: 'mat',    label: 'Material',           w: 150 },
-  { id: 'code',   label: 'Mã phiếu / Mã lệnh', w: 130 },
-  { id: 'pallet', label: 'Pallet',             w: 64,  align: 'right' },
-  { id: 'actual', label: 'Thực nhập',          w: 84,  align: 'right' },
-  { id: 'plan',   label: 'Thùng KH',           w: 84,  align: 'right' },
-  { id: 'imp',    label: 'Người nhập',         w: 104 },
-  { id: 'shift',  label: 'Ca',                 w: 64 },
-  { id: 'note',   label: 'Ghi chú',            w: 120 },
+  { id: 'pin',      label: '',                   w: 34,  resize: false },
+  { id: 'date',     label: 'Ngày nhập',          w: 96 },
+  { id: 'loc',      label: 'Vị trí',             w: 84 },
+  { id: 'mat',      label: 'Material',           w: 150 },
+  { id: 'code',     label: 'Mã phiếu / Mã lệnh', w: 130 },
+  { id: 'pallet',   label: 'Pallet',             w: 64,  align: 'right' },
+  { id: 'actual',   label: 'Thực nhập',          w: 84,  align: 'right' },
+  { id: 'plan',     label: 'Thùng KH',           w: 84,  align: 'right' },
+  { id: 'progress', label: 'Tiến độ',            w: 78,  align: 'right' },
+  { id: 'imp',      label: 'Người nhập',         w: 104 },
+  { id: 'shift',    label: 'Ca',                 w: 64 },
+  { id: 'note',     label: 'Ghi chú',            w: 120 },
+  { id: 'status',   label: 'Trạng thái',         w: 92 },
 ]
 const INBOUND_COL_DEFAULTS = INBOUND_COLS.map(c => c.w)
 
@@ -1181,6 +1182,15 @@ export default function Inbound() {
   // Totals
   const totalPallets = useMemo(() => filteredOrders.reduce((s, o) => s + o._count.inventory_entries, 0), [filteredOrders])
   const totalCartons = useMemo(() => filteredOrders.reduce((s, o) => s + (o.total_cartons ?? 0), 0), [filteredOrders])
+  const srcCounts = useMemo(() => {
+    let sx = 0, ncc = 0, tf = 0
+    for (const o of filteredOrders) {
+      if (o.source_type === 'NCC') ncc++
+      else if (o.source_type === 'TRANSFER') tf++
+      else sx++
+    }
+    return { sx, ncc, tf }
+  }, [filteredOrders])
 
   // Location summary — aggregate theo vị trí thực tế của từng pallet (entries_by_location)
   // không dùng order.location vì user có thể đổi vị trí phiếu sau khi đã quét
@@ -1380,6 +1390,9 @@ export default function Inbound() {
       {/* Dải tile tổng hợp (Manhattan Insight) */}
       <SummaryBand tiles={[
         { label: 'Phiếu nhập', value: filteredOrders.length },
+        { label: 'SX',         value: srcCounts.sx },
+        { label: 'NCC',        value: srcCounts.ncc },
+        { label: 'TF',         value: srcCounts.tf },
         { label: 'Pallet',     value: totalPallets },
         { label: 'Thực nhập',  value: totalCartons.toLocaleString() },
         { label: 'Hoàn thành', value: filteredOrders.filter(o => o.status === 'COMPLETED').length },
@@ -1418,7 +1431,7 @@ export default function Inbound() {
                           <span
                             onPointerDown={e => startResize(i, e)}
                             onClick={e => e.stopPropagation()}
-                            className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70"
+                            className="absolute top-0 right-0 z-30 h-full w-2.5 cursor-col-resize touch-none bg-slate-200/40 hover:bg-sky-400/70"
                             title="Kéo để chỉnh độ rộng cột"
                           />
                         )}
@@ -1434,7 +1447,7 @@ export default function Inbound() {
                     const spacerBefore = bpos === 'first' && i > 0 && prevBpos !== 'last'
                     const spacerAfter  = bpos === 'last'
                     const nodes: React.ReactNode[] = []
-                    if (spacerBefore) nodes.push(<tr key={`sp-b-${order.id}`} aria-hidden><td colSpan={12} className="p-0 border-0 bg-transparent"><div className="h-2.5" /></td></tr>)
+                    if (spacerBefore) nodes.push(<tr key={`sp-b-${order.id}`} aria-hidden><td colSpan={13} className="p-0 border-0 bg-transparent"><div className="h-2.5" /></td></tr>)
                     nodes.push(
                       <InboundRow
                         key={order.id}
@@ -1459,7 +1472,7 @@ export default function Inbound() {
                         bracketPos={bpos}
                       />
                     )
-                    if (spacerAfter) nodes.push(<tr key={`sp-a-${order.id}`} aria-hidden><td colSpan={12} className="p-0 border-0 bg-transparent"><div className="h-2.5" /></td></tr>)
+                    if (spacerAfter) nodes.push(<tr key={`sp-a-${order.id}`} aria-hidden><td colSpan={13} className="p-0 border-0 bg-transparent"><div className="h-2.5" /></td></tr>)
                     return nodes
                   })}
                 </TableBody>
@@ -1594,11 +1607,6 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
         ) : null}
       </TableCell>
 
-      {/* Col: Trạng thái */}
-      <TableCell className="px-2 py-1 whitespace-nowrap">
-        <Badge variant={st.variant} className="px-1.5 py-0 text-[9px] font-medium">{st.label}</Badge>
-      </TableCell>
-
       {/* Col 3: Vị trí */}
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <div className="flex items-center justify-between gap-1 w-full">
@@ -1617,17 +1625,17 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
 
       {/* Col 4: Material */}
       <TableCell className="px-2 py-1">
-        <div className="text-[10px] font-medium whitespace-nowrap">{matName}</div>
-        {matCode && <div className="text-[9px] text-slate-400 font-mono whitespace-nowrap">{matCode}</div>}
+        <div className="text-[10px] font-medium truncate" title={matName}>{matName}</div>
+        {matCode && <div className="text-[9px] text-slate-400 font-mono truncate" title={matCode}>{matCode}</div>}
       </TableCell>
 
       {/* Col 5: Mã phiếu / Mã lệnh (NEW) */}
       <TableCell className="px-2 py-1">
         {order.import_code ? (
-          <div className="text-[10px] font-mono font-semibold whitespace-nowrap">{order.import_code}</div>
+          <div className="text-[10px] font-mono font-semibold truncate" title={order.import_code}>{order.import_code}</div>
         ) : null}
         {(order as any).tms_order?.order_code ? (
-          <div className="text-[9px] font-mono whitespace-nowrap mt-0.5 opacity-80">{(order as any).tms_order.order_code}</div>
+          <div className="text-[9px] font-mono truncate mt-0.5 opacity-80" title={(order as any).tms_order.order_code}>{(order as any).tms_order.order_code}</div>
         ) : null}
         {!order.import_code && !(order as any).tms_order?.order_code && (
           <span className="text-[10px] text-slate-300">—</span>
@@ -1660,9 +1668,25 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
         )}
       </TableCell>
 
+      {/* Col: Tiến độ (Thực nhập / Thùng KH) */}
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        {order.planned_cartons != null && order.planned_cartons > 0 ? (() => {
+          const pct  = Math.round(((order.total_cartons ?? 0) / order.planned_cartons) * 100)
+          const done = pct >= 100
+          return (
+            <div className="flex flex-col items-end gap-0.5">
+              <span className={`text-[10px] font-semibold tabular-nums ${done ? 'text-green-600' : 'text-amber-600'}`}>{pct}%</span>
+              <div className="h-1 w-12 rounded-full bg-slate-200 overflow-hidden">
+                <div className={`h-full ${done ? 'bg-green-500' : 'bg-amber-500'}`} style={{ width: `${Math.min(100, pct)}%` }} />
+              </div>
+            </div>
+          )
+        })() : <span className="text-[10px] text-slate-300">—</span>}
+      </TableCell>
+
       {/* Col 9: Người nhập */}
       <TableCell className="px-2 py-1">
-        <div className="text-[10px] max-w-[90px] truncate">{importer}</div>
+        <div className="text-[10px] max-w-[90px] truncate" title={importer}>{importer}</div>
       </TableCell>
 
       {/* Col 10: Ca */}
@@ -1674,7 +1698,12 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
 
       {/* Col 11: Ghi chú */}
       <TableCell className="px-2 py-1">
-        <div className="text-[10px] max-w-[90px] truncate">{order.notes ?? '—'}</div>
+        <div className="text-[10px] truncate" title={order.notes ?? undefined}>{order.notes ?? '—'}</div>
+      </TableCell>
+
+      {/* Col cuối: Trạng thái */}
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        <Badge variant={st.variant} className="px-1.5 py-0 text-[9px] font-medium">{st.label}</Badge>
       </TableCell>
 
     </TableRow>

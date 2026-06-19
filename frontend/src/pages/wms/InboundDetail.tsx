@@ -33,6 +33,8 @@ import { inboundOrderStatusLabel, formatTimestampDate, formatTimestampTime } fro
 import { unlockAudio }             from '@/utils/audio'
 import type { InboundOrder, InboundOrderStatus, PalletEntry } from '@/types'
 
+const INBOUND_LOC_LIMIT = 3   // ≤3 vị trí khác nhau/phiếu (khớp BE INBOUND_LOCATION_LIMIT)
+
 // ─── Status badge ─────────────────────────────────────────────
 
 const statusVariant: Record<InboundOrderStatus, string> = {
@@ -126,6 +128,12 @@ export default function InboundDetail() {
   const { mutate: deleteEntries                         } = useDeletePalletEntries()
   const { mutate: updateOrder                           } = useUpdateInboundOrder()
   const { mutate: setOrderLocation                      } = useSetInboundOrderLocation()
+  const [locError, setLocError] = useState<string | null>(null)
+  const changeLoc = (v: string) => setOrderLocation(
+    { id: order!.id, location_id: v },
+    { onSuccess: () => setLocError(null),
+      onError: (e) => setLocError((e as AxiosError<{ error?: { message?: string } }>).response?.data?.error?.message ?? 'Không đổi được vị trí') },
+  )
   const { mutate: updateEntry, isPending: saving        } = useUpdatePalletEntry()
   // Đổi vị trí phiếu = thao tác đặt pallet → quyền edit_pallet (của mình) / force_edit_pallet (bất kỳ),
   // KHÔNG dùng quyền `edit` (vốn là "Sửa nhóm phiếu NCC"). Tách riêng theo chuẩn 1 action = 1 quyền.
@@ -137,14 +145,19 @@ export default function InboundDetail() {
   const locFull = (l: LocOpt) => l.max_pallets > 0 && (l.used_slots ?? 0) >= l.max_pallets
   const locRec  = (l: LocOpt) => !!l.has_same_material && !locFull(l)
   const locOptions = [...(allLocations as LocOpt[])].sort((a, b) => (locRec(b) ? 1 : 0) - (locRec(a) ? 1 : 0))
+  // Giới hạn ≤3 vị trí khác nhau: tính từ vị trí thật của pallet. Đủ 3 → chặn chọn vị trí MỚI
+  // ngay ở dropdown (chỉ cho chọn lại 1 trong 3 vị trí đã dùng). BE là lớp chặn cuối.
+  const usedLocIds = new Set(((order?.inventory_entries ?? []) as { location_id?: string }[]).map(e => e.location_id).filter(Boolean) as string[])
+  const locLimitReached = usedLocIds.size >= INBOUND_LOC_LIMIT
   function renderLocItems() {
     return locOptions.map(l => {
       const isPartial = (l.used_slots ?? 0) > 0 && !locFull(l)
+      const blocked = locLimitReached && !usedLocIds.has(l.id)
       return (
-        <SelectItem key={l.id} value={l.id}>
+        <SelectItem key={l.id} value={l.id} disabled={blocked}>
           {locRec(l) && <span className="text-amber-500 font-bold mr-1">★</span>}
           <span className={locFull(l) ? 'text-blue-700 font-semibold' : isPartial ? 'text-amber-600' : ''}>{l.location_code}</span>
-          <span className="ml-2 text-xs text-slate-400">({l.used_slots ?? 0}/{l.max_pallets}{l.has_same_material ? ' · đang để' : ''})</span>
+          <span className="ml-2 text-xs text-slate-400">({l.used_slots ?? 0}/{l.max_pallets}{l.has_same_material ? ' · đang để' : ''}{blocked ? ' · đủ 3 VT' : ''})</span>
         </SelectItem>
       )
     })
@@ -201,11 +214,17 @@ export default function InboundDetail() {
   const entries     = order?.inventory_entries ?? []
   const totalScanned = entries.reduce((sum, e) => sum + e.cartons_imported, 0)
   // Vị trí THỰC TẾ của pallet (có thể tràn sang nhiều vị trí khi quét) — hiện đa vị trí.
-  const actualLocCodes = [...new Set(entries.map(e => (e as any).location?.location_code).filter(Boolean))] as string[]
+  const actualLocCodesRaw = [...new Set(entries.map(e => (e as any).location?.location_code).filter(Boolean))] as string[]
+  // Vị trí dùng SAU CÙNG hiện trước: order.location_id đã persist = vị trí mới nhất → đẩy lên đầu
+  const curLocCode = order?.location?.location_code
+  const actualLocCodes = curLocCode && actualLocCodesRaw.includes(curLocCode)
+    ? [curLocCode, ...actualLocCodesRaw.filter(c => c !== curLocCode)]
+    : actualLocCodesRaw
   const headerLocText = actualLocCodes.length > 0
     ? (actualLocCodes.length === 1 ? actualLocCodes[0] : `${actualLocCodes[0]} +${actualLocCodes.length - 1}`)
     : (order?.location?.location_code ?? null)
   const headerLocTitle = actualLocCodes.length > 1 ? actualLocCodes.join(', ') : undefined
+  const locHistory = ((order as any)?.location_history ?? []) as { location_code: string; by_name: string | null; at: string; source: string }[]
   const isNccFull   = order?.source_type === 'NCC' && (order?.planned_cartons ?? 0) > 0 && totalScanned >= (order?.planned_cartons ?? 0)
 
   function canDeleteEntry(entry: PalletEntry): boolean {
@@ -581,7 +600,7 @@ export default function InboundDetail() {
                   <span className="flex items-center gap-1">
                     <span className="font-mono font-medium" title={headerLocTitle}>{headerLocText}</span>
                     {isOpen && canSetLocation && (
-                      <Select onValueChange={(v) => setOrderLocation({ id: order.id, location_id: v })}>
+                      <Select onValueChange={changeLoc}>
                         <SelectTrigger className="h-6 w-auto gap-1 rounded-md border-0 bg-sky-600 px-2 text-[10px] font-semibold text-white shadow-sm hover:bg-sky-700">
                           <Pencil className="h-3 w-3" /> Đổi vị trí
                         </SelectTrigger>
@@ -596,7 +615,7 @@ export default function InboundDetail() {
                     <AlertTriangle className="h-3 w-3" />
                     Chưa chọn vị trí
                     {canSetLocation && (
-                      <Select onValueChange={(v) => setOrderLocation({ id: order.id, location_id: v })}>
+                      <Select onValueChange={changeLoc}>
                         <SelectTrigger className="h-6 w-auto gap-1 rounded-md border-0 bg-blue-600 px-2 text-[10px] font-semibold text-white shadow-sm hover:bg-blue-700 ml-1">
                           <MapPin className="h-3 w-3" /> <SelectValue placeholder="Chọn vị trí" />
                         </SelectTrigger>
@@ -711,6 +730,26 @@ export default function InboundDetail() {
             )}
           </div>
         </div>
+
+        {locError && (
+          <div className="mx-4 mt-2 rounded-md bg-red-50 border border-red-200 px-3 py-1.5 text-xs text-red-700">{locError}</div>
+        )}
+
+        {/* Lịch sử đổi vị trí (tối đa 3 vị trí khác nhau/phiếu) */}
+        {locHistory.length > 0 && (
+          <div className="px-4 py-1.5 border-y border-slate-200 bg-slate-50 flex items-center gap-2 text-[11px] overflow-x-auto">
+            <span className="shrink-0 font-medium text-slate-500 inline-flex items-center gap-1">
+              <MapPin className="h-3 w-3 text-slate-400" /> Lịch sử vị trí ({actualLocCodes.length}/3):
+            </span>
+            {locHistory.map((h, i) => (
+              <span key={i} className="shrink-0 inline-flex items-center gap-1">
+                {i > 0 && <span className="text-slate-300">→</span>}
+                <span className="font-mono font-semibold text-slate-700">{h.location_code}</span>
+                <span className="text-slate-400">({h.source === 'scan' ? 'quét' : 'sửa'}{h.by_name ? ` · ${h.by_name}` : ''} · {formatTimestampDate(h.at, true)} {formatTimestampTime(h.at, false)})</span>
+              </span>
+            ))}
+          </div>
+        )}
 
         {/* Dải tile tổng hợp (đồng bộ với list) */}
         <SummaryBand tiles={[

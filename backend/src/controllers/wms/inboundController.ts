@@ -10,7 +10,7 @@ import { emitInboundChanged } from '../../lib/events'
 const ORDER_SELECT = `
   id, import_code, warehouse_id, location_id, material_id, planned_pallets, shift_id, status,
   imported_by, created_by, updated_by, import_date, notes, created_at, updated_at,
-  source_type, gate_registration_id, tms_order_id, planned_cartons, warehouse_type, from_gdo_id, posm_entry_id, posm_cartons,
+  source_type, gate_registration_id, tms_order_id, planned_cartons, warehouse_type, from_gdo_id, posm_entry_id, posm_cartons, location_history,
   warehouse:Warehouse(id, code, name),
   location:Location(id, location_code, sub_code, max_pallets),
   material:Material(id, material_code, short_name, material_description, cartons_per_pallet, cartons_per_pallet_mn, category, no_qr_tracking),
@@ -480,6 +480,24 @@ export async function updateOrder(req: Request, res: Response) {
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
+// ─── Giới hạn & lịch sử vị trí ───────────────────────────────
+const INBOUND_LOCATION_LIMIT = 3
+type LocHistoryEntry = { location_code: string; by_id: string | null; by_name: string | null; at: string; source: 'scan' | 'detail' }
+
+// Giới hạn ≤3 vị trí KHÁC NHAU/phiếu: tính LIVE từ vị trí thật của pallet (InventoryEntry).
+// Trả true nếu thêm newLocId sẽ vượt 3 vị trí khác nhau (newLocId chưa từng có pallet & đã đủ 3).
+async function exceedsLocationLimit(orderId: string, newLocId: string): Promise<boolean> {
+  const { data: rows } = await supabase
+    .from('InventoryEntry').select('location_id').eq('import_order_id', orderId)
+  const set = new Set((rows ?? []).map((r: { location_id: string | null }) => r.location_id).filter(Boolean) as string[])
+  return !set.has(newLocId) && set.size >= INBOUND_LOCATION_LIMIT
+}
+
+function appendLocHistory(order: unknown, location_code: string, source: 'scan' | 'detail', user: { sub?: string; name?: string } | undefined): LocHistoryEntry[] {
+  const cur = Array.isArray((order as any).location_history) ? (order as any).location_history as LocHistoryEntry[] : []
+  return [...cur, { location_code, by_id: user?.sub ?? null, by_name: user?.name ?? null, at: new Date().toISOString(), source }]
+}
+
 // ─── Set order location (TÁCH RIÊNG khỏi updateOrder) ────────
 // Đổi vị trí phiếu = thao tác đặt/định tuyến pallet, KHÔNG phải "sửa nhóm phiếu NCC".
 // Gate bằng edit_pallet/force_edit_pallet (xem route) — không gộp vào quyền `edit`.
@@ -489,7 +507,7 @@ export async function setOrderLocation(req: Request, res: Response) {
     if (!location_id) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu location_id')
 
     const { data: order } = await supabase
-      .from('ProductionImport').select('status, warehouse_id, warehouse_type').eq('id', req.params.id).maybeSingle()
+      .from('ProductionImport').select('status, warehouse_id, warehouse_type, location_id, location_history').eq('id', req.params.id).maybeSingle()
     if (!order) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (order.status !== 'OPEN') return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập đã đóng, không thể đổi vị trí')
 
@@ -503,10 +521,17 @@ export async function setOrderLocation(req: Request, res: Response) {
     if (location.category && orderCategory && location.category !== orderCategory)
       return fail(res, 422, 'LOCATION_CATEGORY_MISMATCH',
         `Vị trí ${location.location_code} thuộc loại "${location.category}" — không khớp loại hàng "${orderCategory}". Chọn vị trí đúng loại.`)
+    if (await exceedsLocationLimit(req.params.id, location_id))
+      return fail(res, 422, 'LOCATION_LIMIT',
+        `Phiếu đã dùng tối đa ${INBOUND_LOCATION_LIMIT} vị trí khác nhau — không thể thêm vị trí mới (chỉ chọn lại vị trí đã dùng).`)
+
+    const changed = location_id !== (order as any).location_id
+    const patch: Record<string, unknown> = { location_id, updated_by: updated_by ?? null, updated_at: new Date().toISOString() }
+    if (changed) patch.location_history = appendLocHistory(order, location.location_code, 'detail', req.user)
 
     const { data: updated, error } = await supabase
       .from('ProductionImport')
-      .update({ location_id, updated_by: updated_by ?? null, updated_at: new Date().toISOString() })
+      .update(patch)
       .eq('id', req.params.id).select(ORDER_SELECT).maybeSingle()
     if (error) throw error
     if (!updated) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
@@ -656,7 +681,7 @@ export async function checkScanQR(req: Request, res: Response) {
 
     const { data: order } = await supabase
       .from('ProductionImport')
-      .select('id, import_code, status, source_type, material_id, warehouse_id, warehouse_type, material:Material(material_code, cartons_per_pallet), warehouse:Warehouse(id, nmsx_code)')
+      .select('id, import_code, status, source_type, material_id, warehouse_id, warehouse_type, location_id, location_history, material:Material(material_code, cartons_per_pallet), warehouse:Warehouse(id, nmsx_code)')
       .eq('id', order_id).maybeSingle()
     if (!order)                  return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (order.status !== 'OPEN') return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập không còn ở trạng thái mở')
@@ -723,6 +748,11 @@ export async function checkScanQR(req: Request, res: Response) {
         `Vị trí ${location.location_code} thuộc loại "${(location as any).category}" — không khớp loại hàng "${orderCategory}" của phiếu. Chọn vị trí đúng loại.`)
     }
 
+    // Giới hạn ≤3 vị trí khác nhau/phiếu
+    if (await exceedsLocationLimit(order_id, location_id))
+      return fail(res, 422, 'LOCATION_LIMIT',
+        `Phiếu đã dùng tối đa ${INBOUND_LOCATION_LIMIT} vị trí khác nhau — không thể quét sang vị trí mới (chỉ quét vào vị trí đã dùng).`)
+
     const stackLayerNum = Number(stack_layer)
     if (stackLayerNum === 1) {
       const { count: usedSlots } = await supabase
@@ -761,7 +791,7 @@ export async function scanQR(req: Request, res: Response) {
     // Load order with material + source_type
     const { data: order } = await supabase
       .from('ProductionImport')
-      .select('id, import_code, status, source_type, material_id, warehouse_id, warehouse_type, material:Material(material_code, cartons_per_pallet), warehouse:Warehouse(id, nmsx_code)')
+      .select('id, import_code, status, source_type, material_id, warehouse_id, warehouse_type, location_id, location_history, material:Material(material_code, cartons_per_pallet), warehouse:Warehouse(id, nmsx_code)')
       .eq('id', order_id).maybeSingle()
     if (!order)                     return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (order.status !== 'OPEN')    return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập không còn ở trạng thái mở')
@@ -856,6 +886,11 @@ export async function scanQR(req: Request, res: Response) {
         `Vị trí ${location.location_code} thuộc loại "${location.category}" — không khớp loại hàng "${orderCategory}" của phiếu. Chọn vị trí đúng loại.`)
     }
 
+    // Giới hạn ≤3 vị trí khác nhau/phiếu
+    if (await exceedsLocationLimit(order_id, location_id))
+      return fail(res, 422, 'LOCATION_LIMIT',
+        `Phiếu đã dùng tối đa ${INBOUND_LOCATION_LIMIT} vị trí khác nhau — không thể quét sang vị trí mới (chỉ quét vào vị trí đã dùng).`)
+
     // Fire manufacturer lookup now so it runs in parallel with the location capacity check below
     const manufacturerP = parsed.manufacturer_code
       ? supabase.from('Manufacturer').select('id, code, name').eq('code', parsed.manufacturer_code).maybeSingle()
@@ -926,6 +961,15 @@ export async function scanQR(req: Request, res: Response) {
     if (entErr) {
       if (entErr.code === '23505') return fail(res, 409, 'DUPLICATE_PALLET', 'Pallet đã tồn tại trong hệ thống')
       throw entErr
+    }
+
+    // Persist vị trí "hiện tại" của phiếu = vị trí vừa quét + ghi lịch sử khi đổi (quyền scan)
+    if (location_id !== (order as any).location_id) {
+      await supabase.from('ProductionImport').update({
+        location_id,
+        location_history: appendLocHistory(order, location.location_code, 'scan', req.user),
+        updated_at: new Date().toISOString(),
+      }).eq('id', order_id)
     }
 
     const warnings: string[] = []

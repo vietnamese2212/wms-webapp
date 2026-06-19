@@ -1565,11 +1565,16 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
 
   // Vị trí THỰC TẾ của pallet (entries_by_location) — không chỉ vị trí mục tiêu của phiếu.
   // Pallet có thể tràn sang vị trí khác khi quét → hiện đa vị trí ("A +N", tooltip đủ).
-  const actualLocs = [...new Set(
+  const actualLocsRaw = [...new Set(
     (((order as any).entries_by_location ?? []) as { loc: string }[])
       .map(e => e.loc.split('-')[0])
       .filter(c => c && c !== '(chưa xác định)')
   )]
+  // Vị trí dùng SAU CÙNG hiện trước: order.location_id đã persist = vị trí mới nhất → đẩy lên đầu
+  const curLocCode = order.location?.location_code
+  const actualLocs = curLocCode && actualLocsRaw.includes(curLocCode)
+    ? [curLocCode, ...actualLocsRaw.filter(c => c !== curLocCode)]
+    : actualLocsRaw
   const locText  = actualLocs.length > 0
     ? (actualLocs.length === 1 ? actualLocs[0] : `${actualLocs[0]} +${actualLocs.length - 1}`)
     : (order.location?.location_code ?? '—')

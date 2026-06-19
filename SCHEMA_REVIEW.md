@@ -110,8 +110,10 @@ warehouse_id TEXT FK, location_id TEXT FK, material_id TEXT FK,
 shift_id TEXT FK,        -- Ca nhập
 planned_pallets INT, status TEXT,  -- "OPEN" | "COMPLETED" | "CANCELLED"
 imported_by TEXT FK(Employee), created_by TEXT FK(Employee), updated_by TEXT FK(Employee),
+location_history JSONB DEFAULT '[]',  -- lịch sử đổi vị trí: [{location_code, by_id, by_name, at, source:'scan'|'detail'}] (migration 20260619)
 notes TEXT, created_at, updated_at
 ```
+> Giới hạn **≤3 vị trí khác nhau/phiếu** (vị trí thật của pallet) — enforce LIVE ở `scanQR`/`setOrderLocation`/`checkScanQR` (`exceedsLocationLimit`), không lưu count riêng. Đổi vị trí ở quét/detail → persist `location_id` (vị trí hiện tại) + append `location_history`.
 
 ### InventoryEntry (pallet tồn kho)
 ```sql

@@ -374,15 +374,44 @@ export function useUpdateInboundOrder() {
   })
 }
 
-// Đổi vị trí phiếu — endpoint riêng (gate edit_pallet/force_edit_pallet, KHÔNG dùng quyền edit)
+// Đổi vị trí phiếu — endpoint riêng (gate edit_pallet/force_edit_pallet, KHÔNG dùng quyền edit).
+// Optimistic: cập nhật ngay cache detail (vị trí mới hiện tức thì) + dùng order PATCH trả về để
+// merge cache, KHÔNG refetch getOrder chặn UI. Realtime sẽ reconcile nền. `location_code` truyền
+// từ component để hiện code mới ngay; thiếu cũng không sao (chỉ chậm hiện code tới khi PATCH về).
+type InboundOrderCache = {
+  location_id: string | null
+  location: { id: string; location_code: string } | null
+  [k: string]: unknown
+}
 export function useSetInboundOrderLocation() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, location_id }: { id: string; location_id: string }) =>
+    mutationFn: ({ id, location_id }: { id: string; location_id: string; location_code?: string }) =>
       apiClient.patch(`/wms/inbound-orders/${id}/location`, { location_id }).then((r) => r.data.data),
-    onSuccess: (_d, v) => {
+    onMutate: async ({ id, location_id, location_code }) => {
+      await qc.cancelQueries({ queryKey: ['inbound-order', id] })
+      const prev = qc.getQueryData<InboundOrderCache>(['inbound-order', id])
+      if (prev) {
+        qc.setQueryData<InboundOrderCache>(['inbound-order', id], {
+          ...prev,
+          location_id,
+          location: location_code ? { id: location_id, location_code } : prev.location,
+        })
+      }
+      return { prev, id }
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['inbound-order', ctx.id], ctx.prev)
+    },
+    onSuccess: (data: Partial<InboundOrderCache>, v) => {
+      // PATCH trả về order đầy đủ (ORDER_SELECT + count) → merge, GIỮ inventory_entries hiện có.
+      qc.setQueryData<InboundOrderCache>(['inbound-order', v.id], (old) =>
+        old ? { ...old, ...data } : old)
+    },
+    onSettled: () => {
+      // Chỉ invalidate list ở nền (cho trang DS nếu đang mở). Detail đã cập nhật qua cache +
+      // realtime tự reconcile → tránh refetch getOrder chặn.
       qc.invalidateQueries({ queryKey: ['inbound-orders'] })
-      qc.invalidateQueries({ queryKey: ['inbound-order', v.id] })
     },
   })
 }

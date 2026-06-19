@@ -16,6 +16,7 @@ description: BẮT BUỘC làm theo khi thêm/sửa endpoint có INSERT/UPDATE, 
 - `onSettled`/`onSuccess` của mutation phải `invalidateQueries` cho **TẤT CẢ** query key liên quan (không chỉ query chính).
 - Thêm query key mới vào `TABLE_QUERY_MAP` (`frontend/src/lib/realtimeEvents.ts`) ở bảng DB tương ứng → realtime tự invalidate, không cần polling.
 - Optimistic update → phải rollback đúng khi lỗi.
+- **Sửa 1 field trên 1 record đang mở (vd đổi vị trí phiếu) → BẮT BUỘC optimistic, KHÔNG `invalidate → refetch` query detail nặng.** Pattern: `onMutate` `setQueryData` patch field ngay (snapshot để `onError` rollback) → UI đổi tức thì; mutationFn trả về record đầy đủ thì `onSuccess` MERGE vào cache (`{...old, ...data}`, giữ field con như `inventory_entries`); `onSettled` chỉ invalidate query **list** ở nền. **Lý do (bài học 19/06/2026 — đổi vị trí Inbound chậm):** invalidate query detail khiến user chờ thêm 1 round-trip serverless refetch query nặng (nhiều join); cộng `emitInboundChanged()`→Realtime invalidate prefix → refetch detail LẦN 2 trùng lặp. ⇒ click thấy "đứng hình rất lâu". Optimistic + xài response + để Realtime reconcile nền = phản hồi tức thì, vẫn eventual-consistent. **Đừng vừa `invalidate(detail)` trong mutation vừa để Realtime invalidate cùng key → refetch kép.**
 - Lỗi API hiển thị **banner đỏ inline** trong component (không chỉ console). Bulk action chạy song song `Promise.all(ids.map(...))`. Button: `disabled={saving}`.
 
 ## C. Đổi DB schema (migration)

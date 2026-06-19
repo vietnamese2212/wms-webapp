@@ -128,7 +128,7 @@ export default function InboundDetail() {
   const { mutate: setOrderLocation                      } = useSetInboundOrderLocation()
   const [locError, setLocError] = useState<string | null>(null)
   const changeLoc = (v: string) => setOrderLocation(
-    { id: order!.id, location_id: v },
+    { id: order!.id, location_id: v, location_code: (allLocations as LocOpt[]).find(l => l.id === v)?.location_code },
     { onSuccess: () => setLocError(null),
       onError: (e) => setLocError((e as AxiosError<{ error?: { message?: string } }>).response?.data?.error?.message ?? 'Không đổi được vị trí') },
   )

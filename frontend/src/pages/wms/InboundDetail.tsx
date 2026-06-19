@@ -4,7 +4,7 @@ import type { AxiosError }              from 'axios'
 import {
   ArrowLeft, Plus, CheckCircle2, XCircle, Trash2, Pencil,
   MapPin, Package, AlertTriangle, QrCode,
-  Clock, Calendar, User, Bookmark, RotateCcw,
+  Clock, Calendar, User, Bookmark, RotateCcw, History,
 } from 'lucide-react'
 import { format, parseISO }    from 'date-fns'
 import { vi }                  from 'date-fns/locale'
@@ -160,6 +160,7 @@ export default function InboundDetail() {
   const isManualEntry = (order?.material as any)?.no_qr_tracking === true
 
   const [showScan,          setShowScan]          = useState(false)
+  const [showLocHistory,    setShowLocHistory]    = useState(false)
   const [showManualDialog,  setShowManualDialog]  = useState(false)
   const [manualCartons,     setManualCartons]     = useState('')
   const [manualFeedback,    setManualFeedback]    = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
@@ -278,6 +279,38 @@ export default function InboundDetail() {
           allLocations={allLocations as any}
         />
       )}
+
+      {/* ── Lịch sử đổi vị trí ── */}
+      <Dialog open={showLocHistory} onOpenChange={(v) => { if (!v) setShowLocHistory(false) }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base flex items-center gap-2"><History className="h-4 w-4 text-slate-500" /> Lịch sử vị trí</DialogTitle>
+          </DialogHeader>
+          <div className="max-h-[60vh] overflow-y-auto -mx-1 px-1">
+            {locHistory.length === 0 ? (
+              <p className="text-sm text-slate-400 text-center py-4">Chưa có thay đổi vị trí</p>
+            ) : (
+              <ol className="relative border-l border-slate-200 ml-2 space-y-3 py-1">
+                {[...locHistory].reverse().map((h, i) => (
+                  <li key={i} className="ml-4">
+                    <span className="absolute -left-[5px] mt-1 h-2.5 w-2.5 rounded-full border-2 border-white bg-sky-500" />
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono font-semibold text-sm text-slate-800">{h.location_code}</span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${h.source === 'scan' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>
+                        {h.source === 'scan' ? 'Quét' : 'Sửa'}
+                      </span>
+                      {i === 0 && <span className="text-[10px] text-green-600 font-medium">hiện tại</span>}
+                    </div>
+                    <div className="text-[11px] text-slate-400 mt-0.5">
+                      {h.by_name ?? '—'} · {formatTimestampDate(h.at)} {formatTimestampTime(h.at, false)}
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Manual entry dialog (POSM / Loscam) ── */}
       <Dialog open={showManualDialog} onOpenChange={v => { if (!v) { setManualFeedback(null); setShowManualDialog(false) } }}>
@@ -600,6 +633,12 @@ export default function InboundDetail() {
                         </SelectContent>
                       </Select>
                     )}
+                    {locHistory.length > 0 && (
+                      <button type="button" onClick={() => setShowLocHistory(true)}
+                        className="h-6 inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 text-[10px] font-medium text-slate-500 hover:bg-slate-50">
+                        <History className="h-3 w-3" /> Lịch sử ({locHistory.length})
+                      </button>
+                    )}
                   </span>
                 ) : isOpen ? (
                   <span className="text-amber-600 flex items-center gap-1">
@@ -724,22 +763,6 @@ export default function InboundDetail() {
 
         {locError && (
           <div className="mx-4 mt-2 rounded-md bg-red-50 border border-red-200 px-3 py-1.5 text-xs text-red-700">{locError}</div>
-        )}
-
-        {/* Lịch sử đổi vị trí (tối đa 3 vị trí khác nhau/phiếu) */}
-        {locHistory.length > 0 && (
-          <div className="px-4 py-1.5 border-y border-slate-200 bg-slate-50 flex items-center gap-2 text-[11px] overflow-x-auto">
-            <span className="shrink-0 font-medium text-slate-500 inline-flex items-center gap-1">
-              <MapPin className="h-3 w-3 text-slate-400" /> Lịch sử vị trí:
-            </span>
-            {locHistory.map((h, i) => (
-              <span key={i} className="shrink-0 inline-flex items-center gap-1">
-                {i > 0 && <span className="text-slate-300">→</span>}
-                <span className="font-mono font-semibold text-slate-700">{h.location_code}</span>
-                <span className="text-slate-400">({h.source === 'scan' ? 'quét' : 'sửa'}{h.by_name ? ` · ${h.by_name}` : ''} · {formatTimestampDate(h.at, true)} {formatTimestampTime(h.at, false)})</span>
-              </span>
-            ))}
-          </div>
         )}
 
         {/* Dải tile tổng hợp (đồng bộ với list) */}

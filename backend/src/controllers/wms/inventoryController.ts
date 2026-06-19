@@ -297,28 +297,24 @@ export async function listInventory(req: Request, res: Response) {
     .order('id', { ascending: true })
     .range(r.offset, r.offset + r.limitNum - 1)
 
-  // Tổng thùng tồn. Khi lọc category: SQL sum() qua embedded filter non-inner BỊ LỖI (material không có
-  // trong select) → trả 0; nên inner-join rồi sum JS trên tập đã lọc (giống pre-filter %date). Không lọc
-  // category: dùng SQL sum() nhanh.
+  // Tổng thùng tồn = SQL sum() — server-side aggregate, KHÔNG bị cap 1000 dòng như khi fetch rows.
+  // Khi lọc category, thêm Material!inner để filter loại đúng entry (embedded non-inner làm sum lỗi → 0);
+  // PostgREST khi đó gom theo category nên reduce tổng các dòng trả về. Không lọc category: 1 dòng tổng.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let aggQ = catActive
-    ? applyInventoryFilters(
-        (supabase.from('InventoryEntry') as any).select('cartons_remaining, material:Material!inner(category)').limit(100_000),
-        r.params)
-    : applyInventoryFilters(
-        (supabase.from('InventoryEntry') as any).select('cartons_remaining.sum()'),
-        r.params)
+  let aggQ = applyInventoryFilters(
+    (supabase.from('InventoryEntry') as any).select(
+      catActive ? 'cartons_remaining.sum(), material:Material!inner(category)' : 'cartons_remaining.sum()'
+    ),
+    r.params)
   if (r.datePctIds !== null) aggQ = aggQ.in('id', r.datePctIds)
 
   const [{ data, count, error }, { data: aggData, error: aggErr }] = await Promise.all([mainQ, aggQ])
 
-  if (error)   return fail(res, 500, 'DB_ERROR', error.message)
-  if (aggErr)  return fail(res, 500, 'DB_ERROR', aggErr.message)
+  if (error)  return fail(res, 500, 'DB_ERROR', error.message)
+  if (aggErr) return fail(res, 500, 'DB_ERROR', aggErr.message)
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const total_cartons_remaining = catActive
-    ? ((aggData as any[]) ?? []).reduce((s, e) => s + Number(e.cartons_remaining ?? 0), 0)
-    : Number((aggData as any[])?.[0]?.sum ?? 0)
+  const total_cartons_remaining = ((aggData as any[]) ?? []).reduce((s, row) => s + Number(row?.sum ?? 0), 0)
 
   return ok(res, { entries: data ?? [], total: count ?? 0, page: r.pageNum, limit: r.limitNum, total_cartons_remaining })
 }

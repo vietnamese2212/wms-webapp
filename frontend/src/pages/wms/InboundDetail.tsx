@@ -582,8 +582,8 @@ export default function InboundDetail() {
                     <span className="font-mono font-medium" title={headerLocTitle}>{headerLocText}</span>
                     {isOpen && canSetLocation && (
                       <Select onValueChange={(v) => setOrderLocation({ id: order.id, location_id: v })}>
-                        <SelectTrigger className="h-5 w-6 border-dashed px-1 text-slate-300 hover:text-slate-500">
-                          <Pencil className="h-2.5 w-2.5" />
+                        <SelectTrigger className="h-6 w-auto gap-1 rounded-md border-0 bg-sky-600 px-2 text-[10px] font-semibold text-white shadow-sm hover:bg-sky-700">
+                          <Pencil className="h-3 w-3" /> Đổi vị trí
                         </SelectTrigger>
                         <SelectContent>
                           {renderLocItems()}
@@ -597,8 +597,8 @@ export default function InboundDetail() {
                     Chưa chọn vị trí
                     {canSetLocation && (
                       <Select onValueChange={(v) => setOrderLocation({ id: order.id, location_id: v })}>
-                        <SelectTrigger className="h-5 text-[10px] w-auto border-dashed px-1 ml-1">
-                          <SelectValue placeholder="Chọn" />
+                        <SelectTrigger className="h-6 w-auto gap-1 rounded-md border-0 bg-blue-600 px-2 text-[10px] font-semibold text-white shadow-sm hover:bg-blue-700 ml-1">
+                          <MapPin className="h-3 w-3" /> <SelectValue placeholder="Chọn vị trí" />
                         </SelectTrigger>
                         <SelectContent>
                           {renderLocItems()}

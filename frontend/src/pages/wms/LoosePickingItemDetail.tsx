@@ -9,10 +9,11 @@ import {
 import { Button }  from '@/components/ui/button'
 import { Card }    from '@/components/ui/card'
 import { Input }   from '@/components/ui/input'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { QRScanner } from '@/components/shared/QRScanner'
 import type { QRScannerHandle } from '@/components/shared/QRScanner'
-import { useGDO, useScanLoosePickingItem, useCheckOutboundScan, useItemInventory, type CheckOutboundScanResult, type ItemInventoryEntry } from '@/api/hooks'
+import { useGDO, useScanLoosePickingItem, useCheckOutboundScan, useConfirmLoosePickingItem, useItemInventory, type CheckOutboundScanResult, type ItemInventoryEntry } from '@/api/hooks'
 import { PalletDetailDialog } from '@/components/shared/PalletDetailDialog'
 import { useActiveLoosePickingStore } from '@/stores/activeLoosePickingStore'
 import { useAuthStore } from '@/stores/authStore'
@@ -53,6 +54,35 @@ function ProgressBar({ scanned, target }: { scanned: number; target: number }) {
         {scanned}/{target} thùng
       </span>
     </div>
+  )
+}
+
+// ─── Confirm dialog ────────────────────────────────────────────
+
+function ConfirmDialog({
+  open, title, message, onConfirm, onCancel, loading, error,
+}: {
+  open: boolean; title: string; message: string
+  onConfirm: () => void; onCancel: () => void; loading?: boolean; error?: string | null
+}) {
+  return (
+    <Dialog open={open} onOpenChange={v => { if (!v) onCancel() }}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader><DialogTitle>{title}</DialogTitle></DialogHeader>
+        <p className="text-sm text-slate-600 py-1">{message}</p>
+        {error && (
+          <div className="rounded bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700 flex items-start gap-1.5">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />{error}
+          </div>
+        )}
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={onCancel} disabled={loading}>Không</Button>
+          <Button className="bg-red-600 hover:bg-red-700 text-white" onClick={onConfirm} disabled={loading}>
+            {loading ? 'Đang xử lý…' : 'Xác nhận'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -254,8 +284,11 @@ export default function LoosePickingItemDetail() {
 
   const { data: gdo, isLoading } = useGDO(gdoId)
   const { data: inventoryData = [], isLoading: invLoading } = useItemInventory(gdoId, itemId)
+  const { mutate: confirmLoose, isPending: confirming } = useConfirmLoosePickingItem()
   const [showScan,          setShowScan]          = useState(false)
   const [showInventory,     setShowInventory]     = useState(false)
+  const [confirmLooseOpen,  setConfirmLooseOpen]  = useState(false)
+  const [looseError,        setLooseError]        = useState<string | null>(null)
   const [expandedInvKeys,   setExpandedInvKeys]   = useState<Set<string>>(new Set())
   const [detailEntryId,     setDetailEntryId]     = useState<string | null>(null)
 
@@ -335,6 +368,9 @@ export default function LoosePickingItemDetail() {
   const looseDone    = Math.min(looseScanned, effectiveLoose)
   const isDone       = looseDone >= effectiveLoose
   const scans        = (item.scan_entries ?? []).filter(s => s.is_loose_picking)
+  const looseUnconfirmedCount = scans
+    .filter(s => !s.loose_confirmed)
+    .reduce((sum, s) => sum + Number(s.cartons_scanned), 0)
 
   function openScan() {
     unlockAudio()
@@ -346,6 +382,28 @@ export default function LoosePickingItemDetail() {
       {showScan && (
         <ScanDialog item={item} gdoId={gdoId!} onClose={() => setShowScan(false)} />
       )}
+
+      <ConfirmDialog
+        open={confirmLooseOpen}
+        title="Xác nhận nhặt lẻ"
+        message={`Xác nhận đã kiểm tra ${looseUnconfirmedCount} thùng nhặt lẻ cho mã này? Tồn kho sẽ được trừ ngay.`}
+        onConfirm={() => {
+          setLooseError(null)
+          confirmLoose(
+            { gdoId: gdoId!, itemId: item.id, employee_id: user?.id ?? undefined },
+            {
+              onSuccess: () => setConfirmLooseOpen(false),
+              onError: (err) => {
+                const msg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi xác nhận nhặt lẻ'
+                setLooseError(msg)
+              },
+            }
+          )
+        }}
+        onCancel={() => { setConfirmLooseOpen(false); setLooseError(null) }}
+        loading={confirming}
+        error={looseError}
+      />
 
       <div className="flex flex-col h-full min-h-0">
 
@@ -385,6 +443,17 @@ export default function LoosePickingItemDetail() {
               )}
             </div>
           </div>
+
+          {/* Row 1b: Check nhặt lẻ — xác nhận trừ tồn (chỉ khi xe đã bắt đầu) */}
+          {!!gdo.started_at && item.loose_picking > 0 && looseUnconfirmedCount > 0 && can(perms, 'loosepicking', 'complete') && (
+            <button
+              onClick={() => setConfirmLooseOpen(true)}
+              disabled={confirming}
+              className="w-full flex items-center justify-center gap-1.5 h-8 px-3 rounded border text-xs font-medium transition-colors bg-purple-50 border-purple-300 text-purple-700 hover:bg-purple-100 disabled:opacity-50"
+            >
+              {confirming ? 'Đang xử lý…' : `Check nhặt lẻ (${looseUnconfirmedCount} thùng)`}
+            </button>
+          )}
 
           {/* Row 2: name + progress */}
           <div className="space-y-1">

@@ -63,6 +63,9 @@ function fTime(ts: string | null | undefined): string {
   return formatTimestampTime(ts)
 }
 
+// useWarehouses() trả any[] (dùng nhiều nơi) → cast cục bộ sang type tối thiểu thay cho `as any`
+type WarehouseLite = { id: string; name: string; warehouse_type?: string | null }
+
 const OUTBOUND_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
   { id: 'pin',       label: '',              w: 34 },
   { id: 'date',      label: 'Ngày xuất',     w: 96 },
@@ -227,7 +230,7 @@ export default function Outbound() {
             nCreated > 0 && `Tạo mới ${nCreated} xe`,
             nMerged  > 0 && `Cập nhật ${nMerged} xe (PAUSED)`,
           ].filter(Boolean).join(' · ')
-          setUploadOk(okParts || (skipped.length ? undefined : 'Không có xe mới') as any)
+          setUploadOk(okParts || (skipped.length ? null : 'Không có xe mới'))
           if (skipped.length) {
             type SkippedItem = { group_code: string; reason?: string }
             const CATS: { key: string; label: string; match: (r: string) => boolean; detailPrefix?: string }[] = [
@@ -293,9 +296,9 @@ export default function Outbound() {
   }
 
   // ─── Filter chip bar (Manhattan) ───
-  const warehouseOptions = (warehouses as any[])
-    .filter((w: any) => !outboundAllowedWhIds || outboundAllowedWhIds.has(w.id))
-    .map((w: any) => ({ value: w.id, label: w.name }))
+  const warehouseOptions = (warehouses as WarehouseLite[])
+    .filter(w => !outboundAllowedWhIds || outboundAllowedWhIds.has(w.id))
+    .map(w => ({ value: w.id, label: w.name }))
 
   const filterDefs: FilterDef[] = [
     { key: 'date',     label: 'Ngày xuất', type: 'daterange', from: f.dateFrom, to: f.dateTo,
@@ -867,7 +870,7 @@ function GDOFormBody({
   const allMats = allMatsData as { id: string; material_code: string; short_name?: string | null; unit?: string | null; category?: string | null }[]
 
   const exportTypeOptions = warehouseId ? vtByWarehouse : allVehicleTypes
-  const isNPP = (warehouses as any[]).find(w => w.id === warehouseId)?.warehouse_type === 'NPP'
+  const isNPP = (warehouses as WarehouseLite[]).find(w => w.id === warehouseId)?.warehouse_type === 'NPP'
   const isMultiDO = (gdo?.delivery_orders?.length ?? 0) > 1
 
   const TODAY_STR = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })

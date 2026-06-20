@@ -243,7 +243,7 @@ export default function OutboundPrepare() {
               {addOpen && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setAddOpen(false)} />
-                  <div className="absolute left-0 top-full mt-1 z-50 w-[300px] bg-white border border-slate-200 rounded-lg shadow-xl">
+                  <div className="absolute left-0 top-full mt-1 z-50 w-[min(300px,calc(100vw-2rem))] bg-white border border-slate-200 rounded-lg shadow-xl">
                     <div className="p-2 border-b">
                       <Input autoFocus value={addSearch} onChange={e => setAddSearch(e.target.value)} placeholder="Tìm số xe, loại xe, NPP…" className="h-7 text-xs" />
                     </div>

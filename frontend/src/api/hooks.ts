@@ -1347,7 +1347,6 @@ export function useScanLoosePickingItem() {
       // quét nhặt lẻ reserve tồn → làm mới tồn kho & gợi ý FEFO
       qc.invalidateQueries({ queryKey: ['inventory-entries'] })
       qc.invalidateQueries({ queryKey: ['item-inventory'] })
-      qc.invalidateQueries({ queryKey: ['gdo-pick-suggestions'] })
       qc.invalidateQueries({ queryKey: ['inventory-by-material'] })
     },
   })
@@ -1481,7 +1480,6 @@ export function useScanOutboundItem() {
       qc.invalidateQueries({ queryKey: ['inventory-entries'] })
       qc.invalidateQueries({ queryKey: ['inventory-summary'] })
       qc.invalidateQueries({ queryKey: ['item-inventory'] })
-      qc.invalidateQueries({ queryKey: ['gdo-pick-suggestions'] })
       qc.invalidateQueries({ queryKey: ['inventory-by-material'] })
     },
   })
@@ -1520,7 +1518,6 @@ export function useManualCompleteItem() {
       // manual-complete có thể trừ tồn → làm mới tồn kho & gợi ý FEFO
       qc.invalidateQueries({ queryKey: ['inventory-entries'] })
       qc.invalidateQueries({ queryKey: ['inventory-summary'] })
-      qc.invalidateQueries({ queryKey: ['gdo-pick-suggestions'] })
       qc.invalidateQueries({ queryKey: ['inventory-by-material'] })
     },
   })
@@ -1567,7 +1564,6 @@ export function useDeleteOutboundScanEntry() {
       qc.invalidateQueries({ queryKey: ['inventory-entries'] })
       qc.invalidateQueries({ queryKey: ['inventory-summary'] })
       qc.invalidateQueries({ queryKey: ['item-inventory'] })
-      qc.invalidateQueries({ queryKey: ['gdo-pick-suggestions'] })
       qc.invalidateQueries({ queryKey: ['inventory-by-material'] })
     },
   })
@@ -1605,7 +1601,6 @@ export function useConfirmLoosePickingItem() {
       qc.invalidateQueries({ queryKey: ['inventory-entries'] })
       qc.invalidateQueries({ queryKey: ['loosepicking'] })
       qc.invalidateQueries({ queryKey: ['item-inventory'] })
-      qc.invalidateQueries({ queryKey: ['gdo-pick-suggestions'] })
       qc.invalidateQueries({ queryKey: ['inventory-by-material'] })
     },
   })
@@ -1651,21 +1646,8 @@ export function useItemInventory(gdoId: string | undefined, itemId: string | und
   })
 }
 
-// Gợi ý vị trí lấy hàng FEFO cho cả GDO (1 request) → map material_id → top vị trí.
+// Gợi ý vị trí lấy hàng FEFO (chỉ dùng ở Bảng chuẩn bị hàng).
 export type PickSuggestion = { location_code: string | null; pct_date: number | null; available: number }
-export type GDOPickSuggestions = Record<string, { suggestions: PickSuggestion[]; total_available: number }>
-
-export function useGDOPickSuggestions(gdoId: string | undefined) {
-  return useQuery({
-    queryKey: ['gdo-pick-suggestions', gdoId],
-    queryFn: async () => {
-      const { data } = await apiClient.get(`/wms/outbound/${gdoId}/pick-suggestions`)
-      return data.data as GDOPickSuggestions
-    },
-    enabled: !!gdoId,
-    staleTime: 30_000,
-  })
-}
 
 // Bảng chuẩn bị hàng — gom nhiều GDO. queryKey bắt đầu 'gdo' → OutboundItem/ScanEntry đổi
 // tự invalidate (realtime trừ dần pallet cần chuẩn bị khi quét).

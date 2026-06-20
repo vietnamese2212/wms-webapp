@@ -6,7 +6,7 @@ import type { DeliverySlot, TmsOrder } from '@/types'
 // Maps table name → query keys to invalidate (fallback refetch).
 const TABLE_QUERY_MAP: Record<string, string[][]> = {
   ProductionImport:    [['inbound-orders'], ['inbound-order'], ['inbound-report'], ['transfer-goods'], ['inbound-by-gdo'], ['tms-orders-transfer']],
-  InventoryEntry:      [['inbound-order'], ['inventory-entries'], ['inventory-summary'], ['inventory-facets'], ['locations-real'], ['plan-vs-actual'], ['inbound-report'], ['manual-item-stock'], ['item-inventory'], ['gdo-pick-suggestions'], ['inventory-by-material'], ['transfer-goods'], ['inbound-by-gdo'], ['stocktake-summary'], ['stocktake-entries']],
+  InventoryEntry:      [['inbound-order'], ['inventory-entries'], ['inventory-summary'], ['inventory-facets'], ['locations-real'], ['plan-vs-actual'], ['inbound-report'], ['manual-item-stock'], ['item-inventory'], ['inventory-by-material'], ['transfer-goods'], ['inbound-by-gdo'], ['stocktake-summary'], ['stocktake-entries']],
   Location:            [['locations-real'], ['sub-groups']],
   Material:            [['materials']],
   Manufacturer:        [['manufacturers']],
@@ -24,8 +24,8 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   inbound_plan_lines:  [['inbound-plan-lines-by-order'], ['plan-vs-actual'], ['inbound-plan-lines'], ['inbound-report']],
   GroupDeliveryOrder:  [['gdos'], ['gdo'], ['tms-orders-transfer'], ['loosepicking']],
   OutboundDelivery:    [['gdo']],
-  OutboundItem:        [['gdo'], ['loosepicking'], ['gdo-pick-suggestions'], ['item-inventory'], ['inventory-by-material']],
-  OutboundScanEntry:   [['gdo'], ['loosepicking'], ['gdo-pick-suggestions'], ['item-inventory'], ['inventory-by-material']],
+  OutboundItem:        [['gdo'], ['loosepicking'], ['item-inventory'], ['inventory-by-material']],
+  OutboundScanEntry:   [['gdo'], ['loosepicking'], ['item-inventory'], ['inventory-by-material']],
   Skill:                [['hr-skills'], ['hr-emp-skills']],
   EmployeeSkill:        [['hr-emp-skills']],
   LeaveRequest:         [['hr-leaves']],

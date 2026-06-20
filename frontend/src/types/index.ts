@@ -678,6 +678,14 @@ export interface OutboundDelivery {
   items:            OutboundItem[]
 }
 
+export interface GDOItemBreakdown {
+  material_code:    string
+  material_name:    string | null
+  distributor_name: string | null
+  cartons:          number
+  pallets:          number
+}
+
 export interface GDO {
   id:               string
   group_code:       string
@@ -698,6 +706,7 @@ export interface GDO {
   export_type?:     string | null
   total_cartons?:   number
   total_pallets?:   number
+  item_breakdown?:  GDOItemBreakdown[]
   // Workflow fields
   assigned_at?:        string | null
   assigned_by?:        string | null

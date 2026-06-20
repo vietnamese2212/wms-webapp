@@ -2,7 +2,7 @@ import { useRef, useState, useMemo, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
-import { Upload, Truck, CheckCircle2, AlertTriangle, X, Bookmark, Info, Plus, Trash2, PenSquare, Rows3, AlignJustify } from 'lucide-react'
+import { Upload, Truck, CheckCircle2, AlertTriangle, X, Bookmark, Info, Plus, Trash2, PenSquare, Rows3, AlignJustify, ChevronDown, Building2 } from 'lucide-react'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
@@ -101,6 +101,7 @@ export default function Outbound() {
   const [postUploadLoading, setPostUploadLoading] = useState(false)
   const [showCreate,  setShowCreate]  = useState(false)
   const [dense, setDense] = useState(() => localStorage.getItem('outbound_density') !== 'comfortable')
+  const [nppOpen, setNppOpen] = useState(false)
   const { widths: colW, startResize, totalWidth } = useColumnResize('outbound_col_widths', OUTBOUND_COL_DEFAULTS)
   function toggleDensity() {
     setDense(d => { localStorage.setItem('outbound_density', d ? 'comfortable' : 'compact'); return !d })
@@ -136,10 +137,19 @@ export default function Outbound() {
   const dvvtOptions       = useMemo(() => [...new Set(gdos.map(g => g.dvvt).filter(Boolean))] as string[], [gdos])
   const nppOptions        = useMemo(() => [...new Set(gdos.flatMap(g => g.distributor_names ?? []).filter(Boolean))], [gdos])
   const warehouseTypeOpts = useMemo(() => [...new Set(gdos.map(g => g.warehouse_type).filter(Boolean))] as string[], [gdos])
+  const materialOptions   = useMemo(() => {
+    const seen = new Map<string, string>()  // code → label
+    for (const g of gdos) for (const b of g.item_breakdown ?? []) {
+      if (!seen.has(b.material_code))
+        seen.set(b.material_code, b.material_name ? `${b.material_code} · ${b.material_name}` : b.material_code)
+    }
+    return [...seen.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([value, label]) => ({ value, label }))
+  }, [gdos])
 
   const filterTypes          = f.filterTypes          ?? []
   const filterDvvts          = f.filterDvvts          ?? []
   const filterNpps           = f.filterNpps           ?? []
+  const filterMaterials      = f.filterMaterials      ?? []
   const filterWarehouseTypes = f.filterWarehouseTypes ?? []
   const filterStatuses       = f.filterStatuses       ?? []
 
@@ -153,11 +163,15 @@ export default function Outbound() {
     if (filterTypes.length          > 0 && !filterTypes.includes(g.export_type ?? ''))                              return false
     if (filterDvvts.length          > 0 && !filterDvvts.includes(g.dvvt ?? ''))                                     return false
     if (filterNpps.length           > 0 && !(g.distributor_names ?? []).some(n => filterNpps.includes(n)))          return false
+    if (filterMaterials.length      > 0 && !(g.item_breakdown ?? []).some(b => filterMaterials.includes(b.material_code))) return false
     if (filterWarehouseTypes.length > 0 && !filterWarehouseTypes.includes(g.warehouse_type ?? ''))                  return false
     if (filterStatuses.length       > 0 && !filterStatuses.includes(gdoStatusInfo(g).label))                        return false
-    if (!omniMatch([g.group_code, g.export_type, g.dvvt, g.warehouse_type, gdoStatusInfo(g).label, ...(g.distributor_names ?? [])], f.search)) return false
+    // Search khớp cả mã/tên hàng (item_breakdown) → gõ mã hàng ra đơn xuất chứa mã đó.
+    if (!omniMatch([g.group_code, g.export_type, g.dvvt, g.warehouse_type, gdoStatusInfo(g).label,
+      ...(g.distributor_names ?? []),
+      ...(g.item_breakdown ?? []).flatMap(b => [b.material_code, b.material_name])], f.search)) return false
     return true
-  }), [gdos, f.search, filterTypes, filterDvvts, filterNpps, filterWarehouseTypes, filterStatuses])
+  }), [gdos, f.search, filterTypes, filterDvvts, filterNpps, filterMaterials, filterWarehouseTypes, filterStatuses])
 
   const sorted = useMemo(() => [...filtered].sort((a, b) => {
     if (a.delivery_date !== b.delivery_date)
@@ -173,6 +187,25 @@ export default function Outbound() {
     pallets:   sorted.reduce((s, g) => s + (g.total_pallets ?? 0), 0),
     completed: sorted.filter(g => g.status === 'COMPLETED').length,
   }), [sorted])
+
+  // Phân bổ theo NPP — gom item_breakdown của các chuyến đã lọc; nếu đang lọc mã hàng thì
+  // chỉ tính mã hàng đó (gõ mã hàng → đi những nhà nào, bao nhiêu, tổng). Kiểu expand Inbound.
+  const nppBreakdown = useMemo(() => {
+    const map = new Map<string, { npp: string; pallets: number; cartons: number }>()
+    for (const g of sorted) for (const b of g.item_breakdown ?? []) {
+      if (filterMaterials.length > 0 && !filterMaterials.includes(b.material_code)) continue
+      const npp = b.distributor_name ?? '(không tên)'
+      const cur = map.get(npp) ?? { npp, pallets: 0, cartons: 0 }
+      cur.pallets  += b.pallets
+      cur.cartons  += b.cartons
+      map.set(npp, cur)
+    }
+    return [...map.values()].sort((a, b) => b.cartons - a.cartons)
+  }, [sorted, filterMaterials])
+  const nppTotals = useMemo(() => ({
+    pallets: nppBreakdown.reduce((s, r) => s + r.pallets, 0),
+    cartons: nppBreakdown.reduce((s, r) => s + r.cartons, 0),
+  }), [nppBreakdown])
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -274,13 +307,15 @@ export default function Outbound() {
       onChange: v => setOutbound({ filterDvvts: v }) },
     { key: 'npp',      label: 'NPP',       type: 'multi',  options: nppOptions.map(n => ({ value: n, label: n })), selected: filterNpps, searchable: true,
       onChange: v => setOutbound({ filterNpps: v }) },
+    { key: 'material', label: 'Mã hàng',   type: 'multi',  options: materialOptions, selected: filterMaterials, searchable: true,
+      onChange: v => setOutbound({ filterMaterials: v }) },
     { key: 'status',   label: 'Tình trạng', type: 'multi', options: statusOptions, selected: filterStatuses,
       onChange: v => setOutbound({ filterStatuses: v }) },
   ]
 
   const viewSnapshot = {
     search: f.search, dateFrom: f.dateFrom, dateTo: f.dateTo, warehouseId: f.warehouseId,
-    filterWarehouseTypes, filterTypes, filterDvvts, filterNpps, filterStatuses,
+    filterWarehouseTypes, filterTypes, filterDvvts, filterNpps, filterMaterials, filterStatuses,
   }
   const savedViews = useSavedViewsStore(s => s.views['outbound'] ?? [])
   const activeViewId = useMemo(() => {
@@ -365,6 +400,57 @@ export default function Outbound() {
             <span className="italic">Hiển thị tất cả ngày</span>
           )}
         </p>
+
+        {/* Phân bổ theo NPP – collapsible trong header (kiểu expand Inbound) */}
+        {!isLoading && nppBreakdown.length > 0 && (
+          <div className="rounded-md border border-slate-200 overflow-hidden">
+            <button
+              className="w-full flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 bg-slate-50 hover:bg-slate-100 text-left"
+              onClick={() => setNppOpen(v => !v)}>
+              <Building2 className="h-3.5 w-3.5 text-slate-400" />
+              Phân bổ theo NPP ({nppBreakdown.length} nhà) · {nppTotals.pallets.toLocaleString('vi-VN')} pallet · {nppTotals.cartons.toLocaleString('vi-VN')} thùng
+              {filterMaterials.length > 0 && <span className="text-blue-600">· lọc {filterMaterials.length} mã hàng</span>}
+              <ChevronDown className={`h-3 w-3 ml-auto transition-transform ${nppOpen ? 'rotate-180' : ''}`} />
+            </button>
+            {nppOpen && (
+              <div className="px-3 py-2 overflow-x-auto border-t border-slate-200 bg-white">
+                {(() => {
+                  const parts = [
+                    hasDate ? dateLabel : null,
+                    f.warehouseId ? (warehouses as { id: string; name: string }[]).find(w => w.id === f.warehouseId)?.name : null,
+                    filterMaterials.length > 0 ? `Mã hàng: ${filterMaterials.join(', ')}` : null,
+                  ].filter(Boolean)
+                  return parts.length > 0 ? <p className="text-[10px] text-slate-400 mb-1.5">Lọc: {parts.join(' · ')}</p> : null
+                })()}
+                <table className="text-[11px] w-full max-w-md">
+                  <thead>
+                    <tr className="text-slate-400 border-b">
+                      <th className="py-1 pr-6 text-left font-medium">NPP / Khách hàng</th>
+                      <th className="py-1 pr-6 text-right font-medium">Pallet</th>
+                      <th className="py-1 text-right font-medium">Thùng</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {nppBreakdown.map(row => (
+                      <tr key={row.npp} className="border-b border-slate-100">
+                        <td className="py-1 pr-6 text-slate-700">{row.npp}</td>
+                        <td className="py-1 pr-6 text-right tabular-nums font-semibold">{row.pallets.toLocaleString('vi-VN')}</td>
+                        <td className="py-1 text-right tabular-nums">{row.cartons.toLocaleString('vi-VN')}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="text-slate-500 font-semibold border-t">
+                      <td className="py-1 pr-6">Tổng</td>
+                      <td className="py-1 pr-6 text-right tabular-nums">{nppTotals.pallets.toLocaleString('vi-VN')}</td>
+                      <td className="py-1 text-right tabular-nums">{nppTotals.cartons.toLocaleString('vi-VN')}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Summary band (Manhattan) */}

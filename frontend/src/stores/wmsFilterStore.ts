@@ -10,6 +10,7 @@ interface OutboundFilters {
   filterTypes: string[]
   filterDvvts: string[]
   filterNpps: string[]
+  filterMaterials: string[]
   warehouseId: string
   filterWarehouseTypes: string[]
   filterStatuses: string[]
@@ -150,7 +151,7 @@ function initialFilters() {
     assignment: { search: '', warehouseId: '', layoutId: '', dateFrom: today().slice(0, 8) + '01' },
     outbound: {
       search: '', dateFrom: today(), dateTo: today(),
-      filterTypes: [], filterDvvts: [], filterNpps: [],
+      filterTypes: [], filterDvvts: [], filterNpps: [], filterMaterials: [],
       warehouseId: '', filterWarehouseTypes: [], filterStatuses: [],
     },
     inbound:   { ...INBOUND_DEFAULT },

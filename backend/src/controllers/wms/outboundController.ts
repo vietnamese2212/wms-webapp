@@ -179,16 +179,18 @@ export async function listGDOs(req: Request, res: Response) {
 
     const { data: items } = doIds.length
       ? await (supabase.from('OutboundItem') as any)
-          .select('do_id, cartons_ordered, pallets_estimated, material_type, export_type, material_code_raw, material_id, material:Material!material_id(no_qr_tracking)')
+          .select('do_id, cartons_ordered, pallets_estimated, material_type, export_type, material_code_raw, material_id, material:Material!material_id(no_qr_tracking, short_name)')
           .in('do_id', doIds)
       : { data: [] }
 
     // Build lookup maps
     const dosByGdo = new Map<string, any[]>()
+    const distributorByDo = new Map<string, string | null>()
     for (const d of (dos ?? [])) {
       const list = dosByGdo.get(d.gdo_id) ?? []
       list.push(d)
       dosByGdo.set(d.gdo_id, list)
+      distributorByDo.set(d.id, d.distributor_name ?? null)
     }
 
     const itemsByDo = new Map<string, any[]>()
@@ -211,6 +213,19 @@ export async function listGDOs(req: Request, res: Response) {
       )]
       const firstExportType = gdoItems.find((i: any) => i.export_type)?.export_type ?? null
 
+      // Phân bổ theo (mã hàng × NPP) — gộp để FE lọc theo mã hàng + tổng theo NPP (expand kiểu Inbound).
+      // Chỉ tính item đếm được (loại no_qr_tracking) để Tổng khớp tile Tổng thùng/Pallet.
+      const breakdownMap = new Map<string, { material_code: string; material_name: string | null; distributor_name: string | null; cartons: number; pallets: number }>()
+      for (const i of countable) {
+        const material_code = i.material_code_raw ?? '(?)'
+        const distributor_name = distributorByDo.get(i.do_id) ?? null
+        const key = `${material_code}__${distributor_name ?? ''}`
+        const cur = breakdownMap.get(key) ?? { material_code, material_name: i.material?.short_name ?? null, distributor_name, cartons: 0, pallets: 0 }
+        cur.cartons += Number(i.cartons_ordered ?? 0)
+        cur.pallets += Number(i.pallets_estimated ?? 0)
+        breakdownMap.set(key, cur)
+      }
+
       return {
         ...g,
         do_count:          gdoDOs.length,
@@ -219,6 +234,7 @@ export async function listGDOs(req: Request, res: Response) {
         export_type:       firstExportType,
         total_cartons:     countable.reduce((s: number, i: any) => s + Number(i.cartons_ordered),    0),
         total_pallets:     countable.reduce((s: number, i: any) => s + Number(i.pallets_estimated),  0),
+        item_breakdown:    [...breakdownMap.values()],
       }
     }))
   } catch (e) { return fail(res, String(e)) }

@@ -8,6 +8,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
 import { BarChart2, Flag, MapPin, X } from 'lucide-react'
@@ -209,7 +210,7 @@ export default function StocktakeDashboard() {
     ? new Set(user.warehouse_ids)
     : null
 
-  const { warehouseId, category, locationId, requiresOnly, view } = useWmsFilterStore(s => s.stocktakeSummary)
+  const { warehouseId, category, locationIds, requiresOnly, view } = useWmsFilterStore(s => s.stocktakeSummary)
   const setStocktakeSummary = useWmsFilterStore(s => s.setStocktakeSummary)
   const [selectedId,   setSelectedId]   = useState<string | null>(null)
 
@@ -234,8 +235,8 @@ export default function StocktakeDashboard() {
     : (locations as any[])
 
   const { data, isFetching } = useStocktakeEntries(
-    { location_id: locationId, view },
-    !!locationId,
+    { location_ids: locationIds.join(','), view },
+    locationIds.length > 0,
   )
 
   const stats   = data?.stats   ?? { total: 0, checked: 0, unchecked: 0, flagged: 0 }
@@ -264,7 +265,7 @@ export default function StocktakeDashboard() {
           </div>
 
           <Select value={warehouseId || '__none__'} onValueChange={v => {
-            setStocktakeSummary({ warehouseId: v === '__none__' ? '' : v, locationId: '' })
+            setStocktakeSummary({ warehouseId: v === '__none__' ? '' : v, locationIds: [] })
           }}>
             <SelectTrigger className="h-6 text-[11px] w-[100px]"><SelectValue placeholder="Kho…" /></SelectTrigger>
             <SelectContent>
@@ -276,7 +277,7 @@ export default function StocktakeDashboard() {
           </Select>
 
           <Select value={category || '__all__'} onValueChange={v => {
-            setStocktakeSummary({ category: v === '__all__' ? '' : v, locationId: '' })
+            setStocktakeSummary({ category: v === '__all__' ? '' : v, locationIds: [] })
           }}>
             <SelectTrigger className="h-6 text-[11px] w-[90px]"><SelectValue placeholder="Loại…" /></SelectTrigger>
             <SelectContent>
@@ -287,23 +288,17 @@ export default function StocktakeDashboard() {
             </SelectContent>
           </Select>
 
-          <Select value={locationId || '__none__'} onValueChange={v => {
-            setStocktakeSummary({ locationId: v === '__none__' ? '' : v, view: 'problem' }); setSelectedId(null)
-          }} disabled={!warehouseId}>
-            <SelectTrigger className="h-6 text-[11px] w-[120px]"><SelectValue placeholder="Vị trí…" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__none__" className="text-xs">Chọn vị trí…</SelectItem>
-              {filteredLocations.map((l: any) => (
-                <SelectItem key={l.id} value={l.id} className="text-xs">
-                  {l.location_code}{l.requires_stocktake ? ' 🚩' : ''}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <MultiSelectFilter
+            label="Vị trí"
+            width="w-[130px]"
+            options={filteredLocations.map((l: any) => ({ value: l.id, label: `${l.location_code}${l.requires_stocktake ? ' 🚩' : ''}` }))}
+            selected={locationIds}
+            onChange={ids => { setStocktakeSummary({ locationIds: ids }); setSelectedId(null) }}
+          />
 
           <label className="flex items-center gap-1 cursor-pointer select-none">
             <input type="checkbox" checked={requiresOnly} onChange={e => {
-              setStocktakeSummary({ requiresOnly: e.target.checked, locationId: '' })
+              setStocktakeSummary({ requiresOnly: e.target.checked, locationIds: [] })
             }} className="h-3 w-3 cursor-pointer" />
             <span className="text-[11px] text-slate-600 flex items-center gap-0.5">
               <Flag className="h-2.5 w-2.5 text-red-500" /> Cần check
@@ -312,7 +307,7 @@ export default function StocktakeDashboard() {
         </div>
 
         {/* Row 2: stat cards — chỉ hiện khi đã chọn vị trí */}
-        {locationId && (
+        {locationIds.length > 0 && (
           <div className="flex gap-1.5">
             <StatCard label="Tổng Pallet" value={stats.total}
               active={view === 'all'} color="bg-slate-100 text-slate-700 border-slate-300"
@@ -332,7 +327,7 @@ export default function StocktakeDashboard() {
 
       {/* Content */}
       <div className="flex flex-1 min-h-0">
-        {!locationId ? (
+        {locationIds.length === 0 ? (
           <div className="flex-1 flex flex-col items-center justify-center text-slate-400">
             <MapPin className="h-8 w-8 mb-2 opacity-40" />
             <p className="text-sm">Chọn vị trí để xem tổng hợp</p>
@@ -345,6 +340,7 @@ export default function StocktakeDashboard() {
                 <TableHeader>
                   <TableRow>
                     <TableHead className="text-[9px] px-2 py-1.5">Mã pallet</TableHead>
+                    <TableHead className="text-[9px] px-2 py-1.5">Vị trí</TableHead>
                     <TableHead className="text-[9px] px-2 py-1.5">Tên hàng</TableHead>
                     <TableHead className="text-[9px] px-2 py-1.5 text-right">Tồn App</TableHead>
                     <TableHead className="text-[9px] px-2 py-1.5 text-right">Tồn thực tế</TableHead>
@@ -358,11 +354,11 @@ export default function StocktakeDashboard() {
                 <TableBody>
                   {isFetching && entries.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={9} className="text-center text-xs text-slate-400 py-8">Đang tải…</TableCell>
+                      <TableCell colSpan={10} className="text-center text-xs text-slate-400 py-8">Đang tải…</TableCell>
                     </TableRow>
                   ) : entries.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={9} className="text-center text-xs text-slate-400 py-8">
+                      <TableCell colSpan={10} className="text-center text-xs text-slate-400 py-8">
                         {view === 'problem' ? 'Không có pallet cần xử lý 🎉' : 'Không có dữ liệu'}
                       </TableCell>
                     </TableRow>
@@ -378,6 +374,11 @@ export default function StocktakeDashboard() {
                         <TableCell className="px-2 py-1">
                           <span className="font-mono text-[10px] font-semibold">
                             {e.pallet_code}
+                          </span>
+                        </TableCell>
+                        <TableCell className="px-2 py-1">
+                          <span className="font-mono text-[10px]">
+                            {e.location?.location_code ?? <span className="text-slate-300">—</span>}
                           </span>
                         </TableCell>
                         <TableCell className="px-2 py-1">
@@ -447,7 +448,7 @@ export default function StocktakeDashboard() {
 
       {/* Footer đếm bản ghi */}
       <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 sm:rounded-b-xl">
-        {locationId ? `${entries.length} pallet` : 'Chọn vị trí để xem tổng hợp'}
+        {locationIds.length > 0 ? `${entries.length} pallet · ${locationIds.length} vị trí` : 'Chọn vị trí để xem tổng hợp'}
       </div>
      </div>
     </div>

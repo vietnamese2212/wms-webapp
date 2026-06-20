@@ -742,17 +742,20 @@ export async function stocktakeEntry(req: Request, res: Response) {
 }
 
 export async function stocktakeEntries(req: Request, res: Response) {
-  const { warehouse_id, category, location_id, view = 'problem' } = req.query as Record<string, string>
+  const { warehouse_id, category, location_id, location_ids, view = 'problem' } = req.query as Record<string, string>
   // view: 'all' | 'flagged' | 'unchecked' | 'checked' | 'problem' (flagged + unchecked)
 
   const scopeWhIds = req.user?.warehouse_scope !== 'NATIONAL'
     ? (req.user?.warehouse_ids ?? [])
     : []
 
-  // Resolve location IDs to query against
+  // Resolve location IDs to query against. Ưu tiên danh sách vị trí chọn (CSV); fallback location_id đơn.
+  const explicitIds = location_ids
+    ? String(location_ids).split(',').filter(Boolean)
+    : (location_id ? [location_id] : [])
   let resolvedLocationIds: string[]
-  if (location_id) {
-    resolvedLocationIds = [location_id]
+  if (explicitIds.length) {
+    resolvedLocationIds = explicitIds
   } else {
     let locQuery = (supabase.from('Location') as any).select('id').eq('is_active', true)
 

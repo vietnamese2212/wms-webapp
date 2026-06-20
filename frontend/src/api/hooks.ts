@@ -964,7 +964,7 @@ export interface StocktakeEntriesResult {
 }
 
 export function useStocktakeEntries(
-  params: { warehouse_id?: string; category?: string; location_id?: string; view?: string },
+  params: { warehouse_id?: string; category?: string; location_ids?: string; view?: string },
   enabled = true,
 ) {
   return useQuery({
@@ -973,7 +973,7 @@ export function useStocktakeEntries(
       const q: Record<string, string> = {}
       if (params.warehouse_id) q.warehouse_id = params.warehouse_id
       if (params.category)     q.category     = params.category
-      if (params.location_id)  q.location_id  = params.location_id
+      if (params.location_ids) q.location_ids = params.location_ids
       if (params.view)         q.view         = params.view
       const { data } = await apiClient.get('/wms/inventory/stocktake-entries', { params: q })
       return data.data as StocktakeEntriesResult

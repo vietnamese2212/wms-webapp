@@ -101,7 +101,7 @@ interface StocktakeFilters {
 interface StocktakeSummaryFilters {
   warehouseId: string
   category: string
-  locationId: string
+  locationIds: string[]
   requiresOnly: boolean
   view: StocktakeView
 }
@@ -207,7 +207,7 @@ function initialFilters() {
     },
     scanLogApplied: { from_date: today(), to_date: today() } as ScanLogApplied,
     stocktake:        { warehouseId: '', category: '', locationId: '', requiresOnly: false },
-    stocktakeSummary: { warehouseId: '', category: '', locationId: '', requiresOnly: false, view: 'problem' as StocktakeView },
+    stocktakeSummary: { warehouseId: '', category: '', locationIds: [], requiresOnly: false, view: 'problem' as StocktakeView },
     locations:        { search: '', warehouseId: '', catFilter: '', statusFilter: [], flagFilter: false },
     gateRegistration: {
       fDate: today(), fDateTo: '', fWarehouse: '', fWarehouseType: '',

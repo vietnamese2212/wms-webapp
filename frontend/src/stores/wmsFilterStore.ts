@@ -84,6 +84,20 @@ export interface ScanLogApplied {
   cycles?: string
   scanner_name?: string
 }
+export type StocktakeView = 'problem' | 'flagged' | 'unchecked' | 'checked' | 'all'
+interface StocktakeFilters {
+  warehouseId: string
+  category: string
+  locationId: string
+  requiresOnly: boolean
+}
+interface StocktakeSummaryFilters {
+  warehouseId: string
+  category: string
+  locationId: string
+  requiresOnly: boolean
+  view: StocktakeView
+}
 interface GateRegistrationFilters {
   fDate: string
   fDateTo: string
@@ -125,6 +139,8 @@ interface WmsFilterState {
   loosePicking:      LoosePickingFilters
   scanLogDraft:      ScanLogDraft
   scanLogApplied:    ScanLogApplied
+  stocktake:         StocktakeFilters
+  stocktakeSummary:  StocktakeSummaryFilters
   gateRegistration:  GateRegistrationFilters
   deliveries:        DeliveriesFilters
   materials:         MaterialsFilters
@@ -136,6 +152,8 @@ interface WmsFilterState {
   setLoosePicking:      (f: Partial<LoosePickingFilters>)      => void
   setScanLogDraft:      (f: Partial<ScanLogDraft>)             => void
   setScanLogApplied:    (f: ScanLogApplied)                    => void
+  setStocktake:         (f: Partial<StocktakeFilters>)         => void
+  setStocktakeSummary:  (f: Partial<StocktakeSummaryFilters>)  => void
   setGateRegistration:  (f: Partial<GateRegistrationFilters>)  => void
   setDeliveries:        (f: Partial<DeliveriesFilters>)        => void
   setMaterials:         (f: Partial<MaterialsFilters>)         => void
@@ -179,6 +197,8 @@ function initialFilters() {
       pallet_code: '', materials: [], machines: [], cycles: [], scanner_name: '',
     },
     scanLogApplied: { from_date: today(), to_date: today() } as ScanLogApplied,
+    stocktake:        { warehouseId: '', category: '', locationId: '', requiresOnly: false },
+    stocktakeSummary: { warehouseId: '', category: '', locationId: '', requiresOnly: false, view: 'problem' as StocktakeView },
     gateRegistration: {
       fDate: today(), fDateTo: '', fWarehouse: '', fWarehouseType: '',
       fVehicleTypes: [], fCompany: '', fDirection: '', fStatus: '',
@@ -203,6 +223,8 @@ export const useWmsFilterStore = create<WmsFilterState>()(
       setLoosePicking:     (f) => set(s => ({ loosePicking:     { ...s.loosePicking,     ...f } })),
       setScanLogDraft:     (f) => set(s => ({ scanLogDraft:     { ...s.scanLogDraft,     ...f } })),
       setScanLogApplied:   (f) => set(_  => ({ scanLogApplied: f })),
+      setStocktake:        (f) => set(s => ({ stocktake:        { ...s.stocktake,        ...f } })),
+      setStocktakeSummary: (f) => set(s => ({ stocktakeSummary: { ...s.stocktakeSummary, ...f } })),
       setGateRegistration: (f) => set(s => ({ gateRegistration: { ...s.gateRegistration, ...f } })),
       setDeliveries:       (f) => set(s => ({ deliveries:       { ...s.deliveries,       ...f } })),
       setMaterials:        (f) => set(s => ({ materials:        { ...s.materials,        ...f } })),

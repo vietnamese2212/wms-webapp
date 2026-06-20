@@ -738,9 +738,10 @@ export async function checkScanQR(req: Request, res: Response) {
 
     const stackLayerNum = Number(stack_layer)
     if (stackLayerNum === 1) {
+      // Đếm pallet đang CHIẾM CHỖ layer 1: IN_STOCK + PARTIAL (xuất dở vẫn nằm đó) + QUARANTINE (cách ly vẫn chiếm chỗ) — khớp bulkTransferLocation
       const { count: usedSlots } = await supabase
         .from('InventoryEntry').select('*', { count: 'exact', head: true })
-        .eq('location_id', location_id).eq('stack_layer', 1).eq('status', 'IN_STOCK')
+        .eq('location_id', location_id).eq('stack_layer', 1).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE'])
       if ((usedSlots ?? 0) >= location.max_pallets) {
         return fail(res, 422, 'LOCATION_FULL',
           `Vị trí ${location.location_code} đã đầy (${usedSlots}/${location.max_pallets} pallet). Chọn tầng chồng hoặc vị trí khác.`)
@@ -876,12 +877,13 @@ export async function scanQR(req: Request, res: Response) {
 
     const stackLayerNum = Number(stack_layer)
     if (stackLayerNum === 1) {
+      // Đếm pallet đang CHIẾM CHỖ layer 1: IN_STOCK + PARTIAL (xuất dở vẫn nằm đó) + QUARANTINE (cách ly vẫn chiếm chỗ) — khớp bulkTransferLocation
       const { count: usedSlots } = await supabase
         .from('InventoryEntry')
         .select('*', { count: 'exact', head: true })
         .eq('location_id', location_id)
         .eq('stack_layer', 1)
-        .eq('status', 'IN_STOCK')
+        .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE'])
       if ((usedSlots ?? 0) >= location.max_pallets) {
         return fail(res, 422, 'LOCATION_FULL',
           `Vị trí ${location.location_code} đã đầy (${usedSlots}/${location.max_pallets} pallet). Chọn tầng chồng (layer 2/3) hoặc vị trí khác.`)

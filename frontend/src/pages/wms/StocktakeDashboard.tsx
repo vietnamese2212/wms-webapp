@@ -5,14 +5,13 @@ import {
   type StocktakeEntryRow,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
+import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
 import { BarChart2, Flag, MapPin, X } from 'lucide-react'
 import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
-
-type View = 'problem' | 'flagged' | 'unchecked' | 'checked' | 'all'
 
 function parseDiff(note: string | null): { actual: number; app: number; diff: number } | null {
   if (!note) return null
@@ -200,26 +199,6 @@ function DetailPanel({ entryId, onClose }: { entryId: string; onClose: () => voi
   )
 }
 
-// ─── Filter persistence ───────────────────────────────────────────
-const SUMMARY_FILTERS_KEY = 'stocktake_summary_filters_v1'
-
-function loadSummaryFilters(defaultWarehouseId: string) {
-  try {
-    const s = sessionStorage.getItem(SUMMARY_FILTERS_KEY)
-    if (s) {
-      const p = JSON.parse(s) as Record<string, unknown>
-      return {
-        warehouseId:  typeof p.warehouseId  === 'string' ? p.warehouseId  : defaultWarehouseId,
-        category:     typeof p.category     === 'string' ? p.category     : '',
-        locationId:   typeof p.locationId   === 'string' ? p.locationId   : '',
-        requiresOnly: Boolean(p.requiresOnly),
-        view:         typeof p.view         === 'string' ? p.view as View : 'problem' as View,
-      }
-    }
-  } catch {}
-  return { warehouseId: defaultWarehouseId, category: '', locationId: '', requiresOnly: false, view: 'problem' as View }
-}
-
 // ─── Main ────────────────────────────────────────────────────────
 export default function StocktakeDashboard() {
   const user  = useAuthStore(s => s.user)
@@ -229,17 +208,17 @@ export default function StocktakeDashboard() {
     ? new Set(user.warehouse_ids)
     : null
 
-  const init = loadSummaryFilters(user?.warehouse_ids?.[0] ?? user?.warehouse_id ?? '')
-  const [warehouseId,  setWarehouseId]  = useState(init.warehouseId)
-  const [category,     setCategory]     = useState(init.category)
-  const [locationId,   setLocationId]   = useState(init.locationId)
-  const [requiresOnly, setRequiresOnly] = useState(init.requiresOnly)
-  const [view,         setView]         = useState<View>(init.view)
+  const { warehouseId, category, locationId, requiresOnly, view } = useWmsFilterStore(s => s.stocktakeSummary)
+  const setStocktakeSummary = useWmsFilterStore(s => s.setStocktakeSummary)
   const [selectedId,   setSelectedId]   = useState<string | null>(null)
 
+  // Mặc định kho = kho đầu tiên của user nếu store chưa có (cần kho để chọn vị trí)
   useEffect(() => {
-    sessionStorage.setItem(SUMMARY_FILTERS_KEY, JSON.stringify({ warehouseId, category, locationId, requiresOnly, view }))
-  }, [warehouseId, category, locationId, requiresOnly, view])
+    if (!warehouseId) {
+      const def = user?.warehouse_ids?.[0] ?? user?.warehouse_id ?? ''
+      if (def) setStocktakeSummary({ warehouseId: def })
+    }
+  }, [warehouseId, user, setStocktakeSummary])
 
   const unflag = useUnflagEntry()
   const { data: warehouses = [] } = useWarehouses(true)
@@ -284,7 +263,7 @@ export default function StocktakeDashboard() {
           </div>
 
           <Select value={warehouseId || '__none__'} onValueChange={v => {
-            setWarehouseId(v === '__none__' ? '' : v); setLocationId('')
+            setStocktakeSummary({ warehouseId: v === '__none__' ? '' : v, locationId: '' })
           }}>
             <SelectTrigger className="h-6 text-[11px] w-[100px]"><SelectValue placeholder="Kho…" /></SelectTrigger>
             <SelectContent>
@@ -296,7 +275,7 @@ export default function StocktakeDashboard() {
           </Select>
 
           <Select value={category || '__all__'} onValueChange={v => {
-            setCategory(v === '__all__' ? '' : v); setLocationId('')
+            setStocktakeSummary({ category: v === '__all__' ? '' : v, locationId: '' })
           }}>
             <SelectTrigger className="h-6 text-[11px] w-[90px]"><SelectValue placeholder="Loại…" /></SelectTrigger>
             <SelectContent>
@@ -308,7 +287,7 @@ export default function StocktakeDashboard() {
           </Select>
 
           <Select value={locationId || '__none__'} onValueChange={v => {
-            setLocationId(v === '__none__' ? '' : v); setView('problem'); setSelectedId(null)
+            setStocktakeSummary({ locationId: v === '__none__' ? '' : v, view: 'problem' }); setSelectedId(null)
           }} disabled={!warehouseId}>
             <SelectTrigger className="h-6 text-[11px] w-[120px]"><SelectValue placeholder="Vị trí…" /></SelectTrigger>
             <SelectContent>
@@ -323,7 +302,7 @@ export default function StocktakeDashboard() {
 
           <label className="flex items-center gap-1 cursor-pointer select-none">
             <input type="checkbox" checked={requiresOnly} onChange={e => {
-              setRequiresOnly(e.target.checked); setLocationId('')
+              setStocktakeSummary({ requiresOnly: e.target.checked, locationId: '' })
             }} className="h-3 w-3 cursor-pointer" />
             <span className="text-[11px] text-slate-600 flex items-center gap-0.5">
               <Flag className="h-2.5 w-2.5 text-red-500" /> Cần check
@@ -336,16 +315,16 @@ export default function StocktakeDashboard() {
           <div className="flex gap-1.5">
             <StatCard label="Tổng Pallet" value={stats.total}
               active={view === 'all'} color="bg-slate-100 text-slate-700 border-slate-300"
-              onClick={() => setView('all')} />
+              onClick={() => setStocktakeSummary({ view: 'all' })} />
             <StatCard label="Đã kiểm" value={stats.checked}
               active={view === 'checked'} color="bg-green-100 text-green-700 border-green-300"
-              onClick={() => setView('checked')} />
+              onClick={() => setStocktakeSummary({ view: 'checked' })} />
             <StatCard label="Chưa kiểm" value={stats.unchecked}
               active={view === 'unchecked'} color="bg-amber-100 text-amber-700 border-amber-300"
-              onClick={() => setView('unchecked')} />
+              onClick={() => setStocktakeSummary({ view: 'unchecked' })} />
             <StatCard label="Chênh lệch" value={stats.flagged}
               active={view === 'flagged'} color="bg-red-100 text-red-700 border-red-300"
-              onClick={() => setView('flagged')} />
+              onClick={() => setStocktakeSummary({ view: 'flagged' })} />
           </div>
         )}
       </div>

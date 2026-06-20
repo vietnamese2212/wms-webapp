@@ -68,9 +68,8 @@ export const MODULES = {
     label: 'Kiểm kho',
     actions: {
       view:     'Xem danh sách',
-      create:   'Tạo phiếu',
       scan:     'Quét QR',
-      complete: 'Hoàn thành',
+      complete: 'Bỏ cờ chênh lệch',
     },
   },
   locations: {

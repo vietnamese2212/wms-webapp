@@ -917,33 +917,6 @@ export function useBulkUpdateProductionDate() {
   })
 }
 
-export interface StocktakeSummaryItem {
-  location_id:        string
-  location_code:      string
-  sub_code:           string
-  requires_stocktake: boolean
-  warehouse_name:     string
-  total:              number
-  checked:            number
-  unchecked:          number
-  flagged:            number
-}
-
-export function useStocktakeSummary(params: { warehouse_id?: string; category?: string; requires_stocktake_only?: boolean }) {
-  return useQuery({
-    queryKey: ['stocktake-summary', params],
-    queryFn: async () => {
-      const q: Record<string, string> = {}
-      if (params.warehouse_id)          q.warehouse_id           = params.warehouse_id
-      if (params.category)              q.category               = params.category
-      if (params.requires_stocktake_only) q.requires_stocktake_only = 'true'
-      const { data } = await apiClient.get('/wms/inventory/stocktake-summary', { params: q })
-      return data.data as StocktakeSummaryItem[]
-    },
-    enabled: true,
-  })
-}
-
 export function useStocktakeEntry() {
   const qc = useQueryClient()
   return useMutation({
@@ -953,7 +926,7 @@ export function useStocktakeEntry() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['inventory-entries'] })
-      qc.invalidateQueries({ queryKey: ['stocktake-summary'] })
+      qc.invalidateQueries({ queryKey: ['stocktake-entries'] })
     },
   })
 }
@@ -967,7 +940,6 @@ export function useUnflagEntry() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['inventory-entries'] })
-      qc.invalidateQueries({ queryKey: ['stocktake-summary'] })
       qc.invalidateQueries({ queryKey: ['stocktake-entries'] })
     },
   })

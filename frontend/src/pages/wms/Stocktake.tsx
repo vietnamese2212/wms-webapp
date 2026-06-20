@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { QRScanner } from '@/components/shared/QRScanner'
 import { useWarehouses, useLocationsReal, useWarehouseTypes } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
+import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
@@ -32,24 +33,6 @@ type ResultState =
   | { mode: 'success' }
   | { mode: 'error'; message: string }
 
-const FILTERS_KEY = 'stocktake_filters_v1'
-
-function loadFilters(defaultWarehouseId: string) {
-  try {
-    const s = sessionStorage.getItem(FILTERS_KEY)
-    if (s) {
-      const p = JSON.parse(s) as Record<string, unknown>
-      return {
-        warehouseId:  typeof p.warehouseId  === 'string' ? p.warehouseId  : defaultWarehouseId,
-        category:     typeof p.category     === 'string' ? p.category     : '',
-        locationId:   typeof p.locationId   === 'string' ? p.locationId   : '',
-        requiresOnly: Boolean(p.requiresOnly),
-      }
-    }
-  } catch {}
-  return { warehouseId: defaultWarehouseId, category: '', locationId: '', requiresOnly: false }
-}
-
 function qaColor(code: string | undefined): string {
   if (!code) return 'bg-slate-100 text-slate-600'
   const c = code.toUpperCase()
@@ -69,11 +52,8 @@ export default function Stocktake() {
     ? new Set(user.warehouse_ids)
     : null
 
-  const init = loadFilters(user?.warehouse_ids?.[0] ?? user?.warehouse_id ?? '')
-  const [warehouseId,  setWarehouseId]  = useState(init.warehouseId)
-  const [category,     setCategory]     = useState(init.category)
-  const [locationId,   setLocationId]   = useState(init.locationId)
-  const [requiresOnly, setRequiresOnly] = useState(init.requiresOnly)
+  const { warehouseId, category, locationId, requiresOnly } = useWmsFilterStore(s => s.stocktake)
+  const setStocktake = useWmsFilterStore(s => s.setStocktake)
 
   const [resultState,  setResultState]  = useState<ResultState>({ mode: 'none' })
   const [scannerOpen,  setScannerOpen]  = useState(false)
@@ -84,9 +64,13 @@ export default function Stocktake() {
   const [inputVal,     setInputVal]     = useState('')
   const [searching,    setSearching]    = useState(false)
 
+  // Mặc định kho = kho đầu tiên của user nếu store chưa có (giữ UX tự chọn cũ)
   useEffect(() => {
-    sessionStorage.setItem(FILTERS_KEY, JSON.stringify({ warehouseId, category, locationId, requiresOnly }))
-  }, [warehouseId, category, locationId, requiresOnly])
+    if (!warehouseId) {
+      const def = user?.warehouse_ids?.[0] ?? user?.warehouse_id ?? ''
+      if (def) setStocktake({ warehouseId: def })
+    }
+  }, [warehouseId, user, setStocktake])
 
   useEffect(() => {
     if (locationId) setTimeout(() => inputRef.current?.focus(), 80)
@@ -154,7 +138,6 @@ export default function Stocktake() {
     try {
       await apiClient.post(`/wms/inventory/${resultState.entry.id}/stocktake`, body)
       qc.invalidateQueries({ queryKey: ['inventory-entries'] })
-      qc.invalidateQueries({ queryKey: ['stocktake-summary'] })
       qc.invalidateQueries({ queryKey: ['stocktake-entries'] })
       setResultState({ mode: 'success' })
       setTimeout(clearResult, 1500)
@@ -181,13 +164,12 @@ export default function Stocktake() {
           <WarehouseSingleSelect
             warehouses={(warehouses as any[]).filter((w: any) => !allowedStockWhIds || allowedStockWhIds.has(w.id))}
             value={warehouseId || ''}
-            onChange={v => { setWarehouseId(v); setLocationId(''); setResultState({ mode: 'none' }); setInputVal('') }}
+            onChange={v => { setStocktake({ warehouseId: v, locationId: '' }); setResultState({ mode: 'none' }); setInputVal('') }}
             placeholder="Kho…"
             triggerClassName="h-7 w-[110px]"
           />
           <Select value={category || '__all__'} onValueChange={v => {
-            setCategory(v === '__all__' ? '' : v)
-            setLocationId('')
+            setStocktake({ category: v === '__all__' ? '' : v, locationId: '' })
             setResultState({ mode: 'none' })
             setInputVal('')
           }}>
@@ -200,7 +182,7 @@ export default function Stocktake() {
             </SelectContent>
           </Select>
           <Select value={locationId || '__none__'} onValueChange={v => {
-            setLocationId(v === '__none__' ? '' : v)
+            setStocktake({ locationId: v === '__none__' ? '' : v })
             setResultState({ mode: 'none' })
             setInputVal('')
             setScannerOpen(false)
@@ -217,8 +199,7 @@ export default function Stocktake() {
           </Select>
           <label className="flex items-center gap-1.5 cursor-pointer select-none">
             <input type="checkbox" checked={requiresOnly} onChange={e => {
-              setRequiresOnly(e.target.checked)
-              setLocationId('')
+              setStocktake({ requiresOnly: e.target.checked, locationId: '' })
               setResultState({ mode: 'none' })
               setInputVal('')
             }} className="h-3.5 w-3.5 cursor-pointer" />

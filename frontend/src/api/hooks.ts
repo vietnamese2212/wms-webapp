@@ -1652,6 +1652,21 @@ export type PrepareRow = {
 }
 export type PrepareBoard = { rows: PrepareRow[]; total_cartons: number; total_pallets: number }
 
+// Tồn kho theo mã hàng + kho (nút search tồn kho ở bảng chuẩn bị)
+export function useInventoryByMaterial(materialId: string | null, warehouseId: string | undefined) {
+  return useQuery({
+    queryKey: ['inventory-by-material', materialId, warehouseId],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/outbound/inventory-by-material', {
+        params: { material_id: materialId, warehouse_id: warehouseId || undefined },
+      })
+      return data.data as ItemInventoryEntry[]
+    },
+    enabled: !!materialId,
+    staleTime: 15_000,
+  })
+}
+
 export function usePrepareBoard(gdoIds: string[]) {
   const key = [...gdoIds].sort().join(',')
   return useQuery({

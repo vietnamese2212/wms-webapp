@@ -191,20 +191,23 @@ export default function Outbound() {
   // Phân bổ theo NPP — gom item_breakdown của các chuyến đã lọc; nếu đang lọc mã hàng thì
   // chỉ tính mã hàng đó (gõ mã hàng → đi những nhà nào, bao nhiêu, tổng). Kiểu expand Inbound.
   const nppBreakdown = useMemo(() => {
-    const map = new Map<string, { npp: string; pallets: number; cartons: number }>()
+    const map = new Map<string, { npp: string; planned: number; scanned: number }>()
     for (const g of sorted) for (const b of g.item_breakdown ?? []) {
       if (filterMaterials.length > 0 && !filterMaterials.includes(b.material_code)) continue
       const npp = b.distributor_name ?? '(không tên)'
-      const cur = map.get(npp) ?? { npp, pallets: 0, cartons: 0 }
-      cur.pallets  += b.pallets
-      cur.cartons  += b.cartons
+      const cur = map.get(npp) ?? { npp, planned: 0, scanned: 0 }
+      cur.planned += b.cartons
+      cur.scanned += b.cartons_scanned ?? 0
       map.set(npp, cur)
     }
-    return [...map.values()].sort((a, b) => b.cartons - a.cartons)
+    return [...map.values()]
+      .map(r => ({ ...r, remaining: Math.max(0, r.planned - r.scanned) }))
+      .sort((a, b) => b.planned - a.planned)
   }, [sorted, filterMaterials])
   const nppTotals = useMemo(() => ({
-    pallets: nppBreakdown.reduce((s, r) => s + r.pallets, 0),
-    cartons: nppBreakdown.reduce((s, r) => s + r.cartons, 0),
+    planned:   nppBreakdown.reduce((s, r) => s + r.planned, 0),
+    scanned:   nppBreakdown.reduce((s, r) => s + r.scanned, 0),
+    remaining: nppBreakdown.reduce((s, r) => s + r.remaining, 0),
   }), [nppBreakdown])
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -412,7 +415,7 @@ export default function Outbound() {
               className="w-full flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 bg-slate-50 hover:bg-slate-100 text-left"
               onClick={() => setNppOpen(v => !v)}>
               <Building2 className="h-3.5 w-3.5 text-slate-400" />
-              Phân bổ theo NPP ({nppBreakdown.length} nhà) · {nppTotals.pallets.toLocaleString('vi-VN')} pallet · {nppTotals.cartons.toLocaleString('vi-VN')} thùng
+              Phân bổ theo NPP ({nppBreakdown.length} nhà) · KH {nppTotals.planned.toLocaleString('vi-VN')} · đã xuất {nppTotals.scanned.toLocaleString('vi-VN')} · còn {nppTotals.remaining.toLocaleString('vi-VN')} thùng
               {filterMaterials.length > 0 && <span className="text-blue-600">· lọc {filterMaterials.length} mã hàng</span>}
               <ChevronDown className={`h-3 w-3 ml-auto transition-transform ${nppOpen ? 'rotate-180' : ''}`} />
             </button>
@@ -426,28 +429,31 @@ export default function Outbound() {
                   ].filter(Boolean)
                   return parts.length > 0 ? <p className="text-[10px] text-slate-400 mb-1.5">Lọc: {parts.join(' · ')}</p> : null
                 })()}
-                <table className="text-[11px] w-full max-w-md">
+                <table className="text-[11px] w-full max-w-lg">
                   <thead>
                     <tr className="text-slate-400 border-b">
                       <th className="py-1 pr-6 text-left font-medium">NPP / Khách hàng</th>
-                      <th className="py-1 pr-6 text-right font-medium">Pallet</th>
-                      <th className="py-1 text-right font-medium">Thùng</th>
+                      <th className="py-1 pr-6 text-right font-medium">Kế hoạch</th>
+                      <th className="py-1 pr-6 text-right font-medium">Đã xuất</th>
+                      <th className="py-1 text-right font-medium">Còn lại</th>
                     </tr>
                   </thead>
                   <tbody>
                     {nppBreakdown.map(row => (
                       <tr key={row.npp} className="border-b border-slate-100">
                         <td className="py-1 pr-6 text-slate-700">{row.npp}</td>
-                        <td className="py-1 pr-6 text-right tabular-nums font-semibold">{row.pallets.toLocaleString('vi-VN')}</td>
-                        <td className="py-1 text-right tabular-nums">{row.cartons.toLocaleString('vi-VN')}</td>
+                        <td className="py-1 pr-6 text-right tabular-nums font-semibold">{row.planned.toLocaleString('vi-VN')}</td>
+                        <td className="py-1 pr-6 text-right tabular-nums text-green-700">{row.scanned.toLocaleString('vi-VN')}</td>
+                        <td className={`py-1 text-right tabular-nums font-semibold ${row.remaining > 0 ? 'text-amber-700' : 'text-slate-400'}`}>{row.remaining.toLocaleString('vi-VN')}</td>
                       </tr>
                     ))}
                   </tbody>
                   <tfoot>
                     <tr className="text-slate-500 font-semibold border-t">
                       <td className="py-1 pr-6">Tổng</td>
-                      <td className="py-1 pr-6 text-right tabular-nums">{nppTotals.pallets.toLocaleString('vi-VN')}</td>
-                      <td className="py-1 text-right tabular-nums">{nppTotals.cartons.toLocaleString('vi-VN')}</td>
+                      <td className="py-1 pr-6 text-right tabular-nums">{nppTotals.planned.toLocaleString('vi-VN')}</td>
+                      <td className="py-1 pr-6 text-right tabular-nums text-green-700">{nppTotals.scanned.toLocaleString('vi-VN')}</td>
+                      <td className="py-1 text-right tabular-nums text-amber-700">{nppTotals.remaining.toLocaleString('vi-VN')}</td>
                     </tr>
                   </tfoot>
                 </table>

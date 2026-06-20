@@ -179,7 +179,7 @@ export async function listGDOs(req: Request, res: Response) {
 
     const { data: items } = doIds.length
       ? await (supabase.from('OutboundItem') as any)
-          .select('do_id, cartons_ordered, pallets_estimated, material_type, export_type, material_code_raw, material_id, material:Material!material_id(no_qr_tracking, short_name)')
+          .select('do_id, cartons_ordered, cartons_scanned, pallets_estimated, material_type, export_type, material_code_raw, material_id, material:Material!material_id(no_qr_tracking, short_name)')
           .in('do_id', doIds)
       : { data: [] }
 
@@ -215,14 +215,15 @@ export async function listGDOs(req: Request, res: Response) {
 
       // Phân bổ theo (mã hàng × NPP) — gộp để FE lọc theo mã hàng + tổng theo NPP (expand kiểu Inbound).
       // Chỉ tính item đếm được (loại no_qr_tracking) để Tổng khớp tile Tổng thùng/Pallet.
-      const breakdownMap = new Map<string, { material_code: string; material_name: string | null; distributor_name: string | null; cartons: number; pallets: number }>()
+      const breakdownMap = new Map<string, { material_code: string; material_name: string | null; distributor_name: string | null; cartons: number; cartons_scanned: number; pallets: number }>()
       for (const i of countable) {
         const material_code = i.material_code_raw ?? '(?)'
         const distributor_name = distributorByDo.get(i.do_id) ?? null
         const key = `${material_code}__${distributor_name ?? ''}`
-        const cur = breakdownMap.get(key) ?? { material_code, material_name: i.material?.short_name ?? null, distributor_name, cartons: 0, pallets: 0 }
-        cur.cartons += Number(i.cartons_ordered ?? 0)
-        cur.pallets += Number(i.pallets_estimated ?? 0)
+        const cur = breakdownMap.get(key) ?? { material_code, material_name: i.material?.short_name ?? null, distributor_name, cartons: 0, cartons_scanned: 0, pallets: 0 }
+        cur.cartons         += Number(i.cartons_ordered ?? 0)
+        cur.cartons_scanned += Number(i.cartons_scanned ?? 0)
+        cur.pallets         += Number(i.pallets_estimated ?? 0)
         breakdownMap.set(key, cur)
       }
 
@@ -1273,58 +1274,69 @@ export async function uploadExcel(req: Request, res: Response) {
 
 // ─── Get available inventory for an item ─────────────────────
 
+// Tồn khả dụng của 1 mã hàng trong 1 kho (FEFO list) — dùng chung cho getItemInventory
+// và getInventoryByMaterial (nút search tồn kho ở bảng chuẩn bị). Trả [] nếu kho không có vị trí.
+async function fetchMaterialInventory(materialId: string, warehouseId: string | null) {
+  let q = (supabase.from('InventoryEntry') as any)
+    .select('id, pallet_code, cartons_imported, cartons_remaining, cartons_reserved, production_date, import_date, qa_status_id, qa_status:QAStatus(id,code,name), location:Location(location_code), material:Material!material_id(shelf_life_days)')
+    .eq('material_id', materialId)
+    .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING'])
+
+  if (warehouseId) {
+    const { data: locs } = await (supabase.from('Location') as any)
+      .select('id').eq('warehouse_id', warehouseId)
+    const locIds = ((locs ?? []) as any[]).map((l: any) => l.id as string)
+    if (!locIds.length) return []
+    q = q.in('location_id', locIds)
+  }
+
+  const { data, error } = await q.order('created_at')
+  if (error) throw new Error(error.message)
+
+  const now = Date.now()
+  return (data ?? []).map((e: any) => {
+    const shelfDays = e.material?.shelf_life_days ? Number(e.material.shelf_life_days) : 0
+    let pct_date: number | null = null
+    if (shelfDays > 0 && e.production_date) {
+      const totalMs   = shelfDays * 86_400_000
+      const remaining = new Date(e.production_date).getTime() + totalMs - now
+      pct_date = Math.max(0, Math.round((remaining / totalMs) * 100))
+    }
+    const reserved = Number(e.cartons_reserved ?? 0)
+    return {
+      id:                e.id,
+      pallet_code:       e.pallet_code,
+      cartons_remaining: e.cartons_remaining,
+      cartons_imported:  e.cartons_imported,
+      cartons_reserved:  reserved,
+      location_code:     e.location?.location_code ?? null,
+      production_date:   e.production_date ?? null,
+      import_date:       e.import_date ?? null,
+      pct_date,
+      available:         Math.max(0, (e.cartons_remaining ?? e.cartons_imported) - reserved),
+      qa_status:         e.qa_status_id ? (e.qa_status ?? null) : null,
+    }
+  })
+}
+
 export async function getItemInventory(req: Request, res: Response) {
   try {
     const { gdoId, itemId } = req.params
-
     const [itemRes, gdoRes] = await Promise.all([
       (supabase.from('OutboundItem') as any).select('material_id').eq('id', itemId).single(),
       (supabase.from('GroupDeliveryOrder') as any).select('warehouse_id').eq('id', gdoId).single(),
     ])
     if (!itemRes.data) return fail(res, 'Không tìm thấy mặt hàng', 404)
-    const item = itemRes.data
-    const gdo  = gdoRes.data
+    return ok(res, await fetchMaterialInventory(itemRes.data.material_id, gdoRes.data?.warehouse_id ?? null))
+  } catch (e) { return fail(res, String(e)) }
+}
 
-    let q = (supabase.from('InventoryEntry') as any)
-      .select('id, pallet_code, cartons_imported, cartons_remaining, cartons_reserved, production_date, import_date, qa_status_id, qa_status:QAStatus(id,code,name), location:Location(location_code), material:Material!material_id(shelf_life_days)')
-      .eq('material_id', item.material_id)
-      .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING'])
-
-    if (gdo?.warehouse_id) {
-      const { data: locs } = await (supabase.from('Location') as any)
-        .select('id').eq('warehouse_id', gdo.warehouse_id)
-      const locIds = (locs ?? []).map((l: any) => l.id as string)
-      if (!locIds.length) return ok(res, [])
-      q = q.in('location_id', locIds)
-    }
-
-    const { data, error } = await q.order('created_at')
-    if (error) return fail(res, error.message)
-
-    const now = Date.now()
-    return ok(res, (data ?? []).map((e: any) => {
-      const shelfDays = e.material?.shelf_life_days ? Number(e.material.shelf_life_days) : 0
-      let pct_date: number | null = null
-      if (shelfDays > 0 && e.production_date) {
-        const totalMs  = shelfDays * 86_400_000
-        const remaining = new Date(e.production_date).getTime() + totalMs - now
-        pct_date = Math.max(0, Math.round((remaining / totalMs) * 100))
-      }
-      const reserved = Number(e.cartons_reserved ?? 0)
-      return {
-        id:                e.id,
-        pallet_code:       e.pallet_code,
-        cartons_remaining: e.cartons_remaining,
-        cartons_imported:  e.cartons_imported,
-        cartons_reserved:  reserved,
-        location_code:     e.location?.location_code ?? null,
-        production_date:   e.production_date ?? null,
-        import_date:       e.import_date ?? null,
-        pct_date,
-        available:         Math.max(0, (e.cartons_remaining ?? e.cartons_imported) - reserved),
-        qa_status:         e.qa_status_id ? (e.qa_status ?? null) : null,
-      }
-    }))
+// Tồn theo mã hàng + kho (nút search tồn kho ở bảng chuẩn bị, không gắn item cụ thể)
+export async function getInventoryByMaterial(req: Request, res: Response) {
+  try {
+    const { material_id, warehouse_id } = req.query as Record<string, string>
+    if (!material_id) return fail(res, 'material_id là bắt buộc', 400)
+    return ok(res, await fetchMaterialInventory(material_id, warehouse_id || null))
   } catch (e) { return fail(res, String(e)) }
 }
 

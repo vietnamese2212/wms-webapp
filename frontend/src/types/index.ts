@@ -683,6 +683,7 @@ export interface GDOItemBreakdown {
   material_name:    string | null
   distributor_name: string | null
   cartons:          number
+  cartons_scanned:  number
   pallets:          number
 }
 

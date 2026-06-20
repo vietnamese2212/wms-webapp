@@ -112,6 +112,7 @@ router.get('/outbound/employees',                             outbound.getWareho
 router.get('/outbound/scan-log/facets',                       requirePerm('scanlog', 'view'), outbound.getScanLogFacets)
 router.get('/outbound/scan-log',                              requirePerm('scanlog', 'view'), outbound.getScanLog)
 router.get('/outbound/prepare',                               requirePerm('outbound', 'view'), outbound.getPrepareBoard)
+router.get('/outbound/inventory-by-material',                 requirePerm('outbound', 'view'), outbound.getInventoryByMaterial)
 router.get('/outbound/:id',                                   outbound.getGDO)
 router.put('/outbound/:id',                                   requirePerm('outbound', 'edit'), outbound.updateGDO)
 router.patch('/outbound/:id',                                 requirePerm('outbound', 'edit'), outbound.patchGDO)

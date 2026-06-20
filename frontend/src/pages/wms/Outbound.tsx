@@ -348,10 +348,12 @@ export default function Outbound() {
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
           <div className="flex gap-1.5 shrink-0">
-            <Button size="sm" variant="outline" onClick={() => navigate('/wms/outbound/prepare')} className="h-7 text-xs gap-1">
-              <PackageCheck className="h-3.5 w-3.5" />
-              Chuẩn bị hàng
-            </Button>
+            {can(perms, 'outbound', 'view') && (
+              <Button size="sm" variant="outline" onClick={() => navigate('/wms/outbound/prepare')} className="h-7 text-xs gap-1">
+                <PackageCheck className="h-3.5 w-3.5" />
+                Chuẩn bị hàng
+              </Button>
+            )}
             {can(perms, 'outbound', 'create') && (
               <Button size="sm" variant="outline" onClick={() => setShowCreate(true)} className="h-7 text-xs gap-1">
                 <PenSquare className="h-3.5 w-3.5" />
@@ -490,7 +492,8 @@ export default function Outbound() {
               <TableRow className="bg-slate-50">
                 {OUTBOUND_COLS.map((c, i) => (
                   <TableHead key={c.id}
-                    className={`relative text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5 ${c.align === 'right' ? 'text-right' : ''} ${i === 1 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                    style={i <= 1 ? { left: i === 0 ? 0 : colW[0] } : undefined}
+                    className={`relative text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5 ${c.align === 'right' ? 'text-right' : ''} ${i <= 1 ? 'sticky z-20 bg-slate-50' : ''}`}>
                     {c.label}
                     {i > 0 && (
                       <span onPointerDown={e => startResize(i, e)} onClick={e => e.stopPropagation()}
@@ -506,6 +509,7 @@ export default function Outbound() {
                   key={gdo.id}
                   gdo={gdo}
                   dense={dense}
+                  pinW={colW[0]}
                   onClick={() => navigate(`/wms/outbound/${gdo.id}`)}
                   onAssign={can(perms, 'outbound', 'assign') ? (e => { e.stopPropagation(); assignGDO({ id: gdo.id }) }) : undefined}
                 />
@@ -534,11 +538,12 @@ export default function Outbound() {
 
 // ─── GDO Row ──────────────────────────────────────────────────
 
-function GDORow({ gdo, onClick, onAssign, dense = true }: {
+function GDORow({ gdo, onClick, onAssign, dense = true, pinW = 34 }: {
   gdo: GDO
   onClick: () => void
   onAssign?: (e: React.MouseEvent) => void
   dense?: boolean
+  pinW?: number
 }) {
   const { pin, unpin, isPinned } = useActiveVehiclesStore()
   const pinned    = isPinned(gdo.id)
@@ -550,7 +555,7 @@ function GDORow({ gdo, onClick, onAssign, dense = true }: {
   return (
     <TableRow className={`cursor-pointer ${gdoRowText(gdo)} ${dense ? '' : '[&_td]:py-2.5'}`} onClick={onClick}>
       {/* Bookmark */}
-      <TableCell className="px-1.5 py-1" onClick={e => e.stopPropagation()}>
+      <TableCell className="px-1.5 py-1 sticky left-0 z-10 bg-white" style={{ left: 0 }} onClick={e => e.stopPropagation()}>
         <button
           onClick={() => pinned ? unpin(gdo.id) : pin({ id: gdo.id, group_code: gdo.group_code, status: gdo.status })}
           className={`p-0.5 rounded transition-colors ${pinned ? 'text-amber-500' : 'text-slate-300 hover:text-slate-500'}`}
@@ -560,7 +565,7 @@ function GDORow({ gdo, onClick, onAssign, dense = true }: {
         </button>
       </TableCell>
 
-      <TableCell className="px-2 py-1 whitespace-nowrap sticky left-0 z-10 bg-white">
+      <TableCell className="px-2 py-1 whitespace-nowrap sticky z-10 bg-white" style={{ left: pinW }}>
         <span className="text-[10px] font-medium tabular-nums">{dateLabel}</span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">

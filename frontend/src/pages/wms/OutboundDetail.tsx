@@ -560,10 +560,11 @@ function ManualCompleteDialog({ gdoId, itemId, matName, initialCartons, onClose 
 
 // ─── Items table ───────────────────────────────────────────────
 
-function ItemsTable({ doRecords, gdoId, canScan, expandedItemIds, toggleExpand }: {
+function ItemsTable({ doRecords, gdoId, canScan, canManualComplete, expandedItemIds, toggleExpand }: {
   doRecords: OutboundDelivery[]
   gdoId: string
   canScan: boolean
+  canManualComplete: boolean
   expandedItemIds: Set<string>
   toggleExpand: (id: string) => void
 }) {
@@ -674,17 +675,23 @@ function ItemsTable({ doRecords, gdoId, canScan, expandedItemIds, toggleExpand }
                     <span className={`text-[10px] font-semibold tabular-nums ${textCls}`}>{item.cartons_ordered}</span>
                     {(() => {
                       const isManual = item.material?.no_qr_tracking === true
+                      if (isManual) {
+                        // nút "Lưu thủ công/Sửa SL" gọi /manual-complete → cần quyền outbound.complete
+                        if (!canManualComplete) return null
+                        return (
+                          <button
+                            onClick={e => { e.stopPropagation(); setManualDlg({ itemId: item.id, matName: matName, cartons: item.status === 'COMPLETED' ? item.cartons_scanned : item.cartons_ordered }) }}
+                            className="flex items-center gap-0.5 text-[9px] font-medium text-green-600 hover:text-green-700 bg-green-50 hover:bg-green-100 rounded px-1.5 py-0.5 transition-colors"
+                            title={item.status === 'COMPLETED' ? 'Sửa số lượng' : 'Lưu thủ công'}
+                          >
+                            <PenSquare className="h-2.5 w-2.5" /> {item.status === 'COMPLETED' ? 'Sửa SL' : 'Lưu thủ công'}
+                          </button>
+                        )
+                      }
+                      // nút "Quét" chỉ điều hướng (trang đích gate scan) → giữ canScan
                       if (!canScan) return null
-                      if (!isManual && item.status === 'COMPLETED') return null
-                      return isManual ? (
-                        <button
-                          onClick={e => { e.stopPropagation(); setManualDlg({ itemId: item.id, matName: matName, cartons: item.status === 'COMPLETED' ? item.cartons_scanned : item.cartons_ordered }) }}
-                          className="flex items-center gap-0.5 text-[9px] font-medium text-green-600 hover:text-green-700 bg-green-50 hover:bg-green-100 rounded px-1.5 py-0.5 transition-colors"
-                          title={item.status === 'COMPLETED' ? 'Sửa số lượng' : 'Lưu thủ công'}
-                        >
-                          <PenSquare className="h-2.5 w-2.5" /> {item.status === 'COMPLETED' ? 'Sửa SL' : 'Lưu thủ công'}
-                        </button>
-                      ) : (
+                      if (item.status === 'COMPLETED') return null
+                      return (
                         <button
                           onClick={e => { e.stopPropagation(); navigate(`/wms/outbound/${gdoId}/items/${item.id}?scan=1`) }}
                           className="flex items-center gap-0.5 text-[9px] font-medium text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 rounded px-1.5 py-0.5 transition-colors"
@@ -1270,6 +1277,7 @@ export default function OutboundDetail() {
               doRecords={allDOs}
               gdoId={id!}
               canScan={!!gdo.started_at && gdo.status !== 'PAUSED' && gdo.status !== 'COMPLETED'}
+              canManualComplete={can(perms, 'outbound', 'complete')}
               expandedItemIds={expandedItemIds}
               toggleExpand={toggleExpandItem}
             />

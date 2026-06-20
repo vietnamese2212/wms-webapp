@@ -15,6 +15,10 @@ interface OutboundFilters {
   filterWarehouseTypes: string[]
   filterStatuses: string[]
 }
+interface OutboundPrepareFilters {
+  date: string
+  warehouseId: string
+}
 interface InboundFilters {
   search: string
   dateFrom: string
@@ -115,6 +119,7 @@ interface AssignmentFilters {
 interface WmsFilterState {
   assignment:        AssignmentFilters
   outbound:          OutboundFilters
+  outboundPrepare:   OutboundPrepareFilters
   inbound:           InboundFilters
   inventory:         InventoryFilters
   loosePicking:      LoosePickingFilters
@@ -125,6 +130,7 @@ interface WmsFilterState {
   materials:         MaterialsFilters
   inboundReport:     InboundReportFilters
   setOutbound:          (f: Partial<OutboundFilters>)          => void
+  setOutboundPrepare:   (f: Partial<OutboundPrepareFilters>)   => void
   setInbound:           (f: Partial<InboundFilters>)           => void
   setInventory:         (f: Partial<InventoryFilters>)         => void
   setLoosePicking:      (f: Partial<LoosePickingFilters>)      => void
@@ -154,6 +160,7 @@ function initialFilters() {
       filterTypes: [], filterDvvts: [], filterNpps: [], filterMaterials: [],
       warehouseId: '', filterWarehouseTypes: [], filterStatuses: [],
     },
+    outboundPrepare: { date: today(), warehouseId: '' },
     inbound:   { ...INBOUND_DEFAULT },
     inventory: {
       search: '', warehouseIds: [], materialCategories: [],
@@ -190,6 +197,7 @@ export const useWmsFilterStore = create<WmsFilterState>()(
     (set) => ({
       ...initialFilters(),
       setOutbound:         (f) => set(s => ({ outbound:         { ...s.outbound,         ...f } })),
+      setOutboundPrepare:  (f) => set(s => ({ outboundPrepare:  { ...s.outboundPrepare,  ...f } })),
       setInbound:          (f) => set(s => ({ inbound:          { ...INBOUND_DEFAULT, ...s.inbound, ...f } })),
       setInventory:        (f) => set(s => ({ inventory:        { ...s.inventory,        ...f } })),
       setLoosePicking:     (f) => set(s => ({ loosePicking:     { ...s.loosePicking,     ...f } })),

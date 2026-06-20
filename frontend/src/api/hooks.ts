@@ -1344,6 +1344,11 @@ export function useScanLoosePickingItem() {
       qc.invalidateQueries({ queryKey: ['loosepicking'] })
       qc.invalidateQueries({ queryKey: ['gdos'] })
       qc.invalidateQueries({ queryKey: ['gdo'] })
+      // quét nhặt lẻ reserve tồn → làm mới tồn kho & gợi ý FEFO
+      qc.invalidateQueries({ queryKey: ['inventory-entries'] })
+      qc.invalidateQueries({ queryKey: ['item-inventory'] })
+      qc.invalidateQueries({ queryKey: ['gdo-pick-suggestions'] })
+      qc.invalidateQueries({ queryKey: ['inventory-by-material'] })
     },
   })
 }
@@ -1472,6 +1477,12 @@ export function useScanOutboundItem() {
         }
       })
       qc.invalidateQueries({ queryKey: ['gdo', v.gdoId] })
+      // quét xuất trừ tồn InventoryEntry → làm mới tồn kho & gợi ý FEFO
+      qc.invalidateQueries({ queryKey: ['inventory-entries'] })
+      qc.invalidateQueries({ queryKey: ['inventory-summary'] })
+      qc.invalidateQueries({ queryKey: ['item-inventory'] })
+      qc.invalidateQueries({ queryKey: ['gdo-pick-suggestions'] })
+      qc.invalidateQueries({ queryKey: ['inventory-by-material'] })
     },
   })
 }
@@ -1506,6 +1517,11 @@ export function useManualCompleteItem() {
     onSettled: (_d, _e, { gdoId, itemId }) => {
       qc.invalidateQueries({ queryKey: ['gdo', gdoId] })
       qc.invalidateQueries({ queryKey: ['manual-item-stock', gdoId, itemId] })
+      // manual-complete có thể trừ tồn → làm mới tồn kho & gợi ý FEFO
+      qc.invalidateQueries({ queryKey: ['inventory-entries'] })
+      qc.invalidateQueries({ queryKey: ['inventory-summary'] })
+      qc.invalidateQueries({ queryKey: ['gdo-pick-suggestions'] })
+      qc.invalidateQueries({ queryKey: ['inventory-by-material'] })
     },
   })
 }
@@ -1547,6 +1563,12 @@ export function useDeleteOutboundScanEntry() {
     onSettled: (_d, _e, v) => {
       qc.invalidateQueries({ queryKey: ['gdo', v.gdoId] })
       qc.invalidateQueries({ queryKey: ['manual-item-stock', v.gdoId, v.itemId] })
+      // xóa scan hoàn tồn kho lại → làm mới tồn kho & gợi ý FEFO
+      qc.invalidateQueries({ queryKey: ['inventory-entries'] })
+      qc.invalidateQueries({ queryKey: ['inventory-summary'] })
+      qc.invalidateQueries({ queryKey: ['item-inventory'] })
+      qc.invalidateQueries({ queryKey: ['gdo-pick-suggestions'] })
+      qc.invalidateQueries({ queryKey: ['inventory-by-material'] })
     },
   })
 }
@@ -1582,6 +1604,9 @@ export function useConfirmLoosePickingItem() {
       qc.invalidateQueries({ queryKey: ['gdo', v.gdoId] })
       qc.invalidateQueries({ queryKey: ['inventory-entries'] })
       qc.invalidateQueries({ queryKey: ['loosepicking'] })
+      qc.invalidateQueries({ queryKey: ['item-inventory'] })
+      qc.invalidateQueries({ queryKey: ['gdo-pick-suggestions'] })
+      qc.invalidateQueries({ queryKey: ['inventory-by-material'] })
     },
   })
 }

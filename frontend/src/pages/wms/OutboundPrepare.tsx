@@ -11,6 +11,7 @@ import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useGDOs, useWarehouses, usePrepareBoard, useInventoryByMaterial, type ItemInventoryEntry } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
+import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { omniMatch } from '@/utils/omniSearch'
 import type { GDO } from '@/types'
 
@@ -119,8 +120,13 @@ export default function OutboundPrepare() {
   const user = useAuthStore(s => s.user)
   const { isPinned } = useActiveVehiclesStore()
 
-  const [date, setDate]               = useState(TODAY)
-  const [warehouseId, setWarehouseId] = useState(user?.warehouse_ids?.[0] ?? user?.warehouse_id ?? '')
+  // Filter (ngày + kho) lưu ở store → nhớ khi rời trang + riêng theo từng user (scopedPersist)
+  const prep = useWmsFilterStore(s => s.outboundPrepare)
+  const setOutboundPrepare = useWmsFilterStore(s => s.setOutboundPrepare)
+  const date = prep.date || TODAY
+  const warehouseId = prep.warehouseId
+  const setDate = (d: string) => setOutboundPrepare({ date: d })
+  const setWarehouseId = (w: string) => setOutboundPrepare({ warehouseId: w })
   const [selected, setSelected]       = useState<Set<string>>(new Set())
   const [didInit, setDidInit]         = useState(false)
   const [addOpen, setAddOpen]         = useState(false)
@@ -130,6 +136,15 @@ export default function OutboundPrepare() {
   const { data: warehouses = [] } = useWarehouses(true)
   const allowedWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
     ? new Set(user.warehouse_ids) : null
+
+  // Lần đầu chưa có kho trong store → mặc định kho của user
+  useEffect(() => {
+    if (!warehouseId) {
+      const def = user?.warehouse_ids?.[0] ?? user?.warehouse_id ?? ''
+      if (def) setOutboundPrepare({ warehouseId: def })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const { data: gdos = [], isLoading: gdosLoading } = useGDOs({
     warehouse_id: warehouseId || undefined,

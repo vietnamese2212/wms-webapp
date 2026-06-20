@@ -2238,9 +2238,27 @@ export async function getScanLog(req: Request, res: Response) {
 }
 
 export async function getScanLogFacets(req: Request, res: Response) {
-  const { material_category } = req.query
+  const { material_category, warehouse_ids } = req.query
+
+  // Enforce warehouse scope từ JWT (giống getScanLog) → facets KHÔNG rò mã máy/chu kỳ kho khác
+  const scopeWhIds = req.user?.warehouse_scope !== 'NATIONAL'
+    ? (req.user?.warehouse_ids ?? [])
+    : []
+  let effectiveWarehouseIds: string | null = null
+  if (scopeWhIds.length > 0) {
+    const requested = warehouse_ids ? String(warehouse_ids).split(',').filter(Boolean) : []
+    const effective = requested.length > 0
+      ? requested.filter(id => scopeWhIds.includes(id))
+      : scopeWhIds
+    if (effective.length === 0) return ok(res, { machines: [], cycles: [] })
+    effectiveWarehouseIds = effective.join(',')
+  } else {
+    effectiveWarehouseIds = warehouse_ids ? String(warehouse_ids) : null
+  }
+
   const { data, error } = await supabase.rpc('get_scan_log_facets', {
     p_material_category: material_category ? String(material_category) : null,
+    p_warehouse_ids:     effectiveWarehouseIds,
   })
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
   const row = (data as any[])?.[0] ?? {}

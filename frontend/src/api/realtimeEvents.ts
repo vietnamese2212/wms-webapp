@@ -91,6 +91,19 @@ export function suppressTmsOrdersRealtime(ms: number): void {
   suppressTmsOrdersUntil = Date.now() + ms
 }
 
+// Lịch sử quét (['outbound-scan-log']) chạy bằng RPC nặng + phân trang → KHÔNG map thẳng vào
+// TABLE_QUERY_MAP (mỗi lần quét toàn hệ thống sẽ refetch ngay → bão request). Thay vào đó: THROTTLE
+// — gộp burst quét, refetch tối đa 1 lần / 3s. invalidateQueries chỉ refetch query ĐANG mở (trang
+// ScanLog), còn lại chỉ đánh dấu stale → không tốn gì khi không ai xem.
+let scanLogTimer: ReturnType<typeof setTimeout> | null = null
+function scheduleScanLogRefresh(): void {
+  if (scanLogTimer) return
+  scanLogTimer = setTimeout(() => {
+    scanLogTimer = null
+    queryClient.invalidateQueries({ queryKey: ['outbound-scan-log'] })
+  }, 3000)
+}
+
 export function connectRealtimeEvents(): void {
   if (!supabaseClient || channel) return
 
@@ -101,6 +114,9 @@ export function connectRealtimeEvents(): void {
       { event: '*', schema: 'public', table: '*' },
       (payload) => {
         if (payload.table === 'DeliverySlot') patchSlotCache(payload)
+
+        // Lịch sử quét: refetch throttle khi có quét xuất/nhặt lẻ thay đổi
+        if (payload.table === 'OutboundScanEntry') scheduleScanLogRefresh()
 
         // Khi ProductionImport thay đổi (kể cả SQL-level delete), xóa localStorage
         // list cache để tránh ghost record flash khi component mount lại.

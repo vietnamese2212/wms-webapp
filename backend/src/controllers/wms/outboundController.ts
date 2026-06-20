@@ -2116,20 +2116,25 @@ export async function manualCompleteItem(req: Request, res: Response) {
         if (invEntry) {
           const newRemaining = available - delta
           const imported = Number(invEntry.cartons_imported)
-          await supabase.from('InventoryEntry').update({
+          // Optimistic lock: chỉ ghi nếu cartons_remaining VẪN bằng giá trị vừa đọc.
+          // Chặn đua 2 lượt manual-complete cùng mã POSM cùng lúc trừ tồn 2 lần (newRemaining tính từ số đọc cũ).
+          const { data: applied } = await supabase.from('InventoryEntry').update({
             cartons_remaining: newRemaining,
             status: newRemaining === 0 ? 'EXPORTED' : newRemaining < imported ? 'PARTIAL' : 'IN_STOCK',
             updated_at: now(),
-          }).eq('id', invEntry.id)
+          }).eq('id', invEntry.id).eq('cartons_remaining', available).select('id')
+          if (!applied?.length) return fail(res, 409, 'STOCK_CHANGED', 'Tồn kho mã này vừa thay đổi (thao tác khác) — mở lại và thử lại')
         }
       } else if (delta < 0 && invEntry) {
-        const newRemaining = Number(invEntry.cartons_remaining) + Math.abs(delta)
+        const current = Number(invEntry.cartons_remaining)
+        const newRemaining = current + Math.abs(delta)
         const imported = Number(invEntry.cartons_imported)
-        await supabase.from('InventoryEntry').update({
+        const { data: applied } = await supabase.from('InventoryEntry').update({
           cartons_remaining: newRemaining,
           status: newRemaining === 0 ? 'EXPORTED' : newRemaining < imported ? 'PARTIAL' : 'IN_STOCK',
           updated_at: now(),
-        }).eq('id', invEntry.id)
+        }).eq('id', invEntry.id).eq('cartons_remaining', current).select('id')
+        if (!applied?.length) return fail(res, 409, 'STOCK_CHANGED', 'Tồn kho mã này vừa thay đổi (thao tác khác) — mở lại và thử lại')
       }
     }
 

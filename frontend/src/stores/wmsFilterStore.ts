@@ -243,6 +243,26 @@ export const useWmsFilterStore = create<WmsFilterState>()(
       setAssignment:       (f) => set(s => ({ assignment:       { ...s.assignment,       ...f } })),
       reset:               ()  => set(() => initialFilters()),
     }),
-    { name: 'wms-filters-v10', storage: createJSONStorage(() => sessionStorage) }
+    {
+      name: 'wms-filters-v10',
+      storage: createJSONStorage(() => sessionStorage),
+      // Deep-merge TỪNG slice qua default: dữ liệu persist shape CŨ (thiếu field mới, vd locationIds)
+      // sẽ được lấp bằng default → tránh crash khi đọc field chưa có (màn trắng). Setter giữ từ current.
+      merge: (persisted, current) => {
+        const p = (persisted ?? {}) as Record<string, unknown>
+        const defaults = initialFilters() as Record<string, unknown>
+        const merged: Record<string, unknown> = { ...current }
+        for (const key of Object.keys(defaults)) {
+          const def = defaults[key]
+          const pv  = p[key]
+          merged[key] =
+            def && typeof def === 'object' && !Array.isArray(def) &&
+            pv  && typeof pv  === 'object' && !Array.isArray(pv)
+              ? { ...(def as object), ...(pv as object) }
+              : (pv !== undefined ? pv : def)
+        }
+        return merged as unknown as WmsFilterState
+      },
+    }
   )
 )

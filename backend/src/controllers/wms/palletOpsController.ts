@@ -69,20 +69,27 @@ export async function mergePallets(req: Request, res: Response) {
 // POST /wms/pallet-ops/ungroup  { pallet_codes: string[] }
 export async function ungroupPallets(req: Request, res: Response) {
   try {
-    const { pallet_codes } = req.body as { pallet_codes?: string[] }
+    const { pallet_codes, warehouse_id } = req.body as { pallet_codes?: string[]; warehouse_id?: string }
     const codes = Array.isArray(pallet_codes) ? [...new Set(pallet_codes.map(c => (c ?? '').trim()).filter(Boolean))] : []
     if (!codes.length) return fail(res, 'Chưa chọn pallet để gỡ nhóm')
     const now = new Date().toISOString()
+    // Scope theo KHO — mỗi kho có thể có tem trùng mã (vd 810000000 ở 2 kho) → tránh gỡ nhầm pallet kho khác
     // Lưu parent cũ để hoàn tác
-    const { data: before } = await (supabase.from('InventoryEntry') as any)
-      .select('pallet_code, parent_pallet_code').in('pallet_code', codes).not('parent_pallet_code', 'is', null)
+    let bq = (supabase.from('InventoryEntry') as any)
+      .select('pallet_code, parent_pallet_code, warehouse_id').in('pallet_code', codes).not('parent_pallet_code', 'is', null)
+    if (warehouse_id) bq = bq.eq('warehouse_id', warehouse_id)
+    const { data: before } = await bq
     const prev = (before ?? []).map((b: any) => ({ code: b.pallet_code, parent: b.parent_pallet_code }))
-    const { data, error } = await (supabase.from('InventoryEntry') as any)
+    let uq = (supabase.from('InventoryEntry') as any)
       .update({ parent_pallet_code: null, update_date: vnDate(), updated_at: now })
-      .in('pallet_code', codes).not('parent_pallet_code', 'is', null).select('pallet_code')
+      .in('pallet_code', codes).not('parent_pallet_code', 'is', null)
+    if (warehouse_id) uq = uq.eq('warehouse_id', warehouse_id)
+    const { data, error } = await uq.select('pallet_code')
     if (error) return fail(res, error.message, 500)
     const n = (data ?? []).length
-    if (n) await logOp(req, 'UNGROUP', codes, [], { count: n, prev }, null)
+    // warehouse_id để log: ưu tiên param, suy từ entry nếu thiếu — trước đây log null → Lịch sử (lọc theo kho) ẩn mất ca gỡ nhóm
+    const whForLog = warehouse_id ?? (before ?? [])[0]?.warehouse_id ?? null
+    if (n) await logOp(req, 'UNGROUP', codes, [], { count: n, prev }, whForLog)
     return ok(res, { ungrouped: n })
   } catch (e) { return fail(res, (e as Error).message, 500) }
 }
@@ -182,21 +189,33 @@ export async function splitPallet(req: Request, res: Response) {
 export async function listOps(req: Request, res: Response) {
   try {
     const { search, type, warehouse_id, date_from, date_to, limit } = req.query as Record<string, string | undefined>
-    let q = supabase.from('PalletOperation')
-      .select('id, type, source_codes, target_codes, detail, operated_by_name, created_at, undone_at, undone_by_name')
-      .order('created_at', { ascending: false })
-      .limit(Math.min(parseInt(limit ?? '500', 10) || 500, 2000))
-    if (type) q = q.eq('type', type)
-    if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
-    if (search) {
-      const s = search.trim()
-      q = q.or(`source_codes.cs.{"${s}"},target_codes.cs.{"${s}"}`)
+    // Lọc dùng chung; tạo query MỚI mỗi trang (PostgREST cap ~1000 dòng/response → phải phân trang)
+    const applyFilters = () => {
+      let q = supabase.from('PalletOperation')
+        .select('id, type, source_codes, target_codes, detail, operated_by_name, created_at, undone_at, undone_by_name')
+        .order('created_at', { ascending: false })
+      if (type) q = q.eq('type', type)
+      if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
+      if (search) {
+        const s = search.trim()
+        q = q.or(`source_codes.cs.{"${s}"},target_codes.cs.{"${s}"}`)
+      }
+      if (date_from) q = q.gte('created_at', new Date(`${date_from}T00:00:00+07:00`).toISOString())
+      if (date_to)   q = q.lte('created_at', new Date(`${date_to}T23:59:59+07:00`).toISOString())
+      return q
     }
-    if (date_from) q = q.gte('created_at', new Date(`${date_from}T00:00:00+07:00`).toISOString())
-    if (date_to)   q = q.lte('created_at', new Date(`${date_to}T23:59:59+07:00`).toISOString())
-    const { data, error } = await q
-    if (error) return fail(res, error.message, 500)
-    return ok(res, data ?? [])
+
+    const PAGE = 1000
+    const hardCap = Math.min(parseInt(limit ?? '5000', 10) || 5000, 20000)
+    const out: unknown[] = []
+    for (let p = 0; p * PAGE < hardCap; p++) {
+      const { data, error } = await applyFilters().range(p * PAGE, p * PAGE + PAGE - 1)
+      if (error) return fail(res, error.message, 500)
+      const batch = data ?? []
+      out.push(...batch)
+      if (batch.length < PAGE) break
+    }
+    return ok(res, out)
   } catch (e) { return fail(res, (e as Error).message, 500) }
 }
 
@@ -210,6 +229,9 @@ export async function undoOp(req: Request, res: Response) {
     if (op.undone_at) return fail(res, 'Thao tác này đã được hoàn tác trước đó')
 
     const now = new Date().toISOString()
+    // Scope theo kho của thao tác — pallet_code có thể trùng giữa kho → tránh hoàn tác nhầm kho khác
+    const opWh: string | null = op.warehouse_id ?? null
+    const scopeWh = <T extends { eq: (k: string, v: unknown) => T }>(q: T): T => (opWh ? q.eq('warehouse_id', opWh) : q)
 
     if (op.type === 'MERGE') {
       // Trả parent + vị trí cũ cho từng pallet con
@@ -217,28 +239,28 @@ export async function undoOp(req: Request, res: Response) {
       for (const p of prev) {
         const patch: Record<string, unknown> = { parent_pallet_code: p.parent ?? null, update_date: vnDate(), updated_at: now }
         if (p.location_id) patch.location_id = p.location_id
-        await (supabase.from('InventoryEntry') as any).update(patch).eq('pallet_code', p.code)
+        await scopeWh((supabase.from('InventoryEntry') as any).update(patch).eq('pallet_code', p.code))
       }
     } else if (op.type === 'UNGROUP') {
       const prev: { code: string; parent: string | null }[] = op.detail?.prev ?? []
       for (const p of prev) {
-        await (supabase.from('InventoryEntry') as any)
-          .update({ parent_pallet_code: p.parent ?? null, update_date: vnDate(), updated_at: now }).eq('pallet_code', p.code)
+        await scopeWh((supabase.from('InventoryEntry') as any)
+          .update({ parent_pallet_code: p.parent ?? null, update_date: vnDate(), updated_at: now }).eq('pallet_code', p.code))
       }
     } else if (op.type === 'SPLIT') {
       const childCodes = (op.target_codes ?? []) as string[]
       const srcCode = (op.source_codes ?? [])[0] as string
-      const { data: kids } = await (supabase.from('InventoryEntry') as any)
-        .select('pallet_code, origin, parent_pallet_code, cartons_imported, cartons_remaining, cartons_reserved').in('pallet_code', childCodes)
+      const { data: kids } = await scopeWh((supabase.from('InventoryEntry') as any)
+        .select('pallet_code, origin, parent_pallet_code, cartons_imported, cartons_remaining, cartons_reserved').in('pallet_code', childCodes))
       const found = kids ?? []
       // Guard: pallet con phải còn nguyên (chưa xuất/giữ chỗ/dồn/đổi số lượng) mới hoàn tác được
       const bad = (found as any[]).find(k => k.origin !== 'SPLIT' || k.parent_pallet_code || Number(k.cartons_remaining) !== Number(k.cartons_imported) || Number(k.cartons_reserved || 0) > 0)
       if (found.length !== childCodes.length) return fail(res, 'Không hoàn tác được: pallet con đã bị xuất/xóa.')
       if (bad) return fail(res, `Không hoàn tác được: pallet con "${bad.pallet_code}" đã thay đổi (xuất/giữ chỗ/dồn).`)
       const total = (found as any[]).reduce((s, k) => s + Number(k.cartons_remaining), 0)
-      const { error: delErr } = await (supabase.from('InventoryEntry') as any).delete().in('pallet_code', childCodes)
+      const { error: delErr } = await scopeWh((supabase.from('InventoryEntry') as any).delete().in('pallet_code', childCodes))
       if (delErr) return fail(res, delErr.message, 500)
-      const { data: src } = await (supabase.from('InventoryEntry') as any).select('id, cartons_imported, cartons_remaining').eq('pallet_code', srcCode).maybeSingle()
+      const { data: src } = await scopeWh((supabase.from('InventoryEntry') as any).select('id, cartons_imported, cartons_remaining').eq('pallet_code', srcCode)).maybeSingle()
       if (src) {
         const newRemaining = Number(src.cartons_remaining) + total
         const status = newRemaining >= Number(src.cartons_imported) ? 'IN_STOCK' : 'PARTIAL'

@@ -367,7 +367,7 @@ export default function PalletOps() {
 
                 {canUngroup && (
                   <Button variant="outline" className="w-full gap-1.5" disabled={!allChildren.length || ungroup.isPending}
-                    onClick={async () => { setMsg(null); try { const r = await ungroup.mutateAsync({ pallet_codes: allChildren }); setMsg({ ok: true, text: `Đã gỡ nhóm ${r.ungrouped} pallet` }); setMergeChildren([]); setChildInput('') } catch (e: any) { setMsg({ ok: false, text: e?.response?.data?.error?.message ?? 'Lỗi gỡ nhóm' }) } }}>
+                    onClick={async () => { setMsg(null); try { const r = await ungroup.mutateAsync({ pallet_codes: allChildren, warehouse_id: opWh }); setMsg({ ok: true, text: `Đã gỡ nhóm ${r.ungrouped} pallet` }); setMergeChildren([]); setChildInput('') } catch (e: any) { setMsg({ ok: false, text: e?.response?.data?.error?.message ?? 'Lỗi gỡ nhóm' }) } }}>
                     <Trash2 className="h-4 w-4" />Gỡ nhóm các pallet con đã nhập
                   </Button>
                 )}

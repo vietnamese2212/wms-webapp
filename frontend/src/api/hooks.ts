@@ -83,7 +83,7 @@ export function useUngroupPallets() {
   const inv = useInvalidateInventory()
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { pallet_codes: string[] }) =>
+    mutationFn: (body: { pallet_codes: string[]; warehouse_id?: string }) =>
       apiClient.post('/wms/pallet-ops/ungroup', body).then(r => r.data.data),
     onSuccess: () => { inv(); qc.invalidateQueries({ queryKey: ['pallet-ops-log'] }) },
   })

@@ -569,8 +569,9 @@ export async function adjustInventory(req: Request, res: Response) {
 
   if (updateErr) return fail(res, 500, 'DB_ERROR', updateErr.message)
 
-  // Insert audit log
-  await supabase.from('InventoryAdjustmentLog' as any).insert({
+  // Insert audit log — KHÔNG nuốt lỗi: điều chỉnh tồn đã ghi nhận thành công, nhưng nếu log
+  // hỏng (bảng chưa tạo / RLS) phải log ra console để thấy, tránh mất vết audit âm thầm.
+  const { error: logErr } = await supabase.from('InventoryAdjustmentLog' as any).insert({
     id:             randomUUID(),
     entry_id:       id,
     delta:          adjustment,
@@ -581,6 +582,7 @@ export async function adjustInventory(req: Request, res: Response) {
     actor_id:       isValidUUID(employee_id) ? employee_id : null,
     adjusted_at:    now,
   })
+  if (logErr) console.error('[adjustInventory] Ghi InventoryAdjustmentLog thất bại:', logErr.message)
 
   return ok(res, { entry: updated })
 }

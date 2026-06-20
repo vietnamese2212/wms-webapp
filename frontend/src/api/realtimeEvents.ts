@@ -12,6 +12,7 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   Manufacturer:        [['manufacturers']],
   PalletLabelPrint:    [['pallet-prints']],
   PalletOperation:     [['pallet-ops-log']],
+  InventoryAdjustmentLog: [['adjustment-log']],   // prefix khớp ['adjustment-log', entryId]
   Warehouse:           [['warehouses']],
   WarehouseZone:       [['warehouse-zones']],
   LookupValue:         [['lookup']],            // prefix khớp ['lookup','warehouse_type'] & ['lookup',type]

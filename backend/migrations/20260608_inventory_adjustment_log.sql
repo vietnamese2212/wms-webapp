@@ -18,5 +18,14 @@ ALTER TABLE "InventoryAdjustmentLog" ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "service_all"  ON "InventoryAdjustmentLog" TO service_role USING (true) WITH CHECK (true);
 CREATE POLICY "anon_select"  ON "InventoryAdjustmentLog" FOR SELECT TO anon USING (true);
 
--- Realtime
-ALTER PUBLICATION supabase_realtime ADD TABLE "InventoryAdjustmentLog";
+-- Realtime — idempotent: Supabase có thể đã tự thêm bảng mới vào publication.
+-- ADD TABLE thẳng sẽ lỗi "already member" → rollback CẢ migration (mất luôn CREATE TABLE).
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime' AND tablename = 'InventoryAdjustmentLog'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE "InventoryAdjustmentLog";
+  END IF;
+END $$;

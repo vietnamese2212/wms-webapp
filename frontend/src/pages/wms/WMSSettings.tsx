@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { AxiosError } from 'axios'
-import { Plus, Pencil, Trash2, Warehouse, Tag, Settings2, MapPin, X } from 'lucide-react'
+import { Plus, Pencil, Trash2, Warehouse, Tag, Settings2, MapPin, X, Clock, ShieldCheck } from 'lucide-react'
 import { formatDateTime } from '@/utils/formatters'
 import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
@@ -16,6 +16,8 @@ import {
   useWarehouses, useCreateWarehouse, useUpdateWarehouse, useDeleteWarehouse,
   useWarehouseTypes, useAddWarehouseType, useUpdateWarehouseType, useDeleteWarehouseType,
   useWarehouseZones, useCreateWarehouseZone, useUpdateWarehouseZone, useDeleteWarehouseZone,
+  useImportShifts, useCreateImportShift, useUpdateImportShift,
+  useQAStatuses, useCreateQAStatus, useUpdateQAStatus,
   type WarehouseZone,
 } from '@/api/hooks'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -260,6 +262,141 @@ function TypeDialog({ type, open, onClose }: {
   )
 }
 
+// ─── Ca nhập / Tình trạng QA (cùng shape: code/name/display_order/is_active) ────
+
+interface MetaRow { id: string; code: string; name: string; display_order: number; is_active: boolean }
+
+function MetaDialog({ kind, row, open, onClose }: {
+  kind: 'shift' | 'qa'; row: MetaRow | null; open: boolean; onClose: () => void
+}) {
+  const isEdit = !!row
+  const [code,     setCode]     = useState(row?.code ?? '')
+  const [name,     setName]     = useState(row?.name ?? '')
+  const [order,    setOrder]    = useState(String(row?.display_order ?? 0))
+  const [isActive, setIsActive] = useState(row?.is_active ?? true)
+  const [err, setErr] = useState('')
+
+  const createShift = useCreateImportShift()
+  const updateShift = useUpdateImportShift()
+  const createQA    = useCreateQAStatus()
+  const updateQA    = useUpdateQAStatus()
+  const noun = kind === 'shift' ? 'ca nhập' : 'trạng thái QA'
+  const isPending = kind === 'shift'
+    ? createShift.isPending || updateShift.isPending
+    : createQA.isPending || updateQA.isPending
+
+  function handleSubmit() {
+    setErr('')
+    if (!code.trim() || !name.trim()) { setErr('Mã và tên là bắt buộc'); return }
+    const display_order = Number(order) || 0
+    const opts = { onSuccess: onClose, onError: (e: unknown) => setErr(apiMsg(e)) }
+    if (isEdit) {
+      const body = { id: row.id, code: code.trim(), name: name.trim(), display_order, is_active: isActive }
+      if (kind === 'shift') updateShift.mutate(body, opts); else updateQA.mutate(body, opts)
+    } else {
+      const body = { code: code.trim(), name: name.trim(), display_order }
+      if (kind === 'shift') createShift.mutate(body, opts); else createQA.mutate(body, opts)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={v => { if (!v) onClose() }}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader><DialogTitle>{isEdit ? `Sửa ${noun}` : `Thêm ${noun}`}</DialogTitle></DialogHeader>
+        <div className="space-y-3 py-1">
+          {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
+          <div className="grid grid-cols-3 gap-2">
+            <div className="space-y-1">
+              <Label className="text-xs">Mã *</Label>
+              <Input value={code} onChange={e => setCode(e.target.value.toUpperCase())} placeholder={kind === 'shift' ? 'C1' : 'OK'} />
+            </div>
+            <div className="space-y-1 col-span-2">
+              <Label className="text-xs">Tên *</Label>
+              <Input value={name} onChange={e => setName(e.target.value)} placeholder={kind === 'shift' ? 'Ca 1, Ca hành chính…' : 'Đạt, Chờ kiểm…'} />
+            </div>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Thứ tự hiển thị</Label>
+            <Input type="number" value={order} onChange={e => setOrder(e.target.value)} className="w-24" />
+          </div>
+          {isEdit && (
+            <div className="flex items-center gap-2">
+              <input id="meta-active" type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} className="h-4 w-4 rounded accent-blue-600" />
+              <Label htmlFor="meta-active" className="text-sm cursor-pointer">Đang sử dụng</Label>
+            </div>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={onClose}>Huỷ</Button>
+          <Button size="sm" onClick={handleSubmit} disabled={isPending || !code.trim() || !name.trim()}>
+            {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function MetaTab({ noun, rows, loading, canManage, onAdd, onEdit }: {
+  noun: string; rows: MetaRow[]; loading: boolean; canManage: boolean
+  onAdd: () => void; onEdit: (r: MetaRow) => void
+}) {
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-slate-500">{rows.length} {noun}</p>
+        {canManage && (
+          <Button size="sm" className="gap-1.5" onClick={onAdd}>
+            <Plus className="h-4 w-4" /> Thêm {noun}
+          </Button>
+        )}
+      </div>
+      <Card>
+        {loading ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> :
+          rows.length === 0 ? (
+            <div className="p-12 text-center text-slate-400 text-sm">Chưa có {noun} nào</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="px-3 py-2 text-xs">Mã</TableHead>
+                    <TableHead className="px-3 py-2 text-xs">Tên</TableHead>
+                    <TableHead className="px-3 py-2 text-xs">Thứ tự</TableHead>
+                    <TableHead className="px-3 py-2 text-xs">Trạng thái</TableHead>
+                    {canManage && <TableHead className="px-3 py-2 w-12" />}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {rows.map(r => (
+                    <TableRow key={r.id} className={`text-sm ${!r.is_active ? 'opacity-50' : ''}`}>
+                      <TableCell className="px-3 py-2 font-mono font-semibold text-[11px] text-slate-600">{r.code}</TableCell>
+                      <TableCell className="px-3 py-2 font-medium text-slate-800">{r.name}</TableCell>
+                      <TableCell className="px-3 py-2 text-slate-500 text-xs tabular-nums">{r.display_order}</TableCell>
+                      <TableCell className="px-3 py-2">
+                        <Badge variant={r.is_active ? 'default' : 'secondary'} className="text-xs">
+                          {r.is_active ? 'Hoạt động' : 'Tạm dừng'}
+                        </Badge>
+                      </TableCell>
+                      {canManage && (
+                        <TableCell className="px-2 py-2">
+                          <button className="text-slate-400 hover:text-blue-500 p-1 transition-colors" onClick={() => onEdit(r)}>
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                        </TableCell>
+                      )}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )
+        }
+      </Card>
+    </div>
+  )
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function WMSSettings() {
@@ -297,6 +434,16 @@ export default function WMSSettings() {
   const [editingZone, setEditingZone] = useState<WarehouseZone | null>(null)
   const [showZoneDlg, setShowZoneDlg] = useState(false)
 
+  // Ca nhập
+  const { data: shifts = [], isLoading: loadingShifts } = useImportShifts()
+  const [editShift, setEditShift] = useState<MetaRow | null>(null)
+  const [showShiftDlg, setShowShiftDlg] = useState(false)
+
+  // Tình trạng QA
+  const { data: qaStatuses = [], isLoading: loadingQA } = useQAStatuses()
+  const [editQA, setEditQA] = useState<MetaRow | null>(null)
+  const [showQADlg, setShowQADlg] = useState(false)
+
   function handleDeleteWh(wh: WhRow) {
     if (!confirm(`Xóa kho "${wh.name}"?\nChỉ xóa được kho chưa có vị trí nào.`)) return
     deleteWh(wh.id, { onError: e => toast({ variant: 'destructive', title: 'Không xóa được kho', description: apiMsg(e) }) })
@@ -322,7 +469,9 @@ export default function WMSSettings() {
         <TabsList className="mb-2">
           <TabsTrigger value="warehouses" className="gap-1.5"><Warehouse className="h-3.5 w-3.5" /> Kho</TabsTrigger>
           <TabsTrigger value="types"      className="gap-1.5"><Tag      className="h-3.5 w-3.5" /> Loại kho</TabsTrigger>
-          <TabsTrigger value="zones"      className="gap-1.5"><MapPin   className="h-3.5 w-3.5" /> Khu vực kho</TabsTrigger>
+          <TabsTrigger value="zones"      className="gap-1.5"><MapPin     className="h-3.5 w-3.5" /> Khu vực kho</TabsTrigger>
+          <TabsTrigger value="shifts"     className="gap-1.5"><Clock      className="h-3.5 w-3.5" /> Ca nhập</TabsTrigger>
+          <TabsTrigger value="qa"         className="gap-1.5"><ShieldCheck className="h-3.5 w-3.5" /> Tình trạng QA</TabsTrigger>
         </TabsList>
 
         {/* ── Tab: Kho ── */}
@@ -593,6 +742,22 @@ export default function WMSSettings() {
             )}
           </div>
         </TabsContent>
+
+        {/* ── Tab: Ca nhập ── */}
+        <TabsContent value="shifts">
+          <p className="text-xs text-slate-500 mb-3">Danh mục ca nhập hàng — dùng khi tạo phiếu nhập kho.</p>
+          <MetaTab noun="ca nhập" rows={shifts} loading={loadingShifts} canManage={canManageGlobal}
+            onAdd={() => { setEditShift(null); setShowShiftDlg(true) }}
+            onEdit={r => { setEditShift(r); setShowShiftDlg(true) }} />
+        </TabsContent>
+
+        {/* ── Tab: Tình trạng QA ── */}
+        <TabsContent value="qa">
+          <p className="text-xs text-slate-500 mb-3">Danh mục tình trạng kiểm định chất lượng — gắn cho từng pallet tồn kho.</p>
+          <MetaTab noun="trạng thái QA" rows={qaStatuses} loading={loadingQA} canManage={canManageGlobal}
+            onAdd={() => { setEditQA(null); setShowQADlg(true) }}
+            onEdit={r => { setEditQA(r); setShowQADlg(true) }} />
+        </TabsContent>
       </Tabs>
 
       {showWhDlg && (
@@ -603,6 +768,12 @@ export default function WMSSettings() {
       )}
       {showZoneDlg && (
         <ZoneDialog zone={editingZone} warehouseId={effectiveWhId} warehouses={zoneAccessWh} warehouseTypes={warehouseTypes} open={showZoneDlg} onClose={() => setShowZoneDlg(false)} />
+      )}
+      {showShiftDlg && (
+        <MetaDialog kind="shift" row={editShift} open={showShiftDlg} onClose={() => setShowShiftDlg(false)} />
+      )}
+      {showQADlg && (
+        <MetaDialog kind="qa" row={editQA} open={showQADlg} onClose={() => setShowQADlg(false)} />
       )}
      </div>
     </div>

@@ -165,6 +165,42 @@ export function useQAStatuses() {
   })
 }
 
+// Ca nhập — tạo/sửa (gate wms_settings.manage_global ở BE)
+export function useCreateImportShift() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { code: string; name: string; display_order?: number }) =>
+      apiClient.post('/masterdata/import-shifts', body).then(r => r.data.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['import-shifts'] }),
+  })
+}
+export function useUpdateImportShift() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string; code?: string; name?: string; display_order?: number; is_active?: boolean }) =>
+      apiClient.put(`/masterdata/import-shifts/${id}`, body).then(r => r.data.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['import-shifts'] }),
+  })
+}
+
+// Tình trạng QA — tạo/sửa (gate wms_settings.manage_global ở BE)
+export function useCreateQAStatus() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { code: string; name: string; display_order?: number }) =>
+      apiClient.post('/masterdata/qa-statuses', body).then(r => r.data.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['qa-statuses'] }),
+  })
+}
+export function useUpdateQAStatus() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string; code?: string; name?: string; display_order?: number; is_active?: boolean }) =>
+      apiClient.put(`/masterdata/qa-statuses/${id}`, body).then(r => r.data.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['qa-statuses'] }),
+  })
+}
+
 // Mutations
 export function useCreateWarehouse() {
   const qc = useQueryClient()

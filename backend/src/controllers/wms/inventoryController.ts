@@ -817,10 +817,11 @@ export async function stocktakeEntries(req: Request, res: Response) {
   else if (view === 'problem')   filtered = all.filter(e => e.stocktake_flagged || !isChecked(e))
   else                           filtered = all
 
+  // CHƯA quét lên đầu (cần tập trung tìm); trong nhóm đã quét: lệch trước, rồi đã kiểm OK
   filtered.sort((a, b) => {
-    if (a.stocktake_flagged !== b.stocktake_flagged) return a.stocktake_flagged ? -1 : 1
     const aOk = isChecked(a), bOk = isChecked(b)
     if (aOk !== bOk) return aOk ? 1 : -1
+    if (a.stocktake_flagged !== b.stocktake_flagged) return a.stocktake_flagged ? -1 : 1
     return 0
   })
 

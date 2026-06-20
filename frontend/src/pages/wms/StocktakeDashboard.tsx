@@ -262,10 +262,12 @@ export default function StocktakeDashboard() {
   const todayVN    = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   const todayStart = new Date(`${todayVN}T00:00:00+07:00`).toISOString()
 
-  // Màu CHỮ theo trạng thái (không fill nền): chênh lệch=đỏ, đã kiểm=xanh lá, chưa kiểm=xám
+  // Màu CHỮ theo trạng thái (không fill nền):
+  // - chênh lệch=đỏ (cần xử lý) · đã quét trong ngày=xanh dương + GẠCH NGANG (xong, bỏ qua)
+  // - chưa quét=xám đậm thường (cần tập trung tìm) → đẩy lên đầu (sort ở backend)
   function rowStatusKey(e: StocktakeEntryRow): RowStatusKey {
     if (e.stocktake_flagged) return 'paused'
-    if (isCheckedToday(e, todayVN, todayStart)) return 'assigned'
+    if (isCheckedToday(e, todayVN, todayStart)) return 'completed'
     return 'pending'
   }
 

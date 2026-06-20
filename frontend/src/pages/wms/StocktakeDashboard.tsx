@@ -9,6 +9,7 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
+import { useColumnResize } from '@/components/shared/useColumnResize'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
 import { BarChart2, Flag, MapPin, X } from 'lucide-react'
@@ -201,6 +202,21 @@ function DetailPanel({ entryId, onClose }: { entryId: string; onClose: () => voi
   )
 }
 
+// ─── Cột bảng (Manhattan, kéo giãn) ──────────────────────────────
+const STK_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
+  { id: 'pallet', label: 'Mã pallet',      w: 130 },
+  { id: 'loc',    label: 'Vị trí',         w: 120 },
+  { id: 'mat',    label: 'Tên hàng',       w: 160 },
+  { id: 'app',    label: 'Tồn App',        w: 80,  align: 'right' },
+  { id: 'real',   label: 'Tồn thực tế',    w: 90,  align: 'right' },
+  { id: 'diff',   label: 'Chênh lệch',     w: 90,  align: 'right' },
+  { id: 'by',     label: 'Người kiểm',     w: 120 },
+  { id: 'at',     label: 'Thời gian kiểm', w: 140 },
+  { id: 'status', label: 'Trạng thái',     w: 100 },
+  { id: 'unflag', label: 'Bỏ cờ',          w: 80 },
+]
+const STK_COL_DEFAULTS = STK_COLS.map(c => c.w)
+
 // ─── Main ────────────────────────────────────────────────────────
 export default function StocktakeDashboard() {
   const user  = useAuthStore(s => s.user)
@@ -213,6 +229,7 @@ export default function StocktakeDashboard() {
   const { warehouseId, category, locationIds, requiresOnly, view } = useWmsFilterStore(s => s.stocktakeSummary)
   const setStocktakeSummary = useWmsFilterStore(s => s.setStocktakeSummary)
   const [selectedId,   setSelectedId]   = useState<string | null>(null)
+  const { widths: colW, startResize, totalWidth } = useColumnResize('stocktake_summary_col_widths', STK_COL_DEFAULTS)
 
   // Mặc định kho = kho đầu tiên của user nếu store chưa có (cần kho để chọn vị trí)
   useEffect(() => {
@@ -336,72 +353,78 @@ export default function StocktakeDashboard() {
           <>
             {/* Table — overflow-auto cho cả scroll dọc lẫn ngang + sticky header */}
             <div className="flex-1 min-w-0 overflow-auto pb-20 lg:pb-4">
-              <Table className="min-w-[720px]">
+              <Table className="table-fixed [&_td]:overflow-hidden [&_th]:overflow-hidden [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100" style={{ width: totalWidth, minWidth: '100%' }}>
+                <colgroup>
+                  {colW.map((w, i) => <col key={i} style={{ width: w }} />)}
+                </colgroup>
                 <TableHeader>
-                  <TableRow>
-                    <TableHead className="text-[9px] px-2 py-1.5">Mã pallet</TableHead>
-                    <TableHead className="text-[9px] px-2 py-1.5">Vị trí</TableHead>
-                    <TableHead className="text-[9px] px-2 py-1.5">Tên hàng</TableHead>
-                    <TableHead className="text-[9px] px-2 py-1.5 text-right">Tồn App</TableHead>
-                    <TableHead className="text-[9px] px-2 py-1.5 text-right">Tồn thực tế</TableHead>
-                    <TableHead className="text-[9px] px-2 py-1.5 text-right">Chênh lệch</TableHead>
-                    <TableHead className="text-[9px] px-2 py-1.5">Người kiểm</TableHead>
-                    <TableHead className="text-[9px] px-2 py-1.5">Thời gian kiểm</TableHead>
-                    <TableHead className="text-[9px] px-2 py-1.5">Trạng thái</TableHead>
-                    <TableHead className="text-[9px] px-2 py-1.5">Bỏ cờ</TableHead>
+                  <TableRow className="bg-slate-50">
+                    {STK_COLS.map((c, i) => (
+                      <TableHead key={c.id}
+                        className={`relative px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''} ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                        {c.label}
+                        {i > 0 && c.id !== 'unflag' && (
+                          <span onPointerDown={e => startResize(i, e)} onClick={e => e.stopPropagation()}
+                            className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70"
+                            title="Kéo để chỉnh độ rộng cột" />
+                        )}
+                      </TableHead>
+                    ))}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {isFetching && entries.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={10} className="text-center text-xs text-slate-400 py-8">Đang tải…</TableCell>
+                      <TableCell colSpan={STK_COLS.length} className="text-center text-xs text-slate-400 py-8">Đang tải…</TableCell>
                     </TableRow>
                   ) : entries.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={10} className="text-center text-xs text-slate-400 py-8">
+                      <TableCell colSpan={STK_COLS.length} className="text-center text-xs text-slate-400 py-8">
                         {view === 'problem' ? 'Không có pallet cần xử lý 🎉' : 'Không có dữ liệu'}
                       </TableCell>
                     </TableRow>
                   ) : entries.map(e => {
                     const diff    = parseDiff(e.stocktake_flag_note)
                     const checked = isCheckedToday(e, todayVN, todayStart)
+                    const sel     = selectedId === e.id
+                    const stickyBg = sel ? 'bg-sky-50' : 'bg-white'
                     return (
                       <TableRow
                         key={e.id}
-                        className={`cursor-pointer transition-colors ${rowText(rowStatusKey(e))} ${selectedId === e.id ? 'bg-sky-50' : ''}`}
+                        className={`cursor-pointer transition-colors ${rowText(rowStatusKey(e))} ${sel ? 'bg-sky-50' : ''}`}
                         onClick={() => setSelectedId(prev => prev === e.id ? null : e.id)}
                       >
-                        <TableCell className="px-2 py-1">
+                        <TableCell className={`px-2 py-1 whitespace-nowrap sticky left-0 z-10 ${stickyBg}`}>
                           <span className="font-mono text-[10px] font-semibold">
                             {e.pallet_code}
                           </span>
                         </TableCell>
-                        <TableCell className="px-2 py-1">
+                        <TableCell className="px-2 py-1 whitespace-nowrap">
                           <span className="font-mono text-[10px]">
                             {e.location?.location_code ?? <span className="text-slate-300">—</span>}
                           </span>
                         </TableCell>
-                        <TableCell className="px-2 py-1">
+                        <TableCell className="px-2 py-1 whitespace-nowrap">
                           <span className="text-[10px]">
                             {e.material?.short_name ?? e.material?.material_code ?? '—'}
                           </span>
                         </TableCell>
-                        <TableCell className="px-2 py-1 text-right">
+                        <TableCell className="px-2 py-1 whitespace-nowrap text-right">
                           <span className="text-[10px] font-semibold tabular-nums">{e.cartons_remaining}</span>
                         </TableCell>
-                        <TableCell className="px-2 py-1 text-right">
+                        <TableCell className="px-2 py-1 whitespace-nowrap text-right">
                           {diff
                             ? <span className="text-[10px] tabular-nums font-semibold">{diff.actual}</span>
                             : <span className="text-[10px] text-slate-300">—</span>}
                         </TableCell>
-                        <TableCell className="px-2 py-1 text-right">
+                        <TableCell className="px-2 py-1 whitespace-nowrap text-right">
                           {diff
                             ? <span className={`text-[10px] font-semibold tabular-nums ${diff.diff < 0 ? 'text-red-600' : diff.diff > 0 ? 'text-amber-600' : 'text-slate-400'}`}>
                                 {diff.diff > 0 ? '+' : ''}{diff.diff}
                               </span>
                             : <span className="text-[10px] text-slate-300">—</span>}
                         </TableCell>
-                        <TableCell className="px-2 py-1">
+                        <TableCell className="px-2 py-1 whitespace-nowrap">
                           <span className="text-[10px] text-slate-500">{e.stocktake_by_emp?.name ?? '—'}</span>
                         </TableCell>
                         <TableCell className="px-2 py-1 whitespace-nowrap">
@@ -411,7 +434,7 @@ export default function StocktakeDashboard() {
                               </span>
                             : <span className="text-[10px] text-slate-300">—</span>}
                         </TableCell>
-                        <TableCell className="px-2 py-1">
+                        <TableCell className="px-2 py-1 whitespace-nowrap">
                           {e.stocktake_flagged
                             ? <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-red-600 bg-red-100 rounded-full px-1.5 py-0.5">
                                 <Flag className="h-2.5 w-2.5" /> Chênh lệch
@@ -420,7 +443,7 @@ export default function StocktakeDashboard() {
                               ? <span className="text-[9px] font-semibold text-green-600 bg-green-100 rounded-full px-1.5 py-0.5">Đã kiểm</span>
                               : <span className="text-[9px] text-slate-400 bg-slate-100 rounded-full px-1.5 py-0.5">Chưa kiểm</span>}
                         </TableCell>
-                        <TableCell className="px-2 py-1" onClick={ev => ev.stopPropagation()}>
+                        <TableCell className="px-2 py-1 whitespace-nowrap" onClick={ev => ev.stopPropagation()}>
                           {e.stocktake_flagged && can(perms, 'stocktake', 'complete') && (
                             <Button size="sm" variant="outline"
                               className="h-5 text-[9px] px-1.5 border-red-200 text-red-600 hover:bg-red-50 flex items-center gap-0.5"

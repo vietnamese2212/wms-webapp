@@ -596,25 +596,28 @@ export default function PalletLabels() {
         {/* Bảng điều khiển trái — full-width trên mobile, cột 288px trên desktop */}
         <div className="w-full lg:w-72 lg:shrink-0 border-b lg:border-b-0 lg:border-r bg-white lg:overflow-y-auto p-3 space-y-3 no-print">
           {tab === 'generate' ? (
-            <>
-              <div className="space-y-1">
-                <Label className="text-xs">Loại hàng</Label>
-                <Select value={genCat || '__all__'} onValueChange={v => { setGenCat(v === '__all__' ? '' : v); setMat(null) }}>
-                  <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Tất cả loại" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__all__">Tất cả loại</SelectItem>
-                    {categoryOpts.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+            /* Form gọn: gom 2–3 cột để vừa 1 màn, không phải kéo dọc */
+            <div className="space-y-2">
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-xs">Loại hàng</Label>
+                  <Select value={genCat || '__all__'} onValueChange={v => { setGenCat(v === '__all__' ? '' : v); setMat(null) }}>
+                    <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Tất cả loại" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all__">Tất cả loại</SelectItem>
+                      {categoryOpts.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Ngày SX <span className="text-red-500">*</span></Label>
+                  <Input type="date" className="h-8 text-sm" value={prodDate} onChange={e => setProdDate(e.target.value)} />
+                </div>
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">Mã hàng <span className="text-red-500">*</span></Label>
                 <MatPicker value={mat?.material_code ?? ''} label={mat?.short_name ?? mat?.material_description ?? ''} category={genCat} onPick={setMat} />
                 {mat && <p className="text-[10px] text-slate-400">Loại: {mat.category ?? '—'} · Thùng/pallet: {mat.cartons_per_pallet ?? '—'}</p>}
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">Ngày SX <span className="text-red-500">*</span></Label>
-                <Input type="date" className="h-8 text-sm" value={prodDate} onChange={e => setProdDate(e.target.value)} />
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
@@ -641,20 +644,19 @@ export default function PalletLabels() {
                   <p className="text-[10px] text-amber-600">Chưa có kho chức năng "Kho tổng" — tạo ở Cài đặt WMS → Kho (chức năng = Kho tổng).</p>
                 )}
               </div>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-3 gap-2">
                 <div className="space-y-1">
-                  <Label className="text-xs">Seq bắt đầu</Label>
+                  <Label className="text-xs">Seq đầu</Label>
                   <Input type="number" min={1} className="h-8 text-sm" value={seqStart} onChange={e => setSeqStart(e.target.value)} />
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">Số pallet</Label>
                   <Input type="number" min={1} max={200} className="h-8 text-sm" value={count} onChange={e => setCount(e.target.value)} />
                 </div>
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">Số lượng / pallet (thùng)</Label>
-                <Input type="number" min={0} className="h-8 text-sm" value={qty} onChange={e => setQty(e.target.value)} />
-                <p className="text-[10px] text-slate-400">Mặc định theo định mức thùng/pallet, sửa được.</p>
+                <div className="space-y-1">
+                  <Label className="text-xs">SL/pallet</Label>
+                  <Input type="number" min={0} className="h-8 text-sm" value={qty} onChange={e => setQty(e.target.value)} />
+                </div>
               </div>
               {!genReady && <p className="flex items-start gap-1 text-[11px] text-amber-600"><AlertTriangle className="h-3.5 w-3.5 shrink-0" /> Chọn đủ Mã hàng, Chu kỳ, Máy, NMSX để sinh tem.</p>}
               {genReady && genDupes.length > 0 && (
@@ -663,7 +665,7 @@ export default function PalletLabels() {
                   <span><b>{genDupes.length}</b> tem trùng pallet đã có trong tồn kho (seq: {genDupes.map(d => d.seq).join(', ')}). In sẽ tạo QR trùng — đổi Seq bắt đầu để tránh.</span>
                 </div>
               )}
-            </>
+            </div>
           ) : tab === 'reprint' ? (
             <>
               {/* Quét / điền tay mã pallet — thêm nhanh, không phụ thuộc filter */}

@@ -8,6 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { SummaryBand } from '@/components/shared/SummaryBand'
+import { useColumnResize } from '@/components/shared/useColumnResize'
 import { useGDOs, useWarehouses, usePrepareBoard, useInventoryByMaterial, type ItemInventoryEntry } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
@@ -16,6 +17,16 @@ import { omniMatch } from '@/utils/omniSearch'
 import type { GDO } from '@/types'
 
 const TODAY = new Date().toISOString().slice(0, 10)
+
+const PREPARE_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
+  { id: 'loc',     label: 'Vị trí (FEFO)', w: 150 },
+  { id: 'code',    label: 'Mã hàng',       w: 110 },
+  { id: 'name',    label: 'Tên hàng',      w: 220 },
+  { id: 'pallets', label: 'Pallet cần',    w: 90, align: 'right' },
+  { id: 'cartons', label: 'Còn (thùng)',   w: 96, align: 'right' },
+  { id: 'avail',   label: 'Khả dụng',      w: 96, align: 'right' },
+]
+const PREPARE_COL_DEFAULTS = PREPARE_COLS.map(c => c.w)
 
 function pctColor(pct: number | null): string {
   if (pct === null) return 'text-slate-400'
@@ -182,6 +193,7 @@ export default function OutboundPrepare() {
   const selectedIds = useMemo(() => [...selected], [selected])
   const { data: board, isFetching } = usePrepareBoard(selectedIds)
   const rows = board?.rows ?? []
+  const { widths: colW, startResize, totalWidth } = useColumnResize('outbound_prepare_col_widths', PREPARE_COL_DEFAULTS)
 
   function addGdo(id: string) { setSelected(prev => new Set(prev).add(id)) }
   function removeGdo(id: string) { setSelected(prev => { const n = new Set(prev); n.delete(id); return n }) }
@@ -297,15 +309,21 @@ export default function OutboundPrepare() {
             <p className="text-sm">Đã chuẩn bị xong — không còn pallet phải lấy</p>
           </div>
         ) : (
-          <Table className="min-w-[640px]">
+          <Table className="table-fixed [&_td]:overflow-hidden [&_th]:overflow-hidden [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100" style={{ width: totalWidth, minWidth: '100%' }}>
+            <colgroup>{colW.map((w, i) => <col key={i} style={{ width: w }} />)}</colgroup>
             <TableHeader>
               <TableRow className="bg-slate-50">
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap sticky left-0 z-20 bg-slate-50">Vị trí (FEFO)</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Mã hàng</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Tên hàng</TableHead>
-                <TableHead className="text-[9px] font-medium text-sky-600 px-2 py-1.5 text-right whitespace-nowrap">Pallet cần</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Còn (thùng)</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Khả dụng</TableHead>
+                {PREPARE_COLS.map((c, i) => (
+                  <TableHead key={c.id}
+                    style={i === 0 ? { left: 0 } : undefined}
+                    className={`relative text-[9px] font-medium px-2 py-1.5 whitespace-nowrap ${c.id === 'pallets' ? 'text-sky-600' : 'text-slate-500'} ${c.align === 'right' ? 'text-right' : ''} ${i === 0 ? 'sticky z-20 bg-slate-50' : ''}`}>
+                    {c.label}
+                    {i > 0 && (
+                      <span onPointerDown={e => startResize(i, e)} onClick={e => e.stopPropagation()}
+                        className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70" title="Kéo để chỉnh độ rộng cột" />
+                    )}
+                  </TableHead>
+                ))}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -315,7 +333,7 @@ export default function OutboundPrepare() {
                 const short = avail < r.cartons_remaining
                 return (
                   <TableRow key={r.material_id ?? r.material_code} className="hover:bg-slate-50">
-                    <TableCell className="px-2 py-1 whitespace-nowrap sticky left-0 z-10 bg-white">
+                    <TableCell className="px-2 py-1 whitespace-nowrap sticky left-0 z-10 bg-white" style={{ left: 0 }}>
                       <div className="flex items-center gap-1">
                         <MapPin className="h-3 w-3 text-sky-500 shrink-0" />
                         <span className="text-[10px] font-mono text-slate-700">{sug?.location_code ?? '—'}</span>
@@ -329,7 +347,7 @@ export default function OutboundPrepare() {
                       {r.suggestions[1] && <div className="text-[9px] font-mono text-slate-400 pl-4">{r.suggestions[1].location_code}</div>}
                     </TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap"><span className="text-[10px] font-mono font-semibold text-slate-700">{r.material_code}</span></TableCell>
-                    <TableCell className="px-2 py-1">
+                    <TableCell className="px-2 py-1 whitespace-nowrap">
                       <span className="text-[10px] text-slate-600">{r.material_name ?? '—'}</span>
                       {r.no_qr_tracking && <span className="text-[9px] text-purple-600 ml-1">(thủ công)</span>}
                     </TableCell>

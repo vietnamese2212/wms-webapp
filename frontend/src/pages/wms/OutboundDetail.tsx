@@ -17,6 +17,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { SummaryBand } from '@/components/shared/SummaryBand'
 import {
   useGDO, useAssignGDO, useStartGDO, useWarehouseEmployees, usePatchGDO,
   useUnassignGDO, useUnstartGDO, useUncompleteGDO, useUpdateTransport,
@@ -917,13 +918,16 @@ export default function OutboundDetail() {
 
   function handleDelete() {
     if (!gdo) return
-    if (!confirm(`Xóa đơn "${gdo.group_code}"?\nHành động này không thể hoàn tác.`)) return
-    deleteGDO(gdo.id, {
-      onSuccess: () => navigate('/wms/outbound'),
-      onError: (err) => {
-        const msg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi xóa đơn'
-        toast({ variant: 'destructive', title: 'Không xóa được đơn', description: msg })
-      },
+    setPendingConfirm({
+      title: 'Xóa đơn',
+      message: `Xóa đơn "${gdo.group_code}"? Hành động này không thể hoàn tác.`,
+      onConfirm: () => deleteGDO(gdo.id, {
+        onSuccess: () => navigate('/wms/outbound'),
+        onError: (err) => {
+          const msg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi xóa đơn'
+          toast({ variant: 'destructive', title: 'Không xóa được đơn', description: msg })
+        },
+      }),
     })
   }
 
@@ -1265,6 +1269,14 @@ export default function OutboundDetail() {
           </div>
         )}
 
+        {/* Dải tile tổng hợp (đồng bộ với list) */}
+        <SummaryBand tiles={[
+          { label: 'DO',       value: allDOs.length },
+          { label: 'Mã hàng',  value: allItems.length },
+          { label: 'Đã xuất',  value: `${totalScanned.toLocaleString('vi-VN')} thùng`, accent: totalScanned > 0 },
+          { label: 'Kế hoạch', value: `${totalOrdered.toLocaleString('vi-VN')} thùng` },
+        ]} />
+
         {/* ── Items table: ~80% ── */}
         <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
           {allDOs.length === 0 ? (
@@ -1273,6 +1285,12 @@ export default function OutboundDetail() {
               <p className="text-sm">Chưa có DO nào</p>
             </div>
           ) : (
+            <>
+            <div className="px-3 py-2 bg-slate-100 border-b border-slate-200 flex items-center gap-1.5">
+              <span className="h-3.5 w-1 rounded-full bg-sky-500 shrink-0" />
+              <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-600">Hàng hóa</h2>
+              <span className="text-[11px] font-normal text-slate-400">{allItems.length} mã · {allDOs.length} DO</span>
+            </div>
             <ItemsTable
               doRecords={allDOs}
               gdoId={id!}
@@ -1281,6 +1299,7 @@ export default function OutboundDetail() {
               expandedItemIds={expandedItemIds}
               toggleExpand={toggleExpandItem}
             />
+            </>
           )}
         </div>
        </div>

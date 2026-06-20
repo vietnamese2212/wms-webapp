@@ -37,6 +37,8 @@ type LabelData = {
   seq: string           // "001"
 }
 
+type WarehouseLite = { id: string; code: string; name: string; warehouse_type?: string | null }
+
 // ddmmyy từ yyyy-mm-dd
 function toDdmmyy(iso: string): string {
   if (!iso || iso.length < 10) return ''
@@ -186,10 +188,10 @@ export default function PalletLabels() {
   const categoryOpts = (whTypes as { value: string }[]).map(t => t.value)
   const allowedWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
     ? new Set(user.warehouse_ids) : null
-  const whOptions = (warehouses as any[]).filter(w => !allowedWhIds || allowedWhIds.has(w.id))
+  const whOptions = (warehouses as WarehouseLite[]).filter(w => !allowedWhIds || allowedWhIds.has(w.id))
   // NMSX = mã kho tổng theo WMS Settings (chức năng = Kho tổng).
   // Toàn app coi mọi kho KHÔNG phải NPP là Kho tổng (kho cũ có thể NULL) → lọc !== 'NPP' cho khớp.
-  const nmsxOptions = (warehouses as any[]).filter(w => w.warehouse_type !== 'NPP')
+  const nmsxOptions = (warehouses as WarehouseLite[]).filter(w => w.warehouse_type !== 'NPP')
 
   // ── Generate form ──
   const [genCat, setGenCat]   = useState<string>(SAVED.genCat ?? '')   // Loại hàng — lọc nhanh mã hàng
@@ -235,6 +237,15 @@ export default function PalletLabels() {
     return out
   }, [tab, mat, prodDate, cycle, machine, nmsx, seqStart, count, qty])
 
+  // F1 — cảnh báo trùng: QR sắp sinh đã có pallet trong tồn kho? (tránh in QR trùng pallet đang tồn)
+  const genPrefix = genReady && mat ? `${toDdmmyy(prodDate)}_${clean(mat.material_code)}_${clean(cycle)}_${clean(machine)}_` : ''
+  const { data: genDupData } = useInventoryEntries(
+    { search: genPrefix, status: '', page: 1, limit: 500 },
+    tab === 'generate' && genPrefix.length >= 3,
+  )
+  const genExistingCodes = useMemo(() => new Set((genDupData?.entries ?? []).map(e => e.pallet_code)), [genDupData])
+  const genDupes = useMemo(() => genLabels.filter(l => genExistingCodes.has(l.qr)), [genLabels, genExistingCodes])
+
   function entryToLabel(e: any): LabelData {
     const pd: string | null = e.production_date ?? null
     const disp = pd ? toDisplayDate(pd.slice(0, 10)) : '—'
@@ -278,6 +289,7 @@ export default function PalletLabels() {
     status: '', page: 1, limit: 500,
   })
   const invEntries = invData?.entries ?? []
+  const invTotal = invData?.total ?? 0   // cảnh báo cụt nếu > số dòng tải (limit 500)
   const entryByCode = useMemo(() => {
     const m: Record<string, any> = {}
     for (const e of invEntries as any[]) m[e.pallet_code] = e
@@ -345,6 +357,7 @@ export default function PalletLabels() {
     status: '', page: 1, limit: 500,
   }, tab === 'audit' && auReady)
   const auPallets = (auInvData?.entries ?? []) as any[]
+  const auTotal = auInvData?.total ?? 0   // cảnh báo cụt nếu > số dòng tải (limit 500)
 
   // (2) Lấy log in cho đúng tập mã pallet đó → ghép số lần in (0 nếu chưa in)
   const auCodes = useMemo(() => auPallets.map(e => e.pallet_code), [auPallets])
@@ -617,7 +630,7 @@ export default function PalletLabels() {
                   <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Chọn kho tổng" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__none__">— Không —</SelectItem>
-                    {nmsxOptions.map((w: any) => (
+                    {nmsxOptions.map(w => (
                       <SelectItem key={w.id} value={w.code}>{w.code}{w.name ? ` — ${w.name}` : ''}</SelectItem>
                     ))}
                   </SelectContent>
@@ -642,6 +655,12 @@ export default function PalletLabels() {
                 <p className="text-[10px] text-slate-400">Mặc định theo định mức thùng/pallet, sửa được.</p>
               </div>
               {!genReady && <p className="flex items-start gap-1 text-[11px] text-amber-600"><AlertTriangle className="h-3.5 w-3.5 shrink-0" /> Chọn đủ Mã hàng, Chu kỳ, Máy, NMSX để sinh tem.</p>}
+              {genReady && genDupes.length > 0 && (
+                <div className="flex items-start gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-800">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                  <span><b>{genDupes.length}</b> tem trùng pallet đã có trong tồn kho (seq: {genDupes.map(d => d.seq).join(', ')}). In sẽ tạo QR trùng — đổi Seq bắt đầu để tránh.</span>
+                </div>
+              )}
             </>
           ) : tab === 'reprint' ? (
             <>
@@ -683,7 +702,10 @@ export default function PalletLabels() {
               </div>
 
               <div className="space-y-1">
-                <Label className="text-xs">Mã pallet (chọn nhiều) — {invEntries.length} kết quả</Label>
+                <Label className="text-xs">Mã pallet (chọn nhiều) — {invEntries.length}{invTotal > invEntries.length ? `/${invTotal}` : ''} kết quả</Label>
+                {invTotal > invEntries.length && (
+                  <p className="text-[10px] text-amber-600">Chỉ tải {invEntries.length}/{invTotal} pallet — lọc hẹp hơn (Chu kỳ/Máy/Tên hàng) để chọn đủ.</p>
+                )}
                 <MultiSelectFilter label="Chọn mã pallet" options={palletOptions} selected={Object.keys(picked)} onChange={onPickCodes} width="w-full" />
               </div>
 
@@ -744,6 +766,9 @@ export default function PalletLabels() {
                   ? 'Pallet chưa in vẫn hiện với số lần = 0. Bấm 1 dòng để xem ai in, lúc nào.'
                   : 'Chọn đủ Kho + Loại hàng + Tên hàng + Chu kỳ (hoặc quét/nhập mã pallet) mới truy vấn — dữ liệu rất lớn.'}
               </p>
+              {auReady && auTotal > auPallets.length && (
+                <p className="text-[10px] text-amber-600">Chỉ tải {auPallets.length}/{auTotal} pallet — lọc hẹp hơn để tra đủ.</p>
+              )}
             </>
           ) : (
             /* Lịch sử in — bộ lọc */
@@ -892,9 +917,9 @@ export default function PalletLabels() {
               </colgroup>
               <thead>
                 <tr className="text-left text-[9px] font-medium text-slate-500">
-                  {canReprint && <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5" />}
+                  {canReprint && <th className="sticky top-0 left-0 z-20 bg-slate-50 px-2 py-1.5" />}
                   {['Thời gian in', 'Chế độ', 'Số tem', 'Mã hàng', 'Tên hàng', 'Chu kỳ', 'Máy', 'Người in'].map((h, i) => (
-                    <th key={i} className={`sticky top-0 z-10 bg-slate-50 px-2 py-1.5 whitespace-nowrap relative ${i === 2 ? 'text-right' : ''}`}>
+                    <th key={i} className={`sticky top-0 bg-slate-50 px-2 py-1.5 whitespace-nowrap relative ${i === 0 ? (canReprint ? 'z-20 left-[36px]' : 'z-20 left-0') : 'z-10'} ${i === 2 ? 'text-right' : ''}`}>
                       {h}
                       <span onPointerDown={e => histCols.startResize(i, e)} className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70" />
                     </th>
@@ -910,15 +935,16 @@ export default function PalletLabels() {
                   const cycs  = [...new Set(b.rows.map(r => r.cycle).filter(Boolean))]
                   const macs  = [...new Set(b.rows.map(r => r.machine).filter(Boolean))]
                   const open  = histOpen.has(b.key)
+                  const pinBg = histSelBatch === b.key ? 'bg-sky-50' : 'bg-white'
                   return (
                   <Fragment key={b.key}>
                     <tr className={`border-b border-slate-100 cursor-pointer ${histSelBatch === b.key ? 'bg-sky-50' : 'hover:bg-slate-50'}`} onClick={() => toggleHistOpen(b.key)}>
                       {canReprint && (
-                        <td className="px-2 py-1 text-center" onClick={e => e.stopPropagation()}>
+                        <td className={`px-2 py-1 text-center sticky left-0 z-10 ${pinBg}`} onClick={e => e.stopPropagation()}>
                           <input type="checkbox" title="In lại cả lệnh này" checked={histSelBatch === b.key} onChange={() => selectHistBatch(b.key)} />
                         </td>
                       )}
-                      <td className="px-2 py-1 tabular-nums whitespace-nowrap">{formatTimestampDate(b.at, true)} {formatTimestampTime(b.at)}</td>
+                      <td className={`px-2 py-1 tabular-nums whitespace-nowrap sticky z-10 ${pinBg} ${canReprint ? 'left-[36px]' : 'left-0'}`}>{formatTimestampDate(b.at, true)} {formatTimestampTime(b.at)}</td>
                       <td className="px-2 py-1 whitespace-nowrap"><span className={`px-1.5 py-0.5 rounded-full text-[9px] ${b.mode === 'REPRINT' ? 'bg-amber-100 text-amber-700' : 'bg-slate-200 text-slate-600'}`}>{b.mode === 'REPRINT' ? 'In lại' : 'Sinh mới'}</span></td>
                       <td className="px-2 py-1 text-right tabular-nums font-semibold whitespace-nowrap">{b.rows.length}</td>
                       <td className="px-2 py-1 font-mono whitespace-nowrap">{mats.join(', ') || '—'}</td>

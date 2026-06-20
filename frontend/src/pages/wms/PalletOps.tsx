@@ -29,6 +29,9 @@ export default function PalletOps() {
   const canMerge   = can(perms, 'pallet_ops', 'merge')
   const canUngroup = can(perms, 'pallet_ops', 'ungroup')
   const canSplit   = can(perms, 'pallet_ops', 'split')
+  // In tem chạm module In tem pallet (logPrints) → gate đúng quyền pallet_print theo mode
+  const canGenLabel     = can(perms, 'pallet_print', 'generate')   // in tem con vừa tách (sinh mới)
+  const canReprintLabel = can(perms, 'pallet_print', 'reprint')    // in lại tem từ lịch sử
 
   const [params] = useSearchParams()
   const initTab = params.get('tab') as Tab
@@ -278,7 +281,7 @@ export default function PalletOps() {
                       <td className="px-2 py-1 whitespace-nowrap">{o.undone_at ? <span className="text-amber-600">Đã hoàn tác</span> : <span className="text-green-600">Hiệu lực</span>}</td>
                       <td className="px-2 py-1 whitespace-nowrap">
                         <div className="flex items-center gap-1">
-                          {o.type === 'SPLIT' && !o.undone_at && canSplit && (
+                          {o.type === 'SPLIT' && !o.undone_at && canReprintLabel && (
                             <Button size="sm" variant="outline" className="h-6 text-[10px] gap-1" title="In tem các pallet con" onClick={() => printOp(o)}><Printer className="h-3 w-3" />In tem</Button>
                           )}
                           {!o.undone_at && canUndo && (
@@ -455,10 +458,12 @@ export default function PalletOps() {
                       {splitDone.map(l => <div key={l.key} className="font-mono text-[10px] text-violet-700">{l.qr} · {l.qty} thùng</div>)}
                     </div>
                     <div className="flex gap-2">
-                      <Button size="sm" className="flex-1 gap-1.5" onClick={() => { printTems(splitDone, 'GENERATE'); setSplitDone(null) }}>
-                        <Printer className="h-3.5 w-3.5" />In tem ngay
-                      </Button>
-                      <Button size="sm" variant="outline" className="flex-1" onClick={() => setSplitDone(null)}>Để in sau (ở Lịch sử)</Button>
+                      {canGenLabel && (
+                        <Button size="sm" className="flex-1 gap-1.5" onClick={() => { printTems(splitDone, 'GENERATE'); setSplitDone(null) }}>
+                          <Printer className="h-3.5 w-3.5" />In tem ngay
+                        </Button>
+                      )}
+                      <Button size="sm" variant="outline" className="flex-1" onClick={() => setSplitDone(null)}>{canGenLabel ? 'Để in sau (ở Lịch sử)' : 'Đóng — in tem ở module In tem pallet'}</Button>
                     </div>
                   </div>
                 )}

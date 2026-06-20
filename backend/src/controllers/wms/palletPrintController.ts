@@ -75,28 +75,38 @@ export async function listPrints(req: Request, res: Response) {
     const { qr_code, qr_codes, search, categories, cycles, machines, nmsx, material_codes, date_from, date_to, limit } = req.query as Record<string, string | undefined>
     const csv = (s?: string) => (s ? s.split(',').map(x => x.trim()).filter(Boolean) : [])
 
-    let q = supabase
-      .from('PalletLabelPrint')
-      .select('id, batch_id, qr_code, material_code, category, cycle, machine, seq, nmsx, qty, mode, printed_by_name, created_at')
-      .order('created_at', { ascending: false })
-      .limit(Math.min(parseInt(limit ?? '5000', 10) || 5000, 5000))
+    // Lọc dùng chung; tạo query MỚI mỗi trang (PostgREST cap ~1000 dòng/response → phải phân trang)
+    const applyFilters = () => {
+      let q = supabase
+        .from('PalletLabelPrint')
+        .select('id, batch_id, qr_code, material_code, category, cycle, machine, seq, nmsx, qty, mode, printed_by_name, created_at')
+        .order('created_at', { ascending: false })
+      if (qr_code) q = q.eq('qr_code', qr_code)
+      if (search)  q = q.ilike('qr_code', `%${search}%`)
+      const codes = csv(qr_codes)
+      if (codes.length) q = q.in('qr_code', codes)
+      const cats = csv(categories), cyc = csv(cycles), mac = csv(machines), nm = csv(nmsx), mats = csv(material_codes)
+      if (cats.length) q = q.in('category', cats)
+      if (cyc.length)  q = q.in('cycle', cyc)
+      if (mac.length)  q = q.in('machine', mac)
+      if (nm.length)   q = q.in('nmsx', nm)
+      if (mats.length) q = q.in('material_code', mats)
+      if (date_from) q = q.gte('created_at', new Date(`${date_from}T00:00:00+07:00`).toISOString())
+      if (date_to)   q = q.lte('created_at', new Date(`${date_to}T23:59:59+07:00`).toISOString())
+      return q
+    }
 
-    if (qr_code) q = q.eq('qr_code', qr_code)
-    if (search)  q = q.ilike('qr_code', `%${search}%`)
-    const codes = csv(qr_codes)
-    if (codes.length) q = q.in('qr_code', codes)
-    const cats = csv(categories), cyc = csv(cycles), mac = csv(machines), nm = csv(nmsx), mats = csv(material_codes)
-    if (cats.length) q = q.in('category', cats)
-    if (cyc.length)  q = q.in('cycle', cyc)
-    if (mac.length)  q = q.in('machine', mac)
-    if (nm.length)   q = q.in('nmsx', nm)
-    if (mats.length) q = q.in('material_code', mats)
-    if (date_from) q = q.gte('created_at', new Date(`${date_from}T00:00:00+07:00`).toISOString())
-    if (date_to)   q = q.lte('created_at', new Date(`${date_to}T23:59:59+07:00`).toISOString())
-
-    const { data, error } = await q
-    if (error) return fail(res, error.message, 500)
-    return ok(res, data ?? [])
+    const PAGE = 1000
+    const hardCap = Math.min(parseInt(limit ?? '20000', 10) || 20000, 20000)
+    const out: unknown[] = []
+    for (let p = 0; p * PAGE < hardCap; p++) {
+      const { data, error } = await applyFilters().range(p * PAGE, p * PAGE + PAGE - 1)
+      if (error) return fail(res, error.message, 500)
+      const batch = data ?? []
+      out.push(...batch)
+      if (batch.length < PAGE) break
+    }
+    return ok(res, out)
   } catch (e) {
     return fail(res, (e as Error).message, 500)
   }

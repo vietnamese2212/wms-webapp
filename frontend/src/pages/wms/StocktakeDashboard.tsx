@@ -12,6 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Button } from '@/components/ui/button'
 import { BarChart2, Flag, MapPin, X } from 'lucide-react'
 import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
+import { rowText, type RowStatusKey } from '@/lib/rowStatus'
 
 function parseDiff(note: string | null): { actual: number; app: number; diff: number } | null {
   if (!note) return null
@@ -243,11 +244,11 @@ export default function StocktakeDashboard() {
   const todayVN    = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   const todayStart = new Date(`${todayVN}T00:00:00+07:00`).toISOString()
 
-  function rowBg(e: StocktakeEntryRow): string {
-    const sel = selectedId === e.id
-    if (e.stocktake_flagged) return sel ? 'bg-red-100'   : 'bg-red-50 hover:bg-red-100'
-    if (isCheckedToday(e, todayVN, todayStart)) return sel ? 'bg-green-100' : 'bg-green-50 hover:bg-green-100'
-    return sel ? 'bg-blue-50' : 'hover:bg-slate-50'
+  // Màu CHỮ theo trạng thái (không fill nền): chênh lệch=đỏ, đã kiểm=xanh lá, chưa kiểm=xám
+  function rowStatusKey(e: StocktakeEntryRow): RowStatusKey {
+    if (e.stocktake_flagged) return 'paused'
+    if (isCheckedToday(e, todayVN, todayStart)) return 'assigned'
+    return 'pending'
   }
 
   return (
@@ -371,16 +372,16 @@ export default function StocktakeDashboard() {
                     return (
                       <TableRow
                         key={e.id}
-                        className={`cursor-pointer transition-colors ${rowBg(e)}`}
+                        className={`cursor-pointer transition-colors ${rowText(rowStatusKey(e))} ${selectedId === e.id ? 'bg-sky-50' : ''}`}
                         onClick={() => setSelectedId(prev => prev === e.id ? null : e.id)}
                       >
                         <TableCell className="px-2 py-1">
-                          <span className="font-mono text-[10px] font-semibold text-blue-600">
+                          <span className="font-mono text-[10px] font-semibold">
                             {e.pallet_code}
                           </span>
                         </TableCell>
                         <TableCell className="px-2 py-1">
-                          <span className="text-[10px] text-slate-600">
+                          <span className="text-[10px]">
                             {e.material?.short_name ?? e.material?.material_code ?? '—'}
                           </span>
                         </TableCell>
@@ -389,7 +390,7 @@ export default function StocktakeDashboard() {
                         </TableCell>
                         <TableCell className="px-2 py-1 text-right">
                           {diff
-                            ? <span className="text-[10px] tabular-nums font-semibold text-slate-700">{diff.actual}</span>
+                            ? <span className="text-[10px] tabular-nums font-semibold">{diff.actual}</span>
                             : <span className="text-[10px] text-slate-300">—</span>}
                         </TableCell>
                         <TableCell className="px-2 py-1 text-right">

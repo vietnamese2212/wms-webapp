@@ -21,6 +21,7 @@ import {
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
+import { rowText, type RowStatusKey } from '@/lib/rowStatus'
 import { can, type ModulePermissions } from '@/config/permissions'
 
 
@@ -310,18 +311,17 @@ export default function Locations() {
                   const isFull    = loc.is_active && loc.max_pallets > 0 && loc.used_slots >= loc.max_pallets
                   const isPartial = loc.is_active && loc.used_slots > 0 && !isFull
                   const isSelected = selectedLoc?.id === loc.id
-                  const rowCls = !loc.is_active
-                    ? 'opacity-50 hover:opacity-80 bg-slate-50 cursor-pointer'
-                    : isFull    ? `bg-blue-50 hover:bg-blue-100 cursor-pointer${isSelected ? ' ring-1 ring-inset ring-blue-400' : ''}`
-                    : isPartial ? `bg-amber-50 hover:bg-amber-100 cursor-pointer${isSelected ? ' ring-1 ring-inset ring-amber-400' : ''}`
-                    : `hover:bg-slate-50 cursor-pointer${isSelected ? ' bg-slate-100' : ''}`
+                  // Màu CHỮ theo trạng thái (không fill nền): đầy=xanh dương, còn chỗ=cam, trống/đã xóa=xám
+                  const statusKey: RowStatusKey = !loc.is_active ? 'pending' : isFull ? 'full' : isPartial ? 'inProgress' : 'pending'
+                  const rowCls = `cursor-pointer ${rowText(statusKey)} ${!loc.is_active ? 'opacity-50' : ''} ${isSelected ? 'bg-sky-50' : ''}`
+                  const stickyBg = isSelected ? 'bg-sky-50' : 'bg-white'
                   const showSubName = loc.sub_name && loc.sub_name !== loc.sub_code
                   return (
                     <TableRow key={loc.id} className={`${rowCls} ${dense ? '' : '[&_td]:py-2.5'}`} onClick={() => setSelectedLoc(prev => prev?.id === loc.id ? null : loc)}>
-                      <TableCell className="px-2 py-1 text-[10px] text-slate-600 sticky left-0 z-10 bg-inherit">
+                      <TableCell className={`px-2 py-1 text-[10px] sticky left-0 z-10 ${stickyBg}`}>
                         {loc.warehouse?.name ?? '—'}
                       </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] text-slate-600">
+                      <TableCell className="px-2 py-1 text-[10px]">
                         {loc.category ?? <span className="text-slate-400">—</span>}
                       </TableCell>
                       <TableCell className="px-2 py-1 text-[10px]">

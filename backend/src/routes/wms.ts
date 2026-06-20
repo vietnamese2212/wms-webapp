@@ -87,8 +87,8 @@ router.get('/inbound-orders/:id/location-suggestions',  inbound.getLocationSugge
 router.get('/inventory/facets',                   inventory.listFacets)
 router.get('/inventory/summary',                   inventory.summaryInventory)   // tổng hợp theo mã — phải trước /:id
 router.get('/inventory/export',                    requirePerm('inventory', 'export'), inventory.exportInventory)  // phải trước /:id
-router.get('/inventory/stocktake-summary',         inventory.stocktakeSummary)   // phải trước /:id
-router.get('/inventory/stocktake-entries',         inventory.stocktakeEntries)   // phải trước /:id
+router.get('/inventory/stocktake-summary',         requirePerm('stocktake', 'view'), inventory.stocktakeSummary)   // phải trước /:id
+router.get('/inventory/stocktake-entries',         requirePerm('stocktake', 'view'), inventory.stocktakeEntries)   // phải trước /:id
 router.get('/inventory',                          inventory.listInventory)
 router.get('/inventory/:id',                      inventory.getInventoryEntry)
 router.post('/inventory/stocktake-check',          requirePerm('stocktake', 'scan'), inventory.stocktakeCheck)

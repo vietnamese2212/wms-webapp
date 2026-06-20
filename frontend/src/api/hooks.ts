@@ -1626,6 +1626,22 @@ export function useItemInventory(gdoId: string | undefined, itemId: string | und
   })
 }
 
+// Gợi ý vị trí lấy hàng FEFO cho cả GDO (1 request) → map material_id → top vị trí.
+export type PickSuggestion = { location_code: string | null; pct_date: number | null; available: number }
+export type GDOPickSuggestions = Record<string, { suggestions: PickSuggestion[]; total_available: number }>
+
+export function useGDOPickSuggestions(gdoId: string | undefined) {
+  return useQuery({
+    queryKey: ['gdo-pick-suggestions', gdoId],
+    queryFn: async () => {
+      const { data } = await apiClient.get(`/wms/outbound/${gdoId}/pick-suggestions`)
+      return data.data as GDOPickSuggestions
+    },
+    enabled: !!gdoId,
+    staleTime: 30_000,
+  })
+}
+
 export function useManualItemStock(gdoId: string | undefined, itemId: string | undefined) {
   return useQuery({
     queryKey: ['manual-item-stock', gdoId, itemId],

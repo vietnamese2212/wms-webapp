@@ -6,7 +6,7 @@ import { vi } from 'date-fns/locale'
 import { formatDateTime, formatTimestampTime } from '@/utils/formatters'
 import {
   ArrowLeft, CheckCircle2,
-  Truck, Package, ClipboardList, Play, Pause, ChevronRight, ChevronDown, Bookmark, X, RotateCcw, Pencil, QrCode, Search, PenSquare, Trash2,
+  Truck, Package, ClipboardList, Play, Pause, ChevronRight, ChevronDown, Bookmark, X, RotateCcw, Pencil, QrCode, Search, PenSquare, Trash2, MapPin,
 } from 'lucide-react'
 import { Button }  from '@/components/ui/button'
 import { Input }   from '@/components/ui/input'
@@ -21,6 +21,7 @@ import {
   useGDO, useAssignGDO, useStartGDO, useWarehouseEmployees, usePatchGDO,
   useUnassignGDO, useUnstartGDO, useUncompleteGDO, useUpdateTransport,
   useItemInventory, useManualItemStock, useDeleteGDO, useManualCompleteItem, type ItemInventoryEntry,
+  useGDOPickSuggestions,
 } from '@/api/hooks'
 import { EditGDOModal, gdoKey } from './Outbound'
 import { statusText } from '@/lib/rowStatus'
@@ -583,6 +584,9 @@ function ItemsTable({ doRecords, gdoId, canScan, expandedItemIds, toggleExpand }
 
   const inventoryItem = inventoryItemId ? allItems.find(i => i.id === inventoryItemId) : null
 
+  // Gợi ý vị trí lấy hàng FEFO cho cả GDO (1 request) → hiện inline mỗi mã hàng
+  const { data: pickSuggestions = {} } = useGDOPickSuggestions(gdoId)
+
   return (
     <>
     {inventoryItem && (
@@ -630,6 +634,8 @@ function ItemsTable({ doRecords, gdoId, canScan, expandedItemIds, toggleExpand }
             const looseUnconfirmed = scans
               .filter(s => s.is_loose_picking && !s.loose_confirmed)
               .reduce((sum, s) => sum + s.cartons_scanned, 0)
+            const pickSug = item.material_id ? pickSuggestions[item.material_id] : undefined
+            const showPick = item.status !== 'COMPLETED' && !item.material?.no_qr_tracking && (pickSug?.suggestions?.length ?? 0) > 0
 
             return (
               <Fragment key={item.id}>
@@ -645,6 +651,22 @@ function ItemsTable({ doRecords, gdoId, canScan, expandedItemIds, toggleExpand }
                   <ProgressBar compact scanned={item.cartons_scanned} ordered={item.cartons_ordered} looseUnconfirmed={looseUnconfirmed} />
                   {(item.scan_entries?.length ?? 0) > 0 && (
                     <div className="text-[9px] text-slate-400 mt-0.5">{item.scan_entries.length} pallet</div>
+                  )}
+                  {showPick && (
+                    <div className="mt-0.5 flex items-start gap-0.5">
+                      <MapPin className="h-2.5 w-2.5 text-sky-500 shrink-0 mt-[1px]" />
+                      <span className="text-[9px] text-slate-500 leading-tight">
+                        Lấy: {pickSug!.suggestions.map((s, i) => (
+                          <span key={i}>
+                            {i > 0 && <span className="text-slate-300"> · </span>}
+                            <span className="font-mono text-slate-600">{s.location_code ?? '—'}</span>
+                            {s.pct_date !== null && (
+                              <span className={s.pct_date <= 30 ? 'text-red-600' : s.pct_date <= 60 ? 'text-amber-600' : 'text-green-700'}> {s.pct_date}%</span>
+                            )}
+                          </span>
+                        ))}
+                      </span>
+                    </div>
                   )}
                 </TableCell>
                 <TableCell className={`px-2 py-1 align-top text-right whitespace-nowrap`}>

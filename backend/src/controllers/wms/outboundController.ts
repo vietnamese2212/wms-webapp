@@ -1328,6 +1328,74 @@ export async function getItemInventory(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
+// ─── Gợi ý vị trí lấy hàng FEFO cho cả GDO (1 batch query) ────
+// Trả map material_id → { suggestions: top vị trí FEFO (pct thấp trước), total_available }.
+// Dùng để hiện inline trên trang chi tiết (không phải mở popup từng mã).
+export async function getGDOPickSuggestions(req: Request, res: Response) {
+  try {
+    const { gdoId } = req.params
+    const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
+      .select('warehouse_id').eq('id', gdoId).single()
+
+    const { data: dos } = await (supabase.from('OutboundDelivery') as any)
+      .select('id').eq('gdo_id', gdoId)
+    const doIds = (dos ?? []).map((d: any) => d.id)
+    if (!doIds.length) return ok(res, {})
+
+    const { data: items } = await (supabase.from('OutboundItem') as any)
+      .select('material_id').in('do_id', doIds)
+    const matIds = [...new Set((items ?? []).map((i: any) => i.material_id).filter(Boolean))] as string[]
+    if (!matIds.length) return ok(res, {})
+
+    let locIds: string[] | null = null
+    if (gdo?.warehouse_id) {
+      const { data: locs } = await (supabase.from('Location') as any)
+        .select('id').eq('warehouse_id', gdo.warehouse_id)
+      locIds = ((locs ?? []) as any[]).map((l: any) => l.id as string)
+      if (!locIds.length) return ok(res, {})
+    }
+
+    let q = (supabase.from('InventoryEntry') as any)
+      .select('material_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, location:Location(location_code), material:Material!material_id(shelf_life_days)')
+      .in('material_id', matIds)
+      .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING'])
+    if (locIds) q = q.in('location_id', locIds)
+    const { data: entries, error } = await q
+    if (error) return fail(res, error.message)
+
+    const nowMs = Date.now()
+    type Agg = { location_code: string | null; pct_date: number | null; available: number }
+    const byMat = new Map<string, Map<string, Agg>>()
+    for (const e of (entries ?? [])) {
+      const reserved  = Number(e.cartons_reserved ?? 0)
+      const available = Math.max(0, (e.cartons_remaining ?? e.cartons_imported ?? 0) - reserved)
+      if (available <= 0) continue
+      const shelfDays = e.material?.shelf_life_days ? Number(e.material.shelf_life_days) : 0
+      let pct_date: number | null = null
+      if (shelfDays > 0 && e.production_date) {
+        const totalMs   = shelfDays * 86_400_000
+        const remaining = new Date(e.production_date).getTime() + totalMs - nowMs
+        pct_date = Math.max(0, Math.round((remaining / totalMs) * 100))
+      }
+      const loc = e.location?.location_code ?? '(chưa xác định)'
+      const key = `${pct_date ?? 'n'}|${loc}`
+      const locMap = byMat.get(e.material_id) ?? new Map<string, Agg>()
+      const cur = locMap.get(key) ?? { location_code: loc, pct_date, available: 0 }
+      cur.available += available
+      locMap.set(key, cur)
+      byMat.set(e.material_id, locMap)
+    }
+
+    const result: Record<string, { suggestions: Agg[]; total_available: number }> = {}
+    for (const [matId, locMap] of byMat) {
+      const rows  = [...locMap.values()].sort((a, b) => (a.pct_date ?? Infinity) - (b.pct_date ?? Infinity))
+      const total = rows.reduce((s, r) => s + r.available, 0)
+      result[matId] = { suggestions: rows.slice(0, 2), total_available: total }
+    }
+    return ok(res, result)
+  } catch (e) { return fail(res, String(e)) }
+}
+
 // ─── Check scan validity (no save) ───────────────────────────
 
 export async function checkScanItem(req: Request, res: Response) {

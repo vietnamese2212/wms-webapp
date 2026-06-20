@@ -127,6 +127,7 @@ router.post('/outbound/:gdoId/items/:itemId/scan',            requireAnyPerm(['o
 router.delete('/outbound/:gdoId/items/:itemId/scans/:scanId', requireAnyPerm(['outbound', 'scan'], ['loosepicking', 'scan']), outbound.deleteScanEntry)
 router.post('/outbound/:gdoId/items/:itemId/manual-complete', requirePerm('outbound', 'complete'), outbound.manualCompleteItem)
 router.post('/outbound/:gdoId/items/:itemId/confirm-loose',   requireAnyPerm(['outbound', 'complete'], ['loosepicking', 'complete']), outbound.confirmLoosePickingItem)
+router.get('/outbound/:gdoId/pick-suggestions',              outbound.getGDOPickSuggestions)
 router.get('/outbound/:gdoId/items/:itemId/inventory',        outbound.getItemInventory)
 router.get('/outbound/:gdoId/items/:itemId/manual-stock',     outbound.getManualItemStock)
 

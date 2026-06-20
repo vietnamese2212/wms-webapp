@@ -560,11 +560,11 @@ function ManualCompleteDialog({ gdoId, itemId, matName, initialCartons, onClose 
 
 // ─── Items table ───────────────────────────────────────────────
 
-function ItemsTable({ doRecords, gdoId, canScan, canManualComplete, expandedItemIds, toggleExpand }: {
+function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, toggleExpand }: {
   doRecords: OutboundDelivery[]
   gdoId: string
   canScan: boolean
-  canManualComplete: boolean
+  hasScanPerm: boolean
   expandedItemIds: Set<string>
   toggleExpand: (id: string) => void
 }) {
@@ -675,9 +675,11 @@ function ItemsTable({ doRecords, gdoId, canScan, canManualComplete, expandedItem
                     <span className={`text-[10px] font-semibold tabular-nums ${textCls}`}>{item.cartons_ordered}</span>
                     {(() => {
                       const isManual = item.material?.no_qr_tracking === true
+                      // Cả 2 nút đều là "ghi nhận xuất" → cần trạng thái cho phép (canScan) + quyền outbound.scan
+                      if (!canScan) return null
+                      if (!hasScanPerm) return null
                       if (isManual) {
-                        // nút "Lưu thủ công/Sửa SL" gọi /manual-complete → cần quyền outbound.complete
-                        if (!canManualComplete) return null
+                        // "Lưu thủ công/Sửa SL": ghi nhận xuất cho hàng không QR (= quét thủ công)
                         return (
                           <button
                             onClick={e => { e.stopPropagation(); setManualDlg({ itemId: item.id, matName: matName, cartons: item.status === 'COMPLETED' ? item.cartons_scanned : item.cartons_ordered }) }}
@@ -688,8 +690,6 @@ function ItemsTable({ doRecords, gdoId, canScan, canManualComplete, expandedItem
                           </button>
                         )
                       }
-                      // nút "Quét" chỉ điều hướng (trang đích gate scan) → giữ canScan
-                      if (!canScan) return null
                       if (item.status === 'COMPLETED') return null
                       return (
                         <button
@@ -1277,7 +1277,7 @@ export default function OutboundDetail() {
               doRecords={allDOs}
               gdoId={id!}
               canScan={!!gdo.started_at && gdo.status !== 'PAUSED' && gdo.status !== 'COMPLETED'}
-              canManualComplete={can(perms, 'outbound', 'complete')}
+              hasScanPerm={can(perms, 'outbound', 'scan')}
               expandedItemIds={expandedItemIds}
               toggleExpand={toggleExpandItem}
             />

@@ -127,7 +127,8 @@ router.post('/outbound/:gdoId/items/:itemId/check-scan',      requireAnyPerm(['o
 // Scan/xóa-scan dùng chung cho trang Xuất kho VÀ Nhặt lẻ → chấp nhận quyền của cả 2 module
 router.post('/outbound/:gdoId/items/:itemId/scan',            requireAnyPerm(['outbound', 'scan'], ['loosepicking', 'scan']), outbound.scanItem)
 router.delete('/outbound/:gdoId/items/:itemId/scans/:scanId', requireAnyPerm(['outbound', 'scan'], ['loosepicking', 'scan']), outbound.deleteScanEntry)
-router.post('/outbound/:gdoId/items/:itemId/manual-complete', requirePerm('outbound', 'complete'), outbound.manualCompleteItem)
+// "Lưu thủ công" = ghi nhận xuất cho hàng không QR (trừ tồn + tạo scan entry) → là capability QUÉT, không phải complete
+router.post('/outbound/:gdoId/items/:itemId/manual-complete', requirePerm('outbound', 'scan'), outbound.manualCompleteItem)
 router.post('/outbound/:gdoId/items/:itemId/confirm-loose',   requireAnyPerm(['outbound', 'complete'], ['loosepicking', 'complete']), outbound.confirmLoosePickingItem)
 router.get('/outbound/:gdoId/pick-suggestions',              requirePerm('outbound', 'view'), outbound.getGDOPickSuggestions)
 router.get('/outbound/:gdoId/items/:itemId/inventory',        requireAnyPerm(['outbound', 'view'], ['loosepicking', 'view']), outbound.getItemInventory)

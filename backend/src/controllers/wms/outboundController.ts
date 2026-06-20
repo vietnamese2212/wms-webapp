@@ -8,6 +8,35 @@ const now = () => new Date().toISOString()
 
 // ─── Helpers ──────────────────────────────────────────────────
 
+// Điều chỉnh remaining/reserved của 1 InventoryEntry AN TOÀN ĐUA (optimistic-lock + retry).
+// delta âm = trừ, dương = cộng. Chỉ ghi khi remaining&reserved CHƯA đổi so với lúc đọc → chặn
+// lost-update khi nhiều thao tác (quét / xóa-scan / xác nhận nhặt lẻ) chạm cùng pallet đồng thời.
+// Trả về true nếu áp dụng được trong 5 lần thử, false nếu entry biến mất hoặc đua liên tục.
+async function adjustInventoryAtomic(
+  invId: string, deltaRemaining: number, deltaReserved: number,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const { data: inv } = await (supabase.from('InventoryEntry') as any)
+      .select('cartons_remaining, cartons_imported, cartons_reserved').eq('id', invId).single()
+    if (!inv) return false
+    const curRemaining = Number(inv.cartons_remaining ?? 0)
+    const curReserved  = Number(inv.cartons_reserved ?? 0)
+    const newRemaining = Math.max(0, curRemaining + deltaRemaining)
+    const newReserved  = Math.max(0, curReserved + deltaReserved)
+    const maxImport    = Number(inv.cartons_imported)
+    const newStatus    = newReserved > 0 ? 'LOOSE_PICKING'
+      : newRemaining === 0 ? 'EXPORTED'
+      : newRemaining < maxImport ? 'PARTIAL'
+      : 'IN_STOCK'
+    const { data: applied } = await (supabase.from('InventoryEntry') as any)
+      .update({ cartons_remaining: newRemaining, cartons_reserved: newReserved, status: newStatus, updated_at: now() })
+      .eq('id', invId).eq('cartons_remaining', curRemaining).eq('cartons_reserved', curReserved)
+      .select('id')
+    if (applied?.length) return true
+  }
+  return false
+}
+
 function parsePlannedDate(group_code: string): string | null {
   const parts = group_code.split('_')
   // New format: warehouseCode_X|N_ddmmyy_stt  (parts[1] is 'X' or 'N')
@@ -1684,15 +1713,16 @@ export async function scanItem(req: Request, res: Response) {
     let new_item_status: string
     if (loose_picking_mode) {
       new_item_status = 'IN_PROGRESS'
-      const new_reserved = Number(inv.cartons_reserved ?? 0) + to_take
-      await Promise.all([
-        (supabase.from('InventoryEntry') as any)
-          .update({ status: 'LOOSE_PICKING', cartons_reserved: new_reserved, updated_at: t })
-          .eq('id', inv.id),
-        (supabase.from('OutboundItem') as any)
-          .update({ cartons_scanned: new_scanned, status: new_item_status, updated_at: t })
-          .eq('id', itemId),
-      ])
+      // Giữ hàng (reserve) an toàn đua: chỉ +reserved, KHÔNG đụng remaining.
+      // Nếu tồn vừa bị thao tác khác đổi liên tục → rollback scan entry đã insert để không lệch.
+      const reserved_ok = await adjustInventoryAtomic(inv.id, 0, to_take)
+      if (!reserved_ok) {
+        await (supabase.from('OutboundScanEntry') as any).delete().eq('id', scanId)
+        return fail(res, 'Tồn kho mã này vừa thay đổi (thao tác khác) — thử lại', 409)
+      }
+      await (supabase.from('OutboundItem') as any)
+        .update({ cartons_scanned: new_scanned, status: new_item_status, updated_at: t })
+        .eq('id', itemId)
     } else {
       // Kiểm tra có nhặt lẻ chưa xác nhận không trước khi COMPLETE item
       let wouldComplete = new_scanned >= Number(item.cartons_ordered)
@@ -1766,40 +1796,18 @@ export async function deleteScanEntry(req: Request, res: Response) {
 
     const t = now()
 
-    // Restore inventory — xử lý khác nhau cho nhặt lẻ chưa xác nhận vs đã xác nhận vs thường
+    // Restore inventory an toàn đua (optimistic-lock + retry) — khác nhau cho nhặt lẻ chưa/đã xác nhận vs thường
     if (scan.inventory_entry_id) {
-      const { data: inv } = await (supabase.from('InventoryEntry') as any)
-        .select('cartons_remaining, cartons_imported, cartons_reserved').eq('id', scan.inventory_entry_id).single()
-      if (inv) {
-        if (scan.is_loose_picking && !scan.loose_confirmed) {
-          // Chưa xác nhận: chỉ giảm reserved, không thay đổi remaining
-          const newReserved = Math.max(0, Number(inv.cartons_reserved ?? 0) - Number(scan.cartons_scanned))
-          const newStatus = newReserved > 0 ? 'LOOSE_PICKING'
-            : Number(inv.cartons_remaining ?? 0) < Number(inv.cartons_imported) ? 'PARTIAL'
-            : 'IN_STOCK'
-          await (supabase.from('InventoryEntry') as any)
-            .update({ cartons_reserved: newReserved, status: newStatus, updated_at: t })
-            .eq('id', scan.inventory_entry_id)
-        } else if (scan.is_loose_picking && scan.loose_confirmed) {
-          // Đã xác nhận: khôi phục remaining và giảm reserved
-          const restored   = Number(inv.cartons_remaining ?? 0) + Number(scan.cartons_scanned)
-          const newReserved = Math.max(0, Number(inv.cartons_reserved ?? 0) - Number(scan.cartons_scanned))
-          const maxImport  = Number(inv.cartons_imported)
-          const newStatus  = newReserved > 0 ? 'LOOSE_PICKING'
-            : restored >= maxImport ? 'IN_STOCK'
-            : 'PARTIAL'
-          await (supabase.from('InventoryEntry') as any)
-            .update({ cartons_remaining: restored, cartons_reserved: newReserved, status: newStatus, updated_at: t })
-            .eq('id', scan.inventory_entry_id)
-        } else {
-          // Scan thường: khôi phục remaining
-          const restored  = Number(inv.cartons_remaining ?? 0) + Number(scan.cartons_scanned)
-          const maxImport = Number(inv.cartons_imported)
-          const invStatus = restored >= maxImport ? 'IN_STOCK' : 'PARTIAL'
-          await (supabase.from('InventoryEntry') as any)
-            .update({ cartons_remaining: restored, status: invStatus, updated_at: t })
-            .eq('id', scan.inventory_entry_id)
-        }
+      const sc = Number(scan.cartons_scanned)
+      if (scan.is_loose_picking && !scan.loose_confirmed) {
+        // Chưa xác nhận: chỉ nhả reserved (remaining chưa từng bị trừ)
+        await adjustInventoryAtomic(scan.inventory_entry_id, 0, -sc)
+      } else if (scan.is_loose_picking && scan.loose_confirmed) {
+        // Đã xác nhận: hoàn remaining + nhả reserved
+        await adjustInventoryAtomic(scan.inventory_entry_id, sc, -sc)
+      } else {
+        // Scan thường: hoàn remaining
+        await adjustInventoryAtomic(scan.inventory_entry_id, sc, 0)
       }
     }
 
@@ -1864,11 +1872,10 @@ export async function confirmLoosePickingItem(req: Request, res: Response) {
     const { gdoId, itemId } = req.params
     const { employee_id } = req.body as { employee_id?: string }
 
-    const [{ data: gdo }, { data: item }, { data: looseEntries, error: looseErr }, { data: empCheck }] =
+    const [{ data: gdo }, { data: item }, { data: empCheck }] =
       await Promise.all([
         (supabase.from('GroupDeliveryOrder') as any).select('status, started_at').eq('id', gdoId).single(),
         (supabase.from('OutboundItem') as any).select('*').eq('id', itemId).single(),
-        (supabase.from('OutboundScanEntry') as any).select('*').eq('item_id', itemId).eq('is_loose_picking', true).eq('loose_confirmed', false),
         employee_id
           ? (supabase.from('Employee') as any).select('id').eq('id', employee_id).maybeSingle()
           : Promise.resolve({ data: null }),
@@ -1877,41 +1884,32 @@ export async function confirmLoosePickingItem(req: Request, res: Response) {
 
     if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng', 400)
     if (!item) return fail(res, 'Không tìm thấy mặt hàng', 404)
-    if (looseErr) return fail(res, `Lỗi DB: ${looseErr.message}`, 500)
-    if (!looseEntries?.length) return fail(res, 'Không có nhặt lẻ chờ xác nhận', 400)
 
     const t = now()
 
-    // Group by inventory_entry_id → tổng thùng cần deduct
+    // ── CHIẾM NGUYÊN TỬ (atomic claim) ────────────────────────────
+    // Chiếm các loose entry CHƯA xác nhận bằng MỘT câu UPDATE...RETURNING (1 statement = atomic + row-lock).
+    // Hai lượt confirm đồng thời: lượt đầu set loose_confirmed=true & nhận rows; lượt sau khớp 0 dòng (vì
+    // loose_confirmed đã = true) → nhận [] → KHÔNG trừ tồn lần nữa. Đây là CHỐT chống "2 người xác nhận cùng lúc".
+    const { data: claimed, error: claimErr } = await (supabase.from('OutboundScanEntry') as any)
+      .update({ loose_confirmed: true, loose_confirmed_at: t, loose_confirmed_by: confirmed_by, updated_at: t })
+      .eq('item_id', itemId).eq('is_loose_picking', true).eq('loose_confirmed', false)
+      .select('id, inventory_entry_id, cartons_scanned')
+    if (claimErr) return fail(res, `Lỗi DB: ${claimErr.message}`, 500)
+    if (!claimed?.length) return fail(res, 'Không có nhặt lẻ chờ xác nhận', 400)
+
+    // Gộp số thùng cần trừ theo inventory_entry_id (CHỈ trên các entry vừa chiếm được — của riêng request này)
     const invDeduct = new Map<string, number>()
-    for (const entry of looseEntries) {
+    for (const entry of (claimed as any[])) {
       if (entry.inventory_entry_id) {
         invDeduct.set(entry.inventory_entry_id, (invDeduct.get(entry.inventory_entry_id) ?? 0) + Number(entry.cartons_scanned))
       }
     }
 
-    // Cập nhật từng InventoryEntry: giảm remaining và reserved
+    // Trừ remaining + reserved từng InventoryEntry an toàn đua (optimistic-lock + retry)
     for (const [invId, amount] of invDeduct) {
-      const { data: inv } = await (supabase.from('InventoryEntry') as any)
-        .select('cartons_remaining, cartons_imported, cartons_reserved').eq('id', invId).single()
-      if (!inv) continue
-      const newRemaining = Math.max(0, Number(inv.cartons_remaining ?? 0) - amount)
-      const newReserved  = Math.max(0, Number(inv.cartons_reserved  ?? 0) - amount)
-      const maxImport    = Number(inv.cartons_imported)
-      const newStatus    = newReserved > 0 ? 'LOOSE_PICKING'
-        : newRemaining === 0 ? 'EXPORTED'
-        : newRemaining < maxImport ? 'PARTIAL'
-        : 'IN_STOCK'
-      await (supabase.from('InventoryEntry') as any)
-        .update({ cartons_remaining: newRemaining, cartons_reserved: newReserved, status: newStatus, updated_at: t })
-        .eq('id', invId)
+      await adjustInventoryAtomic(invId, -amount, -amount)
     }
-
-    // Đánh dấu các loose entries là đã xác nhận
-    const looseIds = (looseEntries as any[]).map((e: any) => e.id as string)
-    await (supabase.from('OutboundScanEntry') as any)
-      .update({ loose_confirmed: true, loose_confirmed_at: t, loose_confirmed_by: confirmed_by, updated_at: t })
-      .in('id', looseIds)
 
     // Re-check item completion
     const newCartons = Number(item.cartons_scanned)
@@ -1947,7 +1945,7 @@ export async function confirmLoosePickingItem(req: Request, res: Response) {
       }
     }
 
-    return ok(res, { confirmed: looseIds.length })
+    return ok(res, { confirmed: (claimed as any[]).length })
   } catch (e) { return fail(res, String(e)) }
 }
 

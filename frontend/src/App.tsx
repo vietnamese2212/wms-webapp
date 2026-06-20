@@ -10,7 +10,7 @@ import Login from '@/pages/Login'
 
 const {
   Dashboard, Inventory, Inbound, InboundDetail,
-  Outbound, OutboundDetail, OutboundItemDetail, OutboundScanLog,
+  Outbound, OutboundDetail, OutboundItemDetail, OutboundScanLog, OutboundPrepare,
   LoosePicking, LoosePickingDetail, LoosePickingItemDetail,
   Locations, Stocktake, StocktakeDashboard, PalletLabels, PalletOps,
   Deliveries, WMSSettings, TMSSettings, TMSBookings, TMSReport, GateRegistration,
@@ -66,6 +66,7 @@ export default function App() {
 
         {/* WMS — outbound */}
         <Route path="/wms/outbound"                         element={<PermissionRoute module="outbound"><Outbound /></PermissionRoute>} />
+        <Route path="/wms/outbound/prepare"                 element={<PermissionRoute module="outbound"><OutboundPrepare /></PermissionRoute>} />
         <Route path="/wms/outbound/scan-log"                element={<PermissionRoute module="scanlog"><OutboundScanLog /></PermissionRoute>} />
         <Route path="/wms/outbound/:id"                     element={<PermissionRoute module="outbound"><OutboundDetail /></PermissionRoute>} />
         <Route path="/wms/outbound/:gdoId/items/:itemId"    element={<PermissionRoute module="outbound"><OutboundItemDetail /></PermissionRoute>} />

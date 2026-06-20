@@ -2,7 +2,7 @@ import { useRef, useState, useMemo, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
-import { Upload, Truck, CheckCircle2, AlertTriangle, X, Bookmark, Info, Plus, Trash2, PenSquare, Rows3, AlignJustify, ChevronDown, Building2 } from 'lucide-react'
+import { Upload, Truck, CheckCircle2, AlertTriangle, X, Bookmark, Info, Plus, Trash2, PenSquare, Rows3, AlignJustify, ChevronDown, Building2, PackageCheck } from 'lucide-react'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
@@ -345,6 +345,10 @@ export default function Outbound() {
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
           <div className="flex gap-1.5 shrink-0">
+            <Button size="sm" variant="outline" onClick={() => navigate('/wms/outbound/prepare')} className="h-7 text-xs gap-1">
+              <PackageCheck className="h-3.5 w-3.5" />
+              Chuẩn bị hàng
+            </Button>
             {can(perms, 'outbound', 'create') && (
               <Button size="sm" variant="outline" onClick={() => setShowCreate(true)} className="h-7 text-xs gap-1">
                 <PenSquare className="h-3.5 w-3.5" />

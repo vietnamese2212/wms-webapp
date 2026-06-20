@@ -111,6 +111,7 @@ router.post('/outbound/upload',                               requirePerm('outbo
 router.get('/outbound/employees',                             outbound.getWarehouseEmployees)
 router.get('/outbound/scan-log/facets',                       requirePerm('scanlog', 'view'), outbound.getScanLogFacets)
 router.get('/outbound/scan-log',                              requirePerm('scanlog', 'view'), outbound.getScanLog)
+router.get('/outbound/prepare',                               requirePerm('outbound', 'view'), outbound.getPrepareBoard)
 router.get('/outbound/:id',                                   outbound.getGDO)
 router.put('/outbound/:id',                                   requirePerm('outbound', 'edit'), outbound.updateGDO)
 router.patch('/outbound/:id',                                 requirePerm('outbound', 'edit'), outbound.patchGDO)

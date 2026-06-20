@@ -1396,6 +1396,118 @@ export async function getGDOPickSuggestions(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
+// ─── Bảng chuẩn bị hàng — gom ≥1 GDO, tính pallet CÒN PHẢI chuẩn bị + gợi ý vị trí FEFO ──
+// Realtime: FE dùng queryKey ['gdo','prepare',…] → OutboundItem/OutboundScanEntry đổi sẽ tự
+// invalidate (prefix 'gdo'), pallet cần chuẩn bị giảm dần khi quét. KHÔNG giữ chỗ (reserve).
+export async function getPrepareBoard(req: Request, res: Response) {
+  try {
+    const gdoIds = String(req.query.gdo_ids ?? '').split(',').map(s => s.trim()).filter(Boolean)
+    if (!gdoIds.length) return ok(res, { rows: [], total_cartons: 0, total_pallets: 0 })
+
+    const { data: gdos } = await (supabase.from('GroupDeliveryOrder') as any)
+      .select('id, warehouse_id').in('id', gdoIds)
+    const warehouseIds = [...new Set((gdos ?? []).map((g: any) => g.warehouse_id).filter(Boolean))] as string[]
+
+    const { data: dos } = await (supabase.from('OutboundDelivery') as any)
+      .select('id').in('gdo_id', gdoIds)
+    const doIds = (dos ?? []).map((d: any) => d.id)
+    if (!doIds.length) return ok(res, { rows: [], total_cartons: 0, total_pallets: 0 })
+
+    const { data: items } = await (supabase.from('OutboundItem') as any)
+      .select('material_id, material_code_raw, cartons_ordered, cartons_scanned, loose_picking, material:Material!material_id(short_name, cartons_per_pallet, no_qr_tracking)')
+      .in('do_id', doIds)
+
+    // Gom theo mã hàng (material_id, fallback material_code_raw)
+    type Row = {
+      material_id: string | null; material_code: string; material_name: string | null
+      cartons_ordered: number; cartons_scanned: number; cartons_remaining: number
+      cartons_per_pallet: number; pallets_remaining: number; no_qr_tracking: boolean
+      suggestions: { location_code: string | null; pct_date: number | null; available: number }[]
+    }
+    const rowMap = new Map<string, Row>()
+    for (const i of (items ?? [])) {
+      const key = i.material_id ?? `raw:${i.material_code_raw ?? ''}`
+      const cur = rowMap.get(key) ?? {
+        material_id: i.material_id ?? null,
+        material_code: i.material_code_raw ?? '(?)',
+        material_name: i.material?.short_name ?? null,
+        cartons_ordered: 0, cartons_scanned: 0, cartons_remaining: 0,
+        cartons_per_pallet: Number(i.material?.cartons_per_pallet ?? 0),
+        pallets_remaining: 0, no_qr_tracking: i.material?.no_qr_tracking === true,
+        suggestions: [],
+      }
+      cur.cartons_ordered += Number(i.cartons_ordered ?? 0)
+      cur.cartons_scanned += Number(i.cartons_scanned ?? 0)
+      rowMap.set(key, cur)
+    }
+
+    // FEFO suggestions cho các mã hàng (1 batch query)
+    const matIds = [...new Set([...rowMap.values()].map(r => r.material_id).filter(Boolean))] as string[]
+    let locIds: string[] | null = null
+    if (warehouseIds.length) {
+      const { data: locs } = await (supabase.from('Location') as any)
+        .select('id').in('warehouse_id', warehouseIds)
+      locIds = ((locs ?? []) as any[]).map((l: any) => l.id as string)
+    }
+    if (matIds.length && (!locIds || locIds.length)) {
+      let q = (supabase.from('InventoryEntry') as any)
+        .select('material_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, location:Location(location_code), material:Material!material_id(shelf_life_days)')
+        .in('material_id', matIds)
+        .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING'])
+      if (locIds) q = q.in('location_id', locIds)
+      const { data: entries } = await q
+      const nowMs = Date.now()
+      const byMat = new Map<string, Map<string, { location_code: string | null; pct_date: number | null; available: number }>>()
+      for (const e of (entries ?? [])) {
+        const reserved  = Number(e.cartons_reserved ?? 0)
+        const available = Math.max(0, (e.cartons_remaining ?? e.cartons_imported ?? 0) - reserved)
+        if (available <= 0) continue
+        const shelfDays = e.material?.shelf_life_days ? Number(e.material.shelf_life_days) : 0
+        let pct_date: number | null = null
+        if (shelfDays > 0 && e.production_date) {
+          const totalMs   = shelfDays * 86_400_000
+          const remaining = new Date(e.production_date).getTime() + totalMs - nowMs
+          pct_date = Math.max(0, Math.round((remaining / totalMs) * 100))
+        }
+        const loc = e.location?.location_code ?? '(chưa xác định)'
+        const k = `${pct_date ?? 'n'}|${loc}`
+        const locMap = byMat.get(e.material_id) ?? new Map()
+        const cur = locMap.get(k) ?? { location_code: loc, pct_date, available: 0 }
+        cur.available += available
+        locMap.set(k, cur)
+        byMat.set(e.material_id, locMap)
+      }
+      for (const r of rowMap.values()) {
+        if (!r.material_id) continue
+        const locMap = byMat.get(r.material_id)
+        if (!locMap) continue
+        r.suggestions = [...locMap.values()].sort((a, b) => (a.pct_date ?? Infinity) - (b.pct_date ?? Infinity)).slice(0, 2)
+      }
+    }
+
+    // Tính còn lại + pallet cần; chỉ giữ mã còn phải chuẩn bị
+    const rows = [...rowMap.values()].map(r => {
+      r.cartons_remaining = Math.max(0, r.cartons_ordered - r.cartons_scanned)
+      r.pallets_remaining = r.cartons_per_pallet > 0 ? Math.ceil(r.cartons_remaining / r.cartons_per_pallet) : 0
+      return r
+    }).filter(r => r.cartons_remaining > 0)
+
+    // Sắp theo vị trí FEFO (đi 1 vòng theo vị trí), rồi mã hàng
+    rows.sort((a, b) => {
+      const la = a.suggestions[0]?.location_code ?? '￿'
+      const lb = b.suggestions[0]?.location_code ?? '￿'
+      if (la !== lb) return la < lb ? -1 : 1
+      return a.material_code.localeCompare(b.material_code)
+    })
+
+    return ok(res, {
+      rows,
+      total_cartons: rows.reduce((s, r) => s + r.cartons_remaining, 0),
+      total_pallets: rows.reduce((s, r) => s + r.pallets_remaining, 0),
+    })
+  } catch (e) { return fail(res, String(e)) }
+}
+
 // ─── Check scan validity (no save) ───────────────────────────
 
 export async function checkScanItem(req: Request, res: Response) {

@@ -1642,6 +1642,29 @@ export function useGDOPickSuggestions(gdoId: string | undefined) {
   })
 }
 
+// Bảng chuẩn bị hàng — gom nhiều GDO. queryKey bắt đầu 'gdo' → OutboundItem/ScanEntry đổi
+// tự invalidate (realtime trừ dần pallet cần chuẩn bị khi quét).
+export type PrepareRow = {
+  material_id: string | null; material_code: string; material_name: string | null
+  cartons_ordered: number; cartons_scanned: number; cartons_remaining: number
+  cartons_per_pallet: number; pallets_remaining: number; no_qr_tracking: boolean
+  suggestions: PickSuggestion[]
+}
+export type PrepareBoard = { rows: PrepareRow[]; total_cartons: number; total_pallets: number }
+
+export function usePrepareBoard(gdoIds: string[]) {
+  const key = [...gdoIds].sort().join(',')
+  return useQuery({
+    queryKey: ['gdo', 'prepare', key],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/outbound/prepare', { params: { gdo_ids: key } })
+      return data.data as PrepareBoard
+    },
+    enabled: gdoIds.length > 0,
+    staleTime: 10_000,
+  })
+}
+
 export function useManualItemStock(gdoId: string | undefined, itemId: string | undefined) {
   return useQuery({
     queryKey: ['manual-item-stock', gdoId, itemId],

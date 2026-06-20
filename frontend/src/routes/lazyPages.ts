@@ -11,6 +11,7 @@ const outbound           = () => import('@/pages/wms/Outbound')
 const outboundDetail     = () => import('@/pages/wms/OutboundDetail')
 const outboundItemDetail = () => import('@/pages/wms/OutboundItemDetail')
 const outboundScanLog    = () => import('@/pages/wms/OutboundScanLog')
+const outboundPrepare    = () => import('@/pages/wms/OutboundPrepare')
 const loosePicking           = () => import('@/pages/wms/LoosePicking')
 const loosePickingDetail     = () => import('@/pages/wms/LoosePickingDetail')
 const loosePickingItemDetail = () => import('@/pages/wms/LoosePickingItemDetail')
@@ -43,6 +44,7 @@ export const Pages = {
   OutboundDetail: lazy(outboundDetail),
   OutboundItemDetail: lazy(outboundItemDetail),
   OutboundScanLog: lazy(outboundScanLog),
+  OutboundPrepare: lazy(outboundPrepare),
   LoosePicking: lazy(loosePicking),
   LoosePickingDetail: lazy(loosePickingDetail),
   LoosePickingItemDetail: lazy(loosePickingItemDetail),

@@ -356,8 +356,10 @@ export default function PalletLabels() {
     search: auQr.trim().length >= 3 ? auQr.trim() : undefined,
     status: '', page: 1, limit: 500,
   }, tab === 'audit' && auReady)
-  const auPallets = (auInvData?.entries ?? []) as any[]
-  const auTotal = auInvData?.total ?? 0   // cảnh báo cụt nếu > số dòng tải (limit 500)
+  // Gate theo auReady: query này dùng CHUNG cache key với tab In lại khi filter rỗng
+  // (cùng params {status:'',page:1,limit:500}) → enabled:false vẫn đọc ké cache → phải chặn ở đây
+  const auPallets = (auReady ? (auInvData?.entries ?? []) : []) as any[]
+  const auTotal = auReady ? (auInvData?.total ?? 0) : 0   // cảnh báo cụt nếu > số dòng tải
 
   // (2) Lấy log in cho đúng tập mã pallet đó → ghép số lần in (0 nếu chưa in)
   const auCodes = useMemo(() => auPallets.map(e => e.pallet_code), [auPallets])

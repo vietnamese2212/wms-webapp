@@ -102,7 +102,7 @@ router.patch('/inventory/:id/unflag',             requirePerm('stocktake', 'comp
 router.post('/inventory/:id/stocktake',           requirePerm('stocktake', 'scan'), inventory.stocktakeEntry)
 
 // Loose picking (nhặt lẻ)
-router.get('/loosepicking', outbound.listLoosePickingItems)
+router.get('/loosepicking',                                   requirePerm('loosepicking', 'view'), outbound.listLoosePickingItems)
 
 // Outbound (chuyến xe / xuất kho)
 router.get('/outbound',                                       requirePerm('outbound', 'view'), outbound.listGDOs)

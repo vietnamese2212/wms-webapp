@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { MapPin, Plus, Pencil, Trash2, Flag, X, Rows3, AlignJustify } from 'lucide-react'
 import { formatDateTime } from '@/utils/formatters'
 import { omniMatch } from '@/utils/omniSearch'
@@ -20,6 +20,7 @@ import {
   useCreateLocation, useUpdateLocation, useDeleteLocation,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
+import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 
 
@@ -68,11 +69,17 @@ const LOC_COL_DEFAULTS = LOC_COLS.map(c => c.w)
 export default function Locations() {
   const user  = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
-  const [warehouseId,  setWarehouseId]  = useState(user?.warehouse_id ?? user?.warehouse_ids?.[0] ?? '')
-  const [catFilter,    setCatFilter]    = useState('')
-  const [search,       setSearch]       = useState('')
-  const [statusFilter, setStatusFilter] = useState<string[]>([])
-  const [flagFilter,   setFlagFilter]   = useState(false)
+  const { search, warehouseId, catFilter, statusFilter, flagFilter } = useWmsFilterStore(s => s.locations)
+  const setLocationsFilter = useWmsFilterStore(s => s.setLocations)
+
+  // Mặc định kho = kho của user nếu store chưa có (giữ UX cũ)
+  useEffect(() => {
+    if (!warehouseId) {
+      const def = user?.warehouse_id ?? user?.warehouse_ids?.[0] ?? ''
+      if (def) setLocationsFilter({ warehouseId: def })
+    }
+  }, [warehouseId, user, setLocationsFilter])
+
   const { widths: colW, startResize, totalWidth } = useColumnResize('locations_col_widths', LOC_COL_DEFAULTS)
   const [dense, setDense] = useState(() => localStorage.getItem('locations_density') !== 'comfortable')
   function toggleDensity() {
@@ -225,13 +232,13 @@ export default function Locations() {
   // ─── Filter chip bar (Manhattan) ───
   const filterDefs: FilterDef[] = [
     { key: 'warehouse', label: 'Kho', type: 'single', options: warehouses.map(w => ({ value: w.id, label: w.name })), value: warehouseId || '', allLabel: 'Tất cả kho',
-      onChange: v => { setWarehouseId(v); setCatFilter('') } },
+      onChange: v => setLocationsFilter({ warehouseId: v, catFilter: '' }) },
     { key: 'category', label: 'Loại kho', type: 'single', options: categoryOptions.map((c: string) => ({ value: c, label: c })), value: catFilter, allLabel: 'Tất cả loại',
-      onChange: v => setCatFilter(v) },
+      onChange: v => setLocationsFilter({ catFilter: v }) },
     { key: 'status', label: 'Trạng thái', type: 'multi', options: [{ value: 'inactive', label: 'Đã xóa' }], selected: statusFilter, searchable: false,
-      onChange: setStatusFilter },
+      onChange: v => setLocationsFilter({ statusFilter: v }) },
     { key: 'flag', label: 'Cần check hàng ngày', type: 'multi', options: [{ value: 'flag', label: 'Cần check hàng ngày' }], selected: flagFilter ? ['flag'] : [], searchable: false,
-      onChange: v => setFlagFilter(v.includes('flag')) },
+      onChange: v => setLocationsFilter({ flagFilter: v.includes('flag') }) },
   ]
 
   return (
@@ -243,7 +250,7 @@ export default function Locations() {
           <span className="text-sm font-semibold text-slate-700 shrink-0 flex items-center gap-1.5">
             <MapPin className="h-4 w-4 text-slate-500" /> Vị trí kho
           </span>
-          <SearchInput value={search} onChange={setSearch} placeholder="Tìm vị trí, kho, loại, hàng/kệ…" className="flex-1 min-w-[140px]" />
+          <SearchInput value={search} onChange={v => setLocationsFilter({ search: v })} placeholder="Tìm vị trí, kho, loại, hàng/kệ…" className="flex-1 min-w-[140px]" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
           <button type="button" onClick={toggleDensity}
             className="hidden sm:inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0"

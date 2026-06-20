@@ -84,6 +84,13 @@ export interface ScanLogApplied {
   cycles?: string
   scanner_name?: string
 }
+interface LocationsFilters {
+  search: string
+  warehouseId: string
+  catFilter: string
+  statusFilter: string[]
+  flagFilter: boolean
+}
 export type StocktakeView = 'problem' | 'flagged' | 'unchecked' | 'checked' | 'all'
 interface StocktakeFilters {
   warehouseId: string
@@ -141,6 +148,7 @@ interface WmsFilterState {
   scanLogApplied:    ScanLogApplied
   stocktake:         StocktakeFilters
   stocktakeSummary:  StocktakeSummaryFilters
+  locations:         LocationsFilters
   gateRegistration:  GateRegistrationFilters
   deliveries:        DeliveriesFilters
   materials:         MaterialsFilters
@@ -154,6 +162,7 @@ interface WmsFilterState {
   setScanLogApplied:    (f: ScanLogApplied)                    => void
   setStocktake:         (f: Partial<StocktakeFilters>)         => void
   setStocktakeSummary:  (f: Partial<StocktakeSummaryFilters>)  => void
+  setLocations:         (f: Partial<LocationsFilters>)         => void
   setGateRegistration:  (f: Partial<GateRegistrationFilters>)  => void
   setDeliveries:        (f: Partial<DeliveriesFilters>)        => void
   setMaterials:         (f: Partial<MaterialsFilters>)         => void
@@ -199,6 +208,7 @@ function initialFilters() {
     scanLogApplied: { from_date: today(), to_date: today() } as ScanLogApplied,
     stocktake:        { warehouseId: '', category: '', locationId: '', requiresOnly: false },
     stocktakeSummary: { warehouseId: '', category: '', locationId: '', requiresOnly: false, view: 'problem' as StocktakeView },
+    locations:        { search: '', warehouseId: '', catFilter: '', statusFilter: [], flagFilter: false },
     gateRegistration: {
       fDate: today(), fDateTo: '', fWarehouse: '', fWarehouseType: '',
       fVehicleTypes: [], fCompany: '', fDirection: '', fStatus: '',
@@ -225,6 +235,7 @@ export const useWmsFilterStore = create<WmsFilterState>()(
       setScanLogApplied:   (f) => set(_  => ({ scanLogApplied: f })),
       setStocktake:        (f) => set(s => ({ stocktake:        { ...s.stocktake,        ...f } })),
       setStocktakeSummary: (f) => set(s => ({ stocktakeSummary: { ...s.stocktakeSummary, ...f } })),
+      setLocations:        (f) => set(s => ({ locations:        { ...s.locations,        ...f } })),
       setGateRegistration: (f) => set(s => ({ gateRegistration: { ...s.gateRegistration, ...f } })),
       setDeliveries:       (f) => set(s => ({ deliveries:       { ...s.deliveries,       ...f } })),
       setMaterials:        (f) => set(s => ({ materials:        { ...s.materials,        ...f } })),

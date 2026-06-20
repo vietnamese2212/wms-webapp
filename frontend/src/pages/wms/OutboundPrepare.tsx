@@ -175,7 +175,6 @@ export default function OutboundPrepare() {
     .filter(w => !allowedWhIds || allowedWhIds.has(w.id))
 
   const gdoMeta = (g: GDO) => [
-    (g.delivery_codes ?? []).length ? `DO ${(g.delivery_codes ?? []).join(', ')}` : null,
     g.export_type || null,
     (g.distributor_names ?? []).join(', ') || null,
   ].filter(Boolean).join(' · ')
@@ -219,7 +218,7 @@ export default function OutboundPrepare() {
                   <div className="fixed inset-0 z-40" onClick={() => setAddOpen(false)} />
                   <div className="absolute left-0 top-full mt-1 z-50 w-[300px] bg-white border border-slate-200 rounded-lg shadow-xl">
                     <div className="p-2 border-b">
-                      <Input autoFocus value={addSearch} onChange={e => setAddSearch(e.target.value)} placeholder="Tìm số xe, DO, NPP…" className="h-7 text-xs" />
+                      <Input autoFocus value={addSearch} onChange={e => setAddSearch(e.target.value)} placeholder="Tìm số xe, loại xe, NPP…" className="h-7 text-xs" />
                     </div>
                     <div className="max-h-64 overflow-y-auto">
                       {gdosLoading ? (
@@ -287,13 +286,11 @@ export default function OutboundPrepare() {
             <TableHeader>
               <TableRow className="bg-slate-50">
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap sticky left-0 z-20 bg-slate-50">Vị trí (FEFO)</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">%Date</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Mã hàng</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Tên hàng</TableHead>
                 <TableHead className="text-[9px] font-medium text-sky-600 px-2 py-1.5 text-right whitespace-nowrap">Pallet cần</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Còn (thùng)</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Khả dụng</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-1 py-1.5 text-center w-8">Tồn</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -307,12 +304,14 @@ export default function OutboundPrepare() {
                       <div className="flex items-center gap-1">
                         <MapPin className="h-3 w-3 text-sky-500 shrink-0" />
                         <span className="text-[10px] font-mono text-slate-700">{sug?.location_code ?? '—'}</span>
+                        {r.material_id && (
+                          <button onClick={() => setInvMat({ id: r.material_id!, code: r.material_code, name: r.material_name ?? r.material_code })}
+                            className="inline-flex items-center justify-center h-5 w-5 rounded text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors shrink-0" title="Xem tồn kho">
+                            <Search className="h-3.5 w-3.5" />
+                          </button>
+                        )}
                       </div>
                       {r.suggestions[1] && <div className="text-[9px] font-mono text-slate-400 pl-4">{r.suggestions[1].location_code}</div>}
-                    </TableCell>
-                    <TableCell className="px-2 py-1 whitespace-nowrap">
-                      {sug ? <span className={`text-[10px] font-bold tabular-nums ${pctColor(sug.pct_date)}`}>{sug.pct_date !== null ? `${sug.pct_date}%` : '—'}</span>
-                           : <span className="text-[10px] text-slate-300">—</span>}
                     </TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap"><span className="text-[10px] font-mono font-semibold text-slate-700">{r.material_code}</span></TableCell>
                     <TableCell className="px-2 py-1">
@@ -330,14 +329,6 @@ export default function OutboundPrepare() {
                           {avail.toLocaleString('vi-VN')}{short && <span className="ml-0.5" title="Tồn gợi ý ít hơn số cần">⚠</span>}
                         </span>
                       ) : <span className="text-[10px] text-red-500">hết tồn</span>}
-                    </TableCell>
-                    <TableCell className="px-1 py-1 text-center">
-                      {r.material_id && (
-                        <button onClick={() => setInvMat({ id: r.material_id!, code: r.material_code, name: r.material_name ?? r.material_code })}
-                          className="inline-flex items-center justify-center h-6 w-6 rounded text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors" title="Xem tồn kho">
-                          <Search className="h-4 w-4" />
-                        </button>
-                      )}
                     </TableCell>
                   </TableRow>
                 )

@@ -3396,11 +3396,34 @@ export default function TMSBookings() {
               {tableRows.flatMap(({ order, vslot, slotIndex, isPrimary, secIndex, stt, sttRowspan, rowKey, spanRowKeys, blockKey, isFirstOrderRow, groupStatus, groupParity, showSlotCell, slotCellRowspan }, rowIndex) => {
                 // Khối = mọi dòng cùng đơn chủ (xe chính + xe phụ + đơn gom). Chỉ kẻ/ngăn ở ĐẦU và CUỐI khối,
                 // KHÔNG chia giữa các dòng cùng khối (tránh đứt đường nối khi 1 đơn đi nhiều xe).
-                const isBlockStart = rowIndex === 0 || tableRows[rowIndex - 1].blockKey !== blockKey
-                const isBlockEnd   = rowIndex === tableRows.length - 1 || tableRows[rowIndex + 1].blockKey !== blockKey
-                const isMultiRowBlock = !(isBlockStart && isBlockEnd)
-                // Phân nhóm CHỈ bằng nền (rowBg). Đường kẻ ngang giữa các dòng = mặc định của bảng (như bình thường),
-                // KHÔNG dùng khoảng trống/gap (gap làm mất vạch + đứt mũi tên).
+                // Nhóm để TÁCH (như bong bóng chat): phần XE NHÀ (cùng đơn, KHÔNG gom) là 1 nhóm; mỗi CỤM GOM
+                // (đơn chính + đơn phụ đi chung xe) là nhóm RIÊNG — nên cùng 1 đơn nhưng phần xe gom vẫn tách khỏi xe nhà.
+                const sepKeyOf = (i: number) => {
+                  const r = tableRows[i]
+                  return r.vslot.consolidation_group_id ? `cg-${r.vehicleGroupKey}` : `blk-${r.blockKey}`
+                }
+                const sepKey = sepKeyOf(rowIndex)
+                const sepStart = rowIndex === 0 || sepKeyOf(rowIndex - 1) !== sepKey
+                const sepEnd   = rowIndex === tableRows.length - 1 || sepKeyOf(rowIndex + 1) !== sepKey
+                const isMultiRowGroup = !(sepStart && sepEnd)
+                const prevGroupMulti  = rowIndex >= 2 && sepKeyOf(rowIndex - 2) === sepKeyOf(rowIndex - 1)
+                // Tách (khe trống ~bong bóng) ở RANH GIỚI có ÍT NHẤT 1 nhóm nhiều dòng (cụm xe / đơn gom).
+                // Giữa 2 đơn LẺ liền nhau = KHÔNG tách (chỉ kẻ ngang thường).
+                const showGap = sepStart && rowIndex > 0 && (isMultiRowGroup || prevGroupMulti)
+                // Nếu connector tree (cùng 1 đơn đi nhiều xe) băng qua khe → vẽ tiếp line dọc xám để KHÔNG đứt mũi tên.
+                const orderSpansGap = showGap && tableRows[rowIndex - 1].order.id === order.id
+                const grpSpacer = showGap
+                  ? (
+                    <tr key={`sp-${rowKey}`} aria-hidden className="pointer-events-none">
+                      <td className="p-0 border-0 w-8" />
+                      <td className="p-0 border-0 relative">
+                        {orderSpansGap && <div className="absolute left-1/2 top-0 bottom-0 w-px bg-slate-300" />}
+                        <div className="h-2" />
+                      </td>
+                      <td colSpan={22} className="p-0 border-0 bg-transparent" />
+                    </tr>
+                  )
+                  : null
                 const isConsolidated = !!vslot.consolidation_group_id
                 const isGroupHovered = spanRowKeys.includes(hoveredRow ?? '')
                 const rowTextCls = (() => {
@@ -3414,8 +3437,8 @@ export default function TMSBookings() {
                 // Phân biệt nhóm CHỈ bằng NỀN (không border): cụm GOM / xe ghép (đi chung xe với đơn khác) = nền sky;
                 // xe phụ thường (cùng đơn, nhiều xe) = nền slate; đơn LẺ 1 dòng = nền trắng.
                 // Nền đổi màu giữa các nhóm = đã đủ tách row, KHÔNG cắt đường nối tree (mũi tên liền mạch).
-                const rowBg = isConsolidated ? 'bg-sky-100' : (isMultiRowBlock ? 'bg-slate-50' : '')
-                return [
+                const rowBg = isConsolidated ? 'bg-sky-100' : (isMultiRowGroup ? 'bg-slate-50' : '')
+                return [grpSpacer,
                 <TableRow key={rowKey}
                   onMouseEnter={() => setHoveredRow(rowKey)}
                   onMouseLeave={() => setHoveredRow(null)}

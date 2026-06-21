@@ -3408,10 +3408,6 @@ export default function TMSBookings() {
                   ? <tr key={`sp-${rowKey}`} aria-hidden><td colSpan={25} className="p-0 border-0 bg-transparent"><div className="h-2" /></td></tr>
                   : null
                 const isConsolidated = !!vslot.consolidation_group_id
-                // Đầu CỤM GOM (xe chở chung đơn khác) trong cùng khối: kẻ 1 line mảnh tách khỏi xe phụ thường phía trên.
-                // Dùng border (không phải GAP) → chỉ "cắt ngang", KHÔNG làm hở/đứt đường nối tree.
-                const prevConsolidated = rowIndex > 0 && !!tableRows[rowIndex - 1].vslot.consolidation_group_id && tableRows[rowIndex - 1].blockKey === blockKey
-                const isConsolStart = isConsolidated && !prevConsolidated && !isBlockStart
                 const isGroupHovered = spanRowKeys.includes(hoveredRow ?? '')
                 const rowTextCls = (() => {
                   // Chuẩn table-format: chữ TRUNG TÍNH — trạng thái xem ở cột badge (Trạng thái / Tình trạng XH).
@@ -3421,10 +3417,10 @@ export default function TMSBookings() {
                   return ''
                 })()
                 const cellHoverBg = isGroupHovered ? 'bg-slate-100' : ''
-                // Cụm GOM (đi chung xe với đơn KHÁC): consolidation primary (vd 51C-10003) + các đơn gom (vd BV_324)
-                // -> NỔI nền trắng + accent dọc sky. KHÔNG dùng viền NGANG để phân biệt (viền ngang sẽ cắt đường nối tree);
-                // chỉ đổi nền + accent dọc => vừa tách rõ vừa giữ mũi tên liền mạch.
-                const rowBg = isConsolidated ? 'bg-white' : (isMultiRowBlock ? 'bg-slate-50' : '')
+                // Phân biệt nhóm CHỈ bằng NỀN (không border): cụm GOM / xe ghép (đi chung xe với đơn khác) = nền sky;
+                // xe phụ thường (cùng đơn, nhiều xe) = nền slate; đơn LẺ 1 dòng = nền trắng.
+                // Nền đổi màu giữa các nhóm = đã đủ tách row, KHÔNG cắt đường nối tree (mũi tên liền mạch).
+                const rowBg = isConsolidated ? 'bg-sky-100' : (isMultiRowBlock ? 'bg-slate-50' : '')
                 return [grpSpacer,
                 <TableRow key={rowKey}
                   onMouseEnter={() => setHoveredRow(rowKey)}
@@ -3434,13 +3430,6 @@ export default function TMSBookings() {
                   'hover:bg-transparent cursor-pointer',
                   rowTextCls,
                   rowBg,
-                  isConsolidated ? 'border-l-2 border-l-sky-400' : (isMultiRowBlock ? 'border-l-2 border-l-slate-300' : ''),
-                  // Vạch ngăn 2px chỉ ở ranh giới CÓ KHỐI NHIỀU DÒNG (tách cụm xe/đơn gom khỏi đơn khác).
-                  // Giữa các đơn LẺ liền nhau KHÔNG kẻ (row thường). KHÔNG kẻ giữa dòng cùng đơn (connector liền).
-                  showBlockSep ? 'border-t-2 border-t-slate-300' : '',
-                  // Tách đầu cụm gom (nhóm xe MỚI = ghép với đơn khác) khỏi xe phụ thường: vạch 2px sky rõ,
-                  // khớp accent trái của cụm → khung trên+trái. Là BORDER (cắt ngang) nên KHÔNG làm đứt mũi tên.
-                  isConsolStart ? 'border-t-2 border-t-sky-400' : '',
                 ].filter(Boolean).join(' ')}>
                   {stt !== null && (
                     <TableCell rowSpan={sttRowspan} className={`px-1 py-1 w-6 text-center align-middle border-r border-slate-100 ${cellHoverBg}`}>

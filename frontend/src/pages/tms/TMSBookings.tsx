@@ -2722,7 +2722,7 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
       onClose={() => setShowUpload(false)}
     />}
     <Dialog open={!!order} onOpenChange={v => !v && onClose()}>
-      <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-w-none w-full sm:w-[480px] sm:max-w-[92vw] h-[100dvh] max-h-[100dvh] rounded-none m-0 top-0 right-0 left-auto translate-x-0 translate-y-0 overflow-y-auto">
         <DialogHeader>
           <div className="flex items-start justify-between gap-2">
             <DialogTitle className="font-mono text-base">{order.order_code || 'Chi tiết đơn'}</DialogTitle>
@@ -3514,8 +3514,8 @@ export default function TMSBookings() {
                     )}
                   </TableCell>
 
-                  <TableCell className={`px-2 py-1 text-[10px] whitespace-nowrap ${cellHoverBg}`}>
-                    {isFirstOrderRow ? formatDate(order.date) : ''}
+                  <TableCell className={`px-2 py-1 text-[10px] font-mono whitespace-nowrap ${cellHoverBg}`}>
+                    {order.date ? formatDate(order.date) : <span className="text-slate-300">—</span>}
                   </TableCell>
                   {showSlotCell && (
                     <TableCell rowSpan={slotCellRowspan > 1 ? slotCellRowspan : undefined} className={`px-2 py-1 text-[10px] whitespace-nowrap align-middle ${cellHoverBg}`}>

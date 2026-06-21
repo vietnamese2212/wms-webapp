@@ -3445,6 +3445,8 @@ export default function TMSBookings() {
                   onClick={() => setDetailOrder(order)}
                   className={[
                   'hover:bg-transparent cursor-pointer',
+                  // Dòng đầu mỗi bong bóng (ngay sau khe trống) thiếu vạch trên vì spacer border-0 → thêm border-t.
+                  showGap ? 'border-t' : '',
                   rowTextCls,
                   rowBg,
                 ].filter(Boolean).join(' ')}>

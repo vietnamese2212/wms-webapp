@@ -2529,15 +2529,18 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
                         const cfg = tStatus ? TRANSFER_STATUS_CFG[tStatus] : null
                         const slot = o.vehicle_slots?.[0]
                         const dvvt = o.ncc?.name ?? o.transfer_gdo?.dvvt
-                        const rowCls = tStatus === 'DELIVERED'
-                          ? 'bg-slate-50 hover:bg-slate-100'
+                        // Màu HÀNG = CHỮ (không fill nền — chuẩn table-format). Ưu tiên: thiếu/thừa = ĐỎ;
+                        // Đã giao = xanh dương + gạch ngang; Đang nhận = cam; Đang vận chuyển = không màu.
+                        const rowDiscrepancy = !!o.receiving_started_at && (o.actual_received ?? 0) !== (o.planned_boxes ?? 0)
+                        const rowText = rowDiscrepancy
+                          ? 'text-red-600'
+                          : tStatus === 'DELIVERED'
+                          ? 'text-blue-600 line-through'
                           : tStatus === 'RECEIVING'
-                          ? 'bg-green-50 hover:bg-green-100'
-                          : tStatus === 'IN_TRANSIT'
-                          ? 'bg-amber-50 hover:bg-amber-100'
-                          : 'hover:bg-slate-50'
+                          ? 'text-amber-600'
+                          : ''
                         return (
-                          <tr key={o.id} className={`border-t border-slate-100 cursor-pointer ${rowCls}`}
+                          <tr key={o.id} className={`border-t border-slate-100 cursor-pointer hover:bg-slate-50 ${rowText}`}
                             onClick={() => setSelectedOrderId(o.id)}>
                             <td className="px-2 py-1 whitespace-nowrap">
                               {(o.transfer_gdo?.delivery_codes?.length ?? 0) > 0
@@ -2548,14 +2551,14 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
                               <span className="text-[10px] tabular-nums">{o.created_at ? formatDateTime(o.created_at).slice(0, 16) : '—'}</span>
                             </td>
                             <td className="px-2 py-1 whitespace-nowrap">
-                              <span className="text-[10px] text-slate-600">{o.transfer_gdo?.warehouse?.name ?? '—'}</span>
+                              <span className="text-[10px]">{o.transfer_gdo?.warehouse?.name ?? '—'}</span>
                             </td>
                             <td className="px-2 py-1 whitespace-nowrap">
-                              <span className="text-[10px] font-semibold text-blue-700">{o.warehouse?.name ?? o.transfer_gdo?.shipto_party ?? '—'}</span>
+                              <span className="text-[10px] font-semibold">{o.warehouse?.name ?? o.transfer_gdo?.shipto_party ?? '—'}</span>
                             </td>
                             <td className="px-2 py-1 whitespace-nowrap">
                               {o.receiving_started_at
-                                ? <span className="text-[10px] tabular-nums text-slate-600">{formatDateTime(o.receiving_started_at)}</span>
+                                ? <span className="text-[10px] tabular-nums">{formatDateTime(o.receiving_started_at)}</span>
                                 : <span className="text-slate-300 text-[10px]">—</span>}
                             </td>
                             <td className="px-2 py-1 whitespace-nowrap text-right">
@@ -2572,7 +2575,7 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
                               return (<>
                                 <td className="px-2 py-1 whitespace-nowrap text-right">
                                   {hasStarted
-                                    ? <span className="text-[10px] font-semibold tabular-nums text-blue-700">{actual}</span>
+                                    ? <span className="text-[10px] font-semibold tabular-nums">{actual}</span>
                                     : <span className="text-slate-300 text-[10px]">—</span>}
                                 </td>
                                 <td className="px-2 py-1 whitespace-nowrap text-right">
@@ -2589,11 +2592,11 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
                             })()}
                             <td className="px-2 py-1 whitespace-nowrap">
                               {o.eta
-                                ? <span className="text-[10px] font-semibold text-green-700">{formatDateTime(o.eta)}</span>
+                                ? <span className="text-[10px] font-semibold">{formatDateTime(o.eta)}</span>
                                 : <span className="text-[9px] text-slate-300">—</span>}
                             </td>
                             <td className="px-2 py-1 whitespace-nowrap">
-                              <span className="text-[10px] text-slate-600">{dvvt ?? <span className="text-slate-300">—</span>}</span>
+                              <span className="text-[10px]">{dvvt ?? <span className="text-slate-300">—</span>}</span>
                             </td>
                             <td className="px-2 py-1 whitespace-nowrap">
                               <span className="text-[10px] font-mono">{(slot?.license_plate ?? o.transfer_gdo?.license_plate) ?? <span className="text-slate-300">—</span>}</span>
@@ -2609,11 +2612,11 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
                                 : <span className="text-slate-300">—</span>}
                             </td>
                             <td className="px-2 py-1 whitespace-nowrap">
-                              <span className="text-[10px] font-mono text-slate-500">{o.transfer_gdo?.group_code ?? '—'}</span>
+                              <span className="text-[10px] font-mono">{o.transfer_gdo?.group_code ?? '—'}</span>
                             </td>
                             <td className="px-2 py-1 max-w-[160px]">
                               {o.notes
-                                ? <span className="text-[10px] text-slate-600 truncate block">{o.notes}</span>
+                                ? <span className="text-[10px] truncate block">{o.notes}</span>
                                 : <span className="text-slate-300 text-[10px]">—</span>}
                             </td>
                             <td className="px-2 py-1 whitespace-nowrap">
@@ -3362,7 +3365,8 @@ export default function TMSBookings() {
 
       {/* Content */}
       {activeTab === 'transfer' ? (
-        <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+        // KHÔNG overflow-auto ở đây — TransferOrdersPanel tự quản scroll (tránh lồng 2 lớp làm hỏng sticky header).
+        <div className="flex-1 min-h-0 flex flex-col">
           <TransferOrdersPanel
             canEdit={canEdit} canConfirmReceipt={canConfirmReceipt}
             userScope={user?.warehouse_scope ?? 'ASSIGNED'}

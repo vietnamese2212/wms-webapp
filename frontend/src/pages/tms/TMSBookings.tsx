@@ -2456,25 +2456,23 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
     return list
   }, [scopedOrders, dateFrom, dateTo, khoXuatFilter, khoNhanFilter])
 
+  // Gom filter tab Chuyển kho về 1 FilterBar (daterange Ngày xuất + Kho xuất/nhận) — đồng bộ tab Kế hoạch
+  const transferFilterDefs: FilterDef[] = [
+    { key: 'date', label: 'Ngày xuất', type: 'daterange', from: dateFrom, to: dateTo,
+      onChange: (f, t) => { setDateFrom(f); setDateTo(t) } },
+    ...(!isSingle ? [
+      { key: 'khoxuat', label: 'Kho xuất', type: 'multi' as const, options: khoXuatOptions, selected: khoXuatFilter, onChange: setKhoXuatFilter, searchable: true },
+      { key: 'khonhan', label: 'Kho nhận', type: 'multi' as const, options: khoNhanOptions, selected: khoNhanFilter, onChange: setKhoNhanFilter, searchable: true },
+    ] : []),
+  ]
+
   return (
     <div className="flex flex-col h-full">
       <TransferOrderDetail order={selectedOrder} canEdit={canEdit} canConfirmReceipt={canConfirmReceipt} onClose={() => setSelectedOrderId(null)} />
-      {/* ── Filter bar ── */}
+      {/* ── Filter bar (gom 1 chỗ qua FilterBar — đồng bộ tab Kế hoạch) ── */}
       <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b bg-white shrink-0">
-        <div className="flex items-center gap-1">
-          <span className="text-[10px] text-slate-500 shrink-0">Ngày xuất</span>
-          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
-            className="h-7 text-xs border border-slate-200 rounded px-1.5 font-mono" />
-          <span className="text-[10px] text-slate-400">—</span>
-          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
-            className="h-7 text-xs border border-slate-200 rounded px-1.5 font-mono" />
-          {(dateFrom || dateTo) && (
-            <button onClick={() => { setDateFrom(''); setDateTo('') }}
-              className="text-[10px] text-slate-400 hover:text-red-500 px-1">✕</button>
-          )}
-        </div>
-        {!isSingle && <MultiSelectFilter label="Kho xuất" options={khoXuatOptions} selected={khoXuatFilter} onChange={setKhoXuatFilter} searchable />}
-        {!isSingle && <MultiSelectFilter label="Kho nhận" options={khoNhanOptions} selected={khoNhanFilter} onChange={setKhoNhanFilter} searchable />}
+        <FilterBar defs={transferFilterDefs} />
+        <FilterSheetButton defs={transferFilterDefs} className="sm:hidden" />
       </div>
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
         {isLoading ? (
@@ -3371,6 +3369,7 @@ export default function TMSBookings() {
                   )}
                 </TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Mã đơn</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Ngày KH</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Tên NPP</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap w-10">Đặt giờ</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Khung giờ</TableHead>
@@ -3378,7 +3377,6 @@ export default function TMSBookings() {
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">ĐVVT</TableHead>
                 <TableHead className="text-[9px] font-medium text-red-500 px-2 py-1.5 whitespace-nowrap w-6">UT</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Hướng</TableHead>
-                {isNccUser && !warehouseId && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Kho</TableHead>}
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Loại kho</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Loại xe</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap text-right">Thùng</TableHead>
@@ -3391,6 +3389,7 @@ export default function TMSBookings() {
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Giờ ĐK</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Giờ vào</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Giờ ra</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Kho</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-16"></TableHead>
               </TableRow>
             </TableHeader>
@@ -3398,7 +3397,7 @@ export default function TMSBookings() {
               {tableRows.flatMap(({ order, vslot, slotIndex, isPrimary, secIndex, stt, sttRowspan, rowKey, spanRowKeys, isFirstOrderRow, groupStatus, groupParity, showSlotCell, slotCellRowspan }, rowIndex) => {
                 // Khoảng trống ~8px ngăn cách giữa các nhóm xe (xe chính/xe phụ/đơn gom) — như Inbound
                 const grpSpacer = isPrimary && rowIndex > 0
-                  ? <tr key={`sp-${rowKey}`} aria-hidden><td colSpan={23 + (isNccUser && !warehouseId ? 1 : 0)} className="p-0 border-0 bg-transparent"><div className="h-2" /></td></tr>
+                  ? <tr key={`sp-${rowKey}`} aria-hidden><td colSpan={25} className="p-0 border-0 bg-transparent"><div className="h-2" /></td></tr>
                   : null
                 const isConsolidated = !!vslot.consolidation_group_id
                 const isGroupHovered = spanRowKeys.includes(hoveredRow ?? '')
@@ -3489,6 +3488,9 @@ export default function TMSBookings() {
                       )
                     })()}
                   </TableCell>
+                  <TableCell className={`px-2 py-1 text-[10px] whitespace-nowrap ${cellHoverBg}`}>
+                    {isFirstOrderRow ? formatDate(order.date) : ''}
+                  </TableCell>
                   <TableCell className={`px-2 py-1 text-[10px] font-semibold max-w-[140px] truncate whitespace-nowrap ${cellHoverBg}`}>
                     {isPrimary
                       ? <>
@@ -3553,11 +3555,6 @@ export default function TMSBookings() {
                       ) : <span className="text-slate-400">—</span>}
                     </TableCell>
                   )}
-                  {isNccUser && !warehouseId && (
-                    <TableCell className={`px-2 py-1 text-[10px] whitespace-nowrap ${cellHoverBg}`}>
-                      {(warehouses as { id: string; name: string }[]).find(w => w.id === order.warehouse_id)?.name ?? '—'}
-                    </TableCell>
-                  )}
                   {/* Loại kho — merge qua tất cả rows cùng vehicle group */}
                   {stt !== null && (
                     <TableCell rowSpan={sttRowspan > 1 ? sttRowspan : undefined} className={`px-2 py-1 text-[10px] whitespace-nowrap align-middle ${cellHoverBg}`}>
@@ -3608,6 +3605,9 @@ export default function TMSBookings() {
                   </TableCell>
                   <TableCell className={`px-2 py-1 text-[10px] font-mono whitespace-nowrap ${cellHoverBg}`}>
                     {fmtTime(vslot.gate_exit_at)}
+                  </TableCell>
+                  <TableCell className={`px-2 py-1 text-[10px] whitespace-nowrap ${cellHoverBg}`}>
+                    {isFirstOrderRow ? ((warehouses as { id: string; name: string }[]).find(w => w.id === order.warehouse_id)?.name ?? '—') : ''}
                   </TableCell>
                   <TableCell className={`px-2 py-1 ${cellHoverBg}`}>
                     <div className="flex items-center gap-0.5">

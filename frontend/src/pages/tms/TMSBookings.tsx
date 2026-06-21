@@ -3073,6 +3073,7 @@ export default function TMSBookings() {
     vehicleGroupKey: number  // same for all rows in the same vehicle group (= primary stt)
     rowKey: string           // unique key for this row (matches <TableRow key>)
     spanRowKeys: string[]    // all row keys in this vehicle group (for merged-cell hover)
+    blockKey: string         // id đơn CHỦ — gom mọi dòng cùng cụm (xe chính + xe phụ + đơn gom) thành 1 khối
     isFirstOrderRow: boolean
     groupStatus: string      // primary slot's status (for group background)
     groupParity: number      // 0 or 1 based on stable STT, for alternating booked colors
@@ -3131,7 +3132,7 @@ export default function TMSBookings() {
           isPrimary: true, secIndex: 0,
           stt, sttRowspan: totalRows,
           vehicleGroupKey: stt,
-          rowKey: primaryRowKey, spanRowKeys,
+          rowKey: primaryRowKey, spanRowKeys, blockKey: order.id,
           isFirstOrderRow, groupStatus, groupParity,
           showSlotCell: true,
           slotCellRowspan: shouldMergeSlot ? totalRows : 1,
@@ -3147,7 +3148,7 @@ export default function TMSBookings() {
             isPrimary: false, secIndex: secIdx++,
             stt: null, sttRowspan: 0,
             vehicleGroupKey: stt,
-            rowKey: secRowKey, spanRowKeys,
+            rowKey: secRowKey, spanRowKeys, blockKey: order.id,
             isFirstOrderRow: isSecFirstOrderRow,
             groupStatus, groupParity,
             showSlotCell: !shouldMergeSlot,
@@ -3168,7 +3169,7 @@ export default function TMSBookings() {
         isPrimary: true, secIndex: 0,
         stt, sttRowspan: 1,
         vehicleGroupKey: stt,
-        rowKey: orphanRowKey, spanRowKeys: [orphanRowKey],
+        rowKey: orphanRowKey, spanRowKeys: [orphanRowKey], blockKey: order.id,
         isFirstOrderRow: true,
         groupStatus: slot.status, groupParity: stt % 2,
         showSlotCell: true, slotCellRowspan: 1,
@@ -3352,8 +3353,7 @@ export default function TMSBookings() {
         ) : !tableRows.length ? (
           <div className="py-24 text-center text-sm text-slate-400">Chưa có đơn hàng nào trong khoảng ngày này</div>
         ) : (
-          <div className="overflow-x-auto">
-          <Table className="min-w-[960px]">
+          <Table className="min-w-[960px] [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100">
             <TableHeader>
               <TableRow>
                 <TableHead className="px-1 py-1.5 w-6"></TableHead>
@@ -3394,9 +3394,14 @@ export default function TMSBookings() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {tableRows.flatMap(({ order, vslot, slotIndex, isPrimary, secIndex, stt, sttRowspan, rowKey, spanRowKeys, isFirstOrderRow, groupStatus, groupParity, showSlotCell, slotCellRowspan }, rowIndex) => {
-                // Khoảng trống ~8px ngăn cách giữa các nhóm xe (xe chính/xe phụ/đơn gom) — như Inbound
-                const grpSpacer = isPrimary && rowIndex > 0
+              {tableRows.flatMap(({ order, vslot, slotIndex, isPrimary, secIndex, stt, sttRowspan, rowKey, spanRowKeys, blockKey, isFirstOrderRow, groupStatus, groupParity, showSlotCell, slotCellRowspan }, rowIndex) => {
+                // Khối = mọi dòng cùng đơn chủ (xe chính + xe phụ + đơn gom). Chỉ kẻ/ngăn ở ĐẦU và CUỐI khối,
+                // KHÔNG chia giữa các dòng cùng khối (tránh đứt đường nối khi 1 đơn đi nhiều xe).
+                const isBlockStart = rowIndex === 0 || tableRows[rowIndex - 1].blockKey !== blockKey
+                const isBlockEnd   = rowIndex === tableRows.length - 1 || tableRows[rowIndex + 1].blockKey !== blockKey
+                const isMultiRowBlock = !(isBlockStart && isBlockEnd)
+                // Khoảng trống ~8px ngăn cách giữa các KHỐI (không chèn giữa dòng cùng khối)
+                const grpSpacer = isBlockStart && rowIndex > 0
                   ? <tr key={`sp-${rowKey}`} aria-hidden><td colSpan={25} className="p-0 border-0 bg-transparent"><div className="h-2" /></td></tr>
                   : null
                 const isConsolidated = !!vslot.consolidation_group_id
@@ -3409,8 +3414,10 @@ export default function TMSBookings() {
                   return ''
                 })()
                 const cellHoverBg = isGroupHovered ? 'bg-slate-100' : ''
-                // Cụm đi chung xe (đơn gom / đơn phụ) = nền slate nhạt + accent trái slate — 1 màu, thay cho viền nhiều màu cũ
-                const isCluster = isConsolidated || !isPrimary
+                // Đổi đơn trong cùng khối (đơn gom đi nhờ xe = mã đơn KHÁC) → kẻ ngăn + phân biệt
+                const orderChanged = !isBlockStart && tableRows[rowIndex - 1].order.id !== order.id
+                // Nền: đơn gom (đơn khác, !isPrimary) = trắng inset để NỔI khỏi khối; còn lại khối nhiều dòng = slate nhạt
+                const rowBg = !isPrimary ? 'bg-white' : (isMultiRowBlock ? 'bg-slate-50' : '')
                 return [grpSpacer,
                 <TableRow key={rowKey}
                   onMouseEnter={() => setHoveredRow(rowKey)}
@@ -3419,11 +3426,12 @@ export default function TMSBookings() {
                   className={[
                   'hover:bg-transparent cursor-pointer',
                   rowTextCls,
-                  isCluster ? 'bg-slate-50' : '',
-                  isCluster ? 'border-l-2 border-l-slate-300' : '',
-                  // Viền trên mảnh phân tách cụm xe (1 màu slate)
-                  isPrimary && rowIndex > 0 ? 'border-t border-t-slate-300'
-                    : !isPrimary ? 'border-t border-t-slate-100' : '',
+                  rowBg,
+                  isMultiRowBlock ? 'border-l-2 border-l-slate-300' : '',
+                  // Chỉ kẻ ĐẦU khối + CUỐI khối; thêm kẻ ngăn khi đổi sang đơn khác (đơn gom) trong khối
+                  isBlockStart ? 'border-t border-t-slate-300' : '',
+                  isBlockEnd ? 'border-b border-b-slate-300' : '',
+                  orderChanged ? 'border-t border-t-slate-300' : '',
                 ].filter(Boolean).join(' ')}>
                   {stt !== null && (
                     <TableCell rowSpan={sttRowspan} className={`px-1 py-1 w-6 text-center align-middle border-r border-slate-100 ${cellHoverBg}`}>
@@ -3682,7 +3690,6 @@ export default function TMSBookings() {
               })}
             </TableBody>
           </Table>
-          </div>
         )}
       </div>
 

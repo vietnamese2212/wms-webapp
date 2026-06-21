@@ -117,9 +117,12 @@ export const MODULES = {
   wms_settings: {
     label: 'Cài đặt WMS',
     actions: {
-      view:          'Xem cài đặt',
-      manage_zone:   'Quản lý khu vực kho (kho được assign)',
-      manage_global: 'Quản lý toàn bộ (kho, loại kho, khu vực, ca nhập, QA)',
+      view:             'Mở trang cài đặt',
+      manage_warehouse: 'Quản lý Kho',
+      manage_type:      'Quản lý Loại kho',
+      manage_zone:      'Quản lý Khu vực kho (kho được gán)',
+      manage_shift:     'Quản lý Ca nhập',
+      manage_qa:        'Quản lý Tình trạng QA',
     },
   },
   tms_plan: {

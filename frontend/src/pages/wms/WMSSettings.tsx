@@ -20,7 +20,7 @@ import {
   useQAStatuses, useCreateQAStatus, useUpdateQAStatus,
   type WarehouseZone,
 } from '@/api/hooks'
-import { can, type ModulePermissions } from '@/config/permissions'
+import { can, isAdmin, type ModulePermissions } from '@/config/permissions'
 import { useAuthStore } from '@/stores/authStore'
 
 function apiMsg(err: unknown) {
@@ -402,8 +402,21 @@ function MetaTab({ noun, rows, loading, canManage, onAdd, onEdit }: {
 export default function WMSSettings() {
   const user = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
-  const canManageGlobal = can(perms, 'wms_settings', 'manage_global')
-  const canManageZone   = can(perms, 'wms_settings', 'manage_zone') || canManageGlobal
+  const admin = isAdmin(user?.name)
+  // Mỗi tab = 1 quyền riêng (ẩn tab nếu không có quyền). Admin thấy hết.
+  const canManageWarehouse = admin || can(perms, 'wms_settings', 'manage_warehouse')
+  const canManageType      = admin || can(perms, 'wms_settings', 'manage_type')
+  const canManageZone      = admin || can(perms, 'wms_settings', 'manage_zone')
+  const canManageShift     = admin || can(perms, 'wms_settings', 'manage_shift')
+  const canManageQA        = admin || can(perms, 'wms_settings', 'manage_qa')
+  const visibleTabs = [
+    canManageWarehouse && 'warehouses',
+    canManageType      && 'types',
+    canManageZone      && 'zones',
+    canManageShift     && 'shifts',
+    canManageQA        && 'qa',
+  ].filter(Boolean) as string[]
+  const defaultTab = visibleTabs[0]
 
   // Kho
   const { data: allWh = [], isLoading: loadingWh } = useWarehouses(false)
@@ -424,7 +437,8 @@ export default function WMSSettings() {
 
   // Khu vực kho — lọc theo warehouse_scope của user
   const activeWh = (allWh as WhRow[]).filter(w => w.is_active)
-  const zoneAccessWh = canManageGlobal
+  // Scope kho cho tab Khu vực: ASSIGNED → chỉ kho được gán (khớp gác BE zoneController); còn lại → tất cả.
+  const zoneAccessWh = (admin || user?.warehouse_scope !== 'ASSIGNED')
     ? activeWh
     : activeWh.filter(w => (user?.warehouse_ids ?? []).includes(w.id))
   const [selectedWhId, setSelectedWhId] = useState('')
@@ -465,20 +479,25 @@ export default function WMSSettings() {
         <p className="text-xs text-slate-400 mt-0.5">Kho, loại kho, khu vực kho — master data dùng chung cho toàn hệ thống</p>
       </div>
 
-      <Tabs defaultValue="warehouses">
+      {!defaultTab ? (
+        <div className="p-12 text-center text-slate-400 text-sm">
+          Bạn chưa được cấp quyền quản lý mục nào trong Cài đặt WMS.
+        </div>
+      ) : (
+      <Tabs defaultValue={defaultTab}>
         <TabsList className="mb-2">
-          <TabsTrigger value="warehouses" className="gap-1.5"><Warehouse className="h-3.5 w-3.5" /> Kho</TabsTrigger>
-          <TabsTrigger value="types"      className="gap-1.5"><Tag      className="h-3.5 w-3.5" /> Loại kho</TabsTrigger>
-          <TabsTrigger value="zones"      className="gap-1.5"><MapPin     className="h-3.5 w-3.5" /> Khu vực kho</TabsTrigger>
-          <TabsTrigger value="shifts"     className="gap-1.5"><Clock      className="h-3.5 w-3.5" /> Ca nhập</TabsTrigger>
-          <TabsTrigger value="qa"         className="gap-1.5"><ShieldCheck className="h-3.5 w-3.5" /> Tình trạng QA</TabsTrigger>
+          {canManageWarehouse && <TabsTrigger value="warehouses" className="gap-1.5"><Warehouse className="h-3.5 w-3.5" /> Kho</TabsTrigger>}
+          {canManageType      && <TabsTrigger value="types"      className="gap-1.5"><Tag      className="h-3.5 w-3.5" /> Loại kho</TabsTrigger>}
+          {canManageZone      && <TabsTrigger value="zones"      className="gap-1.5"><MapPin     className="h-3.5 w-3.5" /> Khu vực kho</TabsTrigger>}
+          {canManageShift     && <TabsTrigger value="shifts"     className="gap-1.5"><Clock      className="h-3.5 w-3.5" /> Ca nhập</TabsTrigger>}
+          {canManageQA        && <TabsTrigger value="qa"         className="gap-1.5"><ShieldCheck className="h-3.5 w-3.5" /> Tình trạng QA</TabsTrigger>}
         </TabsList>
 
         {/* ── Tab: Kho ── */}
         <TabsContent value="warehouses" className="space-y-3">
           <div className="flex items-center justify-between">
             <p className="text-xs text-slate-500">{(allWh as WhRow[]).length} kho</p>
-            {canManageGlobal && (
+            {canManageWarehouse && (
               <Button size="sm" className="gap-1.5" onClick={() => { setEditingWh(null); setShowWhDlg(true) }}>
                 <Plus className="h-4 w-4" /> Thêm kho
               </Button>
@@ -496,7 +515,7 @@ export default function WMSSettings() {
                         <TableHead className="px-3 py-2 text-xs">Chức năng</TableHead>
                         <TableHead className="px-3 py-2 text-xs">Địa chỉ</TableHead>
                         <TableHead className="px-3 py-2 text-xs">Trạng thái</TableHead>
-                        {canManageGlobal && <TableHead className="px-3 py-2 w-16" />}
+                        {canManageWarehouse && <TableHead className="px-3 py-2 w-16" />}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -517,7 +536,7 @@ export default function WMSSettings() {
                               {wh.is_active ? 'Hoạt động' : 'Tạm dừng'}
                             </Badge>
                           </TableCell>
-                          {canManageGlobal && (
+                          {canManageWarehouse && (
                             <TableCell className="px-2 py-2">
                               <div className="flex items-center gap-0.5">
                                 <button className="text-slate-400 hover:text-blue-500 p-1 transition-colors"
@@ -566,7 +585,7 @@ export default function WMSSettings() {
             <p className="text-xs text-slate-500">
               Danh sách loại kho — dùng cho phân loại vị trí, mã hàng, phân quyền nhân viên và đăng ký vận chuyển TMS.
             </p>
-            {canManageGlobal && (
+            {canManageType && (
               <Button size="sm" className="gap-1.5 shrink-0" onClick={() => { setEditingType(null); setShowTypeDlg(true) }}>
                 <Plus className="h-4 w-4" /> Thêm loại kho
               </Button>
@@ -580,7 +599,7 @@ export default function WMSSettings() {
                   <div className="p-12 text-center text-slate-400 space-y-2">
                     <Tag className="h-10 w-10 mx-auto opacity-30" />
                     <p className="text-sm">Chưa có loại kho nào</p>
-                    {canManageGlobal && <p className="text-xs">Nhấn "Thêm loại kho" để tạo loại kho đầu tiên</p>}
+                    {canManageType && <p className="text-xs">Nhấn "Thêm loại kho" để tạo loại kho đầu tiên</p>}
                   </div>
                 ) : (
                   <div className="overflow-x-auto">
@@ -588,7 +607,7 @@ export default function WMSSettings() {
                       <TableHeader>
                         <TableRow>
                           <TableHead className="px-3 py-2 text-xs">Tên loại kho</TableHead>
-                          {canManageGlobal && <TableHead className="px-3 py-2 w-16" />}
+                          {canManageType && <TableHead className="px-3 py-2 w-16" />}
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -597,7 +616,7 @@ export default function WMSSettings() {
                             className={`text-sm cursor-pointer ${detailType?.id === t.id ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
                             onClick={() => setDetailType(prev => prev?.id === t.id ? null : t)}>
                             <TableCell className="px-3 py-2 font-medium text-slate-800">{t.value}</TableCell>
-                            {canManageGlobal && (
+                            {canManageType && (
                               <TableCell className="px-2 py-2">
                                 <div className="flex items-center gap-0.5">
                                   <button className="text-slate-400 hover:text-blue-500 p-1 transition-colors"
@@ -746,7 +765,7 @@ export default function WMSSettings() {
         {/* ── Tab: Ca nhập ── */}
         <TabsContent value="shifts">
           <p className="text-xs text-slate-500 mb-3">Danh mục ca nhập hàng — dùng khi tạo phiếu nhập kho.</p>
-          <MetaTab noun="ca nhập" rows={shifts} loading={loadingShifts} canManage={canManageGlobal}
+          <MetaTab noun="ca nhập" rows={shifts} loading={loadingShifts} canManage={canManageShift}
             onAdd={() => { setEditShift(null); setShowShiftDlg(true) }}
             onEdit={r => { setEditShift(r); setShowShiftDlg(true) }} />
         </TabsContent>
@@ -754,11 +773,12 @@ export default function WMSSettings() {
         {/* ── Tab: Tình trạng QA ── */}
         <TabsContent value="qa">
           <p className="text-xs text-slate-500 mb-3">Danh mục tình trạng kiểm định chất lượng — gắn cho từng pallet tồn kho.</p>
-          <MetaTab noun="trạng thái QA" rows={qaStatuses} loading={loadingQA} canManage={canManageGlobal}
+          <MetaTab noun="trạng thái QA" rows={qaStatuses} loading={loadingQA} canManage={canManageQA}
             onAdd={() => { setEditQA(null); setShowQADlg(true) }}
             onEdit={r => { setEditQA(r); setShowQADlg(true) }} />
         </TabsContent>
       </Tabs>
+      )}
 
       {showWhDlg && (
         <WarehouseDialog wh={editingWh} open={showWhDlg} onClose={() => setShowWhDlg(false)} />

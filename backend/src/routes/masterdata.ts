@@ -12,10 +12,10 @@ const router = Router()
 
 // Warehouse
 router.get('/warehouses',        warehouse.listWarehouses)
-router.post('/warehouses',       requirePerm('wms_settings', 'manage_global'), warehouse.createWarehouse)
+router.post('/warehouses',       requirePerm('wms_settings', 'manage_warehouse'), warehouse.createWarehouse)
 router.get('/warehouses/:id',    warehouse.getWarehouse)
-router.put('/warehouses/:id',    requirePerm('wms_settings', 'manage_global'), warehouse.updateWarehouse)
-router.delete('/warehouses/:id', requirePerm('wms_settings', 'manage_global'), warehouse.deleteWarehouse)
+router.put('/warehouses/:id',    requirePerm('wms_settings', 'manage_warehouse'), warehouse.updateWarehouse)
+router.delete('/warehouses/:id', requirePerm('wms_settings', 'manage_warehouse'), warehouse.deleteWarehouse)
 
 // Location
 router.get('/locations/sub-groups',  location.listSubGroups)   // ?warehouse_id=xxx
@@ -42,13 +42,13 @@ router.delete('/materials/:id',     requirePerm('materials', 'delete'), material
 
 // ImportShift (Ca nhập)
 router.get('/import-shifts',        shiftQa.listImportShifts)
-router.post('/import-shifts',       requirePerm('wms_settings', 'manage_global'), shiftQa.createImportShift)
-router.put('/import-shifts/:id',    requirePerm('wms_settings', 'manage_global'), shiftQa.updateImportShift)
+router.post('/import-shifts',       requirePerm('wms_settings', 'manage_shift'), shiftQa.createImportShift)
+router.put('/import-shifts/:id',    requirePerm('wms_settings', 'manage_shift'), shiftQa.updateImportShift)
 
 // QAStatus (Tình trạng QA)
 router.get('/qa-statuses',          shiftQa.listQAStatuses)
-router.post('/qa-statuses',         requirePerm('wms_settings', 'manage_global'), shiftQa.createQAStatus)
-router.put('/qa-statuses/:id',      requirePerm('wms_settings', 'manage_global'), shiftQa.updateQAStatus)
+router.post('/qa-statuses',         requirePerm('wms_settings', 'manage_qa'), shiftQa.createQAStatus)
+router.put('/qa-statuses/:id',      requirePerm('wms_settings', 'manage_qa'), shiftQa.updateQAStatus)
 
 // Department + JobTitle (cấu trúc tổ chức + phân quyền chức danh)
 router.get('/departments',          department.listDepartments)

@@ -36,9 +36,9 @@ router.get('/events', (req, res) => {
 
 // Lookup values (loại xuất, v.v.)
 router.get('/lookup',        lookup.listLookup)
-router.post('/lookup',       requirePerm('wms_settings', 'manage_global'), lookup.addLookup)
-router.put('/lookup/:id',    requirePerm('wms_settings', 'manage_global'), lookup.updateLookup)
-router.delete('/lookup/:id', requirePerm('wms_settings', 'manage_global'), lookup.deleteLookup)
+router.post('/lookup',       requirePerm('wms_settings', 'manage_type'), lookup.addLookup)
+router.put('/lookup/:id',    requirePerm('wms_settings', 'manage_type'), lookup.updateLookup)
+router.delete('/lookup/:id', requirePerm('wms_settings', 'manage_type'), lookup.deleteLookup)
 
 // In tem pallet — log truy vết (in mấy lần, ai in)
 router.post('/pallet-prints', requireAnyPerm(['pallet_print', 'generate'], ['pallet_print', 'reprint']), palletPrint.logPrints)
@@ -53,9 +53,9 @@ router.post('/pallet-ops/:id/undo', requireAnyPerm(['pallet_ops', 'merge'], ['pa
 
 // Warehouse zones (khu vực kho)
 router.get('/zones',         zone.listZones)
-router.post('/zones',        requireAnyPerm(['wms_settings', 'manage_zone'], ['wms_settings', 'manage_global']), zone.createZone)
-router.put('/zones/:id',     requireAnyPerm(['wms_settings', 'manage_zone'], ['wms_settings', 'manage_global']), zone.updateZone)
-router.delete('/zones/:id',  requireAnyPerm(['wms_settings', 'manage_zone'], ['wms_settings', 'manage_global']), zone.deleteZone)
+router.post('/zones',        requirePerm('wms_settings', 'manage_zone'), zone.createZone)
+router.put('/zones/:id',     requirePerm('wms_settings', 'manage_zone'), zone.updateZone)
+router.delete('/zones/:id',  requirePerm('wms_settings', 'manage_zone'), zone.deleteZone)
 
 // Inbound plan lines (kế hoạch nhập ngoài NCC)
 router.get('/inbound-plan',         requirePerm('inbound_plan', 'view'),   inboundPlan.listPlanLines)

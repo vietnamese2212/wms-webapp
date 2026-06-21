@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
+import { useColumnResize } from '@/components/shared/useColumnResize'
 import type { MSOpt } from '@/components/shared/MultiSelectFilter'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useAuthStore } from '@/stores/authStore'
@@ -2400,6 +2401,16 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
 
 // ── TransferOrdersPanel ───────────────────────────────────────────────────────
 
+// Cột bảng Chuyển kho (kéo giãn được) — label + độ rộng mặc định (px). Thứ tự PHẢI khớp <td> trong tbody.
+const TRANSFER_COLS: { label: string; align?: 'right' }[] = [
+  { label: 'Số DO' }, { label: 'Ngày xuất' }, { label: 'Kho xuất' }, { label: 'Kho nhận' },
+  { label: 'Ngày nhận' }, { label: 'Thùng KH', align: 'right' }, { label: 'Thực nhận', align: 'right' },
+  { label: 'Chênh lệch', align: 'right' }, { label: 'Tình trạng GN' }, { label: 'Dự kiến giao' },
+  { label: 'ĐVVT' }, { label: 'Biển số' }, { label: 'Số điện thoại' }, { label: 'Tình trạng' },
+  { label: 'Số GDO' }, { label: 'Ghi chú' }, { label: 'Mã lệnh' },
+]
+const TRANSFER_COL_DEFAULTS = [110, 120, 110, 110, 130, 70, 70, 80, 96, 130, 96, 96, 110, 100, 96, 170, 120]
+
 function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWarehouseId, userWarehouseIds }: {
   canEdit: boolean; canConfirmReceipt: boolean
   userScope: 'NATIONAL' | 'ASSIGNED'
@@ -2409,6 +2420,7 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
   const { data: orders = [], isLoading } = useTransferOrders()
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null)
   const selectedOrder = orders.find(o => o.id === selectedOrderId) ?? null
+  const { widths: colW, startResize, totalWidth } = useColumnResize('tms_transfer_col_widths', TRANSFER_COL_DEFAULTS)
 
   // Filter tab Chuyển kho per-user qua useWmsFilterStore — KHÔNG localStorage thuần
   const ttf    = useWmsFilterStore(s => s.tmsTransfer)
@@ -2487,12 +2499,27 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
                 <span className="text-[10px] font-semibold text-slate-500">Lệnh chuyển kho ({filtered.length}{filtered.length < orders.length ? `/${orders.length}` : ''})</span>
                 <span className="ml-2 text-[9px] text-slate-400">Click vào dòng để xem chi tiết</span>
               </div>
-                <div className="overflow-x-auto">
-                  <table className="min-w-max w-full">
+                {/* KHÔNG bọc overflow-x-auto riêng (sẽ tạo scroll container mới làm hỏng sticky header).
+                    Dùng overflow-auto DUY NHẤT ở container ngoài (2477) cho cả cuộn dọc + ngang.
+                    Cột kéo giãn: table-fixed + colgroup + tay kéo (useColumnResize). */}
+                <table className="table-fixed [&_th]:overflow-hidden [&_td]:overflow-hidden [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100" style={{ width: totalWidth, minWidth: '100%' }}>
+                    <colgroup>
+                      {colW.map((w, i) => <col key={i} style={{ width: w }} />)}
+                    </colgroup>
                     <thead className="sticky top-0 z-10 bg-slate-50">
                       <tr>
-                        {['Số DO', 'Ngày xuất', 'Kho xuất', 'Kho nhận', 'Ngày nhận', 'Thùng KH', 'Thực nhận', 'Chênh lệch', 'Tình trạng GN', 'Dự kiến giao', 'ĐVVT', 'Biển số', 'Số điện thoại', 'Tình trạng', 'Số GDO', 'Ghi chú', 'Mã lệnh'].map(h => (
-                          <th key={h} className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
+                        {TRANSFER_COLS.map((c, i) => (
+                          <th key={c.label} className={`relative px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap ${c.align === 'right' ? 'text-right' : 'text-left'}`}>
+                            {c.label}
+                            {i > 0 && (
+                              <span
+                                onPointerDown={e => startResize(i, e)}
+                                onClick={e => e.stopPropagation()}
+                                className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70"
+                                title="Kéo để chỉnh độ rộng cột"
+                              />
+                            )}
+                          </th>
                         ))}
                       </tr>
                     </thead>
@@ -2597,7 +2624,6 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
                       })}
                     </tbody>
                   </table>
-                </div>
             </>
           </>
         )}

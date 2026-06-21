@@ -3414,10 +3414,10 @@ export default function TMSBookings() {
                   return ''
                 })()
                 const cellHoverBg = isGroupHovered ? 'bg-slate-100' : ''
-                // Đổi đơn trong cùng khối (đơn gom đi nhờ xe = mã đơn KHÁC) → kẻ ngăn + phân biệt
-                const orderChanged = !isBlockStart && tableRows[rowIndex - 1].order.id !== order.id
-                // Nền: đơn gom (đơn khác, !isPrimary) = trắng inset để NỔI khỏi khối; còn lại khối nhiều dòng = slate nhạt
-                const rowBg = !isPrimary ? 'bg-white' : (isMultiRowBlock ? 'bg-slate-50' : '')
+                // Cụm GOM (đi chung xe với đơn KHÁC): consolidation primary (vd 51C-10003) + các đơn gom (vd BV_324)
+                // -> NỔI nền trắng + accent dọc sky. KHÔNG dùng viền NGANG để phân biệt (viền ngang sẽ cắt đường nối tree);
+                // chỉ đổi nền + accent dọc => vừa tách rõ vừa giữ mũi tên liền mạch.
+                const rowBg = isConsolidated ? 'bg-white' : (isMultiRowBlock ? 'bg-slate-50' : '')
                 return [grpSpacer,
                 <TableRow key={rowKey}
                   onMouseEnter={() => setHoveredRow(rowKey)}
@@ -3427,11 +3427,11 @@ export default function TMSBookings() {
                   'hover:bg-transparent cursor-pointer',
                   rowTextCls,
                   rowBg,
-                  isMultiRowBlock ? 'border-l-2 border-l-slate-300' : '',
-                  // Chỉ kẻ ĐẦU khối + CUỐI khối; thêm kẻ ngăn khi đổi sang đơn khác (đơn gom) trong khối
-                  isBlockStart ? 'border-t border-t-slate-300' : '',
-                  isBlockEnd ? 'border-b border-b-slate-300' : '',
-                  orderChanged ? 'border-t border-t-slate-300' : '',
+                  isConsolidated ? 'border-l-2 border-l-sky-400' : (isMultiRowBlock ? 'border-l-2 border-l-slate-300' : ''),
+                  // Chỉ kẻ NGOÀI khối NHIỀU DÒNG (đầu/cuối); đơn LẺ 1 dòng KHÔNG kẻ (chỉ cách bằng khoảng trống).
+                  // Không kẻ giữa khối để đường nối tree không bị đứt.
+                  isBlockStart && isMultiRowBlock ? 'border-t border-t-slate-300' : '',
+                  isBlockEnd && isMultiRowBlock ? 'border-b border-b-slate-300' : '',
                 ].filter(Boolean).join(' ')}>
                   {stt !== null && (
                     <TableCell rowSpan={sttRowspan} className={`px-1 py-1 w-6 text-center align-middle border-r border-slate-100 ${cellHoverBg}`}>

@@ -3402,18 +3402,15 @@ export default function TMSBookings() {
                 const isConsolidated = !!vslot.consolidation_group_id
                 const isGroupHovered = spanRowKeys.includes(hoveredRow ?? '')
                 const rowTextCls = (() => {
-                  // TmsOrder bị hủy (do INBOUND NCC không tới / kế hoạch bị cancel)
-                  if (order.status === 'CANCELLED') return 'text-slate-400 line-through opacity-60'
-                  // Gate status overrides booking status
-                  if (vslot.gate_export_status === 'Đã xuất')   return 'text-[#4A90D9] line-through'
-                  if (vslot.gate_export_status === 'Đang xuất') return 'text-[#D8891C]'
-                  if (vslot.gate_export_status === 'Đăng ký')   return 'text-[#E85AA0]'
-                  if (groupStatus === 'DONE')    return 'text-[#4A90D9] line-through'
-                  if (groupStatus === 'ARRIVED') return 'text-[#4A90D9]'
-                  if (groupStatus === 'BOOKED')  return 'text-green-700'
+                  // Chuẩn table-format: chữ TRUNG TÍNH — trạng thái xem ở cột badge (Trạng thái / Tình trạng XH).
+                  // Chỉ gạch ngang khi đã xuất/hoàn thành, xám mờ khi hủy.
+                  if (order.status === 'CANCELLED') return 'text-slate-400 line-through'
+                  if (vslot.gate_export_status === 'Đã xuất' || groupStatus === 'DONE') return 'text-slate-400 line-through'
                   return ''
                 })()
-                const cellHoverBg = isGroupHovered ? 'bg-slate-50' : ''
+                const cellHoverBg = isGroupHovered ? 'bg-slate-100' : ''
+                // Cụm đi chung xe (đơn gom / đơn phụ) = nền slate nhạt + accent trái slate — 1 màu, thay cho viền nhiều màu cũ
+                const isCluster = isConsolidated || !isPrimary
                 return [grpSpacer,
                 <TableRow key={rowKey}
                   onMouseEnter={() => setHoveredRow(rowKey)}
@@ -3422,14 +3419,11 @@ export default function TMSBookings() {
                   className={[
                   'hover:bg-transparent cursor-pointer',
                   rowTextCls,
-                  // Left border: standalone slate | xe chính teal | xe phụ purple | đơn phụ teal-400
-                  isPrimary
-                    ? (slotIndex > 0 ? 'border-l-4 border-l-purple-400' : (isConsolidated ? 'border-l-4 border-l-teal-600' : 'border-l-4 border-l-slate-300'))
-                    : 'border-l-4 border-l-teal-400',
-                  // Top border: dày khi vehicle group mới | mỏng khi đơn phụ sub-row
-                  isPrimary && rowIndex > 0
-                    ? (slotIndex > 0 ? 'border-t-2 border-t-purple-300' : (isConsolidated ? 'border-t-2 border-t-teal-500' : 'border-t-2 border-t-slate-400'))
-                    : !isPrimary ? 'border-t border-t-slate-200' : '',
+                  isCluster ? 'bg-slate-50' : '',
+                  isCluster ? 'border-l-2 border-l-slate-300' : '',
+                  // Viền trên mảnh phân tách cụm xe (1 màu slate)
+                  isPrimary && rowIndex > 0 ? 'border-t border-t-slate-300'
+                    : !isPrimary ? 'border-t border-t-slate-100' : '',
                 ].filter(Boolean).join(' ')}>
                   {stt !== null && (
                     <TableCell rowSpan={sttRowspan} className={`px-1 py-1 w-6 text-center align-middle border-r border-slate-100 ${cellHoverBg}`}>

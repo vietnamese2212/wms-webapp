@@ -3356,7 +3356,6 @@ export default function TMSBookings() {
           <Table className="min-w-[960px] [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100">
             <TableHeader>
               <TableRow>
-                <TableHead className="px-1 py-1.5 w-6"></TableHead>
                 <TableHead className="px-2 py-1.5 w-8">
                   {checkableOrderIds.length > 0 && (
                     <input
@@ -3405,7 +3404,7 @@ export default function TMSBookings() {
                 const showBlockSep = isBlockStart && rowIndex > 0 && (isMultiRowBlock || prevIsMultiRow)
                 // Khoảng trống ~8px ngăn cách quanh khối nhiều dòng (không chèn giữa dòng cùng khối, không chèn giữa đơn lẻ)
                 const grpSpacer = showBlockSep
-                  ? <tr key={`sp-${rowKey}`} aria-hidden><td colSpan={25} className="p-0 border-0 bg-transparent"><div className="h-2" /></td></tr>
+                  ? <tr key={`sp-${rowKey}`} aria-hidden><td colSpan={24} className="p-0 border-0 bg-transparent"><div className="h-2" /></td></tr>
                   : null
                 const isConsolidated = !!vslot.consolidation_group_id
                 const isGroupHovered = spanRowKeys.includes(hoveredRow ?? '')
@@ -3431,10 +3430,6 @@ export default function TMSBookings() {
                   rowTextCls,
                   rowBg,
                 ].filter(Boolean).join(' ')}>
-                  {stt !== null && (
-                    <TableCell rowSpan={sttRowspan} className={`px-1 py-1 w-6 text-center align-middle border-r border-slate-100 ${cellHoverBg}`}>
-                    </TableCell>
-                  )}
                   <TableCell
                     className={`px-2 py-1 w-8 ${cellHoverBg}`}
                     style={(() => {

@@ -2445,7 +2445,7 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
   // inline-block để không bị gạch ngang theo hàng "Đã giao".
   const ownMark = (whId?: string | null) =>
     accessibleIds && whId && accessibleIds.has(whId)
-      ? <span className="inline-block align-middle text-red-600 font-bold ml-0.5" title="Kho của bạn">*</span>
+      ? <Star className="inline-block align-middle h-3 w-3 ml-0.5 shrink-0 fill-red-500 text-red-500" aria-label="Kho của bạn" />
       : null
 
   // Data pool: NATIONAL xem tất, ASSIGNED lọc OR logic (kho xuất hoặc kho nhận thuộc quyền)

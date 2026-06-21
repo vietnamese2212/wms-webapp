@@ -3438,8 +3438,9 @@ export default function TMSBookings() {
                   // Vạch ngăn 2px chỉ ở ranh giới CÓ KHỐI NHIỀU DÒNG (tách cụm xe/đơn gom khỏi đơn khác).
                   // Giữa các đơn LẺ liền nhau KHÔNG kẻ (row thường). KHÔNG kẻ giữa dòng cùng đơn (connector liền).
                   showBlockSep ? 'border-t-2 border-t-slate-300' : '',
-                  // Tách đầu cụm gom khỏi xe phụ thường (line mảnh, cắt ngang nhưng không làm đứt mũi tên)
-                  isConsolStart ? 'border-t border-t-slate-300' : '',
+                  // Tách đầu cụm gom (nhóm xe MỚI = ghép với đơn khác) khỏi xe phụ thường: vạch 2px sky rõ,
+                  // khớp accent trái của cụm → khung trên+trái. Là BORDER (cắt ngang) nên KHÔNG làm đứt mũi tên.
+                  isConsolStart ? 'border-t-2 border-t-sky-400' : '',
                 ].filter(Boolean).join(' ')}>
                   {stt !== null && (
                     <TableCell rowSpan={sttRowspan} className={`px-1 py-1 w-6 text-center align-middle border-r border-slate-100 ${cellHoverBg}`}>

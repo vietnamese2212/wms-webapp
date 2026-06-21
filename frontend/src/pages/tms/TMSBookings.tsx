@@ -3400,8 +3400,11 @@ export default function TMSBookings() {
                 const isBlockStart = rowIndex === 0 || tableRows[rowIndex - 1].blockKey !== blockKey
                 const isBlockEnd   = rowIndex === tableRows.length - 1 || tableRows[rowIndex + 1].blockKey !== blockKey
                 const isMultiRowBlock = !(isBlockStart && isBlockEnd)
-                // Khoảng trống ~8px ngăn cách giữa các KHỐI (không chèn giữa dòng cùng khối)
-                const grpSpacer = isBlockStart && rowIndex > 0
+                // Chỉ ngăn cách khi có liên quan KHỐI NHIỀU DÒNG (cụm xe / đơn gom). Giữa các ĐƠN LẺ liền nhau = row thường, KHÔNG ngăn.
+                const prevIsMultiRow = rowIndex >= 2 && tableRows[rowIndex - 1].blockKey === tableRows[rowIndex - 2].blockKey
+                const showBlockSep = isBlockStart && rowIndex > 0 && (isMultiRowBlock || prevIsMultiRow)
+                // Khoảng trống ~8px ngăn cách quanh khối nhiều dòng (không chèn giữa dòng cùng khối, không chèn giữa đơn lẻ)
+                const grpSpacer = showBlockSep
                   ? <tr key={`sp-${rowKey}`} aria-hidden><td colSpan={25} className="p-0 border-0 bg-transparent"><div className="h-2" /></td></tr>
                   : null
                 const isConsolidated = !!vslot.consolidation_group_id
@@ -3428,9 +3431,9 @@ export default function TMSBookings() {
                   rowTextCls,
                   rowBg,
                   isConsolidated ? 'border-l-2 border-l-sky-400' : (isMultiRowBlock ? 'border-l-2 border-l-slate-300' : ''),
-                  // Vạch ngăn 2px ở ĐẦU mỗi ĐƠN mới → phân biệt rõ đơn này với đơn kế (kể cả đơn lẻ).
-                  // KHÔNG kẻ giữa các dòng CÙNG 1 đơn (đường nối tree liền mạch) — chỉ ở ranh giới đổi đơn (block).
-                  isBlockStart && rowIndex > 0 ? 'border-t-2 border-t-slate-300' : '',
+                  // Vạch ngăn 2px chỉ ở ranh giới CÓ KHỐI NHIỀU DÒNG (tách cụm xe/đơn gom khỏi đơn khác).
+                  // Giữa các đơn LẺ liền nhau KHÔNG kẻ (row thường). KHÔNG kẻ giữa dòng cùng đơn (connector liền).
+                  showBlockSep ? 'border-t-2 border-t-slate-300' : '',
                 ].filter(Boolean).join(' ')}>
                   {stt !== null && (
                     <TableCell rowSpan={sttRowspan} className={`px-1 py-1 w-6 text-center align-middle border-r border-slate-100 ${cellHoverBg}`}>

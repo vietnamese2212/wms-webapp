@@ -119,7 +119,7 @@ export const MODULES = {
     actions: {
       view:          'Xem cài đặt',
       manage_zone:   'Quản lý khu vực kho (kho được assign)',
-      manage_global: 'Quản lý toàn bộ (kho, loại kho, khu vực)',
+      manage_global: 'Quản lý toàn bộ (kho, loại kho, khu vực, ca nhập, QA)',
     },
   },
   tms_plan: {

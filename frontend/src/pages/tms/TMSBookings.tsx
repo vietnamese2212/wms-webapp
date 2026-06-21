@@ -2441,6 +2441,13 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
 
   const isSingle = accessibleIds !== null && accessibleIds.size <= 1
 
+  // Dấu * đỏ sau tên kho CỦA CHÍNH USER (kho xuất/nhận) để dễ nhìn. NATIONAL (full kho) → KHÔNG hiện.
+  // inline-block để không bị gạch ngang theo hàng "Đã giao".
+  const ownMark = (whId?: string | null) =>
+    accessibleIds && whId && accessibleIds.has(whId)
+      ? <span className="inline-block align-middle text-red-600 font-bold ml-0.5" title="Kho của bạn">*</span>
+      : null
+
   // Data pool: NATIONAL xem tất, ASSIGNED lọc OR logic (kho xuất hoặc kho nhận thuộc quyền)
   const scopedOrders = React.useMemo(() => {
     if (!accessibleIds) return orders as TransferOrder[]
@@ -2529,12 +2536,10 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
                         const cfg = tStatus ? TRANSFER_STATUS_CFG[tStatus] : null
                         const slot = o.vehicle_slots?.[0]
                         const dvvt = o.ncc?.name ?? o.transfer_gdo?.dvvt
-                        // Màu HÀNG = CHỮ (không fill nền — chuẩn table-format). Ưu tiên: thiếu/thừa = ĐỎ;
+                        // Màu HÀNG = CHỮ (không fill nền — chuẩn table-format). Theo TRẠNG THÁI:
                         // Đã giao = xanh dương + gạch ngang; Đang nhận = cam; Đang vận chuyển = không màu.
-                        const rowDiscrepancy = !!o.receiving_started_at && (o.actual_received ?? 0) !== (o.planned_boxes ?? 0)
-                        const rowText = rowDiscrepancy
-                          ? 'text-red-600'
-                          : tStatus === 'DELIVERED'
+                        // (Thiếu/thừa KHÔNG tô đỏ cả hàng — chỉ highlight ở riêng cột Tình trạng GN bên dưới.)
+                        const rowText = tStatus === 'DELIVERED'
                           ? 'text-blue-600 line-through'
                           : tStatus === 'RECEIVING'
                           ? 'text-amber-600'
@@ -2551,10 +2556,10 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
                               <span className="text-[10px] tabular-nums">{o.created_at ? formatDateTime(o.created_at).slice(0, 16) : '—'}</span>
                             </td>
                             <td className="px-2 py-1 whitespace-nowrap">
-                              <span className="text-[10px]">{o.transfer_gdo?.warehouse?.name ?? '—'}</span>
+                              <span className="text-[10px]">{o.transfer_gdo?.warehouse?.name ?? '—'}{ownMark(o.transfer_gdo?.warehouse?.id)}</span>
                             </td>
                             <td className="px-2 py-1 whitespace-nowrap">
-                              <span className="text-[10px] font-semibold">{o.warehouse?.name ?? o.transfer_gdo?.shipto_party ?? '—'}</span>
+                              <span className="text-[10px] font-semibold">{o.warehouse?.name ?? o.transfer_gdo?.shipto_party ?? '—'}{ownMark(o.warehouse?.id)}</span>
                             </td>
                             <td className="px-2 py-1 whitespace-nowrap">
                               {o.receiving_started_at
@@ -2583,9 +2588,11 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
                                     ? <span className={`text-[10px] font-semibold tabular-nums ${diffCls}`}>{diff > 0 ? `+${diff}` : diff}</span>
                                     : <span className="text-slate-300 text-[10px]">—</span>}
                                 </td>
+                                {/* Tình trạng GN = format RIÊNG: badge tự màu (đỏ=thiếu, cam=thừa, xanh=đủ).
+                                    inline-block để gạch ngang của hàng "Đã giao" KHÔNG xuyên qua badge (atomic inline). */}
                                 <td className="px-2 py-1 whitespace-nowrap">
                                   {hasStarted
-                                    ? <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${gnCls}`}>{gnLabel}</span>
+                                    ? <span className={`inline-block text-[9px] font-medium px-1.5 py-0.5 rounded-full ${gnCls}`}>{gnLabel}</span>
                                     : <span className="text-slate-300 text-[10px]">—</span>}
                                 </td>
                               </>)

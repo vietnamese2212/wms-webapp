@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import * as XLSX from 'xlsx'
-import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, CalendarDays, ShieldX, Lock, FileSpreadsheet, X, SlidersHorizontal, QrCode, CheckCircle2 } from 'lucide-react'
+import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, CalendarDays, ShieldX, Lock, FileSpreadsheet, X, QrCode, CheckCircle2 } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
+import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import type { MSOpt } from '@/components/shared/MultiSelectFilter'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -2922,10 +2923,11 @@ export default function TMSBookings() {
   const canUploadInbound  = can(perms, 'tms_plan', 'upload_inbound')
   const isNccUser = user?.department === 'Đơn vị vận tải'
 
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   // Filter state per-user qua useWmsFilterStore (scopedPersist) — KHÔNG localStorage thuần (sẽ dùng chung giữa user)
   const tf    = useWmsFilterStore(s => s.tmsBookings)
   const setTf = useWmsFilterStore(s => s.setTmsBookings)
-  const date           = tf.date;      const setDate           = (v: string)   => setTf({ date: v })
+  const dateFrom       = tf.dateFrom;  const dateTo            = tf.dateTo
   const warehouseId    = tf.warehouseId; const setWarehouseId  = (v: string)   => setTf({ warehouseId: v })
   const loaiKhoFilter  = tf.loaiKho;   const setLoaiKhoFilter  = (v: string[]) => setTf({ loaiKho: v })
   const loaiXeFilter   = tf.loaiXe;    const setLoaiXeFilter   = (v: string[]) => setTf({ loaiXe: v })
@@ -2933,13 +2935,12 @@ export default function TMSBookings() {
   const dvvtFilter     = tf.dvvt;      const setDvvtFilter     = (v: string[]) => setTf({ dvvt: v })
   const khungGioFilter = tf.khungGio;  const setKhungGioFilter = (v: string[]) => setTf({ khungGio: v })
   const [slotOverviewOpen, setSlotOverviewOpen] = useState(false)
-  const [showMoreFilters, setShowMoreFilters] = useState(false)
 
   // Tab Chuyển kho chỉ hiện khi có quyền confirm_receipt (#1) — ẩn hẳn nếu thiếu, ép về 'main'
   const setActiveTab = (t: 'main' | 'transfer') => setTf({ tab: t })
   const activeTab: 'main' | 'transfer' = (tf.tab === 'transfer' && !canConfirmReceipt) ? 'main' : tf.tab
 
-  useEffect(() => { setSelectedOrderIds(new Set()) }, [date, warehouseId])
+  useEffect(() => { setSelectedOrderIds(new Set()) }, [dateFrom, dateTo, warehouseId])
   const [createOpen, setCreateOpen] = useState(false)
   const [uploadOpen, setUploadOpen] = useState(false)
   const [inboundPlanUploadOpen, setInboundPlanUploadOpen] = useState(false)
@@ -2953,12 +2954,12 @@ export default function TMSBookings() {
   const [pendingRelease, setPendingRelease] = useState<{ type: 'release' | 'revoke' | 'delete'; id: string; vslot?: TmsVehicleSlot; label: string } | null>(null)
 
   const { data: warehouses = [] }             = useWarehouses(true)
-  const { data: slotsList = [] }              = useDeliverySlots(warehouseId ? { date, warehouse_id: warehouseId } : undefined)
+  const { data: slotsList = [] }              = useDeliverySlots(warehouseId ? { date: dateFrom, warehouse_id: warehouseId } : undefined)
   const { data: whTypesMain = [] }            = useWarehouseTypes()
   const { data: vehicleTypesMain = [] }       = useVehicleTypes(true)
   const { data: transportCompaniesMain = [] } = useTransportCompanies(true)
   const { data: orders = [], isLoading }      = useTmsOrders(
-    (warehouseId || isNccUser) ? { date, warehouse_id: warehouseId || undefined } : undefined,
+    (warehouseId || isNccUser) ? { date_from: dateFrom, date_to: dateTo || dateFrom, warehouse_id: warehouseId || undefined } : undefined,
   )
   const nppSuggestions = useMemo(() =>
     [...new Set((orders as TmsOrder[]).map(o => o.npp_name).filter(Boolean) as string[])].sort(),
@@ -3030,6 +3031,17 @@ export default function TMSBookings() {
     }
     return list
   }, [orders, huongFilter, dvvtFilter, loaiKhoFilter, loaiXeFilter, khungGioFilter])
+
+  // Tất cả filter tab Kế hoạch gom 1 chỗ qua FilterBar (ngày = daterange Từ–Đến)
+  const mainFilterDefs: FilterDef[] = [
+    { key: 'date', label: 'Ngày', type: 'daterange', from: dateFrom, to: dateTo,
+      onChange: (f, t) => { const nf = f || today; setTf({ dateFrom: nf, dateTo: t || nf }) } },
+    { key: 'khunggio', label: 'Khung giờ', type: 'multi', options: khungGioOptions, selected: khungGioFilter, onChange: setKhungGioFilter },
+    { key: 'huong',    label: 'Hướng',     type: 'multi', options: huongOptions,    selected: huongFilter,    onChange: setHuongFilter },
+    { key: 'dvvt',     label: 'ĐVVT',      type: 'multi', options: dvvtOptions,     selected: dvvtFilter,     onChange: setDvvtFilter },
+    { key: 'loaikho',  label: 'Loại kho',  type: 'multi', options: loaiKhoOptions,  selected: loaiKhoFilter,  onChange: setLoaiKhoFilter },
+    { key: 'loaixe',   label: 'Loại xe',   type: 'multi', options: loaiXeOptions,   selected: loaiXeFilter,   onChange: setLoaiXeFilter },
+  ]
 
 
   // STT ổn định theo toàn kho (không nhảy khi filter) — pre-compute trên ALL orders
@@ -3295,9 +3307,8 @@ export default function TMSBookings() {
         </div>
         {activeTab === 'main' && (
           <div className="flex items-center gap-2 flex-wrap">
-            <Input type="date" value={date} onChange={e => setDate(e.target.value)} className="h-8 text-sm w-36" />
             <Select value={warehouseId || '__none__'} onValueChange={v => setWarehouseId(v === '__none__' ? '' : v)}>
-              <SelectTrigger className="h-8 text-sm flex-1 min-w-[140px] max-w-[200px]"><SelectValue placeholder="— Chọn kho —" /></SelectTrigger>
+              <SelectTrigger className="h-8 text-sm w-[180px] min-w-[140px] max-w-[200px]"><SelectValue placeholder="— Chọn kho —" /></SelectTrigger>
               <SelectContent>
                 {isNccUser && <SelectItem value="__none__">— Tất cả kho —</SelectItem>}
                 {!isNccUser && <SelectItem value="__none__">— Chọn kho —</SelectItem>}
@@ -3306,22 +3317,8 @@ export default function TMSBookings() {
                 ))}
               </SelectContent>
             </Select>
-            {(warehouseId || isNccUser) && (() => {
-              const activeCnt = [khungGioFilter.length > 0, huongFilter.length > 0, dvvtFilter.length > 0, loaiKhoFilter.length > 0, loaiXeFilter.length > 0].filter(Boolean).length
-              return (
-                <Button
-                  variant="outline" size="sm"
-                  className={`h-8 text-xs gap-1 ${showMoreFilters || activeCnt > 0 ? 'border-blue-400 text-blue-700 bg-blue-50' : ''}`}
-                  onClick={() => setShowMoreFilters(v => !v)}
-                >
-                  <SlidersHorizontal className="h-3.5 w-3.5" />
-                  Bộ lọc
-                  {activeCnt > 0 && (
-                    <span className="ml-0.5 bg-blue-500 text-white rounded-full text-[9px] px-1 leading-none py-0.5">{activeCnt}</span>
-                  )}
-                </Button>
-              )
-            })()}
+            {(warehouseId || isNccUser) && <FilterBar defs={mainFilterDefs} />}
+            {(warehouseId || isNccUser) && <FilterSheetButton defs={mainFilterDefs} className="sm:hidden" />}
             {canChangeDate && selectedOrderIds.size > 0 && (
               <div className="flex items-center gap-2 w-full py-0.5">
                 <span className="text-xs text-slate-600 font-medium">{selectedOrderIds.size} đơn đã chọn</span>
@@ -3334,23 +3331,6 @@ export default function TMSBookings() {
               </div>
             )}
             {actionErr && <p className="text-xs text-red-600 w-full">{actionErr}</p>}
-          </div>
-        )}
-        {activeTab === 'main' && (warehouseId || isNccUser) && showMoreFilters && (
-          <div className="flex items-center gap-2 flex-wrap mt-2 pt-2 border-t">
-            <MultiSelectFilter label="Khung giờ" options={khungGioOptions} selected={khungGioFilter} onChange={setKhungGioFilter} />
-            <MultiSelectFilter label="Hướng" options={huongOptions} selected={huongFilter} onChange={setHuongFilter} />
-            <MultiSelectFilter label="ĐVVT" options={dvvtOptions} selected={dvvtFilter} onChange={setDvvtFilter} />
-            <MultiSelectFilter label="Loại kho" options={loaiKhoOptions} selected={loaiKhoFilter} onChange={setLoaiKhoFilter} />
-            <MultiSelectFilter label="Loại xe" options={loaiXeOptions} selected={loaiXeFilter} onChange={setLoaiXeFilter} />
-            {(khungGioFilter.length > 0 || huongFilter.length > 0 || dvvtFilter.length > 0 || loaiKhoFilter.length > 0 || loaiXeFilter.length > 0) && (
-              <button
-                className="text-[10px] text-slate-400 hover:text-red-500 underline"
-                onClick={() => { setKhungGioFilter([]); setHuongFilter([]); setDvvtFilter([]); setLoaiKhoFilter([]); setLoaiXeFilter([]) }}
-              >
-                Xóa bộ lọc
-              </button>
-            )}
           </div>
         )}
       </div>
@@ -3372,7 +3352,7 @@ export default function TMSBookings() {
         ) : isLoading ? (
           <div className="py-24 text-center text-sm text-slate-400">Đang tải...</div>
         ) : !tableRows.length ? (
-          <div className="py-24 text-center text-sm text-slate-400">Chưa có đơn hàng nào cho ngày này</div>
+          <div className="py-24 text-center text-sm text-slate-400">Chưa có đơn hàng nào trong khoảng ngày này</div>
         ) : (
           <div className="overflow-x-auto">
           <Table className="min-w-[960px]">
@@ -3724,7 +3704,7 @@ export default function TMSBookings() {
         open={createOpen || !!editOrder}
         order={editOrder}
         onClose={() => { setCreateOpen(false); setEditOrder(null) }}
-        defaultDate={date}
+        defaultDate={dateFrom}
         defaultWarehouseId={warehouseId}
         nppSuggestions={nppSuggestions}
       />
@@ -3737,13 +3717,13 @@ export default function TMSBookings() {
       <SlotOverviewDialog
         open={slotOverviewOpen}
         onClose={() => setSlotOverviewOpen(false)}
-        defaultDate={date}
+        defaultDate={dateFrom}
         warehouseId={warehouseId}
         warehouseName={warehouseName}
       />
       <InboundPlanBulkUploadDialog
         open={inboundPlanUploadOpen}
-        date={date}
+        date={dateFrom}
         warehouseId={warehouseId}
         onClose={() => setInboundPlanUploadOpen(false)}
       />
@@ -3758,7 +3738,7 @@ export default function TMSBookings() {
       <ChangeDateDialog
         open={changeDateOpen}
         orderIds={[...selectedOrderIds]}
-        currentDate={date}
+        currentDate={dateFrom}
         onClose={() => { setChangeDateOpen(false); setSelectedOrderIds(new Set()) }}
       />
       <OrderDetailDialog

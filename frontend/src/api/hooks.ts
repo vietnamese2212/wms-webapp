@@ -2078,14 +2078,14 @@ export function useGenerateSlots() {
 
 // ── TMS Orders ───────────────────────────────────────────────────────────────
 
-export function useTmsOrders(params?: { date?: string; warehouse_id?: string }) {
+export function useTmsOrders(params?: { date_from?: string; date_to?: string; warehouse_id?: string }) {
   return useQuery({
     queryKey: ['tms-orders', params],
     queryFn: async () => {
       const { data } = await apiClient.get('/tms/orders', { params })
       return data.data as import('@/types').TmsOrder[]
     },
-    enabled: !!params?.date,
+    enabled: !!params?.date_from,
   })
 }
 

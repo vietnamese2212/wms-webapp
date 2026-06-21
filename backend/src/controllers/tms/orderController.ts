@@ -38,7 +38,7 @@ const ORDER_SELECT = `
 // GET /api/tms/orders?date=YYYY-MM-DD&warehouse_id=...&source_type=TRANSFER&destination_warehouse_id=
 export async function listOrders(req: Request, res: Response) {
   try {
-    const { date, warehouse_id, source_type, destination_warehouse_id } = req.query as Record<string, string>
+    const { date, date_from, date_to, warehouse_id, source_type, destination_warehouse_id } = req.query as Record<string, string>
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const userNccId: string | null = (req as any).user?.ncc_id ?? null
@@ -123,14 +123,19 @@ export async function listOrders(req: Request, res: Response) {
       })))
     }
 
-    if (!date) return fail(res, 'date là bắt buộc', 400)
+    // Lọc theo khoảng ngày (date_from/date_to) — fallback `date` đơn cho tương thích cũ
+    const from = date_from || date
+    const to   = date_to || date
+    if (!from) return fail(res, 'date_from là bắt buộc', 400)
     if (!warehouse_id && !userNccId) return fail(res, 'warehouse_id là bắt buộc', 400)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let q = (supabase.from('TmsOrder') as any)
       .select(ORDER_SELECT)
-      .eq('date', date)
+      .gte('date', from)
+      .lte('date', to || from)
       .neq('source_type', 'TRANSFER')
+      .order('date', { ascending: false })
       .order('created_at')
 
     if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)

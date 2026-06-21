@@ -138,7 +138,8 @@ interface AssignmentFilters {
   dateFrom: string
 }
 interface TmsBookingsFilters {
-  date: string
+  dateFrom: string
+  dateTo: string
   warehouseId: string
   loaiKho: string[]
   loaiXe: string[]
@@ -239,7 +240,7 @@ function initialFilters() {
       dateFrom: (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }) })(),
       dateTo: today(), warehouseId: '', selCategories: [],
     },
-    tmsBookings: { date: today(), warehouseId: '', loaiKho: [], loaiXe: [], huong: [], dvvt: [], khungGio: [], tab: 'main' as const },
+    tmsBookings: { dateFrom: today(), dateTo: today(), warehouseId: '', loaiKho: [], loaiXe: [], huong: [], dvvt: [], khungGio: [], tab: 'main' as const },
     tmsTransfer: { dateFrom: '', dateTo: '', khoXuat: [], khoNhan: [] },
   }
 }

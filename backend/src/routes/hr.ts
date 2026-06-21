@@ -29,11 +29,11 @@ router.delete('/leaves/:id',     requirePerm('leave', 'delete'),  leave.deleteLe
 // ─── Layout (mẫu gom skill theo Kho) ─────────────────────────────────────────
 router.get('/layouts',               requirePerm('work_assignment', 'view'),   layout.listLayouts)
 router.get('/layouts/:id',           requirePerm('work_assignment', 'view'),   layout.getLayout)
-router.post('/layouts',              requirePerm('work_assignment', 'create'), layout.createLayout)
-router.put('/layouts/:id',           requirePerm('work_assignment', 'create'), layout.updateLayout)
-router.put('/layouts/:id/skills',    requirePerm('work_assignment', 'create'), layout.setLayoutSkills)
-router.put('/layouts/:id/job-titles', requirePerm('work_assignment', 'create'), layout.setLayoutJobTitles)
-router.delete('/layouts/:id',        requirePerm('work_assignment', 'create'), layout.deleteLayout)
+router.post('/layouts',              requirePerm('work_assignment', 'manage_layout'), layout.createLayout)
+router.put('/layouts/:id',           requirePerm('work_assignment', 'manage_layout'), layout.updateLayout)
+router.put('/layouts/:id/skills',    requirePerm('work_assignment', 'manage_layout'), layout.setLayoutSkills)
+router.put('/layouts/:id/job-titles', requirePerm('work_assignment', 'manage_layout'), layout.setLayoutJobTitles)
+router.delete('/layouts/:id',        requirePerm('work_assignment', 'manage_layout'), layout.deleteLayout)
 
 // ─── Phân công lịch làm việc ─────────────────────────────────────────────────
 router.get('/sheets',                 requirePerm('work_assignment', 'view'),    asg.listSheets)
@@ -47,8 +47,8 @@ router.delete('/sheets/:id',          requirePerm('work_assignment', 'delete'), 
 
 // ─── Quy tắc nghỉ giữa ca ────────────────────────────────────────────────────
 router.get('/shift-rules',        requirePerm('work_assignment', 'view'),   shiftRule.listShiftRules)
-router.post('/shift-rules',       requirePerm('work_assignment', 'create'), shiftRule.createShiftRule)
-router.delete('/shift-rules/:id', requirePerm('work_assignment', 'create'), shiftRule.deleteShiftRule)
+router.post('/shift-rules',       requirePerm('work_assignment', 'manage_shift_rules'), shiftRule.createShiftRule)
+router.delete('/shift-rules/:id', requirePerm('work_assignment', 'manage_shift_rules'), shiftRule.deleteShiftRule)
 
 // ─── Chấm công ───────────────────────────────────────────────────────────────
 router.get('/attendance/report', requirePerm('attendance', 'report'), att.reportAttendance)

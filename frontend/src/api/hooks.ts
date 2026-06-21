@@ -1,8 +1,8 @@
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import {
   mockInventory, mockTransactions, mockVehicles,
-  mockDeliveries, mockEmployees, mockSchedules,
-  mockLocations, mockOvertimeRequests,
+  mockDeliveries, mockEmployees,
+  mockLocations,
 } from '@/utils/mockData'
 import { apiClient } from './client'
 import { suppressTmsOrdersRealtime } from './realtimeEvents'
@@ -1063,20 +1063,6 @@ export function useEmployees() {
   return useQuery({
     queryKey: ['employees'],
     queryFn: async () => { await delay(); return mockEmployees },
-  })
-}
-
-export function useSchedules() {
-  return useQuery({
-    queryKey: ['schedules'],
-    queryFn: async () => { await delay(); return mockSchedules },
-  })
-}
-
-export function useOvertimeRequests() {
-  return useQuery({
-    queryKey: ['overtime'],
-    queryFn: async () => { await delay(); return mockOvertimeRequests },
   })
 }
 

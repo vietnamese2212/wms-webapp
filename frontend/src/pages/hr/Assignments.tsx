@@ -27,7 +27,7 @@ import {
   type SheetDetail, type LayoutRow,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
-import { can, type ModulePermissions } from '@/config/permissions'
+import { can, isAdmin, type ModulePermissions } from '@/config/permissions'
 import { formatDate, formatDateTime, formatTimestampDate } from '@/utils/formatters'
 
 const SHIFT_LABEL: Record<string, string> = { CA1: 'Ca 1', CA2: 'Ca 2', CA3: 'Ca 3', HC: 'HC' }
@@ -60,6 +60,10 @@ export default function Assignments() {
   const user  = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
   const canCreate = can(perms, 'work_assignment', 'create')
+  const admin = isAdmin(user?.name)
+  // Tab Layout / Quy tắc ca = quyền riêng (ẩn tab nếu thiếu). Admin thấy hết.
+  const canManageLayout     = admin || can(perms, 'work_assignment', 'manage_layout')
+  const canManageShiftRules = admin || can(perms, 'work_assignment', 'manage_shift_rules')
 
   const [tab, setTab] = useState<'daily' | 'layout' | 'rules'>('daily')
 
@@ -70,13 +74,13 @@ export default function Assignments() {
           <h1 className="text-base font-semibold text-slate-800">Phân công lịch làm việc</h1>
           <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-medium">
             <button onClick={() => setTab('daily')} className={`px-3 py-1.5 ${tab === 'daily' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Phân công</button>
-            <button onClick={() => setTab('layout')} className={`px-3 py-1.5 border-l border-slate-200 ${tab === 'layout' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Layout</button>
-            <button onClick={() => setTab('rules')} className={`px-3 py-1.5 border-l border-slate-200 ${tab === 'rules' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Quy tắc ca</button>
+            {canManageLayout && <button onClick={() => setTab('layout')} className={`px-3 py-1.5 border-l border-slate-200 ${tab === 'layout' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Layout</button>}
+            {canManageShiftRules && <button onClick={() => setTab('rules')} className={`px-3 py-1.5 border-l border-slate-200 ${tab === 'rules' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Quy tắc ca</button>}
           </div>
         </div>
         <div className="flex-1 min-h-0 flex flex-col">
           {tab === 'daily' ? <DailyTab canCreate={canCreate} perms={perms} />
-            : <div className="flex-1 min-h-0 overflow-auto">{tab === 'layout' ? <LayoutTab canCreate={canCreate} /> : <ShiftRulesTab canManage={canCreate} />}</div>}
+            : <div className="flex-1 min-h-0 overflow-auto">{tab === 'layout' ? <LayoutTab canCreate={canManageLayout} /> : <ShiftRulesTab canManage={canManageShiftRules} />}</div>}
         </div>
       </div>
     </div>

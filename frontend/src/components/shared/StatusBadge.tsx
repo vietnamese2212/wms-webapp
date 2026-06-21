@@ -1,11 +1,11 @@
 import { Badge } from '@/components/ui/badge'
 import type {
   TransactionStatus, TransactionType, DeliveryStatus,
-  VehicleStatus, EmployeeStatus, StockStatus, OvertimeStatus,
+  VehicleStatus, EmployeeStatus, StockStatus,
 } from '@/types'
 import {
   transactionStatusLabel, transactionTypeLabel, deliveryStatusLabel,
-  vehicleStatusLabel, employeeStatusLabel, stockStatusLabel, overtimeStatusLabel,
+  vehicleStatusLabel, employeeStatusLabel, stockStatusLabel,
 } from '@/utils/formatters'
 import type { BadgeProps } from '@/components/ui/badge'
 
@@ -53,12 +53,6 @@ const stockStatusVariant: Record<StockStatus, BadgeVariant> = {
   OUT_OF_STOCK: 'danger',
 }
 
-const overtimeStatusVariant: Record<OvertimeStatus, BadgeVariant> = {
-  PENDING: 'warning',
-  APPROVED: 'success',
-  REJECTED: 'danger',
-}
-
 export function TransactionStatusBadge({ status }: { status: TransactionStatus }) {
   return <Badge variant={transactionStatusVariant[status]}>{transactionStatusLabel[status]}</Badge>
 }
@@ -81,8 +75,4 @@ export function EmployeeStatusBadge({ status }: { status: EmployeeStatus }) {
 
 export function StockStatusBadge({ status }: { status: StockStatus }) {
   return <Badge variant={stockStatusVariant[status]}>{stockStatusLabel[status]}</Badge>
-}
-
-export function OvertimeStatusBadge({ status }: { status: OvertimeStatus }) {
-  return <Badge variant={overtimeStatusVariant[status]}>{overtimeStatusLabel[status]}</Badge>
 }

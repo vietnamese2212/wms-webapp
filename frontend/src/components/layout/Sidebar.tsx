@@ -66,7 +66,6 @@ const navGroups: NavGroup[] = [
       { to: '/hr/assignments', icon: CalendarRange, label: 'Phân công',     module: 'work_assignment' as ModuleKey },
       { to: '/hr/attendance',  icon: CalendarCheck, label: 'Chấm công',     module: 'attendance' as ModuleKey },
       { to: '/hr/org',         icon: Network,     label: 'Sơ đồ tổ chức',  module: 'employees' as ModuleKey },
-      { to: '/hr/schedule',    icon: Calendar,    label: 'Lịch làm việc',  module: 'schedule' },
     ],
   },
   {

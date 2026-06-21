@@ -9,7 +9,6 @@ export const ALL_PERMISSIONS: Record<string, string[]> = {
   employees:    ['view'],
   user_admin:   ['view', 'create', 'edit', 'set_password', 'delete', 'manage_roles'],
   deliveries:   ['view', 'create', 'edit'],
-  schedule:     ['view', 'create', 'approve'],
   wms_settings: ['view', 'manage_warehouse', 'manage_type', 'manage_zone', 'manage_shift', 'manage_qa'],
   tms_plan:          ['view', 'create', 'edit', 'delete', 'add_vehicle', 'release', 'change_date', 'book', 'revoke', 'upload_outbound', 'upload_inbound', 'confirm_receipt'],
   tms_vehicle_types: ['view', 'manage'],
@@ -23,6 +22,6 @@ export const ALL_PERMISSIONS: Record<string, string[]> = {
   pallet_ops:        ['view', 'merge', 'ungroup', 'split'],
   work_skill:        ['view', 'manage', 'assign'],
   leave:             ['view', 'request', 'approve', 'delete'],
-  work_assignment:   ['view', 'create', 'edit', 'publish', 'delete'],
+  work_assignment:   ['view', 'create', 'edit', 'publish', 'delete', 'manage_layout', 'manage_shift_rules'],
   attendance:        ['view', 'self_log', 'edit', 'report'],
 }

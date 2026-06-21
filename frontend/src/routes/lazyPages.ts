@@ -26,7 +26,6 @@ const tmsSettings = () => import('@/pages/tms/TMSSettings')
 const tmsBookings = () => import('@/pages/tms/TMSBookings')
 const tmsReport   = () => import('@/pages/tms/TMSReport')
 const gateRegistration = () => import('@/pages/tms/GateRegistration')
-const schedule = () => import('@/pages/hr/Schedule')
 const leaveManagement = () => import('@/pages/hr/LeaveManagement')
 const assignments = () => import('@/pages/hr/Assignments')
 const attendance = () => import('@/pages/hr/Attendance')
@@ -59,7 +58,6 @@ export const Pages = {
   TMSBookings: lazy(tmsBookings),
   TMSReport: lazy(tmsReport),
   GateRegistration: lazy(gateRegistration),
-  Schedule: lazy(schedule),
   LeaveManagement: lazy(leaveManagement),
   Assignments: lazy(assignments),
   Attendance: lazy(attendance),
@@ -92,7 +90,6 @@ const prefetchMap: Record<string, () => Promise<unknown>> = {
   '/hr/assignments': assignments,
   '/hr/attendance': attendance,
   '/hr/org': orgChart,
-  '/hr/schedule': schedule,
   '/masterdata/materials': materials,
   '/masterdata/users': userManagement,
   '/settings': settings,

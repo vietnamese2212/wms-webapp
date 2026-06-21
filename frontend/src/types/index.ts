@@ -204,32 +204,6 @@ export interface Shift {
   color: string
 }
 
-export type ScheduleStatus = 'SCHEDULED' | 'CONFIRMED' | 'ABSENT' | 'LATE'
-
-export interface Schedule {
-  id: string
-  employee: Employee
-  shift: Shift
-  date: string
-  status: ScheduleStatus
-  checkIn?: string
-  checkOut?: string
-  overtimeHours?: number
-}
-
-export type OvertimeStatus = 'PENDING' | 'APPROVED' | 'REJECTED'
-
-export interface OvertimeRequest {
-  id: string
-  employee: Employee
-  date: string
-  hours: number
-  reason: string
-  status: OvertimeStatus
-  approvedBy?: string
-  createdAt: string
-}
-
 // Masterdata – Ca nhập & Tình trạng QA
 export interface ImportShift {
   id:            string

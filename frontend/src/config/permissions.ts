@@ -106,14 +106,6 @@ export const MODULES = {
       edit:   'Sửa',
     },
   },
-  schedule: {
-    label: 'Lịch làm việc',
-    actions: {
-      view:   'Xem lịch',
-      create: 'Tạo lịch',
-      approve:'Duyệt / Từ chối',
-    },
-  },
   wms_settings: {
     label: 'Cài đặt WMS',
     actions: {
@@ -238,11 +230,13 @@ export const MODULES = {
   work_assignment: {
     label: 'Phân công lịch làm việc',
     actions: {
-      view:    'Xem phân công',
-      create:  'Tạo phiếu + Tự xếp',
-      edit:    'Sửa tay (đổi người)',
-      publish: 'Phát hành',
-      delete:  'Xóa phiếu',
+      view:               'Xem phân công',
+      create:             'Tạo phiếu + Tự xếp',
+      edit:               'Sửa tay (đổi người)',
+      publish:            'Phát hành',
+      delete:             'Xóa phiếu',
+      manage_layout:      'Quản lý Layout vị trí',
+      manage_shift_rules: 'Quản lý Quy tắc ca',
     },
   },
   attendance: {

@@ -14,7 +14,7 @@ const {
   LoosePicking, LoosePickingDetail, LoosePickingItemDetail,
   Locations, Stocktake, StocktakeDashboard, PalletLabels, PalletOps,
   Deliveries, WMSSettings, TMSSettings, TMSBookings, TMSReport, GateRegistration,
-  Schedule, LeaveManagement, Assignments, Attendance, OrgChart,
+  LeaveManagement, Assignments, Attendance, OrgChart,
   UserManagement, Materials, Settings,
 } = Pages
 
@@ -101,7 +101,6 @@ export default function App() {
         <Route path="/hr/assignments" element={<PermissionRoute module="work_assignment"><Assignments /></PermissionRoute>} />
         <Route path="/hr/attendance" element={<PermissionRoute module="attendance"><Attendance /></PermissionRoute>} />
         <Route path="/hr/org" element={<PermissionRoute module="employees"><OrgChart /></PermissionRoute>} />
-        <Route path="/hr/schedule" element={<PermissionRoute module="schedule"><Schedule /></PermissionRoute>} />
 
         {/* Masterdata */}
         <Route

@@ -1,7 +1,7 @@
 import type {
   Product, Location, InventoryItem, Transaction,
   Vehicle, Driver, DeliveryOrder,
-  Employee, Shift, Schedule, OvertimeRequest,
+  Employee, Shift,
 } from '@/types'
 
 export const mockProducts: Product[] = [
@@ -141,21 +141,6 @@ export const mockShifts: Shift[] = [
   { id: 'S002', name: 'Ca Chiều', type: 'AFTERNOON', startTime: '14:00', endTime: '22:00', daysOfWeek: [1,2,3,4,5,6], color: '#F59E0B' },
   { id: 'S003', name: 'Ca Tối', type: 'NIGHT', startTime: '22:00', endTime: '06:00', daysOfWeek: [1,2,3,4,5,6], color: '#8B5CF6' },
   { id: 'S004', name: 'Ca Hành Chính', type: 'FULL_DAY', startTime: '08:00', endTime: '17:00', daysOfWeek: [1,2,3,4,5], color: '#10B981' },
-]
-
-export const mockSchedules: Schedule[] = [
-  { id: 'SC001', employee: mockEmployees[1], shift: mockShifts[0], date: '2026-05-07', status: 'CONFIRMED', checkIn: '05:58', checkOut: '14:05' },
-  { id: 'SC002', employee: mockEmployees[2], shift: mockShifts[1], date: '2026-05-07', status: 'CONFIRMED', checkIn: '14:02' },
-  { id: 'SC003', employee: mockEmployees[3], shift: mockShifts[0], date: '2026-05-07', status: 'ABSENT' },
-  { id: 'SC004', employee: mockEmployees[7], shift: mockShifts[2], date: '2026-05-07', status: 'SCHEDULED' },
-  { id: 'SC005', employee: mockEmployees[0], shift: mockShifts[3], date: '2026-05-07', status: 'CONFIRMED', checkIn: '07:55' },
-  { id: 'SC006', employee: mockEmployees[4], shift: mockShifts[3], date: '2026-05-07', status: 'CONFIRMED', checkIn: '08:10' },
-]
-
-export const mockOvertimeRequests: OvertimeRequest[] = [
-  { id: 'OT001', employee: mockEmployees[1], date: '2026-05-08', hours: 3, reason: 'Nhập hàng gấp từ nhà cung cấp', status: 'APPROVED', approvedBy: 'Nguyễn Văn Quản Lý', createdAt: '2026-05-06T16:00:00Z' },
-  { id: 'OT002', employee: mockEmployees[2], date: '2026-05-09', hours: 2, reason: 'Xuất hàng khẩn cho đơn hàng lớn', status: 'PENDING', createdAt: '2026-05-07T09:00:00Z' },
-  { id: 'OT003', employee: mockEmployees[7], date: '2026-05-10', hours: 4, reason: 'Kiểm kho định kỳ', status: 'PENDING', createdAt: '2026-05-07T10:30:00Z' },
 ]
 
 export const dashboardKPIs = {

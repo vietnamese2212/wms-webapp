@@ -29,13 +29,18 @@ export default function PalletOps() {
   const canMerge   = can(perms, 'pallet_ops', 'merge')
   const canUngroup = can(perms, 'pallet_ops', 'ungroup')
   const canSplit   = can(perms, 'pallet_ops', 'split')
+  const canMergeTab = canMerge || canUngroup   // tab Dồn gồm dồn (merge) + gỡ nhóm (ungroup)
   // In tem chạm module In tem pallet (logPrints) → gate đúng quyền pallet_print theo mode
   const canGenLabel     = can(perms, 'pallet_print', 'generate')   // in tem con vừa tách (sinh mới)
   const canReprintLabel = can(perms, 'pallet_print', 'reprint')    // in lại tem từ lịch sử
 
   const [params] = useSearchParams()
   const initTab = params.get('tab') as Tab
-  const [tab, setTab] = useState<Tab>(['split', 'history'].includes(initTab) ? initTab : 'merge')
+  const [tab, setTab] = useState<Tab>(() => {
+    if (initTab === 'split' && canSplit) return 'split'
+    if (initTab === 'history') return 'history'
+    return canMergeTab ? 'merge' : canSplit ? 'split' : 'history'   // tab đầu tiên có quyền
+  })
   const [scanFor, setScanFor] = useState<null | 'target' | 'child' | 'source' | 'history'>(null)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
@@ -205,10 +210,10 @@ export default function PalletOps() {
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-sm font-semibold text-slate-700 shrink-0 flex items-center gap-1.5"><Layers className="h-4 w-4 text-slate-500" />Dồn / Tách pallet</span>
             <div className="flex rounded-lg border border-slate-200 overflow-x-auto text-xs font-medium max-w-full [&>button]:shrink-0 [&>button]:whitespace-nowrap">
-              <button onClick={() => { setTab('merge'); setMsg(null) }}
-                className={`px-3 py-1 inline-flex items-center gap-1 transition-colors ${tab === 'merge' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}><Layers className="h-3 w-3" />Dồn (gom nhóm)</button>
-              <button onClick={() => { setTab('split'); setMsg(null) }}
-                className={`px-3 py-1 border-l border-slate-200 inline-flex items-center gap-1 transition-colors ${tab === 'split' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}><Scissors className="h-3 w-3" />Tách số lượng</button>
+              {canMergeTab && <button onClick={() => { setTab('merge'); setMsg(null) }}
+                className={`px-3 py-1 inline-flex items-center gap-1 transition-colors ${tab === 'merge' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}><Layers className="h-3 w-3" />Dồn (gom nhóm)</button>}
+              {canSplit && <button onClick={() => { setTab('split'); setMsg(null) }}
+                className={`px-3 py-1 border-l border-slate-200 inline-flex items-center gap-1 transition-colors ${tab === 'split' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}><Scissors className="h-3 w-3" />Tách số lượng</button>}
               <button onClick={() => { setTab('history'); setMsg(null) }}
                 className={`px-3 py-1 border-l border-slate-200 inline-flex items-center gap-1 transition-colors ${tab === 'history' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}><History className="h-3 w-3" />Lịch sử</button>
             </div>

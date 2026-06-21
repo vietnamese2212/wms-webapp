@@ -21,7 +21,7 @@ import {
   useAddVehicleSlot, useUpdateVehicleSlot, useReleaseVehicleSlot, useRevokeVehicleSlot, useDeleteVehicleSlot,
   usePlanLinesByOrder, usePlanVsActual, useBulkCreatePlanLinesForOrder, useMaterials,
   useBulkCreatePlanLines, useUpdatePlanLine, useDeletePlanLine,
-  useTransferOrders, useCreateTransferOrder, useConfirmTransferReceipt, useCancelTransferReceipt, useGDOs, useTransferGoods,
+  useTransferOrders, useConfirmTransferReceipt, useCancelTransferReceipt, useTransferGoods,
   useActiveImportsByGdo, useCreateOneInbound,
   useCompleteInboundOrder, useScanManualPallet,
   type TransferOrder,
@@ -1830,89 +1830,6 @@ const TRANSFER_STATUS_CFG: Record<string, { label: string; cls: string }> = {
   IN_TRANSIT:       { label: 'Đang vận chuyển', cls: 'bg-blue-100 text-blue-700' },
   RECEIVING:        { label: 'Đang nhận',        cls: 'bg-green-100 text-green-700' },
   DELIVERED:        { label: 'Đã giao',          cls: 'bg-slate-100 text-slate-600' },
-}
-
-function CreateFromGDODialog({ open, warehouseId, onClose }: {
-  open: boolean; warehouseId: string; onClose: () => void
-}) {
-  void warehouseId
-  const [selectedGdo, setSelectedGdo] = useState<string>('')
-  const [err, setErr] = useState('')
-  const { data: gdos = [], isLoading } = useGDOs(open ? { transfer_status: 'PENDING_DELIVERY' } : undefined)
-  const { mutateAsync: createTransfer, isPending: saving } = useCreateTransferOrder()
-
-  const eligible = gdos as import('@/types').GDO[]
-
-  useEffect(() => { if (open) { setSelectedGdo(''); setErr('') } }, [open])
-
-  const handleCreate = async () => {
-    if (!selectedGdo) { setErr('Chọn GDO cần tạo lệnh chuyển'); return }
-    setErr('')
-    try {
-      await createTransfer({ gdo_id: selectedGdo })
-      onClose()
-    } catch (e: unknown) {
-      const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
-      setErr(msg ?? 'Lỗi tạo lệnh chuyển')
-    }
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={v => !v && onClose()}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader><DialogTitle>Tạo lệnh chuyển kho từ GDO</DialogTitle></DialogHeader>
-        <div className="space-y-3 py-2">
-          <p className="text-xs text-slate-500">Chọn đơn xuất đã Hoàn thành có kho đích (Ship-to) để tạo lệnh chuyển. Hàng hóa sẽ được tự động nạp từ đơn xuất.</p>
-          {isLoading ? (
-            <p className="text-xs text-slate-400 py-4 text-center">Đang tải...</p>
-          ) : eligible.length === 0 ? (
-            <p className="text-xs text-slate-400 py-4 text-center">Không có GDO nào phù hợp (cần COMPLETED + có Ship-to kho NPP + chưa tạo lệnh)</p>
-          ) : (
-            <div className="border rounded-lg overflow-auto max-h-64">
-              <table className="min-w-full text-[10px]">
-                <thead className="bg-slate-50 sticky top-0">
-                  <tr>
-                    {['', 'Số xe', 'Ngày xuất', 'Ship-to', 'Tình trạng'].map(h => (
-                      <th key={h} className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {(eligible as import('@/types').GDO[]).map(g => (
-                    <tr
-                      key={g.id}
-                      onClick={() => setSelectedGdo(g.id)}
-                      className={`border-t border-slate-100 cursor-pointer ${selectedGdo === g.id ? 'bg-blue-50' : 'hover:bg-slate-50'}`}
-                    >
-                      <td className="px-2 py-1">
-                        <input type="radio" readOnly checked={selectedGdo === g.id} className="h-3 w-3" />
-                      </td>
-                      <td className="px-2 py-1 font-mono font-semibold">{g.group_code}</td>
-                      <td className="px-2 py-1 tabular-nums">{g.delivery_date}</td>
-                      <td className="px-2 py-1 font-semibold text-blue-700">{g.shipto_party ?? '—'}</td>
-                      <td className="px-2 py-1">
-                        {g.transfer_status
-                          ? <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${TRANSFER_STATUS_CFG[g.transfer_status]?.cls ?? ''}`}>{TRANSFER_STATUS_CFG[g.transfer_status]?.label ?? g.transfer_status}</span>
-                          : <span className="text-slate-400">Chưa tạo</span>
-                        }
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-          {err && <p className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded">{err}</p>}
-        </div>
-        <DialogFooter>
-          <Button variant="outline" size="sm" onClick={onClose}>Hủy</Button>
-          <Button size="sm" onClick={handleCreate} disabled={saving || !selectedGdo}>
-            {saving ? 'Đang tạo...' : 'Tạo lệnh chuyển'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
 }
 
 // ── Transport Update Dialog (biển số + SĐT + Dự kiến giao) ──────────────────

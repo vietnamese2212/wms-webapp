@@ -2140,18 +2140,6 @@ export function useTransferGoods(orderId?: string | null) {
   })
 }
 
-export function useCreateTransferOrder() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (body: { gdo_id: string; ncc_id?: string; notes?: string }) =>
-      apiClient.post('/tms/orders/from-gdo', body).then(r => r.data.data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['tms-orders-transfer'] })
-      qc.invalidateQueries({ queryKey: ['gdos'] })
-    },
-  })
-}
-
 export function useConfirmTransferReceipt() {
   const qc = useQueryClient()
   return useMutation({

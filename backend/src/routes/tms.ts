@@ -32,7 +32,6 @@ router.post('/slots/generate', requireAnyPerm(['tms_plan', 'book'], ['tms_plan',
 // TmsOrder (Kế hoạch vận chuyển — điều vận tạo)
 router.get('/orders',                    requirePerm('tms_plan', 'view'),                                                    order.listOrders)
 router.post('/orders',                   requirePerm('tms_plan', 'create'),                                                  order.createOrder)
-router.post('/orders/from-gdo',          requirePerm('tms_plan', 'create'),                                                  order.createTransferOrder)
 router.post('/orders/bulk',              requireAnyPerm(['tms_plan', 'upload_outbound'], ['tms_plan', 'upload_inbound']),     order.bulkCreateOrders)
 router.patch('/orders/bulk-date',              requirePerm('tms_plan', 'change_date'),                                      order.bulkUpdateOrderDate)
 router.get('/orders/:id/transfer-goods',       requirePerm('tms_plan', 'view'),          order.getTransferGoods)

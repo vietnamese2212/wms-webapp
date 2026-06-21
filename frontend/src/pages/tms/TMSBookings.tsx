@@ -3399,13 +3399,8 @@ export default function TMSBookings() {
                 const isBlockStart = rowIndex === 0 || tableRows[rowIndex - 1].blockKey !== blockKey
                 const isBlockEnd   = rowIndex === tableRows.length - 1 || tableRows[rowIndex + 1].blockKey !== blockKey
                 const isMultiRowBlock = !(isBlockStart && isBlockEnd)
-                // Chỉ ngăn cách khi có liên quan KHỐI NHIỀU DÒNG (cụm xe / đơn gom). Giữa các ĐƠN LẺ liền nhau = row thường, KHÔNG ngăn.
-                const prevIsMultiRow = rowIndex >= 2 && tableRows[rowIndex - 1].blockKey === tableRows[rowIndex - 2].blockKey
-                const showBlockSep = isBlockStart && rowIndex > 0 && (isMultiRowBlock || prevIsMultiRow)
-                // Khoảng trống ~8px ngăn cách quanh khối nhiều dòng (không chèn giữa dòng cùng khối, không chèn giữa đơn lẻ)
-                const grpSpacer = showBlockSep
-                  ? <tr key={`sp-${rowKey}`} aria-hidden><td colSpan={24} className="p-0 border-0 bg-transparent"><div className="h-2" /></td></tr>
-                  : null
+                // Phân nhóm CHỈ bằng nền (rowBg). Đường kẻ ngang giữa các dòng = mặc định của bảng (như bình thường),
+                // KHÔNG dùng khoảng trống/gap (gap làm mất vạch + đứt mũi tên).
                 const isConsolidated = !!vslot.consolidation_group_id
                 const isGroupHovered = spanRowKeys.includes(hoveredRow ?? '')
                 const rowTextCls = (() => {
@@ -3420,7 +3415,7 @@ export default function TMSBookings() {
                 // xe phụ thường (cùng đơn, nhiều xe) = nền slate; đơn LẺ 1 dòng = nền trắng.
                 // Nền đổi màu giữa các nhóm = đã đủ tách row, KHÔNG cắt đường nối tree (mũi tên liền mạch).
                 const rowBg = isConsolidated ? 'bg-sky-100' : (isMultiRowBlock ? 'bg-slate-50' : '')
-                return [grpSpacer,
+                return [
                 <TableRow key={rowKey}
                   onMouseEnter={() => setHoveredRow(rowKey)}
                   onMouseLeave={() => setHoveredRow(null)}

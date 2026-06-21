@@ -3369,9 +3369,9 @@ export default function TMSBookings() {
                   )}
                 </TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Mã đơn</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Ngày KH</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Tên NPP</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap w-10">Đặt giờ</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Ngày KH</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Khung giờ</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Biển số</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">ĐVVT</TableHead>
@@ -3488,9 +3488,6 @@ export default function TMSBookings() {
                       )
                     })()}
                   </TableCell>
-                  <TableCell className={`px-2 py-1 text-[10px] whitespace-nowrap ${cellHoverBg}`}>
-                    {isFirstOrderRow ? formatDate(order.date) : ''}
-                  </TableCell>
                   <TableCell className={`px-2 py-1 text-[10px] font-semibold max-w-[140px] truncate whitespace-nowrap ${cellHoverBg}`}>
                     {isPrimary
                       ? <>
@@ -3517,6 +3514,9 @@ export default function TMSBookings() {
                     )}
                   </TableCell>
 
+                  <TableCell className={`px-2 py-1 text-[10px] whitespace-nowrap ${cellHoverBg}`}>
+                    {isFirstOrderRow ? formatDate(order.date) : ''}
+                  </TableCell>
                   {showSlotCell && (
                     <TableCell rowSpan={slotCellRowspan > 1 ? slotCellRowspan : undefined} className={`px-2 py-1 text-[10px] whitespace-nowrap align-middle ${cellHoverBg}`}>
                       {vslot.slot && (

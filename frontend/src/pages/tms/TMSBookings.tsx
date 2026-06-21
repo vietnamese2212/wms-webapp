@@ -3428,10 +3428,9 @@ export default function TMSBookings() {
                   rowTextCls,
                   rowBg,
                   isConsolidated ? 'border-l-2 border-l-sky-400' : (isMultiRowBlock ? 'border-l-2 border-l-slate-300' : ''),
-                  // Chỉ kẻ NGOÀI khối NHIỀU DÒNG (đầu/cuối); đơn LẺ 1 dòng KHÔNG kẻ (chỉ cách bằng khoảng trống).
-                  // Không kẻ giữa khối để đường nối tree không bị đứt.
-                  isBlockStart && isMultiRowBlock ? 'border-t border-t-slate-300' : '',
-                  isBlockEnd && isMultiRowBlock ? 'border-b border-b-slate-300' : '',
+                  // Vạch ngăn 2px ở ĐẦU mỗi ĐƠN mới → phân biệt rõ đơn này với đơn kế (kể cả đơn lẻ).
+                  // KHÔNG kẻ giữa các dòng CÙNG 1 đơn (đường nối tree liền mạch) — chỉ ở ranh giới đổi đơn (block).
+                  isBlockStart && rowIndex > 0 ? 'border-t-2 border-t-slate-300' : '',
                 ].filter(Boolean).join(' ')}>
                   {stt !== null && (
                     <TableCell rowSpan={sttRowspan} className={`px-1 py-1 w-6 text-center align-middle border-r border-slate-100 ${cellHoverBg}`}>

@@ -3,6 +3,23 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 
+// Phân trang TUẦN TỰ cho 1 query bất kỳ — né cap ~1000 dòng/response của PostgREST.
+// `makeQuery`: hàm trả về query MỚI mỗi lần (đã .select + filter + .order ổn định), CHƯA .range. Throw nếu lỗi.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function fetchAllPaged(makeQuery: () => any, pageSize = 1000): Promise<any[]> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rows: any[] = []
+  for (let p = 0; ; p++) {
+    const { data, error } = await makeQuery().range(p * pageSize, p * pageSize + pageSize - 1)
+    if (error) throw new Error(error.message)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const batch = (data ?? []) as any[]
+    rows.push(...batch)
+    if (batch.length < pageSize) break
+  }
+  return rows
+}
+
 const ORDER_SELECT = `
   *,
   ncc:TransportCompany!ncc_id(id, code, name),
@@ -83,10 +100,12 @@ export async function listOrders(req: Request, res: Response) {
         }
 
         if (qrImportIds.length) {
+          // Phân trang né cap-1000: tổng entry qua TẤT CẢ chuyến trong list dễ vượt 1000
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { data: entries } = await (supabase.from('InventoryEntry') as any)
+          const entries = await fetchAllPaged(() => (supabase.from('InventoryEntry') as any)
             .select('import_order_id, cartons_imported').in('import_order_id', qrImportIds)
-          for (const entry of (entries ?? []) as any[]) {
+            .order('import_order_id', { ascending: true }))
+          for (const entry of entries as any[]) {
             const ordId = importToOrder.get(entry.import_order_id)
             if (!ordId) continue
             actualReceivedByOrder.set(ordId, (actualReceivedByOrder.get(ordId) ?? 0) + (entry.cartons_imported ?? 0))
@@ -377,12 +396,13 @@ export async function getPlanVsActual(req: Request, res: Response) {
       for (const o of (actualOrders ?? []) as any[]) {
         importMaterialMap.set(o.id as string, o.material_id as string)
       }
+      // Phân trang: 1 chuyến chuyển kho có thể >1000 pallet → cap-1000 sẽ cụt tổng thực nhận
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: entries, error: entErr } = await (supabase.from('InventoryEntry') as any)
+      const entries = await fetchAllPaged(() => (supabase.from('InventoryEntry') as any)
         .select('import_order_id, cartons_imported')
         .in('import_order_id', importIds)
-      if (entErr) return fail(res, entErr.message)
-      for (const e of (entries ?? []) as any[]) {
+        .order('import_order_id', { ascending: true }))
+      for (const e of entries as any[]) {
         const mid = importMaterialMap.get(e.import_order_id as string)
         if (!mid) continue
         actualBoxMap.set(mid, (actualBoxMap.get(mid) ?? 0) + ((e.cartons_imported ?? 0) as number))
@@ -507,14 +527,14 @@ export async function getInboundReport(req: Request, res: Response) {
     }
 
     if (importIds.length > 0) {
+      // Phân trang né cap-1000 (báo cáo nhập gộp nhiều chuyến → có thể >1000 entry)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: entries, error: entErr } = await (supabase.from('InventoryEntry') as any)
+      const entries = await fetchAllPaged(() => (supabase.from('InventoryEntry') as any)
         .select('import_order_id, cartons_imported')
         .in('import_order_id', importIds)
-      if (entErr) return fail(res, entErr.message)
-
+        .order('import_order_id', { ascending: true }))
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      for (const e of (entries ?? []) as any[]) {
+      for (const e of entries as any[]) {
         const meta = importMeta.get(e.import_order_id)
         if (!meta) continue
         const key = `${meta.tms_order_id}/${meta.material_id}`
@@ -998,12 +1018,14 @@ export async function getTransferGoods(req: Request, res: Response) {
     const inboundByMaterialId = new Map<string, InboundPallet & { pallet_code: string }>()
 
     if (importIds.length) {
+      // Phân trang né cap-1000: 1 chuyến chuyển kho có thể >1000 pallet → bảng hàng/chênh lệch sẽ cụt
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: entries } = await (supabase.from('InventoryEntry') as any)
+      const entries = await fetchAllPaged(() => (supabase.from('InventoryEntry') as any)
         .select('material_id, pallet_code, cartons_imported, created_at')
         .in('import_order_id', importIds)
+        .order('import_order_id', { ascending: true }))
 
-      for (const entry of entries ?? []) {
+      for (const entry of entries) {
         if (!entry.pallet_code) continue
         const existing = inboundByPalletCode.get(entry.pallet_code)
         inboundByPalletCode.set(entry.pallet_code, {

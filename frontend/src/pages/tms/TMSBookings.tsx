@@ -13,6 +13,7 @@ import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect
 import type { MSOpt } from '@/components/shared/MultiSelectFilter'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useAuthStore } from '@/stores/authStore'
+import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import {
   useWarehouses, useWarehouseTypes, useVehicleTypes, useVehicleTypesByWarehouse, useTransportCompanies, useTmsVehicles,
   useDeliverySlots, useGenerateSlots,
@@ -2115,6 +2116,13 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
     : []
   const cfg = tStatus ? TRANSFER_STATUS_CFG[tStatus] : null
   const totalScanned = goods.reduce((s, g) => s + (g.actual_boxes ?? 0), 0)
+  // Nhận QUÁ kế hoạch (#4): cảnh báo, KHÔNG chặn — liệt kê mã hàng thực nhận > kế hoạch
+  const overReceivedMats = goods.filter(g => {
+    const imp = importByMat.get(g.material_id)
+    const isNoQrRow = g.no_qr_tracking === true || imp?.material?.no_qr_tracking === true
+    const actual = isNoQrRow ? Math.max(g.actual_boxes ?? 0, imp?.total_cartons ?? 0) : (g.actual_boxes ?? 0)
+    return (g.planned_boxes ?? 0) > 0 && actual > (g.planned_boxes ?? 0)
+  })
   const dvvtDisplay = order?.ncc?.name ?? order?.transfer_gdo?.dvvt ?? null
 
   return (
@@ -2227,6 +2235,11 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
             </div>
             {confirmErr && <p className="text-xs text-red-600 bg-red-50 px-2 py-1 rounded mt-1">{confirmErr}</p>}
             {actionErr && <p className="text-xs text-red-600 bg-red-50 px-2 py-1 rounded mt-1">{actionErr}</p>}
+            {overReceivedMats.length > 0 && (
+              <p className="text-xs text-red-700 bg-red-50 border border-red-200 px-2 py-1 rounded mt-1">
+                ⚠ Nhận VƯỢT kế hoạch ở {overReceivedMats.length} mã hàng — kiểm tra lại số lượng. Vẫn cho phép nhận.
+              </p>
+            )}
             {/* Dòng 2: Info grid */}
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-0.5 text-[11px]">
               <div className="flex gap-2">
@@ -2360,9 +2373,10 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                             {(() => {
                               const diff = actualCartons - g.planned_boxes
                               const hasData = actualCartons > 0
-                              const diffCls = diff === 0 ? 'text-green-700' : diff > 0 ? 'text-amber-600' : 'text-red-600'
+                              // Nhận VƯỢT kế hoạch (diff>0) = đỏ cảnh báo (#4); thiếu (đang nhận) = amber
+                              const diffCls = diff === 0 ? 'text-green-700' : diff > 0 ? 'text-red-600' : 'text-amber-600'
                               const gnLabel = diff === 0 ? 'Đủ' : diff > 0 ? `Thừa +${diff}` : `Thiếu ${diff}`
-                              const gnCls = diff === 0 ? 'bg-green-100 text-green-700' : diff > 0 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'
+                              const gnCls = diff === 0 ? 'bg-green-100 text-green-700' : diff > 0 ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
                               return (<>
                                 <td className="px-2 py-1 whitespace-nowrap text-right">
                                   {hasData
@@ -2478,19 +2492,13 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null)
   const selectedOrder = orders.find(o => o.id === selectedOrderId) ?? null
 
-  const [dateFrom, setDateFrom] = useState(() => localStorage.getItem('tmsb_tf_from') ?? '')
-  const [dateTo, setDateTo]     = useState(() => localStorage.getItem('tmsb_tf_to') ?? '')
-  const [khoXuatFilter, setKhoXuatFilter] = useState<string[]>(() => {
-    try { return JSON.parse(localStorage.getItem('tmsb_tf_xuat') ?? '[]') } catch { return [] }
-  })
-  const [khoNhanFilter, setKhoNhanFilter] = useState<string[]>(() => {
-    try { return JSON.parse(localStorage.getItem('tmsb_tf_nhan') ?? '[]') } catch { return [] }
-  })
-
-  useEffect(() => { localStorage.setItem('tmsb_tf_from', dateFrom) }, [dateFrom])
-  useEffect(() => { localStorage.setItem('tmsb_tf_to', dateTo) }, [dateTo])
-  useEffect(() => { localStorage.setItem('tmsb_tf_xuat', JSON.stringify(khoXuatFilter)) }, [khoXuatFilter])
-  useEffect(() => { localStorage.setItem('tmsb_tf_nhan', JSON.stringify(khoNhanFilter)) }, [khoNhanFilter])
+  // Filter tab Chuyển kho per-user qua useWmsFilterStore — KHÔNG localStorage thuần
+  const ttf    = useWmsFilterStore(s => s.tmsTransfer)
+  const setTtf = useWmsFilterStore(s => s.setTmsTransfer)
+  const dateFrom       = ttf.dateFrom; const setDateFrom       = (v: string)   => setTtf({ dateFrom: v })
+  const dateTo         = ttf.dateTo;   const setDateTo         = (v: string)   => setTtf({ dateTo: v })
+  const khoXuatFilter  = ttf.khoXuat;  const setKhoXuatFilter  = (v: string[]) => setTtf({ khoXuat: v })
+  const khoNhanFilter  = ttf.khoNhan;  const setKhoNhanFilter  = (v: string[]) => setTtf({ khoNhan: v })
 
   // Set các kho user có quyền truy cập (null = không giới hạn)
   const accessibleIds = React.useMemo(() => {
@@ -2997,40 +3005,24 @@ export default function TMSBookings() {
   const canUploadInbound  = can(perms, 'tms_plan', 'upload_inbound')
   const isNccUser = user?.department === 'Đơn vị vận tải'
 
-  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
-  const [date, setDate] = useState(() => localStorage.getItem('tmsb_date') ?? today)
-  const [warehouseId, setWarehouseId] = useState(() => localStorage.getItem('tmsb_wh') ?? '')
-  const [loaiKhoFilter, setLoaiKhoFilter] = useState<string[]>(() => {
-    try { return JSON.parse(localStorage.getItem('tmsb_loaikho') ?? '[]') } catch { return [] }
-  })
-  const [loaiXeFilter, setLoaiXeFilter] = useState<string[]>(() => {
-    try { return JSON.parse(localStorage.getItem('tmsb_loaixe') ?? '[]') } catch { return [] }
-  })
-  const [huongFilter, setHuongFilter] = useState<string[]>(() => {
-    try { return JSON.parse(localStorage.getItem('tmsb_huong') ?? '[]') } catch { return [] }
-  })
-  const [dvvtFilter, setDvvtFilter] = useState<string[]>(() => {
-    try { return JSON.parse(localStorage.getItem('tmsb_dvvt') ?? '[]') } catch { return [] }
-  })
-  const [khungGioFilter, setKhungGioFilter] = useState<string[]>(() => {
-    try { return JSON.parse(localStorage.getItem('tmsb_khungio') ?? '[]') } catch { return [] }
-  })
+  // Filter state per-user qua useWmsFilterStore (scopedPersist) — KHÔNG localStorage thuần (sẽ dùng chung giữa user)
+  const tf    = useWmsFilterStore(s => s.tmsBookings)
+  const setTf = useWmsFilterStore(s => s.setTmsBookings)
+  const date           = tf.date;      const setDate           = (v: string)   => setTf({ date: v })
+  const warehouseId    = tf.warehouseId; const setWarehouseId  = (v: string)   => setTf({ warehouseId: v })
+  const loaiKhoFilter  = tf.loaiKho;   const setLoaiKhoFilter  = (v: string[]) => setTf({ loaiKho: v })
+  const loaiXeFilter   = tf.loaiXe;    const setLoaiXeFilter   = (v: string[]) => setTf({ loaiXe: v })
+  const huongFilter    = tf.huong;     const setHuongFilter    = (v: string[]) => setTf({ huong: v })
+  const dvvtFilter     = tf.dvvt;      const setDvvtFilter     = (v: string[]) => setTf({ dvvt: v })
+  const khungGioFilter = tf.khungGio;  const setKhungGioFilter = (v: string[]) => setTf({ khungGio: v })
   const [slotOverviewOpen, setSlotOverviewOpen] = useState(false)
   const [showMoreFilters, setShowMoreFilters] = useState(false)
 
-  useEffect(() => { localStorage.setItem('tmsb_date', date) }, [date])
-  useEffect(() => { localStorage.setItem('tmsb_wh', warehouseId) }, [warehouseId])
-  useEffect(() => { localStorage.setItem('tmsb_loaikho', JSON.stringify(loaiKhoFilter)) }, [loaiKhoFilter])
-  useEffect(() => { localStorage.setItem('tmsb_loaixe', JSON.stringify(loaiXeFilter)) }, [loaiXeFilter])
-  useEffect(() => { localStorage.setItem('tmsb_huong', JSON.stringify(huongFilter)) }, [huongFilter])
-  useEffect(() => { localStorage.setItem('tmsb_dvvt', JSON.stringify(dvvtFilter)) }, [dvvtFilter])
-  useEffect(() => { localStorage.setItem('tmsb_khungio', JSON.stringify(khungGioFilter)) }, [khungGioFilter])
-  useEffect(() => { setSelectedOrderIds(new Set()) }, [date, warehouseId])
+  // Tab Chuyển kho chỉ hiện khi có quyền confirm_receipt (#1) — ẩn hẳn nếu thiếu, ép về 'main'
+  const setActiveTab = (t: 'main' | 'transfer') => setTf({ tab: t })
+  const activeTab: 'main' | 'transfer' = (tf.tab === 'transfer' && !canConfirmReceipt) ? 'main' : tf.tab
 
-  const [activeTab, setActiveTab] = useState<'main' | 'transfer'>(() =>
-    (localStorage.getItem('tmsb_tab') as 'main' | 'transfer') ?? 'main'
-  )
-  useEffect(() => { localStorage.setItem('tmsb_tab', activeTab) }, [activeTab])
+  useEffect(() => { setSelectedOrderIds(new Set()) }, [date, warehouseId])
   const [createOpen, setCreateOpen] = useState(false)
   const [uploadOpen, setUploadOpen] = useState(false)
   const [inboundPlanUploadOpen, setInboundPlanUploadOpen] = useState(false)
@@ -3347,16 +3339,19 @@ export default function TMSBookings() {
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
             <span className="text-sm font-semibold text-slate-700">Kế hoạch vận chuyển</span>
-            <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-medium">
-              <button
-                onClick={() => setActiveTab('main')}
-                className={`px-3 py-1 transition-colors ${activeTab === 'main' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
-              >Kế hoạch</button>
-              <button
-                onClick={() => setActiveTab('transfer')}
-                className={`px-3 py-1 transition-colors border-l border-slate-200 ${activeTab === 'transfer' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
-              >Chuyển kho</button>
-            </div>
+            {/* Toggle 2 tab chỉ hiện khi có quyền nhận hàng chuyển kho — không có quyền thì chỉ xem Kế hoạch (#1) */}
+            {canConfirmReceipt && (
+              <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-medium">
+                <button
+                  onClick={() => setActiveTab('main')}
+                  className={`px-3 py-1 transition-colors ${activeTab === 'main' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+                >Kế hoạch</button>
+                <button
+                  onClick={() => setActiveTab('transfer')}
+                  className={`px-3 py-1 transition-colors border-l border-slate-200 ${activeTab === 'transfer' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+                >Chuyển kho</button>
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-1.5">
             {warehouseId && canView && (

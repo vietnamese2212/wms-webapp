@@ -137,6 +137,22 @@ interface AssignmentFilters {
   layoutId: string
   dateFrom: string
 }
+interface TmsBookingsFilters {
+  date: string
+  warehouseId: string
+  loaiKho: string[]
+  loaiXe: string[]
+  huong: string[]
+  dvvt: string[]
+  khungGio: string[]
+  tab: 'main' | 'transfer'
+}
+interface TmsTransferFilters {
+  dateFrom: string
+  dateTo: string
+  khoXuat: string[]
+  khoNhan: string[]
+}
 interface WmsFilterState {
   assignment:        AssignmentFilters
   outbound:          OutboundFilters
@@ -153,6 +169,8 @@ interface WmsFilterState {
   deliveries:        DeliveriesFilters
   materials:         MaterialsFilters
   inboundReport:     InboundReportFilters
+  tmsBookings:       TmsBookingsFilters
+  tmsTransfer:       TmsTransferFilters
   setOutbound:          (f: Partial<OutboundFilters>)          => void
   setOutboundPrepare:   (f: Partial<OutboundPrepareFilters>)   => void
   setInbound:           (f: Partial<InboundFilters>)           => void
@@ -168,6 +186,8 @@ interface WmsFilterState {
   setMaterials:         (f: Partial<MaterialsFilters>)         => void
   setInboundReport:     (f: Partial<InboundReportFilters>)     => void
   setAssignment:        (f: Partial<AssignmentFilters>)        => void
+  setTmsBookings:       (f: Partial<TmsBookingsFilters>)       => void
+  setTmsTransfer:       (f: Partial<TmsTransferFilters>)       => void
   reset:                ()                                     => void
 }
 
@@ -219,6 +239,8 @@ function initialFilters() {
       dateFrom: (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }) })(),
       dateTo: today(), warehouseId: '', selCategories: [],
     },
+    tmsBookings: { date: today(), warehouseId: '', loaiKho: [], loaiXe: [], huong: [], dvvt: [], khungGio: [], tab: 'main' as const },
+    tmsTransfer: { dateFrom: '', dateTo: '', khoXuat: [], khoNhan: [] },
   }
 }
 
@@ -241,6 +263,8 @@ export const useWmsFilterStore = create<WmsFilterState>()(
       setMaterials:        (f) => set(s => ({ materials:        { ...s.materials,        ...f } })),
       setInboundReport:    (f) => set(s => ({ inboundReport:    { ...s.inboundReport,    ...f } })),
       setAssignment:       (f) => set(s => ({ assignment:       { ...s.assignment,       ...f } })),
+      setTmsBookings:      (f) => set(s => ({ tmsBookings:      { ...s.tmsBookings,      ...f } })),
+      setTmsTransfer:      (f) => set(s => ({ tmsTransfer:      { ...s.tmsTransfer,      ...f } })),
       reset:               ()  => set(() => initialFilters()),
     }),
     {

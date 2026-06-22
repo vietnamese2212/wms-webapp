@@ -2533,13 +2533,26 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
     })
   }, [orders, accessibleIds])
 
-  const khoXuatOptions = React.useMemo<MSOpt[]>(() =>
-    [...new Map(scopedOrders.map(o => o.transfer_gdo?.warehouse).filter(Boolean)
-      .map(w => [w!.id, { value: w!.id, label: w!.name }])).values()], [scopedOrders])
+  // Tên kho lấy từ danh sách kho tổng (query nhỏ, cache nhanh) — KHÔNG chờ transfer orders (~2s) → chip không hiện UUID.
+  const { data: allWarehouses = [] } = useWarehouses(true)
+  const whNameById = React.useMemo(
+    () => new Map((allWarehouses as { id: string; name: string }[]).map(w => [w.id, w.name])),
+    [allWarehouses])
 
-  const khoNhanOptions = React.useMemo<MSOpt[]>(() =>
-    [...new Map(scopedOrders.map(o => (o as any).warehouse).filter(Boolean)
-      .map((w: { id: string; name: string }) => [w.id, { value: w.id, label: w.name }])).values()], [scopedOrders])
+  // Options = kho có trong dữ liệu transfer + LUÔN gồm giá trị ĐANG chọn (resolve tên qua kho tổng) → không flash UUID.
+  const khoXuatOptions = React.useMemo<MSOpt[]>(() => {
+    const ids = new Set<string>()
+    for (const o of scopedOrders) { const id = o.transfer_gdo?.warehouse?.id; if (id) ids.add(id) }
+    for (const id of khoXuatFilter) if (id) ids.add(id)
+    return [...ids].map(id => ({ value: id, label: whNameById.get(id) ?? id }))
+  }, [scopedOrders, khoXuatFilter, whNameById])
+
+  const khoNhanOptions = React.useMemo<MSOpt[]>(() => {
+    const ids = new Set<string>()
+    for (const o of scopedOrders) { const id = (o as any).warehouse?.id; if (id) ids.add(id) }
+    for (const id of khoNhanFilter) if (id) ids.add(id)
+    return [...ids].map(id => ({ value: id, label: whNameById.get(id) ?? id }))
+  }, [scopedOrders, khoNhanFilter, whNameById])
 
   const filtered = React.useMemo(() => {
     let list = scopedOrders

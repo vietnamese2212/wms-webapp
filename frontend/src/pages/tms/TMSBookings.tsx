@@ -2544,14 +2544,15 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
     const ids = new Set<string>()
     for (const o of scopedOrders) { const id = o.transfer_gdo?.warehouse?.id; if (id) ids.add(id) }
     for (const id of khoXuatFilter) if (id) ids.add(id)
-    return [...ids].map(id => ({ value: id, label: whNameById.get(id) ?? id }))
+    // Chưa resolve được tên (kho tổng đang tải) → hiện '…', TUYỆT ĐỐI không để lộ UUID.
+    return [...ids].map(id => ({ value: id, label: whNameById.get(id) ?? '…' }))
   }, [scopedOrders, khoXuatFilter, whNameById])
 
   const khoNhanOptions = React.useMemo<MSOpt[]>(() => {
     const ids = new Set<string>()
     for (const o of scopedOrders) { const id = (o as any).warehouse?.id; if (id) ids.add(id) }
     for (const id of khoNhanFilter) if (id) ids.add(id)
-    return [...ids].map(id => ({ value: id, label: whNameById.get(id) ?? id }))
+    return [...ids].map(id => ({ value: id, label: whNameById.get(id) ?? '…' }))
   }, [scopedOrders, khoNhanFilter, whNameById])
 
   const filtered = React.useMemo(() => {

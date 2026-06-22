@@ -6,7 +6,7 @@ import { useWarehouses, useWarehouseTypes, useVehicleTypesByWarehouse } from '@/
 import { useAuthStore } from '@/stores/authStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { can, type ModulePermissions } from '@/config/permissions'
-import { formatDateTime } from '@/utils/formatters'
+import { formatDateTime, normalizeLicensePlate, normalizePhone } from '@/utils/formatters'
 import type { GateRegistration, GateStatus, BookingSuggestion, TransportCompany, TmsVehicle, TmsVehicleType } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -1177,8 +1177,8 @@ export default function GateRegistration() {
                       options={vehicleOptions}
                       placeholder="Tìm hoặc nhập biển số"
                       freetextMode
-                      onSelect={opt => setForm(prev => ({ ...prev, vehicle_id: opt.value, license_plate: opt.label }))}
-                      onFreeText={text => f('license_plate', text.toUpperCase())}
+                      onSelect={opt => setForm(prev => ({ ...prev, vehicle_id: opt.value, license_plate: normalizeLicensePlate(opt.label) }))}
+                      onFreeText={text => f('license_plate', normalizeLicensePlate(text))}
                       onClear={() => setForm(prev => ({ ...prev, vehicle_id: '', license_plate: '' }))}
                     />
                   </div>
@@ -1196,7 +1196,7 @@ export default function GateRegistration() {
                   </div>
                   <div className="space-y-1">
                     <label className="text-xs text-slate-500">Số điện thoại <span className="text-red-500">*</span></label>
-                    <Input type="tel" className="text-xs h-8" value={form.phone} onChange={e => f('phone', e.target.value)} placeholder="0909..." />
+                    <Input type="tel" inputMode="numeric" className="text-xs h-8" value={form.phone} onChange={e => f('phone', normalizePhone(e.target.value))} placeholder="0912345678" />
                   </div>
                 </div>
 

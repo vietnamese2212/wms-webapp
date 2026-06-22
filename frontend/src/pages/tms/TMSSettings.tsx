@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { AxiosError } from 'axios'
 import { Plus, Pencil, Trash2, Truck, Clock, Building2, Settings2, Warehouse, X } from 'lucide-react'
-import { formatDateTime } from '@/utils/formatters'
+import { formatDateTime, normalizeLicensePlate, normalizePhone } from '@/utils/formatters'
 import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
 import { Label }    from '@/components/ui/label'
@@ -236,7 +236,7 @@ function TransportCompanyDialog({ co, open, onClose }: { co: TransportCompany | 
           <div className="space-y-1"><Label className="text-xs">Người liên hệ</Label>
             <Input value={contact} onChange={e => setContact(e.target.value)} /></div>
           <div className="space-y-1"><Label className="text-xs">SĐT liên hệ</Label>
-            <Input value={phone} onChange={e => setPhone(e.target.value)} /></div>
+            <Input value={phone} onChange={e => setPhone(normalizePhone(e.target.value))} inputMode="numeric" placeholder="0912345678" /></div>
           {isEdit && <div className="flex items-center gap-2">
             <input id="co-active" type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} className="h-4 w-4 rounded accent-blue-600" />
             <Label htmlFor="co-active" className="text-sm cursor-pointer">Đang hoạt động</Label>
@@ -303,7 +303,7 @@ function VehicleDialog({ v, open, onClose, companies, vehicleTypes, lockedNccId 
             )}
           </div>
           <div className="space-y-1"><Label className="text-xs">Biển số xe *</Label>
-            <Input value={plate} onChange={e => setPlate(e.target.value.toUpperCase())} placeholder="51F-12345"
+            <Input value={plate} onChange={e => setPlate(normalizeLicensePlate(e.target.value))} placeholder="30H1234"
               disabled={isEdit} className={isEdit ? 'bg-slate-50 cursor-not-allowed' : ''} /></div>
           <div className="space-y-1"><Label className="text-xs">Loại xe *</Label>
             <Select value={vtId || '__none__'} onValueChange={val => setVtId(val === '__none__' ? '' : val)}>

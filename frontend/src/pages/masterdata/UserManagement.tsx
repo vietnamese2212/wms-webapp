@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import type { AxiosError } from 'axios'
 import { Plus, Pencil, ShieldCheck, Building2, User2, KeyRound, Check, Briefcase, Copy, CheckCheck, Trash2, RotateCcw, X, Warehouse } from 'lucide-react'
 import { WarehouseMultiSelect } from '@/components/shared/WarehouseMultiSelect'
-import { formatDateTime } from '@/utils/formatters'
+import { formatDateTime, normalizePhone } from '@/utils/formatters'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
@@ -475,7 +475,7 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">SĐT</Label>
-                  <Input value={phone} onChange={e => setPhone(e.target.value)} />
+                  <Input value={phone} onChange={e => setPhone(normalizePhone(e.target.value))} inputMode="numeric" placeholder="0912345678" />
                 </div>
               </div>
 

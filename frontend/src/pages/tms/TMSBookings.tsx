@@ -33,7 +33,7 @@ import { useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { InboundScanSheetById } from '@/components/wms/InboundScanSheet'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { formatDate, formatDateTime } from '@/utils/formatters'
+import { formatDate, formatDateTime, normalizeLicensePlate, normalizePhone, isValidPhone } from '@/utils/formatters'
 import type { TmsOrder, TmsVehicleSlot, DeliverySlot, TmsVehicleType, TmsVehicle, TransportCompany } from '@/types'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -202,6 +202,7 @@ function BookSlotDialog({ vslot, order, onClose, allOrders }: {
     if (!vslot || !order) return
     if (!selectedSlot) { setErr('Vui lòng chọn khung giờ'); return }
     if (!licensePlate) { setErr('Vui lòng nhập biển số xe'); return }
+    if (driverPhone && !isValidPhone(driverPhone)) { setErr('SĐT lái xe phải đủ 10 chữ số'); return }
 
     // Nếu có đơn gom mà loại xe khác nhau → yêu cầu confirm lần đầu
     if (!skipVtCheck && consolidationOrderIds.length > 0 && order.vehicle_type) {
@@ -266,7 +267,7 @@ function BookSlotDialog({ vslot, order, onClose, allOrders }: {
             </div>
             <div>
               <Label className="text-xs">SĐT lái xe</Label>
-              <Input value={driverPhone} onChange={e => setDriverPhone(e.target.value)} placeholder="0912..." className="h-8 text-sm mt-1" />
+              <Input value={driverPhone} onChange={e => setDriverPhone(normalizePhone(e.target.value))} inputMode="numeric" placeholder="0912345678" className="h-8 text-sm mt-1" />
             </div>
           </div>
           {consolidatableOrders.length > 0 && (
@@ -1942,6 +1943,10 @@ function TransportUpdateDialog({ order, onClose }: { order: TransferOrder | null
       setErr('Cần đủ Biển số, SĐT lái xe và Giờ xe tới để hoàn tất booking')
       return
     }
+    if (!isValidPhone(driverPhone)) {
+      setErr('SĐT lái xe phải đủ 10 chữ số')
+      return
+    }
     if (minEta && eta < minEta) {
       setErr(`Thời gian giao không được trước ngày bốc hàng (${order.transfer_gdo?.delivery_date ?? ''})`)
       return
@@ -1983,11 +1988,11 @@ function TransportUpdateDialog({ order, onClose }: { order: TransferOrder | null
           <div className="grid grid-cols-2 gap-2">
             <div>
               <Label className="text-xs">Biển số xe <span className="text-red-500">*</span></Label>
-              <Input value={licensePlate} onChange={e => setPlate(e.target.value)} placeholder="51F-12345" className="h-8 text-sm mt-1 font-mono" />
+              <Input value={licensePlate} onChange={e => setPlate(normalizeLicensePlate(e.target.value))} placeholder="30H1234" className="h-8 text-sm mt-1 font-mono" />
             </div>
             <div>
               <Label className="text-xs">SĐT lái xe <span className="text-red-500">*</span></Label>
-              <Input value={driverPhone} onChange={e => setPhone(e.target.value)} placeholder="0912..." className="h-8 text-sm mt-1" />
+              <Input value={driverPhone} onChange={e => setPhone(normalizePhone(e.target.value))} inputMode="numeric" placeholder="0912345678" className="h-8 text-sm mt-1" />
             </div>
           </div>
           <div>

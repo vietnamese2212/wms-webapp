@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
-import { formatDateTime, formatTimestampTime } from '@/utils/formatters'
+import { formatDateTime, formatTimestampTime, normalizeLicensePlate } from '@/utils/formatters'
 import {
   ArrowLeft, CheckCircle2,
   Truck, Package, ClipboardList, Play, Pause, ChevronRight, ChevronDown, Bookmark, X, RotateCcw, Pencil, QrCode, Search, PenSquare, Trash2,
@@ -189,8 +189,8 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
         <div className="space-y-3 py-1">
           <div className="space-y-1">
             <Label className="text-xs">Biển số xe *</Label>
-            <Input className="text-lg h-10" placeholder="VD: 30A-12345"
-              value={licPlate} onChange={e => setLicPlate(e.target.value.toUpperCase())} />
+            <Input className="text-lg h-10" placeholder="VD: 30H1234"
+              value={licPlate} onChange={e => setLicPlate(normalizeLicensePlate(e.target.value))} />
           </div>
           {isContainer && (
             <div className="space-y-1">
@@ -293,8 +293,8 @@ function EditTransportDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; 
         <div className="space-y-3 py-1">
           <div className="space-y-1">
             <Label className="text-xs">Biển số xe *</Label>
-            <Input className="text-lg h-10" placeholder="VD: 30A-12345"
-              value={licPlate} onChange={e => setLicPlate(e.target.value.toUpperCase())} />
+            <Input className="text-lg h-10" placeholder="VD: 30H1234"
+              value={licPlate} onChange={e => setLicPlate(normalizeLicensePlate(e.target.value))} />
           </div>
           {(isContainer || containerNum) && (
             <div className="space-y-1">

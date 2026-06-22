@@ -13,7 +13,7 @@ import { Button } from '@/components/ui/button'
 import { Input }  from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { useGDOs, useUploadGDOExcel, useWarehouses, useWarehouseTypes, useCreateGDO, useUpdateGDO, useMaterials, useGDO, useAssignGDO, useVehicleTypes, useVehicleTypesByWarehouse } from '@/api/hooks'
+import { useGDOs, useUploadGDOExcel, useWarehouses, useWarehouseTypes, useCreateGDO, useUpdateGDO, useMaterials, useGDO, useAssignGDO, useVehicleTypes, useVehicleTypesByWarehouse, useTransportCompanies } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
@@ -870,6 +870,7 @@ function GDOFormBody({
   onClose: () => void
 }) {
   const formUser = useAuthStore(s => s.user)
+  const { data: dvvtCompanies = [] } = useTransportCompanies(true)
   const formAllowedWhIds = formUser?.warehouse_scope !== 'NATIONAL' && formUser?.warehouse_ids?.length
     ? new Set(formUser.warehouse_ids)
     : null
@@ -1069,7 +1070,12 @@ function GDOFormBody({
             {mode === 'edit' ? (
               <div className="h-7 text-xs px-2 flex items-center border border-slate-100 rounded bg-white text-slate-600">{dvvt || '—'}</div>
             ) : (
-              <Input className="h-7 text-xs" placeholder="Đơn vị vận tải…" value={dvvt} onChange={e => setDvvt(e.target.value)} />
+              <>
+                <Input className="h-7 text-xs" placeholder="Chọn hoặc gõ ĐVVT…" list="dvvt-options" value={dvvt} onChange={e => setDvvt(e.target.value)} />
+                <datalist id="dvvt-options">
+                  {dvvtCompanies.map(c => <option key={c.id} value={c.name} />)}
+                </datalist>
+              </>
             )}
           </div>
           {!isMultiDO && (

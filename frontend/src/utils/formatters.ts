@@ -117,3 +117,19 @@ export const palletStatusLabel: Record<string, string> = {
   TRANSFERRED: 'Đã chuyển',
   PARTIAL:     'Xuất một phần',
 }
+
+// ─── Biển số xe & SĐT (chuẩn hóa + validate dùng chung toàn app) ───────────────
+// Biển số: viết hoa, CHỈ chữ+số (bỏ mọi ký tự đặc biệt/khoảng trắng). VD: 30H1234, 30H12345, CD1234.
+export function normalizeLicensePlate(s: string): string {
+  return (s ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+}
+export function isValidLicensePlate(s: string): boolean {
+  return /^[A-Z0-9]+$/.test((s ?? '').trim())
+}
+// SĐT: chỉ chữ số, tối đa 10 (chuẩn hóa khi gõ); hợp lệ = đúng 10 chữ số.
+export function normalizePhone(s: string): string {
+  return (s ?? '').replace(/\D/g, '').slice(0, 10)
+}
+export function isValidPhone(s: string): boolean {
+  return /^\d{10}$/.test((s ?? '').trim())
+}

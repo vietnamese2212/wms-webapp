@@ -148,6 +148,36 @@ function SlotPicker({ warehouseId, date, selectedSlotId, onSelect, cargoType, ve
   )
 }
 
+// ── Combobox biển số: gợi ý từ DS xe ĐVVT nhưng cho gõ biển số lạ ───────────
+function PlateCombobox({ value, onChange, plates }: {
+  value: string
+  onChange: (v: string) => void
+  plates: string[]
+}) {
+  const [open, setOpen] = useState(false)
+  const filtered = value.trim() ? plates.filter(p => p.toUpperCase().includes(value.toUpperCase())) : plates
+  return (
+    <div className="relative mt-1">
+      <Input className="h-8 text-sm font-mono" placeholder="Chọn hoặc gõ biển số…"
+        value={value}
+        onChange={e => { onChange(normalizeLicensePlate(e.target.value)); setOpen(true) }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+      />
+      {open && filtered.length > 0 && (
+        <div className="absolute z-50 w-full mt-0.5 bg-white border border-slate-200 rounded shadow-lg max-h-44 overflow-y-auto">
+          {filtered.map(p => (
+            <button key={p} type="button"
+              className="w-full text-left px-2.5 py-1.5 text-[11px] font-mono hover:bg-slate-50"
+              onMouseDown={() => { onChange(p); setOpen(false) }}
+            >{p}</button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── ĐVVT Book Dialog (điền slot + biển số + SĐT cho 1 VehicleSlot) ──────────
 
 function BookSlotDialog({ vslot, order, onClose, allOrders }: {
@@ -254,15 +284,8 @@ function BookSlotDialog({ vslot, order, onClose, allOrders }: {
               {isDriver ? (
                 <Input value={licensePlate} disabled className="h-8 text-sm mt-1 bg-slate-50 font-mono" />
               ) : (
-                <Select value={licensePlate || '__none__'} onValueChange={v => setLicensePlate(v === '__none__' ? '' : v)}>
-                  <SelectTrigger className="h-8 text-sm mt-1"><SelectValue placeholder="Chọn biển số" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">— Chọn xe —</SelectItem>
-                    {(nccVehicles as TmsVehicle[]).map(v => (
-                      <SelectItem key={v.id} value={v.license_plate}>{v.license_plate}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <PlateCombobox value={licensePlate} onChange={setLicensePlate}
+                  plates={(nccVehicles as TmsVehicle[]).map(v => v.license_plate)} />
               )}
             </div>
             <div>

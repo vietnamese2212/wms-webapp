@@ -815,6 +815,40 @@ function CustomerCombobox({ value, onChange, onNPPChange, warehouses }: {
   )
 }
 
+// ─── ĐVVT combobox (UX giống Tên khách hàng): gợi ý từ ĐVVT/NCC + cho gõ tên lạ ──
+function DvvtCombobox({ value, onChange, companies }: {
+  value: string
+  onChange: (v: string) => void
+  companies: { id: string; name: string }[]
+}) {
+  const [open, setOpen] = useState(false)
+  const filtered = value.trim()
+    ? companies.filter(c => c.name.toLowerCase().includes(value.toLowerCase()))
+    : companies
+  return (
+    <div className="relative">
+      <Input
+        className="h-7 text-xs"
+        placeholder="Chọn hoặc gõ ĐVVT…"
+        value={value}
+        onChange={e => { onChange(e.target.value); setOpen(true) }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+      />
+      {open && filtered.length > 0 && (
+        <div className="absolute z-50 w-full mt-0.5 bg-white border border-slate-200 rounded shadow-lg max-h-44 overflow-y-auto">
+          {filtered.map(c => (
+            <button key={c.id} type="button"
+              className="w-full text-left px-2.5 py-1.5 text-[11px] hover:bg-slate-50"
+              onMouseDown={() => { onChange(c.name); setOpen(false) }}
+            >{c.name}</button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Item row type ────────────────────────────────────────────
 
 type ItemRow = {
@@ -1070,12 +1104,7 @@ function GDOFormBody({
             {mode === 'edit' ? (
               <div className="h-7 text-xs px-2 flex items-center border border-slate-100 rounded bg-white text-slate-600">{dvvt || '—'}</div>
             ) : (
-              <>
-                <Input className="h-7 text-xs" placeholder="Chọn hoặc gõ ĐVVT…" list="dvvt-options" value={dvvt} onChange={e => setDvvt(e.target.value)} />
-                <datalist id="dvvt-options">
-                  {dvvtCompanies.map(c => <option key={c.id} value={c.name} />)}
-                </datalist>
-              </>
+              <DvvtCombobox value={dvvt} onChange={setDvvt} companies={dvvtCompanies} />
             )}
           </div>
           {!isMultiDO && (

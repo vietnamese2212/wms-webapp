@@ -3071,7 +3071,6 @@ export default function TMSBookings() {
     { key: 'date', label: 'Ngày', type: 'daterange', from: dateFrom, to: dateTo,
       onChange: (f, t) => { const nf = f || today; setTf({ dateFrom: nf, dateTo: t || nf }) } },
     { key: 'khunggio', label: 'Khung giờ', type: 'multi', options: khungGioOptions, selected: khungGioFilter, onChange: setKhungGioFilter },
-    { key: 'huong',    label: 'Hướng',     type: 'multi', options: huongOptions,    selected: huongFilter,    onChange: setHuongFilter },
     { key: 'dvvt',     label: 'ĐVVT',      type: 'multi', options: dvvtOptions,     selected: dvvtFilter,     onChange: setDvvtFilter },
     { key: 'loaikho',  label: 'Loại kho',  type: 'multi', options: loaiKhoOptions,  selected: loaiKhoFilter,  onChange: setLoaiKhoFilter },
     { key: 'loaixe',   label: 'Loại xe',   type: 'multi', options: loaiXeOptions,   selected: loaiXeFilter,   onChange: setLoaiXeFilter },
@@ -3352,6 +3351,17 @@ export default function TMSBookings() {
                 ))}
               </SelectContent>
             </Select>
+            {/* Hướng — filter nhanh đặt cạnh Kho (ngoài "Thêm lọc"); chỉ 2 giá trị Xuất/Nhập → Select gọn */}
+            {(warehouseId || isNccUser) && (
+              <Select value={huongFilter.length === 1 ? huongFilter[0] : '__all__'}
+                onValueChange={v => setHuongFilter(v === '__all__' ? [] : [v])}>
+                <SelectTrigger className="h-8 text-sm w-[120px] min-w-[100px]"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">Hướng: Tất cả</SelectItem>
+                  {huongOptions.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            )}
             {(warehouseId || isNccUser) && <FilterBar defs={mainFilterDefs} />}
             {(warehouseId || isNccUser) && <FilterSheetButton defs={mainFilterDefs} className="sm:hidden" />}
             {canChangeDate && selectedOrderIds.size > 0 && (
@@ -3640,7 +3650,15 @@ export default function TMSBookings() {
                     </TableCell>
                   )}
                   <TableCell className={`px-2 py-1 text-[10px] whitespace-nowrap ${cellHoverBg}`}>
-                    {vslot.gate_export_status || <span className="text-slate-300">—</span>}
+                    {/* Tình trạng XH — màu CHỮ tương tự tab Chuyển kho: Đã xuất = xanh dương + gạch (như "Đã giao"),
+                        Đang xuất = cam (như "Đang nhận"), Đăng ký = trung tính. */}
+                    {vslot.gate_export_status
+                      ? <span className={
+                          vslot.gate_export_status === 'Đã xuất'   ? 'text-blue-600 line-through'
+                          : vslot.gate_export_status === 'Đang xuất' ? 'text-amber-600'
+                          : 'text-slate-600'
+                        }>{vslot.gate_export_status}</span>
+                      : <span className="text-slate-300">—</span>}
                   </TableCell>
                   {stt !== null && (
                     <TableCell rowSpan={sttRowspan > 1 ? sttRowspan : undefined} className={`px-2 py-1 text-[10px] font-mono whitespace-nowrap align-middle ${cellHoverBg}`}>

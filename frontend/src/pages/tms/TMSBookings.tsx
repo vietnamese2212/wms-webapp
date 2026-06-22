@@ -1938,8 +1938,16 @@ function TransportUpdateDialog({ order, onClose }: { order: TransferOrder | null
 
   const handleSave = async () => {
     if (!order) return
-    if (eta && minEta && eta < minEta) {
+    if (!licensePlate.trim() || !driverPhone.trim() || !eta) {
+      setErr('Cần đủ Biển số, SĐT lái xe và Giờ xe tới để hoàn tất booking')
+      return
+    }
+    if (minEta && eta < minEta) {
       setErr(`Thời gian giao không được trước ngày bốc hàng (${order.transfer_gdo?.delivery_date ?? ''})`)
+      return
+    }
+    if (new Date(eta).getTime() < Date.now()) {
+      setErr('Giờ xe tới không được ở quá khứ')
       return
     }
     try {
@@ -1974,17 +1982,17 @@ function TransportUpdateDialog({ order, onClose }: { order: TransferOrder | null
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <Label className="text-xs">Biển số xe</Label>
+              <Label className="text-xs">Biển số xe <span className="text-red-500">*</span></Label>
               <Input value={licensePlate} onChange={e => setPlate(e.target.value)} placeholder="51F-12345" className="h-8 text-sm mt-1 font-mono" />
             </div>
             <div>
-              <Label className="text-xs">SĐT lái xe</Label>
+              <Label className="text-xs">SĐT lái xe <span className="text-red-500">*</span></Label>
               <Input value={driverPhone} onChange={e => setPhone(e.target.value)} placeholder="0912..." className="h-8 text-sm mt-1" />
             </div>
           </div>
           <div>
             <Label className="text-xs">
-              Dự kiến giao
+              Giờ xe tới (dự kiến giao) <span className="text-red-500">*</span>
               {minEta && <span className="text-slate-400 font-normal ml-1">· không trước {order.transfer_gdo?.delivery_date}</span>}
             </Label>
             <Input type="datetime-local" value={eta} min={minEta} onChange={e => setEta(e.target.value)} className="h-8 text-sm mt-1" />
@@ -2003,7 +2011,7 @@ function TransportUpdateDialog({ order, onClose }: { order: TransferOrder | null
         </div>
         <DialogFooter>
           <Button variant="outline" size="sm" onClick={onClose}>Hủy</Button>
-          <Button size="sm" onClick={handleSave} disabled={saving}>
+          <Button size="sm" onClick={handleSave} disabled={saving || !licensePlate.trim() || !driverPhone.trim() || !eta}>
             {saving ? 'Đang lưu...' : 'Lưu'}
           </Button>
         </DialogFooter>
@@ -2096,6 +2104,8 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
   }
 
   const slot = order?.vehicle_slots?.[0]
+  // ĐVVT booking đủ = có Biển số + SĐT lái xe + Giờ xe tới (ETA). Chưa đủ → chưa cho bắt đầu nhận.
+  const hasBooking = !!(slot?.license_plate?.trim() && slot?.driver_phone?.trim() && order?.eta)
   const tStatus = order?.transfer_gdo?.transfer_status
   // Giữ trạng thái "đang bắt đầu nhận" liên tục từ lúc bấm tới khi panel chuyển sang RECEIVING
   // (tránh nút nháy về 'Bắt đầu nhận hàng' rồi mới đổi — do refetch trễ)
@@ -2141,23 +2151,36 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
               {cfg && <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${cfg.cls}`}>{cfg.label}</span>}
               <div className="ml-auto flex items-center gap-2 shrink-0">
                 {canConfirmReceipt && tStatus === 'IN_TRANSIT' && (
-                  <Button size="sm" className={`h-7 text-xs bg-green-600 hover:bg-green-700 gap-1 ${(confirming || starting) ? 'animate-pulse' : ''}`}
-                    disabled={confirming || starting}
-                    onClick={async () => {
-                      if (!order) return
-                      setConfirmErr(''); setStarting(true)
-                      try {
-                        await confirmReceipt(order.id)
-                      } catch (e: unknown) {
-                        setStarting(false)
-                        const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
-                        setConfirmErr(msg ?? 'Lỗi xác nhận nhận hàng')
-                      }
-                    }}>
-                    {(confirming || starting)
-                      ? <><RotateCcw className="h-3 w-3 animate-spin" /> Đang xử lý…</>
-                      : 'Bắt đầu nhận hàng'}
-                  </Button>
+                  <TooltipProvider delayDuration={100}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span>
+                          <Button size="sm" className={`h-7 text-xs bg-green-600 hover:bg-green-700 gap-1 ${(confirming || starting) ? 'animate-pulse' : ''} ${!hasBooking ? 'opacity-50 cursor-not-allowed' : ''}`}
+                            disabled={confirming || starting || !hasBooking}
+                            onClick={async () => {
+                              if (!order) return
+                              setConfirmErr(''); setStarting(true)
+                              try {
+                                await confirmReceipt(order.id)
+                              } catch (e: unknown) {
+                                setStarting(false)
+                                const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
+                                setConfirmErr(msg ?? 'Lỗi xác nhận nhận hàng')
+                              }
+                            }}>
+                            {(confirming || starting)
+                              ? <><RotateCcw className="h-3 w-3 animate-spin" /> Đang xử lý…</>
+                              : 'Bắt đầu nhận hàng'}
+                          </Button>
+                        </span>
+                      </TooltipTrigger>
+                      {!hasBooking && (
+                        <TooltipContent side="bottom">
+                          Cần ĐVVT booking (đủ Biển số, SĐT lái xe, Giờ xe tới) trước khi nhận hàng
+                        </TooltipContent>
+                      )}
+                    </Tooltip>
+                  </TooltipProvider>
                 )}
                 {canConfirmReceipt && tStatus === 'RECEIVING' && (
                   <>

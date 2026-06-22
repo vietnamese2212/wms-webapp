@@ -736,7 +736,7 @@ export async function confirmTransferReceipt(req: Request, res: Response) {
     const t = new Date().toISOString()
 
     const { data: tmsOrder } = await (supabase.from('TmsOrder') as any)
-      .select('id, destination_warehouse_id, transfer_gdo_id, warehouse:Warehouse!destination_warehouse_id(id, code, name)')
+      .select('id, eta, destination_warehouse_id, transfer_gdo_id, warehouse:Warehouse!destination_warehouse_id(id, code, name)')
       .eq('id', id).single()
     if (!tmsOrder) return fail(res, 'Không tìm thấy lệnh chuyển kho', 404)
     if (!tmsOrder.transfer_gdo_id) return fail(res, 'Lệnh này không phải lệnh chuyển kho', 400)
@@ -750,6 +750,13 @@ export async function confirmTransferReceipt(req: Request, res: Response) {
     if (!gdo) return fail(res, 'Không tìm thấy GDO', 404)
     if (gdo.transfer_status === 'DELIVERED') return fail(res, 'GDO này đã được xác nhận giao', 409)
     if (gdo.transfer_status !== 'IN_TRANSIT') return fail(res, 'GDO phải ở trạng thái Đang giao trước khi xác nhận', 400)
+
+    // Gác ĐVVT booking: phải đủ Biển số + SĐT lái xe + Giờ xe tới (ETA) mới cho NPP nhận hàng.
+    const { data: bkSlots } = await (supabase.from('TmsVehicleSlot') as any)
+      .select('license_plate, driver_phone').eq('order_id', id)
+    const bk = ((bkSlots ?? []) as { license_plate: string | null; driver_phone: string | null }[])[0]
+    if (!bk?.license_plate?.trim() || !bk?.driver_phone?.trim() || !tmsOrder.eta)
+      return fail(res, 'Cần ĐVVT booking (đủ Biển số, SĐT lái xe, Giờ xe tới) trước khi nhận hàng', 400)
 
     const { count: existing } = await (supabase.from('ProductionImport') as any)
       .select('id', { count: 'exact', head: true }).eq('from_gdo_id', gdoId).neq('status', 'CANCELLED')

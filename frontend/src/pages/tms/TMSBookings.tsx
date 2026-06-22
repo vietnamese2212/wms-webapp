@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import * as XLSX from 'xlsx'
-import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, CalendarDays, ShieldX, Lock, FileSpreadsheet, X, QrCode, CheckCircle2, Boxes, ChevronDown } from 'lucide-react'
+import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, CalendarDays, ShieldX, FileSpreadsheet, X, QrCode, CheckCircle2, Boxes, ChevronDown } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -2839,6 +2839,8 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
   if (!order) return null
   const whName = warehouses.find(w => w.id === order.warehouse_id)?.name ?? order.warehouse_id
   const isInbound = order.direction === 'INBOUND'
+  // Chỉ Sửa/Xóa khi mọi xe còn PENDING (đồng bộ với điều kiện canEditOrder ở list — tránh sửa/xóa đơn đã book).
+  const allPending = order.vehicle_slots.every(vs => vs.status === 'PENDING')
 
   // Info-row dùng chung khung với TransferOrderDetail (label w-16 + value kế thừa style từ children).
   const infoRow = (label: string, value: React.ReactNode, wide = false) => (
@@ -2871,12 +2873,12 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
                   <Upload className="h-3 w-3" />Upload
                 </Button>
               )}
-              {canEdit && (
+              {canEdit && allPending && (
                 <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={onEditOrder}>
                   <Pencil className="h-3 w-3" />Sửa
                 </Button>
               )}
-              {canDelete && (
+              {canDelete && allPending && (
                 <Button size="sm" variant="outline" className="h-7 text-xs gap-1 text-red-600 hover:text-red-700 border-red-200 hover:border-red-300" onClick={onDeleteOrder}>
                   <Trash2 className="h-3 w-3" />Xóa
                 </Button>
@@ -3783,18 +3785,8 @@ export default function TMSBookings() {
                   </TableCell>
                   <TableCell className={`px-2 py-1 ${cellHoverBg}`}>
                     <div className="flex items-center gap-0.5">
-                      {/* Lock icon cho INBOUND (đồng bộ từ Kế hoạch nhập ngoài) */}
-                      {isFirstOrderRow && order.direction === 'INBOUND' && (
-                        <button
-                          onClick={e => e.stopPropagation()}
-                          className="text-slate-300 p-1 rounded cursor-default"
-                          title="Có thể sửa / xóa ở Kế hoạch nhập ngoài nhé"
-                        >
-                          <Lock className="h-3 w-3" />
-                        </button>
-                      )}
-                      {/* Sửa đơn — chỉ OUTBOUND, lần xuất hiện đầu của mỗi order */}
-                      {isFirstOrderRow && order.direction !== 'INBOUND' && canEditOrder(order) && (
+                      {/* Sửa đơn — mọi đơn (INBOUND giờ quản lý ngay tại TMS, inbound-plan đã gộp vào đây), khi mọi xe còn PENDING */}
+                      {isFirstOrderRow && canEditOrder(order) && (
                         <button
                           onClick={e => { e.stopPropagation(); setEditOrder(order) }}
                           className="text-slate-400 hover:text-slate-600 p-1 rounded"
@@ -3843,8 +3835,8 @@ export default function TMSBookings() {
                           <RotateCcw className="h-3.5 w-3.5" />
                         </button>
                       )}
-                      {/* Xóa đơn — chỉ OUTBOUND, lần xuất hiện đầu, khi tất cả slots PENDING */}
-                      {isFirstOrderRow && order.direction !== 'INBOUND' && canDelete && order.vehicle_slots.every(vs => vs.status === 'PENDING') && (
+                      {/* Xóa đơn — mọi đơn (BE dọn inbound_plan_lines cho INBOUND), khi tất cả slots PENDING */}
+                      {isFirstOrderRow && canDelete && order.vehicle_slots.every(vs => vs.status === 'PENDING') && (
                         <button
                           onClick={e => handleDeleteOrder(e, order.id)}
                           className="text-red-400 hover:text-red-600 p-1 rounded"

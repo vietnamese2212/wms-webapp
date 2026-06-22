@@ -1090,6 +1090,11 @@ export async function deleteOrder(req: Request, res: Response) {
     if (order.source_type === 'TRANSFER')
       return fail(res, 400, 'TRANSFER_ORDER', 'Lệnh chuyển kho được tạo tự động — gỡ hoàn thành ở Outbound để hủy')
 
+    // Dọn dòng kế hoạch nhập trước (FK inbound_plan_lines→TmsOrder là ON DELETE SET NULL → nếu không xóa,
+    // dòng sẽ mồ côi mà vẫn hiện trong Báo cáo nhập theo ngày/kho). Đơn Xuất không có plan-lines → no-op.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase.from('inbound_plan_lines') as any).delete().eq('tms_order_id', id)
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (supabase.from('TmsOrder') as any).delete().eq('id', id)
     if (error) return fail(res, error.message)

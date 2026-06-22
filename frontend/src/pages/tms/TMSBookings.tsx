@@ -3521,10 +3521,11 @@ export default function TMSBookings() {
                 const isConsolidated = !!vslot.consolidation_group_id
                 const isGroupHovered = spanRowKeys.includes(hoveredRow ?? '')
                 const rowTextCls = (() => {
-                  // Chuẩn table-format: chữ TRUNG TÍNH — trạng thái xem ở cột badge (Trạng thái / Tình trạng XH).
-                  // Chỉ gạch ngang khi đã xuất/hoàn thành, xám mờ khi hủy.
+                  // Highlight CẢ ROW theo Tình trạng XH — đồng bộ màu tab Chuyển kho:
+                  // Đã xuất / hoàn thành = xanh dương + gạch ngang; Đang xuất = cam; Đăng ký / chưa xuất = trung tính; Hủy = xám mờ + gạch.
                   if (order.status === 'CANCELLED') return 'text-slate-400 line-through'
-                  if (vslot.gate_export_status === 'Đã xuất' || groupStatus === 'DONE') return 'text-slate-400 line-through'
+                  if (vslot.gate_export_status === 'Đã xuất' || groupStatus === 'DONE') return 'text-blue-600 line-through'
+                  if (vslot.gate_export_status === 'Đang xuất') return 'text-amber-600'
                   return ''
                 })()
                 const cellHoverBg = isGroupHovered ? 'bg-slate-100' : ''
@@ -3697,15 +3698,8 @@ export default function TMSBookings() {
                     </TableCell>
                   )}
                   <TableCell className={`px-2 py-1 text-[10px] whitespace-nowrap ${cellHoverBg}`}>
-                    {/* Tình trạng XH — màu CHỮ tương tự tab Chuyển kho: Đã xuất = xanh dương + gạch (như "Đã giao"),
-                        Đang xuất = cam (như "Đang nhận"), Đăng ký = trung tính. */}
-                    {vslot.gate_export_status
-                      ? <span className={
-                          vslot.gate_export_status === 'Đã xuất'   ? 'text-blue-600 line-through'
-                          : vslot.gate_export_status === 'Đang xuất' ? 'text-amber-600'
-                          : 'text-slate-600'
-                        }>{vslot.gate_export_status}</span>
-                      : <span className="text-slate-300">—</span>}
+                    {/* Màu kế thừa từ row (đã highlight theo Tình trạng XH) — không override. */}
+                    {vslot.gate_export_status || <span className="text-slate-300">—</span>}
                   </TableCell>
                   {stt !== null && (
                     <TableCell rowSpan={sttRowspan > 1 ? sttRowspan : undefined} className={`px-2 py-1 text-[10px] font-mono whitespace-nowrap align-middle ${cellHoverBg}`}>

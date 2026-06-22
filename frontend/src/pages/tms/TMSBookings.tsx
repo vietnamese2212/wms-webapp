@@ -3688,7 +3688,7 @@ export default function TMSBookings() {
                       )
                     })()}
                   </TableCell>
-                  <TableCell className={`px-2 py-1 text-[10px] font-semibold max-w-[140px] truncate whitespace-nowrap ${cellHoverBg}`}>
+                  <TableCell className={`px-2 py-1 text-[10px] font-semibold whitespace-nowrap ${cellHoverBg}`}>
                     {isPrimary
                       ? <>
                           {isConsolidated && sttRowspan > 1 && <span className="font-normal text-teal-600">(đơn chính): </span>}

@@ -2551,19 +2551,18 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
   }, [scopedOrders, dateFrom, dateTo, khoXuatFilter, khoNhanFilter])
 
   // Subtotal tab Chuyển kho (SummaryBand) — tính trên dữ liệu ĐÃ filter.
-  // Thùng KH = tổng kế hoạch MỌI lệnh (scope). Thực nhận = CHỈ lệnh ĐÃ GIAO (đã hoàn tất nhận — lệnh Đang nhận
-  // chưa chốt nên không tính). Chênh lệch = thực nhận − KH TRÊN LỆNH ĐÃ GIAO (so cùng tập, mới có nghĩa).
+  // Thùng KH = tổng kế hoạch MỌI lệnh (scope). Thực nhận = CHỈ lệnh ĐÃ GIAO (đã hoàn tất nhận).
+  // Chênh lệch = Thực nhận − Thùng KH (trừ thẳng 2 ô hiển thị).
   const summary = React.useMemo(() => {
-    let plannedBoxes = 0, deliveredPlanned = 0, deliveredActual = 0, delivered = 0
+    let plannedBoxes = 0, deliveredActual = 0, delivered = 0
     for (const o of filtered) {
       plannedBoxes += o.planned_boxes ?? 0
       if (o.transfer_gdo?.transfer_status === 'DELIVERED') {
         delivered++
-        deliveredPlanned += o.planned_boxes ?? 0
-        deliveredActual  += o.actual_received ?? 0
+        deliveredActual += o.actual_received ?? 0
       }
     }
-    return { count: filtered.length, plannedBoxes, actualBoxes: deliveredActual, diff: deliveredActual - deliveredPlanned, delivered }
+    return { count: filtered.length, plannedBoxes, actualBoxes: deliveredActual, diff: deliveredActual - plannedBoxes, delivered }
   }, [filtered])
 
   // Gom filter tab Chuyển kho về 1 FilterBar (daterange Ngày xuất + Kho xuất/nhận) — đồng bộ tab Kế hoạch

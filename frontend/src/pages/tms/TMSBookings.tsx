@@ -2070,6 +2070,7 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
   const [scanImportId, setScanImportId] = useState<string | null>(null)
   const [manualDraft,  setManualDraft]  = useState<Record<string, string>>({})
   const [rowBusy,      setRowBusy]       = useState<string | null>(null)
+  const [completeConfirm, setCompleteConfirm] = useState<{ impId: string; code: string; name: string; planned: number; actual: number } | null>(null)
   const [actionErr,    setActionErr]     = useState('')
 
   // material_id → phiếu nhập (ProductionImport) đang hoạt động
@@ -2156,6 +2157,40 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
   return (
     <>
       <TransportUpdateDialog order={showUpdate ? order : null} onClose={() => setShowUpdate(false)} />
+      {completeConfirm && (() => {
+        const { impId, code, name, planned, actual } = completeConfirm
+        const diff = actual - planned
+        const statusEl = planned <= 0
+          ? <span className="text-slate-400 text-xs">Không có kế hoạch số thùng</span>
+          : diff === 0
+            ? <span className="text-xs font-medium text-green-700 bg-green-50 px-2 py-0.5 rounded-full">Đúng kế hoạch</span>
+            : diff < 0
+              ? <span className="text-xs font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">Thiếu {Math.abs(diff)} thùng so với kế hoạch</span>
+              : <span className="text-xs font-medium text-red-700 bg-red-50 px-2 py-0.5 rounded-full">Thừa {diff} thùng so với kế hoạch</span>
+        return (
+          <Dialog open onOpenChange={v => { if (!v) setCompleteConfirm(null) }}>
+            <DialogContent className="sm:max-w-sm">
+              <DialogHeader>
+                <DialogTitle>Xác nhận hoàn thành nhận hàng</DialogTitle>
+                <p className="text-xs text-slate-500 mt-1 font-mono">{code} · {name}</p>
+              </DialogHeader>
+              <div className="py-2 space-y-2 text-sm">
+                <div className="flex justify-between text-slate-600"><span>Kế hoạch</span><span className="font-medium">{planned} thùng</span></div>
+                <div className="flex justify-between text-slate-600"><span>Thực nhận</span><span className="font-semibold">{actual} thùng</span></div>
+                <div className="pt-1">{statusEl}</div>
+              </div>
+              <DialogFooter className="gap-2">
+                <Button variant="outline" size="sm" onClick={() => setCompleteConfirm(null)}>Hủy</Button>
+                <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white"
+                  disabled={rowBusy === impId}
+                  onClick={() => { setCompleteConfirm(null); handleCompleteOne(impId) }}>
+                  {rowBusy === impId ? 'Đang lưu…' : 'Hoàn thành'}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        )
+      })()}
       {scanImportId && (
         <InboundScanSheetById
           importId={scanImportId}
@@ -2167,6 +2202,7 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
         <DialogContent className="w-screen max-w-[100vw] h-[100dvh] max-h-[100dvh] rounded-none flex flex-col p-0 gap-0 sm:w-[80vw] sm:max-w-[80vw] sm:h-[85vh] sm:max-h-[85vh] sm:rounded-lg"
           onInteractOutside={e => { if (scanImportId) e.preventDefault() }}
           onEscapeKeyDown={e => { if (scanImportId) e.preventDefault() }}>
+          <DialogTitle className="sr-only">Chi tiết lệnh chuyển kho {order?.order_code}</DialogTitle>
           {/* Header — pr-10 để tránh nút X của shadcn */}
           <div className="px-4 pt-3 pb-2 border-b bg-white shrink-0 pr-10">
             {/* Dòng 1: Mã lệnh + trạng thái + actions (góc phải) */}
@@ -2470,7 +2506,7 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                                           )}
                                           {canComplete && hasQty && (
                                             <Button size="sm" className="h-6 text-[10px] px-1.5 gap-1 bg-green-600 hover:bg-green-700"
-                                              disabled={busy} onClick={() => handleCompleteOne(imp.id)}>
+                                              disabled={busy} onClick={() => setCompleteConfirm({ impId: imp.id, code: g.material_code ?? '—', name: g.material_name ?? '', planned: g.planned_boxes, actual: actualCartons })}>
                                               <CheckCircle2 className="h-3 w-3" /> {busy ? '…' : 'Hoàn thành'}
                                             </Button>
                                           )}
@@ -2934,6 +2970,7 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
     />}
     <Dialog open={!!order} onOpenChange={v => !v && onClose()}>
       <DialogContent className="w-screen max-w-[100vw] h-[100dvh] max-h-[100dvh] rounded-none flex flex-col p-0 gap-0 sm:w-[80vw] sm:max-w-[80vw] sm:h-[85vh] sm:max-h-[85vh] sm:rounded-lg">
+        <DialogTitle className="sr-only">Chi tiết đơn {order.order_code || ''}</DialogTitle>
         {/* Header — chuẩn TransferOrderDetail: mã + badge + nút phải + info grid 3 cột (gộp audit). pr-10 tránh nút X. */}
         <div className="px-4 pt-3 pb-2 border-b bg-white shrink-0 pr-10">
           <div className="flex items-center gap-2 flex-wrap mb-2">

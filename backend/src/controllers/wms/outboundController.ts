@@ -648,6 +648,24 @@ export async function patchGDO(req: Request, res: Response) {
         return fail(res, 'Chuyến đang tạm dừng — chỉ được đổi trạng thái, không sửa dữ liệu', 400)
     }
 
+    // Gác hoàn thành: thực quét phải KHỚP kế hoạch — mọi item cartons_scanned >= cartons_ordered.
+    // Xuất thiếu (hết tồn/NPP giao thiếu) → sửa SL đơn xuống = thực xuất rồi mới hoàn thành.
+    if (status === 'COMPLETED') {
+      const { data: dos } = await (supabase.from('OutboundDelivery') as any)
+        .select('id').eq('gdo_id', req.params.id)
+      const doIds = ((dos ?? []) as { id: string }[]).map(d => d.id)
+      if (doIds.length) {
+        const { data: items } = await (supabase.from('OutboundItem') as any)
+          .select('material_code_raw, cartons_ordered, cartons_scanned').in('do_id', doIds)
+        const short = ((items ?? []) as { material_code_raw: string | null; cartons_ordered: number; cartons_scanned: number }[])
+          .filter(i => Number(i.cartons_scanned) < Number(i.cartons_ordered))
+        if (short.length) {
+          const e = short[0]
+          return fail(res, `Chưa thể hoàn thành — còn ${short.length} mã chưa xuất đủ kế hoạch (vd ${e.material_code_raw ?? '?'}: ${Number(e.cartons_scanned)}/${Number(e.cartons_ordered)}). Sửa số lượng đơn xuống bằng thực xuất rồi hoàn thành.`, 400)
+        }
+      }
+    }
+
     const t = now()
     const patch: Record<string, unknown> = { updated_at: t }
     if (delivery_date !== undefined) patch.delivery_date = delivery_date
@@ -2136,9 +2154,12 @@ export async function manualCompleteItem(req: Request, res: Response) {
       }
     }
 
+    // Chỉ COMPLETED khi nhập đủ kế hoạch — thiếu thì IN_PROGRESS (giống hàng QR).
+    // Muốn chốt đơn thiếu: sửa cartons_ordered xuống = thực xuất rồi mới hoàn thành.
+    const newItemStatus = ctn >= Number(item.cartons_ordered) ? 'COMPLETED' : 'IN_PROGRESS'
     const t = now()
     await (supabase.from('OutboundItem') as any)
-      .update({ status: 'COMPLETED', cartons_scanned: ctn, updated_at: t }).eq('id', itemId)
+      .update({ status: newItemStatus, cartons_scanned: ctn, updated_at: t }).eq('id', itemId)
 
     // Upsert OutboundScanEntry cho no_qr items (1 dòng per item, pallet_code = material_code)
     if (isSpecial && specialMatCode) {
@@ -2166,7 +2187,7 @@ export async function manualCompleteItem(req: Request, res: Response) {
         .select('id', { count: 'exact', head: true })
         .eq('gdo_id', gdoId).neq('status', 'COMPLETED').neq('id', item.do_id),
     ])
-    const doCompleted = pendingItems === 0
+    const doCompleted = pendingItems === 0 && newItemStatus === 'COMPLETED'
     const gdoCompleted = doCompleted && pendingDOs === 0
     await Promise.all([
       (supabase.from('OutboundDelivery') as any)

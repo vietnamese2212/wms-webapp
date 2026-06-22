@@ -267,7 +267,12 @@ export async function bulkCreateOrders(req: Request, res: Response) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const inputList = orders as any[]
 
-    // Check trùng order_code trong DB
+    // Chặn ngày quá khứ (đồng bộ với tạo đơn lẻ — upload không back-date).
+    const today = todayVN()
+    const pastDated = inputList.filter(o => o.date && o.date < today).map(o => o.order_code || o.date)
+    if (pastDated.length) return fail(res, `Không thể upload đơn ngày quá khứ: ${pastDated.join(', ')}`, 400)
+
+    // Check trùng order_code trong DB → 409 (upload là TẠO MỚI, không cập nhật đơn đã có)
     const incomingCodes = inputList.map(o => o.order_code).filter(Boolean) as string[]
     if (incomingCodes.length) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -275,7 +280,7 @@ export async function bulkCreateOrders(req: Request, res: Response) {
         .select('order_code').in('order_code', incomingCodes)
       if (existing?.length) {
         const dupes = (existing as { order_code: string }[]).map(r => r.order_code).join(', ')
-        return fail(res, `Mã đơn đã tồn tại: ${dupes}`)
+        return fail(res, `Mã đơn đã tồn tại: ${dupes}`, 409)
       }
     }
 

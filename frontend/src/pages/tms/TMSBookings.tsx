@@ -2745,17 +2745,6 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
 
 // ── Order Detail Dialog ───────────────────────────────────────────────────────
 
-function DR({ label, value, wide }: { label: string; value?: React.ReactNode | null; wide?: boolean }) {
-  return (
-    <div className={wide ? 'col-span-2' : ''}>
-      <span className="text-slate-500">{label}:</span>{' '}
-      <span className="font-medium text-slate-800">
-        {value ?? <span className="text-slate-400 font-normal">—</span>}
-      </span>
-    </div>
-  )
-}
-
 function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEdit, canDelete, onEditOrder, onDeleteOrder }: {
   order: TmsOrder | null
   onClose: () => void
@@ -2850,6 +2839,14 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
   const whName = warehouses.find(w => w.id === order.warehouse_id)?.name ?? order.warehouse_id
   const isInbound = order.direction === 'INBOUND'
 
+  // Info-row dùng chung khung với TransferOrderDetail (label w-16 + value kế thừa style từ children).
+  const infoRow = (label: string, value: React.ReactNode, wide = false) => (
+    <div className={`flex gap-2 ${wide ? 'col-span-2 sm:col-span-3' : ''}`}>
+      <span className="text-slate-400 w-16 shrink-0">{label}</span>
+      <span className="font-medium text-slate-700 break-words min-w-0">{value ?? <span className="text-slate-300 font-normal">—</span>}</span>
+    </div>
+  )
+
   return (
     <>
     {showUpload && <UploadPlanLinesDialog
@@ -2859,11 +2856,20 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
       onClose={() => setShowUpload(false)}
     />}
     <Dialog open={!!order} onOpenChange={v => !v && onClose()}>
-      <DialogContent className="max-w-none w-full sm:w-[480px] sm:max-w-[92vw] h-[100dvh] max-h-[100dvh] rounded-none m-0 top-0 right-0 left-auto translate-x-0 translate-y-0 overflow-y-auto">
-        <DialogHeader>
-          <div className="flex items-start justify-between gap-2">
-            <DialogTitle className="font-mono text-base">{order.order_code || 'Chi tiết đơn'}</DialogTitle>
-            <div className="flex gap-1 shrink-0 mr-8">
+      <DialogContent className="w-screen max-w-[100vw] h-[100dvh] max-h-[100dvh] rounded-none flex flex-col p-0 gap-0 sm:w-[80vw] sm:max-w-[80vw] sm:h-[85vh] sm:max-h-[85vh] sm:rounded-lg">
+        {/* Header — chuẩn TransferOrderDetail: mã + badge + nút phải + info grid 3 cột (gộp audit). pr-10 tránh nút X. */}
+        <div className="px-4 pt-3 pb-2 border-b bg-white shrink-0 pr-10">
+          <div className="flex items-center gap-2 flex-wrap mb-2">
+            <span className="text-sm font-mono font-bold text-slate-800">{order.order_code || 'Chi tiết đơn'}</span>
+            {order.direction === 'OUTBOUND' && <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-orange-100 text-orange-700">Xuất</span>}
+            {order.direction === 'INBOUND'  && <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-teal-100 text-teal-700">Nhập</span>}
+            {order.priority && <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-red-100 text-red-700">Ưu tiên</span>}
+            <div className="ml-auto flex items-center gap-2 shrink-0">
+              {isInbound && canUploadInbound && (
+                <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => setShowUpload(true)}>
+                  <Upload className="h-3 w-3" />Upload
+                </Button>
+              )}
               {canEdit && (
                 <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={onEditOrder}>
                   <Pencil className="h-3 w-3" />Sửa
@@ -2876,51 +2882,34 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
               )}
             </div>
           </div>
-        </DialogHeader>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-0.5 text-[11px]">
+            {infoRow('NPP', order.npp_name)}
+            {infoRow('Ngày', <span className="font-mono">{formatDate(order.date)}</span>)}
+            {infoRow('ĐVVT', order.ncc?.name)}
+            {infoRow('Kho', whName)}
+            {infoRow('Loại kho', order.warehouse_type)}
+            {infoRow('Loại xe', order.vehicle_type)}
+            {infoRow('Thùng', order.planned_boxes != null ? `${order.planned_boxes} thùng` : null)}
+            {infoRow('Pallet', order.planned_pallets != null ? `${order.planned_pallets} pl` : null)}
+            {infoRow('Tấn', order.planned_tons != null ? `${order.planned_tons} t` : null)}
+            {order.export_status && infoRow('Tình trạng XH', order.export_status)}
+            {infoRow('Người tạo', order.created_by)}
+            {infoRow('Giờ tạo', order.created_at ? <span className="font-mono text-[10px]">{formatDateTime(order.created_at)}</span> : null)}
+            {infoRow('Người sửa', order.updated_by)}
+            {infoRow('Giờ sửa', order.updated_at ? <span className="font-mono text-[10px]">{formatDateTime(order.updated_at)}</span> : null)}
+            {order.gdo_refs && infoRow('GDO Refs', <span className="font-mono">{order.gdo_refs}</span>, true)}
+            {order.notes && infoRow('Ghi chú', order.notes, true)}
+          </div>
+        </div>
 
-        <div className="space-y-5 py-1 text-xs">
-          {/* Thông tin đơn hàng */}
-          <section>
-            <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-400 mb-2">Thông tin đơn hàng</p>
-            <div className="grid grid-cols-2 gap-x-6 gap-y-1.5">
-              <DR label="NPP" value={order.npp_name} />
-              <DR label="Ngày" value={<span className="font-mono">{formatDate(order.date)}</span>} />
-              <DR label="Hướng" value={
-                order.direction === 'OUTBOUND' ? <span className="text-orange-600 font-semibold">Xuất</span>
-                : order.direction === 'INBOUND'  ? <span className="text-teal-600 font-semibold">Nhập</span>
-                : null
-              } />
-              <DR label="ĐVVT" value={order.ncc?.name} />
-              <DR label="Kho" value={whName} />
-              <DR label="Loại kho" value={order.warehouse_type} />
-              <DR label="Loại xe" value={order.vehicle_type} />
-              <DR label="Ưu tiên" value={order.priority ? <span className="text-red-600 font-bold">Có</span> : '—'} />
-              <DR label="Thùng" value={order.planned_boxes != null ? `${order.planned_boxes} thùng` : null} />
-              <DR label="Pallet" value={order.planned_pallets != null ? `${order.planned_pallets} pl` : null} />
-              <DR label="Tấn" value={order.planned_tons != null ? `${order.planned_tons} t` : null} />
-              {order.export_status && <DR label="Tình trạng XH" value={order.export_status} />}
-              {order.gdo_refs  && <DR label="GDO Refs" value={order.gdo_refs}  wide />}
-              {order.notes     && <DR label="Ghi chú"  value={order.notes}     wide />}
-            </div>
-          </section>
-
-          {/* Audit */}
-          <section>
-            <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-400 mb-2">Tạo / Sửa đơn</p>
-            <div className="grid grid-cols-2 gap-x-6 gap-y-1.5">
-              <DR label="Người tạo" value={order.created_by ? <span className="font-mono">{order.created_by}</span> : null} />
-              <DR label="Giờ tạo"   value={order.created_at ? <span className="font-mono">{formatDateTime(order.created_at)}</span> : null} />
-              <DR label="Người sửa" value={order.updated_by ? <span className="font-mono">{order.updated_by}</span> : null} />
-              <DR label="Giờ sửa"   value={order.updated_at ? <span className="font-mono">{formatDateTime(order.updated_at)}</span> : null} />
-            </div>
-          </section>
-
+        {/* Body cuộn — Xe đặt khung giờ + Hàng hóa */}
+        <div className="flex-1 min-h-0 overflow-auto p-4 space-y-5 text-xs">
           {/* Vehicle slots */}
           <section>
             <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-400 mb-2">Xe đặt khung giờ ({order.vehicle_slots.length})</p>
-            <div className="rounded border overflow-hidden">
-              <table className="min-w-full">
-                <thead className="bg-slate-50">
+            <div className="overflow-x-auto">
+              <table className="min-w-max w-full">
+                <thead className="sticky top-0 z-10 bg-slate-50">
                   <tr>
                     {['#', 'Khung giờ', 'Biển số', 'SĐT', 'Trạng thái', 'Đặt bởi', 'Cập nhật lúc'].map(h => (
                       <th key={h} className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
@@ -2952,25 +2941,15 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
             </div>
           </section>
 
-          {/* Hàng hóa nhập hàng — KH vs Thực tế (chỉ INBOUND) */}
+          {/* Hàng hóa nhập hàng — KH vs Thực tế (chỉ INBOUND), cùng format bảng dòng hàng với Chuyển kho */}
           {isInbound && (
             <section>
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">
-                  Hàng hóa ({mergedRows.length})
-                </p>
-                {canUploadInbound && (
-                  <Button size="sm" variant="outline" className="h-6 text-[10px] px-2 gap-1"
-                    onClick={() => setShowUpload(true)}>
-                    <Upload className="h-3 w-3" />Upload
-                  </Button>
-                )}
-              </div>
-              <div className="rounded border overflow-hidden">
-                <table className="min-w-full">
-                  <thead className="bg-slate-50">
+              <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-400 mb-2">Hàng hóa ({mergedRows.length})</p>
+              <div className="overflow-x-auto">
+                <table className="min-w-max w-full">
+                  <thead className="sticky top-0 z-10 bg-slate-50">
                     <tr>
-                      {['Mã hàng', 'Tên hàng', 'ĐVT', 'Kế hoạch', 'Thực tế', 'CL'].map((h, idx) => (
+                      {['Mã hàng', 'Tên hàng', 'ĐVT', 'Thùng KH', 'Thùng thực', 'Chênh lệch'].map((h, idx) => (
                         <th key={idx} className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
                       ))}
                     </tr>
@@ -2985,13 +2964,13 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
                         <tr key={row.material_code}
                           className={`border-t border-slate-100 ${isCancelled ? 'opacity-50' : diff < 0 && row.actual_boxes > 0 ? 'bg-red-50' : diff > 0 ? 'bg-green-50' : ''}`}>
                           <td className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">{row.material_code}</td>
-                          <td className="px-2 py-1 text-[10px] max-w-[140px] truncate whitespace-nowrap">{row.material_name}</td>
-                          <td className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{row.unit || '—'}</td>
-                          <td className="px-2 py-1 text-[10px] tabular-nums font-semibold whitespace-nowrap">
+                          <td className="px-2 py-1 text-[10px] max-w-[220px] truncate whitespace-nowrap" title={row.material_name}>{row.material_name}</td>
+                          <td className="px-2 py-1 text-[10px] text-slate-400 whitespace-nowrap">{row.unit || '—'}</td>
+                          <td className="px-2 py-1 text-[10px] text-right tabular-nums font-semibold whitespace-nowrap">
                             {row.planned_boxes || <span className="text-slate-300">—</span>}
                           </td>
-                          <td className="px-2 py-1 text-[10px] tabular-nums font-semibold whitespace-nowrap">{row.actual_boxes > 0 ? row.actual_boxes : <span className="text-slate-300">0</span>}</td>
-                          <td className={`px-2 py-1 text-[10px] tabular-nums font-semibold whitespace-nowrap ${diff < 0 && row.actual_boxes > 0 ? 'text-red-600' : diff > 0 ? 'text-green-600' : 'text-slate-300'}`}>
+                          <td className="px-2 py-1 text-[10px] text-right tabular-nums font-semibold whitespace-nowrap">{row.actual_boxes > 0 ? row.actual_boxes : <span className="text-slate-300">0</span>}</td>
+                          <td className={`px-2 py-1 text-[10px] text-right tabular-nums font-semibold whitespace-nowrap ${diff < 0 && row.actual_boxes > 0 ? 'text-red-600' : diff > 0 ? 'text-green-600' : 'text-slate-300'}`}>
                             {row.actual_boxes > 0 ? (diff > 0 ? `+${diff}` : diff) : '—'}
                           </td>
                         </tr>
@@ -3003,7 +2982,7 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
               {/* Form thêm dòng thủ công */}
               {canUploadInbound && (
                 <div className="mt-2 space-y-1">
-                  <div className="flex gap-1 items-center">
+                  <div className="flex gap-1 items-center flex-wrap">
                     <MatCombobox
                       value={addCode}
                       allMats={allMats as MatItem[]}
@@ -3029,10 +3008,6 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
             </section>
           )}
         </div>
-
-        <DialogFooter>
-          <Button variant="outline" size="sm" onClick={onClose}>Đóng</Button>
-        </DialogFooter>
       </DialogContent>
     </Dialog>
     </>

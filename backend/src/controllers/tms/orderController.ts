@@ -3,6 +3,9 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 
+// Ngày hôm nay theo giờ VN (YYYY-MM-DD) — chặn nghiệp vụ ngày quá khứ. So sánh chuỗi ISO date là an toàn.
+const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+
 // Phân trang TUẦN TỰ cho 1 query bất kỳ — né cap ~1000 dòng/response của PostgREST.
 // `makeQuery`: hàm trả về query MỚI mỗi lần (đã .select + filter + .order ổn định), CHƯA .range. Throw nếu lỗi.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -170,6 +173,7 @@ export async function createOrder(req: Request, res: Response) {
     if (!date || !warehouse_id) return fail(res, 'date và warehouse_id là bắt buộc', 400)
     if (!direction)  return fail(res, 'direction là bắt buộc', 400)
     if (!ncc_id)     return fail(res, 'ĐVVT là bắt buộc', 400)
+    if (date < todayVN()) return fail(res, 'Không thể tạo đơn cho ngày quá khứ', 400)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const user = (req as any).user
@@ -331,8 +335,14 @@ export async function updateOrder(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: existing, error: fetchErr } = await (supabase.from('TmsOrder') as any)
-      .select('id').eq('id', id).single()
+      .select('id, date').eq('id', id).single()
     if (fetchErr || !existing) return fail(res, 'Không tìm thấy đơn hàng', 404)
+
+    // Chỉ chặn khi ĐỔI ngày sang quá khứ (không chặn update giữ nguyên ngày cũ — vd đơn chuyển kho chỉ sửa eta/biển số).
+    if (date !== undefined && date !== existing.date && date < todayVN())
+      return fail(res, 'Không thể chuyển sang ngày quá khứ', 400)
+    if (eta && String(eta).slice(0, 10) < todayVN())
+      return fail(res, 'Dự kiến giao không thể là ngày quá khứ', 400)
 
     const updates: Record<string, unknown> = { updated_by: user?.name || null, updated_at: now }
     if (date            !== undefined) updates.date            = date
@@ -365,6 +375,7 @@ export async function bulkUpdateOrderDate(req: Request, res: Response) {
     const { ids, date } = req.body as { ids: string[]; date: string }
     if (!Array.isArray(ids) || !ids.length) return fail(res, 'ids phải là array không rỗng', 400)
     if (!date) return fail(res, 'date là bắt buộc', 400)
+    if (date < todayVN()) return fail(res, 'Không thể chuyển sang ngày quá khứ', 400)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const user = (req as any).user

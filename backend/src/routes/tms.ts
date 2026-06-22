@@ -39,6 +39,7 @@ router.post('/orders/:id/confirm-receipt',      requirePerm('tms_plan', 'confirm
 router.post('/orders/:id/cancel-receipt',       requirePerm('tms_plan', 'confirm_receipt'), order.cancelTransferReceipt)
 router.post('/orders/:id/create-one-inbound',   requirePerm('tms_plan', 'confirm_receipt'), order.createOneInbound)
 router.get('/orders/:orderId/plan-vs-actual',  requirePerm('tms_plan', 'view'),   order.getPlanVsActual)
+router.post('/orders/material-summary',        requirePerm('tms_plan', 'view'),   order.getMaterialSummary)
 router.get('/reports/inbound',                 requirePerm('tms_plan', 'view'),   order.getInboundReport)
 router.patch('/orders/:id',              requirePerm('tms_plan', 'edit'),                                                    order.updateOrder)
 router.delete('/orders/:id',             requirePerm('tms_plan', 'delete'),                                                  order.deleteOrder)

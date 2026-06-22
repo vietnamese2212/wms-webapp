@@ -20,6 +20,17 @@ async function fetchAllPaged(makeQuery: () => any, pageSize = 1000): Promise<any
   return rows
 }
 
+// Chia danh sách id thành lô (né giới hạn độ dài URL của `.in(...)`), mỗi lô vẫn phân trang né cap-1000.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function fetchAllByIdChunks(ids: string[], makeQuery: (chunk: string[]) => any, chunkSize = 100): Promise<any[]> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const out: any[] = []
+  for (let i = 0; i < ids.length; i += chunkSize) {
+    out.push(...await fetchAllPaged(() => makeQuery(ids.slice(i, i + chunkSize))))
+  }
+  return out
+}
+
 const ORDER_SELECT = `
   *,
   ncc:TransportCompany!ncc_id(id, code, name),
@@ -451,6 +462,76 @@ export async function getPlanVsActual(req: Request, res: Response) {
     }
 
     return ok(res, Object.values(byMaterial))
+  } catch (e) { return fail(res, String(e)) }
+}
+
+// POST /api/tms/orders/material-summary  body: { order_ids: string[] }
+// Tổng hợp theo MÃ HÀNG across nhiều đơn (band tra cứu ở danh sách): kế hoạch (inbound_plan_lines)
+// vs thực nhận (ProductionImport → InventoryEntry; mã no-QR dùng posm_cartons). Khớp với actual_received của list.
+export async function getMaterialSummary(req: Request, res: Response) {
+  try {
+    const { order_ids } = req.body as { order_ids?: string[] }
+    if (!Array.isArray(order_ids) || order_ids.length === 0) return ok(res, [])
+
+    type Row = { material_id: string; material_code: string; material_name: string; unit: string; planned_boxes: number; actual_boxes: number }
+    const byMat: Record<string, Row> = {}
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const ensure = (mid: string, m: any): Row => {
+      if (!byMat[mid]) byMat[mid] = {
+        material_id: mid,
+        material_code: m?.material_code ?? '',
+        material_name: m?.short_name ?? m?.material_description ?? '',
+        unit: m?.unit ?? '',
+        planned_boxes: 0, actual_boxes: 0,
+      }
+      return byMat[mid]
+    }
+
+    // 1) Kế hoạch từ inbound_plan_lines
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const planLines = await fetchAllByIdChunks(order_ids, (chunk) => (supabase.from('inbound_plan_lines') as any)
+      .select('material_id, planned_boxes, material:Material!material_id(material_code, short_name, material_description, unit)')
+      .in('tms_order_id', chunk).neq('status', 'CANCELLED').order('material_id', { ascending: true }))
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const l of planLines as any[]) {
+      if (!l.material_id) continue
+      ensure(l.material_id, l.material).planned_boxes += (l.planned_boxes ?? 0) as number
+    }
+
+    // 2) Thực nhận từ ProductionImport (+ InventoryEntry cho mã QR, posm_cartons cho mã no-QR)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const imports = await fetchAllByIdChunks(order_ids, (chunk) => (supabase.from('ProductionImport') as any)
+      .select('id, material_id, posm_cartons, material:Material!material_id(material_code, short_name, material_description, unit, no_qr_tracking)')
+      .in('tms_order_id', chunk).neq('status', 'CANCELLED').order('id', { ascending: true }))
+    const qrImportIds: string[] = []
+    const importToMat = new Map<string, string>()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const imp of imports as any[]) {
+      if (!imp.material_id) continue
+      const row = ensure(imp.material_id, imp.material)
+      importToMat.set(imp.id, imp.material_id)
+      if (imp.material?.no_qr_tracking) {
+        if (imp.posm_cartons != null) row.actual_boxes += Number(imp.posm_cartons)
+      } else {
+        qrImportIds.push(imp.id)
+      }
+    }
+    if (qrImportIds.length) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const entries = await fetchAllByIdChunks(qrImportIds, (chunk) => (supabase.from('InventoryEntry') as any)
+        .select('import_order_id, cartons_imported').in('import_order_id', chunk).order('import_order_id', { ascending: true }))
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      for (const e of entries as any[]) {
+        const mid = importToMat.get(e.import_order_id as string)
+        if (!mid) continue
+        byMat[mid].actual_boxes += (e.cartons_imported ?? 0) as number
+      }
+    }
+
+    const rows = Object.values(byMat)
+      .map(r => ({ ...r, diff: r.actual_boxes - r.planned_boxes }))
+      .sort((a, b) => b.planned_boxes - a.planned_boxes)
+    return ok(res, rows)
   } catch (e) { return fail(res, String(e)) }
 }
 

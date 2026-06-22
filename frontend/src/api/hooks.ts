@@ -2140,6 +2140,29 @@ export function useTransferGoods(orderId?: string | null) {
   })
 }
 
+export type MaterialSummaryRow = {
+  material_id: string
+  material_code: string
+  material_name: string
+  unit: string
+  planned_boxes: number
+  actual_boxes: number
+  diff: number
+}
+
+// Tổng hợp theo mã hàng across danh sách đơn (band tra cứu). order_ids = các đơn ĐÃ lọc trên UI → band khớp list.
+export function useMaterialSummary(orderIds: string[], enabled: boolean) {
+  return useQuery({
+    queryKey: ['tms-material-summary', [...orderIds].sort().join(',')],
+    queryFn: async () => {
+      const { data } = await apiClient.post('/tms/orders/material-summary', { order_ids: orderIds })
+      return data.data as MaterialSummaryRow[]
+    },
+    enabled: enabled && orderIds.length > 0,
+    staleTime: 15_000,
+  })
+}
+
 export function useConfirmTransferReceipt() {
   const qc = useQueryClient()
   return useMutation({

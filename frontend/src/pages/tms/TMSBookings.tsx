@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import * as XLSX from 'xlsx'
-import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, CalendarDays, ShieldX, Lock, FileSpreadsheet, X, QrCode, CheckCircle2 } from 'lucide-react'
+import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, CalendarDays, ShieldX, Lock, FileSpreadsheet, X, QrCode, CheckCircle2, Boxes, ChevronDown } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -26,7 +26,7 @@ import {
   useBulkCreatePlanLines, useUpdatePlanLine, useDeletePlanLine,
   useTransferOrders, useConfirmTransferReceipt, useCancelTransferReceipt, useTransferGoods,
   useActiveImportsByGdo, useCreateOneInbound,
-  useCompleteInboundOrder, useScanManualPallet,
+  useCompleteInboundOrder, useScanManualPallet, useMaterialSummary,
   type TransferOrder,
 } from '@/api/hooks'
 import { useNavigate } from 'react-router-dom'
@@ -1835,6 +1835,80 @@ const TRANSFER_STATUS_CFG: Record<string, { label: string; cls: string }> = {
   DELIVERED:        { label: 'Đã giao',          cls: 'bg-slate-100 text-slate-600' },
 }
 
+// Band tổng hợp theo MÃ HÀNG (KH · thực tế · chênh lệch) để tra cứu — kiểu expand "Phân bổ theo NPP" của Outbound.
+// orderIds = các đơn ĐÃ lọc trên UI; có ô tìm mã hàng/tên để tra cứu nhanh. Tổng ở header tính trên dòng đã lọc.
+function MaterialSummaryBand({ orderIds }: { orderIds: string[] }) {
+  const [open, setOpen] = useState(false)
+  const [q, setQ] = useState('')
+  const { data: rows = [], isFetching } = useMaterialSummary(orderIds, orderIds.length > 0)
+
+  const filtered = useMemo(() => {
+    const s = q.trim().toLowerCase()
+    if (!s) return rows
+    return rows.filter(r => r.material_code.toLowerCase().includes(s) || r.material_name.toLowerCase().includes(s))
+  }, [rows, q])
+  const totals = useMemo(() => filtered.reduce(
+    (a, r) => ({ planned: a.planned + r.planned_boxes, actual: a.actual + r.actual_boxes, diff: a.diff + r.diff }),
+    { planned: 0, actual: 0, diff: 0 }), [filtered])
+  const fmtDiff = (n: number) => `${n > 0 ? '+' : ''}${n.toLocaleString('vi-VN')}`
+
+  if (orderIds.length === 0) return null
+  return (
+    <div className="border-b border-slate-200 bg-white shrink-0">
+      <button type="button" onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 bg-slate-50 hover:bg-slate-100 text-left">
+        <Boxes className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+        <span>Tổng hợp mã hàng ({rows.length} mã) · KH {totals.planned.toLocaleString('vi-VN')} · thực tế {totals.actual.toLocaleString('vi-VN')} · chênh lệch {fmtDiff(totals.diff)} thùng</span>
+        {q.trim() && <span className="text-blue-600">· lọc “{q.trim()}”</span>}
+        {isFetching && <span className="text-slate-400">· đang tải…</span>}
+        <ChevronDown className={`h-3.5 w-3.5 ml-auto shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="max-h-64 overflow-auto">
+          <div className="sticky top-0 z-10 bg-white px-3 py-1.5 border-b border-slate-100">
+            <input value={q} onChange={e => setQ(e.target.value)} placeholder="Tìm mã hàng / tên hàng…"
+              className="w-full max-w-xs h-7 px-2 text-xs border border-slate-200 rounded outline-none focus:border-blue-400" />
+          </div>
+          {rows.length === 0 ? (
+            <div className="py-6 text-center text-xs text-slate-400">{isFetching ? 'Đang tải…' : 'Không có dòng hàng nào'}</div>
+          ) : (
+            <table className="w-full [&_td]:border-t [&_td]:border-slate-100">
+              <thead className="sticky top-[42px] z-10 bg-slate-50">
+                <tr className="text-[9px] font-medium text-slate-500">
+                  <th className="px-2 py-1 text-left whitespace-nowrap">Mã hàng</th>
+                  <th className="px-2 py-1 text-left whitespace-nowrap">Tên hàng</th>
+                  <th className="px-2 py-1 text-left whitespace-nowrap">ĐVT</th>
+                  <th className="px-2 py-1 text-right whitespace-nowrap">KH</th>
+                  <th className="px-2 py-1 text-right whitespace-nowrap">Thực tế</th>
+                  <th className="px-2 py-1 text-right whitespace-nowrap">CL</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map(r => {
+                  const diffCls = r.diff === 0 ? 'text-green-700' : r.diff > 0 ? 'text-amber-600' : 'text-red-600'
+                  return (
+                    <tr key={r.material_id} className="text-[10px] hover:bg-slate-50">
+                      <td className="px-2 py-1 whitespace-nowrap font-mono font-semibold">{r.material_code || <span className="text-slate-300">—</span>}</td>
+                      <td className="px-2 py-1 max-w-[220px] truncate" title={r.material_name}>{r.material_name || <span className="text-slate-300">—</span>}</td>
+                      <td className="px-2 py-1 whitespace-nowrap text-slate-400">{r.unit || '—'}</td>
+                      <td className="px-2 py-1 whitespace-nowrap text-right tabular-nums">{r.planned_boxes.toLocaleString('vi-VN')}</td>
+                      <td className="px-2 py-1 whitespace-nowrap text-right tabular-nums">{r.actual_boxes.toLocaleString('vi-VN')}</td>
+                      <td className={`px-2 py-1 whitespace-nowrap text-right tabular-nums font-semibold ${diffCls}`}>{fmtDiff(r.diff)}</td>
+                    </tr>
+                  )
+                })}
+                {filtered.length === 0 && (
+                  <tr><td colSpan={6} className="px-2 py-4 text-center text-xs text-slate-400">Không khớp “{q.trim()}”</td></tr>
+                )}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Transport Update Dialog (biển số + SĐT + Dự kiến giao) ──────────────────
 
 function TransportUpdateDialog({ order, onClose }: { order: TransferOrder | null; onClose: () => void }) {
@@ -2516,6 +2590,9 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
           { label: 'Chênh lệch', value: summary.diff > 0 ? `+${summary.diff.toLocaleString('vi-VN')}` : summary.diff.toLocaleString('vi-VN'), accent: summary.diff !== 0 },
           { label: 'Đã giao',    value: `${summary.delivered}/${summary.count}`, accent: summary.delivered > 0 },
         ]} />
+      )}
+      {!isLoading && filtered.length > 0 && (
+        <MaterialSummaryBand orderIds={filtered.map(o => o.id)} />
       )}
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
         {isLoading ? (
@@ -3252,6 +3329,11 @@ export default function TMSBookings() {
     return { orders: filteredOrders.length, vehicles, boxes, pallets, tons, done }
   }, [filteredOrders, tableRows])
 
+  // Band tổng hợp mã hàng chỉ cho phần NHẬP (Kế hoạch) — đơn INBOUND mới có inbound_plan_lines.
+  const inboundOrderIds = useMemo(
+    () => filteredOrders.filter(o => o.direction === 'INBOUND').map(o => o.id),
+    [filteredOrders])
+
   const canEditOrder = (o: TmsOrder) =>
     canEdit && o.vehicle_slots.every(vs => vs.status === 'PENDING')
 
@@ -3438,6 +3520,9 @@ export default function TMSBookings() {
           { label: 'Tấn',        value: mainSummary.tons.toLocaleString('vi-VN', { maximumFractionDigits: 1 }) },
           { label: 'Hoàn thành', value: `${mainSummary.done}/${mainSummary.orders}`, accent: mainSummary.done > 0 },
         ]} />
+      )}
+      {activeTab === 'main' && (warehouseId || isNccUser) && (
+        <MaterialSummaryBand orderIds={inboundOrderIds} />
       )}
       <div className={`flex-1 min-h-0 overflow-auto pb-20 lg:pb-4 ${activeTab !== 'main' ? 'hidden' : ''}`}>
         {!warehouseId && !isNccUser ? (

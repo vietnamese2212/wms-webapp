@@ -475,7 +475,7 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">SĐT</Label>
-                  <Input value={phone} onChange={e => setPhone(normalizePhone(e.target.value))} inputMode="numeric" placeholder="0912345678" />
+                  <Input value={phone} onChange={e => setPhone(normalizePhone(e.target.value))} inputMode="numeric" placeholder="09xxxxxxxx" />
                 </div>
               </div>
 

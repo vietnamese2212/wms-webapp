@@ -149,32 +149,21 @@ function SlotPicker({ warehouseId, date, selectedSlotId, onSelect, cargoType, ve
 }
 
 // ── Combobox biển số: gợi ý từ DS xe ĐVVT nhưng cho gõ biển số lạ ───────────
-function PlateCombobox({ value, onChange, plates }: {
+// Dùng <datalist> native (popup trình duyệt) — KHÔNG bị overflow-y-auto của DialogContent cắt.
+function PlateCombobox({ value, onChange, plates, listId }: {
   value: string
   onChange: (v: string) => void
   plates: string[]
+  listId: string
 }) {
-  const [open, setOpen] = useState(false)
-  const filtered = value.trim() ? plates.filter(p => p.toUpperCase().includes(value.toUpperCase())) : plates
   return (
-    <div className="relative mt-1">
-      <Input className="h-8 text-sm font-mono" placeholder="Chọn hoặc gõ biển số…"
-        value={value}
-        onChange={e => { onChange(normalizeLicensePlate(e.target.value)); setOpen(true) }}
-        onFocus={() => setOpen(true)}
-        onBlur={() => setTimeout(() => setOpen(false), 150)}
-      />
-      {open && filtered.length > 0 && (
-        <div className="absolute z-50 w-full mt-0.5 bg-white border border-slate-200 rounded shadow-lg max-h-44 overflow-y-auto">
-          {filtered.map(p => (
-            <button key={p} type="button"
-              className="w-full text-left px-2.5 py-1.5 text-[11px] font-mono hover:bg-slate-50"
-              onMouseDown={() => { onChange(p); setOpen(false) }}
-            >{p}</button>
-          ))}
-        </div>
-      )}
-    </div>
+    <>
+      <Input className="h-8 text-sm mt-1 font-mono" list={listId} placeholder="Chọn hoặc gõ biển số…"
+        value={value} onChange={e => onChange(normalizeLicensePlate(e.target.value))} />
+      <datalist id={listId}>
+        {[...new Set(plates)].map(p => <option key={p} value={p} />)}
+      </datalist>
+    </>
   )
 }
 
@@ -284,13 +273,13 @@ function BookSlotDialog({ vslot, order, onClose, allOrders }: {
               {isDriver ? (
                 <Input value={licensePlate} disabled className="h-8 text-sm mt-1 bg-slate-50 font-mono" />
               ) : (
-                <PlateCombobox value={licensePlate} onChange={setLicensePlate}
+                <PlateCombobox value={licensePlate} onChange={setLicensePlate} listId="bookslot-plates"
                   plates={(nccVehicles as TmsVehicle[]).map(v => v.license_plate)} />
               )}
             </div>
             <div>
               <Label className="text-xs">SĐT lái xe</Label>
-              <Input value={driverPhone} onChange={e => setDriverPhone(normalizePhone(e.target.value))} inputMode="numeric" placeholder="0912345678" className="h-8 text-sm mt-1" />
+              <Input value={driverPhone} onChange={e => setDriverPhone(normalizePhone(e.target.value))} inputMode="numeric" placeholder="09xxxxxxxx" className="h-8 text-sm mt-1" />
             </div>
           </div>
           {consolidatableOrders.length > 0 && (
@@ -1939,6 +1928,12 @@ function TransportUpdateDialog({ order, onClose }: { order: TransferOrder | null
   const updateOrder = useUpdateOrder()
   const updateSlot  = useUpdateVehicleSlot()
 
+  // Gợi ý biển số theo ĐVVT: ưu tiên ncc_id, nếu transfer order chỉ có tên (dvvt từ Outbound) thì khớp theo tên.
+  const { data: allCompanies = [] } = useTransportCompanies(true)
+  const dvvtName = order?.ncc?.name ?? order?.transfer_gdo?.dvvt ?? ''
+  const resolvedNccId = order?.ncc?.id ?? allCompanies.find(c => c.name === dvvtName)?.id ?? null
+  const { data: dvvtVehicles = [] } = useTmsVehicles(resolvedNccId ? { ncc_id: resolvedNccId, is_active: 'true' } : undefined)
+
   const [licensePlate, setPlate]    = useState('')
   const [driverPhone, setPhone]     = useState('')
   const [eta, setEta]               = useState('')
@@ -2011,11 +2006,12 @@ function TransportUpdateDialog({ order, onClose }: { order: TransferOrder | null
           <div className="grid grid-cols-2 gap-2">
             <div>
               <Label className="text-xs">Biển số xe <span className="text-red-500">*</span></Label>
-              <Input value={licensePlate} onChange={e => setPlate(normalizeLicensePlate(e.target.value))} placeholder="30H1234" className="h-8 text-sm mt-1 font-mono" />
+              <PlateCombobox value={licensePlate} onChange={setPlate} listId="transfer-plates"
+                plates={(dvvtVehicles as TmsVehicle[]).map(v => v.license_plate)} />
             </div>
             <div>
               <Label className="text-xs">SĐT lái xe <span className="text-red-500">*</span></Label>
-              <Input value={driverPhone} onChange={e => setPhone(normalizePhone(e.target.value))} inputMode="numeric" placeholder="0912345678" className="h-8 text-sm mt-1" />
+              <Input value={driverPhone} onChange={e => setPhone(normalizePhone(e.target.value))} inputMode="numeric" placeholder="09xxxxxxxx" className="h-8 text-sm mt-1" />
             </div>
           </div>
           <div>

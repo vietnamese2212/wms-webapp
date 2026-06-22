@@ -236,7 +236,7 @@ function TransportCompanyDialog({ co, open, onClose }: { co: TransportCompany | 
           <div className="space-y-1"><Label className="text-xs">Người liên hệ</Label>
             <Input value={contact} onChange={e => setContact(e.target.value)} /></div>
           <div className="space-y-1"><Label className="text-xs">SĐT liên hệ</Label>
-            <Input value={phone} onChange={e => setPhone(normalizePhone(e.target.value))} inputMode="numeric" placeholder="0912345678" /></div>
+            <Input value={phone} onChange={e => setPhone(normalizePhone(e.target.value))} inputMode="numeric" placeholder="09xxxxxxxx" /></div>
           {isEdit && <div className="flex items-center gap-2">
             <input id="co-active" type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} className="h-4 w-4 rounded accent-blue-600" />
             <Label htmlFor="co-active" className="text-sm cursor-pointer">Đang hoạt động</Label>

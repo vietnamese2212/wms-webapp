@@ -1196,7 +1196,7 @@ export default function GateRegistration() {
                   </div>
                   <div className="space-y-1">
                     <label className="text-xs text-slate-500">Số điện thoại <span className="text-red-500">*</span></label>
-                    <Input type="tel" inputMode="numeric" className="text-xs h-8" value={form.phone} onChange={e => f('phone', normalizePhone(e.target.value))} placeholder="0912345678" />
+                    <Input type="tel" inputMode="numeric" className="text-xs h-8" value={form.phone} onChange={e => f('phone', normalizePhone(e.target.value))} placeholder="09xxxxxxxx" />
                   </div>
                 </div>
 

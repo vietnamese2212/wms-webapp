@@ -2533,11 +2533,24 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
     })
   }, [orders, accessibleIds])
 
-  // Tên kho lấy từ danh sách kho tổng (query nhỏ, cache nhanh) — KHÔNG chờ transfer orders (~2s) → chip không hiện UUID.
+  // Tên kho: seed ĐỒNG BỘ từ cache localStorage (có tên ngay frame đầu, kể cả hard reload) + cập nhật từ useWarehouses.
+  // KHÔNG chờ transfer orders (~2s), không lộ UUID. Lần đầu tiên (chưa có cache) mới thoáng '…'.
   const { data: allWarehouses = [] } = useWarehouses(true)
-  const whNameById = React.useMemo(
-    () => new Map((allWarehouses as { id: string; name: string }[]).map(w => [w.id, w.name])),
-    [allWarehouses])
+  const cachedWhNames = React.useMemo<Record<string, string>>(() => {
+    try { return JSON.parse(localStorage.getItem('wms-wh-names') || '{}') } catch { return {} }
+  }, [])
+  const whNameById = React.useMemo(() => {
+    const map = new Map<string, string>(Object.entries(cachedWhNames))
+    for (const w of allWarehouses as { id: string; name: string }[]) map.set(w.id, w.name)
+    return map
+  }, [allWarehouses, cachedWhNames])
+  React.useEffect(() => {
+    if (!allWarehouses.length) return
+    try {
+      localStorage.setItem('wms-wh-names', JSON.stringify(
+        Object.fromEntries((allWarehouses as { id: string; name: string }[]).map(w => [w.id, w.name]))))
+    } catch { /* ignore quota */ }
+  }, [allWarehouses])
 
   // Options = kho có trong dữ liệu transfer + LUÔN gồm giá trị ĐANG chọn (resolve tên qua kho tổng) → không flash UUID.
   const khoXuatOptions = React.useMemo<MSOpt[]>(() => {

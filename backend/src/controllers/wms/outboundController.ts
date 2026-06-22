@@ -232,7 +232,7 @@ export async function listGDOs(req: Request, res: Response) {
     return ok(res, (data ?? []).map((g: any) => {
       const gdoDOs   = dosByGdo.get(g.id) ?? []
       const gdoItems = gdoDOs.flatMap((d: any) => itemsByDo.get(d.id) ?? [])
-      const countable = gdoItems.filter((i: any) => !isExcludedFromCount(i))
+      const noqrItems = gdoItems.filter((i: any) => isExcludedFromCount(i))
 
       const distributorNames = [...new Set(
         gdoDOs.map((d: any) => d.distributor_name).filter(Boolean)
@@ -243,9 +243,9 @@ export async function listGDOs(req: Request, res: Response) {
       const firstExportType = gdoItems.find((i: any) => i.export_type)?.export_type ?? null
 
       // Phân bổ theo (mã hàng × NPP) — gộp để FE lọc theo mã hàng + tổng theo NPP (expand kiểu Inbound).
-      // Chỉ tính item đếm được (loại no_qr_tracking) để Tổng khớp tile Tổng thùng/Pallet.
+      // Tính MỌI item (kể cả no_qr_tracking) để khớp tile Tổng thùng (= tất cả).
       const breakdownMap = new Map<string, { material_code: string; material_name: string | null; distributor_name: string | null; cartons: number; cartons_scanned: number; pallets: number }>()
-      for (const i of countable) {
+      for (const i of gdoItems) {
         const material_code = i.material_code_raw ?? '(?)'
         const distributor_name = distributorByDo.get(i.do_id) ?? null
         const key = `${material_code}__${distributor_name ?? ''}`
@@ -262,8 +262,10 @@ export async function listGDOs(req: Request, res: Response) {
         distributor_names: distributorNames as string[],
         delivery_codes:    deliveryCodes as string[],
         export_type:       firstExportType,
-        total_cartons:     countable.reduce((s: number, i: any) => s + Number(i.cartons_ordered),    0),
-        total_pallets:     countable.reduce((s: number, i: any) => s + Number(i.pallets_estimated),  0),
+        // Tổng thùng = TẤT CẢ item (gồm hàng no_qr); thêm total_cartons_noqr = riêng hàng không QR.
+        total_cartons:      gdoItems.reduce((s: number, i: any) => s + Number(i.cartons_ordered),   0),
+        total_cartons_noqr: noqrItems.reduce((s: number, i: any) => s + Number(i.cartons_ordered),  0),
+        total_pallets:      gdoItems.reduce((s: number, i: any) => s + Number(i.pallets_estimated), 0),
         item_breakdown:    [...breakdownMap.values()],
       }
     }))

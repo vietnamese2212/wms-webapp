@@ -934,6 +934,9 @@ export default function OutboundDetail() {
   const countable = allItems.filter(i => !i.material?.no_qr_tracking)
   const totalOrdered = countable.reduce((s, i) => s + i.cartons_ordered, 0)
   const totalScanned = countable.reduce((s, i) => s + i.cartons_scanned, 0)
+  // Hiển thị Kế hoạch/Đã xuất tính CẢ hàng no_qr (khớp Tổng thùng ở list); countable chỉ dùng cho canComplete.
+  const totalOrderedAll = allItems.reduce((s, i) => s + i.cartons_ordered, 0)
+  const totalScannedAll = allItems.reduce((s, i) => s + i.cartons_scanned, 0)
   const manualItems  = allItems.filter(i => i.material?.no_qr_tracking === true)
   const allManualDone = manualItems.every(i => i.status === 'COMPLETED')
   const scanComplete  = countable.length === 0 || (totalOrdered > 0 && totalScanned >= totalOrdered)
@@ -1165,7 +1168,7 @@ export default function OutboundDetail() {
             )}
             <span className="flex items-center gap-1">
               <Package className="h-3 w-3 text-slate-400 shrink-0" />
-              <span className="font-medium">{totalScanned}/{totalOrdered}</span> thùng
+              <span className="font-medium">{totalScannedAll}/{totalOrderedAll}</span> thùng
             </span>
           </div>
 
@@ -1228,7 +1231,7 @@ export default function OutboundDetail() {
               <button className="ml-auto" onClick={() => setUndoErr(null)}><X className="h-3 w-3" /></button>
             </div>
           )}
-          <ProgressBar scanned={totalScanned} ordered={totalOrdered} />
+          <ProgressBar scanned={totalScannedAll} ordered={totalOrderedAll} />
         </div>
 
         {/* Quick-switch bar — nằm ngoài header để không gây scroll */}
@@ -1251,8 +1254,8 @@ export default function OutboundDetail() {
         <SummaryBand tiles={[
           { label: 'DO',       value: allDOs.length },
           { label: 'Mã hàng',  value: allItems.length },
-          { label: 'Đã xuất',  value: `${totalScanned.toLocaleString('vi-VN')} thùng`, accent: totalScanned > 0 },
-          { label: 'Kế hoạch', value: `${totalOrdered.toLocaleString('vi-VN')} thùng` },
+          { label: 'Đã xuất',  value: `${totalScannedAll.toLocaleString('vi-VN')} thùng`, accent: totalScannedAll > 0 },
+          { label: 'Kế hoạch', value: `${totalOrderedAll.toLocaleString('vi-VN')} thùng` },
         ]} />
 
         {/* ── Items table: ~80% ── */}

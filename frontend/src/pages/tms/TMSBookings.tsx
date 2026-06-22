@@ -12,6 +12,7 @@ import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { useColumnResize } from '@/components/shared/useColumnResize'
+import { SummaryBand } from '@/components/shared/SummaryBand'
 import type { MSOpt } from '@/components/shared/MultiSelectFilter'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useAuthStore } from '@/stores/authStore'
@@ -2475,6 +2476,20 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
     return list
   }, [scopedOrders, dateFrom, dateTo, khoXuatFilter, khoNhanFilter])
 
+  // Subtotal tab Chuyển kho (SummaryBand) — tính trên dữ liệu ĐÃ filter. Thực nhận/chênh lệch chỉ tính lệnh đã bắt đầu nhận.
+  const summary = React.useMemo(() => {
+    let plannedBoxes = 0, actualBoxes = 0, diff = 0, delivered = 0
+    for (const o of filtered) {
+      plannedBoxes += o.planned_boxes ?? 0
+      if (o.receiving_started_at) {
+        actualBoxes += o.actual_received ?? 0
+        diff        += (o.actual_received ?? 0) - (o.planned_boxes ?? 0)
+      }
+      if (o.transfer_gdo?.transfer_status === 'DELIVERED') delivered++
+    }
+    return { count: filtered.length, plannedBoxes, actualBoxes, diff, delivered }
+  }, [filtered])
+
   // Gom filter tab Chuyển kho về 1 FilterBar (daterange Ngày xuất + Kho xuất/nhận) — đồng bộ tab Kế hoạch
   const transferFilterDefs: FilterDef[] = [
     { key: 'date', label: 'Ngày xuất', type: 'daterange', from: dateFrom, to: dateTo,
@@ -2493,6 +2508,15 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
         <FilterBar defs={transferFilterDefs} />
         <FilterSheetButton defs={transferFilterDefs} className="sm:hidden" />
       </div>
+      {!isLoading && filtered.length > 0 && (
+        <SummaryBand tiles={[
+          { label: 'Lệnh',       value: summary.count.toLocaleString('vi-VN') },
+          { label: 'Thùng KH',   value: summary.plannedBoxes.toLocaleString('vi-VN') },
+          { label: 'Thực nhận',  value: summary.actualBoxes.toLocaleString('vi-VN') },
+          { label: 'Chênh lệch', value: summary.diff > 0 ? `+${summary.diff.toLocaleString('vi-VN')}` : summary.diff.toLocaleString('vi-VN'), accent: summary.diff !== 0 },
+          { label: 'Đã giao',    value: `${summary.delivered}/${summary.count}`, accent: summary.delivered > 0 },
+        ]} />
+      )}
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
         {isLoading ? (
           <div className="py-24 text-center text-sm text-slate-400">Đang tải...</div>
@@ -3215,6 +3239,19 @@ export default function TMSBookings() {
     return rows
   }, [filteredOrders])
 
+  // Subtotal tab Kế hoạch (SummaryBand) — tính trên dữ liệu ĐÃ filter
+  const mainSummary = useMemo(() => {
+    let boxes = 0, pallets = 0, tons = 0
+    for (const o of filteredOrders) {
+      boxes   += o.planned_boxes ?? 0
+      pallets += o.planned_pallets ?? 0
+      tons    += o.planned_tons ?? 0
+    }
+    const vehicles = tableRows.filter(r => r.stt !== null).length
+    const done = filteredOrders.filter(o => o.vehicle_slots.length > 0 && o.vehicle_slots.every(vs => vs.status === 'DONE')).length
+    return { orders: filteredOrders.length, vehicles, boxes, pallets, tons, done }
+  }, [filteredOrders, tableRows])
+
   const canEditOrder = (o: TmsOrder) =>
     canEdit && o.vehicle_slots.every(vs => vs.status === 'PENDING')
 
@@ -3392,6 +3429,16 @@ export default function TMSBookings() {
           />
         </div>
       ) : null}
+      {activeTab === 'main' && (warehouseId || isNccUser) && tableRows.length > 0 && (
+        <SummaryBand tiles={[
+          { label: 'Đơn',        value: mainSummary.orders.toLocaleString('vi-VN') },
+          { label: 'Xe',         value: mainSummary.vehicles.toLocaleString('vi-VN') },
+          { label: 'Thùng',      value: mainSummary.boxes.toLocaleString('vi-VN') },
+          { label: 'Pallet',     value: mainSummary.pallets.toLocaleString('vi-VN') },
+          { label: 'Tấn',        value: mainSummary.tons.toLocaleString('vi-VN', { maximumFractionDigits: 1 }) },
+          { label: 'Hoàn thành', value: `${mainSummary.done}/${mainSummary.orders}`, accent: mainSummary.done > 0 },
+        ]} />
+      )}
       <div className={`flex-1 min-h-0 overflow-auto pb-20 lg:pb-4 ${activeTab !== 'main' ? 'hidden' : ''}`}>
         {!warehouseId && !isNccUser ? (
           <div className="py-24 text-center text-sm text-slate-400">Chọn kho để xem kế hoạch</div>

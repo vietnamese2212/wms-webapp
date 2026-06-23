@@ -105,6 +105,25 @@ function scheduleScanLogRefresh(): void {
   }, 3000)
 }
 
+// COALESCE refetch theo từng query-key: gộp BURST sự kiện realtime thành tối đa 1
+// refetch / cửa sổ. Trước đây mỗi event gọi invalidateQueries thẳng → 1 thao tác
+// hàng loạt (upload, reset) hoặc HÀNG TRĂM user book cùng lúc sinh ra hàng trăm
+// event → mỗi client refetch list 'tms-orders' (~2MB) hàng trăm lần → trình duyệt
+// cạn kết nối (ERR_INSUFFICIENT_RESOURCES), UI không settle, BE bị dội.
+// Giải: lịch trailing-edge — event đầu hẹn refetch sau COALESCE_MS, mọi event trong
+// cửa sổ bị gộp. Bảng cập-nhật-liên-tục → refetch đều ~1 lần/cửa sổ thay vì N lần.
+// (booked_count slot vẫn cập nhật TỨC THÌ qua patchSlotCache, không chờ refetch.)
+const COALESCE_MS = 1000
+const invalidateTimers = new Map<string, ReturnType<typeof setTimeout>>()
+function coalescedInvalidate(key: string[]): void {
+  const id = JSON.stringify(key)
+  if (invalidateTimers.has(id)) return
+  invalidateTimers.set(id, setTimeout(() => {
+    invalidateTimers.delete(id)
+    queryClient.invalidateQueries({ queryKey: key })
+  }, COALESCE_MS))
+}
+
 export function connectRealtimeEvents(): void {
   if (!supabaseClient || channel) return
 
@@ -143,7 +162,7 @@ export function connectRealtimeEvents(): void {
         const suppress = Date.now() < suppressTmsOrdersUntil
         keys.forEach((k) => {
           if (suppress && k[0] === 'tms-orders') return
-          queryClient.invalidateQueries({ queryKey: k })
+          coalescedInvalidate(k)
         })
       }
     )

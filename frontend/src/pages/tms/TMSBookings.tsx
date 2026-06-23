@@ -3405,6 +3405,31 @@ export default function TMSBookings() {
     return rows
   }, [filteredOrders])
 
+  // Phân trang lưới Kế hoạch: render theo TRANG để không treo khi nhiều đơn/đa-ngày.
+  // CẮT TẠI RANH GIỚI CỤM (blockKey) → 1 cụm xe gom/tách luôn trọn 1 trang → rowspan co dãn đúng.
+  const [planPage, setPlanPage] = useState(1)
+  const [planPageSize, setPlanPageSize] = useState(200)
+  const planPages = useMemo<TableRow[][]>(() => {
+    const out: TableRow[][] = []
+    let cur: TableRow[] = []
+    let i = 0
+    while (i < tableRows.length) {
+      const bk = tableRows[i].blockKey
+      const block: TableRow[] = []
+      while (i < tableRows.length && tableRows[i].blockKey === bk) { block.push(tableRows[i]); i++ }
+      // đóng trang trước khi thêm cụm sẽ vượt cỡ (trang có thể >pageSize chút để trọn cụm — đúng "200 hoặc hơn")
+      if (cur.length > 0 && cur.length + block.length > planPageSize) { out.push(cur); cur = [] }
+      cur.push(...block)
+    }
+    if (cur.length) out.push(cur)
+    return out
+  }, [tableRows, planPageSize])
+  const planPageCount = Math.max(1, planPages.length)
+  const planSafePage  = Math.min(planPage, planPageCount)
+  const pagedRows     = planPages[planSafePage - 1] ?? []
+  // Reset về trang 1 khi đổi filter/ngày/kho/cỡ trang — KHÔNG reset khi realtime refetch (giữ trang đang xem)
+  useEffect(() => { setPlanPage(1) }, [dateFrom, dateTo, warehouseId, planPageSize, huongFilter, dvvtFilter, loaiKhoFilter, loaiXeFilter, khungGioFilter])
+
   // Subtotal tab Kế hoạch (SummaryBand) — tính trên dữ liệu ĐÃ filter
   const mainSummary = useMemo(() => {
     let boxes = 0, pallets = 0, tons = 0
@@ -3661,25 +3686,25 @@ export default function TMSBookings() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {tableRows.flatMap(({ order, vslot, slotIndex, isPrimary, secIndex, stt, sttRowspan, rowKey, spanRowKeys, blockKey, isFirstOrderRow, groupStatus, groupParity, showSlotCell, slotCellRowspan }, rowIndex) => {
+              {pagedRows.flatMap(({ order, vslot, slotIndex, isPrimary, secIndex, stt, sttRowspan, rowKey, spanRowKeys, blockKey, isFirstOrderRow, groupStatus, groupParity, showSlotCell, slotCellRowspan }, rowIndex) => {
                 // Khối = mọi dòng cùng đơn chủ (xe chính + xe phụ + đơn gom). Chỉ kẻ/ngăn ở ĐẦU và CUỐI khối,
                 // KHÔNG chia giữa các dòng cùng khối (tránh đứt đường nối khi 1 đơn đi nhiều xe).
                 // Nhóm để TÁCH (như bong bóng chat): phần XE NHÀ (cùng đơn, KHÔNG gom) là 1 nhóm; mỗi CỤM GOM
                 // (đơn chính + đơn phụ đi chung xe) là nhóm RIÊNG — nên cùng 1 đơn nhưng phần xe gom vẫn tách khỏi xe nhà.
                 const sepKeyOf = (i: number) => {
-                  const r = tableRows[i]
+                  const r = pagedRows[i]
                   return r.vslot.consolidation_group_id ? `cg-${r.vehicleGroupKey}` : `blk-${r.blockKey}`
                 }
                 const sepKey = sepKeyOf(rowIndex)
                 const sepStart = rowIndex === 0 || sepKeyOf(rowIndex - 1) !== sepKey
-                const sepEnd   = rowIndex === tableRows.length - 1 || sepKeyOf(rowIndex + 1) !== sepKey
+                const sepEnd   = rowIndex === pagedRows.length - 1 || sepKeyOf(rowIndex + 1) !== sepKey
                 const isMultiRowGroup = !(sepStart && sepEnd)
                 const prevGroupMulti  = rowIndex >= 2 && sepKeyOf(rowIndex - 2) === sepKeyOf(rowIndex - 1)
                 // Tách (khe trống ~bong bóng) ở RANH GIỚI có ÍT NHẤT 1 nhóm nhiều dòng (cụm xe / đơn gom).
                 // Giữa 2 đơn LẺ liền nhau = KHÔNG tách (chỉ kẻ ngang thường).
                 const showGap = sepStart && rowIndex > 0 && (isMultiRowGroup || prevGroupMulti)
                 // Nếu connector tree (cùng 1 đơn đi nhiều xe) băng qua khe → vẽ tiếp line dọc xám để KHÔNG đứt mũi tên.
-                const orderSpansGap = showGap && tableRows[rowIndex - 1].order.id === order.id
+                const orderSpansGap = showGap && pagedRows[rowIndex - 1].order.id === order.id
                 const grpSpacer = showGap
                   ? (
                     <tr key={`sp-${rowKey}`} aria-hidden className="pointer-events-none">
@@ -3757,7 +3782,7 @@ export default function TMSBookings() {
                         {order.order_code || <span className="text-slate-400 font-normal">—</span>}
                       </>
                     ) : (() => {
-                      const nextRow = tableRows[rowIndex + 1]
+                      const nextRow = pagedRows[rowIndex + 1]
                       const isLast = !nextRow || nextRow.order.id !== order.id || nextRow.slotIndex === 0
                       return (
                         <>
@@ -3966,11 +3991,25 @@ export default function TMSBookings() {
         )}
       </div>
 
-      {/* Footer đếm bản ghi */}
-      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 sm:rounded-b-xl">
-        {activeTab === 'main'
-          ? `${(orders as TmsOrder[]).length} đơn`
-          : 'Chuyển kho'}
+      {/* Footer đếm bản ghi + phân trang */}
+      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 sm:rounded-b-xl flex items-center gap-3 flex-wrap">
+        {activeTab === 'main' ? (
+          <>
+            <span>{(orders as TmsOrder[]).length.toLocaleString('vi-VN')} đơn · {tableRows.length.toLocaleString('vi-VN')} dòng</span>
+            {planPageCount > 1 && (
+              <span className="flex items-center gap-1.5">
+                <button className="px-2 py-0.5 rounded border border-slate-300 disabled:opacity-40 hover:bg-slate-100" disabled={planSafePage <= 1} onClick={() => setPlanPage(p => Math.max(1, p - 1))}>‹ Trước</button>
+                <span className="tabular-nums">Trang {planSafePage}/{planPageCount}</span>
+                <button className="px-2 py-0.5 rounded border border-slate-300 disabled:opacity-40 hover:bg-slate-100" disabled={planSafePage >= planPageCount} onClick={() => setPlanPage(p => Math.min(planPageCount, p + 1))}>Sau ›</button>
+              </span>
+            )}
+            <span className="flex items-center gap-1">Cỡ trang:
+              {[200, 500, 1000].map(sz => (
+                <button key={sz} className={`px-1.5 py-0.5 rounded border ${planPageSize === sz ? 'border-sky-500 text-sky-700 bg-sky-50' : 'border-slate-300 hover:bg-slate-100'}`} onClick={() => setPlanPageSize(sz)}>{sz}</button>
+              ))}
+            </span>
+          </>
+        ) : 'Chuyển kho'}
       </div>
      </div>
 

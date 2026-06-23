@@ -8,7 +8,6 @@ export const ALL_PERMISSIONS: Record<string, string[]> = {
   locations:    ['view', 'create', 'edit', 'delete'],
   employees:    ['view'],
   user_admin:   ['view', 'create', 'edit', 'set_password', 'delete', 'manage_roles'],
-  deliveries:   ['view', 'create', 'edit'],
   wms_settings: ['view', 'manage_warehouse', 'manage_type', 'manage_zone', 'manage_shift', 'manage_qa'],
   tms_plan:          ['view', 'create', 'edit', 'delete', 'add_vehicle', 'release', 'change_date', 'book', 'revoke', 'upload_outbound', 'upload_inbound', 'confirm_receipt'],
   tms_vehicle_types: ['view', 'manage'],

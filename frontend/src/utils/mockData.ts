@@ -1,6 +1,6 @@
 import type {
   Product, Location, InventoryItem, Transaction,
-  Vehicle, Driver, DeliveryOrder,
+  Vehicle, Driver,
   Employee, Shift,
 } from '@/types'
 
@@ -91,40 +91,6 @@ export const mockVehicles: Vehicle[] = [
   { id: 'V005', plateNumber: '51L-33333', type: 'VAN', capacity: 1000, status: 'EXPIRED', nextInspectionDate: '2026-04-01', brand: 'Hyundai', model: 'Porter', year: 2019 },
 ]
 
-export const mockDeliveries: DeliveryOrder[] = [
-  {
-    id: 'DEL001', orderNo: 'DO-2026-0891', vehicle: mockVehicles[1], driver: mockDrivers[1],
-    origin: 'Kho Bình Dương - KCN Sóng Thần', destination: 'Khách hàng - 123 Lý Thường Kiệt, Q.10',
-    customer: 'Công ty TNHH Phân Phối ABC', status: 'IN_TRANSIT',
-    scheduledAt: '2026-05-07T08:00:00Z', weight: 3500, items: 48, distance: 35,
-  },
-  {
-    id: 'DEL002', orderNo: 'DO-2026-0892', vehicle: mockVehicles[0], driver: mockDrivers[0],
-    origin: 'Kho Bình Dương - KCN Sóng Thần', destination: 'Khách hàng - 456 Nguyễn Huệ, Q.1',
-    customer: 'Siêu thị Big C Miền Nam', status: 'PENDING',
-    scheduledAt: '2026-05-07T14:00:00Z', weight: 4200, items: 60,
-  },
-  {
-    id: 'DEL003', orderNo: 'DO-2026-0889', vehicle: mockVehicles[3], driver: mockDrivers[3],
-    origin: 'Kho Bình Dương - KCN Sóng Thần', destination: 'Cảng Cát Lái, TP.HCM',
-    customer: 'Công ty XNK Toàn Cầu', status: 'DELIVERED',
-    scheduledAt: '2026-05-06T07:00:00Z', completedAt: '2026-05-06T11:30:00Z', weight: 18000, items: 200, distance: 42,
-  },
-  {
-    id: 'DEL004', orderNo: 'DO-2026-0890', vehicle: mockVehicles[2], driver: mockDrivers[2],
-    origin: 'Kho Bình Dương - KCN Sóng Thần', destination: 'KCN Nhơn Trạch, Đồng Nai',
-    customer: 'Nhà máy Sản Xuất XYZ', status: 'FAILED',
-    scheduledAt: '2026-05-06T10:00:00Z', weight: 1200, items: 24,
-    notes: 'Xe hỏng giữa đường, cần điều xe khác',
-  },
-  {
-    id: 'DEL005', orderNo: 'DO-2026-0893', status: 'ASSIGNED',
-    origin: 'Kho Bình Dương - KCN Sóng Thần', destination: 'Khách hàng - 789 Điện Biên Phủ, Q.3',
-    customer: 'Chuỗi bán lẻ MWG', vehicle: mockVehicles[0], driver: mockDrivers[0],
-    scheduledAt: '2026-05-08T09:00:00Z', weight: 2800, items: 36,
-  },
-]
-
 export const mockEmployees: Employee[] = [
   { id: 'E001', name: 'Nguyễn Văn Quản Lý', employeeCode: 'NV001', department: 'Kho vận', phone: '0901234567', email: 'ql@wms.vn', qrCode: 'QR-E001', status: 'ACTIVE', joinDate: '2021-03-01' },
   { id: 'E002', name: 'Trần Văn Kho', employeeCode: 'NV002', department: 'Kho vận', phone: '0912345678', email: 'tvk@wms.vn', qrCode: 'QR-E002', status: 'ACTIVE', joinDate: '2022-01-15' },
@@ -146,10 +112,8 @@ export const mockShifts: Shift[] = [
 export const dashboardKPIs = {
   inventoryAccuracy: 99.7,
   orderFulfillmentRate: 97.8,
-  onTimeDelivery: 94.5,
   warehouseUtilization: 76.2,
   todayInbound: 3,
   todayOutbound: 7,
-  pendingDeliveries: 2,
   lowStockAlerts: 3,
 }

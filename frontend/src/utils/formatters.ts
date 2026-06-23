@@ -1,6 +1,6 @@
 import { format, formatDistanceToNow, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
-import type { TransactionType, TransactionStatus, DeliveryStatus, VehicleStatus, EmployeeStatus, StockStatus } from '@/types'
+import type { TransactionType, TransactionStatus, VehicleStatus, EmployeeStatus, StockStatus } from '@/types'
 
 // Intl-based helpers — always display in Vietnam timezone (UTC+7) regardless of browser OS
 const VN_TZ = 'Asia/Ho_Chi_Minh'
@@ -73,14 +73,6 @@ export const transactionStatusLabel: Record<TransactionStatus, string> = {
   IN_PROGRESS: 'Đang thực hiện',
   COMPLETED: 'Hoàn thành',
   CANCELLED: 'Đã huỷ',
-}
-
-export const deliveryStatusLabel: Record<DeliveryStatus, string> = {
-  PENDING: 'Chờ giao',
-  ASSIGNED: 'Đã phân công',
-  IN_TRANSIT: 'Đang giao',
-  DELIVERED: 'Hoàn thành',
-  FAILED: 'Thất bại',
 }
 
 export const vehicleStatusLabel: Record<VehicleStatus, string> = {

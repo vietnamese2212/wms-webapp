@@ -1,7 +1,7 @@
 import { NavLink, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard, Package, PackagePlus, PackageMinus, MapPin,
-  Truck, Navigation, Calendar, Settings, Settings2, ChevronLeft, ChevronRight,
+  Truck, Calendar, Settings, Settings2, ChevronLeft, ChevronRight,
   BarChart3, ClipboardList, UserCog, Scissors, ScanLine, ClipboardCheck, BarChart2, ShieldCheck, Tag, QrCode, CalendarRange, CalendarCheck, Network,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -57,7 +57,6 @@ const navGroups: NavGroup[] = [
       { to: '/tms/reports',    icon: BarChart2,     label: 'Báo cáo nhập',   module: 'tms_plan' },
       { to: '/tms/gate',       icon: ShieldCheck,   label: 'Đăng ký cổng',  module: 'gate_registration' },
       { to: '/tms/settings',   icon: Settings2,     label: 'Cài đặt TMS',   modules: ['tms_vehicle_types', 'tms_slots', 'tms_companies', 'tms_vehicles'] },
-      { to: '/tms/deliveries', icon: Navigation,    label: 'Giao hàng',     module: 'deliveries' },
     ],
   },
   {

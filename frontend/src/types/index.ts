@@ -158,24 +158,6 @@ export interface Vehicle {
   year: number
 }
 
-export type DeliveryStatus = 'PENDING' | 'ASSIGNED' | 'IN_TRANSIT' | 'DELIVERED' | 'FAILED'
-
-export interface DeliveryOrder {
-  id: string
-  orderNo: string
-  vehicle?: Vehicle
-  driver?: Driver
-  origin: string
-  destination: string
-  customer: string
-  status: DeliveryStatus
-  scheduledAt: string
-  completedAt?: string
-  weight: number
-  items: number
-  distance?: number
-  notes?: string
-}
 
 // HR
 export type EmployeeStatus = 'ACTIVE' | 'INACTIVE' | 'ON_LEAVE'

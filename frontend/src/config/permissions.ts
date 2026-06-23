@@ -98,14 +98,6 @@ export const MODULES = {
       manage_roles: 'Sửa & phân quyền [Phòng ban · Chức danh]',
     },
   },
-  deliveries: {
-    label: 'Giao hàng',
-    actions: {
-      view:   'Xem danh sách',
-      create: 'Tạo chuyến',
-      edit:   'Sửa',
-    },
-  },
   wms_settings: {
     label: 'Cài đặt WMS',
     actions: {
@@ -175,9 +167,9 @@ export const MODULES = {
     },
   },
   inbound_plan: {
-    label: 'Kế hoạch nhập (từ ngoài) — trang KH nhập',
+    label: 'Kế hoạch nhập chuyển kho (trong trang Kế hoạch VC)',
     actions: {
-      view:   'Xem kế hoạch',
+      view:   'Xem kế hoạch nhập',
       create: 'Thêm / Upload dòng kế hoạch',
       edit:   'Sửa dòng kế hoạch',
       delete: 'Xóa dòng (nhập nhầm)',

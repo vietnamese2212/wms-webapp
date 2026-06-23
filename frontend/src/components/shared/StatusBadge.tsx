@@ -1,10 +1,10 @@
 import { Badge } from '@/components/ui/badge'
 import type {
-  TransactionStatus, TransactionType, DeliveryStatus,
+  TransactionStatus, TransactionType,
   VehicleStatus, EmployeeStatus, StockStatus,
 } from '@/types'
 import {
-  transactionStatusLabel, transactionTypeLabel, deliveryStatusLabel,
+  transactionStatusLabel, transactionTypeLabel,
   vehicleStatusLabel, employeeStatusLabel, stockStatusLabel,
 } from '@/utils/formatters'
 import type { BadgeProps } from '@/components/ui/badge'
@@ -24,14 +24,6 @@ const transactionTypeVariant: Record<TransactionType, BadgeVariant> = {
   TRANSFER: 'purple',
   ADJUSTMENT: 'warning',
   CYCLE_COUNT: 'slate',
-}
-
-const deliveryStatusVariant: Record<DeliveryStatus, BadgeVariant> = {
-  PENDING: 'warning',
-  ASSIGNED: 'info',
-  IN_TRANSIT: 'purple',
-  DELIVERED: 'success',
-  FAILED: 'danger',
 }
 
 const vehicleStatusVariant: Record<VehicleStatus, BadgeVariant> = {
@@ -59,10 +51,6 @@ export function TransactionStatusBadge({ status }: { status: TransactionStatus }
 
 export function TransactionTypeBadge({ type }: { type: TransactionType }) {
   return <Badge variant={transactionTypeVariant[type]}>{transactionTypeLabel[type]}</Badge>
-}
-
-export function DeliveryStatusBadge({ status }: { status: DeliveryStatus }) {
-  return <Badge variant={deliveryStatusVariant[status]}>{deliveryStatusLabel[status]}</Badge>
 }
 
 export function VehicleStatusBadge({ status }: { status: VehicleStatus }) {

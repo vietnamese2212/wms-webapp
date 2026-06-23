@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom'
 import {
-  Package, PackagePlus, PackageMinus, Navigation, AlertTriangle,
+  Package, PackagePlus, PackageMinus, AlertTriangle,
   CheckCircle2, TrendingUp, Warehouse, Clock, ArrowRight, Activity,
 } from 'lucide-react'
 import { PageHeader } from '@/components/shared/PageHeader'
@@ -75,19 +75,6 @@ export default function Dashboard() {
             target="≥ 98%"
           />
           <StatsCard
-            title="Giao hàng đúng giờ"
-            value={dashboardKPIs.onTimeDelivery}
-            unit="%"
-            change={1.2}
-            changeLabel="so tuần trước"
-            trend="up"
-            icon={Navigation}
-            iconColor="text-purple-600"
-            progress={dashboardKPIs.onTimeDelivery}
-            progressColor="bg-purple-500"
-            target="≥ 95%"
-          />
-          <StatsCard
             title="Sử dụng kho"
             value={dashboardKPIs.warehouseUtilization}
             unit="%"
@@ -124,19 +111,6 @@ export default function Dashboard() {
                 <div>
                   <p className="text-2xl font-bold">{dashboardKPIs.todayOutbound}</p>
                   <p className="text-xs text-muted-foreground">Phiếu xuất hôm nay</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-5">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-purple-100 dark:bg-purple-900/30">
-                  <Navigation className="h-5 w-5 text-purple-600" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold">{dashboardKPIs.pendingDeliveries}</p>
-                  <p className="text-xs text-muted-foreground">Giao hàng chờ</p>
                 </div>
               </div>
             </CardContent>
@@ -253,12 +227,6 @@ export default function Dashboard() {
                   <Link to="/wms/outbound">
                     <PackageMinus className="h-4 w-4 text-blue-600" />
                     Tạo phiếu xuất kho
-                  </Link>
-                </Button>
-                <Button variant="outline" className="w-full justify-start gap-2 h-9" asChild>
-                  <Link to="/tms/deliveries">
-                    <Navigation className="h-4 w-4 text-purple-600" />
-                    Tạo lệnh giao hàng
                   </Link>
                 </Button>
                 <Button variant="outline" className="w-full justify-start gap-2 h-9" asChild>

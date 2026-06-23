@@ -13,7 +13,7 @@ const {
   Outbound, OutboundDetail, OutboundItemDetail, OutboundScanLog, OutboundPrepare,
   LoosePicking, LoosePickingDetail, LoosePickingItemDetail,
   Locations, Stocktake, StocktakeDashboard, PalletLabels, PalletOps,
-  Deliveries, WMSSettings, TMSSettings, TMSBookings, TMSReport, GateRegistration,
+  WMSSettings, TMSSettings, TMSBookings, TMSReport, GateRegistration,
   LeaveManagement, Assignments, Attendance, OrgChart,
   UserManagement, Materials, Settings,
 } = Pages
@@ -62,7 +62,6 @@ export default function App() {
         {/* WMS — inbound */}
         <Route path="/wms/inbound"         element={<PermissionRoute module="inbound"><Inbound /></PermissionRoute>} />
         <Route path="/wms/inbound/:id"     element={<PermissionRoute module="inbound"><InboundDetail /></PermissionRoute>} />
-        <Route path="/wms/inbound-plan"    element={<Navigate to="/tms/bookings" replace />} />
 
         {/* WMS — outbound */}
         <Route path="/wms/outbound"                         element={<PermissionRoute module="outbound"><Outbound /></PermissionRoute>} />
@@ -92,7 +91,6 @@ export default function App() {
         {/* TMS */}
         <Route path="/tms/bookings"   element={<PermissionRoute module="tms_plan"><TMSBookings /></PermissionRoute>} />
         <Route path="/tms/reports"    element={<PermissionRoute module="tms_plan"><TMSReport /></PermissionRoute>} />
-        <Route path="/tms/deliveries" element={<PermissionRoute module="deliveries"><Deliveries /></PermissionRoute>} />
         <Route path="/tms/settings"   element={<PermissionRoute module={['tms_vehicle_types', 'tms_slots', 'tms_companies', 'tms_vehicles']}><TMSSettings /></PermissionRoute>} />
         <Route path="/tms/gate"       element={<PermissionRoute module="gate_registration"><GateRegistration /></PermissionRoute>} />
 

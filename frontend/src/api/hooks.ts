@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import {
   mockInventory, mockTransactions, mockVehicles,
-  mockDeliveries, mockEmployees,
+  mockEmployees,
   mockLocations,
 } from '@/utils/mockData'
 import { apiClient } from './client'
@@ -1048,13 +1048,6 @@ export function useVehicles() {
   return useQuery({
     queryKey: ['vehicles'],
     queryFn: async () => { await delay(); return mockVehicles },
-  })
-}
-
-export function useDeliveries() {
-  return useQuery({
-    queryKey: ['deliveries'],
-    queryFn: async () => { await delay(); return mockDeliveries },
   })
 }
 

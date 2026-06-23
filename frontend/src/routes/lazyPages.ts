@@ -20,7 +20,6 @@ const stocktake          = () => import('@/pages/wms/Stocktake')
 const stocktakeDashboard = () => import('@/pages/wms/StocktakeDashboard')
 const palletLabels       = () => import('@/pages/wms/PalletLabels')
 const palletOps          = () => import('@/pages/wms/PalletOps')
-const deliveries  = () => import('@/pages/tms/Deliveries')
 const wmsSettings = () => import('@/pages/wms/WMSSettings')
 const tmsSettings = () => import('@/pages/tms/TMSSettings')
 const tmsBookings = () => import('@/pages/tms/TMSBookings')
@@ -52,7 +51,6 @@ export const Pages = {
   StocktakeDashboard: lazy(stocktakeDashboard),
   PalletLabels: lazy(palletLabels),
   PalletOps: lazy(palletOps),
-  Deliveries: lazy(deliveries),
   WMSSettings: lazy(wmsSettings),
   TMSSettings: lazy(tmsSettings),
   TMSBookings: lazy(tmsBookings),
@@ -86,7 +84,6 @@ const prefetchMap: Record<string, () => Promise<unknown>> = {
   '/tms/reports': tmsReport,
   '/tms/gate': gateRegistration,
   '/tms/settings': tmsSettings,
-  '/tms/deliveries': deliveries,
   '/hr/assignments': assignments,
   '/hr/attendance': attendance,
   '/hr/org': orgChart,

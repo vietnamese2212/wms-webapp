@@ -115,10 +115,6 @@ interface GateRegistrationFilters {
   fDirection: string
   fStatus: string
 }
-interface DeliveriesFilters {
-  search: string
-  statusFilter: string
-}
 interface MaterialsFilters {
   search: string
   catFilter: string[]
@@ -167,7 +163,6 @@ interface WmsFilterState {
   stocktakeSummary:  StocktakeSummaryFilters
   locations:         LocationsFilters
   gateRegistration:  GateRegistrationFilters
-  deliveries:        DeliveriesFilters
   materials:         MaterialsFilters
   inboundReport:     InboundReportFilters
   tmsBookings:       TmsBookingsFilters
@@ -183,7 +178,6 @@ interface WmsFilterState {
   setStocktakeSummary:  (f: Partial<StocktakeSummaryFilters>)  => void
   setLocations:         (f: Partial<LocationsFilters>)         => void
   setGateRegistration:  (f: Partial<GateRegistrationFilters>)  => void
-  setDeliveries:        (f: Partial<DeliveriesFilters>)        => void
   setMaterials:         (f: Partial<MaterialsFilters>)         => void
   setInboundReport:     (f: Partial<InboundReportFilters>)     => void
   setAssignment:        (f: Partial<AssignmentFilters>)        => void
@@ -234,7 +228,6 @@ function initialFilters() {
       fDate: today(), fDateTo: '', fWarehouse: '', fWarehouseType: '',
       fVehicleTypes: [], fCompany: '', fDirection: '', fStatus: '',
     },
-    deliveries: { search: '', statusFilter: 'ALL' },
     materials:  { search: '', catFilter: [], statusFilter: ['active'], qrFilter: [] },
     inboundReport: {
       dateFrom: (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }) })(),
@@ -260,7 +253,6 @@ export const useWmsFilterStore = create<WmsFilterState>()(
       setStocktakeSummary: (f) => set(s => ({ stocktakeSummary: { ...s.stocktakeSummary, ...f } })),
       setLocations:        (f) => set(s => ({ locations:        { ...s.locations,        ...f } })),
       setGateRegistration: (f) => set(s => ({ gateRegistration: { ...s.gateRegistration, ...f } })),
-      setDeliveries:       (f) => set(s => ({ deliveries:       { ...s.deliveries,       ...f } })),
       setMaterials:        (f) => set(s => ({ materials:        { ...s.materials,        ...f } })),
       setInboundReport:    (f) => set(s => ({ inboundReport:    { ...s.inboundReport,    ...f } })),
       setAssignment:       (f) => set(s => ({ assignment:       { ...s.assignment,       ...f } })),

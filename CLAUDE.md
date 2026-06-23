@@ -155,8 +155,7 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 | `tms_companies` | TMS — ĐVVT / NCC | Cài đặt TMS | view, manage |
 | `tms_vehicles` | TMS — Xe | Cài đặt TMS | view, manage |
 | `gate_registration` | Đăng ký cổng | Đăng ký cổng | view, create, edit, delete, call, entry, exit |
-| `inbound_plan` | Kế hoạch nhập (từ ngoài) | KH nhập | view, create, edit, delete, cancel |
-| `deliveries` | Giao hàng | Giao hàng | view, create, edit |
+| `inbound_plan` | Kế hoạch nhập chuyển kho | trong TMS Bookings (tab Kế hoạch) — KH nhập kho đích của chuyển kho, auto-tạo từ Outbound + upload. **KHÔNG còn khái niệm "KH nhập từ ngoài" / trang KH nhập đứng riêng** | view, create, edit, delete, cancel |
 
 > **Cross-module**:
 > - Nút "Quét/Hoàn thành" trong tab **Chuyển kho** gọi API Inbound nhưng được điều khiển bằng `tms_plan.confirm_receipt` (FE + BE `requireAnyPerm(['inbound',...],['tms_plan','confirm_receipt'])`). Khi nút ở trang A nhưng thao tác chạm module B → dùng `requireAnyPerm` + ghi nhãn cho rõ, đừng bắt user đoán.

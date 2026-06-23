@@ -22,7 +22,6 @@ const breadcrumbMap: Record<string, { label: string; parent?: string; parentPath
   '/wms/locations': { label: 'Vị trí kho', parent: 'Kho vận', parentPath: '/wms/locations' },
   '/tms/bookings':  { label: 'Kế hoạch VC',  parent: 'Vận tải', parentPath: '/tms/bookings' },
   '/tms/settings':  { label: 'Cài đặt TMS', parent: 'Vận tải', parentPath: '/tms/settings' },
-  '/tms/deliveries':{ label: 'Giao hàng',   parent: 'Vận tải', parentPath: '/tms/deliveries' },
   '/hr/leaves':   { label: 'Nghỉ phép', parent: 'Nhân sự', parentPath: '/hr/leaves' },
   '/hr/assignments': { label: 'Phân công', parent: 'Nhân sự', parentPath: '/hr/assignments' },
   '/hr/attendance': { label: 'Chấm công', parent: 'Nhân sự', parentPath: '/hr/attendance' },

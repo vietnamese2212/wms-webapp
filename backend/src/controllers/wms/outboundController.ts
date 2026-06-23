@@ -217,29 +217,37 @@ export async function listGDOs(req: Request, res: Response) {
       ? (req.user?.warehouse_ids ?? [])
       : []
 
-    let q = (supabase.from('GroupDeliveryOrder') as any)
-      .select('*, warehouse:Warehouse(id,code,name), forklift_driver:Employee!forklift_driver_id(id,name)')
-      .order('delivery_date', { ascending: false })
-
-    if (scopeWarehouseIds.length > 0) {
-      const effective = warehouse_id
-        ? scopeWarehouseIds.filter(id => id === warehouse_id)
-        : scopeWarehouseIds
-      if (effective.length === 0) return ok(res, [])
-      effective.length === 1
-        ? q = q.eq('warehouse_id', effective[0])
-        : q = q.in('warehouse_id', effective)
-    } else {
-      if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
+    // Rebuild query mỗi trang (builder PostgREST dùng 1 lần) — phân trang vượt cap ~1000 dòng/response
+    // (kho nhiều chuyến/khoảng ngày rộng → trước đây mất chuyến từ dòng 1001).
+    const buildQuery = (): any | null => {
+      let q = (supabase.from('GroupDeliveryOrder') as any)
+        .select('*, warehouse:Warehouse(id,code,name), forklift_driver:Employee!forklift_driver_id(id,name)')
+        .order('delivery_date', { ascending: false })
+      if (scopeWarehouseIds.length > 0) {
+        const effective = warehouse_id ? scopeWarehouseIds.filter(id => id === warehouse_id) : scopeWarehouseIds
+        if (effective.length === 0) return null
+        q = effective.length === 1 ? q.eq('warehouse_id', effective[0]) : q.in('warehouse_id', effective)
+      } else if (warehouse_id) {
+        q = q.eq('warehouse_id', warehouse_id)
+      }
+      if (status)          q = q.eq('status', status)
+      if (transfer_status) q = q.eq('transfer_status', transfer_status)
+      if (date)            q = q.eq('delivery_date', date)
+      if (date_from)       q = q.gte('delivery_date', date_from)
+      if (date_to)         q = q.lte('delivery_date', date_to)
+      if (search)          q = q.ilike('group_code', `%${search}%`)
+      return q
     }
-    if (status)          q = q.eq('status', status)
-    if (transfer_status) q = q.eq('transfer_status', transfer_status)
-    if (date)            q = q.eq('delivery_date', date)
-    if (date_from)       q = q.gte('delivery_date', date_from)
-    if (date_to)         q = q.lte('delivery_date', date_to)
-    if (search)          q = q.ilike('group_code', `%${search}%`)
-    const { data, error } = await q
-    if (error) return fail(res, error.message)
+    if (buildQuery() === null) return ok(res, [])   // scope kho rỗng
+    const PAGE = 1000
+    const data: any[] = []
+    for (let page = 0; ; page++) {
+      const { data: batch, error } = await buildQuery().range(page * PAGE, page * PAGE + PAGE - 1)
+      if (error) return fail(res, error.message)
+      const arr = batch ?? []
+      data.push(...arr)
+      if (arr.length < PAGE) break
+    }
 
     const gdoIds = (data ?? []).map((g: any) => g.id)
     if (!gdoIds.length) return ok(res, [])

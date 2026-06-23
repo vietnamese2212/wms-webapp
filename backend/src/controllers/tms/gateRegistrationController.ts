@@ -13,33 +13,40 @@ export async function listGateRegistrations(req: Request, res: Response) {
     company_id, direction, status,
   } = req.query as Record<string, string | undefined>
 
-  let q = supabase
-    .from('gate_registrations')
-    .select('*')
-    .order('date', { ascending: false })
-    .order('registration_number', { ascending: true })
-
-  if (date) {
-    q = q.eq('date', date)
-  } else {
-    if (date_from) q = q.gte('date', date_from)
-    if (date_to)   q = q.lte('date', date_to)
-  }
-  // Phân quyền kho
   const scopeWhs = req.user?.warehouse_scope !== 'NATIONAL'
     ? (req.user?.warehouse_ids ?? [])
     : []
-  if (scopeWhs.length > 0) q = q.in('warehouse_id', scopeWhs)
-
-  if (warehouse_id)   q = q.eq('warehouse_id', warehouse_id)
-  if (warehouse_type) q = q.eq('warehouse_type', warehouse_type)
-  if (vehicle_type)   q = q.eq('vehicle_type', vehicle_type)
-  if (company_id)     q = q.eq('company_id', company_id)
-  if (direction)      q = q.eq('direction', direction)
-  if (status)         q = q.eq('status', status)
-
-  const { data, error } = await q
-  if (error) return apiErr(res, 'DB_ERROR', error.message, 500)
+  // Rebuild mỗi trang — phân trang vượt cap ~1000 dòng/response (cổng đông/khoảng ngày rộng → mất bản ghi)
+  const buildQuery = () => {
+    let q = supabase
+      .from('gate_registrations')
+      .select('*')
+      .order('date', { ascending: false })
+      .order('registration_number', { ascending: true })
+    if (date) {
+      q = q.eq('date', date)
+    } else {
+      if (date_from) q = q.gte('date', date_from)
+      if (date_to)   q = q.lte('date', date_to)
+    }
+    if (scopeWhs.length > 0) q = q.in('warehouse_id', scopeWhs)
+    if (warehouse_id)   q = q.eq('warehouse_id', warehouse_id)
+    if (warehouse_type) q = q.eq('warehouse_type', warehouse_type)
+    if (vehicle_type)   q = q.eq('vehicle_type', vehicle_type)
+    if (company_id)     q = q.eq('company_id', company_id)
+    if (direction)      q = q.eq('direction', direction)
+    if (status)         q = q.eq('status', status)
+    return q
+  }
+  const PAGE = 1000
+  const data: unknown[] = []
+  for (let page = 0; ; page++) {
+    const { data: batch, error } = await buildQuery().range(page * PAGE, page * PAGE + PAGE - 1)
+    if (error) return apiErr(res, 'DB_ERROR', error.message, 500)
+    const arr = batch ?? []
+    data.push(...arr)
+    if (arr.length < PAGE) break
+  }
   return res.json({ success: true, data })
 }
 

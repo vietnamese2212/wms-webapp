@@ -35,16 +35,25 @@ async function attachEmp<T extends { employee_id: string }>(rows: T[]) {
 export async function listAttendance(req: Request, res: Response) {
   try {
     const { warehouse_id, department_id, employee_id, date_from, date_to } = req.query as Record<string, string>
-    let q = supabase.from('Attendance').select(SEL).order('work_date', { ascending: false })
-    if (warehouse_id) {
-      const empIds = await employeeIdsOfWarehouse(warehouse_id)
-      q = q.in('employee_id', empIds.length ? empIds : ['__none__'])
+    const warehouseEmpIds = warehouse_id ? await employeeIdsOfWarehouse(warehouse_id) : null
+    // Rebuild mỗi trang — phân trang vượt cap ~1000 (nhân viên × ngày trong khoảng rộng dễ >1000 → mất công)
+    const buildQuery = () => {
+      let q = supabase.from('Attendance').select(SEL).order('work_date', { ascending: false })
+      if (warehouseEmpIds) q = q.in('employee_id', warehouseEmpIds.length ? warehouseEmpIds : ['__none__'])
+      if (employee_id)  q = q.eq('employee_id', employee_id)
+      if (date_from)    q = q.gte('work_date', date_from)
+      if (date_to)      q = q.lte('work_date', date_to)
+      return q
     }
-    if (employee_id)  q = q.eq('employee_id', employee_id)
-    if (date_from)    q = q.gte('work_date', date_from)
-    if (date_to)      q = q.lte('work_date', date_to)
-    const { data, error } = await q
-    if (error) return fail(res, error.message)
+    const PAGE = 1000
+    const data: unknown[] = []
+    for (let page = 0; ; page++) {
+      const { data: batch, error } = await buildQuery().range(page * PAGE, page * PAGE + PAGE - 1)
+      if (error) return fail(res, error.message)
+      const arr = batch ?? []
+      data.push(...arr)
+      if (arr.length < PAGE) break
+    }
     let rows = await attachEmp((data ?? []) as { employee_id: string }[])
     if (department_id) rows = rows.filter(r => (r.employee as { department_id?: string } | null)?.department_id === department_id)
     return ok(res, rows)

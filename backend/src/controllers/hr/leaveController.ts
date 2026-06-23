@@ -117,15 +117,25 @@ async function canApprove(ctx: ApproverCtx, employeeId: string, pm: Map<string, 
 export async function listLeaves(req: Request, res: Response) {
   try {
     const { warehouse_id, department_id, employee_id, status, date_from, date_to, to_approve, direct } = req.query as Record<string, string>
-    let q = supabase.from('LeaveRequest').select(LEAVE_SELECT).order('date_from', { ascending: false })
-    if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
-    if (employee_id)  q = q.eq('employee_id', employee_id)
-    if (status)       q = q.eq('status', status)
-    // overlap khoảng ngày: date_from <= to AND date_to >= from
-    if (date_to)      q = q.lte('date_from', date_to)
-    if (date_from)    q = q.gte('date_to', date_from)
-    const { data, error } = await q
-    if (error) return fail(res, error.message)
+    const buildQuery = () => {
+      let q = supabase.from('LeaveRequest').select(LEAVE_SELECT).order('date_from', { ascending: false })
+      if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
+      if (employee_id)  q = q.eq('employee_id', employee_id)
+      if (status)       q = q.eq('status', status)
+      // overlap khoảng ngày: date_from <= to AND date_to >= from
+      if (date_to)      q = q.lte('date_from', date_to)
+      if (date_from)    q = q.gte('date_to', date_from)
+      return q
+    }
+    const PAGE = 1000
+    const data: unknown[] = []
+    for (let page = 0; ; page++) {
+      const { data: batch, error } = await buildQuery().range(page * PAGE, page * PAGE + PAGE - 1)
+      if (error) return fail(res, error.message)
+      const arr = batch ?? []
+      data.push(...arr)
+      if (arr.length < PAGE) break
+    }
 
     let rows = (data ?? []) as { employee_id: string; [k: string]: unknown }[]
     let withEmp = await attachEmployees(rows)

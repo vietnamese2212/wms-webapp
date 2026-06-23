@@ -212,7 +212,7 @@ export async function createGateRegistration(req: Request, res: Response) {
   // Trước đây chỉ đọc-rồi-ghi 1 lần → cao điểm xe vào bị lỗi trùng số, user phải tự thử lại.
   let data: Record<string, unknown> | null = null
   let lastErr: { code?: string; message: string } | null = null
-  for (let attempt = 0; attempt < 8; attempt++) {
+  for (let attempt = 0; attempt < 25; attempt++) {
     const { data: maxRow } = await supabase
       .from('gate_registrations')
       .select('registration_number')
@@ -229,8 +229,11 @@ export async function createGateRegistration(req: Request, res: Response) {
     if (!ins.error) { data = ins.data as Record<string, unknown>; lastErr = null; break }
     lastErr = ins.error
     if (ins.error.code !== '23505') break   // lỗi khác (không phải trùng số) → dừng ngay
+    // Trùng số do đua: chờ ngẫu nhiên (jitter tăng dần) để PHÁ thundering herd rồi đọc lại max+1.
+    // Không có jitter thì hàng chục request cùng đọc 1 max → đụng lại liên tục.
+    await new Promise(r => setTimeout(r, 15 + Math.floor(Math.random() * (40 + attempt * 25))))
   }
-  if (lastErr || !data) return apiErr(res, 'DB_ERROR', lastErr?.message ?? 'Không cấp được số đăng ký, thử lại', 500)
+  if (lastErr || !data) return apiErr(res, 'DB_ERROR', lastErr?.message ?? 'Hệ thống đang bận cấp số đăng ký, thử lại', 500)
 
   // Tính lại vị trí booking cho tất cả gate trong nhóm
   const plate = (data as { license_plate: string | null }).license_plate

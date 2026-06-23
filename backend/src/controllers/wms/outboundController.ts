@@ -41,7 +41,7 @@ async function adjustInventoryAtomic(
 // Trả: true=trừ xong · false=KHÔNG đủ tồn (đã bị thao tác khác lấy) · null=tranh chấp sau 5 lần.
 // Chống đua + chống xuất-quá-tồn khi nhiều nhân viên quét cùng 1 pallet (giống book_vehicle_slot).
 async function consumeInventoryExact(invId: string, amount: number): Promise<boolean | null> {
-  for (let attempt = 0; attempt < 5; attempt++) {
+  for (let attempt = 0; attempt < 15; attempt++) {
     const { data: inv } = await (supabase.from('InventoryEntry') as any)
       .select('cartons_remaining, cartons_imported, cartons_reserved').eq('id', invId).single()
     if (!inv) return null
@@ -56,6 +56,8 @@ async function consumeInventoryExact(invId: string, amount: number): Promise<boo
       .eq('id', invId).eq('cartons_remaining', curRemaining).eq('cartons_reserved', curReserved)
       .select('id')
     if (applied?.length) return true
+    // CAS trượt (người khác vừa đổi tồn): chờ jitter tăng dần phá thundering herd rồi đọc lại.
+    await new Promise(r => setTimeout(r, 10 + Math.floor(Math.random() * (30 + attempt * 20))))
   }
   return null
 }

@@ -13,25 +13,35 @@ export async function listMaterials(req: Request, res: Response) {
   try {
     const { active, search, manufacturer_id, storage_category, category } = req.query
 
-    let query = supabase
-      .from('Material')
-      .select('*, manufacturer:Manufacturer(id, code, name)')
-      .order('material_code')
-
-    if (active === 'true') query = query.eq('is_active', true)
-    if (manufacturer_id) query = query.eq('manufacturer_id', String(manufacturer_id))
-    if (storage_category) query = query.eq('storage_category', String(storage_category))
-    if (category) query = query.eq('category', String(category))
-    if (search) {
-      const s = String(search)
-      query = query.or(
-        `material_code.ilike.%${s}%,material_description.ilike.%${s}%,short_name.ilike.%${s}%,old_code.ilike.%${s}%`
-      )
+    // Rebuild mỗi trang — phân trang vượt cap ~1000 dòng/response của PostgREST.
+    // Đã >1000 mã hàng active → không phân trang thì 4+ mã biến mất khỏi mọi list + dropdown chọn mã (Inbound/Outbound/TMS...).
+    const buildQuery = () => {
+      let query = supabase
+        .from('Material')
+        .select('*, manufacturer:Manufacturer(id, code, name)')
+        .order('material_code')
+      if (active === 'true') query = query.eq('is_active', true)
+      if (manufacturer_id) query = query.eq('manufacturer_id', String(manufacturer_id))
+      if (storage_category) query = query.eq('storage_category', String(storage_category))
+      if (category) query = query.eq('category', String(category))
+      if (search) {
+        const s = String(search)
+        query = query.or(
+          `material_code.ilike.%${s}%,material_description.ilike.%${s}%,short_name.ilike.%${s}%,old_code.ilike.%${s}%`
+        )
+      }
+      return query
     }
-
-    const { data, error } = await query
-    if (error) throw error
-    ok(res, data ?? [])
+    const PAGE = 1000
+    const out: unknown[] = []
+    for (let page = 0; ; page++) {
+      const { data, error } = await buildQuery().range(page * PAGE, page * PAGE + PAGE - 1)
+      if (error) throw error
+      const arr = data ?? []
+      out.push(...arr)
+      if (arr.length < PAGE) break
+    }
+    ok(res, out)
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
@@ -170,12 +180,21 @@ export async function deleteMaterial(req: Request, res: Response) {
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
-export async function listCategories(req: Request, res: Response) {
+export async function listCategories(_req: Request, res: Response) {
   try {
-    const { data, error } = await supabase
-      .from('Material').select('category').eq('is_active', true).not('category', 'is', null)
-    if (error) throw error
-    const cats = [...new Set((data ?? []).map((m: any) => m.category).filter(Boolean))].sort()
+    // Phân trang để không sót category chỉ xuất hiện ở mã hàng thứ >1000 (cap PostgREST)
+    const PAGE = 1000
+    const rows: { category: string | null }[] = []
+    for (let page = 0; ; page++) {
+      const { data, error } = await supabase
+        .from('Material').select('category').eq('is_active', true).not('category', 'is', null)
+        .range(page * PAGE, page * PAGE + PAGE - 1)
+      if (error) throw error
+      const arr = (data ?? []) as { category: string | null }[]
+      rows.push(...arr)
+      if (arr.length < PAGE) break
+    }
+    const cats = [...new Set(rows.map(m => m.category).filter(Boolean))].sort()
     ok(res, cats)
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }

@@ -2160,47 +2160,39 @@ export async function manualCompleteItem(req: Request, res: Response) {
 
     if (isSpecial && item.material_id && gdo?.warehouse_id) {
       const materialCode = specialMatCode
-      const { data: invEntry } = await supabase
-        .from('InventoryEntry')
-        .select('id, cartons_remaining, cartons_imported')
-        .eq('pallet_code', materialCode)
-        .eq('warehouse_id', gdo.warehouse_id)
-        .maybeSingle()
-
-      specialInvEntryId = invEntry?.id ?? null
-
       const oldCartons = Number(item.cartons_scanned) || 0
-      const delta = ctn - oldCartons
+      const delta = ctn - oldCartons   // >0: xuất thêm (trừ tồn) · <0: giảm (cộng lại) · =0: không đổi
 
-      if (delta > 0) {
-        const available = Number(invEntry?.cartons_remaining ?? 0)
-        if (available < delta) {
-          return fail(res, 400, 'INSUFFICIENT_STOCK',
-            `Không đủ tồn kho — còn ${available} thùng${oldCartons > 0 ? `, cần thêm ${delta} thùng` : ''}`)
-        }
-        if (invEntry) {
-          const newRemaining = available - delta
-          const imported = Number(invEntry.cartons_imported)
-          // Optimistic lock: chỉ ghi nếu cartons_remaining VẪN bằng giá trị vừa đọc.
-          // Chặn đua 2 lượt manual-complete cùng mã POSM cùng lúc trừ tồn 2 lần (newRemaining tính từ số đọc cũ).
-          const { data: applied } = await supabase.from('InventoryEntry').update({
-            cartons_remaining: newRemaining,
-            status: newRemaining === 0 ? 'EXPORTED' : newRemaining < imported ? 'PARTIAL' : 'IN_STOCK',
-            updated_at: now(),
-          }).eq('id', invEntry.id).eq('cartons_remaining', available).select('id')
-          if (!applied?.length) return fail(res, 409, 'STOCK_CHANGED', 'Tồn kho mã này vừa thay đổi (thao tác khác) — mở lại và thử lại')
-        }
-      } else if (delta < 0 && invEntry) {
-        const current = Number(invEntry.cartons_remaining)
-        const newRemaining = current + Math.abs(delta)
-        const imported = Number(invEntry.cartons_imported)
+      // Áp delta vào tồn POSM dùng chung — optimistic-CAS + jitter, đọc lại remaining MỖI lần thử.
+      // Nhiều đơn cùng quét POSM chung 1 mã → thundering herd; không retry thì ~nửa bị 409 oan.
+      // INSUFFICIENT (thiếu tồn thật) thì KHÔNG retry; chỉ retry khi CAS trượt (người khác vừa đổi tồn).
+      let outcome: 'OK' | 'INSUFFICIENT' | 'BUSY' = 'OK'
+      for (let attempt = 0; attempt < 15; attempt++) {
+        const { data: invEntry } = await supabase
+          .from('InventoryEntry').select('id, cartons_remaining, cartons_imported')
+          .eq('pallet_code', materialCode).eq('warehouse_id', gdo.warehouse_id).maybeSingle()
+        specialInvEntryId = (invEntry as { id?: string } | null)?.id ?? null
+        if (!invEntry || delta === 0) { outcome = 'OK'; break }
+        const current  = Number((invEntry as { cartons_remaining: number }).cartons_remaining)
+        const imported = Number((invEntry as { cartons_imported: number }).cartons_imported)
+        if (delta > 0 && current < delta) { outcome = 'INSUFFICIENT'; break }   // thiếu tồn thật
+        const newRemaining = current - delta   // delta<0 → cộng lại
         const { data: applied } = await supabase.from('InventoryEntry').update({
           cartons_remaining: newRemaining,
           status: newRemaining === 0 ? 'EXPORTED' : newRemaining < imported ? 'PARTIAL' : 'IN_STOCK',
           updated_at: now(),
-        }).eq('id', invEntry.id).eq('cartons_remaining', current).select('id')
-        if (!applied?.length) return fail(res, 409, 'STOCK_CHANGED', 'Tồn kho mã này vừa thay đổi (thao tác khác) — mở lại và thử lại')
+        }).eq('id', (invEntry as { id: string }).id).eq('cartons_remaining', current).select('id')
+        if (applied?.length) { outcome = 'OK'; break }
+        outcome = 'BUSY'
+        await new Promise(r => setTimeout(r, 10 + Math.floor(Math.random() * (30 + attempt * 20))))
       }
+      if (outcome === 'INSUFFICIENT') {
+        const { data: inv2 } = await supabase.from('InventoryEntry').select('cartons_remaining').eq('pallet_code', materialCode).eq('warehouse_id', gdo.warehouse_id).maybeSingle()
+        const available = Number((inv2 as { cartons_remaining?: number } | null)?.cartons_remaining ?? 0)
+        return fail(res, 400, 'INSUFFICIENT_STOCK',
+          `Không đủ tồn kho — còn ${available} thùng${oldCartons > 0 ? `, cần thêm ${delta} thùng` : ''}`)
+      }
+      if (outcome === 'BUSY') return fail(res, 409, 'STOCK_CHANGED', 'Tồn kho mã này đang bận (nhiều người thao tác) — thử lại')
     }
 
     // Chỉ COMPLETED khi nhập đủ kế hoạch — thiếu thì IN_PROGRESS (giống hàng QR).

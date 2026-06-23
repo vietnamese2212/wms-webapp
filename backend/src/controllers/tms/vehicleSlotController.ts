@@ -4,20 +4,13 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { relinkAfterDelete } from './gateRegistrationController'
 
-// Đếm số TmsVehicleSlot khác đơn có cùng (slot_id, license_plate) — dùng để tránh double-count booked_count
-// khi 1 xe vật lý chạy nhiều ĐƠN KHÁC NHAU trong cùng khung giờ (consolidation).
-// Xe phụ cùng đơn (excludeOrderId) KHÔNG bị loại — mỗi xe phụ luôn tính là 1 slot riêng.
-async function countSameBooking(slotId: string, licensePlate: string, excludeId: string, excludeOrderId?: string): Promise<number> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let q = (supabase.from('TmsVehicleSlot') as any)
-    .select('id', { count: 'exact', head: true })
-    .eq('slot_id', slotId)
-    .eq('license_plate', licensePlate)
-    .neq('id', excludeId)
-  if (excludeOrderId) q = q.neq('order_id', excludeOrderId)
-  const { count } = await q
-  return count ?? 0
-}
+// Kế toán slot (booked_count + sức chứa) được xử lý NGUYÊN TỬ trong Postgres:
+//   • book_vehicle_slot(vslot, new_slot, plate, status, actor) — gán/đổi/nhả slot,
+//     kiểm sức chứa bằng ĐẾM SỐNG biển-số-distinct dưới row-lock (không tin booked_count),
+//     rồi recount cache. Trả 'OK' | 'FULL' | 'NOT_FOUND' | 'SLOT_NOT_FOUND'.
+//   • recount_slot(slot) — tính lại booked_count từ dữ liệu thực (dùng sau khi xóa dòng).
+// Xem migration 20260623_atomic_slot_booking.sql. Nhờ vậy hàng trăm user đặt cùng lúc
+// KHÔNG thể overbooking và booked_count không lệch (chỉ là cache, capacity dựa đếm sống).
 
 // Helper: tìm gate_regs theo plate+date+warehouse, gom nhóm theo criteria của gate_reg rồi relink
 async function relinkGatesByPlate(plate: string, orderId: string) {
@@ -84,17 +77,18 @@ export async function updateVehicleSlot(req: Request, res: Response) {
     if (!existing) return fail(res, 'Không tìm thấy vehicle slot', 404)
 
     // Không cho thay đổi slot sau ARRIVED/DONE
-    if (['ARRIVED','DONE'].includes(existing.status as string) && slot_id !== undefined) {
+    if (['ARRIVED', 'DONE'].includes(existing.status as string) && slot_id !== undefined) {
       return fail(res, 'Không thể thay đổi khung giờ sau khi xe đã đến hoặc hoàn thành', 400)
     }
 
     const newSlotId = slot_id !== undefined ? slot_id : existing.slot_id
     const isChangingSlot = newSlotId !== existing.slot_id
+    const newPlate = license_plate !== undefined ? (license_plate || null) : ((existing.license_plate as string | null) ?? null)
+    const isChangingPlate = license_plate !== undefined && newPlate !== ((existing.license_plate as string | null) ?? null)
 
+    // Gác giờ (chỉ đọc) khi đổi khung giờ — làm TRƯỚC khi đụng kế toán
     if (isChangingSlot) {
       const nowMs = Date.now()
-
-      // Giải phóng slot cũ
       if (existing.slot_id) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data: oldSlot } = await (supabase.from('DeliverySlot') as any)
@@ -104,16 +98,8 @@ export async function updateVehicleSlot(req: Request, res: Response) {
           if (nowMs >= slotStart) {
             return fail(res, `Đã qua giờ ${String(oldSlot.time_from).slice(0, 5)}, không thể thay đổi khung giờ`, 400)
           }
-          // Chỉ decrement nếu không còn booking nào khác cùng (slot, biển số) — tránh giảm oan khi 1 xe nhiều đơn
-          const oldPlate = existing.license_plate as string | null
-          const othersInOldSlot = oldPlate ? await countSameBooking(existing.slot_id, oldPlate, id, existing.order_id as string) : 0
-          if (!oldPlate || othersInOldSlot === 0) {
-            await supabase.rpc('try_book_slot', { p_slot_id: existing.slot_id, p_delta: -1 })
-          }
         }
       }
-
-      // Chiếm slot mới
       if (newSlotId) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data: newSlot } = await (supabase.from('DeliverySlot') as any)
@@ -123,15 +109,25 @@ export async function updateVehicleSlot(req: Request, res: Response) {
         if (nowMs >= newSlotStart) {
           return fail(res, `Khung giờ ${String(newSlot.time_from).slice(0, 5)} đã qua, không thể đặt`, 400)
         }
-        // Biển số sẽ được set sau update — dùng giá trị incoming (nếu có) hoặc existing
-        const newPlate = license_plate !== undefined ? (license_plate || null) : (existing.license_plate as string | null)
-        const othersInNewSlot = newPlate ? await countSameBooking(newSlotId, newPlate, id, existing.order_id as string) : 0
-        // Chỉ increment nếu xe này chưa được đếm trong slot (tránh double-count khi 1 xe nhiều đơn)
-        if (!newPlate || othersInNewSlot === 0) {
-          const { data: booked } = await supabase.rpc('try_book_slot', { p_slot_id: newSlotId, p_delta: 1 })
-          if (!booked) return fail(res, 'Slot đã hết chỗ', 409)
-        }
       }
+    }
+
+    // Kế toán NGUYÊN TỬ qua RPC khi đổi slot HOẶC đổi biển số
+    if (isChangingSlot || isChangingPlate) {
+      const finalStatus = status !== undefined
+        ? status
+        : isChangingSlot
+          ? (newSlotId ? (license_plate !== undefined && !license_plate ? 'PENDING' : 'BOOKED') : 'PENDING')
+          : (existing.status as string)   // chỉ đổi biển: giữ nguyên trạng thái (ARRIVED/DONE…)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: rpcRes, error: rpcErr } = await (supabase.rpc as any)('book_vehicle_slot', {
+        p_vslot_id: id, p_new_slot_id: newSlotId, p_plate: newPlate,
+        p_status: finalStatus, p_actor: user?.name || null,
+      })
+      if (rpcErr) return fail(res, rpcErr.message)
+      if (rpcRes === 'FULL')           return fail(res, 'Slot đã hết chỗ', 409)
+      if (rpcRes === 'SLOT_NOT_FOUND') return fail(res, 'Slot không tồn tại', 404)
+      if (rpcRes === 'NOT_FOUND')      return fail(res, 'Không tìm thấy vehicle slot', 404)
     }
 
     // Validate gate_registration_id: cảnh báo nếu link sai thứ tự lần (nhưng vẫn cho phép)
@@ -145,13 +141,11 @@ export async function updateVehicleSlot(req: Request, res: Response) {
 
       if (gateReg) {
         const g = gateReg as { license_plate: string | null; date: string; registration_number: number; warehouse_id: string }
-        // Tìm thứ tự của slot này trong các slots cùng biển số + ngày + kho
         if (g.license_plate) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const { data: sameOrder } = await (supabase.from('TmsOrder') as any)
             .select('id').eq('id', existing.order_id).single()
           if (sameOrder) {
-            // Đếm số gate_registrations cùng biển + ngày trước gate này
             const { count: gatesBefore } = await supabase
               .from('gate_registrations')
               .select('*', { count: 'exact', head: true })
@@ -160,7 +154,6 @@ export async function updateVehicleSlot(req: Request, res: Response) {
               .eq('warehouse_id', g.warehouse_id)
               .lt('registration_number', g.registration_number)
 
-            // Đếm số slots cùng biển số + ngày đã được link trước slot này
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const { data: samePlateSlotsData } = await (supabase.from('TmsVehicleSlot') as any)
               .select('id, order_id, gate_registration_id, created_at')
@@ -169,12 +162,8 @@ export async function updateVehicleSlot(req: Request, res: Response) {
               .not('gate_registration_id', 'is', null)
               .order('created_at')
 
-            const linkedBefore = ((samePlateSlotsData ?? []) as { gate_registration_id: string }[]).filter(s => {
-              // Chỉ tính slots đã link với gate_reg có registration_number nhỏ hơn
-              return true // simplified: count all already linked = gatesBefore is the expected index
-            }).length
-
-            const expectedGateIndex = linkedBefore // 0-indexed: slot này nên là link thứ (linkedBefore + 1)
+            const linkedBefore = ((samePlateSlotsData ?? []) as { gate_registration_id: string }[]).length
+            const expectedGateIndex = linkedBefore
             if ((gatesBefore ?? 0) !== expectedGateIndex) {
               sequenceWarning = `Cảnh báo: Xe ${g.license_plate} đã có ${gatesBefore ?? 0} lần đăng ký trước đó — bạn đang link lần ${g.registration_number} vào slot không đúng thứ tự (nên là lần ${expectedGateIndex + 1})`
             }
@@ -183,24 +172,18 @@ export async function updateVehicleSlot(req: Request, res: Response) {
       }
     }
 
+    // Cập nhật các trường KHÔNG liên quan kế toán (slot_id/license_plate/status do RPC xử lý)
     const updates: Record<string, unknown> = { booked_by: user?.name || null, updated_at: now }
-    if (slot_id              !== undefined) updates.slot_id              = slot_id
-    if (license_plate        !== undefined) updates.license_plate        = license_plate || null
     if (driver_name          !== undefined) updates.driver_name          = driver_name || null
     if (driver_phone         !== undefined) updates.driver_phone         = driver_phone || null
     if (gate_registration_id !== undefined) updates.gate_registration_id = gate_registration_id || null
-    if (status        !== undefined) updates.status        = status
-    else if (isChangingSlot) {
-      updates.status = newSlotId && license_plate !== undefined
-        ? (license_plate ? 'BOOKED' : 'PENDING')
-        : (newSlotId ? 'BOOKED' : 'PENDING')
-    }
+    // status chỉ set qua plain update khi RPC KHÔNG được gọi (không đổi slot/biển)
+    if (status !== undefined && !(isChangingSlot || isChangingPlate)) updates.status = status
 
     // Consolidation: tạo group mới (lần đầu) hoặc thêm đơn vào group hiện có (BOOKED)
     let newGroupId: string | null = null
     const orderIds = Array.isArray(consolidation_order_ids) ? consolidation_order_ids as string[] : []
     if (orderIds.length > 0) {
-      // Kiểm tra hướng và loại kho trước khi gom đơn
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: primaryOrder } = await (supabase.from('TmsOrder') as any)
         .select('direction, warehouse_type').eq('id', existing.order_id).single()
@@ -244,12 +227,11 @@ export async function updateVehicleSlot(req: Request, res: Response) {
       .single()
     if (error) return fail(res, error.message)
 
-    // Áp dụng cùng slot+plate cho xe chính của các đơn chạy chung (không increment booked_count)
+    // Áp cùng slot+plate cho xe chính của các đơn chạy chung (cùng biển → recount không tăng số chỗ)
     if (newGroupId && orderIds.length > 0) {
-      const finalSlotId = slot_id !== undefined ? slot_id : existing.slot_id
-      const finalPlate  = license_plate !== undefined ? (license_plate || null) : (existing.license_plate as string | null)
+      const finalSlotId = newSlotId
+      const finalPlate  = newPlate
 
-      // Batch fetch tất cả firstSlot cùng lúc thay vì N queries tuần tự
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: candidateSlots } = await (supabase.from('TmsVehicleSlot') as any)
         .select('id, order_id, status, consolidation_group_id')
@@ -258,7 +240,6 @@ export async function updateVehicleSlot(req: Request, res: Response) {
         .is('consolidation_group_id', null)
         .order('created_at', { ascending: true })
 
-      // Lấy slot đầu tiên (oldest) mỗi order
       const seen = new Set<string>()
       const eligible = ((candidateSlots ?? []) as { id: string; order_id: string; status: string; consolidation_group_id: string | null }[])
         .filter(s => { if (seen.has(s.order_id)) return false; seen.add(s.order_id); return true })
@@ -271,12 +252,15 @@ export async function updateVehicleSlot(req: Request, res: Response) {
             consolidation_group_id: newGroupId, is_consolidation_primary: false, updated_at: now,
           }).eq('id', s.id)
         ))
+        // Recount slot đích sau khi thêm các xe gom (cùng biển → số chỗ không đổi, nhưng đảm bảo cache đúng)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        if (finalSlotId) await (supabase.rpc as any)('recount_slot', { p_slot_id: finalSlotId })
       }
     }
 
     // Cascade + re-sort position khi slot hoặc biển số thay đổi
-    const relinkPlate = (license_plate !== undefined ? (license_plate || null) : (existing.license_plate as string | null)) as string | null
-    const isChangingPlate = license_plate !== undefined && relinkPlate !== (existing.license_plate as string | null)
+    const relinkPlate = newPlate as string | null
+    const isChangingPlateForRelink = isChangingPlate
 
     if (isChangingSlot) {
       const newSlot = (data as { slot?: { time_from?: string; time_to?: string } | null }).slot
@@ -290,11 +274,10 @@ export async function updateVehicleSlot(req: Request, res: Response) {
         .eq('tms_vehicle_slot_id', id)
     }
 
-    if ((isChangingSlot || isChangingPlate) && relinkPlate) {
+    if ((isChangingSlot || isChangingPlateForRelink) && relinkPlate) {
       await relinkGatesByPlate(relinkPlate, existing.order_id as string)
     }
-    // Khi biển số thay đổi: relink biển số cũ để xoá booking info khỏi gate đã đăng ký biển cũ
-    if (isChangingPlate && (existing.license_plate as string | null)) {
+    if (isChangingPlateForRelink && (existing.license_plate as string | null)) {
       await relinkGatesByPlate(existing.license_plate as string, existing.order_id as string)
     }
 
@@ -305,8 +288,21 @@ export async function updateVehicleSlot(req: Request, res: Response) {
 
 // PATCH /api/tms/vehicle-slots/:id/revoke — thu hồi booking, bỏ qua kiểm tra giờ (quyền đặc biệt)
 export async function revokeVehicleSlot(req: Request, res: Response) {
+  return releaseInternal(req, res, { skipTimeCheck: true })
+}
+
+// PATCH /api/tms/vehicle-slots/:id/release — trả lại: tách khỏi nhóm (nếu có), xoá slot+biển số+sdt
+export async function releaseVehicleSlot(req: Request, res: Response) {
+  return releaseInternal(req, res, { skipTimeCheck: false })
+}
+
+// Dùng chung cho release/revoke: nhả slot NGUYÊN TỬ qua book_vehicle_slot(new_slot=NULL),
+// xử lý nhóm gom, xoá thông tin tài xế/cổng. revoke bỏ qua kiểm tra giờ.
+async function releaseInternal(req: Request, res: Response, opts: { skipTimeCheck: boolean }) {
   try {
     const { id } = req.params
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const user = (req as any).user
     const now = new Date().toISOString()
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -315,16 +311,26 @@ export async function revokeVehicleSlot(req: Request, res: Response) {
     if (fetchErr) return fail(res, fetchErr.message)
     if (!existing) return fail(res, 'Không tìm thấy vehicle slot', 404)
 
-    // Decrement booked_count — bỏ qua kiểm tra thời gian
-    if (existing.slot_id) {
-      const plate = existing.license_plate as string | null
-      const othersInSlot = plate ? await countSameBooking(existing.slot_id, plate, id, existing.order_id as string) : 0
-      if (!plate || othersInSlot === 0) {
-        await supabase.rpc('try_book_slot', { p_slot_id: existing.slot_id, p_delta: -1 })
+    if (!opts.skipTimeCheck && existing.slot_id) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: oldSlot } = await (supabase.from('DeliverySlot') as any)
+        .select('date, time_from').eq('id', existing.slot_id).single()
+      if (oldSlot) {
+        const slotStart = new Date(`${oldSlot.date}T${oldSlot.time_from}+07:00`).getTime()
+        if (Date.now() >= slotStart) {
+          return fail(res, 'Đã qua giờ, không thể trả lại khung giờ', 400)
+        }
       }
     }
 
-    // Xử lý group consolidation
+    // Nhả slot NGUYÊN TỬ (set slot_id=null, plate=null, status PENDING, recount slot cũ)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error: rpcErr } = await (supabase.rpc as any)('book_vehicle_slot', {
+      p_vslot_id: id, p_new_slot_id: null, p_plate: null, p_status: 'PENDING', p_actor: user?.name || null,
+    })
+    if (rpcErr) return fail(res, rpcErr.message)
+
+    // Xử lý group consolidation: dòng này tách ra, các dòng còn lại giữ nguyên
     const groupId = existing.consolidation_group_id as string | null
     if (groupId) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -333,7 +339,6 @@ export async function revokeVehicleSlot(req: Request, res: Response) {
         .eq('consolidation_group_id', groupId)
         .neq('id', id)
       const mateList = (mates ?? []) as { id: string; is_consolidation_primary: boolean }[]
-
       if (mateList.length === 1) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await (supabase.from('TmsVehicleSlot') as any).update({
@@ -347,10 +352,11 @@ export async function revokeVehicleSlot(req: Request, res: Response) {
       }
     }
 
+    // Xoá thông tin tài xế/cổng + cờ nhóm (slot/biển/status đã do RPC xử lý)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await (supabase.from('TmsVehicleSlot') as any)
       .update({
-        slot_id: null, license_plate: null, driver_phone: null, status: 'PENDING',
+        driver_phone: null,
         consolidation_group_id: null, is_consolidation_primary: false,
         gate_export_status: null, gate_registered_at: null, gate_entry_at: null, gate_exit_at: null,
         updated_at: now,
@@ -359,8 +365,8 @@ export async function revokeVehicleSlot(req: Request, res: Response) {
       .select('*, slot:DeliverySlot!slot_id(id, date, time_from, time_to, direction, cargo_type, max_vehicles, booked_count)')
       .single()
     if (error) return fail(res, error.message)
-    const revokeOldPlate = existing.license_plate as string | null
-    if (revokeOldPlate) await relinkGatesByPlate(revokeOldPlate, existing.order_id as string)
+    const oldPlate = existing.license_plate as string | null
+    if (oldPlate) await relinkGatesByPlate(oldPlate, existing.order_id as string)
     return ok(res, data)
   } catch (e) { return fail(res, String(e)) }
 }
@@ -384,15 +390,6 @@ export async function deleteVehicleSlot(req: Request, res: Response) {
       .select('id').eq('order_id', existing.order_id)
     if ((siblings ?? []).length <= 1) return fail(res, 'Không thể xoá xe duy nhất của đơn hàng', 400)
 
-    // Nếu BOOKED: giải phóng booked_count
-    if (existing.status === 'BOOKED' && existing.slot_id) {
-      const plate = existing.license_plate as string | null
-      const othersInSlot = plate ? await countSameBooking(existing.slot_id, plate, id, existing.order_id as string) : 0
-      if (!plate || othersInSlot === 0) {
-        await supabase.rpc('try_book_slot', { p_slot_id: existing.slot_id, p_delta: -1 })
-      }
-    }
-
     // Xử lý consolidation group
     const groupId = existing.consolidation_group_id as string | null
     if (groupId) {
@@ -415,87 +412,18 @@ export async function deleteVehicleSlot(req: Request, res: Response) {
       }
     }
 
+    const oldSlotId = existing.slot_id as string | null
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (supabase.from('TmsVehicleSlot') as any).delete().eq('id', id)
     if (error) return fail(res, error.message)
+
+    // Tính lại cache booked_count cho slot cũ sau khi xoá dòng
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if (oldSlotId) await (supabase.rpc as any)('recount_slot', { p_slot_id: oldSlotId })
 
     const deletedPlate = existing.license_plate as string | null
     if (deletedPlate) await relinkGatesByPlate(deletedPlate, existing.order_id as string)
 
     return ok(res, { id })
-  } catch (e) { return fail(res, String(e)) }
-}
-
-// PATCH /api/tms/vehicle-slots/:id/release — trả lại: tách khỏi nhóm (nếu có), xoá slot+biển số+sdt
-export async function releaseVehicleSlot(req: Request, res: Response) {
-  try {
-    const { id } = req.params
-    const now = new Date().toISOString()
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: existing, error: fetchErr } = await (supabase.from('TmsVehicleSlot') as any)
-      .select('id, slot_id, status, order_id, license_plate, consolidation_group_id, is_consolidation_primary').eq('id', id).single()
-    if (fetchErr) return fail(res, fetchErr.message)
-    if (!existing) return fail(res, 'Không tìm thấy vehicle slot', 404)
-
-    if (existing.slot_id) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: oldSlot } = await (supabase.from('DeliverySlot') as any)
-        .select('date, time_from').eq('id', existing.slot_id).single()
-      if (oldSlot) {
-        const slotStart = new Date(`${oldSlot.date}T${oldSlot.time_from}+07:00`).getTime()
-        if (Date.now() >= slotStart) {
-          return fail(res, 'Đã qua giờ, không thể trả lại khung giờ', 400)
-        }
-        // Chỉ decrement nếu không còn đơn khác cùng (slot, biển số) — tránh giảm oan khi 1 xe nhiều đơn
-        const plate = existing.license_plate as string | null
-        const othersInSlot = plate ? await countSameBooking(existing.slot_id, plate, id, existing.order_id as string) : 0
-        if (!plate || othersInSlot === 0) {
-          await supabase.rpc('try_book_slot', { p_slot_id: existing.slot_id, p_delta: -1 })
-        }
-      }
-    }
-
-    // Xử lý group consolidation: dòng này tách ra, các dòng còn lại giữ nguyên
-    const groupId = existing.consolidation_group_id as string | null
-    if (groupId) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: mates } = await (supabase.from('TmsVehicleSlot') as any)
-        .select('id, is_consolidation_primary')
-        .eq('consolidation_group_id', groupId)
-        .neq('id', id)
-      const mateList = (mates ?? []) as { id: string; is_consolidation_primary: boolean }[]
-
-      if (mateList.length === 1) {
-        // Nhóm chỉ còn 1 → giải thể nhóm, member còn lại vẫn giữ booking (standalone)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (supabase.from('TmsVehicleSlot') as any).update({
-          consolidation_group_id: null, is_consolidation_primary: false, updated_at: now,
-        }).eq('id', mateList[0].id)
-      } else if (mateList.length >= 2 && (existing.is_consolidation_primary as boolean)) {
-        // Primary tách ra → chỉ định member đầu tiên làm primary mới
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (supabase.from('TmsVehicleSlot') as any).update({
-          is_consolidation_primary: true, updated_at: now,
-        }).eq('id', mateList[0].id)
-      }
-      // else: secondary tách ra, group >= 2 còn lại → không thay đổi gì
-    }
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (supabase.from('TmsVehicleSlot') as any)
-      .update({
-        slot_id: null, license_plate: null, driver_phone: null, status: 'PENDING',
-        consolidation_group_id: null, is_consolidation_primary: false,
-        gate_export_status: null, gate_registered_at: null, gate_entry_at: null, gate_exit_at: null,
-        updated_at: now,
-      })
-      .eq('id', id)
-      .select('*, slot:DeliverySlot!slot_id(id, date, time_from, time_to, direction, cargo_type, max_vehicles, booked_count)')
-      .single()
-    if (error) return fail(res, error.message)
-    const releaseOldPlate = existing.license_plate as string | null
-    if (releaseOldPlate) await relinkGatesByPlate(releaseOldPlate, existing.order_id as string)
-    return ok(res, data)
   } catch (e) { return fail(res, String(e)) }
 }

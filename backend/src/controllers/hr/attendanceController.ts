@@ -87,11 +87,24 @@ export async function upsertAttendance(req: Request, res: Response) {
       const [r] = await attachEmp([data as { employee_id: string }])
       return ok(res, r)
     }
-    const { data, error } = await supabase.from('Attendance').insert({
+    const ins = await supabase.from('Attendance').insert({
       id: randomUUID(), employee_id: empId, work_date, ...payload, created_at: now(),
     }).select(SEL).single()
-    if (error) return fail(res, error.message)
-    const [r] = await attachEmp([data as { employee_id: string }])
+    if (ins.error) {
+      // Đua: 2 lượt chấm cùng (nhân viên, ngày) cùng lúc → cả hai thấy chưa tồn rồi cùng insert.
+      // unique (employee_id, work_date) chặn → lượt sau 23505 → chuyển sang UPDATE (idempotent), hết trùng dòng / lỗi oan.
+      if ((ins.error as { code?: string }).code === '23505') {
+        const { data: ex2 } = await supabase.from('Attendance').select('id').eq('employee_id', empId).eq('work_date', work_date).maybeSingle()
+        if (ex2) {
+          const { data, error } = await supabase.from('Attendance').update(payload).eq('id', (ex2 as { id: string }).id).select(SEL).single()
+          if (error) return fail(res, error.message)
+          const [r] = await attachEmp([data as { employee_id: string }])
+          return ok(res, r)
+        }
+      }
+      return fail(res, ins.error.message)
+    }
+    const [r] = await attachEmp([ins.data as { employee_id: string }])
     return ok(res, r, 201)
   } catch (e) { return fail(res, String(e)) }
 }

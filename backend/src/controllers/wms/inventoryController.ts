@@ -524,67 +524,67 @@ export async function adjustInventory(req: Request, res: Response) {
     return fail(res, 400, 'INVALID_INPUT', 'adjustment phải là số khác 0')
   }
 
-  const { data: entry, error: fetchErr } = await (supabase.from('InventoryEntry') as any)
-    .select('id, cartons_remaining, cartons_imported, adjustment_qty, status')
-    .eq('id', id)
-    .maybeSingle()
-
-  if (fetchErr || !entry) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy pallet')
-
-  const cartonsBeforeAdjust = Number(entry.cartons_remaining ?? 0)
-  const newRemaining = cartonsBeforeAdjust + adjustment
-  if (newRemaining < 0) return fail(res, 400, 'INVALID_INPUT', 'Tồn kho không thể âm')
-
   const now    = new Date().toISOString()
   const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
-
-  let newStatus = entry.status
-  if (ACTIVE_STATUSES.includes(entry.status)) {
-    if (newRemaining <= 0) newStatus = 'EXPORTED'
-    else if (newRemaining >= Number(entry.cartons_imported)) newStatus = 'IN_STOCK'
-    else newStatus = 'PARTIAL'
-  }
-
   const isValidUUID = (s?: string) => !!s && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)
 
-  const patch: Record<string, any> = {
-    cartons_remaining: newRemaining,
-    adjustment_qty:    Number(entry.adjustment_qty ?? 0) + adjustment,
-    status:            newStatus,
-    updated_at:        now,
-    update_date:       vnDate,
+  // Đọc–tính–ghi NGUYÊN TỬ (optimistic-CAS + jitter): chặn 2 lượt chỉnh cùng pallet đồng thời
+  // ghi mù từ số đọc cũ → mất cập nhật tồn + adjustment_qty + log sai cartons_before/after.
+  for (let attempt = 0; attempt < 15; attempt++) {
+    const { data: entry, error: fetchErr } = await (supabase.from('InventoryEntry') as any)
+      .select('id, cartons_remaining, cartons_imported, adjustment_qty, status')
+      .eq('id', id)
+      .maybeSingle()
+    if (fetchErr || !entry) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy pallet')
+
+    const cartonsBeforeAdjust = Number(entry.cartons_remaining ?? 0)
+    const newRemaining = cartonsBeforeAdjust + adjustment
+    if (newRemaining < 0) return fail(res, 400, 'INVALID_INPUT', 'Tồn kho không thể âm')
+
+    let newStatus = entry.status
+    if (ACTIVE_STATUSES.includes(entry.status)) {
+      if (newRemaining <= 0) newStatus = 'EXPORTED'
+      else if (newRemaining >= Number(entry.cartons_imported)) newStatus = 'IN_STOCK'
+      else newStatus = 'PARTIAL'
+    }
+
+    const patch: Record<string, any> = {
+      cartons_remaining: newRemaining,
+      adjustment_qty:    Number(entry.adjustment_qty ?? 0) + adjustment,
+      status:            newStatus,
+      updated_at:        now,
+      update_date:       vnDate,
+    }
+    if (stocktake_by) { patch.stocktake_by = stocktake_by; patch.stocktake_at = now }
+    if (isValidUUID(employee_id)) patch.updated_by = employee_id
+
+    const { data: updated, error: updateErr } = await (supabase.from('InventoryEntry') as any)
+      .update(patch)
+      .eq('id', id)
+      .eq('cartons_remaining', cartonsBeforeAdjust)   // CAS: chỉ ghi nếu tồn VẪN bằng số vừa đọc
+      .select(ENTRY_SELECT)
+    if (updateErr) return fail(res, 500, 'DB_ERROR', updateErr.message)
+
+    if (updated?.length) {
+      // Audit log — KHÔNG nuốt lỗi (mất vết audit âm thầm là tệ). cartons_before/after khớp thật.
+      const { error: logErr } = await supabase.from('InventoryAdjustmentLog' as any).insert({
+        id:             randomUUID(),
+        entry_id:       id,
+        delta:          adjustment,
+        cartons_before: cartonsBeforeAdjust,
+        cartons_after:  newRemaining,
+        note:           note?.trim() || null,
+        actor_name:     actor_name?.trim() || null,
+        actor_id:       isValidUUID(employee_id) ? employee_id : null,
+        adjusted_at:    now,
+      })
+      if (logErr) console.error('[adjustInventory] Ghi InventoryAdjustmentLog thất bại:', logErr.message)
+      return ok(res, { entry: updated[0] })
+    }
+    // CAS trượt (người khác vừa chỉnh tồn): chờ jitter rồi đọc lại
+    await new Promise(r => setTimeout(r, 10 + Math.floor(Math.random() * (30 + attempt * 20))))
   }
-
-  if (stocktake_by) {
-    patch.stocktake_by = stocktake_by
-    patch.stocktake_at = now
-  }
-  if (isValidUUID(employee_id)) patch.updated_by = employee_id
-
-  const { data: updated, error: updateErr } = await (supabase.from('InventoryEntry') as any)
-    .update(patch)
-    .eq('id', id)
-    .select(ENTRY_SELECT)
-    .single()
-
-  if (updateErr) return fail(res, 500, 'DB_ERROR', updateErr.message)
-
-  // Insert audit log — KHÔNG nuốt lỗi: điều chỉnh tồn đã ghi nhận thành công, nhưng nếu log
-  // hỏng (bảng chưa tạo / RLS) phải log ra console để thấy, tránh mất vết audit âm thầm.
-  const { error: logErr } = await supabase.from('InventoryAdjustmentLog' as any).insert({
-    id:             randomUUID(),
-    entry_id:       id,
-    delta:          adjustment,
-    cartons_before: cartonsBeforeAdjust,
-    cartons_after:  newRemaining,
-    note:           note?.trim() || null,
-    actor_name:     actor_name?.trim() || null,
-    actor_id:       isValidUUID(employee_id) ? employee_id : null,
-    adjusted_at:    now,
-  })
-  if (logErr) console.error('[adjustInventory] Ghi InventoryAdjustmentLog thất bại:', logErr.message)
-
-  return ok(res, { entry: updated })
+  return fail(res, 409, 'STOCK_CHANGED', 'Tồn kho pallet này đang bận (nhiều người chỉnh) — thử lại')
 }
 
 export async function listAdjustmentLog(req: Request, res: Response) {

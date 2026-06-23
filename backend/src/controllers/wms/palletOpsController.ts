@@ -176,13 +176,31 @@ export async function splitPallet(req: Request, res: Response) {
     const { data: created, error: cErr } = await (supabase.from('InventoryEntry') as any).insert(rows).select('*')
     if (cErr) return fail(res, cErr.message, 500)
 
-    // Trừ tồn pallet gốc (GIỮ NGUYÊN cartons_imported để báo cáo nhập bất biến)
-    const newRemaining = remaining - totalSplit
-    const newStatus = newRemaining < Number(source.cartons_imported ?? 0) ? 'PARTIAL' : undefined
-    const { error: upErr } = await (supabase.from('InventoryEntry') as any)
-      .update({ cartons_remaining: newRemaining, ...(newStatus ? { status: newStatus } : {}), update_date: vnDate(), updated_at: now })
-      .eq('id', source.id)
-    if (upErr) return fail(res, upErr.message, 500)
+    // Trừ tồn pallet gốc NGUYÊN TỬ (optimistic-CAS + jitter, GIỮ NGUYÊN cartons_imported để báo cáo nhập bất biến):
+    // chống 2 lượt tách cùng pallet đồng thời over-split (cả 2 trừ từ cùng số đọc cũ). Đọc lại mỗi lần;
+    // nếu khả dụng đã < totalSplit (người khác vừa tách) hoặc CAS trượt → ROLLBACK pallet con đã tạo.
+    let newRemaining = remaining - totalSplit
+    let okDec = false, decErr: 'BUSY' | 'INSUFFICIENT' = 'BUSY'
+    for (let attempt = 0; attempt < 15; attempt++) {
+      const { data: cur } = await (supabase.from('InventoryEntry') as any)
+        .select('cartons_remaining, cartons_reserved, cartons_imported').eq('id', source.id).maybeSingle()
+      if (!cur) { decErr = 'BUSY'; break }
+      const curRem = Number(cur.cartons_remaining ?? 0), curRes = Number(cur.cartons_reserved ?? 0)
+      if (curRem - curRes < totalSplit) { decErr = 'INSUFFICIENT'; break }
+      newRemaining = curRem - totalSplit
+      const st = newRemaining < Number(cur.cartons_imported ?? 0) ? 'PARTIAL' : undefined
+      const { data: applied } = await (supabase.from('InventoryEntry') as any)
+        .update({ cartons_remaining: newRemaining, ...(st ? { status: st } : {}), update_date: vnDate(), updated_at: now })
+        .eq('id', source.id).eq('cartons_remaining', curRem).eq('cartons_reserved', curRes).select('id')
+      if (applied?.length) { okDec = true; break }
+      await new Promise(r => setTimeout(r, 10 + Math.floor(Math.random() * (30 + attempt * 20))))
+    }
+    if (!okDec) {
+      await (supabase.from('InventoryEntry') as any).delete().in('id', rows.map(r => r.id))
+      return fail(res, decErr === 'INSUFFICIENT'
+        ? `Pallet gốc "${src}" vừa bị tách bớt — không đủ ${totalSplit} thùng khả dụng, thử lại`
+        : `Pallet gốc "${src}" đang bận (nhiều người thao tác) — thử lại`, 409)
+    }
 
     const childCodes = rows.map(r => r.pallet_code)
     await logOp(req, 'SPLIT', [src], childCodes, { children: rows.map(r => ({ code: r.pallet_code, qty: r.cartons_remaining })), source_remaining: newRemaining }, ENTRY_WH(source))

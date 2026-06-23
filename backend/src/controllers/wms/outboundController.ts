@@ -721,12 +721,15 @@ export async function patchGDO(req: Request, res: Response) {
       if (status === 'COMPLETED') patch.completed_at = t
     }
 
+    // CAS khi hoàn thành: chỉ winner đầu (status chưa COMPLETED) mới đổi → cascade
+    // maybeAutoCreateTransferOrder (tạo TmsOrder chuyển kho) chạy ĐÚNG 1 lần, không tạo trùng.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await (supabase.from('GroupDeliveryOrder') as any)
-      .update(patch).eq('id', req.params.id)
+    let upd = (supabase.from('GroupDeliveryOrder') as any).update(patch).eq('id', req.params.id)
+    if (status === 'COMPLETED') upd = upd.neq('status', 'COMPLETED')
+    const { data: updRows, error } = await upd.select('id')
     if (error) return fail(res, error.message)
 
-    if (status === 'COMPLETED') await maybeAutoCreateTransferOrder(req.params.id, t)
+    if (status === 'COMPLETED' && (updRows?.length ?? 0) > 0) await maybeAutoCreateTransferOrder(req.params.id, t)
 
     const result = await fetchGDOFull(req.params.id)
     return ok(res, result)

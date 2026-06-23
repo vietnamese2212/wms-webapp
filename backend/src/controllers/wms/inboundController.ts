@@ -540,12 +540,16 @@ export async function completeOrder(req: Request, res: Response) {
     if (existing.status === 'COMPLETED') return fail(res, 400, 'ALREADY_COMPLETED', 'Phiếu nhập đã hoàn thành')
 
     const nowTs = new Date().toISOString()
+    // CAS: chỉ đổi nếu CHƯA completed → 2 lượt "hoàn thành" cùng lúc thì chỉ 1 thắng,
+    // cascade (TmsOrder DONE / GDO DELIVERED) chạy ĐÚNG 1 lần (tránh xử lý trùng).
     const { data: updated, error } = await supabase
       .from('ProductionImport')
       .update({ status: 'COMPLETED', updated_by: req.body.updated_by ?? null, updated_at: nowTs })
       .eq('id', req.params.id)
+      .neq('status', 'COMPLETED')
       .select(ORDER_SELECT).maybeSingle()
     if (error) throw error
+    if (!updated) return fail(res, 400, 'ALREADY_COMPLETED', 'Phiếu nhập đã hoàn thành')
 
     if (existing.tms_order_id) {
       const { data: allSiblings } = await supabase

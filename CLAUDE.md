@@ -77,6 +77,12 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 - Mọi INSERT phải có `id: randomUUID()` + `updated_at: new Date().toISOString()` — DB không có DEFAULT, thiếu → **lỗi 23502**. `import { randomUUID } from 'crypto'`. DB client: `import { supabase } from '../../lib/supabase'`.
 - Tính năng cập nhật số liệu phải **realtime** (không refresh tay) + test đủ **4 case: tạo / sửa / xóa / làm lại**. `invalidateQueries` đủ MỌI key liên quan; thêm key vào `TABLE_QUERY_MAP` (`realtimeEvents.ts`); optimistic phải rollback khi lỗi.
 
+**Đồng thời — VÀI TRĂM nhân sự cùng thao tác** (skill `verify-feature` Cổng 5 + `concurrency-hardening`):
+- **Luôn đặt app vào tình huống hàng trăm người cùng xuất/nhập/booking** khi làm/test tính năng ghi số liệu. Hai điều TỐI KỴ: (1) app treo / đá user ra `/login`; (2) dữ liệu sai khi nhiều người cùng làm.
+- Mọi cập nhật trên **bộ đếm/tổng/tồn/sức chứa DÙNG CHUNG** phải nguyên tử: đếm sống dưới row-lock (RPC, vd `book_vehicle_slot`) hoặc **optimistic-CAS** (`update … WHERE col=giá_trị_đọc`) — KHÔNG ghi mù `col = đọc + delta` (mất cập nhật khi đua). Mẫu: `consumeInventoryExact`, `addItemScanned`, `adjustInventoryAtomic`.
+- **Optimistic-CAS / retry-on-conflict PHẢI có jitter+backoff** giữa các lần thử (không thì thundering herd → nửa số request 409 oan).
+- Test tải: gọi **API thật**, dữ liệu **bám DB thật**, **rải + tranh chấp + đa-module đồng thời**, ~25–30 in-flight (đừng bão hoà `max_connections=60`, đừng bắn lúc user thật đang dùng), Playwright **refresh giữa tải** (không văng) + kiểm bất biến (tồn không âm/không xuất quá, không overbooking, cache khớp), rồi **dọn sạch**.
+
 **Phân quyền** (skill `add-permission`):
 - Mọi nút/route gọi API write phải gate `can(perms, module, action)` (FE) + `requirePerm` (BE). Mỗi action = 1 permission riêng (không gộp `manage`). Thêm action = đủ **4 nơi**: FE config, **BE config** (thiếu → admin mất quyền), gate nút, route BE.
 

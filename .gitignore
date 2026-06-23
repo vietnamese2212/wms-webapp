@@ -51,5 +51,10 @@ backend/C*Tempbackend_test.log
 .playwright-mcp/
 login-check.png
 
+# Ảnh chụp màn hình / scratch để ở thư mục gốc — không commit
+/*.png
+/*.jpeg
+/*.jpg
+
 # Dữ liệu nhân viên thật + mật khẩu — không commit
 Employee_Template.xlsx

@@ -62,6 +62,26 @@ async function consumeInventoryExact(invId: string, amount: number): Promise<boo
   return null
 }
 
+// CỘNG DỒN cartons_scanned của item NGUYÊN TỬ (optimistic-CAS) + set status theo TỔNG mới.
+// Trước đây ghi mù cartons_scanned = (số đọc cũ + delta) → nhiều người quét CÙNG item làm MẤT cộng dồn
+// (item kẹt IN_PROGRESS dù đã quét đủ, đơn không tự hoàn thành). CAS bảo đảm mỗi lượt cộng đúng 1 lần.
+// Trả tổng mới, hoặc null nếu tranh chấp sau 15 lần (hiếm — caller giữ giá trị ước tính).
+async function addItemScanned(itemId: string, delta: number, statusOf: (total: number) => string): Promise<number | null> {
+  for (let attempt = 0; attempt < 15; attempt++) {
+    const { data: it } = await (supabase.from('OutboundItem') as any)
+      .select('cartons_scanned').eq('id', itemId).single()
+    if (!it) return null
+    const cur = Number(it.cartons_scanned ?? 0)
+    const next = cur + delta
+    const { data: applied } = await (supabase.from('OutboundItem') as any)
+      .update({ cartons_scanned: next, status: statusOf(next), updated_at: now() })
+      .eq('id', itemId).eq('cartons_scanned', cur).select('id')
+    if (applied?.length) return next
+    await new Promise(r => setTimeout(r, 10 + Math.floor(Math.random() * (30 + attempt * 20))))
+  }
+  return null
+}
+
 function parsePlannedDate(group_code: string): string | null {
   const parts = group_code.split('_')
   // New format: warehouseCode_X|N_ddmmyy_stt  (parts[1] is 'X' or 'N')
@@ -1752,7 +1772,7 @@ export async function scanItem(req: Request, res: Response) {
     })
     if (insertErr) return fail(res, `Lỗi lưu scan entry: ${insertErr.message}`, 500)
 
-    const new_scanned = Number(item.cartons_scanned) + to_take
+    let new_scanned = Number(item.cartons_scanned) + to_take
 
     // Loose picking: giữ hàng (reserve) thay vì xuất ngay; item không tự COMPLETE
     let new_item_status: string
@@ -1765,18 +1785,9 @@ export async function scanItem(req: Request, res: Response) {
         await (supabase.from('OutboundScanEntry') as any).delete().eq('id', scanId)
         return fail(res, 'Tồn kho mã này vừa thay đổi (thao tác khác) — thử lại', 409)
       }
-      await (supabase.from('OutboundItem') as any)
-        .update({ cartons_scanned: new_scanned, status: new_item_status, updated_at: t })
-        .eq('id', itemId)
+      const cum = await addItemScanned(itemId, to_take, () => 'IN_PROGRESS')
+      if (cum != null) new_scanned = cum
     } else {
-      // Kiểm tra có nhặt lẻ chưa xác nhận không trước khi COMPLETE item
-      let wouldComplete = new_scanned >= Number(item.cartons_ordered)
-      if (wouldComplete) {
-        const { data: unconfirmedLoose } = await (supabase.from('OutboundScanEntry') as any)
-          .select('id').eq('item_id', itemId).eq('is_loose_picking', true).eq('loose_confirmed', false)
-        if ((unconfirmedLoose ?? []).length > 0) wouldComplete = false
-      }
-      new_item_status = wouldComplete ? 'COMPLETED' : 'IN_PROGRESS'
       // Trừ tồn NGUYÊN TỬ chống đua + chống xuất-quá-tồn (trước đây ghi mù remaining=available-to_take
       // → 2 người quét cùng pallet làm mất cập nhật / xuất quá số). Lỗi → rollback scan entry đã insert.
       const consumed = await consumeInventoryExact(inv.id, to_take)
@@ -1786,9 +1797,16 @@ export async function scanItem(req: Request, res: Response) {
           ? `Pallet "${qr}" vừa được người khác xuất bớt — tồn không đủ, quét lại`
           : 'Tồn kho mã này đang bận (nhiều người thao tác) — thử lại', 409)
       }
-      await (supabase.from('OutboundItem') as any)
-        .update({ cartons_scanned: new_scanned, status: new_item_status, updated_at: t })
-        .eq('id', itemId)
+      // Nhặt lẻ chưa xác nhận → KHÔNG cho complete dù đủ số
+      const { data: unconfirmedLoose } = await (supabase.from('OutboundScanEntry') as any)
+        .select('id').eq('item_id', itemId).eq('is_loose_picking', true).eq('loose_confirmed', false)
+      const blockComplete = (unconfirmedLoose ?? []).length > 0
+      const ordered = Number(item.cartons_ordered)
+      // Cộng dồn cartons_scanned NGUYÊN TỬ + set status theo TỔNG thật (chống mất cộng dồn khi nhiều
+      // người quét cùng item → item kẹt IN_PROGRESS / đơn không tự hoàn thành dù đã quét đủ).
+      const cum = await addItemScanned(itemId, to_take, n => (n >= ordered && !blockComplete) ? 'COMPLETED' : 'IN_PROGRESS')
+      if (cum != null) new_scanned = cum
+      new_item_status = (new_scanned >= ordered && !blockComplete) ? 'COMPLETED' : 'IN_PROGRESS'
     }
 
     // Nhặt lẻ mode: skip DO/GDO cascade khi chưa bắt đầu (xe chưa tới)

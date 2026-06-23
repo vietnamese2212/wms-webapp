@@ -179,50 +179,58 @@ export async function createGateRegistration(req: Request, res: Response) {
     return apiErr(res, 'MISSING_FIELDS', 'date và warehouse_id là bắt buộc')
   }
 
-  // Auto-increment registration_number cho ngày
-  const { data: maxRow } = await supabase
-    .from('gate_registrations')
-    .select('registration_number')
-    .eq('date', date)
-    .order('registration_number', { ascending: false })
-    .limit(1)
-    .maybeSingle()
-
-  const registration_number = ((maxRow as { registration_number: number } | null)?.registration_number ?? 0) + 1
   const now = new Date().toISOString()
+  const basePayload = {
+    id: randomUUID(),
+    date,
+    driver_name:        driver_name ?? null,
+    phone:              phone ?? null,
+    company_id:         company_id ?? null,
+    company_name_raw:   company_name_raw ?? null,
+    vehicle_id:         vehicle_id ?? null,
+    license_plate:      license_plate ?? null,
+    direction:          direction ?? null,
+    warehouse_id,
+    warehouse_type:     warehouse_type ?? null,
+    vehicle_type:       vehicle_type ?? null,
+    content:            content ?? null,
+    return_pallet:      return_pallet ?? false,
+    seal_number:        seal_number ?? null,
+    notes:              notes ?? null,
+    status:             'REGISTERED',
+    priority:           false,
+    registered_at:      now,
+    registered_by:      userName,
+    created_by:         userName,
+    updated_by:         userName,
+    updated_at:         now,
+  }
 
-  const { data, error } = await supabase
-    .from('gate_registrations')
-    .insert({
-      id: randomUUID(),
-      date,
-      registration_number,
-      driver_name:        driver_name ?? null,
-      phone:              phone ?? null,
-      company_id:         company_id ?? null,
-      company_name_raw:   company_name_raw ?? null,
-      vehicle_id:         vehicle_id ?? null,
-      license_plate:      license_plate ?? null,
-      direction:          direction ?? null,
-      warehouse_id,
-      warehouse_type:     warehouse_type ?? null,
-      vehicle_type:       vehicle_type ?? null,
-      content:            content ?? null,
-      return_pallet:      return_pallet ?? false,
-      seal_number:        seal_number ?? null,
-      notes:              notes ?? null,
-      status:             'REGISTERED',
-      priority:           false,
-      registered_at:      now,
-      registered_by:      userName,
-      created_by:         userName,
-      updated_by:         userName,
-      updated_at:         now,
-    })
-    .select()
-    .single()
-
-  if (error) return apiErr(res, 'DB_ERROR', error.message, 500)
+  // Cấp registration_number (max+1 theo ngày) + insert NGUYÊN TỬ chống đua:
+  // unique (date, registration_number) bảo đảm KHÔNG trùng; khi nhiều xe đăng ký cùng lúc,
+  // 2 user có thể cùng lấy 1 số → 1 insert dính 23505 → đọc lại max+1 và thử lại (tối đa 8 lần).
+  // Trước đây chỉ đọc-rồi-ghi 1 lần → cao điểm xe vào bị lỗi trùng số, user phải tự thử lại.
+  let data: Record<string, unknown> | null = null
+  let lastErr: { code?: string; message: string } | null = null
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const { data: maxRow } = await supabase
+      .from('gate_registrations')
+      .select('registration_number')
+      .eq('date', date)
+      .order('registration_number', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    const registration_number = ((maxRow as { registration_number: number } | null)?.registration_number ?? 0) + 1
+    const ins = await supabase
+      .from('gate_registrations')
+      .insert({ ...basePayload, registration_number })
+      .select()
+      .single()
+    if (!ins.error) { data = ins.data as Record<string, unknown>; lastErr = null; break }
+    lastErr = ins.error
+    if (ins.error.code !== '23505') break   // lỗi khác (không phải trùng số) → dừng ngay
+  }
+  if (lastErr || !data) return apiErr(res, 'DB_ERROR', lastErr?.message ?? 'Không cấp được số đăng ký, thử lại', 500)
 
   // Tính lại vị trí booking cho tất cả gate trong nhóm
   const plate = (data as { license_plate: string | null }).license_plate

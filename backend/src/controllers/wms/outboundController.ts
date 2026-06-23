@@ -37,6 +37,29 @@ async function adjustInventoryAtomic(
   return false
 }
 
+// XUẤT (trừ remaining) NGUYÊN TỬ: chỉ trừ ĐÚNG `amount` nếu tồn còn đủ, dưới optimistic-lock.
+// Trả: true=trừ xong · false=KHÔNG đủ tồn (đã bị thao tác khác lấy) · null=tranh chấp sau 5 lần.
+// Chống đua + chống xuất-quá-tồn khi nhiều nhân viên quét cùng 1 pallet (giống book_vehicle_slot).
+async function consumeInventoryExact(invId: string, amount: number): Promise<boolean | null> {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const { data: inv } = await (supabase.from('InventoryEntry') as any)
+      .select('cartons_remaining, cartons_imported, cartons_reserved').eq('id', invId).single()
+    if (!inv) return null
+    const curRemaining = Number(inv.cartons_remaining ?? inv.cartons_imported ?? 0)
+    const curReserved  = Number(inv.cartons_reserved ?? 0)
+    if (curRemaining < amount) return false   // không đủ tồn để xuất từng ấy nữa
+    const newRemaining = curRemaining - amount
+    const maxImport    = Number(inv.cartons_imported)
+    const newStatus    = newRemaining === 0 ? 'EXPORTED' : newRemaining < maxImport ? 'PARTIAL' : 'IN_STOCK'
+    const { data: applied } = await (supabase.from('InventoryEntry') as any)
+      .update({ cartons_remaining: newRemaining, status: newStatus, updated_at: now() })
+      .eq('id', invId).eq('cartons_remaining', curRemaining).eq('cartons_reserved', curReserved)
+      .select('id')
+    if (applied?.length) return true
+  }
+  return null
+}
+
 function parsePlannedDate(group_code: string): string | null {
   const parts = group_code.split('_')
   // New format: warehouseCode_X|N_ddmmyy_stt  (parts[1] is 'X' or 'N')
@@ -1752,14 +1775,18 @@ export async function scanItem(req: Request, res: Response) {
         if ((unconfirmedLoose ?? []).length > 0) wouldComplete = false
       }
       new_item_status = wouldComplete ? 'COMPLETED' : 'IN_PROGRESS'
-      await Promise.all([
-        to_take >= available
-          ? (supabase.from('InventoryEntry') as any).update({ status: 'EXPORTED', cartons_remaining: 0, updated_at: t }).eq('id', inv.id)
-          : (supabase.from('InventoryEntry') as any).update({ status: 'PARTIAL', cartons_remaining: available - to_take, updated_at: t }).eq('id', inv.id),
-        (supabase.from('OutboundItem') as any)
-          .update({ cartons_scanned: new_scanned, status: new_item_status, updated_at: t })
-          .eq('id', itemId),
-      ])
+      // Trừ tồn NGUYÊN TỬ chống đua + chống xuất-quá-tồn (trước đây ghi mù remaining=available-to_take
+      // → 2 người quét cùng pallet làm mất cập nhật / xuất quá số). Lỗi → rollback scan entry đã insert.
+      const consumed = await consumeInventoryExact(inv.id, to_take)
+      if (consumed !== true) {
+        await (supabase.from('OutboundScanEntry') as any).delete().eq('id', scanId)
+        return fail(res, consumed === false
+          ? `Pallet "${qr}" vừa được người khác xuất bớt — tồn không đủ, quét lại`
+          : 'Tồn kho mã này đang bận (nhiều người thao tác) — thử lại', 409)
+      }
+      await (supabase.from('OutboundItem') as any)
+        .update({ cartons_scanned: new_scanned, status: new_item_status, updated_at: t })
+        .eq('id', itemId)
     }
 
     // Nhặt lẻ mode: skip DO/GDO cascade khi chưa bắt đầu (xe chưa tới)

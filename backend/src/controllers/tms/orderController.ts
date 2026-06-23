@@ -143,20 +143,21 @@ export async function listOrders(req: Request, res: Response) {
     if (!from) return fail(res, 'date_from là bắt buộc', 400)
     if (!warehouse_id && !userNccId) return fail(res, 'warehouse_id là bắt buộc', 400)
 
+    // Phân trang né cap-1000 của PostgREST: >1000 đơn/ngày/kho sẽ bị mất nếu không page.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let q = (supabase.from('TmsOrder') as any)
-      .select(ORDER_SELECT)
-      .gte('date', from)
-      .lte('date', to || from)
-      .neq('source_type', 'TRANSFER')
-      .order('date', { ascending: false })
-      .order('created_at')
-
-    if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
-    if (userNccId)    q = q.eq('ncc_id', userNccId)
-
-    const { data, error } = await q
-    if (error) return fail(res, error.message)
+    const data = await fetchAllPaged(() => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let q = (supabase.from('TmsOrder') as any)
+        .select(ORDER_SELECT)
+        .gte('date', from)
+        .lte('date', to || from)
+        .neq('source_type', 'TRANSFER')
+        .order('date', { ascending: false })
+        .order('created_at')
+      if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
+      if (userNccId)    q = q.eq('ncc_id', userNccId)
+      return q
+    })
     return ok(res, data)
   } catch (e) { return fail(res, String(e)) }
 }

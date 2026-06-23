@@ -315,7 +315,7 @@ export default function GateRegistration() {
   // ── Filters (persisted via wmsFilterStore)
   const { gateRegistration: grf, setGateRegistration } = useWmsFilterStore()
   const fDate          = grf.fDate          || TODAY_VN
-  const fDateTo        = grf.fDateTo
+  const fDateTo        = grf.fDateTo        || TODAY_VN
   const fWarehouse     = grf.fWarehouse
   const fWarehouseType = grf.fWarehouseType
   const fVehicleTypes  = grf.fVehicleTypes
@@ -620,7 +620,7 @@ export default function GateRegistration() {
   // ── Action buttons (reused in row + detail)
   function ActionButtons({ reg, size = 'sm' }: { reg: GateRegistration; size?: 'sm' | 'xs' }) {
     const btnCls = size === 'xs'
-      ? 'text-[10px] px-1.5 py-0.5 h-auto'
+      ? 'text-[10px] px-1.5 py-0.5 h-auto !min-h-0 !min-w-0'   // bỏ sàn touch-target 44px → row co theo số mã đơn
       : 'text-xs px-2 py-1 h-auto'
     return (
       <div className="flex gap-1 items-center flex-nowrap">

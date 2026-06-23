@@ -499,7 +499,7 @@ export default function Outbound() {
                 {OUTBOUND_COLS.map((c, i) => (
                   <TableHead key={c.id}
                     style={i <= 1 ? { left: i === 0 ? 0 : colW[0] } : undefined}
-                    className={`relative text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5 ${c.align === 'right' ? 'text-right' : ''} ${i <= 1 ? 'sticky z-20 bg-slate-50' : ''}`}>
+                    className={`text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5 ${c.align === 'right' ? 'text-right' : ''} ${i <= 1 ? 'sticky z-20 bg-slate-50' : ''}`}>
                     {c.label}
                     {i > 0 && (
                       <span onPointerDown={e => startResize(i, e)} onClick={e => e.stopPropagation()}

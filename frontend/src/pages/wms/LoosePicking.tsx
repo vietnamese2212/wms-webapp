@@ -265,7 +265,7 @@ export default function LoosePicking() {
               <TableRow className="bg-slate-50">
                 {LOOSE_COLS.map((c, i) => (
                   <TableHead key={c.id}
-                    className={`relative text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5 ${c.align === 'right' ? 'text-right' : ''} ${i === 1 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                    className={`text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5 ${c.align === 'right' ? 'text-right' : ''} ${i === 1 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
                     {c.label}
                     {i > 0 && (
                       <span onPointerDown={e => startResize(i, e)} onClick={e => e.stopPropagation()}

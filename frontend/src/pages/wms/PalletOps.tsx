@@ -258,7 +258,7 @@ export default function PalletOps() {
                 <thead>
                   <tr className="text-left text-[9px] font-medium text-slate-500">
                     {['Thời gian', 'Loại', 'Pallet nguồn', 'Pallet đích', 'Tên hàng', 'Số lượng', 'Người làm', 'Trạng thái', 'Thao tác'].map((h, i) => (
-                      <th key={i} className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 whitespace-nowrap relative">{h}
+                      <th key={i} className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 whitespace-nowrap">{h}
                         <span onPointerDown={e => opCols.startResize(i, e)} className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70" />
                       </th>
                     ))}

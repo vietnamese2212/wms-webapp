@@ -451,7 +451,7 @@ export default function Materials() {
               <TableRow>
                 {MAT_COLS.map((c, i) => (
                   <TableHead key={c.id}
-                    className={`relative text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''} ${c.id === 'code' ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                    className={`text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''} ${c.id === 'code' ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
                     {c.id === 'check'
                       ? <RowCheck checked={allSelected} indeterminate={someSelected} onClick={toggleAll} />
                       : c.label}

@@ -801,7 +801,7 @@ export default function GateRegistration() {
                   <TableRow>
                     {GATE_COLS.map((c, i) => (
                       <TableHead key={c.id}
-                        className={`relative text-[9px] font-medium text-slate-500 whitespace-nowrap py-1.5 ${i === 21 ? 'px-1' : 'px-2'} ${c.align === 'right' ? 'text-right' : ''} ${c.id === 'num' ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                        className={`text-[9px] font-medium text-slate-500 whitespace-nowrap py-1.5 ${i === 21 ? 'px-1' : 'px-2'} ${c.align === 'right' ? 'text-right' : ''} ${c.id === 'num' ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
                         {c.label}
                         {i > 0 && c.id !== 'actions' && (
                           <span onPointerDown={e => gateStartResize(i, e)} onClick={e => e.stopPropagation()}

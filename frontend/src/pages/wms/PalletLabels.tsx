@@ -812,7 +812,7 @@ export default function PalletLabels() {
               <thead>
                 <tr className="text-left text-[9px] font-medium text-slate-500">
                   {['Mã pallet (QR)', 'Mã hàng', 'Loại', 'NMSX', 'Chu kỳ', 'Máy', 'Ngày nhập', 'Người nhập', 'Số lần in', 'Lần in gần nhất'].map((h, i) => (
-                    <th key={i} className={`sticky top-0 bg-slate-50 px-2 py-1.5 whitespace-nowrap relative ${i === 0 ? 'left-0 z-20' : 'z-10'} ${i === 8 ? 'text-right' : ''}`}>
+                    <th key={i} className={`sticky top-0 bg-slate-50 px-2 py-1.5 whitespace-nowrap ${i === 0 ? 'left-0 z-20' : 'z-10'} ${i === 8 ? 'text-right' : ''}`}>
                       {h}
                       <span onPointerDown={e => auCols.startResize(i, e)} className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70" />
                     </th>
@@ -923,7 +923,7 @@ export default function PalletLabels() {
                 <tr className="text-left text-[9px] font-medium text-slate-500">
                   {canReprint && <th className="sticky top-0 left-0 z-20 bg-slate-50 px-2 py-1.5" />}
                   {['Thời gian in', 'Chế độ', 'Số tem', 'Mã hàng', 'Tên hàng', 'Chu kỳ', 'Máy', 'Người in'].map((h, i) => (
-                    <th key={i} className={`sticky top-0 bg-slate-50 px-2 py-1.5 whitespace-nowrap relative ${i === 0 ? (canReprint ? 'z-20 left-[36px]' : 'z-20 left-0') : 'z-10'} ${i === 2 ? 'text-right' : ''}`}>
+                    <th key={i} className={`sticky top-0 bg-slate-50 px-2 py-1.5 whitespace-nowrap ${i === 0 ? (canReprint ? 'z-20 left-[36px]' : 'z-20 left-0') : 'z-10'} ${i === 2 ? 'text-right' : ''}`}>
                       {h}
                       <span onPointerDown={e => histCols.startResize(i, e)} className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70" />
                     </th>

@@ -316,7 +316,7 @@ export default function OutboundPrepare() {
                 {PREPARE_COLS.map((c, i) => (
                   <TableHead key={c.id}
                     style={i === 0 ? { left: 0 } : undefined}
-                    className={`relative text-[9px] font-medium px-2 py-1.5 whitespace-nowrap ${c.id === 'pallets' ? 'text-sky-600' : 'text-slate-500'} ${c.align === 'right' ? 'text-right' : ''} ${i === 0 ? 'sticky z-20 bg-slate-50' : ''}`}>
+                    className={`text-[9px] font-medium px-2 py-1.5 whitespace-nowrap ${c.id === 'pallets' ? 'text-sky-600' : 'text-slate-500'} ${c.align === 'right' ? 'text-right' : ''} ${i === 0 ? 'sticky z-20 bg-slate-50' : ''}`}>
                     {c.label}
                     {i > 0 && (
                       <span onPointerDown={e => startResize(i, e)} onClick={e => e.stopPropagation()}

@@ -238,7 +238,7 @@ function DailyTab({ canCreate, perms }: { canCreate: boolean; perms: ModulePermi
             <TableHeader>
               <TableRow>
                 {SHEET_COLS.map((c, i) => (
-                  <TableHead key={c.id} className={`relative px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''} ${c.id === 'date' ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                  <TableHead key={c.id} className={`px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''} ${c.id === 'date' ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
                     {c.label}
                     {i > 0 && <span onPointerDown={e => startResize(i, e)} onClick={e => e.stopPropagation()} className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70" title="Kéo để chỉnh độ rộng cột" />}
                   </TableHead>

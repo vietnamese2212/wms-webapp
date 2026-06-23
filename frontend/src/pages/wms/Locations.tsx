@@ -295,7 +295,7 @@ export default function Locations() {
                 <TableRow className="bg-slate-50">
                   {LOC_COLS.map((c, i) => (
                     <TableHead key={c.id}
-                      className={`relative px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''} ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                      className={`px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''} ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
                       {c.label}
                       {i > 0 && c.id !== 'actions' && (
                         <span onPointerDown={e => startResize(i, e)} onClick={e => e.stopPropagation()}

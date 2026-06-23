@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import type { AxiosError } from 'axios'
 import { apiClient } from '@/api/client'
 import type { User } from '@/types'
 
@@ -38,8 +39,14 @@ export const useAuthStore = create<AuthState>()(
           const res = await apiClient.get('/auth/me')
           const { user, token } = res.data.data as { user: User; token: string }
           set({ user, token })
-        } catch {
-          set({ user: null, isAuthenticated: false, token: null })
+        } catch (err) {
+          // CHỈ đăng xuất khi token thực sự hết hạn/sai (401). Lỗi TẠM THỜI
+          // (cold-start timeout, mất mạng, 5xx, DB bận lúc đông) KHÔNG được xóa
+          // phiên — giữ user/token đã persist để user vẫn dùng được, lần load
+          // sau tự refresh lại. Trước đây catch-all xóa sạch → refresh là "văng".
+          if ((err as AxiosError)?.response?.status === 401) {
+            set({ user: null, isAuthenticated: false, token: null })
+          }
         }
       },
     }),

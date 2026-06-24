@@ -6,6 +6,23 @@ function apiErr(res: Response, code: string, message: string, status = 400) {
   return res.status(status).json({ success: false, error: { code, message } })
 }
 
+// Phạm vi kho của user: null = NATIONAL (toàn bộ); mảng = chỉ các kho được gán
+function scopeWhIds(req: Request): string[] | null {
+  return req.user?.warehouse_scope === 'NATIONAL' ? null : (req.user?.warehouse_ids ?? [])
+}
+// Gác theo id: bản ghi phải thuộc kho trong phạm vi user (NATIONAL bỏ qua). Trả false + đã gửi 403 nếu chặn.
+async function guardGateScope(req: Request, res: Response, id: string): Promise<boolean> {
+  const scope = scopeWhIds(req)
+  if (scope === null) return true
+  const { data } = await supabase.from('gate_registrations').select('warehouse_id').eq('id', id).maybeSingle()
+  const whId = (data as { warehouse_id: string | null } | null)?.warehouse_id ?? null
+  if (!whId || !scope.includes(whId)) {
+    apiErr(res, 'FORBIDDEN', 'Ngoài phạm vi kho được giao — không thể thao tác đăng ký cổng của kho này', 403)
+    return false
+  }
+  return true
+}
+
 export async function listGateRegistrations(req: Request, res: Response) {
   const {
     date, date_from, date_to,
@@ -186,6 +203,12 @@ export async function createGateRegistration(req: Request, res: Response) {
     return apiErr(res, 'MISSING_FIELDS', 'date và warehouse_id là bắt buộc')
   }
 
+  // Phạm vi kho: non-NATIONAL chỉ được tạo đăng ký cho kho được giao
+  const cScope = scopeWhIds(req)
+  if (cScope !== null && !cScope.includes(warehouse_id)) {
+    return apiErr(res, 'FORBIDDEN', 'Ngoài phạm vi kho được giao — không thể tạo đăng ký cổng cho kho này', 403)
+  }
+
   const now = new Date().toISOString()
   const basePayload = {
     id: randomUUID(),
@@ -278,6 +301,16 @@ export async function updateGateRegistration(req: Request, res: Response) {
     .eq('id', id)
     .single() as { data: GateRow | null }
 
+  // Phạm vi kho: bản ghi hiện tại phải thuộc kho được giao; KHÔNG cho chuyển sang kho ngoài phạm vi
+  const uScope = scopeWhIds(req)
+  if (uScope !== null) {
+    const curWh = before?.warehouse_id ?? null
+    if (!curWh || !uScope.includes(curWh))
+      return apiErr(res, 'FORBIDDEN', 'Ngoài phạm vi kho được giao — không thể sửa đăng ký cổng của kho này', 403)
+    if (warehouse_id !== undefined && warehouse_id && !uScope.includes(warehouse_id))
+      return apiErr(res, 'FORBIDDEN', 'Không thể chuyển đăng ký sang kho ngoài phạm vi được giao', 403)
+  }
+
   const patch: Record<string, unknown> = {
     updated_by: userName,
     updated_at: new Date().toISOString(),
@@ -340,6 +373,7 @@ export async function updateGateRegistration(req: Request, res: Response) {
 
 export async function doCall(req: Request, res: Response) {
   const { id } = req.params
+  if (!(await guardGateScope(req, res, id))) return
   const user = (req as Request & { user?: { name?: string } }).user
   const { custom_time } = req.body
   const now = new Date().toISOString()
@@ -358,6 +392,7 @@ export async function doCall(req: Request, res: Response) {
 
 export async function doEntry(req: Request, res: Response) {
   const { id } = req.params
+  if (!(await guardGateScope(req, res, id))) return
   const user = (req as Request & { user?: { name?: string } }).user
   const { custom_time } = req.body
   const now = new Date().toISOString()
@@ -390,6 +425,7 @@ export async function doEntry(req: Request, res: Response) {
 
 export async function doExit(req: Request, res: Response) {
   const { id } = req.params
+  if (!(await guardGateScope(req, res, id))) return
   const user = (req as Request & { user?: { name?: string } }).user
   const { load_capacity, custom_time } = req.body
   const now = new Date().toISOString()
@@ -430,6 +466,7 @@ export async function doExit(req: Request, res: Response) {
 
 export async function doRevertCall(req: Request, res: Response) {
   const { id } = req.params
+  if (!(await guardGateScope(req, res, id))) return
   const user = (req as Request & { user?: { name?: string } }).user
   const now = new Date().toISOString()
 
@@ -446,6 +483,7 @@ export async function doRevertCall(req: Request, res: Response) {
 
 export async function doRevertEntry(req: Request, res: Response) {
   const { id } = req.params
+  if (!(await guardGateScope(req, res, id))) return
   const user = (req as Request & { user?: { name?: string } }).user
   const now = new Date().toISOString()
 
@@ -478,6 +516,7 @@ export async function doRevertEntry(req: Request, res: Response) {
 
 export async function doRevertExit(req: Request, res: Response) {
   const { id } = req.params
+  if (!(await guardGateScope(req, res, id))) return
   const user = (req as Request & { user?: { name?: string } }).user
   const now = new Date().toISOString()
 
@@ -722,6 +761,7 @@ export async function relinkAfterDelete(
 
 export async function deleteGateRegistration(req: Request, res: Response) {
   const { id } = req.params
+  if (!(await guardGateScope(req, res, id))) return
 
   // Lấy thông tin trước khi xóa để re-link sau
   const { data: reg } = await supabase

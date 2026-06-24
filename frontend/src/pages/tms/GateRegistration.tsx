@@ -966,10 +966,10 @@ export default function GateRegistration() {
                         <TableCell
                           colSpan={GATE_COLS.length}
                           onClick={() => toggleGroup(item.key)}
-                          className={`sticky left-0 z-10 whitespace-nowrap cursor-pointer select-none ${cellCls}`}
-                          style={{ paddingLeft: item.level === 3 ? 8 : 8 + (item.level - 1) * 22 }}
+                          className={`whitespace-nowrap cursor-pointer select-none !overflow-visible ${cellCls}`}
                         >
-                          <span className="inline-flex items-center gap-2">
+                          {/* span con sticky-left: cell colSpan rộng cả bảng không trượt-dính được; span co theo chữ thì dính được */}
+                          <span className="sticky left-0 inline-flex items-center gap-2" style={{ paddingLeft: item.level === 3 ? 8 : 8 + (item.level - 1) * 22 }}>
                             {item.level === 3
                               ? <Star className="h-3.5 w-3.5 shrink-0 text-purple-600 fill-purple-500" />
                               : item.collapsed ? <ChevronRight className="h-3.5 w-3.5 shrink-0" /> : <ChevronDown className="h-3.5 w-3.5 shrink-0" />}

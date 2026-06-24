@@ -187,60 +187,12 @@ export async function suggestBooking(req: Request, res: Response) {
   }] })
 }
 
-export async function createGateRegistration(req: Request, res: Response) {
-  const user = (req as Request & { user?: { name?: string } }).user
-  const userName = user?.name ?? null
-
-  const {
-    date, driver_name, phone,
-    company_id, company_name_raw,
-    vehicle_id, license_plate,
-    direction, warehouse_id, warehouse_type, vehicle_type,
-    content, return_pallet, seal_number, notes,
-  } = req.body
-
-  if (!date || !warehouse_id) {
-    return apiErr(res, 'MISSING_FIELDS', 'date và warehouse_id là bắt buộc')
-  }
-
-  // Phạm vi kho: non-NATIONAL chỉ được tạo đăng ký cho kho được giao
-  const cScope = scopeWhIds(req)
-  if (cScope !== null && !cScope.includes(warehouse_id)) {
-    return apiErr(res, 'FORBIDDEN', 'Ngoài phạm vi kho được giao — không thể tạo đăng ký cổng cho kho này', 403)
-  }
-
-  const now = new Date().toISOString()
-  const basePayload = {
-    id: randomUUID(),
-    date,
-    driver_name:        driver_name ?? null,
-    phone:              phone ?? null,
-    company_id:         company_id ?? null,
-    company_name_raw:   company_name_raw ?? null,
-    vehicle_id:         vehicle_id ?? null,
-    license_plate:      license_plate ?? null,
-    direction:          direction ?? null,
-    warehouse_id,
-    warehouse_type:     warehouse_type ?? null,
-    vehicle_type:       vehicle_type ?? null,
-    content:            content ?? null,
-    return_pallet:      return_pallet ?? false,
-    seal_number:        seal_number ?? null,
-    notes:              notes ?? null,
-    status:             'REGISTERED',
-    priority:           false,
-    registered_at:      now,
-    registered_by:      userName,
-    created_by:         userName,
-    updated_by:         userName,
-    updated_at:         now,
-  }
-
-  // Cấp registration_number (max+1 theo ngày) + insert NGUYÊN TỬ chống đua:
-  // unique (date, registration_number) bảo đảm KHÔNG trùng; khi nhiều xe đăng ký cùng lúc,
-  // 2 user có thể cùng lấy 1 số → 1 insert dính 23505 → đọc lại max+1 và thử lại (tối đa 8 lần).
-  // Trước đây chỉ đọc-rồi-ghi 1 lần → cao điểm xe vào bị lỗi trùng số, user phải tự thử lại.
-  let data: Record<string, unknown> | null = null
+// Cấp registration_number (max+1 theo ngày) + insert NGUYÊN TỬ chống đua:
+// unique (date, registration_number) bảo đảm KHÔNG trùng; khi nhiều xe đăng ký cùng lúc,
+// 2 user có thể cùng lấy 1 số → 1 insert dính 23505 → đọc lại max+1 và thử lại (tối đa 25 lần).
+async function insertGateWithNumber(
+  basePayload: Record<string, unknown>, date: string,
+): Promise<{ data: Record<string, unknown> | null; error: { code?: string; message: string } | null }> {
   let lastErr: { code?: string; message: string } | null = null
   for (let attempt = 0; attempt < 25; attempt++) {
     const { data: maxRow } = await supabase
@@ -256,20 +208,126 @@ export async function createGateRegistration(req: Request, res: Response) {
       .insert({ ...basePayload, registration_number })
       .select()
       .single()
-    if (!ins.error) { data = ins.data as Record<string, unknown>; lastErr = null; break }
+    if (!ins.error) return { data: ins.data as Record<string, unknown>, error: null }
     lastErr = ins.error
     if (ins.error.code !== '23505') break   // lỗi khác (không phải trùng số) → dừng ngay
     // Trùng số do đua: chờ ngẫu nhiên (jitter tăng dần) để PHÁ thundering herd rồi đọc lại max+1.
-    // Không có jitter thì hàng chục request cùng đọc 1 max → đụng lại liên tục.
     await new Promise(r => setTimeout(r, 15 + Math.floor(Math.random() * (40 + attempt * 25))))
   }
-  if (lastErr || !data) return apiErr(res, 'DB_ERROR', lastErr?.message ?? 'Hệ thống đang bận cấp số đăng ký, thử lại', 500)
+  return { data: null, error: lastErr ?? { message: 'Hệ thống đang bận cấp số đăng ký, thử lại' } }
+}
+
+type GateLeg = {
+  direction: string
+  vehicle_type?: string | null; company_id?: string | null; company_name_raw?: string | null
+  content?: string | null; return_pallet?: boolean | null; seal_number?: string | null; notes?: string | null
+}
+
+export async function createGateRegistration(req: Request, res: Response) {
+  const user = (req as Request & { user?: { name?: string } }).user
+  const userName = user?.name ?? null
+
+  const {
+    date, driver_name, phone,
+    company_id, company_name_raw,
+    vehicle_id, license_plate,
+    direction, warehouse_id, warehouse_type, vehicle_type,
+    content, return_pallet, seal_number, notes,
+    combined, legs,
+  } = req.body as Record<string, unknown> & { combined?: boolean; legs?: GateLeg[] }
+
+  if (!date || !warehouse_id) {
+    return apiErr(res, 'MISSING_FIELDS', 'date và warehouse_id là bắt buộc')
+  }
+
+  // Phạm vi kho: non-NATIONAL chỉ được tạo đăng ký cho kho được giao
+  const cScope = scopeWhIds(req)
+  if (cScope !== null && !cScope.includes(warehouse_id as string)) {
+    return apiErr(res, 'FORBIDDEN', 'Ngoài phạm vi kho được giao — không thể tạo đăng ký cổng cho kho này', 403)
+  }
+
+  const now = new Date().toISOString()
+  // Trường DÙNG CHUNG cho cả 1 record lẫn 2 chân kết hợp (cùng xe/biển/kho/Loại kho)
+  const shared = {
+    date,
+    driver_name:        driver_name ?? null,
+    phone:              phone ?? null,
+    vehicle_id:         vehicle_id ?? null,
+    license_plate:      license_plate ?? null,
+    warehouse_id,
+    warehouse_type:     warehouse_type ?? null,
+    status:             'REGISTERED',
+    priority:           false,
+    registered_at:      now,
+    registered_by:      userName,
+    created_by:         userName,
+    updated_by:         userName,
+    updated_at:         now,
+  }
+
+  // ── Xe "kết hợp" (vừa Nhập vừa Xuất cùng Loại kho): tạo 2 record 1 CHIỀU riêng, chung visit_group_id.
+  // Mỗi record là 1 chiều bình thường → match booking theo cơ chế cũ, KHÔNG đụng relink → không lỗi TMS.
+  if (combined && Array.isArray(legs) && legs.length >= 2) {
+    const visitId = randomUUID()
+    const created: Record<string, unknown>[] = []
+    for (const leg of legs) {
+      if (!leg?.direction) return apiErr(res, 'MISSING_FIELDS', 'Mỗi chân kết hợp phải có hướng (Nhập/Xuất)')
+      const payload = {
+        ...shared,
+        id: randomUUID(),
+        visit_group_id:   visitId,
+        direction:        leg.direction,
+        vehicle_type:     leg.vehicle_type ?? null,
+        company_id:       leg.company_id ?? null,
+        company_name_raw: leg.company_name_raw ?? null,
+        content:          leg.content ?? null,
+        return_pallet:    leg.return_pallet ?? false,
+        seal_number:      leg.seal_number ?? null,
+        notes:            leg.notes ?? null,
+      }
+      const { data, error } = await insertGateWithNumber(payload, date as string)
+      if (error || !data) return apiErr(res, 'DB_ERROR', error?.message ?? 'Lỗi tạo đăng ký kết hợp', 500)
+      created.push(data)
+    }
+    // Relink booking cho TỪNG chân (mỗi chân 1 chiều → đúng cơ chế hiện tại)
+    const plate = (created[0] as { license_plate: string | null }).license_plate
+    if (plate) {
+      for (let i = 0; i < legs.length; i++) {
+        const leg = legs[i]
+        await relinkAfterDelete(
+          plate, date as string, warehouse_id as string,
+          leg.direction,
+          (warehouse_type ?? null) as string | null,
+          (leg.vehicle_type ?? null) as string | null,
+          (leg.company_id ?? null) as string | null,
+        )
+      }
+    }
+    return res.status(201).json({ success: true, data: created })
+  }
+
+  // ── Đăng ký 1 chiều bình thường
+  const basePayload = {
+    ...shared,
+    id: randomUUID(),
+    direction:          direction ?? null,
+    company_id:         company_id ?? null,
+    company_name_raw:   company_name_raw ?? null,
+    vehicle_type:       vehicle_type ?? null,
+    content:            content ?? null,
+    return_pallet:      return_pallet ?? false,
+    seal_number:        seal_number ?? null,
+    notes:              notes ?? null,
+  }
+
+  const { data, error } = await insertGateWithNumber(basePayload, date as string)
+  if (error || !data) return apiErr(res, 'DB_ERROR', error?.message ?? 'Hệ thống đang bận cấp số đăng ký, thử lại', 500)
 
   // Tính lại vị trí booking cho tất cả gate trong nhóm
   const plate = (data as { license_plate: string | null }).license_plate
   if (plate) {
     await relinkAfterDelete(
-      plate, date, warehouse_id,
+      plate, date as string, warehouse_id as string,
       (direction ?? null) as string | null,
       (warehouse_type ?? null) as string | null,
       (vehicle_type ?? null) as string | null,

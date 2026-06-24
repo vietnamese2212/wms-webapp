@@ -308,6 +308,17 @@ const FORM_DEFAULT: FormData = {
   content: '', return_pallet: false, seal_number: '', notes: '',
 }
 
+// Chân thứ 2 (Xuất) của xe "kết hợp" — chỉ dùng khi Hướng = 'BOTH' (sentinel form, KHÔNG lưu DB).
+// Trường dùng chung (ngày/kho/Loại kho/biển số/lái xe/SĐT) lấy từ `form`; chỉ các trường này khác chân.
+type LegData = {
+  vehicle_type: string; company_id: string; company_name_raw: string
+  content: string; return_pallet: boolean; seal_number: string; notes: string
+}
+const LEG_DEFAULT: LegData = {
+  vehicle_type: '', company_id: '', company_name_raw: '',
+  content: '', return_pallet: false, seal_number: '', notes: '',
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function GateRegistration() {
@@ -371,6 +382,7 @@ export default function GateRegistration() {
   const [modalOpen,  setModalOpen]  = useState(false)
   const [editReg,    setEditReg]    = useState<GateRegistration | null>(null)
   const [form,       setForm]       = useState<FormData>(FORM_DEFAULT)
+  const [outLeg,     setOutLeg]     = useState<LegData>(LEG_DEFAULT)   // chân Xuất khi đăng ký kết hợp
 
   // ── Action dialogs
   const [callTarget,  setCallTarget]  = useState<GateRegistration | null>(null)
@@ -533,6 +545,10 @@ export default function GateRegistration() {
   // Chưa chọn kho: hiện tất cả
   const availableVehicleTypes = (form.warehouse_id ? filteredGateVehicleTypes : vehicleTypes) as TmsVehicleType[]
 
+  // Xe "kết hợp" (chỉ ở chế độ tạo mới): Hướng = 'BOTH' (sentinel form). Chân chính = NHẬP, chân phụ = XUẤT.
+  const isCombined = !editReg && form.direction === 'BOTH'
+  const mainDirection = form.direction === 'BOTH' ? 'INBOUND' : form.direction
+
   // Phase 1 hoàn thành khi đủ 6 tiêu chí matching (company_name_raw chấp nhận thay company_id cho NCC vãng lai)
   const phase1Complete = !!(
     form.date && form.warehouse_id && form.direction &&
@@ -542,13 +558,13 @@ export default function GateRegistration() {
   // Suggest chỉ trigger khi đủ cả 7 (phase1 + biển số)
   const suggestEnabled = !!(phase1Complete && form.license_plate)
   const { data: suggestions = [], isFetching: suggestLoading } = useQuery<BookingSuggestion[]>({
-    queryKey: ['gate-suggest', form.date, form.license_plate, form.warehouse_id, form.direction, form.warehouse_type, form.vehicle_type, form.company_id, editReg?.id],
+    queryKey: ['gate-suggest', form.date, form.license_plate, form.warehouse_id, mainDirection, form.warehouse_type, form.vehicle_type, form.company_id, editReg?.id],
     queryFn: () => apiClient.get('/tms/gate-registrations/suggest-booking', {
       params: {
         date:            form.date,
         license_plate:   form.license_plate,
         warehouse_id:    form.warehouse_id,
-        direction:       form.direction || undefined,
+        direction:       mainDirection || undefined,
         warehouse_type:  form.warehouse_type || undefined,
         vehicle_type:    form.vehicle_type || undefined,
         company_id:      form.company_id || undefined,
@@ -556,6 +572,24 @@ export default function GateRegistration() {
       },
     }).then(r => r.data.data),
     enabled: suggestEnabled && modalOpen,
+  })
+
+  // Booking dự kiến cho CHÂN XUẤT (chỉ khi đăng ký kết hợp)
+  const outSuggestEnabled = !!(isCombined && form.license_plate && form.warehouse_type && outLeg.vehicle_type && (outLeg.company_id || outLeg.company_name_raw))
+  const { data: outSuggestions = [], isFetching: outSuggestLoading } = useQuery<BookingSuggestion[]>({
+    queryKey: ['gate-suggest', form.date, form.license_plate, form.warehouse_id, 'OUTBOUND', form.warehouse_type, outLeg.vehicle_type, outLeg.company_id],
+    queryFn: () => apiClient.get('/tms/gate-registrations/suggest-booking', {
+      params: {
+        date:            form.date,
+        license_plate:   form.license_plate,
+        warehouse_id:    form.warehouse_id,
+        direction:       'OUTBOUND',
+        warehouse_type:  form.warehouse_type || undefined,
+        vehicle_type:    outLeg.vehicle_type || undefined,
+        company_id:      outLeg.company_id || undefined,
+      },
+    }).then(r => r.data.data),
+    enabled: outSuggestEnabled && modalOpen,
   })
 
   // ── Mutations
@@ -647,6 +681,7 @@ export default function GateRegistration() {
   function openCreate() {
     setEditReg(null)
     setForm({ ...FORM_DEFAULT, date: TODAY_VN, warehouse_id: fWarehouse })
+    setOutLeg(LEG_DEFAULT)
     setApiError('')
     setModalOpen(true)
   }
@@ -677,6 +712,7 @@ export default function GateRegistration() {
   function closeModal() {
     setModalOpen(false)
     setEditReg(null)
+    setOutLeg(LEG_DEFAULT)
   }
 
   function f(k: keyof FormData, v: string | boolean) {
@@ -696,6 +732,45 @@ export default function GateRegistration() {
 
   async function handleSubmit() {
     setApiError('')
+    // Xe kết hợp: gửi 2 chân (Nhập = trường chính, Xuất = outLeg) → BE tạo 2 record 1 chiều chung visit_group_id
+    if (isCombined) {
+      const shared = {
+        date:           form.date,
+        driver_name:    form.driver_name || null,
+        phone:          form.phone || null,
+        vehicle_id:     form.vehicle_id || null,
+        license_plate:  form.license_plate || null,
+        warehouse_id:   form.warehouse_id,
+        warehouse_type: form.warehouse_type || null,
+      }
+      createMut.mutate({
+        ...shared,
+        combined: true,
+        legs: [
+          {
+            direction: 'INBOUND',
+            vehicle_type:     form.vehicle_type || null,
+            company_id:       form.company_id || null,
+            company_name_raw: form.company_name_raw || null,
+            content:          form.content || null,
+            return_pallet:    form.return_pallet,
+            seal_number:      form.seal_number || null,
+            notes:            form.notes || null,
+          },
+          {
+            direction: 'OUTBOUND',
+            vehicle_type:     outLeg.vehicle_type || null,
+            company_id:       outLeg.company_id || null,
+            company_name_raw: outLeg.company_name_raw || null,
+            content:          outLeg.content || null,
+            return_pallet:    outLeg.return_pallet,
+            seal_number:      outLeg.seal_number || null,
+            notes:            outLeg.notes || null,
+          },
+        ],
+      })
+      return
+    }
     const body = {
       date:             form.date,
       driver_name:      form.driver_name || null,
@@ -875,9 +950,9 @@ export default function GateRegistration() {
       <TableCell className="px-2 py-1 text-[10px] font-mono whitespace-nowrap">{fmtDate(reg.date)}</TableCell>
       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
         {reg.direction === 'OUTBOUND'
-          ? <span className="flex items-center gap-0.5">Xuất<ArrowRight className="h-3 w-3 text-orange-600" /></span>
+          ? <span className="flex items-center gap-0.5">Xuất<ArrowRight className="h-3 w-3 text-orange-600" />{reg.visit_group_id && <span className="text-red-500 font-bold" title="Xe kết hợp Nhập + Xuất">*</span>}</span>
           : reg.direction === 'INBOUND'
-          ? <span className="flex items-center gap-0.5">Nhập<ArrowLeft className="h-3 w-3 text-blue-600" /></span>
+          ? <span className="flex items-center gap-0.5">Nhập<ArrowLeft className="h-3 w-3 text-blue-600" />{reg.visit_group_id && <span className="text-red-500 font-bold" title="Xe kết hợp Nhập + Xuất">*</span>}</span>
           : '—'}
       </TableCell>
       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.vehicle_type ?? '—'}</TableCell>
@@ -1089,6 +1164,7 @@ export default function GateRegistration() {
                     : selected.direction === 'INBOUND'
                     ? <span className="ml-1 text-blue-600 font-medium">Nhập</span>
                     : ' —'}
+                  {selected.visit_group_id && <span className="ml-0.5 text-red-500 font-bold" title="Xe kết hợp Nhập + Xuất">*</span>}
                 </div>
                 {selected.warehouse_type && <div><span className="text-slate-400">Loại kho:</span> <span>{selected.warehouse_type}</span></div>}
                 {selected.content && <div><span className="text-slate-400">Nội dung:</span> <span>{selected.content}</span></div>}
@@ -1254,6 +1330,7 @@ export default function GateRegistration() {
                     <SelectItem value="__none__">Chưa xác định</SelectItem>
                     <SelectItem value="OUTBOUND">Xuất (OUTBOUND)</SelectItem>
                     <SelectItem value="INBOUND">Nhập (INBOUND)</SelectItem>
+                    {!editReg && <SelectItem value="BOTH">Nhập + Xuất (kết hợp)</SelectItem>}
                   </SelectContent>
                 </Select>
               </div>
@@ -1283,6 +1360,13 @@ export default function GateRegistration() {
               </div>
             </div>
 
+            {isCombined && (
+              <div className="flex items-center gap-2 -mb-1">
+                <ArrowLeft className="h-3.5 w-3.5 text-blue-600" />
+                <span className="text-xs font-semibold text-blue-700">Chân NHẬP</span>
+                <span className="text-[10px] text-slate-400">(loại xe / ĐVVT / nội dung riêng)</span>
+              </div>
+            )}
             {/* Row 3: Loại xe + ĐVVT */}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
@@ -1340,7 +1424,7 @@ export default function GateRegistration() {
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-xs text-slate-500">Nội dung vào ra <span className="text-red-500">*</span></label>
+                    <label className="text-xs text-slate-500">Nội dung vào ra{isCombined ? ' (nhập)' : ''} <span className="text-red-500">*</span></label>
                     <Input className="text-xs h-8" value={form.content} onChange={e => f('content', e.target.value)} placeholder="Vào lấy hàng, giao hàng..." />
                   </div>
                 </div>
@@ -1419,6 +1503,76 @@ export default function GateRegistration() {
                     <p className="text-[10px] text-slate-400">Không tìm thấy booking phù hợp</p>
                   )}
                 </div>
+
+                {/* ── Chân XUẤT (chỉ khi đăng ký kết hợp) — loại xe/ĐVVT/nội dung riêng cho chân xuất */}
+                {isCombined && (
+                  <div className="border-2 border-orange-200 rounded-lg p-3 space-y-3 bg-orange-50/40">
+                    <div className="flex items-center gap-2">
+                      <ArrowRight className="h-3.5 w-3.5 text-orange-600" />
+                      <span className="text-xs font-semibold text-orange-700">Chân XUẤT</span>
+                      <span className="text-[10px] text-slate-400">(cùng xe/kho, khác loại xe/ĐVVT được)</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-xs text-slate-500">Loại xe <span className="text-red-500">*</span></label>
+                        <ComboField
+                          value={outLeg.vehicle_type}
+                          displayValue={vtOptions.find(v => v.value === outLeg.vehicle_type)?.label ?? outLeg.vehicle_type}
+                          options={vtOptions}
+                          placeholder="Tìm loại xe"
+                          onSelect={opt => setOutLeg(prev => ({ ...prev, vehicle_type: opt.value }))}
+                          onClear={() => setOutLeg(prev => ({ ...prev, vehicle_type: '' }))}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs text-slate-500">ĐVVT / NCC <span className="text-red-500">*</span></label>
+                        <ComboField
+                          value={outLeg.company_id}
+                          displayValue={companies.find(c => c.id === outLeg.company_id)?.name ?? outLeg.company_name_raw}
+                          freeTextValue={outLeg.company_name_raw}
+                          options={companyOptions}
+                          placeholder="Tìm hoặc nhập ĐVVT"
+                          freetextMode
+                          onSelect={opt => setOutLeg(prev => ({ ...prev, company_id: opt.value, company_name_raw: opt.label }))}
+                          onFreeText={text => setOutLeg(prev => ({ ...prev, company_id: '', company_name_raw: text }))}
+                          onClear={() => setOutLeg(prev => ({ ...prev, company_id: '', company_name_raw: '' }))}
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs text-slate-500">Nội dung vào ra (xuất) <span className="text-red-500">*</span></label>
+                      <Input className="text-xs h-8" value={outLeg.content} onChange={e => setOutLeg(prev => ({ ...prev, content: e.target.value }))} placeholder="Giao hàng, xuất bán..." />
+                    </div>
+                    {/* Booking dự kiến cho chân xuất */}
+                    <div className="border rounded-lg p-2.5 space-y-1.5 bg-white">
+                      <p className="text-xs font-medium text-slate-600">Booking xuất dự kiến</p>
+                      {!outSuggestEnabled ? (
+                        <p className="text-[10px] text-slate-400">Điền loại xe + ĐVVT chân xuất để xem booking</p>
+                      ) : outSuggestLoading ? (
+                        <span className="flex items-center gap-1 text-[10px] text-slate-400">
+                          <Loader2 className="h-3 w-3 animate-spin" />Đang tìm...
+                        </span>
+                      ) : outSuggestions[0] ? (
+                        <div className="bg-green-50 border border-green-200 rounded px-2 py-1.5 text-xs space-y-0.5">
+                          <div>
+                            <span className="font-mono font-semibold text-green-700">{outSuggestions[0].order_code}</span>
+                            {(outSuggestions[0].booking_slot_from || outSuggestions[0].booking_slot_to) && (
+                              <span className="ml-2 text-green-600">{outSuggestions[0].booking_slot_from}–{outSuggestions[0].booking_slot_to}</span>
+                            )}
+                          </div>
+                          <div className="text-slate-500 flex flex-wrap gap-x-3">
+                            {outSuggestions[0].planned_boxes && <span>{outSuggestions[0].planned_boxes} thùng</span>}
+                            {outSuggestions[0].planned_pallets && <span>{outSuggestions[0].planned_pallets} pallet</span>}
+                            {outSuggestions[0].npp_names && <span>{outSuggestions[0].npp_names}</span>}
+                            {outSuggestions[0].gdo_refs && <span className="font-mono">{outSuggestions[0].gdo_refs}</span>}
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-[10px] text-slate-400">Không tìm thấy booking xuất phù hợp</p>
+                      )}
+                    </div>
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -1431,7 +1585,8 @@ export default function GateRegistration() {
                 createMut.isPending || updateMut.isPending ||
                 !form.date || !form.warehouse_id || !form.direction ||
                 !form.warehouse_type || !form.vehicle_type || !(form.company_id || form.company_name_raw) ||
-                !form.license_plate || !form.content || !form.driver_name || !form.phone
+                !form.license_plate || !form.content || !form.driver_name || !form.phone ||
+                (isCombined && (!outLeg.vehicle_type || !(outLeg.company_id || outLeg.company_name_raw) || !outLeg.content))
               }
               onClick={handleSubmit}
             >

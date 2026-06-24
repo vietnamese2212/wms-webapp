@@ -534,6 +534,8 @@ export interface GateRegistration {
   warehouse_type:      string | null
   vehicle_type:        string | null
 
+  visit_group_id:      string | null  // gắn 2 chân của xe "kết hợp" (Nhập+Xuất cùng lượt)
+
   content:             string | null
   return_pallet:       boolean
   seal_number:         string | null

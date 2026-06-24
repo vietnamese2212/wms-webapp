@@ -956,11 +956,10 @@ export default function GateRegistration() {
                 <TableBody>
                   {renderList.map(item => {
                     if (item.kind === 'leaf') return renderLeafRow(item.reg)
-                    const onDark = item.level === 1
                     const cellCls =
                       item.level === 1 ? 'bg-slate-700 text-white py-2 font-bold border-b border-slate-600'
                       : item.level === 2 ? 'bg-sky-50 text-sky-900 py-1.5 font-semibold border-b border-sky-100 border-l-4 border-l-sky-500'
-                      : 'bg-white text-slate-600 py-1 font-medium border-b border-slate-100 border-l-4 border-l-slate-200'
+                      : 'bg-slate-100 text-slate-700 py-1 font-medium border-b border-slate-200 border-l-4 border-l-slate-300'
                     const pill = (txt: string, c: string) => <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${c}`}>{txt}</span>
                     return (
                       <TableRow key={item.key} className="hover:bg-transparent">
@@ -973,9 +972,12 @@ export default function GateRegistration() {
                           <span className="inline-flex items-center gap-2">
                             {item.collapsed ? <ChevronRight className="h-3.5 w-3.5 shrink-0" /> : <ChevronDown className="h-3.5 w-3.5 shrink-0" />}
                             <span className={item.level <= 2 ? 'uppercase tracking-wide text-[11px]' : 'text-[11px]'}>{item.label}</span>
-                            {pill(`${item.total} xe`, onDark ? 'bg-white/20 text-white' : 'bg-slate-200/70 text-slate-600')}
-                            {item.waiting > 0 && pill(`chờ ${item.waiting}`, onDark ? 'bg-amber-400/30 text-amber-50' : 'bg-amber-100 text-amber-700')}
-                            {item.inside > 0 && pill(`trong ${item.inside}`, onDark ? 'bg-emerald-400/30 text-emerald-50' : 'bg-green-100 text-green-700')}
+                            {/* Thống kê (N xe / chờ / trong) chỉ ở cấp Loại xe; Kho & Loại kho để gọn */}
+                            {item.level === 3 && <>
+                              {pill(`${item.total} xe`, 'bg-slate-200/70 text-slate-600')}
+                              {item.waiting > 0 && pill(`chờ ${item.waiting}`, 'bg-amber-100 text-amber-700')}
+                              {item.inside > 0 && pill(`trong ${item.inside}`, 'bg-green-100 text-green-700')}
+                            </>}
                           </span>
                         </TableCell>
                       </TableRow>

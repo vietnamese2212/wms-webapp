@@ -960,18 +960,20 @@ export default function GateRegistration() {
                     const cellCls =
                       item.level === 1 ? 'bg-slate-700 text-white py-2 font-bold border-b border-slate-600'
                       : item.level === 2 ? 'bg-sky-100 text-sky-900 py-1.5 font-semibold border-b border-sky-200 border-l-4 border-l-sky-500'
-                      : 'bg-slate-100 text-slate-700 py-1 font-medium border-b border-slate-200 border-l-4 border-l-slate-400'
+                      : 'bg-slate-100 text-slate-700 py-1 font-medium border-b border-slate-200 border-l-4 border-l-purple-400'
                     return (
                       <TableRow key={item.key} className="hover:bg-transparent">
                         <TableCell
                           colSpan={GATE_COLS.length}
                           onClick={() => toggleGroup(item.key)}
                           className={`sticky left-0 z-10 whitespace-nowrap cursor-pointer select-none ${cellCls}`}
-                          style={{ paddingLeft: 8 + (item.level - 1) * 22 }}
+                          style={{ paddingLeft: item.level === 3 ? 8 : 8 + (item.level - 1) * 22 }}
                         >
                           <span className="inline-flex items-center gap-2">
-                            {item.collapsed ? <ChevronRight className="h-3.5 w-3.5 shrink-0" /> : <ChevronDown className="h-3.5 w-3.5 shrink-0" />}
-                            <span className={item.level <= 2 ? 'uppercase tracking-wide text-[11px]' : 'text-[11px]'}>{item.label}</span>
+                            {item.level === 3
+                              ? <Star className="h-3.5 w-3.5 shrink-0 text-purple-600 fill-purple-500" />
+                              : item.collapsed ? <ChevronRight className="h-3.5 w-3.5 shrink-0" /> : <ChevronDown className="h-3.5 w-3.5 shrink-0" />}
+                            <span className={`${item.level <= 2 ? 'uppercase tracking-wide text-[11px]' : 'text-[11px]'} ${item.level === 3 ? 'text-purple-700 font-semibold' : ''}`}>{item.label}</span>
                             {/* Thống kê chỉ ở cấp Loại xe — dạng chữ rõ nghĩa, không màu */}
                             {item.level === 3 && (
                               <span className="text-[10px] font-normal text-slate-500">

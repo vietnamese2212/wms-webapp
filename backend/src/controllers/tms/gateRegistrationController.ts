@@ -448,6 +448,19 @@ export async function doCall(req: Request, res: Response) {
   const now = new Date().toISOString()
   const ts = custom_time ? new Date(custom_time).toISOString() : now
 
+  // Xe kết hợp: chân Xuất chỉ được "Gọi xe" khi chân Nhập đã "Ra" (COMPLETED) — tránh thao tác sớm
+  const { data: regCall } = await supabase
+    .from('gate_registrations')
+    .select('direction, visit_group_id')
+    .eq('id', id).maybeSingle()
+  const rCall = regCall as { direction: string | null; visit_group_id: string | null } | null
+  if (rCall?.visit_group_id && rCall.direction === 'OUTBOUND') {
+    const inStatus = await combinedPartnerStatus(rCall.visit_group_id, 'INBOUND')
+    if (inStatus && inStatus !== 'COMPLETED') {
+      return apiErr(res, 'SEQUENCE', 'Xe Nhập chưa ra — chân Xuất chưa thể gọi xe (xe kết hợp)', 409)
+    }
+  }
+
   const { data, error } = await supabase
     .from('gate_registrations')
     .update({ status: 'CALLED', called_at: ts, called_by: user?.name ?? null, updated_by: user?.name ?? null, updated_at: now })
@@ -604,12 +617,12 @@ export async function doRevertExit(req: Request, res: Response) {
     .eq('id', id).single()
   if (fetchErr) return apiErr(res, 'DB_ERROR', fetchErr.message, 500)
 
-  // Xe kết hợp: gỡ "Đã ra" của chân Nhập chỉ khi chân Xuất CHƯA vào (phải gỡ "Đã vào" chân Xuất trước)
+  // Xe kết hợp: gỡ "Đã ra" của chân Nhập chỉ khi chân Xuất đã lùi hẳn về "Chưa gọi" (gỡ Gọi xe + Đã vào trước)
   const rRevExit = reg as { direction: string | null; visit_group_id: string | null }
   if (rRevExit.visit_group_id && rRevExit.direction === 'INBOUND') {
     const outStatus = await combinedPartnerStatus(rRevExit.visit_group_id, 'OUTBOUND')
-    if (outStatus && ['IN', 'COMPLETED'].includes(outStatus)) {
-      return apiErr(res, 'SEQUENCE', 'Phải gỡ "Đã vào" của chân Xuất trước khi gỡ "Đã ra" của chân Nhập', 409)
+    if (outStatus && outStatus !== 'REGISTERED') {
+      return apiErr(res, 'SEQUENCE', 'Phải hoàn tác thao tác của chân Xuất trước (gỡ Gọi xe / Đã vào) rồi mới gỡ "Đã ra" của chân Nhập', 409)
     }
   }
 

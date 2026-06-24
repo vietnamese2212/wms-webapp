@@ -428,6 +428,9 @@ export default function GateRegistration() {
   }, [displayRegs])
   const expandAll  = () => { setCollapsed(new Set()); try { localStorage.setItem(collapseKey, '[]') } catch { /* ignore */ } }
   const collapseAll = () => { const all = new Set(allGroupKeys); setCollapsed(all); try { localStorage.setItem(collapseKey, JSON.stringify([...all])) } catch { /* ignore */ } }
+  // Đang gom hết? = mọi nhóm Kho (cấp 1) đều đang gập → nút 1-cái toggle Mở/Gom
+  const whKeys = useMemo(() => [...new Set(displayRegs.map(r => `W::${r.warehouse_id ?? ''}`))], [displayRegs])
+  const allCollapsed = whKeys.length > 0 && whKeys.every(k => collapsed.has(k))
 
   // Cây phân cấp: Kho → Loại kho → Loại xe; dòng lá sort booking ↑ (null cuối) → giờ ĐK ↑
   type RenderItem =
@@ -939,15 +942,11 @@ export default function GateRegistration() {
             activeId={activeViewId}
             onApply={(filters) => setGateRegistration(filters as Partial<typeof grf>)}
           />
-          <button type="button" onClick={expandAll}
+          <button type="button" onClick={allCollapsed ? expandAll : collapseAll}
             className="inline-flex h-7 items-center gap-1 px-2 rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0 text-[11px]"
-            title="Mở tất cả nhóm">
-            <ChevronsUpDown className="h-3.5 w-3.5" /><span className="hidden sm:inline">Mở</span>
-          </button>
-          <button type="button" onClick={collapseAll}
-            className="inline-flex h-7 items-center gap-1 px-2 rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0 text-[11px]"
-            title="Gom tất cả nhóm">
-            <ChevronsDownUp className="h-3.5 w-3.5" /><span className="hidden sm:inline">Gom</span>
+            title={allCollapsed ? 'Mở tất cả nhóm' : 'Gom tất cả nhóm'}>
+            {allCollapsed ? <ChevronsUpDown className="h-3.5 w-3.5" /> : <ChevronsDownUp className="h-3.5 w-3.5" />}
+            <span className="hidden sm:inline">{allCollapsed ? 'Mở' : 'Gom'}</span>
           </button>
           <button type="button" onClick={toggleDensity}
             className="hidden sm:inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0"

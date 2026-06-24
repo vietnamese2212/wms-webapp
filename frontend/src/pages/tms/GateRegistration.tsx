@@ -954,27 +954,33 @@ export default function GateRegistration() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {renderList.map(item => item.kind === 'group' ? (
-                    <TableRow key={item.key} className="hover:bg-transparent">
-                      <TableCell
-                        colSpan={GATE_COLS.length}
-                        onClick={() => toggleGroup(item.key)}
-                        className={`sticky left-0 z-10 py-1 whitespace-nowrap cursor-pointer select-none border-b border-slate-200 ${
-                          item.level === 1 ? 'bg-slate-100 font-semibold text-slate-700'
-                          : item.level === 2 ? 'bg-slate-50 text-slate-600'
-                          : 'bg-white text-slate-500'}`}
-                        style={{ paddingLeft: 6 + (item.level - 1) * 18 }}
-                      >
-                        <span className="inline-flex items-center gap-1.5 text-[11px]">
-                          {item.collapsed ? <ChevronRight className="h-3.5 w-3.5 shrink-0" /> : <ChevronDown className="h-3.5 w-3.5 shrink-0" />}
-                          <span>{item.label}</span>
-                          <span className="text-slate-400 font-normal">({item.total})</span>
-                          {item.waiting > 0 && <span className="text-amber-600 font-normal">· chờ {item.waiting}</span>}
-                          {item.inside > 0 && <span className="text-green-600 font-normal">· trong {item.inside}</span>}
-                        </span>
-                      </TableCell>
-                    </TableRow>
-                  ) : renderLeafRow(item.reg))}
+                  {renderList.map(item => {
+                    if (item.kind === 'leaf') return renderLeafRow(item.reg)
+                    const onDark = item.level === 1
+                    const cellCls =
+                      item.level === 1 ? 'bg-slate-700 text-white py-2 font-bold border-b border-slate-600'
+                      : item.level === 2 ? 'bg-sky-50 text-sky-900 py-1.5 font-semibold border-b border-sky-100 border-l-4 border-l-sky-500'
+                      : 'bg-white text-slate-600 py-1 font-medium border-b border-slate-100 border-l-4 border-l-slate-200'
+                    const pill = (txt: string, c: string) => <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${c}`}>{txt}</span>
+                    return (
+                      <TableRow key={item.key} className="hover:bg-transparent">
+                        <TableCell
+                          colSpan={GATE_COLS.length}
+                          onClick={() => toggleGroup(item.key)}
+                          className={`sticky left-0 z-10 whitespace-nowrap cursor-pointer select-none ${cellCls}`}
+                          style={{ paddingLeft: 8 + (item.level - 1) * 22 }}
+                        >
+                          <span className="inline-flex items-center gap-2">
+                            {item.collapsed ? <ChevronRight className="h-3.5 w-3.5 shrink-0" /> : <ChevronDown className="h-3.5 w-3.5 shrink-0" />}
+                            <span className={item.level <= 2 ? 'uppercase tracking-wide text-[11px]' : 'text-[11px]'}>{item.label}</span>
+                            {pill(`${item.total} xe`, onDark ? 'bg-white/20 text-white' : 'bg-slate-200/70 text-slate-600')}
+                            {item.waiting > 0 && pill(`chờ ${item.waiting}`, onDark ? 'bg-amber-400/30 text-amber-50' : 'bg-amber-100 text-amber-700')}
+                            {item.inside > 0 && pill(`trong ${item.inside}`, onDark ? 'bg-emerald-400/30 text-emerald-50' : 'bg-green-100 text-green-700')}
+                          </span>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
                 </TableBody>
               </Table>
           )}

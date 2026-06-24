@@ -19,7 +19,7 @@ import {
   X, Plus, Pencil, Trash2, PhoneCall,
   LogIn, LogOut, Star, Package, ArrowRight, ArrowLeft,
   ChevronDown, ChevronRight, Loader2, Phone, RotateCcw,
-  HelpCircle, XCircle,
+  HelpCircle, XCircle, ChevronsDownUp, ChevronsUpDown,
 } from 'lucide-react'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
@@ -73,6 +73,10 @@ const TODAY_VN = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi
 // Loại xe đặc biệt — KHÔNG gắn booking (không có TmsOrder nào mang loại xe này nên
 // suggest/relink tự lọc ra rỗng). Luôn xếp CUỐI trong cây.
 const SPECIAL_VTYPES = ['Chỉ trả pallet', 'Khác']
+
+// Nhãn nhóm khi thiếu loại kho/loại xe — dùng CHUNG cho buildRenderList + allGroupKeys (key phải khớp)
+const WT_FALLBACK = '— Chưa rõ loại kho —'
+const VT_FALLBACK = '— Chưa rõ loại xe —'
 
 // Cột bảng đăng ký cổng — số phần tử PHẢI khớp số <TableCell> mỗi dòng (22 cột)
 const GATE_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
@@ -412,14 +416,25 @@ export default function GateRegistration() {
     })
   })()
 
+  // Tất cả key nhóm (mọi cấp) để Mở/Gom tất cả — key PHẢI khớp buildRenderList
+  const allGroupKeys = useMemo(() => {
+    const s = new Set<string>()
+    for (const r of displayRegs) {
+      const whKey = `W::${r.warehouse_id ?? ''}`
+      const wtKey = `${whKey}::T::${r.warehouse_type ?? WT_FALLBACK}`
+      s.add(whKey); s.add(wtKey); s.add(`${wtKey}::V::${r.vehicle_type ?? VT_FALLBACK}`)
+    }
+    return s
+  }, [displayRegs])
+  const expandAll  = () => { setCollapsed(new Set()); try { localStorage.setItem(collapseKey, '[]') } catch { /* ignore */ } }
+  const collapseAll = () => { const all = new Set(allGroupKeys); setCollapsed(all); try { localStorage.setItem(collapseKey, JSON.stringify([...all])) } catch { /* ignore */ } }
+
   // Cây phân cấp: Kho → Loại kho → Loại xe; dòng lá sort booking ↑ (null cuối) → giờ ĐK ↑
   type RenderItem =
     | { kind: 'group'; level: 1 | 2 | 3; key: string; label: string; total: number; done: number; inside: number; waiting: number; collapsed: boolean }
     | { kind: 'leaf'; reg: GateRegistration }
   const buildRenderList = (warehouses: { id: string; name: string }[], wtOrder: Map<string, number>, vtOrder: Map<string, number>): RenderItem[] => {
-    const WT_FALLBACK = '— Chưa rõ loại kho —'
-    const VT_FALLBACK = '— Chưa rõ loại xe —'
-    const whName = (wid: string) => (warehouses as { id: string; name: string }[]).find(w => w.id === wid)?.name ?? wid
+    const whName = (wid: string) =>(warehouses as { id: string; name: string }[]).find(w => w.id === wid)?.name ?? wid
     const byWh = new Map<string, Map<string, Map<string, GateRegistration[]>>>()
     for (const r of displayRegs) {
       const wid = r.warehouse_id ?? ''
@@ -924,6 +939,16 @@ export default function GateRegistration() {
             activeId={activeViewId}
             onApply={(filters) => setGateRegistration(filters as Partial<typeof grf>)}
           />
+          <button type="button" onClick={expandAll}
+            className="inline-flex h-7 items-center gap-1 px-2 rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0 text-[11px]"
+            title="Mở tất cả nhóm">
+            <ChevronsUpDown className="h-3.5 w-3.5" /><span className="hidden sm:inline">Mở</span>
+          </button>
+          <button type="button" onClick={collapseAll}
+            className="inline-flex h-7 items-center gap-1 px-2 rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0 text-[11px]"
+            title="Gom tất cả nhóm">
+            <ChevronsDownUp className="h-3.5 w-3.5" /><span className="hidden sm:inline">Gom</span>
+          </button>
           <button type="button" onClick={toggleDensity}
             className="hidden sm:inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0"
             title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>

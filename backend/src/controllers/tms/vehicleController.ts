@@ -115,18 +115,27 @@ export async function updateVehicle(req: Request, res: Response) {
       .update(updates).eq('id', id).select('*').single()
     if (error) return fail(res, error.message)
 
-    // Cascade is_active → soft-delete hoặc restore driver employee
-    if (is_active !== undefined && currentPlate && currentNccId) {
+    // Cascade xuống driver employee (khóa theo plate + ncc cũ):
+    // - đổi ĐVVT (ncc_id) → di chuyển driver theo xe (giữ tài khoản đăng nhập khớp ncc mới)
+    // - is_active → soft-delete / restore driver
+    // (KHÔNG đụng dữ liệu lịch sử: booking/gate lưu biển số + tên NCC dạng snapshot text.)
+    if (currentPlate && currentNccId) {
       const now = new Date().toISOString()
-      const empUpdate = is_active
-        ? { is_active: true,  deleted_at: null, updated_at: now }
-        : { is_active: false, deleted_at: now,  updated_at: now }
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (supabase.from('Employee') as any)
-        .update(empUpdate)
-        .eq('employee_code', currentPlate)
-        .eq('ncc_id', currentNccId)
-        .eq('is_driver', true)
+      const empUpdate: Record<string, unknown> = { updated_at: now }
+      if (ncc_id !== undefined && ncc_id !== currentNccId) empUpdate.ncc_id = ncc_id
+      if (is_active !== undefined) {
+        empUpdate.is_active  = is_active
+        empUpdate.deleted_at = is_active ? null : now
+      }
+      // chỉ ghi khi có thay đổi thực (ngoài updated_at)
+      if (Object.keys(empUpdate).length > 1) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (supabase.from('Employee') as any)
+          .update(empUpdate)
+          .eq('employee_code', currentPlate)
+          .eq('ncc_id', currentNccId)
+          .eq('is_driver', true)
+      }
     }
 
     const [merged] = await withRelations([data])

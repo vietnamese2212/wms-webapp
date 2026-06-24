@@ -70,6 +70,10 @@ const ROW_TEXT: Record<GateStatus, string> = {
 
 const TODAY_VN = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
+// Loại xe đặc biệt — KHÔNG gắn booking (không có TmsOrder nào mang loại xe này nên
+// suggest/relink tự lọc ra rỗng). Luôn xếp CUỐI trong cây.
+const SPECIAL_VTYPES = ['Chỉ trả pallet', 'Khác']
+
 // Cột bảng đăng ký cổng — số phần tử PHẢI khớp số <TableCell> mỗi dòng (22 cột)
 const GATE_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
   { id: 'num',     label: '#',         w: 40 },
@@ -412,7 +416,7 @@ export default function GateRegistration() {
   type RenderItem =
     | { kind: 'group'; level: 1 | 2 | 3; key: string; label: string; total: number; done: number; inside: number; waiting: number; collapsed: boolean }
     | { kind: 'leaf'; reg: GateRegistration }
-  const buildRenderList = (warehouses: { id: string; name: string }[]): RenderItem[] => {
+  const buildRenderList = (warehouses: { id: string; name: string }[], wtOrder: Map<string, number>): RenderItem[] => {
     const WT_FALLBACK = '— Chưa rõ loại kho —'
     const VT_FALLBACK = '— Chưa rõ loại xe —'
     const whName = (wid: string) => (warehouses as { id: string; name: string }[]).find(w => w.id === wid)?.name ?? wid
@@ -449,14 +453,22 @@ export default function GateRegistration() {
       const whCol = collapsed.has(whKey)
       items.push({ kind: 'group', level: 1, key: whKey, label: whName(wid), ...stats(whRegs), collapsed: whCol })
       if (whCol) continue
-      for (const wt of [...wtMap.keys()].sort((a, b) => a.localeCompare(b, 'vi'))) {
+      for (const wt of [...wtMap.keys()].sort((a, b) => {
+        const oa = wtOrder.get(a) ?? 9999, ob = wtOrder.get(b) ?? 9999   // loại kho theo thứ tự WMS Settings; lạ/null xuống cuối
+        if (oa !== ob) return oa - ob
+        return a.localeCompare(b, 'vi')
+      })) {
         const vtMap = wtMap.get(wt)!
         const wtRegs = [...vtMap.values()].flat()
         const wtKey = `${whKey}::T::${wt}`
         const wtCol = collapsed.has(wtKey)
         items.push({ kind: 'group', level: 2, key: wtKey, label: wt, ...stats(wtRegs), collapsed: wtCol })
         if (wtCol) continue
-        for (const vt of [...vtMap.keys()].sort((a, b) => a.localeCompare(b, 'vi'))) {
+        for (const vt of [...vtMap.keys()].sort((a, b) => {
+          const sa = SPECIAL_VTYPES.includes(a) ? 1 : 0, sb = SPECIAL_VTYPES.includes(b) ? 1 : 0   // Chỉ trả pallet / Khác xuống cuối
+          if (sa !== sb) return sa - sb
+          return a.localeCompare(b, 'vi')
+        })) {
           const leaves = [...vtMap.get(vt)!].sort(sortLeaf)
           const vtKey = `${wtKey}::V::${vt}`
           const vtCol = collapsed.has(vtKey)
@@ -488,7 +500,10 @@ export default function GateRegistration() {
   const { data: whTypes = [] } = useWarehouseTypes()
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const renderList = useMemo(() => buildRenderList(warehouses as { id: string; name: string }[]), [displayRegs, collapsed, warehouses])
+  const renderList = useMemo(() => {
+    const wtOrder = new Map<string, number>((whTypes as { value: string }[]).map((t, i) => [t.value, i]))
+    return buildRenderList(warehouses as { id: string; name: string }[], wtOrder)
+  }, [displayRegs, collapsed, warehouses, whTypes])
 
   // Lọc loại xe theo kho + loại kho — warehouse_type dùng thẳng; 'Khác' = không filter
   const _gateCargoType = (form.warehouse_type && form.warehouse_type !== 'Khác') ? form.warehouse_type : undefined
@@ -782,10 +797,15 @@ export default function GateRegistration() {
     sub:   c.code,
   }))
 
-  const vtOptions: ComboOption[] = availableVehicleTypes.map(vt => ({
-    value: vt.name,   // lưu name để khớp với TmsOrder.vehicle_type
-    label: vt.name,
-  }))
+  const vtOptions: ComboOption[] = [
+    ...availableVehicleTypes.map(vt => ({
+      value: vt.name,   // lưu name để khớp với TmsOrder.vehicle_type
+      label: vt.name,
+    })),
+    // 2 loại đặc biệt luôn có sẵn (không phụ thuộc kho/khung giờ), không gắn booking
+    ...SPECIAL_VTYPES.filter(s => !availableVehicleTypes.some(vt => vt.name === s))
+      .map(s => ({ value: s, label: s })),
+  ]
 
   // ─── Filter chip bar (Manhattan) ───
   const filterWhOptions = (allowedWhIds

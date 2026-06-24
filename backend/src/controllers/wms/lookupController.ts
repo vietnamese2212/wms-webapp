@@ -68,6 +68,27 @@ export async function updateLookup(req: Request, res: Response) {
   res.json({ success: true, data })
 }
 
+// Sắp xếp lại thứ tự (kéo-thả) — set sort_order theo vị trí mảng ids
+export async function reorderLookup(req: Request, res: Response) {
+  const { type, ids } = req.body as { type?: string; ids?: string[] }
+  if (!type || !Array.isArray(ids) || ids.length === 0) return fail(res, 'type và ids là bắt buộc')
+
+  const now = new Date().toISOString()
+  const actor = (req as any).user?.name || null
+  const results = await Promise.all(
+    ids.map((id, i) =>
+      supabase
+        .from('LookupValue')
+        .update({ sort_order: i + 1, updated_at: now, updated_by: actor })
+        .eq('id', id)
+        .eq('type', type),
+    ),
+  )
+  const err = results.find(r => r.error)?.error
+  if (err) return fail(res, err.message, 500)
+  res.json({ success: true })
+}
+
 export async function deleteLookup(req: Request, res: Response) {
   const { id } = req.params
 

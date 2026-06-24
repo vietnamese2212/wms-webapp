@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import type { AxiosError } from 'axios'
-import { Plus, Pencil, Trash2, Warehouse, Tag, Settings2, MapPin, X, Clock, ShieldCheck } from 'lucide-react'
+import { Plus, Pencil, Trash2, Warehouse, Tag, Settings2, MapPin, X, Clock, ShieldCheck, GripVertical } from 'lucide-react'
 import { formatDateTime } from '@/utils/formatters'
 import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
@@ -14,7 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { toast } from '@/components/ui/use-toast'
 import {
   useWarehouses, useCreateWarehouse, useUpdateWarehouse, useDeleteWarehouse,
-  useWarehouseTypes, useAddWarehouseType, useUpdateWarehouseType, useDeleteWarehouseType,
+  useWarehouseTypes, useAddWarehouseType, useUpdateWarehouseType, useDeleteWarehouseType, useReorderWarehouseTypes,
   useWarehouseZones, useCreateWarehouseZone, useUpdateWarehouseZone, useDeleteWarehouseZone,
   useImportShifts, useCreateImportShift, useUpdateImportShift,
   useQAStatuses, useCreateQAStatus, useUpdateQAStatus,
@@ -430,6 +430,33 @@ export default function WMSSettings() {
   const [editingType, setEditingType] = useState<{ id: string; value: string } | null>(null)
   const [showTypeDlg, setShowTypeDlg] = useState(false)
 
+  // Kéo-thả sắp thứ tự loại kho (kiểu AppSheet: grip + chỉ báo trên/dưới theo nửa dòng)
+  type TypeRow = { id: string; value: string; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+  const reorderTypes = useReorderWarehouseTypes()
+  const [orderedTypes, setOrderedTypes] = useState<TypeRow[]>([])
+  const [dragIdx, setDragIdx] = useState<number | null>(null)
+  const [overType, setOverType] = useState<{ idx: number; below: boolean } | null>(null)
+  // Đồng bộ từ server khi KHÔNG đang kéo (sau reorder, refetch sẽ cập nhật đúng thứ tự).
+  // Dep = chuỗi id ổn định (KHÔNG dùng ref mảng — fallback [] đổi ref mỗi render → loop vô hạn).
+  const typesKey = (warehouseTypes as TypeRow[]).map(t => t.id).join(',')
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (dragIdx === null) setOrderedTypes(warehouseTypes as TypeRow[]) }, [typesKey, dragIdx])
+  function dropType() {
+    const from = dragIdx, ov = overType
+    setDragIdx(null); setOverType(null)
+    if (from === null || !ov) return
+    let toIdx = ov.below ? ov.idx + 1 : ov.idx
+    if (from < toIdx) toIdx--               // bù lại do đã splice phần tử kéo
+    if (toIdx === from) return
+    const next = [...orderedTypes]
+    const [moved] = next.splice(from, 1)
+    next.splice(toIdx, 0, moved)
+    setOrderedTypes(next)
+    reorderTypes.mutate(next.map(t => t.id), {
+      onError: e => { toast({ variant: 'destructive', title: 'Không lưu được thứ tự', description: apiMsg(e) }); setOrderedTypes(warehouseTypes as TypeRow[]) },
+    })
+  }
+
   // Detail panel state
   const [detailWh,   setDetailWh]   = useState<WhRow | null>(null)
   const [detailType, setDetailType] = useState<{ id: string; value: string; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null } | null>(null)
@@ -584,6 +611,7 @@ export default function WMSSettings() {
           <div className="flex items-center justify-between">
             <p className="text-xs text-slate-500">
               Danh sách loại kho — dùng cho phân loại vị trí, mã hàng, phân quyền nhân viên và đăng ký vận chuyển TMS.
+              {canManageType && <span className="text-slate-400"> Kéo <GripVertical className="inline h-3 w-3 -mt-0.5" /> để đổi thứ tự (áp dụng cho cây Đăng ký cổng).</span>}
             </p>
             {canManageType && (
               <Button size="sm" className="gap-1.5 shrink-0" onClick={() => { setEditingType(null); setShowTypeDlg(true) }}>
@@ -606,15 +634,33 @@ export default function WMSSettings() {
                     <Table>
                       <TableHeader>
                         <TableRow>
+                          {canManageType && <TableHead className="px-2 py-2 w-8" />}
                           <TableHead className="px-3 py-2 text-xs">Tên loại kho</TableHead>
                           {canManageType && <TableHead className="px-3 py-2 w-16" />}
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {(warehouseTypes as { id: string; value: string; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }[]).map(t => (
+                        {orderedTypes.map((t, idx) => {
+                          const isOver = overType?.idx === idx && dragIdx !== null && dragIdx !== idx
+                          return (
                           <TableRow key={t.id}
-                            className={`text-sm cursor-pointer ${detailType?.id === t.id ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
+                            draggable={canManageType}
+                            onDragStart={() => setDragIdx(idx)}
+                            onDragOver={canManageType ? (e => {
+                              e.preventDefault()
+                              const r = e.currentTarget.getBoundingClientRect()
+                              const below = (e.clientY - r.top) > r.height / 2
+                              if (overType?.idx !== idx || overType?.below !== below) setOverType({ idx, below })
+                            }) : undefined}
+                            onDrop={canManageType ? (e => { e.preventDefault(); dropType() }) : undefined}
+                            onDragEnd={() => { setDragIdx(null); setOverType(null) }}
+                            className={`text-sm cursor-pointer ${detailType?.id === t.id ? 'bg-slate-100' : 'hover:bg-slate-50'} ${dragIdx === idx ? 'opacity-40' : ''} ${isOver && !overType?.below ? '[&>td]:border-t-2 [&>td]:border-t-sky-500' : ''} ${isOver && overType?.below ? '[&>td]:border-b-2 [&>td]:border-b-sky-500' : ''}`}
                             onClick={() => setDetailType(prev => prev?.id === t.id ? null : t)}>
+                            {canManageType && (
+                              <TableCell className="px-2 py-2 w-8 text-slate-300 cursor-grab active:cursor-grabbing" onClick={e => e.stopPropagation()} title="Kéo để đổi thứ tự">
+                                <GripVertical className="h-4 w-4" />
+                              </TableCell>
+                            )}
                             <TableCell className="px-3 py-2 font-medium text-slate-800">{t.value}</TableCell>
                             {canManageType && (
                               <TableCell className="px-2 py-2">
@@ -632,7 +678,8 @@ export default function WMSSettings() {
                               </TableCell>
                             )}
                           </TableRow>
-                        ))}
+                          )
+                        })}
                       </TableBody>
                     </Table>
                   </div>

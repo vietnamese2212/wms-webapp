@@ -37,6 +37,7 @@ router.get('/events', (req, res) => {
 // Lookup values (loại xuất, v.v.)
 router.get('/lookup',        lookup.listLookup)
 router.post('/lookup',       requirePerm('wms_settings', 'manage_type'), lookup.addLookup)
+router.put('/lookup/reorder', requirePerm('wms_settings', 'manage_type'), lookup.reorderLookup)  // ĐẶT TRƯỚC /:id
 router.put('/lookup/:id',    requirePerm('wms_settings', 'manage_type'), lookup.updateLookup)
 router.delete('/lookup/:id', requirePerm('wms_settings', 'manage_type'), lookup.deleteLookup)
 

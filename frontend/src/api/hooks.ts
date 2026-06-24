@@ -703,6 +703,16 @@ export function useDeleteWarehouseType() {
   })
 }
 
+// Kéo-thả sắp thứ tự loại kho (sort_order) — ids theo thứ tự mới
+export function useReorderWarehouseTypes() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (ids: string[]) =>
+      apiClient.put('/wms/lookup/reorder', { type: 'warehouse_type', ids }).then(r => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['lookup', 'warehouse_type'] }),
+  })
+}
+
 export type WarehouseZone = { id: string; warehouse_id: string; code: string; name: string; category: string | null; sort_order: number; is_active: boolean; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
 
 export function useWarehouseZones(warehouseId?: string) {

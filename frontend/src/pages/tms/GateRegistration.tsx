@@ -18,7 +18,7 @@ import { toast } from '@/components/ui/use-toast'
 import {
   X, Plus, Pencil, Trash2, PhoneCall,
   LogIn, LogOut, Star, Package, ArrowRight, ArrowLeft,
-  ChevronDown, Loader2, Phone, RotateCcw,
+  ChevronDown, ChevronRight, Loader2, Phone, RotateCcw,
   HelpCircle, XCircle,
 } from 'lucide-react'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
@@ -335,6 +335,21 @@ export default function GateRegistration() {
     setDense(d => { localStorage.setItem('gate_density', d ? 'comfortable' : 'compact'); return !d })
   }
 
+  // Trạng thái gập/mở nhóm cây (Kho → Loại kho → Loại xe) — nhớ riêng từng user
+  const collapseKey = `gate_tree_collapsed:${user?.id ?? 'anon'}`
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => {
+    try { const raw = localStorage.getItem(collapseKey); return raw ? new Set<string>(JSON.parse(raw)) : new Set() }
+    catch { return new Set() }
+  })
+  function toggleGroup(key: string) {
+    setCollapsed(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key); else next.add(key)
+      try { localStorage.setItem(collapseKey, JSON.stringify([...next])) } catch { /* ignore */ }
+      return next
+    })
+  }
+
   // Auto-set warehouse for single-warehouse users on first visit
   useEffect(() => {
     if (!grf.fWarehouse && allowedWhIds && allowedWhIds.size === 1) {
@@ -393,6 +408,66 @@ export default function GateRegistration() {
     })
   })()
 
+  // Cây phân cấp: Kho → Loại kho → Loại xe; dòng lá sort booking ↑ (null cuối) → giờ ĐK ↑
+  type RenderItem =
+    | { kind: 'group'; level: 1 | 2 | 3; key: string; label: string; total: number; waiting: number; inside: number; collapsed: boolean }
+    | { kind: 'leaf'; reg: GateRegistration }
+  const buildRenderList = (warehouses: { id: string; name: string }[]): RenderItem[] => {
+    const WT_FALLBACK = '— Chưa rõ loại kho —'
+    const VT_FALLBACK = '— Chưa rõ loại xe —'
+    const whName = (wid: string) => (warehouses as { id: string; name: string }[]).find(w => w.id === wid)?.name ?? wid
+    const byWh = new Map<string, Map<string, Map<string, GateRegistration[]>>>()
+    for (const r of displayRegs) {
+      const wid = r.warehouse_id ?? ''
+      const wt = r.warehouse_type ?? WT_FALLBACK
+      const vt = r.vehicle_type ?? VT_FALLBACK
+      if (!byWh.has(wid)) byWh.set(wid, new Map())
+      const wtMap = byWh.get(wid)!
+      if (!wtMap.has(wt)) wtMap.set(wt, new Map())
+      const vtMap = wtMap.get(wt)!
+      if (!vtMap.has(vt)) vtMap.set(vt, [])
+      vtMap.get(vt)!.push(r)
+    }
+    const stats = (rs: GateRegistration[]) => ({
+      total: rs.length,
+      waiting: rs.filter(r => r.status === 'REGISTERED' || r.status === 'CALLED').length,
+      inside: rs.filter(r => r.status === 'IN').length,
+    })
+    const sortLeaf = (a: GateRegistration, b: GateRegistration) => {
+      const ba = a.booking_slot_from ?? '￿', bb = b.booking_slot_from ?? '￿'
+      if (ba !== bb) return ba < bb ? -1 : 1
+      const ra = a.registered_at ?? '', rb = b.registered_at ?? ''
+      return ra < rb ? -1 : ra > rb ? 1 : 0
+    }
+    const items: RenderItem[] = []
+    const whKeys = [...byWh.keys()].sort((a, b) => whName(a).localeCompare(whName(b), 'vi'))
+    for (const wid of whKeys) {
+      const wtMap = byWh.get(wid)!
+      const whRegs = [...wtMap.values()].flatMap(m => [...m.values()].flat())
+      const whKey = `W::${wid}`
+      const whCol = collapsed.has(whKey)
+      items.push({ kind: 'group', level: 1, key: whKey, label: whName(wid), ...stats(whRegs), collapsed: whCol })
+      if (whCol) continue
+      for (const wt of [...wtMap.keys()].sort((a, b) => a.localeCompare(b, 'vi'))) {
+        const vtMap = wtMap.get(wt)!
+        const wtRegs = [...vtMap.values()].flat()
+        const wtKey = `${whKey}::T::${wt}`
+        const wtCol = collapsed.has(wtKey)
+        items.push({ kind: 'group', level: 2, key: wtKey, label: wt, ...stats(wtRegs), collapsed: wtCol })
+        if (wtCol) continue
+        for (const vt of [...vtMap.keys()].sort((a, b) => a.localeCompare(b, 'vi'))) {
+          const leaves = [...vtMap.get(vt)!].sort(sortLeaf)
+          const vtKey = `${wtKey}::V::${vt}`
+          const vtCol = collapsed.has(vtKey)
+          items.push({ kind: 'group', level: 3, key: vtKey, label: vt, ...stats(leaves), collapsed: vtCol })
+          if (vtCol) continue
+          for (const reg of leaves) items.push({ kind: 'leaf', reg })
+        }
+      }
+    }
+    return items
+  }
+
   const { data: companies = [] } = useQuery<TransportCompany[]>({
     queryKey: ['tms-companies'],
     queryFn: () => apiClient.get('/tms/transport-companies').then(r => r.data.data),
@@ -410,6 +485,9 @@ export default function GateRegistration() {
 
   const { data: warehouses = [] } = useWarehouses(true)
   const { data: whTypes = [] } = useWarehouseTypes()
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const renderList = useMemo(() => buildRenderList(warehouses as { id: string; name: string }[]), [displayRegs, collapsed, warehouses])
 
   // Lọc loại xe theo kho + loại kho — warehouse_type dùng thẳng; 'Khác' = không filter
   const _gateCargoType = (form.warehouse_type && form.warehouse_type !== 'Khác') ? form.warehouse_type : undefined
@@ -743,6 +821,70 @@ export default function GateRegistration() {
   const { widths: gateColW, startResize: gateStartResize, totalWidth: gateTotalWidth } =
     useColumnResize('gate_col_widths', GATE_COLS.map(c => c.w))
 
+  const renderLeafRow = (reg: GateRegistration) => (
+    <TableRow
+      key={reg.id}
+      className={`cursor-pointer ${ROW_TEXT[reg.status]} ${selected?.id === reg.id ? 'ring-1 ring-inset ring-blue-400' : ''} ${dense ? '' : '[&_td]:py-2.5'}`}
+      onClick={() => setSelected(prev => prev?.id === reg.id ? null : reg)}
+    >
+      <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap sticky left-0 z-10 bg-white">
+        {reg.registration_number}
+      </TableCell>
+      <TableCell className="px-2 py-1 text-[10px] font-mono whitespace-nowrap">{fmtDate(reg.date)}</TableCell>
+      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
+        {reg.direction === 'OUTBOUND'
+          ? <span className="flex items-center gap-0.5">Xuất<ArrowRight className="h-3 w-3 text-orange-600" /></span>
+          : reg.direction === 'INBOUND'
+          ? <span className="flex items-center gap-0.5">Nhập<ArrowLeft className="h-3 w-3 text-blue-600" /></span>
+          : '—'}
+      </TableCell>
+      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.vehicle_type ?? '—'}</TableCell>
+      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
+        <span className="flex items-center gap-1">
+          <span>{reg.content ?? '—'}</span>
+          {reg.return_pallet && <Package className="h-3 w-3 text-blue-500 shrink-0" />}
+          {reg.priority && <Star className="h-2.5 w-2.5 text-amber-500 fill-amber-500 shrink-0" />}
+        </span>
+      </TableCell>
+      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
+        <span className="flex items-center gap-1">
+          {reg.booking_slot_from
+            ? <span>{reg.booking_slot_from.slice(0,5)}–{(reg.booking_slot_to ?? '').slice(0,5)}</span>
+            : <span className="text-slate-300">—</span>}
+          {bookingIcon(reg)}
+        </span>
+      </TableCell>
+      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap align-top">
+        {renderOrderField(reg.booking_order_code, true)}
+      </TableCell>
+      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap align-top">
+        {renderOrderField(reg.booking_npp_names)}
+      </TableCell>
+      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap align-top">
+        {renderOrderField(reg.booking_gdo_refs)}
+      </TableCell>
+      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{companyName(reg)}</TableCell>
+      <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">{reg.license_plate ?? '—'}</TableCell>
+      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.driver_name ?? '—'}</TableCell>
+      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.phone ?? '—'}</TableCell>
+      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.notes ?? '—'}</TableCell>
+      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{fmtTime(reg.registered_at)}</TableCell>
+      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-medium">{fmtTime(reg.called_at)}</TableCell>
+      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-medium">{fmtTime(reg.entry_at)}</TableCell>
+      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-medium">{fmtTime(reg.exit_at)}</TableCell>
+      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{warehouseName(reg.warehouse_id)}</TableCell>
+      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.warehouse_type ?? '—'}</TableCell>
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${STATUS_BADGE[reg.status]}`}>
+          {STATUS_LABEL[reg.status]}
+        </span>
+      </TableCell>
+      <TableCell className="px-1 py-1 whitespace-nowrap" onClick={e => e.stopPropagation()}>
+        <ActionButtons reg={reg} size="xs" />
+      </TableCell>
+    </TableRow>
+  )
+
   return (
     <div className="flex flex-col h-full sm:p-3">
      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
@@ -812,69 +954,27 @@ export default function GateRegistration() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {displayRegs.map(reg => (
-                    <TableRow
-                      key={reg.id}
-                      className={`cursor-pointer ${ROW_TEXT[reg.status]} ${selected?.id === reg.id ? 'ring-1 ring-inset ring-blue-400' : ''} ${dense ? '' : '[&_td]:py-2.5'}`}
-                      onClick={() => setSelected(prev => prev?.id === reg.id ? null : reg)}
-                    >
-                      <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap sticky left-0 z-10 bg-white">
-                        {reg.registration_number}
-                      </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] font-mono whitespace-nowrap">{fmtDate(reg.date)}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
-                        {reg.direction === 'OUTBOUND'
-                          ? <span className="flex items-center gap-0.5">Xuất<ArrowRight className="h-3 w-3 text-orange-600" /></span>
-                          : reg.direction === 'INBOUND'
-                          ? <span className="flex items-center gap-0.5">Nhập<ArrowLeft className="h-3 w-3 text-blue-600" /></span>
-                          : '—'}
-                      </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.vehicle_type ?? '—'}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
-                        <span className="flex items-center gap-1">
-                          <span>{reg.content ?? '—'}</span>
-                          {reg.return_pallet && <Package className="h-3 w-3 text-blue-500 shrink-0" />}
-                          {reg.priority && <Star className="h-2.5 w-2.5 text-amber-500 fill-amber-500 shrink-0" />}
+                  {renderList.map(item => item.kind === 'group' ? (
+                    <TableRow key={item.key} className="hover:bg-transparent">
+                      <TableCell
+                        colSpan={GATE_COLS.length}
+                        onClick={() => toggleGroup(item.key)}
+                        className={`sticky left-0 z-10 py-1 whitespace-nowrap cursor-pointer select-none border-b border-slate-200 ${
+                          item.level === 1 ? 'bg-slate-100 font-semibold text-slate-700'
+                          : item.level === 2 ? 'bg-slate-50 text-slate-600'
+                          : 'bg-white text-slate-500'}`}
+                        style={{ paddingLeft: 6 + (item.level - 1) * 18 }}
+                      >
+                        <span className="inline-flex items-center gap-1.5 text-[11px]">
+                          {item.collapsed ? <ChevronRight className="h-3.5 w-3.5 shrink-0" /> : <ChevronDown className="h-3.5 w-3.5 shrink-0" />}
+                          <span>{item.label}</span>
+                          <span className="text-slate-400 font-normal">({item.total})</span>
+                          {item.waiting > 0 && <span className="text-amber-600 font-normal">· chờ {item.waiting}</span>}
+                          {item.inside > 0 && <span className="text-green-600 font-normal">· trong {item.inside}</span>}
                         </span>
-                      </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
-                        <span className="flex items-center gap-1">
-                          {reg.booking_slot_from
-                            ? <span>{reg.booking_slot_from.slice(0,5)}–{(reg.booking_slot_to ?? '').slice(0,5)}</span>
-                            : <span className="text-slate-300">—</span>}
-                          {bookingIcon(reg)}
-                        </span>
-                      </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap align-top">
-                        {renderOrderField(reg.booking_order_code, true)}
-                      </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap align-top">
-                        {renderOrderField(reg.booking_npp_names)}
-                      </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap align-top">
-                        {renderOrderField(reg.booking_gdo_refs)}
-                      </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{companyName(reg)}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">{reg.license_plate ?? '—'}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.driver_name ?? '—'}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.phone ?? '—'}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.notes ?? '—'}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{fmtTime(reg.registered_at)}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-medium">{fmtTime(reg.called_at)}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-medium">{fmtTime(reg.entry_at)}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-medium">{fmtTime(reg.exit_at)}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{warehouseName(reg.warehouse_id)}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.warehouse_type ?? '—'}</TableCell>
-                      <TableCell className="px-2 py-1 whitespace-nowrap">
-                        <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${STATUS_BADGE[reg.status]}`}>
-                          {STATUS_LABEL[reg.status]}
-                        </span>
-                      </TableCell>
-                      <TableCell className="px-1 py-1 whitespace-nowrap" onClick={e => e.stopPropagation()}>
-                        <ActionButtons reg={reg} size="xs" />
                       </TableCell>
                     </TableRow>
-                  ))}
+                  ) : renderLeafRow(item.reg))}
                 </TableBody>
               </Table>
           )}

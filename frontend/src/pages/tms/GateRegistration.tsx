@@ -807,11 +807,21 @@ export default function GateRegistration() {
     return warehouses.find(w => w.id === id)?.name ?? id
   }
 
+  // Xe kết hợp: chân đối ứng (khác chiều) cùng visit_group_id — để gác thứ tự Vào/Ra
+  function combinedPartner(reg: GateRegistration): GateRegistration | undefined {
+    if (!reg.visit_group_id) return undefined
+    return regs.find(r => r.visit_group_id === reg.visit_group_id && r.id !== reg.id)
+  }
+
   // ── Action buttons (reused in row + detail)
   function ActionButtons({ reg, size = 'sm' }: { reg: GateRegistration; size?: 'sm' | 'xs' }) {
     const btnCls = size === 'xs'
       ? 'text-[10px] px-1.5 py-0.5 h-auto !min-h-0 !min-w-0'   // bỏ sàn touch-target 44px → row co theo số mã đơn
       : 'text-xs px-2 py-1 h-auto'
+    // Xe kết hợp — gác thứ tự: chân Xuất chỉ Vào khi chân Nhập đã Ra; gỡ "Đã ra" chân Nhập phải gỡ "Đã vào" chân Xuất trước
+    const partner = combinedPartner(reg)
+    const blockOutEntry = !!(reg.visit_group_id && reg.direction === 'OUTBOUND' && partner && partner.status !== 'COMPLETED')
+    const blockInRevertExit = !!(reg.visit_group_id && reg.direction === 'INBOUND' && partner && (partner.status === 'IN' || partner.status === 'COMPLETED'))
     return (
       <div className="flex gap-1 items-center flex-nowrap">
         {/* Gọi xe */}
@@ -838,6 +848,8 @@ export default function GateRegistration() {
         {(reg.status === 'REGISTERED' || reg.status === 'CALLED') && can(perms, 'gate_registration', 'entry') && (
           <Button size="sm" variant="outline"
             className={`${btnCls} border-green-300 text-green-700 hover:bg-green-50`}
+            disabled={blockOutEntry}
+            title={blockOutEntry ? 'Xe Nhập chưa ra — chân Xuất chưa thể vào' : undefined}
             onClick={e => { e.stopPropagation(); setEntryTarget(reg); setEntryTime(nowVnDatetimeLocal()) }}
           >
             <LogIn className="h-3 w-3 mr-1" />Vào
@@ -867,8 +879,8 @@ export default function GateRegistration() {
         {reg.status === 'COMPLETED' && can(perms, 'gate_registration', 'exit') && (
           <Button size="sm" variant="ghost"
             className={`${btnCls} text-slate-400 hover:text-red-500`}
-            disabled={revertExitMut.isPending}
-            title="Huỷ xác nhận ra"
+            disabled={revertExitMut.isPending || blockInRevertExit}
+            title={blockInRevertExit ? 'Phải gỡ "Đã vào" của chân Xuất trước' : 'Huỷ xác nhận ra'}
             onClick={e => { e.stopPropagation(); revertExitMut.mutate(reg.id) }}
           >
             <RotateCcw className="h-3 w-3" />

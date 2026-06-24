@@ -23,6 +23,17 @@ async function guardGateScope(req: Request, res: Response, id: string): Promise<
   return true
 }
 
+// Xe "kết hợp": lấy trạng thái chân đối ứng (khác chiều) theo visit_group_id
+async function combinedPartnerStatus(visitGroupId: string, partnerDirection: 'INBOUND' | 'OUTBOUND'): Promise<string | null> {
+  const { data } = await supabase
+    .from('gate_registrations')
+    .select('status')
+    .eq('visit_group_id', visitGroupId)
+    .eq('direction', partnerDirection)
+    .maybeSingle()
+  return (data as { status: string } | null)?.status ?? null
+}
+
 export async function listGateRegistrations(req: Request, res: Response) {
   const {
     date, date_from, date_to,
@@ -458,9 +469,18 @@ export async function doEntry(req: Request, res: Response) {
 
   const { data: reg, error: fetchErr } = await supabase
     .from('gate_registrations')
-    .select('tms_order_id, tms_order_ids, tms_vehicle_slot_id')
+    .select('tms_order_id, tms_order_ids, tms_vehicle_slot_id, direction, visit_group_id')
     .eq('id', id).single()
   if (fetchErr) return apiErr(res, 'DB_ERROR', fetchErr.message, 500)
+
+  // Xe kết hợp: chân Xuất chỉ được "Vào" khi chân Nhập đã "Ra" (COMPLETED) — tránh bấm nhầm
+  const rEntry = reg as { direction: string | null; visit_group_id: string | null }
+  if (rEntry.visit_group_id && rEntry.direction === 'OUTBOUND') {
+    const inStatus = await combinedPartnerStatus(rEntry.visit_group_id, 'INBOUND')
+    if (inStatus && inStatus !== 'COMPLETED') {
+      return apiErr(res, 'SEQUENCE', 'Xe Nhập chưa ra — chân Xuất chưa thể vào (xe kết hợp)', 409)
+    }
+  }
 
   const { data, error } = await supabase
     .from('gate_registrations')
@@ -580,9 +600,18 @@ export async function doRevertExit(req: Request, res: Response) {
 
   const { data: reg, error: fetchErr } = await supabase
     .from('gate_registrations')
-    .select('tms_order_id, tms_order_ids, tms_vehicle_slot_id')
+    .select('tms_order_id, tms_order_ids, tms_vehicle_slot_id, direction, visit_group_id')
     .eq('id', id).single()
   if (fetchErr) return apiErr(res, 'DB_ERROR', fetchErr.message, 500)
+
+  // Xe kết hợp: gỡ "Đã ra" của chân Nhập chỉ khi chân Xuất CHƯA vào (phải gỡ "Đã vào" chân Xuất trước)
+  const rRevExit = reg as { direction: string | null; visit_group_id: string | null }
+  if (rRevExit.visit_group_id && rRevExit.direction === 'INBOUND') {
+    const outStatus = await combinedPartnerStatus(rRevExit.visit_group_id, 'OUTBOUND')
+    if (outStatus && ['IN', 'COMPLETED'].includes(outStatus)) {
+      return apiErr(res, 'SEQUENCE', 'Phải gỡ "Đã vào" của chân Xuất trước khi gỡ "Đã ra" của chân Nhập', 409)
+    }
+  }
 
   const { data, error } = await supabase
     .from('gate_registrations')

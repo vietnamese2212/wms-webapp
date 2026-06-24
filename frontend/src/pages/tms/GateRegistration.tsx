@@ -410,7 +410,7 @@ export default function GateRegistration() {
 
   // Cây phân cấp: Kho → Loại kho → Loại xe; dòng lá sort booking ↑ (null cuối) → giờ ĐK ↑
   type RenderItem =
-    | { kind: 'group'; level: 1 | 2 | 3; key: string; label: string; total: number; waiting: number; inside: number; collapsed: boolean }
+    | { kind: 'group'; level: 1 | 2 | 3; key: string; label: string; total: number; done: number; inside: number; waiting: number; collapsed: boolean }
     | { kind: 'leaf'; reg: GateRegistration }
   const buildRenderList = (warehouses: { id: string; name: string }[]): RenderItem[] => {
     const WT_FALLBACK = '— Chưa rõ loại kho —'
@@ -430,8 +430,9 @@ export default function GateRegistration() {
     }
     const stats = (rs: GateRegistration[]) => ({
       total: rs.length,
-      waiting: rs.filter(r => r.status === 'REGISTERED' || r.status === 'CALLED').length,
+      done: rs.filter(r => r.status === 'COMPLETED').length,
       inside: rs.filter(r => r.status === 'IN').length,
+      waiting: rs.filter(r => r.status === 'REGISTERED' || r.status === 'CALLED').length,
     })
     const sortLeaf = (a: GateRegistration, b: GateRegistration) => {
       const ba = a.booking_slot_from ?? '￿', bb = b.booking_slot_from ?? '￿'
@@ -958,9 +959,8 @@ export default function GateRegistration() {
                     if (item.kind === 'leaf') return renderLeafRow(item.reg)
                     const cellCls =
                       item.level === 1 ? 'bg-slate-700 text-white py-2 font-bold border-b border-slate-600'
-                      : item.level === 2 ? 'bg-sky-50 text-sky-900 py-1.5 font-semibold border-b border-sky-100 border-l-4 border-l-sky-500'
-                      : 'bg-slate-100 text-slate-700 py-1 font-medium border-b border-slate-200 border-l-4 border-l-slate-300'
-                    const pill = (txt: string, c: string) => <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${c}`}>{txt}</span>
+                      : item.level === 2 ? 'bg-sky-100 text-sky-900 py-1.5 font-semibold border-b border-sky-200 border-l-4 border-l-sky-500'
+                      : 'bg-slate-100 text-slate-700 py-1 font-medium border-b border-slate-200 border-l-4 border-l-slate-400'
                     return (
                       <TableRow key={item.key} className="hover:bg-transparent">
                         <TableCell
@@ -972,12 +972,12 @@ export default function GateRegistration() {
                           <span className="inline-flex items-center gap-2">
                             {item.collapsed ? <ChevronRight className="h-3.5 w-3.5 shrink-0" /> : <ChevronDown className="h-3.5 w-3.5 shrink-0" />}
                             <span className={item.level <= 2 ? 'uppercase tracking-wide text-[11px]' : 'text-[11px]'}>{item.label}</span>
-                            {/* Thống kê (N xe / chờ / trong) chỉ ở cấp Loại xe; Kho & Loại kho để gọn */}
-                            {item.level === 3 && <>
-                              {pill(`${item.total} xe`, 'bg-slate-200/70 text-slate-600')}
-                              {item.waiting > 0 && pill(`chờ ${item.waiting}`, 'bg-amber-100 text-amber-700')}
-                              {item.inside > 0 && pill(`trong ${item.inside}`, 'bg-green-100 text-green-700')}
-                            </>}
+                            {/* Thống kê chỉ ở cấp Loại xe — dạng chữ rõ nghĩa, không màu */}
+                            {item.level === 3 && (
+                              <span className="text-[10px] font-normal text-slate-500">
+                                Tổng {item.total} · Xong {item.done} · Trong {item.inside} · Chờ {item.waiting}
+                              </span>
+                            )}
                           </span>
                         </TableCell>
                       </TableRow>

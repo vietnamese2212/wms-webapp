@@ -23,6 +23,7 @@ const requireTmsView = requireAnyPerm(
 // VehicleType (Loại xe)
 router.get('/vehicle-types',     requireTmsView,                               vehicleType.listVehicleTypes)
 router.post('/vehicle-types',    requirePerm('tms_vehicle_types', 'manage'),   vehicleType.createVehicleType)
+router.put('/vehicle-types/reorder', requirePerm('tms_vehicle_types', 'manage'), vehicleType.reorderVehicleTypes)  // ĐẶT TRƯỚC /:id
 router.put('/vehicle-types/:id', requirePerm('tms_vehicle_types', 'manage'),   vehicleType.updateVehicleType)
 
 // DeliverySlot

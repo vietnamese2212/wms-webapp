@@ -11,7 +11,33 @@ export async function listVehicleTypes(req: Request, res: Response) {
     if (is_active !== undefined) q = q.eq('is_active', is_active === 'true')
     const { data, error } = await q
     if (error) return fail(res, error.message)
-    return ok(res, data ?? [])
+    // Sắp theo sort_order (resilient: thiếu cột → undefined→0 → giữ thứ tự tên SQL đã trả; sort ổn định)
+    const sorted = [...((data ?? []) as Record<string, unknown>[])]
+      .sort((a, b) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0))
+    return ok(res, sorted)
+  } catch (e) { return fail(res, String(e)) }
+}
+
+// Kéo-thả sắp thứ tự loại xe — set sort_order theo vị trí mảng ids
+export async function reorderVehicleTypes(req: Request, res: Response) {
+  try {
+    const { ids } = req.body as { ids?: string[] }
+    if (!Array.isArray(ids) || ids.length === 0) return fail(res, 'ids là bắt buộc', 400)
+    const now = new Date().toISOString()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const actor = (req as any).user?.name || null
+    const results = await Promise.all(
+      ids.map((id, i) =>
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (supabase.from('VehicleType') as any)
+          .update({ sort_order: i + 1, updated_at: now, updated_by: actor })
+          .eq('id', id),
+      ),
+    )
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const err = results.find((r: any) => r.error)?.error
+    if (err) return fail(res, err.message)
+    return ok(res, { reordered: ids.length })
   } catch (e) { return fail(res, String(e)) }
 }
 

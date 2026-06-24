@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import type { AxiosError } from 'axios'
-import { Plus, Pencil, Trash2, Truck, Clock, Building2, Settings2, Warehouse, X } from 'lucide-react'
+import { Plus, Pencil, Trash2, Truck, Clock, Building2, Settings2, Warehouse, X, GripVertical } from 'lucide-react'
 import { formatDateTime, normalizeLicensePlate, normalizePhone } from '@/utils/formatters'
 import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
@@ -15,7 +15,7 @@ import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { toast } from '@/components/ui/use-toast'
 import {
   useWarehouses, useWarehouseTypes,
-  useVehicleTypes, useCreateVehicleType, useUpdateVehicleType,
+  useVehicleTypes, useCreateVehicleType, useUpdateVehicleType, useReorderVehicleTypes,
   useSlotTemplates, useCreateSlotTemplate, useUpdateSlotTemplate, useDeleteSlotTemplate,
   useTransportCompanies, useCreateTransportCompany, useUpdateTransportCompany, useDeleteTransportCompany,
   useTmsVehicles, useCreateTmsVehicle, useUpdateTmsVehicle, useDeleteTmsVehicle,
@@ -366,6 +366,30 @@ export default function TMSSettings() {
   const [editingVT, setEditingVT] = useState<TmsVehicleType | null>(null)
   const [showVTDlg, setShowVTDlg] = useState(false)
 
+  // Kéo-thả sắp thứ tự loại xe (kiểu AppSheet: grip + chỉ báo trên/dưới theo nửa dòng)
+  const reorderVT = useReorderVehicleTypes()
+  const [orderedVT, setOrderedVT] = useState<TmsVehicleType[]>([])
+  const [dragVTIdx, setDragVTIdx] = useState<number | null>(null)
+  const [overVT, setOverVT] = useState<{ idx: number; below: boolean } | null>(null)
+  const vtKey = vehicleTypes.map(v => v.id).join(',')   // dep ổn định (tránh loop do fallback [] đổi ref)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (dragVTIdx === null) setOrderedVT(vehicleTypes) }, [vtKey, dragVTIdx])
+  function dropVT() {
+    const from = dragVTIdx, ov = overVT
+    setDragVTIdx(null); setOverVT(null)
+    if (from === null || !ov) return
+    let toIdx = ov.below ? ov.idx + 1 : ov.idx
+    if (from < toIdx) toIdx--
+    if (toIdx === from) return
+    const next = [...orderedVT]
+    const [moved] = next.splice(from, 1)
+    next.splice(toIdx, 0, moved)
+    setOrderedVT(next)
+    reorderVT.mutate(next.map(v => v.id), {
+      onError: e => { toast({ variant: 'destructive', title: 'Không lưu được thứ tự', description: apiMsg(e) }); setOrderedVT(vehicleTypes) },
+    })
+  }
+
   // SlotTemplate — chỉ load khi đã chọn kho, filter client-side
   const [filterVTIds, setFilterVTIds] = useState<string[]>([])
   const { data: templates = [], isLoading: loadingST } = useSlotTemplates({
@@ -458,6 +482,7 @@ export default function TMSSettings() {
                   <Table>
                     <TableHeader>
                       <TableRow>
+                        {canVehicleTypes && <TableHead className="px-2 py-1.5 w-7" />}
                         <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Mã</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Tên loại xe</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Trạng thái</TableHead>
@@ -465,9 +490,27 @@ export default function TMSSettings() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {vehicleTypes.map(vt => (
-                        <TableRow key={vt.id} className={`cursor-pointer ${detailVT?.id === vt.id ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
+                      {orderedVT.map((vt, idx) => {
+                        const isOver = overVT?.idx === idx && dragVTIdx !== null && dragVTIdx !== idx
+                        return (
+                        <TableRow key={vt.id}
+                          draggable={canVehicleTypes}
+                          onDragStart={() => setDragVTIdx(idx)}
+                          onDragOver={canVehicleTypes ? (e => {
+                            e.preventDefault()
+                            const r = e.currentTarget.getBoundingClientRect()
+                            const below = (e.clientY - r.top) > r.height / 2
+                            if (overVT?.idx !== idx || overVT?.below !== below) setOverVT({ idx, below })
+                          }) : undefined}
+                          onDrop={canVehicleTypes ? (e => { e.preventDefault(); dropVT() }) : undefined}
+                          onDragEnd={() => { setDragVTIdx(null); setOverVT(null) }}
+                          className={`cursor-pointer ${detailVT?.id === vt.id ? 'bg-slate-100' : 'hover:bg-slate-50'} ${dragVTIdx === idx ? 'opacity-40' : ''} ${isOver && !overVT?.below ? '[&>td]:border-t-2 [&>td]:border-t-sky-500' : ''} ${isOver && overVT?.below ? '[&>td]:border-b-2 [&>td]:border-b-sky-500' : ''}`}
                           onClick={() => setDetailVT(prev => prev?.id === vt.id ? null : vt)}>
+                          {canVehicleTypes && (
+                            <TableCell className="px-2 py-1 w-7 text-slate-300 cursor-grab active:cursor-grabbing" onClick={e => e.stopPropagation()} title="Kéo để đổi thứ tự">
+                              <GripVertical className="h-3.5 w-3.5" />
+                            </TableCell>
+                          )}
                           <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-600">{vt.code}</TableCell>
                           <TableCell className="px-2 py-1 text-[10px] font-medium text-slate-800">{vt.name}</TableCell>
                           <TableCell className="px-2 py-1">
@@ -484,7 +527,8 @@ export default function TMSSettings() {
                             </TableCell>
                           )}
                         </TableRow>
-                      ))}
+                        )
+                      })}
                     </TableBody>
                   </Table>
                 </div>

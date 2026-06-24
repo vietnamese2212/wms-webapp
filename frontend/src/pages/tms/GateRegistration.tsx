@@ -416,7 +416,7 @@ export default function GateRegistration() {
   type RenderItem =
     | { kind: 'group'; level: 1 | 2 | 3; key: string; label: string; total: number; done: number; inside: number; waiting: number; collapsed: boolean }
     | { kind: 'leaf'; reg: GateRegistration }
-  const buildRenderList = (warehouses: { id: string; name: string }[], wtOrder: Map<string, number>): RenderItem[] => {
+  const buildRenderList = (warehouses: { id: string; name: string }[], wtOrder: Map<string, number>, vtOrder: Map<string, number>): RenderItem[] => {
     const WT_FALLBACK = '— Chưa rõ loại kho —'
     const VT_FALLBACK = '— Chưa rõ loại xe —'
     const whName = (wid: string) => (warehouses as { id: string; name: string }[]).find(w => w.id === wid)?.name ?? wid
@@ -467,6 +467,8 @@ export default function GateRegistration() {
         for (const vt of [...vtMap.keys()].sort((a, b) => {
           const sa = SPECIAL_VTYPES.includes(a) ? 1 : 0, sb = SPECIAL_VTYPES.includes(b) ? 1 : 0   // Chỉ trả pallet / Khác xuống cuối
           if (sa !== sb) return sa - sb
+          const oa = vtOrder.get(a) ?? 9999, ob = vtOrder.get(b) ?? 9999   // loại xe theo thứ tự TMS Settings; lạ xuống cuối
+          if (oa !== ob) return oa - ob
           return a.localeCompare(b, 'vi')
         })) {
           const leaves = [...vtMap.get(vt)!].sort(sortLeaf)
@@ -502,8 +504,9 @@ export default function GateRegistration() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const renderList = useMemo(() => {
     const wtOrder = new Map<string, number>((whTypes as { value: string }[]).map((t, i) => [t.value, i]))
-    return buildRenderList(warehouses as { id: string; name: string }[], wtOrder)
-  }, [displayRegs, collapsed, warehouses, whTypes])
+    const vtOrder = new Map<string, number>((vehicleTypes as { name: string }[]).map((t, i) => [t.name, i]))
+    return buildRenderList(warehouses as { id: string; name: string }[], wtOrder, vtOrder)
+  }, [displayRegs, collapsed, warehouses, whTypes, vehicleTypes])
 
   // Lọc loại xe theo kho + loại kho — warehouse_type dùng thẳng; 'Khác' = không filter
   const _gateCargoType = (form.warehouse_type && form.warehouse_type !== 'Khác') ? form.warehouse_type : undefined

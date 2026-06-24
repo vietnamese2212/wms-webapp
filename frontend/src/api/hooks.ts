@@ -1926,6 +1926,16 @@ export function useCreateVehicleType() {
   })
 }
 
+// Kéo-thả sắp thứ tự loại xe (sort_order) — ids theo thứ tự mới
+export function useReorderVehicleTypes() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (ids: string[]) =>
+      apiClient.put('/tms/vehicle-types/reorder', { ids }).then(r => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-vehicle-types'] }),
+  })
+}
+
 export function useUpdateVehicleType() {
   const qc = useQueryClient()
   return useMutation({

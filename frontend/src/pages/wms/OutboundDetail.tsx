@@ -244,7 +244,7 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
           {special && (
             <div className="space-y-1">
               <Label className="text-xs">Hoặc nhập biển số tay (xe vãng lai, không đăng ký cổng)</Label>
-              <Input className="text-base h-9" placeholder="VD: 30H1234" disabled={!!gateRegId}
+              <Input className="text-base h-9" placeholder="VD: 30H1234" disabled={!!gateRegId} autoFocus
                 value={licPlate} onChange={e => setLicPlate(normalizeLicensePlate(e.target.value))} />
             </div>
           )}
@@ -413,7 +413,7 @@ function EditTransportDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; 
           {special && (
             <div className="space-y-1">
               <Label className="text-xs">Hoặc nhập biển số tay (xe vãng lai, không đăng ký cổng)</Label>
-              <Input className="text-base h-9" placeholder="VD: 30H1234" disabled={!!gateRegId}
+              <Input className="text-base h-9" placeholder="VD: 30H1234" disabled={!!gateRegId} autoFocus
                 value={licPlate} onChange={e => setLicPlate(normalizeLicensePlate(e.target.value))} />
             </div>
           )}

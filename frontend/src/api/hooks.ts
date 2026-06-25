@@ -1757,6 +1757,7 @@ export function useUpdateTransport() {
       id: string; license_plate: string; container_number?: string
       exporter_name?: string; loader_name?: string
       forklift_driver_id?: string; forklift_driver_names?: string
+      gate_registration_id?: string | null; allow_shared_gate?: boolean
     }) => apiClient.patch(`/wms/outbound/${id}/transport`, body).then(r => r.data.data as GDO),
     onSuccess: (data, { id }) => {
       qc.setQueryData(['gdo', id], data)

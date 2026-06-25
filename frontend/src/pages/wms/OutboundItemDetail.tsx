@@ -17,20 +17,12 @@ import type { QRScannerHandle } from '@/components/shared/QRScanner'
 import { toast } from '@/components/ui/use-toast'
 import { useGDO, useScanOutboundItem, useManualCompleteItem, useManualItemStock, useDeleteOutboundScanEntry, useItemInventory, useCheckOutboundScan, useConfirmLoosePickingItem, type ItemInventoryEntry, type CheckOutboundScanResult } from '@/api/hooks'
 import { PalletDetailDialog } from '@/components/shared/PalletDetailDialog'
-import { statusText, type RowStatusKey } from '@/lib/rowStatus'
+import { itemStatusText } from './Outbound'
 import { useAuthStore } from '@/stores/authStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { playBeep, unlockAudio } from '@/utils/audio'
 import type { OutboundItem, OutboundStatus } from '@/types'
-
-// Màu trạng thái cho item (cùng palette rowStatus với bảng Outbound) — dùng cho header detail material
-function itemKey(item: { status?: string; cartons_scanned: number; cartons_ordered: number }): RowStatusKey {
-  if (item.cartons_ordered === 0) return 'pending'
-  if (item.status === 'COMPLETED' || item.cartons_scanned >= item.cartons_ordered) return 'full'
-  if (item.cartons_scanned > 0) return 'inProgress'
-  return 'pending'
-}
 
 // ─── Status badge ──────────────────────────────────────────────
 
@@ -547,7 +539,7 @@ export default function OutboundItemDetail() {
               >
                 <ArrowLeft className="h-4 w-4" />
               </button>
-              <span className={`font-mono font-semibold text-sm truncate ${statusText(itemKey(item))}`}>{matCode}</span>
+              <span className={`font-mono font-semibold text-sm truncate ${itemStatusText(item.status)}`}>{matCode}</span>
               <Badge status={item.status} />
             </div>
 
@@ -590,32 +582,32 @@ export default function OutboundItemDetail() {
             </button>
           )}
 
-          {/* Row 2: material name + progress */}
+          {/* Row 2: material name + progress — kế thừa màu trạng thái như dòng ở list */}
           <div className="space-y-1">
-            <p className="text-sm font-medium text-slate-800 leading-tight">{matName}</p>
+            <p className={`text-sm font-medium leading-tight ${itemStatusText(item.status)}`}>{matName}</p>
             <ProgressBar scanned={item.cartons_scanned} ordered={item.cartons_ordered} looseUnconfirmed={looseUnconfirmedCount} />
           </div>
 
-          {/* Row 3: số lượng + meta nhỏ */}
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-500">
+          {/* Row 3: số lượng + meta nhỏ — kế thừa màu trạng thái */}
+          <div className={`flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs ${itemStatusText(item.status)}`}>
             <span className="flex items-center gap-1">
               <Package className="h-3 w-3 text-slate-400 shrink-0" />
-              <span className="font-medium text-slate-700">{item.cartons_ordered}</span> thùng
+              <span className="font-medium">{item.cartons_ordered}</span> thùng
               {item.boxes_display > 0 && (
-                <span className="ml-1">· <span className="font-medium text-slate-700">{item.boxes_display}</span> hộp</span>
+                <span className="ml-1">· <span className="font-medium">{item.boxes_display}</span> hộp</span>
               )}
               {item.loose_picking > 0 && (
-                <span className="ml-1">· nhặt lẻ <span className="font-medium text-slate-700">{item.loose_picking}</span></span>
+                <span className="ml-1">· nhặt lẻ <span className="font-medium">{item.loose_picking}</span></span>
               )}
             </span>
             {item.pallets_estimated > 0 && (
-              <span><span className="font-medium text-slate-700">{item.pallets_estimated}</span> pl</span>
+              <span><span className="font-medium">{item.pallets_estimated}</span> pl</span>
             )}
             {item.material_type && (
               <span className="bg-slate-100 text-slate-600 rounded px-1.5 py-0.5">{item.material_type}</span>
             )}
             {item.batch_required && (
-              <span>Batch: <span className="font-medium text-slate-700">{item.batch_required}</span></span>
+              <span>Batch: <span className="font-medium">{item.batch_required}</span></span>
             )}
             {item.date_required != null && item.date_required > 0 && (
               <span>%Date: <span className="font-semibold text-amber-700">{item.date_required}%</span></span>

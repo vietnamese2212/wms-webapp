@@ -43,6 +43,17 @@ export function gdoKey(gdo: GDO): RowStatusKey {
 }
 function gdoRowText(gdo: GDO) { return rowText(gdoKey(gdo)) }
 
+// Màu chữ 1 dòng hàng (item) theo TRẠNG THÁI (khớp màu badge item) — dùng chung list + detail material
+export function itemStatusText(status: string): string {
+  switch (status) {
+    case 'COMPLETED':   return 'text-green-600'
+    case 'IN_PROGRESS': return 'text-amber-600'
+    case 'PAUSED':
+    case 'CANCELLED':   return 'text-red-500'
+    default:            return 'text-slate-700'
+  }
+}
+
 function gdoStatusInfo(gdo: GDO): { label: string; cls: string } {
   if (gdo.status === 'COMPLETED')   return { label: 'Hoàn thành', cls: 'bg-blue-100 text-blue-700'   }
   if (gdo.status === 'IN_PROGRESS') return { label: 'Đang xuất',  cls: 'bg-amber-100 text-amber-700' }

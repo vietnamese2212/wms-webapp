@@ -24,7 +24,7 @@ import {
   useItemInventory, useManualItemStock, useDeleteGDO, useManualCompleteItem, type ItemInventoryEntry,
   useActiveGateRegistrations, useGDOs,
 } from '@/api/hooks'
-import { EditGDOModal, gdoKey } from './Outbound'
+import { EditGDOModal, gdoKey, itemStatusText } from './Outbound'
 import { statusText } from '@/lib/rowStatus'
 import { PalletDetailDialog } from '@/components/shared/PalletDetailDialog'
 import { useAuthStore } from '@/stores/authStore'
@@ -503,11 +503,9 @@ function EditTransportDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; 
 
 // ─── Row color by item status ──────────────────────────────────
 
+// Màu chữ dòng hàng theo TRẠNG THÁI item (dùng chung itemStatusText với header detail material)
 function itemTextCls(item: OutboundItem): string {
-  if (item.cartons_ordered === 0) return ''
-  if (item.cartons_scanned >= item.cartons_ordered) return 'text-blue-700'
-  if (item.cartons_scanned > 0) return 'text-amber-700'
-  return 'text-slate-700'
+  return itemStatusText(item.status)
 }
 
 function itemRowBg(item: OutboundItem): string {
@@ -1313,8 +1311,8 @@ export default function OutboundDetail() {
             </div>
           </div>
 
-          {/* Row 2: GDO info compact */}
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-600">
+          {/* Row 2: GDO info compact — kế thừa màu trạng thái như dòng ở list */}
+          <div className={`flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs ${statusText(gdoKey(gdo))}`}>
             <span className="flex items-center gap-1">
               <Truck className="h-3 w-3 text-slate-400 shrink-0" />
               <span className="font-medium">{format(parseISO(gdo.delivery_date), 'dd-MM-yy', { locale: vi })}</span>
@@ -1323,11 +1321,11 @@ export default function OutboundDetail() {
               )}
             </span>
             {gdo.dvvt && <span>{gdo.dvvt}</span>}
-            {npp && <span className="text-slate-500 break-words">{npp}</span>}
+            {npp && <span className="break-words">{npp}</span>}
             {(gdo.delivery_codes?.length ?? 0) > 0 && (
               <span className="flex items-center gap-1">
                 <span className="text-slate-400">DO</span>
-                <span className="font-mono text-slate-700 font-semibold">{gdo.delivery_codes!.join(' · ')}</span>
+                <span className="font-mono font-semibold">{gdo.delivery_codes!.join(' · ')}</span>
               </span>
             )}
             <span className="flex items-center gap-1">
@@ -1364,7 +1362,7 @@ export default function OutboundDetail() {
             <div className="flex flex-wrap gap-x-4 gap-y-0 text-[10px] font-medium">
               {gdo.assigned_at && (
                 <span className="text-green-600">
-                  Giao đơn:{gdo.assigned_by ? <span className="font-normal text-slate-500"> {gdo.assigned_by} · </span> : ' '}
+                  Giao đơn:{gdo.assigned_by ? <span className="font-normal"> {gdo.assigned_by} · </span> : ' '}
                   {formatDateTime(gdo.assigned_at)}
                 </span>
               )}
@@ -1377,15 +1375,15 @@ export default function OutboundDetail() {
             </div>
           )}
 
-          <div className="flex flex-wrap gap-x-4 gap-y-0 text-[10px] text-slate-400">
+          <div className={`flex flex-wrap gap-x-4 gap-y-0 text-[10px] ${statusText(gdoKey(gdo))}`}>
             {gdo.created_by && (
-              <span>Tạo bởi: <span className="text-slate-600 font-medium">{gdo.created_by}</span>{gdo.created_at ? <span className="ml-1">{formatDateTime(gdo.created_at)}</span> : null}</span>
+              <span>Tạo bởi: <span className="font-medium">{gdo.created_by}</span>{gdo.created_at ? <span className="ml-1">{formatDateTime(gdo.created_at)}</span> : null}</span>
             )}
             {!gdo.created_by && gdo.created_at && (
-              <span>Ngày tạo: <span className="text-slate-600">{formatDateTime(gdo.created_at)}</span></span>
+              <span>Ngày tạo: {formatDateTime(gdo.created_at)}</span>
             )}
             {gdo.updated_by && (
-              <span>Sửa bởi: <span className="text-slate-600 font-medium">{gdo.updated_by}</span>{gdo.updated_at ? <span className="ml-1">{formatDateTime(gdo.updated_at)}</span> : null}</span>
+              <span>Sửa bởi: <span className="font-medium">{gdo.updated_by}</span>{gdo.updated_at ? <span className="ml-1">{formatDateTime(gdo.updated_at)}</span> : null}</span>
             )}
           </div>
 

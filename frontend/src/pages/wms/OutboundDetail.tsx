@@ -24,7 +24,7 @@ import {
   useItemInventory, useManualItemStock, useDeleteGDO, useManualCompleteItem, type ItemInventoryEntry,
   useActiveGateRegistrations, useGDOs,
 } from '@/api/hooks'
-import { EditGDOModal, gdoKey, itemStatusText } from './Outbound'
+import { EditGDOModal, gdoKey } from './Outbound'
 import { statusText } from '@/lib/rowStatus'
 import { PalletDetailDialog } from '@/components/shared/PalletDetailDialog'
 import { useAuthStore } from '@/stores/authStore'
@@ -503,9 +503,11 @@ function EditTransportDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; 
 
 // ─── Row color by item status ──────────────────────────────────
 
-// Màu chữ dòng hàng theo TRẠNG THÁI item (dùng chung itemStatusText với header detail material)
 function itemTextCls(item: OutboundItem): string {
-  return itemStatusText(item.status)
+  if (item.cartons_ordered === 0) return ''
+  if (item.cartons_scanned >= item.cartons_ordered) return 'text-blue-700'
+  if (item.cartons_scanned > 0) return 'text-amber-700'
+  return 'text-slate-700'
 }
 
 function itemRowBg(item: OutboundItem): string {

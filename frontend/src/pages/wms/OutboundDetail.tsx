@@ -1,4 +1,4 @@
-import { useState, useEffect, Fragment } from 'react'
+import { useState, useEffect, useRef, Fragment } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
@@ -137,6 +137,58 @@ function TagPicker({
   )
 }
 
+// ─── Combobox chọn CHUYẾN (gõ biển số để tìm) — dùng chung Start + Sửa thông tin xe ───
+type GateRegOpt = { id: string; registration_number: number; license_plate: string | null; status: string; entry_at: string | null; exit_at: string | null; date: string }
+
+function ChuyenCombo({ options, value, onPick, takenGateIds, placeholder }: {
+  options: GateRegOpt[]; value: string; onPick: (id: string) => void
+  takenGateIds: Set<string>; placeholder?: string
+}) {
+  const [open, setOpen] = useState(false)
+  const [q, setQ] = useState('')
+  const boxRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const h = (e: MouseEvent) => { if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false) }
+    document.addEventListener('mousedown', h)
+    return () => document.removeEventListener('mousedown', h)
+  }, [])
+  const fmtT = (ts: string | null) => ts ? formatTimestampTime(ts).slice(0, 5) : '—'
+  const label = (g: GateRegOpt) =>
+    `${g.license_plate ?? '—'} · #${g.registration_number} · vào ${fmtT(g.entry_at)}${g.exit_at ? ` · ra ${fmtT(g.exit_at)}` : ''}${takenGateIds.has(g.id) ? ' · ⚠ đã gắn' : ''}`
+  const selected = options.find(g => g.id === value)
+  const term = q.trim().toLowerCase()
+  const filtered = term
+    ? options.filter(g => (g.license_plate ?? '').toLowerCase().includes(term) || String(g.registration_number).includes(term))
+    : options
+  return (
+    <div className="relative" ref={boxRef}>
+      <Input
+        className="h-10 text-sm"
+        placeholder={placeholder ?? 'Gõ biển số để tìm chuyến…'}
+        value={open ? q : (selected ? label(selected) : '')}
+        onFocus={() => { setOpen(true); setQ('') }}
+        onChange={e => { setQ(e.target.value); setOpen(true) }}
+      />
+      {open && (
+        <div className="absolute z-50 mt-1 w-full max-h-56 overflow-auto rounded-md border border-slate-200 bg-white shadow-lg">
+          {selected && (
+            <button type="button" className="w-full text-left px-2 py-1.5 text-[11px] text-red-500 hover:bg-slate-50"
+              onMouseDown={e => { e.preventDefault(); onPick(''); setOpen(false) }}>✕ Bỏ chọn chuyến</button>
+          )}
+          {filtered.length === 0 && <div className="px-2 py-2 text-[11px] text-slate-400">Không có chuyến phù hợp</div>}
+          {filtered.map(g => (
+            <button key={g.id} type="button"
+              className={`w-full text-left px-2 py-1.5 text-xs hover:bg-sky-50 ${g.id === value ? 'bg-sky-50 font-medium' : ''}`}
+              onMouseDown={e => { e.preventDefault(); onPick(g.id); setOpen(false) }}>
+              {label(g)}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Start dialog ─────────────────────────────────────────────
 
 function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose: () => void }) {
@@ -175,7 +227,6 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
     .filter(g => special ? true : (g.status === 'IN' && !takenGateIds.has(g.id)))
     .sort((a, b) => b.date.localeCompare(a.date) || (b.entry_at ?? '').localeCompare(a.entry_at ?? ''))
   const selectedGate = (gateRegs as GateReg[]).find(g => g.id === gateRegId)
-  const fmtT = (ts: string | null) => ts ? formatTimestampTime(ts).slice(0, 5) : '—'
   const effectivePlate = selectedGate?.license_plate ?? licPlate
 
   // Resolved names for submission
@@ -216,22 +267,11 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
         <div className="space-y-3 py-1">
           <div className="space-y-1">
             <Label className="text-xs">Chuyến xe đã vào cổng *</Label>
-            <Select value={gateRegId || '__none__'} onValueChange={v => { setGateRegId(v === '__none__' ? '' : v); if (v !== '__none__') setLicPlate('') }}>
-              <SelectTrigger className="h-10 text-sm"><SelectValue placeholder="Chọn chuyến xe (biển số · vào lúc…)" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none__">— Chọn chuyến —</SelectItem>
-                {eligibleGates.map(g => (
-                  <SelectItem key={g.id} value={g.id}>
-                    {g.license_plate ?? '—'} · #{g.registration_number} · vào {fmtT(g.entry_at)}{g.exit_at ? ` · ra ${fmtT(g.exit_at)}` : ''}{takenGateIds.has(g.id) ? ' · ⚠ đã gắn' : ''}
-                  </SelectItem>
-                ))}
-                {eligibleGates.length === 0 && (
-                  <div className="px-2 py-1.5 text-[11px] text-slate-400">
-                    Không có chuyến phù hợp{special ? '' : ' — tích "Trường hợp đặc biệt" để mở rộng'}
-                  </div>
-                )}
-              </SelectContent>
-            </Select>
+            <ChuyenCombo options={eligibleGates} value={gateRegId} takenGateIds={takenGateIds}
+              onPick={id => { setGateRegId(id); if (id) setLicPlate('') }} />
+            {eligibleGates.length === 0 && (
+              <p className="text-[11px] text-slate-400">Không có chuyến phù hợp{special ? '' : ' — tích "Trường hợp đặc biệt" để mở rộng'}</p>
+            )}
           </div>
 
           <label className="flex items-center gap-2 cursor-pointer text-xs">
@@ -347,7 +387,6 @@ function EditTransportDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; 
   const selectedGate = (gateRegs as GateReg[]).find(g => g.id === gateRegId)
   const optionGates = selectedGate && !eligibleGates.some(g => g.id === selectedGate.id)
     ? [selectedGate, ...eligibleGates] : eligibleGates
-  const fmtT = (ts: string | null) => ts ? formatTimestampTime(ts).slice(0, 5) : '—'
   const effectivePlate = selectedGate?.license_plate ?? licPlate
 
   const empMap = new Map((employees as EmpOption[]).map(e => [e.id, e.name]))
@@ -385,22 +424,11 @@ function EditTransportDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; 
         <div className="space-y-3 py-1">
           <div className="space-y-1">
             <Label className="text-xs">Chuyến xe đã vào cổng *</Label>
-            <Select value={gateRegId || '__none__'} onValueChange={v => { setGateRegId(v === '__none__' ? '' : v); if (v !== '__none__') setLicPlate('') }}>
-              <SelectTrigger className="h-10 text-sm"><SelectValue placeholder="Chọn chuyến xe (biển số · vào lúc…)" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none__">— Chọn chuyến —</SelectItem>
-                {optionGates.map(g => (
-                  <SelectItem key={g.id} value={g.id}>
-                    {g.license_plate ?? '—'} · #{g.registration_number} · vào {fmtT(g.entry_at)}{g.exit_at ? ` · ra ${fmtT(g.exit_at)}` : ''}{takenGateIds.has(g.id) ? ' · ⚠ đã gắn' : ''}
-                  </SelectItem>
-                ))}
-                {optionGates.length === 0 && (
-                  <div className="px-2 py-1.5 text-[11px] text-slate-400">
-                    Không có chuyến phù hợp{special ? '' : ' — tích "Trường hợp đặc biệt" để mở rộng'}
-                  </div>
-                )}
-              </SelectContent>
-            </Select>
+            <ChuyenCombo options={optionGates} value={gateRegId} takenGateIds={takenGateIds}
+              onPick={id => { setGateRegId(id); if (id) setLicPlate('') }} />
+            {optionGates.length === 0 && (
+              <p className="text-[11px] text-slate-400">Không có chuyến phù hợp{special ? '' : ' — tích "Trường hợp đặc biệt" để mở rộng'}</p>
+            )}
           </div>
 
           <label className="flex items-center gap-2 cursor-pointer text-xs">

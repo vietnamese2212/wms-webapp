@@ -17,11 +17,20 @@ import type { QRScannerHandle } from '@/components/shared/QRScanner'
 import { toast } from '@/components/ui/use-toast'
 import { useGDO, useScanOutboundItem, useManualCompleteItem, useManualItemStock, useDeleteOutboundScanEntry, useItemInventory, useCheckOutboundScan, useConfirmLoosePickingItem, type ItemInventoryEntry, type CheckOutboundScanResult } from '@/api/hooks'
 import { PalletDetailDialog } from '@/components/shared/PalletDetailDialog'
+import { statusText, type RowStatusKey } from '@/lib/rowStatus'
 import { useAuthStore } from '@/stores/authStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { playBeep, unlockAudio } from '@/utils/audio'
 import type { OutboundItem, OutboundStatus } from '@/types'
+
+// Màu trạng thái cho item (cùng palette rowStatus với bảng Outbound) — dùng cho header detail material
+function itemKey(item: { status?: string; cartons_scanned: number; cartons_ordered: number }): RowStatusKey {
+  if (item.cartons_ordered === 0) return 'pending'
+  if (item.status === 'COMPLETED' || item.cartons_scanned >= item.cartons_ordered) return 'full'
+  if (item.cartons_scanned > 0) return 'inProgress'
+  return 'pending'
+}
 
 // ─── Status badge ──────────────────────────────────────────────
 
@@ -538,7 +547,7 @@ export default function OutboundItemDetail() {
               >
                 <ArrowLeft className="h-4 w-4" />
               </button>
-              <span className="font-mono font-semibold text-sm truncate">{matCode}</span>
+              <span className={`font-mono font-semibold text-sm truncate ${statusText(itemKey(item))}`}>{matCode}</span>
               <Badge status={item.status} />
             </div>
 

@@ -1734,6 +1734,7 @@ export function useStartGDO() {
       id: string; license_plate: string; container_number?: string
       exporter_name?: string; loader_name?: string
       forklift_driver_id?: string; forklift_driver_names?: string
+      gate_registration_id?: string | null; allow_shared_gate?: boolean
     }) => apiClient.post(`/wms/outbound/${id}/start`, body).then(r => r.data.data),
     onMutate: async ({ id }) => {
       await qc.cancelQueries({ queryKey: ['gdo', id] })

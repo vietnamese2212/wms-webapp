@@ -22,6 +22,7 @@ import {
   useGDO, useAssignGDO, useStartGDO, useWarehouseEmployees, usePatchGDO,
   useUnassignGDO, useUnstartGDO, useUncompleteGDO, useUpdateTransport,
   useItemInventory, useManualItemStock, useDeleteGDO, useManualCompleteItem, type ItemInventoryEntry,
+  useActiveGateRegistrations, useGDOs,
 } from '@/api/hooks'
 import { EditGDOModal, gdoKey } from './Outbound'
 import { statusText } from '@/lib/rowStatus'
@@ -152,6 +153,30 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
   const [loaderName,       setLoaderName]       = useState('')
   const [extraExporterIds, setExtraExporterIds] = useState<string[]>([])
   const [forklifterIds,    setForklifterIds]    = useState<string[]>([])
+  const [gateRegId,        setGateRegId]        = useState('')
+  const [special,          setSpecial]          = useState(false)   // mở khóa: xe đã ra / bốc thêm đơn / vãng lai
+
+  // ── Chuyến xe ở Đăng ký cổng (OUTBOUND, đã vào) — gắn biển số theo đúng CHUYẾN để báo cáo per-chuyến
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+  const threeDaysAgo = (() => { const d = new Date(today); d.setDate(d.getDate() - 3); return d.toISOString().slice(0, 10) })()
+  const { data: gateRegs = [] } = useActiveGateRegistrations(
+    gdo.warehouse_id ? { date_from: threeDaysAgo, date_to: today, warehouse_id: gdo.warehouse_id, direction: 'OUTBOUND' } : undefined
+  )
+  const { data: recentGdos = [] } = useGDOs(
+    gdo.warehouse_id ? { warehouse_id: gdo.warehouse_id, date_from: threeDaysAgo, date_to: today } : undefined
+  )
+  const takenGateIds = new Set<string>()
+  for (const g of recentGdos as GDO[]) if (g.gate_registration_id && g.id !== gdo.id) takenGateIds.add(g.gate_registration_id)
+
+  type GateReg = { id: string; registration_number: number; license_plate: string | null; status: string; entry_at: string | null; exit_at: string | null; date: string }
+  // Mặc định: chuyến IN (đã vào, CHƯA ra) + chưa bị phiếu khác gắn. Đặc biệt: thêm chuyến đã RA trong 3 ngày + cả chuyến đã gắn.
+  const eligibleGates = (gateRegs as GateReg[])
+    .filter(g => g.entry_at)                                                       // đã vào cổng
+    .filter(g => special ? true : (g.status === 'IN' && !takenGateIds.has(g.id)))
+    .sort((a, b) => b.date.localeCompare(a.date) || (b.entry_at ?? '').localeCompare(a.entry_at ?? ''))
+  const selectedGate = (gateRegs as GateReg[]).find(g => g.id === gateRegId)
+  const fmtT = (ts: string | null) => ts ? formatTimestampTime(ts).slice(0, 5) : '—'
+  const effectivePlate = selectedGate?.license_plate ?? licPlate
 
   // Resolved names for submission
   const empMap = new Map((employees as EmpOption[]).map(e => [e.id, e.name]))
@@ -160,17 +185,19 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
   const forklifterNames = forklifterIds.map(id => empMap.get(id) ?? id).filter(Boolean).join(', ')
 
   function handleSubmit() {
-    if (!licPlate.trim()) { setErr('Vui lòng nhập biển số xe'); return }
+    if (!effectivePlate.trim()) { setErr('Vui lòng chọn chuyến xe đã vào cổng (hoặc nhập biển số ở Trường hợp đặc biệt)'); return }
     setErr(null)
     startGDO(
       {
         id:                   gdo.id,
-        license_plate:        licPlate,
+        license_plate:        effectivePlate.trim(),
         container_number:     containerNum || undefined,
         exporter_name:        exporterName || undefined,
         loader_name:          loaderName   || undefined,
         forklift_driver_id:   forklifterIds[0] || undefined,
         forklift_driver_names: forklifterNames || undefined,
+        gate_registration_id: gateRegId || undefined,
+        allow_shared_gate:    special || undefined,
       },
       {
         onSuccess: onClose,
@@ -188,10 +215,47 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
         <DialogHeader><DialogTitle className="text-base">Bắt đầu xuất kho</DialogTitle></DialogHeader>
         <div className="space-y-3 py-1">
           <div className="space-y-1">
-            <Label className="text-xs">Biển số xe *</Label>
-            <Input className="text-lg h-10" placeholder="VD: 30H1234"
-              value={licPlate} onChange={e => setLicPlate(normalizeLicensePlate(e.target.value))} />
+            <Label className="text-xs">Chuyến xe đã vào cổng *</Label>
+            <Select value={gateRegId || '__none__'} onValueChange={v => { setGateRegId(v === '__none__' ? '' : v); if (v !== '__none__') setLicPlate('') }}>
+              <SelectTrigger className="h-10 text-sm"><SelectValue placeholder="Chọn chuyến xe (biển số · vào lúc…)" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">— Chọn chuyến —</SelectItem>
+                {eligibleGates.map(g => (
+                  <SelectItem key={g.id} value={g.id}>
+                    {g.license_plate ?? '—'} · #{g.registration_number} · vào {fmtT(g.entry_at)}{g.exit_at ? ` · ra ${fmtT(g.exit_at)}` : ''}{takenGateIds.has(g.id) ? ' · ⚠ đã gắn' : ''}
+                  </SelectItem>
+                ))}
+                {eligibleGates.length === 0 && (
+                  <div className="px-2 py-1.5 text-[11px] text-slate-400">
+                    Không có chuyến phù hợp{special ? '' : ' — tích "Trường hợp đặc biệt" để mở rộng'}
+                  </div>
+                )}
+              </SelectContent>
+            </Select>
           </div>
+
+          <label className="flex items-center gap-2 cursor-pointer text-xs">
+            <input type="checkbox" checked={special}
+              onChange={e => { setSpecial(e.target.checked); if (!e.target.checked) setLicPlate('') }}
+              className="h-4 w-4 rounded border-slate-300 accent-amber-600" />
+            <span>Trường hợp đặc biệt (xe đã ra / bốc thêm đơn cùng chuyến / xe vãng lai)</span>
+          </label>
+
+          {special && (
+            <div className="space-y-1">
+              <Label className="text-xs">Hoặc nhập biển số tay (xe vãng lai, không đăng ký cổng)</Label>
+              <Input className="text-base h-9" placeholder="VD: 30H1234" disabled={!!gateRegId}
+                value={licPlate} onChange={e => setLicPlate(normalizeLicensePlate(e.target.value))} />
+            </div>
+          )}
+
+          {special && gateRegId && takenGateIds.has(gateRegId) && (
+            <p className="text-[11px] text-amber-600">⚠ Chuyến đã gắn phiếu khác — chỉ tiếp tục nếu xe bốc thêm đơn cùng chuyến.</p>
+          )}
+          {special && !gateRegId && licPlate.trim() && (
+            <p className="text-[11px] text-amber-600">⚠ Biển số chưa gắn đăng ký cổng (xe vãng lai / giao đêm).</p>
+          )}
+
           {isContainer && (
             <div className="space-y-1">
               <Label className="text-xs">Số container</Label>

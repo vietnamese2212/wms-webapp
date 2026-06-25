@@ -781,11 +781,25 @@ export async function startGDO(req: Request, res: Response) {
     const {
       license_plate, container_number, exporter_name,
       loader_name, forklift_driver_id, forklift_driver_names,
+      gate_registration_id, allow_shared_gate,
     } = req.body as {
       license_plate?: string; container_number?: string; exporter_name?: string
       loader_name?: string; forklift_driver_id?: string; forklift_driver_names?: string
+      gate_registration_id?: string | null; allow_shared_gate?: boolean
     }
     if (!license_plate) return fail(res, 'Biển số xe là bắt buộc', 400)
+
+    // Khóa cứng 1 chuyến = 1 phiếu: nếu chuyến cổng đã gắn GDO khác → chặn, trừ khi user xác nhận đặc biệt (bốc thêm đơn cùng chuyến)
+    if (gate_registration_id && !allow_shared_gate) {
+      const { data: taken } = await (supabase.from('GroupDeliveryOrder') as any)
+        .select('id, group_code')
+        .eq('gate_registration_id', gate_registration_id)
+        .neq('id', req.params.id)
+        .limit(1)
+      if (taken && taken.length > 0) {
+        return fail(res, `Chuyến này đã gắn phiếu ${taken[0].group_code ?? ''} — tích "Trường hợp đặc biệt" nếu xe bốc thêm đơn cùng chuyến`, 409)
+      }
+    }
 
     const { error } = await (supabase.from('GroupDeliveryOrder') as any)
       .update({
@@ -796,6 +810,7 @@ export async function startGDO(req: Request, res: Response) {
         loader_name:            loader_name            ?? null,
         forklift_driver_id:     forklift_driver_id     ?? null,
         forklift_driver_names:  forklift_driver_names  ?? null,
+        gate_registration_id:   gate_registration_id   ?? null,
         status:     'IN_PROGRESS',
         updated_at: now(),
       })

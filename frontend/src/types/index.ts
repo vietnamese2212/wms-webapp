@@ -681,6 +681,9 @@ export interface GDO {
   forklift_driver_id?:    string | null
   forklift_driver_names?: string | null
   forklift_driver?:       { id: string; name: string } | null
+  // Liên kết chuyến xe ở Đăng ký cổng (1 chuyến = 1 lượt xe đã vào) — phục vụ báo cáo per-chuyến
+  gate_registration_id?:  string | null
+  gate_registration?:     { id: string; registration_number: number; date: string; license_plate: string | null; status: string; direction: string; entry_at?: string | null; exit_at?: string | null } | null
   // Audit
   updated_at?:     string | null
   created_by?:     string | null

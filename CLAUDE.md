@@ -91,6 +91,7 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 - Hiển thị: date-only → `formatDate()`; timestamp → `formatDateTime()`/`formatTimestampDate()`/`formatTimestampTime()` (dùng `Intl` + timezone VN, không phụ thuộc OS). Cell hẹp: `formatTimestampDate(s, true)` → `dd-MM-yy`. Tất cả từ `utils/formatters.ts`.
 
 **TypeScript:** không `as any`/`as any[]` — type rõ ràng. Axios error: `import type { AxiosError } from 'axios'`.
+- **Nợ `as any` (đang dọn dần):** code cũ còn ~341 chỗ `as any`/`: any` (Stage A đã gỡ 66% an toàn: `(supabase.from(...) as any)` + `(req as any).user`→`req.user`, BE 588→138). **Code MỚI tuyệt đối không `as any`**; đuôi dài chỉ dọn **khi đụng vào từng file**, KHÔNG mass-rewrite (rủi ro churn, lợi ích 0-runtime). Gốc rễ: `backend/src/lib/supabase.ts` thiếu generic `Database` → cách triệt để là `supabase gen types typescript` + `createClient<Database>()` (mini-project, chưa làm). Chi tiết: memory `as-any-cleanup`.
 
 **Frontend:**
 - Lỗi API: banner đỏ inline trong component (không chỉ `console.error`).

@@ -22,7 +22,7 @@ export function MobileNav() {
           <BarChart3 className="h-4 w-4" />
         </div>
         <div>
-          <p className="text-sm font-bold text-white">WMS Pro</p>
+          <p className="text-sm font-bold text-white">MAL SC</p>
           <p className="text-[10px] text-slate-400">Supply Chain</p>
         </div>
       </div>

@@ -82,9 +82,9 @@ export function Header() {
       {/* Logo (mobile only) */}
       <Link to="/" className="flex items-center gap-2 lg:hidden">
         <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-sky-500 text-white">
-          <span className="text-xs font-bold">W</span>
+          <span className="text-xs font-bold">M</span>
         </div>
-        <span className="font-bold text-sm text-white">WMS Pro</span>
+        <span className="font-bold text-sm text-white">MAL SC</span>
       </Link>
 
       {/* Breadcrumb (desktop) */}

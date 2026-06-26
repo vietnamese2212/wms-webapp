@@ -252,7 +252,7 @@ export default function Settings() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium">Phiên bản</p>
-                <p className="text-xs text-muted-foreground">WMS Pro v0.1.0</p>
+                <p className="text-xs text-muted-foreground">MAL SC v0.1.0</p>
               </div>
               <Badge variant="secondary">Beta</Badge>
             </div>

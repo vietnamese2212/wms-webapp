@@ -628,32 +628,49 @@ export async function bulkTransferLocation(req: Request, res: Response) {
   if (!location_id)
     return fail(res, 400, 'INVALID_INPUT', 'Thiếu location_id')
 
+  const now    = new Date().toISOString()
+  const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+  const updatedBy = (employee_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employee_id))
+    ? employee_id : null
+
+  // Nguyên tử: RPC khóa dòng Location → đếm sức chứa DƯỚI LOCK → move trong cùng transaction.
+  // Chống đua quá-tải vị trí khi nhiều người dồn cùng lúc vào CÙNG vị trí.
+  const { data: result, error: rpcErr } = await supabase.rpc('move_pallets_to_location', {
+    p_ids: ids, p_location_id: location_id, p_updated_by: updatedBy, p_update_date: vnDate, p_now: now,
+  })
+  if (!rpcErr) {
+    const parts = String(result ?? '').split('|')
+    switch (parts[0]) {
+      case 'NO_IDS':    return fail(res, 400, 'INVALID_INPUT', 'Cần ít nhất 1 pallet')
+      case 'NOT_FOUND': return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy vị trí')
+      case 'INACTIVE':  return fail(res, 400, 'LOCATION_INACTIVE', 'Vị trí không hoạt động')
+      case 'FULL':      return fail(res, 400, 'LOCATION_FULL',
+        `Vị trí ${parts[2] ?? ''} không đủ chỗ (còn ${parts[1] ?? 0} slot, cần ${ids.length})`)
+      default:          return ok(res, { updated: ids.length, location_code: parts[1] ?? '' })
+    }
+  }
+  // RPC chưa được apply trên DB (function not found) → fallback logic cũ (KHÔNG nguyên tử) để không vỡ tính năng.
+  const notDeployed = rpcErr.code === 'PGRST202' || /Could not find the function|does not exist/i.test(rpcErr.message ?? '')
+  if (!notDeployed) return fail(res, 500, 'DB_ERROR', rpcErr.message)
+
   const { data: loc } = await supabase.from('Location')
     .select('id, is_active, location_code, max_pallets')
     .eq('id', location_id).maybeSingle()
   if (!loc)           return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy vị trí')
   if (!loc.is_active) return fail(res, 400, 'LOCATION_INACTIVE', 'Vị trí không hoạt động')
-
-  // Check capacity: count active pallets already at this location
   if (loc.max_pallets > 0) {
     const { count: usedSlots } = await supabase.from('InventoryEntry')
       .select('id', { count: 'exact', head: true })
       .eq('location_id', location_id)
       .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE'])
-
     const available = loc.max_pallets - (usedSlots ?? 0)
     if (available < ids.length) {
       return fail(res, 400, 'LOCATION_FULL',
         `Vị trí ${loc.location_code} không đủ chỗ (còn ${Math.max(0, available)} slot, cần ${ids.length})`)
     }
   }
-
-  const now    = new Date().toISOString()
-  const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
-
   const patch: Record<string, unknown> = { location_id, updated_at: now, update_date: vnDate }
-  if (employee_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employee_id)) patch.updated_by = employee_id
-
+  if (updatedBy) patch.updated_by = updatedBy
   const { error } = await supabase.from('InventoryEntry').update(patch).in('id', ids)
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
   return ok(res, { updated: ids.length, location_code: loc.location_code })

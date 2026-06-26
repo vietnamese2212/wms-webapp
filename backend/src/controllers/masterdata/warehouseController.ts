@@ -92,6 +92,16 @@ export async function updateWarehouse(req: Request, res: Response) {
     if (inventory_mode !== undefined) {
       if (!INVENTORY_MODES.includes(inventory_mode))
         return fail(res, 400, 'VALIDATION_ERROR', 'Chế độ quản tồn không hợp lệ (QR, QTY hoặc NONE)')
+      // Chặn đổi chế độ khi kho CÒN TỒN sống → tránh tính lại lịch sử thực-nhận sai (posm↔import)
+      // và tồn pool QTY không quét được nếu sang QR. NONE→QTY/QR vẫn OK vì kho NONE không có tồn.
+      const { data: cur } = await supabase.from('Warehouse').select('inventory_mode').eq('id', req.params.id).maybeSingle()
+      if (cur && (cur as { inventory_mode?: string }).inventory_mode !== inventory_mode) {
+        const { count } = await supabase.from('InventoryEntry')
+          .select('id', { count: 'exact', head: true })
+          .eq('warehouse_id', req.params.id).gt('cartons_remaining', 0)
+        if ((count ?? 0) > 0)
+          return fail(res, 400, 'WAREHOUSE_HAS_STOCK', `Kho còn ${count} dòng tồn — không thể đổi chế độ quản tồn. Xử lý hết tồn (hoặc kiểm kho) trước khi đổi.`)
+      }
       patch.inventory_mode = inventory_mode
     }
 

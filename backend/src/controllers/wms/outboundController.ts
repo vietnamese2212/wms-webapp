@@ -436,8 +436,11 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: destWh } = await supabase.from('Warehouse')
-    .select('id, code, name').eq('code', gdo.shipto_party).eq('is_active', true).maybeSingle()
+    .select('id, code, name, inventory_mode').eq('code', gdo.shipto_party).eq('is_active', true).maybeSingle()
   if (!destWh) return
+  // Kho đích NONE (không theo dõi tồn, vd bộ phận Sản xuất) → xuất TIÊU HAO: chỉ trừ tồn nguồn,
+  // KHÔNG tạo lệnh chuyển kho / không bắt nhận. (đích QR/QTY mới là chuyển kho đầy đủ)
+  if ((destWh as { inventory_mode?: string | null }).inventory_mode === 'NONE') return
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: dos } = await supabase.from('OutboundDelivery')

@@ -75,7 +75,7 @@ function fTime(ts: string | null | undefined): string {
 }
 
 // useWarehouses() trả any[] (dùng nhiều nơi) → cast cục bộ sang type tối thiểu thay cho `as any`
-type WarehouseLite = { id: string; name: string; warehouse_type?: string | null }
+type WarehouseLite = { id: string; name: string; code?: string; warehouse_type?: string | null; inventory_mode?: string | null }
 
 const OUTBOUND_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
   { id: 'pin',       label: '',              w: 34 },
@@ -123,6 +123,11 @@ export default function Outbound() {
   }
 
   const { data: warehouses = [] } = useWarehouses(true)
+  // Mã các kho NONE (xuất tiêu hao, vd Sản xuất) → badge "Xuất SX" ở cột Ship-to
+  const noneWhCodes = useMemo(
+    () => new Set((warehouses as WarehouseLite[]).filter(w => w.inventory_mode === 'NONE' && w.code).map(w => w.code as string)),
+    [warehouses],
+  )
 
   const outboundAllowedWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
     ? new Set(user.warehouse_ids)
@@ -527,6 +532,7 @@ export default function Outbound() {
                   gdo={gdo}
                   dense={dense}
                   pinW={colW[0]}
+                  isProdDest={!!gdo.shipto_party && noneWhCodes.has(gdo.shipto_party)}
                   onClick={() => navigate(`/wms/outbound/${gdo.id}`)}
                   onAssign={can(perms, 'outbound', 'assign') ? (e => { e.stopPropagation(); assignGDO({ id: gdo.id }) }) : undefined}
                 />
@@ -555,12 +561,13 @@ export default function Outbound() {
 
 // ─── GDO Row ──────────────────────────────────────────────────
 
-function GDORow({ gdo, onClick, onAssign, dense = true, pinW = 34 }: {
+function GDORow({ gdo, onClick, onAssign, dense = true, pinW = 34, isProdDest = false }: {
   gdo: GDO
   onClick: () => void
   onAssign?: (e: React.MouseEvent) => void
   dense?: boolean
   pinW?: number
+  isProdDest?: boolean
 }) {
   const { pin, unpin, isPinned } = useActiveVehiclesStore()
   const pinned    = isPinned(gdo.id)
@@ -592,7 +599,12 @@ function GDORow({ gdo, onClick, onAssign, dense = true, pinW = 34 }: {
         <span className="text-[10px] truncate block" title={npp}>{npp}</span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
-        <span className="text-[10px] font-mono">{gdo.shipto_party ?? '—'}</span>
+        {gdo.shipto_party ? (
+          <span className="inline-flex items-center gap-1">
+            <span className="text-[10px] font-mono">{gdo.shipto_party}</span>
+            {isProdDest && <span className="text-[8px] px-1 py-0.5 rounded bg-sky-100 text-sky-700 border border-sky-200 font-medium">Xuất SX</span>}
+          </span>
+        ) : <span className="text-slate-300">—</span>}
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px]">{gdo.dvvt ?? '—'}</span>
@@ -928,6 +940,9 @@ function GDOFormBody({
 
   const exportTypeOptions = warehouseId ? vtByWarehouse : allVehicleTypes
   const isNPP = (warehouses as WarehouseLite[]).find(w => w.id === warehouseId)?.warehouse_type === 'NPP'
+  // Đích là kho NONE (vd bộ phận Sản xuất) → xuất tiêu hao: không có xe, không tạo phiếu nhập
+  const isProductionIssue = (warehouses as WarehouseLite[]).find(w => w.code === shiptoPartyId)?.inventory_mode === 'NONE'
+  const noVehicle = isNPP || isProductionIssue
   const isMultiDO = (gdo?.delivery_orders?.length ?? 0) > 1
 
   const TODAY_STR = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -1104,10 +1119,17 @@ function GDOFormBody({
               />
             )}
             {shiptoPartyId && (
-              <div className="flex items-center gap-1.5 rounded bg-amber-50 border border-amber-200 px-2 py-1 text-[10px] text-amber-800">
-                <AlertTriangle className="h-3 w-3 shrink-0" />
-                <span>Chuyển kho · Ship-to: <span className="font-mono font-semibold">{shiptoPartyId}</span> — Hoàn thành đơn sẽ tạo phiếu nhập cho kho này</span>
-              </div>
+              isProductionIssue ? (
+                <div className="flex items-center gap-1.5 rounded bg-sky-50 border border-sky-200 px-2 py-1 text-[10px] text-sky-800">
+                  <AlertTriangle className="h-3 w-3 shrink-0" />
+                  <span>Xuất Sản xuất · <span className="font-mono font-semibold">{shiptoPartyId}</span> — chỉ trừ tồn nguồn, KHÔNG tạo phiếu nhập / lệnh chuyển kho</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5 rounded bg-amber-50 border border-amber-200 px-2 py-1 text-[10px] text-amber-800">
+                  <AlertTriangle className="h-3 w-3 shrink-0" />
+                  <span>Chuyển kho · Ship-to: <span className="font-mono font-semibold">{shiptoPartyId}</span> — Hoàn thành đơn sẽ tạo phiếu nhập cho kho này</span>
+                </div>
+              )
             )}
           </div>
           <div className="space-y-1">
@@ -1130,7 +1152,7 @@ function GDOFormBody({
               )}
             </div>
           )}
-          {!isNPP && (
+          {!noVehicle && (
             <div className="space-y-1">
               <label className="text-[10px] font-medium text-slate-500">Loại xe <span className="text-red-500">*</span></label>
               <div className="flex flex-wrap gap-1.5">
@@ -1308,6 +1330,7 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
   const { mutate: createGDO, isPending } = useCreateGDO()
   const { data: warehousesForCreate = [] } = useWarehouses(true)
   const isNPPCreate = (warehousesForCreate as any[]).find(w => w.id === warehouseId)?.warehouse_type === 'NPP'
+  const isProdCreate = (warehousesForCreate as any[]).find(w => w.code === shiptoPartyId)?.inventory_mode === 'NONE'
 
   function handleSubmit() {
     if (!date)         return setError('Chọn ngày xuất')
@@ -1315,7 +1338,7 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
     if (!warehouseType) return setError('Chọn loại kho')
     if (!customerName.trim()) return setError('Nhập tên khách hàng')
     if (!dvvt.trim())  return setError('Nhập đơn vị vận tải')
-    if (!isNPPCreate && !exportType) return setError('Chọn loại xuất')
+    if (!isNPPCreate && !isProdCreate && !exportType) return setError('Chọn loại xe')
     const filledItems = items.filter(i => i.material_code.trim())
     if (filledItems.length === 0) return setError('Nhập ít nhất một mã hàng')
     const seenCodes = new Set<string>()
@@ -1424,13 +1447,14 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
   }, [gdo, initialized, allVehicleTypes])
 
   const isNPPEdit = (warehousesForEdit as any[]).find(w => w.id === warehouseId)?.warehouse_type === 'NPP'
+  const isProdEdit = (warehousesForEdit as any[]).find(w => w.code === shiptoPartyId)?.inventory_mode === 'NONE'
 
   function handleSubmit() {
     const isMultiDO = (gdo?.delivery_orders?.length ?? 0) > 1
     if (!date) return setError('Chọn ngày xuất')
     if (!isMultiDO && !deliveryCode.trim()) return setError('Nhập Số DO')
     if (!isMultiDO && !customerName.trim()) return setError('Nhập tên khách hàng')
-    if (!isNPPEdit && !exportType) return setError('Chọn loại xe')
+    if (!isNPPEdit && !isProdEdit && !exportType) return setError('Chọn loại xe')
     for (const item of items) {
       if (!item.material_code.trim()) return setError('Chọn mã hàng cho tất cả dòng')
       if (!item.cartons || item.cartons <= 0) return setError('Số thùng phải > 0')

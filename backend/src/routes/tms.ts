@@ -22,9 +22,9 @@ const requireTmsView = requireAnyPerm(
 
 // VehicleType (Loại xe)
 router.get('/vehicle-types',     requireTmsView,                               vehicleType.listVehicleTypes)
-router.post('/vehicle-types',    requirePerm('tms_vehicle_types', 'manage'),   vehicleType.createVehicleType)
-router.put('/vehicle-types/reorder', requirePerm('tms_vehicle_types', 'manage'), vehicleType.reorderVehicleTypes)  // ĐẶT TRƯỚC /:id
-router.put('/vehicle-types/:id', requirePerm('tms_vehicle_types', 'manage'),   vehicleType.updateVehicleType)
+router.post('/vehicle-types',    requirePerm('tms_vehicle_types', 'create'),   vehicleType.createVehicleType)
+router.put('/vehicle-types/reorder', requirePerm('tms_vehicle_types', 'edit'), vehicleType.reorderVehicleTypes)  // ĐẶT TRƯỚC /:id
+router.put('/vehicle-types/:id', requirePerm('tms_vehicle_types', 'edit'),   vehicleType.updateVehicleType)
 
 // DeliverySlot
 router.get('/slots',           requirePerm('tms_plan', 'view'),                slot.listSlots)
@@ -55,21 +55,21 @@ router.delete('/vehicle-slots/:id',              requirePerm('tms_plan', 'add_ve
 // SlotTemplate (Khung giờ)
 router.get('/slot-templates/vehicle-types', requireTmsView,                    slotTemplate.getVehicleTypesByWarehouse)
 router.get('/slot-templates',        requirePerm('tms_slots', 'view'),         slotTemplate.listSlotTemplates)
-router.post('/slot-templates',       requirePerm('tms_slots', 'manage'),       slotTemplate.createSlotTemplate)
-router.put('/slot-templates/:id',    requirePerm('tms_slots', 'manage'),       slotTemplate.updateSlotTemplate)
-router.delete('/slot-templates/:id', requirePerm('tms_slots', 'manage'),       slotTemplate.deleteSlotTemplate)
+router.post('/slot-templates',       requirePerm('tms_slots', 'create'),       slotTemplate.createSlotTemplate)
+router.put('/slot-templates/:id',    requirePerm('tms_slots', 'edit'),         slotTemplate.updateSlotTemplate)
+router.delete('/slot-templates/:id', requirePerm('tms_slots', 'delete'),       slotTemplate.deleteSlotTemplate)
 
 // TransportCompany (ĐVVT / NCC)
 router.get('/transport-companies',        requireAnyPerm(['tms_plan', 'view'], ['tms_companies', 'view'], ['tms_vehicles', 'view']), transportCompany.listTransportCompanies)
-router.post('/transport-companies',       requirePerm('tms_companies', 'manage'),  transportCompany.createTransportCompany)
-router.put('/transport-companies/:id',    requirePerm('tms_companies', 'manage'),  transportCompany.updateTransportCompany)
-router.delete('/transport-companies/:id', requirePerm('tms_companies', 'manage'),  transportCompany.deleteTransportCompany)
+router.post('/transport-companies',       requirePerm('tms_companies', 'create'),  transportCompany.createTransportCompany)
+router.put('/transport-companies/:id',    requirePerm('tms_companies', 'edit'),    transportCompany.updateTransportCompany)
+router.delete('/transport-companies/:id', requirePerm('tms_companies', 'delete'),  transportCompany.deleteTransportCompany)
 
 // Vehicle (Xe)
 router.get('/vehicles',        requireAnyPerm(['tms_plan', 'view'], ['tms_vehicles', 'view']), vehicle.listVehicles)
-router.post('/vehicles',       requirePerm('tms_vehicles', 'manage'), vehicle.createVehicle)
-router.put('/vehicles/:id',    requirePerm('tms_vehicles', 'manage'), vehicle.updateVehicle)
-router.delete('/vehicles/:id', requirePerm('tms_vehicles', 'manage'), vehicle.deleteVehicle)
+router.post('/vehicles',       requirePerm('tms_vehicles', 'create'), vehicle.createVehicle)
+router.put('/vehicles/:id',    requirePerm('tms_vehicles', 'edit'),   vehicle.updateVehicle)
+router.delete('/vehicles/:id', requirePerm('tms_vehicles', 'delete'), vehicle.deleteVehicle)
 
 // Gate Registration (Đăng ký cổng Bảo vệ)
 router.get('/gate-registrations',                    requirePerm('gate_registration', 'view'),   gateReg.listGateRegistrations)

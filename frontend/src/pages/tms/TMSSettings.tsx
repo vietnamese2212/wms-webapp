@@ -337,11 +337,25 @@ export default function TMSSettings() {
   const perms = user?.module_permissions as ModulePermissions | null ?? null
   const userNccId = user?.ncc_id ?? null   // non-null = ĐVVT user
 
-  // Quyền write từng tab
-  const canVehicleTypes = can(perms, 'tms_vehicle_types', 'manage')
-  const canSlots        = can(perms, 'tms_slots',         'manage')
-  const canCompanies    = can(perms, 'tms_companies',     'manage')
-  const canVehicles     = can(perms, 'tms_vehicles',      'manage')
+  // Quyền write từng tab — mịn theo capability (create / edit / delete)
+  const vtCreate = can(perms, 'tms_vehicle_types', 'create')
+  const vtEdit   = can(perms, 'tms_vehicle_types', 'edit')      // sửa + kéo-thả thứ tự
+  const vtWrite  = vtCreate || vtEdit                            // hiện cột thao tác
+
+  const slotCreate = can(perms, 'tms_slots', 'create')
+  const slotEdit   = can(perms, 'tms_slots', 'edit')
+  const slotDelete = can(perms, 'tms_slots', 'delete')
+  const slotWrite  = slotEdit || slotDelete
+
+  const coCreate = can(perms, 'tms_companies', 'create')
+  const coEdit   = can(perms, 'tms_companies', 'edit')
+  const coDelete = can(perms, 'tms_companies', 'delete')
+  const coWrite  = coEdit || coDelete
+
+  const vCreate = can(perms, 'tms_vehicles', 'create')
+  const vEdit   = can(perms, 'tms_vehicles', 'edit')
+  const vDelete = can(perms, 'tms_vehicles', 'delete')
+  const vWrite  = vEdit || vDelete
 
   // Tab visibility theo quyền view
   const showVtTab        = canAccess(perms, 'tms_vehicle_types')
@@ -469,7 +483,7 @@ export default function TMSSettings() {
         <TabsContent value="vehicle-types" className="space-y-3">
           <div className="flex items-center justify-between">
             <p className="text-xs text-slate-500">{vehicleTypes.length} loại xe</p>
-            {canVehicleTypes && (
+            {vtCreate && (
               <Button size="sm" className="gap-1.5" onClick={() => { setEditingVT(null); setShowVTDlg(true) }}>
                 <Plus className="h-4 w-4" /> Thêm loại xe
               </Button>
@@ -482,11 +496,11 @@ export default function TMSSettings() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        {canVehicleTypes && <TableHead className="px-2 py-1.5 w-7" />}
+                        {vtEdit && <TableHead className="px-2 py-1.5 w-7" />}
                         <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Mã</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Tên loại xe</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Trạng thái</TableHead>
-                        {canVehicleTypes && <TableHead className="px-2 py-1.5 w-12" />}
+                        {vtEdit && <TableHead className="px-2 py-1.5 w-12" />}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -494,19 +508,19 @@ export default function TMSSettings() {
                         const isOver = overVT?.idx === idx && dragVTIdx !== null && dragVTIdx !== idx
                         return (
                         <TableRow key={vt.id}
-                          draggable={canVehicleTypes}
+                          draggable={vtEdit}
                           onDragStart={() => setDragVTIdx(idx)}
-                          onDragOver={canVehicleTypes ? (e => {
+                          onDragOver={vtEdit ? (e => {
                             e.preventDefault()
                             const r = e.currentTarget.getBoundingClientRect()
                             const below = (e.clientY - r.top) > r.height / 2
                             if (overVT?.idx !== idx || overVT?.below !== below) setOverVT({ idx, below })
                           }) : undefined}
-                          onDrop={canVehicleTypes ? (e => { e.preventDefault(); dropVT() }) : undefined}
+                          onDrop={vtEdit ? (e => { e.preventDefault(); dropVT() }) : undefined}
                           onDragEnd={() => { setDragVTIdx(null); setOverVT(null) }}
                           className={`cursor-pointer ${detailVT?.id === vt.id ? 'bg-slate-100' : 'hover:bg-slate-50'} ${dragVTIdx === idx ? 'opacity-40' : ''} ${isOver && !overVT?.below ? '[&>td]:border-t-2 [&>td]:border-t-sky-500' : ''} ${isOver && overVT?.below ? '[&>td]:border-b-2 [&>td]:border-b-sky-500' : ''}`}
                           onClick={() => setDetailVT(prev => prev?.id === vt.id ? null : vt)}>
-                          {canVehicleTypes && (
+                          {vtEdit && (
                             <TableCell className="px-2 py-1 w-7 text-slate-300 cursor-grab active:cursor-grabbing" onClick={e => e.stopPropagation()} title="Kéo để đổi thứ tự">
                               <GripVertical className="h-3.5 w-3.5" />
                             </TableCell>
@@ -518,7 +532,7 @@ export default function TMSSettings() {
                               {vt.is_active ? 'Hoạt động' : 'Tạm dừng'}
                             </Badge>
                           </TableCell>
-                          {canVehicleTypes && (
+                          {vtEdit && (
                             <TableCell className="px-2 py-1">
                               <button className="text-slate-400 hover:text-blue-500 transition-colors p-1"
                                 onClick={e => { e.stopPropagation(); setEditingVT(vt); setShowVTDlg(true) }}>
@@ -568,7 +582,7 @@ export default function TMSSettings() {
                   <span className="font-medium text-slate-700">{selectedWarehouse?.name}</span>
                   {' '}· {filteredTemplates.length} template
                 </p>
-                {canSlots && (
+                {slotCreate && (
                   <Button size="sm" className="gap-1.5" onClick={() => { setEditingST(null); setShowSTDlg(true) }}>
                     <Plus className="h-4 w-4" /> Thêm khung giờ
                   </Button>
@@ -588,7 +602,7 @@ export default function TMSSettings() {
                     <div className="p-12 text-center text-slate-400 space-y-2">
                       <Clock className="h-10 w-10 mx-auto opacity-30" />
                       <p className="text-sm">Chưa có khung giờ nào cho kho này</p>
-                      {canSlots && <Button size="sm" variant="outline" onClick={() => { setEditingST(null); setShowSTDlg(true) }}>
+                      {slotCreate && <Button size="sm" variant="outline" onClick={() => { setEditingST(null); setShowSTDlg(true) }}>
                         <Plus className="h-4 w-4 mr-1" /> Thêm khung giờ đầu tiên
                       </Button>}
                     </div>
@@ -603,7 +617,7 @@ export default function TMSSettings() {
                             <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Khung giờ</TableHead>
                             <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right">Max xe</TableHead>
                             <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Trạng thái</TableHead>
-                            {canSlots && <TableHead className="px-2 py-1.5 w-16" />}
+                            {slotWrite && <TableHead className="px-2 py-1.5 w-16" />}
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -623,18 +637,18 @@ export default function TMSSettings() {
                                   {st.is_active ? 'Hoạt động' : 'Tạm dừng'}
                                 </Badge>
                               </TableCell>
-                              {canSlots && (
+                              {slotWrite && (
                                 <TableCell className="px-2 py-1">
                                   <div className="flex items-center gap-0.5">
-                                    <button className="text-slate-400 hover:text-blue-500 p-1"
+                                    {slotEdit && <button className="text-slate-400 hover:text-blue-500 p-1"
                                       onClick={e => { e.stopPropagation(); setEditingST(st); setShowSTDlg(true) }}>
                                       <Pencil className="h-3.5 w-3.5" />
-                                    </button>
-                                    <button className="text-slate-400 hover:text-red-500 p-1"
+                                    </button>}
+                                    {slotDelete && <button className="text-slate-400 hover:text-red-500 p-1"
                                       disabled={deletingST}
                                       onClick={e => { e.stopPropagation(); if (confirm('Xóa template này?')) deleteST(st.id, { onError: e2 => toast({ variant: 'destructive', title: 'Không xóa được template', description: apiMsg(e2) }) }) }}>
                                       <Trash2 className="h-3.5 w-3.5" />
-                                    </button>
+                                    </button>}
                                   </div>
                                 </TableCell>
                               )}
@@ -674,7 +688,7 @@ export default function TMSSettings() {
         <TabsContent value="companies" className="space-y-3">
           <div className="flex items-center justify-between">
             <p className="text-xs text-slate-500">{companies.length} ĐVVT / NCC</p>
-            {canCompanies && (
+            {coCreate && (
               <Button size="sm" className="gap-1.5" onClick={() => { setEditingCo(null); setShowCoDlg(true) }}>
                 <Plus className="h-4 w-4" /> Thêm ĐVVT
               </Button>
@@ -686,7 +700,7 @@ export default function TMSSettings() {
                 <div className="p-12 text-center text-slate-400 space-y-2">
                   <Building2 className="h-10 w-10 mx-auto opacity-30" />
                   <p className="text-sm">Chưa có ĐVVT nào</p>
-                  {canCompanies && <Button size="sm" variant="outline" onClick={() => { setEditingCo(null); setShowCoDlg(true) }}>
+                  {coCreate && <Button size="sm" variant="outline" onClick={() => { setEditingCo(null); setShowCoDlg(true) }}>
                     <Plus className="h-4 w-4 mr-1" /> Thêm ĐVVT đầu tiên
                   </Button>}
                 </div>
@@ -701,7 +715,7 @@ export default function TMSSettings() {
                         <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Người liên hệ</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">SĐT</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Trạng thái</TableHead>
-                        {canCompanies && <TableHead className="px-2 py-1.5 w-16" />}
+                        {coWrite && <TableHead className="px-2 py-1.5 w-16" />}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -723,14 +737,14 @@ export default function TMSSettings() {
                               {co.is_active ? 'Hoạt động' : 'Tạm dừng'}
                             </Badge>
                           </TableCell>
-                          {canCompanies && (
+                          {coWrite && (
                             <TableCell className="px-2 py-1">
                               <div className="flex items-center gap-0.5">
-                                <button className="text-slate-400 hover:text-blue-500 transition-colors p-1"
+                                {coEdit && <button className="text-slate-400 hover:text-blue-500 transition-colors p-1"
                                   onClick={e => { e.stopPropagation(); setEditingCo(co); setShowCoDlg(true) }}>
                                   <Pencil className="h-3.5 w-3.5" />
-                                </button>
-                                {!userNccId && (
+                                </button>}
+                                {coDelete && !userNccId && (
                                   <button className="text-slate-400 hover:text-red-500 transition-colors p-1"
                                     disabled={deletingCo}
                                     onClick={e => { e.stopPropagation(); if (confirm(`Xóa ĐVVT "${co.name}"?\nTất cả xe và tài khoản lái xe liên kết sẽ bị xóa vĩnh viễn.`)) deleteCo(co.id, { onError: e2 => toast({ variant: 'destructive', title: 'Không xóa được ĐVVT', description: apiMsg(e2) }) }) }}>
@@ -774,7 +788,7 @@ export default function TMSSettings() {
         <TabsContent value="vehicles" className="space-y-3">
           <div className="flex items-center justify-between">
             <p className="text-xs text-slate-500">{filteredVehicles.length} xe</p>
-            {canVehicles && (
+            {vCreate && (
               <Button size="sm" className="gap-1.5" onClick={() => { setEditingV(null); setShowVDlg(true) }}>
                 <Plus className="h-4 w-4" /> Thêm xe
               </Button>
@@ -794,7 +808,7 @@ export default function TMSSettings() {
                 <div className="p-12 text-center text-slate-400 space-y-2">
                   <Truck className="h-10 w-10 mx-auto opacity-30" />
                   <p className="text-sm">Chưa có xe nào</p>
-                  {canVehicles && <Button size="sm" variant="outline" onClick={() => { setEditingV(null); setShowVDlg(true) }}>
+                  {vCreate && <Button size="sm" variant="outline" onClick={() => { setEditingV(null); setShowVDlg(true) }}>
                     <Plus className="h-4 w-4 mr-1" /> Thêm xe đầu tiên
                   </Button>}
                 </div>
@@ -807,7 +821,7 @@ export default function TMSSettings() {
                         <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Loại xe</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">ĐVVT / NCC</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Trạng thái</TableHead>
-                        {canVehicles && <TableHead className="px-2 py-1.5 w-16" />}
+                        {vWrite && <TableHead className="px-2 py-1.5 w-16" />}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -823,18 +837,18 @@ export default function TMSSettings() {
                               {v.is_active ? 'Hoạt động' : 'Tạm dừng'}
                             </Badge>
                           </TableCell>
-                          {canVehicles && (
+                          {vWrite && (
                             <TableCell className="px-2 py-1">
                               <div className="flex items-center gap-0.5">
-                                <button className="text-slate-400 hover:text-blue-500 transition-colors p-1"
+                                {vEdit && <button className="text-slate-400 hover:text-blue-500 transition-colors p-1"
                                   onClick={e => { e.stopPropagation(); setEditingV(v); setShowVDlg(true) }}>
                                   <Pencil className="h-3.5 w-3.5" />
-                                </button>
-                                <button className="text-slate-400 hover:text-red-500 transition-colors p-1"
+                                </button>}
+                                {vDelete && <button className="text-slate-400 hover:text-red-500 transition-colors p-1"
                                   disabled={deletingV}
                                   onClick={e => { e.stopPropagation(); if (confirm(`Xóa xe "${v.license_plate}"?\nTài khoản lái xe liên kết (nếu có) sẽ bị xóa vĩnh viễn.`)) deleteV(v.id, { onError: e2 => toast({ variant: 'destructive', title: 'Không xóa được xe', description: apiMsg(e2) }) }) }}>
                                   <Trash2 className="h-3.5 w-3.5" />
-                                </button>
+                                </button>}
                               </div>
                             </TableCell>
                           )}

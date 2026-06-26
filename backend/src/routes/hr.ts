@@ -11,9 +11,9 @@ const router = Router()
 
 // ─── Skill (Vị trí phân công) ───────────────────────────────────────────────
 router.get('/skills',        requirePerm('work_skill', 'view'),   skill.listSkills)
-router.post('/skills',       requirePerm('work_skill', 'manage'), skill.createSkill)
-router.put('/skills/:id',    requirePerm('work_skill', 'manage'), skill.updateSkill)
-router.delete('/skills/:id', requirePerm('work_skill', 'manage'), skill.deleteSkill)
+router.post('/skills',       requirePerm('work_skill', 'create'), skill.createSkill)
+router.put('/skills/:id',    requirePerm('work_skill', 'edit'),   skill.updateSkill)
+router.delete('/skills/:id', requirePerm('work_skill', 'delete'), skill.deleteSkill)
 
 // ─── EmployeeSkill (NV pick skill từ chức danh) ─────────────────────────────
 router.get('/employees/:id/skills',     requirePerm('work_skill', 'view'),   skill.getEmployeeSkills)

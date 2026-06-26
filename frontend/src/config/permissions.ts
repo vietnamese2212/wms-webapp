@@ -1,10 +1,15 @@
 // ─── Module + Action registry ─────────────────────────────────────────────────
 // Thêm module mới: thêm key vào MODULES
 // Thêm action mới trong module: thêm key vào actions của module đó
+//
+// `page` = TÊN TRANG/MENU mà module thuộc về (dùng gom nhóm trong trình phân quyền).
+// `tab`  = TÊN TAB trong trang đó (chỉ khi nhiều module dùng chung 1 page). Trình phân
+//          quyền gom các module cùng `page` lại, mỗi `tab` là 1 dòng con → "Trang → Tab".
+// QUY TẮC ĐỘ MỊN: mỗi capability = 1 action riêng (create/edit/delete...), KHÔNG gộp `manage`.
 
 export const MODULES = {
   inventory: {
-    label: 'Tồn kho',
+    page: 'Tồn kho',
     actions: {
       view:            'Xem danh sách',
       adjust:          'Điều chỉnh tồn',
@@ -16,7 +21,7 @@ export const MODULES = {
     },
   },
   inbound: {
-    label: 'Nhập kho',
+    page: 'Nhập kho',
     actions: {
       view:               'Xem danh sách',
       create:             'Tạo phiếu',
@@ -32,7 +37,7 @@ export const MODULES = {
     },
   },
   outbound: {
-    label: 'Xuất kho',
+    page: 'Xuất kho',
     actions: {
       view:       'Xem danh sách',
       create:     'Tạo đơn',
@@ -48,13 +53,13 @@ export const MODULES = {
     },
   },
   scanlog: {
-    label: 'Lịch sử quét',
+    page: 'Lịch sử quét',
     actions: {
       view: 'Xem lịch sử quét',
     },
   },
   loosepicking: {
-    label: 'Nhặt lẻ',
+    page: 'Nhặt lẻ',
     actions: {
       view:     'Xem danh sách',
       create:   'Tạo đơn',
@@ -65,7 +70,7 @@ export const MODULES = {
     },
   },
   stocktake: {
-    label: 'Kiểm kho',
+    page: 'Kiểm kho',
     actions: {
       view:     'Xem danh sách',
       scan:     'Quét QR',
@@ -73,7 +78,7 @@ export const MODULES = {
     },
   },
   locations: {
-    label: 'Vị trí kho',
+    page: 'Vị trí kho',
     actions: {
       view:   'Xem danh sách',
       create: 'Thêm vị trí',
@@ -82,13 +87,14 @@ export const MODULES = {
     },
   },
   employees: {
-    label: 'Sơ đồ tổ chức (xem)',
+    page: 'Sơ đồ tổ chức (xem)',
     actions: {
       view: 'Xem sơ đồ tổ chức / danh sách nhân sự',
     },
   },
   user_admin: {
-    label: 'Quản lý người dùng',
+    page: 'Quản lý người dùng',
+    tab:  'Người dùng & Phân quyền',
     actions: {
       view:         'Mở trang / xem danh sách',
       create:       'Thêm tài khoản [Nhân viên]',
@@ -98,8 +104,19 @@ export const MODULES = {
       manage_roles: 'Sửa & phân quyền [Phòng ban · Chức danh]',
     },
   },
+  work_skill: {
+    page: 'Quản lý người dùng',
+    tab:  'Vị trí & Skill',
+    actions: {
+      view:   'Xem danh sách',
+      create: 'Thêm vị trí',
+      edit:   'Sửa vị trí',
+      delete: 'Xóa vị trí',
+      assign: 'Gán skill cho nhân viên',
+    },
+  },
   wms_settings: {
-    label: 'Cài đặt WMS',
+    page: 'Cài đặt WMS',
     actions: {
       view:             'Mở trang cài đặt',
       manage_warehouse: 'Quản lý Kho',
@@ -110,7 +127,8 @@ export const MODULES = {
     },
   },
   tms_plan: {
-    label: 'Vận chuyển: Đặt lịch & Chuyển kho (trang TMS Bookings)',
+    page: 'TMS Bookings',
+    tab:  'Đặt lịch & Chuyển kho',
     actions: {
       view:            'Xem kế hoạch',
       create:          'Thêm đơn',
@@ -126,36 +144,58 @@ export const MODULES = {
       confirm_receipt: 'Nhận hàng chuyển kho: xác nhận / quét / hoàn thành [Chuyển kho]',
     },
   },
+  inbound_plan: {
+    page: 'TMS Bookings',
+    tab:  'Kế hoạch nhập',
+    actions: {
+      view:   'Xem kế hoạch nhập',
+      create: 'Thêm / Upload dòng kế hoạch',
+      edit:   'Sửa dòng kế hoạch',
+      delete: 'Xóa dòng (nhập nhầm)',
+      cancel: 'Hủy dòng kế hoạch',
+    },
+  },
   tms_vehicle_types: {
-    label: 'TMS — Loại xe',
+    page: 'Cài đặt TMS',
+    tab:  'Loại xe',
     actions: {
       view:   'Xem danh sách',
-      manage: 'Thêm / Sửa loại xe',
+      create: 'Thêm loại xe',
+      edit:   'Sửa loại xe',
     },
   },
   tms_slots: {
-    label: 'TMS — Khung giờ',
+    page: 'Cài đặt TMS',
+    tab:  'Khung giờ',
     actions: {
       view:   'Xem danh sách',
-      manage: 'Thêm / Sửa / Xóa khung giờ',
+      create: 'Thêm khung giờ',
+      edit:   'Sửa khung giờ',
+      delete: 'Xóa khung giờ',
     },
   },
   tms_companies: {
-    label: 'TMS — ĐVVT / NCC',
+    page: 'Cài đặt TMS',
+    tab:  'ĐVVT / NCC',
     actions: {
       view:   'Xem danh sách',
-      manage: 'Thêm / Sửa / Xóa ĐVVT',
+      create: 'Thêm ĐVVT',
+      edit:   'Sửa ĐVVT',
+      delete: 'Xóa ĐVVT',
     },
   },
   tms_vehicles: {
-    label: 'TMS — Xe',
+    page: 'Cài đặt TMS',
+    tab:  'Xe',
     actions: {
       view:   'Xem danh sách xe',
-      manage: 'Thêm / Sửa / Xóa xe',
+      create: 'Thêm xe',
+      edit:   'Sửa xe',
+      delete: 'Xóa xe',
     },
   },
   gate_registration: {
-    label: 'Đăng ký cổng',
+    page: 'Đăng ký cổng',
     actions: {
       view:   'Xem danh sách',
       create: 'Tạo đăng ký',
@@ -166,18 +206,8 @@ export const MODULES = {
       exit:   'Xác nhận xe ra (Bảo vệ)',
     },
   },
-  inbound_plan: {
-    label: 'Kế hoạch nhập chuyển kho (trong trang Kế hoạch VC)',
-    actions: {
-      view:   'Xem kế hoạch nhập',
-      create: 'Thêm / Upload dòng kế hoạch',
-      edit:   'Sửa dòng kế hoạch',
-      delete: 'Xóa dòng (nhập nhầm)',
-      cancel: 'Hủy dòng kế hoạch',
-    },
-  },
   materials: {
-    label: 'Mã hàng',
+    page: 'Mã hàng',
     actions: {
       view:   'Xem danh sách',
       create: 'Thêm mã hàng',
@@ -186,7 +216,7 @@ export const MODULES = {
     },
   },
   pallet_print: {
-    label: 'In tem pallet',
+    page: 'In tem pallet',
     actions: {
       view:    'Xem trang',
       generate:'Sinh tem mới (in)',
@@ -194,7 +224,7 @@ export const MODULES = {
     },
   },
   pallet_ops: {
-    label: 'Dồn / Tách pallet',
+    page: 'Dồn / Tách pallet',
     actions: {
       view:    'Xem trang',
       merge:   'Dồn (gom nhóm)',
@@ -202,16 +232,9 @@ export const MODULES = {
       split:   'Tách số lượng',
     },
   },
-  work_skill: {
-    label: 'Vị trí & Skill',
-    actions: {
-      view:   'Xem danh sách',
-      manage: 'Thêm / Sửa / Xóa vị trí',
-      assign: 'Gán skill cho nhân viên',
-    },
-  },
   leave: {
-    label: 'Nghỉ phép',
+    page: 'Chấm công',
+    tab:  'Nghỉ phép',
     actions: {
       view:    'Xem danh sách',
       request: 'Gửi đơn nghỉ',
@@ -219,8 +242,18 @@ export const MODULES = {
       delete:  'Xóa đơn',
     },
   },
+  attendance: {
+    page: 'Chấm công',
+    tab:  'Bảng công',
+    actions: {
+      view:     'Xem bảng công [Bảng công]',
+      self_log: 'Tự chấm công (của mình) [Của tôi]',
+      edit:     'Sửa công người khác [Bảng công]',
+      report:   'Xem báo cáo [Bảng công]',
+    },
+  },
   work_assignment: {
-    label: 'Phân công lịch làm việc',
+    page: 'Phân công lịch làm việc',
     actions: {
       view:               'Xem phân công',
       create:             'Tạo phiếu + Tự xếp',
@@ -231,19 +264,22 @@ export const MODULES = {
       manage_shift_rules: 'Quản lý Quy tắc ca',
     },
   },
-  attendance: {
-    label: 'Chấm công',
-    actions: {
-      view:     'Xem bảng công [Bảng công]',
-      self_log: 'Tự chấm công (của mình) [Của tôi]',
-      edit:     'Sửa công người khác [Bảng công]',
-      report:   'Xem báo cáo [Bảng công]',
-    },
-  },
 } as const
 
 export type ModuleKey = keyof typeof MODULES
 export type ModulePermissions = Partial<Record<ModuleKey, string[]>>
+
+// Gom module theo Trang → Tab cho trình phân quyền (giữ thứ tự xuất hiện trong MODULES).
+// Module cùng `page` nằm chung 1 nhóm; mỗi `tab` là 1 dòng con trong nhóm đó.
+export const PERMISSION_PAGES: { page: string; modules: ModuleKey[] }[] = (() => {
+  const groups: { page: string; modules: ModuleKey[] }[] = []
+  const idx = new Map<string, number>()
+  for (const [key, def] of Object.entries(MODULES) as [ModuleKey, { page: string }][]) {
+    if (!idx.has(def.page)) { idx.set(def.page, groups.length); groups.push({ page: def.page, modules: [] }) }
+    groups[idx.get(def.page)!].modules.push(key)
+  }
+  return groups
+})()
 
 // All permissions — dùng cho NATIONAL_MANAGER fallback
 export const ALL_PERMISSIONS: ModulePermissions = Object.fromEntries(

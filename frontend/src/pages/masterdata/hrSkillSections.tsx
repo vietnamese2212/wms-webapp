@@ -22,7 +22,9 @@ const shiftLabel = (t: string | null) => SHIFT_OPTS.find(o => o.value === (t ?? 
 export function JobTitleSkillSection({ jobTitleId }: { jobTitleId: string }) {
   const user  = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
-  const canManage = can(perms, 'work_skill', 'manage')
+  const canSkillCreate = can(perms, 'work_skill', 'create')
+  const canSkillEdit   = can(perms, 'work_skill', 'edit')
+  const canSkillDelete = can(perms, 'work_skill', 'delete')
 
   const { data: skills = [], isLoading } = useSkills({ job_title_id: jobTitleId, include_inactive: true })
   // skill kế thừa từ chức danh cấp dưới (chỉ đọc — quản lý ở chức danh con)
@@ -61,7 +63,7 @@ export function JobTitleSkillSection({ jobTitleId }: { jobTitleId: string }) {
     <div className="space-y-2">
       <p className="text-xs font-medium text-slate-600 flex items-center gap-1"><Award className="h-3.5 w-3.5" /> Danh mục Vị trí / Skill của chức danh</p>
       {err && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</div>}
-      {canManage && (
+      {canSkillCreate && (
         <div className="flex items-end gap-2">
           <Input value={name} onChange={e => setName(e.target.value)} onKeyDown={e => e.key === 'Enter' && add()} placeholder="VD: Pallet, SCA, SX…" className="h-8 text-sm flex-1" />
           <select value={shift} onChange={e => setShift(e.target.value)} className="border border-slate-200 rounded-md px-2 text-sm h-8 bg-white">
@@ -90,8 +92,8 @@ export function JobTitleSkillSection({ jobTitleId }: { jobTitleId: string }) {
               <>
                 <span className="text-sm text-slate-700 flex-1">{s.name}{!s.is_active && <span className="ml-1 text-[10px] text-slate-400">(ẩn)</span>}</span>
                 <span className="text-[10px] text-slate-400">{shiftLabel(s.shift_tag)}</span>
-                {canManage && <button onClick={() => startEdit(s)} className="text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded p-1"><Pencil className="h-3.5 w-3.5" /></button>}
-                {canManage && <button onClick={() => remove(s)} className="text-slate-400 hover:text-red-600 hover:bg-red-50 rounded p-1"><Trash2 className="h-3.5 w-3.5" /></button>}
+                {canSkillEdit && <button onClick={() => startEdit(s)} className="text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded p-1"><Pencil className="h-3.5 w-3.5" /></button>}
+                {canSkillDelete && <button onClick={() => remove(s)} className="text-slate-400 hover:text-red-600 hover:bg-red-50 rounded p-1"><Trash2 className="h-3.5 w-3.5" /></button>}
               </>
             )}
           </div>

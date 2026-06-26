@@ -21,7 +21,7 @@ import {
   useTransportCompanies, useTmsVehicles,
 } from '@/api/hooks'
 import { apiClient } from '@/api/client'
-import { MODULES, can, isAdmin, type ModuleKey, type ModulePermissions } from '@/config/permissions'
+import { MODULES, PERMISSION_PAGES, can, isAdmin, type ModuleKey, type ModulePermissions } from '@/config/permissions'
 import { useAuthStore } from '@/stores/authStore'
 import type { EmployeeRecord, Department, JobTitle, TmsVehicle } from '@/types'
 import { JobTitleSkillSection, EmployeeSkillSection } from './hrSkillSections'
@@ -713,51 +713,61 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
               <ShieldCheck className="h-3.5 w-3.5" /> Phân quyền module
             </p>
             <div className="space-y-3 max-h-[400px] overflow-y-auto">
-              {(Object.entries(MODULES) as [ModuleKey, typeof MODULES[ModuleKey]][]).map(([modKey, modDef]) => {
-                const grantedActions = (modulePerms[modKey] ?? []) as string[]
-                const hasAny = grantedActions.length > 0
+              {PERMISSION_PAGES.map(({ page, modules }) => {
+                const mods = modules.map(k => [k, MODULES[k]] as [ModuleKey, typeof MODULES[ModuleKey]])
+                const multi = mods.length > 1                                            // trang nhiều tab
+                const pageHasAny = mods.some(([k]) => (modulePerms[k]?.length ?? 0) > 0)
+                const isAll = mods.every(([k, d]) => Object.keys(d.actions).every(a => (modulePerms[k] ?? []).includes(a)))
                 return (
-                  <div key={modKey} className={`rounded-lg border p-3 ${hasAny ? 'border-blue-200 bg-blue-50/50' : 'border-slate-200'}`}>
+                  <div key={page} className={`rounded-lg border p-3 ${pageHasAny ? 'border-blue-200 bg-blue-50/50' : 'border-slate-200'}`}>
                     <div className="flex items-center justify-between mb-2">
-                      <p className={`text-xs font-semibold ${hasAny ? 'text-blue-700' : 'text-slate-500'}`}>
-                        {modDef.label}
+                      <p className={`text-xs font-semibold ${pageHasAny ? 'text-blue-700' : 'text-slate-500'}`}>
+                        {page}
                       </p>
-                      {(() => {
-                        const allActions = Object.keys(modDef.actions)
-                        const isAll = allActions.every(a => grantedActions.includes(a))
-                        return (
-                          <button
-                            type="button"
-                            onClick={() => setModulePerms(prev => ({
-                              ...prev,
-                              [modKey]: isAll ? undefined : allActions,
-                            }))}
-                            className={`text-[10px] px-2 py-0.5 rounded font-medium transition-colors ${
-                              isAll
-                                ? 'bg-blue-600 text-white hover:bg-blue-700'
-                                : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
-                            }`}
-                          >
-                            Tất cả
-                          </button>
-                        )
-                      })()}
+                      <button
+                        type="button"
+                        onClick={() => setModulePerms(prev => {
+                          const next = { ...prev }
+                          for (const [k, d] of mods) next[k] = isAll ? undefined : Object.keys(d.actions)
+                          return next
+                        })}
+                        className={`text-[10px] px-2 py-0.5 rounded font-medium transition-colors ${
+                          isAll
+                            ? 'bg-blue-600 text-white hover:bg-blue-700'
+                            : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                        }`}
+                      >
+                        Tất cả
+                      </button>
                     </div>
-                    <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-                      {(Object.entries(modDef.actions) as [string, string][]).map(([actionKey, actionLabel]) => {
-                        const checked = grantedActions.includes(actionKey)
+                    <div className="space-y-2.5">
+                      {mods.map(([modKey, modDef]) => {
+                        const grantedActions = (modulePerms[modKey] ?? []) as string[]
+                        const tab = (modDef as { tab?: string }).tab
                         return (
-                          <label key={actionKey} className="flex items-center gap-1.5 cursor-pointer select-none">
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={() => toggleAction(modKey, actionKey)}
-                              className="h-3.5 w-3.5 rounded accent-blue-600"
-                            />
-                            <span className={`text-xs ${checked ? 'text-slate-700 font-medium' : 'text-slate-400'}`}>
-                              {actionLabel}
-                            </span>
-                          </label>
+                          <div key={modKey} className={multi ? 'border-l-2 border-slate-200 pl-2.5' : ''}>
+                            {multi && tab && (
+                              <p className="text-[11px] font-medium text-slate-500 mb-1">{tab}</p>
+                            )}
+                            <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+                              {(Object.entries(modDef.actions) as [string, string][]).map(([actionKey, actionLabel]) => {
+                                const checked = grantedActions.includes(actionKey)
+                                return (
+                                  <label key={actionKey} className="flex items-center gap-1.5 cursor-pointer select-none">
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      onChange={() => toggleAction(modKey, actionKey)}
+                                      className="h-3.5 w-3.5 rounded accent-blue-600"
+                                    />
+                                    <span className={`text-xs ${checked ? 'text-slate-700 font-medium' : 'text-slate-400'}`}>
+                                      {actionLabel}
+                                    </span>
+                                  </label>
+                                )
+                              })}
+                            </div>
+                          </div>
                         )
                       })}
                     </div>
@@ -805,7 +815,8 @@ export default function UserManagement() {
   // Cấu trúc phòng ban/chức danh & phân quyền: chỉ Admin. Danh mục Vị trí/Skill: Admin hoặc người có
   // work_skill.manage cho chức danh CẤP DƯỚI mình (theo sơ đồ chức danh).
   const isAdminUser    = isAdmin(user?.name)
-  const canManageSkill = can(perms, 'work_skill', 'manage')
+  // "Quản lý skill" = có bất kỳ quyền ghi danh mục Vị trí/Skill (create/edit/delete)
+  const canManageSkill = can(perms, 'work_skill', 'create') || can(perms, 'work_skill', 'edit') || can(perms, 'work_skill', 'delete')
   const { data: allJts = [] } = useJobTitles()
   const subordinateJtIds = (() => {
     const set = new Set<string>()

@@ -21,7 +21,8 @@ import {
   useTransportCompanies, useTmsVehicles,
 } from '@/api/hooks'
 import { apiClient } from '@/api/client'
-import { MODULES, PERMISSION_PAGES, can, isAdmin, type ModuleKey, type ModulePermissions } from '@/config/permissions'
+import { MODULES, can, isAdmin, type ModuleKey, type ModulePermissions } from '@/config/permissions'
+import { PERMISSION_PAGES } from '@/config/navigation'
 import { useAuthStore } from '@/stores/authStore'
 import type { EmployeeRecord, Department, JobTitle, TmsVehicle } from '@/types'
 import { JobTitleSkillSection, EmployeeSkillSection } from './hrSkillSections'

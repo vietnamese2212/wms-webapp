@@ -269,17 +269,8 @@ export const MODULES = {
 export type ModuleKey = keyof typeof MODULES
 export type ModulePermissions = Partial<Record<ModuleKey, string[]>>
 
-// Gom module theo Trang → Tab cho trình phân quyền (giữ thứ tự xuất hiện trong MODULES).
-// Module cùng `page` nằm chung 1 nhóm; mỗi `tab` là 1 dòng con trong nhóm đó.
-export const PERMISSION_PAGES: { page: string; modules: ModuleKey[] }[] = (() => {
-  const groups: { page: string; modules: ModuleKey[] }[] = []
-  const idx = new Map<string, number>()
-  for (const [key, def] of Object.entries(MODULES) as [ModuleKey, { page: string }][]) {
-    if (!idx.has(def.page)) { idx.set(def.page, groups.length); groups.push({ page: def.page, modules: [] }) }
-    groups[idx.get(def.page)!].modules.push(key)
-  }
-  return groups
-})()
+// PERMISSION_PAGES (gom module theo Trang → Tab cho trình phân quyền) ĐÃ CHUYỂN sang
+// `config/navigation.ts` để xếp THEO THỨ TỰ SIDEBAR (tránh import vòng: navigation → permissions).
 
 // All permissions — dùng cho NATIONAL_MANAGER fallback
 export const ALL_PERMISSIONS: ModulePermissions = Object.fromEntries(

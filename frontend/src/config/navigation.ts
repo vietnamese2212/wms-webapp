@@ -7,7 +7,7 @@ import {
   Settings2, BarChart2, ClipboardList, UserCog, Scissors, ScanLine,
   ClipboardCheck, ShieldCheck, Tag, QrCode, CalendarRange, CalendarCheck, Network,
 } from 'lucide-react'
-import type { ModuleKey } from './permissions'
+import { MODULES, type ModuleKey } from './permissions'
 
 export interface NavItem {
   to: string
@@ -85,3 +85,26 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
 ]
+
+// ─── Trình phân quyền: gom module theo Trang → Tab, THỨ TỰ KHỚP SIDEBAR ──────────
+// Page xuất hiện theo đúng thứ tự module lần đầu gặp khi duyệt NAV_GROUPS (sidebar).
+// Module trong cùng page giữ thứ tự khai báo MODULES (tab con). Module không có trên
+// sidebar (vd inbound_plan, work_skill) đi kèm page-mate của nó; nếu page nào hoàn toàn
+// vắng mặt trên sidebar thì append cuối (an toàn).
+export const PERMISSION_PAGES: { page: string; modules: ModuleKey[] }[] = (() => {
+  const orderedPages: string[] = []
+  const seen = new Set<string>()
+  const pushPage = (p: string) => { if (!seen.has(p)) { seen.add(p); orderedPages.push(p) } }
+  for (const g of NAV_GROUPS) {
+    for (const it of g.items) {
+      const mods = it.modules ?? (it.module ? [it.module] : [])
+      for (const m of mods) pushPage(MODULES[m].page)
+    }
+  }
+  // an toàn: page có trong MODULES nhưng không xuất hiện trên sidebar
+  for (const k of Object.keys(MODULES) as ModuleKey[]) pushPage(MODULES[k].page)
+  return orderedPages.map(page => ({
+    page,
+    modules: (Object.keys(MODULES) as ModuleKey[]).filter(k => MODULES[k].page === page),
+  }))
+})()

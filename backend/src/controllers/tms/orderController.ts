@@ -414,27 +414,35 @@ export async function getPlanVsActual(req: Request, res: Response) {
       .neq('status', 'CANCELLED')
     if (planErr) return fail(res, planErr.message)
 
-    // ProductionImport records cho order này
+    // ProductionImport records cho order này (kèm no_qr + mode kho nhận để tính "no-QR hiệu lực")
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: actualOrders, error: actErr } = await supabase.from('ProductionImport')
-      .select('id, material_id, material:Material!material_id(material_code, short_name, material_description)')
+      .select('id, material_id, posm_cartons, material:Material!material_id(material_code, short_name, material_description, no_qr_tracking), warehouse:Warehouse!warehouse_id(inventory_mode)')
       .eq('tms_order_id', orderId)
       .neq('status', 'CANCELLED')
     if (actErr) return fail(res, actErr.message)
 
-    // Lấy số thùng thực tế từ InventoryEntry (cartons_imported) thay vì planned_cartons
-    const importIds = ((actualOrders ?? []) as any[]).map((o: any) => o.id as string)
-    const actualBoxMap = new Map<string, number>() // material_id → tổng cartons_imported
-    if (importIds.length > 0) {
-      const importMaterialMap = new Map<string, string>() // import_id → material_id
-      for (const o of (actualOrders ?? []) as any[]) {
-        importMaterialMap.set(o.id as string, o.material_id as string)
+    // Thực nhận theo material: mã no-QR hiệu lực (mã no_qr_tracking HOẶC kho nhận QTY) → posm_cartons
+    // (pool dùng chung, import_order_id ≠ phiếu nên không khớp InventoryEntry theo phiếu); còn lại → cartons_imported.
+    const actualBoxMap = new Map<string, number>() // material_id → tổng thực nhận
+    const qrImportIds: string[] = []
+    const importMaterialMap = new Map<string, string>() // import_id → material_id
+    for (const o of (actualOrders ?? []) as any[]) {
+      if (!o.material_id) continue
+      importMaterialMap.set(o.id as string, o.material_id as string)
+      if (effectiveNoQr(o.material?.no_qr_tracking, o.warehouse?.inventory_mode)) {
+        if (o.posm_cartons != null)
+          actualBoxMap.set(o.material_id, (actualBoxMap.get(o.material_id) ?? 0) + Number(o.posm_cartons))
+      } else {
+        qrImportIds.push(o.id as string)
       }
+    }
+    if (qrImportIds.length > 0) {
       // Phân trang: 1 chuyến chuyển kho có thể >1000 pallet → cap-1000 sẽ cụt tổng thực nhận
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const entries = await fetchAllPaged(() => supabase.from('InventoryEntry')
         .select('import_order_id, cartons_imported')
-        .in('import_order_id', importIds)
+        .in('import_order_id', qrImportIds)
         .order('import_order_id', { ascending: true }))
       for (const e of entries as any[]) {
         const mid = importMaterialMap.get(e.import_order_id as string)

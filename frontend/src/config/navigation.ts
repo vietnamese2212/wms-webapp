@@ -32,7 +32,7 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: 'Kho vận (WMS)',
+    label: 'Kho (WMS)',
     operational: true,
     items: [
       { to: '/wms/inbound',       icon: PackagePlus,    label: 'Nhập kho',          module: 'inbound' },
@@ -44,7 +44,7 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: 'Vận tải (TMS)',
+    label: 'Điều vận (TMS)',
     operational: true,
     items: [
       { to: '/tms/bookings', icon: ClipboardList, label: 'Kế hoạch VC',  module: 'tms_plan' },

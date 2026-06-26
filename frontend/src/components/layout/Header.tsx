@@ -16,12 +16,12 @@ import { Badge } from '@/components/ui/badge'
 
 const breadcrumbMap: Record<string, { label: string; parent?: string; parentPath?: string }> = {
   '/': { label: 'Dashboard' },
-  '/wms/inventory': { label: 'Tồn kho', parent: 'Kho vận', parentPath: '/wms/inventory' },
-  '/wms/inbound': { label: 'Nhập kho', parent: 'Kho vận', parentPath: '/wms/inbound' },
-  '/wms/outbound': { label: 'Xuất kho', parent: 'Kho vận', parentPath: '/wms/outbound' },
-  '/wms/locations': { label: 'Vị trí kho', parent: 'Kho vận', parentPath: '/wms/locations' },
-  '/tms/bookings':  { label: 'Kế hoạch VC',  parent: 'Vận tải', parentPath: '/tms/bookings' },
-  '/tms/settings':  { label: 'Cài đặt TMS', parent: 'Vận tải', parentPath: '/tms/settings' },
+  '/wms/inventory': { label: 'Tồn kho', parent: 'Kho', parentPath: '/wms/inventory' },
+  '/wms/inbound': { label: 'Nhập kho', parent: 'Kho', parentPath: '/wms/inbound' },
+  '/wms/outbound': { label: 'Xuất kho', parent: 'Kho', parentPath: '/wms/outbound' },
+  '/wms/locations': { label: 'Vị trí kho', parent: 'Kho', parentPath: '/wms/locations' },
+  '/tms/bookings':  { label: 'Kế hoạch VC',  parent: 'Điều vận', parentPath: '/tms/bookings' },
+  '/tms/settings':  { label: 'Cài đặt TMS', parent: 'Điều vận', parentPath: '/tms/settings' },
   '/hr/leaves':   { label: 'Nghỉ phép', parent: 'Nhân sự', parentPath: '/hr/leaves' },
   '/hr/assignments': { label: 'Phân công', parent: 'Nhân sự', parentPath: '/hr/assignments' },
   '/hr/attendance': { label: 'Chấm công', parent: 'Nhân sự', parentPath: '/hr/attendance' },

@@ -1,8 +1,6 @@
 import { NavLink, useLocation } from 'react-router-dom'
 import {
-  LayoutDashboard, Package, PackagePlus, PackageMinus, MapPin,
-  Truck, Calendar, Settings, Settings2, ChevronLeft, ChevronRight,
-  BarChart3, ClipboardList, UserCog, Scissors, ScanLine, ClipboardCheck, BarChart2, ShieldCheck, Tag, QrCode, CalendarRange, CalendarCheck, Network,
+  Settings, ChevronLeft, ChevronRight, BarChart3,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { prefetchPage } from '@/routes/lazyPages'
@@ -11,74 +9,12 @@ import { useAuthStore } from '@/stores/authStore'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { canAccess, canAccessAny, isAdmin, type ModuleKey, type ModulePermissions } from '@/config/permissions'
-
-interface NavItem {
-  to: string
-  icon: React.ElementType
-  label: string
-  module?: ModuleKey
-  modules?: ModuleKey[]   // hiện nếu bất kỳ module nào trong list có view access
-  adminOnly?: boolean
-}
-
-interface NavGroup {
-  label: string
-  items: NavItem[]
-}
-
-const navGroups: NavGroup[] = [
-  {
-    label: 'Tổng quan',
-    items: [
-      { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
-    ],
-  },
-  {
-    label: 'Kho vận (WMS)',
-    items: [
-      { to: '/wms/inventory',         icon: Package,        label: 'Tồn kho',       module: 'inventory' },
-      { to: '/wms/inbound',           icon: PackagePlus,    label: 'Nhập kho',       module: 'inbound' },
-      { to: '/wms/pallet-labels',     icon: QrCode,         label: 'In tem pallet',  module: 'pallet_print' as ModuleKey },
-      { to: '/wms/pallet-ops',        icon: Scissors,       label: 'Dồn / Tách pallet', module: 'pallet_ops' as ModuleKey },
-      { to: '/wms/outbound',          icon: PackageMinus,   label: 'Xuất kho',       module: 'outbound' },
-      { to: '/wms/outbound/scan-log', icon: ScanLine,       label: 'Lịch sử quét',   module: 'scanlog' },
-      { to: '/wms/loosepicking',      icon: Scissors,       label: 'Nhặt lẻ',        module: 'loosepicking' },
-      { to: '/wms/locations',         icon: MapPin,         label: 'Vị trí kho',     module: 'locations' },
-      { to: '/wms/stocktake',         icon: ClipboardCheck, label: 'Check vị trí',   module: 'stocktake' },
-      { to: '/wms/stocktake/summary', icon: BarChart2,      label: 'Tổng hợp KK',    module: 'stocktake' },
-      { to: '/wms/settings',          icon: Settings2,      label: 'Cài đặt WMS',    module: 'wms_settings' as ModuleKey },
-    ],
-  },
-  {
-    label: 'Vận tải (TMS)',
-    items: [
-      { to: '/tms/bookings',   icon: ClipboardList, label: 'Kế hoạch VC',    module: 'tms_plan' },
-      { to: '/tms/reports',    icon: BarChart2,     label: 'Báo cáo nhập',   module: 'tms_plan' },
-      { to: '/tms/gate',       icon: ShieldCheck,   label: 'Đăng ký cổng',  module: 'gate_registration' },
-      { to: '/tms/settings',   icon: Settings2,     label: 'Cài đặt TMS',   modules: ['tms_vehicle_types', 'tms_slots', 'tms_companies', 'tms_vehicles'] },
-    ],
-  },
-  {
-    label: 'Nhân sự (HR)',
-    items: [
-      { to: '/hr/assignments', icon: CalendarRange, label: 'Phân công',     module: 'work_assignment' as ModuleKey },
-      { to: '/hr/attendance',  icon: CalendarCheck, label: 'Chấm công',     module: 'attendance' as ModuleKey },
-      { to: '/hr/org',         icon: Network,     label: 'Sơ đồ tổ chức',  module: 'employees' as ModuleKey },
-    ],
-  },
-  {
-    label: 'Quản trị',
-    items: [
-      { to: '/masterdata/materials', icon: Tag,     label: 'Mã hàng',            module: 'materials' as ModuleKey },
-      { to: '/masterdata/users',     icon: UserCog, label: 'Quản lý người dùng', module: 'user_admin' as ModuleKey },
-    ],
-  },
-]
+import { canAccess, canAccessAny, isAdmin, type ModulePermissions } from '@/config/permissions'
+import { NAV_GROUPS, type NavItem } from '@/config/navigation'
 
 function NavItemComponent({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
   const location = useLocation()
-  const allItems = navGroups.flatMap(g => g.items)
+  const allItems = NAV_GROUPS.flatMap(g => g.items)
   const isActive = item.to === '/'
     ? location.pathname === '/'
     : (location.pathname === item.to || location.pathname.startsWith(item.to + '/')) &&
@@ -165,7 +101,7 @@ export function Sidebar() {
         {/* Navigation */}
         <ScrollArea className="flex-1 py-4">
           <nav className="space-y-5 px-2">
-            {navGroups.map((group) => {
+            {NAV_GROUPS.map((group) => {
               const visibleItems = group.items.filter(item => {
                 if (item.adminOnly) return admin
                 if (item.modules) return admin || canAccessAny(modulePerms, ...item.modules)

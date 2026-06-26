@@ -29,7 +29,16 @@ function apiMsg(err: unknown) {
 
 // ─── Warehouse Dialog ─────────────────────────────────────────────────────────
 
-interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+
+// Chế độ quản tồn — độc lập với warehouse_type (CENTRAL/NPP). Xem migration 20260626_warehouse_inventory_mode.sql
+type InvMode = 'QR' | 'QTY' | 'NONE'
+const INV_MODE_META: Record<InvMode, { label: string; desc: string; badge: string }> = {
+  QR:   { label: 'Tồn kho QR',     desc: 'Theo dõi tồn đầy đủ qua QR (pallet/vị trí/quét)', badge: 'border-green-400 text-green-700 bg-green-50' },
+  QTY:  { label: 'Tồn kho số lượng', desc: 'Theo dõi tồn dạng số lượng, không pallet/QR',     badge: 'border-sky-400 text-sky-700 bg-sky-50' },
+  NONE: { label: 'Không quản tồn',  desc: 'Không theo dõi tồn (điểm trung chuyển/giao nhận)', badge: 'border-slate-300 text-slate-500 bg-slate-50' },
+}
+const invModeMeta = (m: string) => INV_MODE_META[(m as InvMode)] ?? INV_MODE_META.QR
 
 function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolean; onClose: () => void }) {
   const isEdit = !!wh
@@ -37,6 +46,7 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
   const [name,          setName]          = useState(wh?.name ?? '')
   const [address,       setAddress]       = useState(wh?.address ?? '')
   const [warehouseType, setWarehouseType] = useState<'CENTRAL' | 'NPP'>((wh?.warehouse_type as 'CENTRAL' | 'NPP') ?? 'CENTRAL')
+  const [invMode,       setInvMode]       = useState<InvMode>((wh?.inventory_mode as InvMode) ?? 'QR')
   const [isActive,      setIsActive]      = useState(wh?.is_active ?? true)
   const [err, setErr] = useState('')
 
@@ -49,12 +59,12 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
     if (!code.trim() || !name.trim()) { setErr('Mã và tên kho là bắt buộc'); return }
     if (isEdit) {
       update(
-        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType },
+        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     } else {
       create(
-        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType },
+        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType, inventory_mode: invMode },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     }
@@ -89,6 +99,20 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
                 <SelectItem value="NPP">Kho NPP</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Chế độ quản tồn *</Label>
+            <Select value={invMode} onValueChange={v => setInvMode(v as InvMode)}>
+              <SelectTrigger className="h-8 text-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {(Object.keys(INV_MODE_META) as InvMode[]).map(m => (
+                  <SelectItem key={m} value={m}>{INV_MODE_META[m].label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-[10px] text-slate-400">{INV_MODE_META[invMode].desc}</p>
           </div>
           {isEdit && (
             <div className="flex items-center gap-2">
@@ -540,6 +564,7 @@ export default function WMSSettings() {
                         <TableHead className="px-3 py-2 text-xs">Mã</TableHead>
                         <TableHead className="px-3 py-2 text-xs">Tên kho</TableHead>
                         <TableHead className="px-3 py-2 text-xs">Chức năng</TableHead>
+                        <TableHead className="px-3 py-2 text-xs">Quản tồn</TableHead>
                         <TableHead className="px-3 py-2 text-xs">Địa chỉ</TableHead>
                         <TableHead className="px-3 py-2 text-xs">Trạng thái</TableHead>
                         {canManageWarehouse && <TableHead className="px-3 py-2 w-16" />}
@@ -555,6 +580,11 @@ export default function WMSSettings() {
                           <TableCell className="px-3 py-2">
                             <Badge variant="outline" className={`text-[10px] ${wh.warehouse_type === 'NPP' ? 'border-amber-400 text-amber-700 bg-amber-50' : 'border-blue-400 text-blue-700 bg-blue-50'}`}>
                               {wh.warehouse_type === 'NPP' ? 'Kho NPP' : 'Kho tổng'}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="px-3 py-2">
+                            <Badge variant="outline" className={`text-[10px] ${invModeMeta(wh.inventory_mode).badge}`}>
+                              {invModeMeta(wh.inventory_mode).label}
                             </Badge>
                           </TableCell>
                           <TableCell className="px-3 py-2 text-slate-500 text-xs">{wh.address ?? '—'}</TableCell>
@@ -592,6 +622,7 @@ export default function WMSSettings() {
                   <button onClick={() => setDetailWh(null)} className="text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>
                 </div>
                 <div><span className="text-slate-400">Chức năng:</span> <span className="font-medium">{detailWh.warehouse_type === 'NPP' ? 'Kho NPP' : 'Kho tổng'}</span></div>
+                <div><span className="text-slate-400">Quản tồn:</span> <span className="font-medium">{invModeMeta(detailWh.inventory_mode).label}</span></div>
                 <div><span className="text-slate-400">Địa chỉ:</span> <span className="font-medium">{detailWh.address ?? '—'}</span></div>
                 <div><span className="text-slate-400">Trạng thái:</span> <span className="font-medium">{detailWh.is_active ? 'Hoạt động' : 'Tạm dừng'}</span></div>
                 <div className="border-t pt-2 space-y-1.5">

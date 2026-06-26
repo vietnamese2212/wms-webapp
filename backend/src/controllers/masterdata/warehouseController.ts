@@ -3,6 +3,8 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 
+const INVENTORY_MODES = ['QR', 'QTY', 'NONE'] as const
+
 function extractCount(arr: unknown): number {
   if (Array.isArray(arr) && arr.length > 0) return (arr[0] as { count: number }).count ?? 0
   return 0
@@ -53,15 +55,18 @@ export async function getWarehouse(req: Request, res: Response) {
 
 export async function createWarehouse(req: Request, res: Response) {
   try {
-    const { code, name, address, warehouse_type } = req.body
+    const { code, name, address, warehouse_type, inventory_mode } = req.body
     if (!code || !name) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu code hoặc name')
     if (!warehouse_type || !['CENTRAL', 'NPP'].includes(warehouse_type))
       return fail(res, 400, 'VALIDATION_ERROR', 'Chức năng kho không hợp lệ (CENTRAL hoặc NPP)')
+    const mode = inventory_mode ?? 'QR'
+    if (!INVENTORY_MODES.includes(mode))
+      return fail(res, 400, 'VALIDATION_ERROR', 'Chế độ quản tồn không hợp lệ (QR, QTY hoặc NONE)')
 
     const actor = req.user?.name || null
     const { data, error } = await supabase
       .from('Warehouse')
-      .insert({ id: randomUUID(), code: String(code).toUpperCase().trim(), name: String(name).trim(), address, warehouse_type, created_by: actor, updated_by: actor, updated_at: new Date().toISOString() })
+      .insert({ id: randomUUID(), code: String(code).toUpperCase().trim(), name: String(name).trim(), address, warehouse_type, inventory_mode: mode, created_by: actor, updated_by: actor, updated_at: new Date().toISOString() })
       .select().single()
 
     if (error) {
@@ -74,7 +79,7 @@ export async function createWarehouse(req: Request, res: Response) {
 
 export async function updateWarehouse(req: Request, res: Response) {
   try {
-    const { name, address, is_active, warehouse_type } = req.body
+    const { name, address, is_active, warehouse_type, inventory_mode } = req.body
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: req.user?.name || null }
     if (name !== undefined) patch.name = String(name).trim()
     if (address !== undefined) patch.address = address
@@ -83,6 +88,11 @@ export async function updateWarehouse(req: Request, res: Response) {
       if (!['CENTRAL', 'NPP'].includes(warehouse_type))
         return fail(res, 400, 'VALIDATION_ERROR', 'Chức năng kho không hợp lệ')
       patch.warehouse_type = warehouse_type
+    }
+    if (inventory_mode !== undefined) {
+      if (!INVENTORY_MODES.includes(inventory_mode))
+        return fail(res, 400, 'VALIDATION_ERROR', 'Chế độ quản tồn không hợp lệ (QR, QTY hoặc NONE)')
+      patch.inventory_mode = inventory_mode
     }
 
     const { data, error } = await supabase

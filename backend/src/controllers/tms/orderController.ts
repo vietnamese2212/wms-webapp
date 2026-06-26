@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
+import { effectiveNoQr } from '../../lib/inventoryMode'
 
 // Ngày hôm nay theo giờ VN (YYYY-MM-DD) — chặn nghiệp vụ ngày quá khứ. So sánh chuỗi ISO date là an toàn.
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -94,7 +95,7 @@ export async function listOrders(req: Request, res: Response) {
       if (orderIds.length) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data: importOrders } = await supabase.from('ProductionImport')
-          .select('id, tms_order_id, created_at, posm_cartons, material:Material!material_id(no_qr_tracking)')
+          .select('id, tms_order_id, created_at, posm_cartons, material:Material!material_id(no_qr_tracking), warehouse:Warehouse!warehouse_id(inventory_mode)')
           .in('tms_order_id', orderIds)
           .eq('source_type', 'TRANSFER')
           .neq('status', 'CANCELLED')
@@ -104,7 +105,7 @@ export async function listOrders(req: Request, res: Response) {
           importToOrder.set(imp.id, imp.tms_order_id)
           const existing = receivingStartedAt.get(imp.tms_order_id)
           if (!existing || imp.created_at < existing) receivingStartedAt.set(imp.tms_order_id, imp.created_at)
-          if (imp.material?.no_qr_tracking) {
+          if (effectiveNoQr(imp.material?.no_qr_tracking, imp.warehouse?.inventory_mode)) {
             // No-QR: nhận vào pool dùng chung (import_order_id ≠ phiếu) → cộng theo posm_cartons
             if (imp.posm_cartons != null)
               actualReceivedByOrder.set(imp.tms_order_id, (actualReceivedByOrder.get(imp.tms_order_id) ?? 0) + Number(imp.posm_cartons))
@@ -518,7 +519,7 @@ export async function getMaterialSummary(req: Request, res: Response) {
     // 2) Thực nhận từ ProductionImport (+ InventoryEntry cho mã QR, posm_cartons cho mã no-QR)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const imports = await fetchAllByIdChunks(order_ids, (chunk) => supabase.from('ProductionImport')
-      .select('id, material_id, posm_cartons, material:Material!material_id(material_code, short_name, material_description, unit, no_qr_tracking)')
+      .select('id, material_id, posm_cartons, material:Material!material_id(material_code, short_name, material_description, unit, no_qr_tracking), warehouse:Warehouse!warehouse_id(inventory_mode)')
       .in('tms_order_id', chunk).neq('status', 'CANCELLED').order('id', { ascending: true }))
     const qrImportIds: string[] = []
     const importToMat = new Map<string, string>()
@@ -527,7 +528,7 @@ export async function getMaterialSummary(req: Request, res: Response) {
       if (!imp.material_id) continue
       const row = ensure(imp.material_id, imp.material)
       importToMat.set(imp.id, imp.material_id)
-      if (imp.material?.no_qr_tracking) {
+      if (effectiveNoQr(imp.material?.no_qr_tracking, imp.warehouse?.inventory_mode)) {
         if (imp.posm_cartons != null) row.actual_boxes += Number(imp.posm_cartons)
       } else {
         qrImportIds.push(imp.id)
@@ -986,7 +987,7 @@ export async function getTransferGoods(req: Request, res: Response) {
     // Lấy mọi phiếu non-cancelled (kể cả OPEN) để "Thùng thực" cập nhật live khi đang nhận.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: importOrders } = await supabase.from('ProductionImport')
-      .select('id, material_id, posm_cartons, material:Material!material_id(no_qr_tracking)')
+      .select('id, material_id, posm_cartons, material:Material!material_id(no_qr_tracking), warehouse:Warehouse!warehouse_id(inventory_mode)')
       .eq('tms_order_id', id).eq('source_type', 'TRANSFER').neq('status', 'CANCELLED')
     const importIds: string[] = (importOrders ?? []).map((o: any) => o.id)
 
@@ -996,7 +997,7 @@ export async function getTransferGoods(req: Request, res: Response) {
     const noQrMat = new Set<string>()
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     for (const o of (importOrders ?? []) as any[]) {
-      if (o.material?.no_qr_tracking && o.material_id) {
+      if (effectiveNoQr(o.material?.no_qr_tracking, o.warehouse?.inventory_mode) && o.material_id) {
         noQrMat.add(o.material_id)
         if (o.posm_cartons != null)
           posmByMaterial.set(o.material_id, (posmByMaterial.get(o.material_id) ?? 0) + Number(o.posm_cartons))

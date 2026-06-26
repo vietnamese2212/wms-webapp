@@ -4,6 +4,14 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { parseInboundQR } from '../../utils/qrParser'
 import { emitInboundChanged } from '../../lib/events'
+import { effectiveNoQr } from '../../lib/inventoryMode'
+
+// Kho QTY → ép no-QR hiệu lực cho phiếu (mutate material.no_qr_tracking theo inventory_mode của kho)
+function applyInboundMode(
+  order: { warehouse?: { inventory_mode?: string | null } | null; material?: { no_qr_tracking?: boolean | null } | null } | null | undefined,
+): void {
+  if (order?.material) order.material.no_qr_tracking = effectiveNoQr(order.material.no_qr_tracking, order.warehouse?.inventory_mode)
+}
 
 // ─── Select strings ──────────────────────────────────────────
 
@@ -11,7 +19,7 @@ const ORDER_SELECT = `
   id, import_code, warehouse_id, location_id, material_id, planned_pallets, shift_id, status,
   imported_by, created_by, updated_by, import_date, notes, created_at, updated_at,
   source_type, gate_registration_id, tms_order_id, planned_cartons, warehouse_type, from_gdo_id, posm_entry_id, posm_cartons, location_history,
-  warehouse:Warehouse(id, code, name),
+  warehouse:Warehouse(id, code, name, inventory_mode),
   location:Location(id, location_code, sub_code, max_pallets),
   material:Material(id, material_code, short_name, material_description, cartons_per_pallet, cartons_per_pallet_mn, category, no_qr_tracking),
   shift:ImportShift(id, code, name),
@@ -228,6 +236,8 @@ export async function listOrders(req: Request, res: Response) {
       )
     }
 
+    filtered.forEach(applyInboundMode)  // kho QTY → ép no-QR hiệu lực
+
     const withCount = await Promise.all(filtered.map(attachCount))
 
     // Batch-fetch delivery codes for TRANSFER orders
@@ -265,12 +275,17 @@ export async function createOrder(req: Request, res: Response) {
     if (!material_id)  return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu material_id')
     const resolvedSourceType = source_type === 'NCC' ? 'NCC' : source_type === 'TRANSFER' ? 'TRANSFER' : 'FACTORY'
 
-    // Check no_qr_tracking: FACTORY không được tạo phiếu cho mã hàng này; NCC/TRANSFER → force location_id = null
-    const { data: matCheck } = await supabase.from('Material').select('no_qr_tracking').eq('id', material_id).maybeSingle()
+    // Check no_qr_tracking: FACTORY block giữ ở CẤP MÃ (mã no_qr không nhập SX được).
+    // Kho QTY KHÔNG chặn FACTORY (kho SX vẫn có thể là QTY) — chỉ ép no-QR hiệu lực để bỏ vị trí + nhập tay.
+    const [{ data: matCheck }, { data: whMode }] = await Promise.all([
+      supabase.from('Material').select('no_qr_tracking').eq('id', material_id).maybeSingle(),
+      supabase.from('Warehouse').select('inventory_mode').eq('id', warehouse_id).maybeSingle(),
+    ])
     if (matCheck?.no_qr_tracking === true && resolvedSourceType === 'FACTORY') {
       return fail(res, 400, 'VALIDATION_ERROR', 'Hàng hóa không theo dõi QR không thể nhập theo luồng Nhập SX')
     }
-    const resolvedLocationId = matCheck?.no_qr_tracking === true ? null : (location_id ?? null)
+    const noQrEffective = effectiveNoQr(matCheck?.no_qr_tracking, (whMode as { inventory_mode?: string | null } | null)?.inventory_mode)
+    const resolvedLocationId = noQrEffective ? null : (location_id ?? null)
 
     const todayStr = vnDate()
 
@@ -371,6 +386,7 @@ export async function createOrder(req: Request, res: Response) {
     }
 
     if (!order) return fail(res, 409, 'DUPLICATE', 'Không thể tạo mã phiếu — thử lại')
+    applyInboundMode(order as Parameters<typeof applyInboundMode>[0])
 
     const suggestions = await getLocationSuggestionsData(warehouse_id, material_id)
     emitInboundChanged()
@@ -389,6 +405,7 @@ export async function getOrder(req: Request, res: Response) {
     if (oErr) throw oErr
     if (eErr) throw eErr
     if (!order) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
+    applyInboundMode(order as unknown as Parameters<typeof applyInboundMode>[0])
 
     let allEntries = entries ?? []
 

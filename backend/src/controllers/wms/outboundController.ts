@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
+import { effectiveNoQr, markItemsNoQrIfQty } from '../../lib/inventoryMode'
 
 const now = () => new Date().toISOString()
 
@@ -143,7 +144,7 @@ function isExcludedFromCount(item: any): boolean {
 
 async function fetchGDOFull(id: string) {
   const { data: gdo, error } = await supabase.from('GroupDeliveryOrder')
-    .select('*, warehouse:Warehouse(id,code,name), gate_registration:gate_registrations!gate_registration_id(id,registration_number,date,license_plate,company_name_raw,driver_name,status,direction,registered_at,entry_at,exit_at,called_at)')
+    .select('*, warehouse:Warehouse(id,code,name,inventory_mode), gate_registration:gate_registrations!gate_registration_id(id,registration_number,date,license_plate,company_name_raw,driver_name,status,direction,registered_at,entry_at,exit_at,called_at)')
     .eq('id', id).single()
   if (error || !gdo) return null
 
@@ -158,6 +159,12 @@ async function fetchGDOFull(id: string) {
         .in('do_id', doIds)
         .order('id')
     : { data: [] }
+
+  // Kho QTY → ép mọi item thành no-QR hiệu lực (hiển thị + logic manual downstream)
+  markItemsNoQrIfQty(
+    (items ?? []) as unknown as Parameters<typeof markItemsNoQrIfQty>[0],
+    (gdo as unknown as { warehouse?: { inventory_mode?: string | null } | null }).warehouse?.inventory_mode,
+  )
 
   const itemIds = (items ?? []).map((i: any) => i.id)
   const { data: scans } = itemIds.length
@@ -221,7 +228,7 @@ export async function listGDOs(req: Request, res: Response) {
     // (kho nhiều chuyến/khoảng ngày rộng → trước đây mất chuyến từ dòng 1001).
     const buildQuery = (): any | null => {
       let q = supabase.from('GroupDeliveryOrder')
-        .select('*, warehouse:Warehouse(id,code,name), forklift_driver:Employee!forklift_driver_id(id,name)')
+        .select('*, warehouse:Warehouse(id,code,name,inventory_mode), forklift_driver:Employee!forklift_driver_id(id,name)')
         .order('delivery_date', { ascending: false })
       if (scopeWarehouseIds.length > 0) {
         const effective = warehouse_id ? scopeWarehouseIds.filter(id => id === warehouse_id) : scopeWarehouseIds
@@ -264,6 +271,15 @@ export async function listGDOs(req: Request, res: Response) {
           .select('do_id, cartons_ordered, cartons_scanned, pallets_estimated, material_type, export_type, material_code_raw, material_id, material:Material!material_id(no_qr_tracking, short_name)')
           .in('do_id', doIds)
       : { data: [] }
+
+    // Kho QTY → ép no-QR hiệu lực cho item của các GDO QTY (do_id → gdo → inventory_mode)
+    const gdoModeById = new Map<string, string | null>((data ?? []).map((g: any) => [g.id, g.warehouse?.inventory_mode ?? null]))
+    const doToGdo = new Map<string, string>((dos ?? []).map((d: any) => [d.id, d.gdo_id]))
+    const qtyItems = (items ?? []).filter((i: any) => {
+      const gid = doToGdo.get(i.do_id)
+      return gid != null && gdoModeById.get(gid) === 'QTY'
+    })
+    markItemsNoQrIfQty(qtyItems as unknown as Parameters<typeof markItemsNoQrIfQty>[0], 'QTY')
 
     // Build lookup maps
     const dosByGdo = new Map<string, any[]>()
@@ -874,8 +890,9 @@ export async function updateTransport(req: Request, res: Response) {
 export async function unstartGDO(req: Request, res: Response) {
   try {
     const { data: gdo } = await supabase.from('GroupDeliveryOrder')
-      .select('started_at').eq('id', req.params.id).single()
+      .select('started_at, warehouse:Warehouse(inventory_mode)').eq('id', req.params.id).single()
     if (!gdo?.started_at) return fail(res, 'Đơn chưa được bắt đầu', 400)
+    const gdoMode = (gdo as unknown as { warehouse?: { inventory_mode?: string | null } | null }).warehouse?.inventory_mode
 
     // Kiểm tra chưa có QR nào được quét (bỏ qua POSM/Pallet Loscam và nhặt lẻ chưa confirm)
     const { data: doList } = await supabase.from('OutboundDelivery')
@@ -884,6 +901,7 @@ export async function unstartGDO(req: Request, res: Response) {
     if (doIds.length) {
       const { data: items } = await supabase.from('OutboundItem')
         .select('id, material_type, material_code_raw, material_id, material:Material!material_id(no_qr_tracking)').in('do_id', doIds)
+      markItemsNoQrIfQty((items ?? []) as unknown as Parameters<typeof markItemsNoQrIfQty>[0], gdoMode)  // kho QTY → mọi item no-QR, không có QR để chặn gỡ bắt đầu
       // Chỉ kiểm tra item có thể scan thực sự (bỏ POSM, Pallet Loscam, 810000)
       const blockableIds = (items ?? [])
         .filter((i: any) => !isExcludedFromCount(i))
@@ -1484,18 +1502,21 @@ export async function getPrepareBoard(req: Request, res: Response) {
     if (!gdoIds.length) return ok(res, { rows: [], total_cartons: 0, total_pallets: 0 })
 
     const { data: gdos } = await supabase.from('GroupDeliveryOrder')
-      .select('id, warehouse_id').in('id', gdoIds)
+      .select('id, warehouse_id, warehouse:Warehouse(inventory_mode)').in('id', gdoIds)
     const warehouseIds = [...new Set((gdos ?? []).map((g: any) => g.warehouse_id).filter(Boolean))] as string[]
+    // do_id → kho QTY? (kho QTY → mã hành xử như no_qr_tracking)
+    const qtyGdoIds = new Set((gdos ?? []).filter((g: any) => g.warehouse?.inventory_mode === 'QTY').map((g: any) => g.id as string))
 
     const { data: dos } = await supabase.from('OutboundDelivery')
-      .select('id').in('gdo_id', gdoIds)
+      .select('id, gdo_id').in('gdo_id', gdoIds)
     const doIds = (dos ?? []).map((d: any) => d.id)
     if (!doIds.length) return ok(res, { rows: [], total_cartons: 0, total_pallets: 0 })
+    const qtyDoIds = new Set((dos ?? []).filter((d: any) => qtyGdoIds.has(d.gdo_id)).map((d: any) => d.id as string))
 
     const { data: items } = await supabase.from('OutboundItem')
-      .select('material_id, material_code_raw, cartons_ordered, cartons_scanned, loose_picking, material:Material!material_id(short_name, cartons_per_pallet, no_qr_tracking)')
+      .select('do_id, material_id, material_code_raw, cartons_ordered, cartons_scanned, loose_picking, material:Material!material_id(short_name, cartons_per_pallet, no_qr_tracking)')
       .in('do_id', doIds) as { data: Array<{
-        material_id: string | null; material_code_raw: string | null
+        do_id: string; material_id: string | null; material_code_raw: string | null
         cartons_ordered: number | null; cartons_scanned: number | null; loose_picking: number | null
         material: { short_name: string | null; cartons_per_pallet: number | null; no_qr_tracking: boolean | null } | null
       }> | null }
@@ -1510,15 +1531,17 @@ export async function getPrepareBoard(req: Request, res: Response) {
     const rowMap = new Map<string, Row>()
     for (const i of (items ?? [])) {
       const key = i.material_id ?? `raw:${i.material_code_raw ?? ''}`
+      const itemNoQr = effectiveNoQr(i.material?.no_qr_tracking, qtyDoIds.has(i.do_id) ? 'QTY' : 'QR')
       const cur = rowMap.get(key) ?? {
         material_id: i.material_id ?? null,
         material_code: i.material_code_raw ?? '(?)',
         material_name: i.material?.short_name ?? null,
         cartons_ordered: 0, cartons_scanned: 0, cartons_remaining: 0,
         cartons_per_pallet: Number(i.material?.cartons_per_pallet ?? 0),
-        pallets_remaining: 0, no_qr_tracking: i.material?.no_qr_tracking === true,
+        pallets_remaining: 0, no_qr_tracking: itemNoQr,
         suggestions: [],
       }
+      cur.no_qr_tracking = cur.no_qr_tracking || itemNoQr
       cur.cartons_ordered += Number(i.cartons_ordered ?? 0)
       cur.cartons_scanned += Number(i.cartons_scanned ?? 0)
       rowMap.set(key, cur)
@@ -2190,7 +2213,7 @@ export async function manualCompleteItem(req: Request, res: Response) {
     const { cartons } = req.body as { cartons?: number }
 
     const [{ data: gdo }, { data: item }] = await Promise.all([
-      supabase.from('GroupDeliveryOrder').select('status, warehouse_id').eq('id', gdoId).single(),
+      supabase.from('GroupDeliveryOrder').select('status, warehouse_id, warehouse:Warehouse(inventory_mode)').eq('id', gdoId).single(),
       supabase.from('OutboundItem')
         .select('id, do_id, material_id, material_type, material_code_raw, cartons_ordered, cartons_scanned, material:Material!material_id(material_code, no_qr_tracking)')
         .eq('id', itemId).single(),
@@ -2204,7 +2227,9 @@ export async function manualCompleteItem(req: Request, res: Response) {
       return fail(res, 400, 'EXCEEDS_PLAN', `Số thùng (${ctn}) vượt kế hoạch (${item.cartons_ordered})`)
     }
 
-    const isSpecial = (item.material as any)?.no_qr_tracking === true
+    // Kho QTY → ép no-QR hiệu lực (xuất tay qua pool dùng chung như mã no_qr_tracking)
+    const gdoMode = (gdo as { warehouse?: { inventory_mode?: string | null } | null } | null)?.warehouse?.inventory_mode
+    const isSpecial = effectiveNoQr((item.material as any)?.no_qr_tracking, gdoMode)
     const specialMatCode: string | null = isSpecial ? ((item.material as any)?.material_code ?? item.material_code_raw ?? null) : null
     let specialInvEntryId: string | null = null
 

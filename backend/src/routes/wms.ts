@@ -58,14 +58,15 @@ router.post('/zones',        requirePerm('wms_settings', 'manage_zone'), zone.cr
 router.put('/zones/:id',     requirePerm('wms_settings', 'manage_zone'), zone.updateZone)
 router.delete('/zones/:id',  requirePerm('wms_settings', 'manage_zone'), zone.deleteZone)
 
-// Inbound plan lines (kế hoạch nhập ngoài NCC)
-router.get('/inbound-plan',         requirePerm('inbound_plan', 'view'),   inboundPlan.listPlanLines)
-router.post('/inbound-plan',        requirePerm('inbound_plan', 'create'), inboundPlan.createPlanLine)
-router.post('/inbound-plan/bulk',           requirePerm('inbound_plan', 'create'),       inboundPlan.bulkCreatePlanLines)
+// Inbound plan lines (kế hoạch nhập chuyển kho — sửa trong tab Kế hoạch của TMS Bookings,
+// gate FE bằng tms_plan → BE dùng requireAnyPerm để KH nhập đi cùng quyền tms_plan, tránh 403 giữa chừng khi lưu)
+router.get('/inbound-plan',         requireAnyPerm(['inbound_plan', 'view'],   ['tms_plan', 'view']),           inboundPlan.listPlanLines)
+router.post('/inbound-plan',        requireAnyPerm(['inbound_plan', 'create'], ['tms_plan', 'upload_inbound']), inboundPlan.createPlanLine)
+router.post('/inbound-plan/bulk',           requireAnyPerm(['inbound_plan', 'create'], ['tms_plan', 'upload_inbound']), inboundPlan.bulkCreatePlanLines)
 router.post('/inbound-plan/bulk-for-order', requirePerm('tms_plan', 'upload_inbound'),   inboundPlan.bulkCreateForOrder)
-router.patch('/inbound-plan/:id',        requirePerm('inbound_plan', 'edit'),   inboundPlan.updatePlanLine)
-router.patch('/inbound-plan/:id/cancel', requirePerm('inbound_plan', 'cancel'), inboundPlan.cancelPlanLine)
-router.delete('/inbound-plan/:id',       requirePerm('inbound_plan', 'delete'), inboundPlan.deletePlanLine)
+router.patch('/inbound-plan/:id',        requireAnyPerm(['inbound_plan', 'edit'],   ['tms_plan', 'upload_inbound']), inboundPlan.updatePlanLine)
+router.patch('/inbound-plan/:id/cancel', requireAnyPerm(['inbound_plan', 'cancel'], ['tms_plan', 'upload_inbound']), inboundPlan.cancelPlanLine)
+router.delete('/inbound-plan/:id',       requireAnyPerm(['inbound_plan', 'delete'], ['tms_plan', 'upload_inbound']), inboundPlan.deletePlanLine)
 
 // Inbound orders (phiếu nhập kho)
 router.get('/inbound-orders',                           inbound.listOrders)

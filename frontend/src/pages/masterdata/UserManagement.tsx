@@ -740,33 +740,50 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
                         Tất cả
                       </button>
                     </div>
-                    <div className="space-y-2.5">
+                    <div className={multi ? 'space-y-2' : ''}>
                       {mods.map(([modKey, modDef]) => {
                         const grantedActions = (modulePerms[modKey] ?? []) as string[]
                         const tab = (modDef as { tab?: string }).tab
+                        const tabActions = Object.keys(modDef.actions)
+                        const tabAll = tabActions.every(a => grantedActions.includes(a))
+                        const actionsGrid = (
+                          <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+                            {(Object.entries(modDef.actions) as [string, string][]).map(([actionKey, actionLabel]) => {
+                              const checked = grantedActions.includes(actionKey)
+                              return (
+                                <label key={actionKey} className="flex items-center gap-1.5 cursor-pointer select-none">
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={() => toggleAction(modKey, actionKey)}
+                                    className="h-3.5 w-3.5 rounded accent-blue-600"
+                                  />
+                                  <span className={`text-xs ${checked ? 'text-slate-700 font-medium' : 'text-slate-400'}`}>
+                                    {actionLabel}
+                                  </span>
+                                </label>
+                              )
+                            })}
+                          </div>
+                        )
+                        // Trang đơn (1 module): hiện thẳng lưới action.
+                        if (!multi) return <div key={modKey}>{actionsGrid}</div>
+                        // Trang nhiều tab: mỗi tab = card riêng có băng tiêu đề (accent sky) để tách bạch.
                         return (
-                          <div key={modKey} className={multi ? 'border-l-2 border-slate-200 pl-2.5' : ''}>
-                            {multi && tab && (
-                              <p className="text-[11px] font-medium text-slate-500 mb-1">{tab}</p>
-                            )}
-                            <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-                              {(Object.entries(modDef.actions) as [string, string][]).map(([actionKey, actionLabel]) => {
-                                const checked = grantedActions.includes(actionKey)
-                                return (
-                                  <label key={actionKey} className="flex items-center gap-1.5 cursor-pointer select-none">
-                                    <input
-                                      type="checkbox"
-                                      checked={checked}
-                                      onChange={() => toggleAction(modKey, actionKey)}
-                                      className="h-3.5 w-3.5 rounded accent-blue-600"
-                                    />
-                                    <span className={`text-xs ${checked ? 'text-slate-700 font-medium' : 'text-slate-400'}`}>
-                                      {actionLabel}
-                                    </span>
-                                  </label>
-                                )
-                              })}
+                          <div key={modKey} className="rounded-md border border-slate-200 bg-white overflow-hidden">
+                            <div className="flex items-center justify-between border-l-[3px] border-sky-500 bg-slate-100 px-2 py-1">
+                              <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-600">{tab}</span>
+                              <button
+                                type="button"
+                                onClick={() => setModulePerms(prev => ({ ...prev, [modKey]: tabAll ? undefined : tabActions }))}
+                                className={`text-[9px] px-1.5 py-0.5 rounded font-medium transition-colors ${
+                                  tabAll ? 'bg-sky-600 text-white hover:bg-sky-700' : 'bg-white text-slate-400 border border-slate-200 hover:bg-slate-50'
+                                }`}
+                              >
+                                Tất cả
+                              </button>
                             </div>
+                            <div className="px-2.5 py-2">{actionsGrid}</div>
                           </div>
                         )
                       })}

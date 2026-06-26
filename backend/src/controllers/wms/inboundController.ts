@@ -13,6 +13,33 @@ function applyInboundMode(
   if (order?.material) order.material.no_qr_tracking = effectiveNoQr(order.material.no_qr_tracking, order.warehouse?.inventory_mode)
 }
 
+// Phạm vi kho của user: null = NATIONAL (toàn bộ); mảng = chỉ các kho được gán
+function scopeWhIds(req: Request): string[] | null {
+  return req.user?.warehouse_scope === 'NATIONAL' ? null : (req.user?.warehouse_ids ?? [])
+}
+// Gác CREATE: kho đích phải nằm trong phạm vi user (NATIONAL bỏ qua). Trả false + đã gửi 403 nếu chặn.
+function guardWhCreate(req: Request, res: Response, warehouseId: string | null | undefined): boolean {
+  const scope = scopeWhIds(req)
+  if (scope === null) return true
+  if (!warehouseId || !scope.includes(warehouseId)) {
+    fail(res, 403, 'FORBIDDEN', 'Ngoài phạm vi kho được giao — không thể thao tác phiếu nhập của kho này')
+    return false
+  }
+  return true
+}
+// Gác theo id: phiếu nhập phải thuộc kho trong phạm vi user. Trả false + đã gửi 403 nếu chặn.
+async function guardInboundScope(req: Request, res: Response, id: string): Promise<boolean> {
+  const scope = scopeWhIds(req)
+  if (scope === null) return true
+  const { data } = await supabase.from('ProductionImport').select('warehouse_id').eq('id', id).maybeSingle()
+  const whId = (data as { warehouse_id: string | null } | null)?.warehouse_id ?? null
+  if (!whId || !scope.includes(whId)) {
+    fail(res, 403, 'FORBIDDEN', 'Ngoài phạm vi kho được giao — không thể thao tác phiếu nhập của kho này')
+    return false
+  }
+  return true
+}
+
 // ─── Select strings ──────────────────────────────────────────
 
 const ORDER_SELECT = `
@@ -273,6 +300,7 @@ export async function createOrder(req: Request, res: Response) {
     } = req.body
     if (!warehouse_id) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu warehouse_id')
     if (!material_id)  return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu material_id')
+    if (!guardWhCreate(req, res, warehouse_id)) return
     const resolvedSourceType = source_type === 'NCC' ? 'NCC' : source_type === 'TRANSFER' ? 'TRANSFER' : 'FACTORY'
 
     // Check no_qr_tracking: FACTORY block giữ ở CẤP MÃ (mã no_qr không nhập SX được).
@@ -470,6 +498,7 @@ export async function getOrder(req: Request, res: Response) {
 
 export async function updateOrder(req: Request, res: Response) {
   try {
+    if (!(await guardInboundScope(req, res, req.params.id))) return
     const { location_id, planned_pallets, planned_cartons, shift_id, import_date, notes, updated_by } = req.body
 
     const { data: existing } = await supabase
@@ -512,6 +541,7 @@ function appendLocHistory(order: unknown, location_code: string, source: 'scan' 
 // Gate bằng edit_pallet/force_edit_pallet (xem route) — không gộp vào quyền `edit`.
 export async function setOrderLocation(req: Request, res: Response) {
   try {
+    if (!(await guardInboundScope(req, res, req.params.id))) return
     const { location_id, updated_by } = req.body as { location_id?: string; updated_by?: string }
     if (!location_id) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu location_id')
 
@@ -551,6 +581,7 @@ export async function setOrderLocation(req: Request, res: Response) {
 
 export async function completeOrder(req: Request, res: Response) {
   try {
+    if (!(await guardInboundScope(req, res, req.params.id))) return
     const { data: existing } = await supabase
       .from('ProductionImport').select('id, status, source_type, tms_order_id').eq('id', req.params.id).maybeSingle()
     if (!existing) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
@@ -599,6 +630,7 @@ export async function completeOrder(req: Request, res: Response) {
 
 export async function uncompleteOrder(req: Request, res: Response) {
   try {
+    if (!(await guardInboundScope(req, res, req.params.id))) return
     const { data: existing } = await supabase
       .from('ProductionImport').select('id, status, source_type, tms_order_id').eq('id', req.params.id).maybeSingle()
     if (!existing) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
@@ -641,6 +673,7 @@ export async function uncompleteOrder(req: Request, res: Response) {
 
 export async function cancelOrder(req: Request, res: Response) {
   try {
+    if (!(await guardInboundScope(req, res, req.params.id))) return
     const { data: existing } = await supabase
       .from('ProductionImport')
       .select('status, source_type, from_gdo_id')
@@ -787,6 +820,7 @@ export async function checkScanQR(req: Request, res: Response) {
 
 export async function scanQR(req: Request, res: Response) {
   try {
+    if (!(await guardInboundScope(req, res, req.params.id))) return
     const { id: order_id } = req.params
     const { qr_code, location_id, stack_layer = 1, cartons_override, qa_status_id, employee_id } = req.body
 
@@ -990,6 +1024,7 @@ export async function scanQR(req: Request, res: Response) {
 
 export async function scanManual(req: Request, res: Response) {
   try {
+    if (!(await guardInboundScope(req, res, req.params.id))) return
     const { id: order_id } = req.params
     const { cartons, employee_id } = req.body
 
@@ -1102,6 +1137,7 @@ export async function scanManual(req: Request, res: Response) {
 
 export async function updateEntry(req: Request, res: Response) {
   try {
+    if (!(await guardInboundScope(req, res, req.params.id))) return
     const { id: order_id, entryId } = req.params
     const { cartons_imported, stack_layer, employee_id } = req.body
 
@@ -1221,6 +1257,7 @@ function checkInventoryUnchanged(
 
 export async function removeEntry(req: Request, res: Response) {
   try {
+    if (!(await guardInboundScope(req, res, req.params.id))) return
     const { id: order_id, entryId } = req.params
     const { employee_id } = req.body ?? {}
 
@@ -1295,6 +1332,7 @@ export async function removeEntry(req: Request, res: Response) {
 
 export async function removeEntries(req: Request, res: Response) {
   try {
+    if (!(await guardInboundScope(req, res, req.params.id))) return
     const { id: order_id } = req.params
     const { entry_ids, employee_id } = req.body ?? {}
 

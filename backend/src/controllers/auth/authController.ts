@@ -11,7 +11,7 @@ const JWT_EXPIRY = '7d'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function getWarehouseIds(employeeId: string): Promise<string[]> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data } = await (supabase.from('UserWarehouseAccess') as any)
+  const { data } = await supabase.from('UserWarehouseAccess')
     .select('warehouse_id')
     .eq('employee_id', employeeId)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -61,7 +61,7 @@ export async function login(req: Request, res: Response) {
     if (!email || !password) return fail(res, 'Email và mật khẩu là bắt buộc', 400)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: emps } = await (supabase.from('Employee') as any)
+    const { data: emps } = await supabase.from('Employee')
       .select('id, name, employee_code, email, warehouse_scope, warehouse_id, allowed_categories, password, is_active, module_permissions, job_title_id, ncc_id')
       .ilike('email', email.trim())
       .limit(1)
@@ -81,11 +81,11 @@ export async function login(req: Request, res: Response) {
       getWarehouseIds(emp.id),
       emp.job_title_id
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ? (supabase.from('JobTitle') as any).select('module_permissions, name').eq('id', emp.job_title_id).single().then((r: any) => r.data)
+        ? supabase.from('JobTitle').select('module_permissions, name').eq('id', emp.job_title_id).single().then((r: any) => r.data)
         : Promise.resolve(null),
       emp.warehouse_id
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ? (supabase.from('Warehouse') as any).select('name').eq('id', emp.warehouse_id).single().then((r: any) => r.data)
+        ? supabase.from('Warehouse').select('name').eq('id', emp.warehouse_id).single().then((r: any) => r.data)
         : Promise.resolve(null),
     ])
 
@@ -111,7 +111,7 @@ export async function me(req: Request, res: Response) {
     if (!userId) return fail(res, 'Unauthorized', 401)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: emps } = await (supabase.from('Employee') as any)
+    const { data: emps } = await supabase.from('Employee')
       .select('id, name, employee_code, email, warehouse_scope, warehouse_id, allowed_categories, is_active, module_permissions, job_title_id, ncc_id')
       .eq('id', userId).limit(1)
 
@@ -125,11 +125,11 @@ export async function me(req: Request, res: Response) {
       getWarehouseIds(emp.id),
       emp.job_title_id
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ? (supabase.from('JobTitle') as any).select('module_permissions, name').eq('id', emp.job_title_id).single().then((r: any) => r.data)
+        ? supabase.from('JobTitle').select('module_permissions, name').eq('id', emp.job_title_id).single().then((r: any) => r.data)
         : Promise.resolve(null),
       emp.warehouse_id
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ? (supabase.from('Warehouse') as any).select('name').eq('id', emp.warehouse_id).single().then((r: any) => r.data)
+        ? supabase.from('Warehouse').select('name').eq('id', emp.warehouse_id).single().then((r: any) => r.data)
         : Promise.resolve(null),
     ])
 
@@ -158,7 +158,7 @@ export async function changePassword(req: Request, res: Response) {
     if (new_password.length < 6) return fail(res, 'Mật khẩu mới phải có ít nhất 6 ký tự', 400)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: emps } = await (supabase.from('Employee') as any)
+    const { data: emps } = await supabase.from('Employee')
       .select('id, password').eq('id', userId).limit(1)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -171,7 +171,7 @@ export async function changePassword(req: Request, res: Response) {
 
     const hash = await bcrypt.hash(new_password, 10)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (supabase.from('Employee') as any)
+    await supabase.from('Employee')
       .update({ password: hash, updated_at: new Date().toISOString() })
       .eq('id', userId)
 

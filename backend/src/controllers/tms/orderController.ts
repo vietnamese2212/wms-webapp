@@ -55,12 +55,12 @@ export async function listOrders(req: Request, res: Response) {
     const { date, date_from, date_to, warehouse_id, source_type, destination_warehouse_id } = req.query as Record<string, string>
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const userNccId: string | null = (req as any).user?.ncc_id ?? null
+    const userNccId: string | null = req.user?.ncc_id ?? null
 
     // TRANSFER orders: không cần date
     if (source_type === 'TRANSFER') {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let q = (supabase.from('TmsOrder') as any)
+      let q = supabase.from('TmsOrder')
         .select(`${ORDER_SELECT}, transfer_gdo:GroupDeliveryOrder!transfer_gdo_id(id, group_code, shipto_party, transfer_status, delivery_date, dvvt, license_plate, warehouse:Warehouse!warehouse_id(id, code, name))`)
         .eq('source_type', 'TRANSFER')
         .order('created_at', { ascending: false })
@@ -76,7 +76,7 @@ export async function listOrders(req: Request, res: Response) {
       const codesByGdo = new Map<string, string[]>()
       if (gdoIds.length) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: dos } = await (supabase.from('OutboundDelivery') as any)
+        const { data: dos } = await supabase.from('OutboundDelivery')
           .select('gdo_id, delivery_code').in('gdo_id', gdoIds)
         for (const d of (dos ?? [])) {
           if (!d.delivery_code) continue
@@ -93,7 +93,7 @@ export async function listOrders(req: Request, res: Response) {
 
       if (orderIds.length) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: importOrders } = await (supabase.from('ProductionImport') as any)
+        const { data: importOrders } = await supabase.from('ProductionImport')
           .select('id, tms_order_id, created_at, posm_cartons, material:Material!material_id(no_qr_tracking)')
           .in('tms_order_id', orderIds)
           .eq('source_type', 'TRANSFER')
@@ -116,7 +116,7 @@ export async function listOrders(req: Request, res: Response) {
         if (qrImportIds.length) {
           // Phân trang né cap-1000: tổng entry qua TẤT CẢ chuyến trong list dễ vượt 1000
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const entries = await fetchAllPaged(() => (supabase.from('InventoryEntry') as any)
+          const entries = await fetchAllPaged(() => supabase.from('InventoryEntry')
             .select('import_order_id, cartons_imported').in('import_order_id', qrImportIds)
             .order('import_order_id', { ascending: true }))
           for (const entry of entries as any[]) {
@@ -147,7 +147,7 @@ export async function listOrders(req: Request, res: Response) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const data = await fetchAllPaged(() => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let q = (supabase.from('TmsOrder') as any)
+      let q = supabase.from('TmsOrder')
         .select(ORDER_SELECT)
         .gte('date', from)
         .lte('date', to || from)
@@ -177,7 +177,7 @@ export async function createOrder(req: Request, res: Response) {
     if (date < todayVN()) return fail(res, 'Không thể tạo đơn cho ngày quá khứ', 400)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const user = (req as any).user
+    const user = req.user
     const now = new Date().toISOString()
     const orderId = randomUUID()
 
@@ -188,7 +188,7 @@ export async function createOrder(req: Request, res: Response) {
     if (autoGenerate) {
       // Tự sinh mã: X/N_MãKho_ddmmyy_STT
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: wh } = await (supabase.from('Warehouse') as any)
+      const { data: wh } = await supabase.from('Warehouse')
         .select('code').eq('id', warehouse_id).maybeSingle()
       const whCode = (wh?.code ?? 'KHO') as string
       const dirPrefix = direction === 'OUTBOUND' ? 'X' : 'N'
@@ -196,7 +196,7 @@ export async function createOrder(req: Request, res: Response) {
       const ddmmyy = `${String(d.getDate()).padStart(2, '0')}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getFullYear()).slice(-2)}`
       codePrefix = `${whCode}_${dirPrefix}_${ddmmyy}`
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { count } = await (supabase.from('TmsOrder') as any)
+      const { count } = await supabase.from('TmsOrder')
         .select('id', { count: 'exact', head: true })
         .like('order_code', `${codePrefix}_%`)
       order_code = `${codePrefix}_${(count ?? 0) + 1}`
@@ -220,14 +220,14 @@ export async function createOrder(req: Request, res: Response) {
     let ordErr: { code?: string; message: string } | null = null
     for (let attempt = 0; attempt < 5; attempt++) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const res2 = await (supabase.from('TmsOrder') as any).insert({ ...row, order_code })
+      const res2 = await supabase.from('TmsOrder').insert({ ...row, order_code })
       ordErr = res2.error
       if (!ordErr) break
       if (ordErr.code !== '23505') break
       if (!autoGenerate) break // mã nhập tay → không retry
       // Lấy số thứ tự hiện tại cao nhất rồi +1
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: existing } = await (supabase.from('TmsOrder') as any)
+      const { data: existing } = await supabase.from('TmsOrder')
         .select('order_code')
         .like('order_code', `${codePrefix}_%`)
         .order('order_code', { ascending: false })
@@ -243,13 +243,13 @@ export async function createOrder(req: Request, res: Response) {
 
     // Tạo 1 TmsVehicleSlot mặc định
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (supabase.from('TmsVehicleSlot') as any).insert({
+    await supabase.from('TmsVehicleSlot').insert({
       id: randomUUID(), order_id: orderId,
       status: 'PENDING', created_at: now, updated_at: now,
     })
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (supabase.from('TmsOrder') as any)
+    const { data, error } = await supabase.from('TmsOrder')
       .select(ORDER_SELECT).eq('id', orderId).single()
     if (error) return fail(res, error.message)
     return ok(res, data, 201)
@@ -263,7 +263,7 @@ export async function bulkCreateOrders(req: Request, res: Response) {
     if (!Array.isArray(orders) || !orders.length) return fail(res, 'orders phải là array không rỗng', 400)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const user = (req as any).user
+    const user = req.user
     const now = new Date().toISOString()
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const inputList = orders as any[]
@@ -277,7 +277,7 @@ export async function bulkCreateOrders(req: Request, res: Response) {
     const incomingCodes = inputList.map(o => o.order_code).filter(Boolean) as string[]
     if (incomingCodes.length) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: existing } = await (supabase.from('TmsOrder') as any)
+      const { data: existing } = await supabase.from('TmsOrder')
         .select('order_code').in('order_code', incomingCodes)
       if (existing?.length) {
         const dupes = (existing as { order_code: string }[]).map(r => r.order_code).join(', ')
@@ -306,7 +306,7 @@ export async function bulkCreateOrders(req: Request, res: Response) {
     if (!orderRows.length) return fail(res, 'Không có dòng hợp lệ để import', 400)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error: insErr } = await (supabase.from('TmsOrder') as any).insert(orderRows)
+    const { error: insErr } = await supabase.from('TmsOrder').insert(orderRows)
     if (insErr) {
       if (insErr.code === '23505') return fail(res, 'Mã đơn bị trùng, vui lòng kiểm tra lại file')
       return fail(res, insErr.message)
@@ -318,7 +318,7 @@ export async function bulkCreateOrders(req: Request, res: Response) {
       status: 'PENDING', created_at: now, updated_at: now,
     }))
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (supabase.from('TmsVehicleSlot') as any).insert(slotRows)
+    await supabase.from('TmsVehicleSlot').insert(slotRows)
 
     return ok(res, { inserted: orderRows.length }, 201)
   } catch (e) { return fail(res, String(e)) }
@@ -336,11 +336,11 @@ export async function updateOrder(req: Request, res: Response) {
     } = req.body
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const user = (req as any).user
+    const user = req.user
     const now = new Date().toISOString()
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: existing, error: fetchErr } = await (supabase.from('TmsOrder') as any)
+    const { data: existing, error: fetchErr } = await supabase.from('TmsOrder')
       .select('id, date').eq('id', id).single()
     if (fetchErr || !existing) return fail(res, 'Không tìm thấy đơn hàng', 404)
 
@@ -368,7 +368,7 @@ export async function updateOrder(req: Request, res: Response) {
     if (eta             !== undefined) updates.eta             = eta || null
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (supabase.from('TmsOrder') as any)
+    const { data, error } = await supabase.from('TmsOrder')
       .update(updates).eq('id', id).select(ORDER_SELECT).single()
     if (error) return fail(res, error.message)
     return ok(res, data)
@@ -384,12 +384,12 @@ export async function bulkUpdateOrderDate(req: Request, res: Response) {
     if (date < todayVN()) return fail(res, 'Không thể chuyển sang ngày quá khứ', 400)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const user = (req as any).user
+    const user = req.user
     const now = new Date().toISOString()
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     // Chỉ đổi ngày đơn PENDING (đơn đã BOOKED/ARRIVED không được đổi → tránh lệch slot booked_count)
-    const { data, error } = await (supabase.from('TmsOrder') as any)
+    const { data, error } = await supabase.from('TmsOrder')
       .update({ date, updated_by: user?.name || null, updated_at: now })
       .in('id', ids)
       .eq('status', 'PENDING')
@@ -407,7 +407,7 @@ export async function getPlanVsActual(req: Request, res: Response) {
 
     // Plan lines (kế hoạch)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: planLines, error: planErr } = await (supabase.from('inbound_plan_lines') as any)
+    const { data: planLines, error: planErr } = await supabase.from('inbound_plan_lines')
       .select('material_id, planned_boxes, planned_pallets, material:Material!material_id(material_code, short_name, material_description)')
       .eq('tms_order_id', orderId)
       .neq('status', 'CANCELLED')
@@ -415,7 +415,7 @@ export async function getPlanVsActual(req: Request, res: Response) {
 
     // ProductionImport records cho order này
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: actualOrders, error: actErr } = await (supabase.from('ProductionImport') as any)
+    const { data: actualOrders, error: actErr } = await supabase.from('ProductionImport')
       .select('id, material_id, material:Material!material_id(material_code, short_name, material_description)')
       .eq('tms_order_id', orderId)
       .neq('status', 'CANCELLED')
@@ -431,7 +431,7 @@ export async function getPlanVsActual(req: Request, res: Response) {
       }
       // Phân trang: 1 chuyến chuyển kho có thể >1000 pallet → cap-1000 sẽ cụt tổng thực nhận
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const entries = await fetchAllPaged(() => (supabase.from('InventoryEntry') as any)
+      const entries = await fetchAllPaged(() => supabase.from('InventoryEntry')
         .select('import_order_id, cartons_imported')
         .in('import_order_id', importIds)
         .order('import_order_id', { ascending: true }))
@@ -506,7 +506,7 @@ export async function getMaterialSummary(req: Request, res: Response) {
 
     // 1) Kế hoạch từ inbound_plan_lines
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const planLines = await fetchAllByIdChunks(order_ids, (chunk) => (supabase.from('inbound_plan_lines') as any)
+    const planLines = await fetchAllByIdChunks(order_ids, (chunk) => supabase.from('inbound_plan_lines')
       .select('material_id, planned_boxes, material:Material!material_id(material_code, short_name, material_description, unit)')
       .in('tms_order_id', chunk).neq('status', 'CANCELLED').order('material_id', { ascending: true }))
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -517,7 +517,7 @@ export async function getMaterialSummary(req: Request, res: Response) {
 
     // 2) Thực nhận từ ProductionImport (+ InventoryEntry cho mã QR, posm_cartons cho mã no-QR)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const imports = await fetchAllByIdChunks(order_ids, (chunk) => (supabase.from('ProductionImport') as any)
+    const imports = await fetchAllByIdChunks(order_ids, (chunk) => supabase.from('ProductionImport')
       .select('id, material_id, posm_cartons, material:Material!material_id(material_code, short_name, material_description, unit, no_qr_tracking)')
       .in('tms_order_id', chunk).neq('status', 'CANCELLED').order('id', { ascending: true }))
     const qrImportIds: string[] = []
@@ -535,7 +535,7 @@ export async function getMaterialSummary(req: Request, res: Response) {
     }
     if (qrImportIds.length) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const entries = await fetchAllByIdChunks(qrImportIds, (chunk) => (supabase.from('InventoryEntry') as any)
+      const entries = await fetchAllByIdChunks(qrImportIds, (chunk) => supabase.from('InventoryEntry')
         .select('import_order_id, cartons_imported').in('import_order_id', chunk).order('import_order_id', { ascending: true }))
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       for (const e of entries as any[]) {
@@ -561,7 +561,7 @@ export async function getInboundReport(req: Request, res: Response) {
 
     // 1. Fetch plan lines với join material, ncc, warehouse
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let q = (supabase.from('inbound_plan_lines') as any)
+    let q = supabase.from('inbound_plan_lines')
       .select(`
         id, date, warehouse_id, ncc_id, material_id, po_number,
         planned_boxes, tms_order_id, status,
@@ -594,7 +594,7 @@ export async function getInboundReport(req: Request, res: Response) {
 
     if (orderIds.length > 0) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: planImports, error: impErr } = await (supabase.from('ProductionImport') as any)
+      const { data: planImports, error: impErr } = await supabase.from('ProductionImport')
         .select(IMPORT_SELECT)
         .in('tms_order_id', orderIds)
         .neq('status', 'CANCELLED')
@@ -604,7 +604,7 @@ export async function getInboundReport(req: Request, res: Response) {
 
     // Thêm imports theo date range (bắt phát sinh thuần — không nằm trong plan nào)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let dateQ = (supabase.from('ProductionImport') as any)
+    let dateQ = supabase.from('ProductionImport')
       .select(IMPORT_SELECT)
       .gte('import_date', date_from)
       .lte('import_date', date_to)
@@ -632,7 +632,7 @@ export async function getInboundReport(req: Request, res: Response) {
     if (importIds.length > 0) {
       // Phân trang né cap-1000 (báo cáo nhập gộp nhiều chuyến → có thể >1000 entry)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const entries = await fetchAllPaged(() => (supabase.from('InventoryEntry') as any)
+      const entries = await fetchAllPaged(() => supabase.from('InventoryEntry')
         .select('import_order_id, cartons_imported')
         .in('import_order_id', importIds)
         .order('import_order_id', { ascending: true }))
@@ -736,7 +736,7 @@ export async function confirmTransferReceipt(req: Request, res: Response) {
     const { id } = req.params
     const t = new Date().toISOString()
 
-    const { data: tmsOrder } = await (supabase.from('TmsOrder') as any)
+    const { data: tmsOrder } = await supabase.from('TmsOrder')
       .select('id, eta, destination_warehouse_id, transfer_gdo_id, warehouse:Warehouse!destination_warehouse_id(id, code, name)')
       .eq('id', id).single()
     if (!tmsOrder) return fail(res, 'Không tìm thấy lệnh chuyển kho', 404)
@@ -744,31 +744,31 @@ export async function confirmTransferReceipt(req: Request, res: Response) {
     if (!tmsOrder.destination_warehouse_id) return fail(res, 'Lệnh chưa có kho nhận', 400)
 
     const gdoId = tmsOrder.transfer_gdo_id as string
-    const nppWh = tmsOrder.warehouse as { id: string; code: string; name: string }
+    const nppWh = tmsOrder.warehouse as unknown as { id: string; code: string; name: string }
 
-    const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
+    const { data: gdo } = await supabase.from('GroupDeliveryOrder')
       .select('id, transfer_status').eq('id', gdoId).single()
     if (!gdo) return fail(res, 'Không tìm thấy GDO', 404)
     if (gdo.transfer_status === 'DELIVERED') return fail(res, 'GDO này đã được xác nhận giao', 409)
     if (gdo.transfer_status !== 'IN_TRANSIT') return fail(res, 'GDO phải ở trạng thái Đang giao trước khi xác nhận', 400)
 
     // Gác ĐVVT booking: phải đủ Biển số + SĐT lái xe + Giờ xe tới (ETA) mới cho NPP nhận hàng.
-    const { data: bkSlots } = await (supabase.from('TmsVehicleSlot') as any)
+    const { data: bkSlots } = await supabase.from('TmsVehicleSlot')
       .select('license_plate, driver_phone').eq('order_id', id)
     const bk = ((bkSlots ?? []) as { license_plate: string | null; driver_phone: string | null }[])[0]
     if (!bk?.license_plate?.trim() || !bk?.driver_phone?.trim() || !tmsOrder.eta)
       return fail(res, 'Cần ĐVVT booking (đủ Biển số, SĐT lái xe, Giờ xe tới) trước khi nhận hàng', 400)
 
-    const { count: existing } = await (supabase.from('ProductionImport') as any)
+    const { count: existing } = await supabase.from('ProductionImport')
       .select('id', { count: 'exact', head: true }).eq('from_gdo_id', gdoId).neq('status', 'CANCELLED')
     if (existing && existing > 0) return fail(res, 'Đã tạo phiếu nhập cho lô hàng này rồi', 409)
 
-    const { data: dos } = await (supabase.from('OutboundDelivery') as any)
+    const { data: dos } = await supabase.from('OutboundDelivery')
       .select('id').eq('gdo_id', gdoId)
     const doIds: string[] = (dos ?? []).map((d: { id: string }) => d.id)
     if (!doIds.length) return fail(res, 'GDO không có đơn giao hàng', 400)
 
-    const { data: items } = await (supabase.from('OutboundItem') as any)
+    const { data: items } = await supabase.from('OutboundItem')
       .select('material_id, cartons_ordered, material_type, material:Material(category)').in('do_id', doIds)
 
     const matMap = new Map<string, { material_id: string; cartons: number; category: string | null }>()
@@ -784,7 +784,7 @@ export async function confirmTransferReceipt(req: Request, res: Response) {
     const [vy, vm, vd] = vnDate.split('-')
     const ddmmyy = `${vd}${vm}${vy.slice(2)}`
     const importPrefix = `${nppWh.code}_N_${ddmmyy}_`
-    const { data: existingCodes } = await (supabase.from('ProductionImport') as any)
+    const { data: existingCodes } = await supabase.from('ProductionImport')
       .select('import_code').ilike('import_code', `${importPrefix}%`)
     const maxSeq = (existingCodes ?? []).reduce((max: number, r: { import_code: string }) => {
       const n = parseInt(r.import_code.slice(importPrefix.length), 10)
@@ -806,10 +806,10 @@ export async function confirmTransferReceipt(req: Request, res: Response) {
       tms_order_id: id,
       updated_at: t,
     }))
-    const { error: insertError } = await (supabase.from('ProductionImport') as any).insert(toInsert)
+    const { error: insertError } = await supabase.from('ProductionImport').insert(toInsert)
     if (insertError) return fail(res, `Lỗi tạo phiếu nhập: ${insertError.message}`, 500)
 
-    await (supabase.from('GroupDeliveryOrder') as any)
+    await supabase.from('GroupDeliveryOrder')
       .update({ transfer_status: 'RECEIVING', updated_at: t }).eq('id', gdoId)
 
     return ok(res, { created: toInsert.length })
@@ -824,53 +824,53 @@ export async function createOneInbound(req: Request, res: Response) {
     if (!material_id) return fail(res, 'Thiếu material_id', 400)
 
     const t = new Date().toISOString()
-    const { data: tmsOrder } = await (supabase.from('TmsOrder') as any)
+    const { data: tmsOrder } = await supabase.from('TmsOrder')
       .select('id, destination_warehouse_id, transfer_gdo_id, warehouse:Warehouse!destination_warehouse_id(id, code)')
       .eq('id', id).single()
     if (!tmsOrder) return fail(res, 'Không tìm thấy lệnh chuyển kho', 404)
     if (!tmsOrder.transfer_gdo_id) return fail(res, 'Lệnh không phải chuyển kho', 400)
     if (!tmsOrder.destination_warehouse_id) return fail(res, 'Lệnh chưa có kho nhận', 400)
 
-    const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
+    const { data: gdo } = await supabase.from('GroupDeliveryOrder')
       .select('id, transfer_status').eq('id', tmsOrder.transfer_gdo_id).single()
     if (!gdo || gdo.transfer_status !== 'RECEIVING')
       return fail(res, 'GDO phải đang ở trạng thái Đang nhận', 400)
 
     // Kiểm tra chưa có phiếu active cho mã hàng này trong TMS order
-    const { data: existing } = await (supabase.from('ProductionImport') as any)
+    const { data: existing } = await supabase.from('ProductionImport')
       .select('id').eq('tms_order_id', id).eq('material_id', material_id)
     if ((existing ?? []).length > 0)
       return fail(res, 'Đã có phiếu nhập cho mã hàng này', 409)
 
     // Lấy planned_cartons từ GDO outbound items
-    const { data: dos } = await (supabase.from('OutboundDelivery') as any)
+    const { data: dos } = await supabase.from('OutboundDelivery')
       .select('id').eq('gdo_id', tmsOrder.transfer_gdo_id)
     const doIds = (dos ?? []).map((d: { id: string }) => d.id)
     let plannedCartons = 0
     if (doIds.length > 0) {
-      const { data: items } = await (supabase.from('OutboundItem') as any)
+      const { data: items } = await supabase.from('OutboundItem')
         .select('cartons_ordered').in('do_id', doIds).eq('material_id', material_id)
       plannedCartons = (items ?? []).reduce((s: number, i: { cartons_ordered: number }) => s + (i.cartons_ordered || 0), 0)
     }
 
     // Lấy category của material
-    const { data: mat } = await (supabase.from('Material') as any)
+    const { data: mat } = await supabase.from('Material')
       .select('category').eq('id', material_id).maybeSingle()
 
     // Generate import_code
     const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
     const [vy, vm, vd] = vnDate.split('-')
     const ddmmyy = `${vd}${vm}${vy.slice(2)}`
-    const whCode = (tmsOrder.warehouse as { code: string })?.code ?? 'XX'
+    const whCode = (tmsOrder.warehouse as unknown as { code: string })?.code ?? 'XX'
     const prefix = `${whCode}_N_${ddmmyy}_`
-    const { data: existingCodes } = await (supabase.from('ProductionImport') as any)
+    const { data: existingCodes } = await supabase.from('ProductionImport')
       .select('import_code').ilike('import_code', `${prefix}%`)
     const maxSeq = (existingCodes ?? []).reduce((max: number, r: { import_code: string }) => {
       const n = parseInt(r.import_code.slice(prefix.length), 10)
       return isNaN(n) ? max : Math.max(max, n)
     }, 0)
 
-    const { data: created, error } = await (supabase.from('ProductionImport') as any).insert({
+    const { data: created, error } = await supabase.from('ProductionImport').insert({
       id:              randomUUID(),
       import_code:     `${prefix}${String(maxSeq + 1).padStart(2, '0')}`,
       warehouse_id:    tmsOrder.destination_warehouse_id,
@@ -897,28 +897,28 @@ export async function cancelTransferReceipt(req: Request, res: Response) {
     const { id } = req.params
     const t = new Date().toISOString()
 
-    const { data: tmsOrder } = await (supabase.from('TmsOrder') as any)
+    const { data: tmsOrder } = await supabase.from('TmsOrder')
       .select('id, transfer_gdo_id').eq('id', id).single()
     if (!tmsOrder) return fail(res, 'Không tìm thấy lệnh chuyển kho', 404)
     if (!tmsOrder.transfer_gdo_id) return fail(res, 'Lệnh này không phải lệnh chuyển kho', 400)
 
     const gdoId = tmsOrder.transfer_gdo_id as string
 
-    const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
+    const { data: gdo } = await supabase.from('GroupDeliveryOrder')
       .select('id, transfer_status').eq('id', gdoId).single()
     if (!gdo) return fail(res, 'Không tìm thấy GDO', 404)
     if (gdo.transfer_status !== 'RECEIVING') return fail(res, 'Lệnh không ở trạng thái Đang nhận', 400)
 
     // Không cho phép hủy nếu còn phiếu nhập đang hoạt động (OPEN hoặc COMPLETED)
     // NPP phải tự hủy/hoàn thành từng phiếu qua module Nhập kho trước
-    const { count: activeCount } = await (supabase.from('ProductionImport') as any)
+    const { count: activeCount } = await supabase.from('ProductionImport')
       .select('id', { count: 'exact', head: true })
       .eq('from_gdo_id', gdoId).neq('status', 'CANCELLED')
     if (activeCount && activeCount > 0)
       return fail(res, `Còn ${activeCount} phiếu nhập đang hoạt động — hủy từng phiếu ở module Nhập kho trước`, 409)
 
     // Reset GDO về IN_TRANSIT
-    await (supabase.from('GroupDeliveryOrder') as any)
+    await supabase.from('GroupDeliveryOrder')
       .update({ transfer_status: 'IN_TRANSIT', updated_at: t }).eq('id', gdoId)
 
     return ok(res, { cancelled: true })
@@ -931,12 +931,12 @@ export async function getTransferGoods(req: Request, res: Response) {
     const { id } = req.params
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: tmsOrder } = await (supabase.from('TmsOrder') as any)
+    const { data: tmsOrder } = await supabase.from('TmsOrder')
       .select('id, transfer_gdo_id').eq('id', id).maybeSingle()
     if (!tmsOrder) return fail(res, 'Không tìm thấy lệnh', 404)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: planLines } = await (supabase.from('inbound_plan_lines') as any)
+    const { data: planLines } = await supabase.from('inbound_plan_lines')
       .select('material_id, planned_boxes, material:Material(id, material_code, short_name, unit)')
       .eq('tms_order_id', id)
       .neq('status', 'CANCELLED')
@@ -949,13 +949,13 @@ export async function getTransferGoods(req: Request, res: Response) {
 
     if (tmsOrder.transfer_gdo_id) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: dos } = await (supabase.from('OutboundDelivery') as any)
+      const { data: dos } = await supabase.from('OutboundDelivery')
         .select('id').eq('gdo_id', tmsOrder.transfer_gdo_id)
       const doIds = (dos ?? []).map((d: any) => d.id as string)
 
       if (doIds.length) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: items } = await (supabase.from('OutboundItem') as any)
+        const { data: items } = await supabase.from('OutboundItem')
           .select('id, material_id').in('do_id', doIds)
         const itemIds = (items ?? []).map((i: any) => i.id as string)
         const itemMatMap = new Map<string, string>()
@@ -963,7 +963,7 @@ export async function getTransferGoods(req: Request, res: Response) {
 
         if (itemIds.length) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { data: scans } = await (supabase.from('OutboundScanEntry') as any)
+          const { data: scans } = await supabase.from('OutboundScanEntry')
             .select('item_id, pallet_code, cartons_scanned')
             .in('item_id', itemIds)
 
@@ -985,7 +985,7 @@ export async function getTransferGoods(req: Request, res: Response) {
     // Pallet đã nhận tại kho nhận: ProductionImport → InventoryEntry
     // Lấy mọi phiếu non-cancelled (kể cả OPEN) để "Thùng thực" cập nhật live khi đang nhận.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: importOrders } = await (supabase.from('ProductionImport') as any)
+    const { data: importOrders } = await supabase.from('ProductionImport')
       .select('id, material_id, posm_cartons, material:Material!material_id(no_qr_tracking)')
       .eq('tms_order_id', id).eq('source_type', 'TRANSFER').neq('status', 'CANCELLED')
     const importIds: string[] = (importOrders ?? []).map((o: any) => o.id)
@@ -1011,7 +1011,7 @@ export async function getTransferGoods(req: Request, res: Response) {
     if (importIds.length) {
       // Phân trang né cap-1000: 1 chuyến chuyển kho có thể >1000 pallet → bảng hàng/chênh lệch sẽ cụt
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const entries = await fetchAllPaged(() => (supabase.from('InventoryEntry') as any)
+      const entries = await fetchAllPaged(() => supabase.from('InventoryEntry')
         .select('material_id, pallet_code, cartons_imported, created_at')
         .in('import_order_id', importIds)
         .order('import_order_id', { ascending: true }))
@@ -1083,12 +1083,12 @@ export async function deleteOrder(req: Request, res: Response) {
     const { id } = req.params
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: order } = await (supabase.from('TmsOrder') as any)
+    const { data: order } = await supabase.from('TmsOrder')
       .select('id, source_type, transfer_gdo_id').eq('id', id).single()
     if (!order) return fail(res, 'Không tìm thấy lệnh', 404)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: slots } = await (supabase.from('TmsVehicleSlot') as any)
+    const { data: slots } = await supabase.from('TmsVehicleSlot')
       .select('id, status').eq('order_id', id)
     const hasBooked = (slots ?? []).some((s: { status: string }) =>
       ['BOOKED','ARRIVED','DONE'].includes(s.status)
@@ -1101,10 +1101,10 @@ export async function deleteOrder(req: Request, res: Response) {
     // Dọn dòng kế hoạch nhập trước (FK inbound_plan_lines→TmsOrder là ON DELETE SET NULL → nếu không xóa,
     // dòng sẽ mồ côi mà vẫn hiện trong Báo cáo nhập theo ngày/kho). Đơn Xuất không có plan-lines → no-op.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (supabase.from('inbound_plan_lines') as any).delete().eq('tms_order_id', id)
+    await supabase.from('inbound_plan_lines').delete().eq('tms_order_id', id)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await (supabase.from('TmsOrder') as any).delete().eq('id', id)
+    const { error } = await supabase.from('TmsOrder').delete().eq('id', id)
     if (error) return fail(res, error.message)
 
     return ok(res, { id })

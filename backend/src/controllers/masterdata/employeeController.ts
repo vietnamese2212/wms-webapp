@@ -7,14 +7,14 @@ import { ok, fail } from '../../utils/response'
 // ─── Phân quyền: bảo vệ tài khoản Admin + giới hạn phạm vi thấy nhân sự ─────────
 function isSuperadmin(req: Request): boolean {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (req as any).user?.name === 'Admin'
+  return req.user?.name === 'Admin'
 }
 
 // Chặn non-superadmin thao tác trên tài khoản superadmin (Admin). true = đã chặn (đã trả lỗi).
 async function blockIfTargetSuperadmin(req: Request, res: Response): Promise<boolean> {
   if (isSuperadmin(req)) return false
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data } = await (supabase.from('Employee') as any)
+  const { data } = await supabase.from('Employee')
     .select('name, employee_code').eq('id', req.params.id).maybeSingle()
   if (data?.name === 'Admin' || data?.employee_code === 'ADMIN') {
     fail(res, 'Chỉ Admin mới được thao tác trên tài khoản Admin', 403)
@@ -27,7 +27,7 @@ async function blockIfTargetSuperadmin(req: Request, res: Response): Promise<boo
 // Sơ đồ tổ chức nằm ở JobTitle.parent_id (KHÔNG phải Employee.manager_id). null = thấy tất cả (superadmin).
 async function visibleEmployeeIds(req: Request): Promise<Set<string> | null> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const u = (req as any).user
+  const u = req.user
   if (!u) return new Set<string>()
   if (u.name === 'Admin') return null
 
@@ -36,14 +36,14 @@ async function visibleEmployeeIds(req: Request): Promise<Set<string> | null> {
 
   // 1. Chức danh của người dùng (JWT không có job_title_id → đọc từ DB)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: me } = await (supabase.from('Employee') as any)
+  const { data: me } = await supabase.from('Employee')
     .select('job_title_id').eq('id', self).maybeSingle()
   const myJt: string | null = me?.job_title_id ?? null
 
   if (myJt) {
     // Tập chức danh cấp dưới (đệ quy) của chức danh mình — không gồm chính chức danh mình (chỉ cấp dưới)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: jts } = await (supabase.from('JobTitle') as any).select('id, parent_id')
+    const { data: jts } = await supabase.from('JobTitle').select('id, parent_id')
     const childrenOf = new Map<string, string[]>()
     for (const r of ((jts ?? []) as { id: string; parent_id: string | null }[])) {
       if (!r.parent_id) continue
@@ -60,7 +60,7 @@ async function visibleEmployeeIds(req: Request): Promise<Set<string> | null> {
     }
     if (descJt.size) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: subs } = await (supabase.from('Employee') as any)
+      const { data: subs } = await supabase.from('Employee')
         .select('id').in('job_title_id', [...descJt])
       for (const s of ((subs ?? []) as { id: string }[])) allowed.add(s.id)
     }
@@ -71,7 +71,7 @@ async function visibleEmployeeIds(req: Request): Promise<Set<string> | null> {
     const whIds: string[] = u.warehouse_ids ?? []
     if (!whIds.length) return new Set<string>([self])
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: wa } = await (supabase.from('UserWarehouseAccess') as any)
+    const { data: wa } = await supabase.from('UserWarehouseAccess')
       .select('employee_id').in('warehouse_id', whIds)
     const inWh = new Set(((wa ?? []) as { employee_id: string }[]).map(r => r.employee_id))
     return new Set<string>([...allowed].filter(id => id === self || inWh.has(id)))
@@ -123,7 +123,7 @@ async function fetchFull(opts: {
   include_deleted?: boolean
 }) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let q = (supabase.from('Employee') as any).select(EMP_BASE).order('name')
+  let q = supabase.from('Employee').select(EMP_BASE).order('name')
   if (!opts.include_deleted) q = q.is('deleted_at', null)
   if (opts.ids?.length)      q = q.in('id', opts.ids)
   if (opts.department_id)    q = q.eq('department_id', opts.department_id)
@@ -132,33 +132,33 @@ async function fetchFull(opts: {
 
   const { data, error } = await q
   if (error) throw new Error(error.message)
-  const emps = (data ?? []) as EmpRow[]
+  const emps = (data ?? []) as unknown as EmpRow[]
   if (!emps.length) return []
 
   // ── Departments ────────────────────────────────────────────────────────────
   const deptIds = [...new Set(emps.map(e => e.department_id).filter((x): x is string => !!x))]
   const { data: depts } = deptIds.length
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ? await (supabase.from('Department') as any).select('id, name, code').in('id', deptIds)
+    ? await supabase.from('Department').select('id, name, code').in('id', deptIds)
     : { data: [] as { id: string; name: string; code: string }[] }
 
   // ── JobTitles ──────────────────────────────────────────────────────────────
   const jtIds = [...new Set(emps.map(e => e.job_title_id).filter((x): x is string => !!x))]
   const { data: jts } = jtIds.length
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ? await (supabase.from('JobTitle') as any).select('id, name').in('id', jtIds)
+    ? await supabase.from('JobTitle').select('id, name').in('id', jtIds)
     : { data: [] as { id: string; name: string }[] }
 
   // ── Warehouse access ───────────────────────────────────────────────────────
   const empIds = emps.map(e => e.id)
-  const { data: waRows } = await (supabase.from('UserWarehouseAccess') as any)
+  const { data: waRows } = await supabase.from('UserWarehouseAccess')
     .select('employee_id, warehouse_id')
     .in('employee_id', empIds)
 
   const wIds = [...new Set(((waRows ?? []) as { employee_id: string; warehouse_id: string }[]).map(r => r.warehouse_id))]
   const { data: whs } = wIds.length
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ? await (supabase.from('Warehouse') as any).select('id, code, name').in('id', wIds)
+    ? await supabase.from('Warehouse').select('id, code, name').in('id', wIds)
     : { data: [] as { id: string; code: string; name: string }[] }
 
   // ── Merge ──────────────────────────────────────────────────────────────────
@@ -177,7 +177,7 @@ async function fetchFull(opts: {
   const mgrIds = [...new Set(emps.map(e => e.manager_id).filter((x): x is string => !!x))]
   const { data: mgrs } = mgrIds.length
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ? await (supabase.from('Employee') as any).select('id, name, employee_code').in('id', mgrIds)
+    ? await supabase.from('Employee').select('id, name, employee_code').in('id', mgrIds)
     : { data: [] as { id: string; name: string; employee_code: string }[] }
   const mgrMap = new Map(((mgrs ?? []) as { id: string; name: string; employee_code: string }[]).map(m => [m.id, m]))
 
@@ -242,8 +242,8 @@ export async function createEmployee(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const now = new Date().toISOString()
-    const actor = (req as any).user?.name || null
-    const { error } = await (supabase.from('Employee') as any).insert({
+    const actor = req.user?.name || null
+    const { error } = await supabase.from('Employee').insert({
       id: empId, name, employee_code,
       email: email || null, phone: phone || null,
       department_id: department_id || null,
@@ -264,7 +264,7 @@ export async function createEmployee(req: Request, res: Response) {
 
     if (warehouse_ids.length > 0) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (supabase.from('UserWarehouseAccess') as any).insert(
+      await supabase.from('UserWarehouseAccess').insert(
         warehouse_ids.map(wid => ({
           id: randomUUID(), employee_id: empId, warehouse_id: wid,
         }))
@@ -300,7 +300,7 @@ export async function updateEmployee(req: Request, res: Response) {
 
     // Build update object explicitly — exclude undefined fields so Supabase doesn't overwrite them with null
     // (quyền nằm trên JobTitle, không phải Employee — không đụng module_permissions ở đây)
-    const updates: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: (req as any).user?.name || null }
+    const updates: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: req.user?.name || null }
     if (name              !== undefined) updates.name              = name
     if (phone             !== undefined) updates.phone             = phone
     if (email             !== undefined) updates.email             = email
@@ -315,17 +315,17 @@ export async function updateEmployee(req: Request, res: Response) {
     if (manager_id        !== undefined) updates.manager_id        = manager_id || null
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await (supabase.from('Employee') as any)
+    const { error } = await supabase.from('Employee')
       .update(updates)
       .eq('id', id)
     if (error) return fail(res, error.message)
 
     if (warehouse_ids !== undefined) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (supabase.from('UserWarehouseAccess') as any).delete().eq('employee_id', id)
+      await supabase.from('UserWarehouseAccess').delete().eq('employee_id', id)
       if (warehouse_ids.length > 0) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (supabase.from('UserWarehouseAccess') as any).insert(
+        await supabase.from('UserWarehouseAccess').insert(
           warehouse_ids.map(wid => ({ id: randomUUID(), employee_id: id, warehouse_id: wid }))
         )
       }
@@ -355,14 +355,14 @@ export async function setManager(req: Request, res: Response) {
         if (seen.has(cur)) break
         seen.add(cur)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const r: { data: { manager_id: string | null } | null } = await (supabase.from('Employee') as any).select('manager_id').eq('id', cur).maybeSingle()
+        const r: { data: { manager_id: string | null } | null } = await supabase.from('Employee').select('manager_id').eq('id', cur).maybeSingle()
         cur = r.data?.manager_id ?? null
       }
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await (supabase.from('Employee') as any)
-      .update({ manager_id: mgr, updated_at: new Date().toISOString(), updated_by: (req as any).user?.name || null })
+    const { error } = await supabase.from('Employee')
+      .update({ manager_id: mgr, updated_at: new Date().toISOString(), updated_by: req.user?.name || null })
       .eq('id', id)
     if (error) return fail(res, error.message)
     const rows = await fetchFull({ ids: [id] })
@@ -381,7 +381,7 @@ export async function setPassword(req: Request, res: Response) {
 
     const hash = await bcrypt.hash(password, 10)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await (supabase.from('Employee') as any)
+    const { error } = await supabase.from('Employee')
       .update({ password: hash, updated_at: new Date().toISOString() })
       .eq('id', id)
     if (error) return fail(res, error.message)
@@ -396,15 +396,15 @@ async function employeeHasHistory(id: string): Promise<boolean> {
   // Các bảng dùng TEXT column (không phải FK constraint) — phải check thủ công
   const checks = await Promise.all([
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (supabase.from('ProductionImport') as any)
+    supabase.from('ProductionImport')
       .select('id', { count: 'exact', head: true })
       .or(`imported_by.eq.${id},created_by.eq.${id}`),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (supabase.from('InventoryEntry') as any)
+    supabase.from('InventoryEntry')
       .select('id', { count: 'exact', head: true })
       .eq('created_by', id),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (supabase.from('OutboundScanEntry') as any)
+    supabase.from('OutboundScanEntry')
       .select('id', { count: 'exact', head: true })
       .eq('scanned_by', id),
   ])
@@ -419,7 +419,7 @@ export async function deleteEmployee(req: Request, res: Response) {
     const hasHistory = await employeeHasHistory(id)
     if (hasHistory) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { error: softErr } = await (supabase.from('Employee') as any)
+      const { error: softErr } = await supabase.from('Employee')
         .update({ deleted_at: new Date().toISOString(), is_active: false, updated_at: new Date().toISOString() })
         .eq('id', id)
       if (softErr) return fail(res, softErr.message)
@@ -428,13 +428,13 @@ export async function deleteEmployee(req: Request, res: Response) {
 
     // Không có lịch sử → hard delete (FK constraint thực như UserWarehouseAccess sẽ cascade)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error: hardErr } = await (supabase.from('Employee') as any).delete().eq('id', id)
+    const { error: hardErr } = await supabase.from('Employee').delete().eq('id', id)
     if (!hardErr) return ok(res, { message: 'Đã xóa nhân viên', deleted: 'hard' })
 
     // Vẫn còn FK constraint DB-level khác (23503) → soft delete
     if (hardErr.code === '23503') {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { error: softErr } = await (supabase.from('Employee') as any)
+      const { error: softErr } = await supabase.from('Employee')
         .update({ deleted_at: new Date().toISOString(), is_active: false, updated_at: new Date().toISOString() })
         .eq('id', id)
       if (softErr) return fail(res, softErr.message)
@@ -452,7 +452,7 @@ export async function restoreEmployee(req: Request, res: Response) {
     if (await blockIfTargetSuperadmin(req, res)) return
     const { id } = req.params
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await (supabase.from('Employee') as any)
+    const { error } = await supabase.from('Employee')
       .update({ deleted_at: null, is_active: true, updated_at: new Date().toISOString() })
       .eq('id', id)
     if (error) return fail(res, error.message)
@@ -470,10 +470,10 @@ export async function setWarehouseAccess(req: Request, res: Response) {
     const { warehouse_ids } = req.body as { warehouse_ids: string[] }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (supabase.from('UserWarehouseAccess') as any).delete().eq('employee_id', id)
+    await supabase.from('UserWarehouseAccess').delete().eq('employee_id', id)
     if (warehouse_ids.length > 0) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (supabase.from('UserWarehouseAccess') as any).insert(
+      await supabase.from('UserWarehouseAccess').insert(
         warehouse_ids.map(wid => ({ id: randomUUID(), employee_id: id, warehouse_id: wid }))
       )
     }

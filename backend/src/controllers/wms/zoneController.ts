@@ -26,7 +26,7 @@ export async function createZone(req: Request, res: Response) {
   const { warehouse_id, name, category } = req.body as { warehouse_id?: string; name?: string; category?: string }
   if (!warehouse_id || !name?.trim()) return fail(res, 'warehouse_id và name là bắt buộc')
 
-  const reqUser = (req as any).user
+  const reqUser = req.user
   if (reqUser?.warehouse_scope === 'ASSIGNED') {
     const allowed: string[] = reqUser.warehouse_ids ?? []
     if (!allowed.includes(warehouse_id)) return fail(res, 'Không có quyền thao tác trên kho này', 403)
@@ -77,7 +77,7 @@ export async function updateZone(req: Request, res: Response) {
   const { id } = req.params
   const { name, category, is_active } = req.body as { name?: string; category?: string | null; is_active?: boolean }
 
-  const actor = (req as any).user
+  const actor = req.user
   if (actor?.warehouse_scope === 'ASSIGNED') {
     const { data: target } = await supabase.from('WarehouseZone').select('warehouse_id').eq('id', id).single()
     const allowed: string[] = actor.warehouse_ids ?? []
@@ -110,7 +110,7 @@ export async function deleteZone(req: Request, res: Response) {
     .single()
 
   if (zone) {
-    const deleteActor = (req as any).user
+    const deleteActor = req.user
     if (deleteActor?.warehouse_scope === 'ASSIGNED') {
       const allowed: string[] = deleteActor.warehouse_ids ?? []
       if (!allowed.includes((zone as any).warehouse_id)) return fail(res, 'Không có quyền thao tác trên kho này', 403)

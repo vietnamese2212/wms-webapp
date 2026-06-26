@@ -15,7 +15,7 @@ import { relinkAfterDelete } from './gateRegistrationController'
 // Helper: tìm gate_regs theo plate+date+warehouse, gom nhóm theo criteria của gate_reg rồi relink
 async function relinkGatesByPlate(plate: string, orderId: string) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: ord } = await (supabase.from('TmsOrder') as any)
+  const { data: ord } = await supabase.from('TmsOrder')
     .select('date, warehouse_id')
     .eq('id', orderId)
     .single()
@@ -47,12 +47,12 @@ export async function addVehicleSlot(req: Request, res: Response) {
 
     // Kiểm tra order tồn tại
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: order, error: ordErr } = await (supabase.from('TmsOrder') as any)
+    const { data: order, error: ordErr } = await supabase.from('TmsOrder')
       .select('id').eq('id', orderId).single()
     if (ordErr || !order) return fail(res, 'Không tìm thấy đơn hàng', 404)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (supabase.from('TmsVehicleSlot') as any)
+    const { data, error } = await supabase.from('TmsVehicleSlot')
       .insert({ id: randomUUID(), order_id: orderId, status: 'PENDING', created_at: now, updated_at: now })
       .select('*, slot:DeliverySlot!slot_id(id, date, time_from, time_to, direction, cargo_type, max_vehicles, booked_count)')
       .single()
@@ -67,11 +67,11 @@ export async function updateVehicleSlot(req: Request, res: Response) {
     const { id } = req.params
     const { slot_id, license_plate, driver_name, driver_phone, status, consolidation_order_ids, gate_registration_id } = req.body
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const user = (req as any).user
+    const user = req.user
     const now = new Date().toISOString()
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: existing, error: fetchErr } = await (supabase.from('TmsVehicleSlot') as any)
+    const { data: existing, error: fetchErr } = await supabase.from('TmsVehicleSlot')
       .select('id, slot_id, status, order_id, license_plate, consolidation_group_id, is_consolidation_primary').eq('id', id).single()
     if (fetchErr) return fail(res, fetchErr.message)
     if (!existing) return fail(res, 'Không tìm thấy vehicle slot', 404)
@@ -91,7 +91,7 @@ export async function updateVehicleSlot(req: Request, res: Response) {
       const nowMs = Date.now()
       if (existing.slot_id) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: oldSlot } = await (supabase.from('DeliverySlot') as any)
+        const { data: oldSlot } = await supabase.from('DeliverySlot')
           .select('date, time_from').eq('id', existing.slot_id).single()
         if (oldSlot) {
           const slotStart = new Date(`${oldSlot.date}T${oldSlot.time_from}+07:00`).getTime()
@@ -102,7 +102,7 @@ export async function updateVehicleSlot(req: Request, res: Response) {
       }
       if (newSlotId) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: newSlot } = await (supabase.from('DeliverySlot') as any)
+        const { data: newSlot } = await supabase.from('DeliverySlot')
           .select('date, time_from').eq('id', newSlotId).single()
         if (!newSlot) return fail(res, 'Slot không tồn tại', 404)
         const newSlotStart = new Date(`${newSlot.date}T${newSlot.time_from}+07:00`).getTime()
@@ -143,7 +143,7 @@ export async function updateVehicleSlot(req: Request, res: Response) {
         const g = gateReg as { license_plate: string | null; date: string; registration_number: number; warehouse_id: string }
         if (g.license_plate) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { data: sameOrder } = await (supabase.from('TmsOrder') as any)
+          const { data: sameOrder } = await supabase.from('TmsOrder')
             .select('id').eq('id', existing.order_id).single()
           if (sameOrder) {
             const { count: gatesBefore } = await supabase
@@ -155,7 +155,7 @@ export async function updateVehicleSlot(req: Request, res: Response) {
               .lt('registration_number', g.registration_number)
 
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const { data: samePlateSlotsData } = await (supabase.from('TmsVehicleSlot') as any)
+            const { data: samePlateSlotsData } = await supabase.from('TmsVehicleSlot')
               .select('id, order_id, gate_registration_id, created_at')
               .eq('license_plate', g.license_plate)
               .neq('id', id)
@@ -185,10 +185,10 @@ export async function updateVehicleSlot(req: Request, res: Response) {
     const orderIds = Array.isArray(consolidation_order_ids) ? consolidation_order_ids as string[] : []
     if (orderIds.length > 0) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: primaryOrder } = await (supabase.from('TmsOrder') as any)
+      const { data: primaryOrder } = await supabase.from('TmsOrder')
         .select('direction, warehouse_type').eq('id', existing.order_id).single()
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: secondaryOrders } = await (supabase.from('TmsOrder') as any)
+      const { data: secondaryOrders } = await supabase.from('TmsOrder')
         .select('direction, warehouse_type').in('id', orderIds)
       if (primaryOrder?.direction) {
         const hasWrongDir = (secondaryOrders ?? []).some(
@@ -221,7 +221,7 @@ export async function updateVehicleSlot(req: Request, res: Response) {
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (supabase.from('TmsVehicleSlot') as any)
+    const { data, error } = await supabase.from('TmsVehicleSlot')
       .update(updates).eq('id', id)
       .select('*, slot:DeliverySlot!slot_id(id, date, time_from, time_to, direction, cargo_type, max_vehicles, booked_count)')
       .single()
@@ -233,7 +233,7 @@ export async function updateVehicleSlot(req: Request, res: Response) {
       const finalPlate  = newPlate
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: candidateSlots } = await (supabase.from('TmsVehicleSlot') as any)
+      const { data: candidateSlots } = await supabase.from('TmsVehicleSlot')
         .select('id, order_id, status, consolidation_group_id')
         .in('order_id', orderIds)
         .eq('status', 'PENDING')
@@ -247,7 +247,7 @@ export async function updateVehicleSlot(req: Request, res: Response) {
       if (eligible.length > 0) {
         await Promise.all(eligible.map(s =>
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (supabase.from('TmsVehicleSlot') as any).update({
+          supabase.from('TmsVehicleSlot').update({
             slot_id: finalSlotId, license_plate: finalPlate, status: 'BOOKED',
             consolidation_group_id: newGroupId, is_consolidation_primary: false, updated_at: now,
           }).eq('id', s.id)
@@ -302,18 +302,18 @@ async function releaseInternal(req: Request, res: Response, opts: { skipTimeChec
   try {
     const { id } = req.params
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const user = (req as any).user
+    const user = req.user
     const now = new Date().toISOString()
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: existing, error: fetchErr } = await (supabase.from('TmsVehicleSlot') as any)
+    const { data: existing, error: fetchErr } = await supabase.from('TmsVehicleSlot')
       .select('id, slot_id, status, order_id, license_plate, consolidation_group_id, is_consolidation_primary').eq('id', id).single()
     if (fetchErr) return fail(res, fetchErr.message)
     if (!existing) return fail(res, 'Không tìm thấy vehicle slot', 404)
 
     if (!opts.skipTimeCheck && existing.slot_id) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: oldSlot } = await (supabase.from('DeliverySlot') as any)
+      const { data: oldSlot } = await supabase.from('DeliverySlot')
         .select('date, time_from').eq('id', existing.slot_id).single()
       if (oldSlot) {
         const slotStart = new Date(`${oldSlot.date}T${oldSlot.time_from}+07:00`).getTime()
@@ -334,19 +334,19 @@ async function releaseInternal(req: Request, res: Response, opts: { skipTimeChec
     const groupId = existing.consolidation_group_id as string | null
     if (groupId) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: mates } = await (supabase.from('TmsVehicleSlot') as any)
+      const { data: mates } = await supabase.from('TmsVehicleSlot')
         .select('id, is_consolidation_primary')
         .eq('consolidation_group_id', groupId)
         .neq('id', id)
       const mateList = (mates ?? []) as { id: string; is_consolidation_primary: boolean }[]
       if (mateList.length === 1) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (supabase.from('TmsVehicleSlot') as any).update({
+        await supabase.from('TmsVehicleSlot').update({
           consolidation_group_id: null, is_consolidation_primary: false, updated_at: now,
         }).eq('id', mateList[0].id)
       } else if (mateList.length >= 2 && (existing.is_consolidation_primary as boolean)) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (supabase.from('TmsVehicleSlot') as any).update({
+        await supabase.from('TmsVehicleSlot').update({
           is_consolidation_primary: true, updated_at: now,
         }).eq('id', mateList[0].id)
       }
@@ -354,7 +354,7 @@ async function releaseInternal(req: Request, res: Response, opts: { skipTimeChec
 
     // Xoá thông tin tài xế/cổng + cờ nhóm (slot/biển/status đã do RPC xử lý)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (supabase.from('TmsVehicleSlot') as any)
+    const { data, error } = await supabase.from('TmsVehicleSlot')
       .update({
         driver_phone: null,
         consolidation_group_id: null, is_consolidation_primary: false,
@@ -378,7 +378,7 @@ export async function deleteVehicleSlot(req: Request, res: Response) {
     const now = new Date().toISOString()
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: existing, error: fetchErr } = await (supabase.from('TmsVehicleSlot') as any)
+    const { data: existing, error: fetchErr } = await supabase.from('TmsVehicleSlot')
       .select('id, slot_id, status, order_id, license_plate, consolidation_group_id, is_consolidation_primary').eq('id', id).single()
     if (fetchErr) return fail(res, fetchErr.message)
     if (!existing) return fail(res, 'Không tìm thấy vehicle slot', 404)
@@ -386,7 +386,7 @@ export async function deleteVehicleSlot(req: Request, res: Response) {
 
     // Không cho xoá slot duy nhất của đơn
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: siblings } = await (supabase.from('TmsVehicleSlot') as any)
+    const { data: siblings } = await supabase.from('TmsVehicleSlot')
       .select('id').eq('order_id', existing.order_id)
     if ((siblings ?? []).length <= 1) return fail(res, 'Không thể xoá xe duy nhất của đơn hàng', 400)
 
@@ -394,19 +394,19 @@ export async function deleteVehicleSlot(req: Request, res: Response) {
     const groupId = existing.consolidation_group_id as string | null
     if (groupId) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: mates } = await (supabase.from('TmsVehicleSlot') as any)
+      const { data: mates } = await supabase.from('TmsVehicleSlot')
         .select('id, is_consolidation_primary')
         .eq('consolidation_group_id', groupId)
         .neq('id', id)
       const mateList = (mates ?? []) as { id: string; is_consolidation_primary: boolean }[]
       if (mateList.length === 1) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (supabase.from('TmsVehicleSlot') as any).update({
+        await supabase.from('TmsVehicleSlot').update({
           consolidation_group_id: null, is_consolidation_primary: false, updated_at: now,
         }).eq('id', mateList[0].id)
       } else if (mateList.length >= 2 && (existing.is_consolidation_primary as boolean)) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (supabase.from('TmsVehicleSlot') as any).update({
+        await supabase.from('TmsVehicleSlot').update({
           is_consolidation_primary: true, updated_at: now,
         }).eq('id', mateList[0].id)
       }
@@ -414,7 +414,7 @@ export async function deleteVehicleSlot(req: Request, res: Response) {
 
     const oldSlotId = existing.slot_id as string | null
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await (supabase.from('TmsVehicleSlot') as any).delete().eq('id', id)
+    const { error } = await supabase.from('TmsVehicleSlot').delete().eq('id', id)
     if (error) return fail(res, error.message)
 
     // Tính lại cache booked_count cho slot cũ sau khi xoá dòng

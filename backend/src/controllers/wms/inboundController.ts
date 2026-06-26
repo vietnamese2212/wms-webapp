@@ -47,17 +47,17 @@ function generateImportCode(whCode: string, ddmmyy: string, seq: number): string
 }
 
 async function computeGdoTotalCartons(gdoId: string, materialId: string | null): Promise<number | null> {
-  const { data: dos } = await (supabase.from('OutboundDelivery') as any).select('id').eq('gdo_id', gdoId)
+  const { data: dos } = await supabase.from('OutboundDelivery').select('id').eq('gdo_id', gdoId)
   const doIds = (dos ?? []).map((d: any) => d.id as string)
   if (!doIds.length) return null
 
-  let itemQuery = (supabase.from('OutboundItem') as any).select('id').in('do_id', doIds)
+  let itemQuery = supabase.from('OutboundItem').select('id').in('do_id', doIds)
   if (materialId) itemQuery = itemQuery.eq('material_id', materialId)
   const { data: items } = await itemQuery
   const itemIds = (items ?? []).map((i: any) => i.id as string)
   if (!itemIds.length) return null
 
-  const { data: scans } = await (supabase.from('OutboundScanEntry') as any)
+  const { data: scans } = await supabase.from('OutboundScanEntry')
     .select('cartons_scanned').in('item_id', itemIds)
   return (scans ?? []).reduce((sum: number, s: any) => sum + (Number(s.cartons_scanned) || 0), 0)
 }
@@ -235,7 +235,7 @@ export async function listOrders(req: Request, res: Response) {
     const transferGdoIds = [...new Set(filtered.filter((o: any) => o.source_type === 'TRANSFER' && o.from_gdo_id).map((o: any) => o.from_gdo_id as string))]
     const codesByGdo = new Map<string, string[]>()
     if (transferGdoIds.length > 0) {
-      const { data: dos } = await (supabase.from('OutboundDelivery') as any).select('gdo_id, delivery_code').in('gdo_id', transferGdoIds)
+      const { data: dos } = await supabase.from('OutboundDelivery').select('gdo_id, delivery_code').in('gdo_id', transferGdoIds)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       for (const d of (dos ?? []) as any[]) {
         if (!d.delivery_code) continue
@@ -321,14 +321,14 @@ export async function createOrder(req: Request, res: Response) {
     // Lấy warehouse code để tạo import_code theo format mới
     const [y, mo, d] = todayStr.split('-')
     const ddmmyy = `${d}${mo}${y.slice(2)}`
-    const { data: whRow } = await (supabase.from('Warehouse') as any).select('code').eq('id', warehouse_id).maybeSingle()
+    const { data: whRow } = await supabase.from('Warehouse').select('code').eq('id', warehouse_id).maybeSingle()
     const whCode = whRow?.code ? String(whRow.code) : 'XX'
     const importPrefix = `${whCode}_N_${ddmmyy}_`
 
     // Retry khi 2 request song song → cùng import_code → 23505
     let order: unknown = null
     for (let attempt = 0; attempt < 5; attempt++) {
-      const { data: existingCodes } = await (supabase.from('ProductionImport') as any)
+      const { data: existingCodes } = await supabase.from('ProductionImport')
         .select('import_code').ilike('import_code', `${importPrefix}%`)
       const maxSeq = (existingCodes ?? []).reduce((max: number, r: { import_code: string }) => {
         const n = parseInt(r.import_code.slice(importPrefix.length), 10)
@@ -435,7 +435,7 @@ export async function getOrder(req: Request, res: Response) {
     const fromGdoId = (order as any).from_gdo_id as string | null
     let fromGdoDeliveryCodes: string[] = []
     if (fromGdoId) {
-      const { data: dos } = await (supabase.from('OutboundDelivery') as any)
+      const { data: dos } = await supabase.from('OutboundDelivery')
         .select('delivery_code').eq('gdo_id', fromGdoId)
       fromGdoDeliveryCodes = ((dos ?? []) as any[]).map((d: any) => d.delivery_code).filter(Boolean)
     }
@@ -557,15 +557,15 @@ export async function completeOrder(req: Request, res: Response) {
       const allDone = (allSiblings ?? []).length > 0 && (allSiblings ?? []).every((s: { status: string }) => s.status === 'COMPLETED')
       if (allDone) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: tmsOrder } = await (supabase.from('TmsOrder') as any)
+        const { data: tmsOrder } = await supabase.from('TmsOrder')
           .select('transfer_gdo_id').eq('id', existing.tms_order_id).maybeSingle()
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (supabase.from('TmsOrder') as any)
+        await supabase.from('TmsOrder')
           .update({ status: 'DONE', completed_at: nowTs, updated_at: nowTs })
           .eq('id', existing.tms_order_id)
         if (existing.source_type === 'TRANSFER' && tmsOrder?.transfer_gdo_id) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          await (supabase.from('GroupDeliveryOrder') as any)
+          await supabase.from('GroupDeliveryOrder')
             .update({ transfer_status: 'DELIVERED', updated_at: nowTs })
             .eq('id', tmsOrder.transfer_gdo_id)
         }
@@ -597,17 +597,17 @@ export async function uncompleteOrder(req: Request, res: Response) {
 
     if (existing.tms_order_id) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: tmsOrder } = await (supabase.from('TmsOrder') as any)
+      const { data: tmsOrder } = await supabase.from('TmsOrder')
         .select('status, transfer_gdo_id').eq('id', existing.tms_order_id).maybeSingle()
       if (tmsOrder?.status === 'DONE') {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (supabase.from('TmsOrder') as any)
+        await supabase.from('TmsOrder')
           .update({ status: 'PENDING', completed_at: null, updated_at: nowTs })
           .eq('id', existing.tms_order_id)
         if (existing.source_type === 'TRANSFER' && tmsOrder.transfer_gdo_id) {
           // Còn phiếu nhập → vẫn đang nhận hàng; chỉ về IN_TRANSIT khi xóa hết phiếu
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          await (supabase.from('GroupDeliveryOrder') as any)
+          await supabase.from('GroupDeliveryOrder')
             .update({ transfer_status: 'RECEIVING', updated_at: nowTs })
             .eq('id', tmsOrder.transfer_gdo_id)
         }
@@ -648,7 +648,7 @@ export async function cancelOrder(req: Request, res: Response) {
         .select('id', { count: 'exact', head: true })
         .eq('from_gdo_id', existing.from_gdo_id)
       if (!activeCount || activeCount === 0) {
-        await (supabase.from('GroupDeliveryOrder') as any)
+        await supabase.from('GroupDeliveryOrder')
           .update({ transfer_status: 'IN_TRANSIT', updated_at: nowTs })
           .eq('id', existing.from_gdo_id)
       }
@@ -690,7 +690,7 @@ export async function checkScanQR(req: Request, res: Response) {
       supabase.from('InventoryEntry').select('id, status, cartons_remaining, import_order_id, location:Location!location_id(warehouse_id)').eq('pallet_code', parsed.pallet_code).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']),
       supabase.from('Location').select('id, location_code, max_pallets, is_active, category').eq('id', location_id).maybeSingle(),
       isTransfer
-        ? (supabase.from('OutboundScanEntry') as any).select('cartons_scanned').eq('pallet_code', parsed.pallet_code).order('created_at', { ascending: false }).limit(1).maybeSingle()
+        ? supabase.from('OutboundScanEntry').select('cartons_scanned').eq('pallet_code', parsed.pallet_code).order('created_at', { ascending: false }).limit(1).maybeSingle()
         : Promise.resolve({ data: null }),
     ])
 

@@ -6,10 +6,10 @@ import { ok, fail } from '../../utils/response'
 export async function listTransportCompanies(req: Request, res: Response) {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const userNccId: string | null = (req as any).user?.ncc_id ?? null
+    const userNccId: string | null = req.user?.ncc_id ?? null
     const { is_active } = req.query as Record<string, string>
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let q = (supabase.from('TransportCompany') as any).select('*').order('name')
+    let q = supabase.from('TransportCompany').select('*').order('name')
     // ĐVVT user: chỉ thấy công ty của mình
     if (userNccId) q = q.eq('id', userNccId)
     if (is_active !== undefined) q = q.eq('is_active', is_active === 'true')
@@ -27,8 +27,8 @@ export async function createTransportCompany(req: Request, res: Response) {
     if (!code || !name) return fail(res, 'code và name là bắt buộc', 400)
     const now = new Date().toISOString()
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const actor = (req as any).user?.name || null
-    const { data, error } = await (supabase.from('TransportCompany') as any)
+    const actor = req.user?.name || null
+    const { data, error } = await supabase.from('TransportCompany')
       .insert({
         id: randomUUID(), code: code.toUpperCase().trim(), name: name.trim(),
         type: type ?? 'ĐVVT',
@@ -46,7 +46,7 @@ export async function createTransportCompany(req: Request, res: Response) {
 export async function updateTransportCompany(req: Request, res: Response) {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const userNccId: string | null = (req as any).user?.ncc_id ?? null
+    const userNccId: string | null = req.user?.ncc_id ?? null
     const { id } = req.params
     // ĐVVT user: chỉ được sửa công ty của mình
     if (userNccId && id !== userNccId)
@@ -54,14 +54,14 @@ export async function updateTransportCompany(req: Request, res: Response) {
     const { name, type, contact_name, contact_phone, is_active } = req.body as {
       name?: string; type?: string; contact_name?: string; contact_phone?: string; is_active?: boolean
     }
-    const updates: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: (req as any).user?.name || null }
+    const updates: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: req.user?.name || null }
     if (name          !== undefined) updates.name          = name.trim()
     if (type          !== undefined) updates.type          = type
     if (contact_name  !== undefined) updates.contact_name  = contact_name?.trim() ?? null
     if (contact_phone !== undefined) updates.contact_phone = contact_phone?.trim() ?? null
     if (is_active     !== undefined) updates.is_active     = is_active
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (supabase.from('TransportCompany') as any)
+    const { data, error } = await supabase.from('TransportCompany')
       .update(updates).eq('id', id).select().single()
     if (error) return fail(res, error.message)
 
@@ -70,11 +70,11 @@ export async function updateTransportCompany(req: Request, res: Response) {
       const now = new Date().toISOString()
       // Lấy biển số xe của ĐVVT để cascade sang employee
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: vehicles } = await (supabase.from('Vehicle') as any)
+      const { data: vehicles } = await supabase.from('Vehicle')
         .select('license_plate').eq('ncc_id', id)
       // Cập nhật tất cả xe
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (supabase.from('Vehicle') as any)
+      await supabase.from('Vehicle')
         .update({ is_active, updated_at: now }).eq('ncc_id', id)
       // Cập nhật tất cả driver employee (via plate)
       if (vehicles?.length) {
@@ -83,7 +83,7 @@ export async function updateTransportCompany(req: Request, res: Response) {
           ? { is_active: true,  deleted_at: null, updated_at: now }
           : { is_active: false, deleted_at: now,  updated_at: now }
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (supabase.from('Employee') as any)
+        await supabase.from('Employee')
           .update(empUpdate)
           .in('employee_code', plates)
           .eq('ncc_id', id)
@@ -98,33 +98,33 @@ export async function updateTransportCompany(req: Request, res: Response) {
 export async function deleteTransportCompany(req: Request, res: Response) {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const userNccId: string | null = (req as any).user?.ncc_id ?? null
+    const userNccId: string | null = req.user?.ncc_id ?? null
     // ĐVVT user không được xóa công ty (kể cả của mình)
     if (userNccId) return fail(res, 'Không có quyền xóa ĐVVT', 403)
     const { id } = req.params
 
     // Lấy tất cả xe của ĐVVT
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: vehicles } = await (supabase.from('Vehicle') as any)
+    const { data: vehicles } = await supabase.from('Vehicle')
       .select('license_plate').eq('ncc_id', id)
 
     if (vehicles?.length) {
       const plates = (vehicles as { license_plate: string }[]).map(v => v.license_plate)
       // Hard-delete tất cả driver employee của các xe này
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (supabase.from('Employee') as any)
+      await supabase.from('Employee')
         .delete()
         .in('employee_code', plates)
         .eq('ncc_id', id)
         .eq('is_driver', true)
       // Hard-delete tất cả xe của ĐVVT
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (supabase.from('Vehicle') as any).delete().eq('ncc_id', id)
+      await supabase.from('Vehicle').delete().eq('ncc_id', id)
     }
 
     // Hard-delete ĐVVT (Postgres sẽ trả lỗi FK nếu còn record tham chiếu)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await (supabase.from('TransportCompany') as any).delete().eq('id', id)
+    const { error } = await supabase.from('TransportCompany').delete().eq('id', id)
     if (error) return fail(res, error.message)
     return ok(res, { deleted: true })
   } catch (e) { return fail(res, String(e)) }

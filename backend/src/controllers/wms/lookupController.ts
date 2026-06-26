@@ -35,7 +35,7 @@ export async function addLookup(req: Request, res: Response) {
 
   const nextSort = existing?.length ? Number((existing[0] as any).sort_order ?? 0) + 1 : 1
 
-  const actor = (req as any).user?.name || null
+  const actor = req.user?.name || null
   const { data, error } = await supabase
     .from('LookupValue')
     .insert({ id: randomUUID(), type, value: value.trim(), sort_order: nextSort, created_at: t, updated_at: t, created_by: actor, updated_by: actor })
@@ -56,7 +56,7 @@ export async function updateLookup(req: Request, res: Response) {
 
   const { data, error } = await supabase
     .from('LookupValue')
-    .update({ value: value.trim(), updated_at: new Date().toISOString(), updated_by: (req as any).user?.name || null })
+    .update({ value: value.trim(), updated_at: new Date().toISOString(), updated_by: req.user?.name || null })
     .eq('id', id)
     .select('id, value, sort_order, created_at, updated_at, created_by, updated_by')
     .single()
@@ -74,7 +74,7 @@ export async function reorderLookup(req: Request, res: Response) {
   if (!type || !Array.isArray(ids) || ids.length === 0) return fail(res, 'type và ids là bắt buộc')
 
   const now = new Date().toISOString()
-  const actor = (req as any).user?.name || null
+  const actor = req.user?.name || null
   const results = await Promise.all(
     ids.map((id, i) =>
       supabase

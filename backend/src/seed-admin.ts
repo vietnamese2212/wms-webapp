@@ -44,7 +44,7 @@ async function run() {
   const hash = await bcrypt.hash(ADMIN_PASSWORD, 10)
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: existing } = await (supabase.from('Employee') as any)
+  const { data: existing } = await supabase.from('Employee')
     .select('id, name')
     .ilike('email', ADMIN_EMAIL)
     .limit(1)
@@ -55,7 +55,7 @@ async function run() {
   const now = new Date().toISOString()
   if (found) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await (supabase.from('Employee') as any).update({
+    const { error } = await supabase.from('Employee').update({
       password:           hash,
       warehouse_scope:    'NATIONAL',
       allowed_categories: ['Thành phẩm', 'NVL', 'POSM', 'Bao bì'],
@@ -67,7 +67,7 @@ async function run() {
     console.log(`✓ Admin updated: ${found.name} (${ADMIN_EMAIL})`)
   } else {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await (supabase.from('Employee') as any).insert({
+    const { error } = await supabase.from('Employee').insert({
       id:                 randomUUID(),
       name:               ADMIN_NAME,
       employee_code:      ADMIN_CODE,

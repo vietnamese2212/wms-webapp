@@ -96,8 +96,8 @@ export async function createMaterial(req: Request, res: Response) {
         notes: notes ?? null,
         warehouse_pallet_overrides: Array.isArray(warehouse_pallet_overrides) ? warehouse_pallet_overrides : [],
         supplier_shelf_life_overrides: Array.isArray(supplier_shelf_life_overrides) ? supplier_shelf_life_overrides : [],
-        created_by: (req as any).user?.name || null,
-        updated_by: (req as any).user?.name || null,
+        created_by: req.user?.name || null,
+        updated_by: req.user?.name || null,
         updated_at: new Date().toISOString(),
       })
       .select('*, manufacturer:Manufacturer(id, code, name)')
@@ -156,7 +156,7 @@ export async function updateMaterial(req: Request, res: Response) {
     if (no_qr_tracking !== undefined) patch.no_qr_tracking = Boolean(no_qr_tracking)
     if (warehouse_pallet_overrides !== undefined) patch.warehouse_pallet_overrides = Array.isArray(warehouse_pallet_overrides) ? warehouse_pallet_overrides : []
     if (supplier_shelf_life_overrides !== undefined) patch.supplier_shelf_life_overrides = Array.isArray(supplier_shelf_life_overrides) ? supplier_shelf_life_overrides : []
-    patch.updated_by = (req as any).user?.name || null
+    patch.updated_by = req.user?.name || null
 
     const { data, error } = await supabase
       .from('Material')

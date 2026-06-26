@@ -7,7 +7,7 @@ export async function listVehicleTypes(req: Request, res: Response) {
   try {
     const { is_active } = req.query as Record<string, string>
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let q = (supabase.from('VehicleType') as any).select('*').order('name')
+    let q = supabase.from('VehicleType').select('*').order('name')
     if (is_active !== undefined) q = q.eq('is_active', is_active === 'true')
     const { data, error } = await q
     if (error) return fail(res, error.message)
@@ -25,11 +25,11 @@ export async function reorderVehicleTypes(req: Request, res: Response) {
     if (!Array.isArray(ids) || ids.length === 0) return fail(res, 'ids là bắt buộc', 400)
     const now = new Date().toISOString()
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const actor = (req as any).user?.name || null
+    const actor = req.user?.name || null
     const results = await Promise.all(
       ids.map((id, i) =>
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (supabase.from('VehicleType') as any)
+        supabase.from('VehicleType')
           .update({ sort_order: i + 1, updated_at: now, updated_by: actor })
           .eq('id', id),
       ),
@@ -47,8 +47,8 @@ export async function createVehicleType(req: Request, res: Response) {
     if (!code || !name) return fail(res, 'code và name là bắt buộc', 400)
     const now = new Date().toISOString()
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const actor = (req as any).user?.name || null
-    const { data, error } = await (supabase.from('VehicleType') as any)
+    const actor = req.user?.name || null
+    const { data, error } = await supabase.from('VehicleType')
       .insert({ id: randomUUID(), code: code.toUpperCase().trim(), name: name.trim(), is_active: true, created_at: now, updated_at: now, created_by: actor, updated_by: actor })
       .select().single()
     if (error) return fail(res, error.message)
@@ -60,11 +60,11 @@ export async function updateVehicleType(req: Request, res: Response) {
   try {
     const { id } = req.params
     const { code, is_active } = req.body as { code?: string; is_active?: boolean }
-    const updates: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: (req as any).user?.name || null }
+    const updates: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: req.user?.name || null }
     if (code      !== undefined) updates.code      = code.toUpperCase().trim()
     if (is_active !== undefined) updates.is_active = is_active
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (supabase.from('VehicleType') as any)
+    const { data, error } = await supabase.from('VehicleType')
       .update(updates).eq('id', id).select().single()
     if (error) return fail(res, error.message)
     return ok(res, data)

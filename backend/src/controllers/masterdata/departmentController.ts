@@ -12,7 +12,7 @@ const ADMIN_ONLY_MSG = 'Chỉ Admin được sửa cấu trúc phòng ban / ch�
 // Trả message lỗi nếu vi phạm, null nếu hợp lệ.
 function escalationError(req: Request, perms?: Record<string, string[]>): string | null {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const u = (req as any).user
+  const u = req.user
   if (u?.name === 'Admin') return null
   const mine: Record<string, string[]> = u?.module_permissions ?? {}
   for (const [mod, actions] of Object.entries(perms ?? {})) {
@@ -48,7 +48,7 @@ export async function createDepartment(req: Request, res: Response) {
     }
     if (!name || !code) return fail(res, 'name và code là bắt buộc', 400)
 
-    const actor = (req as any).user?.name || null
+    const actor = req.user?.name || null
     const { data, error } = await supabase
       .from('Department')
       .insert({ id: randomUUID(), name, code: code.toUpperCase(), allowed_modules, updated_at: new Date().toISOString(), created_by: actor, updated_by: actor })
@@ -68,7 +68,7 @@ export async function updateDepartment(req: Request, res: Response) {
     }
     const { data, error } = await supabase
       .from('Department')
-      .update({ name, code: code?.toUpperCase(), allowed_modules, is_active, requires_scheduling, updated_at: new Date().toISOString(), updated_by: (req as any).user?.name || null })
+      .update({ name, code: code?.toUpperCase(), allowed_modules, is_active, requires_scheduling, updated_at: new Date().toISOString(), updated_by: req.user?.name || null })
       .eq('id', id)
       .select(DEPT_SELECT)
       .single()
@@ -104,7 +104,7 @@ export async function createJobTitle(req: Request, res: Response) {
     const escErr = escalationError(req, module_permissions)
     if (escErr) return fail(res, escErr, 403)
 
-    const actor = (req as any).user?.name || null
+    const actor = req.user?.name || null
     const now = new Date().toISOString()
     const { data, error } = await supabase
       .from('JobTitle')
@@ -143,7 +143,7 @@ export async function setJobTitleParent(req: Request, res: Response) {
         cur = r.data?.parent_id ?? null
       }
     }
-    const upd: Record<string, unknown> = { parent_id: parent, updated_at: new Date().toISOString(), updated_by: (req as any).user?.name || null }
+    const upd: Record<string, unknown> = { parent_id: parent, updated_at: new Date().toISOString(), updated_by: req.user?.name || null }
     if (in_chart !== undefined) upd.in_chart = in_chart
     const { data, error } = await supabase.from('JobTitle')
       .update(upd)
@@ -165,7 +165,7 @@ export async function updateJobTitle(req: Request, res: Response) {
     if (escErr) return fail(res, escErr, 403)
     const { data, error } = await supabase
       .from('JobTitle')
-      .update({ name, is_active, module_permissions, updated_at: new Date().toISOString(), updated_by: (req as any).user?.name || null })
+      .update({ name, is_active, module_permissions, updated_at: new Date().toISOString(), updated_by: req.user?.name || null })
       .eq('id', id)
       .select(JT_SELECT)
       .single()

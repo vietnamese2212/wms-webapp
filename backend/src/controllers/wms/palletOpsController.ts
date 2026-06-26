@@ -21,7 +21,7 @@ const WH_SELECT = 'warehouse_id, location:Location!location_id(warehouse_id)'
 // Bản ghi truy vết thao tác
 async function logOp(req: Request, type: string, source_codes: string[], target_codes: string[], detail: unknown, warehouse_id: string | null) {
   const now = new Date().toISOString()
-  await (supabase.from('PalletOperation') as any).insert({
+  await supabase.from('PalletOperation').insert({
     id: randomUUID(), type, source_codes, target_codes, detail,
     operated_by: req.user?.sub ?? null, operated_by_name: req.user?.name ?? null,
     warehouse_id, created_at: now, updated_at: now,
@@ -40,7 +40,7 @@ export async function mergePallets(req: Request, res: Response) {
     if (children.includes(target)) return fail(res, 'Pallet đích không thể vừa là pallet con')
 
     // Scope theo KHO qua location (warehouse_id cột thường NULL) → tránh trùng mã giữa kho tổng/NPP
-    const { data: tRows, error: tErr } = await (supabase.from('InventoryEntry') as any)
+    const { data: tRows, error: tErr } = await supabase.from('InventoryEntry')
       .select(`id, pallet_code, location_id, parent_pallet_code, ${WH_SELECT}`)
       .eq('pallet_code', target).in('status', ACTIVE)
     if (tErr) return fail(res, tErr.message, 500)
@@ -50,7 +50,7 @@ export async function mergePallets(req: Request, res: Response) {
     if (!tgt) return fail(res, `Không tìm thấy pallet đích "${target}" đang tồn ${warehouse_id ? 'trong kho đã chọn' : 'kho'}`, 404)
     if (tgt.parent_pallet_code) return fail(res, 'Pallet đích đang là pallet con của nhóm khác — chọn pallet đầu nhóm')
 
-    const { data: kRows, error: kErr } = await (supabase.from('InventoryEntry') as any)
+    const { data: kRows, error: kErr } = await supabase.from('InventoryEntry')
       .select(`id, pallet_code, parent_pallet_code, location_id, ${WH_SELECT}`).in('pallet_code', children).in('status', ACTIVE)
     if (kErr) return fail(res, kErr.message, 500)
     const kids = (kRows ?? []).filter((k: any) => matchWh(k, warehouse_id))
@@ -61,12 +61,12 @@ export async function mergePallets(req: Request, res: Response) {
     const now = new Date().toISOString()
     // Lưu trạng thái cũ (parent + vị trí) để hoàn tác
     const prev = kids.map((k: any) => ({ code: k.pallet_code, parent: k.parent_pallet_code, location_id: k.location_id }))
-    const { error: uErr } = await (supabase.from('InventoryEntry') as any)
+    const { error: uErr } = await supabase.from('InventoryEntry')
       .update({ parent_pallet_code: target, location_id: tgt.location_id, update_date: vnDate(), updated_at: now })
       .in('id', kids.map((k: any) => k.id))
     if (uErr) return fail(res, uErr.message, 500)
 
-    await logOp(req, 'MERGE', children, [target], { count: kids.length, prev }, ENTRY_WH(tgt))
+    await logOp(req, 'MERGE', children, [target], { count: kids.length, prev }, ENTRY_WH(tgt as unknown as Parameters<typeof ENTRY_WH>[0]))
     return ok(res, { target, merged: kids.length })
   } catch (e) { return fail(res, (e as Error).message, 500) }
 }
@@ -81,20 +81,20 @@ export async function ungroupPallets(req: Request, res: Response) {
     const now = new Date().toISOString()
     // Scope theo KHO qua location (vd 810000000 ở 2 kho) → tránh gỡ nhầm pallet kho khác
     // Lưu parent cũ để hoàn tác
-    const { data: bRows } = await (supabase.from('InventoryEntry') as any)
+    const { data: bRows } = await supabase.from('InventoryEntry')
       .select(`id, pallet_code, parent_pallet_code, ${WH_SELECT}`).in('pallet_code', codes).not('parent_pallet_code', 'is', null)
     const before = (bRows ?? []).filter((b: any) => matchWh(b, warehouse_id))
     const prev = before.map((b: any) => ({ code: b.pallet_code, parent: b.parent_pallet_code }))
     let n = 0
     if (before.length) {
-      const { data, error } = await (supabase.from('InventoryEntry') as any)
+      const { data, error } = await supabase.from('InventoryEntry')
         .update({ parent_pallet_code: null, update_date: vnDate(), updated_at: now })
         .in('id', before.map((b: any) => b.id)).select('pallet_code')
       if (error) return fail(res, error.message, 500)
       n = (data ?? []).length
     }
     // warehouse_id để log: ưu tiên param, suy từ entry nếu thiếu — trước đây log null → Lịch sử (lọc theo kho) ẩn mất ca gỡ nhóm
-    const whForLog = warehouse_id ?? (before[0] ? ENTRY_WH(before[0]) : null)
+    const whForLog = warehouse_id ?? (before[0] ? ENTRY_WH(before[0] as unknown as Parameters<typeof ENTRY_WH>[0]) : null)
     if (n) await logOp(req, 'UNGROUP', codes, [], { count: n, prev }, whForLog)
     return ok(res, { ungrouped: n })
   } catch (e) { return fail(res, (e as Error).message, 500) }
@@ -113,7 +113,7 @@ export async function splitPallet(req: Request, res: Response) {
     if (!items.length) return fail(res, 'Chưa nhập số lượng tách')
 
     // Scope theo KHO qua location (cột warehouse_id thường NULL ở pallet nhập SX)
-    const { data: sRows, error: sErr } = await (supabase.from('InventoryEntry') as any)
+    const { data: sRows, error: sErr } = await supabase.from('InventoryEntry')
       .select(`id, pallet_code, location_id, material_id, manufacturer_id, cycle, machine_code, pallet_sequence_no, qa_status_id, stack_layer, cartons_imported, cartons_remaining, cartons_reserved, production_date, ${WH_SELECT}`)
       .eq('pallet_code', src).in('status', ACTIVE)
     if (sErr) return fail(res, sErr.message, 500)
@@ -130,7 +130,7 @@ export async function splitPallet(req: Request, res: Response) {
 
     // Tìm số thứ tự con kế tiếp (baseSeq.N) — quét theo cùng mã hàng
     const baseSeq = parts[4]
-    const { data: sameMat } = await (supabase.from('InventoryEntry') as any)
+    const { data: sameMat } = await supabase.from('InventoryEntry')
       .select('pallet_code').eq('material_id', source.material_id)
     let maxN = 0
     for (const r of (sameMat ?? []) as { pallet_code: string }[]) {
@@ -173,7 +173,7 @@ export async function splitPallet(req: Request, res: Response) {
       }
     })
 
-    const { data: created, error: cErr } = await (supabase.from('InventoryEntry') as any).insert(rows).select('*')
+    const { data: created, error: cErr } = await supabase.from('InventoryEntry').insert(rows).select('*')
     if (cErr) return fail(res, cErr.message, 500)
 
     // Trừ tồn pallet gốc NGUYÊN TỬ (optimistic-CAS + jitter, GIỮ NGUYÊN cartons_imported để báo cáo nhập bất biến):
@@ -182,28 +182,28 @@ export async function splitPallet(req: Request, res: Response) {
     let newRemaining = remaining - totalSplit
     let okDec = false, decErr: 'BUSY' | 'INSUFFICIENT' = 'BUSY'
     for (let attempt = 0; attempt < 15; attempt++) {
-      const { data: cur } = await (supabase.from('InventoryEntry') as any)
+      const { data: cur } = await supabase.from('InventoryEntry')
         .select('cartons_remaining, cartons_reserved, cartons_imported').eq('id', source.id).maybeSingle()
       if (!cur) { decErr = 'BUSY'; break }
       const curRem = Number(cur.cartons_remaining ?? 0), curRes = Number(cur.cartons_reserved ?? 0)
       if (curRem - curRes < totalSplit) { decErr = 'INSUFFICIENT'; break }
       newRemaining = curRem - totalSplit
       const st = newRemaining < Number(cur.cartons_imported ?? 0) ? 'PARTIAL' : undefined
-      const { data: applied } = await (supabase.from('InventoryEntry') as any)
+      const { data: applied } = await supabase.from('InventoryEntry')
         .update({ cartons_remaining: newRemaining, ...(st ? { status: st } : {}), update_date: vnDate(), updated_at: now })
         .eq('id', source.id).eq('cartons_remaining', curRem).eq('cartons_reserved', curRes).select('id')
       if (applied?.length) { okDec = true; break }
       await new Promise(r => setTimeout(r, 10 + Math.floor(Math.random() * (30 + attempt * 20))))
     }
     if (!okDec) {
-      await (supabase.from('InventoryEntry') as any).delete().in('id', rows.map(r => r.id))
+      await supabase.from('InventoryEntry').delete().in('id', rows.map(r => r.id))
       return fail(res, decErr === 'INSUFFICIENT'
         ? `Pallet gốc "${src}" vừa bị tách bớt — không đủ ${totalSplit} thùng khả dụng, thử lại`
         : `Pallet gốc "${src}" đang bận (nhiều người thao tác) — thử lại`, 409)
     }
 
     const childCodes = rows.map(r => r.pallet_code)
-    await logOp(req, 'SPLIT', [src], childCodes, { children: rows.map(r => ({ code: r.pallet_code, qty: r.cartons_remaining })), source_remaining: newRemaining }, ENTRY_WH(source))
+    await logOp(req, 'SPLIT', [src], childCodes, { children: rows.map(r => ({ code: r.pallet_code, qty: r.cartons_remaining })), source_remaining: newRemaining }, ENTRY_WH(source as unknown as Parameters<typeof ENTRY_WH>[0]))
 
     return ok(res, { source: src, source_remaining: newRemaining, children: created ?? [] })
   } catch (e) { return fail(res, (e as Error).message, 500) }
@@ -248,7 +248,7 @@ export async function listOps(req: Request, res: Response) {
 export async function undoOp(req: Request, res: Response) {
   try {
     const { id } = req.params
-    const { data: op, error } = await (supabase.from('PalletOperation') as any).select('*').eq('id', id).maybeSingle()
+    const { data: op, error } = await supabase.from('PalletOperation').select('*').eq('id', id).maybeSingle()
     if (error) return fail(res, error.message, 500)
     if (!op) return fail(res, 'Không tìm thấy thao tác', 404)
     if (op.undone_at) return fail(res, 'Thao tác này đã được hoàn tác trước đó')
@@ -259,7 +259,7 @@ export async function undoOp(req: Request, res: Response) {
     // Lấy entries khớp kho theo danh sách mã (kèm field tùy chọn)
     const fetchInWh = async (codes: string[], extra = ''): Promise<any[]> => {
       if (!codes.length) return []
-      const { data } = await (supabase.from('InventoryEntry') as any)
+      const { data } = await supabase.from('InventoryEntry')
         .select(`id, pallet_code${extra ? ', ' + extra : ''}, ${WH_SELECT}`).in('pallet_code', codes)
       return ((data ?? []) as any[]).filter(e => matchWh(e, opWh))
     }
@@ -273,7 +273,7 @@ export async function undoOp(req: Request, res: Response) {
         const e = byCode.get(p.code); if (!e) continue
         const patch: Record<string, unknown> = { parent_pallet_code: p.parent ?? null, update_date: vnDate(), updated_at: now }
         if (p.location_id) patch.location_id = p.location_id
-        await (supabase.from('InventoryEntry') as any).update(patch).eq('id', e.id)
+        await supabase.from('InventoryEntry').update(patch).eq('id', e.id)
       }
     } else if (op.type === 'UNGROUP') {
       const prev: { code: string; parent: string | null }[] = op.detail?.prev ?? []
@@ -281,7 +281,7 @@ export async function undoOp(req: Request, res: Response) {
       const byCode = new Map<string, any>(entries.map(e => [e.pallet_code, e]))
       for (const p of prev) {
         const e = byCode.get(p.code); if (!e) continue
-        await (supabase.from('InventoryEntry') as any)
+        await supabase.from('InventoryEntry')
           .update({ parent_pallet_code: p.parent ?? null, update_date: vnDate(), updated_at: now }).eq('id', e.id)
       }
     } else if (op.type === 'SPLIT') {
@@ -293,20 +293,20 @@ export async function undoOp(req: Request, res: Response) {
       if (found.length !== childCodes.length) return fail(res, 'Không hoàn tác được: pallet con đã bị xuất/xóa.')
       if (bad) return fail(res, `Không hoàn tác được: pallet con "${bad.pallet_code}" đã thay đổi (xuất/giữ chỗ/dồn).`)
       const total = found.reduce((s, k) => s + Number(k.cartons_remaining), 0)
-      const { error: delErr } = await (supabase.from('InventoryEntry') as any).delete().in('id', found.map(k => k.id))
+      const { error: delErr } = await supabase.from('InventoryEntry').delete().in('id', found.map(k => k.id))
       if (delErr) return fail(res, delErr.message, 500)
       const srcRows = await fetchInWh([srcCode], 'cartons_imported, cartons_remaining')
       const src = srcRows[0]
       if (src) {
         const newRemaining = Number(src.cartons_remaining) + total
         const status = newRemaining >= Number(src.cartons_imported) ? 'IN_STOCK' : 'PARTIAL'
-        await (supabase.from('InventoryEntry') as any).update({ cartons_remaining: newRemaining, status, update_date: vnDate(), updated_at: now }).eq('id', src.id)
+        await supabase.from('InventoryEntry').update({ cartons_remaining: newRemaining, status, update_date: vnDate(), updated_at: now }).eq('id', src.id)
       }
     } else {
       return fail(res, 'Loại thao tác không hỗ trợ hoàn tác')
     }
 
-    await (supabase.from('PalletOperation') as any).update({ undone_at: now, undone_by: req.user?.sub ?? null, undone_by_name: req.user?.name ?? null, updated_at: now }).eq('id', id)
+    await supabase.from('PalletOperation').update({ undone_at: now, undone_by: req.user?.sub ?? null, undone_by_name: req.user?.name ?? null, updated_at: now }).eq('id', id)
     return ok(res, { undone: true, type: op.type })
   } catch (e) { return fail(res, (e as Error).message, 500) }
 }

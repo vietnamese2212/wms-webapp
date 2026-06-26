@@ -102,7 +102,7 @@ function matchDatePct(pct: number, range: string): boolean {
 // (Tối ưu sau: chuyển sang RPC để gom phía DB trong 1 call.)
 async function fetchAllInventory(select: string, params: FilterParams, datePctIds: string[] | null): Promise<any[]> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let cq = applyInventoryFilters((supabase.from('InventoryEntry') as any).select(select, { count: 'exact', head: true }), params)
+  let cq = applyInventoryFilters(supabase.from('InventoryEntry').select(select, { count: 'exact', head: true }), params)
   if (datePctIds !== null) cq = cq.in('id', datePctIds)
   const { count, error: cErr } = await cq
   if (cErr) throw new Error(cErr.message)
@@ -113,7 +113,7 @@ async function fetchAllInventory(select: string, params: FilterParams, datePctId
   const reqs = []
   for (let p = 0; p * PAGE < n; p++) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let q = applyInventoryFilters((supabase.from('InventoryEntry') as any).select(select), params)
+    let q = applyInventoryFilters(supabase.from('InventoryEntry').select(select), params)
       .order('id', { ascending: true })
       .range(p * PAGE, p * PAGE + PAGE - 1)
     if (datePctIds !== null) q = q.in('id', datePctIds)
@@ -219,7 +219,7 @@ async function resolveInventoryFilter(req: Request): Promise<ResolvedFilter> {
   const [locResult, matResult] = await Promise.all([
     needLocFilter ? (async () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let locQ = (supabase.from('Location') as any).select('id')
+      let locQ = supabase.from('Location').select('id')
       if (effectiveWarehouseIds.length === 1)    locQ = locQ.eq('warehouse_id', effectiveWarehouseIds[0])
       else if (effectiveWarehouseIds.length > 1) locQ = locQ.in('warehouse_id', effectiveWarehouseIds)
       if (filterLocations.length === 1)          locQ = locQ.eq('location_code', filterLocations[0])
@@ -229,7 +229,7 @@ async function resolveInventoryFilter(req: Request): Promise<ResolvedFilter> {
 
     needMatFilter ? (async () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let matQ = (supabase.from('Material') as any).select('id')
+      let matQ = supabase.from('Material').select('id')
       if (material_search)            matQ = matQ.or(`material_code.ilike.%${material_search}%,short_name.ilike.%${material_search}%`)
       if (filterMaterialIds.length > 0) matQ = matQ.in('id', filterMaterialIds)
       return await matQ
@@ -280,9 +280,9 @@ async function resolveInventoryFilter(req: Request): Promise<ResolvedFilter> {
         searchLocIds = (sloc.data ?? []).map((l: any) => l.id as string)
       } else {
         const [fmat, floc] = await Promise.all([
-          (supabase.from('Material') as any).select('id')
+          supabase.from('Material').select('id')
             .or(`material_code.ilike.%${term}%,material_description.ilike.%${term}%,short_name.ilike.%${term}%,old_code.ilike.%${term}%`).limit(500),
-          (supabase.from('Location') as any).select('id')
+          supabase.from('Location').select('id')
             .or(`location_code.ilike.%${term}%,sub_code.ilike.%${term}%,sub_name.ilike.%${term}%`).limit(500),
         ])
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -340,7 +340,7 @@ export async function listInventory(req: Request, res: Response) {
 
   // Main paginated query — sort by import_date desc + id asc để đảm bảo thứ tự ổn định giữa các trang
   let mainQ = applyInventoryFilters(
-    (supabase.from('InventoryEntry') as any).select(mainSelect, { count: 'exact' }),
+    supabase.from('InventoryEntry').select(mainSelect, { count: 'exact' }),
     r.params
   )
   if (r.datePctIds !== null) mainQ = mainQ.in('id', r.datePctIds)
@@ -386,7 +386,7 @@ export async function summaryInventory(req: Request, res: Response) {
     return fail(res, 500, 'DB_ERROR', (e as Error).message)
   }
   // Map id→tên kho (fallback cho POSM: location_id null nhưng có warehouse_id)
-  const { data: whRows } = await (supabase.from('Warehouse') as any).select('id, name')
+  const { data: whRows } = await supabase.from('Warehouse').select('id, name')
 
   const whMap: Record<string, string> = Object.fromEntries(((whRows ?? []) as any[]).map(w => [w.id, w.name]))
   const now = Date.now()
@@ -462,14 +462,14 @@ export async function listFacets(req: Request, res: Response) {
   const categories   = parseArr(q.categories)
 
   // Materials: query Material table directly (5-10k rows, always complete)
-  let matQ = (supabase.from('Material') as any)
+  let matQ = supabase.from('Material')
     .select('id, material_code, short_name')
     .order('material_code')
   if (categories.length === 1)    matQ = matQ.eq('category', categories[0])
   else if (categories.length > 1) matQ = matQ.in('category', categories)
 
   // Locations: query Location table directly (small, always complete)
-  let locQ = (supabase.from('Location') as any)
+  let locQ = supabase.from('Location')
     .select('id, location_code')
     .order('location_code')
   if (warehouseIds.length === 1)    locQ = locQ.eq('warehouse_id', warehouseIds[0])
@@ -487,7 +487,7 @@ export async function listFacets(req: Request, res: Response) {
   let invData: any[]
   try {
     invData = await fetchAllPaged(() => {
-      let q = (supabase.from('InventoryEntry') as any)
+      let q = supabase.from('InventoryEntry')
         .select(invSelect)
         .in('status', ['IN_STOCK', 'PARTIAL'])
         .order('id', { ascending: true })
@@ -531,7 +531,7 @@ export async function adjustInventory(req: Request, res: Response) {
   // Đọc–tính–ghi NGUYÊN TỬ (optimistic-CAS + jitter): chặn 2 lượt chỉnh cùng pallet đồng thời
   // ghi mù từ số đọc cũ → mất cập nhật tồn + adjustment_qty + log sai cartons_before/after.
   for (let attempt = 0; attempt < 15; attempt++) {
-    const { data: entry, error: fetchErr } = await (supabase.from('InventoryEntry') as any)
+    const { data: entry, error: fetchErr } = await supabase.from('InventoryEntry')
       .select('id, cartons_remaining, cartons_imported, adjustment_qty, status')
       .eq('id', id)
       .maybeSingle()
@@ -558,7 +558,7 @@ export async function adjustInventory(req: Request, res: Response) {
     if (stocktake_by) { patch.stocktake_by = stocktake_by; patch.stocktake_at = now }
     if (isValidUUID(employee_id)) patch.updated_by = employee_id
 
-    const { data: updated, error: updateErr } = await (supabase.from('InventoryEntry') as any)
+    const { data: updated, error: updateErr } = await supabase.from('InventoryEntry')
       .update(patch)
       .eq('id', id)
       .eq('cartons_remaining', cartonsBeforeAdjust)   // CAS: chỉ ghi nếu tồn VẪN bằng số vừa đọc
@@ -614,7 +614,7 @@ export async function bulkUpdateQA(req: Request, res: Response) {
   const patch: Record<string, unknown> = { qa_status_id: qa_status_id ?? null, updated_at: now, update_date: vnDate }
   if (employee_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employee_id)) patch.updated_by = employee_id
 
-  const { error } = await (supabase.from('InventoryEntry') as any).update(patch).in('id', ids)
+  const { error } = await supabase.from('InventoryEntry').update(patch).in('id', ids)
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
   return ok(res, { updated: ids.length })
 }
@@ -628,7 +628,7 @@ export async function bulkTransferLocation(req: Request, res: Response) {
   if (!location_id)
     return fail(res, 400, 'INVALID_INPUT', 'Thiếu location_id')
 
-  const { data: loc } = await (supabase.from('Location') as any)
+  const { data: loc } = await supabase.from('Location')
     .select('id, is_active, location_code, max_pallets')
     .eq('id', location_id).maybeSingle()
   if (!loc)           return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy vị trí')
@@ -636,7 +636,7 @@ export async function bulkTransferLocation(req: Request, res: Response) {
 
   // Check capacity: count active pallets already at this location
   if (loc.max_pallets > 0) {
-    const { count: usedSlots } = await (supabase.from('InventoryEntry') as any)
+    const { count: usedSlots } = await supabase.from('InventoryEntry')
       .select('id', { count: 'exact', head: true })
       .eq('location_id', location_id)
       .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE'])
@@ -654,7 +654,7 @@ export async function bulkTransferLocation(req: Request, res: Response) {
   const patch: Record<string, unknown> = { location_id, updated_at: now, update_date: vnDate }
   if (employee_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employee_id)) patch.updated_by = employee_id
 
-  const { error } = await (supabase.from('InventoryEntry') as any).update(patch).in('id', ids)
+  const { error } = await supabase.from('InventoryEntry').update(patch).in('id', ids)
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
   return ok(res, { updated: ids.length, location_code: loc.location_code })
 }
@@ -668,7 +668,7 @@ export async function bulkTransferMaterial(req: Request, res: Response) {
   if (!material_id)
     return fail(res, 400, 'INVALID_INPUT', 'Thiếu material_id')
 
-  const { data: mat } = await (supabase.from('Material') as any)
+  const { data: mat } = await supabase.from('Material')
     .select('id, material_code').eq('id', material_id).maybeSingle()
   if (!mat) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy hàng hóa')
 
@@ -678,7 +678,7 @@ export async function bulkTransferMaterial(req: Request, res: Response) {
   const patch: Record<string, unknown> = { material_id, updated_at: now, update_date: vnDate }
   if (employee_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employee_id)) patch.updated_by = employee_id
 
-  const { error } = await (supabase.from('InventoryEntry') as any).update(patch).in('id', ids)
+  const { error } = await supabase.from('InventoryEntry').update(patch).in('id', ids)
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
   return ok(res, { updated: ids.length, material_code: mat.material_code })
 }
@@ -690,7 +690,7 @@ export async function stocktakeCheck(req: Request, res: Response) {
   const palletCode = qr_code?.trim()
   if (!palletCode) return fail(res, 400, 'INVALID_INPUT', 'Thiếu mã pallet')
 
-  const { data, error } = await (supabase.from('InventoryEntry') as any)
+  const { data, error } = await supabase.from('InventoryEntry')
     .select(ENTRY_SELECT)
     .eq('pallet_code', palletCode)
     .in('status', ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'])
@@ -709,7 +709,7 @@ export async function stocktakeEntry(req: Request, res: Response) {
     employee_id?: string; new_location_id?: string; physical_count?: number
   }
 
-  const { data: existing, error: fetchErr } = await (supabase.from('InventoryEntry') as any)
+  const { data: existing, error: fetchErr } = await supabase.from('InventoryEntry')
     .select('id, location_id, cartons_remaining')
     .eq('id', id).maybeSingle()
 
@@ -738,7 +738,7 @@ export async function stocktakeEntry(req: Request, res: Response) {
     }
   }
 
-  const { error } = await (supabase.from('InventoryEntry') as any).update(patch).eq('id', id)
+  const { error } = await supabase.from('InventoryEntry').update(patch).eq('id', id)
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
   return ok(res, { ok: true })
 }
@@ -759,7 +759,7 @@ export async function stocktakeEntries(req: Request, res: Response) {
   if (explicitIds.length) {
     resolvedLocationIds = explicitIds
   } else {
-    let locQuery = (supabase.from('Location') as any).select('id').eq('is_active', true)
+    let locQuery = supabase.from('Location').select('id').eq('is_active', true)
 
     if (scopeWhIds.length > 0) {
       const effective = warehouse_id
@@ -787,7 +787,7 @@ export async function stocktakeEntries(req: Request, res: Response) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let entries: any[]
   try {
-    entries = await fetchAllPaged(() => (supabase.from('InventoryEntry') as any)
+    entries = await fetchAllPaged(() => supabase.from('InventoryEntry')
       .select(`
         id, pallet_code, cartons_remaining, import_date,
         stocktake_flagged, stocktake_flag_note, stocktake_at,
@@ -832,7 +832,7 @@ export async function stocktakeEntries(req: Request, res: Response) {
 
 export async function unflagEntry(req: Request, res: Response) {
   const now = new Date().toISOString()
-  const { error } = await (supabase.from('InventoryEntry') as any)
+  const { error } = await supabase.from('InventoryEntry')
     .update({ stocktake_flagged: false, stocktake_flag_note: null, updated_at: now })
     .eq('id', req.params.id)
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
@@ -857,14 +857,14 @@ export async function bulkUpdateProductionDate(req: Request, res: Response) {
   const patch: Record<string, unknown> = { production_date, updated_at: now, update_date: vnDate }
   if (employee_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employee_id)) patch.updated_by = employee_id
 
-  const { error } = await (supabase.from('InventoryEntry') as any).update(patch).in('id', ids)
+  const { error } = await supabase.from('InventoryEntry').update(patch).in('id', ids)
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
   return ok(res, { updated: ids.length })
 }
 
 export async function getInventoryEntry(req: Request, res: Response) {
   const { id } = req.params
-  const { data, error } = await (supabase.from('InventoryEntry') as any)
+  const { data, error } = await supabase.from('InventoryEntry')
     .select(ENTRY_SELECT)
     .eq('id', id)
     .maybeSingle()

@@ -59,7 +59,7 @@ export async function logPrints(req: Request, res: Response) {
       }))
     if (rows.length === 0) return fail(res, 'Tem không hợp lệ')
 
-    const { error } = await (supabase.from('PalletLabelPrint') as any).insert(rows)
+    const { error } = await supabase.from('PalletLabelPrint').insert(rows)
     if (error) return fail(res, error.message, 500)
     return ok(res, { logged: rows.length })
   } catch (e) {

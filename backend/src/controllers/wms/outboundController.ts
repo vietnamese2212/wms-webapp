@@ -16,7 +16,7 @@ async function adjustInventoryAtomic(
   invId: string, deltaRemaining: number, deltaReserved: number,
 ): Promise<boolean> {
   for (let attempt = 0; attempt < 5; attempt++) {
-    const { data: inv } = await (supabase.from('InventoryEntry') as any)
+    const { data: inv } = await supabase.from('InventoryEntry')
       .select('cartons_remaining, cartons_imported, cartons_reserved').eq('id', invId).single()
     if (!inv) return false
     const curRemaining = Number(inv.cartons_remaining ?? 0)
@@ -28,7 +28,7 @@ async function adjustInventoryAtomic(
       : newRemaining === 0 ? 'EXPORTED'
       : newRemaining < maxImport ? 'PARTIAL'
       : 'IN_STOCK'
-    const { data: applied } = await (supabase.from('InventoryEntry') as any)
+    const { data: applied } = await supabase.from('InventoryEntry')
       .update({ cartons_remaining: newRemaining, cartons_reserved: newReserved, status: newStatus, updated_at: now() })
       .eq('id', invId).eq('cartons_remaining', curRemaining).eq('cartons_reserved', curReserved)
       .select('id')
@@ -42,7 +42,7 @@ async function adjustInventoryAtomic(
 // Chống đua + chống xuất-quá-tồn khi nhiều nhân viên quét cùng 1 pallet (giống book_vehicle_slot).
 async function consumeInventoryExact(invId: string, amount: number): Promise<boolean | null> {
   for (let attempt = 0; attempt < 15; attempt++) {
-    const { data: inv } = await (supabase.from('InventoryEntry') as any)
+    const { data: inv } = await supabase.from('InventoryEntry')
       .select('cartons_remaining, cartons_imported, cartons_reserved').eq('id', invId).single()
     if (!inv) return null
     const curRemaining = Number(inv.cartons_remaining ?? inv.cartons_imported ?? 0)
@@ -51,7 +51,7 @@ async function consumeInventoryExact(invId: string, amount: number): Promise<boo
     const newRemaining = curRemaining - amount
     const maxImport    = Number(inv.cartons_imported)
     const newStatus    = newRemaining === 0 ? 'EXPORTED' : newRemaining < maxImport ? 'PARTIAL' : 'IN_STOCK'
-    const { data: applied } = await (supabase.from('InventoryEntry') as any)
+    const { data: applied } = await supabase.from('InventoryEntry')
       .update({ cartons_remaining: newRemaining, status: newStatus, updated_at: now() })
       .eq('id', invId).eq('cartons_remaining', curRemaining).eq('cartons_reserved', curReserved)
       .select('id')
@@ -68,12 +68,12 @@ async function consumeInventoryExact(invId: string, amount: number): Promise<boo
 // Trả tổng mới, hoặc null nếu tranh chấp sau 15 lần (hiếm — caller giữ giá trị ước tính).
 async function addItemScanned(itemId: string, delta: number, statusOf: (total: number) => string): Promise<number | null> {
   for (let attempt = 0; attempt < 15; attempt++) {
-    const { data: it } = await (supabase.from('OutboundItem') as any)
+    const { data: it } = await supabase.from('OutboundItem')
       .select('cartons_scanned').eq('id', itemId).single()
     if (!it) return null
     const cur = Number(it.cartons_scanned ?? 0)
     const next = cur + delta
-    const { data: applied } = await (supabase.from('OutboundItem') as any)
+    const { data: applied } = await supabase.from('OutboundItem')
       .update({ cartons_scanned: next, status: statusOf(next), updated_at: now() })
       .eq('id', itemId).eq('cartons_scanned', cur).select('id')
     if (applied?.length) return next
@@ -142,18 +142,18 @@ function isExcludedFromCount(item: any): boolean {
 // ─── Fetch full GDO ───────────────────────────────────────────
 
 async function fetchGDOFull(id: string) {
-  const { data: gdo, error } = await (supabase.from('GroupDeliveryOrder') as any)
+  const { data: gdo, error } = await supabase.from('GroupDeliveryOrder')
     .select('*, warehouse:Warehouse(id,code,name), gate_registration:gate_registrations!gate_registration_id(id,registration_number,date,license_plate,company_name_raw,driver_name,status,direction,registered_at,entry_at,exit_at,called_at)')
     .eq('id', id).single()
   if (error || !gdo) return null
 
-  const { data: dos } = await (supabase.from('OutboundDelivery') as any)
+  const { data: dos } = await supabase.from('OutboundDelivery')
     .select('*').eq('gdo_id', id).order('delivery_code')
 
   const doIds = (dos ?? []).map((d: any) => d.id)
 
   const { data: items } = doIds.length
-    ? await (supabase.from('OutboundItem') as any)
+    ? await supabase.from('OutboundItem')
         .select('*, material:Material(id,material_code,short_name,custom_short_name,cartons_per_pallet,weight_kg,shelf_life_days,no_qr_tracking)')
         .in('do_id', doIds)
         .order('id')
@@ -161,7 +161,7 @@ async function fetchGDOFull(id: string) {
 
   const itemIds = (items ?? []).map((i: any) => i.id)
   const { data: scans } = itemIds.length
-    ? await (supabase.from('OutboundScanEntry') as any)
+    ? await supabase.from('OutboundScanEntry')
         .select('*, scanned_by_emp:Employee!scanned_by(id, name)').in('item_id', itemIds)
     : { data: [] }
 
@@ -220,7 +220,7 @@ export async function listGDOs(req: Request, res: Response) {
     // Rebuild query mỗi trang (builder PostgREST dùng 1 lần) — phân trang vượt cap ~1000 dòng/response
     // (kho nhiều chuyến/khoảng ngày rộng → trước đây mất chuyến từ dòng 1001).
     const buildQuery = (): any | null => {
-      let q = (supabase.from('GroupDeliveryOrder') as any)
+      let q = supabase.from('GroupDeliveryOrder')
         .select('*, warehouse:Warehouse(id,code,name), forklift_driver:Employee!forklift_driver_id(id,name)')
         .order('delivery_date', { ascending: false })
       if (scopeWarehouseIds.length > 0) {
@@ -253,14 +253,14 @@ export async function listGDOs(req: Request, res: Response) {
     if (!gdoIds.length) return ok(res, [])
 
     // Bulk fetch DOs and items for aggregation
-    const { data: dos } = await (supabase.from('OutboundDelivery') as any)
+    const { data: dos } = await supabase.from('OutboundDelivery')
       .select('id, gdo_id, distributor_name, delivery_code')
       .in('gdo_id', gdoIds)
 
     const doIds = (dos ?? []).map((d: any) => d.id)
 
     const { data: items } = doIds.length
-      ? await (supabase.from('OutboundItem') as any)
+      ? await supabase.from('OutboundItem')
           .select('do_id, cartons_ordered, cartons_scanned, pallets_estimated, material_type, export_type, material_code_raw, material_id, material:Material!material_id(no_qr_tracking, short_name)')
           .in('do_id', doIds)
       : { data: [] }
@@ -353,18 +353,18 @@ export async function createGDO(req: Request, res: Response) {
     const [yr, mo, dy] = today.split('-')
     const ddmmyy = `${dy}${mo}${yr.slice(2)}`
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const whData = warehouse_id ? (await (supabase.from('Warehouse') as any).select('code').eq('id', warehouse_id).single()).data : null
+    const whData = warehouse_id ? (await supabase.from('Warehouse').select('code').eq('id', warehouse_id).single()).data : null
     const whCode = whData?.code ? String(whData.code) : 'XX'
     const prefix = `${whCode}_X_${ddmmyy}_`
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: existing } = await (supabase.from('GroupDeliveryOrder') as any)
+    const { data: existing } = await supabase.from('GroupDeliveryOrder')
       .select('group_code').ilike('group_code', `${prefix}%`)
     const maxNum = Math.max(0, ...(existing ?? []).map((r: any) => parseInt(r.group_code.split('_').at(-1) ?? '') || 0))
     const group_code = `${prefix}${String(maxNum + 1).padStart(2, '0')}`
 
     const gdoId = randomUUID()
-    const actor = (req as any).user?.name || null
-    const { error } = await (supabase.from('GroupDeliveryOrder') as any).insert({
+    const actor = req.user?.name || null
+    const { error } = await supabase.from('GroupDeliveryOrder').insert({
       id: gdoId, group_code, planned_date: delivery_date, delivery_date,
       warehouse_id: warehouse_id ?? null, dvvt: dvvt ?? null,
       warehouse_type: warehouse_type ?? null, shipto_party: shipto_party ?? null, status: 'PENDING',
@@ -374,7 +374,7 @@ export async function createGDO(req: Request, res: Response) {
 
     // Load material info (id + category → material_type)
     const allCodes = [...new Set(items.map(i => i.material_code))]
-    const { data: mats } = await (supabase.from('Material') as any)
+    const { data: mats } = await supabase.from('Material')
       .select('id, material_code, category').in('material_code', allCodes)
     const matMap = new Map<string, { id: string; category: string | null }>(
       (mats ?? []).map((m: any) => [m.material_code, { id: m.id, category: m.category }])
@@ -382,7 +382,7 @@ export async function createGDO(req: Request, res: Response) {
 
     // Single DO for manual orders
     const doId = randomUUID()
-    const { error: doErr } = await (supabase.from('OutboundDelivery') as any).insert({
+    const { error: doErr } = await supabase.from('OutboundDelivery').insert({
       id: doId, gdo_id: gdoId, delivery_code: delivery_code?.trim() || null,
       distributor_name: customer_name ?? null, status: 'PENDING', updated_at: now(),
     })
@@ -401,7 +401,7 @@ export async function createGDO(req: Request, res: Response) {
         status: 'PENDING', updated_at: now(),
       }
     })
-    const { error: itemErr } = await (supabase.from('OutboundItem') as any).insert(itemsToInsert)
+    const { error: itemErr } = await supabase.from('OutboundItem').insert(itemsToInsert)
     if (itemErr) return fail(res, itemErr.message)
 
     const result = await fetchGDOFull(gdoId)
@@ -413,25 +413,25 @@ export async function createGDO(req: Request, res: Response) {
 
 async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
+  const { data: gdo } = await supabase.from('GroupDeliveryOrder')
     .select('id, group_code, shipto_party, transfer_status, license_plate')
     .eq('id', gdoId).single()
   if (!gdo?.shipto_party || gdo.transfer_status) return
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: destWh } = await (supabase.from('Warehouse') as any)
+  const { data: destWh } = await supabase.from('Warehouse')
     .select('id, code, name').eq('code', gdo.shipto_party).eq('is_active', true).maybeSingle()
   if (!destWh) return
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: dos } = await (supabase.from('OutboundDelivery') as any)
+  const { data: dos } = await supabase.from('OutboundDelivery')
     .select('id').eq('gdo_id', gdoId)
   const doIds = (dos ?? []).map((d: { id: string }) => d.id)
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: items } = doIds.length
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ? await (supabase.from('OutboundItem') as any)
+    ? await supabase.from('OutboundItem')
         .select('material_id, cartons_ordered, material_type, material:Material(category)')
         .in('do_id', doIds)
     : { data: [] as any[] }
@@ -451,7 +451,7 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
   const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await (supabase.from('TmsOrder') as any).insert({
+  await supabase.from('TmsOrder').insert({
     id: orderId, order_code: orderCode,
     date: vnDate, warehouse_id: destWh.id,
     destination_warehouse_id: destWh.id,
@@ -470,15 +470,15 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
     created_at: nowTs, updated_at: nowTs,
   }))
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await (supabase.from('inbound_plan_lines') as any).insert(lineRows)
+  await supabase.from('inbound_plan_lines').insert(lineRows)
 
   const totalBoxes = lineRows.reduce((s, r) => s + r.planned_boxes, 0)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await (supabase.from('TmsOrder') as any).update({ planned_boxes: totalBoxes, updated_at: nowTs }).eq('id', orderId)
+  await supabase.from('TmsOrder').update({ planned_boxes: totalBoxes, updated_at: nowTs }).eq('id', orderId)
 
   const plate: string | null = gdo.license_plate || null
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await (supabase.from('TmsVehicleSlot') as any).insert({
+  await supabase.from('TmsVehicleSlot').insert({
     id: randomUUID(), order_id: orderId,
     license_plate: plate,
     status: plate ? 'BOOKED' : 'PENDING',
@@ -486,7 +486,7 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
   })
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await (supabase.from('GroupDeliveryOrder') as any)
+  await supabase.from('GroupDeliveryOrder')
     .update({ transfer_status: 'IN_TRANSIT', updated_at: nowTs }).eq('id', gdoId)
 }
 
@@ -494,19 +494,19 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
 
 export async function deleteGDO(req: Request, res: Response) {
   try {
-    const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
+    const { data: gdo } = await supabase.from('GroupDeliveryOrder')
       .select('status').eq('id', req.params.id).single()
     if (!gdo) return fail(res, 'Không tìm thấy chuyến xe', 404)
     if (gdo.status !== 'PENDING') return fail(res, 'Chỉ có thể xóa đơn ở trạng thái chờ (PENDING)', 400)
 
-    const { data: dos } = await (supabase.from('OutboundDelivery') as any)
+    const { data: dos } = await supabase.from('OutboundDelivery')
       .select('id').eq('gdo_id', req.params.id)
     const doIds = (dos ?? []).map((d: any) => d.id as string)
     if (doIds.length) {
-      await (supabase.from('OutboundItem') as any).delete().in('do_id', doIds)
-      await (supabase.from('OutboundDelivery') as any).delete().in('id', doIds)
+      await supabase.from('OutboundItem').delete().in('do_id', doIds)
+      await supabase.from('OutboundDelivery').delete().in('id', doIds)
     }
-    await (supabase.from('GroupDeliveryOrder') as any).delete().eq('id', req.params.id)
+    await supabase.from('GroupDeliveryOrder').delete().eq('id', req.params.id)
     return ok(res, { success: true })
   } catch (e) { return fail(res, String(e)) }
 }
@@ -521,7 +521,7 @@ export async function updateGDO(req: Request, res: Response) {
       items?: Array<{ db_id?: string; material_code: string; cartons_ordered: number; loose_picking?: number; header_text?: string }>
     }
 
-    const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
+    const { data: gdo } = await supabase.from('GroupDeliveryOrder')
       .select('status').eq('id', req.params.id).single()
     if (!gdo) return fail(res, 'Không tìm thấy chuyến xe', 404)
     if (!['PENDING', 'PAUSED'].includes(gdo.status)) return fail(res, 'Chỉ sửa được đơn ở trạng thái PENDING hoặc PAUSED', 400)
@@ -533,11 +533,11 @@ export async function updateGDO(req: Request, res: Response) {
     if ('gate_registration_id' in req.body) gdoUpdates.gate_registration_id = gate_registration_id ?? null
     if ('shipto_party' in req.body) gdoUpdates.shipto_party = shipto_party ?? null
 
-    await (supabase.from('GroupDeliveryOrder') as any)
+    await supabase.from('GroupDeliveryOrder')
       .update(gdoUpdates)
       .eq('id', req.params.id)
 
-    const { data: dos } = await (supabase.from('OutboundDelivery') as any)
+    const { data: dos } = await supabase.from('OutboundDelivery')
       .select('id').eq('gdo_id', req.params.id)
     const doList = dos ?? []
     const isMultiDO = doList.length > 1
@@ -547,7 +547,7 @@ export async function updateGDO(req: Request, res: Response) {
       const singleDOPatch: Record<string, unknown> = { distributor_name: customer_name ?? null, updated_at: t }
       if ('delivery_code' in req.body && delivery_code !== undefined)
         singleDOPatch.delivery_code = delivery_code.trim() || null
-      await (supabase.from('OutboundDelivery') as any)
+      await supabase.from('OutboundDelivery')
         .update(singleDOPatch).eq('id', doList[0].id)
     }
 
@@ -556,7 +556,7 @@ export async function updateGDO(req: Request, res: Response) {
     // Lấy tất cả items của GDO (across all DOs)
     const doIds = doList.map((d: any) => d.id as string)
     const { data: existingItems } = doIds.length
-      ? await (supabase.from('OutboundItem') as any)
+      ? await supabase.from('OutboundItem')
           .select('id, do_id, material_code_raw, cartons_ordered, cartons_scanned').in('do_id', doIds)
       : { data: [] }
 
@@ -586,7 +586,7 @@ export async function updateGDO(req: Request, res: Response) {
       // Xóa items bị loại bỏ (chưa xuất)
       const toDeleteIds = [...existingById.keys()].filter(id => !requestedDbIds.has(id))
       if (toDeleteIds.length) {
-        await (supabase.from('OutboundItem') as any).delete().in('id', toDeleteIds)
+        await supabase.from('OutboundItem').delete().in('id', toDeleteIds)
       }
 
       // Load material cho các item chưa xuất mà đổi mã hàng
@@ -599,7 +599,7 @@ export async function updateGDO(req: Request, res: Response) {
         .map(item => item.material_code)
       let changedMatMap = new Map<string, { id: string; category: string | null }>()
       if (changedMatCodes.length) {
-        const { data: mats } = await (supabase.from('Material') as any)
+        const { data: mats } = await supabase.from('Material')
           .select('id, material_code, category').in('material_code', changedMatCodes)
         changedMatMap = new Map((mats ?? []).map((m: any) => [m.material_code as string, { id: m.id, category: m.category }]))
       }
@@ -619,7 +619,7 @@ export async function updateGDO(req: Request, res: Response) {
               fields.material_id       = matInfo?.id ?? null
               fields.material_type     = matInfo?.category ?? null
             }
-            return (supabase.from('OutboundItem') as any).update(fields).eq('id', item.db_id!)
+            return supabase.from('OutboundItem').update(fields).eq('id', item.db_id!)
           })
       )
     } else {
@@ -652,14 +652,14 @@ export async function updateGDO(req: Request, res: Response) {
         .filter((i: any) => !newCodes.has(i.material_code_raw as string))
         .map((i: any) => i.id as string)
       if (toDeleteIds.length) {
-        await (supabase.from('OutboundItem') as any).delete().in('id', toDeleteIds)
+        await supabase.from('OutboundItem').delete().in('id', toDeleteIds)
       }
 
       // Load material cho items mới
       const newCodes2 = items.filter(i => !existingByCode.has(i.material_code)).map(i => i.material_code)
       let matMap = new Map<string, { id: string; category: string | null }>()
       if (newCodes2.length) {
-        const { data: mats } = await (supabase.from('Material') as any)
+        const { data: mats } = await supabase.from('Material')
           .select('id, material_code, category').in('material_code', newCodes2)
         matMap = new Map((mats ?? []).map((m: any) => [m.material_code as string, { id: m.id, category: m.category }]))
       }
@@ -680,8 +680,8 @@ export async function updateGDO(req: Request, res: Response) {
         }
       }
       await Promise.all([
-        ...toUpdate.map(({ id, fields }) => (supabase.from('OutboundItem') as any).update(fields).eq('id', id)),
-        ...(toInsert.length ? [(supabase.from('OutboundItem') as any).insert(toInsert)] : []),
+        ...toUpdate.map(({ id, fields }) => supabase.from('OutboundItem').update(fields).eq('id', id)),
+        ...(toInsert.length ? [supabase.from('OutboundItem').insert(toInsert)] : []),
       ])
     }
 
@@ -697,7 +697,7 @@ export async function patchGDO(req: Request, res: Response) {
 
     // PAUSED: chỉ cho đổi status (ví dụ resume → IN_PROGRESS), không sửa dữ liệu khác
     if (delivery_date) {
-      const { data: current } = await (supabase.from('GroupDeliveryOrder') as any)
+      const { data: current } = await supabase.from('GroupDeliveryOrder')
         .select('status').eq('id', req.params.id).single()
       if (current?.status === 'PAUSED')
         return fail(res, 'Chuyến đang tạm dừng — chỉ được đổi trạng thái, không sửa dữ liệu', 400)
@@ -706,11 +706,11 @@ export async function patchGDO(req: Request, res: Response) {
     // Gác hoàn thành: thực quét phải KHỚP kế hoạch — mọi item cartons_scanned >= cartons_ordered.
     // Xuất thiếu (hết tồn/NPP giao thiếu) → sửa SL đơn xuống = thực xuất rồi mới hoàn thành.
     if (status === 'COMPLETED') {
-      const { data: dos } = await (supabase.from('OutboundDelivery') as any)
+      const { data: dos } = await supabase.from('OutboundDelivery')
         .select('id').eq('gdo_id', req.params.id)
       const doIds = ((dos ?? []) as { id: string }[]).map(d => d.id)
       if (doIds.length) {
-        const { data: items } = await (supabase.from('OutboundItem') as any)
+        const { data: items } = await supabase.from('OutboundItem')
           .select('material_code_raw, cartons_ordered, cartons_scanned').in('do_id', doIds)
         const short = ((items ?? []) as { material_code_raw: string | null; cartons_ordered: number; cartons_scanned: number }[])
           .filter(i => Number(i.cartons_scanned) < Number(i.cartons_ordered))
@@ -732,7 +732,7 @@ export async function patchGDO(req: Request, res: Response) {
     // CAS khi hoàn thành: chỉ winner đầu (status chưa COMPLETED) mới đổi → cascade
     // maybeAutoCreateTransferOrder (tạo TmsOrder chuyển kho) chạy ĐÚNG 1 lần, không tạo trùng.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let upd = (supabase.from('GroupDeliveryOrder') as any).update(patch).eq('id', req.params.id)
+    let upd = supabase.from('GroupDeliveryOrder').update(patch).eq('id', req.params.id)
     if (status === 'COMPLETED') upd = upd.neq('status', 'COMPLETED')
     const { data: updRows, error } = await upd.select('id')
     if (error) return fail(res, error.message)
@@ -749,7 +749,7 @@ export async function patchGDO(req: Request, res: Response) {
 export async function assignGDO(req: Request, res: Response) {
   try {
     const { assigned_by } = req.body as { assigned_by?: string }
-    const { error } = await (supabase.from('GroupDeliveryOrder') as any)
+    const { error } = await supabase.from('GroupDeliveryOrder')
       .update({ assigned_at: now(), assigned_by: assigned_by ?? null, updated_at: now() })
       .eq('id', req.params.id)
     if (error) return fail(res, error.message)
@@ -762,11 +762,11 @@ export async function assignGDO(req: Request, res: Response) {
 
 export async function unassignGDO(req: Request, res: Response) {
   try {
-    const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
+    const { data: gdo } = await supabase.from('GroupDeliveryOrder')
       .select('assigned_at, started_at').eq('id', req.params.id).single()
     if (!gdo?.assigned_at) return fail(res, 'Đơn chưa được giao đơn', 400)
     if (gdo?.started_at)   return fail(res, 'Cần gỡ bắt đầu trước khi gỡ giao đơn', 400)
-    const { error } = await (supabase.from('GroupDeliveryOrder') as any)
+    const { error } = await supabase.from('GroupDeliveryOrder')
       .update({ assigned_at: null, assigned_by: null, status: 'PENDING', updated_at: now() })
       .eq('id', req.params.id)
     if (error) return fail(res, error.message)
@@ -791,7 +791,7 @@ export async function startGDO(req: Request, res: Response) {
 
     // Khóa cứng 1 chuyến = 1 phiếu: nếu chuyến cổng đã gắn GDO khác → chặn, trừ khi user xác nhận đặc biệt (bốc thêm đơn cùng chuyến)
     if (gate_registration_id && !allow_shared_gate) {
-      const { data: taken } = await (supabase.from('GroupDeliveryOrder') as any)
+      const { data: taken } = await supabase.from('GroupDeliveryOrder')
         .select('id, group_code')
         .eq('gate_registration_id', gate_registration_id)
         .neq('id', req.params.id)
@@ -801,7 +801,7 @@ export async function startGDO(req: Request, res: Response) {
       }
     }
 
-    const { error } = await (supabase.from('GroupDeliveryOrder') as any)
+    const { error } = await supabase.from('GroupDeliveryOrder')
       .update({
         started_at: now(),
         license_plate,
@@ -836,13 +836,13 @@ export async function updateTransport(req: Request, res: Response) {
     }
     if (!license_plate?.trim()) return fail(res, 'Biển số xe là bắt buộc', 400)
 
-    const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
+    const { data: gdo } = await supabase.from('GroupDeliveryOrder')
       .select('started_at').eq('id', req.params.id).single()
     if (!gdo?.started_at) return fail(res, 'Chuyến chưa được bắt đầu', 400)
 
     // Khóa cứng 1 chuyến = 1 phiếu (như startGDO): chuyến đã gắn GDO khác → chặn, trừ khi xác nhận đặc biệt
     if (gate_registration_id && !allow_shared_gate) {
-      const { data: taken } = await (supabase.from('GroupDeliveryOrder') as any)
+      const { data: taken } = await supabase.from('GroupDeliveryOrder')
         .select('id, group_code')
         .eq('gate_registration_id', gate_registration_id)
         .neq('id', req.params.id)
@@ -852,7 +852,7 @@ export async function updateTransport(req: Request, res: Response) {
       }
     }
 
-    const { error } = await (supabase.from('GroupDeliveryOrder') as any)
+    const { error } = await supabase.from('GroupDeliveryOrder')
       .update({
         license_plate:         license_plate.trim(),
         container_number:      container_number?.trim()      || null,
@@ -873,16 +873,16 @@ export async function updateTransport(req: Request, res: Response) {
 
 export async function unstartGDO(req: Request, res: Response) {
   try {
-    const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
+    const { data: gdo } = await supabase.from('GroupDeliveryOrder')
       .select('started_at').eq('id', req.params.id).single()
     if (!gdo?.started_at) return fail(res, 'Đơn chưa được bắt đầu', 400)
 
     // Kiểm tra chưa có QR nào được quét (bỏ qua POSM/Pallet Loscam và nhặt lẻ chưa confirm)
-    const { data: doList } = await (supabase.from('OutboundDelivery') as any)
+    const { data: doList } = await supabase.from('OutboundDelivery')
       .select('id').eq('gdo_id', req.params.id)
     const doIds = (doList ?? []).map((d: any) => d.id)
     if (doIds.length) {
-      const { data: items } = await (supabase.from('OutboundItem') as any)
+      const { data: items } = await supabase.from('OutboundItem')
         .select('id, material_type, material_code_raw, material_id, material:Material!material_id(no_qr_tracking)').in('do_id', doIds)
       // Chỉ kiểm tra item có thể scan thực sự (bỏ POSM, Pallet Loscam, 810000)
       const blockableIds = (items ?? [])
@@ -890,7 +890,7 @@ export async function unstartGDO(req: Request, res: Response) {
         .map((i: any) => i.id as string)
       if (blockableIds.length) {
         // Chỉ đếm scan entries thực sự (không phải nhặt lẻ chưa confirm)
-        const { count } = await (supabase.from('OutboundScanEntry') as any)
+        const { count } = await supabase.from('OutboundScanEntry')
           .select('id', { count: 'exact', head: true })
           .in('item_id', blockableIds)
           .or('is_loose_picking.eq.false,is_loose_picking.is.null,loose_confirmed.eq.true')
@@ -900,7 +900,7 @@ export async function unstartGDO(req: Request, res: Response) {
     }
 
     const t = now()
-    const { error } = await (supabase.from('GroupDeliveryOrder') as any)
+    const { error } = await supabase.from('GroupDeliveryOrder')
       .update({
         started_at: null, license_plate: null, container_number: null,
         exporter_name: null, loader_name: null,
@@ -918,7 +918,7 @@ export async function unstartGDO(req: Request, res: Response) {
 export async function uncompleteGDO(req: Request, res: Response) {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
+    const { data: gdo } = await supabase.from('GroupDeliveryOrder')
       .select('status, transfer_status').eq('id', req.params.id).single()
     if (gdo?.status !== 'COMPLETED') return fail(res, 'Đơn chưa hoàn thành', 400)
 
@@ -929,7 +929,7 @@ export async function uncompleteGDO(req: Request, res: Response) {
 
     if (ts === 'RECEIVING') {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: openImports } = await (supabase.from('ProductionImport') as any)
+      const { data: openImports } = await supabase.from('ProductionImport')
         .select('import_code').eq('from_gdo_id', req.params.id).neq('status', 'CANCELLED')
       const codes = (openImports ?? []).map((r: { import_code: string }) => r.import_code).join(', ')
       return fail(res, 400, 'INBOUND_OPEN', `Kho NPP đã tạo phiếu nhập (${codes}) — hủy phiếu trước khi bỏ hoàn thành`)
@@ -937,20 +937,20 @@ export async function uncompleteGDO(req: Request, res: Response) {
 
     if (ts === 'IN_TRANSIT') {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: tmsOrder } = await (supabase.from('TmsOrder') as any)
+      const { data: tmsOrder } = await supabase.from('TmsOrder')
         .select('id').eq('transfer_gdo_id', req.params.id).maybeSingle()
       if (tmsOrder) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (supabase.from('inbound_plan_lines') as any).delete().eq('tms_order_id', tmsOrder.id)
+        await supabase.from('inbound_plan_lines').delete().eq('tms_order_id', tmsOrder.id)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (supabase.from('TmsVehicleSlot') as any).delete().eq('order_id', tmsOrder.id)
+        await supabase.from('TmsVehicleSlot').delete().eq('order_id', tmsOrder.id)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (supabase.from('TmsOrder') as any).delete().eq('id', tmsOrder.id)
+        await supabase.from('TmsOrder').delete().eq('id', tmsOrder.id)
       }
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await (supabase.from('GroupDeliveryOrder') as any)
+    const { error } = await supabase.from('GroupDeliveryOrder')
       .update({ status: 'IN_PROGRESS', completed_at: null, scan_completed_at: null, transfer_status: null, updated_at: now() })
       .eq('id', req.params.id)
     if (error) return fail(res, error.message)
@@ -963,7 +963,7 @@ export async function uncompleteGDO(req: Request, res: Response) {
 export async function getWarehouseEmployees(req: Request, res: Response) {
   try {
     const { warehouse_id } = req.query as Record<string, string>
-    let q = (supabase.from('Employee') as any)
+    let q = supabase.from('Employee')
       .select('id, name, employee_code')
       .eq('is_active', true)
       .order('name')
@@ -989,12 +989,12 @@ async function mergePausedGDO(
 ): Promise<{ group_code: string; id?: string; merged?: boolean; skipped?: boolean; reason?: string }> {
   const t = now()
 
-  const { data: existingDOs } = await (supabase.from('OutboundDelivery') as any)
+  const { data: existingDOs } = await supabase.from('OutboundDelivery')
     .select('id, delivery_code').eq('gdo_id', gdoId)
 
   const existingDoIds = (existingDOs ?? []).map((d: any) => d.id as string)
   const { data: existingItems } = existingDoIds.length
-    ? await (supabase.from('OutboundItem') as any)
+    ? await supabase.from('OutboundItem')
         .select('id, do_id, material_code_raw, cartons_scanned').in('do_id', existingDoIds)
     : { data: [] }
 
@@ -1063,7 +1063,7 @@ async function mergePausedGDO(
     })
     .map((i: any) => i.id as string)
   if (staleItemIds.length) {
-    await (supabase.from('OutboundItem') as any).delete().in('id', staleItemIds)
+    await supabase.from('OutboundItem').delete().in('id', staleItemIds)
   }
 
   // Cleanup: delete stale DOs not in new file (items already deleted above)
@@ -1071,11 +1071,11 @@ async function mergePausedGDO(
     .filter((d: any) => !newDeliveryCodes.has(d.delivery_code as string))
     .map((d: any) => d.id as string)
   if (staleDOIds.length) {
-    await (supabase.from('OutboundDelivery') as any).delete().in('id', staleDOIds)
+    await supabase.from('OutboundDelivery').delete().in('id', staleDOIds)
   }
 
   // Update GDO header — preserve workflow fields (started_at, assigned_at, status, license_plate, etc.)
-  await (supabase.from('GroupDeliveryOrder') as any)
+  await supabase.from('GroupDeliveryOrder')
     .update({ delivery_date, planned_date, warehouse_id, dvvt, warehouse_type, updated_at: t })
     .eq('id', gdoId)
 
@@ -1087,10 +1087,10 @@ async function mergePausedGDO(
 
     if (existingDO) {
       doId = existingDO.id as string
-      await (supabase.from('OutboundDelivery') as any).update({ distributor_name, updated_at: t }).eq('id', doId)
+      await supabase.from('OutboundDelivery').update({ distributor_name, updated_at: t }).eq('id', doId)
     } else {
       doId = randomUUID()
-      await (supabase.from('OutboundDelivery') as any).insert({
+      await supabase.from('OutboundDelivery').insert({
         id: doId, gdo_id: gdoId, delivery_code, distributor_name, status: 'PENDING', updated_at: t,
       })
     }
@@ -1122,9 +1122,9 @@ async function mergePausedGDO(
         const newStatus = scanned >= newCartons ? 'COMPLETED'
           : scanned > 0 ? 'IN_PROGRESS'
           : 'PENDING'
-        await (supabase.from('OutboundItem') as any).update({ ...fields, status: newStatus }).eq('id', existing.id)
+        await supabase.from('OutboundItem').update({ ...fields, status: newStatus }).eq('id', existing.id)
       } else {
-        await (supabase.from('OutboundItem') as any).insert({
+        await supabase.from('OutboundItem').insert({
           id: randomUUID(), do_id: doId, ...fields,
           cartons_scanned: 0,
           status: 'PENDING',
@@ -1163,10 +1163,10 @@ export async function uploadExcel(req: Request, res: Response) {
     // Pre-load warehouses, materials, warehouse types, and existing GDOs in parallel
     const allGroupCodes = [...byVehicle.keys()]
     const [warehousesRes, materialsRes, whTypesRes, existingRes] = await Promise.all([
-      (supabase.from('Warehouse') as any).select('id, code, name').eq('is_active', true),
-      (supabase.from('Material') as any).select('id, material_code'),
-      (supabase.from('LookupValue') as any).select('value').eq('type', 'warehouse_type').eq('is_active', true),
-      (supabase.from('GroupDeliveryOrder') as any)
+      supabase.from('Warehouse').select('id, code, name').eq('is_active', true),
+      supabase.from('Material').select('id, material_code'),
+      supabase.from('LookupValue').select('value').eq('type', 'warehouse_type').eq('is_active', true),
+      supabase.from('GroupDeliveryOrder')
         .select('id, group_code, status, assigned_at, assigned_by')
         .in('group_code', allGroupCodes),
     ])
@@ -1352,7 +1352,7 @@ export async function uploadExcel(req: Request, res: Response) {
         toReplaceIds.push(pendingSimpleMap.get(group_code)!)
       }
       const gdoId = randomUUID()
-      const actor = (req as any).user?.name || null
+      const actor = req.user?.name || null
       gdoInserts.push({
         id: gdoId, group_code, planned_date, delivery_date,
         warehouse_id: resolved_warehouse_id, dvvt, warehouse_type: loai_kho,
@@ -1366,27 +1366,27 @@ export async function uploadExcel(req: Request, res: Response) {
 
     // Simple PENDING → cascade delete entire GDO
     if (toReplaceIds.length) {
-      const { data: dosToDelete } = await (supabase.from('OutboundDelivery') as any)
+      const { data: dosToDelete } = await supabase.from('OutboundDelivery')
         .select('id').in('gdo_id', toReplaceIds)
       const doIdsToDelete = (dosToDelete ?? []).map((d: any) => d.id as string)
       if (doIdsToDelete.length) {
-        await (supabase.from('OutboundItem') as any).delete().in('do_id', doIdsToDelete)
-        await (supabase.from('OutboundDelivery') as any).delete().in('id', doIdsToDelete)
+        await supabase.from('OutboundItem').delete().in('do_id', doIdsToDelete)
+        await supabase.from('OutboundDelivery').delete().in('id', doIdsToDelete)
       }
-      await (supabase.from('GroupDeliveryOrder') as any).delete().in('id', toReplaceIds)
+      await supabase.from('GroupDeliveryOrder').delete().in('id', toReplaceIds)
     }
 
     // Preserve PENDING → delete DOs/Items only, update GDO header
     if (toPreserveIds.length) {
-      const { data: dosToDelete } = await (supabase.from('OutboundDelivery') as any)
+      const { data: dosToDelete } = await supabase.from('OutboundDelivery')
         .select('id').in('gdo_id', toPreserveIds)
       const doIdsToDelete = (dosToDelete ?? []).map((d: any) => d.id as string)
       if (doIdsToDelete.length) {
-        await (supabase.from('OutboundItem') as any).delete().in('do_id', doIdsToDelete)
-        await (supabase.from('OutboundDelivery') as any).delete().in('id', doIdsToDelete)
+        await supabase.from('OutboundItem').delete().in('do_id', doIdsToDelete)
+        await supabase.from('OutboundDelivery').delete().in('id', doIdsToDelete)
       }
       for (const { id, fields } of preserveGDOUpdates) {
-        await (supabase.from('GroupDeliveryOrder') as any).update(fields).eq('id', id)
+        await supabase.from('GroupDeliveryOrder').update(fields).eq('id', id)
       }
     }
 
@@ -1394,7 +1394,7 @@ export async function uploadExcel(req: Request, res: Response) {
     const CHUNK = 100
     async function batchInsert(table: string, rows: any[]) {
       for (let i = 0; i < rows.length; i += CHUNK) {
-        const { error } = await (supabase.from(table) as any).insert(rows.slice(i, i + CHUNK))
+        const { error } = await supabase.from(table).insert(rows.slice(i, i + CHUNK))
         if (error) throw new Error(`${table}: ${error.message}`)
       }
     }
@@ -1412,13 +1412,13 @@ export async function uploadExcel(req: Request, res: Response) {
 // Tồn khả dụng của 1 mã hàng trong 1 kho (FEFO list) — dùng chung cho getItemInventory
 // và getInventoryByMaterial (nút search tồn kho ở bảng chuẩn bị). Trả [] nếu kho không có vị trí.
 async function fetchMaterialInventory(materialId: string, warehouseId: string | null) {
-  let q = (supabase.from('InventoryEntry') as any)
+  let q = supabase.from('InventoryEntry')
     .select('id, pallet_code, cartons_imported, cartons_remaining, cartons_reserved, production_date, import_date, qa_status_id, qa_status:QAStatus(id,code,name), location:Location(location_code), material:Material!material_id(shelf_life_days)')
     .eq('material_id', materialId)
     .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING'])
 
   if (warehouseId) {
-    const { data: locs } = await (supabase.from('Location') as any)
+    const { data: locs } = await supabase.from('Location')
       .select('id').eq('warehouse_id', warehouseId)
     const locIds = ((locs ?? []) as any[]).map((l: any) => l.id as string)
     if (!locIds.length) return []
@@ -1458,8 +1458,8 @@ export async function getItemInventory(req: Request, res: Response) {
   try {
     const { gdoId, itemId } = req.params
     const [itemRes, gdoRes] = await Promise.all([
-      (supabase.from('OutboundItem') as any).select('material_id').eq('id', itemId).single(),
-      (supabase.from('GroupDeliveryOrder') as any).select('warehouse_id').eq('id', gdoId).single(),
+      supabase.from('OutboundItem').select('material_id').eq('id', itemId).single(),
+      supabase.from('GroupDeliveryOrder').select('warehouse_id').eq('id', gdoId).single(),
     ])
     if (!itemRes.data) return fail(res, 'Không tìm thấy mặt hàng', 404)
     return ok(res, await fetchMaterialInventory(itemRes.data.material_id, gdoRes.data?.warehouse_id ?? null))
@@ -1483,18 +1483,22 @@ export async function getPrepareBoard(req: Request, res: Response) {
     const gdoIds = String(req.query.gdo_ids ?? '').split(',').map(s => s.trim()).filter(Boolean)
     if (!gdoIds.length) return ok(res, { rows: [], total_cartons: 0, total_pallets: 0 })
 
-    const { data: gdos } = await (supabase.from('GroupDeliveryOrder') as any)
+    const { data: gdos } = await supabase.from('GroupDeliveryOrder')
       .select('id, warehouse_id').in('id', gdoIds)
     const warehouseIds = [...new Set((gdos ?? []).map((g: any) => g.warehouse_id).filter(Boolean))] as string[]
 
-    const { data: dos } = await (supabase.from('OutboundDelivery') as any)
+    const { data: dos } = await supabase.from('OutboundDelivery')
       .select('id').in('gdo_id', gdoIds)
     const doIds = (dos ?? []).map((d: any) => d.id)
     if (!doIds.length) return ok(res, { rows: [], total_cartons: 0, total_pallets: 0 })
 
-    const { data: items } = await (supabase.from('OutboundItem') as any)
+    const { data: items } = await supabase.from('OutboundItem')
       .select('material_id, material_code_raw, cartons_ordered, cartons_scanned, loose_picking, material:Material!material_id(short_name, cartons_per_pallet, no_qr_tracking)')
-      .in('do_id', doIds)
+      .in('do_id', doIds) as { data: Array<{
+        material_id: string | null; material_code_raw: string | null
+        cartons_ordered: number | null; cartons_scanned: number | null; loose_picking: number | null
+        material: { short_name: string | null; cartons_per_pallet: number | null; no_qr_tracking: boolean | null } | null
+      }> | null }
 
     // Gom theo mã hàng (material_id, fallback material_code_raw)
     type Row = {
@@ -1524,17 +1528,22 @@ export async function getPrepareBoard(req: Request, res: Response) {
     const matIds = [...new Set([...rowMap.values()].map(r => r.material_id).filter(Boolean))] as string[]
     let locIds: string[] | null = null
     if (warehouseIds.length) {
-      const { data: locs } = await (supabase.from('Location') as any)
+      const { data: locs } = await supabase.from('Location')
         .select('id').in('warehouse_id', warehouseIds)
       locIds = ((locs ?? []) as any[]).map((l: any) => l.id as string)
     }
     if (matIds.length && (!locIds || locIds.length)) {
-      let q = (supabase.from('InventoryEntry') as any)
+      let q = supabase.from('InventoryEntry')
         .select('material_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, location:Location(location_code), material:Material!material_id(shelf_life_days)')
         .in('material_id', matIds)
         .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING'])
       if (locIds) q = q.in('location_id', locIds)
-      const { data: entries } = await q
+      const { data: entries } = await q as { data: Array<{
+        material_id: string; cartons_remaining: number | null; cartons_imported: number | null
+        cartons_reserved: number | null; production_date: string | null
+        location: { location_code: string | null } | null
+        material: { shelf_life_days: number | null } | null
+      }> | null }
       const nowMs = Date.now()
       const byMat = new Map<string, Map<string, { location_code: string | null; pct_date: number | null; available: number }>>()
       for (const e of (entries ?? [])) {
@@ -1602,10 +1611,10 @@ export async function checkScanItem(req: Request, res: Response) {
       { data: invList },
       { data: dupCheck },
     ] = await Promise.all([
-      (supabase.from('GroupDeliveryOrder') as any).select('status, warehouse_id').eq('id', gdoId).single(),
-      (supabase.from('OutboundItem') as any).select('*').eq('id', itemId).single(),
-      (supabase.from('InventoryEntry') as any).select('*, qa_status:QAStatus(code,name), location:Location!location_id(warehouse_id)').eq('pallet_code', qr).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']),
-      (supabase.from('OutboundScanEntry') as any).select('id').eq('item_id', itemId).eq('pallet_code', qr).maybeSingle(),
+      supabase.from('GroupDeliveryOrder').select('status, warehouse_id').eq('id', gdoId).single(),
+      supabase.from('OutboundItem').select('*').eq('id', itemId).single(),
+      supabase.from('InventoryEntry').select('*, qa_status:QAStatus(code,name), location:Location!location_id(warehouse_id)').eq('pallet_code', qr).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']),
+      supabase.from('OutboundScanEntry').select('id').eq('item_id', itemId).eq('pallet_code', qr).maybeSingle(),
     ])
     const inv = ((invList ?? []) as any[]).find((e: any) => e.location?.warehouse_id === gdo?.warehouse_id) ?? null
 
@@ -1632,7 +1641,7 @@ export async function checkScanItem(req: Request, res: Response) {
     if (dateReqPct > 0) {
       const matId = item.material_id ?? inv.material_id
       const { data: mat } = matId
-        ? await (supabase.from('Material') as any).select('shelf_life_days').eq('id', matId).single()
+        ? await supabase.from('Material').select('shelf_life_days').eq('id', matId).single()
         : { data: null }
       const shelfLifeDays = mat?.shelf_life_days ? Number(mat.shelf_life_days) : 0
       if (!shelfLifeDays) return fail(res, `Mặt hàng chưa có Shelf Life — không thể kiểm tra %Date`, 400)
@@ -1649,11 +1658,11 @@ export async function checkScanItem(req: Request, res: Response) {
 
     let best_available_date: string | null = null
     if (inv.material_id && gdo?.warehouse_id) {
-      const { data: locs } = await (supabase.from('Location') as any)
+      const { data: locs } = await supabase.from('Location')
         .select('id').eq('warehouse_id', gdo.warehouse_id)
       const locIds = (locs ?? []).map((l: any) => l.id as string)
       if (locIds.length > 0) {
-        const { data: bestEntries } = await (supabase.from('InventoryEntry') as any)
+        const { data: bestEntries } = await supabase.from('InventoryEntry')
           .select('production_date')
           .eq('material_id', inv.material_id)
           .in('location_id', locIds)
@@ -1695,12 +1704,12 @@ export async function scanItem(req: Request, res: Response) {
       { data: dupCheck },
       { data: empCheck },
     ] = await Promise.all([
-      (supabase.from('GroupDeliveryOrder') as any).select('status, started_at, warehouse_id').eq('id', gdoId).single(),
-      (supabase.from('OutboundItem') as any).select('*').eq('id', itemId).single(),
-      (supabase.from('InventoryEntry') as any).select('*, qa_status:QAStatus(code,name), location:Location!location_id(warehouse_id)').eq('pallet_code', qr).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']),
-      (supabase.from('OutboundScanEntry') as any).select('id').eq('item_id', itemId).eq('pallet_code', qr).maybeSingle(),
+      supabase.from('GroupDeliveryOrder').select('status, started_at, warehouse_id').eq('id', gdoId).single(),
+      supabase.from('OutboundItem').select('*').eq('id', itemId).single(),
+      supabase.from('InventoryEntry').select('*, qa_status:QAStatus(code,name), location:Location!location_id(warehouse_id)').eq('pallet_code', qr).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']),
+      supabase.from('OutboundScanEntry').select('id').eq('item_id', itemId).eq('pallet_code', qr).maybeSingle(),
       employee_id
-        ? (supabase.from('Employee') as any).select('id').eq('id', employee_id).maybeSingle()
+        ? supabase.from('Employee').select('id').eq('id', employee_id).maybeSingle()
         : Promise.resolve({ data: null }),
     ])
     const inv = ((invList ?? []) as any[]).find((e: any) => e.location?.warehouse_id === gdo?.warehouse_id) ?? null
@@ -1717,15 +1726,15 @@ export async function scanItem(req: Request, res: Response) {
     const matId = item.material_id ?? inv.material_id
     const [{ data: shelfMat }, best_available_date] = await Promise.all([
       matId
-        ? (supabase.from('Material') as any).select('shelf_life_days').eq('id', matId).single()
+        ? supabase.from('Material').select('shelf_life_days').eq('id', matId).single()
         : Promise.resolve({ data: null }),
       (async (): Promise<string | null> => {
         if (!inv.material_id || !gdo?.warehouse_id) return null
-        const { data: locs } = await (supabase.from('Location') as any)
+        const { data: locs } = await supabase.from('Location')
           .select('id').eq('warehouse_id', gdo.warehouse_id)
         const locIds = (locs ?? []).map((l: any) => l.id as string)
         if (!locIds.length) return null
-        const { data: bestEntries } = await (supabase.from('InventoryEntry') as any)
+        const { data: bestEntries } = await supabase.from('InventoryEntry')
           .select('production_date')
           .eq('material_id', inv.material_id)
           .in('location_id', locIds)
@@ -1775,7 +1784,7 @@ export async function scanItem(req: Request, res: Response) {
     let cap = Math.min(available, remaining_on_item)
 
     if (loose_picking_mode) {
-      const { data: looseEntries } = await (supabase.from('OutboundScanEntry') as any)
+      const { data: looseEntries } = await supabase.from('OutboundScanEntry')
         .select('cartons_scanned').eq('item_id', itemId).eq('is_loose_picking', true)
       const loose_scanned = (looseEntries ?? []).reduce((s: number, e: any) => s + Number(e.cartons_scanned), 0)
       const outbound_scanned = Number(item.cartons_scanned) - loose_scanned
@@ -1801,7 +1810,7 @@ export async function scanItem(req: Request, res: Response) {
 
     // Insert scan entry TRƯỚC khi thay đổi inventory — nếu lỗi thì không có gì bị ảnh hưởng
     const scanId = randomUUID()
-    const { error: insertErr } = await (supabase.from('OutboundScanEntry') as any).insert({
+    const { error: insertErr } = await supabase.from('OutboundScanEntry').insert({
       id: scanId, item_id: itemId, inventory_entry_id: inv.id,
       pallet_code: qr, cartons_scanned: to_take,
       production_date: inv.production_date ?? null,
@@ -1823,7 +1832,7 @@ export async function scanItem(req: Request, res: Response) {
       // Nếu tồn vừa bị thao tác khác đổi liên tục → rollback scan entry đã insert để không lệch.
       const reserved_ok = await adjustInventoryAtomic(inv.id, 0, to_take)
       if (!reserved_ok) {
-        await (supabase.from('OutboundScanEntry') as any).delete().eq('id', scanId)
+        await supabase.from('OutboundScanEntry').delete().eq('id', scanId)
         return fail(res, 'Tồn kho mã này vừa thay đổi (thao tác khác) — thử lại', 409)
       }
       const cum = await addItemScanned(itemId, to_take, () => 'IN_PROGRESS')
@@ -1833,13 +1842,13 @@ export async function scanItem(req: Request, res: Response) {
       // → 2 người quét cùng pallet làm mất cập nhật / xuất quá số). Lỗi → rollback scan entry đã insert.
       const consumed = await consumeInventoryExact(inv.id, to_take)
       if (consumed !== true) {
-        await (supabase.from('OutboundScanEntry') as any).delete().eq('id', scanId)
+        await supabase.from('OutboundScanEntry').delete().eq('id', scanId)
         return fail(res, consumed === false
           ? `Pallet "${qr}" vừa được người khác xuất bớt — tồn không đủ, quét lại`
           : 'Tồn kho mã này đang bận (nhiều người thao tác) — thử lại', 409)
       }
       // Nhặt lẻ chưa xác nhận → KHÔNG cho complete dù đủ số
-      const { data: unconfirmedLoose } = await (supabase.from('OutboundScanEntry') as any)
+      const { data: unconfirmedLoose } = await supabase.from('OutboundScanEntry')
         .select('id').eq('item_id', itemId).eq('is_loose_picking', true).eq('loose_confirmed', false)
       const blockComplete = (unconfirmedLoose ?? []).length > 0
       const ordered = Number(item.cartons_ordered)
@@ -1857,20 +1866,20 @@ export async function scanItem(req: Request, res: Response) {
       // Parallel: count pending items in DO + count pending DOs in GDO (gdoId đã biết từ params)
       // Item đã được UPDATE ở bước trên nên count phản ánh trạng thái mới
       const [{ count: pendingItems }, { count: pendingDOs }] = await Promise.all([
-        (supabase.from('OutboundItem') as any)
+        supabase.from('OutboundItem')
           .select('id', { count: 'exact', head: true })
           .eq('do_id', item.do_id).neq('status', 'COMPLETED'),
-        (supabase.from('OutboundDelivery') as any)
+        supabase.from('OutboundDelivery')
           .select('id', { count: 'exact', head: true })
           .eq('gdo_id', gdoId).neq('status', 'COMPLETED').neq('id', item.do_id),
       ])
       const doCompleted = pendingItems === 0
       const gdoCompleted = doCompleted && pendingDOs === 0
       await Promise.all([
-        (supabase.from('OutboundDelivery') as any)
+        supabase.from('OutboundDelivery')
           .update({ status: doCompleted ? 'COMPLETED' : 'IN_PROGRESS', updated_at: t })
           .eq('id', item.do_id),
-        (supabase.from('GroupDeliveryOrder') as any)
+        supabase.from('GroupDeliveryOrder')
           .update({
             status:          'IN_PROGRESS',
             last_scanned_at: t,
@@ -1894,11 +1903,11 @@ export async function deleteScanEntry(req: Request, res: Response) {
   try {
     const { gdoId, itemId, scanId } = req.params
 
-    const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
+    const { data: gdo } = await supabase.from('GroupDeliveryOrder')
       .select('status').eq('id', gdoId).single()
     if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng — không thể xóa QR', 400)
 
-    const { data: scan } = await (supabase.from('OutboundScanEntry') as any)
+    const { data: scan } = await supabase.from('OutboundScanEntry')
       .select('*').eq('id', scanId).eq('item_id', itemId).single()
     if (!scan) return fail(res, 'Không tìm thấy bản ghi quét', 404)
 
@@ -1919,23 +1928,23 @@ export async function deleteScanEntry(req: Request, res: Response) {
       }
     }
 
-    await (supabase.from('OutboundScanEntry') as any).delete().eq('id', scanId)
+    await supabase.from('OutboundScanEntry').delete().eq('id', scanId)
 
     // Recalculate item
-    const { data: item } = await (supabase.from('OutboundItem') as any)
+    const { data: item } = await supabase.from('OutboundItem')
       .select('*').eq('id', itemId).single()
     if (item) {
-      const { data: remainingScans } = await (supabase.from('OutboundScanEntry') as any)
+      const { data: remainingScans } = await supabase.from('OutboundScanEntry')
         .select('cartons_scanned').eq('item_id', itemId)
       const newCartons  = (remainingScans ?? []).reduce((s: number, e: any) => s + Number(e.cartons_scanned), 0)
       const newItemStatus = newCartons === 0 ? 'PENDING'
         : newCartons >= Number(item.cartons_ordered) ? 'COMPLETED'
         : 'IN_PROGRESS'
-      await (supabase.from('OutboundItem') as any)
+      await supabase.from('OutboundItem')
         .update({ cartons_scanned: newCartons, status: newItemStatus, updated_at: t }).eq('id', itemId)
 
       // Recalculate DO
-      const { data: siblingItems } = await (supabase.from('OutboundItem') as any)
+      const { data: siblingItems } = await supabase.from('OutboundItem')
         .select('id, status').eq('do_id', item.do_id)
       const allStatuses = (siblingItems ?? []).map((i: any) =>
         i.id === itemId ? newItemStatus : i.status
@@ -1943,15 +1952,15 @@ export async function deleteScanEntry(req: Request, res: Response) {
       const doCompleted   = allStatuses.every((s: string) => s === 'COMPLETED')
       const doAnyProgress = allStatuses.some((s: string) => s !== 'PENDING')
       const doStatus      = doCompleted ? 'COMPLETED' : doAnyProgress ? 'IN_PROGRESS' : 'PENDING'
-      const { data: doRow } = await (supabase.from('OutboundDelivery') as any)
+      const { data: doRow } = await supabase.from('OutboundDelivery')
         .update({ status: doStatus, updated_at: t })
         .eq('id', item.do_id).select('gdo_id').single()
 
       // Recalculate GDO (respect started_at — once started, minimum IN_PROGRESS)
       if (doRow?.gdo_id) {
-        const { data: gdo } = await (supabase.from('GroupDeliveryOrder') as any)
+        const { data: gdo } = await supabase.from('GroupDeliveryOrder')
           .select('started_at').eq('id', gdoId).single()
-        const { data: siblingDOs } = await (supabase.from('OutboundDelivery') as any)
+        const { data: siblingDOs } = await supabase.from('OutboundDelivery')
           .select('id, status').eq('gdo_id', doRow.gdo_id)
         const doStatuses = (siblingDOs ?? []).map((d: any) =>
           d.id === item.do_id ? doStatus : d.status
@@ -1960,7 +1969,7 @@ export async function deleteScanEntry(req: Request, res: Response) {
         const gdoAnyProgress = doStatuses.some((s: string) => s !== 'PENDING')
         let gdoStatus = gdoAnyProgress ? 'IN_PROGRESS' : 'PENDING'
         if (gdo?.started_at && gdoStatus === 'PENDING') gdoStatus = 'IN_PROGRESS'
-        await (supabase.from('GroupDeliveryOrder') as any)
+        await supabase.from('GroupDeliveryOrder')
           .update({
             status: gdoStatus,
             ...(!gdoCompleted ? { scan_completed_at: null } : {}),
@@ -1982,10 +1991,10 @@ export async function confirmLoosePickingItem(req: Request, res: Response) {
 
     const [{ data: gdo }, { data: item }, { data: empCheck }] =
       await Promise.all([
-        (supabase.from('GroupDeliveryOrder') as any).select('status, started_at').eq('id', gdoId).single(),
-        (supabase.from('OutboundItem') as any).select('*').eq('id', itemId).single(),
+        supabase.from('GroupDeliveryOrder').select('status, started_at').eq('id', gdoId).single(),
+        supabase.from('OutboundItem').select('*').eq('id', itemId).single(),
         employee_id
-          ? (supabase.from('Employee') as any).select('id').eq('id', employee_id).maybeSingle()
+          ? supabase.from('Employee').select('id').eq('id', employee_id).maybeSingle()
           : Promise.resolve({ data: null }),
       ])
     const confirmed_by = empCheck ? employee_id : null
@@ -1999,7 +2008,7 @@ export async function confirmLoosePickingItem(req: Request, res: Response) {
     // Chiếm các loose entry CHƯA xác nhận bằng MỘT câu UPDATE...RETURNING (1 statement = atomic + row-lock).
     // Hai lượt confirm đồng thời: lượt đầu set loose_confirmed=true & nhận rows; lượt sau khớp 0 dòng (vì
     // loose_confirmed đã = true) → nhận [] → KHÔNG trừ tồn lần nữa. Đây là CHỐT chống "2 người xác nhận cùng lúc".
-    const { data: claimed, error: claimErr } = await (supabase.from('OutboundScanEntry') as any)
+    const { data: claimed, error: claimErr } = await supabase.from('OutboundScanEntry')
       .update({ loose_confirmed: true, loose_confirmed_at: t, loose_confirmed_by: confirmed_by, updated_at: t })
       .eq('item_id', itemId).eq('is_loose_picking', true).eq('loose_confirmed', false)
       .select('id, inventory_entry_id, cartons_scanned')
@@ -2022,27 +2031,27 @@ export async function confirmLoosePickingItem(req: Request, res: Response) {
     // Re-check item completion
     const newCartons = Number(item.cartons_scanned)
     const newItemStatus = newCartons >= Number(item.cartons_ordered) ? 'COMPLETED' : 'IN_PROGRESS'
-    await (supabase.from('OutboundItem') as any)
+    await supabase.from('OutboundItem')
       .update({ status: newItemStatus, updated_at: t }).eq('id', itemId)
 
     // Cascade DO → GDO (chỉ khi xe đã bắt đầu)
     if (gdo?.started_at) {
-      const { data: siblingItems } = await (supabase.from('OutboundItem') as any)
+      const { data: siblingItems } = await supabase.from('OutboundItem')
         .select('id, status').eq('do_id', item.do_id)
       const doCompleted = (siblingItems ?? []).every((i: any) =>
         i.id === itemId ? newItemStatus === 'COMPLETED' : i.status === 'COMPLETED'
       )
-      const { data: doRow } = await (supabase.from('OutboundDelivery') as any)
+      const { data: doRow } = await supabase.from('OutboundDelivery')
         .update({ status: doCompleted ? 'COMPLETED' : 'IN_PROGRESS', updated_at: t })
         .eq('id', item.do_id).select('gdo_id').single()
 
       if (doRow?.gdo_id) {
-        const { data: siblingDOs } = await (supabase.from('OutboundDelivery') as any)
+        const { data: siblingDOs } = await supabase.from('OutboundDelivery')
           .select('status').eq('gdo_id', doRow.gdo_id)
         const gdoCompleted = (siblingDOs ?? []).every((d: any) =>
           d.id === item.do_id ? doCompleted : d.status === 'COMPLETED'
         )
-        await (supabase.from('GroupDeliveryOrder') as any)
+        await supabase.from('GroupDeliveryOrder')
           .update({
             status:          'IN_PROGRESS',
             last_scanned_at: t,
@@ -2067,7 +2076,7 @@ export async function listLoosePickingItems(req: Request, res: Response) {
       ? (req.user?.warehouse_ids ?? [])
       : []
 
-    let gdoQ = (supabase.from('GroupDeliveryOrder') as any)
+    let gdoQ = supabase.from('GroupDeliveryOrder')
       .select('id, group_code, delivery_date, planned_date, status, started_at, dvvt, warehouse_type, warehouse:Warehouse(id,code,name)')
       .neq('status', 'CANCELLED')
 
@@ -2091,13 +2100,13 @@ export async function listLoosePickingItems(req: Request, res: Response) {
     if (!gdos?.length) return ok(res, [])
 
     const gdoIds = (gdos as any[]).map((g: any) => g.id as string)
-    const { data: dos } = await (supabase.from('OutboundDelivery') as any)
+    const { data: dos } = await supabase.from('OutboundDelivery')
       .select('id, gdo_id, distributor_name').in('gdo_id', gdoIds)
 
     const doIds = (dos ?? []).map((d: any) => d.id as string)
     if (!doIds.length) return ok(res, [])
 
-    const { data: items } = await (supabase.from('OutboundItem') as any)
+    const { data: items } = await supabase.from('OutboundItem')
       .select('*, material:Material(id,material_code,short_name)')
       .in('do_id', doIds)
       .gt('loose_picking', 0)
@@ -2120,7 +2129,7 @@ export async function listLoosePickingItems(req: Request, res: Response) {
 
     // Tính loose_scanned (thùng thực sự quét qua chế độ nhặt lẻ) per item
     const itemIds = (items as any[]).map((i: any) => i.id as string)
-    const { data: looseScans } = await (supabase.from('OutboundScanEntry') as any)
+    const { data: looseScans } = await supabase.from('OutboundScanEntry')
       .select('item_id, cartons_scanned').in('item_id', itemIds).eq('is_loose_picking', true)
     const looseScannedByItem: Record<string, number> = {}
     for (const scan of (looseScans ?? [])) {
@@ -2150,8 +2159,8 @@ export async function getManualItemStock(req: Request, res: Response) {
   try {
     const { gdoId, itemId } = req.params
     const [{ data: gdo }, { data: item }] = await Promise.all([
-      (supabase.from('GroupDeliveryOrder') as any).select('warehouse_id').eq('id', gdoId).single(),
-      (supabase.from('OutboundItem') as any)
+      supabase.from('GroupDeliveryOrder').select('warehouse_id').eq('id', gdoId).single(),
+      supabase.from('OutboundItem')
         .select('material_code_raw, cartons_ordered, cartons_scanned, material:Material!material_id(material_code)')
         .eq('id', itemId).single(),
     ])
@@ -2181,8 +2190,8 @@ export async function manualCompleteItem(req: Request, res: Response) {
     const { cartons } = req.body as { cartons?: number }
 
     const [{ data: gdo }, { data: item }] = await Promise.all([
-      (supabase.from('GroupDeliveryOrder') as any).select('status, warehouse_id').eq('id', gdoId).single(),
-      (supabase.from('OutboundItem') as any)
+      supabase.from('GroupDeliveryOrder').select('status, warehouse_id').eq('id', gdoId).single(),
+      supabase.from('OutboundItem')
         .select('id, do_id, material_id, material_type, material_code_raw, cartons_ordered, cartons_scanned, material:Material!material_id(material_code, no_qr_tracking)')
         .eq('id', itemId).single(),
     ])
@@ -2240,18 +2249,18 @@ export async function manualCompleteItem(req: Request, res: Response) {
     // Muốn chốt đơn thiếu: sửa cartons_ordered xuống = thực xuất rồi mới hoàn thành.
     const newItemStatus = ctn >= Number(item.cartons_ordered) ? 'COMPLETED' : 'IN_PROGRESS'
     const t = now()
-    await (supabase.from('OutboundItem') as any)
+    await supabase.from('OutboundItem')
       .update({ status: newItemStatus, cartons_scanned: ctn, updated_at: t }).eq('id', itemId)
 
     // Upsert OutboundScanEntry cho no_qr items (1 dòng per item, pallet_code = material_code)
     if (isSpecial && specialMatCode) {
-      const { data: existingScan } = await (supabase.from('OutboundScanEntry') as any)
+      const { data: existingScan } = await supabase.from('OutboundScanEntry')
         .select('id').eq('item_id', itemId).maybeSingle()
       if (existingScan) {
-        await (supabase.from('OutboundScanEntry') as any)
+        await supabase.from('OutboundScanEntry')
           .update({ cartons_scanned: ctn, updated_at: t }).eq('id', existingScan.id)
       } else {
-        await (supabase.from('OutboundScanEntry') as any).insert({
+        await supabase.from('OutboundScanEntry').insert({
           id: randomUUID(), item_id: itemId,
           inventory_entry_id: specialInvEntryId,
           pallet_code: specialMatCode, cartons_scanned: ctn,
@@ -2262,20 +2271,20 @@ export async function manualCompleteItem(req: Request, res: Response) {
 
     // Parallel: count pending items in DO + count pending DOs in GDO (gdoId đã biết từ params)
     const [{ count: pendingItems }, { count: pendingDOs }] = await Promise.all([
-      (supabase.from('OutboundItem') as any)
+      supabase.from('OutboundItem')
         .select('id', { count: 'exact', head: true })
         .eq('do_id', item.do_id).neq('status', 'COMPLETED').neq('id', itemId),
-      (supabase.from('OutboundDelivery') as any)
+      supabase.from('OutboundDelivery')
         .select('id', { count: 'exact', head: true })
         .eq('gdo_id', gdoId).neq('status', 'COMPLETED').neq('id', item.do_id),
     ])
     const doCompleted = pendingItems === 0 && newItemStatus === 'COMPLETED'
     const gdoCompleted = doCompleted && pendingDOs === 0
     await Promise.all([
-      (supabase.from('OutboundDelivery') as any)
+      supabase.from('OutboundDelivery')
         .update({ status: doCompleted ? 'COMPLETED' : 'IN_PROGRESS', updated_at: t })
         .eq('id', item.do_id),
-      (supabase.from('GroupDeliveryOrder') as any)
+      supabase.from('GroupDeliveryOrder')
         .update({
           status:     'IN_PROGRESS',
           ...(gdoCompleted ? { scan_completed_at: t } : {}),

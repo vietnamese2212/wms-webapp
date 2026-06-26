@@ -15,7 +15,7 @@ export async function listSlots(req: Request, res: Response) {
     if (!date || !warehouse_id) return fail(res, 'date và warehouse_id là bắt buộc', 400)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let q = (supabase.from('DeliverySlot') as any)
+    let q = supabase.from('DeliverySlot')
       .select('id, template_id, warehouse_id, vehicle_type_id, vehicle_type:VehicleType(id, code, name), direction, cargo_type, date, time_from, time_to, max_vehicles, booked_count, status')
       .eq('date', date)
       .eq('warehouse_id', warehouse_id)
@@ -44,7 +44,7 @@ export async function generateSlotsForDates(req: Request, res: Response) {
 
     // Lấy template đang hoạt động của kho này
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: templates, error: tmplErr } = await (supabase.from('SlotTemplate') as any)
+    const { data: templates, error: tmplErr } = await supabase.from('SlotTemplate')
       .select('id, vehicle_type_id, cargo_type, day_of_week, time_from, time_to, max_vehicles')
       .eq('is_active', true)
       .eq('warehouse_id', warehouse_id)
@@ -53,7 +53,7 @@ export async function generateSlotsForDates(req: Request, res: Response) {
 
     // Tìm slot đã tồn tại để tránh duplicate
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: existing } = await (supabase.from('DeliverySlot') as any)
+    const { data: existing } = await supabase.from('DeliverySlot')
       .select('template_id, date')
       .in('date', validDates)
       .not('template_id', 'is', null)
@@ -90,7 +90,7 @@ export async function generateSlotsForDates(req: Request, res: Response) {
     if (!rows.length) return ok(res, { created: 0, message: 'Slot đã tồn tại cho tất cả ngày được yêu cầu' })
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error: insErr } = await (supabase.from('DeliverySlot') as any).insert(rows)
+    const { error: insErr } = await supabase.from('DeliverySlot').insert(rows)
     if (insErr) return fail(res, insErr.message)
 
     return ok(res, { created: rows.length, dates: validDates })

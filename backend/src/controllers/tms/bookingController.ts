@@ -16,11 +16,11 @@ export async function listBookings(req: Request, res: Response) {
     if (!date) return fail(res, 'date là bắt buộc', 400)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const userNccId: string | null = (req as any).user?.ncc_id ?? null
+    const userNccId: string | null = req.user?.ncc_id ?? null
     if (!warehouse_id && !userNccId) return fail(res, 'warehouse_id là bắt buộc', 400)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let q = (supabase.from('DeliveryBooking') as any)
+    let q = supabase.from('DeliveryBooking')
       .select(BOOKING_SELECT)
       .eq('date', date)
       .order('created_at')
@@ -48,11 +48,11 @@ export async function createBooking(req: Request, res: Response) {
     if (!date || !warehouse_id) return fail(res, 'date và warehouse_id là bắt buộc', 400)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const user = (req as any).user
+    const user = req.user
     const now = new Date().toISOString()
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (supabase.from('DeliveryBooking') as any)
+    const { data, error } = await supabase.from('DeliveryBooking')
       .insert({
         id: randomUUID(), date, warehouse_id,
         npp_name: npp_name || null,
@@ -86,7 +86,7 @@ export async function bulkCreateBookings(req: Request, res: Response) {
     if (!Array.isArray(bookings) || !bookings.length) return fail(res, 'bookings phải là array không rỗng', 400)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const user = (req as any).user
+    const user = req.user
     const now = new Date().toISOString()
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -96,7 +96,7 @@ export async function bulkCreateBookings(req: Request, res: Response) {
     const incomingCodes = inputList.map(b => b.vehicle_code).filter(Boolean) as string[]
     if (incomingCodes.length) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: existing } = await (supabase.from('DeliveryBooking') as any)
+      const { data: existing } = await supabase.from('DeliveryBooking')
         .select('vehicle_code')
         .in('vehicle_code', incomingCodes)
       if (existing?.length) {
@@ -130,7 +130,7 @@ export async function bulkCreateBookings(req: Request, res: Response) {
     if (!rows.length) return fail(res, 'Không có dòng hợp lệ để import', 400)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (supabase.from('DeliveryBooking') as any).insert(rows).select('id')
+    const { data, error } = await supabase.from('DeliveryBooking').insert(rows).select('id')
     if (error) {
       if (error.code === '23505') return fail(res, 'Số xe bị trùng, vui lòng kiểm tra lại file')
       return fail(res, error.message)
@@ -149,12 +149,12 @@ export async function updateBooking(req: Request, res: Response) {
       box_count, pallet_count, tonnage, warehouse_type, vehicle_type, direction,
     } = req.body
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const user = (req as any).user
+    const user = req.user
     const now = new Date().toISOString()
     const userNccId: string | null = user?.ncc_id ?? null
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: existing, error: fetchErr } = await (supabase.from('DeliveryBooking') as any)
+    const { data: existing, error: fetchErr } = await supabase.from('DeliveryBooking')
       .select('id, slot_id, status, ncc_id')
       .eq('id', id)
       .single()
@@ -178,7 +178,7 @@ export async function updateBooking(req: Request, res: Response) {
 
       if (existing.slot_id) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: oldSlot } = await (supabase.from('DeliverySlot') as any)
+        const { data: oldSlot } = await supabase.from('DeliverySlot')
           .select('date, time_from').eq('id', existing.slot_id).single()
         if (oldSlot) {
           // Kiểm tra giờ: không được đổi slot sau khi giờ cũ đã bắt đầu
@@ -193,7 +193,7 @@ export async function updateBooking(req: Request, res: Response) {
 
       if (newSlotId) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: newSlot } = await (supabase.from('DeliverySlot') as any)
+        const { data: newSlot } = await supabase.from('DeliverySlot')
           .select('date, time_from').eq('id', newSlotId).single()
         if (!newSlot) return fail(res, 'Slot không tồn tại', 404)
         // Không cho chọn slot đã qua giờ
@@ -231,7 +231,7 @@ export async function updateBooking(req: Request, res: Response) {
     if (userNccId && !existing.ncc_id) updates.ncc_id = userNccId
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (supabase.from('DeliveryBooking') as any)
+    const { data, error } = await supabase.from('DeliveryBooking')
       .update(updates)
       .eq('id', id)
       .select(BOOKING_SELECT)
@@ -248,7 +248,7 @@ export async function deleteBooking(req: Request, res: Response) {
     const { id } = req.params
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: existing, error: fetchErr } = await (supabase.from('DeliveryBooking') as any)
+    const { data: existing, error: fetchErr } = await supabase.from('DeliveryBooking')
       .select('id, slot_id, status').eq('id', id).single()
     if (fetchErr || !existing) return fail(res, 'Không tìm thấy booking', 404)
     if (existing.status !== 'PENDING') return fail(res, 'Chỉ có thể xóa booking đang PENDING', 400)
@@ -258,7 +258,7 @@ export async function deleteBooking(req: Request, res: Response) {
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await (supabase.from('DeliveryBooking') as any).delete().eq('id', id)
+    const { error } = await supabase.from('DeliveryBooking').delete().eq('id', id)
     if (error) return fail(res, error.message)
     return ok(res, { id })
   } catch (e) { return fail(res, String(e)) }

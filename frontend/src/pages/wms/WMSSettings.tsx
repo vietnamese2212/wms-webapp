@@ -107,7 +107,8 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {(Object.keys(INV_MODE_META) as InvMode[]).map(m => (
+                {/* NONE chưa wire hành vi → tạm ẩn, chỉ cho QR + QTY */}
+                {(['QR', 'QTY'] as InvMode[]).map(m => (
                   <SelectItem key={m} value={m}>{INV_MODE_META[m].label}</SelectItem>
                 ))}
               </SelectContent>

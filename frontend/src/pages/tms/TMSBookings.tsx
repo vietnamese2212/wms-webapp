@@ -15,6 +15,7 @@ import { useColumnResize } from '@/components/shared/useColumnResize'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import type { MSOpt } from '@/components/shared/MultiSelectFilter'
 import { can, type ModulePermissions } from '@/config/permissions'
+import { statusText } from '@/lib/rowStatus'
 import { useAuthStore } from '@/stores/authStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import {
@@ -2748,16 +2749,16 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
                         const cfg = tStatus ? TRANSFER_STATUS_CFG[tStatus] : null
                         const slot = o.vehicle_slots?.[0]
                         const dvvt = o.ncc?.name ?? o.transfer_gdo?.dvvt
-                        // Màu HÀNG = CHỮ (không fill nền — chuẩn table-format). Theo TRẠNG THÁI:
-                        // Đã giao = xanh dương + gạch ngang; Đang nhận = cam; Đang vận chuyển = không màu.
+                        // Màu HÀNG = CHỮ (không fill nền — chuẩn table-format §10 qua statusText).
+                        // Đã giao = completed (xanh #4A90D9 + gạch ngang); Đang nhận = inProgress (cam #D8891C); Đang vận chuyển = không màu.
                         // (Thiếu/thừa KHÔNG tô đỏ cả hàng — chỉ highlight ở riêng cột Tình trạng GN bên dưới.)
-                        const rowText = tStatus === 'DELIVERED'
-                          ? 'text-blue-600 line-through'
+                        const rowCls = tStatus === 'DELIVERED'
+                          ? statusText('completed')
                           : tStatus === 'RECEIVING'
-                          ? 'text-amber-600'
+                          ? statusText('inProgress')
                           : ''
                         return (
-                          <tr key={o.id} className={`border-t border-slate-100 cursor-pointer hover:bg-slate-50 ${rowText}`}
+                          <tr key={o.id} className={`border-t border-slate-100 cursor-pointer hover:bg-slate-50 ${rowCls}`}
                             onClick={() => setSelectedOrderId(o.id)}>
                             <td className="px-2 py-1 whitespace-nowrap">
                               {(o.transfer_gdo?.delivery_codes?.length ?? 0) > 0
@@ -3715,8 +3716,8 @@ export default function TMSBookings() {
                   // Highlight CẢ ROW theo Tình trạng XH — đồng bộ màu tab Chuyển kho:
                   // Đã xuất / hoàn thành = xanh dương + gạch ngang; Đang xuất = cam; Đăng ký / chưa xuất = trung tính; Hủy = xám mờ + gạch.
                   if (order.status === 'CANCELLED') return 'text-slate-400 line-through'
-                  if (vslot.gate_export_status === 'Đã xuất' || groupStatus === 'DONE') return 'text-blue-600 line-through'
-                  if (vslot.gate_export_status === 'Đang xuất') return 'text-amber-600'
+                  if (vslot.gate_export_status === 'Đã xuất' || groupStatus === 'DONE') return statusText('completed')
+                  if (vslot.gate_export_status === 'Đang xuất') return statusText('inProgress')
                   return ''
                 })()
                 const cellHoverBg = isGroupHovered ? 'bg-slate-100' : ''

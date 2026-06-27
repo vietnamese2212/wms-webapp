@@ -7,6 +7,20 @@ function buildLocationCode(warehouseCode: string, subCode: string, row: string, 
   return [warehouseCode, subCode, row, shelf].filter(Boolean).join('_')
 }
 
+// Warehouse-scope: NATIONAL = mọi kho (null), còn lại = danh sách kho được gán.
+function scopeWhIds(req: Request): string[] | null {
+  return req.user?.warehouse_scope === 'NATIONAL' ? null : (req.user?.warehouse_ids ?? [])
+}
+// Chặn 403 nếu vị trí (theo id) không thuộc kho trong phạm vi user. NATIONAL bỏ qua.
+async function guardLocScope(req: Request, res: Response, locationId: string): Promise<boolean> {
+  const scope = scopeWhIds(req)
+  if (scope === null) return true
+  const { data } = await supabase.from('Location').select('warehouse_id').eq('id', locationId).maybeSingle()
+  const wh = (data as { warehouse_id: string | null } | null)?.warehouse_id ?? null
+  if (!wh || !scope.includes(wh)) { fail(res, 403, 'FORBIDDEN', 'Vị trí không thuộc kho trong phạm vi của bạn'); return false }
+  return true
+}
+
 export async function listLocations(req: Request, res: Response) {
   try {
     const { warehouse_id, sub_code, active, category, material_id } = req.query
@@ -88,6 +102,7 @@ export async function listSubGroups(req: Request, res: Response) {
 
 export async function getLocation(req: Request, res: Response) {
   try {
+    if (!(await guardLocScope(req, res, req.params.id))) return
     const { data: loc, error } = await supabase
       .from('Location').select('*, warehouse:Warehouse(id, code, name)').eq('id', req.params.id).maybeSingle()
     if (error) throw error
@@ -110,6 +125,9 @@ export async function createLocation(req: Request, res: Response) {
     const { warehouse_id, sub_code, sub_name, sub_type, row, shelf, max_pallets } = req.body
     if (!warehouse_id || !sub_code || !row)
       return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu warehouse_id, sub_code hoặc row')
+    const scope = scopeWhIds(req)
+    if (scope !== null && !scope.includes(String(warehouse_id)))
+      return fail(res, 403, 'FORBIDDEN', 'Không thể tạo vị trí ở kho ngoài phạm vi của bạn')
 
     const { data: wh, error: whErr } = await supabase
       .from('Warehouse').select('code').eq('id', warehouse_id).maybeSingle()
@@ -155,6 +173,7 @@ export async function createLocation(req: Request, res: Response) {
 
 export async function updateLocation(req: Request, res: Response) {
   try {
+    if (!(await guardLocScope(req, res, req.params.id))) return
     const { sub_name, sub_type, max_pallets, is_active, category, requires_stocktake } = req.body
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: req.user?.name || null }
     if (sub_name !== undefined)          patch.sub_name          = sub_name ? String(sub_name).trim() : null
@@ -174,6 +193,7 @@ export async function updateLocation(req: Request, res: Response) {
 
 export async function deleteLocation(req: Request, res: Response) {
   try {
+    if (!(await guardLocScope(req, res, req.params.id))) return
     // Chặn xóa vị trí đang chứa hàng → tránh tồn kho mồ côi trên location inactive
     const { count } = await supabase
       .from('InventoryEntry')

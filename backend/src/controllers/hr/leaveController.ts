@@ -133,6 +133,21 @@ async function canApprove(ctx: ApproverCtx, employeeId: string, pm: Map<string, 
   return sharesKho(ctx, e?.warehouse_scope ?? null, new Set((wa ?? []).map((r: { warehouse_id: string }) => r.warehouse_id)))
 }
 
+// Non-admin chỉ được SỬA/XÓA đơn của CHÍNH MÌNH hoặc của cấp dưới (chức danh dưới + chung kho).
+async function guardLeaveScope(req: Request, res: Response, leaveId: string): Promise<boolean> {
+  const u = userOf(req)
+  if (u.name === 'Admin') return true
+  const { data: lv } = await supabase.from('LeaveRequest').select('employee_id').eq('id', leaveId).maybeSingle()
+  const empId = (lv as { employee_id: string } | null)?.employee_id
+  if (!empId) { fail(res, 'Không tìm thấy đơn', 404); return false }
+  if (empId === u.sub) return true
+  const ctx = await approverContext(u.sub)
+  const pm  = await loadParentMap()
+  if (await canApprove(ctx, empId, pm, false)) return true
+  fail(res, 'Bạn không có quyền trên đơn nghỉ phép này', 403)
+  return false
+}
+
 export async function listLeaves(req: Request, res: Response) {
   try {
     const { warehouse_id, department_id, employee_id, status, date_from, date_to, to_approve, direct } = req.query as Record<string, string>
@@ -207,6 +222,7 @@ export async function createLeave(req: Request, res: Response) {
 export async function updateLeave(req: Request, res: Response) {
   try {
     const { id } = req.params
+    if (!(await guardLeaveScope(req, res, id))) return
     const { date_from, date_to, leave_type, reason } = req.body as {
       date_from?: string; date_to?: string; leave_type?: string; reason?: string
     }
@@ -285,6 +301,7 @@ export async function decideLeave(req: Request, res: Response) {
 export async function deleteLeave(req: Request, res: Response) {
   try {
     const { id } = req.params
+    if (!(await guardLeaveScope(req, res, id))) return
     // Lấy trước khi xóa: nếu đơn đã DUYỆT thì gỡ luôn chấm công LEAVE đã tự tạo
     const { data: cur } = await supabase.from('LeaveRequest')
       .select('id, employee_id, date_from, date_to, status').eq('id', id).maybeSingle()

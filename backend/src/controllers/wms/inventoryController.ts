@@ -748,6 +748,8 @@ export async function stocktakeCheck(req: Request, res: Response) {
 
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
   if (!data) return fail(res, 404, 'NOT_FOUND', `Không tìm thấy pallet "${palletCode}" trong tồn kho`)
+  // Scope: không cho tra cứu pallet ngoài phạm vi kho của user
+  if (!(await guardEntriesScope(req, res, [(data as unknown as { id: string }).id]))) return
   return ok(res, { entry: data, pallet_code: palletCode })
 }
 
@@ -763,6 +765,7 @@ export async function stocktakeEntry(req: Request, res: Response) {
 
   if (fetchErr) return fail(res, 500, 'DB_ERROR', fetchErr.message)
   if (!existing) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy pallet')
+  if (!(await guardEntriesScope(req, res, [id]))) return
 
   const now    = new Date().toISOString()
   const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -879,6 +882,7 @@ export async function stocktakeEntries(req: Request, res: Response) {
 }
 
 export async function unflagEntry(req: Request, res: Response) {
+  if (!(await guardEntriesScope(req, res, [req.params.id]))) return
   const now = new Date().toISOString()
   const { error } = await supabase.from('InventoryEntry')
     .update({ stocktake_flagged: false, stocktake_flag_note: null, updated_at: now })

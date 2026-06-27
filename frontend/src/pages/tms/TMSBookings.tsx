@@ -3260,6 +3260,9 @@ export default function TMSBookings() {
   const mainFilterDefs: FilterDef[] = [
     { key: 'date', label: 'Ngày', type: 'daterange', from: dateFrom, to: dateTo,
       onChange: (f, t) => { const nf = f || today; setTf({ dateFrom: nf, dateTo: t || nf }) } },
+    { key: 'huong', label: 'Hướng', type: 'single', allLabel: 'Tất cả',
+      value: huongFilter.length === 1 ? huongFilter[0] : '',
+      onChange: v => setHuongFilter(v ? [v] : []), options: huongOptions },
     { key: 'khunggio', label: 'Khung giờ', type: 'multi', options: khungGioOptions, selected: khungGioFilter, onChange: setKhungGioFilter },
     { key: 'dvvt',     label: 'ĐVVT',      type: 'multi', options: dvvtOptions,     selected: dvvtFilter,     onChange: setDvvtFilter },
     { key: 'loaikho',  label: 'Loại kho',  type: 'multi', options: loaiKhoOptions,  selected: loaiKhoFilter,  onChange: setLoaiKhoFilter },
@@ -3584,17 +3587,6 @@ export default function TMSBookings() {
                 ))}
               </SelectContent>
             </Select>
-            {/* Hướng — filter nhanh đặt cạnh Kho (ngoài "Thêm lọc"); chỉ 2 giá trị Xuất/Nhập → Select gọn */}
-            {(warehouseId || isNccUser) && (
-              <Select value={huongFilter.length === 1 ? huongFilter[0] : '__all__'}
-                onValueChange={v => setHuongFilter(v === '__all__' ? [] : [v])}>
-                <SelectTrigger className="h-8 text-sm w-[120px] min-w-[100px]"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__all__">Hướng: Tất cả</SelectItem>
-                  {huongOptions.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            )}
             {(warehouseId || isNccUser) && <FilterBar defs={mainFilterDefs} />}
             {(warehouseId || isNccUser) && <FilterSheetButton defs={mainFilterDefs} className="sm:hidden" />}
             {canChangeDate && selectedOrderIds.size > 0 && (

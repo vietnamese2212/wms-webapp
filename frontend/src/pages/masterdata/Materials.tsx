@@ -58,6 +58,13 @@ function CatBadge({ cat }: { cat: string | null }) {
   return <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${cls}`}>{cat}</span>
 }
 
+// Khối lượng (kg) thường là float dẫn xuất nhiều chữ số thập phân (vd 0.001658333) → tràn cột hẹp.
+// Làm tròn 3 số lẻ + cắt số 0 thừa cho gọn; giá trị gốc đầy đủ vẫn xem qua title khi hover.
+function fmtWeight(n: number | null | undefined): string | null {
+  if (n == null) return null
+  return String(Math.round(n * 1000) / 1000)
+}
+
 // ── Detail field row ────────────────────────────────────────────────────────
 function DRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -465,7 +472,7 @@ export default function Materials() {
             </TableHeader>
             <TableBody>
               {isLoading ? (
-                <TableSkeleton cols={colCount} rows={12} />
+                <tr><td colSpan={colCount} className="p-0"><TableSkeleton cols={colCount} rows={12} /></td></tr>
               ) : filtered.length === 0 ? (
                 <tr><td colSpan={colCount}><EmptyState title="Không có mã hàng" /></td></tr>
               ) : filtered.map(mat => {
@@ -497,8 +504,9 @@ export default function Materials() {
                     <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] font-semibold tabular-nums text-right">
                       {mat.units_per_carton ?? <span className="text-slate-300">—</span>}
                     </TableCell>
-                    <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] font-semibold tabular-nums text-right">
-                      {mat.weight_kg ?? <span className="text-slate-300">—</span>}
+                    <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] font-semibold tabular-nums text-right"
+                      title={mat.weight_kg != null ? String(mat.weight_kg) : undefined}>
+                      {fmtWeight(mat.weight_kg) ?? <span className="text-slate-300">—</span>}
                     </TableCell>
                     <TableCell className="px-2 py-1">
                       <div className="flex flex-row flex-wrap gap-1 items-center">

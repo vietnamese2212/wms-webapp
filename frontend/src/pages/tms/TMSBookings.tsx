@@ -2695,7 +2695,7 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
         <FilterSheetButton defs={transferFilterDefs} className="sm:hidden" />
       </div>
       {!isLoading && filtered.length > 0 && (
-        <SummaryBand tiles={[
+        <SummaryBand compact tiles={[
           { label: 'Lệnh',       value: summary.count.toLocaleString('vi-VN') },
           { label: 'Thùng KH',   value: summary.plannedBoxes.toLocaleString('vi-VN') },
           { label: 'Thực nhận',  value: summary.actualBoxes.toLocaleString('vi-VN') },
@@ -2760,9 +2760,9 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
                         return (
                           <tr key={o.id} className={`border-t border-slate-100 cursor-pointer hover:bg-slate-50 ${rowCls}`}
                             onClick={() => setSelectedOrderId(o.id)}>
-                            <td className="px-2 py-1 whitespace-nowrap">
+                            <td className="px-2 py-1 truncate" title={(o.transfer_gdo?.delivery_codes?.length ?? 0) > 0 ? o.transfer_gdo!.delivery_codes!.join(', ') : undefined}>
                               {(o.transfer_gdo?.delivery_codes?.length ?? 0) > 0
-                                ? <span className="text-[10px] font-mono font-semibold truncate block" title={o.transfer_gdo!.delivery_codes!.join(', ')}>{o.transfer_gdo!.delivery_codes!.join(', ')}</span>
+                                ? <span className="text-[10px] font-mono font-semibold">{o.transfer_gdo!.delivery_codes!.join(', ')}</span>
                                 : <span className="text-slate-300 text-[10px]">—</span>}
                             </td>
                             <td className="px-2 py-1 whitespace-nowrap">
@@ -2831,16 +2831,16 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
                                 ? <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${cfg.cls}`}>{cfg.label}</span>
                                 : <span className="text-slate-300">—</span>}
                             </td>
-                            <td className="px-2 py-1 whitespace-nowrap">
-                              <span className="text-[10px] font-mono truncate block" title={o.transfer_gdo?.group_code ?? ''}>{o.transfer_gdo?.group_code ?? '—'}</span>
+                            <td className="px-2 py-1 truncate" title={o.transfer_gdo?.group_code ?? undefined}>
+                              <span className="text-[10px] font-mono">{o.transfer_gdo?.group_code ?? '—'}</span>
                             </td>
-                            <td className="px-2 py-1 max-w-[160px]">
+                            <td className="px-2 py-1 truncate" title={o.notes ?? undefined}>
                               {o.notes
-                                ? <span className="text-[10px] truncate block">{o.notes}</span>
+                                ? <span className="text-[10px]">{o.notes}</span>
                                 : <span className="text-slate-300 text-[10px]">—</span>}
                             </td>
-                            <td className="px-2 py-1 whitespace-nowrap">
-                              <span className="text-[10px] font-mono font-semibold truncate block" title={o.order_code}>{o.order_code}</span>
+                            <td className="px-2 py-1 truncate" title={o.order_code}>
+                              <span className="text-[10px] font-mono font-semibold">{o.order_code}</span>
                             </td>
                           </tr>
                         )
@@ -3619,7 +3619,7 @@ export default function TMSBookings() {
         </div>
       ) : null}
       {activeTab === 'main' && (warehouseId || isNccUser) && tableRows.length > 0 && (
-        <SummaryBand tiles={[
+        <SummaryBand compact tiles={[
           { label: 'Đơn',        value: mainSummary.orders.toLocaleString('vi-VN') },
           { label: 'Xe',         value: mainSummary.vehicles.toLocaleString('vi-VN') },
           { label: 'Thùng',      value: mainSummary.boxes.toLocaleString('vi-VN') },

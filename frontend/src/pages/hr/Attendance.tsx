@@ -1,11 +1,15 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Save, Trash2, ChevronLeft, ChevronRight, Plus, CheckCircle2, Clock, Flag } from 'lucide-react'
+import * as XLSX from 'xlsx'
+import { Save, Trash2, ChevronLeft, ChevronRight, Plus, CheckCircle2, Clock, Flag, Download, Rows3, AlignJustify } from 'lucide-react'
 import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, addDays, addMonths, subMonths, isSameMonth } from 'date-fns'
 import { vi } from 'date-fns/locale'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
+import { SavedViews } from '@/components/shared/SavedViews'
+import { useSavedViewsStore } from '@/stores/savedViewsStore'
+import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import {
   useWarehouses, useDepartments, useJobTitles, useEmployeeRecords,
@@ -280,9 +284,9 @@ function MySection() {
 
 // Bảng công của bản thân theo khoảng ngày tùy chọn (chu kỳ công không tròn tháng)
 function MyRangeSheet({ employeeId }: { employeeId?: string }) {
-  const [from, setFrom] = useState<string>(() => localStorage.getItem(MY_FROM_KEY) || MONTH_START())
+  const from = useWmsFilterStore(s => s.attendanceMy.from)
+  const setFrom = (v: string) => useWmsFilterStore.getState().setAttendanceMy({ from: v })
   const [to, setTo]     = useState<string>(TODAY())
-  useEffect(() => { localStorage.setItem(MY_FROM_KEY, from) }, [from])
 
   const { data: rows = [], isLoading } = useAttendance(
     { employee_id: employeeId, date_from: from, date_to: to }, !!employeeId,
@@ -325,8 +329,6 @@ function MyRangeSheet({ employeeId }: { employeeId?: string }) {
 }
 
 // ─── Bảng công chung (ma trận người × ngày + raw data) ───────────────────────
-const TEAM_FILTER_KEY = 'hr_team_att_filter'
-
 type MatrixRow = { id: string; name: string; code: string; job: string | null; byDate: Map<string, AttendanceRow>; hours: number; missingDays: string[] }
 
 function TeamSection({ perms }: { perms: ModulePermissions | null }) {
@@ -338,17 +340,12 @@ function TeamSection({ perms }: { perms: ModulePermissions | null }) {
   const del = useDeleteAttendance()
   const today = TODAY()
 
-  // nhớ filter cũ (kho/phòng/tìm/chức danh/tình trạng/Từ ngày); riêng Tới ngày luôn mặc định hôm nay
-  const saved = (() => { try { return JSON.parse(localStorage.getItem(TEAM_FILTER_KEY) || '{}') } catch { return {} } })()
-  const [view, setView]     = useState<'matrix' | 'raw'>('matrix')
-  const [wh, setWh]         = useState<string>(saved.wh ?? '')
-  const [dept, setDept]     = useState<string>(saved.dept ?? '')
-  const [jt, setJt]         = useState<string>(saved.jt ?? '')
-  const [q, setQ]           = useState<string>(saved.q ?? '')
-  const [status, setStatus] = useState<'all' | 'done' | 'missing'>(saved.status ?? 'all')
-  const [from, setFrom]     = useState<string>(saved.from ?? MONTH_START())
-  const [to, setTo]         = useState(TODAY())
-  useEffect(() => { localStorage.setItem(TEAM_FILTER_KEY, JSON.stringify({ wh, dept, jt, q, status, from })) }, [wh, dept, jt, q, status, from])
+  // Filter trong store (persist theo user qua scopedPersist)
+  const f = useWmsFilterStore(s => s.attendanceTeam)
+  const setAtt = useWmsFilterStore(s => s.setAttendanceTeam)
+  const { view, warehouseId: wh, deptId: dept, jt, q, status, from, to } = f
+  const [dense, setDense] = useState(() => localStorage.getItem('attendance_density') === '1')
+  const toggleDense = () => setDense(d => { localStorage.setItem('attendance_density', d ? '0' : '1'); return !d })
 
   const { data: rows = [], isLoading } = useAttendance(
     { warehouse_id: wh || undefined, department_id: dept || undefined, date_from: from, date_to: to }, true,
@@ -405,33 +402,60 @@ function TeamSection({ perms }: { perms: ModulePermissions | null }) {
   }, [filtered])
 
   const defs: FilterDef[] = [
-    { key: 'warehouse', label: 'Kho', type: 'single', value: wh, onChange: setWh, allLabel: 'Tất cả kho',
+    { key: 'warehouse', label: 'Kho', type: 'single', value: wh, onChange: v => setAtt({ warehouseId: v }), allLabel: 'Tất cả kho',
       options: (warehouses as { id: string; name: string }[]).map(w => ({ value: w.id, label: w.name })) },
-    { key: 'dept', label: 'Phòng ban', type: 'single', value: dept, onChange: setDept, allLabel: 'Tất cả phòng',
+    { key: 'dept', label: 'Phòng ban', type: 'single', value: dept, onChange: v => setAtt({ deptId: v }), allLabel: 'Tất cả phòng',
       options: (departments as { id: string; name: string }[]).map(d => ({ value: d.id, label: d.name })) },
-    { key: 'jt', label: 'Chức danh', type: 'single', value: jt, onChange: setJt, allLabel: 'Tất cả chức danh',
+    { key: 'jt', label: 'Chức danh', type: 'single', value: jt, onChange: v => setAtt({ jt: v }), allLabel: 'Tất cả chức danh',
       options: jobTitles.map(j => ({ value: j.name, label: j.name })) },
     ...(view === 'matrix' ? [{ key: 'status', label: 'Tình trạng', type: 'single' as const,
-      value: status === 'all' ? '' : status, onChange: (v: string) => setStatus((v || 'all') as 'all' | 'done' | 'missing'),
+      value: status === 'all' ? '' : status, onChange: (v: string) => setAtt({ status: (v || 'all') as 'all' | 'done' | 'missing' }),
       allLabel: 'Tất cả tình trạng',
       options: [{ value: 'done', label: 'Đã chấm đủ' }, { value: 'missing', label: 'Còn thiếu' }] }] : []),
-    { key: 'range', label: 'Khoảng ngày', type: 'daterange', from, to, onChange: (f, t) => { setFrom(f); setTo(t) } },
+    { key: 'range', label: 'Khoảng ngày', type: 'daterange', from, to, onChange: (ff, tt) => setAtt({ from: ff, to: tt }) },
   ]
+  const viewSnapshot = { warehouseId: wh, deptId: dept, jt, q, status, from, to }
+  const savedViews = useSavedViewsStore(s => s.views['attendance'] ?? [])
+  const activeViewId = savedViews.find(v => JSON.stringify(v.filters) === JSON.stringify(viewSnapshot))?.id ?? null
+
+  function exportExcel() {
+    const sheet = filtered.map(r => ({
+      'Ngày': formatDate(r.work_date), 'Nhân viên': r.employee?.name ?? '', 'Mã NV': r.employee?.employee_code ?? '',
+      'Chức danh': r.employee?.job_title ?? '', 'Loại': KIND_SHORT[r.kind] ?? r.kind,
+      'OT (giờ)': r.ot_hours || '', 'Về sớm (giờ)': r.early_leave_hours || '',
+    }))
+    const ws = XLSX.utils.json_to_sheet(sheet)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Bảng công')
+    XLSX.writeFile(wb, `bang_cong_${from}_${to}.xlsx`)
+  }
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
+    <div className="flex flex-col h-full min-h-0 space-y-3">
+      <div className="flex flex-wrap items-center gap-2 shrink-0">
         <div className="flex rounded-md border border-slate-200 overflow-hidden text-xs font-medium">
-          <button onClick={() => setView('matrix')} className={`px-2.5 py-1 ${view === 'matrix' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Ma trận</button>
-          <button onClick={() => setView('raw')} className={`px-2.5 py-1 border-l border-slate-200 ${view === 'raw' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Raw data</button>
+          <button onClick={() => setAtt({ view: 'matrix' })} className={`px-2.5 py-1 ${view === 'matrix' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Ma trận</button>
+          <button onClick={() => setAtt({ view: 'raw' })} className={`px-2.5 py-1 border-l border-slate-200 ${view === 'raw' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Raw data</button>
         </div>
-        <Input value={q} onChange={e => setQ(e.target.value)} placeholder="Tìm tên / mã NV…" className="h-7 text-xs w-44" />
+        <Input value={q} onChange={e => setAtt({ q: e.target.value })} placeholder="Tìm tên / mã NV…" className="h-7 text-xs w-44" />
         <div className="flex-1" />
+        <SavedViews module="attendance" currentFilters={viewSnapshot} activeId={activeViewId}
+          onApply={(fl) => setAtt(fl as Partial<typeof f>)} />
+        <button type="button" onClick={toggleDense}
+          className="hidden sm:inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 shrink-0"
+          title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
+          {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
+        </button>
+        <button type="button" onClick={exportExcel} disabled={!filtered.length}
+          className="hidden sm:inline-flex items-center gap-1 h-7 px-2.5 rounded-md border border-slate-200 text-xs font-medium text-slate-600 hover:bg-slate-50 shrink-0 disabled:opacity-50"
+          title="Xuất Excel (raw)">
+          <Download className="h-3.5 w-3.5" /> Excel
+        </button>
         <FilterSheetButton defs={defs} className="sm:hidden" />
         <div className="hidden sm:block"><FilterBar defs={defs} /></div>
       </div>
 
-      <SummaryBand className="rounded-lg" tiles={[
+      <SummaryBand className="rounded-lg shrink-0" tiles={[
         { label: 'Số người', value: matrixAll.length },
         { label: 'Tổng công', value: sum.cong, accent: true },
         { label: 'Ngày công', value: sum.workDays },
@@ -443,30 +467,31 @@ function TeamSection({ perms }: { perms: ModulePermissions | null }) {
 
       {isLoading ? <p className="text-xs text-slate-400 py-8 text-center">Đang tải…</p>
         : view === 'matrix'
-          ? <MatrixTable emps={matrixEmps} dates={dates} isWorkDay={isWorkDay} />
-          : <AttTable rows={filtered} onDelete={canEdit ? (id => del.mutate(id)) : undefined} showName />}
+          ? <MatrixTable emps={matrixEmps} dates={dates} isWorkDay={isWorkDay} dense={dense} />
+          : <AttTable rows={filtered} onDelete={canEdit ? (id => del.mutate(id)) : undefined} showName dense={dense} />}
     </div>
   )
 }
 
 // Ma trận: dòng = người (roster), cột = từng ngày; ô có ca = đã chấm, ô trống ngày làm việc = chưa chấm (đỏ)
-function MatrixTable({ emps, dates, isWorkDay }: { emps: MatrixRow[]; dates: string[]; isWorkDay: (ds: string) => boolean }) {
+function MatrixTable({ emps, dates, isWorkDay, dense }: { emps: MatrixRow[]; dates: string[]; isWorkDay: (ds: string) => boolean; dense: boolean }) {
+  const pad = dense ? 'py-0.5' : 'py-1'
   return (
-    <div className="border border-slate-200 rounded-lg overflow-x-auto">
+    <div className="flex-1 min-h-0 overflow-auto border border-slate-200 rounded-lg">
       <table className="text-xs min-w-max border-collapse">
         <thead className="bg-slate-50 text-[10px] text-slate-500">
           <tr>
-            <th className="text-left px-2 py-1.5 font-medium sticky left-0 z-20 bg-slate-50 border-r border-slate-200 min-w-[120px]">Nhân viên</th>
-            <th className="text-left px-2 py-1.5 font-medium border-r border-slate-100 min-w-[70px]">Mã NV</th>
-            <th className="text-left px-2 py-1.5 font-medium border-r border-slate-200 min-w-[100px]">Chức danh</th>
+            <th className="text-left px-2 py-1.5 font-medium sticky left-0 top-0 z-30 bg-slate-50 border-r border-slate-200 min-w-[120px]">Nhân viên</th>
+            <th className="text-left px-2 py-1.5 font-medium sticky top-0 z-10 bg-slate-50 border-r border-slate-100 min-w-[70px]">Mã NV</th>
+            <th className="text-left px-2 py-1.5 font-medium sticky top-0 z-10 bg-slate-50 border-r border-slate-200 min-w-[100px]">Chức danh</th>
             {dates.map(d => (
-              <th key={d} className="px-1 py-1 font-medium text-center border-r border-slate-100 min-w-[42px]">
+              <th key={d} className="px-1 py-1 font-medium text-center sticky top-0 z-10 bg-slate-50 border-r border-slate-100 min-w-[42px]">
                 <div className="text-[9px] text-slate-400">{dowOf(d)}</div>
                 <div className="tabular-nums">{format(new Date(`${d}T00:00:00`), 'dd/MM')}</div>
               </th>
             ))}
-            <th className="text-right px-2 py-1.5 font-medium border-l border-slate-200 min-w-[44px]">Thiếu</th>
-            <th className="text-right px-2 py-1.5 font-medium sticky right-0 z-20 bg-slate-50 border-l border-slate-200">Tổng công</th>
+            <th className="text-right px-2 py-1.5 font-medium sticky top-0 z-10 bg-slate-50 border-l border-slate-200 min-w-[44px]">Thiếu</th>
+            <th className="text-right px-2 py-1.5 font-medium sticky right-0 top-0 z-30 bg-slate-50 border-l border-slate-200">Tổng công</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
@@ -474,14 +499,14 @@ function MatrixTable({ emps, dates, isWorkDay }: { emps: MatrixRow[]; dates: str
             <tr><td colSpan={dates.length + 5} className="text-center text-slate-400 py-6">Không có nhân viên phù hợp</td></tr>
           ) : emps.map(g => (
             <tr key={g.id} className="hover:bg-slate-50/60">
-              <td className="px-2 py-1 sticky left-0 z-10 bg-white border-r border-slate-200 font-medium text-slate-700 whitespace-nowrap">{g.name}</td>
-              <td className="px-2 py-1 font-mono text-slate-500 border-r border-slate-100 whitespace-nowrap">{g.code}</td>
-              <td className="px-2 py-1 text-slate-600 border-r border-slate-200 whitespace-nowrap">{g.job ?? '—'}</td>
+              <td className={`px-2 ${pad} sticky left-0 z-10 bg-white border-r border-slate-200 font-medium text-slate-700 whitespace-nowrap max-w-[160px] truncate`} title={g.name}>{g.name}</td>
+              <td className={`px-2 ${pad} font-mono text-slate-500 border-r border-slate-100 whitespace-nowrap`}>{g.code}</td>
+              <td className={`px-2 ${pad} text-slate-600 border-r border-slate-200 whitespace-nowrap max-w-[140px] truncate`} title={g.job ?? ''}>{g.job ?? '—'}</td>
               {dates.map(d => {
                 const e = g.byDate.get(d)
                 if (e) {
                   return (
-                    <td key={d} className={`px-1 py-1 text-center border-r border-slate-100 ${KIND_CELL[e.kind]}`}>
+                    <td key={d} className={`px-1 ${pad} text-center border-r border-slate-100 ${KIND_CELL[e.kind]}`}>
                       <div className="leading-none">
                         <div className="text-[10px] font-medium">{KIND_SHORT[e.kind]}</div>
                         {(e.ot_hours > 0 || e.early_leave_hours > 0) && <div className="text-[8px] text-slate-500">{e.ot_hours > 0 ? `+${e.ot_hours}` : `−${e.early_leave_hours}`}</div>}
@@ -491,13 +516,13 @@ function MatrixTable({ emps, dates, isWorkDay }: { emps: MatrixRow[]; dates: str
                 }
                 const missing = isWorkDay(d)
                 return (
-                  <td key={d} className={`px-1 py-1 text-center border-r border-slate-100 ${missing ? 'bg-red-50' : ''}`} title={missing ? 'Chưa chấm công' : ''}>
+                  <td key={d} className={`px-1 ${pad} text-center border-r border-slate-100 ${missing ? 'bg-red-50' : ''}`} title={missing ? 'Chưa chấm công' : ''}>
                     <span className={missing ? 'text-red-400' : 'text-slate-300'}>{missing ? '–' : '·'}</span>
                   </td>
                 )
               })}
-              <td className={`px-2 py-1 text-right border-l border-slate-200 tabular-nums font-semibold ${g.missingDays.length ? 'text-red-600' : 'text-slate-400'}`}>{g.missingDays.length || '—'}</td>
-              <td className="px-2 py-1 text-right sticky right-0 z-10 bg-white border-l border-slate-200 font-semibold text-slate-700 tabular-nums">{toCong(g.hours)}</td>
+              <td className={`px-2 ${pad} text-right border-l border-slate-200 tabular-nums font-semibold ${g.missingDays.length ? 'text-red-600' : 'text-slate-400'}`}>{g.missingDays.length || '—'}</td>
+              <td className={`px-2 ${pad} text-right sticky right-0 z-10 bg-white border-l border-slate-200 font-semibold text-slate-700 tabular-nums`}>{toCong(g.hours)}</td>
             </tr>
           ))}
         </tbody>
@@ -506,41 +531,42 @@ function MatrixTable({ emps, dates, isWorkDay }: { emps: MatrixRow[]; dates: str
   )
 }
 
-function AttTable({ rows, onDelete, showName }: { rows: AttendanceRow[]; onDelete?: (id: string) => void; showName: boolean }) {
+function AttTable({ rows, onDelete, showName, dense }: { rows: AttendanceRow[]; onDelete?: (id: string) => void; showName: boolean; dense?: boolean }) {
+  const pad = dense ? 'py-1' : 'py-1.5'
   return (
-    <div className="border border-slate-200 rounded-lg overflow-x-auto">
-      <table className="w-full text-xs min-w-max">
+    <div className="flex-1 min-h-0 overflow-auto border border-slate-200 rounded-lg">
+      <table className="w-full text-xs min-w-max [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
         <thead className="bg-slate-50 text-[10px] text-slate-500">
           <tr>
-            {showName && <th className="text-left px-2 py-2 font-medium">Nhân viên</th>}
-            {showName && <th className="text-left px-2 py-2 font-medium">Mã NV</th>}
-            {showName && <th className="text-left px-2 py-2 font-medium">Chức danh</th>}
-            <th className="text-left px-2 py-2 font-medium">Ngày</th>
-            <th className="text-left px-2 py-2 font-medium">Thứ</th>
-            <th className="text-left px-2 py-2 font-medium">Loại</th>
-            <th className="text-right px-2 py-2 font-medium">Giờ OT</th>
-            <th className="text-right px-2 py-2 font-medium">Về sớm</th>
-            <th className="text-right px-2 py-2 font-medium">Tổng giờ</th>
-            <th className="text-right px-2 py-2 font-medium">Tổng công</th>
-            {onDelete && <th className="px-2 py-2"></th>}
+            {showName && <th className="text-left px-2 py-2 font-medium sticky left-0 top-0 z-30 bg-slate-50">Nhân viên</th>}
+            {showName && <th className="text-left px-2 py-2 font-medium sticky top-0 z-10 bg-slate-50">Mã NV</th>}
+            {showName && <th className="text-left px-2 py-2 font-medium sticky top-0 z-10 bg-slate-50">Chức danh</th>}
+            <th className="text-left px-2 py-2 font-medium sticky top-0 z-10 bg-slate-50">Ngày</th>
+            <th className="text-left px-2 py-2 font-medium sticky top-0 z-10 bg-slate-50">Thứ</th>
+            <th className="text-left px-2 py-2 font-medium sticky top-0 z-10 bg-slate-50">Loại</th>
+            <th className="text-right px-2 py-2 font-medium sticky top-0 z-10 bg-slate-50">Giờ OT</th>
+            <th className="text-right px-2 py-2 font-medium sticky top-0 z-10 bg-slate-50">Về sớm</th>
+            <th className="text-right px-2 py-2 font-medium sticky top-0 z-10 bg-slate-50">Tổng giờ</th>
+            <th className="text-right px-2 py-2 font-medium sticky top-0 z-10 bg-slate-50">Tổng công</th>
+            {onDelete && <th className="px-2 py-2 sticky top-0 z-10 bg-slate-50"></th>}
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
           {rows.length === 0 ? (
-            <tr><td colSpan={showName ? 10 : 7} className="text-center text-slate-400 py-6">Chưa có dữ liệu</td></tr>
+            <tr><td colSpan={showName ? 11 : 8} className="text-center text-slate-400 py-6">Chưa có dữ liệu</td></tr>
           ) : rows.map(r => (
             <tr key={r.id} className="hover:bg-slate-50/60">
-              {showName && <td className="px-2 py-1.5 font-medium text-slate-700">{r.employee?.name ?? '—'}</td>}
-              {showName && <td className="px-2 py-1.5 font-mono text-slate-500">{r.employee?.employee_code ?? '—'}</td>}
-              {showName && <td className="px-2 py-1.5 text-slate-600">{r.employee?.job_title ?? '—'}</td>}
-              <td className="px-2 py-1.5 tabular-nums">{formatDate(r.work_date)}</td>
-              <td className="px-2 py-1.5 text-slate-500">{dowOf(r.work_date)}</td>
-              <td className="px-2 py-1.5"><Badge variant={kindVariant(r.kind)}>{kindLabel(r.kind)}</Badge></td>
-              <td className="px-2 py-1.5 text-right tabular-nums">{r.ot_hours > 0 ? r.ot_hours : '—'}</td>
-              <td className="px-2 py-1.5 text-right tabular-nums">{r.early_leave_hours > 0 ? r.early_leave_hours : '—'}</td>
-              <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{rowTotal(r)}h</td>
-              <td className="px-2 py-1.5 text-right tabular-nums font-semibold text-slate-700">{toCong(rowTotal(r))}</td>
-              {onDelete && <td className="px-2 py-1.5 text-right"><button onClick={() => onDelete(r.id)} className="text-slate-400 hover:text-red-600 hover:bg-red-50 rounded p-1"><Trash2 className="h-3.5 w-3.5" /></button></td>}
+              {showName && <td className={`px-2 ${pad} font-medium text-slate-700 sticky left-0 z-10 bg-white max-w-[160px] truncate`} title={r.employee?.name ?? ''}>{r.employee?.name ?? '—'}</td>}
+              {showName && <td className={`px-2 ${pad} font-mono text-slate-500`}>{r.employee?.employee_code ?? '—'}</td>}
+              {showName && <td className={`px-2 ${pad} text-slate-600 max-w-[140px] truncate`} title={r.employee?.job_title ?? ''}>{r.employee?.job_title ?? '—'}</td>}
+              <td className={`px-2 ${pad} tabular-nums`}>{formatDate(r.work_date)}</td>
+              <td className={`px-2 ${pad} text-slate-500`}>{dowOf(r.work_date)}</td>
+              <td className={`px-2 ${pad}`}><Badge variant={kindVariant(r.kind)}>{kindLabel(r.kind)}</Badge></td>
+              <td className={`px-2 ${pad} text-right tabular-nums`}>{r.ot_hours > 0 ? r.ot_hours : '—'}</td>
+              <td className={`px-2 ${pad} text-right tabular-nums`}>{r.early_leave_hours > 0 ? r.early_leave_hours : '—'}</td>
+              <td className={`px-2 ${pad} text-right tabular-nums text-slate-500`}>{rowTotal(r)}h</td>
+              <td className={`px-2 ${pad} text-right tabular-nums font-semibold text-slate-700`}>{toCong(rowTotal(r))}</td>
+              {onDelete && <td className={`px-2 ${pad} text-right`}><button onClick={() => onDelete(r.id)} className="text-slate-400 hover:text-red-600 hover:bg-red-50 rounded p-1"><Trash2 className="h-3.5 w-3.5" /></button></td>}
             </tr>
           ))}
         </tbody>

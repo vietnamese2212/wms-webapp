@@ -19,6 +19,33 @@ const ENTRY_SELECT = `
   stocktake_by_emp:Employee!stocktake_by(id, name)
 `.trim()
 
+// ─── Warehouse-scope cho route GHI (mirror Outbound/Inbound) ───
+// NATIONAL → null (toàn quyền). Khác → danh sách kho được gán.
+function scopeWhIds(req: Request): string[] | null {
+  return req.user?.warehouse_scope === 'NATIONAL' ? null : (req.user?.warehouse_ids ?? [])
+}
+// Chặn 403 nếu BẤT KỲ entry nào không thuộc kho trong phạm vi user. NATIONAL bỏ qua.
+// Kho của entry = location.warehouse_id (QR pallet) HOẶC warehouse_id (POSM, location_id null) —
+// KHÔNG tin riêng cột warehouse_id (đa số NULL với pallet QR).
+async function guardEntriesScope(req: Request, res: Response, ids: string[]): Promise<boolean> {
+  const scope = scopeWhIds(req)
+  if (scope === null) return true
+  const { data } = await supabase.from('InventoryEntry')
+    .select('id, warehouse_id, location:Location!location_id(warehouse_id)')
+    .in('id', ids)
+  type LocWh = { warehouse_id: string | null }
+  const rows = (data ?? []) as unknown as Array<{ warehouse_id: string | null; location: LocWh | LocWh[] | null }>
+  for (const e of rows) {
+    const loc = Array.isArray(e.location) ? e.location[0] : e.location
+    const wh = loc?.warehouse_id ?? e.warehouse_id ?? null
+    if (!wh || !scope.includes(wh)) {
+      fail(res, 403, 'FORBIDDEN', 'Pallet không thuộc kho trong phạm vi của bạn')
+      return false
+    }
+  }
+  return true
+}
+
 interface FilterParams {
   status?: string
   locationFilter?: string[] | null
@@ -523,6 +550,7 @@ export async function adjustInventory(req: Request, res: Response) {
   if (typeof adjustment !== 'number' || adjustment === 0) {
     return fail(res, 400, 'INVALID_INPUT', 'adjustment phải là số khác 0')
   }
+  if (!(await guardEntriesScope(req, res, [id]))) return
 
   const now    = new Date().toISOString()
   const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -607,6 +635,7 @@ export async function bulkUpdateQA(req: Request, res: Response) {
   }
   if (!Array.isArray(ids) || ids.length === 0)
     return fail(res, 400, 'INVALID_INPUT', 'Cần ít nhất 1 pallet')
+  if (!(await guardEntriesScope(req, res, ids))) return
 
   const now    = new Date().toISOString()
   const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -627,6 +656,7 @@ export async function bulkTransferLocation(req: Request, res: Response) {
     return fail(res, 400, 'INVALID_INPUT', 'Cần ít nhất 1 pallet')
   if (!location_id)
     return fail(res, 400, 'INVALID_INPUT', 'Thiếu location_id')
+  if (!(await guardEntriesScope(req, res, ids))) return
 
   const now    = new Date().toISOString()
   const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -684,6 +714,7 @@ export async function bulkTransferMaterial(req: Request, res: Response) {
     return fail(res, 400, 'INVALID_INPUT', 'Cần ít nhất 1 pallet')
   if (!material_id)
     return fail(res, 400, 'INVALID_INPUT', 'Thiếu material_id')
+  if (!(await guardEntriesScope(req, res, ids))) return
 
   const { data: mat } = await supabase.from('Material')
     .select('id, material_code').eq('id', material_id).maybeSingle()
@@ -867,6 +898,7 @@ export async function bulkUpdateProductionDate(req: Request, res: Response) {
   const d = new Date(production_date)
   if (isNaN(d.getTime()))
     return fail(res, 400, 'INVALID_INPUT', 'Ngày sản xuất không hợp lệ')
+  if (!(await guardEntriesScope(req, res, ids))) return
 
   const now    = new Date().toISOString()
   const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })

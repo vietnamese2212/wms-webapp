@@ -21,7 +21,7 @@ const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Mi
 const LOOSE_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
   { id: 'pin',        label: '',             w: 34 },
   { id: 'date',       label: 'Ngày xuất',    w: 90 },
-  { id: 'code',       label: 'Số xe',        w: 110 },
+  { id: 'code',       label: 'Số xe',        w: 132 },
   { id: 'npp',        label: 'NPP',          w: 160 },
   { id: 'dvvt',       label: 'ĐVVT',         w: 90 },
   { id: 'wh',         label: 'Kho xuất',     w: 140 },
@@ -312,16 +312,16 @@ export default function LoosePicking() {
                       <span className="text-[10px] font-medium tabular-nums">{dateStr}</span>
                     </TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap">
-                      <span className="text-[10px] font-mono font-semibold">{s.gdo?.group_code ?? '—'}</span>
+                      <span className="text-[10px] font-mono font-semibold truncate block" title={s.gdo?.group_code ?? ''}>{s.gdo?.group_code ?? '—'}</span>
                     </TableCell>
                     <TableCell className="px-2 py-1 max-w-[140px]">
-                      <span className="text-[10px] text-slate-600 line-clamp-2 leading-tight">{npp || '—'}</span>
+                      <span className="text-[10px] text-slate-600 line-clamp-2 leading-tight" title={npp}>{npp || '—'}</span>
                     </TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap">
-                      <span className="text-[10px] text-slate-600">{s.gdo?.dvvt ?? '—'}</span>
+                      <span className="text-[10px] text-slate-600 truncate block" title={s.gdo?.dvvt ?? ''}>{s.gdo?.dvvt ?? '—'}</span>
                     </TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap">
-                      <span className="text-[10px] text-slate-700">{s.gdo?.warehouse?.name ?? '—'}</span>
+                      <span className="text-[10px] text-slate-700 truncate block" title={s.gdo?.warehouse?.name ?? ''}>{s.gdo?.warehouse?.name ?? '—'}</span>
                     </TableCell>
                     <TableCell className="px-2 py-1 text-right whitespace-nowrap">
                       <span className="text-[10px] font-semibold tabular-nums">{s.items.length}</span>

@@ -979,7 +979,7 @@ function applyClientFilters(
 // Cấu hình cột Inbound (thứ tự khớp với các <TableCell> trong InboundRow)
 const INBOUND_COLS: { id: string; label: string; w: number; align?: 'right'; resize?: false }[] = [
   { id: 'pin',      label: '',                   w: 34,  resize: false },
-  { id: 'date',     label: 'Ngày nhập',          w: 96 },
+  { id: 'date',     label: 'Ngày nhập',          w: 118 },
   { id: 'loc',      label: 'Vị trí',             w: 84 },
   { id: 'mat',      label: 'Material',           w: 150 },
   { id: 'code',     label: 'Mã phiếu / Mã lệnh', w: 130 },
@@ -1705,7 +1705,7 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
       </TableCell>
 
       {/* Col: Tiến độ (Thực nhập / Thùng KH) */}
-      <TableCell className="px-2 py-1 whitespace-nowrap">
+      <TableCell className="px-2 py-1 whitespace-nowrap text-right">
         {order.planned_cartons != null && order.planned_cartons > 0 ? (() => {
           const pct  = Math.round(((order.total_cartons ?? 0) / order.planned_cartons) * 100)
           const done = pct >= 100

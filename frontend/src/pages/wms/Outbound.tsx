@@ -2,7 +2,7 @@ import { useRef, useState, useMemo, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
-import { Upload, Truck, CheckCircle2, AlertTriangle, X, Bookmark, Info, Plus, Trash2, PenSquare, Rows3, AlignJustify, ChevronDown, Building2, PackageCheck } from 'lucide-react'
+import { Upload, Truck, CheckCircle2, AlertTriangle, X, Bookmark, Info, Plus, Trash2, PenSquare, Rows3, AlignJustify, ChevronDown, Building2, PackageCheck, ArrowRight } from 'lucide-react'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
@@ -105,6 +105,75 @@ const OUTBOUND_COL_DEFAULTS = OUTBOUND_COLS.map(c => c.w)
 // Pallet là số lẻ (thùng / thùng-mỗi-pallet) → làm tròn 2 chữ số, cắt đuôi 0 (tránh "3.5300000000000002")
 const fmtPallets = (n: number | null | undefined) => +(Number(n ?? 0).toFixed(2))
 
+// Phát hiện desktop (lg+) để quyết định click row = chọn (hiện pane) hay điều hướng
+function useIsDesktop() {
+  const [d, setD] = useState(() => typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches)
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 1024px)')
+    const h = () => setD(mq.matches)
+    mq.addEventListener('change', h)
+    return () => mq.removeEventListener('change', h)
+  }, [])
+  return d
+}
+
+// ─── Pane phải + Live Tiles (Manhattan Insight) — chuẩn list→detail như Inbound ───
+function OutboundPane({ gdo, onClose }: { gdo: GDO; onClose: () => void }) {
+  const navigate = useNavigate()
+  const st  = gdoStatusInfo(gdo)
+  const npp = gdo.distributor_names?.join(', ') || '—'
+  const cartons   = gdo.total_cartons ?? 0
+  const noqr      = gdo.total_cartons_noqr ?? 0
+  const Row = ({ k, v }: { k: string; v: string }) => (
+    <div className="flex justify-between gap-2 text-[11px]"><span className="text-slate-400 shrink-0">{k}</span><span className="text-slate-700 text-right truncate">{v}</span></div>
+  )
+  return (
+    <aside className="hidden lg:flex flex-col w-56 shrink-0 border-l border-slate-200 bg-slate-50">
+      <div className="px-3 py-2 border-b border-slate-200 bg-white">
+        <div className="flex items-center justify-between">
+          <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-medium ${st.cls}`}>{st.label}</span>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600" title="Đóng"><X className="h-3.5 w-3.5" /></button>
+        </div>
+        <div className={`mt-1 text-sm font-mono font-semibold leading-tight ${gdoRowText(gdo)}`}>{gdo.group_code}</div>
+        <div className="text-[11px] text-slate-500 mt-1 truncate" title={npp}>NPP: <span className="font-medium text-slate-700">{npp}</span></div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-2 space-y-2">
+        <div className="grid grid-cols-2 gap-2">
+          <div className="rounded-lg bg-sky-600 text-white px-2 py-2.5 text-center">
+            <div className="text-xl font-bold leading-none tabular-nums">{cartons.toLocaleString('vi-VN')}</div>
+            <div className="text-[9px] mt-1 text-sky-100 uppercase tracking-wide">Thùng</div>
+          </div>
+          <div className="rounded-lg bg-sky-700 text-white px-2 py-2.5 text-center">
+            <div className="text-xl font-bold leading-none tabular-nums">{fmtPallets(gdo.total_pallets)}</div>
+            <div className="text-[9px] mt-1 text-sky-100 uppercase tracking-wide">Pallet</div>
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 space-y-1">
+          <Row k="Kho xuất" v={gdo.warehouse?.name ?? '—'} />
+          <Row k="Loại kho" v={gdo.warehouse_type ?? '—'} />
+          <Row k="ĐVVT" v={gdo.dvvt ?? '—'} />
+          <Row k="Loại xe" v={gdo.export_type ?? '—'} />
+          {noqr > 0 && <Row k="Tổng (k QR)" v={noqr.toLocaleString('vi-VN')} />}
+        </div>
+
+        <div className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 space-y-1">
+          <Row k="Giao đơn"  v={fTime(gdo.assigned_at)} />
+          <Row k="Bắt đầu"   v={fTime(gdo.started_at)} />
+          <Row k="Quét xong" v={fTime(gdo.scan_completed_at)} />
+          <Row k="Kết thúc"  v={fTime(gdo.completed_at)} />
+        </div>
+
+        <button onClick={() => navigate(`/wms/outbound/${gdo.id}`)}
+          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:border-blue-300 hover:text-blue-600 transition-colors flex items-center justify-between">
+          Mở chi tiết <ArrowRight className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </aside>
+  )
+}
+
 export default function Outbound() {
   const navigate = useNavigate()
   const user     = useAuthStore(s => s.user)
@@ -119,6 +188,8 @@ export default function Outbound() {
   const [showCreate,  setShowCreate]  = useState(false)
   const [dense, setDense] = useState(() => localStorage.getItem('outbound_density') !== 'comfortable')
   const [nppOpen, setNppOpen] = useState(false)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const isDesktop = useIsDesktop()
   const { widths: colW, startResize, totalWidth } = useColumnResize('outbound_col_widths', OUTBOUND_COL_DEFAULTS)
   function toggleDensity() {
     setDense(d => { localStorage.setItem('outbound_density', d ? 'comfortable' : 'compact'); return !d })
@@ -497,7 +568,8 @@ export default function Outbound() {
         { label: 'Hoàn thành', value: summary.completed, accent: summary.completed > 0 },
       ]} />
 
-      {/* Table */}
+      {/* Table + Pane (Manhattan Insight) */}
+      <div className="flex flex-1 min-h-0">
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
         {isLoading || postUploadLoading ? (
           <div className="p-4 space-y-2">
@@ -534,14 +606,20 @@ export default function Outbound() {
                   gdo={gdo}
                   dense={dense}
                   pinW={colW[0]}
+                  selected={gdo.id === selectedId}
                   isProdDest={!!gdo.shipto_party && noneWhCodes.has(gdo.shipto_party)}
-                  onClick={() => navigate(`/wms/outbound/${gdo.id}`)}
+                  onClick={() => { if (isDesktop) setSelectedId(gdo.id); else navigate(`/wms/outbound/${gdo.id}`) }}
+                  onDoubleClick={() => navigate(`/wms/outbound/${gdo.id}`)}
                   onAssign={can(perms, 'outbound', 'assign') ? (e => { e.stopPropagation(); assignGDO({ id: gdo.id }) }) : undefined}
                 />
               ))}
             </TableBody>
           </Table>
         )}
+      </div>
+      {selectedId && sorted.find(g => g.id === selectedId) && (
+        <OutboundPane gdo={sorted.find(g => g.id === selectedId)!} onClose={() => setSelectedId(null)} />
+      )}
       </div>
 
       {/* Footer đếm bản ghi */}
@@ -563,13 +641,15 @@ export default function Outbound() {
 
 // ─── GDO Row ──────────────────────────────────────────────────
 
-function GDORow({ gdo, onClick, onAssign, dense = true, pinW = 34, isProdDest = false }: {
+function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34, isProdDest = false, selected = false }: {
   gdo: GDO
   onClick: () => void
+  onDoubleClick?: () => void
   onAssign?: (e: React.MouseEvent) => void
   dense?: boolean
   pinW?: number
   isProdDest?: boolean
+  selected?: boolean
 }) {
   const { pin, unpin, isPinned } = useActiveVehiclesStore()
   const pinned    = isPinned(gdo.id)
@@ -579,9 +659,9 @@ function GDORow({ gdo, onClick, onAssign, dense = true, pinW = 34, isProdDest = 
   const isPending = gdo.status === 'PENDING'
 
   return (
-    <TableRow className={`cursor-pointer ${gdoRowText(gdo)} ${dense ? '' : '[&_td]:py-2.5'}`} onClick={onClick}>
+    <TableRow className={`cursor-pointer ${gdoRowText(gdo)} ${dense ? '' : '[&_td]:py-2.5'} ${selected ? 'bg-sky-50' : ''}`} onClick={onClick} onDoubleClick={onDoubleClick}>
       {/* Bookmark */}
-      <TableCell className="px-1.5 py-1 sticky left-0 z-10 bg-white" style={{ left: 0 }} onClick={e => e.stopPropagation()}>
+      <TableCell className={`px-1.5 py-1 sticky left-0 z-10 ${selected ? 'bg-sky-50' : 'bg-white'}`} style={{ left: 0 }} onClick={e => e.stopPropagation()}>
         <button
           onClick={() => pinned ? unpin(gdo.id) : pin({ id: gdo.id, group_code: gdo.group_code, status: gdo.status })}
           className={`p-0.5 rounded transition-colors ${pinned ? 'text-amber-500' : 'text-slate-300 hover:text-slate-500'}`}

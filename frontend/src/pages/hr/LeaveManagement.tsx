@@ -197,6 +197,10 @@ export default function LeaveManagement() {
 
 export function CreateLeaveDialog({ wh, dept, onClose, fixedEmployeeId }: { wh: string; dept: string; onClose: () => void; fixedEmployeeId?: string }) {
   const user = useAuthStore(s => s.user)
+  const perms = user?.module_permissions as ModulePermissions | null ?? null
+  // Chỉ người có quyền DUYỆT (quản lý/HR) mới được nộp hộ cấp dưới → mới hiện ô chọn nhân viên.
+  // User thường chỉ nộp cho chính mình.
+  const canPickOther = can(perms, 'leave', 'approve')
   const create = useCreateLeave()
   const { data: emps = [] } = useEmployeeRecords(dept ? { department_id: dept } : undefined)
 
@@ -237,9 +241,9 @@ export function CreateLeaveDialog({ wh, dept, onClose, fixedEmployeeId }: { wh: 
         <DialogHeader><DialogTitle>Gửi đơn nghỉ phép</DialogTitle></DialogHeader>
         <div className="space-y-3">
           {err && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{err}</div>}
-          {!fixedEmployeeId && (
+          {!fixedEmployeeId && canPickOther && (
             <div>
-              <label className="text-[11px] text-slate-500">Nhân viên</label>
+              <label className="text-[11px] text-slate-500">Nhân viên (cấp dưới)</label>
               <select value={empId} onChange={e => setEmpId(e.target.value)} className="w-full border border-slate-200 rounded-md px-2 h-9 text-sm bg-white">
                 <option value="">— Chọn nhân viên —</option>
                 {(emps as { id: string; name: string; employee_code: string }[]).map(e => (

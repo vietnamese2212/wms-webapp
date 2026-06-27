@@ -133,19 +133,25 @@ async function canApprove(ctx: ApproverCtx, employeeId: string, pm: Map<string, 
   return sharesKho(ctx, e?.warehouse_scope ?? null, new Set((wa ?? []).map((r: { warehouse_id: string }) => r.warehouse_id)))
 }
 
-// Non-admin chỉ được SỬA/XÓA đơn của CHÍNH MÌNH hoặc của cấp dưới (chức danh dưới + chung kho).
-async function guardLeaveScope(req: Request, res: Response, leaveId: string): Promise<boolean> {
+// Non-admin chỉ được thao tác đơn của CHÍNH MÌNH hoặc cấp dưới (chức danh dưới + chung kho).
+async function guardLeaveTarget(req: Request, res: Response, empId?: string | null): Promise<boolean> {
   const u = userOf(req)
   if (u.name === 'Admin') return true
-  const { data: lv } = await supabase.from('LeaveRequest').select('employee_id').eq('id', leaveId).maybeSingle()
-  const empId = (lv as { employee_id: string } | null)?.employee_id
-  if (!empId) { fail(res, 'Không tìm thấy đơn', 404); return false }
+  if (!empId) { fail(res, 'Thiếu nhân viên', 400); return false }
   if (empId === u.sub) return true
   const ctx = await approverContext(u.sub)
   const pm  = await loadParentMap()
   if (await canApprove(ctx, empId, pm, false)) return true
-  fail(res, 'Bạn không có quyền trên đơn nghỉ phép này', 403)
+  fail(res, 'Bạn chỉ được tạo/sửa đơn nghỉ cho chính mình hoặc cấp dưới', 403)
   return false
+}
+// SỬA/XÓA: lấy employee_id của đơn rồi áp guardLeaveTarget.
+async function guardLeaveScope(req: Request, res: Response, leaveId: string): Promise<boolean> {
+  if (userOf(req).name === 'Admin') return true
+  const { data: lv } = await supabase.from('LeaveRequest').select('employee_id').eq('id', leaveId).maybeSingle()
+  const empId = (lv as { employee_id: string } | null)?.employee_id
+  if (!empId) { fail(res, 'Không tìm thấy đơn', 404); return false }
+  return guardLeaveTarget(req, res, empId)
 }
 
 export async function listLeaves(req: Request, res: Response) {
@@ -196,6 +202,7 @@ export async function createLeave(req: Request, res: Response) {
     }
     const empId = employee_id || u.sub
     if (!empId || !date_from || !date_to) return fail(res, 'employee_id, date_from, date_to là bắt buộc', 400)
+    if (!(await guardLeaveTarget(req, res, empId))) return
     if (date_to < date_from) return fail(res, 'Đến ngày phải >= Từ ngày', 400)
 
     const dup = await overlappingLeave(empId, date_from, date_to)

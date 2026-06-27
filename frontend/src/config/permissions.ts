@@ -63,11 +63,8 @@ export const MODULES = {
     page: 'Nhặt lẻ',
     actions: {
       view:     'Xem danh sách',
-      create:   'Tạo đơn',
-      start:    'Bắt đầu',
       scan:     'Quét QR',
       complete: 'Hoàn thành',
-      cancel:   'Huỷ đơn',
     },
   },
   stocktake: {

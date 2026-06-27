@@ -581,7 +581,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
             {/* Section 1: Thông tin chuyến xe */}
             <div className="border rounded-lg bg-slate-50 px-3 py-2.5 space-y-2">
               <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">Thông tin chuyến xe</p>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 <div>
                   <Label className="text-xs">Kho *</Label>
                   {canPickWarehouse ? (
@@ -706,7 +706,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                   </Dialog>
                 </div>
               </div>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 <div>
                   <Label className="text-xs">Ngày nhập *</Label>
                   <Input type="date" value={importDate} min={editGroup?.length ? undefined : TODAY} onChange={e => {

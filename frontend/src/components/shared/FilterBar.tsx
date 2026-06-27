@@ -71,6 +71,14 @@ export function FilterBar({ defs, className }: { defs: FilterDef[]; className?: 
   const [openKey, setOpenKey] = useState<string | null>(null)
   const [addOpen, setAddOpen] = useState(false)
   const barRef = useRef<HTMLDivElement>(null)
+  const addRef = useRef<HTMLDivElement>(null)
+  const [addAlignRight, setAddAlignRight] = useState(false)
+  useEffect(() => {
+    if (addOpen && addRef.current) {
+      const rect = addRef.current.getBoundingClientRect()
+      setAddAlignRight(rect.left + 180 > window.innerWidth)
+    }
+  }, [addOpen])
 
   useEffect(() => {
     if (!openKey && !addOpen) return
@@ -91,7 +99,7 @@ export function FilterBar({ defs, className }: { defs: FilterDef[]; className?: 
   return (
     <div ref={barRef} className={`hidden sm:flex items-center gap-1.5 flex-wrap ${className ?? ''}`}>
       {/* "+ Thêm lọc" */}
-      <div className="relative">
+      <div className="relative" ref={addRef}>
         <button
           type="button"
           onClick={() => { setAddOpen(v => !v); setOpenKey(null) }}
@@ -100,7 +108,7 @@ export function FilterBar({ defs, className }: { defs: FilterDef[]; className?: 
           <Plus className="h-3.5 w-3.5" /> Thêm lọc
         </button>
         {addOpen && (
-          <div className="absolute z-50 top-full left-0 mt-1 bg-white border rounded-md shadow-lg min-w-[160px] py-1 animate-in fade-in zoom-in-95 duration-100 origin-top-left"
+          <div className={`absolute z-50 top-full mt-1 bg-white border rounded-md shadow-lg min-w-[160px] py-1 animate-in fade-in zoom-in-95 duration-100 ${addAlignRight ? 'right-0 origin-top-right' : 'left-0 origin-top-left'}`}
             onMouseDown={e => e.stopPropagation()}>
             {inactiveDefs.length === 0 ? (
               <div className="px-3 py-2 text-xs text-slate-400 text-center">Đã thêm hết</div>
@@ -222,8 +230,17 @@ function FilterChip({ def, open, onToggle, onClose }: {
   def: FilterDef; open: boolean; onToggle: () => void; onClose: () => void
 }) {
   const active = isActive(def)
+  const wrapRef = useRef<HTMLDivElement>(null)
+  // Lật popover sang phải nếu mở left-0 sẽ tràn mép phải màn hình (vd FilterBar bị đẩy sát phải)
+  const [alignRight, setAlignRight] = useState(false)
+  useEffect(() => {
+    if (open && wrapRef.current) {
+      const rect = wrapRef.current.getBoundingClientRect()
+      setAlignRight(rect.left + 248 > window.innerWidth)
+    }
+  }, [open])
   return (
-    <div className="relative">
+    <div className="relative" ref={wrapRef}>
       <div className={`h-7 inline-flex items-center rounded-full border text-xs transition-colors ${
         active ? 'border-blue-300 bg-blue-50' : 'border-slate-300 bg-white'
       }`}>
@@ -240,7 +257,7 @@ function FilterChip({ def, open, onToggle, onClose }: {
         )}
       </div>
       {open && (
-        <div className="absolute z-50 top-full left-0 mt-1 animate-in fade-in zoom-in-95 duration-100 origin-top-left" onMouseDown={e => e.stopPropagation()}>
+        <div className={`absolute z-50 top-full mt-1 animate-in fade-in zoom-in-95 duration-100 ${alignRight ? 'right-0 origin-top-right' : 'left-0 origin-top-left'}`} onMouseDown={e => e.stopPropagation()}>
           <FilterPopover def={def} onClose={onClose} />
         </div>
       )}

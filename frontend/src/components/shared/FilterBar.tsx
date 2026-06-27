@@ -385,15 +385,15 @@ function MultiList({ def, onClose, fullWidth = false }: { def: Extract<FilterDef
         </div>
       )}
       <div className="overflow-y-auto flex-1">
-        <label className={`flex items-center gap-2 px-3 hover:bg-slate-50 cursor-pointer border-b border-slate-100 ${row}`}>
-          <Cbx checked={allSelected} indeterminate={someSelected} onClick={toggleAll} />
+        <label onClick={toggleAll} className={`flex items-center gap-2 px-3 hover:bg-slate-50 cursor-pointer border-b border-slate-100 ${row}`}>
+          <Cbx checked={allSelected} indeterminate={someSelected} />
           <span className={`text-slate-500 font-medium ${fullWidth ? 'text-sm' : 'text-[11px]'}`}>Tất cả</span>
         </label>
         {visible.length === 0 ? (
           <div className="px-3 py-2 text-xs text-slate-400 text-center">Không tìm thấy</div>
         ) : visible.map(o => (
-          <label key={o.value} className={`flex items-center gap-2 px-3 hover:bg-slate-50 cursor-pointer ${row}`}>
-            <Cbx checked={def.selected.includes(o.value)} onClick={() => toggle(o.value)} />
+          <label key={o.value} onClick={() => toggle(o.value)} className={`flex items-center gap-2 px-3 hover:bg-slate-50 cursor-pointer ${row}`}>
+            <Cbx checked={def.selected.includes(o.value)} />
             <span className={`text-slate-700 ${fullWidth ? 'text-sm' : 'text-[11px]'}`}>{o.label}</span>
           </label>
         ))}
@@ -408,11 +408,12 @@ function MultiList({ def, onClose, fullWidth = false }: { def: Extract<FilterDef
   )
 }
 
-function Cbx({ checked, indeterminate, onClick }: { checked: boolean; indeterminate?: boolean; onClick: () => void }) {
+// Thuần hiển thị — toggle do hàng (label) xử lý để click cả text lẫn ô vuông đều ăn
+function Cbx({ checked, indeterminate }: { checked: boolean; indeterminate?: boolean }) {
   return (
-    <div onClick={e => { e.preventDefault(); onClick() }}
-      className={`w-3.5 h-3.5 border rounded shrink-0 flex items-center justify-center cursor-pointer transition-colors
-        ${checked || indeterminate ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white hover:border-blue-400'}`}>
+    <div
+      className={`w-3.5 h-3.5 border rounded shrink-0 flex items-center justify-center transition-colors
+        ${checked || indeterminate ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white'}`}>
       {checked && <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />}
       {!checked && indeterminate && <Minus className="h-2.5 w-2.5 text-white" strokeWidth={3} />}
     </div>

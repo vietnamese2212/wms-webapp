@@ -1,10 +1,15 @@
 import { useState, useEffect, useRef } from 'react'
 import type { AxiosError } from 'axios'
-import { Plus, Pencil, ShieldCheck, Building2, User2, KeyRound, Check, Briefcase, Copy, CheckCheck, Trash2, RotateCcw, X, Warehouse } from 'lucide-react'
+import { Plus, Pencil, ShieldCheck, Building2, User2, KeyRound, Check, Briefcase, Copy, CheckCheck, Trash2, RotateCcw, X, Warehouse, Rows3, AlignJustify } from 'lucide-react'
 import { WarehouseMultiSelect } from '@/components/shared/WarehouseMultiSelect'
 import { formatDateTime, normalizePhone } from '@/utils/formatters'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
+import { SavedViews } from '@/components/shared/SavedViews'
+import { SummaryBand } from '@/components/shared/SummaryBand'
+import { useColumnResize } from '@/components/shared/useColumnResize'
+import { useWmsFilterStore } from '@/stores/wmsFilterStore'
+import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
 import { Label }    from '@/components/ui/label'
@@ -849,11 +854,21 @@ export default function UserManagement() {
   })()
   const canEditJt = (jtId: string) => isAdminUser || (canManageSkill && subordinateJtIds.has(jtId))
 
-  const [search,       setSearch]       = useState('')
-  const [filterDept,   setFilterDept]   = useState('__all__')
-  const [statusFilter, setStatusFilter] = useState<'active' | 'hidden' | 'all'>('active')
-  const [filterJt,     setFilterJt]     = useState('__all__')
-  const [filterWh,     setFilterWh]     = useState('__all__')
+  const ua = useWmsFilterStore(s => s.userAdmin)
+  const setUserAdmin = useWmsFilterStore(s => s.setUserAdmin)
+  const { search, deptId: filterDept, jtId: filterJt, warehouseId: filterWh, status: statusFilter } = ua
+  const setSearch       = (v: string) => setUserAdmin({ search: v })
+  const setFilterDept   = (v: string) => setUserAdmin({ deptId: v })
+  const setFilterJt     = (v: string) => setUserAdmin({ jtId: v })
+  const setFilterWh     = (v: string) => setUserAdmin({ warehouseId: v })
+  const setStatusFilter = (v: 'active' | 'hidden' | 'all') => setUserAdmin({ status: v })
+  const [dense, setDense] = useState(() => localStorage.getItem('user_admin_density') === '1')
+  const toggleDense = () => setDense(d => { localStorage.setItem('user_admin_density', d ? '0' : '1'); return !d })
+  const EMP_COL_DEFAULTS = [220, 200, 150, 200, 120, 80]
+  const { widths: empColW, startResize: empStartResize, totalWidth: empTotalWidth } = useColumnResize('user_admin_col_widths', EMP_COL_DEFAULTS)
+  const empViewSnapshot = { search, deptId: filterDept, jtId: filterJt, warehouseId: filterWh, status: statusFilter }
+  const empSavedViews = useSavedViewsStore(s => s.views['user_admin'] ?? [])
+  const empActiveViewId = empSavedViews.find(v => JSON.stringify(v.filters) === JSON.stringify(empViewSnapshot))?.id ?? null
   const [editingEmp,   setEditingEmp]   = useState<EmployeeRecord | null>(null)
   const [showEmpDlg,   setShowEmpDlg]   = useState(false)
   const [pwdEmp,       setPwdEmp]       = useState<EmployeeRecord | null>(null)
@@ -960,8 +975,21 @@ export default function UserManagement() {
           <div className="flex gap-2 flex-wrap items-center">
             <SearchInput value={search} onChange={setSearch} placeholder="Tìm tên, mã, đăng nhập…" className="flex-1 min-w-[200px]" />
             <FilterSheetButton defs={empFilterDefs} className="sm:hidden" />
+            <SavedViews module="user_admin" currentFilters={empViewSnapshot} activeId={empActiveViewId}
+              onApply={(fl) => setUserAdmin(fl as Partial<typeof ua>)} />
+            <button type="button" onClick={toggleDense}
+              className="hidden sm:inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 shrink-0"
+              title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
+              {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
+            </button>
             <FilterBar defs={empFilterDefs} className="hidden sm:flex" />
           </div>
+
+          <SummaryBand className="rounded-lg" tiles={[
+            { label: 'Đang hoạt động', value: scopedRaw.filter(e => !e.deleted_at && e.is_active).length, accent: true },
+            { label: 'Tạm dừng', value: scopedRaw.filter(e => !e.deleted_at && !e.is_active).length },
+            { label: 'Đã ẩn', value: scopedRaw.filter(e => !!e.deleted_at).length },
+          ]} />
 
           {isError && (
             <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
@@ -984,16 +1012,20 @@ export default function UserManagement() {
                   )}
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <Table className="[&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
+                <div className="overflow-auto max-h-[calc(100vh-22rem)]">
+                  <Table className={`table-fixed [&_td]:overflow-hidden [&_th]:overflow-hidden [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap [&_td]:border-r [&_td]:border-slate-100 [&_th]:border-r [&_th]:border-slate-200 ${dense ? '[&_td]:!py-1' : '[&_td]:!py-2.5'}`} style={{ width: empTotalWidth, minWidth: '100%' }}>
+                    <colgroup>{empColW.map((w, i) => <col key={i} style={{ width: w }} />)}</colgroup>
                     <TableHeader>
                       <TableRow>
-                        <TableHead className="px-3 py-2 text-xs">Nhân viên</TableHead>
-                        <TableHead className="px-3 py-2 text-xs">Phòng ban / Chức danh</TableHead>
-                        <TableHead className="px-3 py-2 text-xs">Loại hàng</TableHead>
-                        <TableHead className="px-3 py-2 text-xs">Kho</TableHead>
-                        <TableHead className="px-3 py-2 text-xs">Trạng thái</TableHead>
-                        <TableHead className="px-3 py-2 w-16" />
+                        {['Nhân viên', 'Phòng ban / Chức danh', 'Loại hàng', 'Kho', 'Trạng thái', ''].map((lbl, i) => (
+                          <TableHead key={i} className={`px-3 py-2 text-xs ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                            {lbl}
+                            {i > 0 && i < 5 && (
+                              <span onPointerDown={e => empStartResize(i, e)} onClick={e => e.stopPropagation()}
+                                className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70" title="Kéo để chỉnh độ rộng cột" />
+                            )}
+                          </TableHead>
+                        ))}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -1003,9 +1035,9 @@ export default function UserManagement() {
                         <TableRow key={emp.id}
                           className={`text-sm cursor-pointer ${isDeleted ? 'opacity-50 bg-slate-50' : ''} ${selectedEmp?.id === emp.id ? 'bg-slate-100' : isDeleted ? '' : 'hover:bg-slate-50'}`}
                           onClick={() => setSelectedEmp(prev => prev?.id === emp.id ? null : emp)}>
-                          <TableCell className="px-3 py-2">
-                            <p className={`font-medium ${isDeleted ? 'line-through text-slate-400' : 'text-slate-800'}`}>{emp.name}</p>
-                            <p className="text-xs text-slate-400">{emp.employee_code} · {emp.email ?? '—'}</p>
+                          <TableCell className={`px-3 py-2 sticky left-0 z-10 ${selectedEmp?.id === emp.id ? 'bg-slate-100' : isDeleted ? 'bg-slate-50' : 'bg-white'}`}>
+                            <p className={`font-medium truncate ${isDeleted ? 'line-through text-slate-400' : 'text-slate-800'}`} title={emp.name}>{emp.name}</p>
+                            <p className="text-xs text-slate-400 truncate" title={`${emp.employee_code} · ${emp.email ?? ''}`}>{emp.employee_code} · {emp.email ?? '—'}</p>
                             {isDeleted && <p className="text-[10px] text-amber-600 mt-0.5">Ẩn {new Date(emp.deleted_at!).toLocaleDateString('vi-VN')}</p>}
                           </TableCell>
                           <TableCell className="px-3 py-2">

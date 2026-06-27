@@ -142,6 +142,7 @@ interface UserAdminFilters {
   deptId: string
   jtId: string
   status: 'active' | 'hidden' | 'all'
+  jtDept: string          // tab Chức danh: lọc theo phòng ban
 }
 interface AttendanceTeamFilters {
   view: 'matrix' | 'raw'
@@ -254,7 +255,7 @@ function initialFilters() {
     },
     tmsBookings: { dateFrom: today(), dateTo: today(), warehouseId: '', loaiKho: [], loaiXe: [], huong: [], dvvt: [], khungGio: [], tab: 'main' as const },
     tmsTransfer: { dateFrom: '', dateTo: '', khoXuat: [], khoNhan: [] },
-    userAdmin: { search: '', warehouseId: '__all__', deptId: '__all__', jtId: '__all__', status: 'active' as const },
+    userAdmin: { search: '', warehouseId: '__all__', deptId: '__all__', jtId: '__all__', status: 'active' as const, jtDept: '__all__' },
     attendanceTeam: { view: 'matrix' as const, warehouseId: '', deptId: '', jt: '', q: '', status: 'all' as const, from: today().slice(0, 8) + '01', to: today() },
     attendanceMy: { from: today().slice(0, 8) + '01' },
     leave: { warehouseId: '', deptId: '', jt: '', status: '', from: '', to: '' },

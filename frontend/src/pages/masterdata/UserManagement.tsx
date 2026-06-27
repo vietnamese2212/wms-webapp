@@ -856,15 +856,17 @@ export default function UserManagement() {
 
   const ua = useWmsFilterStore(s => s.userAdmin)
   const setUserAdmin = useWmsFilterStore(s => s.setUserAdmin)
-  const { search, deptId: filterDept, jtId: filterJt, warehouseId: filterWh, status: statusFilter } = ua
+  const { search, deptId: filterDept, jtId: filterJt, warehouseId: filterWh, status: statusFilter, jtDept: filterDeptJt } = ua
   const setSearch       = (v: string) => setUserAdmin({ search: v })
   const setFilterDept   = (v: string) => setUserAdmin({ deptId: v })
   const setFilterJt     = (v: string) => setUserAdmin({ jtId: v })
   const setFilterWh     = (v: string) => setUserAdmin({ warehouseId: v })
   const setStatusFilter = (v: 'active' | 'hidden' | 'all') => setUserAdmin({ status: v })
+  const setFilterDeptJt = (v: string) => setUserAdmin({ jtDept: v })
   const [dense, setDense] = useState(() => localStorage.getItem('user_admin_density') === '1')
   const toggleDense = () => setDense(d => { localStorage.setItem('user_admin_density', d ? '0' : '1'); return !d })
-  const EMP_COL_DEFAULTS = [220, 200, 150, 200, 120, 80]
+  // Cột tab Nhân viên: mỗi giá trị 1 cột (không xếp chồng 2 dòng) — gọn, không wrap
+  const EMP_COL_DEFAULTS = [170, 110, 150, 110, 130, 140, 150, 180, 95, 90]
   const { widths: empColW, startResize: empStartResize, totalWidth: empTotalWidth } = useColumnResize('user_admin_col_widths', EMP_COL_DEFAULTS)
   const empViewSnapshot = { search, deptId: filterDept, jtId: filterJt, warehouseId: filterWh, status: statusFilter }
   const empSavedViews = useSavedViewsStore(s => s.views['user_admin'] ?? [])
@@ -880,7 +882,6 @@ export default function UserManagement() {
 
   const [editingJt,  setEditingJt]  = useState<JobTitle | null>(null)
   const [showJtDlg,  setShowJtDlg]  = useState(false)
-  const [filterDeptJt, setFilterDeptJt] = useState('__all__')
 
   const [selectedEmp,  setSelectedEmp]  = useState<EmployeeRecord | null>(null)
   const [selectedDept, setSelectedDept] = useState<Department | null>(null)
@@ -931,6 +932,13 @@ export default function UserManagement() {
       value: statusFilter === 'active' ? '' : statusFilter,
       onChange: v => setStatusFilter((v || 'active') as 'active' | 'hidden' | 'all'),
       options: [{ value: 'hidden', label: 'Đang ẩn' }, { value: 'all', label: 'Toàn bộ' }] },
+  ]
+
+  // Filter tab Chức danh — FilterBar chuẩn (Phòng ban), state lưu store thay cho useState
+  const jtFilterDefs: FilterDef[] = [
+    { key: 'jtDept', label: 'Phòng ban', type: 'single', allLabel: 'Tất cả phòng ban',
+      value: filterDeptJt === '__all__' ? '' : filterDeptJt, onChange: v => setFilterDeptJt(v || '__all__'),
+      options: departments.map(d => ({ value: d.id, label: d.name })) },
   ]
 
   return (
@@ -1003,14 +1011,14 @@ export default function UserManagement() {
                 </div>
               ) : (
                 <div className="overflow-auto max-h-[calc(100vh-22rem)]">
-                  <Table className={`table-fixed [&_td]:overflow-hidden [&_th]:overflow-hidden [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap [&_td]:border-r [&_td]:border-slate-100 [&_th]:border-r [&_th]:border-slate-200 ${dense ? '[&_td]:!py-1' : '[&_td]:!py-2.5'}`} style={{ width: empTotalWidth, minWidth: '100%' }}>
+                  <Table className={`table-fixed [&_td]:overflow-hidden [&_th]:overflow-hidden [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap [&_td]:border-r [&_td]:border-slate-100 [&_th]:border-r [&_th]:border-slate-200 ${dense ? '[&_td]:!py-1' : '[&_td]:!py-2'}`} style={{ width: empTotalWidth, minWidth: '100%' }}>
                     <colgroup>{empColW.map((w, i) => <col key={i} style={{ width: w }} />)}</colgroup>
                     <TableHeader>
                       <TableRow>
-                        {['Nhân viên', 'Phòng ban / Chức danh', 'Loại hàng', 'Kho', 'Trạng thái', ''].map((lbl, i) => (
+                        {['Họ tên', 'Mã NV', 'Đăng nhập', 'SĐT', 'Phòng ban', 'Chức danh', 'Loại hàng', 'Kho', 'Trạng thái', ''].map((lbl, i) => (
                           <TableHead key={i} className={`px-3 py-2 text-xs ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
                             {lbl}
-                            {i > 0 && i < 5 && (
+                            {i < 9 && (
                               <span onPointerDown={e => empStartResize(i, e)} onClick={e => e.stopPropagation()}
                                 className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70" title="Kéo để chỉnh độ rộng cột" />
                             )}
@@ -1021,40 +1029,41 @@ export default function UserManagement() {
                     <TableBody>
                       {employees.map(emp => {
                         const isDeleted = !!emp.deleted_at
+                        const cats = emp.allowed_categories ?? []
+                        const whList = emp.warehouse_access ?? []
                         return (
                         <TableRow key={emp.id}
                           className={`text-sm cursor-pointer ${isDeleted ? 'opacity-50 bg-slate-50' : ''} ${selectedEmp?.id === emp.id ? 'bg-slate-100' : isDeleted ? '' : 'hover:bg-slate-50'}`}
                           onClick={() => setSelectedEmp(prev => prev?.id === emp.id ? null : emp)}>
                           <TableCell className={`px-3 py-2 sticky left-0 z-10 ${selectedEmp?.id === emp.id ? 'bg-slate-100' : isDeleted ? 'bg-slate-50' : 'bg-white'}`}>
-                            <p className={`font-medium truncate ${isDeleted ? 'line-through text-slate-400' : 'text-slate-800'}`} title={emp.name}>{emp.name}</p>
-                            <p className="text-xs text-slate-400 truncate" title={`${emp.employee_code} · ${emp.email ?? ''}`}>{emp.employee_code} · {emp.email ?? '—'}</p>
-                            {isDeleted && <p className="text-[10px] text-amber-600 mt-0.5">Ẩn {new Date(emp.deleted_at!).toLocaleDateString('vi-VN')}</p>}
+                            <span className={`font-medium block truncate ${isDeleted ? 'line-through text-slate-400' : 'text-slate-800'}`} title={emp.name}>{emp.name}</span>
                           </TableCell>
-                          <TableCell className="px-3 py-2">
-                            <p className="text-slate-700">{emp.dept?.name ?? '—'}</p>
-                            <p className="text-xs text-slate-400">{emp.job_title?.name ?? '—'}</p>
-                          </TableCell>
-                          <TableCell className="px-3 py-2">
-                            <div className="flex gap-1 flex-wrap">
-                              {(emp.allowed_categories ?? []).map(cat => (
-                                <span key={cat} className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium
+                          <TableCell className="px-3 py-2 font-mono font-semibold text-[11px] text-slate-600 truncate" title={emp.employee_code}>{emp.employee_code}</TableCell>
+                          <TableCell className="px-3 py-2 text-slate-600 truncate" title={emp.email ?? '—'}>{emp.email ?? <span className="text-slate-300">—</span>}</TableCell>
+                          <TableCell className="px-3 py-2 text-slate-600 truncate" title={emp.phone ?? '—'}>{emp.phone ?? <span className="text-slate-300">—</span>}</TableCell>
+                          <TableCell className="px-3 py-2 text-slate-700 truncate" title={emp.dept?.name ?? '—'}>{emp.dept?.name ?? <span className="text-slate-300">—</span>}</TableCell>
+                          <TableCell className="px-3 py-2 text-slate-600 truncate" title={emp.job_title?.name ?? '—'}>{emp.job_title?.name ?? <span className="text-slate-300">—</span>}</TableCell>
+                          <TableCell className="px-3 py-2" title={cats.join(', ')}>
+                            <div className="flex gap-1 overflow-hidden">
+                              {cats.length === 0 ? <span className="text-slate-300">—</span> : cats.map(cat => (
+                                <span key={cat} className={`inline-flex shrink-0 items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium
                                   ${CATEGORY_COLOR[cat] ?? 'bg-slate-100 text-slate-600'}`}>{cat}</span>
                               ))}
                             </div>
                           </TableCell>
-                          <TableCell className="px-3 py-2">
+                          <TableCell className="px-3 py-2"
+                            title={emp.warehouse_scope === 'NATIONAL' ? 'Toàn quốc' : whList.map(wa => wa.warehouse?.name ?? wa.warehouse_id).join(', ')}>
                             {emp.warehouse_scope === 'NATIONAL' ? (
                               <span className="text-xs text-blue-600 font-medium">Toàn quốc</span>
+                            ) : whList.length === 0 ? (
+                              <span className="text-xs text-amber-600">Chưa gán kho</span>
                             ) : (
-                              <div className="flex gap-1 flex-wrap">
-                                {(emp.warehouse_access ?? []).map(wa => (
-                                  <span key={wa.warehouse_id} className="text-xs text-slate-600 bg-slate-100 rounded px-1.5 py-0.5">
+                              <div className="flex gap-1 overflow-hidden">
+                                {whList.map(wa => (
+                                  <span key={wa.warehouse_id} className="shrink-0 text-xs text-slate-600 bg-slate-100 rounded px-1.5 py-0.5">
                                     {wa.warehouse?.name ?? wa.warehouse_id}
                                   </span>
                                 ))}
-                                {(emp.warehouse_access ?? []).length === 0 && (
-                                  <span className="text-xs text-amber-600">Chưa gán kho</span>
-                                )}
                               </div>
                             )}
                           </TableCell>
@@ -1136,7 +1145,7 @@ export default function UserManagement() {
         </TabsContent>
 
         {/* ── Tab: Phòng ban ── */}
-        <TabsContent value="departments" className="space-y-3">
+        <TabsContent value="departments" className="space-y-2">
           <div className="flex items-center justify-between">
             <p className="text-xs text-slate-500">{departments.length} phòng ban</p>
             {isAdminUser && (
@@ -1158,8 +1167,8 @@ export default function UserManagement() {
                   )}
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <Table>
+                <div className="overflow-auto max-h-[calc(100vh-16rem)]">
+                  <Table className="[&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
                     <TableHeader>
                       <TableRow>
                         <TableHead className="px-3 py-2 text-xs">Mã</TableHead>
@@ -1174,7 +1183,7 @@ export default function UserManagement() {
                           className={`text-sm cursor-pointer ${selectedDept?.id === d.id ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
                           onClick={() => setSelectedDept(prev => prev?.id === d.id ? null : d)}>
                           <TableCell className="px-3 py-2 font-mono font-semibold text-slate-600 text-[11px]">{d.code}</TableCell>
-                          <TableCell className="px-3 py-2 font-medium text-slate-800">{d.name}</TableCell>
+                          <TableCell className="px-3 py-2 font-medium text-slate-800 truncate" title={d.name}>{d.name}</TableCell>
                           <TableCell className="px-3 py-2">
                             <Badge variant={d.is_active ? 'default' : 'secondary'} className="text-xs">
                               {d.is_active ? 'Hoạt động' : 'Tạm dừng'}
@@ -1215,27 +1224,17 @@ export default function UserManagement() {
         </TabsContent>
 
         {/* ── Tab: Chức danh ── */}
-        <TabsContent value="job-titles" className="space-y-3">
-          <div className="flex items-center justify-between">
-            <p className="text-xs text-slate-500">{visibleJobTitles.length} chức danh</p>
+        <TabsContent value="job-titles" className="space-y-2">
+          <div className="flex gap-2 flex-wrap items-center">
+            <FilterSheetButton defs={jtFilterDefs} className="sm:hidden" />
+            <span className="text-xs text-slate-500 mr-auto">{visibleJobTitles.length} chức danh</span>
             {isAdminUser && (
-              <Button size="sm" className="gap-1.5" onClick={() => { setEditingJt(null); setShowJtDlg(true) }}>
+              <Button size="sm" className="gap-1.5 h-8" onClick={() => { setEditingJt(null); setShowJtDlg(true) }}>
                 <Plus className="h-4 w-4" /> Thêm chức danh
               </Button>
             )}
           </div>
-          <Select value={filterDeptJt} onValueChange={setFilterDeptJt}>
-            <SelectTrigger className="h-8 text-sm w-[200px]">
-              <Building2 className="h-3.5 w-3.5 mr-1.5 text-slate-400 shrink-0" />
-              <SelectValue placeholder="Tất cả phòng ban" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">Tất cả phòng ban</SelectItem>
-              {departments.map(d => (
-                <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <FilterBar defs={jtFilterDefs} className="hidden sm:flex" />
           <div className="flex gap-3 items-start">
             <Card className="flex-1 min-w-0">
               {visibleJobTitles.length === 0 ? (
@@ -1249,8 +1248,8 @@ export default function UserManagement() {
                   )}
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <Table>
+                <div className="overflow-auto max-h-[calc(100vh-16rem)]">
+                  <Table className="[&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
                     <TableHeader>
                       <TableRow>
                         <TableHead className="px-3 py-2 text-xs">Chức danh</TableHead>
@@ -1264,8 +1263,8 @@ export default function UserManagement() {
                         <TableRow key={jt.id}
                           className={`text-sm cursor-pointer ${selectedJt?.id === jt.id ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
                           onClick={() => setSelectedJt(prev => prev?.id === jt.id ? null : jt)}>
-                          <TableCell className="px-3 py-2 font-medium text-slate-800">{jt.name}</TableCell>
-                          <TableCell className="px-3 py-2 text-slate-600 text-xs">{jt.department?.name ?? '—'}</TableCell>
+                          <TableCell className="px-3 py-2 font-medium text-slate-800 truncate" title={jt.name}>{jt.name}</TableCell>
+                          <TableCell className="px-3 py-2 text-slate-600 text-xs truncate" title={jt.department?.name ?? '—'}>{jt.department?.name ?? '—'}</TableCell>
                           <TableCell className="px-3 py-2">
                             <Badge variant={jt.is_active ? 'default' : 'secondary'} className="text-xs">
                               {jt.is_active ? 'Hoạt động' : 'Tạm dừng'}

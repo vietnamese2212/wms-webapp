@@ -956,22 +956,7 @@ export default function UserManagement() {
         </TabsList>
 
         {/* ── Tab: Nhân viên ── */}
-        <TabsContent value="employees" className="space-y-3">
-          <div className="flex items-center justify-between">
-            <p className="text-xs text-slate-500">
-              {statusFilter === 'hidden'
-                ? `${employees.length} đã ẩn`
-                : statusFilter === 'all'
-                  ? `${scopedRaw.filter(e => !e.deleted_at).length} nhân viên · ${scopedRaw.filter(e => !!e.deleted_at).length} đã ẩn`
-                  : `${employees.length} nhân viên`}
-            </p>
-            {canCreateEmp && (
-              <Button size="sm" className="gap-1.5" onClick={() => { setEditingEmp(null); setShowEmpDlg(true) }}>
-                <Plus className="h-4 w-4" /> Thêm nhân viên
-              </Button>
-            )}
-          </div>
-
+        <TabsContent value="employees" className="space-y-2">
           <div className="flex gap-2 flex-wrap items-center">
             <SearchInput value={search} onChange={setSearch} placeholder="Tìm tên, mã, đăng nhập…" className="flex-1 min-w-[200px]" />
             <FilterSheetButton defs={empFilterDefs} className="sm:hidden" />
@@ -982,8 +967,13 @@ export default function UserManagement() {
               title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
               {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
             </button>
-            <FilterBar defs={empFilterDefs} className="hidden sm:flex" />
+            {canCreateEmp && (
+              <Button size="sm" className="gap-1.5 h-8" onClick={() => { setEditingEmp(null); setShowEmpDlg(true) }}>
+                <Plus className="h-4 w-4" /> Thêm nhân viên
+              </Button>
+            )}
           </div>
+          <FilterBar defs={empFilterDefs} className="hidden sm:flex" />
 
           <SummaryBand className="rounded-lg" tiles={[
             { label: 'Đang hoạt động', value: scopedRaw.filter(e => !e.deleted_at && e.is_active).length, accent: true },

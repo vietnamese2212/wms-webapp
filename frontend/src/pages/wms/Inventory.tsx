@@ -782,7 +782,7 @@ export default function Inventory() {
           </button>
           {can(user?.module_permissions, 'inventory', 'export') && (
             <button type="button" onClick={handleExport} disabled={exporting}
-              className="inline-flex h-7 items-center gap-1 px-2 rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0 disabled:opacity-50"
+              className="hidden sm:inline-flex h-7 items-center gap-1 px-2 rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0 disabled:opacity-50"
               title={`Xuất Excel ${aggregate ? 'bảng tổng hợp' : 'chi tiết pallet'} theo bộ lọc hiện tại`}>
               <Download className="h-3.5 w-3.5" />{exporting ? 'Đang xuất…' : 'Excel'}
             </button>
@@ -1054,25 +1054,27 @@ function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick, warehouse
       </TableCell>
       {/* Tên hàng */}
       <TableCell className="px-2 py-1 whitespace-nowrap">
-        <span className="text-[10px] text-slate-700">{matName}</span>
+        <span className="text-[10px] text-slate-700 truncate block" title={matName}>{matName}</span>
       </TableCell>
       {/* Mã pallet */}
       <TableCell className="px-2 py-1 whitespace-nowrap">
-        <span className="text-[10px] font-mono font-semibold">{e.pallet_code}</span>
-        {e.parent_pallet_code && (
-          <span className="ml-1 inline-flex items-center gap-0.5 rounded-full bg-sky-100 px-1 py-0.5 text-[8px] text-sky-700" title={`Đã dồn vào ${e.parent_pallet_code}`}>
-            <Layers className="h-2 w-2" />dồn
-          </span>
-        )}
-        {e.origin === 'SPLIT' && (
-          <span className="ml-1 inline-flex items-center gap-0.5 rounded-full bg-violet-100 px-1 py-0.5 text-[8px] text-violet-700" title="Pallet tách ra">
-            <Scissors className="h-2 w-2" />tách
-          </span>
-        )}
+        <div className="flex items-center min-w-0">
+          <span className="text-[10px] font-mono font-semibold truncate" title={e.pallet_code}>{e.pallet_code}</span>
+          {e.parent_pallet_code && (
+            <span className="ml-1 shrink-0 inline-flex items-center gap-0.5 rounded-full bg-sky-100 px-1 py-0.5 text-[8px] text-sky-700" title={`Đã dồn vào ${e.parent_pallet_code}`}>
+              <Layers className="h-2 w-2" />dồn
+            </span>
+          )}
+          {e.origin === 'SPLIT' && (
+            <span className="ml-1 shrink-0 inline-flex items-center gap-0.5 rounded-full bg-violet-100 px-1 py-0.5 text-[8px] text-violet-700" title="Pallet tách ra">
+              <Scissors className="h-2 w-2" />tách
+            </span>
+          )}
+        </div>
       </TableCell>
       {/* Vị trí */}
       <TableCell className="px-2 py-1 whitespace-nowrap">
-        <span className="text-[10px] font-mono text-slate-700">{loc}</span>
+        <span className="text-[10px] font-mono text-slate-700 truncate block" title={loc}>{loc}</span>
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         <span className="text-[10px] tabular-nums text-slate-500">{e.cartons_imported}</span>

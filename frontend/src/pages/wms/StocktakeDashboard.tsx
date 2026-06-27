@@ -7,11 +7,14 @@ import {
 import { useAuthStore } from '@/stores/authStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { can, type ModulePermissions } from '@/config/permissions'
+import * as XLSX from 'xlsx'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
+import { SavedViews } from '@/components/shared/SavedViews'
+import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
-import { BarChart2, Flag, MapPin, X } from 'lucide-react'
+import { BarChart2, Flag, MapPin, X, Download, Rows3, AlignJustify } from 'lucide-react'
 import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { rowText, type RowStatusKey } from '@/lib/rowStatus'
 
@@ -228,7 +231,12 @@ export default function StocktakeDashboard() {
   const { warehouseId, category, locationIds, requiresOnly, view } = useWmsFilterStore(s => s.stocktakeSummary)
   const setStocktakeSummary = useWmsFilterStore(s => s.setStocktakeSummary)
   const [selectedId,   setSelectedId]   = useState<string | null>(null)
+  const [dense, setDense] = useState(() => localStorage.getItem('stocktake_summary_density') === '1')
+  const toggleDense = () => setDense(d => { localStorage.setItem('stocktake_summary_density', d ? '0' : '1'); return !d })
   const { widths: colW, startResize, totalWidth } = useColumnResize('stocktake_summary_col_widths', STK_COL_DEFAULTS)
+  const viewSnapshot = { warehouseId, category, locationIds, requiresOnly }
+  const savedViews = useSavedViewsStore(s => s.views['stocktake_summary'] ?? [])
+  const activeViewId = savedViews.find(v => JSON.stringify(v.filters) === JSON.stringify(viewSnapshot))?.id ?? null
 
   // Mặc định kho = kho đầu tiên của user nếu store chưa có (cần kho để chọn vị trí)
   useEffect(() => {
@@ -282,6 +290,24 @@ export default function StocktakeDashboard() {
       options: filteredLocations.map((l: { id: string; location_code: string; requires_stocktake?: boolean }) => ({ value: l.id, label: `${l.location_code}${l.requires_stocktake ? ' 🚩' : ''}` })) },
   ]
 
+  function exportExcel() {
+    const sheet = entries.map(e => {
+      const diff = parseDiff(e.stocktake_flag_note ?? null)
+      return {
+        'Mã pallet': e.pallet_code, 'Vị trí': e.location?.location_code ?? '',
+        'Tên hàng': e.material?.short_name ?? e.material?.material_code ?? '',
+        'Tồn App': e.cartons_remaining, 'Thực tế': diff?.actual ?? '', 'Chênh lệch': diff?.diff ?? '',
+        'Người kiểm': e.stocktake_by_emp?.name ?? '',
+        'TG kiểm': e.stocktake_at ? `${formatTimestampDate(e.stocktake_at, true)} ${formatTimestampTime(e.stocktake_at)}` : '',
+        'Trạng thái': e.stocktake_flagged ? 'Chênh lệch' : (isCheckedToday(e, todayVN, todayStart) ? 'Đã kiểm' : 'Chưa kiểm'),
+      }
+    })
+    const ws = XLSX.utils.json_to_sheet(sheet)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Tổng hợp KK')
+    XLSX.writeFile(wb, `tong_hop_kk_${todayVN}.xlsx`)
+  }
+
   return (
     <div className="flex flex-col h-full sm:p-3">
      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
@@ -302,6 +328,18 @@ export default function StocktakeDashboard() {
             </span>
           </label>
           <div className="flex-1" />
+          <SavedViews module="stocktake_summary" currentFilters={viewSnapshot} activeId={activeViewId}
+            onApply={(fl) => setStocktakeSummary(fl as Partial<typeof viewSnapshot>)} />
+          <button type="button" onClick={toggleDense}
+            className="hidden sm:inline-flex h-6 w-6 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 shrink-0"
+            title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
+            {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
+          </button>
+          <button type="button" onClick={exportExcel} disabled={!entries.length}
+            className="hidden sm:inline-flex items-center gap-1 h-6 px-2 rounded-md border border-slate-200 text-[11px] font-medium text-slate-600 hover:bg-slate-50 shrink-0 disabled:opacity-50"
+            title="Xuất Excel">
+            <Download className="h-3.5 w-3.5" /> Excel
+          </button>
           <FilterSheetButton defs={defs} className="sm:hidden" />
           <FilterBar defs={defs} className="hidden sm:flex" />
         </div>
@@ -336,7 +374,7 @@ export default function StocktakeDashboard() {
           <>
             {/* Table — overflow-auto cho cả scroll dọc lẫn ngang + sticky header */}
             <div className="flex-1 min-w-0 overflow-auto pb-20 lg:pb-4">
-              <Table className="table-fixed [&_td]:overflow-hidden [&_th]:overflow-hidden [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100" style={{ width: totalWidth, minWidth: '100%' }}>
+              <Table className={`table-fixed [&_td]:overflow-hidden [&_th]:overflow-hidden [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100 ${dense ? '[&_td]:!py-0.5' : '[&_td]:!py-1.5'}`} style={{ width: totalWidth, minWidth: '100%' }}>
                 <colgroup>
                   {colW.map((w, i) => <col key={i} style={{ width: w }} />)}
                 </colgroup>
@@ -383,12 +421,12 @@ export default function StocktakeDashboard() {
                           </span>
                         </TableCell>
                         <TableCell className="px-2 py-1 whitespace-nowrap">
-                          <span className="font-mono text-[10px]">
+                          <span className="font-mono text-[10px] block truncate" title={e.location?.location_code ?? ''}>
                             {e.location?.location_code ?? <span className="text-slate-300">—</span>}
                           </span>
                         </TableCell>
                         <TableCell className="px-2 py-1 whitespace-nowrap">
-                          <span className="text-[10px]">
+                          <span className="text-[10px] block truncate" title={e.material?.short_name ?? e.material?.material_code ?? ''}>
                             {e.material?.short_name ?? e.material?.material_code ?? '—'}
                           </span>
                         </TableCell>

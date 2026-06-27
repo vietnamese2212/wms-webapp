@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
-import { MapPin, Plus, Pencil, Trash2, Flag, X, Rows3, AlignJustify } from 'lucide-react'
+import * as XLSX from 'xlsx'
+import { MapPin, Plus, Pencil, Trash2, Flag, X, Rows3, AlignJustify, Download } from 'lucide-react'
 import { formatDateTime } from '@/utils/formatters'
 import { omniMatch } from '@/utils/omniSearch'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
+import { SavedViews } from '@/components/shared/SavedViews'
+import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
@@ -72,6 +75,9 @@ export default function Locations() {
   const perms = user?.module_permissions as ModulePermissions | null ?? null
   const { search, warehouseId, catFilter, statusFilter, flagFilter } = useWmsFilterStore(s => s.locations)
   const setLocationsFilter = useWmsFilterStore(s => s.setLocations)
+  const viewSnapshot = { search, warehouseId, catFilter, statusFilter, flagFilter }
+  const savedViews = useSavedViewsStore(s => s.views['locations'] ?? [])
+  const activeViewId = savedViews.find(v => JSON.stringify(v.filters) === JSON.stringify(viewSnapshot))?.id ?? null
 
   // Mặc định kho = kho của user nếu store chưa có (giữ UX cũ)
   useEffect(() => {
@@ -242,6 +248,19 @@ export default function Locations() {
       onChange: v => setLocationsFilter({ flagFilter: v.includes('flag') }) },
   ]
 
+  function exportExcel() {
+    const sheet = filtered.map(l => ({
+      'Kho': l.warehouse?.name ?? '', 'Loại': l.category ?? '',
+      'Nhóm': l.sub_code + (l.sub_name && l.sub_name !== l.sub_code ? ` (${l.sub_name})` : ''),
+      'Mã vị trí': l.location_code, 'Sức chứa': l.max_pallets, 'Đang dùng': l.used_slots,
+      'Cần check': l.requires_stocktake ? 'x' : '', 'Trạng thái': !l.is_active ? 'Đã xóa' : (l.used_slots >= l.max_pallets ? 'Đầy' : l.used_slots > 0 ? 'Còn chỗ' : 'Trống'),
+    }))
+    const ws = XLSX.utils.json_to_sheet(sheet)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Vị trí kho')
+    XLSX.writeFile(wb, `vi_tri_kho_${new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })}.xlsx`)
+  }
+
   return (
     <div className="flex flex-col h-full sm:p-3">
      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
@@ -253,6 +272,13 @@ export default function Locations() {
           </span>
           <SearchInput value={search} onChange={v => setLocationsFilter({ search: v })} placeholder="Tìm vị trí, kho, loại, hàng/kệ…" className="flex-1 min-w-[140px]" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
+          <SavedViews module="locations" currentFilters={viewSnapshot} activeId={activeViewId}
+            onApply={(fl) => setLocationsFilter(fl as Partial<typeof viewSnapshot>)} />
+          <button type="button" onClick={exportExcel} disabled={!filtered.length}
+            className="hidden sm:inline-flex items-center gap-1 h-7 px-2.5 rounded-md border border-slate-200 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors shrink-0 disabled:opacity-50"
+            title="Xuất Excel">
+            <Download className="h-3.5 w-3.5" /> Excel
+          </button>
           <button type="button" onClick={toggleDensity}
             className="hidden sm:inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0"
             title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>

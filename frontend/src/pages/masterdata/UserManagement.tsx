@@ -983,7 +983,7 @@ export default function UserManagement() {
           </div>
           <FilterBar defs={empFilterDefs} className="hidden sm:flex" />
 
-          <SummaryBand className="rounded-lg" tiles={[
+          <SummaryBand compact className="rounded-lg" tiles={[
             { label: 'Đang hoạt động', value: scopedRaw.filter(e => !e.deleted_at && e.is_active).length, accent: true },
             { label: 'Tạm dừng', value: scopedRaw.filter(e => !e.deleted_at && !e.is_active).length },
             { label: 'Đã ẩn', value: scopedRaw.filter(e => !!e.deleted_at).length },

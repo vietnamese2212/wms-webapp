@@ -12,13 +12,13 @@ export interface BandTile {
   accent?: boolean   // tô số bằng màu nổi (vd tổng quan trọng)
 }
 
-export function SummaryBand({ tiles, className }: { tiles: BandTile[]; className?: string }) {
+export function SummaryBand({ tiles, className, compact }: { tiles: BandTile[]; className?: string; compact?: boolean }) {
   return (
     <div className={`flex divide-x divide-white/15 bg-sky-800 text-white overflow-x-auto no-scrollbar shrink-0 ${className ?? ''}`}>
       {tiles.map((t, i) => (
-        <div key={i} className="flex-1 min-w-[84px] px-3 py-1.5 text-center">
+        <div key={i} className={`flex-1 min-w-[84px] text-center ${compact ? 'px-3 py-0.5' : 'px-3 py-1.5'}`}>
           <div className="text-[9px] font-medium uppercase tracking-wider text-sky-200/90 truncate">{t.label}</div>
-          <div className={`text-base font-semibold leading-tight tabular-nums ${t.accent ? 'text-amber-300' : 'text-white'}`}>
+          <div className={`font-semibold leading-tight tabular-nums ${compact ? 'text-xs' : 'text-base'} ${t.accent ? 'text-amber-300' : 'text-white'}`}>
             {t.value}
           </div>
         </div>

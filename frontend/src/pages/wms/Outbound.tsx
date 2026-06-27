@@ -11,7 +11,7 @@ import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect
 import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
 import { Input }  from '@/components/ui/input'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { SingleSelect } from '@/components/shared/SingleSelect'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useGDOs, useUploadGDOExcel, useWarehouses, useWarehouseTypes, useCreateGDO, useUpdateGDO, useMaterials, useGDO, useAssignGDO, useVehicleTypes, useVehicleTypesByWarehouse, useTransportCompanies } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
@@ -80,7 +80,7 @@ type WarehouseLite = { id: string; name: string; code?: string; warehouse_type?:
 const OUTBOUND_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
   { id: 'pin',       label: '',              w: 34 },
   { id: 'date',      label: 'Ngày xuất',     w: 96 },
-  { id: 'code',      label: 'Số xe',         w: 120 },
+  { id: 'code',      label: 'Số xe',         w: 132 },
   { id: 'npp',       label: 'Tên NPP',       w: 150 },
   { id: 'shipto',    label: 'Ship-to',       w: 96 },
   { id: 'dvvt',      label: 'ĐVVT',          w: 80 },
@@ -102,6 +102,8 @@ const OUTBOUND_COLS: { id: string; label: string; w: number; align?: 'right' }[]
   { id: 'do',        label: 'Số DO',         w: 120 },
 ]
 const OUTBOUND_COL_DEFAULTS = OUTBOUND_COLS.map(c => c.w)
+// Pallet là số lẻ (thùng / thùng-mỗi-pallet) → làm tròn 2 chữ số, cắt đuôi 0 (tránh "3.5300000000000002")
+const fmtPallets = (n: number | null | undefined) => +(Number(n ?? 0).toFixed(2))
 
 export default function Outbound() {
   const navigate = useNavigate()
@@ -491,7 +493,7 @@ export default function Outbound() {
         { label: 'Chuyến xe', value: summary.count },
         { label: 'Tổng thùng', value: summary.cartons.toLocaleString('vi-VN') },
         { label: 'Tổng (k QR)', value: summary.cartonsNoqr.toLocaleString('vi-VN') },
-        { label: 'Pallet', value: summary.pallets.toLocaleString('vi-VN') },
+        { label: 'Pallet', value: fmtPallets(summary.pallets).toLocaleString('vi-VN') },
         { label: 'Hoàn thành', value: summary.completed, accent: summary.completed > 0 },
       ]} />
 
@@ -622,7 +624,7 @@ function GDORow({ gdo, onClick, onAssign, dense = true, pinW = 34, isProdDest = 
         ) : <span className="text-slate-300">—</span>}
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
-        <span className="text-[10px] font-semibold tabular-nums">{gdo.total_pallets ?? 0}</span>
+        <span className="text-[10px] font-semibold tabular-nums">{fmtPallets(gdo.total_pallets)}</span>
         <span className="text-[9px] text-slate-400 ml-0.5">pl</span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
@@ -1075,7 +1077,7 @@ function GDOFormBody({
 
       {/* Metadata fields — compact strip, no scroll */}
       <div className="shrink-0 border-b bg-slate-50/50 px-4 py-2.5">
-        <div className="grid grid-cols-3 gap-x-4 gap-y-2">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2">
           <div className="space-y-1">
             <label className="text-[10px] font-medium text-slate-500">Ngày xuất <span className="text-red-500">*</span></label>
             <Input type="date" className="h-7 text-xs" value={date} min={TODAY_STR} onChange={e => setDate(e.target.value)} />
@@ -1093,13 +1095,14 @@ function GDOFormBody({
           {setWarehouseType !== undefined ? (
             <div className="space-y-1">
               <label className="text-[10px] font-medium text-slate-500">Loại kho <span className="text-red-500">*</span></label>
-              <Select value={warehouseType || '__none__'} onValueChange={v => setWarehouseType(v === '__none__' ? '' : v)}>
-                <SelectTrigger className="h-7 text-xs"><SelectValue placeholder="Loại kho…" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">— Chọn loại kho</SelectItem>
-                  {whTypesInForm.map(t => <SelectItem key={t.id} value={t.value}>{t.value}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <SingleSelect
+                options={[{ value: '', label: '— Chọn loại kho' }, ...whTypesInForm.map(t => ({ value: t.value, label: t.value }))]}
+                value={warehouseType ?? ''}
+                onChange={setWarehouseType}
+                placeholder="Loại kho…"
+                searchable={false}
+                triggerClassName="h-7"
+              />
             </div>
           ) : <div />}
           <div className="space-y-1">

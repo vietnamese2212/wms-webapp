@@ -336,18 +336,20 @@ function SingleList({ def, onClose, fullWidth = false }: { def: Extract<FilterDe
         <input autoFocus className={`w-full border border-slate-200 rounded px-2 outline-none focus:border-blue-400 ${fullWidth ? 'h-9 text-sm' : 'py-1 text-xs'}`}
           placeholder="Tìm…" value={search} onChange={e => setSearch(e.target.value)} />
       </div>
-      <div className="overflow-y-auto flex-1 py-0.5">
-        <button type="button" onClick={() => { def.onChange(''); onClose() }}
-          className={`w-full text-left px-3 hover:bg-slate-50 ${row} ${def.value === '' ? 'text-blue-700 font-medium' : 'text-slate-500'}`}>
-          {def.allLabel ?? 'Tất cả'}
-        </button>
+      <div className="overflow-y-auto flex-1">
+        <label onClick={() => { def.onChange(''); onClose() }}
+          className={`flex items-center gap-2 px-3 hover:bg-slate-50 cursor-pointer border-b border-slate-100 ${row}`}>
+          <Cbx checked={def.value === ''} />
+          <span className={`text-slate-500 font-medium ${fullWidth ? 'text-sm' : 'text-[11px]'}`}>{def.allLabel ?? 'Tất cả'}</span>
+        </label>
         {visible.length === 0 ? (
           <div className="px-3 py-2 text-xs text-slate-400 text-center">Không tìm thấy</div>
         ) : visible.map(o => (
-          <button key={o.value} type="button" onClick={() => { def.onChange(o.value); onClose() }}
-            className={`w-full text-left px-3 hover:bg-slate-50 ${row} ${def.value === o.value ? 'text-blue-700 font-medium' : 'text-slate-700'}`}>
-            {o.label}
-          </button>
+          <label key={o.value} onClick={() => { def.onChange(o.value); onClose() }}
+            className={`flex items-center gap-2 px-3 hover:bg-slate-50 cursor-pointer ${row}`}>
+            <Cbx checked={def.value === o.value} />
+            <span className={`text-slate-700 ${fullWidth ? 'text-sm' : 'text-[11px]'}`}>{o.label}</span>
+          </label>
         ))}
       </div>
     </div>

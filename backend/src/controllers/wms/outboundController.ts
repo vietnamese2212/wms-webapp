@@ -7,6 +7,35 @@ import { effectiveNoQr, markItemsNoQrIfQty } from '../../lib/inventoryMode'
 
 const now = () => new Date().toISOString()
 
+// ─── Warehouse-scope cho route GHI (mirror guardGateScope/guardInboundScope) ────
+// NATIONAL → null (toàn quyền). Khác → danh sách kho được gán cho user.
+function scopeWhIds(req: Request): string[] | null {
+  return req.user?.warehouse_scope === 'NATIONAL' ? null : (req.user?.warehouse_ids ?? [])
+}
+// Kiểm 1 kho có thuộc phạm vi user không (KHÔNG truy DB). NATIONAL → luôn true.
+function inScope(req: Request, whId: string | null | undefined): boolean {
+  const scope = scopeWhIds(req)
+  if (scope === null) return true
+  return !!whId && scope.includes(whId)
+}
+// Chặn 403 nếu chuyến (GDO) không thuộc kho trong phạm vi user (fetch warehouse_id của GDO).
+async function guardGdoScope(req: Request, res: Response, gdoId: string): Promise<boolean> {
+  if (scopeWhIds(req) === null) return true
+  const { data } = await supabase.from('GroupDeliveryOrder')
+    .select('warehouse_id').eq('id', gdoId).maybeSingle()
+  if (!inScope(req, (data as { warehouse_id: string | null } | null)?.warehouse_id)) {
+    fail(res, 'Chuyến xe không thuộc kho trong phạm vi của bạn', 403); return false
+  }
+  return true
+}
+// Chặn 403 nếu tạo/chuyển dữ liệu sang kho ngoài phạm vi user.
+function guardWhCreate(req: Request, res: Response, whId: string | null | undefined): boolean {
+  if (!inScope(req, whId)) {
+    fail(res, 'Không thể thao tác với kho ngoài phạm vi của bạn', 403); return false
+  }
+  return true
+}
+
 // ─── Helpers ──────────────────────────────────────────────────
 
 // Điều chỉnh remaining/reserved của 1 InventoryEntry AN TOÀN ĐUA (optimistic-lock + retry).
@@ -363,6 +392,7 @@ export async function createGDO(req: Request, res: Response) {
     if (!delivery_date) return fail(res, 'delivery_date là bắt buộc', 400)
     if (!delivery_code?.trim()) return fail(res, 'Số DO là bắt buộc', 400)
     if (!items?.length) return fail(res, 'Phải có ít nhất 1 mặt hàng', 400)
+    if (!guardWhCreate(req, res, warehouse_id)) return
 
     // Auto-generate group_code: warehouseCode_X_ddmmyy_stt
     const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -513,6 +543,7 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
 
 export async function deleteGDO(req: Request, res: Response) {
   try {
+    if (!(await guardGdoScope(req, res, req.params.id))) return
     const { data: gdo } = await supabase.from('GroupDeliveryOrder')
       .select('status').eq('id', req.params.id).single()
     if (!gdo) return fail(res, 'Không tìm thấy chuyến xe', 404)
@@ -539,6 +570,9 @@ export async function updateGDO(req: Request, res: Response) {
       customer_name?: string; delivery_code?: string; export_type?: string; gate_registration_id?: string | null; shipto_party?: string | null
       items?: Array<{ db_id?: string; material_code: string; cartons_ordered: number; loose_picking?: number; header_text?: string }>
     }
+
+    if (!(await guardGdoScope(req, res, req.params.id))) return
+    if (warehouse_id && !guardWhCreate(req, res, warehouse_id)) return
 
     const { data: gdo } = await supabase.from('GroupDeliveryOrder')
       .select('status').eq('id', req.params.id).single()
@@ -712,6 +746,7 @@ export async function updateGDO(req: Request, res: Response) {
 
 export async function patchGDO(req: Request, res: Response) {
   try {
+    if (!(await guardGdoScope(req, res, req.params.id))) return
     const { delivery_date, status } = req.body as { delivery_date?: string; status?: string }
 
     // PAUSED: chỉ cho đổi status (ví dụ resume → IN_PROGRESS), không sửa dữ liệu khác
@@ -767,6 +802,7 @@ export async function patchGDO(req: Request, res: Response) {
 
 export async function assignGDO(req: Request, res: Response) {
   try {
+    if (!(await guardGdoScope(req, res, req.params.id))) return
     const { assigned_by } = req.body as { assigned_by?: string }
     const { error } = await supabase.from('GroupDeliveryOrder')
       .update({ assigned_at: now(), assigned_by: assigned_by ?? null, updated_at: now() })
@@ -781,6 +817,7 @@ export async function assignGDO(req: Request, res: Response) {
 
 export async function unassignGDO(req: Request, res: Response) {
   try {
+    if (!(await guardGdoScope(req, res, req.params.id))) return
     const { data: gdo } = await supabase.from('GroupDeliveryOrder')
       .select('assigned_at, started_at').eq('id', req.params.id).single()
     if (!gdo?.assigned_at) return fail(res, 'Đơn chưa được giao đơn', 400)
@@ -807,6 +844,7 @@ export async function startGDO(req: Request, res: Response) {
       gate_registration_id?: string | null; allow_shared_gate?: boolean
     }
     if (!license_plate) return fail(res, 'Biển số xe là bắt buộc', 400)
+    if (!(await guardGdoScope(req, res, req.params.id))) return
 
     // Khóa cứng 1 chuyến = 1 phiếu: nếu chuyến cổng đã gắn GDO khác → chặn, trừ khi user xác nhận đặc biệt (bốc thêm đơn cùng chuyến)
     if (gate_registration_id && !allow_shared_gate) {
@@ -854,6 +892,7 @@ export async function updateTransport(req: Request, res: Response) {
       gate_registration_id?: string | null; allow_shared_gate?: boolean
     }
     if (!license_plate?.trim()) return fail(res, 'Biển số xe là bắt buộc', 400)
+    if (!(await guardGdoScope(req, res, req.params.id))) return
 
     const { data: gdo } = await supabase.from('GroupDeliveryOrder')
       .select('started_at').eq('id', req.params.id).single()
@@ -892,6 +931,7 @@ export async function updateTransport(req: Request, res: Response) {
 
 export async function unstartGDO(req: Request, res: Response) {
   try {
+    if (!(await guardGdoScope(req, res, req.params.id))) return
     const { data: gdo } = await supabase.from('GroupDeliveryOrder')
       .select('started_at, warehouse:Warehouse(inventory_mode)').eq('id', req.params.id).single()
     if (!gdo?.started_at) return fail(res, 'Đơn chưa được bắt đầu', 400)
@@ -938,6 +978,7 @@ export async function unstartGDO(req: Request, res: Response) {
 
 export async function uncompleteGDO(req: Request, res: Response) {
   try {
+    if (!(await guardGdoScope(req, res, req.params.id))) return
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: gdo } = await supabase.from('GroupDeliveryOrder')
       .select('status, transfer_status').eq('id', req.params.id).single()
@@ -1243,6 +1284,11 @@ export async function uploadExcel(req: Request, res: Response) {
         errs.push(`Kho xuất "${kho_xuat_v}" không có trong hệ thống`)
       else if (!kho_xuat_v && !warehouse_id)
         errs.push('Thiếu cột Kho xuất')
+      else {
+        // Scope: chặn upload tạo chuyến cho kho ngoài phạm vi user
+        const resolvedWh = kho_xuat_v ? warehouseByKey.get(kho_xuat_v.toLowerCase()) ?? null : (warehouse_id ?? null)
+        if (!inScope(req, resolvedWh)) errs.push(`Kho xuất "${kho_xuat_v || ''}" ngoài phạm vi của bạn`)
+      }
 
       const loaiKhoVals = [...new Set(
         groupRows.map(r => String(r['Loại kho'] ?? r['Loai kho'] ?? '').trim()).filter(Boolean)
@@ -1642,6 +1688,7 @@ export async function checkScanItem(req: Request, res: Response) {
       supabase.from('InventoryEntry').select('*, qa_status:QAStatus(code,name), location:Location!location_id(warehouse_id)').eq('pallet_code', qr).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']),
       supabase.from('OutboundScanEntry').select('id').eq('item_id', itemId).eq('pallet_code', qr).maybeSingle(),
     ])
+    if (!inScope(req, gdo?.warehouse_id)) return fail(res, 'Chuyến xe không thuộc kho trong phạm vi của bạn', 403)
     const inv = ((invList ?? []) as any[]).find((e: any) => e.location?.warehouse_id === gdo?.warehouse_id) ?? null
 
     if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng — không thể quét', 400)
@@ -1738,6 +1785,7 @@ export async function scanItem(req: Request, res: Response) {
         ? supabase.from('Employee').select('id').eq('id', employee_id).maybeSingle()
         : Promise.resolve({ data: null }),
     ])
+    if (!inScope(req, gdo?.warehouse_id)) return fail(res, 'Chuyến xe không thuộc kho trong phạm vi của bạn', 403)
     const inv = ((invList ?? []) as any[]).find((e: any) => e.location?.warehouse_id === gdo?.warehouse_id) ?? null
     const resolved_employee_id = empCheck ? employee_id : null
     if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng — không thể quét', 400)
@@ -1930,7 +1978,8 @@ export async function deleteScanEntry(req: Request, res: Response) {
     const { gdoId, itemId, scanId } = req.params
 
     const { data: gdo } = await supabase.from('GroupDeliveryOrder')
-      .select('status').eq('id', gdoId).single()
+      .select('status, warehouse_id').eq('id', gdoId).single()
+    if (!inScope(req, gdo?.warehouse_id)) return fail(res, 'Chuyến xe không thuộc kho trong phạm vi của bạn', 403)
     if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng — không thể xóa QR', 400)
 
     const { data: scan } = await supabase.from('OutboundScanEntry')
@@ -2017,7 +2066,7 @@ export async function confirmLoosePickingItem(req: Request, res: Response) {
 
     const [{ data: gdo }, { data: item }, { data: empCheck }] =
       await Promise.all([
-        supabase.from('GroupDeliveryOrder').select('status, started_at').eq('id', gdoId).single(),
+        supabase.from('GroupDeliveryOrder').select('status, started_at, warehouse_id').eq('id', gdoId).single(),
         supabase.from('OutboundItem').select('*').eq('id', itemId).single(),
         employee_id
           ? supabase.from('Employee').select('id').eq('id', employee_id).maybeSingle()
@@ -2025,6 +2074,7 @@ export async function confirmLoosePickingItem(req: Request, res: Response) {
       ])
     const confirmed_by = empCheck ? employee_id : null
 
+    if (!inScope(req, gdo?.warehouse_id)) return fail(res, 'Chuyến xe không thuộc kho trong phạm vi của bạn', 403)
     if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng', 400)
     if (!item) return fail(res, 'Không tìm thấy mặt hàng', 404)
 
@@ -2221,6 +2271,7 @@ export async function manualCompleteItem(req: Request, res: Response) {
         .select('id, do_id, material_id, material_type, material_code_raw, cartons_ordered, cartons_scanned, material:Material!material_id(material_code, no_qr_tracking)')
         .eq('id', itemId).single(),
     ])
+    if (!inScope(req, gdo?.warehouse_id)) return fail(res, 'Chuyến xe không thuộc kho trong phạm vi của bạn', 403)
     if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng — không thể cập nhật', 400)
     if (!item) return fail(res, 'Không tìm thấy mặt hàng', 404)
 

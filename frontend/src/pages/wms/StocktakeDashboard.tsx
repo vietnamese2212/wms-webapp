@@ -7,8 +7,7 @@ import {
 import { useAuthStore } from '@/stores/authStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { can, type ModulePermissions } from '@/config/permissions'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
+import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
@@ -271,51 +270,30 @@ export default function StocktakeDashboard() {
     return 'pending'
   }
 
+  const defs: FilterDef[] = [
+    { key: 'warehouse', label: 'Kho', type: 'single', value: warehouseId, allLabel: 'Tất cả kho',
+      onChange: v => setStocktakeSummary({ warehouseId: v, locationIds: [] }),
+      options: (warehouses as { id: string; name: string }[]).filter(w => !allowedDashWhIds || allowedDashWhIds.has(w.id)).map(w => ({ value: w.id, label: w.name })) },
+    { key: 'category', label: 'Loại hàng', type: 'single', value: category, allLabel: 'Tất cả loại',
+      onChange: v => setStocktakeSummary({ category: v, locationIds: [] }),
+      options: (categories as string[]).map(c => ({ value: c, label: c })) },
+    { key: 'location', label: 'Vị trí', type: 'multi', selected: locationIds,
+      onChange: ids => { setStocktakeSummary({ locationIds: ids }); setSelectedId(null) },
+      options: filteredLocations.map((l: { id: string; location_code: string; requires_stocktake?: boolean }) => ({ value: l.id, label: `${l.location_code}${l.requires_stocktake ? ' 🚩' : ''}` })) },
+  ]
+
   return (
     <div className="flex flex-col h-full sm:p-3">
      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
       {/* Filters — compact, ~70% kích thước cũ */}
       <div className="border-b bg-white px-3 py-1.5 shrink-0 space-y-1.5 sm:rounded-t-xl">
-        {/* Row 1: title + filters */}
+        {/* Row 1: title + filters (FilterBar chuẩn) */}
         <div className="flex gap-1.5 flex-wrap items-center">
           <div className="flex items-center gap-1 shrink-0">
             <BarChart2 className="h-3.5 w-3.5 text-blue-600" />
             <span className="text-xs font-semibold text-slate-700">Tổng hợp KK</span>
           </div>
-
-          <Select value={warehouseId || '__none__'} onValueChange={v => {
-            setStocktakeSummary({ warehouseId: v === '__none__' ? '' : v, locationIds: [] })
-          }}>
-            <SelectTrigger className="h-6 text-[11px] w-[100px]"><SelectValue placeholder="Kho…" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__none__" className="text-xs">Tất cả kho</SelectItem>
-              {(warehouses as any[]).filter((w: any) => !allowedDashWhIds || allowedDashWhIds.has(w.id)).map((w: any) => (
-                <SelectItem key={w.id} value={w.id} className="text-xs">{w.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <Select value={category || '__all__'} onValueChange={v => {
-            setStocktakeSummary({ category: v === '__all__' ? '' : v, locationIds: [] })
-          }}>
-            <SelectTrigger className="h-6 text-[11px] w-[90px]"><SelectValue placeholder="Loại…" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__" className="text-xs">Tất cả</SelectItem>
-              {(categories as string[]).map(c => (
-                <SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <MultiSelectFilter
-            label="Vị trí"
-            width="w-[130px]"
-            options={filteredLocations.map((l: any) => ({ value: l.id, label: `${l.location_code}${l.requires_stocktake ? ' 🚩' : ''}` }))}
-            selected={locationIds}
-            onChange={ids => { setStocktakeSummary({ locationIds: ids }); setSelectedId(null) }}
-          />
-
-          <label className="flex items-center gap-1 cursor-pointer select-none">
+          <label className="flex items-center gap-1 cursor-pointer select-none shrink-0">
             <input type="checkbox" checked={requiresOnly} onChange={e => {
               setStocktakeSummary({ requiresOnly: e.target.checked, locationIds: [] })
             }} className="h-3 w-3 cursor-pointer" />
@@ -323,6 +301,9 @@ export default function StocktakeDashboard() {
               <Flag className="h-2.5 w-2.5 text-red-500" /> Cần check
             </span>
           </label>
+          <div className="flex-1" />
+          <FilterSheetButton defs={defs} className="sm:hidden" />
+          <FilterBar defs={defs} className="hidden sm:flex" />
         </div>
 
         {/* Row 2: stat cards — chỉ hiện khi đã chọn vị trí */}

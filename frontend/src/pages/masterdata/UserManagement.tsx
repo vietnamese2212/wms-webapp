@@ -4,6 +4,7 @@ import { Plus, Pencil, ShieldCheck, Building2, User2, KeyRound, Check, Briefcase
 import { WarehouseMultiSelect } from '@/components/shared/WarehouseMultiSelect'
 import { formatDateTime, normalizePhone } from '@/utils/formatters'
 import { SearchInput } from '@/components/shared/SearchInput'
+import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
 import { Label }    from '@/components/ui/label'
@@ -899,6 +900,24 @@ export default function UserManagement() {
     ? scopedRaw.filter(e => !!e.deleted_at)
     : scopedRaw
 
+  // Filter danh sách nhân viên — FilterBar chuẩn (Kho · Phòng ban · Chức danh · Tình trạng)
+  const empFilterDefs: FilterDef[] = [
+    { key: 'warehouse', label: 'Kho', type: 'single', allLabel: 'Tất cả kho',
+      value: filterWh === '__all__' ? '' : filterWh, onChange: v => setFilterWh(v || '__all__'),
+      options: whOptions.map(o => ({ value: o.id, label: o.label })) },
+    { key: 'dept', label: 'Phòng ban', type: 'single', allLabel: 'Tất cả phòng ban',
+      value: filterDept === '__all__' ? '' : filterDept,
+      onChange: v => { setFilterDept(v || '__all__'); setFilterJt('__all__'); setFilterWh('__all__') },
+      options: departments.map(d => ({ value: d.id, label: d.name })) },
+    { key: 'jt', label: 'Chức danh', type: 'single', allLabel: 'Tất cả chức danh',
+      value: filterJt === '__all__' ? '' : filterJt, onChange: v => setFilterJt(v || '__all__'),
+      options: jtOptions.map(o => ({ value: o.id, label: o.label })) },
+    { key: 'status', label: 'Tình trạng', type: 'single', allLabel: 'Đang hoạt động',
+      value: statusFilter === 'active' ? '' : statusFilter,
+      onChange: v => setStatusFilter((v || 'active') as 'active' | 'hidden' | 'all'),
+      options: [{ value: 'hidden', label: 'Đang ẩn' }, { value: 'all', label: 'Toàn bộ' }] },
+  ]
+
   return (
     <div className="p-4 space-y-4 max-w-7xl mx-auto">
       <div>
@@ -938,55 +957,10 @@ export default function UserManagement() {
             )}
           </div>
 
-          <div className="flex gap-2 flex-wrap">
+          <div className="flex gap-2 flex-wrap items-center">
             <SearchInput value={search} onChange={setSearch} placeholder="Tìm tên, mã, đăng nhập…" className="flex-1 min-w-[200px]" />
-            {/* Thứ tự: Kho · Phòng ban · Chức danh · Tình trạng */}
-            <Select value={filterWh} onValueChange={setFilterWh}>
-              <SelectTrigger className="h-8 text-sm w-[160px]">
-                <Warehouse className="h-3.5 w-3.5 mr-1.5 text-slate-400 shrink-0" />
-                <SelectValue placeholder="Tất cả kho" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">Tất cả kho</SelectItem>
-                {whOptions.map(o => (
-                  <SelectItem key={o.id} value={o.id}>{o.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={filterDept} onValueChange={v => { setFilterDept(v); setFilterJt('__all__'); setFilterWh('__all__') }}>
-              <SelectTrigger className="h-8 text-sm w-[180px]">
-                <Building2 className="h-3.5 w-3.5 mr-1.5 text-slate-400 shrink-0" />
-                <SelectValue placeholder="Tất cả phòng ban" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">Tất cả phòng ban</SelectItem>
-                {departments.map(d => (
-                  <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={filterJt} onValueChange={setFilterJt}>
-              <SelectTrigger className="h-8 text-sm w-[180px]">
-                <Briefcase className="h-3.5 w-3.5 mr-1.5 text-slate-400 shrink-0" />
-                <SelectValue placeholder="Tất cả chức danh" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">Tất cả chức danh</SelectItem>
-                {jtOptions.map(o => (
-                  <SelectItem key={o.id} value={o.id}>{o.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={statusFilter} onValueChange={v => setStatusFilter(v as 'active' | 'hidden' | 'all')}>
-              <SelectTrigger className="h-8 text-sm w-[160px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="active">Đang hoạt động</SelectItem>
-                <SelectItem value="hidden">Đang ẩn</SelectItem>
-                <SelectItem value="all">Toàn bộ</SelectItem>
-              </SelectContent>
-            </Select>
+            <FilterSheetButton defs={empFilterDefs} className="sm:hidden" />
+            <FilterBar defs={empFilterDefs} className="hidden sm:flex" />
           </div>
 
           {isError && (

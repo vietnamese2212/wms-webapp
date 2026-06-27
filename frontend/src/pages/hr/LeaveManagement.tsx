@@ -4,7 +4,6 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
-import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import {
   useWarehouses, useDepartments, useEmployeeRecords, useJobTitles,
@@ -67,6 +66,12 @@ export function LeaveSection() {
   const [openCreate, setOpenCreate] = useState(false)
 
   const defs: FilterDef[] = [
+    { key: 'warehouse', label: 'Kho', type: 'single', value: wh, onChange: setWh, allLabel: 'Tất cả kho',
+      options: (warehouses as { id: string; name: string }[]).map(w => ({ value: w.id, label: w.name })) },
+    { key: 'dept', label: 'Phòng ban', type: 'single', value: dept, onChange: setDept, allLabel: 'Tất cả phòng',
+      options: (departments as { id: string; name: string }[]).map(d => ({ value: d.id, label: d.name })) },
+    { key: 'jt', label: 'Chức danh', type: 'single', value: jt, onChange: setJt, allLabel: 'Tất cả chức danh',
+      options: jobTitles.map(j => ({ value: j.name, label: j.name })) },
     { key: 'status', label: 'Trạng thái', type: 'single', value: status, onChange: setStatus,
       options: [{ value: 'PENDING', label: 'Chờ duyệt' }, { value: 'APPROVED', label: 'Đã duyệt' }, { value: 'REJECTED', label: 'Từ chối' }] },
     { key: 'range', label: 'Khoảng ngày', type: 'daterange', from, to, onChange: (f, t) => { setFrom(f); setTo(t) } },
@@ -95,15 +100,6 @@ export function LeaveSection() {
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-2">
-        <WarehouseSingleSelect warehouses={warehouses as { id: string; code?: string; name: string }[]} value={wh} onChange={setWh} allLabel="Tất cả kho" placeholder="Tất cả kho" triggerClassName="w-40" />
-        <select value={dept} onChange={e => setDept(e.target.value)} className="border border-slate-200 rounded-md px-2.5 text-xs h-7 bg-white text-slate-700">
-          <option value="">Tất cả phòng</option>
-          {(departments as { id: string; name: string }[]).map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-        </select>
-        <select value={jt} onChange={e => setJt(e.target.value)} className="border border-slate-200 rounded-md px-2.5 text-xs h-7 bg-white text-slate-700">
-          <option value="">Tất cả chức danh</option>
-          {jobTitles.map(j => <option key={j.id} value={j.name}>{j.name}</option>)}
-        </select>
         {canApprove && (
           <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
             <input type="checkbox" checked={mine} onChange={e => setMine(e.target.checked)} className="h-3.5 w-3.5 rounded accent-sky-600" />

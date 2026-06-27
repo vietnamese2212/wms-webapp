@@ -5,7 +5,6 @@ import { vi } from 'date-fns/locale'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import {
@@ -406,6 +405,16 @@ function TeamSection({ perms }: { perms: ModulePermissions | null }) {
   }, [filtered])
 
   const defs: FilterDef[] = [
+    { key: 'warehouse', label: 'Kho', type: 'single', value: wh, onChange: setWh, allLabel: 'Tất cả kho',
+      options: (warehouses as { id: string; name: string }[]).map(w => ({ value: w.id, label: w.name })) },
+    { key: 'dept', label: 'Phòng ban', type: 'single', value: dept, onChange: setDept, allLabel: 'Tất cả phòng',
+      options: (departments as { id: string; name: string }[]).map(d => ({ value: d.id, label: d.name })) },
+    { key: 'jt', label: 'Chức danh', type: 'single', value: jt, onChange: setJt, allLabel: 'Tất cả chức danh',
+      options: jobTitles.map(j => ({ value: j.name, label: j.name })) },
+    ...(view === 'matrix' ? [{ key: 'status', label: 'Tình trạng', type: 'single' as const,
+      value: status === 'all' ? '' : status, onChange: (v: string) => setStatus((v || 'all') as 'all' | 'done' | 'missing'),
+      allLabel: 'Tất cả tình trạng',
+      options: [{ value: 'done', label: 'Đã chấm đủ' }, { value: 'missing', label: 'Còn thiếu' }] }] : []),
     { key: 'range', label: 'Khoảng ngày', type: 'daterange', from, to, onChange: (f, t) => { setFrom(f); setTo(t) } },
   ]
 
@@ -416,22 +425,6 @@ function TeamSection({ perms }: { perms: ModulePermissions | null }) {
           <button onClick={() => setView('matrix')} className={`px-2.5 py-1 ${view === 'matrix' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Ma trận</button>
           <button onClick={() => setView('raw')} className={`px-2.5 py-1 border-l border-slate-200 ${view === 'raw' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Raw data</button>
         </div>
-        <WarehouseSingleSelect warehouses={warehouses as { id: string; code?: string; name: string }[]} value={wh} onChange={setWh} allLabel="Tất cả kho" placeholder="Tất cả kho" triggerClassName="w-40" />
-        <select value={dept} onChange={e => setDept(e.target.value)} className="border border-slate-200 rounded-md px-2.5 text-xs h-7 bg-white text-slate-700">
-          <option value="">Tất cả phòng</option>
-          {(departments as { id: string; name: string }[]).map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-        </select>
-        <select value={jt} onChange={e => setJt(e.target.value)} className="border border-slate-200 rounded-md px-2.5 text-xs h-7 bg-white text-slate-700">
-          <option value="">Tất cả chức danh</option>
-          {jobTitles.map(j => <option key={j.id} value={j.name}>{j.name}</option>)}
-        </select>
-        {view === 'matrix' && (
-          <select value={status} onChange={e => setStatus(e.target.value as 'all' | 'done' | 'missing')} className="border border-slate-200 rounded-md px-2.5 text-xs h-7 bg-white text-slate-700">
-            <option value="all">Tất cả tình trạng</option>
-            <option value="done">Đã chấm đủ</option>
-            <option value="missing">Còn thiếu</option>
-          </select>
-        )}
         <Input value={q} onChange={e => setQ(e.target.value)} placeholder="Tìm tên / mã NV…" className="h-7 text-xs w-44" />
         <div className="flex-1" />
         <FilterSheetButton defs={defs} className="sm:hidden" />

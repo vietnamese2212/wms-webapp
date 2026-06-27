@@ -471,108 +471,110 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
           {sourceType === 'FACTORY' && (<>
             {apiError && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{apiError}</div>}
 
-            <div className="space-y-2">
-              <Label>Kho <span className="text-red-500">*</span></Label>
-              {canPickWarehouse ? (
-                <WarehouseSingleSelect
-                  warehouses={(warehouses as { id: string; code: string; name: string }[]).filter(w => !dialogAllowedWhIds || dialogAllowedWhIds.has(w.id))}
-                  value={warehouseId}
-                  onChange={v => { setWarehouseId(v); setSubType(''); setLocationId(''); setMaterialId(''); setMatSearch('') }}
-                  placeholder="Chọn kho"
-                  triggerClassName="h-10"
-                />
-              ) : (
-                <div className="flex h-10 items-center rounded-md border bg-slate-50 px-3 text-sm text-slate-700">
-                  {(warehouses as { id: string; name: string }[]).find(w => w.id === warehouseId)?.name ?? (warehouseId || '—')}
-                </div>
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <Label>Loại kho <span className="text-red-500">*</span></Label>
-              <Select value={subType} onValueChange={v => { setSubType(v); setLocationId(''); setMaterialId(''); setMatSearch('') }} disabled={!warehouseId}>
-                <SelectTrigger><SelectValue placeholder="Chọn loại kho" /></SelectTrigger>
-                <SelectContent>{loaiKhoOpts.map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-
-            {/* Chọn Mã hàng TRƯỚC → từ đó gợi ý vị trí phù hợp */}
-            <div className="space-y-2">
-              <Label>Material <span className="text-red-500">*</span></Label>
-              <div ref={matRef} className="relative">
-                <Input placeholder={!subType ? 'Chọn loại kho trước' : `Tìm hàng ${subType}…`}
-                  value={matInputValue}
-                  disabled={!subType}
-                  onChange={e => { setMatSearch(e.target.value); setMaterialId(''); setLocationId(''); setMatOpen(true) }}
-                  onFocus={() => { if (subType) setMatOpen(true) }}
-                />
-                {matOpen && (
-                  <div className="absolute z-[100] w-full mt-1 max-h-52 overflow-y-auto rounded-md border bg-white shadow-lg">
-                    {(materials as any[]).filter(m => !m.no_qr_tracking).map(m => (
-                      <button key={m.id} type="button"
-                        className={`w-full text-left px-3 py-2 text-sm hover:bg-slate-100 flex items-baseline gap-2 ${m.id === materialId ? 'bg-slate-50 font-medium' : ''}`}
-                        onMouseDown={e => { e.preventDefault(); e.stopPropagation() }}
-                        onClick={() => { setMaterialId(m.id); setMatSearch(''); setMatOpen(false); setLocationId('') }}>
-                        <span className="font-mono text-xs text-slate-500 shrink-0">{m.material_code}</span>
-                        <span className="text-slate-800 truncate">{m.short_name ?? m.material_description}</span>
-                      </button>
-                    ))}
-                    {(materials as any[]).filter(m => !m.no_qr_tracking).length === 0 && (
-                      <div className="px-3 py-3 text-sm text-slate-400 text-center">Không tìm thấy hàng hóa</div>
-                    )}
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label className="text-xs">Kho <span className="text-red-500">*</span></Label>
+                {canPickWarehouse ? (
+                  <WarehouseSingleSelect
+                    warehouses={(warehouses as { id: string; code: string; name: string }[]).filter(w => !dialogAllowedWhIds || dialogAllowedWhIds.has(w.id))}
+                    value={warehouseId}
+                    onChange={v => { setWarehouseId(v); setSubType(''); setLocationId(''); setMaterialId(''); setMatSearch('') }}
+                    placeholder="Chọn kho"
+                    triggerClassName="h-8 mt-0.5"
+                  />
+                ) : (
+                  <div className="flex h-8 items-center rounded-md border bg-white px-2 text-xs text-slate-700 mt-0.5">
+                    {(warehouses as { id: string; name: string }[]).find(w => w.id === warehouseId)?.name ?? (warehouseId || '—')}
                   </div>
                 )}
               </div>
-            </div>
 
-            <div className="space-y-2">
-              <Label>Vị trí nhập <span className="text-red-500">*</span>
-                <span className="ml-2 text-xs font-normal text-slate-400">★ = còn chỗ · đang để dở cùng loại hàng</span>
-              </Label>
-              <Select value={locationId} onValueChange={setLocationId} disabled={!subType || !materialId}>
-                <SelectTrigger><SelectValue placeholder={!warehouseId ? 'Chọn kho trước' : !subType ? 'Chọn loại kho trước' : !materialId ? 'Chọn Mã hàng trước' : 'Chọn vị trí'} /></SelectTrigger>
-                <SelectContent>
-                  {filteredLocs.map(l => {
-                    const isFull = l.max_pallets > 0 && l.used_slots >= l.max_pallets
-                    const isPartial = l.used_slots > 0 && !isFull
-                    const rec = isRecommended(l)
-                    return (
-                      <SelectItem key={l.id} value={l.id}>
-                        {rec && <span className="text-amber-500 font-bold mr-1">★</span>}
-                        <span className={isFull ? 'text-blue-700 font-semibold' : isPartial ? 'text-amber-600' : ''}>{l.location_code}</span>
-                        <span className="ml-2 text-xs text-slate-400">({l.used_slots}/{l.max_pallets}{l.has_same_material ? ' · đang để' : ''})</span>
-                      </SelectItem>
-                    )
-                  })}
-                </SelectContent>
-              </Select>
-            </div>
+              <div>
+                <Label className="text-xs">Loại kho <span className="text-red-500">*</span></Label>
+                <Select value={subType} onValueChange={v => { setSubType(v); setLocationId(''); setMaterialId(''); setMatSearch('') }} disabled={!warehouseId}>
+                  <SelectTrigger className="h-8 text-xs mt-0.5"><SelectValue placeholder="Chọn loại kho" /></SelectTrigger>
+                  <SelectContent>{loaiKhoOpts.map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label>Ca nhập <span className="text-red-500">*</span></Label>
+              {/* Chọn Mã hàng TRƯỚC → từ đó gợi ý vị trí phù hợp (full-width: search + tên dài) */}
+              <div className="col-span-2">
+                <Label className="text-xs">Material <span className="text-red-500">*</span></Label>
+                <div ref={matRef} className="relative">
+                  <Input placeholder={!subType ? 'Chọn loại kho trước' : `Tìm hàng ${subType}…`}
+                    value={matInputValue}
+                    disabled={!subType}
+                    className="h-8 text-xs mt-0.5"
+                    onChange={e => { setMatSearch(e.target.value); setMaterialId(''); setLocationId(''); setMatOpen(true) }}
+                    onFocus={() => { if (subType) setMatOpen(true) }}
+                  />
+                  {matOpen && (
+                    <div className="absolute z-[100] w-full mt-1 max-h-52 overflow-y-auto rounded-md border bg-white shadow-lg">
+                      {(materials as any[]).filter(m => !m.no_qr_tracking).map(m => (
+                        <button key={m.id} type="button"
+                          className={`w-full text-left px-3 py-2 text-sm hover:bg-slate-100 flex items-baseline gap-2 ${m.id === materialId ? 'bg-slate-50 font-medium' : ''}`}
+                          onMouseDown={e => { e.preventDefault(); e.stopPropagation() }}
+                          onClick={() => { setMaterialId(m.id); setMatSearch(''); setMatOpen(false); setLocationId('') }}>
+                          <span className="font-mono text-xs text-slate-500 shrink-0">{m.material_code}</span>
+                          <span className="text-slate-800 truncate">{m.short_name ?? m.material_description}</span>
+                        </button>
+                      ))}
+                      {(materials as any[]).filter(m => !m.no_qr_tracking).length === 0 && (
+                        <div className="px-3 py-3 text-sm text-slate-400 text-center">Không tìm thấy hàng hóa</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="col-span-2">
+                <Label className="text-xs">Vị trí nhập <span className="text-red-500">*</span>
+                  <span className="ml-2 text-[10px] font-normal text-slate-400">★ = còn chỗ · đang để dở cùng loại hàng</span>
+                </Label>
+                <Select value={locationId} onValueChange={setLocationId} disabled={!subType || !materialId}>
+                  <SelectTrigger className="h-8 text-xs mt-0.5"><SelectValue placeholder={!warehouseId ? 'Chọn kho trước' : !subType ? 'Chọn loại kho trước' : !materialId ? 'Chọn Mã hàng trước' : 'Chọn vị trí'} /></SelectTrigger>
+                  <SelectContent>
+                    {filteredLocs.map(l => {
+                      const isFull = l.max_pallets > 0 && l.used_slots >= l.max_pallets
+                      const isPartial = l.used_slots > 0 && !isFull
+                      const rec = isRecommended(l)
+                      return (
+                        <SelectItem key={l.id} value={l.id}>
+                          {rec && <span className="text-amber-500 font-bold mr-1">★</span>}
+                          <span className={isFull ? 'text-blue-700 font-semibold' : isPartial ? 'text-amber-600' : ''}>{l.location_code}</span>
+                          <span className="ml-2 text-xs text-slate-400">({l.used_slots}/{l.max_pallets}{l.has_same_material ? ' · đang để' : ''})</span>
+                        </SelectItem>
+                      )
+                    })}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div>
+                <Label className="text-xs">Ca nhập <span className="text-red-500">*</span></Label>
                 <Select value={shiftId} onValueChange={setShiftId}>
-                  <SelectTrigger><SelectValue placeholder="Chọn ca" /></SelectTrigger>
+                  <SelectTrigger className="h-8 text-xs mt-0.5"><SelectValue placeholder="Chọn ca" /></SelectTrigger>
                   <SelectContent>{(shifts as { id: string; name: string }[]).map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
-              <div className="space-y-2">
-                <Label>Ngày nhập <span className="text-red-500">*</span></Label>
-                <Input type="date" value={importDate} min={TODAY} onChange={e => setImportDate(e.target.value)} />
-              </div>
-            </div>
 
-            <div className="space-y-2">
-              <Label>Người nhập</Label>
-              <div className="flex h-10 items-center rounded-md border bg-slate-50 px-3 text-sm text-slate-700 gap-2">
-                <User className="h-4 w-4 text-slate-400 shrink-0" />
-                <span className="truncate">{user?.name ?? '—'}</span>
+              <div>
+                <Label className="text-xs">Ngày nhập <span className="text-red-500">*</span></Label>
+                <Input type="date" value={importDate} min={TODAY} className="h-8 text-xs mt-0.5" onChange={e => setImportDate(e.target.value)} />
               </div>
-            </div>
 
-            <div className="space-y-2">
-              <Label>Ghi chú</Label>
-              <Input placeholder="Tuỳ chọn" value={notes} onChange={e => setNotes(e.target.value)} />
+              <div>
+                <Label className="text-xs">Người nhập</Label>
+                <div className="flex h-8 items-center rounded-md border bg-white px-2 text-xs text-slate-600 gap-1.5 mt-0.5">
+                  <User className="h-3 w-3 text-slate-400 shrink-0" />
+                  <span className="truncate">{user?.name ?? '—'}</span>
+                </div>
+              </div>
+
+              <div>
+                <Label className="text-xs">Ghi chú</Label>
+                <Input placeholder="Tuỳ chọn" value={notes} onChange={e => setNotes(e.target.value)} className="h-8 text-xs mt-0.5" />
+              </div>
             </div>
           </>)}
 

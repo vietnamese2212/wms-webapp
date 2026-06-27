@@ -136,6 +136,34 @@ interface TmsTransferFilters {
   khoXuat: string[]
   khoNhan: string[]
 }
+interface UserAdminFilters {
+  search: string
+  warehouseId: string
+  deptId: string
+  jtId: string
+  status: 'active' | 'hidden' | 'all'
+}
+interface AttendanceTeamFilters {
+  view: 'matrix' | 'raw'
+  warehouseId: string
+  deptId: string
+  jt: string
+  q: string
+  status: 'all' | 'done' | 'missing'
+  from: string
+  to: string
+}
+interface AttendanceMyFilters {
+  from: string
+}
+interface LeaveFilters {
+  warehouseId: string
+  deptId: string
+  jt: string
+  status: string
+  from: string
+  to: string
+}
 interface WmsFilterState {
   assignment:        AssignmentFilters
   outbound:          OutboundFilters
@@ -152,6 +180,14 @@ interface WmsFilterState {
   inboundReport:     InboundReportFilters
   tmsBookings:       TmsBookingsFilters
   tmsTransfer:       TmsTransferFilters
+  userAdmin:         UserAdminFilters
+  attendanceTeam:    AttendanceTeamFilters
+  attendanceMy:      AttendanceMyFilters
+  leave:             LeaveFilters
+  setUserAdmin:         (f: Partial<UserAdminFilters>)         => void
+  setAttendanceTeam:    (f: Partial<AttendanceTeamFilters>)    => void
+  setAttendanceMy:      (f: Partial<AttendanceMyFilters>)      => void
+  setLeave:             (f: Partial<LeaveFilters>)             => void
   setOutbound:          (f: Partial<OutboundFilters>)          => void
   setOutboundPrepare:   (f: Partial<OutboundPrepareFilters>)   => void
   setInbound:           (f: Partial<InboundFilters>)           => void
@@ -218,6 +254,10 @@ function initialFilters() {
     },
     tmsBookings: { dateFrom: today(), dateTo: today(), warehouseId: '', loaiKho: [], loaiXe: [], huong: [], dvvt: [], khungGio: [], tab: 'main' as const },
     tmsTransfer: { dateFrom: '', dateTo: '', khoXuat: [], khoNhan: [] },
+    userAdmin: { search: '', warehouseId: '__all__', deptId: '__all__', jtId: '__all__', status: 'active' as const },
+    attendanceTeam: { view: 'matrix' as const, warehouseId: '', deptId: '', jt: '', q: '', status: 'all' as const, from: today().slice(0, 8) + '01', to: today() },
+    attendanceMy: { from: today().slice(0, 8) + '01' },
+    leave: { warehouseId: '', deptId: '', jt: '', status: '', from: '', to: '' },
   }
 }
 
@@ -240,6 +280,10 @@ export const useWmsFilterStore = create<WmsFilterState>()(
       setAssignment:       (f) => set(s => ({ assignment:       { ...s.assignment,       ...f } })),
       setTmsBookings:      (f) => set(s => ({ tmsBookings:      { ...s.tmsBookings,      ...f } })),
       setTmsTransfer:      (f) => set(s => ({ tmsTransfer:      { ...s.tmsTransfer,      ...f } })),
+      setUserAdmin:        (f) => set(s => ({ userAdmin:        { ...s.userAdmin,        ...f } })),
+      setAttendanceTeam:   (f) => set(s => ({ attendanceTeam:   { ...s.attendanceTeam,   ...f } })),
+      setAttendanceMy:     (f) => set(s => ({ attendanceMy:     { ...s.attendanceMy,     ...f } })),
+      setLeave:            (f) => set(s => ({ leave:            { ...s.leave,            ...f } })),
       reset:               ()  => set(() => initialFilters()),
     }),
     {

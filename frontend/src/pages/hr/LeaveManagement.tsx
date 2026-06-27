@@ -1,18 +1,23 @@
-import { useEffect, useState } from 'react'
-import { Plus, Check, X, Trash2, CalendarOff, AlertTriangle } from 'lucide-react'
+import { useState } from 'react'
+import * as XLSX from 'xlsx'
+import { Plus, Check, X, Trash2, CalendarOff, AlertTriangle, Download, Rows3, AlignJustify } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
+import { SummaryBand } from '@/components/shared/SummaryBand'
+import { SavedViews } from '@/components/shared/SavedViews'
 import {
   useWarehouses, useDepartments, useEmployeeRecords, useJobTitles,
   useLeaves, useCreateLeave, useDecideLeave, useDeleteLeave,
   type LeaveRow,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
+import { useWmsFilterStore } from '@/stores/wmsFilterStore'
+import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { can, type ModulePermissions } from '@/config/permissions'
-import { formatDate } from '@/utils/formatters'
+import { formatDate, formatTimestampDate } from '@/utils/formatters'
 
 const LEAVE_TYPES: { value: string; label: string }[] = [
   { value: 'ANNUAL', label: 'Phép năm' },
@@ -29,8 +34,6 @@ const STATUS_META: Record<string, { label: string; variant: 'warning' | 'success
   APPROVED: { label: 'Đã duyệt',  variant: 'success' },
   REJECTED: { label: 'Từ chối',   variant: 'slate' },
 }
-const SCOPE_KEY = 'hr_leave_scope'
-
 // Dùng làm 1 tab trong trang Chấm công (không bọc card riêng)
 export function LeaveSection() {
   const user  = useAuthStore(s => s.user)
@@ -43,16 +46,14 @@ export function LeaveSection() {
   const { data: departments = [] } = useDepartments()
   const { data: jobTitles = [] } = useJobTitles()
 
-  const saved = (() => { try { return JSON.parse(localStorage.getItem(SCOPE_KEY) || '{}') } catch { return {} } })()
-  const [wh, setWh]       = useState<string>(saved.wh ?? '')
-  const [dept, setDept]   = useState<string>(saved.dept ?? '')
-  const [jt, setJt]       = useState<string>(saved.jt ?? '')   // lọc theo tên chức danh
-  const [status, setStatus] = useState<string>('')
-  const [from, setFrom]   = useState<string>('')
-  const [to, setTo]       = useState<string>('')
+  // Filter trong store (persist theo user qua scopedPersist)
+  const f = useWmsFilterStore(s => s.leave)
+  const setLeave = useWmsFilterStore(s => s.setLeave)
+  const { warehouseId: wh, deptId: dept, jt, status, from, to } = f
   const [mine, setMine]   = useState(false)   // chờ tôi duyệt (toàn bộ cấp dưới)
   const [direct, setDirect] = useState(false) // chỉ cấp dưới trực tiếp
-  useEffect(() => { localStorage.setItem(SCOPE_KEY, JSON.stringify({ wh, dept, jt })) }, [wh, dept, jt])
+  const [dense, setDense] = useState(() => localStorage.getItem('leave_density') === '1')
+  const toggleDense = () => setDense(d => { localStorage.setItem('leave_density', d ? '0' : '1'); return !d })
 
   const { data: leavesRaw = [], isLoading } = useLeaves(
     { warehouse_id: wh || undefined, department_id: dept || undefined, status: status || undefined, date_from: from || undefined, date_to: to || undefined, to_approve: mine || undefined, direct: (mine && direct) || undefined },
@@ -65,17 +66,41 @@ export function LeaveSection() {
   const [warn, setWarn] = useState<string | null>(null)
   const [openCreate, setOpenCreate] = useState(false)
 
+  const counts = {
+    total: leaves.length,
+    pending: leaves.filter(l => l.status === 'PENDING').length,
+    approved: leaves.filter(l => l.status === 'APPROVED').length,
+    rejected: leaves.filter(l => l.status === 'REJECTED').length,
+  }
+
   const defs: FilterDef[] = [
-    { key: 'warehouse', label: 'Kho', type: 'single', value: wh, onChange: setWh, allLabel: 'Tất cả kho',
+    { key: 'warehouse', label: 'Kho', type: 'single', value: wh, onChange: v => setLeave({ warehouseId: v }), allLabel: 'Tất cả kho',
       options: (warehouses as { id: string; name: string }[]).map(w => ({ value: w.id, label: w.name })) },
-    { key: 'dept', label: 'Phòng ban', type: 'single', value: dept, onChange: setDept, allLabel: 'Tất cả phòng',
+    { key: 'dept', label: 'Phòng ban', type: 'single', value: dept, onChange: v => setLeave({ deptId: v }), allLabel: 'Tất cả phòng',
       options: (departments as { id: string; name: string }[]).map(d => ({ value: d.id, label: d.name })) },
-    { key: 'jt', label: 'Chức danh', type: 'single', value: jt, onChange: setJt, allLabel: 'Tất cả chức danh',
+    { key: 'jt', label: 'Chức danh', type: 'single', value: jt, onChange: v => setLeave({ jt: v }), allLabel: 'Tất cả chức danh',
       options: jobTitles.map(j => ({ value: j.name, label: j.name })) },
-    { key: 'status', label: 'Trạng thái', type: 'single', value: status, onChange: setStatus,
+    { key: 'status', label: 'Trạng thái', type: 'single', value: status, onChange: v => setLeave({ status: v }),
       options: [{ value: 'PENDING', label: 'Chờ duyệt' }, { value: 'APPROVED', label: 'Đã duyệt' }, { value: 'REJECTED', label: 'Từ chối' }] },
-    { key: 'range', label: 'Khoảng ngày', type: 'daterange', from, to, onChange: (f, t) => { setFrom(f); setTo(t) } },
+    { key: 'range', label: 'Khoảng ngày', type: 'daterange', from, to, onChange: (f2, t2) => setLeave({ from: f2, to: t2 }) },
   ]
+  const viewSnapshot = { warehouseId: wh, deptId: dept, jt, status, from, to }
+  const savedViews = useSavedViewsStore(s => s.views['leave'] ?? [])
+  const activeViewId = savedViews.find(v => JSON.stringify(v.filters) === JSON.stringify(viewSnapshot))?.id ?? null
+
+  function exportExcel() {
+    const sheet = leaves.map(l => ({
+      'Nhân viên': l.employee?.name ?? '', 'Mã NV': l.employee?.employee_code ?? '',
+      'Chức danh': l.employee?.job_title ?? '', 'Từ ngày': formatDate(l.date_from), 'Đến ngày': formatDate(l.date_to),
+      'Loại': typeLabel(l.leave_type), 'Lý do': l.reason ?? '',
+      'Trạng thái': STATUS_META[l.status]?.label ?? l.status, 'Người duyệt': l.approved_by ?? '',
+      'Tạo lúc': l.created_at ? formatTimestampDate(l.created_at, true) : '',
+    }))
+    const ws = XLSX.utils.json_to_sheet(sheet)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Nghỉ phép')
+    XLSX.writeFile(wb, `nghi_phep_${TODAY()}.xlsx`)
+  }
 
   async function onDecide(id: string, s: 'APPROVED' | 'REJECTED') {
     setErr(null); setWarn(null)
@@ -98,8 +123,8 @@ export function LeaveSection() {
   }
 
   return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap items-center gap-2">
+    <div className="flex flex-col h-full min-h-0 space-y-2">
+      <div className="flex flex-wrap items-center gap-2 shrink-0">
         {canApprove && (
           <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
             <input type="checkbox" checked={mine} onChange={e => setMine(e.target.checked)} className="h-3.5 w-3.5 rounded accent-sky-600" />
@@ -113,24 +138,43 @@ export function LeaveSection() {
           </label>
         )}
         <div className="flex-1" />
+        <SavedViews module="leave" currentFilters={viewSnapshot} activeId={activeViewId}
+          onApply={(fl) => setLeave(fl as Partial<typeof f>)} />
+        <button type="button" onClick={toggleDense}
+          className="hidden sm:inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 shrink-0"
+          title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
+          {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
+        </button>
+        <button type="button" onClick={exportExcel} disabled={!leaves.length}
+          className="hidden sm:inline-flex items-center gap-1 h-7 px-2.5 rounded-md border border-slate-200 text-xs font-medium text-slate-600 hover:bg-slate-50 shrink-0 disabled:opacity-50"
+          title="Xuất Excel">
+          <Download className="h-3.5 w-3.5" /> Excel
+        </button>
         <FilterSheetButton defs={defs} className="sm:hidden" />
         {canRequest && <Button size="sm" className="h-7" onClick={() => setOpenCreate(true)}><Plus className="h-4 w-4 mr-1" />Gửi đơn nghỉ</Button>}
       </div>
-      <FilterBar defs={defs} className="hidden sm:flex" />
+      <FilterBar defs={defs} className="hidden sm:flex shrink-0" />
 
-      {err && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{err}</div>}
+      <SummaryBand className="rounded-lg shrink-0" tiles={[
+        { label: 'Tổng đơn', value: counts.total },
+        { label: 'Chờ duyệt', value: counts.pending, accent: counts.pending > 0 },
+        { label: 'Đã duyệt', value: counts.approved },
+        { label: 'Từ chối', value: counts.rejected },
+      ]} />
+
+      {err && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2 shrink-0">{err}</div>}
       {warn && (
-        <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2 flex items-start gap-1.5">
+        <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2 flex items-start gap-1.5 shrink-0">
           <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
           <span className="flex-1">{warn}</span>
           <button onClick={() => setWarn(null)} className="text-amber-500 hover:text-amber-700"><X className="h-3.5 w-3.5" /></button>
         </div>
       )}
-      <div className="border border-slate-200 rounded-lg overflow-x-auto">
+      <div className="flex-1 min-h-0 overflow-auto border border-slate-200 rounded-lg">
         <table className="w-full text-xs min-w-max [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
-          <thead className="bg-slate-50 text-[10px] text-slate-500">
+          <thead className="bg-slate-50 text-[10px] text-slate-500 sticky top-0 z-20">
             <tr>
-              <th className="text-left px-2 py-2 font-medium sticky left-0 z-20 bg-slate-50">Nhân viên</th>
+              <th className="text-left px-2 py-2 font-medium sticky left-0 z-30 bg-slate-50">Nhân viên</th>
               <th className="text-left px-2 py-2 font-medium">Mã NV</th>
               <th className="text-left px-2 py-2 font-medium">Chức danh</th>
               <th className="text-left px-2 py-2 font-medium">Từ ngày</th>
@@ -139,28 +183,30 @@ export function LeaveSection() {
               <th className="text-left px-2 py-2 font-medium">Lý do</th>
               <th className="text-left px-2 py-2 font-medium">Trạng thái</th>
               <th className="text-left px-2 py-2 font-medium">Người duyệt</th>
+              <th className="text-left px-2 py-2 font-medium">Tạo lúc</th>
               <th className="px-2 py-2"></th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className={`divide-y divide-slate-100 ${dense ? '[&_td]:py-1' : '[&_td]:py-2'}`}>
             {isLoading ? (
-              <tr><td colSpan={10} className="text-center text-slate-400 py-6">Đang tải…</td></tr>
+              <tr><td colSpan={11} className="text-center text-slate-400 py-6">Đang tải…</td></tr>
             ) : leaves.length === 0 ? (
-              <tr><td colSpan={10} className="text-center text-slate-400 py-6">Không có đơn nghỉ</td></tr>
+              <tr><td colSpan={11} className="text-center text-slate-400 py-6">Không có đơn nghỉ</td></tr>
             ) : leaves.map(l => {
               const meta = STATUS_META[l.status]
               return (
                 <tr key={l.id} className="hover:bg-slate-50/60">
-                  <td className="px-2 py-1.5 font-medium text-slate-700 sticky left-0 z-10 bg-white">{l.employee?.name ?? '—'}</td>
-                  <td className="px-2 py-1.5 font-mono text-slate-500">{l.employee?.employee_code ?? '—'}</td>
-                  <td className="px-2 py-1.5 text-slate-600">{l.employee?.job_title ?? '—'}</td>
-                  <td className="px-2 py-1.5 tabular-nums">{formatDate(l.date_from)}</td>
-                  <td className="px-2 py-1.5 tabular-nums">{formatDate(l.date_to)}</td>
-                  <td className="px-2 py-1.5">{typeLabel(l.leave_type)}</td>
-                  <td className="px-2 py-1.5 max-w-[200px] truncate" title={l.reason ?? ''}>{l.reason || '—'}</td>
-                  <td className="px-2 py-1.5"><Badge variant={meta.variant}>{meta.label}</Badge></td>
-                  <td className="px-2 py-1.5 text-slate-500">{l.approved_by || '—'}</td>
-                  <td className="px-2 py-1.5 text-right whitespace-nowrap">
+                  <td className="px-2 font-medium text-slate-700 sticky left-0 z-10 bg-white">{l.employee?.name ?? '—'}</td>
+                  <td className="px-2 font-mono text-slate-500">{l.employee?.employee_code ?? '—'}</td>
+                  <td className="px-2 text-slate-600">{l.employee?.job_title ?? '—'}</td>
+                  <td className="px-2 tabular-nums">{formatDate(l.date_from)}</td>
+                  <td className="px-2 tabular-nums">{formatDate(l.date_to)}</td>
+                  <td className="px-2">{typeLabel(l.leave_type)}</td>
+                  <td className="px-2 max-w-[200px] truncate" title={l.reason ?? ''}>{l.reason || '—'}</td>
+                  <td className="px-2"><Badge variant={meta.variant}>{meta.label}</Badge></td>
+                  <td className="px-2 text-slate-500">{l.approved_by || '—'}</td>
+                  <td className="px-2 text-slate-400 tabular-nums">{l.created_at ? formatTimestampDate(l.created_at, true) : '—'}</td>
+                  <td className="px-2 text-right">
                     {canApprove && l.status === 'PENDING' && (
                       <>
                         <button onClick={() => onDecide(l.id, 'APPROVED')} disabled={decide.isPending} title="Duyệt" className="text-green-600 hover:bg-green-50 rounded p-1"><Check className="h-4 w-4" /></button>

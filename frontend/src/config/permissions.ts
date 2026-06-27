@@ -40,6 +40,7 @@ export const MODULES = {
     page: 'Xuất kho',
     actions: {
       view:       'Xem danh sách',
+      prepare:    'Chuẩn bị hàng (soạn hàng)',
       create:     'Tạo đơn',
       edit:       'Sửa đơn / xe',
       assign:     'Giao đơn',

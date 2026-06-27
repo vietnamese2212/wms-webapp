@@ -442,7 +442,7 @@ export default function Outbound() {
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
           <div className="flex gap-1.5 shrink-0">
-            {can(perms, 'outbound', 'view') && (
+            {can(perms, 'outbound', 'prepare') && (
               <Button size="sm" variant="outline" onClick={() => navigate('/wms/outbound/prepare')} className="h-7 text-xs gap-1">
                 <PackageCheck className="h-3.5 w-3.5" />
                 Chuẩn bị hàng
@@ -455,7 +455,7 @@ export default function Outbound() {
               </Button>
             )}
             {can(perms, 'outbound', 'create') && (
-              <Button size="sm" disabled={uploading} onClick={() => fileRef.current?.click()} className="h-7 text-xs gap-1">
+              <Button size="sm" disabled={uploading} onClick={() => fileRef.current?.click()} className="hidden sm:inline-flex h-7 text-xs gap-1">
                 <Upload className="h-3.5 w-3.5" />
                 {uploading ? 'Đang xử lý…' : 'Upload Excel'}
               </Button>
@@ -671,7 +671,7 @@ function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34
         </button>
       </TableCell>
 
-      <TableCell className="px-2 py-1 whitespace-nowrap sticky z-10 bg-white" style={{ left: pinW }}>
+      <TableCell className={`px-2 py-1 whitespace-nowrap sticky z-10 ${selected ? 'bg-sky-50' : 'bg-white'}`} style={{ left: pinW }}>
         <span className="text-[10px] font-medium tabular-nums">{dateLabel}</span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
@@ -1238,21 +1238,20 @@ function GDOFormBody({
           {!noVehicle && (
             <div className="space-y-1">
               <label className="text-[10px] font-medium text-slate-500">Loại xe <span className="text-red-500">*</span></label>
-              <div className="flex flex-wrap gap-1.5">
-                {exportTypeOptions.map((vt: any) => (
-                  <button key={vt.id} type="button" onClick={() => setExportType(vt.name)}
-                    className={`h-7 px-2.5 text-xs rounded border font-medium transition-colors ${
-                      exportType === vt.name ? 'bg-blue-600 border-blue-600 text-white' : 'border-slate-200 text-slate-600 hover:border-blue-300 hover:text-blue-600'
-                    }`}>
-                    {vt.name}
-                  </button>
-                ))}
-                {exportTypeOptions.length === 0 && (
-                  <p className="text-[10px] text-slate-400 italic leading-7">
-                    {warehouseId ? 'Chưa có loại xe — kiểm tra TMS' : 'Chọn kho để lọc'}
-                  </p>
-                )}
-              </div>
+              {exportTypeOptions.length === 0 ? (
+                <p className="text-[10px] text-slate-400 italic leading-7">
+                  {warehouseId ? 'Chưa có loại xe — kiểm tra TMS' : 'Chọn kho để lọc'}
+                </p>
+              ) : (
+                <SingleSelect
+                  options={exportTypeOptions.map((vt: { id: string; name: string }) => ({ value: vt.name, label: vt.name }))}
+                  value={exportType}
+                  onChange={setExportType}
+                  placeholder="Chọn loại xe…"
+                  searchable={false}
+                  triggerClassName="h-7"
+                />
+              )}
             </div>
           )}
         </div>

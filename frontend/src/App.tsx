@@ -1,7 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { Shell } from '@/components/layout/Shell'
 import { useAuthStore } from '@/stores/authStore'
-import { canAccess, canAccessAny, isAdmin, type ModuleKey, type ModulePermissions } from '@/config/permissions'
+import { can, canAccess, canAccessAny, isAdmin, type ModuleKey, type ModulePermissions } from '@/config/permissions'
 import { Pages } from '@/routes/lazyPages'
 
 // Login giữ eager (màn đầu khi chưa đăng nhập). Mọi trang còn lại tách chunk
@@ -26,9 +26,11 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
 function PermissionRoute({
   module,
+  action,
   children,
 }: {
   module: ModuleKey | ModuleKey[]
+  action?: string   // nếu có: gate theo đúng action (vd outbound.prepare), không chỉ "có quyền nào trong module"
   children: React.ReactNode
 }) {
   const user = useAuthStore((s) => s.user)
@@ -36,7 +38,9 @@ function PermissionRoute({
   const allowed = isAdmin(user?.name) || (
     Array.isArray(module)
       ? canAccessAny(perms, ...module)
-      : canAccess(perms, module)
+      : action
+        ? can(perms, module, action)
+        : canAccess(perms, module)
   )
   if (!allowed) return <Navigate to="/" replace />
   return <>{children}</>
@@ -65,7 +69,7 @@ export default function App() {
 
         {/* WMS — outbound */}
         <Route path="/wms/outbound"                         element={<PermissionRoute module="outbound"><Outbound /></PermissionRoute>} />
-        <Route path="/wms/outbound/prepare"                 element={<PermissionRoute module="outbound"><OutboundPrepare /></PermissionRoute>} />
+        <Route path="/wms/outbound/prepare"                 element={<PermissionRoute module="outbound" action="prepare"><OutboundPrepare /></PermissionRoute>} />
         <Route path="/wms/outbound/scan-log"                element={<PermissionRoute module="scanlog"><OutboundScanLog /></PermissionRoute>} />
         <Route path="/wms/outbound/:id"                     element={<PermissionRoute module="outbound"><OutboundDetail /></PermissionRoute>} />
         <Route path="/wms/outbound/:gdoId/items/:itemId"    element={<PermissionRoute module="outbound"><OutboundItemDetail /></PermissionRoute>} />

@@ -348,8 +348,10 @@ export default function OutboundPrepare() {
                     </TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap"><span className="text-[10px] font-mono font-semibold text-slate-700">{r.material_code}</span></TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap">
-                      <span className="text-[10px] text-slate-600">{r.material_name ?? '—'}</span>
-                      {r.no_qr_tracking && <span className="text-[9px] text-purple-600 ml-1">(thủ công)</span>}
+                      <div className="flex items-center gap-1 min-w-0">
+                        <span className="text-[10px] text-slate-600 truncate" title={r.material_name ?? undefined}>{r.material_name ?? '—'}</span>
+                        {r.no_qr_tracking && <span className="text-[9px] text-purple-600 shrink-0">(thủ công)</span>}
+                      </div>
                     </TableCell>
                     <TableCell className="px-2 py-1 text-right whitespace-nowrap">
                       <span className="text-[12px] font-bold tabular-nums text-sky-700">{r.pallets_remaining || '—'}</span>

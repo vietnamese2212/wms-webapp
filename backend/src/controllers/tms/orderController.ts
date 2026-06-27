@@ -50,6 +50,39 @@ const ORDER_SELECT = `
   )
 `
 
+// ── Scope-write: user ASSIGNED chỉ thao tác lệnh thuộc kho mình (nguồn HOẶC đích).
+// NATIONAL → null (toàn quyền). ĐVVT (ncc_id) → null vì scope theo CÔNG TY, không theo kho (mirror listOrders).
+function scopeWhIds(req: Request): string[] | null {
+  if (req.user?.warehouse_scope === 'NATIONAL') return null
+  if (req.user?.ncc_id) return null
+  return req.user?.warehouse_ids ?? []
+}
+function whInScope(scope: string[], ...whs: (string | null | undefined)[]): boolean {
+  return (whs.filter(Boolean) as string[]).some(w => scope.includes(w))
+}
+// Gác theo id: lệnh phải dính kho trong phạm vi (nguồn hoặc đích). Trả false + đã gửi lỗi nếu chặn.
+async function guardOrderScope(req: Request, res: Response, id: string): Promise<boolean> {
+  const scope = scopeWhIds(req)
+  if (scope === null) return true
+  const { data } = await supabase.from('TmsOrder')
+    .select('warehouse_id, destination_warehouse_id').eq('id', id).maybeSingle()
+  if (!data) { fail(res, 'Không tìm thấy lệnh', 404); return false }
+  const o = data as { warehouse_id: string | null; destination_warehouse_id: string | null }
+  if (!whInScope(scope, o.warehouse_id, o.destination_warehouse_id)) {
+    fail(res, 'Ngoài phạm vi kho được giao — không thể thao tác lệnh của kho này', 403); return false
+  }
+  return true
+}
+// Gác tạo/đổi sang 1 kho cụ thể.
+function guardWhCreate(req: Request, res: Response, whId: string | null | undefined): boolean {
+  const scope = scopeWhIds(req)
+  if (scope === null) return true
+  if (!whId || !scope.includes(whId)) {
+    fail(res, 'Ngoài phạm vi kho — không thể tạo/đổi lệnh sang kho này', 403); return false
+  }
+  return true
+}
+
 // GET /api/tms/orders?date=YYYY-MM-DD&warehouse_id=...&source_type=TRANSFER&destination_warehouse_id=
 export async function listOrders(req: Request, res: Response) {
   try {
@@ -176,6 +209,7 @@ export async function createOrder(req: Request, res: Response) {
     if (!direction)  return fail(res, 'direction là bắt buộc', 400)
     if (!ncc_id)     return fail(res, 'ĐVVT là bắt buộc', 400)
     if (date < todayVN()) return fail(res, 'Không thể tạo đơn cho ngày quá khứ', 400)
+    if (!guardWhCreate(req, res, warehouse_id)) return
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const user = req.user
@@ -306,6 +340,11 @@ export async function bulkCreateOrders(req: Request, res: Response) {
 
     if (!orderRows.length) return fail(res, 'Không có dòng hợp lệ để import', 400)
 
+    // Scope-write: chặn upload lệnh cho kho ngoài phạm vi (ASSIGNED). NATIONAL/ĐVVT → scope null.
+    const scope = scopeWhIds(req)
+    if (scope !== null && orderRows.some(r => !scope.includes(r.warehouse_id as string)))
+      return fail(res, 'Ngoài phạm vi kho — file chứa lệnh của kho ngoài phạm vi được giao', 403)
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error: insErr } = await supabase.from('TmsOrder').insert(orderRows)
     if (insErr) {
@@ -345,6 +384,10 @@ export async function updateOrder(req: Request, res: Response) {
       .select('id, date').eq('id', id).single()
     if (fetchErr || !existing) return fail(res, 'Không tìm thấy đơn hàng', 404)
 
+    // Scope-write: lệnh phải thuộc kho trong phạm vi; nếu chuyển sang kho mới thì kho đó cũng phải trong phạm vi.
+    if (!(await guardOrderScope(req, res, id))) return
+    if (warehouse_id !== undefined && !guardWhCreate(req, res, warehouse_id)) return
+
     // Chỉ chặn khi ĐỔI ngày sang quá khứ (không chặn update giữ nguyên ngày cũ — vd đơn chuyển kho chỉ sửa eta/biển số).
     if (date !== undefined && date !== existing.date && date < todayVN())
       return fail(res, 'Không thể chuyển sang ngày quá khứ', 400)
@@ -383,6 +426,16 @@ export async function bulkUpdateOrderDate(req: Request, res: Response) {
     if (!Array.isArray(ids) || !ids.length) return fail(res, 'ids phải là array không rỗng', 400)
     if (!date) return fail(res, 'date là bắt buộc', 400)
     if (date < todayVN()) return fail(res, 'Không thể chuyển sang ngày quá khứ', 400)
+
+    // Scope-write: mọi lệnh trong lô phải thuộc kho trong phạm vi (ASSIGNED). NATIONAL/ĐVVT → bỏ qua.
+    const scope = scopeWhIds(req)
+    if (scope !== null) {
+      const { data: ords } = await supabase.from('TmsOrder')
+        .select('warehouse_id, destination_warehouse_id').in('id', ids)
+      const bad = (ords ?? []).some((o: { warehouse_id: string | null; destination_warehouse_id: string | null }) =>
+        !whInScope(scope, o.warehouse_id, o.destination_warehouse_id))
+      if (bad) return fail(res, 'Ngoài phạm vi kho — có lệnh thuộc kho ngoài phạm vi được giao', 403)
+    }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const user = req.user
@@ -744,6 +797,7 @@ export async function confirmTransferReceipt(req: Request, res: Response) {
   try {
     const { id } = req.params
     const t = new Date().toISOString()
+    if (!(await guardOrderScope(req, res, id))) return
 
     const { data: tmsOrder } = await supabase.from('TmsOrder')
       .select('id, eta, destination_warehouse_id, transfer_gdo_id, warehouse:Warehouse!destination_warehouse_id(id, code, name)')
@@ -831,6 +885,7 @@ export async function createOneInbound(req: Request, res: Response) {
     const { id } = req.params
     const { material_id } = req.body as { material_id: string }
     if (!material_id) return fail(res, 'Thiếu material_id', 400)
+    if (!(await guardOrderScope(req, res, id))) return
 
     const t = new Date().toISOString()
     const { data: tmsOrder } = await supabase.from('TmsOrder')
@@ -905,6 +960,7 @@ export async function cancelTransferReceipt(req: Request, res: Response) {
   try {
     const { id } = req.params
     const t = new Date().toISOString()
+    if (!(await guardOrderScope(req, res, id))) return
 
     const { data: tmsOrder } = await supabase.from('TmsOrder')
       .select('id, transfer_gdo_id').eq('id', id).single()
@@ -1090,6 +1146,7 @@ export async function getTransferGoods(req: Request, res: Response) {
 export async function deleteOrder(req: Request, res: Response) {
   try {
     const { id } = req.params
+    if (!(await guardOrderScope(req, res, id))) return
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: order } = await supabase.from('TmsOrder')

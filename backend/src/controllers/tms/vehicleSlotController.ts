@@ -4,6 +4,43 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { relinkAfterDelete } from './gateRegistrationController'
 
+// ── Scope-write: user ASSIGNED chỉ thao tác xe của lệnh thuộc kho mình (nguồn hoặc đích).
+// NATIONAL → null (toàn quyền). ĐVVT (ncc_id) → null vì scope theo CÔNG TY (book xe liên kho là hợp lệ).
+function scopeWhIds(req: Request): string[] | null {
+  if (req.user?.warehouse_scope === 'NATIONAL') return null
+  if (req.user?.ncc_id) return null
+  return req.user?.warehouse_ids ?? []
+}
+function whInScope(scope: string[], ...whs: (string | null | undefined)[]): boolean {
+  return (whs.filter(Boolean) as string[]).some(w => scope.includes(w))
+}
+// Gác theo order: lệnh phải dính kho trong phạm vi.
+async function guardOrderWh(req: Request, res: Response, orderId: string): Promise<boolean> {
+  const scope = scopeWhIds(req)
+  if (scope === null) return true
+  const { data } = await supabase.from('TmsOrder')
+    .select('warehouse_id, destination_warehouse_id').eq('id', orderId).maybeSingle()
+  if (!data) { fail(res, 'Không tìm thấy đơn hàng', 404); return false }
+  const o = data as { warehouse_id: string | null; destination_warehouse_id: string | null }
+  if (!whInScope(scope, o.warehouse_id, o.destination_warehouse_id)) {
+    fail(res, 'Ngoài phạm vi kho được giao — không thể thao tác xe của lệnh kho này', 403); return false
+  }
+  return true
+}
+// Gác theo vehicle-slot id (suy ra order rồi gác kho).
+async function guardSlotWh(req: Request, res: Response, slotId: string): Promise<boolean> {
+  const scope = scopeWhIds(req)
+  if (scope === null) return true
+  const { data } = await supabase.from('TmsVehicleSlot')
+    .select('order:TmsOrder!order_id(warehouse_id, destination_warehouse_id)').eq('id', slotId).maybeSingle()
+  const o = (data as { order: { warehouse_id: string | null; destination_warehouse_id: string | null } | null } | null)?.order ?? null
+  if (!o) { fail(res, 'Không tìm thấy vehicle slot', 404); return false }
+  if (!whInScope(scope, o.warehouse_id, o.destination_warehouse_id)) {
+    fail(res, 'Ngoài phạm vi kho được giao — không thể thao tác xe của lệnh kho này', 403); return false
+  }
+  return true
+}
+
 // Kế toán slot (booked_count + sức chứa) được xử lý NGUYÊN TỬ trong Postgres:
 //   • book_vehicle_slot(vslot, new_slot, plate, status, actor) — gán/đổi/nhả slot,
 //     kiểm sức chứa bằng ĐẾM SỐNG biển-số-distinct dưới row-lock (không tin booked_count),
@@ -44,6 +81,7 @@ export async function addVehicleSlot(req: Request, res: Response) {
   try {
     const { orderId } = req.params
     const now = new Date().toISOString()
+    if (!(await guardOrderWh(req, res, orderId))) return
 
     // Kiểm tra order tồn tại
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -69,6 +107,7 @@ export async function updateVehicleSlot(req: Request, res: Response) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const user = req.user
     const now = new Date().toISOString()
+    if (!(await guardSlotWh(req, res, id))) return
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: existing, error: fetchErr } = await supabase.from('TmsVehicleSlot')
@@ -304,6 +343,7 @@ async function releaseInternal(req: Request, res: Response, opts: { skipTimeChec
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const user = req.user
     const now = new Date().toISOString()
+    if (!(await guardSlotWh(req, res, id))) return
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: existing, error: fetchErr } = await supabase.from('TmsVehicleSlot')
@@ -376,6 +416,7 @@ export async function deleteVehicleSlot(req: Request, res: Response) {
   try {
     const { id } = req.params
     const now = new Date().toISOString()
+    if (!(await guardSlotWh(req, res, id))) return
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: existing, error: fetchErr } = await supabase.from('TmsVehicleSlot')

@@ -38,6 +38,11 @@ export async function generateSlotsForDates(req: Request, res: Response) {
     if (!warehouse_id) return fail(res, 'warehouse_id là bắt buộc', 400)
     if (!dates?.length) return fail(res, 'dates là bắt buộc (mảng YYYY-MM-DD)', 400)
 
+    // Scope-write: user ASSIGNED chỉ sinh slot cho kho mình. NATIONAL/ĐVVT → bỏ qua.
+    const scope = req.user?.warehouse_scope === 'NATIONAL' || req.user?.ncc_id ? null : (req.user?.warehouse_ids ?? [])
+    if (scope !== null && !scope.includes(warehouse_id))
+      return fail(res, 'Ngoài phạm vi kho — không thể sinh khung giờ cho kho này', 403)
+
     // Validate định dạng ngày
     const validDates = dates.filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d))
     if (!validDates.length) return fail(res, 'Không có ngày hợp lệ (cần định dạng YYYY-MM-DD)', 400)

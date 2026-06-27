@@ -2567,7 +2567,7 @@ const TRANSFER_COLS: { label: string; align?: 'right' }[] = [
   { label: 'ĐVVT' }, { label: 'Biển số' }, { label: 'Số điện thoại' }, { label: 'Tình trạng' },
   { label: 'Số GDO' }, { label: 'Ghi chú' }, { label: 'Mã lệnh' },
 ]
-const TRANSFER_COL_DEFAULTS = [110, 120, 110, 110, 130, 70, 70, 80, 96, 130, 96, 96, 110, 100, 96, 170, 120]
+const TRANSFER_COL_DEFAULTS = [120, 120, 110, 110, 130, 70, 70, 80, 96, 130, 96, 96, 110, 130, 110, 170, 130]
 
 function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWarehouseId, userWarehouseIds }: {
   canEdit: boolean; canConfirmReceipt: boolean
@@ -2761,7 +2761,7 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
                             onClick={() => setSelectedOrderId(o.id)}>
                             <td className="px-2 py-1 whitespace-nowrap">
                               {(o.transfer_gdo?.delivery_codes?.length ?? 0) > 0
-                                ? <span className="text-[10px] font-mono font-semibold">{o.transfer_gdo!.delivery_codes!.join(', ')}</span>
+                                ? <span className="text-[10px] font-mono font-semibold truncate block" title={o.transfer_gdo!.delivery_codes!.join(', ')}>{o.transfer_gdo!.delivery_codes!.join(', ')}</span>
                                 : <span className="text-slate-300 text-[10px]">—</span>}
                             </td>
                             <td className="px-2 py-1 whitespace-nowrap">
@@ -2831,7 +2831,7 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
                                 : <span className="text-slate-300">—</span>}
                             </td>
                             <td className="px-2 py-1 whitespace-nowrap">
-                              <span className="text-[10px] font-mono">{o.transfer_gdo?.group_code ?? '—'}</span>
+                              <span className="text-[10px] font-mono truncate block" title={o.transfer_gdo?.group_code ?? ''}>{o.transfer_gdo?.group_code ?? '—'}</span>
                             </td>
                             <td className="px-2 py-1 max-w-[160px]">
                               {o.notes
@@ -2839,7 +2839,7 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
                                 : <span className="text-slate-300 text-[10px]">—</span>}
                             </td>
                             <td className="px-2 py-1 whitespace-nowrap">
-                              <span className="text-[10px] font-mono font-semibold">{o.order_code}</span>
+                              <span className="text-[10px] font-mono font-semibold truncate block" title={o.order_code}>{o.order_code}</span>
                             </td>
                           </tr>
                         )
@@ -2980,7 +2980,7 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
             {order.priority && <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-red-100 text-red-700">Ưu tiên</span>}
             <div className="ml-auto flex items-center gap-2 shrink-0">
               {isInbound && canUploadInbound && (
-                <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => setShowUpload(true)}>
+                <Button size="sm" variant="outline" className="h-7 text-xs gap-1 hidden sm:inline-flex" onClick={() => setShowUpload(true)}>
                   <Upload className="h-3 w-3" />Upload
                 </Button>
               )}
@@ -3556,12 +3556,12 @@ export default function TMSBookings() {
               </Button>
             )}
             {can(perms, 'tms_plan', 'upload_outbound') && (
-              <Button variant="outline" size="sm" onClick={() => setUploadOpen(true)} className="h-8 px-2">
+              <Button variant="outline" size="sm" onClick={() => setUploadOpen(true)} className="h-8 px-2 hidden sm:inline-flex">
                 <Upload className="h-3.5 w-3.5 shrink-0" /><span className="hidden sm:inline ml-1">Upload xuất</span>
               </Button>
             )}
             {canUploadInbound && (
-              <Button variant="outline" size="sm" onClick={() => setInboundPlanUploadOpen(true)} className="h-8 px-2">
+              <Button variant="outline" size="sm" onClick={() => setInboundPlanUploadOpen(true)} className="h-8 px-2 hidden sm:inline-flex">
                 <FileSpreadsheet className="h-3.5 w-3.5 shrink-0" /><span className="hidden sm:inline ml-1">Upload KH nhập</span>
               </Button>
             )}

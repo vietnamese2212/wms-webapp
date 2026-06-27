@@ -56,7 +56,7 @@ interface LoosePickingFilters {
   filterWarehouseTypes: string[]
   filterTypes: string[]
 }
-export interface ScanLogDraft {
+export interface ScanLogFilters {
   from_date: string
   to_date: string
   warehouses: string[]
@@ -69,20 +69,6 @@ export interface ScanLogDraft {
   machines: string[]
   cycles: string[]
   scanner_name: string
-}
-export interface ScanLogApplied {
-  from_date?: string
-  to_date?: string
-  warehouse_ids?: string
-  material_category?: string
-  group_code?: string
-  distributor?: string
-  delivery_code?: string
-  pallet_code?: string
-  material?: string
-  machine_codes?: string
-  cycles?: string
-  scanner_name?: string
 }
 interface LocationsFilters {
   search: string
@@ -157,8 +143,7 @@ interface WmsFilterState {
   inbound:           InboundFilters
   inventory:         InventoryFilters
   loosePicking:      LoosePickingFilters
-  scanLogDraft:      ScanLogDraft
-  scanLogApplied:    ScanLogApplied
+  scanLog:           ScanLogFilters
   stocktake:         StocktakeFilters
   stocktakeSummary:  StocktakeSummaryFilters
   locations:         LocationsFilters
@@ -172,8 +157,7 @@ interface WmsFilterState {
   setInbound:           (f: Partial<InboundFilters>)           => void
   setInventory:         (f: Partial<InventoryFilters>)         => void
   setLoosePicking:      (f: Partial<LoosePickingFilters>)      => void
-  setScanLogDraft:      (f: Partial<ScanLogDraft>)             => void
-  setScanLogApplied:    (f: ScanLogApplied)                    => void
+  setScanLog:           (f: Partial<ScanLogFilters>)          => void
   setStocktake:         (f: Partial<StocktakeFilters>)         => void
   setStocktakeSummary:  (f: Partial<StocktakeSummaryFilters>)  => void
   setLocations:         (f: Partial<LocationsFilters>)         => void
@@ -214,13 +198,12 @@ function initialFilters() {
       warehouseId: '', dateFrom: today(), dateTo: today(), search: '',
       filterDvvts: [], filterNpps: [], filterWarehouseTypes: [], filterTypes: [],
     },
-    scanLogDraft: {
+    scanLog: {
       from_date: today(), to_date: today(),
       warehouses: [], material_category: '',
       group_code: '', distributor: '', delivery_code: '',
       pallet_code: '', materials: [], machines: [], cycles: [], scanner_name: '',
     },
-    scanLogApplied: { from_date: today(), to_date: today() } as ScanLogApplied,
     stocktake:        { warehouseId: '', category: '', locationId: '', requiresOnly: false },
     stocktakeSummary: { warehouseId: '', category: '', locationIds: [], requiresOnly: false, view: 'problem' as StocktakeView },
     locations:        { search: '', warehouseId: '', catFilter: '', statusFilter: [], flagFilter: false },
@@ -247,8 +230,7 @@ export const useWmsFilterStore = create<WmsFilterState>()(
       setInbound:          (f) => set(s => ({ inbound:          { ...INBOUND_DEFAULT, ...s.inbound, ...f } })),
       setInventory:        (f) => set(s => ({ inventory:        { ...s.inventory,        ...f } })),
       setLoosePicking:     (f) => set(s => ({ loosePicking:     { ...s.loosePicking,     ...f } })),
-      setScanLogDraft:     (f) => set(s => ({ scanLogDraft:     { ...s.scanLogDraft,     ...f } })),
-      setScanLogApplied:   (f) => set(_  => ({ scanLogApplied: f })),
+      setScanLog:          (f) => set(s => ({ scanLog:          { ...s.scanLog,          ...f } })),
       setStocktake:        (f) => set(s => ({ stocktake:        { ...s.stocktake,        ...f } })),
       setStocktakeSummary: (f) => set(s => ({ stocktakeSummary: { ...s.stocktakeSummary, ...f } })),
       setLocations:        (f) => set(s => ({ locations:        { ...s.locations,        ...f } })),

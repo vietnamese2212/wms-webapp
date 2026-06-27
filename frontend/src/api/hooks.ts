@@ -1890,6 +1890,21 @@ export function useOutboundScanLogFacets(materialCategory?: string) {
   })
 }
 
+// Export ScanLog: loop phân trang (BE cap limit=1000) gom toàn bộ dòng khớp filter đã áp.
+export async function fetchScanLogExport(applied: ScanLogParams): Promise<OutboundScanLogEntry[]> {
+  const LIMIT = 1000
+  const all: OutboundScanLogEntry[] = []
+  let page = 1
+  for (;;) {
+    const { data } = await apiClient.get('/wms/outbound/scan-log', { params: { ...applied, page, limit: LIMIT } })
+    const d = data.data as { rows: OutboundScanLogEntry[]; total: number }
+    all.push(...d.rows)
+    if (d.rows.length === 0 || all.length >= d.total) break
+    page++
+  }
+  return all
+}
+
 // ─── TMS ─────────────────────────────────────────────────────────────────────
 
 export function useVehicleTypesByWarehouse(warehouseId: string | null, cargoType?: string) {

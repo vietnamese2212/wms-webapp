@@ -1,25 +1,71 @@
 import { useState, useMemo, useRef, useEffect } from 'react'
+import * as XLSX from 'xlsx'
 import {
-  ClipboardList, Filter, X, CalendarDays, ChevronLeft, ChevronRight, QrCode, AlertTriangle,
+  ClipboardList, ChevronLeft, ChevronRight, QrCode, AlertTriangle, Download,
 } from 'lucide-react'
+import type { AxiosError } from 'axios'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { TableSkeleton } from '@/components/shared/TableSkeleton'
 import { EmptyState } from '@/components/shared/EmptyState'
-import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
+import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
+import { SavedViews } from '@/components/shared/SavedViews'
 import { SummaryBand } from '@/components/shared/SummaryBand'
+import { useColumnResize } from '@/components/shared/useColumnResize'
 import { QRScanner } from '@/components/shared/QRScanner'
 import type { QRScannerHandle } from '@/components/shared/QRScanner'
 import {
   useOutboundScanLog, useOutboundScanLogFacets, useWarehouses, useWarehouseTypes, useMaterials,
+  fetchScanLogExport,
 } from '@/api/hooks'
 import type { ScanLogParams } from '@/api/hooks'
 import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
-import { useWmsFilterStore, type ScanLogApplied } from '@/stores/wmsFilterStore'
+import { useWmsFilterStore, type ScanLogFilters } from '@/stores/wmsFilterStore'
+import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { useAuthStore } from '@/stores/authStore'
 
 const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 const PAGE_SIZE = 500
+const EXPORT_MAX = 50_000  // chặn export nếu vượt — yêu cầu lọc hẹp lại (tránh treo trình duyệt)
+
+// Cột bảng — thứ tự PHẢI khớp các <TableCell> mỗi dòng (31 cột). Cột 0 (Ngày xuất) sticky-left.
+const SCANLOG_COLS: { id: string; label: string; align?: 'right' }[] = [
+  { id: 'delivery_date', label: 'Ngày xuất' },
+  { id: 'warehouse',     label: 'Kho' },
+  { id: 'category',      label: 'Loại hàng' },
+  { id: 'group_code',    label: 'Số xe' },
+  { id: 'distributor',   label: 'NPP' },
+  { id: 'delivery_code', label: 'Số DO' },
+  { id: 'pallet_code',   label: 'Mã pallet' },
+  { id: 'material_code', label: 'Mã hàng' },
+  { id: 'material_name', label: 'Tên hàng' },
+  { id: 'cartons',       label: 'Thùng', align: 'right' },
+  { id: 'nsx',           label: 'NSX' },
+  { id: 'hsd',           label: 'HSD' },
+  { id: 'best_date',     label: 'Date cũ nhất' },
+  { id: 'pct',           label: '% Date', align: 'right' },
+  { id: 'location',      label: 'Vị trí' },
+  { id: 'machine',       label: 'Máy' },
+  { id: 'cycle',         label: 'Chu kỳ' },
+  { id: 'import_date',   label: 'Ngày nhập' },
+  { id: 'header_text',   label: 'Ghi chú' },
+  { id: 'scanner',       label: 'Người quét' },
+  { id: 'scanned_at',    label: 'TG quét' },
+  { id: 'loose_at',      label: 'TG check NL' },
+  { id: 'loose_by',      label: 'Người check NL' },
+  { id: 'license_plate', label: 'Biển số' },
+  { id: 'container',     label: 'Số cont' },
+  { id: 'forklift',      label: 'Lái xe nâng' },
+  { id: 'loader',        label: 'Bốc xếp' },
+  { id: 'assigned_at',   label: 'TG giao đơn' },
+  { id: 'started_at',    label: 'TG bắt đầu' },
+  { id: 'last_scan',     label: 'TG quét xong' },
+  { id: 'completed_at',  label: 'TG hoàn thành' },
+]
+const SCANLOG_COL_DEFAULTS = [
+  72, 72, 70, 90, 110, 80, 100, 70, 130, 50, 58, 58, 58, 52, 70, 50, 52, 58, 110, 80,
+  120, 120, 90, 80, 90, 90, 80, 120, 120, 120, 120,
+]
 
 // ─── Helpers ──────────────────────────────────────────────────
 
@@ -47,18 +93,6 @@ function datePctCls(pct: number): string {
   return 'text-red-600 font-semibold'
 }
 
-function DateBtn({ value, placeholder, onChange }: { value: string; placeholder: string; onChange: (v: string) => void }) {
-  return (
-    <input
-      type="date"
-      value={value}
-      onChange={e => onChange(e.target.value)}
-      className="h-7 rounded-md border border-blue-200 bg-white px-2 text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-400"
-      placeholder={placeholder}
-    />
-  )
-}
-
 function FmtTs({ ts }: { ts: string | null }) {
   if (!ts) return <span className="text-slate-300">—</span>
   return (
@@ -68,67 +102,55 @@ function FmtTs({ ts }: { ts: string | null }) {
   )
 }
 
-// ─── Draft state type ──────────────────────────────────────────
-
-type DraftFilters = {
-  from_date: string
-  to_date: string
-  warehouses: string[]
-  material_category: string
-  group_code: string
-  distributor: string
-  delivery_code: string
-  pallet_code: string
-  materials: string[]
-  machines: string[]
-  cycles: string[]
-  scanner_name: string
-}
-
-const EMPTY_DRAFT: DraftFilters = {
-  from_date: TODAY, to_date: TODAY,
-  warehouses: [],
-  material_category: '',
-  group_code: '', distributor: '', delivery_code: '',
-  pallet_code: '',
-  materials: [],
-  machines: [], cycles: [],
-  scanner_name: '',
+// Build query params (comma-join arrays) từ state filter
+function buildParams(f: ScanLogFilters): ScanLogParams {
+  return {
+    from_date:         f.from_date || undefined,
+    to_date:           f.to_date   || undefined,
+    warehouse_ids:     f.warehouses.length > 0 ? f.warehouses.join(',') : undefined,
+    material_category: f.material_category || undefined,
+    group_code:        f.group_code    || undefined,
+    distributor:       f.distributor   || undefined,
+    delivery_code:     f.delivery_code || undefined,
+    pallet_code:       f.pallet_code   || undefined,
+    material:          f.materials.length > 0 ? f.materials.join(',') : undefined,
+    machine_codes:     f.machines.length > 0  ? f.machines.join(',')  : undefined,
+    cycles:            f.cycles.length > 0    ? f.cycles.join(',')    : undefined,
+    scanner_name:      f.scanner_name  || undefined,
+  }
 }
 
 // ─── Page ──────────────────────────────────────────────────────
 
 export default function OutboundScanLog() {
-  const [showFilters, setShowFilters]   = useState(true)
   const [page, setPage]                 = useState(1)
-  const [dateError, setDateError]       = useState('')
   const [showScanner, setShowScanner]   = useState(false)
+  const [exporting, setExporting]       = useState(false)
+  const [exportError, setExportError]   = useState('')
   const scannerRef = useRef<QRScannerHandle>(null)
+  const { widths: colW, startResize, totalWidth } = useColumnResize('scanlog_col_widths', SCANLOG_COL_DEFAULTS)
 
   const user = useAuthStore(s => s.user)
-  const { scanLogDraft: draft, scanLogApplied: applied, setScanLogDraft, setScanLogApplied } = useWmsFilterStore()
-
-  // Aliases so existing call sites need no change
-  type DraftUpdater = Partial<DraftFilters> | ((d: DraftFilters) => DraftFilters)
-  const setDraft = (f: DraftUpdater) => typeof f === 'function' ? setScanLogDraft(f(draft)) : setScanLogDraft(f)
-  const setApplied = (f: ScanLogApplied) => setScanLogApplied(f)
+  const filters    = useWmsFilterStore(s => s.scanLog)
+  const setScanLog = useWmsFilterStore(s => s.setScanLog)
 
   const { data: warehousesData } = useWarehouses()
   const { data: whTypesData    } = useWarehouseTypes()
   const warehouses  = (warehousesData as { id: string; name: string }[] | undefined) ?? []
   const categories  = (whTypesData ?? []).map(t => t.value)
 
-  const { data: facets } = useOutboundScanLogFacets(draft.material_category || undefined)
+  const { data: facets } = useOutboundScanLogFacets(filters.material_category || undefined)
   const { data: materialsData } = useMaterials(
-    { category: draft.material_category },
-    !!draft.material_category,
+    { category: filters.material_category },
+    !!filters.material_category,
   )
   const materials = materialsData ?? []
 
+  // Kho mặc định cho user theo phạm vi (non-NATIONAL) — chỉ set 1 lần khi trống
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (draft.warehouses.length === 0 && user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length) {
-      setScanLogDraft({ warehouses: user.warehouse_ids })
+    if (filters.warehouses.length === 0 && user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length) {
+      setScanLog({ warehouses: user.warehouse_ids })
     }
   }, [user?.warehouse_id]) // eslint-disable-line
 
@@ -152,279 +174,168 @@ export default function OutboundScanLog() {
   const machineOpts   = useMemo(() => (facets?.machines ?? []).map(m => ({ value: m, label: m })), [facets])
   const cycleOpts     = useMemo(() => (facets?.cycles   ?? []).map(c => ({ value: c, label: c })), [facets])
 
-  const canFetch = !!applied.material_category && !!applied.warehouse_ids
+  // ─── Filter chip bar (đồng nhất Manhattan FilterBar) ───
+  const filterDefs: FilterDef[] = [
+    { key: 'date',         label: 'Ngày',        type: 'daterange', from: filters.from_date, to: filters.to_date,
+      onChange: (from, to) => setScanLog({ from_date: from, to_date: to }) },
+    { key: 'warehouse',    label: 'Kho',         type: 'multi', options: warehouseOpts, selected: filters.warehouses, searchable: true,
+      onChange: v => setScanLog({ warehouses: v }) },
+    { key: 'category',     label: 'Loại hàng',   type: 'single', options: categoryOpts, value: filters.material_category, allLabel: 'Tất cả loại',
+      onChange: v => setScanLog({ material_category: v, materials: [], machines: [], cycles: [] }) },
+    { key: 'material',     label: 'Mã / Tên hàng', type: 'multi', options: materialOpts, selected: filters.materials, searchable: true,
+      onChange: v => setScanLog({ materials: v }) },
+    { key: 'machine',      label: 'Máy',         type: 'multi', options: machineOpts, selected: filters.machines, searchable: machineOpts.length > 6,
+      onChange: v => setScanLog({ machines: v }) },
+    { key: 'cycle',        label: 'Chu kỳ',      type: 'multi', options: cycleOpts, selected: filters.cycles, searchable: false,
+      onChange: v => setScanLog({ cycles: v }) },
+    { key: 'group_code',   label: 'Số xe',       type: 'text', value: filters.group_code, placeholder: 'Số xe…',
+      onChange: v => setScanLog({ group_code: v }) },
+    { key: 'distributor',  label: 'NPP',         type: 'text', value: filters.distributor, placeholder: 'NPP…',
+      onChange: v => setScanLog({ distributor: v }) },
+    { key: 'delivery_code', label: 'Số DO',      type: 'text', value: filters.delivery_code, placeholder: 'Số DO…',
+      onChange: v => setScanLog({ delivery_code: v }) },
+    { key: 'pallet_code',  label: 'Mã pallet',   type: 'text', value: filters.pallet_code, placeholder: 'Mã pallet…',
+      onChange: v => setScanLog({ pallet_code: v }) },
+    { key: 'scanner_name', label: 'Người quét',  type: 'text', value: filters.scanner_name, placeholder: 'Người quét…',
+      onChange: v => setScanLog({ scanner_name: v }) },
+  ]
 
-  const params: ScanLogParams = { ...applied, page, limit: PAGE_SIZE }
+  // SavedViews — snapshot literal (assignable Record) để lưu/khớp
+  const viewSnapshot = {
+    from_date: filters.from_date, to_date: filters.to_date, warehouses: filters.warehouses,
+    material_category: filters.material_category, group_code: filters.group_code,
+    distributor: filters.distributor, delivery_code: filters.delivery_code, pallet_code: filters.pallet_code,
+    materials: filters.materials, machines: filters.machines, cycles: filters.cycles, scanner_name: filters.scanner_name,
+  }
+  const savedViews = useSavedViewsStore(s => s.views['scanlog'] ?? [])
+  const activeViewId = useMemo(() =>
+    savedViews.find(v => JSON.stringify(v.filters) === JSON.stringify(viewSnapshot))?.id ?? null
+  , [savedViews, viewSnapshot])
+
+  const canFetch = filters.warehouses.length > 0 && !!filters.material_category
+
+  const params: ScanLogParams = useMemo(() => ({ ...buildParams(filters), page, limit: PAGE_SIZE }), [filters, page])
   const { data, isLoading, isError } = useOutboundScanLog(params, canFetch)
   const rows       = data?.rows  ?? []
   const total      = data?.total ?? 0
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const isBlocked = canFetch && !isLoading && total > 200_000
 
-  function applyFilters() {
-    if (!draft.warehouses.length) {
-      setDateError('Vui lòng chọn ít nhất 1 Kho')
-      return
-    }
-    if (!draft.material_category) {
-      setDateError('Vui lòng chọn Loại hàng')
-      return
-    }
-    if (draft.from_date && draft.to_date && new Date(draft.to_date) < new Date(draft.from_date)) {
-      setDateError('Ngày bắt đầu phải trước ngày kết thúc')
-      return
-    }
-    setDateError('')
-    setApplied({
-      from_date:         draft.from_date || undefined,
-      to_date:           draft.to_date   || undefined,
-      warehouse_ids:     draft.warehouses.length > 0 ? draft.warehouses.join(',') : undefined,
-      material_category: draft.material_category || undefined,
-      group_code:        draft.group_code    || undefined,
-      distributor:       draft.distributor   || undefined,
-      delivery_code:     draft.delivery_code || undefined,
-      pallet_code:       draft.pallet_code   || undefined,
-      material:          draft.materials.length > 0 ? draft.materials.join(',') : undefined,
-      machine_codes:     draft.machines.length > 0  ? draft.machines.join(',')  : undefined,
-      cycles:            draft.cycles.length > 0    ? draft.cycles.join(',')    : undefined,
-      scanner_name:      draft.scanner_name  || undefined,
-    })
-    setPage(1)
-  }
+  // Đổi filter → về trang 1
+  const paramsKey = JSON.stringify(buildParams(filters))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { setPage(1) }, [paramsKey])
 
-  function clearFilters() {
-    setDraft(EMPTY_DRAFT)
-    setDateError('')
-    setApplied({ from_date: TODAY, to_date: TODAY })
-    setPage(1)
+  function applyView(f: Record<string, unknown>) {
+    setScanLog({ ...(f as Partial<ScanLogFilters>) })
   }
 
   function handlePalletScan(raw: string) {
-    setDraft(d => ({ ...d, pallet_code: raw.trim() }))
+    setScanLog({ pallet_code: raw.trim() })
     setShowScanner(false)
   }
 
-  const activeCount = [
-    applied.warehouse_ids,
-    applied.material_category,
-    applied.group_code,
-    applied.distributor,
-    applied.delivery_code,
-    applied.pallet_code,
-    applied.material,
-    applied.machine_codes,
-    applied.cycles,
-    applied.scanner_name,
-  ].filter(Boolean).length
+  async function handleExport() {
+    setExportError('')
+    if (!canFetch) { setExportError('Chọn Kho và Loại hàng trước khi xuất'); return }
+    if (total === 0) { setExportError('Không có dữ liệu để xuất'); return }
+    if (total > EXPORT_MAX) { setExportError(`Quá nhiều dòng (${total.toLocaleString('vi-VN')}). Hãy lọc hẹp lại rồi xuất.`); return }
+    setExporting(true)
+    try {
+      const all = await fetchScanLogExport(buildParams(filters))
+      const fmtTs = (ts: string | null) => ts ? `${formatTimestampDate(ts, true)} ${formatTimestampTime(ts)}` : ''
+      const sheet = all.map(row => {
+        const expiry = calcExpiryDate(row.production_date, row.shelf_life_days)
+        const pct    = calcPctAtScan(row.production_date, row.shelf_life_days, row.scanned_at)
+        return {
+          'Ngày xuất': row.delivery_date ? formatDate(row.delivery_date) : '',
+          'Kho': row.warehouse_name ?? '', 'Loại hàng': row.material_category ?? '',
+          'Số xe': row.group_code ?? '', 'NPP': row.distributor_name ?? '', 'Số DO': row.delivery_code ?? '',
+          'Mã pallet': row.pallet_code ?? '', 'Mã hàng': row.material_code ?? row.material_code_raw ?? '',
+          'Tên hàng': row.material_name ?? '', 'Thùng': row.cartons_scanned,
+          'NSX': row.production_date ? formatDate(row.production_date) : '',
+          'HSD': expiry ? formatDate(expiry) : '',
+          'Date cũ nhất': row.best_available_date ? formatDate(row.best_available_date) : '',
+          '% Date': pct ?? '', 'Vị trí': row.location_code ?? '', 'Máy': row.machine_code ?? '',
+          'Chu kỳ': row.cycle ?? '', 'Ngày nhập': row.import_date ? formatTimestampDate(row.import_date, true) : '',
+          'Ghi chú': row.header_text ?? '', 'Người quét': row.scanner_name ?? '',
+          'TG quét': fmtTs(row.scanned_at),
+          'TG check NL': row.is_loose_picking ? fmtTs(row.loose_confirmed_at) : '',
+          'Người check NL': row.is_loose_picking ? (row.loose_confirmed_by_name ?? '') : '',
+          'Biển số': row.license_plate ?? '', 'Số cont': row.container_number ?? '',
+          'Lái xe nâng': row.forklift_driver_names ?? '', 'Bốc xếp': row.loader_name ?? '',
+          'TG giao đơn': fmtTs(row.assigned_at), 'TG bắt đầu': fmtTs(row.started_at),
+          'TG quét xong': fmtTs(row.last_scanned_at), 'TG hoàn thành': fmtTs(row.completed_at),
+        }
+      })
+      const ws = XLSX.utils.json_to_sheet(sheet)
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, ws, 'Lịch sử quét')
+      XLSX.writeFile(wb, `lich_su_quet_${filters.material_category}_${TODAY}.xlsx`)
+    } catch (e) {
+      const err = e as AxiosError<{ error?: { message?: string } }>
+      setExportError(err?.response?.data?.error?.message ?? 'Xuất Excel lỗi')
+    } finally {
+      setExporting(false)
+    }
+  }
 
-  const dateLabel = applied.from_date === applied.to_date
-    ? (applied.from_date ? formatDate(applied.from_date) : '')
-    : `${applied.from_date ? formatDate(applied.from_date) : '?'} – ${applied.to_date ? formatDate(applied.to_date) : '?'}`
+  const activeCount = filterDefs.filter(d =>
+    d.type === 'multi' ? d.selected.length > 0
+    : d.type === 'single' ? d.value !== ''
+    : d.type === 'daterange' ? (!!d.from || !!d.to)
+    : d.type === 'text' ? d.value.trim() !== ''
+    : false
+  ).length
 
   return (
     <div className="flex flex-col h-full sm:p-3">
      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
       {/* Header */}
       <div className="border-b bg-white px-3 py-2 shrink-0 space-y-2 sm:rounded-t-xl">
-        {/* Title row */}
-        <div className="flex items-center gap-2">
+        {/* Row 1: Title + actions */}
+        <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-semibold text-slate-700 flex items-center gap-1.5 shrink-0">
             <ClipboardList className="h-4 w-4 text-slate-500" />
             Lịch sử quét xuất kho
           </span>
           <div className="flex-1" />
+          <FilterSheetButton defs={filterDefs} className="sm:hidden" />
           <button
-            className={`flex items-center gap-1 h-8 px-2.5 rounded-md border text-xs font-medium transition-colors shrink-0 ${
-              showFilters || activeCount > 0
-                ? 'bg-blue-50 border-blue-200 text-blue-700'
-                : 'border-slate-200 text-slate-600 hover:bg-slate-50'
-            }`}
-            onClick={() => setShowFilters(v => !v)}
+            type="button"
+            onClick={() => setShowScanner(true)}
+            className="h-7 w-7 inline-flex items-center justify-center rounded-md border border-slate-200 bg-white hover:bg-slate-50 transition-colors shrink-0"
+            title="Quét QR lọc theo mã pallet"
           >
-            <Filter className="h-3.5 w-3.5" />
-            Lọc
-            {activeCount > 0 && (
-              <span className="bg-blue-600 text-white text-[10px] rounded-full w-4 h-4 flex items-center justify-center leading-none">
-                {activeCount}
-              </span>
-            )}
+            <QrCode className="h-3.5 w-3.5 text-slate-500" />
+          </button>
+          <SavedViews
+            module="scanlog"
+            currentFilters={viewSnapshot}
+            onApply={applyView}
+            activeId={activeViewId}
+          />
+          <button
+            type="button"
+            onClick={handleExport}
+            disabled={exporting || !canFetch}
+            className="hidden sm:inline-flex items-center gap-1 h-7 px-2.5 rounded-md border border-slate-200 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors shrink-0 disabled:opacity-50"
+            title="Xuất Excel kết quả đang lọc"
+          >
+            <Download className="h-3.5 w-3.5" />{exporting ? 'Đang xuất…' : 'Excel'}
           </button>
         </div>
 
-        {/* Collapsible filter panel */}
-        {showFilters && (
-          <div className="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2.5 space-y-2">
+        {/* Row 2: FilterBar (chip) */}
+        <FilterBar defs={filterDefs} />
 
-            {/* Row 1: Kho (bắt buộc) + Loại hàng (bắt buộc) + Date range */}
-            <div className="flex items-center gap-2 flex-wrap">
-              {/* Kho — multi-select, bắt buộc */}
-              <div className="flex items-center gap-1">
-                <span className="text-[10px] text-red-500 font-medium shrink-0">*</span>
-                <MultiSelectFilter
-                  label="Kho"
-                  options={warehouseOpts}
-                  selected={draft.warehouses}
-                  onChange={v => setDraft(d => ({ ...d, warehouses: v }))}
-                  searchable
-                />
-              </div>
-
-              {/* Loại hàng — single select mandatory */}
-              <div className="flex items-center gap-1">
-                <span className="text-[10px] text-red-500 font-medium shrink-0">*</span>
-                <MultiSelectFilter
-                  label="Loại hàng"
-                  options={categoryOpts}
-                  selected={draft.material_category ? [draft.material_category] : []}
-                  onChange={v => {
-                    const cat = v[v.length - 1] ?? ''
-                    setDraft(d => ({ ...d, material_category: cat, materials: [], machines: [], cycles: [] }))
-                  }}
-                  searchable={false}
-                />
-              </div>
-
-              <span className="text-slate-300 text-xs mx-1">|</span>
-
-              <CalendarDays className="h-3.5 w-3.5 text-blue-400 shrink-0" />
-              <DateBtn value={draft.from_date} placeholder="Từ ngày" onChange={v => { setDraft(d => ({ ...d, from_date: v })); setDateError('') }} />
-              <span className="text-blue-300 text-xs">–</span>
-              <DateBtn value={draft.to_date}   placeholder="Đến ngày" onChange={v => { setDraft(d => ({ ...d, to_date: v })); setDateError('') }} />
-              {!(draft.from_date === TODAY && draft.to_date === TODAY) && (
-                <button className="text-xs text-blue-500 hover:text-blue-700 underline whitespace-nowrap"
-                  onClick={() => setDraft(d => ({ ...d, from_date: TODAY, to_date: TODAY }))}>
-                  Hôm nay
-                </button>
-              )}
-            </div>
-
-            {dateError && (
-              <p className="text-[10px] text-red-500 font-medium">{dateError}</p>
-            )}
-
-            {/* Row 2: Mã pallet (QR) / Số xe / NPP / Số DO */}
-            <div className="flex gap-2 flex-wrap items-center">
-              {/* Mã pallet with QR scan button */}
-              <div className="flex items-center gap-1">
-                <input
-                  className="h-7 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-400 w-[120px]"
-                  placeholder="Mã pallet…"
-                  value={draft.pallet_code}
-                  onChange={e => setDraft(d => ({ ...d, pallet_code: e.target.value }))}
-                />
-                <button
-                  type="button"
-                  className="h-7 w-7 flex items-center justify-center rounded-md border border-slate-200 bg-white hover:bg-slate-50 transition-colors"
-                  title="Quét QR pallet"
-                  onClick={() => setShowScanner(true)}
-                >
-                  <QrCode className="h-3.5 w-3.5 text-slate-500" />
-                </button>
-              </div>
-              <input
-                className="h-7 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-400 w-[110px]"
-                placeholder="Số xe…"
-                value={draft.group_code}
-                onChange={e => setDraft(d => ({ ...d, group_code: e.target.value }))}
-              />
-              <input
-                className="h-7 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-400 w-[130px]"
-                placeholder="NPP…"
-                value={draft.distributor}
-                onChange={e => setDraft(d => ({ ...d, distributor: e.target.value }))}
-              />
-              <input
-                className="h-7 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-400 w-[110px]"
-                placeholder="Số DO…"
-                value={draft.delivery_code}
-                onChange={e => setDraft(d => ({ ...d, delivery_code: e.target.value }))}
-              />
-            </div>
-
-            {/* Row 3: Mã hàng / Máy / Chu kỳ / Người quét + Actions */}
-            <div className="flex gap-2 flex-wrap items-center">
-              <MultiSelectFilter
-                label="Mã / Tên hàng"
-                options={materialOpts}
-                selected={draft.materials}
-                onChange={v => setDraft(d => ({ ...d, materials: v }))}
-                searchable
-              />
-              <MultiSelectFilter
-                label="Máy"
-                options={machineOpts}
-                selected={draft.machines}
-                onChange={v => setDraft(d => ({ ...d, machines: v }))}
-                searchable={machineOpts.length > 6}
-              />
-              <MultiSelectFilter
-                label="Chu kỳ"
-                options={cycleOpts}
-                selected={draft.cycles}
-                onChange={v => setDraft(d => ({ ...d, cycles: v }))}
-                searchable={false}
-              />
-              <input
-                className="h-7 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-400 w-[120px]"
-                placeholder="Người quét…"
-                value={draft.scanner_name}
-                onChange={e => setDraft(d => ({ ...d, scanner_name: e.target.value }))}
-              />
-
-              <div className="flex-1" />
-              <button
-                className="h-7 px-3 rounded-md bg-blue-600 text-white text-xs font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
-                onClick={applyFilters}
-                disabled={!draft.material_category || !draft.warehouses.length}
-                title={(!draft.warehouses.length || !draft.material_category) ? 'Vui lòng chọn Kho và Loại hàng' : ''}
-              >
-                Áp dụng
-              </button>
-              <button
-                className="h-7 px-2 rounded-md border border-slate-200 bg-white text-xs text-slate-500 hover:bg-slate-50 transition-colors"
-                onClick={clearFilters}
-              >
-                Đặt lại
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Summary bar */}
-        <div className="flex items-center gap-3 -mt-0.5">
-          <p className="text-xs text-slate-500 flex-1">
-            {(!applied.material_category || !applied.warehouse_ids)
-              ? <span className="text-amber-600 font-medium">Chọn Kho và Loại hàng để xem dữ liệu</span>
-              : <>
-                  <span className="font-medium text-slate-700">{applied.material_category}</span>
-                  {dateLabel && <span className="ml-2 text-slate-500">· {dateLabel}</span>}
-                </>
-            }
-          </p>
-          {!isBlocked && totalPages > 1 && (
-            <div className="flex items-center gap-1 shrink-0">
-              <button
-                className="h-6 w-6 flex items-center justify-center rounded border border-slate-200 hover:bg-slate-50 disabled:opacity-40"
-                disabled={page <= 1} onClick={() => setPage(p => p - 1)}
-              >
-                <ChevronLeft className="h-3.5 w-3.5" />
-              </button>
-              <span className="text-xs text-slate-600 px-1">{page} / {totalPages}</span>
-              <button
-                className="h-6 w-6 flex items-center justify-center rounded border border-slate-200 hover:bg-slate-50 disabled:opacity-40"
-                disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}
-              >
-                <ChevronRight className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          )}
-        </div>
+        {exportError && <p className="text-[11px] text-red-500 font-medium">{exportError}</p>}
       </div>
 
       {/* Summary band (Manhattan) */}
       <SummaryBand tiles={[
         { label: 'Bản ghi', value: canFetch && !isLoading ? total.toLocaleString('vi-VN') : '—' },
-        { label: 'Loại hàng', value: applied.material_category || '—' },
+        { label: 'Loại hàng', value: filters.material_category || '—' },
         { label: 'Bộ lọc', value: activeCount, accent: activeCount > 0 },
         { label: 'Trang', value: `${page}/${totalPages}` },
       ]} />
@@ -452,11 +363,10 @@ export default function OutboundScanLog() {
         {!canFetch ? (
           <div className="p-8 text-center text-sm text-slate-400">
             Vui lòng chọn <span className="font-semibold text-slate-600">Kho</span> và{' '}
-            <span className="font-semibold text-slate-600">Loại hàng</span>, rồi nhấn{' '}
-            <span className="font-semibold text-slate-600">Áp dụng</span> để xem dữ liệu
+            <span className="font-semibold text-slate-600">Loại hàng</span> ở thanh lọc để xem dữ liệu
           </div>
         ) : isLoading ? (
-          <TableSkeleton cols={10} rows={12} />
+          <TableSkeleton cols={12} rows={12} />
         ) : isError ? (
           <div className="p-6 text-center text-sm text-red-500">Lỗi tải dữ liệu. Vui lòng thử lại.</div>
         ) : isBlocked ? (
@@ -466,46 +376,32 @@ export default function OutboundScanLog() {
               Kết quả quá lớn: {total.toLocaleString()} bản ghi
             </p>
             <p className="text-xs text-slate-500 max-w-sm">
-              Vượt ngưỡng cho phép 200,000 bản ghi. Vui lòng thu hẹp khoảng thời gian hoặc thêm bộ lọc (Kho, Mã hàng, Máy, Chu kỳ…) rồi nhấn <span className="font-semibold">Áp dụng</span> lại.
+              Vượt ngưỡng cho phép 200,000 bản ghi. Vui lòng thu hẹp khoảng thời gian hoặc thêm bộ lọc (Kho, Mã hàng, Máy, Chu kỳ…).
             </p>
           </div>
         ) : rows.length === 0 ? (
           <EmptyState title="Không có dữ liệu scan trong khoảng thời gian này" />
         ) : (
-          <Table className="min-w-[3400px]">
+          <Table className="table-fixed [&_td]:overflow-hidden [&_th]:overflow-hidden [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100" style={{ width: totalWidth, minWidth: '100%' }}>
+            <colgroup>
+              {colW.map((w, i) => <col key={i} style={{ width: w }} />)}
+            </colgroup>
             <TableHeader>
               <TableRow>
-                <TableHead className="min-w-[58px]  text-[9px]">Ngày xuất</TableHead>
-                <TableHead className="min-w-[72px]  text-[9px]">Kho</TableHead>
-                <TableHead className="min-w-[70px]  text-[9px]">Loại hàng</TableHead>
-                <TableHead className="min-w-[90px]  text-[9px]">Số xe</TableHead>
-                <TableHead className="min-w-[110px] text-[9px]">NPP</TableHead>
-                <TableHead className="min-w-[80px]  text-[9px]">Số DO</TableHead>
-                <TableHead className="min-w-[100px] text-[9px]">Mã pallet</TableHead>
-                <TableHead className="min-w-[70px]  text-[9px]">Mã hàng</TableHead>
-                <TableHead className="min-w-[130px] text-[9px]">Tên hàng</TableHead>
-                <TableHead className="min-w-[50px]  text-[9px] text-right">Thùng</TableHead>
-                <TableHead className="min-w-[58px]  text-[9px]">NSX</TableHead>
-                <TableHead className="min-w-[58px]  text-[9px]">HSD</TableHead>
-                <TableHead className="min-w-[58px]  text-[9px]">Date cũ nhất</TableHead>
-                <TableHead className="min-w-[52px]  text-[9px] text-right">% Date</TableHead>
-                <TableHead className="min-w-[70px]  text-[9px]">Vị trí</TableHead>
-                <TableHead className="min-w-[50px]  text-[9px]">Máy</TableHead>
-                <TableHead className="min-w-[52px]  text-[9px]">Chu kỳ</TableHead>
-                <TableHead className="min-w-[58px]  text-[9px]">Ngày nhập</TableHead>
-                <TableHead className="min-w-[110px] text-[9px]">Ghi chú</TableHead>
-                <TableHead className="min-w-[80px]  text-[9px]">Người quét</TableHead>
-                <TableHead className="min-w-[120px] text-[9px]">TG quét</TableHead>
-                <TableHead className="min-w-[120px] text-[9px]">TG check NL</TableHead>
-                <TableHead className="min-w-[90px]  text-[9px]">Người check NL</TableHead>
-                <TableHead className="min-w-[80px]  text-[9px]">Biển số</TableHead>
-                <TableHead className="min-w-[90px]  text-[9px]">Số cont</TableHead>
-                <TableHead className="min-w-[90px]  text-[9px]">Lái xe nâng</TableHead>
-                <TableHead className="min-w-[80px]  text-[9px]">Bốc xếp</TableHead>
-                <TableHead className="min-w-[120px] text-[9px]">TG giao đơn</TableHead>
-                <TableHead className="min-w-[120px] text-[9px]">TG bắt đầu</TableHead>
-                <TableHead className="min-w-[120px] text-[9px]">TG quét xong</TableHead>
-                <TableHead className="min-w-[120px] text-[9px]">TG hoàn thành</TableHead>
+                {SCANLOG_COLS.map((c, i) => (
+                  <TableHead key={c.id}
+                    className={`text-[9px] font-medium text-slate-500 py-1.5 px-2 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''} ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                    {c.label}
+                    {i > 0 && (
+                      <span
+                        onPointerDown={e => startResize(i, e)}
+                        onClick={e => e.stopPropagation()}
+                        className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70"
+                        title="Kéo để chỉnh độ rộng cột"
+                      />
+                    )}
+                  </TableHead>
+                ))}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -514,7 +410,7 @@ export default function OutboundScanLog() {
                 const pct        = calcPctAtScan(row.production_date, row.shelf_life_days, row.scanned_at)
                 return (
                   <TableRow key={row.id}>
-                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap sticky left-0 z-10 bg-white">
                       {row.delivery_date ? formatDate(row.delivery_date) : <span className="text-slate-300">—</span>}
                     </TableCell>
                     <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{row.warehouse_name}</TableCell>
@@ -577,11 +473,30 @@ export default function OutboundScanLog() {
         )}
       </div>
 
-      {/* Footer đếm bản ghi */}
-      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 sm:rounded-b-xl">
-        {canFetch && !isLoading && !isBlocked
-          ? `${total > 0 ? (page - 1) * PAGE_SIZE + 1 : 0}–${Math.min(page * PAGE_SIZE, total)} / ${total.toLocaleString('vi-VN')} bản ghi`
-          : 'Chọn Kho và Loại hàng rồi Áp dụng'}
+      {/* Footer đếm bản ghi + phân trang */}
+      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 flex items-center gap-3 text-[11px] text-slate-500 sm:rounded-b-xl">
+        <span className="flex-1">
+          {canFetch && !isLoading && !isBlocked
+            ? `${total > 0 ? (page - 1) * PAGE_SIZE + 1 : 0}–${Math.min(page * PAGE_SIZE, total)} / ${total.toLocaleString('vi-VN')} bản ghi`
+            : 'Chọn Kho và Loại hàng để xem dữ liệu'}
+        </span>
+        {!isBlocked && totalPages > 1 && (
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              className="h-6 w-6 flex items-center justify-center rounded border border-slate-200 hover:bg-slate-50 disabled:opacity-40"
+              disabled={page <= 1} onClick={() => setPage(p => p - 1)}
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+            </button>
+            <span className="px-1">{page} / {totalPages}</span>
+            <button
+              className="h-6 w-6 flex items-center justify-center rounded border border-slate-200 hover:bg-slate-50 disabled:opacity-40"
+              disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}
+            >
+              <ChevronRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
       </div>
      </div>
     </div>

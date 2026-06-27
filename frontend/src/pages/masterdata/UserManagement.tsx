@@ -1011,12 +1011,12 @@ export default function UserManagement() {
                 </div>
               ) : (
                 <div className="overflow-auto max-h-[calc(100vh-22rem)]">
-                  <Table className={`table-fixed [&_td]:overflow-hidden [&_th]:overflow-hidden [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap [&_td]:border-r [&_td]:border-slate-100 [&_th]:border-r [&_th]:border-slate-200 ${dense ? '[&_td]:!py-1' : '[&_td]:!py-2'}`} style={{ width: empTotalWidth, minWidth: '100%' }}>
+                  <Table className={`table-fixed [&_td]:overflow-hidden [&_th]:overflow-hidden [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap [&_td]:text-[10px] [&_td]:border-r [&_td]:border-slate-100 [&_th]:border-r [&_th]:border-slate-200 ${dense ? '[&_td]:!py-1' : '[&_td]:!py-2'}`} style={{ width: empTotalWidth, minWidth: '100%' }}>
                     <colgroup>{empColW.map((w, i) => <col key={i} style={{ width: w }} />)}</colgroup>
                     <TableHeader>
                       <TableRow>
                         {['Họ tên', 'Mã NV', 'Đăng nhập', 'SĐT', 'Phòng ban', 'Chức danh', 'Loại hàng', 'Kho', 'Trạng thái', ''].map((lbl, i) => (
-                          <TableHead key={i} className={`px-3 py-2 text-xs ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                          <TableHead key={i} className={`px-2 py-1.5 text-[9px] font-medium text-slate-500 ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
                             {lbl}
                             {i < 9 && (
                               <span onPointerDown={e => empStartResize(i, e)} onClick={e => e.stopPropagation()}
@@ -1033,45 +1033,45 @@ export default function UserManagement() {
                         const whList = emp.warehouse_access ?? []
                         return (
                         <TableRow key={emp.id}
-                          className={`text-sm cursor-pointer ${isDeleted ? 'opacity-50 bg-slate-50' : ''} ${selectedEmp?.id === emp.id ? 'bg-slate-100' : isDeleted ? '' : 'hover:bg-slate-50'}`}
+                          className={`cursor-pointer ${isDeleted ? 'opacity-50 bg-slate-50' : ''} ${selectedEmp?.id === emp.id ? 'bg-slate-100' : isDeleted ? '' : 'hover:bg-slate-50'}`}
                           onClick={() => setSelectedEmp(prev => prev?.id === emp.id ? null : emp)}>
-                          <TableCell className={`px-3 py-2 sticky left-0 z-10 ${selectedEmp?.id === emp.id ? 'bg-slate-100' : isDeleted ? 'bg-slate-50' : 'bg-white'}`}>
+                          <TableCell className={`px-2 sticky left-0 z-10 ${selectedEmp?.id === emp.id ? 'bg-slate-100' : isDeleted ? 'bg-slate-50' : 'bg-white'}`}>
                             <span className={`font-medium block truncate ${isDeleted ? 'line-through text-slate-400' : 'text-slate-800'}`} title={emp.name}>{emp.name}</span>
                           </TableCell>
-                          <TableCell className="px-3 py-2 font-mono font-semibold text-[11px] text-slate-600 truncate" title={emp.employee_code}>{emp.employee_code}</TableCell>
-                          <TableCell className="px-3 py-2 text-slate-600 truncate" title={emp.email ?? '—'}>{emp.email ?? <span className="text-slate-300">—</span>}</TableCell>
-                          <TableCell className="px-3 py-2 text-slate-600 truncate" title={emp.phone ?? '—'}>{emp.phone ?? <span className="text-slate-300">—</span>}</TableCell>
-                          <TableCell className="px-3 py-2 text-slate-700 truncate" title={emp.dept?.name ?? '—'}>{emp.dept?.name ?? <span className="text-slate-300">—</span>}</TableCell>
-                          <TableCell className="px-3 py-2 text-slate-600 truncate" title={emp.job_title?.name ?? '—'}>{emp.job_title?.name ?? <span className="text-slate-300">—</span>}</TableCell>
-                          <TableCell className="px-3 py-2" title={cats.join(', ')}>
+                          <TableCell className="px-2 font-mono font-semibold text-slate-600 truncate" title={emp.employee_code}>{emp.employee_code}</TableCell>
+                          <TableCell className="px-2 text-slate-600 truncate" title={emp.email ?? '—'}>{emp.email ?? <span className="text-slate-300">—</span>}</TableCell>
+                          <TableCell className="px-2 text-slate-600 truncate" title={emp.phone ?? '—'}>{emp.phone ?? <span className="text-slate-300">—</span>}</TableCell>
+                          <TableCell className="px-2 text-slate-700 truncate" title={emp.dept?.name ?? '—'}>{emp.dept?.name ?? <span className="text-slate-300">—</span>}</TableCell>
+                          <TableCell className="px-2 text-slate-600 truncate" title={emp.job_title?.name ?? '—'}>{emp.job_title?.name ?? <span className="text-slate-300">—</span>}</TableCell>
+                          <TableCell className="px-2" title={cats.join(', ')}>
                             <div className="flex gap-1 overflow-hidden">
                               {cats.length === 0 ? <span className="text-slate-300">—</span> : cats.map(cat => (
-                                <span key={cat} className={`inline-flex shrink-0 items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium
+                                <span key={cat} className={`inline-flex shrink-0 items-center rounded-full px-1.5 py-0.5 text-[9px] font-medium
                                   ${CATEGORY_COLOR[cat] ?? 'bg-slate-100 text-slate-600'}`}>{cat}</span>
                               ))}
                             </div>
                           </TableCell>
-                          <TableCell className="px-3 py-2"
+                          <TableCell className="px-2"
                             title={emp.warehouse_scope === 'NATIONAL' ? 'Toàn quốc' : whList.map(wa => wa.warehouse?.name ?? wa.warehouse_id).join(', ')}>
                             {emp.warehouse_scope === 'NATIONAL' ? (
-                              <span className="text-xs text-blue-600 font-medium">Toàn quốc</span>
+                              <span className="text-blue-600 font-medium">Toàn quốc</span>
                             ) : whList.length === 0 ? (
-                              <span className="text-xs text-amber-600">Chưa gán kho</span>
+                              <span className="text-amber-600">Chưa gán kho</span>
                             ) : (
                               <div className="flex gap-1 overflow-hidden">
                                 {whList.map(wa => (
-                                  <span key={wa.warehouse_id} className="shrink-0 text-xs text-slate-600 bg-slate-100 rounded px-1.5 py-0.5">
+                                  <span key={wa.warehouse_id} className="shrink-0 text-slate-600 bg-slate-100 rounded px-1.5 py-0.5">
                                     {wa.warehouse?.name ?? wa.warehouse_id}
                                   </span>
                                 ))}
                               </div>
                             )}
                           </TableCell>
-                          <TableCell className="px-3 py-2">
+                          <TableCell className="px-2">
                             {isDeleted ? (
-                              <Badge variant="secondary" className="text-xs text-amber-700 bg-amber-50">Đã ẩn</Badge>
+                              <Badge variant="secondary" className="text-[9px] text-amber-700 bg-amber-50">Đã ẩn</Badge>
                             ) : (
-                              <Badge variant={emp.is_active ? 'default' : 'secondary'} className="text-xs">
+                              <Badge variant={emp.is_active ? 'default' : 'secondary'} className="text-[9px]">
                                 {emp.is_active ? 'Hoạt động' : 'Tạm dừng'}
                               </Badge>
                             )}
@@ -1168,28 +1168,28 @@ export default function UserManagement() {
                 </div>
               ) : (
                 <div className="overflow-auto max-h-[calc(100vh-16rem)]">
-                  <Table className="[&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
+                  <Table className="[&_td]:whitespace-nowrap [&_th]:whitespace-nowrap [&_td]:text-[10px]">
                     <TableHeader>
                       <TableRow>
-                        <TableHead className="px-3 py-2 text-xs">Mã</TableHead>
-                        <TableHead className="px-3 py-2 text-xs">Tên phòng ban</TableHead>
-                        <TableHead className="px-3 py-2 text-xs">Trạng thái</TableHead>
-                        <TableHead className="px-3 py-2 w-12" />
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Mã</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Tên phòng ban</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Trạng thái</TableHead>
+                        <TableHead className="px-2 py-1.5 w-12" />
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {departments.map(d => (
                         <TableRow key={d.id}
-                          className={`text-sm cursor-pointer ${selectedDept?.id === d.id ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
+                          className={`cursor-pointer ${selectedDept?.id === d.id ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
                           onClick={() => setSelectedDept(prev => prev?.id === d.id ? null : d)}>
-                          <TableCell className="px-3 py-2 font-mono font-semibold text-slate-600 text-[11px]">{d.code}</TableCell>
-                          <TableCell className="px-3 py-2 font-medium text-slate-800 truncate" title={d.name}>{d.name}</TableCell>
-                          <TableCell className="px-3 py-2">
-                            <Badge variant={d.is_active ? 'default' : 'secondary'} className="text-xs">
+                          <TableCell className="px-2 py-1.5 font-mono font-semibold text-slate-600">{d.code}</TableCell>
+                          <TableCell className="px-2 py-1.5 font-medium text-slate-800 truncate" title={d.name}>{d.name}</TableCell>
+                          <TableCell className="px-2 py-1.5">
+                            <Badge variant={d.is_active ? 'default' : 'secondary'} className="text-[9px]">
                               {d.is_active ? 'Hoạt động' : 'Tạm dừng'}
                             </Badge>
                           </TableCell>
-                          <TableCell className="px-2 py-2">
+                          <TableCell className="px-2 py-1.5">
                             {isAdminUser && (
                               <button title="Sửa" className="text-slate-400 hover:text-blue-500 transition-colors p-1"
                                 onClick={e => { e.stopPropagation(); setEditingDept(d); setShowDeptDlg(true) }}>
@@ -1249,28 +1249,28 @@ export default function UserManagement() {
                 </div>
               ) : (
                 <div className="overflow-auto max-h-[calc(100vh-16rem)]">
-                  <Table className="[&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
+                  <Table className="[&_td]:whitespace-nowrap [&_th]:whitespace-nowrap [&_td]:text-[10px]">
                     <TableHeader>
                       <TableRow>
-                        <TableHead className="px-3 py-2 text-xs">Chức danh</TableHead>
-                        <TableHead className="px-3 py-2 text-xs">Phòng ban</TableHead>
-                        <TableHead className="px-3 py-2 text-xs">Trạng thái</TableHead>
-                        <TableHead className="px-3 py-2 w-12" />
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Chức danh</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Phòng ban</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Trạng thái</TableHead>
+                        <TableHead className="px-2 py-1.5 w-12" />
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {visibleJobTitles.map(jt => (
                         <TableRow key={jt.id}
-                          className={`text-sm cursor-pointer ${selectedJt?.id === jt.id ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
+                          className={`cursor-pointer ${selectedJt?.id === jt.id ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
                           onClick={() => setSelectedJt(prev => prev?.id === jt.id ? null : jt)}>
-                          <TableCell className="px-3 py-2 font-medium text-slate-800 truncate" title={jt.name}>{jt.name}</TableCell>
-                          <TableCell className="px-3 py-2 text-slate-600 text-xs truncate" title={jt.department?.name ?? '—'}>{jt.department?.name ?? '—'}</TableCell>
-                          <TableCell className="px-3 py-2">
-                            <Badge variant={jt.is_active ? 'default' : 'secondary'} className="text-xs">
+                          <TableCell className="px-2 py-1.5 font-medium text-slate-800 truncate" title={jt.name}>{jt.name}</TableCell>
+                          <TableCell className="px-2 py-1.5 text-slate-600 truncate" title={jt.department?.name ?? '—'}>{jt.department?.name ?? '—'}</TableCell>
+                          <TableCell className="px-2 py-1.5">
+                            <Badge variant={jt.is_active ? 'default' : 'secondary'} className="text-[9px]">
                               {jt.is_active ? 'Hoạt động' : 'Tạm dừng'}
                             </Badge>
                           </TableCell>
-                          <TableCell className="px-2 py-2">
+                          <TableCell className="px-2 py-1.5">
                             {canEditJt(jt.id) && (
                               <button title="Sửa" className="text-slate-400 hover:text-blue-500 transition-colors p-1"
                                 onClick={e => { e.stopPropagation(); setEditingJt(jt); setShowJtDlg(true) }}>

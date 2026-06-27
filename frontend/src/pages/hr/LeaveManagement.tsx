@@ -131,10 +131,10 @@ export function LeaveSection() {
         </div>
       )}
       <div className="border border-slate-200 rounded-lg overflow-x-auto">
-        <table className="w-full text-xs min-w-max">
+        <table className="w-full text-xs min-w-max [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
           <thead className="bg-slate-50 text-[10px] text-slate-500">
             <tr>
-              <th className="text-left px-2 py-2 font-medium">Nhân viên</th>
+              <th className="text-left px-2 py-2 font-medium sticky left-0 z-20 bg-slate-50">Nhân viên</th>
               <th className="text-left px-2 py-2 font-medium">Mã NV</th>
               <th className="text-left px-2 py-2 font-medium">Chức danh</th>
               <th className="text-left px-2 py-2 font-medium">Từ ngày</th>
@@ -155,7 +155,7 @@ export function LeaveSection() {
               const meta = STATUS_META[l.status]
               return (
                 <tr key={l.id} className="hover:bg-slate-50/60">
-                  <td className="px-2 py-1.5 font-medium text-slate-700">{l.employee?.name ?? '—'}</td>
+                  <td className="px-2 py-1.5 font-medium text-slate-700 sticky left-0 z-10 bg-white">{l.employee?.name ?? '—'}</td>
                   <td className="px-2 py-1.5 font-mono text-slate-500">{l.employee?.employee_code ?? '—'}</td>
                   <td className="px-2 py-1.5 text-slate-600">{l.employee?.job_title ?? '—'}</td>
                   <td className="px-2 py-1.5 tabular-nums">{formatDate(l.date_from)}</td>

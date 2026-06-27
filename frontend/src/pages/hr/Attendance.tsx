@@ -481,9 +481,9 @@ function MatrixTable({ emps, dates, isWorkDay }: { emps: MatrixRow[]; dates: str
             <tr><td colSpan={dates.length + 5} className="text-center text-slate-400 py-6">Không có nhân viên phù hợp</td></tr>
           ) : emps.map(g => (
             <tr key={g.id} className="hover:bg-slate-50/60">
-              <td className="px-2 py-1 sticky left-0 z-10 bg-white border-r border-slate-200 font-medium text-slate-700">{g.name}</td>
-              <td className="px-2 py-1 font-mono text-slate-500 border-r border-slate-100">{g.code}</td>
-              <td className="px-2 py-1 text-slate-600 border-r border-slate-200">{g.job ?? '—'}</td>
+              <td className="px-2 py-1 sticky left-0 z-10 bg-white border-r border-slate-200 font-medium text-slate-700 whitespace-nowrap">{g.name}</td>
+              <td className="px-2 py-1 font-mono text-slate-500 border-r border-slate-100 whitespace-nowrap">{g.code}</td>
+              <td className="px-2 py-1 text-slate-600 border-r border-slate-200 whitespace-nowrap">{g.job ?? '—'}</td>
               {dates.map(d => {
                 const e = g.byDate.get(d)
                 if (e) {

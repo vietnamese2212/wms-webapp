@@ -1011,7 +1011,7 @@ export default function UserManagement() {
                 </div>
               ) : (
                 <div className="overflow-x-auto">
-                  <Table>
+                  <Table className="[&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
                     <TableHeader>
                       <TableRow>
                         <TableHead className="px-3 py-2 text-xs">Nhân viên</TableHead>

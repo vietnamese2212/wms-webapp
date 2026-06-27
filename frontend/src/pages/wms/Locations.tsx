@@ -287,7 +287,7 @@ export default function Locations() {
           ) : filtered.length === 0 ? (
             <EmptyState icon={MapPin} title="Không tìm thấy vị trí" />
           ) : (
-            <Table className="table-fixed [&_td]:overflow-hidden [&_th]:overflow-hidden [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100" style={{ width: totalWidth, minWidth: '100%' }}>
+            <Table className="table-fixed [&_td]:overflow-hidden [&_td]:whitespace-nowrap [&_th]:overflow-hidden [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100" style={{ width: totalWidth, minWidth: '100%' }}>
               <colgroup>
                 {colW.map((w, i) => <col key={i} style={{ width: w }} />)}
               </colgroup>
@@ -319,7 +319,7 @@ export default function Locations() {
                   return (
                     <TableRow key={loc.id} className={`${rowCls} ${dense ? '' : '[&_td]:py-2.5'}`} onClick={() => setSelectedLoc(prev => prev?.id === loc.id ? null : loc)}>
                       <TableCell className={`px-2 py-1 text-[10px] sticky left-0 z-10 ${stickyBg}`}>
-                        {loc.warehouse?.name ?? '—'}
+                        <span className="block truncate" title={loc.warehouse?.name ?? ''}>{loc.warehouse?.name ?? '—'}</span>
                       </TableCell>
                       <TableCell className="px-2 py-1 text-[10px]">
                         {loc.category ?? <span className="text-slate-400">—</span>}

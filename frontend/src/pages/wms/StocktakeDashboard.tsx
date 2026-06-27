@@ -95,7 +95,7 @@ function DetailPanel({ entryId, onClose }: { entryId: string; onClose: () => voi
     <div className="w-72 shrink-0 border-l bg-white flex flex-col overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b bg-slate-50 shrink-0">
-        <p className="font-mono text-[10px] font-semibold text-slate-700 truncate flex-1">
+        <p className="font-mono text-[10px] font-semibold text-slate-700 truncate flex-1" title={entry?.pallet_code ?? ''}>
           {isLoading ? '…' : (entry?.pallet_code ?? '—')}
         </p>
         <button onClick={onClose} className="ml-2 text-slate-400 hover:text-slate-700 shrink-0">

@@ -35,11 +35,11 @@ import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect
 function renderOrderField(value: string | null | undefined, mono = false) {
   if (!value) return <span className="text-slate-300">—</span>
   const parts = value.split('\n')
-  if (parts.length <= 1) return <span className={mono ? 'font-mono font-semibold' : ''}>{value || <span className="text-slate-300">—</span>}</span>
+  if (parts.length <= 1) return <span className={`block truncate ${mono ? 'font-mono font-semibold' : ''}`} title={value}>{value || <span className="text-slate-300">—</span>}</span>
   return (
-    <div className={`divide-y divide-slate-100 ${mono ? 'font-mono font-semibold' : ''}`}>
+    <div className={`divide-y divide-slate-100 ${mono ? 'font-mono font-semibold' : ''}`} title={parts.join(', ')}>
       {parts.map((p, i) => (
-        <div key={i} className={i > 0 ? 'pt-0.5' : ''}>
+        <div key={i} className={`truncate ${i > 0 ? 'pt-0.5' : ''}`}>
           {p || <span className="text-slate-300 font-normal">—</span>}
         </div>
       ))}
@@ -998,7 +998,7 @@ export default function GateRegistration() {
       <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">{reg.license_plate ?? '—'}</TableCell>
       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.driver_name ?? '—'}</TableCell>
       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.phone ?? '—'}</TableCell>
-      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.notes ?? '—'}</TableCell>
+      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap" title={reg.notes ?? ''}>{reg.notes ?? '—'}</TableCell>
       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{fmtTime(reg.registered_at)}</TableCell>
       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-medium">{fmtTime(reg.called_at)}</TableCell>
       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-medium">{fmtTime(reg.entry_at)}</TableCell>

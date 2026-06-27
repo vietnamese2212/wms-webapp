@@ -15,7 +15,6 @@ import { Input }               from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Label }               from '@/components/ui/label'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   useInboundOrders, useCreateInboundOrder,
   useWarehouses, useMaterials, useLocationsReal, useImportShifts,
@@ -31,6 +30,7 @@ import { useColumnResize } from '@/components/shared/useColumnResize'
 import { Badge } from '@/components/ui/badge'
 import { rowText, statusText, type RowStatusKey } from '@/lib/rowStatus'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
+import { SingleSelect } from '@/components/shared/SingleSelect'
 import { InboundScanSheetById } from '@/components/wms/InboundScanSheet'
 import type { InboundOrder } from '@/types'
 import { unlockAudio } from '@/utils/audio'
@@ -491,10 +491,15 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
 
               <div>
                 <Label className="text-xs">Loại kho <span className="text-red-500">*</span></Label>
-                <Select value={subType} onValueChange={v => { setSubType(v); setLocationId(''); setMaterialId(''); setMatSearch('') }} disabled={!warehouseId}>
-                  <SelectTrigger className="h-8 text-xs mt-0.5"><SelectValue placeholder="Chọn loại kho" /></SelectTrigger>
-                  <SelectContent>{loaiKhoOpts.map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent>
-                </Select>
+                <SingleSelect
+                  options={loaiKhoOpts.map(v => ({ value: v, label: v }))}
+                  value={subType}
+                  onChange={v => { setSubType(v); setLocationId(''); setMaterialId(''); setMatSearch('') }}
+                  placeholder="Chọn loại kho"
+                  searchable={false}
+                  disabled={!warehouseId}
+                  triggerClassName="h-8 mt-0.5"
+                />
               </div>
 
               {/* Chọn Mã hàng TRƯỚC → từ đó gợi ý vị trí phù hợp (full-width: search + tên dài) */}
@@ -531,31 +536,42 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                 <Label className="text-xs">Vị trí nhập <span className="text-red-500">*</span>
                   <span className="ml-2 text-[10px] font-normal text-slate-400">★ = còn chỗ · đang để dở cùng loại hàng</span>
                 </Label>
-                <Select value={locationId} onValueChange={setLocationId} disabled={!subType || !materialId}>
-                  <SelectTrigger className="h-8 text-xs mt-0.5"><SelectValue placeholder={!warehouseId ? 'Chọn kho trước' : !subType ? 'Chọn loại kho trước' : !materialId ? 'Chọn Mã hàng trước' : 'Chọn vị trí'} /></SelectTrigger>
-                  <SelectContent>
-                    {filteredLocs.map(l => {
-                      const isFull = l.max_pallets > 0 && l.used_slots >= l.max_pallets
-                      const isPartial = l.used_slots > 0 && !isFull
-                      const rec = isRecommended(l)
-                      return (
-                        <SelectItem key={l.id} value={l.id}>
+                <SingleSelect
+                  value={locationId}
+                  onChange={setLocationId}
+                  disabled={!subType || !materialId}
+                  searchable={false}
+                  triggerClassName="h-8 mt-0.5"
+                  placeholder={!warehouseId ? 'Chọn kho trước' : !subType ? 'Chọn loại kho trước' : !materialId ? 'Chọn Mã hàng trước' : 'Chọn vị trí'}
+                  options={filteredLocs.map(l => {
+                    const isFull = l.max_pallets > 0 && l.used_slots >= l.max_pallets
+                    const isPartial = l.used_slots > 0 && !isFull
+                    const rec = isRecommended(l)
+                    return {
+                      value: l.id,
+                      label: l.location_code,
+                      node: (
+                        <span className="flex-1 truncate text-[11px]">
                           {rec && <span className="text-amber-500 font-bold mr-1">★</span>}
-                          <span className={isFull ? 'text-blue-700 font-semibold' : isPartial ? 'text-amber-600' : ''}>{l.location_code}</span>
-                          <span className="ml-2 text-xs text-slate-400">({l.used_slots}/{l.max_pallets}{l.has_same_material ? ' · đang để' : ''})</span>
-                        </SelectItem>
-                      )
-                    })}
-                  </SelectContent>
-                </Select>
+                          <span className={isFull ? 'text-blue-700 font-semibold' : isPartial ? 'text-amber-600' : 'text-slate-700'}>{l.location_code}</span>
+                          <span className="ml-2 text-[10px] text-slate-400">({l.used_slots}/{l.max_pallets}{l.has_same_material ? ' · đang để' : ''})</span>
+                        </span>
+                      ),
+                    }
+                  })}
+                />
               </div>
 
               <div>
                 <Label className="text-xs">Ca nhập <span className="text-red-500">*</span></Label>
-                <Select value={shiftId} onValueChange={setShiftId}>
-                  <SelectTrigger className="h-8 text-xs mt-0.5"><SelectValue placeholder="Chọn ca" /></SelectTrigger>
-                  <SelectContent>{(shifts as { id: string; name: string }[]).map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
-                </Select>
+                <SingleSelect
+                  options={(shifts as { id: string; name: string }[]).map(s => ({ value: s.id, label: s.name }))}
+                  value={shiftId}
+                  onChange={setShiftId}
+                  placeholder="Chọn ca"
+                  searchable={false}
+                  triggerClassName="h-8 mt-0.5"
+                />
               </div>
 
               <div>
@@ -602,10 +618,15 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                 </div>
                 <div>
                   <Label className="text-xs">Loại kho *</Label>
-                  <Select value={subType} onValueChange={v => { setSubType(v); setGateRegId(''); setNccRows([emptyNccRow()]) }} disabled={!warehouseId}>
-                    <SelectTrigger className="h-8 text-xs mt-0.5"><SelectValue placeholder="Chọn loại kho" /></SelectTrigger>
-                    <SelectContent>{loaiKhoOpts.map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent>
-                  </Select>
+                  <SingleSelect
+                    options={loaiKhoOpts.map(v => ({ value: v, label: v }))}
+                    value={subType}
+                    onChange={v => { setSubType(v); setGateRegId(''); setNccRows([emptyNccRow()]) }}
+                    placeholder="Chọn loại kho"
+                    searchable={false}
+                    disabled={!warehouseId}
+                    triggerClassName="h-8 mt-0.5"
+                  />
                 </div>
                 <div>
                   <Label className="text-xs">Xe đang vào cổng *</Label>
@@ -718,10 +739,14 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                 </div>
                 <div>
                   <Label className="text-xs">Ca nhập *</Label>
-                  <Select value={shiftId} onValueChange={setShiftId}>
-                    <SelectTrigger className="h-8 text-xs mt-0.5"><SelectValue placeholder="Chọn ca" /></SelectTrigger>
-                    <SelectContent>{(shifts as { id: string; name: string }[]).map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
-                  </Select>
+                  <SingleSelect
+                    options={(shifts as { id: string; name: string }[]).map(s => ({ value: s.id, label: s.name }))}
+                    value={shiftId}
+                    onChange={setShiftId}
+                    placeholder="Chọn ca"
+                    searchable={false}
+                    triggerClassName="h-8 mt-0.5"
+                  />
                 </div>
                 <div>
                   <Label className="text-xs">Người nhập</Label>

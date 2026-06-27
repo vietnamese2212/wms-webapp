@@ -357,7 +357,7 @@ export default function Materials() {
     return `${base} [${sfx}]`
   })()
 
-  const colCount = (canDel ? 1 : 0) + 9 + 2 + (canEdit || canDel ? 1 : 0)
+  const colCount = (canDel ? 1 : 0) + 10 + 2 + (canEdit || canDel ? 1 : 0)
 
   // Cột bảng — số phần tử khớp số <TableCell> mỗi dòng (tùy quyền canDel/canEdit)
   const MAT_COLS = useMemo(() => {
@@ -372,7 +372,8 @@ export default function Materials() {
       { id: 'pl',      label: 'PL',           w: 60, align: 'right' },
       { id: 'ea',      label: 'EA/T',         w: 64, align: 'right' },
       { id: 'kg',      label: 'KG',           w: 64, align: 'right' },
-      { id: 'tt',      label: 'TT',           w: 130 },
+      { id: 'tt',      label: 'Trạng thái',   w: 96 },
+      { id: 'qr',      label: 'QR',           w: 80 },
       { id: 'created', label: 'Tạo',          w: 120 },
       { id: 'updated', label: 'Sửa',          w: 120 },
     )
@@ -508,15 +509,15 @@ export default function Materials() {
                       title={mat.weight_kg != null ? String(mat.weight_kg) : undefined}>
                       {fmtWeight(mat.weight_kg) ?? <span className="text-slate-300">—</span>}
                     </TableCell>
-                    <TableCell className="px-2 py-1">
-                      <div className="flex flex-row flex-wrap gap-1 items-center">
-                        <span className={`text-[9px] px-1.5 py-0.5 rounded-full whitespace-nowrap ${mat.is_active ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
-                          {mat.is_active ? 'Đang dùng' : 'Ẩn'}
-                        </span>
-                        {mat.no_qr_tracking && (
-                          <span className="text-[9px] px-1.5 py-0.5 rounded-full whitespace-nowrap bg-amber-100 text-amber-700">Không QR</span>
-                        )}
-                      </div>
+                    <TableCell className="px-2 py-1 whitespace-nowrap">
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded-full whitespace-nowrap ${mat.is_active ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
+                        {mat.is_active ? 'Đang dùng' : 'Ẩn'}
+                      </span>
+                    </TableCell>
+                    <TableCell className="px-2 py-1 whitespace-nowrap">
+                      {mat.no_qr_tracking
+                        ? <span className="text-[9px] px-1.5 py-0.5 rounded-full whitespace-nowrap bg-amber-100 text-amber-700">Không QR</span>
+                        : <span className="text-[9px] px-1.5 py-0.5 rounded-full whitespace-nowrap bg-green-100 text-green-700">QR</span>}
                     </TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap">
                       {mat.created_at ? (

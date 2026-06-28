@@ -740,46 +740,24 @@ function LayoutTab({ canCreate }: { canCreate: boolean }) {
   const [wh, setWh] = useState<string>(saved.wh ?? '')
   const { data: layouts = [], isLoading } = useLayouts(wh || undefined, !!wh)
   const del = useDeleteLayout()
-  const [sel, setSel] = useState<string | null>(null)
-  const [showCreate, setShowCreate] = useState(false)
+  const [form, setForm] = useState<{ id: string | null } | null>(null)  // null=đóng · {id:null}=tạo · {id}=sửa
   const [err, setErr] = useState<string | null>(null)
 
   const whName = (warehouses as { id: string; name: string }[]).find(w => w.id === wh)?.name ?? ''
-  const selLayout = sel ? layouts.find(l => l.id === sel) ?? null : null
-  useEffect(() => { setSel(null) }, [wh])   // đổi kho → đóng detail
+  useEffect(() => { setForm(null) }, [wh])   // đổi kho → đóng form
 
-  async function removeLayout(l: LayoutRow) {
-    if (!confirm(`Xóa layout "${l.name}"?`)) return
+  async function removeLayout(id: string, name: string) {
+    if (!confirm(`Xóa layout "${name}"?`)) return
     setErr(null)
-    try { await del.mutateAsync(l.id); if (sel === l.id) setSel(null) } catch (e) { setErr(String((e as { message?: string })?.message ?? e)) }
+    try { await del.mutateAsync(id); setForm(null) } catch (e) { setErr(String((e as { message?: string })?.message ?? e)) }
   }
 
-  // ── DETAIL: mở 1 layout để sửa vị trí ──
-  if (sel && selLayout) {
-    return (
-      <div className="p-3 space-y-3">
-        <div className="flex items-center gap-2 flex-wrap">
-          <Button size="sm" variant="outline" className="h-7" onClick={() => setSel(null)}>← Danh sách</Button>
-          <span className="inline-flex items-center gap-1.5 font-semibold text-slate-700 text-sm"><Layers className="h-4 w-4 text-sky-500" />{selLayout.name}</span>
-          <span className="text-[11px] text-slate-400">{selLayout.positions} vị trí · {selLayout.people} người</span>
-          <div className="flex-1" />
-          {canCreate && <Button size="sm" variant="outline" className="h-7 text-red-600" onClick={() => removeLayout(selLayout)}><Trash2 className="h-3.5 w-3.5 mr-1" />Xóa layout</Button>}
-        </div>
-        {err && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{err}</div>}
-        <div className="max-w-3xl border border-slate-200 rounded-lg">
-          <LayoutEditor layoutId={sel} />
-        </div>
-      </div>
-    )
-  }
-
-  // ── LIST ──
   return (
     <div className="p-3 space-y-3">
       <div className="flex flex-wrap items-center gap-2">
         <WarehouseSingleSelect warehouses={warehouses as { id: string; code?: string; name: string }[]} value={wh} onChange={setWh} placeholder="Chọn kho…" triggerClassName="w-40" />
         <div className="flex-1" />
-        {canCreate && wh && <Button size="sm" className="h-7" onClick={() => setShowCreate(true)}><Plus className="h-4 w-4 mr-1" />Tạo layout</Button>}
+        {canCreate && wh && <Button size="sm" className="h-7" onClick={() => setForm({ id: null })}><Plus className="h-4 w-4 mr-1" />Tạo layout</Button>}
       </div>
       {err && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{err}</div>}
 
@@ -799,7 +777,7 @@ function LayoutTab({ canCreate }: { canCreate: boolean }) {
             </TableHeader>
             <TableBody>
               {layouts.map(l => (
-                <TableRow key={l.id} className="hover:bg-slate-50 cursor-pointer" onClick={() => setSel(l.id)}>
+                <TableRow key={l.id} className="hover:bg-slate-50 cursor-pointer" onClick={() => setForm({ id: l.id })}>
                   <TableCell className="px-2 py-1.5 text-xs font-medium text-slate-700 whitespace-nowrap">
                     <span className="inline-flex items-center gap-1.5"><Layers className="h-3.5 w-3.5 text-sky-500 shrink-0" />{l.name}</span>
                   </TableCell>
@@ -812,142 +790,136 @@ function LayoutTab({ canCreate }: { canCreate: boolean }) {
         </div>
       )}
 
-      {showCreate && wh && (
-        <CreateLayoutDialog warehouseId={wh} warehouseName={whName}
-          onClose={() => setShowCreate(false)}
-          onCreated={id => { setShowCreate(false); setSel(id) }} />
+      {form && wh && (
+        <LayoutFormDialog warehouseId={wh} warehouseName={whName} layoutId={form.id}
+          onClose={() => setForm(null)}
+          onSaved={() => setForm(null)}
+          onDelete={form.id ? () => removeLayout(form.id!, layouts.find(l => l.id === form.id)?.name ?? '') : undefined} />
       )}
     </div>
   )
 }
 
-// Dialog tạo layout mới (chọn kho ngầm theo kho đang xem + nhập tên) → mở detail layout vừa tạo
-function CreateLayoutDialog({ warehouseId, warehouseName, onClose, onCreated }: {
-  warehouseId: string; warehouseName: string; onClose: () => void; onCreated: (id: string) => void
+// Form layout (DÙNG CHUNG Tạo & Sửa): Tên + Ghi chú + (1) chọn chức danh → (2) gom skill (kèm cấp dưới) → số người.
+// Tạo: create rồi setJts/setSkills theo id mới. Sửa: update name/note + setJts/setSkills.
+function LayoutFormDialog({ warehouseId, warehouseName, layoutId, onClose, onSaved, onDelete }: {
+  warehouseId: string; warehouseName: string; layoutId: string | null
+  onClose: () => void; onSaved: () => void; onDelete?: () => void
 }) {
-  const create = useCreateLayout()
-  const [name, setName] = useState('')
-  const [err, setErr] = useState<string | null>(null)
-  const [saving, setSaving] = useState(false)
-
-  async function submit() {
-    if (!name.trim()) return
-    setSaving(true); setErr(null)
-    try { const l = await create.mutateAsync({ warehouse_id: warehouseId, name: name.trim() }); onCreated(l.id) }
-    catch (e) { setErr(String((e as { response?: { data?: { error?: { message?: string } } } }).response?.data?.error?.message ?? (e as { message?: string })?.message ?? e)) }
-    finally { setSaving(false) }
-  }
-
-  return (
-    <Dialog open onOpenChange={o => !o && onClose()}>
-      <DialogContent className="max-w-sm">
-        <DialogHeader><DialogTitle>Tạo layout mới</DialogTitle></DialogHeader>
-        <div className="space-y-3">
-          {err && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{err}</div>}
-          <div>
-            <label className="text-xs text-slate-500">Kho</label>
-            <div className="text-sm font-medium text-slate-700">{warehouseName || '—'}</div>
-          </div>
-          <div>
-            <label className="text-xs text-slate-500">Tên layout *</label>
-            <Input autoFocus value={name} onChange={e => setName(e.target.value)} onKeyDown={e => e.key === 'Enter' && submit()} placeholder="VD: Ca ngày SX" className="h-8 text-sm mt-0.5" />
-          </div>
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" className="h-8" onClick={onClose}>Hủy</Button>
-            <Button className="h-8" onClick={submit} disabled={!name.trim() || saving}>{saving ? 'Đang tạo…' : 'Tạo'}</Button>
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-// Sửa 1 layout: (1) chọn Chức danh → (2) gom skill các chức danh đó (kèm kế thừa cấp dưới) → nhập số người
-function LayoutEditor({ layoutId }: { layoutId: string }) {
-  const { data: layout } = useLayout(layoutId)
+  const isEdit = !!layoutId
+  const { data: layout } = useLayout(layoutId ?? undefined)
   const { data: jobTitles = [] } = useJobTitles()
+  const create = useCreateLayout()
+  const update = useUpdateLayout()
   const setSkills = useSetLayoutSkills()
   const setJts = useSetLayoutJobTitles()
-  const update = useUpdateLayout()
+  const [name, setName] = useState('')
+  const [note, setNote] = useState('')
   const [jts, setJtSel] = useState<string[]>([])
   const [counts, setCounts] = useState<Record<string, number>>({})
   const [notes, setNotes] = useState<Record<string, string>>({})
-  const [note, setNote] = useState('')
-  const [dirty, setDirty] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     if (!layout) return
     const m: Record<string, number> = {}, n: Record<string, string> = {}
     for (const s of layout.skills) { m[s.skill_id] = s.required_count; if (s.note) n[s.skill_id] = s.note }
-    setCounts(m); setNotes(n); setNote(layout.note ?? ''); setJtSel(layout.job_title_ids ?? []); setDirty(false)
+    setName(layout.name); setNote(layout.note ?? ''); setCounts(m); setNotes(n); setJtSel(layout.job_title_ids ?? [])
   }, [layout])
 
   // danh mục skill của các chức danh đã chọn (gồm cả skill kế thừa từ cấp dưới, gộp theo skill_id)
   const { data: catalog = [] } = useSkills({ job_title_ids: jts.join(','), with_descendants: true }, jts.length > 0)
 
-  function setCount(skillId: string, v: number) { setCounts(p => ({ ...p, [skillId]: v })); setDirty(true) }
-  function setSkillNote(skillId: string, v: string) { setNotes(p => ({ ...p, [skillId]: v })); setDirty(true) }
-  async function save() {
-    setErr(null)
+  async function submit() {
+    if (!name.trim()) { setErr('Nhập tên layout'); return }
+    setSaving(true); setErr(null)
     try {
-      await setJts.mutateAsync({ layout_id: layoutId, job_title_ids: jts })
       const catalogIds = new Set(catalog.map(s => s.id))
       const skills = Object.entries(counts).filter(([id, c]) => c > 0 && catalogIds.has(id))
         .map(([skill_id, required_count], i) => ({ skill_id, required_count, sort_order: i, note: notes[skill_id] || undefined }))
-      await setSkills.mutateAsync({ layout_id: layoutId, skills })
-      if (layout && note !== (layout.note ?? '')) await update.mutateAsync({ id: layoutId, note })
-      setDirty(false)
-    } catch (e) { setErr(String((e as { message?: string })?.message ?? e)) }
+      let id = layoutId
+      if (isEdit && id) await update.mutateAsync({ id, name: name.trim(), note: note || undefined })
+      else { const l = await create.mutateAsync({ warehouse_id: warehouseId, name: name.trim(), note: note || undefined }); id = l.id }
+      await setJts.mutateAsync({ layout_id: id!, job_title_ids: jts })
+      await setSkills.mutateAsync({ layout_id: id!, skills })
+      onSaved()
+    } catch (e) { setErr(String((e as { response?: { data?: { error?: { message?: string } } } }).response?.data?.error?.message ?? (e as { message?: string })?.message ?? e)) }
+    finally { setSaving(false) }
   }
 
-  if (!layout) return <p className="text-xs text-slate-400 px-3 pb-3">Đang tải…</p>
   return (
-    <div className="border-t border-slate-200 p-3 space-y-3 bg-slate-50/50">
-      {err && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</div>}
-      <div className="flex items-center gap-2">
-        <Input value={note} onChange={e => { setNote(e.target.value); setDirty(true) }} placeholder="Ghi chú layout (không bắt buộc)" className="h-7 text-xs flex-1" />
-        <Button size="sm" variant={dirty ? 'default' : 'outline'} className="h-7" disabled={!dirty || setSkills.isPending || setJts.isPending} onClick={save}><Save className="h-3.5 w-3.5 mr-1" />Lưu</Button>
-      </div>
-
-      {/* Bước 1: chọn chức danh (dropdown multi-select) */}
-      <div className="space-y-1">
-        <p className="text-[11px] font-semibold text-slate-600">1. Chọn chức danh (gọi nhóm người cho layout)</p>
-        <MultiSelectFilter label="Chức danh" width="w-64"
-          options={jobTitles.map(j => ({ value: j.id, label: j.name }))}
-          selected={jts} onChange={v => { setJtSel(v); setDirty(true) }} />
-      </div>
-
-      {/* Bước 2: bảng vị trí — số lượng — ghi chú */}
-      <div className="space-y-1">
-        <p className="text-[11px] font-semibold text-slate-600">2. Vị trí & số người mặc định (để trống = không dùng)</p>
-        {jts.length === 0 ? <p className="text-xs text-slate-400">Chọn chức danh ở bước 1 để hiện danh mục vị trí.</p>
-        : catalog.length === 0 ? <p className="text-xs text-slate-400">Chức danh đã chọn chưa có vị trí/skill nào.</p>
-        : (
-          <div className="border border-slate-200 rounded-lg overflow-x-auto bg-white">
-            <table className="w-full text-xs min-w-max">
-              <thead className="bg-slate-50 text-[10px] text-slate-500">
-                <tr>
-                  <th className="text-left px-2 py-1.5 font-medium">Vị trí</th>
-                  <th className="text-left px-2 py-1.5 font-medium">Chức danh</th>
-                  <th className="text-left px-2 py-1.5 font-medium w-36">Số lượng</th>
-                  <th className="text-left px-2 py-1.5 font-medium">Ghi chú</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {catalog.map(s => (
-                  <tr key={s.id} className="hover:bg-slate-50/60">
-                    <td className="px-2 py-1 text-slate-700">{s.name}{s.shift_tag && <span className="text-[10px] text-slate-400 ml-1">{shiftOf(s.shift_tag)}</span>}</td>
-                    <td className="px-2 py-1 text-slate-500">{s.job_title ?? '—'}</td>
-                    <td className="px-2 py-1"><QtyCell value={counts[s.id] ?? 0} onChange={v => setCount(s.id, v)} /></td>
-                    <td className="px-2 py-1"><Input value={notes[s.id] ?? ''} onChange={e => setSkillNote(s.id, e.target.value)} placeholder="—" className="h-6 text-xs" /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+    <Dialog open onOpenChange={o => !o && onClose()}>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader><DialogTitle>{isEdit ? 'Sửa layout' : 'Tạo layout mới'}</DialogTitle></DialogHeader>
+        {isEdit && !layout ? <p className="text-xs text-slate-400 py-6 text-center">Đang tải…</p> : (
+        <div className="space-y-3">
+          {err && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{err}</div>}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-slate-500">Kho</label>
+              <div className="text-sm font-medium text-slate-700 mt-1">{warehouseName || '—'}</div>
+            </div>
+            <div>
+              <label className="text-xs text-slate-500">Tên layout *</label>
+              <Input autoFocus value={name} onChange={e => setName(e.target.value)} placeholder="VD: Ca ngày SX" className="h-8 text-sm mt-0.5" />
+            </div>
           </div>
+          <div>
+            <label className="text-xs text-slate-500">Ghi chú</label>
+            <Input value={note} onChange={e => setNote(e.target.value)} placeholder="Ghi chú layout (không bắt buộc)" className="h-8 text-sm mt-0.5" />
+          </div>
+
+          {/* Bước 1: chọn chức danh */}
+          <div className="space-y-1">
+            <p className="text-[11px] font-semibold text-slate-600">1. Chọn chức danh (gọi nhóm người cho layout)</p>
+            <MultiSelectFilter label="Chức danh" width="w-64"
+              options={jobTitles.map(j => ({ value: j.id, label: j.name }))}
+              selected={jts} onChange={setJtSel} />
+          </div>
+
+          {/* Bước 2: bảng vị trí — số lượng — ghi chú */}
+          <div className="space-y-1">
+            <p className="text-[11px] font-semibold text-slate-600">2. Vị trí & số người mặc định (để trống = không dùng)</p>
+            {jts.length === 0 ? <p className="text-xs text-slate-400">Chọn chức danh ở bước 1 để hiện danh mục vị trí.</p>
+            : catalog.length === 0 ? <p className="text-xs text-slate-400">Chức danh đã chọn chưa có vị trí/skill nào.</p>
+            : (
+              <div className="border border-slate-200 rounded-lg overflow-auto bg-white max-h-[38vh]">
+                <table className="w-full text-xs min-w-max">
+                  <thead className="bg-slate-50 text-[10px] text-slate-500">
+                    <tr>
+                      <th className="text-left px-2 py-1.5 font-medium">Vị trí</th>
+                      <th className="text-left px-2 py-1.5 font-medium">Chức danh</th>
+                      <th className="text-left px-2 py-1.5 font-medium w-36">Số lượng</th>
+                      <th className="text-left px-2 py-1.5 font-medium">Ghi chú</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {catalog.map(s => (
+                      <tr key={s.id} className="hover:bg-slate-50/60">
+                        <td className="px-2 py-1 text-slate-700">{s.name}{s.shift_tag && <span className="text-[10px] text-slate-400 ml-1">{shiftOf(s.shift_tag)}</span>}</td>
+                        <td className="px-2 py-1 text-slate-500">{s.job_title ?? '—'}</td>
+                        <td className="px-2 py-1"><QtyCell value={counts[s.id] ?? 0} onChange={v => setCounts(p => ({ ...p, [s.id]: v }))} /></td>
+                        <td className="px-2 py-1"><Input value={notes[s.id] ?? ''} onChange={e => setNotes(p => ({ ...p, [s.id]: e.target.value }))} placeholder="—" className="h-6 text-xs" /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* Footer */}
+          <div className="flex items-center gap-2 pt-1">
+            {isEdit && onDelete && <Button variant="outline" className="h-8 text-red-600" onClick={onDelete}><Trash2 className="h-3.5 w-3.5 mr-1" />Xóa</Button>}
+            <div className="flex-1" />
+            <Button variant="outline" className="h-8" onClick={onClose}>Hủy</Button>
+            <Button className="h-8" onClick={submit} disabled={!name.trim() || saving}><Save className="h-3.5 w-3.5 mr-1" />{saving ? 'Đang lưu…' : (isEdit ? 'Lưu' : 'Tạo')}</Button>
+          </div>
+        </div>
         )}
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   )
 }
+

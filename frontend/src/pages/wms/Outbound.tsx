@@ -1488,6 +1488,7 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
   const [customerName, setCustomerName] = useState('')
   const [deliveryCode, setDeliveryCode] = useState('')
   const [exportType, setExportType]   = useState('')
+  const [warehouseType, setWarehouseType] = useState('')
   const [items, setItems]             = useState<ItemRow[]>([])
   const [error, setError]             = useState('')
   const [initialized, setInitialized] = useState(false)
@@ -1502,6 +1503,7 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
     setWarehouseId(gdo.warehouse_id ?? '')
     setShiptoPartyId(gdo.shipto_party ?? '')
     setDvvt(gdo.dvvt ?? '')
+    setWarehouseType(gdo.warehouse_type ?? '')
     // distributor_name: single-DO → from first DO; multi-DO → displayed read-only separately
     setCustomerName(gdo.delivery_orders?.[0]?.distributor_name ?? '')
     setDeliveryCode(gdo.delivery_orders?.[0]?.delivery_code ?? '')
@@ -1553,6 +1555,7 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
         customer_name: customerName.trim(),
         delivery_code: deliveryCode.trim() || undefined,
         export_type: exportType,
+        warehouse_type: warehouseType || undefined,
         items: items.map(i => ({ db_id: i.db_id, material_code: i.material_code, cartons_ordered: i.cartons, loose_picking: i.loose_picking, header_text: i.header_text || undefined })),
       },
       {
@@ -1582,6 +1585,7 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
           customerName={customerName} setCustomerName={setCustomerName}
           deliveryCode={deliveryCode} setDeliveryCode={setDeliveryCode}
           exportType={exportType} setExportType={setExportType}
+          warehouseType={warehouseType} setWarehouseType={setWarehouseType}
           items={items} setItems={setItems}
           error={error} isPending={isPending}
           onSubmit={handleSubmit} onClose={onClose}

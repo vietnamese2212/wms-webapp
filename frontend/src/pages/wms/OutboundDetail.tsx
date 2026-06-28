@@ -377,7 +377,7 @@ function EditTransportDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; 
     gdo.forklift_driver_id ? [gdo.forklift_driver_id] : []
   )
   const [gateRegId,       setGateRegId]       = useState(gdo.gate_registration_id ?? '')
-  const [special,         setSpecial]         = useState(!gdo.gate_registration_id)   // chưa gắn chuyến → mở mode gõ tay sẵn
+  const [special,         setSpecial]         = useState(false)   // mặc định CHỈ xe đang trong cổng; muốn xe đã ra/vãng lai phải tự tích
 
   // ── Chuyến xe ở Đăng ký cổng (giống StartDialog) — đổi link gate theo đúng chuyến
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })

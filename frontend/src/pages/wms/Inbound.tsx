@@ -100,7 +100,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
   const [nccSaving,      setNccSaving]      = useState(false)
   const [nccErr,         setNccErr]         = useState('')
   const [nccDropdownIdx, setNccDropdownIdx] = useState<number | null>(null)
-  const [showMoreGates,    setShowMoreGates]    = useState(false)
+  const [gateSpecial,      setGateSpecial]      = useState(false)   // mặc định CHỈ xe đang trong cổng; tích để xem cả xe đã ra (3 ngày)
   const [showGateDialog,   setShowGateDialog]   = useState(false)
 
   useEffect(() => {
@@ -117,7 +117,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
         setNotes('')
         setNccId((first as any).ncc_id ?? ''); setShowFactoryNcc(false)
         setNccRows([emptyNccRow()]); setNccSaving(false); setNccErr(''); setNccDropdownIdx(null)
-        setShowMoreGates(false)
+        setGateSpecial(false)
         setEditRows(editGroup.map(o => ({
           id:              o.id,
           material_id:     o.material_id ?? '',
@@ -138,7 +138,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
         setNotes(''); setGateRegId('')
         setNccId(''); setShowFactoryNcc(false)
         setNccRows([emptyNccRow()]); setNccSaving(false); setNccErr(''); setNccDropdownIdx(null)
-        setShowMoreGates(false)
+        setGateSpecial(false)
         setEditRows([])
       }
     }
@@ -149,14 +149,14 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
   const { data: allCompanies = [] } = useTransportCompanies(true)
   const nccList = (allCompanies as { id: string; name: string; type?: string }[]).filter(c => c.type === 'NCC')
 
-  const prevDay2 = importDate
-    ? (() => { const d = new Date(importDate); d.setDate(d.getDate() - 2); return d.toISOString().slice(0, 10) })()
+  // Theo rule giống Xuất: luôn lấy gate INBOUND trong 3 ngày (không lọc status ở server),
+  // lọc client: mặc định CHỈ xe đang trong cổng (status='IN', chưa ra); tích "Trường hợp đặc biệt" → hiện cả xe đã ra.
+  const gateFrom3 = importDate
+    ? (() => { const d = new Date(importDate); d.setDate(d.getDate() - 3); return d.toISOString().slice(0, 10) })()
     : undefined
   const { data: activeGates = [] } = useActiveGateRegistrations(
     sourceType === 'NCC' && warehouseId && importDate
-      ? showMoreGates
-        ? { date_from: prevDay2, date_to: importDate, warehouse_id: warehouseId, warehouse_type: subType || undefined, direction: 'INBOUND', status: 'IN' }
-        : { date: importDate, warehouse_id: warehouseId, warehouse_type: subType || undefined, direction: 'INBOUND', status: 'IN' }
+      ? { date_from: gateFrom3, date_to: importDate, warehouse_id: warehouseId, warehouse_type: subType || undefined, direction: 'INBOUND' }
       : undefined
   )
   const selectedGate    = (activeGates as any[]).find(g => g.id === gateRegId)
@@ -164,9 +164,10 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
     ? (editGroup[0] as any).gate_registration
     : null
   const displayGate = selectedGate ?? (editModeGateInfo?.id === gateRegId ? editModeGateInfo : null)
-  const sortedGates = [...(activeGates as any[])].sort(
-    (a, b) => b.date.localeCompare(a.date) || a.registration_number - b.registration_number
-  )
+  const sortedGates = [...(activeGates as any[])]
+    .filter(g => g.entry_at)                                              // chỉ xe đã vào cổng
+    .filter(g => gateSpecial ? true : g.status === 'IN')                  // mặc định: chưa ra
+    .sort((a, b) => b.date.localeCompare(a.date) || a.registration_number - b.registration_number)
   // Lần = vị trí trong ngày (reset mỗi ngày, không bị ảnh hưởng bởi bản ghi đã xóa)
   const gateLane: Map<string, number> = (() => {
     const dayCount = new Map<string, number>()
@@ -705,16 +706,20 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                           <DialogTitle className="text-sm">Chọn xe vào cổng</DialogTitle>
                           <div className="flex items-center gap-3">
                             <span className="text-[10px] text-slate-400">{sortedGates.length} xe</span>
-                            <button type="button" onClick={() => setShowMoreGates(v => !v)}
-                              className="text-[10px] text-slate-400 hover:text-blue-500 underline-offset-2 hover:underline">
-                              {showMoreGates ? 'Chỉ hôm nay' : '+ 2 ngày trước'}
-                            </button>
+                            <label className="flex items-center gap-1 text-[10px] text-slate-500 cursor-pointer select-none">
+                              <input type="checkbox" checked={gateSpecial}
+                                onChange={e => setGateSpecial(e.target.checked)}
+                                className="h-3 w-3 rounded accent-blue-600" />
+                              <span>Trường hợp đặc biệt (xe đã ra · 3 ngày)</span>
+                            </label>
                           </div>
                         </div>
                       </DialogHeader>
                       <div className="space-y-1 max-h-[72vh] overflow-y-auto pr-0.5">
                         {sortedGates.length === 0 ? (
-                          <div className="text-center text-xs text-slate-400 py-4">Không có xe INBOUND đang vào cổng</div>
+                          <div className="text-center text-xs text-slate-400 py-4">
+                            {gateSpecial ? 'Không có xe INBOUND trong 3 ngày' : 'Không có xe INBOUND đang vào cổng — tích "Trường hợp đặc biệt" để xem xe đã ra'}
+                          </div>
                         ) : (
                           sortedGates.map(g => {
                             const isTaken      = takenGateMap.has(g.id)
@@ -742,6 +747,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                                   {g.license_plate ?? '—'}
                                 </span>
                                 {g.company_name_raw && <span className="text-[10px] text-slate-500 truncate">{g.company_name_raw}</span>}
+                                {g.status !== 'IN' && <span className="text-[8px] px-1 py-0.5 rounded bg-slate-200 text-slate-500 shrink-0">đã ra</span>}
                                 <span className="ml-auto text-[9px] text-slate-400 shrink-0">
                                   {g.date?.slice(8)}/{g.date?.slice(5, 7)} · Lần {gateLane.get(g.id)}
                                   {g.date !== importDate && !isDateBefore && <span className="ml-1 text-amber-500">(trước)</span>}
@@ -1063,19 +1069,22 @@ function applyClientFilters(
 
 // Cấu hình cột Inbound (thứ tự khớp với các <TableCell> trong InboundRow)
 const INBOUND_COLS: { id: string; label: string; w: number; align?: 'right'; resize?: false }[] = [
-  { id: 'pin',      label: '',                   w: 34,  resize: false },
-  { id: 'date',     label: 'Ngày nhập',          w: 118 },
-  { id: 'loc',      label: 'Vị trí',             w: 84 },
-  { id: 'mat',      label: 'Material',           w: 150 },
-  { id: 'code',     label: 'Mã phiếu / Mã lệnh', w: 130 },
-  { id: 'pallet',   label: 'Pallet',             w: 64,  align: 'right' },
-  { id: 'actual',   label: 'Thực nhập',          w: 84,  align: 'right' },
-  { id: 'plan',     label: 'Thùng KH',           w: 84,  align: 'right' },
-  { id: 'progress', label: 'Tiến độ',            w: 78,  align: 'right' },
-  { id: 'imp',      label: 'Người nhập',         w: 104 },
-  { id: 'shift',    label: 'Ca',                 w: 64 },
-  { id: 'note',     label: 'Ghi chú',            w: 120 },
-  { id: 'status',   label: 'Trạng thái',         w: 92 },
+  { id: 'pin',      label: '',            w: 34,  resize: false },
+  { id: 'date',     label: 'Ngày nhập',   w: 104 },
+  { id: 'plate',    label: 'Biển số / DO', w: 120 },
+  { id: 'loc',      label: 'Vị trí',      w: 84 },
+  { id: 'matname',  label: 'Tên hàng',    w: 150 },
+  { id: 'matcode',  label: 'Mã hàng',     w: 110 },
+  { id: 'code',     label: 'Mã phiếu',    w: 120 },
+  { id: 'tms',      label: 'Mã lệnh',     w: 120 },
+  { id: 'pallet',   label: 'Pallet',      w: 64,  align: 'right' },
+  { id: 'actual',   label: 'Thực nhập',   w: 84,  align: 'right' },
+  { id: 'plan',     label: 'Thùng KH',    w: 84,  align: 'right' },
+  { id: 'progress', label: 'Tiến độ',     w: 78,  align: 'right' },
+  { id: 'imp',      label: 'Người nhập',  w: 104 },
+  { id: 'shift',    label: 'Ca',          w: 64 },
+  { id: 'note',     label: 'Ghi chú',     w: 120 },
+  { id: 'status',   label: 'Trạng thái',  w: 92 },
 ]
 const INBOUND_COL_DEFAULTS = INBOUND_COLS.map(c => c.w)
 
@@ -1547,7 +1556,7 @@ export default function Inbound() {
                     const spacerBefore = bpos === 'first' && i > 0 && prevBpos !== 'last'
                     const spacerAfter  = bpos === 'last'
                     const nodes: React.ReactNode[] = []
-                    if (spacerBefore) nodes.push(<tr key={`sp-b-${order.id}`} aria-hidden><td colSpan={13} className="p-0 border-0 bg-transparent"><div className="h-2.5" /></td></tr>)
+                    if (spacerBefore) nodes.push(<tr key={`sp-b-${order.id}`} aria-hidden><td colSpan={16} className="p-0 border-0 bg-transparent"><div className="h-2.5" /></td></tr>)
                     nodes.push(
                       <InboundRow
                         key={order.id}
@@ -1572,7 +1581,7 @@ export default function Inbound() {
                         bracketPos={bpos}
                       />
                     )
-                    if (spacerAfter) nodes.push(<tr key={`sp-a-${order.id}`} aria-hidden><td colSpan={13} className="p-0 border-0 bg-transparent"><div className="h-2.5" /></td></tr>)
+                    if (spacerAfter) nodes.push(<tr key={`sp-a-${order.id}`} aria-hidden><td colSpan={16} className="p-0 border-0 bg-transparent"><div className="h-2.5" /></td></tr>)
                     return nodes
                   })}
                 </TableBody>
@@ -1647,6 +1656,12 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
   const matCode  = order.material?.material_code ?? ''
   const pallets  = order._count.inventory_entries
   const doCodes  = order.source_type === 'TRANSFER' ? (order as any).from_gdo_delivery_codes as string[] | undefined : undefined
+  const tmsCode  = (order as any).tms_order?.order_code ?? null
+  // Biển số / DO trên 1 dòng (không xếp chồng): biển số xe + (TRANSFER) số DO
+  const plateDo  = [
+    order.source_type === 'TRANSFER' ? (order as any).from_gdo?.license_plate : (order as any).gate_registration?.license_plate,
+    order.source_type === 'TRANSFER' && doCodes?.length ? doCodes.join(', ') : null,
+  ].filter(Boolean).join(' · ') || null
 
   // Mô hình "1 phiếu = 1 vị trí": ô Vị trí hiện vị trí HIỆN TẠI của phiếu (order.location, =vị trí
   // chọn cuối). Nếu có pallet đang nằm ở vị trí KHÁC (lệch) → CẢNH BÁO (không tự dời dữ liệu).
@@ -1692,7 +1707,7 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
         </div>
       </TableCell>
 
-      {/* Col 2: Ngày nhập + Số DO (sticky-left để giữ context khi scroll ngang) */}
+      {/* Col 2: Ngày nhập (sticky-left để giữ context khi scroll ngang) */}
       <TableCell className={`px-2 py-1 whitespace-nowrap sticky left-0 z-10 ${selected ? 'bg-sky-50' : showBracket ? 'bg-slate-50' : 'bg-white'}`}>
         <div className="flex items-center gap-0.5">
           <span className="text-[10px] font-medium tabular-nums">{dateFull}</span>
@@ -1709,23 +1724,16 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
             </button>
           )}
         </div>
-        {/* Số DO hoặc biển số xe (dòng 2) */}
-        {doCodes && doCodes.length > 0 ? (
-          <div className="text-[8px] text-slate-400 font-mono truncate mt-0.5 max-w-[130px]">
-            {doCodes.join(', ')}
-          </div>
-        ) : order.source_type === 'NCC' && (order as any).gate_registration?.license_plate ? (
-          <div className="text-[8px] font-mono text-slate-500 truncate mt-0.5">
-            {(order as any).gate_registration.license_plate}
-          </div>
-        ) : order.source_type === 'TRANSFER' && (order as any).from_gdo?.license_plate ? (
-          <div className="text-[8px] font-mono text-purple-600 truncate mt-0.5">
-            {(order as any).from_gdo.license_plate}
-          </div>
-        ) : null}
       </TableCell>
 
-      {/* Col 3: Vị trí */}
+      {/* Col 3: Biển số / DO */}
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        {plateDo
+          ? <span className={`text-[10px] font-mono truncate block ${order.source_type === 'TRANSFER' ? 'text-purple-600' : 'text-slate-600'}`} title={plateDo}>{plateDo}</span>
+          : <span className="text-[10px] text-slate-300">—</span>}
+      </TableCell>
+
+      {/* Col 4: Vị trí */}
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <div className="flex items-center justify-between gap-1 w-full">
           <span className="flex items-center gap-0.5 min-w-0">
@@ -1744,23 +1752,30 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
         </div>
       </TableCell>
 
-      {/* Col 4: Material */}
-      <TableCell className="px-2 py-1">
-        <div className="text-[10px] font-medium truncate" title={matName}>{matName}</div>
-        {matCode && <div className="text-[9px] text-slate-400 font-mono truncate" title={matCode}>{matCode}</div>}
+      {/* Col 5: Tên hàng */}
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        <span className="text-[10px] font-medium truncate block" title={matName}>{matName}</span>
       </TableCell>
 
-      {/* Col 5: Mã phiếu / Mã lệnh (NEW) */}
-      <TableCell className="px-2 py-1">
-        {order.import_code ? (
-          <div className="text-[10px] font-mono font-semibold truncate" title={order.import_code}>{order.import_code}</div>
-        ) : null}
-        {(order as any).tms_order?.order_code ? (
-          <div className="text-[9px] font-mono truncate mt-0.5 opacity-80" title={(order as any).tms_order.order_code}>{(order as any).tms_order.order_code}</div>
-        ) : null}
-        {!order.import_code && !(order as any).tms_order?.order_code && (
-          <span className="text-[10px] text-slate-300">—</span>
-        )}
+      {/* Col 6: Mã hàng */}
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        {matCode
+          ? <span className="text-[9px] text-slate-500 font-mono truncate block" title={matCode}>{matCode}</span>
+          : <span className="text-[10px] text-slate-300">—</span>}
+      </TableCell>
+
+      {/* Col 7: Mã phiếu */}
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        {order.import_code
+          ? <span className="text-[10px] font-mono font-semibold truncate block" title={order.import_code}>{order.import_code}</span>
+          : <span className="text-[10px] text-slate-300">—</span>}
+      </TableCell>
+
+      {/* Col 8: Mã lệnh (TMS) */}
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        {tmsCode
+          ? <span className="text-[9px] font-mono truncate block opacity-80" title={tmsCode}>{tmsCode}</span>
+          : <span className="text-[10px] text-slate-300">—</span>}
       </TableCell>
 
       {/* Col 6: Pallet */}

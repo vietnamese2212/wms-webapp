@@ -567,9 +567,9 @@ export async function deleteGDO(req: Request, res: Response) {
 
 export async function updateGDO(req: Request, res: Response) {
   try {
-    const { delivery_date, warehouse_id, dvvt, customer_name, delivery_code, export_type, items, gate_registration_id, shipto_party } = req.body as {
+    const { delivery_date, warehouse_id, dvvt, customer_name, delivery_code, export_type, warehouse_type, items, gate_registration_id, shipto_party } = req.body as {
       delivery_date?: string; warehouse_id?: string; dvvt?: string
-      customer_name?: string; delivery_code?: string; export_type?: string; gate_registration_id?: string | null; shipto_party?: string | null
+      customer_name?: string; delivery_code?: string; export_type?: string; warehouse_type?: string; gate_registration_id?: string | null; shipto_party?: string | null
       items?: Array<{ db_id?: string; material_code: string; cartons_ordered: number; loose_picking?: number; header_text?: string }>
     }
 
@@ -587,6 +587,7 @@ export async function updateGDO(req: Request, res: Response) {
     }
     if ('gate_registration_id' in req.body) gdoUpdates.gate_registration_id = gate_registration_id ?? null
     if ('shipto_party' in req.body) gdoUpdates.shipto_party = shipto_party ?? null
+    if ('warehouse_type' in req.body) gdoUpdates.warehouse_type = warehouse_type ?? null
 
     await supabase.from('GroupDeliveryOrder')
       .update(gdoUpdates)

@@ -25,7 +25,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { can } from '@/config/permissions'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
-import { effShelfLife } from '@/utils/shelfLife'
+import { resolveShelfLife } from '@/utils/shelfLife'
 import type { InventoryEntry, SupplierShelfLifeOverride } from '@/types'
 
 // ─── Helpers ──────────────────────────────────────────────────
@@ -64,7 +64,7 @@ function entryRowBg(selected: boolean, checked: boolean): string {
 function entryRowText(e: InventoryEntry, selected: boolean): string {
   if (selected)    return '[&_td_span]:text-white'
   if (e.qa_status) return '[&_td_span]:text-red-600'
-  const pct = calcDatePct(e.production_date, effShelfLife(e.material, e.ncc_id))
+  const pct = calcDatePct(e.production_date, resolveShelfLife(e.shelf_life_days, e.material, e.ncc_id))
   if (pct !== null && pct < 60) return '[&_td_span]:text-purple-600'
   if (pct !== null && pct < 80) return '[&_td_span]:text-orange-600'
   return '[&_td_span]:text-slate-700'
@@ -221,29 +221,42 @@ function NccPanel({ ids, material, onClose }: {
   onClose: () => void
 }) {
   const user = useAuthStore(s => s.user)
-  const [nccId, setNccId]   = useState('')   // '' = chưa chọn; '__none__' = bỏ NCC
+  const [selKey, setSelKey] = useState('')   // '' = chưa chọn; '__none__' = bỏ; '<ncc>|<shelf?>'
+  const [expanded, setExpanded] = useState(false)
   const [error, setError]   = useState('')
   const { mutate, isPending } = useBulkUpdateInventoryNcc()
   const { data: allCompanies = [] } = useTransportCompanies(true)
-  const nccList = (allCompanies as { id: string; name: string; type?: string }[]).filter(c => c.type === 'NCC')
-  // Khi các pallet chọn cùng 1 mã hàng → hiện HSD ngoại lệ sau tên NCC (vd "Đại Tân Việt (360 ngày)")
+  const allNcc = (allCompanies as { id: string; name: string; type?: string }[]).filter(c => c.type === 'NCC')
+  const nccName = (id: string) => allNcc.find(n => n.id === id)?.name ?? '(NCC?)'
+  // Khi các pallet chọn cùng 1 mã hàng → ưu tiên hiện biến thể (NCC, shelflife) đã khai cho mã đó
   const shelfOv = material?.supplier_shelf_life_overrides ?? []
-  const nccDays = (id: string) => shelfOv.find(o => o.transport_company_id === id)?.shelf_life_days
+  const variants = shelfOv
+    .filter(o => allNcc.some(n => n.id === o.transport_company_id))
+    .map(o => ({ id: `${o.transport_company_id}|${o.shelf_life_days}`, label: `${nccName(o.transport_company_id)} (${o.shelf_life_days} ngày)`, nccId: o.transport_company_id }))
 
   function handleSubmit() {
     setError('')
+    let ncc_id: string | null = null
+    let shelf_life_days: number | null = null
+    if (selKey !== '__none__' && selKey) {
+      const [id, sh] = selKey.split('|')
+      ncc_id = id || null
+      shelf_life_days = sh ? Number(sh) : null
+    }
     mutate(
-      { ids, ncc_id: nccId === '__none__' ? null : nccId, employee_id: user?.id },
+      { ids, ncc_id, shelf_life_days, employee_id: user?.id },
       {
-        onSuccess: () => { setNccId(''); onClose() },
+        onSuccess: () => { setSelKey(''); onClose() },
         onError: (e: any) => setError(e?.response?.data?.error?.message ?? 'Lỗi không xác định'),
       }
     )
   }
 
-  const options: { id: string; label: string }[] = [
-    ...nccList.map(c => { const d = nccDays(c.id); return { id: c.id, label: d ? `${c.name} (${d} ngày)` : c.name } }),
-    { id: '__none__', label: '— Bỏ NCC (HSD mặc định) —' },
+  // Ưu tiên: biến thể của mã hàng; "Mở rộng" mới thêm tất cả NCC (không kèm shelflife)
+  const options: { id: string; label: string; muted?: boolean }[] = [
+    ...variants,
+    ...(expanded ? allNcc.filter(n => !variants.some(v => v.nccId === n.id)).map(c => ({ id: `${c.id}|`, label: c.name })) : []),
+    { id: '__none__', label: '— Bỏ NCC (HSD mặc định) —', muted: true },
   ]
 
   return (
@@ -252,7 +265,7 @@ function NccPanel({ ids, material, onClose }: {
         <p className="text-xs font-semibold text-slate-700">Sửa NCC hàng loạt</p>
         <div className="flex items-center gap-2">
           <span className="text-[10px] text-slate-500">{ids.length} pallet</span>
-          <button onClick={() => { setNccId(''); setError(''); onClose() }} className="text-slate-400 hover:text-slate-700">
+          <button onClick={() => { setSelKey(''); setError(''); onClose() }} className="text-slate-400 hover:text-slate-700">
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -261,34 +274,39 @@ function NccPanel({ ids, material, onClose }: {
         {error && (
           <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</div>
         )}
-        <p className="text-[10px] text-slate-400">NCC quyết định HSD ngoại lệ (nếu mã hàng có khai) → %Date tính lại theo NCC.</p>
+        <p className="text-[10px] text-slate-400">Chọn NCC = đặt luôn shelflife của lô đó → %Date tính lại. Ưu tiên NCC đã khai cho mã hàng; "Mở rộng" để xem tất cả.</p>
         <div className="space-y-1.5">
           <Label className="text-xs">Nhà cung cấp (NCC)</Label>
-          {nccList.length === 0 ? (
+          {allNcc.length === 0 ? (
             <p className="text-[11px] text-amber-600">Chưa có NCC — tạo ở Cài đặt TMS.</p>
           ) : (
             <div className="border rounded-md overflow-hidden">
               {options.map(opt => (
                 <label key={opt.id}
                   className={`flex items-center gap-2.5 px-3 py-2 cursor-pointer border-b last:border-b-0 transition-colors ${
-                    nccId === opt.id ? 'bg-blue-50' : 'hover:bg-slate-50'
+                    selKey === opt.id ? 'bg-blue-50' : 'hover:bg-slate-50'
                   }`}
-                  onClick={() => setNccId(prev => prev === opt.id ? '' : opt.id)}
+                  onClick={() => setSelKey(prev => prev === opt.id ? '' : opt.id)}
                 >
                   <div className={`w-3.5 h-3.5 border rounded shrink-0 flex items-center justify-center transition-colors ${
-                    nccId === opt.id ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white'
+                    selKey === opt.id ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white'
                   }`}>
-                    {nccId === opt.id && <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />}
+                    {selKey === opt.id && <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />}
                   </div>
-                  <span className={`text-xs ${opt.id === '__none__' ? 'text-slate-500' : 'text-slate-700'}`}>{opt.label}</span>
+                  <span className={`text-xs ${opt.muted ? 'text-slate-500' : 'text-slate-700'}`}>{opt.label}</span>
                 </label>
               ))}
             </div>
           )}
+          {allNcc.length > 0 && (
+            <button type="button" onClick={() => setExpanded(x => !x)} className="text-[10px] text-sky-600 hover:underline">
+              {expanded ? 'Thu gọn' : 'Mở rộng: tất cả NCC'}
+            </button>
+          )}
         </div>
         <div className="flex gap-2 pt-1">
-          <Button variant="outline" className="flex-1" onClick={() => { setNccId(''); setError(''); onClose() }}>Huỷ</Button>
-          <Button className="flex-1" disabled={!nccId || isPending} onClick={handleSubmit}>
+          <Button variant="outline" className="flex-1" onClick={() => { setSelKey(''); setError(''); onClose() }}>Huỷ</Button>
+          <Button className="flex-1" disabled={!selKey || isPending} onClick={handleSubmit}>
             {isPending ? '…' : 'Cập nhật'}
           </Button>
         </div>
@@ -714,7 +732,7 @@ export default function Inventory() {
           const remaining = e.cartons_remaining ?? e.cartons_imported
           const exported  = Math.max(0, Number(e.cartons_imported) - Number(remaining))
           const reserved  = e.cartons_reserved ?? 0
-          const pct       = calcDatePct(e.production_date, effShelfLife(e.material, e.ncc_id))
+          const pct       = calcDatePct(e.production_date, resolveShelfLife(e.shelf_life_days, e.material, e.ncc_id))
           return {
             'Kho': e.location?.warehouse?.name ?? '', 'Loại kho': e.material?.category ?? '',
             'Mã hàng': e.material?.material_code ?? '', 'Tên hàng': e.material?.short_name ?? '',
@@ -1123,7 +1141,7 @@ function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick, warehouse
   const qa            = e.qa_status?.code ?? '—'
   const remaining     = e.cartons_remaining ?? e.cartons_imported
   const exported      = Math.max(0, Number(e.cartons_imported) - Number(remaining))
-  const pct           = calcDatePct(e.production_date, effShelfLife(e.material, e.ncc_id))
+  const pct           = calcDatePct(e.production_date, resolveShelfLife(e.shelf_life_days, e.material, e.ncc_id))
   const prodDateStr   = e.production_date ? formatTimestampDate(e.production_date, true) : '—'
   const adjQty        = e.adjustment_qty ?? 0
   const warehouseNm   = e.location?.warehouse?.name ?? (e.warehouse_id ? warehouseMap[e.warehouse_id] : null) ?? '—'
@@ -1291,7 +1309,7 @@ function DetailPanel({ entry: e, onClose, warehouseMap }: { entry: InventoryEntr
   const loc       = formatLoc(e.location)
   const remaining = e.cartons_remaining ?? e.cartons_imported
   const exported  = Math.max(0, Number(e.cartons_imported) - Number(remaining))
-  const pct       = calcDatePct(e.production_date, effShelfLife(e.material, e.ncc_id))
+  const pct       = calcDatePct(e.production_date, resolveShelfLife(e.shelf_life_days, e.material, e.ncc_id))
 
   function handleAdjust() {
     const val = parseFloat(adjInput)
@@ -1359,7 +1377,7 @@ function DetailPanel({ entry: e, onClose, warehouseMap }: { entry: InventoryEntr
           <Row label="Ngày SX"
             value={e.production_date ? formatTimestampDate(e.production_date, false) : '—'} />
           <Row label="HSD (ngày)"
-            value={effShelfLife(e.material, e.ncc_id) > 0 ? `${effShelfLife(e.material, e.ncc_id)} ngày` : '—'} />
+            value={resolveShelfLife(e.shelf_life_days, e.material, e.ncc_id) > 0 ? `${resolveShelfLife(e.shelf_life_days, e.material, e.ncc_id)} ngày` : '—'} />
           {e.ncc && (
             <Row label="NCC" value={e.ncc.name} />
           )}

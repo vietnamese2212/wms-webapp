@@ -505,6 +505,7 @@ export function useScanPallet() {
       qa_status_id?: string
       employee_id?: string
       ncc_id?: string
+      shelf_life_days?: number
     }) => apiClient.post(`/wms/inbound-orders/${orderId}/scan`, body).then((r) => r.data.data),
 
     // Optimistic: add entry to table immediately, before API responds
@@ -935,8 +936,8 @@ export function useBulkUpdateInventoryQA() {
 export function useBulkUpdateInventoryNcc() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async ({ ids, ncc_id, employee_id }: { ids: string[]; ncc_id: string | null; employee_id?: string }) => {
-      const { data } = await apiClient.patch('/wms/inventory/bulk-ncc', { ids, ncc_id, employee_id })
+    mutationFn: async ({ ids, ncc_id, shelf_life_days, employee_id }: { ids: string[]; ncc_id: string | null; shelf_life_days?: number | null; employee_id?: string }) => {
+      const { data } = await apiClient.patch('/wms/inventory/bulk-ncc', { ids, ncc_id, shelf_life_days, employee_id })
       return data.data as { updated: number }
     },
     // NCC đổi → %Date tính lại ở cả list & tổng hợp

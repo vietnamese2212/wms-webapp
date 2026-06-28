@@ -85,18 +85,29 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
   const { mutate: checkScan,   isPending: serverChecking } = useCheckInboundScan()
 
   const defaultCartons = effCartonsPerPallet(order.material, order.warehouse_id).toString()
-  // Chuyển kho: cho phép chọn NCC (mặc định tự kế thừa từ pallet gốc) — phòng pallet đổi tên A→B
+  // NCC + shelflife theo lô. 1 mã + 1 NCC có thể nhiều shelflife (100/200) → chọn NCC = chọn luôn shelflife.
   const isTransfer = (order as { source_type?: string }).source_type === 'TRANSFER'
   const { data: allCompanies = [] } = useTransportCompanies(true)
-  const nccList = isTransfer
-    ? (allCompanies as { id: string; name: string; type?: string }[]).filter(c => c.type === 'NCC')
-    : []
+  const allNcc = (allCompanies as { id: string; name: string; type?: string }[]).filter(c => c.type === 'NCC')
+  const nccName = (id: string) => allNcc.find(n => n.id === id)?.name ?? '(NCC?)'
   const shelfOv = order.material?.supplier_shelf_life_overrides ?? []
-  const nccLabel = (c: { id: string; name: string }) => {
-    const d = shelfOv.find(o => o.transport_company_id === c.id)?.shelf_life_days
-    return d ? `${c.name} (${d} ngày)` : c.name
+  // Biến thể đã khai cho mã hàng này (ưu tiên hiện): mỗi dòng = 1 (NCC, shelflife)
+  const variants: { key: string; ncc_id: string; shelf: number | null; label: string }[] = shelfOv
+    .filter(o => allNcc.some(n => n.id === o.transport_company_id))
+    .map(o => ({ key: `${o.transport_company_id}|${o.shelf_life_days}`, ncc_id: o.transport_company_id, shelf: o.shelf_life_days, label: `${nccName(o.transport_company_id)} (${o.shelf_life_days} ngày)` }))
+  // Ưu tiên hiện: biến thể của mã + NCC của phiếu (nếu chưa khai biến thể) → tránh chọn nhầm NCC
+  const baseOpts = [...variants]
+  if (order.ncc_id && !variants.some(v => v.ncc_id === order.ncc_id)) {
+    baseOpts.push({ key: `${order.ncc_id}|`, ncc_id: order.ncc_id, shelf: null, label: nccName(order.ncc_id) })
   }
-  const [nccId,            setNccId]            = useState('')   // '' = tự kế thừa
+  const nccRelevant = isTransfer || !!order.ncc_id || variants.length > 0
+  // Mặc định: kế thừa (transfer) hoặc NCC của phiếu; nếu NCC đó chỉ 1 shelflife thì set luôn shelflife
+  const ordVarsForNcc = order.ncc_id ? variants.filter(v => v.ncc_id === order.ncc_id) : []
+  const initNcc   = isTransfer ? '' : (order.ncc_id ?? '')
+  const initShelf = (!isTransfer && ordVarsForNcc.length === 1) ? ordVarsForNcc[0].shelf : null
+  const [nccId,            setNccId]            = useState(initNcc)        // '' = tự kế thừa (transfer)
+  const [shelfDays,        setShelfDays]        = useState<number | null>(initShelf)
+  const [nccExpanded,      setNccExpanded]      = useState(false)          // mở rộng = hiện tất cả NCC
   const [cartons,          setCartons]          = useState(defaultCartons)
   const [stackLayer,       setStackLayer]       = useState('1')
   const [feedback,         setFeedback]         = useState<FeedbackState | null>(null)
@@ -159,7 +170,7 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
       return
     }
     scanPallet(
-      { orderId: order.id, qr_code: pendingQR, location_id: activeLocationId, stack_layer: Number(stackLayer), cartons_override: Number(cartons) || undefined, employee_id: employeeId, ncc_id: isTransfer && nccId ? nccId : undefined },
+      { orderId: order.id, qr_code: pendingQR, location_id: activeLocationId, stack_layer: Number(stackLayer), cartons_override: Number(cartons) || undefined, employee_id: employeeId, ncc_id: nccId || undefined, shelf_life_days: shelfDays ?? undefined },
       {
         onSuccess: (data) => {
           setPendingQR(null)
@@ -230,18 +241,30 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
             </button>
           </div>
 
-          {/* Chuyển kho: chọn NCC (mặc định tự kế thừa từ pallet gốc); dùng khi pallet đổi tên */}
-          {isTransfer && nccList.length > 0 && (
-            <div className="flex items-center gap-2">
-              <Label className="text-xs text-slate-500 shrink-0">NCC</Label>
-              <select
-                value={nccId}
-                onChange={e => setNccId(e.target.value)}
-                className="h-8 flex-1 rounded-md border border-input bg-white px-2 text-xs"
-              >
-                <option value="">Tự kế thừa từ pallet gốc</option>
-                {nccList.map(c => <option key={c.id} value={c.id}>{nccLabel(c)}</option>)}
-              </select>
+          {/* NCC + shelflife: ưu tiên NCC của mã hàng; "Mở rộng" mới hiện tất cả NCC (tránh chọn nhầm) */}
+          {nccRelevant && (
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <Label className="text-xs text-slate-500 shrink-0">NCC</Label>
+                <select
+                  value={nccId ? `${nccId}|${shelfDays ?? ''}` : ''}
+                  onChange={e => {
+                    const [id, sh] = e.target.value.split('|')
+                    setNccId(id || '')
+                    setShelfDays(sh ? Number(sh) : null)
+                  }}
+                  className="h-8 flex-1 rounded-md border border-input bg-white px-2 text-xs"
+                >
+                  <option value="">{isTransfer ? '— Tự kế thừa từ pallet gốc —' : '— Không NCC —'}</option>
+                  {baseOpts.map(v => <option key={v.key} value={v.key}>{v.label}</option>)}
+                  {nccExpanded && allNcc.filter(n => !baseOpts.some(v => v.ncc_id === n.id)).map(n => (
+                    <option key={n.id} value={`${n.id}|`}>{n.name}</option>
+                  ))}
+                </select>
+              </div>
+              <button type="button" onClick={() => setNccExpanded(x => !x)} className="ml-[2.75rem] text-[10px] text-sky-600 hover:underline">
+                {nccExpanded ? 'Thu gọn' : 'Mở rộng: tất cả NCC'}
+              </button>
             </div>
           )}
 

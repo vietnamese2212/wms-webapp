@@ -828,7 +828,7 @@ export async function scanQR(req: Request, res: Response) {
   try {
     if (!(await guardInboundScope(req, res, req.params.id))) return
     const { id: order_id } = req.params
-    const { qr_code, location_id, stack_layer = 1, cartons_override, qa_status_id, employee_id, ncc_id: ncc_override } = req.body
+    const { qr_code, location_id, stack_layer = 1, cartons_override, qa_status_id, employee_id, ncc_id: ncc_override, shelf_life_days: shelf_override } = req.body
 
     if (!qr_code)     return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu qr_code')
     if (!location_id) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu location_id')
@@ -971,19 +971,21 @@ export async function scanQR(req: Request, res: Response) {
       ? Number(cartons_override)
       : effCartonsPerPallet(material, orderWarehouseId)
 
-    // NCC của pallet (cho HSD ngoại lệ theo NCC):
-    // - NCC/SX: lấy từ phiếu (order.ncc_id).
-    // - Chuyển kho: ưu tiên NCC chọn tay ở sheet → kế thừa từ pallet GỐC cùng pallet_code → null.
-    //   (pallet đổi tên A→B sẽ không kế thừa được → operator chọn NCC ở sheet.)
-    let resolvedNcc: string | null = (order as { ncc_id?: string | null }).ncc_id ?? null
-    if (isTransfer) {
-      resolvedNcc = ncc_override ?? null
-      if (!resolvedNcc) {
-        const { data: src } = await supabase.from('InventoryEntry')
-          .select('ncc_id').eq('pallet_code', parsed.pallet_code).not('ncc_id', 'is', null)
-          .order('created_at', { ascending: false }).limit(1).maybeSingle()
-        resolvedNcc = (src as { ncc_id?: string | null } | null)?.ncc_id ?? null
-      }
+    // NCC + shelflife của pallet:
+    // - Ưu tiên giá trị operator chọn ở sheet (ncc_override + shelf_override) — selector NCC-biến-thể.
+    // - Nếu trống & là chuyển kho → kế thừa NCC + shelflife từ pallet GỐC cùng pallet_code.
+    //   (pallet đổi tên A→B không kế thừa được → operator chọn ở sheet.)
+    // - shelflife lưu thẳng trên pallet vì 1 mã+1 NCC có thể nhiều shelflife (không suy được từ NCC).
+    let resolvedNcc: string | null = ncc_override ?? (order as { ncc_id?: string | null }).ncc_id ?? null
+    let resolvedShelf: number | null = (shelf_override != null && Number(shelf_override) > 0) ? Number(shelf_override) : null
+    if (isTransfer && (!resolvedNcc || resolvedShelf == null)) {
+      const { data: src } = await supabase.from('InventoryEntry')
+        .select('ncc_id, shelf_life_days').eq('pallet_code', parsed.pallet_code)
+        .or('ncc_id.not.is.null,shelf_life_days.not.is.null')
+        .order('created_at', { ascending: false }).limit(1).maybeSingle()
+      const s = src as { ncc_id?: string | null; shelf_life_days?: number | null } | null
+      if (!resolvedNcc) resolvedNcc = s?.ncc_id ?? null
+      if (resolvedShelf == null && s?.shelf_life_days != null && Number(s.shelf_life_days) > 0) resolvedShelf = Number(s.shelf_life_days)
     }
 
     const { data: entry, error: entErr } = await supabase
@@ -1007,6 +1009,7 @@ export async function scanQR(req: Request, res: Response) {
         updated_by:         employee_id ?? null,
         status:             'IN_STOCK',
         ncc_id:             resolvedNcc,
+        shelf_life_days:    resolvedShelf,
         import_date:        vnDate(),
         update_date:        vnDate(),
         created_at:         new Date().toISOString(),
@@ -1036,10 +1039,15 @@ export async function scanQR(req: Request, res: Response) {
     if (cartons_imported === 0) {
       warnings.push('Số thùng/pallet chưa được cấu hình cho hàng hóa này – đã nhập 0')
     }
-    // Chuyển kho không xác định được NCC nhưng mã hàng CÓ ngoại lệ HSD theo NCC → HSD/%Date dùng mặc định
-    const matOverrides = (material as { supplier_shelf_life_overrides?: unknown[] | null }).supplier_shelf_life_overrides
-    if (isTransfer && !resolvedNcc && Array.isArray(matOverrides) && matOverrides.length > 0) {
-      warnings.push('Chưa xác định NCC cho pallet chuyển kho – HSD/%Date dùng mặc định. Chọn NCC nếu cần đúng hạn theo NCC.')
+    // Cảnh báo khi KHÔNG xác định được shelflife thực: mã hàng CÓ ngoại lệ nhưng pallet ra HSD mặc định.
+    const matOverrides = ((material as { supplier_shelf_life_overrides?: { transport_company_id: string; shelf_life_days: number }[] | null }).supplier_shelf_life_overrides) ?? []
+    if (resolvedShelf == null && matOverrides.length > 0) {
+      const matchCount = resolvedNcc ? matOverrides.filter(o => o.transport_company_id === resolvedNcc).length : 0
+      if (!resolvedNcc) {
+        warnings.push('Chưa xác định NCC – HSD/%Date dùng mặc định. Chọn NCC nếu cần đúng hạn theo NCC.')
+      } else if (matchCount > 1) {
+        warnings.push('NCC này có nhiều shelflife – chưa chọn lô nên HSD/%Date dùng mặc định. Chọn đúng shelflife (số ngày).')
+      }
     }
 
     emitInboundChanged()

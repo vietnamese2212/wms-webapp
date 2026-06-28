@@ -347,8 +347,6 @@ export default function Materials() {
   function setSupplierOverrideField(i: number, k: 'transport_company_id' | 'shelf_life_days', v: string) {
     setSupplierOverrides(prev => prev.map((o, idx) => idx === i ? { ...o, [k]: v } : o))
   }
-  const usedNccIds = new Set(supplierOverrides.map(o => o.transport_company_id).filter(Boolean))
-
   const saving = createMaterial.isPending || updateMaterial.isPending
 
   const shortNamePreview = (() => {
@@ -861,12 +859,10 @@ export default function Materials() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="__none__" className="text-xs text-slate-400">— Chọn NCC —</SelectItem>
-                        {nccList
-                          .filter(c => !usedNccIds.has(c.id) || c.id === ov.transport_company_id)
-                          .map(c => (
-                            <SelectItem key={c.id} value={c.id} className="text-xs">{c.code} – {c.name}</SelectItem>
-                          ))
-                        }
+                        {/* Cho phép TRÙNG NCC: 1 NCC khai nhiều shelflife (vd 100 & 200 ngày) */}
+                        {nccList.map(c => (
+                          <SelectItem key={c.id} value={c.id} className="text-xs">{c.code} – {c.name}</SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                     <Input type="number" min={1} className="w-20 h-7 text-xs" value={ov.shelf_life_days} onChange={e => setSupplierOverrideField(i, 'shelf_life_days', e.target.value)} placeholder="Ngày" />
@@ -875,7 +871,7 @@ export default function Materials() {
                     </button>
                   </div>
                 ))}
-                {nccList.length > 0 && supplierOverrides.length < nccList.length && (
+                {nccList.length > 0 && (
                   <button onClick={addSupplierOverride} className="flex items-center gap-1 text-[10px] text-blue-500 hover:text-blue-700">
                     <PlusCircle className="h-3 w-3" />Thêm Ngoại lệ NCC
                   </button>

@@ -129,6 +129,7 @@ qa_status_id TEXT FK,
 status TEXT DEFAULT "IN_STOCK",  -- "IN_STOCK" | "EXPORTED" | "TRANSFERRED" | "PARTIAL"
 import_order_id TEXT FK(ProductionImport),
 ncc_id UUID FK(TransportCompany),  -- denormalize từ phiếu khi quét; cho HSD ngoại lệ theo NCC (migration 20260628)
+shelf_life_days INT,  -- shelflife chọn theo LÔ khi nhận (1 mã+1 NCC có thể nhiều shelflife); ưu tiên hơn override-theo-NCC (migration 20260628_02)
 created_by TEXT FK(Employee), updated_by TEXT FK(Employee),
 created_at, updated_at
 ```
@@ -166,6 +167,7 @@ created_at, updated_at
 | 2026-06-16 | — | HR: `JobTitle.parent_id` + `in_chart` (sơ đồ tổ chức). Skill `EmployeeSkill` scope mở rộng: cấp trên gán được skill của chức danh cấp dưới (walk parent_id). Migrations `_jobtitle_hierarchy.sql`, `_jobtitle_in_chart.sql`. |
 | 2026-06-16 | — | HR Layout: `WorkLayoutJobTitle` (layout ↔ chức danh, để gọi đúng pool người). `WorkLayoutSkill.note` + `WorkAssignmentDemand.note` (ghi chú vị trí). Migrations `20260616_layout_jobtitle.sql`, `20260616_layout_demand_note.sql`. |
 | 2026-06-28 | — | Ngoại lệ HSD theo NCC: `ProductionImport.ncc_id` + `InventoryEntry.ncc_id` (UUID FK `TransportCompany`, nullable). Lấy NCC ở phiếu nhập (NCC bắt buộc; SX/chuyển kho tùy chọn) → denormalize xuống pallet khi quét → `effShelfLife(material, ncc_id)` áp `supplier_shelf_life_overrides` cho %Date. Migration `20260628_add_ncc_id_for_shelflife.sql`. |
+| 2026-06-28 | — | Shelflife theo LÔ: `InventoryEntry.shelf_life_days` (INT nullable). 1 mã + 1 NCC khai được nhiều shelflife (100/200 ngày); chọn lúc quét (selector NCC-biến-thể trong InboundScanSheet) → lưu thẳng trên pallet. %Date ưu tiên `shelf_life_days → override-NCC(khi 1 giá trị) → Material.shelf_life_days`. Chuyển kho kế thừa shelf_life_days + ncc_id từ pallet gốc cùng pallet_code. Migration `20260628_02_inventory_shelf_life_days.sql`. |
 | 2026-06-16 | — | HR: `ShiftRestRule` (from_shift→to_shift bị cấm) — luật nghỉ giữa ca, KHÔNG hardcode; auto-assign đọc phân công ngày D-1 + bảng này để loại ca vi phạm. Seed: CA3→{CA1,CA3,HC}. Migration `20260616_shift_rest_rule.sql`. |
 | 2026-06-17 | — | HR Phân công: UNIQUE index `(work_date, layout_id)` — mỗi layout chỉ 1 phiếu/ngày. Migration `20260617_uniq_assignment_sheet_per_day.sql`. |
 | 2026-06-18 | — | Omni-search bỏ dấu server-side: `CREATE EXTENSION unaccent` + RPC `omni_material_ids(term)` / `omni_location_ids(term)` (unaccent ilike, trả id). Migration `20260618_unaccent_search.sql`. Phục vụ ô tìm kiếm Inventory 1-ô (pallet/mã+tên hàng/vị trí, gõ không dấu vẫn ra). Controller fallback ilike nếu chưa apply. |

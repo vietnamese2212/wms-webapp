@@ -266,6 +266,8 @@ export interface InboundOrder {
   location_used_slots?: number
   entries_by_location?: { loc: string; pallets: number; cartons: number }[]
   source_type?:         'FACTORY' | 'NCC' | 'TRANSFER'
+  ncc_id?:              string | null
+  ncc?:                 { id: string; name: string } | null
   warehouse_type?:      string | null
   gate_registration_id?: string | null
   gate_registration?:   { id: string; registration_number: number; date: string; license_plate: string | null; company_name_raw: string | null; driver_name: string | null; status: string; direction: string } | null
@@ -367,6 +369,7 @@ export interface InventoryEntry {
   update_date:        string | null
   adjustment_qty:     number | null
   ncc_id:              string | null
+  shelf_life_days:     number | null
   stocktake_at:        string | null
   stocktake_flagged:   boolean | null
   stocktake_flag_note: string | null

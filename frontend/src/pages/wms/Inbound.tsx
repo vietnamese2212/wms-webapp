@@ -618,8 +618,9 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                     </div>
                     <SingleSelect
                       options={nccList.map(c => {
-                        const d = selectedMat?.supplier_shelf_life_overrides?.find(o => o.transport_company_id === c.id)?.shelf_life_days
-                        return { value: c.id, label: d ? `${c.name} (${d} ngày)` : c.name }
+                        const ms = selectedMat?.supplier_shelf_life_overrides?.filter(o => o.transport_company_id === c.id) ?? []
+                        // 1 shelflife → hiện luôn; nhiều shelflife → chọn lô khi quét, ở đây chỉ chọn NCC
+                        return { value: c.id, label: ms.length === 1 ? `${c.name} (${ms[0].shelf_life_days} ngày)` : c.name }
                       })}
                       value={nccId}
                       onChange={setNccId}

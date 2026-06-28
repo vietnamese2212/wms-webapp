@@ -12,13 +12,25 @@ interface MaterialShelfInfo {
   supplier_shelf_life_overrides?: SupplierOverride[] | null
 }
 
+// 1 NCC có thể khai NHIỀU shelflife (100 & 200) → khi đó không tự quyết được, trả base;
+// giá trị thật lấy từ InventoryEntry.shelf_life_days. Chỉ NCC có ĐÚNG 1 shelflife mới suy tự động.
 export function effShelfLife(
   material: MaterialShelfInfo | null | undefined,
   nccId: string | null | undefined,
 ): number {
   const base = Number(material?.shelf_life_days ?? 0)
   if (!material || !nccId) return base
-  const ov = material.supplier_shelf_life_overrides?.find(o => o.transport_company_id === nccId)
-  const v = ov?.shelf_life_days
-  return v != null && Number(v) > 0 ? Number(v) : base
+  const matches = (material.supplier_shelf_life_overrides ?? [])
+    .filter(o => o.transport_company_id === nccId && o.shelf_life_days != null && Number(o.shelf_life_days) > 0)
+  return matches.length === 1 ? Number(matches[0].shelf_life_days) : base
+}
+
+// %Date 1 pallet: ưu tiên shelflife chọn theo lô (entry) → suy theo NCC → mặc định.
+export function resolveShelfLife(
+  entryShelfLife: number | null | undefined,
+  material: MaterialShelfInfo | null | undefined,
+  nccId: string | null | undefined,
+): number {
+  if (entryShelfLife != null && Number(entryShelfLife) > 0) return Number(entryShelfLife)
+  return effShelfLife(material, nccId)
 }

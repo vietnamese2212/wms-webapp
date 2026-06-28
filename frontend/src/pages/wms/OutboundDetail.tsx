@@ -138,7 +138,7 @@ function TagPicker({
 }
 
 // ─── Picker chọn CHUYẾN (nút mở dialog thẻ, giống bên Nhập) — dùng chung Start + Sửa thông tin xe ───
-type GateRegOpt = { id: string; registration_number: number; license_plate: string | null; company_name_raw?: string | null; status: string; entry_at: string | null; exit_at: string | null; date: string }
+type GateRegOpt = { id: string; registration_number: number; license_plate: string | null; company_name_raw?: string | null; warehouse_id?: string | null; vehicle_type?: string | null; status: string; entry_at: string | null; exit_at: string | null; date: string }
 
 function ChuyenPicker({ gates, value, onPick, freePlate, onFreeText, special, onSpecialChange, takenGateIds }: {
   gates: GateRegOpt[]                          // chỉ chuyến đã vào cổng (entry_at) — CHƯA lọc theo special
@@ -156,13 +156,15 @@ function ChuyenPicker({ gates, value, onPick, freePlate, onFreeText, special, on
   // Giữ chuyến đang gắn trong danh sách dù bị lọc (để không mất link khi sửa)
   const list = selected && !base.some(g => g.id === selected.id) ? [selected, ...base] : base
   const sorted = [...list].sort((a, b) => b.date.localeCompare(a.date) || (b.entry_at ?? '').localeCompare(a.entry_at ?? ''))
-  // Lần = thứ tự lượt xe vào cổng trong ngày (tính trên TẤT CẢ chuyến đã vào — không đổi khi bật/tắt đặc biệt)
+  // Lần = lượt thứ mấy của CÙNG (kho · loại xe · ngày · biển số) — cùng một xe vào nhiều lượt thì Lần 1,2,3…
+  // Tính trên TẤT CẢ chuyến đã vào (không đổi khi bật/tắt đặc biệt).
   const gateLane = (() => {
-    const dayCount = new Map<string, number>()
+    const cnt = new Map<string, number>()
     const m = new Map<string, number>()
+    const keyOf = (g: GateRegOpt) => `${g.date}|${g.warehouse_id ?? ''}|${g.vehicle_type ?? ''}|${g.license_plate ?? ''}`
     for (const g of [...gates].sort((a, b) => a.date.localeCompare(b.date) || a.registration_number - b.registration_number)) {
-      const c = (dayCount.get(g.date) ?? 0) + 1
-      dayCount.set(g.date, c)
+      const c = (cnt.get(keyOf(g)) ?? 0) + 1
+      cnt.set(keyOf(g), c)
       m.set(g.id, c)
     }
     return m
@@ -283,7 +285,7 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
   const takenGateIds = new Set<string>()
   for (const g of recentGdos as GDO[]) if (g.gate_registration_id && g.id !== gdo.id) takenGateIds.add(g.gate_registration_id)
 
-  type GateReg = { id: string; registration_number: number; license_plate: string | null; company_name_raw?: string | null; status: string; entry_at: string | null; exit_at: string | null; date: string }
+  type GateReg = { id: string; registration_number: number; license_plate: string | null; company_name_raw?: string | null; warehouse_id?: string | null; vehicle_type?: string | null; status: string; entry_at: string | null; exit_at: string | null; date: string }
   // Picker tự lọc theo "đặc biệt" — ở đây chỉ truyền các chuyến ĐÃ VÀO cổng (entry_at).
   const gatesWithEntry = (gateRegs as GateReg[]).filter(g => g.entry_at)
   const selectedGate = (gateRegs as GateReg[]).find(g => g.id === gateRegId)
@@ -420,7 +422,7 @@ function EditTransportDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; 
   const takenGateIds = new Set<string>()
   for (const g of recentGdos as GDO[]) if (g.gate_registration_id && g.id !== gdo.id) takenGateIds.add(g.gate_registration_id)
 
-  type GateReg = { id: string; registration_number: number; license_plate: string | null; company_name_raw?: string | null; status: string; entry_at: string | null; exit_at: string | null; date: string }
+  type GateReg = { id: string; registration_number: number; license_plate: string | null; company_name_raw?: string | null; warehouse_id?: string | null; vehicle_type?: string | null; status: string; entry_at: string | null; exit_at: string | null; date: string }
   // Picker tự lọc theo "đặc biệt" + tự giữ chuyến đang gắn — ở đây chỉ truyền chuyến ĐÃ VÀO cổng.
   const gatesWithEntry = (gateRegs as GateReg[]).filter(g => g.entry_at)
   const selectedGate = (gateRegs as GateReg[]).find(g => g.id === gateRegId)

@@ -168,14 +168,18 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
     .filter(g => g.entry_at)                                              // chỉ xe đã vào cổng
     .filter(g => gateSpecial ? true : g.status === 'IN')                  // mặc định: chưa ra
     .sort((a, b) => b.date.localeCompare(a.date) || a.registration_number - b.registration_number)
-  // Lần = vị trí trong ngày (reset mỗi ngày, không bị ảnh hưởng bởi bản ghi đã xóa)
+  // Lần = lượt thứ mấy của CÙNG (kho · loại xe · ngày · biển số) — cùng một xe vào nhiều lượt thì Lần 1,2,3…
+  // Tính trên TẤT CẢ chuyến đã vào cổng (không lọc theo "đặc biệt") để Lần ổn định, không nhảy số.
   const gateLane: Map<string, number> = (() => {
-    const dayCount = new Map<string, number>()
+    const cnt = new Map<string, number>()
     const m = new Map<string, number>()
-    for (const g of sortedGates) {
-      const cnt = (dayCount.get(g.date) ?? 0) + 1
-      dayCount.set(g.date, cnt)
-      m.set(g.id, cnt)
+    const keyOf = (g: any) => `${g.date}|${g.warehouse_id ?? ''}|${g.vehicle_type ?? ''}|${g.license_plate ?? ''}`
+    const all = (activeGates as any[]).filter(g => g.entry_at)
+      .sort((a, b) => a.date.localeCompare(b.date) || a.registration_number - b.registration_number)
+    for (const g of all) {
+      const c = (cnt.get(keyOf(g)) ?? 0) + 1
+      cnt.set(keyOf(g), c)
+      m.set(g.id, c)
     }
     return m
   })()

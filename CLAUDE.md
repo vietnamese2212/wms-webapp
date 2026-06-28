@@ -138,7 +138,7 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 
 | Module key | Nhãn (bảng quyền) | Trang / Menu | Actions |
 |---|---|---|---|
-| `inventory` | Tồn kho | Tồn kho | view, adjust, move_location, recode, qa_update, update_prod_date, export |
+| `inventory` | Tồn kho | Tồn kho | view, adjust, move_location, recode, qa_update, **update_ncc**=Sửa NCC hàng loạt (gán NCC cho pallet → áp HSD ngoại lệ theo NCC), update_prod_date, export |
 | `inbound` | Nhập kho | Nhập kho | view, create, edit, scan, edit_pallet, force_edit_pallet, delete_pallet, force_delete_pallet, cancel, complete, uncomplete |
 | `outbound` | Xuất kho | Xuất kho | view, **prepare**=Chuẩn bị hàng (board soạn hàng, read-only — tách khỏi view, không phải ai xem Xuất kho cũng vào được), create, edit, assign, unassign, start, unstart, scan, complete, uncomplete, cancel |
 | `scanlog` | Lịch sử quét | Lịch sử quét | view |

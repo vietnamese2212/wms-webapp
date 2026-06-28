@@ -1266,14 +1266,12 @@ export default function Inbound() {
   }, [sortedOrders])
 
   function openEditNccGroup(order: InboundOrder) {
-    const gateRegId = (order as any).gate_registration_id
-    const group = gateRegId
-      ? sortedOrders.filter(o => (o as any).gate_registration_id === gateRegId && o.source_type === 'NCC')
-      : sortedOrders.filter(o =>
-          o.source_type === 'NCC' &&
-          o.import_date === order.import_date &&
-          (o as any).warehouse_id === (order as any).warehouse_id
-        )
+    // Nhóm sửa PHẢI khớp đúng nhóm bracket hiển thị (cùng inboundGroupKey = cùng chuyến/cổng).
+    // Phiếu NCC chưa gắn xe → key null → chỉ chính nó, KHÔNG gom theo ngày+kho (tránh kéo nhầm phiếu khác chuyến vào).
+    const key = inboundGroupKey(order)
+    const group = key
+      ? sortedOrders.filter(o => o.source_type === 'NCC' && inboundGroupKey(o) === key)
+      : [order]
     setEditNccGroup(group.length > 0 ? group : [order])
   }
 

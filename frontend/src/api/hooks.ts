@@ -393,6 +393,7 @@ export function useCreateInboundOrder() {
       gate_registration_id?: string
       tms_order_id?: string
       planned_cartons?: number
+      ncc_id?: string
     }) => apiClient.post('/wms/inbound-orders', body).then((r) => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['inbound-orders'] }),
   })
@@ -927,6 +928,21 @@ export function useBulkUpdateInventoryQA() {
       return data.data as { updated: number }
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['inventory-entries'] }) },
+  })
+}
+
+export function useBulkUpdateInventoryNcc() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ ids, ncc_id, employee_id }: { ids: string[]; ncc_id: string | null; employee_id?: string }) => {
+      const { data } = await apiClient.patch('/wms/inventory/bulk-ncc', { ids, ncc_id, employee_id })
+      return data.data as { updated: number }
+    },
+    // NCC đổi → %Date tính lại ở cả list & tổng hợp
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['inventory-entries'] })
+      qc.invalidateQueries({ queryKey: ['inventory-summary'] })
+    },
   })
 }
 

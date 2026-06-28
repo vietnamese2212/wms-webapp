@@ -2,16 +2,18 @@ import { Request, Response } from 'express'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { randomUUID } from 'crypto'
+import { effShelfLife } from '../../utils/shelfLife'
 
 const ENTRY_SELECT = `
   id, pallet_code, location_id, warehouse_id, material_id, manufacturer_id, cycle, machine_code,
   pallet_sequence_no, qa_status_id, stack_layer, cartons_imported, cartons_remaining, cartons_reserved,
-  production_date, status, import_date, update_date, adjustment_qty,
+  production_date, status, import_date, update_date, adjustment_qty, ncc_id,
   parent_pallet_code, origin,
   stocktake_at, stocktake_flagged, stocktake_flag_note,
   created_at, updated_at,
   location:Location(id, location_code, sub_code, sub_name, sub_type, warehouse:Warehouse(id, name, code)),
-  material:Material(id, material_code, short_name, shelf_life_days, category),
+  material:Material(id, material_code, short_name, shelf_life_days, supplier_shelf_life_overrides, category),
+  ncc:TransportCompany!ncc_id(id, name),
   manufacturer:Manufacturer(id, code, name),
   qa_status:QAStatus(id, code, name),
   created_by_emp:Employee!created_by(id, name),
@@ -334,14 +336,14 @@ async function resolveInventoryFilter(req: Request): Promise<ResolvedFilter> {
     // Phân trang 1000 (cap response) để lấy ĐỦ dòng tính pct, không bị thiếu khi >1000 dòng.
     let preEntries: any[]
     try {
-      preEntries = await fetchAllInventory('id, production_date, material:Material(shelf_life_days)', { ...params, status: '' }, null)
+      preEntries = await fetchAllInventory('id, production_date, ncc_id, material:Material(shelf_life_days, supplier_shelf_life_overrides)', { ...params, status: '' }, null)
     } catch (e) {
       return { ...base, error: (e as Error).message }
     }
     const now = Date.now()
     datePctIds = (preEntries ?? [])
       .filter((e: any) => {
-        const shelfDays = Number((e.material as any)?.shelf_life_days)
+        const shelfDays = effShelfLife(e.material, e.ncc_id)
         if (!e.production_date || !shelfDays || shelfDays <= 0) return false
         const pct = calcPct(e.production_date as string, shelfDays, now)
         return datePctRanges.some(r => matchDatePct(pct, r))
@@ -402,9 +404,9 @@ export async function summaryInventory(req: Request, res: Response) {
 
   // Lấy TOÀN BỘ entry khớp filter (phân trang 1000 — cap response + aggregate tắt) rồi gom JS.
   // !inner: lọc category phải loại HẲN entry khác loại, không để lọt với material=null.
-  const summarySelect = 'id, warehouse_id, production_date, cartons_imported, cartons_remaining, material_id, '
+  const summarySelect = 'id, warehouse_id, production_date, cartons_imported, cartons_remaining, material_id, ncc_id, '
     + 'location:Location(warehouse:Warehouse(id, name)), '
-    + 'material:Material!inner(material_code, short_name, category, shelf_life_days)'
+    + 'material:Material!inner(material_code, short_name, category, shelf_life_days, supplier_shelf_life_overrides)'
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let rows: any[]
   try {
@@ -431,11 +433,13 @@ export async function summaryInventory(req: Request, res: Response) {
     const whName = e.location?.warehouse?.name ?? (whId ? whMap[whId] : null) ?? '—'
     const matId  = e.material_id as string
     const prod   = (e.production_date ?? null) as string | null
-    const key    = `${whId}|${matId}|${prod}`
+    const nccId  = (e.ncc_id ?? null) as string | null
+    // Gom theo NCC khi có (HSD ngoại lệ theo NCC → %Date khác nhau); pallet không NCC gom như cũ
+    const key    = `${whId}|${matId}|${prod}|${nccId ?? ''}`
 
     let g = map.get(key)
     if (!g) {
-      const shelf = Number(e.material?.shelf_life_days)
+      const shelf = effShelfLife(e.material, nccId)
       g = {
         warehouse_id: whId, warehouse_name: whName, material_id: matId,
         material_code: e.material?.material_code ?? null,
@@ -641,6 +645,27 @@ export async function bulkUpdateQA(req: Request, res: Response) {
   const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
   const patch: Record<string, unknown> = { qa_status_id: qa_status_id ?? null, updated_at: now, update_date: vnDate }
+  if (employee_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employee_id)) patch.updated_by = employee_id
+
+  const { error } = await supabase.from('InventoryEntry').update(patch).in('id', ids)
+  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  return ok(res, { updated: ids.length })
+}
+
+// Sửa NCC hàng loạt — gán/đổi NCC cho các pallet đã chọn (để áp HSD ngoại lệ theo NCC).
+// ncc_id null = bỏ NCC (về HSD mặc định). Realtime invalidate inventory → %Date tự tính lại.
+export async function bulkUpdateNcc(req: Request, res: Response) {
+  const { ids, ncc_id, employee_id } = req.body as {
+    ids: string[]; ncc_id: string | null; employee_id?: string
+  }
+  if (!Array.isArray(ids) || ids.length === 0)
+    return fail(res, 400, 'INVALID_INPUT', 'Cần ít nhất 1 pallet')
+  if (!(await guardEntriesScope(req, res, ids))) return
+
+  const now    = new Date().toISOString()
+  const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+
+  const patch: Record<string, unknown> = { ncc_id: ncc_id ?? null, updated_at: now, update_date: vnDate }
   if (employee_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employee_id)) patch.updated_by = employee_id
 
   const { error } = await supabase.from('InventoryEntry').update(patch).in('id', ids)

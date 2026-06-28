@@ -20,7 +20,7 @@ import {
   useWarehouses, useMaterials, useLocationsReal, useImportShifts,
   useEmployeeRecords, useWarehouseTypes, useWarehouseZones,
   useActiveGateRegistrations, useInboundPlanLines,
-  useUpdateInboundOrder, useCancelInboundOrder,
+  useUpdateInboundOrder, useCancelInboundOrder, useTransportCompanies,
 } from '@/api/hooks'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
@@ -81,6 +81,8 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
     ? new Set(user.warehouse_ids) : null
 
   const [sourceType,   setSourceType]   = useState<'FACTORY' | 'NCC'>('FACTORY')
+  const [nccId,        setNccId]        = useState('')       // NCC chọn (bắt buộc khi Nhập NCC)
+  const [showFactoryNcc, setShowFactoryNcc] = useState(false) // Nhập SX: bật chọn NCC (tùy chọn)
   const [warehouseId,  setWarehouseId]  = useState('')
   const [subType,      setSubType]      = useState('')
   const [materialId,   setMaterialId]   = useState('')
@@ -113,6 +115,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
         setShiftId((first as any).shift_id ?? '')
         setMaterialId(''); setMatSearch(''); setMatOpen(false); setLocationId('')
         setNotes('')
+        setNccId((first as any).ncc_id ?? ''); setShowFactoryNcc(false)
         setNccRows([emptyNccRow()]); setNccSaving(false); setNccErr(''); setNccDropdownIdx(null)
         setShowMoreGates(false)
         setEditRows(editGroup.map(o => ({
@@ -133,6 +136,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
         setLocationId(''); setShiftId('')
         setImportDate(format(new Date(), 'yyyy-MM-dd'))
         setNotes(''); setGateRegId('')
+        setNccId(''); setShowFactoryNcc(false)
         setNccRows([emptyNccRow()]); setNccSaving(false); setNccErr(''); setNccDropdownIdx(null)
         setShowMoreGates(false)
         setEditRows([])
@@ -142,6 +146,8 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
 
   const { data: warehouses = [] } = useWarehouses(true)
   const { data: shifts     = [] } = useImportShifts()
+  const { data: allCompanies = [] } = useTransportCompanies(true)
+  const nccList = (allCompanies as { id: string; name: string; type?: string }[]).filter(c => c.type === 'NCC')
 
   const prevDay2 = importDate
     ? (() => { const d = new Date(importDate); d.setDate(d.getDate() - 2); return d.toISOString().slice(0, 10) })()
@@ -383,6 +389,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
             source_type: 'NCC', warehouse_type: subType || undefined,
             gate_registration_id: gateRegId || undefined,
             planned_cartons: r.planned_qty ? Number(r.planned_qty) : undefined,
+            ncc_id: nccId || undefined,
           })))
         }
         onClose()
@@ -399,6 +406,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
     if (!gateRegId)   { setNccErr('Vui lòng chọn Xe đang vào cổng'); return }
     if (!shiftId)     { setNccErr('Vui lòng chọn Ca nhập'); return }
     if (!importDate)  { setNccErr('Vui lòng chọn Ngày nhập'); return }
+    if (!nccId)       { setNccErr('Vui lòng chọn Nhà cung cấp (NCC)'); return }
     const validRows = nccRows.filter(r => r.material_id)
     if (!validRows.length) { setNccErr('Vui lòng nhập ít nhất 1 mã hàng hợp lệ'); return }
     const dupCodes = new Set<string>()
@@ -417,6 +425,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
         source_type: 'NCC', warehouse_type: subType || undefined,
         gate_registration_id: gateRegId || undefined,
         planned_cartons: r.planned_qty ? Number(r.planned_qty) : undefined,
+        ncc_id: nccId || undefined,
       })))
       onClose()
     } catch (e) {
@@ -437,7 +446,8 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
     createOrder(
       { warehouse_id: warehouseId, material_id: materialId, location_id: locationId || undefined,
         shift_id: shiftId || undefined, import_date: importDate, notes: notes || undefined,
-        imported_by: importedByEmpId || undefined, source_type: 'FACTORY', warehouse_type: subType || undefined },
+        imported_by: importedByEmpId || undefined, source_type: 'FACTORY', warehouse_type: subType || undefined,
+        ncc_id: (showFactoryNcc && nccId) ? nccId : undefined },
       { onSuccess: (data) => { onClose(); navigate(`/wms/inbound/${data.order.id}`) } }
     )
   }
@@ -591,6 +601,33 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                 <Label className="text-xs">Ghi chú</Label>
                 <Input placeholder="Tuỳ chọn" value={notes} onChange={e => setNotes(e.target.value)} className="h-8 text-xs mt-0.5" />
               </div>
+
+              {/* NCC tùy chọn — chỉ khi cần khai HSD ngoại lệ theo NCC cho hàng SX */}
+              <div className="col-span-2">
+                {!showFactoryNcc ? (
+                  <button type="button" onClick={() => setShowFactoryNcc(true)}
+                    className="text-[11px] text-sky-600 hover:text-sky-700 hover:underline">
+                    + Thêm NCC (tùy chọn)
+                  </button>
+                ) : (
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs">Nhà cung cấp (NCC)</Label>
+                      <button type="button" onClick={() => { setShowFactoryNcc(false); setNccId('') }}
+                        className="text-[10px] text-red-400 hover:text-red-600">Bỏ</button>
+                    </div>
+                    <SingleSelect
+                      options={nccList.map(c => ({ value: c.id, label: c.name }))}
+                      value={nccId}
+                      onChange={setNccId}
+                      placeholder={nccList.length ? 'Chọn NCC' : 'Chưa có NCC — tạo ở Cài đặt TMS'}
+                      searchable={nccList.length > 5}
+                      disabled={nccList.length === 0}
+                      triggerClassName="h-8 mt-0.5"
+                    />
+                  </div>
+                )}
+              </div>
             </div>
           </>)}
 
@@ -728,6 +765,18 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                     </DialogContent>
                   </Dialog>
                 </div>
+              </div>
+              <div>
+                <Label className="text-xs">Nhà cung cấp (NCC) <span className="text-red-500">*</span></Label>
+                <SingleSelect
+                  options={nccList.map(c => ({ value: c.id, label: c.name }))}
+                  value={nccId}
+                  onChange={setNccId}
+                  placeholder={nccList.length ? 'Chọn NCC' : 'Chưa có NCC — tạo ở Cài đặt TMS'}
+                  searchable={nccList.length > 5}
+                  disabled={nccList.length === 0}
+                  triggerClassName="h-8 mt-0.5"
+                />
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 <div>

@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { effectiveNoQr, markItemsNoQrIfQty } from '../../lib/inventoryMode'
 import { effCartonsPerPallet } from '../../utils/palletCalc'
+import { effShelfLife } from '../../utils/shelfLife'
 
 const now = () => new Date().toISOString()
 
@@ -1481,7 +1482,7 @@ export async function uploadExcel(req: Request, res: Response) {
 // và getInventoryByMaterial (nút search tồn kho ở bảng chuẩn bị). Trả [] nếu kho không có vị trí.
 async function fetchMaterialInventory(materialId: string, warehouseId: string | null) {
   let q = supabase.from('InventoryEntry')
-    .select('id, pallet_code, cartons_imported, cartons_remaining, cartons_reserved, production_date, import_date, qa_status_id, qa_status:QAStatus(id,code,name), location:Location(location_code), material:Material!material_id(shelf_life_days)')
+    .select('id, pallet_code, cartons_imported, cartons_remaining, cartons_reserved, production_date, import_date, qa_status_id, ncc_id, qa_status:QAStatus(id,code,name), location:Location(location_code), material:Material!material_id(shelf_life_days, supplier_shelf_life_overrides)')
     .eq('material_id', materialId)
     .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING'])
 
@@ -1498,7 +1499,7 @@ async function fetchMaterialInventory(materialId: string, warehouseId: string | 
 
   const now = Date.now()
   return (data ?? []).map((e: any) => {
-    const shelfDays = e.material?.shelf_life_days ? Number(e.material.shelf_life_days) : 0
+    const shelfDays = effShelfLife(e.material, e.ncc_id)
     let pct_date: number | null = null
     if (shelfDays > 0 && e.production_date) {
       const totalMs   = shelfDays * 86_400_000
@@ -1610,15 +1611,15 @@ export async function getPrepareBoard(req: Request, res: Response) {
     }
     if (matIds.length && (!locIds || locIds.length)) {
       let q = supabase.from('InventoryEntry')
-        .select('material_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, location:Location(location_code), material:Material!material_id(shelf_life_days)')
+        .select('material_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, ncc_id, location:Location(location_code), material:Material!material_id(shelf_life_days, supplier_shelf_life_overrides)')
         .in('material_id', matIds)
         .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING'])
       if (locIds) q = q.in('location_id', locIds)
       const { data: entries } = await q as { data: Array<{
         material_id: string; cartons_remaining: number | null; cartons_imported: number | null
-        cartons_reserved: number | null; production_date: string | null
+        cartons_reserved: number | null; production_date: string | null; ncc_id: string | null
         location: { location_code: string | null } | null
-        material: { shelf_life_days: number | null } | null
+        material: { shelf_life_days: number | null; supplier_shelf_life_overrides: { transport_company_id: string; shelf_life_days: number }[] | null } | null
       }> | null }
       const nowMs = Date.now()
       const byMat = new Map<string, Map<string, { location_code: string | null; pct_date: number | null; available: number }>>()
@@ -1626,7 +1627,7 @@ export async function getPrepareBoard(req: Request, res: Response) {
         const reserved  = Number(e.cartons_reserved ?? 0)
         const available = Math.max(0, (e.cartons_remaining ?? e.cartons_imported ?? 0) - reserved)
         if (available <= 0) continue
-        const shelfDays = e.material?.shelf_life_days ? Number(e.material.shelf_life_days) : 0
+        const shelfDays = effShelfLife(e.material, e.ncc_id)
         let pct_date: number | null = null
         if (shelfDays > 0 && e.production_date) {
           const totalMs   = shelfDays * 86_400_000
@@ -1718,9 +1719,9 @@ export async function checkScanItem(req: Request, res: Response) {
     if (dateReqPct > 0) {
       const matId = item.material_id ?? inv.material_id
       const { data: mat } = matId
-        ? await supabase.from('Material').select('shelf_life_days').eq('id', matId).single()
+        ? await supabase.from('Material').select('shelf_life_days, supplier_shelf_life_overrides').eq('id', matId).single()
         : { data: null }
-      const shelfLifeDays = mat?.shelf_life_days ? Number(mat.shelf_life_days) : 0
+      const shelfLifeDays = effShelfLife(mat, inv.ncc_id)
       if (!shelfLifeDays) return fail(res, `Mặt hàng chưa có Shelf Life — không thể kiểm tra %Date`, 400)
       const prodDate = inv.production_date ? new Date(inv.production_date) : null
       if (!prodDate || isNaN(prodDate.getTime())) return fail(res, `Pallet "${qr}" không có NSX — không thể kiểm tra %Date`, 400)
@@ -1804,7 +1805,7 @@ export async function scanItem(req: Request, res: Response) {
     const matId = item.material_id ?? inv.material_id
     const [{ data: shelfMat }, best_available_date] = await Promise.all([
       matId
-        ? supabase.from('Material').select('shelf_life_days').eq('id', matId).single()
+        ? supabase.from('Material').select('shelf_life_days, supplier_shelf_life_overrides').eq('id', matId).single()
         : Promise.resolve({ data: null }),
       (async (): Promise<string | null> => {
         if (!inv.material_id || !gdo?.warehouse_id) return null
@@ -1824,7 +1825,7 @@ export async function scanItem(req: Request, res: Response) {
         return dates.length > 0 ? dates.reduce((a: string, b: string) => a < b ? a : b) : null
       })(),
     ])
-    const shelfLifeDays = shelfMat?.shelf_life_days ? Number(shelfMat.shelf_life_days) : 0
+    const shelfLifeDays = effShelfLife(shelfMat, inv.ncc_id)
 
     // Kiểm tra % shelf life còn lại nếu item có yêu cầu
     const dateReqPct = Number(item.date_required ?? 0)

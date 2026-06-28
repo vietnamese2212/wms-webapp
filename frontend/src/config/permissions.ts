@@ -16,6 +16,7 @@ export const MODULES = {
       move_location:   'Chuyển vị trí',
       recode:          'Chuyển mã',
       qa_update:       'Cập nhật QA Status',
+      update_ncc:      'Sửa NCC hàng loạt',
       update_prod_date:'Cập nhật ngày SX',
       export:          'Xuất Excel',
     },

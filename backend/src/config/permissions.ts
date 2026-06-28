@@ -1,5 +1,5 @@
 export const ALL_PERMISSIONS: Record<string, string[]> = {
-  inventory:    ['view', 'adjust', 'move_location', 'recode', 'qa_update', 'update_prod_date', 'export'],
+  inventory:    ['view', 'adjust', 'move_location', 'recode', 'qa_update', 'update_ncc', 'update_prod_date', 'export'],
   inbound:      ['view', 'create', 'edit', 'scan', 'edit_pallet', 'force_edit_pallet', 'delete_pallet', 'force_delete_pallet', 'cancel', 'complete', 'uncomplete'],
   outbound:     ['view', 'prepare', 'create', 'edit', 'assign', 'unassign', 'start', 'unstart', 'scan', 'complete', 'uncomplete', 'cancel'],
   scanlog:      ['view'],

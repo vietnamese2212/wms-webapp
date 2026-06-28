@@ -46,8 +46,9 @@ async function guardInboundScope(req: Request, res: Response, id: string): Promi
 const ORDER_SELECT = `
   id, import_code, warehouse_id, location_id, material_id, planned_pallets, shift_id, status,
   imported_by, created_by, updated_by, import_date, notes, created_at, updated_at,
-  source_type, gate_registration_id, tms_order_id, planned_cartons, warehouse_type, from_gdo_id, posm_entry_id, posm_cartons, location_history,
+  source_type, gate_registration_id, tms_order_id, planned_cartons, warehouse_type, from_gdo_id, posm_entry_id, posm_cartons, location_history, ncc_id,
   warehouse:Warehouse(id, code, name, inventory_mode),
+  ncc:TransportCompany!ncc_id(id, name),
   location:Location(id, location_code, sub_code, max_pallets),
   material:Material(id, material_code, short_name, material_description, cartons_per_pallet, cartons_per_pallet_mn, warehouse_pallet_overrides, category, no_qr_tracking),
   shift:ImportShift(id, code, name),
@@ -297,12 +298,15 @@ export async function createOrder(req: Request, res: Response) {
   try {
     const {
       warehouse_id, material_id, location_id, planned_pallets, shift_id, import_date, notes, imported_by,
-      source_type, gate_registration_id, tms_order_id, planned_cartons, warehouse_type, from_gdo_id,
+      source_type, gate_registration_id, tms_order_id, planned_cartons, warehouse_type, from_gdo_id, ncc_id,
     } = req.body
     if (!warehouse_id) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu warehouse_id')
     if (!material_id)  return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu material_id')
     if (!guardWhCreate(req, res, warehouse_id)) return
     const resolvedSourceType = source_type === 'NCC' ? 'NCC' : source_type === 'TRANSFER' ? 'TRANSFER' : 'FACTORY'
+    // Nhập NCC bắt buộc chọn NCC (để áp HSD ngoại lệ); SX/chuyển kho tùy chọn
+    if (resolvedSourceType === 'NCC' && !ncc_id) return fail(res, 400, 'VALIDATION_ERROR', 'Nhập NCC phải chọn Nhà cung cấp')
+    const resolvedNccId = ncc_id ?? null
 
     // Check no_qr_tracking: FACTORY block giữ ở CẤP MÃ (mã no_qr không nhập SX được).
     // Kho QTY KHÔNG chặn FACTORY (kho SX vẫn có thể là QTY) — chỉ ép no-QR hiệu lực để bỏ vị trí + nhập tay.
@@ -402,6 +406,7 @@ export async function createOrder(req: Request, res: Response) {
           tms_order_id:         resolvedTmsOrderId,
           from_gdo_id:          from_gdo_id ?? null,
           planned_cartons:      planned_cartons ? Number(planned_cartons) : null,
+          ncc_id:               resolvedNccId,
           created_at:           new Date().toISOString(),
           updated_at:           new Date().toISOString(),
         })
@@ -831,7 +836,7 @@ export async function scanQR(req: Request, res: Response) {
     // Load order with material + source_type
     const { data: order } = await supabase
       .from('ProductionImport')
-      .select('id, import_code, status, source_type, material_id, warehouse_id, warehouse_type, location_id, location_history, material:Material(material_code, cartons_per_pallet), warehouse:Warehouse(id, nmsx_code)')
+      .select('id, import_code, status, source_type, material_id, warehouse_id, warehouse_type, location_id, location_history, ncc_id, material:Material(material_code, cartons_per_pallet, warehouse_pallet_overrides), warehouse:Warehouse(id, nmsx_code)')
       .eq('id', order_id).maybeSingle()
     if (!order)                     return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (order.status !== 'OPEN')    return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập không còn ở trạng thái mở')
@@ -986,6 +991,7 @@ export async function scanQR(req: Request, res: Response) {
         created_by:         employee_id ?? null,
         updated_by:         employee_id ?? null,
         status:             'IN_STOCK',
+        ncc_id:             (order as { ncc_id?: string | null }).ncc_id ?? null,
         import_date:        vnDate(),
         update_date:        vnDate(),
         created_at:         new Date().toISOString(),

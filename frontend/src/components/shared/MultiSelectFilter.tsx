@@ -124,20 +124,20 @@ export function MultiSelectFilter({
           )}
 
           <div className="overflow-y-auto flex-1">
-            {/* Tất cả row */}
-            <label className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 cursor-pointer border-b border-slate-100">
-              <MSCheckbox checked={allSelected} indeterminate={someSelected} onClick={toggleAll} />
+            {/* Tất cả row — click cả hàng (text + ô) đều toggle */}
+            <div onClick={toggleAll} className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 cursor-pointer border-b border-slate-100">
+              <MSCheckbox checked={allSelected} indeterminate={someSelected} />
               <span className="text-[11px] text-slate-500 font-medium">Tất cả</span>
-            </label>
+            </div>
 
             {visible.length === 0 ? (
               <div className="px-3 py-2 text-xs text-slate-400 text-center">Không tìm thấy</div>
             ) : (
               visible.map(opt => (
-                <label key={opt.value} className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 cursor-pointer">
-                  <MSCheckbox checked={selected.includes(opt.value)} onClick={() => toggle(opt.value)} />
+                <div key={opt.value} onClick={() => toggle(opt.value)} className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 cursor-pointer">
+                  <MSCheckbox checked={selected.includes(opt.value)} />
                   <span className="text-[11px] text-slate-700">{opt.label}</span>
-                </label>
+                </div>
               ))
             )}
           </div>
@@ -160,14 +160,13 @@ export function MultiSelectFilter({
   )
 }
 
-function MSCheckbox({ checked, indeterminate, onClick }: {
-  checked: boolean; indeterminate?: boolean; onClick: () => void
+function MSCheckbox({ checked, indeterminate }: {
+  checked: boolean; indeterminate?: boolean
 }) {
   return (
     <div
-      onClick={e => { e.preventDefault(); onClick() }}
-      className={`w-3.5 h-3.5 border rounded shrink-0 flex items-center justify-center cursor-pointer transition-colors
-        ${checked || indeterminate ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white hover:border-blue-400'}`}
+      className={`w-3.5 h-3.5 border rounded shrink-0 flex items-center justify-center transition-colors
+        ${checked || indeterminate ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white'}`}
     >
       {checked     && <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />}
       {!checked && indeterminate && <Minus className="h-2.5 w-2.5 text-white" strokeWidth={3} />}

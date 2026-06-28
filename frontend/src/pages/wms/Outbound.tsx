@@ -43,6 +43,17 @@ export function gdoKey(gdo: GDO): RowStatusKey {
 }
 function gdoRowText(gdo: GDO) { return rowText(gdoKey(gdo)) }
 
+// ─── Nhóm "cùng chuyến xe" để vẽ bracket nối (giống bảng Nhập) ──
+// Cùng lượt đăng ký cổng (gate_registration_id) HOẶC cùng biển số (xe vãng lai chưa gắn cổng) = chung 1 chuyến.
+type BracketPos = 'first' | 'middle' | 'last' | 'only' | 'none'
+export function outboundGroupKey(g: GDO): string | null {
+  const gate = (g as { gate_registration_id?: string | null }).gate_registration_id
+  if (gate) return `gate:${gate}`
+  const plate = (g as { license_plate?: string | null }).license_plate
+  if (plate && plate.trim()) return `plate:${plate.trim().toUpperCase()}`
+  return null
+}
+
 // Màu chữ 1 dòng hàng (item) theo TRẠNG THÁI (khớp màu badge item) — dùng chung list + detail material
 export function itemStatusText(status: string): string {
   switch (status) {
@@ -269,10 +280,35 @@ export default function Outbound() {
   const sorted = useMemo(() => [...filtered].sort((a, b) => {
     if (a.delivery_date !== b.delivery_date)
       return b.delivery_date.localeCompare(a.delivery_date)
+    // Gom các chuyến chung 1 xe liền nhau (để nối bracket); chuyến có nhóm xếp trước
+    const keyA = outboundGroupKey(a) ?? '', keyB = outboundGroupKey(b) ?? ''
+    if (keyA !== keyB) {
+      if (!keyA && keyB) return 1
+      if (keyA && !keyB) return -1
+      return keyA.localeCompare(keyB)
+    }
     const ta = a.export_type ?? '', tb = b.export_type ?? ''
     if (ta !== tb) return tb.localeCompare(ta)
     return naturalSortCode(a.group_code, b.group_code)
   }), [filtered])
+
+  // Vị trí bracket cho mỗi chuyến trong nhóm "cùng xe" (cùng ngày + cùng outboundGroupKey)
+  const bracketPositions = useMemo(() => {
+    const pos = new Map<string, BracketPos>()
+    const n = sorted.length
+    for (let i = 0; i < n; i++) {
+      const g = sorted[i]
+      const key = outboundGroupKey(g)
+      if (!key) { pos.set(g.id, 'none'); continue }
+      const prevOk = i > 0 && sorted[i - 1].delivery_date === g.delivery_date && outboundGroupKey(sorted[i - 1]) === key
+      const nextOk = i < n - 1 && sorted[i + 1].delivery_date === g.delivery_date && outboundGroupKey(sorted[i + 1]) === key
+      if (!prevOk && !nextOk) pos.set(g.id, 'only')
+      else if (!prevOk) pos.set(g.id, 'first')
+      else if (!nextOk) pos.set(g.id, 'last')
+      else pos.set(g.id, 'middle')
+    }
+    return pos
+  }, [sorted])
 
   const summary = useMemo(() => ({
     count:     sorted.length,
@@ -600,19 +636,30 @@ export default function Outbound() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {sorted.map(gdo => (
-                <GDORow
-                  key={gdo.id}
-                  gdo={gdo}
-                  dense={dense}
-                  pinW={colW[0]}
-                  selected={gdo.id === selectedId}
-                  isProdDest={!!gdo.shipto_party && noneWhCodes.has(gdo.shipto_party)}
-                  onClick={() => { if (isDesktop) setSelectedId(gdo.id); else navigate(`/wms/outbound/${gdo.id}`) }}
-                  onDoubleClick={() => navigate(`/wms/outbound/${gdo.id}`)}
-                  onAssign={can(perms, 'outbound', 'assign') ? (e => { e.stopPropagation(); assignGDO({ id: gdo.id }) }) : undefined}
-                />
-              ))}
+              {sorted.flatMap((gdo, i) => {
+                const bpos     = bracketPositions.get(gdo.id) ?? 'none'
+                const prevBpos = i > 0 ? (bracketPositions.get(sorted[i - 1].id) ?? 'none') : 'none'
+                const spacerBefore = bpos === 'first' && i > 0 && prevBpos !== 'last'
+                const spacerAfter  = bpos === 'last'
+                const nodes: React.ReactNode[] = []
+                if (spacerBefore) nodes.push(<tr key={`sp-b-${gdo.id}`} aria-hidden><td colSpan={OUTBOUND_COLS.length} className="p-0 border-0 bg-transparent"><div className="h-2.5" /></td></tr>)
+                nodes.push(
+                  <GDORow
+                    key={gdo.id}
+                    gdo={gdo}
+                    dense={dense}
+                    pinW={colW[0]}
+                    selected={gdo.id === selectedId}
+                    isProdDest={!!gdo.shipto_party && noneWhCodes.has(gdo.shipto_party)}
+                    bracketPos={bpos}
+                    onClick={() => { if (isDesktop) setSelectedId(gdo.id); else navigate(`/wms/outbound/${gdo.id}`) }}
+                    onDoubleClick={() => navigate(`/wms/outbound/${gdo.id}`)}
+                    onAssign={can(perms, 'outbound', 'assign') ? (e => { e.stopPropagation(); assignGDO({ id: gdo.id }) }) : undefined}
+                  />
+                )
+                if (spacerAfter) nodes.push(<tr key={`sp-a-${gdo.id}`} aria-hidden><td colSpan={OUTBOUND_COLS.length} className="p-0 border-0 bg-transparent"><div className="h-2.5" /></td></tr>)
+                return nodes
+              })}
             </TableBody>
           </Table>
         )}
@@ -641,7 +688,7 @@ export default function Outbound() {
 
 // ─── GDO Row ──────────────────────────────────────────────────
 
-function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34, isProdDest = false, selected = false }: {
+function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34, isProdDest = false, selected = false, bracketPos = 'none' }: {
   gdo: GDO
   onClick: () => void
   onDoubleClick?: () => void
@@ -650,6 +697,7 @@ function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34
   pinW?: number
   isProdDest?: boolean
   selected?: boolean
+  bracketPos?: BracketPos
 }) {
   const { pin, unpin, isPinned } = useActiveVehiclesStore()
   const pinned    = isPinned(gdo.id)
@@ -657,11 +705,23 @@ function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34
   const npp       = gdo.distributor_names?.join(', ') ?? '—'
   const { label: statusLabel, cls: statusCls } = gdoStatusInfo(gdo)
   const isPending = gdo.status === 'PENDING'
+  const showBracket = bracketPos !== 'none' && bracketPos !== 'only'
+  const rowBg = selected ? 'bg-sky-50' : showBracket ? 'bg-slate-50' : 'bg-white'
 
   return (
-    <TableRow className={`cursor-pointer ${gdoRowText(gdo)} ${dense ? '' : '[&_td]:py-2.5'} ${selected ? 'bg-sky-50' : ''}`} onClick={onClick} onDoubleClick={onDoubleClick}>
-      {/* Bookmark */}
-      <TableCell className={`px-1.5 py-1 sticky left-0 z-10 ${selected ? 'bg-sky-50' : 'bg-white'}`} style={{ left: 0 }} onClick={e => e.stopPropagation()}>
+    <TableRow className={`cursor-pointer ${gdoRowText(gdo)} ${dense ? '' : '[&_td]:py-2.5'} ${selected ? 'bg-sky-50' : showBracket ? 'bg-slate-50' : ''} ${showBracket && bracketPos === 'first' ? '[&_td]:border-t [&_td]:!border-t-slate-300' : ''} ${showBracket && bracketPos === 'last' ? '[&_td]:!border-b-slate-300' : ''}`} onClick={onClick} onDoubleClick={onDoubleClick}>
+      {/* Bookmark + bracket connector nối chuyến chung 1 xe */}
+      <TableCell className={`px-1.5 py-1 sticky left-0 z-10 ${rowBg}`} style={{ left: 0 }} onClick={e => e.stopPropagation()}>
+        {showBracket && (
+          <div className="absolute pointer-events-none" style={{
+            right: 0, width: '10px',
+            top: bracketPos === 'first' ? '50%' : 0,
+            bottom: bracketPos === 'last' ? '50%' : 0,
+            borderLeft: '2px solid #0f172a',
+            ...(bracketPos === 'first' ? { borderTop: '2px solid #0f172a', borderTopLeftRadius: '3px' } : {}),
+            ...(bracketPos === 'last'  ? { borderBottom: '2px solid #0f172a', borderBottomLeftRadius: '3px' } : {}),
+          }} />
+        )}
         <button
           onClick={() => pinned ? unpin(gdo.id) : pin({ id: gdo.id, group_code: gdo.group_code, status: gdo.status })}
           className={`p-0.5 rounded transition-colors ${pinned ? 'text-amber-500' : 'text-slate-300 hover:text-slate-500'}`}
@@ -671,7 +731,7 @@ function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34
         </button>
       </TableCell>
 
-      <TableCell className={`px-2 py-1 whitespace-nowrap sticky z-10 ${selected ? 'bg-sky-50' : 'bg-white'}`} style={{ left: pinW }}>
+      <TableCell className={`px-2 py-1 whitespace-nowrap sticky z-10 ${rowBg}`} style={{ left: pinW }}>
         <span className="text-[10px] font-medium tabular-nums">{dateLabel}</span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">

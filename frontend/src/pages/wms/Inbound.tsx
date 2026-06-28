@@ -1046,6 +1046,15 @@ const SHIFT_ORDER: Record<string, number> = { 'Ca 1': 0, 'Ca 2': 1, 'Ca 3': 2, '
 
 type BracketPos = 'first' | 'middle' | 'last' | 'only' | 'none'
 
+// Khóa nhóm "cùng chuyến" để vẽ bracket nối phiếu: theo lệnh TMS (chuyển kho) HOẶC biển số xe (gate) cho NCC nhiều mã cùng chuyến.
+function inboundGroupKey(o: InboundOrder): string | null {
+  const tms = (o as { tms_order?: { order_code?: string } }).tms_order?.order_code
+  if (tms) return `tms:${tms}`
+  const gate = (o as { gate_registration_id?: string | null }).gate_registration_id
+  if (o.source_type === 'NCC' && gate) return `gate:${gate}`
+  return null
+}
+
 // ─── Client-side cascade filter ───────────────────────────────
 
 function applyClientFilters(
@@ -1216,19 +1225,19 @@ export default function Inbound() {
     [shifts]
   )
 
-  // Sort: ngày desc → nhóm theo TMS order → ca asc → giờ tạo asc
+  // Sort: ngày desc → nhóm theo chuyến (lệnh TMS hoặc xe NCC) → ca asc → giờ tạo asc
   const sortedOrders = useMemo(() =>
     [...filteredOrders].sort((a, b) => {
       const dateA = a.import_date ?? ''
       const dateB = b.import_date ?? ''
       if (dateA !== dateB) return dateB.localeCompare(dateA)
-      // Group by TMS order within same date (TMS-grouped rows first, sorted by TMS code)
-      const tmsA = (a as any).tms_order?.order_code ?? ''
-      const tmsB = (b as any).tms_order?.order_code ?? ''
-      if (tmsA !== tmsB) {
-        if (!tmsA && tmsB) return 1
-        if (tmsA && !tmsB) return -1
-        return tmsA.localeCompare(tmsB)
+      // Nhóm theo chuyến trong cùng ngày (phiếu có nhóm xếp trước, sắp theo khóa nhóm)
+      const keyA = inboundGroupKey(a) ?? ''
+      const keyB = inboundGroupKey(b) ?? ''
+      if (keyA !== keyB) {
+        if (!keyA && keyB) return 1
+        if (keyA && !keyB) return -1
+        return keyA.localeCompare(keyB)
       }
       const sA = SHIFT_ORDER[a.shift?.name ?? ''] ?? 99
       const sB = SHIFT_ORDER[b.shift?.name ?? ''] ?? 99
@@ -1238,16 +1247,16 @@ export default function Inbound() {
     [filteredOrders]
   )
 
-  // Tính vị trí bracket cho mỗi row trong nhóm TMS
+  // Tính vị trí bracket cho mỗi row trong nhóm "cùng chuyến" (lệnh TMS hoặc xe NCC)
   const bracketPositions = useMemo(() => {
     const pos = new Map<string, BracketPos>()
     const n = sortedOrders.length
     for (let i = 0; i < n; i++) {
       const o = sortedOrders[i]
-      const tms = (o as any).tms_order?.order_code
-      if (!tms) { pos.set(o.id, 'none'); continue }
-      const prevOk = i > 0 && sortedOrders[i - 1].import_date === o.import_date && (sortedOrders[i - 1] as any).tms_order?.order_code === tms
-      const nextOk = i < n - 1 && sortedOrders[i + 1].import_date === o.import_date && (sortedOrders[i + 1] as any).tms_order?.order_code === tms
+      const key = inboundGroupKey(o)
+      if (!key) { pos.set(o.id, 'none'); continue }
+      const prevOk = i > 0 && sortedOrders[i - 1].import_date === o.import_date && inboundGroupKey(sortedOrders[i - 1]) === key
+      const nextOk = i < n - 1 && sortedOrders[i + 1].import_date === o.import_date && inboundGroupKey(sortedOrders[i + 1]) === key
       if (!prevOk && !nextOk) pos.set(o.id, 'only')
       else if (!prevOk) pos.set(o.id, 'first')
       else if (!nextOk) pos.set(o.id, 'last')

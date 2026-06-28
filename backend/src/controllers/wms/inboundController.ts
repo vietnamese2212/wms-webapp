@@ -329,8 +329,9 @@ export async function createOrder(req: Request, res: Response) {
       resolvedImportedBy = emp?.id ?? null
     }
 
-    // Enforce: 1 gate_registration = 1 phiếu nhập duy nhất
-    // Đồng thời lấy tms_order_id từ gate registration để link báo cáo
+    // 1 lượt xe (gate) có thể có NHIỀU phiếu nhập (NCC nhiều mã cùng chuyến) — KHÔNG xóa phiếu anh em.
+    // (Trước đây xóa phiếu rỗng cùng gate để ép "1 gate = 1 phiếu" → NCC nhiều mã tạo song song tự xóa lẫn nhau.)
+    // Đồng thời lấy tms_order_id từ gate registration để link báo cáo.
     let resolvedTmsOrderId: string | null = tms_order_id ?? null
     if (gate_registration_id) {
       const { data: gateReg } = await supabase
@@ -339,26 +340,6 @@ export async function createOrder(req: Request, res: Response) {
         .eq('id', gate_registration_id)
         .maybeSingle()
       if (gateReg) {
-        // Kiểm tra đã có phiếu nhập chưa
-        const { data: activeImports } = await supabase
-          .from('ProductionImport')
-          .select('id, import_code')
-          .eq('gate_registration_id', gate_registration_id)
-          .neq('status', 'CANCELLED')
-        if (activeImports && activeImports.length > 0) {
-          // Chỉ block nếu ít nhất 1 phiếu đã có pallet quét vào
-          const activeIds = (activeImports as { id: string; import_code: string }[]).map(i => i.id)
-          const { count: entriesCount } = await supabase
-            .from('InventoryEntry')
-            .select('id', { count: 'exact', head: true })
-            .in('import_order_id', activeIds)
-          if (entriesCount && entriesCount > 0)
-            return fail(res, 409, 'GATE_REG_TAKEN', `Lượt vào này đã có phiếu nhập ${(activeImports as { import_code: string }[])[0].import_code}`)
-          // Không có pallet — xóa phiếu rỗng để cho phép tạo lại
-          await supabase.from('ProductionImport')
-            .delete()
-            .in('id', activeIds)
-        }
         // Propagate tms_order_id từ gate registration nếu chưa có
         if (!resolvedTmsOrderId && gateReg.tms_order_id) {
           resolvedTmsOrderId = gateReg.tms_order_id

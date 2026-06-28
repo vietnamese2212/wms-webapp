@@ -1084,18 +1084,18 @@ function applyClientFilters(
 const INBOUND_COLS: { id: string; label: string; w: number; align?: 'right'; resize?: false }[] = [
   { id: 'pin',      label: '',            w: 34,  resize: false },
   { id: 'date',     label: 'Ngày nhập',   w: 104 },
-  { id: 'plate',    label: 'Biển số xe',  w: 110 },
-  { id: 'do',       label: 'Số DO',       w: 110 },
-  { id: 'ncc',      label: 'NCC',         w: 130 },
   { id: 'loc',      label: 'Vị trí',      w: 84 },
-  { id: 'matname',  label: 'Tên hàng',    w: 150 },
+  { id: 'ncc',      label: 'NCC',         w: 130 },
   { id: 'matcode',  label: 'Mã hàng',     w: 110 },
-  { id: 'code',     label: 'Mã phiếu',    w: 120 },
-  { id: 'tms',      label: 'Mã lệnh',     w: 120 },
-  { id: 'pallet',   label: 'Pallet',      w: 64,  align: 'right' },
+  { id: 'matname',  label: 'Tên hàng',    w: 150 },
   { id: 'actual',   label: 'Thực nhập',   w: 84,  align: 'right' },
   { id: 'plan',     label: 'Thùng KH',    w: 84,  align: 'right' },
   { id: 'progress', label: 'Tiến độ',     w: 78,  align: 'right' },
+  { id: 'plate',    label: 'Biển số xe',  w: 110 },
+  { id: 'do',       label: 'Số DO',       w: 110 },
+  { id: 'code',     label: 'Mã phiếu',    w: 120 },
+  { id: 'tms',      label: 'Mã lệnh',     w: 120 },
+  { id: 'pallet',   label: 'Pallet',      w: 64,  align: 'right' },
   { id: 'imp',      label: 'Người nhập',  w: 104 },
   { id: 'shift',    label: 'Ca',          w: 64 },
   { id: 'note',     label: 'Ghi chú',     w: 120 },
@@ -1739,28 +1739,7 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
         </div>
       </TableCell>
 
-      {/* Col 3: Biển số xe */}
-      <TableCell className="px-2 py-1 whitespace-nowrap">
-        {plateNo
-          ? <span className={`text-[10px] font-mono truncate block ${isTransfer ? 'text-purple-600' : 'text-slate-600'}`} title={plateNo}>{plateNo}</span>
-          : <span className="text-[10px] text-slate-300">—</span>}
-      </TableCell>
-
-      {/* Col 4: Số DO (chỉ TF) */}
-      <TableCell className="px-2 py-1 whitespace-nowrap">
-        {doText
-          ? <span className="text-[10px] font-mono text-purple-600 truncate block" title={doText}>{doText}</span>
-          : <span className="text-[10px] text-slate-300">—</span>}
-      </TableCell>
-
-      {/* Col 5: NCC (nhà cung cấp) */}
-      <TableCell className="px-2 py-1 whitespace-nowrap">
-        {(order as any).ncc?.name
-          ? <span className="text-[10px] truncate block" title={(order as any).ncc.name}>{(order as any).ncc.name}</span>
-          : <span className="text-[10px] text-slate-300">—</span>}
-      </TableCell>
-
-      {/* Col 5: Vị trí */}
+      {/* Col 3: Vị trí */}
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <div className="flex items-center justify-between gap-1 w-full">
           <span className="flex items-center gap-0.5 min-w-0">
@@ -1779,36 +1758,23 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
         </div>
       </TableCell>
 
-      {/* Col 5: Tên hàng */}
+      {/* Col 4: NCC (nhà cung cấp) */}
       <TableCell className="px-2 py-1 whitespace-nowrap">
-        <span className="text-[10px] font-medium truncate block" title={matName}>{matName}</span>
+        {(order as any).ncc?.name
+          ? <span className="text-[10px] truncate block" title={(order as any).ncc.name}>{(order as any).ncc.name}</span>
+          : <span className="text-[10px] text-slate-300">—</span>}
       </TableCell>
 
-      {/* Col 6: Mã hàng */}
+      {/* Col 5: Mã hàng */}
       <TableCell className="px-2 py-1 whitespace-nowrap">
         {matCode
           ? <span className="text-[9px] text-slate-500 font-mono truncate block" title={matCode}>{matCode}</span>
           : <span className="text-[10px] text-slate-300">—</span>}
       </TableCell>
 
-      {/* Col 7: Mã phiếu */}
+      {/* Col 6: Tên hàng */}
       <TableCell className="px-2 py-1 whitespace-nowrap">
-        {order.import_code
-          ? <span className="text-[10px] font-mono font-semibold truncate block" title={order.import_code}>{order.import_code}</span>
-          : <span className="text-[10px] text-slate-300">—</span>}
-      </TableCell>
-
-      {/* Col 8: Mã lệnh (TMS) */}
-      <TableCell className="px-2 py-1 whitespace-nowrap">
-        {tmsCode
-          ? <span className="text-[9px] font-mono truncate block opacity-80" title={tmsCode}>{tmsCode}</span>
-          : <span className="text-[10px] text-slate-300">—</span>}
-      </TableCell>
-
-      {/* Col 6: Pallet */}
-      <TableCell className="px-2 py-1 text-right whitespace-nowrap">
-        <span className="text-[10px] font-semibold tabular-nums">{pallets}</span>
-        <span className="text-[9px] text-slate-400 ml-0.5">pl</span>
+        <span className="text-[10px] font-medium truncate block" title={matName}>{matName}</span>
       </TableCell>
 
       {/* Col 7: Thực nhập */}
@@ -1831,7 +1797,7 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
         )}
       </TableCell>
 
-      {/* Col: Tiến độ (Thực nhập / Thùng KH) */}
+      {/* Col 9: Tiến độ (Thực nhập / Thùng KH) */}
       <TableCell className="px-2 py-1 whitespace-nowrap text-right">
         {order.planned_cartons != null && order.planned_cartons > 0 ? (() => {
           const pct  = Math.round(((order.total_cartons ?? 0) / order.planned_cartons) * 100)
@@ -1847,7 +1813,41 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
         })() : <span className="text-[10px] text-slate-300">—</span>}
       </TableCell>
 
-      {/* Col 9: Người nhập */}
+      {/* Col 10: Biển số xe */}
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        {plateNo
+          ? <span className={`text-[10px] font-mono truncate block ${isTransfer ? 'text-purple-600' : 'text-slate-600'}`} title={plateNo}>{plateNo}</span>
+          : <span className="text-[10px] text-slate-300">—</span>}
+      </TableCell>
+
+      {/* Col 11: Số DO (chỉ TF) */}
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        {doText
+          ? <span className="text-[10px] font-mono text-purple-600 truncate block" title={doText}>{doText}</span>
+          : <span className="text-[10px] text-slate-300">—</span>}
+      </TableCell>
+
+      {/* Col 12: Mã phiếu */}
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        {order.import_code
+          ? <span className="text-[10px] font-mono font-semibold truncate block" title={order.import_code}>{order.import_code}</span>
+          : <span className="text-[10px] text-slate-300">—</span>}
+      </TableCell>
+
+      {/* Col 13: Mã lệnh (TMS) */}
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        {tmsCode
+          ? <span className="text-[9px] font-mono truncate block opacity-80" title={tmsCode}>{tmsCode}</span>
+          : <span className="text-[10px] text-slate-300">—</span>}
+      </TableCell>
+
+      {/* Col 14: Pallet */}
+      <TableCell className="px-2 py-1 text-right whitespace-nowrap">
+        <span className="text-[10px] font-semibold tabular-nums">{pallets}</span>
+        <span className="text-[9px] text-slate-400 ml-0.5">pl</span>
+      </TableCell>
+
+      {/* Col 15: Người nhập */}
       <TableCell className="px-2 py-1">
         <div className="text-[10px] max-w-[90px] truncate" title={importer}>{importer}</div>
       </TableCell>

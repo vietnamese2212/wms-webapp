@@ -1047,7 +1047,7 @@ const SHIFT_ORDER: Record<string, number> = { 'Ca 1': 0, 'Ca 2': 1, 'Ca 3': 2, '
 type BracketPos = 'first' | 'middle' | 'last' | 'only' | 'none'
 
 // Khóa nhóm "cùng chuyến" để vẽ bracket nối phiếu: theo lệnh TMS (chuyển kho) HOẶC biển số xe (gate) cho NCC nhiều mã cùng chuyến.
-function inboundGroupKey(o: InboundOrder): string | null {
+export function inboundGroupKey(o: InboundOrder): string | null {
   const tms = (o as { tms_order?: { order_code?: string } }).tms_order?.order_code
   if (tms) return `tms:${tms}`
   const gate = (o as { gate_registration_id?: string | null }).gate_registration_id

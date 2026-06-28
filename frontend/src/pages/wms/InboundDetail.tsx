@@ -27,7 +27,7 @@ import { useAuthStore }            from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useActiveInboundStore }  from '@/stores/activeInboundStore'
 import { statusText } from '@/lib/rowStatus'
-import { inboundKey } from './Inbound'
+import { inboundKey, inboundGroupKey } from './Inbound'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { inboundOrderStatusLabel, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { unlockAudio }             from '@/utils/audio'
@@ -104,12 +104,17 @@ export default function InboundDetail() {
       : undefined
   )
 
-  // Tab bar: tất cả phiếu OPEN của kho + ngày này (để lái xe nâng nhảy qua lại)
+  // Tab bar: các phiếu cùng kho + ngày, rồi lọc về CÙNG CHUYẾN (cùng nhóm bracket) với phiếu đang xem.
   const { data: openOrders = [] } = useInboundOrders(
     order?.warehouse_id && order?.import_date
       ? { warehouse_id: order.warehouse_id, date: order.import_date.slice(0, 10) }
       : undefined
   )
+  // Chỉ giữ phiếu cùng chuyến (cùng inboundGroupKey) — không trộn phiếu khác chuyến/khác cổng cùng ngày.
+  const groupKey = order ? inboundGroupKey(order) : null
+  const tabOrders = groupKey
+    ? (openOrders as InboundOrder[]).filter(o => inboundGroupKey(o) === groupKey)
+    : []
 
   const user  = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
@@ -492,10 +497,10 @@ export default function InboundDetail() {
           </div>
         )}
 
-        {/* ── Tab bar (nhảy qua lại giữa các phiếu đang mở) ── */}
-        {openOrders.length > 1 && (
+        {/* ── Tab bar (nhảy qua lại giữa các phiếu CÙNG CHUYẾN) ── */}
+        {tabOrders.length > 1 && (
           <div className="flex flex-wrap shrink-0 border-b bg-slate-50 gap-0">
-            {openOrders.map((o: InboundOrder) => {
+            {tabOrders.map((o: InboundOrder) => {
               const isActive = o.id === id
               const isNCC    = (o as any).source_type === 'NCC'
               const pallets  = (o as any)._count?.inventory_entries ?? 0

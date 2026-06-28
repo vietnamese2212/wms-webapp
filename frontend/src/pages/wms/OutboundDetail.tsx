@@ -156,6 +156,17 @@ function ChuyenPicker({ gates, value, onPick, freePlate, onFreeText, special, on
   // Giữ chuyến đang gắn trong danh sách dù bị lọc (để không mất link khi sửa)
   const list = selected && !base.some(g => g.id === selected.id) ? [selected, ...base] : base
   const sorted = [...list].sort((a, b) => b.date.localeCompare(a.date) || (b.entry_at ?? '').localeCompare(a.entry_at ?? ''))
+  // Lần = thứ tự lượt xe vào cổng trong ngày (tính trên TẤT CẢ chuyến đã vào — không đổi khi bật/tắt đặc biệt)
+  const gateLane = (() => {
+    const dayCount = new Map<string, number>()
+    const m = new Map<string, number>()
+    for (const g of [...gates].sort((a, b) => a.date.localeCompare(b.date) || a.registration_number - b.registration_number)) {
+      const c = (dayCount.get(g.date) ?? 0) + 1
+      dayCount.set(g.date, c)
+      m.set(g.id, c)
+    }
+    return m
+  })()
   const freeVal = normalizeLicensePlate(walk)
   const commitFree = () => { if (!freeVal) return; onFreeText(freeVal); setWalk(''); setOpen(false) }
   return (
@@ -166,6 +177,7 @@ function ChuyenPicker({ gates, value, onPick, freePlate, onFreeText, special, on
           <span className="truncate">
             <span className="font-mono font-semibold">{selected.license_plate ?? '—'}</span>
             {selected.company_name_raw && <span className="ml-1.5 text-slate-500 text-xs">{selected.company_name_raw}</span>}
+            {gateLane.get(selected.id) && <span className="ml-1.5 text-slate-400 text-xs">· Lần {gateLane.get(selected.id)}</span>}
           </span>
         ) : freePlate ? (
           <span className="truncate"><span className="font-mono font-semibold">{freePlate}</span><span className="ml-1.5 text-amber-600 text-xs">vãng lai</span></span>
@@ -227,7 +239,7 @@ function ChuyenPicker({ gates, value, onPick, freePlate, onFreeText, special, on
                     <span className="font-mono font-semibold text-[11px] text-slate-800">{g.license_plate ?? '—'}</span>
                     {g.company_name_raw && <span className="text-[10px] text-slate-500 truncate">{g.company_name_raw}</span>}
                     {g.status !== 'IN' && <span className="text-[8px] px-1 py-0.5 rounded bg-slate-200 text-slate-500 shrink-0">đã ra</span>}
-                    <span className="ml-auto text-[9px] text-slate-400 shrink-0">vào {fmtT(g.entry_at)}{g.exit_at ? ` · ra ${fmtT(g.exit_at)}` : ''}</span>
+                    <span className="ml-auto text-[9px] text-slate-400 shrink-0">Lần {gateLane.get(g.id)} · vào {fmtT(g.entry_at)}{g.exit_at ? ` · ra ${fmtT(g.exit_at)}` : ''}</span>
                   </div>
                   {isTaken && <div className="text-[9px] text-amber-600 mt-0.5">⚠ Đã gắn phiếu khác — chỉ dùng nếu bốc thêm đơn cùng chuyến</div>}
                 </button>

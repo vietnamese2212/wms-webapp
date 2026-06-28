@@ -942,24 +942,26 @@ export default function UserManagement() {
   ]
 
   return (
-    <div className="flex flex-col h-full p-3 gap-2 max-w-7xl mx-auto w-full">
-      <h1 className="shrink-0 text-base font-semibold text-slate-800 flex items-center gap-2">
-        <User2 className="h-4 w-4 text-slate-500" />
-        Quản lý nhân sự &amp; phân quyền
-      </h1>
-
+    <div className="flex flex-col h-full p-2 gap-1.5 max-w-7xl mx-auto w-full">
       <Tabs defaultValue="employees" className="flex flex-col flex-1 min-h-0">
-        <TabsList className="mb-2 shrink-0">
-          <TabsTrigger value="employees" className="gap-1.5">
-            <User2 className="h-3.5 w-3.5" /> Nhân viên
-          </TabsTrigger>
-          <TabsTrigger value="departments" className="gap-1.5">
-            <Building2 className="h-3.5 w-3.5" /> Phòng ban
-          </TabsTrigger>
-          <TabsTrigger value="job-titles" className="gap-1.5">
-            <Briefcase className="h-3.5 w-3.5" /> Chức danh
-          </TabsTrigger>
-        </TabsList>
+        {/* Tiêu đề + tab trên CÙNG 1 hàng để tối ưu chiều cao, dành đất cho bảng */}
+        <div className="shrink-0 flex items-center gap-3 mb-1.5">
+          <h1 className="text-sm font-semibold text-slate-800 flex items-center gap-1.5 shrink-0">
+            <User2 className="h-4 w-4 text-slate-500" />
+            <span className="hidden md:inline">Quản lý nhân sự &amp; phân quyền</span>
+          </h1>
+          <TabsList className="shrink-0">
+            <TabsTrigger value="employees" className="gap-1.5">
+              <User2 className="h-3.5 w-3.5" /> Nhân viên
+            </TabsTrigger>
+            <TabsTrigger value="departments" className="gap-1.5">
+              <Building2 className="h-3.5 w-3.5" /> Phòng ban
+            </TabsTrigger>
+            <TabsTrigger value="job-titles" className="gap-1.5">
+              <Briefcase className="h-3.5 w-3.5" /> Chức danh
+            </TabsTrigger>
+          </TabsList>
+        </div>
 
         {/* ── Tab: Nhân viên ── */}
         <TabsContent value="employees" className="flex-1 min-h-0 data-[state=active]:flex flex-col space-y-2">

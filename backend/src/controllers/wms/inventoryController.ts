@@ -61,6 +61,7 @@ interface FilterParams {
   manufacturer_id?: string
   filterCycles?: string[]
   filterMachines?: string[]
+  nccIds?: string[]
   import_date_from?: string
   import_date_to?: string
 }
@@ -102,6 +103,9 @@ function applyInventoryFilters(q: any, p: FilterParams): any {
   const fMach = p.filterMachines ?? []
   if (fMach.length === 1)    q = q.eq('machine_code', fMach[0])
   else if (fMach.length > 1) q = q.in('machine_code', fMach)
+  const fNcc = p.nccIds ?? []
+  if (fNcc.length === 1)    q = q.eq('ncc_id', fNcc[0])
+  else if (fNcc.length > 1) q = q.in('ncc_id', fNcc)
   if (p.import_date_from) q = q.gte('import_date', p.import_date_from)
   if (p.import_date_to)   q = q.lte('import_date', p.import_date_to)
   return q
@@ -226,6 +230,7 @@ async function resolveInventoryFilter(req: Request): Promise<ResolvedFilter> {
   const filterMachines    = parseArr(q.filter_machines)
   const filterMaterialIds = parseArr(q.filter_material_ids)
   const qa_status_ids     = parseArr(q.qa_status_ids).length > 0 ? parseArr(q.qa_status_ids) : undefined
+  const nccIds            = parseArr(q.ncc_ids)
   const datePctRanges     = parseArr(q.date_pct_ranges)
 
   const pageNum  = Math.max(1, parseInt(page) || 1)
@@ -326,7 +331,7 @@ async function resolveInventoryFilter(req: Request): Promise<ResolvedFilter> {
     status, locationFilter, materialFilter,
     warehouseIds: effectiveWarehouseIds.length > 0 ? effectiveWarehouseIds : undefined,
     categoryFilter: effectiveCategories.length > 0 ? effectiveCategories : undefined,
-    qa_status_ids, search, searchMatIds, searchLocIds, manufacturer_id, filterCycles, filterMachines, import_date_from, import_date_to,
+    qa_status_ids, search, searchMatIds, searchLocIds, manufacturer_id, filterCycles, filterMachines, nccIds, import_date_from, import_date_to,
   }
 
   // Pre-filter by %date: fetch ALL IDs (no pagination) with same filters, compute pct in JS
@@ -406,6 +411,7 @@ export async function summaryInventory(req: Request, res: Response) {
   // !inner: lọc category phải loại HẲN entry khác loại, không để lọt với material=null.
   const summarySelect = 'id, warehouse_id, production_date, cartons_imported, cartons_remaining, material_id, ncc_id, shelf_life_days, '
     + 'location:Location(warehouse:Warehouse(id, name)), '
+    + 'ncc:TransportCompany!ncc_id(id, name), '
     + 'material:Material!inner(material_code, short_name, category, shelf_life_days, supplier_shelf_life_overrides)'
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let rows: any[]
@@ -423,7 +429,7 @@ export async function summaryInventory(req: Request, res: Response) {
   interface Group {
     warehouse_id: string | null; warehouse_name: string; material_id: string
     material_code: string | null; short_name: string | null; category: string | null
-    production_date: string | null; date_pct: number | null
+    production_date: string | null; date_pct: number | null; ncc_name: string | null
     cartons_imported: number; cartons_remaining: number; pallet_count: number
   }
   const map = new Map<string, Group>()
@@ -448,6 +454,7 @@ export async function summaryInventory(req: Request, res: Response) {
         category:      e.material?.category ?? null,
         production_date: prod,
         date_pct: prod && shelf > 0 ? calcPct(prod, shelf, now) : null,
+        ncc_name: e.ncc?.name ?? null,
         cartons_imported: 0, cartons_remaining: 0, pallet_count: 0,
       }
       map.set(key, g)

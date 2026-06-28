@@ -92,13 +92,14 @@ function writeXlsx(rows: Record<string, unknown>[], baseName: string) {
   XLSX.writeFile(wb, `${baseName}.xlsx`)
 }
 
-// Cột bảng tồn kho — số phần tử PHẢI khớp số <TableCell> mỗi dòng EntryRow (17 cột)
+// Cột bảng tồn kho — số phần tử PHẢI khớp số <TableCell> mỗi dòng EntryRow (18 cột)
 const INVENTORY_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
   { id: 'check',     label: '',         w: 32 },
   { id: 'warehouse', label: 'Kho',      w: 110 },
   { id: 'category',  label: 'Loại kho', w: 90 },
   { id: 'matCode',   label: 'Mã hàng',  w: 90 },
   { id: 'matName',   label: 'Tên hàng', w: 150 },
+  { id: 'ncc',       label: 'NCC',      w: 110 },
   { id: 'pallet',    label: 'Mã pallet',w: 110 },
   { id: 'location',  label: 'Vị trí',   w: 90 },
   { id: 'imported',  label: 'Nhập',     w: 60, align: 'right' },
@@ -120,6 +121,7 @@ const SUMMARY_COLS: { id: string; label: string; w: number; align?: 'right' }[] 
   { id: 'category',  label: 'Loại kho', w: 90 },
   { id: 'matCode',   label: 'Mã hàng',  w: 100 },
   { id: 'matName',   label: 'Tên hàng', w: 180 },
+  { id: 'ncc',       label: 'NCC',      w: 110 },
   { id: 'date',      label: 'Date',     w: 80 },
   { id: 'datePct',   label: '%Date',    w: 64, align: 'right' },
   { id: 'imported',  label: 'Nhập',     w: 70, align: 'right' },
@@ -639,6 +641,8 @@ export default function Inventory() {
   const { data: warehouses   = [] } = useWarehouses(true)
   const { data: qaStatuses   = [] } = useQAStatuses()
   const { data: whTypes      = [] } = useWarehouseTypes()
+  const { data: allCompaniesF = [] } = useTransportCompanies(true)
+  const nccFilterOpts = (allCompaniesF as { id: string; name: string; type?: string }[]).filter(c => c.type === 'NCC').map(c => ({ value: c.id, label: c.name }))
   const categories = whTypes.map(t => t.value)
   const { data: facets } = useInventoryFacets({
     warehouse_ids: f.warehouseIds.length > 0 ? f.warehouseIds : undefined,
@@ -687,6 +691,7 @@ export default function Inventory() {
     filter_cycles:      f.filterCycles.length > 0 ? f.filterCycles : undefined,
     filter_machines:    f.filterMachines.length > 0 ? f.filterMachines : undefined,
     date_pct_ranges:    f.datePctRanges.length > 0 ? f.datePctRanges : undefined,
+    ncc_ids:            f.nccIds.length > 0 ? f.nccIds : undefined,
   }
   const { data, isLoading } = useInventoryEntries({ ...queryParams, page: f.page, limit: LIMIT }, !aggregate)
   const { data: summaryData, isLoading: summaryLoading } = useInventorySummary(queryParams, aggregate)
@@ -719,7 +724,7 @@ export default function Inventory() {
         setExporting(true)
         writeXlsx(groups.map(g => ({
           'Kho': g.warehouse_name, 'Loại kho': g.category ?? '', 'Mã hàng': g.material_code ?? '',
-          'Tên hàng': g.short_name ?? '', 'Ngày SX': g.production_date ? formatTimestampDate(g.production_date) : '',
+          'Tên hàng': g.short_name ?? '', 'NCC': g.ncc_name ?? '', 'Ngày SX': g.production_date ? formatTimestampDate(g.production_date) : '',
           '% Date': g.date_pct ?? '', 'Nhập': g.cartons_imported, 'Xuất': g.cartons_exported,
           'Tồn': g.cartons_remaining, 'Số pallet': g.pallet_count,
         })), `ton_kho_tong_hop_${stamp}`)
@@ -736,6 +741,7 @@ export default function Inventory() {
           return {
             'Kho': e.location?.warehouse?.name ?? '', 'Loại kho': e.material?.category ?? '',
             'Mã hàng': e.material?.material_code ?? '', 'Tên hàng': e.material?.short_name ?? '',
+            'NCC': e.ncc?.name ?? '', 'Shelflife (ngày)': e.shelf_life_days ?? '',
             'Mã pallet': e.pallet_code, 'Vị trí': e.location?.location_code ?? '',
             'Nhập': e.cartons_imported, 'Xuất': exported, 'Tồn': remaining,
             'Nhặt lẻ': reserved, 'Khả dụng': Math.max(0, Number(remaining) - Number(reserved)),
@@ -779,7 +785,7 @@ export default function Inventory() {
   function resetFilters() {
     setInventory({
       search: '', filterLocations: [], filterMaterialIds: [], qaStatusIds: [], status: '',
-      materialCategories: [], manufacturerId: '', filterCycles: [], filterMachines: [], datePctRanges: [], page: 1,
+      materialCategories: [], manufacturerId: '', filterCycles: [], filterMachines: [], nccIds: [], datePctRanges: [], page: 1,
     })
   }
 
@@ -795,7 +801,7 @@ export default function Inventory() {
 
   const hasFilters = !!(f.search || f.filterLocations.length > 0 || f.filterMaterialIds.length > 0
     || f.qaStatusIds.length > 0 || f.status || f.materialCategories.length > 0
-    || f.manufacturerId || f.filterCycles.length > 0 || f.filterMachines.length > 0 || f.datePctRanges.length > 0)
+    || f.manufacturerId || f.filterCycles.length > 0 || f.filterMachines.length > 0 || f.nccIds.length > 0 || f.datePctRanges.length > 0)
 
   // Filter option lists
   const allowedWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
@@ -841,6 +847,8 @@ export default function Inventory() {
       onChange: v => setInventory({ filterMachines: v, page: 1 }) },
     { key: 'datePct', label: '% Date', type: 'multi', options: datePctOpts, selected: f.datePctRanges, searchable: false,
       onChange: v => setInventory({ datePctRanges: v, page: 1 }) },
+    { key: 'ncc', label: 'NCC', type: 'multi', options: nccFilterOpts, selected: f.nccIds, searchable: nccFilterOpts.length > 5,
+      onChange: v => setInventory({ nccIds: v, page: 1 }) },
   ]
 
   const viewSnapshot = {
@@ -848,6 +856,7 @@ export default function Inventory() {
     status: f.status, filterMaterialIds: f.filterMaterialIds, filterLocations: f.filterLocations,
     qaStatusIds: f.qaStatusIds, filterCycles: f.filterCycles, filterMachines: f.filterMachines,
     datePctRanges: f.datePctRanges,
+    nccIds: f.nccIds,
   }
   const savedViews = useSavedViewsStore(s => s.views['inventory'] ?? [])
   const activeViewId = useMemo(() => {
@@ -1173,6 +1182,12 @@ function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick, warehouse
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px] text-slate-700 truncate block" title={matName}>{matName}</span>
       </TableCell>
+      {/* NCC (+ shelflife lô nếu có) */}
+      <TableCell className="px-2 py-1 whitespace-nowrap max-w-[110px]">
+        {e.ncc?.name
+          ? <span className="text-[10px] text-slate-600 truncate block" title={e.shelf_life_days ? `${e.ncc.name} · ${e.shelf_life_days} ngày` : e.ncc.name}>{e.ncc.name}{e.shelf_life_days ? <span className="text-slate-400"> · {e.shelf_life_days}n</span> : null}</span>
+          : <span className="text-[10px] text-slate-300">—</span>}
+      </TableCell>
       {/* Mã pallet */}
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <div className="flex items-center min-w-0">
@@ -1268,6 +1283,11 @@ function SummaryRow({ g, dense, onClick }: { g: InventorySummaryGroup; dense: bo
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px] text-slate-700 truncate block" title={g.short_name ?? ''}>{g.short_name ?? '—'}</span>
+      </TableCell>
+      <TableCell className="px-2 py-1 whitespace-nowrap max-w-[110px]">
+        {g.ncc_name
+          ? <span className="text-[10px] text-slate-600 truncate block" title={g.ncc_name}>{g.ncc_name}</span>
+          : <span className="text-[10px] text-slate-300">—</span>}
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px] tabular-nums text-slate-600">{dateStr}</span>

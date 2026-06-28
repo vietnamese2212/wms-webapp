@@ -772,6 +772,7 @@ export function useInventoryEntries(params?: {
   manufacturer_id?: string
   filter_cycles?: string[]
   filter_machines?: string[]
+  ncc_ids?: string[]
   date_pct_ranges?: string[]
 }, enabled = true) {
   return useQuery({
@@ -780,7 +781,7 @@ export function useInventoryEntries(params?: {
     staleTime: 30_000,
     placeholderData: keepPreviousData, // đổi trang/lọc: giữ dữ liệu cũ, không trắng bảng (cảm giác tức thì)
     queryFn: async () => {
-      const { warehouse_ids, categories, filter_locations, filter_material_ids, qa_status_ids, filter_cycles, filter_machines, date_pct_ranges, ...rest } = params ?? {}
+      const { warehouse_ids, categories, filter_locations, filter_material_ids, qa_status_ids, filter_cycles, filter_machines, ncc_ids, date_pct_ranges, ...rest } = params ?? {}
       const { data } = await apiClient.get('/wms/inventory', {
         params: {
           ...rest,
@@ -791,6 +792,7 @@ export function useInventoryEntries(params?: {
           ...(qa_status_ids?.length       ? { qa_status_ids:      qa_status_ids.join(',')       } : {}),
           ...(filter_cycles?.length       ? { filter_cycles:      filter_cycles.join(',')       } : {}),
           ...(filter_machines?.length     ? { filter_machines:    filter_machines.join(',')     } : {}),
+          ...(ncc_ids?.length             ? { ncc_ids:            ncc_ids.join(',')             } : {}),
           ...(date_pct_ranges?.length     ? { date_pct_ranges:    date_pct_ranges.join(',')     } : {}),
         },
       })
@@ -808,6 +810,7 @@ export interface InventorySummaryGroup {
   category: string | null
   production_date: string | null
   date_pct: number | null
+  ncc_name: string | null
   cartons_imported: number
   cartons_remaining: number
   cartons_exported: number
@@ -822,7 +825,7 @@ export function useInventorySummary(params?: Parameters<typeof useInventoryEntri
     staleTime: 30_000,
     placeholderData: keepPreviousData,
     queryFn: async () => {
-      const { warehouse_ids, categories, filter_locations, filter_material_ids, qa_status_ids, filter_cycles, filter_machines, date_pct_ranges, page, limit, ...rest } = params ?? {}
+      const { warehouse_ids, categories, filter_locations, filter_material_ids, qa_status_ids, filter_cycles, filter_machines, ncc_ids, date_pct_ranges, page, limit, ...rest } = params ?? {}
       void page; void limit // tổng hợp trả tất cả nhóm, phân trang client-side
       const { data } = await apiClient.get('/wms/inventory/summary', {
         params: {
@@ -834,6 +837,7 @@ export function useInventorySummary(params?: Parameters<typeof useInventoryEntri
           ...(qa_status_ids?.length       ? { qa_status_ids:      qa_status_ids.join(',')       } : {}),
           ...(filter_cycles?.length       ? { filter_cycles:      filter_cycles.join(',')       } : {}),
           ...(filter_machines?.length     ? { filter_machines:    filter_machines.join(',')     } : {}),
+          ...(ncc_ids?.length             ? { ncc_ids:            ncc_ids.join(',')             } : {}),
           ...(date_pct_ranges?.length     ? { date_pct_ranges:    date_pct_ranges.join(',')     } : {}),
         },
       })
@@ -844,7 +848,7 @@ export function useInventorySummary(params?: Parameters<typeof useInventoryEntri
 
 // Lấy TOÀN BỘ entry khớp filter để export Excel (BE phân trang nội bộ). On-demand, không phải useQuery.
 export async function fetchInventoryExport(params?: Parameters<typeof useInventoryEntries>[0]): Promise<InventoryEntry[]> {
-  const { warehouse_ids, categories, filter_locations, filter_material_ids, qa_status_ids, filter_cycles, filter_machines, date_pct_ranges, page, limit, ...rest } = params ?? {}
+  const { warehouse_ids, categories, filter_locations, filter_material_ids, qa_status_ids, filter_cycles, filter_machines, ncc_ids, date_pct_ranges, page, limit, ...rest } = params ?? {}
   void page; void limit
   const { data } = await apiClient.get('/wms/inventory/export', {
     params: {
@@ -856,6 +860,7 @@ export async function fetchInventoryExport(params?: Parameters<typeof useInvento
       ...(qa_status_ids?.length       ? { qa_status_ids:      qa_status_ids.join(',')       } : {}),
       ...(filter_cycles?.length       ? { filter_cycles:      filter_cycles.join(',')       } : {}),
       ...(filter_machines?.length     ? { filter_machines:    filter_machines.join(',')     } : {}),
+      ...(ncc_ids?.length             ? { ncc_ids:            ncc_ids.join(',')             } : {}),
       ...(date_pct_ranges?.length     ? { date_pct_ranges:    date_pct_ranges.join(',')     } : {}),
     },
   })

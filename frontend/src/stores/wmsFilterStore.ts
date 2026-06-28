@@ -44,6 +44,7 @@ interface InventoryFilters {
   manufacturerId: string
   filterCycles: string[]
   filterMachines: string[]
+  nccIds: string[]
   datePctRanges: string[]
 }
 interface LoosePickingFilters {
@@ -229,7 +230,7 @@ function initialFilters() {
       search: '', warehouseIds: [], materialCategories: [],
       filterLocations: [], filterMaterialIds: [],
       qaStatusIds: [], status: '', page: 1, manufacturerId: '',
-      filterCycles: [], filterMachines: [], datePctRanges: [],
+      filterCycles: [], filterMachines: [], nccIds: [], datePctRanges: [],
     },
     loosePicking: {
       warehouseId: '', dateFrom: today(), dateTo: today(), search: '',

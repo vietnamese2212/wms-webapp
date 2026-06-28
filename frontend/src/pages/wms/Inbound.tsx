@@ -111,7 +111,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
         setWarehouseId((first as any).warehouse_id ?? user?.warehouse_id ?? user?.warehouse_ids?.[0] ?? '')
         setSubType(first.warehouse_type ?? '')
         setGateRegId((first as any).gate_registration_id ?? '')
-        setImportDate((first as any).import_date ?? format(new Date(), 'yyyy-MM-dd'))
+        setImportDate(((first as any).import_date ?? '').slice(0, 10) || format(new Date(), 'yyyy-MM-dd'))
         setShiftId((first as any).shift_id ?? '')
         setMaterialId(''); setMatSearch(''); setMatOpen(false); setLocationId('')
         setNotes('')
@@ -275,11 +275,15 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
 
   const nccDuplicateCodes = useMemo(() => {
     const seen = new Map<string, number>()
+    // Sửa nhóm: tính cả mã đang có trong nhóm (editRows chưa hủy) → thêm dòng mới trùng mã cũ cũng bị bắt
+    for (const er of editRows) {
+      if (!er.toCancel && er.materialCode) seen.set(er.materialCode, (seen.get(er.materialCode) ?? 0) + 1)
+    }
     for (const r of nccRows) {
       if (r.material_code) seen.set(r.material_code, (seen.get(r.material_code) ?? 0) + 1)
     }
     return new Set([...seen.entries()].filter(([, n]) => n > 1).map(([c]) => c))
-  }, [nccRows])
+  }, [nccRows, editRows])
 
   function lookupNccRow(code: string): NccMatRow {
     const found = nccMatByCode.get(code.trim().toUpperCase())
@@ -369,6 +373,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
       if (!warehouseId) { setNccErr('Vui lòng chọn Kho'); return }
       if (!shiftId)     { setNccErr('Vui lòng chọn Ca nhập'); return }
       if (!importDate)  { setNccErr('Vui lòng chọn Ngày nhập'); return }
+      if (nccDuplicateCodes.size > 0) { setNccErr(`Mã hàng bị trùng (đã có trong nhóm): ${[...nccDuplicateCodes].join(', ')}`); return }
       setNccSaving(true); setNccErr('')
       try {
         await Promise.all(
@@ -1016,11 +1021,11 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
               {isPending ? 'Đang tạo...' : 'Tạo phiếu'}
             </Button>
           ) : editGroup?.length ? (
-            <Button onClick={handleNccSubmit} disabled={nccSaving}>
+            <Button onClick={handleNccSubmit} disabled={nccSaving || nccDuplicateCodes.size > 0}>
               {nccSaving ? 'Đang lưu…' : 'Lưu nhóm'}
             </Button>
           ) : (
-            <Button onClick={handleNccSubmit} disabled={nccSaving || nccValidCount === 0}>
+            <Button onClick={handleNccSubmit} disabled={nccSaving || nccValidCount === 0 || nccDuplicateCodes.size > 0}>
               {nccSaving ? 'Đang tạo...' : nccValidCount > 0 ? `Tạo ${nccValidCount} phiếu nhập` : 'Tạo phiếu'}
             </Button>
           )}

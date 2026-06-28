@@ -58,3 +58,6 @@ login-check.png
 
 # Dữ liệu nhân viên thật + mật khẩu — không commit
 Employee_Template.xlsx
+
+# Template upload (chứa dữ liệu thật khi điền — không commit)
+/templates/

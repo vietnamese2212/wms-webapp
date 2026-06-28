@@ -106,7 +106,7 @@ export function MultiSelectFilter({
             position: 'fixed', left: pos.left,
             ...(pos.openUp ? { bottom: window.innerHeight - pos.top } : { top: pos.top }),
           }}
-          className="z-[60] bg-white border rounded-md shadow-lg min-w-[200px] max-h-72 flex flex-col"
+          className="z-[60] pointer-events-auto bg-white border rounded-md shadow-lg min-w-[200px] max-h-72 flex flex-col"
           // chặn Radix DismissableLayer (modal Dialog) đóng dialog khi bấm vào panel portal
           onPointerDown={e => e.stopPropagation()}
           onMouseDown={e => e.stopPropagation()}

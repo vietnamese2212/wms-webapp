@@ -1,19 +1,51 @@
 import { useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
-import { Download, Check, X } from 'lucide-react'
+import { Download, Check, X, Rows3, AlignJustify } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SummaryBand } from '@/components/shared/SummaryBand'
+import { SavedViews } from '@/components/shared/SavedViews'
+import { useColumnResize } from '@/components/shared/useColumnResize'
+import { rowText, type RowStatusKey } from '@/lib/rowStatus'
 import { useWarehouses, useInboundReport, useUpdatePlanLine, type InboundReportRow } from '@/api/hooks'
 import { formatDate } from '@/utils/formatters'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
+import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { useAuthStore } from '@/stores/authStore'
 import { can, isAdmin, type ModulePermissions } from '@/config/permissions'
 import type { AxiosError } from 'axios'
 
-const TH = 'text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap'
+const TH = 'text-[9px] font-medium text-slate-500 py-1.5 whitespace-nowrap'
 const TD = 'px-2 py-1 text-[10px] whitespace-nowrap'
+
+// Cột kéo giãn được (Manhattan) — id khớp render bên dưới
+const COLS: { id: string; label: string; align?: 'right' }[] = [
+  { id: 'idx',   label: '#' },
+  { id: 'date',  label: 'Ngày' },
+  { id: 'wh',    label: 'Kho' },
+  { id: 'po',    label: 'PO' },
+  { id: 'ncc',   label: 'NCC' },
+  { id: 'cat',   label: 'Loại hàng' },
+  { id: 'mcode', label: 'Mã hàng' },
+  { id: 'mname', label: 'Tên hàng' },
+  { id: 'unit',  label: 'ĐVT' },
+  { id: 'plan',  label: 'KH (thùng)',     align: 'right' },
+  { id: 'act',   label: 'Thực tế (thùng)', align: 'right' },
+  { id: 'pct',   label: '% TT/KH',        align: 'right' },
+  { id: 'note',  label: 'Ghi chú' },
+]
+const COL_DEFAULTS = [44, 92, 120, 100, 160, 96, 104, 190, 60, 92, 104, 80, 96]
+
+/** Trạng thái dòng báo cáo → màu chữ (KHÔNG fill nền). */
+function reportKey(row: InboundReportRow): RowStatusKey {
+  if (row.note === 'Phát sinh') return 'inProgress'           // cam
+  const pct = row.pct ?? 0
+  if (row.actual_boxes === 0 && row.planned_boxes > 0) return 'paused'  // đỏ — chưa nhập
+  if (pct >= 100) return 'assigned'                            // xanh lá — đạt
+  if (pct > 0) return 'inProgress'                             // cam — một phần
+  return 'pending'                                             // xám
+}
 
 export default function TMSReport() {
   const { inboundReport, setInboundReport } = useWmsFilterStore()
@@ -35,6 +67,12 @@ export default function TMSReport() {
   const [editingPoValue, setEditingPoValue] = useState('')
   const [poSaving, setPoSaving] = useState(false)
   const [poError, setPoError] = useState<string | null>(null)
+
+  const [dense, setDense] = useState(() => localStorage.getItem('tms_report_density') !== 'comfortable')
+  function toggleDensity() {
+    setDense(d => { localStorage.setItem('tms_report_density', d ? 'comfortable' : 'compact'); return !d })
+  }
+  const { widths: colW, startResize, totalWidth } = useColumnResize('tms_report_col_widths', COL_DEFAULTS)
 
   async function savePo(planLineId: string) {
     setPoSaving(true)
@@ -78,6 +116,14 @@ export default function TMSReport() {
       onChange: v => setInboundReport({ selCategories: v }) },
   ]
 
+  // ─── Saved views ───
+  const viewSnapshot = useMemo(() => ({ dateFrom, dateTo, warehouseId, selCategories }), [dateFrom, dateTo, warehouseId, selCategories])
+  const savedViews = useSavedViewsStore(s => s.views['tms_report'] ?? [])
+  const activeViewId = useMemo(() => {
+    const cur = JSON.stringify(viewSnapshot)
+    return savedViews.find(v => JSON.stringify(v.filters) === cur)?.id ?? null
+  }, [savedViews, viewSnapshot])
+
   function exportExcel() {
     const data = filteredRows.map(r => ({
       'Ngày':             r.date,
@@ -113,6 +159,17 @@ export default function TMSReport() {
           <span className="text-sm font-semibold text-slate-700 shrink-0">Báo cáo nhập hàng</span>
           <div className="flex-1" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
+          <SavedViews
+            module="tms_report"
+            currentFilters={viewSnapshot}
+            activeId={activeViewId}
+            onApply={(filters) => setInboundReport(filters as Partial<typeof inboundReport>)}
+          />
+          <button type="button" onClick={toggleDensity}
+            className="hidden sm:inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0"
+            title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
+            {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
+          </button>
           <Button size="sm" variant="outline" className="h-7 text-xs" onClick={exportExcel} disabled={filteredRows.length === 0}>
             <Download className="h-3.5 w-3.5 mr-1" />Excel
           </Button>
@@ -135,57 +192,48 @@ export default function TMSReport() {
         { label: '% TT/KH', value: `${overallPct}%`, accent: overallPct >= 100 },
       ]} />
 
-      {/* Table */}
+      {/* Table — cột kéo giãn được (colgroup + table-fixed), scroll ngang ở đáy */}
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
-        <Table className="min-w-full">
+        <Table className="table-fixed [&_td]:overflow-hidden [&_th]:overflow-hidden [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100" style={{ width: totalWidth, minWidth: '100%' }}>
+          <colgroup>
+            {colW.map((w, i) => <col key={i} style={{ width: w }} />)}
+          </colgroup>
           <TableHeader>
             <TableRow>
-              <TableHead className={TH}>#</TableHead>
-              <TableHead className={TH}>Ngày</TableHead>
-              <TableHead className={TH}>Kho</TableHead>
-              <TableHead className={TH}>PO</TableHead>
-              <TableHead className={TH}>NCC</TableHead>
-              <TableHead className={TH}>Loại hàng</TableHead>
-              <TableHead className={TH}>Mã hàng</TableHead>
-              <TableHead className={TH}>Tên hàng</TableHead>
-              <TableHead className={TH}>ĐVT</TableHead>
-              <TableHead className={`${TH} text-right`}>KH (thùng)</TableHead>
-              <TableHead className={`${TH} text-right`}>Thực tế (thùng)</TableHead>
-              <TableHead className={`${TH} text-right`}>% TT/KH</TableHead>
-              <TableHead className={TH}>Ghi chú</TableHead>
+              {COLS.map((c, i) => (
+                <TableHead key={c.id}
+                  className={`${TH} ${i === 0 ? 'px-0 text-center sticky left-0 z-20 bg-slate-50' : 'px-2'} ${c.align === 'right' ? 'text-right' : ''}`}>
+                  {c.label}
+                  {i > 0 && (
+                    <span
+                      onPointerDown={e => startResize(i, e)}
+                      onClick={e => e.stopPropagation()}
+                      className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70"
+                      title="Kéo để chỉnh độ rộng cột"
+                    />
+                  )}
+                </TableHead>
+              ))}
             </TableRow>
           </TableHeader>
-          <TableBody>
+          <TableBody className={dense ? '' : '[&_td]:!py-2.5'}>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={13} className="text-center text-xs text-slate-400 py-10">Đang tải...</TableCell>
+                <TableCell colSpan={COLS.length} className="text-center text-xs text-slate-400 py-10">Đang tải...</TableCell>
               </TableRow>
             ) : filteredRows.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={13} className="text-center text-xs text-slate-400 py-10">
+                <TableCell colSpan={COLS.length} className="text-center text-xs text-slate-400 py-10">
                   {dateFrom && dateTo ? 'Không có dữ liệu' : 'Chọn khoảng ngày để xem báo cáo'}
                 </TableCell>
               </TableRow>
             ) : filteredRows.map((row, i) => {
-              const isPhatSinh = row.note === 'Phát sinh'
-              const pct = row.pct ?? 0
-              const rowCls = isPhatSinh
-                ? 'bg-amber-50 hover:bg-amber-100'
-                : row.actual_boxes === 0 && row.planned_boxes > 0 ? 'bg-red-50 hover:bg-red-100'
-                : pct >= 100                                       ? 'bg-green-50 hover:bg-green-100'
-                : pct > 0                                          ? 'bg-amber-50 hover:bg-amber-100'
-                :                                                    'hover:bg-slate-50'
-              const pctCls =
-                row.pct == null ? 'text-slate-300'
-                : pct >= 100   ? 'text-green-700'
-                : pct >= 50    ? 'text-amber-700'
-                :                'text-red-600'
               const canEditPo = !!row.plan_line_id && canEditPoPerm
               return (
-                <TableRow key={i} className={rowCls}>
-                  <TableCell className={`${TD} text-slate-400 tabular-nums`}>{i + 1}</TableCell>
+                <TableRow key={i} className={rowText(reportKey(row))}>
+                  <TableCell className={`${TD} px-0 text-center text-slate-400 tabular-nums sticky left-0 z-10 bg-white`}>{i + 1}</TableCell>
                   <TableCell className={`${TD} font-mono`}>{formatDate(row.date)}</TableCell>
-                  <TableCell className={TD}>{row.warehouse_name}</TableCell>
+                  <TableCell className={`${TD} truncate`}>{row.warehouse_name}</TableCell>
                   {/* PO — click to edit inline (chỉ với plan line rows) */}
                   <TableCell className={`${TD} font-mono`}>
                     {editingPoId === row.plan_line_id && canEditPo ? (
@@ -215,10 +263,10 @@ export default function TMSReport() {
                         {row.po_number || <span className="text-slate-300">—</span>}
                       </button>
                     ) : (
-                      <span className="text-slate-300">—</span>
+                      <span className="text-slate-300">{row.po_number || '—'}</span>
                     )}
                   </TableCell>
-                  <TableCell className={TD}>
+                  <TableCell className={`${TD} truncate`}>
                     {row.ncc_code
                       ? <><span className="font-mono font-semibold">{row.ncc_code}</span><span className="text-slate-400 ml-1">{row.ncc_name}</span></>
                       : <span className="text-slate-300">—</span>}
@@ -227,22 +275,20 @@ export default function TMSReport() {
                     {row.material_category || <span className="text-slate-300">—</span>}
                   </TableCell>
                   <TableCell className={`${TD} font-mono font-semibold`}>{row.material_code}</TableCell>
-                  <TableCell className={`${TD} max-w-[180px] truncate`}>{row.material_name}</TableCell>
-                  <TableCell className={`${TD} text-slate-500`}>{row.unit || '—'}</TableCell>
+                  <TableCell className={`${TD} truncate`}>{row.material_name}</TableCell>
+                  <TableCell className={`${TD} text-slate-400`}>{row.unit || '—'}</TableCell>
                   <TableCell className={`${TD} tabular-nums font-semibold text-right`}>
                     {row.planned_boxes > 0 ? row.planned_boxes.toLocaleString() : <span className="text-slate-300">—</span>}
                   </TableCell>
                   <TableCell className={`${TD} tabular-nums font-semibold text-right`}>
-                    {row.actual_boxes > 0
-                      ? row.actual_boxes.toLocaleString()
-                      : <span className="text-slate-300">0</span>}
+                    {row.actual_boxes > 0 ? row.actual_boxes.toLocaleString() : <span className="text-slate-300">0</span>}
                   </TableCell>
-                  <TableCell className={`${TD} tabular-nums font-semibold text-right ${pctCls}`}>
-                    {row.pct != null ? `${pct}%` : '—'}
+                  <TableCell className={`${TD} tabular-nums font-semibold text-right`}>
+                    {row.pct != null ? `${row.pct}%` : <span className="text-slate-300">—</span>}
                   </TableCell>
                   <TableCell className={TD}>
-                    {isPhatSinh
-                      ? <span className="text-amber-700 font-semibold">Phát sinh</span>
+                    {row.note === 'Phát sinh'
+                      ? <span className="font-semibold">Phát sinh</span>
                       : <span className="text-slate-300">—</span>}
                   </TableCell>
                 </TableRow>

@@ -18,6 +18,7 @@ import { TableSkeleton } from '@/components/shared/TableSkeleton'
 import { rowText, type RowStatusKey } from '@/lib/rowStatus'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
+import { SingleSelect } from '@/components/shared/SingleSelect'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import {
   useWarehouses,
@@ -319,12 +320,11 @@ function CreateSheetDialog({ warehouses, defaultWh, onClose, onCreated }: {
           </div>
           <div>
             <label className="text-xs font-medium text-slate-600 block mb-1">Layout</label>
-            <Select value={layoutId || undefined} onValueChange={setLayoutId} disabled={!wh}>
-              <SelectTrigger className="w-full h-9 text-sm"><SelectValue placeholder={wh ? 'Chọn layout…' : 'Chọn kho trước'} /></SelectTrigger>
-              <SelectContent>
-                {layouts.map(l => <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
+            <SingleSelect
+              options={layouts.map(l => ({ value: l.id, label: l.name }))}
+              value={layoutId} onChange={setLayoutId} disabled={!wh}
+              placeholder={wh ? 'Chọn layout…' : 'Chọn kho trước'} searchPlaceholder="Tìm layout…"
+              triggerClassName="w-full h-9" />
           </div>
           <div>
             <label className="text-xs font-medium text-slate-600 block mb-1">Ngày</label>

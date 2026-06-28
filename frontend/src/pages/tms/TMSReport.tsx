@@ -266,7 +266,7 @@ export default function TMSReport() {
                       <span className="text-slate-300">{row.po_number || '—'}</span>
                     )}
                   </TableCell>
-                  <TableCell className={`${TD} truncate`}>
+                  <TableCell className={`${TD} truncate`} title={row.ncc_code ? `${row.ncc_code} ${row.ncc_name}` : row.ncc_name || ''}>
                     {row.ncc_code
                       ? <><span className="font-mono font-semibold">{row.ncc_code}</span><span className="text-slate-400 ml-1">{row.ncc_name}</span></>
                       : <span className="text-slate-300">—</span>}
@@ -275,7 +275,7 @@ export default function TMSReport() {
                     {row.material_category || <span className="text-slate-300">—</span>}
                   </TableCell>
                   <TableCell className={`${TD} font-mono font-semibold`}>{row.material_code}</TableCell>
-                  <TableCell className={`${TD} truncate`}>{row.material_name}</TableCell>
+                  <TableCell className={`${TD} truncate`} title={row.material_name}>{row.material_name}</TableCell>
                   <TableCell className={`${TD} text-slate-400`}>{row.unit || '—'}</TableCell>
                   <TableCell className={`${TD} tabular-nums font-semibold text-right`}>
                     {row.planned_boxes > 0 ? row.planned_boxes.toLocaleString() : <span className="text-slate-300">—</span>}

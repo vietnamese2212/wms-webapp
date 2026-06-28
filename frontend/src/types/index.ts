@@ -249,7 +249,7 @@ export interface InboundOrder {
   location_id:     string | null
   location:        { id: string; location_code: string; sub_code: string; max_pallets: number } | null
   material_id:     string | null
-  material:        { id: string; material_code: string; short_name: string | null; material_description: string; cartons_per_pallet: number | null; cartons_per_pallet_mn: number | null } | null
+  material:        { id: string; material_code: string; short_name: string | null; material_description: string; cartons_per_pallet: number | null; cartons_per_pallet_mn: number | null; warehouse_pallet_overrides?: WarehousePalletOverride[] | null } | null
   planned_pallets: number | null
   shift_id:        string | null
   shift:           { id: string; code: string; name: string } | null

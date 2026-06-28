@@ -9,6 +9,7 @@ import { Input }               from '@/components/ui/input'
 import { Label }               from '@/components/ui/label'
 import { useScanPallet, useCheckInboundScan, useInboundOrder, useLocationsReal } from '@/api/hooks'
 import { playBeep } from '@/utils/audio'
+import { effCartonsPerPallet } from '@/utils/palletCalc'
 import type { InboundOrder } from '@/types'
 
 // ─── Scan feedback banner ─────────────────────────────────────
@@ -83,7 +84,7 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
   const { mutate: scanPallet,  isPending: saving        } = useScanPallet()
   const { mutate: checkScan,   isPending: serverChecking } = useCheckInboundScan()
 
-  const defaultCartons = order.material?.cartons_per_pallet?.toString() ?? '0'
+  const defaultCartons = effCartonsPerPallet(order.material, order.warehouse_id).toString()
   const [cartons,          setCartons]          = useState(defaultCartons)
   const [stackLayer,       setStackLayer]       = useState('1')
   const [feedback,         setFeedback]         = useState<FeedbackState | null>(null)

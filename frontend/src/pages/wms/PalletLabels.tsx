@@ -18,6 +18,7 @@ import {
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
+import { effCartonsPerPallet } from '@/utils/palletCalc'
 import type { Material } from '@/types'
 
 // ─── Label data ───────────────────────────────────────────────
@@ -204,10 +205,14 @@ export default function PalletLabels() {
   const [count, setCount]     = useState('4')
   const [qty, setQty]         = useState('')
 
-  // Số lượng auto theo định mức thùng/pallet khi chọn mã
+  // NMSX (mã kho tổng) → id kho để áp ngoại lệ Thùng/Pallet theo kho
+  const nmsxWarehouseId = nmsxOptions.find(w => w.code === nmsx)?.id ?? null
+  // Số lượng auto theo định mức thùng/pallet (ngoại lệ theo kho NMSX nếu có) khi chọn mã / đổi kho
   useEffect(() => {
-    if (mat) setQty(mat.cartons_per_pallet != null ? String(mat.cartons_per_pallet) : '')
-  }, [mat])
+    if (!mat) return
+    const eff = effCartonsPerPallet(mat, nmsxWarehouseId)
+    setQty(eff > 0 ? String(eff) : '')
+  }, [mat, nmsxWarehouseId])
 
   const genReady = !!(mat && prodDate && cycle.trim() && machine.trim() && nmsx.trim())
   const genLabels: LabelData[] = useMemo(() => {

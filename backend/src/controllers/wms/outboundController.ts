@@ -4,6 +4,7 @@ import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { effectiveNoQr, markItemsNoQrIfQty } from '../../lib/inventoryMode'
+import { effCartonsPerPallet } from '../../utils/palletCalc'
 
 const now = () => new Date().toISOString()
 
@@ -1553,6 +1554,9 @@ export async function getPrepareBoard(req: Request, res: Response) {
     const { data: gdos } = await supabase.from('GroupDeliveryOrder')
       .select('id, warehouse_id, warehouse:Warehouse(inventory_mode)').in('id', gdoIds)
     const warehouseIds = [...new Set((gdos ?? []).map((g: any) => g.warehouse_id).filter(Boolean))] as string[]
+    // Ngoại lệ Thùng/Pallet theo kho — chỉ áp khi board gom đúng 1 kho (trường hợp thường);
+    // gom nhiều kho khác override → fallback định mức chung (hiếm).
+    const prepareWarehouseId = warehouseIds.length === 1 ? warehouseIds[0] : null
     // do_id → kho QTY? (kho QTY → mã hành xử như no_qr_tracking)
     const qtyGdoIds = new Set((gdos ?? []).filter((g: any) => g.warehouse?.inventory_mode === 'QTY').map((g: any) => g.id as string))
 
@@ -1563,11 +1567,11 @@ export async function getPrepareBoard(req: Request, res: Response) {
     const qtyDoIds = new Set((dos ?? []).filter((d: any) => qtyGdoIds.has(d.gdo_id)).map((d: any) => d.id as string))
 
     const { data: items } = await supabase.from('OutboundItem')
-      .select('do_id, material_id, material_code_raw, cartons_ordered, cartons_scanned, loose_picking, material:Material!material_id(short_name, cartons_per_pallet, no_qr_tracking)')
+      .select('do_id, material_id, material_code_raw, cartons_ordered, cartons_scanned, loose_picking, material:Material!material_id(short_name, cartons_per_pallet, warehouse_pallet_overrides, no_qr_tracking)')
       .in('do_id', doIds) as { data: Array<{
         do_id: string; material_id: string | null; material_code_raw: string | null
         cartons_ordered: number | null; cartons_scanned: number | null; loose_picking: number | null
-        material: { short_name: string | null; cartons_per_pallet: number | null; no_qr_tracking: boolean | null } | null
+        material: { short_name: string | null; cartons_per_pallet: number | null; warehouse_pallet_overrides: { warehouse_id: string; cartons_per_pallet: number }[] | null; no_qr_tracking: boolean | null } | null
       }> | null }
 
     // Gom theo mã hàng (material_id, fallback material_code_raw)
@@ -1586,7 +1590,7 @@ export async function getPrepareBoard(req: Request, res: Response) {
         material_code: i.material_code_raw ?? '(?)',
         material_name: i.material?.short_name ?? null,
         cartons_ordered: 0, cartons_scanned: 0, cartons_remaining: 0,
-        cartons_per_pallet: Number(i.material?.cartons_per_pallet ?? 0),
+        cartons_per_pallet: effCartonsPerPallet(i.material, prepareWarehouseId),
         pallets_remaining: 0, no_qr_tracking: itemNoQr,
         suggestions: [],
       }

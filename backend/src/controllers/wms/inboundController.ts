@@ -5,6 +5,7 @@ import { ok, fail } from '../../utils/response'
 import { parseInboundQR } from '../../utils/qrParser'
 import { emitInboundChanged } from '../../lib/events'
 import { effectiveNoQr } from '../../lib/inventoryMode'
+import { effCartonsPerPallet } from '../../utils/palletCalc'
 
 // Kho QTY → ép no-QR hiệu lực cho phiếu (mutate material.no_qr_tracking theo inventory_mode của kho)
 function applyInboundMode(
@@ -48,7 +49,7 @@ const ORDER_SELECT = `
   source_type, gate_registration_id, tms_order_id, planned_cartons, warehouse_type, from_gdo_id, posm_entry_id, posm_cartons, location_history,
   warehouse:Warehouse(id, code, name, inventory_mode),
   location:Location(id, location_code, sub_code, max_pallets),
-  material:Material(id, material_code, short_name, material_description, cartons_per_pallet, cartons_per_pallet_mn, category, no_qr_tracking),
+  material:Material(id, material_code, short_name, material_description, cartons_per_pallet, cartons_per_pallet_mn, warehouse_pallet_overrides, category, no_qr_tracking),
   shift:ImportShift(id, code, name),
   gate_registration:gate_registrations!gate_registration_id(id, registration_number, date, license_plate, company_name_raw, driver_name, status, direction),
   tms_order:TmsOrder!tms_order_id(id, order_code, planned_boxes, planned_pallets),
@@ -736,7 +737,7 @@ export async function checkScanQR(req: Request, res: Response) {
     const isTransfer = (order as any).source_type === 'TRANSFER'
 
     const [matResult, dupResult, locResult, obScanResult] = await Promise.all([
-      supabase.from('Material').select('id, material_code, cartons_per_pallet').eq('material_code', parsed.material_code).maybeSingle(),
+      supabase.from('Material').select('id, material_code, cartons_per_pallet, warehouse_pallet_overrides').eq('material_code', parsed.material_code).maybeSingle(),
       supabase.from('InventoryEntry').select('id, status, cartons_remaining, import_order_id, location:Location!location_id(warehouse_id)').eq('pallet_code', parsed.pallet_code).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']),
       supabase.from('Location').select('id, location_code, max_pallets, is_active, category').eq('id', location_id).maybeSingle(),
       isTransfer
@@ -808,11 +809,11 @@ export async function checkScanQR(req: Request, res: Response) {
       }
     }
 
-    const mat = material as { cartons_per_pallet?: number | null }
+    const mat = material as { cartons_per_pallet?: number | null; warehouse_pallet_overrides?: { warehouse_id: string; cartons_per_pallet: number }[] | null }
     return ok(res, {
       pallet_code:       parsed.pallet_code,
       production_date:   parsed.production_date ?? null,
-      suggested_cartons: outboundCartons ?? mat.cartons_per_pallet ?? 0,
+      suggested_cartons: outboundCartons ?? effCartonsPerPallet(mat, orderWarehouseId),
       outbound_cartons:  outboundCartons,
     })
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
@@ -867,7 +868,7 @@ export async function scanQR(req: Request, res: Response) {
 
     // TRANSFER + pallet từ phiếu KHÁC (IN_STOCK hoặc PARTIAL) → merge (cộng tồn)
     if (isTransfer && existingPallet && ['IN_STOCK', 'PARTIAL'].includes(existingPallet.status) && existingPallet.import_order_id !== order_id) {
-      const addCartons = cartons_override ? Number(cartons_override) : (material.cartons_per_pallet ?? 0)
+      const addCartons = cartons_override ? Number(cartons_override) : effCartonsPerPallet(material, orderWarehouseId)
       const cartonsBeforeAdjust = Number(existingPallet.cartons_remaining)
       const newRemaining = cartonsBeforeAdjust + addCartons
       const now = new Date().toISOString()
@@ -963,7 +964,7 @@ export async function scanQR(req: Request, res: Response) {
 
     const cartons_imported = cartons_override
       ? Number(cartons_override)
-      : (material.cartons_per_pallet ?? 0)
+      : effCartonsPerPallet(material, orderWarehouseId)
 
     const { data: entry, error: entErr } = await supabase
       .from('InventoryEntry')

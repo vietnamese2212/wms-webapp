@@ -1,6 +1,6 @@
-import { useEffect, useState, useRef, useMemo, Fragment } from 'react'
+import { useEffect, useState, useRef, useMemo } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Plus, Wand2, Send, Trash2, CalendarDays, Pencil, Save, Layers, X, Loader2, Image as ImageIcon, Share2, Rows3, AlignJustify } from 'lucide-react'
+import { Plus, Wand2, Send, Trash2, CalendarDays, Save, Layers, X, Loader2, Image as ImageIcon, Share2, Rows3, AlignJustify } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -739,41 +739,54 @@ function LayoutTab({ canCreate }: { canCreate: boolean }) {
   const saved = (() => { try { return JSON.parse(localStorage.getItem(SCOPE_KEY) || '{}') } catch { return {} } })()
   const [wh, setWh] = useState<string>(saved.wh ?? '')
   const { data: layouts = [], isLoading } = useLayouts(wh || undefined, !!wh)
-  const create = useCreateLayout()
   const del = useDeleteLayout()
-  const [editId, setEditId] = useState<string | null>(null)
+  const [sel, setSel] = useState<string | null>(null)
+  const [showCreate, setShowCreate] = useState(false)
   const [err, setErr] = useState<string | null>(null)
-  const [newName, setNewName] = useState('')
 
-  async function addLayout() {
-    if (!newName.trim() || !wh) return
-    setErr(null)
-    try { const l = await create.mutateAsync({ warehouse_id: wh, name: newName.trim() }); setNewName(''); setEditId(l.id) }
-    catch (e) { setErr(String((e as { message?: string })?.message ?? e)) }
-  }
+  const whName = (warehouses as { id: string; name: string }[]).find(w => w.id === wh)?.name ?? ''
+  const selLayout = sel ? layouts.find(l => l.id === sel) ?? null : null
+  useEffect(() => { setSel(null) }, [wh])   // đổi kho → đóng detail
+
   async function removeLayout(l: LayoutRow) {
     if (!confirm(`Xóa layout "${l.name}"?`)) return
     setErr(null)
-    try { await del.mutateAsync(l.id); if (editId === l.id) setEditId(null) } catch (e) { setErr(String((e as { message?: string })?.message ?? e)) }
+    try { await del.mutateAsync(l.id); if (sel === l.id) setSel(null) } catch (e) { setErr(String((e as { message?: string })?.message ?? e)) }
   }
 
+  // ── DETAIL: mở 1 layout để sửa vị trí ──
+  if (sel && selLayout) {
+    return (
+      <div className="p-3 space-y-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button size="sm" variant="outline" className="h-7" onClick={() => setSel(null)}>← Danh sách</Button>
+          <span className="inline-flex items-center gap-1.5 font-semibold text-slate-700 text-sm"><Layers className="h-4 w-4 text-sky-500" />{selLayout.name}</span>
+          <span className="text-[11px] text-slate-400">{selLayout.positions} vị trí · {selLayout.people} người</span>
+          <div className="flex-1" />
+          {canCreate && <Button size="sm" variant="outline" className="h-7 text-red-600" onClick={() => removeLayout(selLayout)}><Trash2 className="h-3.5 w-3.5 mr-1" />Xóa layout</Button>}
+        </div>
+        {err && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{err}</div>}
+        <div className="max-w-3xl border border-slate-200 rounded-lg">
+          <LayoutEditor layoutId={sel} />
+        </div>
+      </div>
+    )
+  }
+
+  // ── LIST ──
   return (
     <div className="p-3 space-y-3">
       <div className="flex flex-wrap items-center gap-2">
         <WarehouseSingleSelect warehouses={warehouses as { id: string; code?: string; name: string }[]} value={wh} onChange={setWh} placeholder="Chọn kho…" triggerClassName="w-40" />
-        {canCreate && wh && (
-          <div className="flex items-center gap-1.5">
-            <Input value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => e.key === 'Enter' && addLayout()} placeholder="Tên layout mới (VD: Ca ngày SX)…" className="h-7 text-xs w-56" />
-            <Button size="sm" className="h-7" onClick={addLayout} disabled={!newName.trim() || create.isPending}><Plus className="h-4 w-4" /></Button>
-          </div>
-        )}
+        <div className="flex-1" />
+        {canCreate && wh && <Button size="sm" className="h-7" onClick={() => setShowCreate(true)}><Plus className="h-4 w-4 mr-1" />Tạo layout</Button>}
       </div>
       {err && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{err}</div>}
 
       {!wh ? (
         <div className="flex flex-col items-center justify-center text-slate-400 gap-2 py-16"><Layers className="h-8 w-8" /><p className="text-sm">Chọn <b>Kho</b> để quản lý layout</p></div>
       ) : isLoading ? <p className="text-xs text-slate-400 py-8 text-center">Đang tải…</p>
-      : layouts.length === 0 ? <p className="text-xs text-slate-400 py-8 text-center">Kho này chưa có layout nào.</p>
+      : layouts.length === 0 ? <p className="text-xs text-slate-400 py-8 text-center">Kho này chưa có layout nào. Bấm <b>Tạo layout</b> để thêm.</p>
       : (
         <div className="max-w-3xl border border-slate-200 rounded-lg">
           <Table className="min-w-full">
@@ -782,41 +795,70 @@ function LayoutTab({ canCreate }: { canCreate: boolean }) {
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Tên layout</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap text-right">Vị trí</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap text-right">Người</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap text-right">Thao tác</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {layouts.map(l => (
-                <Fragment key={l.id}>
-                  <TableRow className={`hover:bg-slate-50 ${editId === l.id ? 'bg-sky-50' : ''}`}>
-                    <TableCell className="px-2 py-1.5 text-xs font-medium text-slate-700 whitespace-nowrap">
-                      <span className="inline-flex items-center gap-1.5"><Layers className="h-3.5 w-3.5 text-sky-500 shrink-0" />{l.name}</span>
-                    </TableCell>
-                    <TableCell className="px-2 py-1.5 text-xs text-right tabular-nums whitespace-nowrap">{l.positions || <span className="text-slate-300">—</span>}</TableCell>
-                    <TableCell className="px-2 py-1.5 text-xs text-right tabular-nums whitespace-nowrap">{l.people || <span className="text-slate-300">—</span>}</TableCell>
-                    <TableCell className="px-2 py-1.5 whitespace-nowrap text-right">
-                      {canCreate ? (
-                        <span className="inline-flex items-center gap-1.5">
-                          <Button size="sm" variant="outline" className="h-7" onClick={() => setEditId(editId === l.id ? null : l.id)}><Pencil className="h-3.5 w-3.5 mr-1" />{editId === l.id ? 'Đóng' : 'Sửa vị trí'}</Button>
-                          <Button size="sm" variant="outline" className="h-7 text-red-600" onClick={() => removeLayout(l)}><Trash2 className="h-3.5 w-3.5" /></Button>
-                        </span>
-                      ) : <span className="text-slate-300">—</span>}
-                    </TableCell>
-                  </TableRow>
-                  {editId === l.id && (
-                    <TableRow className="hover:bg-transparent">
-                      <TableCell colSpan={4} className="p-0">
-                        <LayoutEditor layoutId={l.id} />
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </Fragment>
+                <TableRow key={l.id} className="hover:bg-slate-50 cursor-pointer" onClick={() => setSel(l.id)}>
+                  <TableCell className="px-2 py-1.5 text-xs font-medium text-slate-700 whitespace-nowrap">
+                    <span className="inline-flex items-center gap-1.5"><Layers className="h-3.5 w-3.5 text-sky-500 shrink-0" />{l.name}</span>
+                  </TableCell>
+                  <TableCell className="px-2 py-1.5 text-xs text-right tabular-nums whitespace-nowrap">{l.positions || <span className="text-slate-300">—</span>}</TableCell>
+                  <TableCell className="px-2 py-1.5 text-xs text-right tabular-nums whitespace-nowrap">{l.people || <span className="text-slate-300">—</span>}</TableCell>
+                </TableRow>
               ))}
             </TableBody>
           </Table>
         </div>
       )}
+
+      {showCreate && wh && (
+        <CreateLayoutDialog warehouseId={wh} warehouseName={whName}
+          onClose={() => setShowCreate(false)}
+          onCreated={id => { setShowCreate(false); setSel(id) }} />
+      )}
     </div>
+  )
+}
+
+// Dialog tạo layout mới (chọn kho ngầm theo kho đang xem + nhập tên) → mở detail layout vừa tạo
+function CreateLayoutDialog({ warehouseId, warehouseName, onClose, onCreated }: {
+  warehouseId: string; warehouseName: string; onClose: () => void; onCreated: (id: string) => void
+}) {
+  const create = useCreateLayout()
+  const [name, setName] = useState('')
+  const [err, setErr] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  async function submit() {
+    if (!name.trim()) return
+    setSaving(true); setErr(null)
+    try { const l = await create.mutateAsync({ warehouse_id: warehouseId, name: name.trim() }); onCreated(l.id) }
+    catch (e) { setErr(String((e as { response?: { data?: { error?: { message?: string } } } }).response?.data?.error?.message ?? (e as { message?: string })?.message ?? e)) }
+    finally { setSaving(false) }
+  }
+
+  return (
+    <Dialog open onOpenChange={o => !o && onClose()}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader><DialogTitle>Tạo layout mới</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          {err && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{err}</div>}
+          <div>
+            <label className="text-xs text-slate-500">Kho</label>
+            <div className="text-sm font-medium text-slate-700">{warehouseName || '—'}</div>
+          </div>
+          <div>
+            <label className="text-xs text-slate-500">Tên layout *</label>
+            <Input autoFocus value={name} onChange={e => setName(e.target.value)} onKeyDown={e => e.key === 'Enter' && submit()} placeholder="VD: Ca ngày SX" className="h-8 text-sm mt-0.5" />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" className="h-8" onClick={onClose}>Hủy</Button>
+            <Button className="h-8" onClick={submit} disabled={!name.trim() || saving}>{saving ? 'Đang tạo…' : 'Tạo'}</Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 

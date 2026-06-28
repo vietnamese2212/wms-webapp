@@ -743,7 +743,8 @@ function LayoutTab({ canCreate }: { canCreate: boolean }) {
   const [form, setForm] = useState<{ id: string | null } | null>(null)  // null=đóng · {id:null}=tạo · {id}=sửa
   const [err, setErr] = useState<string | null>(null)
 
-  const whName = (warehouses as { id: string; name: string }[]).find(w => w.id === wh)?.name ?? ''
+  const whById = new Map((warehouses as { id: string; name: string }[]).map(w => [w.id, w.name]))
+  const whName = whById.get(wh) ?? ''
   useEffect(() => { setForm(null) }, [wh])   // đổi kho → đóng form
 
   async function removeLayout(id: string, name: string) {
@@ -770,6 +771,7 @@ function LayoutTab({ canCreate }: { canCreate: boolean }) {
           <Table className="min-w-full">
             <TableHeader>
               <TableRow>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Kho</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Tên layout</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap text-right">Vị trí</TableHead>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap text-right">Người</TableHead>
@@ -778,6 +780,7 @@ function LayoutTab({ canCreate }: { canCreate: boolean }) {
             <TableBody>
               {layouts.map(l => (
                 <TableRow key={l.id} className="hover:bg-slate-50 cursor-pointer" onClick={() => setForm({ id: l.id })}>
+                  <TableCell className="px-2 py-1.5 text-xs text-slate-600 whitespace-nowrap">{whById.get(l.warehouse_id) ?? whName ?? <span className="text-slate-300">—</span>}</TableCell>
                   <TableCell className="px-2 py-1.5 text-xs font-medium text-slate-700 whitespace-nowrap">
                     <span className="inline-flex items-center gap-1.5"><Layers className="h-3.5 w-3.5 text-sky-500 shrink-0" />{l.name}</span>
                   </TableCell>

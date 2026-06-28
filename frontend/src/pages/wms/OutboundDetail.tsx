@@ -137,74 +137,106 @@ function TagPicker({
   )
 }
 
-// ─── Combobox chọn CHUYẾN (gõ biển số để tìm) — dùng chung Start + Sửa thông tin xe ───
-type GateRegOpt = { id: string; registration_number: number; license_plate: string | null; status: string; entry_at: string | null; exit_at: string | null; date: string }
+// ─── Picker chọn CHUYẾN (nút mở dialog thẻ, giống bên Nhập) — dùng chung Start + Sửa thông tin xe ───
+type GateRegOpt = { id: string; registration_number: number; license_plate: string | null; company_name_raw?: string | null; status: string; entry_at: string | null; exit_at: string | null; date: string }
 
-function ChuyenCombo({ options, value, onPick, freePlate, onFreeText, allowFreeText, takenGateIds }: {
-  options: GateRegOpt[]; value: string; onPick: (id: string) => void
-  freePlate: string; onFreeText: (plate: string) => void; allowFreeText: boolean
+function ChuyenPicker({ gates, value, onPick, freePlate, onFreeText, special, onSpecialChange, takenGateIds }: {
+  gates: GateRegOpt[]                          // chỉ chuyến đã vào cổng (entry_at) — CHƯA lọc theo special
+  value: string; onPick: (id: string) => void
+  freePlate: string; onFreeText: (plate: string) => void
+  special: boolean; onSpecialChange: (v: boolean) => void
   takenGateIds: Set<string>
 }) {
   const [open, setOpen] = useState(false)
-  const [q, setQ] = useState('')
-  const boxRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
-  const prevAllow = useRef(allowFreeText)
-  useEffect(() => {
-    const h = (e: MouseEvent) => { if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false) }
-    document.addEventListener('mousedown', h)
-    return () => document.removeEventListener('mousedown', h)
-  }, [])
-  // Tick "đặc biệt" → focus luôn vào ô để gõ biển số vãng lai
-  useEffect(() => {
-    if (allowFreeText && !prevAllow.current) { inputRef.current?.focus(); setOpen(true) }
-    prevAllow.current = allowFreeText
-  }, [allowFreeText])
+  const [walk, setWalk] = useState('')
   const fmtT = (ts: string | null) => ts ? formatTimestampTime(ts).slice(0, 5) : '—'
-  const label = (g: GateRegOpt) =>
-    `${g.license_plate ?? '—'} · #${g.registration_number} · vào ${fmtT(g.entry_at)}${g.exit_at ? ` · ra ${fmtT(g.exit_at)}` : ''}${takenGateIds.has(g.id) ? ' · ⚠ đã gắn' : ''}`
-  const selected = options.find(g => g.id === value)
-  const term = q.trim().toLowerCase()
-  const filtered = term
-    ? options.filter(g => (g.license_plate ?? '').toLowerCase().includes(term) || String(g.registration_number).includes(term))
-    : options
-  const freeVal = normalizeLicensePlate(q)
-  const showFree = allowFreeText && freeVal.length > 0
-  const commitFree = () => { onFreeText(freeVal); setQ(''); setOpen(false) }
+  const selected = gates.find(g => g.id === value)
+  // Rule (không đổi): mặc định CHỈ xe đang trong cổng (IN) + chưa bị phiếu khác gắn; đặc biệt → cả xe đã ra / đã gắn.
+  const base = gates.filter(g => special ? true : (g.status === 'IN' && !takenGateIds.has(g.id)))
+  // Giữ chuyến đang gắn trong danh sách dù bị lọc (để không mất link khi sửa)
+  const list = selected && !base.some(g => g.id === selected.id) ? [selected, ...base] : base
+  const sorted = [...list].sort((a, b) => b.date.localeCompare(a.date) || (b.entry_at ?? '').localeCompare(a.entry_at ?? ''))
+  const freeVal = normalizeLicensePlate(walk)
+  const commitFree = () => { if (!freeVal) return; onFreeText(freeVal); setWalk(''); setOpen(false) }
   return (
-    <div className="relative" ref={boxRef}>
-      <Input
-        ref={inputRef}
-        className="h-10 text-sm"
-        placeholder="Gõ biển số: chọn chuyến đã vào — hoặc nhập xe vãng lai (tích Đặc biệt)"
-        value={open ? q : (selected ? label(selected) : freePlate)}
-        onFocus={() => { setOpen(true); setQ(selected ? '' : freePlate) }}
-        onChange={e => { setQ(e.target.value); setOpen(true) }}
-        onKeyDown={e => { if (e.key === 'Enter' && showFree) { e.preventDefault(); commitFree() } }}
-      />
-      {open && (
-        <div className="absolute z-50 mt-1 w-full max-h-56 overflow-auto rounded-md border border-slate-200 bg-white shadow-lg">
-          {(selected || freePlate) && (
-            <button type="button" className="w-full text-left px-2 py-1.5 text-[11px] text-red-500 hover:bg-slate-50"
-              onMouseDown={e => { e.preventDefault(); onPick(''); onFreeText(''); setQ(''); setOpen(false) }}>✕ Xóa</button>
+    <>
+      <button type="button" onClick={() => setOpen(true)}
+        className="w-full h-10 flex items-center justify-between px-2 rounded-md border border-input bg-white text-sm hover:bg-slate-50">
+        {selected ? (
+          <span className="truncate">
+            <span className="font-mono font-semibold">{selected.license_plate ?? '—'}</span>
+            {selected.company_name_raw && <span className="ml-1.5 text-slate-500 text-xs">{selected.company_name_raw}</span>}
+          </span>
+        ) : freePlate ? (
+          <span className="truncate"><span className="font-mono font-semibold">{freePlate}</span><span className="ml-1.5 text-amber-600 text-xs">vãng lai</span></span>
+        ) : (
+          <span className="text-slate-400">Chọn chuyến xe…</span>
+        )}
+        <ChevronDown className="h-3.5 w-3.5 text-slate-400 shrink-0 ml-1" />
+      </button>
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader className="pb-1">
+            <div className="flex items-center justify-between gap-2">
+              <DialogTitle className="text-sm">Chọn chuyến xe</DialogTitle>
+              <div className="flex items-center gap-3">
+                <span className="text-[10px] text-slate-400">{sorted.length} xe</span>
+                <label className="flex items-center gap-1 text-[10px] text-slate-500 cursor-pointer select-none">
+                  <input type="checkbox" checked={special}
+                    onChange={e => onSpecialChange(e.target.checked)}
+                    className="h-3 w-3 rounded accent-amber-600" />
+                  <span>Trường hợp đặc biệt (xe đã ra / vãng lai)</span>
+                </label>
+              </div>
+            </div>
+          </DialogHeader>
+
+          {/* Nhập biển số xe vãng lai — chỉ khi đặc biệt */}
+          {special && (
+            <div className="space-y-1">
+              <div className="flex gap-1">
+                <Input className="h-8 text-xs" placeholder="Nhập biển số xe vãng lai…"
+                  value={walk} onChange={e => setWalk(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commitFree() } }} />
+                <Button type="button" size="sm" variant="outline" className="h-8 shrink-0" disabled={!freeVal} onClick={commitFree}>Dùng</Button>
+              </div>
+              {freeVal && <p className="text-[10px] text-amber-600">✎ Dùng biển số vãng lai: «{freeVal}»</p>}
+            </div>
           )}
-          {filtered.map(g => (
-            <button key={g.id} type="button"
-              className={`w-full text-left px-2 py-1.5 text-xs hover:bg-sky-50 ${g.id === value ? 'bg-sky-50 font-medium' : ''}`}
-              onMouseDown={e => { e.preventDefault(); onPick(g.id); setQ(''); setOpen(false) }}>
-              {label(g)}
-            </button>
-          ))}
-          {filtered.length === 0 && !showFree && <div className="px-2 py-2 text-[11px] text-slate-400">Không có chuyến phù hợp</div>}
-          {showFree && (
-            <button type="button" className="w-full text-left px-2 py-1.5 text-xs text-amber-700 hover:bg-amber-50 border-t border-slate-100"
-              onMouseDown={e => { e.preventDefault(); commitFree() }}>
-              ✎ Dùng biển số vãng lai: «{freeVal}»
-            </button>
-          )}
-        </div>
-      )}
-    </div>
+
+          <div className="space-y-1 max-h-[60vh] overflow-y-auto pr-0.5">
+            {(value || freePlate) && (
+              <button type="button" className="w-full text-left rounded px-2 py-1 text-[11px] text-red-500 hover:bg-slate-50"
+                onClick={() => { onPick(''); onFreeText(''); setOpen(false) }}>✕ Xóa chọn</button>
+            )}
+            {sorted.length === 0 ? (
+              <div className="text-center text-xs text-slate-400 py-4">
+                {special ? 'Không có chuyến trong 3 ngày' : 'Không có xe đang trong cổng — tích "Trường hợp đặc biệt" để xem xe đã ra / nhập vãng lai'}
+              </div>
+            ) : sorted.map(g => {
+              const isTaken = takenGateIds.has(g.id) && g.id !== value
+              return (
+                <button key={g.id} type="button"
+                  onClick={() => { onPick(g.id); setOpen(false) }}
+                  className={`w-full text-left rounded border px-2 py-1 transition-colors ${
+                    g.id === value ? 'border-amber-400 bg-amber-50'
+                      : g.status !== 'IN' ? 'border-slate-200 bg-slate-50 hover:border-amber-200'
+                        : 'border-slate-200 bg-white hover:border-amber-200 hover:bg-amber-50/40'}`}>
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-mono font-semibold text-[11px] text-slate-800">{g.license_plate ?? '—'}</span>
+                    {g.company_name_raw && <span className="text-[10px] text-slate-500 truncate">{g.company_name_raw}</span>}
+                    {g.status !== 'IN' && <span className="text-[8px] px-1 py-0.5 rounded bg-slate-200 text-slate-500 shrink-0">đã ra</span>}
+                    <span className="ml-auto text-[9px] text-slate-400 shrink-0">vào {fmtT(g.entry_at)}{g.exit_at ? ` · ra ${fmtT(g.exit_at)}` : ''}</span>
+                  </div>
+                  {isTaken && <div className="text-[9px] text-amber-600 mt-0.5">⚠ Đã gắn phiếu khác — chỉ dùng nếu bốc thêm đơn cùng chuyến</div>}
+                </button>
+              )
+            })}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }
 
@@ -239,12 +271,9 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
   const takenGateIds = new Set<string>()
   for (const g of recentGdos as GDO[]) if (g.gate_registration_id && g.id !== gdo.id) takenGateIds.add(g.gate_registration_id)
 
-  type GateReg = { id: string; registration_number: number; license_plate: string | null; status: string; entry_at: string | null; exit_at: string | null; date: string }
-  // Mặc định: chuyến IN (đã vào, CHƯA ra) + chưa bị phiếu khác gắn. Đặc biệt: thêm chuyến đã RA trong 3 ngày + cả chuyến đã gắn.
-  const eligibleGates = (gateRegs as GateReg[])
-    .filter(g => g.entry_at)                                                       // đã vào cổng
-    .filter(g => special ? true : (g.status === 'IN' && !takenGateIds.has(g.id)))
-    .sort((a, b) => b.date.localeCompare(a.date) || (b.entry_at ?? '').localeCompare(a.entry_at ?? ''))
+  type GateReg = { id: string; registration_number: number; license_plate: string | null; company_name_raw?: string | null; status: string; entry_at: string | null; exit_at: string | null; date: string }
+  // Picker tự lọc theo "đặc biệt" — ở đây chỉ truyền các chuyến ĐÃ VÀO cổng (entry_at).
+  const gatesWithEntry = (gateRegs as GateReg[]).filter(g => g.entry_at)
   const selectedGate = (gateRegs as GateReg[]).find(g => g.id === gateRegId)
   const effectivePlate = selectedGate?.license_plate ?? licPlate
 
@@ -286,25 +315,13 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
         <div className="space-y-3 py-1">
           <div className="space-y-1">
             <Label className="text-xs">Chuyến xe / Biển số *</Label>
-            <ChuyenCombo options={eligibleGates} value={gateRegId}
+            <ChuyenPicker gates={gatesWithEntry} value={gateRegId}
               onPick={id => { setGateRegId(id); if (id) setLicPlate('') }}
               freePlate={licPlate} onFreeText={p => { setLicPlate(p); setGateRegId('') }}
-              allowFreeText={special} takenGateIds={takenGateIds} />
-            {eligibleGates.length === 0 && !licPlate && (
-              <p className="text-[11px] text-slate-400">Không có chuyến phù hợp{special ? ' — gõ biển số để nhập xe vãng lai' : ' — tích "Trường hợp đặc biệt" để mở rộng / nhập tay'}</p>
-            )}
+              special={special} onSpecialChange={v => { setSpecial(v); if (!v) setLicPlate('') }}
+              takenGateIds={takenGateIds} />
           </div>
 
-          <label className="flex items-center gap-2 cursor-pointer text-xs">
-            <input type="checkbox" checked={special}
-              onChange={e => { setSpecial(e.target.checked); if (!e.target.checked) setLicPlate('') }}
-              className="h-4 w-4 rounded border-slate-300 accent-amber-600" />
-            <span>Trường hợp đặc biệt (xe đã ra / bốc thêm đơn cùng chuyến / xe vãng lai)</span>
-          </label>
-
-          {special && gateRegId && takenGateIds.has(gateRegId) && (
-            <p className="text-[11px] text-amber-600">⚠ Chuyến đã gắn phiếu khác — chỉ tiếp tục nếu xe bốc thêm đơn cùng chuyến.</p>
-          )}
           {special && !gateRegId && licPlate.trim() && (
             <p className="text-[11px] text-amber-600">⚠ Biển số chưa gắn đăng ký cổng (xe vãng lai / giao đêm).</p>
           )}
@@ -391,15 +408,10 @@ function EditTransportDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; 
   const takenGateIds = new Set<string>()
   for (const g of recentGdos as GDO[]) if (g.gate_registration_id && g.id !== gdo.id) takenGateIds.add(g.gate_registration_id)
 
-  type GateReg = { id: string; registration_number: number; license_plate: string | null; status: string; entry_at: string | null; exit_at: string | null; date: string }
-  const eligibleGates = (gateRegs as GateReg[])
-    .filter(g => g.entry_at)
-    .filter(g => special ? true : (g.status === 'IN' && !takenGateIds.has(g.id)))
-    .sort((a, b) => b.date.localeCompare(a.date) || (b.entry_at ?? '').localeCompare(a.entry_at ?? ''))
-  // Giữ chuyến đang gắn trong danh sách dù đã ra/đã lọc (để không mất link khi sửa)
+  type GateReg = { id: string; registration_number: number; license_plate: string | null; company_name_raw?: string | null; status: string; entry_at: string | null; exit_at: string | null; date: string }
+  // Picker tự lọc theo "đặc biệt" + tự giữ chuyến đang gắn — ở đây chỉ truyền chuyến ĐÃ VÀO cổng.
+  const gatesWithEntry = (gateRegs as GateReg[]).filter(g => g.entry_at)
   const selectedGate = (gateRegs as GateReg[]).find(g => g.id === gateRegId)
-  const optionGates = selectedGate && !eligibleGates.some(g => g.id === selectedGate.id)
-    ? [selectedGate, ...eligibleGates] : eligibleGates
   const effectivePlate = selectedGate?.license_plate ?? licPlate
 
   const empMap = new Map((employees as EmpOption[]).map(e => [e.id, e.name]))
@@ -437,25 +449,13 @@ function EditTransportDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; 
         <div className="space-y-3 py-1">
           <div className="space-y-1">
             <Label className="text-xs">Chuyến xe / Biển số *</Label>
-            <ChuyenCombo options={optionGates} value={gateRegId}
+            <ChuyenPicker gates={gatesWithEntry} value={gateRegId}
               onPick={id => { setGateRegId(id); if (id) setLicPlate('') }}
               freePlate={licPlate} onFreeText={p => { setLicPlate(p); setGateRegId('') }}
-              allowFreeText={special} takenGateIds={takenGateIds} />
-            {optionGates.length === 0 && !licPlate && (
-              <p className="text-[11px] text-slate-400">Không có chuyến phù hợp{special ? ' — gõ biển số để nhập xe vãng lai' : ' — tích "Trường hợp đặc biệt" để mở rộng / nhập tay'}</p>
-            )}
+              special={special} onSpecialChange={v => { setSpecial(v); if (!v) setLicPlate('') }}
+              takenGateIds={takenGateIds} />
           </div>
 
-          <label className="flex items-center gap-2 cursor-pointer text-xs">
-            <input type="checkbox" checked={special}
-              onChange={e => { setSpecial(e.target.checked); if (!e.target.checked) setLicPlate('') }}
-              className="h-4 w-4 rounded border-slate-300 accent-amber-600" />
-            <span>Trường hợp đặc biệt (xe đã ra / bốc thêm đơn cùng chuyến / xe vãng lai)</span>
-          </label>
-
-          {special && gateRegId && takenGateIds.has(gateRegId) && (
-            <p className="text-[11px] text-amber-600">⚠ Chuyến đã gắn phiếu khác — chỉ tiếp tục nếu xe bốc thêm đơn cùng chuyến.</p>
-          )}
           {special && !gateRegId && licPlate.trim() && (
             <p className="text-[11px] text-amber-600">⚠ Biển số chưa gắn đăng ký cổng (xe vãng lai / giao đêm).</p>
           )}

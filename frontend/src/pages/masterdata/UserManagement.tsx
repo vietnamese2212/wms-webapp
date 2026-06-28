@@ -962,7 +962,7 @@ export default function UserManagement() {
         </TabsList>
 
         {/* ── Tab: Nhân viên ── */}
-        <TabsContent value="employees" className="flex-1 min-h-0 flex flex-col space-y-2">
+        <TabsContent value="employees" className="flex-1 min-h-0 data-[state=active]:flex flex-col space-y-2">
           <div className="shrink-0 flex gap-2 flex-wrap items-center">
             <SearchInput value={search} onChange={setSearch} placeholder="Tìm tên, mã, đăng nhập…" className="flex-1 min-w-[200px]" />
             <FilterSheetButton defs={empFilterDefs} className="sm:hidden" />
@@ -1143,7 +1143,7 @@ export default function UserManagement() {
         </TabsContent>
 
         {/* ── Tab: Phòng ban ── */}
-        <TabsContent value="departments" className="flex-1 min-h-0 flex flex-col space-y-2">
+        <TabsContent value="departments" className="flex-1 min-h-0 data-[state=active]:flex flex-col space-y-2">
           <div className="shrink-0 flex items-center justify-between">
             <p className="text-xs text-slate-500">{departments.length} phòng ban</p>
             {isAdminUser && (
@@ -1222,7 +1222,7 @@ export default function UserManagement() {
         </TabsContent>
 
         {/* ── Tab: Chức danh ── */}
-        <TabsContent value="job-titles" className="flex-1 min-h-0 flex flex-col space-y-2">
+        <TabsContent value="job-titles" className="flex-1 min-h-0 data-[state=active]:flex flex-col space-y-2">
           <div className="shrink-0 flex gap-2 flex-wrap items-center">
             <FilterSheetButton defs={jtFilterDefs} className="sm:hidden" />
             <span className="text-xs text-slate-500 mr-auto">{visibleJobTitles.length} chức danh</span>

@@ -2765,7 +2765,7 @@ export type LayoutDetail = { id: string; warehouse_id: string; name: string; not
 export function useLayouts(warehouse_id?: string, enabled = true) {
   return useQuery({
     queryKey: ['hr-layouts', warehouse_id],
-    enabled: enabled && !!warehouse_id,
+    enabled,
     queryFn: async () => {
       const { data } = await apiClient.get('/hr/layouts', { params: { warehouse_id } })
       return data.data as LayoutRow[]

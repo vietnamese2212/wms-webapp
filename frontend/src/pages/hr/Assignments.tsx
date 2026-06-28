@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useMemo } from 'react'
+import { useEffect, useState, useRef, useMemo, Fragment } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Plus, Wand2, Send, Trash2, CalendarDays, Pencil, Save, Layers, X, Loader2, Image as ImageIcon, Share2, Rows3, AlignJustify } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -162,6 +162,7 @@ const sheetKey = (status: 'DRAFT' | 'PUBLISHED'): RowStatusKey => status === 'PU
 
 function DailyTab({ canCreate, perms }: { canCreate: boolean; perms: ModulePermissions | null }) {
   const { data: warehouses = [] } = useWarehouses(true)
+  const whNameById = useMemo(() => new Map((warehouses as { id: string; name: string }[]).map(w => [w.id, w.name])), [warehouses])
   const { assignment: af, setAssignment } = useWmsFilterStore()
   const { search, warehouseId, layoutId, dateFrom } = af
   const [dateTo, setDateTo] = useState<string>(DATE_PLUS(15))   // luôn mặc định +15, không nhớ giá trị cũ
@@ -189,7 +190,7 @@ function DailyTab({ canCreate, perms }: { canCreate: boolean; perms: ModulePermi
       options: (warehouses as { id: string; name: string }[]).map(w => ({ value: w.id, label: w.name })),
       value: warehouseId, onChange: v => setAssignment({ warehouseId: v, layoutId: '' }) },
     { key: 'layout', label: 'Layout', type: 'single', allLabel: 'Tất cả layout',
-      options: layouts.map(l => ({ value: l.id, label: l.name })),
+      options: layouts.map(l => ({ value: l.id, label: warehouseId ? l.name : `${l.name} · ${whNameById.get(l.warehouse_id) ?? '—'}` })),
       value: layoutId, onChange: v => setAssignment({ layoutId: v }) },
     { key: 'date', label: 'Ngày', type: 'daterange', from: dateFrom, to: dateTo,
       onChange: (f, t) => { setAssignment({ dateFrom: f }); setDateTo(t) } },
@@ -286,7 +287,7 @@ function CreateSheetDialog({ warehouses, defaultWh, onClose, onCreated }: {
   const [date, setDate] = useState(TODAY())
   const [err, setErr] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
-  const { data: layouts = [] } = useLayouts(wh || undefined)
+  const { data: layouts = [] } = useLayouts(wh || undefined, !!wh)
   const upsert = useUpsertSheet()
   useEffect(() => { if (layoutId && !layouts.some(l => l.id === layoutId)) setLayoutId('') }, [layouts, layoutId])
 
@@ -737,7 +738,7 @@ function LayoutTab({ canCreate }: { canCreate: boolean }) {
   const { data: warehouses = [] } = useWarehouses(true)
   const saved = (() => { try { return JSON.parse(localStorage.getItem(SCOPE_KEY) || '{}') } catch { return {} } })()
   const [wh, setWh] = useState<string>(saved.wh ?? '')
-  const { data: layouts = [], isLoading } = useLayouts(wh || undefined)
+  const { data: layouts = [], isLoading } = useLayouts(wh || undefined, !!wh)
   const create = useCreateLayout()
   const del = useDeleteLayout()
   const [editId, setEditId] = useState<string | null>(null)
@@ -774,20 +775,45 @@ function LayoutTab({ canCreate }: { canCreate: boolean }) {
       ) : isLoading ? <p className="text-xs text-slate-400 py-8 text-center">Đang tải…</p>
       : layouts.length === 0 ? <p className="text-xs text-slate-400 py-8 text-center">Kho này chưa có layout nào.</p>
       : (
-        <div className="space-y-2 max-w-3xl">
-          {layouts.map(l => (
-            <div key={l.id} className="border border-slate-200 rounded-lg">
-              <div className="flex items-center gap-2 px-3 py-2">
-                <Layers className="h-4 w-4 text-sky-500 shrink-0" />
-                <span className="font-medium text-slate-700 text-sm">{l.name}</span>
-                <span className="text-[11px] text-slate-400">{l.positions} vị trí · {l.people} người</span>
-                <div className="flex-1" />
-                {canCreate && <Button size="sm" variant="outline" className="h-7" onClick={() => setEditId(editId === l.id ? null : l.id)}><Pencil className="h-3.5 w-3.5 mr-1" />{editId === l.id ? 'Đóng' : 'Sửa vị trí'}</Button>}
-                {canCreate && <Button size="sm" variant="outline" className="h-7 text-red-600" onClick={() => removeLayout(l)}><Trash2 className="h-3.5 w-3.5" /></Button>}
-              </div>
-              {editId === l.id && <LayoutEditor layoutId={l.id} />}
-            </div>
-          ))}
+        <div className="max-w-3xl border border-slate-200 rounded-lg">
+          <Table className="min-w-full">
+            <TableHeader>
+              <TableRow>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Tên layout</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap text-right">Vị trí</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap text-right">Người</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap text-right">Thao tác</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {layouts.map(l => (
+                <Fragment key={l.id}>
+                  <TableRow className={`hover:bg-slate-50 ${editId === l.id ? 'bg-sky-50' : ''}`}>
+                    <TableCell className="px-2 py-1.5 text-xs font-medium text-slate-700 whitespace-nowrap">
+                      <span className="inline-flex items-center gap-1.5"><Layers className="h-3.5 w-3.5 text-sky-500 shrink-0" />{l.name}</span>
+                    </TableCell>
+                    <TableCell className="px-2 py-1.5 text-xs text-right tabular-nums whitespace-nowrap">{l.positions || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className="px-2 py-1.5 text-xs text-right tabular-nums whitespace-nowrap">{l.people || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className="px-2 py-1.5 whitespace-nowrap text-right">
+                      {canCreate ? (
+                        <span className="inline-flex items-center gap-1.5">
+                          <Button size="sm" variant="outline" className="h-7" onClick={() => setEditId(editId === l.id ? null : l.id)}><Pencil className="h-3.5 w-3.5 mr-1" />{editId === l.id ? 'Đóng' : 'Sửa vị trí'}</Button>
+                          <Button size="sm" variant="outline" className="h-7 text-red-600" onClick={() => removeLayout(l)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                        </span>
+                      ) : <span className="text-slate-300">—</span>}
+                    </TableCell>
+                  </TableRow>
+                  {editId === l.id && (
+                    <TableRow className="hover:bg-transparent">
+                      <TableCell colSpan={4} className="p-0">
+                        <LayoutEditor layoutId={l.id} />
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </Fragment>
+              ))}
+            </TableBody>
+          </Table>
         </div>
       )}
     </div>

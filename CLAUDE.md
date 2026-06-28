@@ -153,7 +153,7 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 | `user_admin` | Quản lý người dùng | Quản lý người dùng | view, create, edit, set_password, delete, manage_roles |
 | `work_skill` | Vị trí & Skill | trong Quản lý người dùng (gán skill) | view, manage, assign |
 | `schedule` | Lịch làm việc | Lịch làm việc | view, create, approve |
-| `work_assignment` | Phân công lịch làm việc | Phân công | view, create, edit, publish, delete |
+| `work_assignment` | Phân công lịch làm việc | Phân công | view, create, edit, publish, delete, **manage_layout**=tab Layout, **manage_shift_rules**=tab Quy tắc ca (3 tab = 3 quyền: Phân công/view · Layout/manage_layout · Quy tắc ca/manage_shift_rules) |
 | `attendance` | Chấm công | Chấm công | view, self_log, edit, report |
 | `leave` | Nghỉ phép | Chấm công (tab Nghỉ phép) | view, request, approve, delete |
 | `tms_plan` | Vận chuyển: Đặt lịch & Chuyển kho | TMS Bookings (tab Đặt lịch + Chuyển kho) | view, create, edit, delete, add_vehicle, release, change_date, book, revoke, upload_outbound, upload_inbound, **confirm_receipt**=nhận hàng chuyển kho (xác nhận/quét/hoàn thành) |

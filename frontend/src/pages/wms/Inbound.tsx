@@ -62,7 +62,7 @@ type EditRow = {
 
 // ─── Create order dialog ─────────────────────────────────────
 
-type MatItem = { id: string; material_code: string; short_name: string | null; material_description: string }
+type MatItem = { id: string; material_code: string; short_name: string | null; material_description: string; supplier_shelf_life_overrides?: { transport_company_id: string; shelf_life_days: number }[] | null }
 
 type NccMatRow = {
   material_code: string; material_id: string
@@ -617,7 +617,10 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                         className="text-[10px] text-red-400 hover:text-red-600">Bỏ</button>
                     </div>
                     <SingleSelect
-                      options={nccList.map(c => ({ value: c.id, label: c.name }))}
+                      options={nccList.map(c => {
+                        const d = selectedMat?.supplier_shelf_life_overrides?.find(o => o.transport_company_id === c.id)?.shelf_life_days
+                        return { value: c.id, label: d ? `${c.name} (${d} ngày)` : c.name }
+                      })}
                       value={nccId}
                       onChange={setNccId}
                       placeholder={nccList.length ? 'Chọn NCC' : 'Chưa có NCC — tạo ở Cài đặt TMS'}

@@ -26,7 +26,7 @@ import { can } from '@/config/permissions'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { effShelfLife } from '@/utils/shelfLife'
-import type { InventoryEntry } from '@/types'
+import type { InventoryEntry, SupplierShelfLifeOverride } from '@/types'
 
 // ─── Helpers ──────────────────────────────────────────────────
 
@@ -215,13 +215,20 @@ function QAPanel({ ids, qaStatuses, onClose }: {
   )
 }
 
-function NccPanel({ ids, onClose }: { ids: string[]; onClose: () => void }) {
+function NccPanel({ ids, material, onClose }: {
+  ids: string[]
+  material?: { supplier_shelf_life_overrides?: SupplierShelfLifeOverride[] | null } | null
+  onClose: () => void
+}) {
   const user = useAuthStore(s => s.user)
   const [nccId, setNccId]   = useState('')   // '' = chưa chọn; '__none__' = bỏ NCC
   const [error, setError]   = useState('')
   const { mutate, isPending } = useBulkUpdateInventoryNcc()
   const { data: allCompanies = [] } = useTransportCompanies(true)
   const nccList = (allCompanies as { id: string; name: string; type?: string }[]).filter(c => c.type === 'NCC')
+  // Khi các pallet chọn cùng 1 mã hàng → hiện HSD ngoại lệ sau tên NCC (vd "Đại Tân Việt (360 ngày)")
+  const shelfOv = material?.supplier_shelf_life_overrides ?? []
+  const nccDays = (id: string) => shelfOv.find(o => o.transport_company_id === id)?.shelf_life_days
 
   function handleSubmit() {
     setError('')
@@ -235,7 +242,7 @@ function NccPanel({ ids, onClose }: { ids: string[]; onClose: () => void }) {
   }
 
   const options: { id: string; label: string }[] = [
-    ...nccList.map(c => ({ id: c.id, label: c.name })),
+    ...nccList.map(c => { const d = nccDays(c.id); return { id: c.id, label: d ? `${c.name} (${d} ngày)` : c.name } }),
     { id: '__none__', label: '— Bỏ NCC (HSD mặc định) —' },
   ]
 
@@ -675,6 +682,12 @@ export default function Inventory() {
   const totalPages        = Math.max(1, Math.ceil(total / LIMIT))
   const checkedCount      = checkedIds.size
   const checkedIdArr      = useMemo(() => [...checkedIds], [checkedIds])
+  // Mã hàng chung của các pallet đang chọn (để panel Sửa NCC hiện HSD ngoại lệ theo NCC); null nếu nhiều mã
+  const ncMaterial        = useMemo(() => {
+    const sel = displayEntries.filter(e => checkedIds.has(e.id))
+    const mats = new Set(sel.map(e => e.material_id))
+    return mats.size === 1 ? sel[0]?.material ?? null : null
+  }, [displayEntries, checkedIds])
 
   // Export Excel theo VIEW đang xem (pallet chi tiết / tổng hợp), tôn trọng filter. Chặn nếu > EXPORT_MAX.
   async function handleExport() {
@@ -999,7 +1012,7 @@ export default function Inventory() {
         {actionModal === 'qa' ? (
           <QAPanel ids={checkedIdArr} qaStatuses={qaStatuses as { id: string; code: string; name: string }[]} onClose={closeActionModal} />
         ) : actionModal === 'ncc' ? (
-          <NccPanel ids={checkedIdArr} onClose={closeActionModal} />
+          <NccPanel ids={checkedIdArr} material={ncMaterial} onClose={closeActionModal} />
         ) : actionModal === 'location' ? (
           <LocationPanel ids={checkedIdArr} warehouseId={actionWarehouseId} category={actionCategory} onClose={closeActionModal} />
         ) : actionModal === 'material' ? (

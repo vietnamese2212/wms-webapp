@@ -504,6 +504,7 @@ export function useScanPallet() {
       cartons_override?: number
       qa_status_id?: string
       employee_id?: string
+      ncc_id?: string
     }) => apiClient.post(`/wms/inbound-orders/${orderId}/scan`, body).then((r) => r.data.data),
 
     // Optimistic: add entry to table immediately, before API responds

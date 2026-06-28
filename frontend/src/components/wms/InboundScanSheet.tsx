@@ -7,7 +7,7 @@ import type { QRScannerHandle } from '@/components/shared/QRScanner'
 import { Button }              from '@/components/ui/button'
 import { Input }               from '@/components/ui/input'
 import { Label }               from '@/components/ui/label'
-import { useScanPallet, useCheckInboundScan, useInboundOrder, useLocationsReal } from '@/api/hooks'
+import { useScanPallet, useCheckInboundScan, useInboundOrder, useLocationsReal, useTransportCompanies } from '@/api/hooks'
 import { playBeep } from '@/utils/audio'
 import { effCartonsPerPallet } from '@/utils/palletCalc'
 import type { InboundOrder } from '@/types'
@@ -85,6 +85,18 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
   const { mutate: checkScan,   isPending: serverChecking } = useCheckInboundScan()
 
   const defaultCartons = effCartonsPerPallet(order.material, order.warehouse_id).toString()
+  // Chuyển kho: cho phép chọn NCC (mặc định tự kế thừa từ pallet gốc) — phòng pallet đổi tên A→B
+  const isTransfer = (order as { source_type?: string }).source_type === 'TRANSFER'
+  const { data: allCompanies = [] } = useTransportCompanies(true)
+  const nccList = isTransfer
+    ? (allCompanies as { id: string; name: string; type?: string }[]).filter(c => c.type === 'NCC')
+    : []
+  const shelfOv = order.material?.supplier_shelf_life_overrides ?? []
+  const nccLabel = (c: { id: string; name: string }) => {
+    const d = shelfOv.find(o => o.transport_company_id === c.id)?.shelf_life_days
+    return d ? `${c.name} (${d} ngày)` : c.name
+  }
+  const [nccId,            setNccId]            = useState('')   // '' = tự kế thừa
   const [cartons,          setCartons]          = useState(defaultCartons)
   const [stackLayer,       setStackLayer]       = useState('1')
   const [feedback,         setFeedback]         = useState<FeedbackState | null>(null)
@@ -147,7 +159,7 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
       return
     }
     scanPallet(
-      { orderId: order.id, qr_code: pendingQR, location_id: activeLocationId, stack_layer: Number(stackLayer), cartons_override: Number(cartons) || undefined, employee_id: employeeId },
+      { orderId: order.id, qr_code: pendingQR, location_id: activeLocationId, stack_layer: Number(stackLayer), cartons_override: Number(cartons) || undefined, employee_id: employeeId, ncc_id: isTransfer && nccId ? nccId : undefined },
       {
         onSuccess: (data) => {
           setPendingQR(null)
@@ -159,8 +171,10 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
           const successMsg = data.merged
             ? `✓ Đã cộng ${data.added_cartons} thùng · Tồn mới: ${data.new_remaining} thùng`
             : `✓ ${data.entry.pallet_code} · ${data.entry.cartons_imported} thùng · ${data.entry.location?.location_code ?? ''}`
-          setFeedback({ type: 'success', msg: successMsg })
-          setTimeout(() => { scannerRef.current?.resume(); setFeedback(null) }, 1500)
+          const warns: string[] = data.warnings ?? []
+          // Có cảnh báo (vd chưa xác định NCC) → giữ lâu hơn để đọc
+          setFeedback(warns.length ? { type: 'error', msg: `${successMsg} · ⚠ ${warns.join(' · ')}` } : { type: 'success', msg: successMsg })
+          setTimeout(() => { scannerRef.current?.resume(); setFeedback(null) }, warns.length ? 4000 : 1500)
         },
         onError: (err) => {
           setPendingQR(null)
@@ -215,6 +229,21 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
               {activeLocationId ? 'Đổi vị trí' : 'Chọn vị trí'}
             </button>
           </div>
+
+          {/* Chuyển kho: chọn NCC (mặc định tự kế thừa từ pallet gốc); dùng khi pallet đổi tên */}
+          {isTransfer && nccList.length > 0 && (
+            <div className="flex items-center gap-2">
+              <Label className="text-xs text-slate-500 shrink-0">NCC</Label>
+              <select
+                value={nccId}
+                onChange={e => setNccId(e.target.value)}
+                className="h-8 flex-1 rounded-md border border-input bg-white px-2 text-xs"
+              >
+                <option value="">Tự kế thừa từ pallet gốc</option>
+                {nccList.map(c => <option key={c.id} value={c.id}>{nccLabel(c)}</option>)}
+              </select>
+            </div>
+          )}
 
           {/* Location picker dialog */}
           {showLocPicker && (

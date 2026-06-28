@@ -50,7 +50,7 @@ const ORDER_SELECT = `
   warehouse:Warehouse(id, code, name, inventory_mode),
   ncc:TransportCompany!ncc_id(id, name),
   location:Location(id, location_code, sub_code, max_pallets),
-  material:Material(id, material_code, short_name, material_description, cartons_per_pallet, cartons_per_pallet_mn, warehouse_pallet_overrides, category, no_qr_tracking),
+  material:Material(id, material_code, short_name, material_description, cartons_per_pallet, cartons_per_pallet_mn, warehouse_pallet_overrides, supplier_shelf_life_overrides, category, no_qr_tracking),
   shift:ImportShift(id, code, name),
   gate_registration:gate_registrations!gate_registration_id(id, registration_number, date, license_plate, company_name_raw, driver_name, status, direction),
   tms_order:TmsOrder!tms_order_id(id, order_code, planned_boxes, planned_pallets),
@@ -828,7 +828,7 @@ export async function scanQR(req: Request, res: Response) {
   try {
     if (!(await guardInboundScope(req, res, req.params.id))) return
     const { id: order_id } = req.params
-    const { qr_code, location_id, stack_layer = 1, cartons_override, qa_status_id, employee_id } = req.body
+    const { qr_code, location_id, stack_layer = 1, cartons_override, qa_status_id, employee_id, ncc_id: ncc_override } = req.body
 
     if (!qr_code)     return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu qr_code')
     if (!location_id) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu location_id')
@@ -971,6 +971,21 @@ export async function scanQR(req: Request, res: Response) {
       ? Number(cartons_override)
       : effCartonsPerPallet(material, orderWarehouseId)
 
+    // NCC của pallet (cho HSD ngoại lệ theo NCC):
+    // - NCC/SX: lấy từ phiếu (order.ncc_id).
+    // - Chuyển kho: ưu tiên NCC chọn tay ở sheet → kế thừa từ pallet GỐC cùng pallet_code → null.
+    //   (pallet đổi tên A→B sẽ không kế thừa được → operator chọn NCC ở sheet.)
+    let resolvedNcc: string | null = (order as { ncc_id?: string | null }).ncc_id ?? null
+    if (isTransfer) {
+      resolvedNcc = ncc_override ?? null
+      if (!resolvedNcc) {
+        const { data: src } = await supabase.from('InventoryEntry')
+          .select('ncc_id').eq('pallet_code', parsed.pallet_code).not('ncc_id', 'is', null)
+          .order('created_at', { ascending: false }).limit(1).maybeSingle()
+        resolvedNcc = (src as { ncc_id?: string | null } | null)?.ncc_id ?? null
+      }
+    }
+
     const { data: entry, error: entErr } = await supabase
       .from('InventoryEntry')
       .insert({
@@ -991,7 +1006,7 @@ export async function scanQR(req: Request, res: Response) {
         created_by:         employee_id ?? null,
         updated_by:         employee_id ?? null,
         status:             'IN_STOCK',
-        ncc_id:             (order as { ncc_id?: string | null }).ncc_id ?? null,
+        ncc_id:             resolvedNcc,
         import_date:        vnDate(),
         update_date:        vnDate(),
         created_at:         new Date().toISOString(),
@@ -1020,6 +1035,11 @@ export async function scanQR(req: Request, res: Response) {
     }
     if (cartons_imported === 0) {
       warnings.push('Số thùng/pallet chưa được cấu hình cho hàng hóa này – đã nhập 0')
+    }
+    // Chuyển kho không xác định được NCC nhưng mã hàng CÓ ngoại lệ HSD theo NCC → HSD/%Date dùng mặc định
+    const matOverrides = (material as { supplier_shelf_life_overrides?: unknown[] | null }).supplier_shelf_life_overrides
+    if (isTransfer && !resolvedNcc && Array.isArray(matOverrides) && matOverrides.length > 0) {
+      warnings.push('Chưa xác định NCC cho pallet chuyển kho – HSD/%Date dùng mặc định. Chọn NCC nếu cần đúng hạn theo NCC.')
     }
 
     emitInboundChanged()

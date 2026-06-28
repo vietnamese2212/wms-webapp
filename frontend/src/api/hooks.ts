@@ -1825,7 +1825,7 @@ export function useWarehouseEmployees(warehouse_id?: string | null) {
       const { data } = await apiClient.get('/wms/outbound/employees', {
         params: warehouse_id ? { warehouse_id } : undefined,
       })
-      return data.data as { id: string; name: string; employee_code: string }[]
+      return data.data as { id: string; name: string; employee_code: string; job_title?: string | null }[]
     },
   })
 }

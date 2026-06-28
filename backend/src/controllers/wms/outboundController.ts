@@ -1029,13 +1029,24 @@ export async function getWarehouseEmployees(req: Request, res: Response) {
   try {
     const { warehouse_id } = req.query as Record<string, string>
     let q = supabase.from('Employee')
-      .select('id, name, employee_code')
+      .select('id, name, employee_code, job_title_id')
       .eq('is_active', true)
       .order('name')
     if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
     const { data, error } = await q
     if (error) return fail(res, error.message)
-    return ok(res, data ?? [])
+    const emps = (data ?? []) as { id: string; name: string; employee_code: string; job_title_id: string | null }[]
+    // Kèm tên chức danh (để FE lọc "lái xe nâng" theo chức danh)
+    const jtIds = [...new Set(emps.map(e => e.job_title_id).filter(Boolean))] as string[]
+    const { data: jts } = jtIds.length
+      ? await supabase.from('JobTitle').select('id, name').in('id', jtIds)
+      : { data: [] as { id: string; name: string }[] }
+    const jtMap = new Map((jts ?? []).map((j: { id: string; name: string }) => [j.id, j.name]))
+    const result = emps.map(e => ({
+      id: e.id, name: e.name, employee_code: e.employee_code,
+      job_title: e.job_title_id ? jtMap.get(e.job_title_id) ?? null : null,
+    }))
+    return ok(res, result)
   } catch (e) { return fail(res, String(e)) }
 }
 

@@ -83,7 +83,10 @@ function ProgressBar({ scanned, ordered, compact = false, looseUnconfirmed = 0 }
 
 // ─── Tag multi-picker (employee dropdown + removable tags) ───
 
-type EmpOption = { id: string; name: string; employee_code?: string }
+type EmpOption = { id: string; name: string; employee_code?: string; job_title?: string | null }
+
+// Lái xe nâng = nhân viên có chức danh CHỨA "lái xe nâng" (không phân biệt hoa thường)
+const isForkliftDriver = (e: EmpOption) => (e.job_title ?? '').toLowerCase().includes('lái xe nâng')
 
 function TagPicker({
   fixedName,
@@ -362,7 +365,7 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
           <div className="space-y-1">
             <Label className="text-xs">Lái xe nâng</Label>
             <TagPicker
-              employees={employees as EmpOption[]}
+              employees={(employees as EmpOption[]).filter(isForkliftDriver)}
               selectedIds={forklifterIds}
               onChange={setForklifterIds}
               placeholder="Chọn lái xe nâng…"
@@ -489,7 +492,7 @@ function EditTransportDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; 
           <div className="space-y-1">
             <Label className="text-xs">Lái xe nâng</Label>
             <TagPicker
-              employees={employees as EmpOption[]}
+              employees={(employees as EmpOption[]).filter(isForkliftDriver)}
               selectedIds={forklifterIds}
               onChange={setForklifterIds}
               placeholder="Chọn lái xe nâng…"

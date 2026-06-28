@@ -1085,6 +1085,7 @@ const INBOUND_COLS: { id: string; label: string; w: number; align?: 'right'; res
   { id: 'pin',      label: '',            w: 34,  resize: false },
   { id: 'date',     label: 'Ngày nhập',   w: 104 },
   { id: 'plate',    label: 'Biển số / DO', w: 120 },
+  { id: 'ncc',      label: 'NCC',         w: 130 },
   { id: 'loc',      label: 'Vị trí',      w: 84 },
   { id: 'matname',  label: 'Tên hàng',    w: 150 },
   { id: 'matcode',  label: 'Mã hàng',     w: 110 },
@@ -1567,7 +1568,7 @@ export default function Inbound() {
                     const spacerBefore = bpos === 'first' && i > 0 && prevBpos !== 'last'
                     const spacerAfter  = bpos === 'last'
                     const nodes: React.ReactNode[] = []
-                    if (spacerBefore) nodes.push(<tr key={`sp-b-${order.id}`} aria-hidden><td colSpan={16} className="p-0 border-0 bg-transparent"><div className="h-2.5" /></td></tr>)
+                    if (spacerBefore) nodes.push(<tr key={`sp-b-${order.id}`} aria-hidden><td colSpan={INBOUND_COLS.length} className="p-0 border-0 bg-transparent"><div className="h-2.5" /></td></tr>)
                     nodes.push(
                       <InboundRow
                         key={order.id}
@@ -1592,7 +1593,7 @@ export default function Inbound() {
                         bracketPos={bpos}
                       />
                     )
-                    if (spacerAfter) nodes.push(<tr key={`sp-a-${order.id}`} aria-hidden><td colSpan={16} className="p-0 border-0 bg-transparent"><div className="h-2.5" /></td></tr>)
+                    if (spacerAfter) nodes.push(<tr key={`sp-a-${order.id}`} aria-hidden><td colSpan={INBOUND_COLS.length} className="p-0 border-0 bg-transparent"><div className="h-2.5" /></td></tr>)
                     return nodes
                   })}
                 </TableBody>
@@ -1744,7 +1745,14 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
           : <span className="text-[10px] text-slate-300">—</span>}
       </TableCell>
 
-      {/* Col 4: Vị trí */}
+      {/* Col 4: NCC (nhà cung cấp) */}
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        {(order as any).ncc?.name
+          ? <span className="text-[10px] truncate block" title={(order as any).ncc.name}>{(order as any).ncc.name}</span>
+          : <span className="text-[10px] text-slate-300">—</span>}
+      </TableCell>
+
+      {/* Col 5: Vị trí */}
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <div className="flex items-center justify-between gap-1 w-full">
           <span className="flex items-center gap-0.5 min-w-0">

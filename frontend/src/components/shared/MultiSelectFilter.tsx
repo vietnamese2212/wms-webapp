@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { ChevronDown, Check, Minus } from 'lucide-react'
 
 export interface MSOpt { value: string; label: string }
@@ -20,12 +21,39 @@ export function MultiSelectFilter({
 }) {
   const [open,   setOpen]   = useState(false)
   const [search, setSearch] = useState('')
-  const ref = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const panelRef   = useRef<HTMLDivElement>(null)
+  // Panel render qua portal (document.body) + position:fixed theo trigger → THOÁT mọi overflow/transform
+  // (vd DialogContent có overflow-y-auto + translate → dropdown absolute/fixed bên trong bị CHE).
+  const [pos, setPos] = useState<{ left: number; top: number; openUp: boolean } | null>(null)
+
+  useLayoutEffect(() => {
+    if (!open) return
+    const compute = () => {
+      const t = triggerRef.current?.getBoundingClientRect()
+      if (!t) return
+      const PANEL_MAX = 288
+      const spaceBelow = window.innerHeight - t.bottom
+      const openUp = spaceBelow < PANEL_MAX && t.top > spaceBelow
+      setPos({
+        left: Math.max(8, Math.min(t.left, window.innerWidth - 220)),
+        top: openUp ? Math.max(8, t.top - 4) : t.bottom + 4,
+        openUp,
+      })
+    }
+    compute()
+    window.addEventListener('scroll', compute, true)  // capture: bắt cả cuộn trong container
+    window.addEventListener('resize', compute)
+    return () => { window.removeEventListener('scroll', compute, true); window.removeEventListener('resize', compute) }
+  }, [open])
 
   useEffect(() => {
     if (!open) { setSearch(''); return }
     const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+      const tgt = e.target as Node
+      if (triggerRef.current?.contains(tgt)) return
+      if (panelRef.current?.contains(tgt)) return
+      setOpen(false)
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
@@ -56,8 +84,9 @@ export function MultiSelectFilter({
   const triggerLabel = active ? `${label} (${selected.length})` : label
 
   return (
-    <div ref={ref} className="relative">
+    <>
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen(v => !v)}
         className={`h-7 px-2 text-xs border rounded flex items-center gap-1 whitespace-nowrap transition-colors ${width ?? ''}
@@ -70,9 +99,16 @@ export function MultiSelectFilter({
         <ChevronDown className="h-3 w-3 ml-0.5 opacity-70 shrink-0" />
       </button>
 
-      {open && (
+      {open && pos && createPortal(
         <div
-          className="absolute z-50 top-full left-0 mt-1 bg-white border rounded-md shadow-lg min-w-[190px] max-h-64 flex flex-col"
+          ref={panelRef}
+          style={{
+            position: 'fixed', left: pos.left,
+            ...(pos.openUp ? { bottom: window.innerHeight - pos.top } : { top: pos.top }),
+          }}
+          className="z-[60] bg-white border rounded-md shadow-lg min-w-[200px] max-h-72 flex flex-col"
+          // chặn Radix DismissableLayer (modal Dialog) đóng dialog khi bấm vào panel portal
+          onPointerDown={e => e.stopPropagation()}
           onMouseDown={e => e.stopPropagation()}
         >
           {searchable && (
@@ -83,7 +119,6 @@ export function MultiSelectFilter({
                 placeholder="Tìm…"
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                onMouseDown={e => e.stopPropagation()}
               />
             </div>
           )}
@@ -118,9 +153,10 @@ export function MultiSelectFilter({
               </button>
             </div>
           )}
-        </div>
+        </div>,
+        document.body
       )}
-    </div>
+    </>
   )
 }
 

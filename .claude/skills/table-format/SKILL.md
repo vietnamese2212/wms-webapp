@@ -132,7 +132,10 @@ Mọi filter state (search, date, dropdown…) lưu `useWmsFilterStore` (`fronte
 ## 17. Dropdown / dialog — bẫy hay gặp
 - Dropdown trong table cell bị che: wrapper ngoài table **không** `overflow-hidden`.
 - Table trong dialog bị cắt: wrapper `overflow-x-auto border rounded-lg` + table `min-w-max`.
-- Dropdown trong dialog có `overflow-y-auto`: mở hướng lên (`bottom-full mb-1`).
+- **⭐ Dropdown/popover MỞ RA BỊ CHE trong Dialog (lỗi HAY GẶP — gốc rễ):** base `DialogContent` (shadcn) có sẵn **`max-h-[calc(100dvh-2rem)] overflow-y-auto` + `translate` (transform)**. `overflow` cắt mọi con `absolute`; `transform` khiến cả con `position:fixed` ĐẶT BÊN TRONG cũng bị cắt (transform tạo containing-block cho fixed). ⇒ panel `absolute`/`fixed` nằm trong DialogContent **chắc chắn bị che**, KHÔNG cứu được bằng `bottom-full`/`z-index`.
+  - **CÁCH ĐÚNG (dùng mọi nơi): render panel qua `createPortal(panel, document.body)` + `position:fixed` tính theo `trigger.getBoundingClientRect()`** (thoát mọi overflow/transform). Mẫu chuẩn: `components/shared/MultiSelectFilter.tsx` (đã portal hoá). Hoặc dùng Radix Popover/Select (tự portal).
+  - Khi portal trong **modal Dialog (Radix)**: panel ở body = "ngoài" content → (a) `onPointerDown={e=>e.stopPropagation()}` để Radix DismissableLayer KHÔNG đóng dialog; (b) outside-click tự check cả `triggerRef` lẫn `panelRef` (panel không còn là con của trigger); (c) recompute vị trí khi `scroll`(capture)/`resize`; (d) **ô search có `autoFocus` sẽ bị Radix focus-trap GIẬT** → trong dialog dùng `searchable={false}` (hoặc danh sách ít). 
+  - **Bài học: KHÔNG tự cuộn (overflow) bao quanh form chứa dropdown rồi mong dropdown nổi — overflow/transform của container LUÔN cắt. Dropdown phải portal ra body.**
 
 ## 17b. Nút icon inline trong cell (chuẩn kích thước — dùng chung mọi module)
 Nút thao tác nhanh trong cell (vd QR "Thêm pallet", icon nhỏ): **icon `h-3.5 w-3.5`** + nút `px-1.5 py-1 rounded` (đủ to cân đối, dễ bấm trên tablet). KHÔNG dùng `h-2.5`/`px-1 py-0.5` (quá nhỏ). Nút phải `onClick={e => e.stopPropagation()}` (hoặc handler tự stopPropagation) để không kích hoạt click-row. Nút mở luồng quét QR ngay trên list → mở **overlay/popup** (vd `InboundScanSheetById`), KHÔNG điều hướng sang trang chi tiết (giữ nguyên giao diện danh sách).

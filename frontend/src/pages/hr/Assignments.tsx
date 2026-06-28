@@ -850,7 +850,7 @@ function LayoutFormDialog({ warehouseId, warehouseName, layoutId, onClose, onSav
 
   return (
     <Dialog open onOpenChange={o => !o && onClose()}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-2xl">
         <DialogHeader><DialogTitle>{isEdit ? 'Sửa layout' : 'Tạo layout mới'}</DialogTitle></DialogHeader>
         {isEdit && !layout ? <p className="text-xs text-slate-400 py-6 text-center">Đang tải…</p> : (
         <div className="space-y-3">
@@ -873,7 +873,7 @@ function LayoutFormDialog({ warehouseId, warehouseName, layoutId, onClose, onSav
           {/* Bước 1: chọn chức danh */}
           <div className="space-y-1">
             <p className="text-[11px] font-semibold text-slate-600">1. Chọn chức danh (gọi nhóm người cho layout)</p>
-            <MultiSelectFilter label="Chức danh" width="w-64"
+            <MultiSelectFilter label="Chức danh" width="w-64" searchable={false}
               options={jobTitles.map(j => ({ value: j.id, label: j.name }))}
               selected={jts} onChange={setJtSel} />
           </div>

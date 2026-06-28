@@ -942,16 +942,14 @@ export default function UserManagement() {
   ]
 
   return (
-    <div className="p-4 space-y-4 max-w-7xl mx-auto">
-      <div>
-        <h1 className="text-xl font-semibold text-slate-800 flex items-center gap-2">
-          <User2 className="h-5 w-5 text-slate-500" />
-          Quản lý nhân sự &amp; phân quyền
-        </h1>
-      </div>
+    <div className="flex flex-col h-full p-3 gap-2 max-w-7xl mx-auto w-full">
+      <h1 className="shrink-0 text-base font-semibold text-slate-800 flex items-center gap-2">
+        <User2 className="h-4 w-4 text-slate-500" />
+        Quản lý nhân sự &amp; phân quyền
+      </h1>
 
-      <Tabs defaultValue="employees">
-        <TabsList className="mb-2">
+      <Tabs defaultValue="employees" className="flex flex-col flex-1 min-h-0">
+        <TabsList className="mb-2 shrink-0">
           <TabsTrigger value="employees" className="gap-1.5">
             <User2 className="h-3.5 w-3.5" /> Nhân viên
           </TabsTrigger>
@@ -964,8 +962,8 @@ export default function UserManagement() {
         </TabsList>
 
         {/* ── Tab: Nhân viên ── */}
-        <TabsContent value="employees" className="space-y-2">
-          <div className="flex gap-2 flex-wrap items-center">
+        <TabsContent value="employees" className="flex-1 min-h-0 flex flex-col space-y-2">
+          <div className="shrink-0 flex gap-2 flex-wrap items-center">
             <SearchInput value={search} onChange={setSearch} placeholder="Tìm tên, mã, đăng nhập…" className="flex-1 min-w-[200px]" />
             <FilterSheetButton defs={empFilterDefs} className="sm:hidden" />
             <SavedViews module="user_admin" currentFilters={empViewSnapshot} activeId={empActiveViewId}
@@ -981,22 +979,22 @@ export default function UserManagement() {
               </Button>
             )}
           </div>
-          <FilterBar defs={empFilterDefs} className="hidden sm:flex" />
+          <FilterBar defs={empFilterDefs} className="shrink-0 hidden sm:flex" />
 
-          <SummaryBand compact className="rounded-lg" tiles={[
+          <SummaryBand compact className="shrink-0 rounded-lg" tiles={[
             { label: 'Đang hoạt động', value: scopedRaw.filter(e => !e.deleted_at && e.is_active).length, accent: true },
             { label: 'Tạm dừng', value: scopedRaw.filter(e => !e.deleted_at && !e.is_active).length },
             { label: 'Đã ẩn', value: scopedRaw.filter(e => !!e.deleted_at).length },
           ]} />
 
           {isError && (
-            <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+            <div className="shrink-0 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
               Lỗi tải dữ liệu: {(error as { message?: string })?.message ?? 'Không kết nối được backend'}
             </div>
           )}
 
-          <div className="flex gap-3 items-start">
-            <Card className="flex-1 min-w-0">
+          <div className="flex gap-3 items-stretch flex-1 min-h-0">
+            <Card className="flex-1 min-w-0 flex flex-col">
               {isLoading ? (
                 <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div>
               ) : employees.length === 0 ? (
@@ -1010,7 +1008,7 @@ export default function UserManagement() {
                   )}
                 </div>
               ) : (
-                <div className="overflow-auto max-h-[calc(100vh-22rem)]">
+                <div className="overflow-auto flex-1 min-h-0">
                   <Table className={`table-fixed [&_td]:overflow-hidden [&_th]:overflow-hidden [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap [&_td]:text-[10px] [&_td]:border-r [&_td]:border-slate-100 [&_th]:border-r [&_th]:border-slate-200 ${dense ? '[&_td]:!py-1' : '[&_td]:!py-2'}`} style={{ width: empTotalWidth, minWidth: '100%' }}>
                     <colgroup>{empColW.map((w, i) => <col key={i} style={{ width: w }} />)}</colgroup>
                     <TableHeader>
@@ -1145,8 +1143,8 @@ export default function UserManagement() {
         </TabsContent>
 
         {/* ── Tab: Phòng ban ── */}
-        <TabsContent value="departments" className="space-y-2">
-          <div className="flex items-center justify-between">
+        <TabsContent value="departments" className="flex-1 min-h-0 flex flex-col space-y-2">
+          <div className="shrink-0 flex items-center justify-between">
             <p className="text-xs text-slate-500">{departments.length} phòng ban</p>
             {isAdminUser && (
               <Button size="sm" className="gap-1.5" onClick={() => { setEditingDept(null); setShowDeptDlg(true) }}>
@@ -1154,8 +1152,8 @@ export default function UserManagement() {
               </Button>
             )}
           </div>
-          <div className="flex gap-3 items-start">
-            <Card className="flex-1 min-w-0">
+          <div className="flex gap-3 items-stretch flex-1 min-h-0">
+            <Card className="flex-1 min-w-0 flex flex-col">
               {departments.length === 0 ? (
                 <div className="p-12 text-center text-slate-400 space-y-2">
                   <Building2 className="h-10 w-10 mx-auto opacity-30" />
@@ -1167,7 +1165,7 @@ export default function UserManagement() {
                   )}
                 </div>
               ) : (
-                <div className="overflow-auto max-h-[calc(100vh-16rem)]">
+                <div className="overflow-auto flex-1 min-h-0">
                   <Table className="[&_td]:whitespace-nowrap [&_th]:whitespace-nowrap [&_td]:text-[10px]">
                     <TableHeader>
                       <TableRow>
@@ -1224,8 +1222,8 @@ export default function UserManagement() {
         </TabsContent>
 
         {/* ── Tab: Chức danh ── */}
-        <TabsContent value="job-titles" className="space-y-2">
-          <div className="flex gap-2 flex-wrap items-center">
+        <TabsContent value="job-titles" className="flex-1 min-h-0 flex flex-col space-y-2">
+          <div className="shrink-0 flex gap-2 flex-wrap items-center">
             <FilterSheetButton defs={jtFilterDefs} className="sm:hidden" />
             <span className="text-xs text-slate-500 mr-auto">{visibleJobTitles.length} chức danh</span>
             {isAdminUser && (
@@ -1234,9 +1232,9 @@ export default function UserManagement() {
               </Button>
             )}
           </div>
-          <FilterBar defs={jtFilterDefs} className="hidden sm:flex" />
-          <div className="flex gap-3 items-start">
-            <Card className="flex-1 min-w-0">
+          <FilterBar defs={jtFilterDefs} className="shrink-0 hidden sm:flex" />
+          <div className="flex gap-3 items-stretch flex-1 min-h-0">
+            <Card className="flex-1 min-w-0 flex flex-col">
               {visibleJobTitles.length === 0 ? (
                 <div className="p-12 text-center text-slate-400 space-y-2">
                   <Briefcase className="h-10 w-10 mx-auto opacity-30" />
@@ -1248,7 +1246,7 @@ export default function UserManagement() {
                   )}
                 </div>
               ) : (
-                <div className="overflow-auto max-h-[calc(100vh-16rem)]">
+                <div className="overflow-auto flex-1 min-h-0">
                   <Table className="[&_td]:whitespace-nowrap [&_th]:whitespace-nowrap [&_td]:text-[10px]">
                     <TableHeader>
                       <TableRow>

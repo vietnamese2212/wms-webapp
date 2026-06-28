@@ -1084,7 +1084,8 @@ function applyClientFilters(
 const INBOUND_COLS: { id: string; label: string; w: number; align?: 'right'; resize?: false }[] = [
   { id: 'pin',      label: '',            w: 34,  resize: false },
   { id: 'date',     label: 'Ngày nhập',   w: 104 },
-  { id: 'plate',    label: 'Biển số / DO', w: 120 },
+  { id: 'plate',    label: 'Biển số xe',  w: 110 },
+  { id: 'do',       label: 'Số DO',       w: 110 },
   { id: 'ncc',      label: 'NCC',         w: 130 },
   { id: 'loc',      label: 'Vị trí',      w: 84 },
   { id: 'matname',  label: 'Tên hàng',    w: 150 },
@@ -1669,11 +1670,11 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
   const pallets  = order._count.inventory_entries
   const doCodes  = order.source_type === 'TRANSFER' ? (order as any).from_gdo_delivery_codes as string[] | undefined : undefined
   const tmsCode  = (order as any).tms_order?.order_code ?? null
-  // Biển số / DO trên 1 dòng (không xếp chồng): biển số xe + (TRANSFER) số DO
-  const plateDo  = [
-    order.source_type === 'TRANSFER' ? (order as any).from_gdo?.license_plate : (order as any).gate_registration?.license_plate,
-    order.source_type === 'TRANSFER' && doCodes?.length ? doCodes.join(', ') : null,
-  ].filter(Boolean).join(' · ') || null
+  const isTransfer = order.source_type === 'TRANSFER'
+  // Biển số xe: NCC → từ đăng ký cổng; TF → từ GDO nguồn; SX → trống (không cổng, không GDO nguồn)
+  const plateNo  = (isTransfer ? (order as any).from_gdo?.license_plate : (order as any).gate_registration?.license_plate) || null
+  // Số DO: chỉ chuyển kho (TF) mới có (mã DO của GDO nguồn)
+  const doText   = isTransfer && doCodes?.length ? doCodes.join(', ') : null
 
   // Mô hình "1 phiếu = 1 vị trí": ô Vị trí hiện vị trí HIỆN TẠI của phiếu (order.location, =vị trí
   // chọn cuối). Nếu có pallet đang nằm ở vị trí KHÁC (lệch) → CẢNH BÁO (không tự dời dữ liệu).
@@ -1738,14 +1739,21 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
         </div>
       </TableCell>
 
-      {/* Col 3: Biển số / DO */}
+      {/* Col 3: Biển số xe */}
       <TableCell className="px-2 py-1 whitespace-nowrap">
-        {plateDo
-          ? <span className={`text-[10px] font-mono truncate block ${order.source_type === 'TRANSFER' ? 'text-purple-600' : 'text-slate-600'}`} title={plateDo}>{plateDo}</span>
+        {plateNo
+          ? <span className={`text-[10px] font-mono truncate block ${isTransfer ? 'text-purple-600' : 'text-slate-600'}`} title={plateNo}>{plateNo}</span>
           : <span className="text-[10px] text-slate-300">—</span>}
       </TableCell>
 
-      {/* Col 4: NCC (nhà cung cấp) */}
+      {/* Col 4: Số DO (chỉ TF) */}
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        {doText
+          ? <span className="text-[10px] font-mono text-purple-600 truncate block" title={doText}>{doText}</span>
+          : <span className="text-[10px] text-slate-300">—</span>}
+      </TableCell>
+
+      {/* Col 5: NCC (nhà cung cấp) */}
       <TableCell className="px-2 py-1 whitespace-nowrap">
         {(order as any).ncc?.name
           ? <span className="text-[10px] truncate block" title={(order as any).ncc.name}>{(order as any).ncc.name}</span>

@@ -877,7 +877,7 @@ export default function Materials() {
                 ))}
                 {nccList.length > 0 && supplierOverrides.length < nccList.length && (
                   <button onClick={addSupplierOverride} className="flex items-center gap-1 text-[10px] text-blue-500 hover:text-blue-700">
-                    <PlusCircle className="h-3 w-3" />Thêm NCC đặc biệt
+                    <PlusCircle className="h-3 w-3" />Thêm Ngoại lệ NCC
                   </button>
                 )}
                 {nccList.length === 0 && (

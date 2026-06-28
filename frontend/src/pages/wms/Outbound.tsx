@@ -95,6 +95,7 @@ const OUTBOUND_COLS: { id: string; label: string; w: number; align?: 'right' }[]
   { id: 'npp',       label: 'Tên NPP',       w: 150 },
   { id: 'shipto',    label: 'Ship-to',       w: 96 },
   { id: 'dvvt',      label: 'ĐVVT',          w: 80 },
+  { id: 'plate',     label: 'Biển số xe',    w: 110 },
   { id: 'cartons',   label: 'Tổng thùng',    w: 90,  align: 'right' },
   { id: 'cartons_noqr', label: 'Tổng (k QR)', w: 88, align: 'right' },
   { id: 'pallets',   label: 'Pallet',        w: 72,  align: 'right' },
@@ -750,6 +751,11 @@ function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px]">{gdo.dvvt ?? '—'}</span>
+      </TableCell>
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        {gdo.license_plate
+          ? <span className="text-[10px] font-mono font-semibold">{gdo.license_plate}</span>
+          : <span className="text-slate-300">—</span>}
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         <span className="text-[10px] font-semibold tabular-nums">{gdo.total_cartons ?? 0}</span>

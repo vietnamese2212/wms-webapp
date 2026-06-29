@@ -23,6 +23,13 @@ SET alias_codes = a.extra, updated_at = now()
 FROM alias_agg a
 WHERE t.id = a.primary_id;
 
+-- CTE chỉ scope 1 câu lệnh → DELETE cần grp RIÊNG của nó.
+WITH grp AS (
+  SELECT id,
+         row_number() OVER (PARTITION BY type, lower(btrim(name)) ORDER BY code) AS rn,
+         count(*)     OVER (PARTITION BY type, lower(btrim(name)))                AS cnt
+  FROM "TransportCompany"
+)
 DELETE FROM "TransportCompany" t
 USING grp g
 WHERE t.id = g.id AND g.rn > 1 AND g.cnt > 1;

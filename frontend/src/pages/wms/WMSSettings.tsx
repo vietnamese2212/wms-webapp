@@ -12,6 +12,8 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { toast } from '@/components/ui/use-toast'
+import { FilterBar, type FilterDef } from '@/components/shared/FilterBar'
+import { SearchInput } from '@/components/shared/SearchInput'
 import {
   useWarehouses, useCreateWarehouse, useUpdateWarehouse, useDeleteWarehouse,
   useWarehouseTypes, useAddWarehouseType, useUpdateWarehouseType, useDeleteWarehouseType, useReorderWarehouseTypes,
@@ -509,6 +511,51 @@ export default function WMSSettings() {
   const [editQA, setEditQA] = useState<MetaRow | null>(null)
   const [showQADlg, setShowQADlg] = useState(false)
 
+  // ── Filter: Kho ──
+  const [whSearch, setWhSearch] = useState('')
+  const [whFunc,   setWhFunc]   = useState('')   // '' | CENTRAL | NPP
+  const [whInv,    setWhInv]    = useState('')   // '' | QR | QTY | NONE
+  const [whStatus, setWhStatus] = useState('')   // '' | active | inactive
+  const whRank = (t: string) => (t === 'CENTRAL' ? 0 : t === 'NPP' ? 1 : 2)
+  const filteredWh = (allWh as WhRow[]).filter(w => {
+    if (whFunc && w.warehouse_type !== whFunc) return false
+    if (whInv && w.inventory_mode !== whInv) return false
+    if (whStatus && (whStatus === 'active') !== w.is_active) return false
+    const q = whSearch.trim().toLowerCase()
+    if (q && !`${w.code} ${w.name} ${w.address ?? ''}`.toLowerCase().includes(q)) return false
+    return true
+  }).sort((a, b) => {
+    // Kho tổng (CENTRAL) trước, rồi NPP; trong cùng nhóm sắp theo địa chỉ
+    if (whRank(a.warehouse_type) !== whRank(b.warehouse_type)) return whRank(a.warehouse_type) - whRank(b.warehouse_type)
+    return (a.address ?? '').localeCompare(b.address ?? '', 'vi')
+  })
+  const whFilterDefs: FilterDef[] = [
+    { key: 'func', label: 'Chức năng', type: 'single', value: whFunc, onChange: setWhFunc, allLabel: 'Tất cả',
+      options: [{ value: 'CENTRAL', label: 'Kho tổng' }, { value: 'NPP', label: 'Kho NPP' }] },
+    { key: 'inv', label: 'Quản tồn', type: 'single', value: whInv, onChange: setWhInv, allLabel: 'Tất cả',
+      options: (Object.keys(INV_MODE_META) as InvMode[]).map(m => ({ value: m, label: INV_MODE_META[m].label })) },
+    { key: 'wst', label: 'Trạng thái', type: 'single', value: whStatus, onChange: setWhStatus, allLabel: 'Tất cả',
+      options: [{ value: 'active', label: 'Hoạt động' }, { value: 'inactive', label: 'Tạm dừng' }] },
+  ]
+
+  // ── Filter: Khu vực kho ──
+  const [zoneSearch, setZoneSearch] = useState('')
+  const [zoneCat,    setZoneCat]    = useState('')
+  const [zoneStatus, setZoneStatus] = useState('')
+  const filteredZones = (zones as WarehouseZone[]).filter(z => {
+    if (zoneCat && (z.category ?? '') !== zoneCat) return false
+    if (zoneStatus && (zoneStatus === 'active') !== z.is_active) return false
+    const q = zoneSearch.trim().toLowerCase()
+    if (q && !`${z.code} ${z.name}`.toLowerCase().includes(q)) return false
+    return true
+  })
+  const zoneFilterDefs: FilterDef[] = [
+    { key: 'zcat', label: 'Loại kho', type: 'single', value: zoneCat, onChange: setZoneCat, allLabel: 'Tất cả',
+      options: (warehouseTypes as { id: string; value: string }[]).map(t => ({ value: t.value, label: t.value })) },
+    { key: 'zst', label: 'Trạng thái', type: 'single', value: zoneStatus, onChange: setZoneStatus, allLabel: 'Tất cả',
+      options: [{ value: 'active', label: 'Hoạt động' }, { value: 'inactive', label: 'Tạm dừng' }] },
+  ]
+
   function handleDeleteWh(wh: WhRow) {
     if (!confirm(`Xóa kho "${wh.name}"?\nChỉ xóa được kho chưa có vị trí nào.`)) return
     deleteWh(wh.id, { onError: e => toast({ variant: 'destructive', title: 'Không xóa được kho', description: apiMsg(e) }) })
@@ -546,17 +593,24 @@ export default function WMSSettings() {
 
         {/* ── Tab: Kho ── */}
         <TabsContent value="warehouses" className="space-y-3">
-          <div className="flex items-center justify-between">
-            <p className="text-xs text-slate-500">{(allWh as WhRow[]).length} kho</p>
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <p className="text-xs text-slate-500">{filteredWh.length}/{(allWh as WhRow[]).length} kho</p>
             {canManageWarehouse && (
               <Button size="sm" className="gap-1.5" onClick={() => { setEditingWh(null); setShowWhDlg(true) }}>
                 <Plus className="h-4 w-4" /> Thêm kho
               </Button>
             )}
           </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <SearchInput value={whSearch} onChange={setWhSearch} placeholder="Tìm mã, tên, địa chỉ kho…" className="flex-1 min-w-[200px]" />
+            <FilterBar defs={whFilterDefs} />
+          </div>
           <div className="flex gap-3 items-start">
             <Card className="flex-1 min-w-0">
-              {loadingWh ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> : (
+              {loadingWh ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> :
+                filteredWh.length === 0 ? (
+                  <div className="p-12 text-center text-slate-400 text-sm">Không có kho khớp bộ lọc</div>
+                ) : (
                 <div className="overflow-x-auto">
                   <Table>
                     <TableHeader>
@@ -571,7 +625,7 @@ export default function WMSSettings() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {(allWh as WhRow[]).map(wh => (
+                      {filteredWh.map(wh => (
                         <TableRow key={wh.id}
                           className={`text-sm cursor-pointer ${!wh.is_active ? 'opacity-50' : ''} ${detailWh?.id === wh.id ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
                           onClick={() => setDetailWh(prev => prev?.id === wh.id ? null : wh)}>
@@ -761,6 +815,14 @@ export default function WMSSettings() {
             )}
           </div>
 
+          {effectiveWhId && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <SearchInput value={zoneSearch} onChange={setZoneSearch} placeholder="Tìm mã, tên khu vực…" className="flex-1 min-w-[200px]" />
+              <FilterBar defs={zoneFilterDefs} />
+              <p className="text-xs text-slate-500 shrink-0">{filteredZones.length}/{(zones as WarehouseZone[]).length}</p>
+            </div>
+          )}
+
           <div className="flex gap-3 items-start">
             <Card className="flex-1 min-w-0">
               {!effectiveWhId ? (
@@ -773,6 +835,8 @@ export default function WMSSettings() {
                   <p className="text-sm">Kho này chưa có khu vực nào</p>
                   {canManageZone && <p className="text-xs">Nhấn "Thêm khu vực" để tạo khu vực đầu tiên</p>}
                 </div>
+              ) : filteredZones.length === 0 ? (
+                <div className="p-12 text-center text-slate-400 text-sm">Không có khu vực khớp bộ lọc</div>
               ) : (
                 <div className="overflow-x-auto">
                   <Table>
@@ -786,7 +850,7 @@ export default function WMSSettings() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {zones.map(z => (
+                      {filteredZones.map(z => (
                         <TableRow key={z.id}
                           className={`text-sm cursor-pointer ${!z.is_active ? 'opacity-50' : ''} ${detailZone?.id === z.id ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
                           onClick={() => setDetailZone(prev => prev?.id === z.id ? null : z)}>

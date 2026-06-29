@@ -11,7 +11,8 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
+import { FilterBar, type FilterDef } from '@/components/shared/FilterBar'
+import { SearchInput } from '@/components/shared/SearchInput'
 import { toast } from '@/components/ui/use-toast'
 import {
   useWarehouses, useWarehouseTypes,
@@ -407,14 +408,31 @@ export default function TMSSettings() {
     })
   }
 
+  // Filter tab Loại xe — search + trạng thái. Kéo-thả tắt khi đang lọc (index không khớp).
+  const [vtSearch, setVtSearch] = useState('')
+  const [vtStatus, setVtStatus] = useState('')   // '' | active | inactive
+  const vtFiltering = !!(vtSearch.trim() || vtStatus)
+  const shownVT = orderedVT.filter(vt => {
+    if (vtStatus && (vtStatus === 'active') !== vt.is_active) return false
+    const q = vtSearch.trim().toLowerCase()
+    if (q && !`${vt.code} ${vt.name}`.toLowerCase().includes(q)) return false
+    return true
+  })
+
   // SlotTemplate — chỉ load khi đã chọn kho, filter client-side
   const [filterVTIds, setFilterVTIds] = useState<string[]>([])
+  const [stSearch, setStSearch] = useState('')
+  const [stStatus, setStStatus] = useState('')   // '' | active | inactive
   const { data: templates = [], isLoading: loadingST } = useSlotTemplates({
     warehouse_id: warehouseId || undefined,
   })
-  const filteredTemplates = templates.filter(st =>
-    filterVTIds.length === 0 || filterVTIds.includes(st.vehicle_type_id)
-  )
+  const filteredTemplates = templates.filter(st => {
+    if (filterVTIds.length && !filterVTIds.includes(st.vehicle_type_id)) return false
+    if (stStatus && (stStatus === 'active') !== st.is_active) return false
+    const q = stSearch.trim().toLowerCase()
+    if (q && !`${st.vehicle_type?.name ?? ''} ${st.cargo_type ?? ''}`.toLowerCase().includes(q)) return false
+    return true
+  })
   const { mutate: deleteST, isPending: deletingST } = useDeleteSlotTemplate()
   const [editingST, setEditingST] = useState<SlotTemplate | null>(null)
   const [showSTDlg, setShowSTDlg] = useState(false)
@@ -424,13 +442,35 @@ export default function TMSSettings() {
   const { mutate: deleteCo, isPending: deletingCo } = useDeleteTransportCompany()
   const [editingCo, setEditingCo] = useState<TransportCompany | null>(null)
   const [showCoDlg, setShowCoDlg] = useState(false)
+  const [coSearch, setCoSearch] = useState('')
+  const [coType,   setCoType]   = useState('')   // '' | NCC | ĐVVT
+  const [coStatus, setCoStatus] = useState('')   // '' | active | inactive
+  const coRank = (t?: string | null) => (t === 'NCC' ? 0 : 1)   // NCC trước, ĐVVT sau
+  const filteredCompanies = (companies as TransportCompany[]).filter(co => {
+    if (coType && (co.type ?? 'ĐVVT') !== coType) return false
+    if (coStatus && (coStatus === 'active') !== co.is_active) return false
+    const q = coSearch.trim().toLowerCase()
+    if (q && !`${co.code} ${co.name} ${co.contact_name ?? ''} ${co.contact_phone ?? ''}`.toLowerCase().includes(q)) return false
+    return true
+  }).sort((a, b) => {
+    if (coRank(a.type) !== coRank(b.type)) return coRank(a.type) - coRank(b.type)
+    return (a.name ?? '').localeCompare(b.name ?? '', 'vi')
+  })
 
   // Vehicle — load tất cả, filter client-side
   const [filterNccs, setFilterNccs] = useState<string[]>([])
+  const [vSearch, setVSearch] = useState('')
+  const [vVtIds,  setVVtIds]  = useState<string[]>([])
+  const [vStatus, setVStatus] = useState('')   // '' | active | inactive
   const { data: vehicles = [], isLoading: loadingV } = useTmsVehicles({})
-  const filteredVehicles = filterNccs.length === 0
-    ? (vehicles as TmsVehicle[])
-    : (vehicles as TmsVehicle[]).filter(v => filterNccs.includes(v.ncc_id))
+  const filteredVehicles = (vehicles as TmsVehicle[]).filter(v => {
+    if (filterNccs.length && !filterNccs.includes(v.ncc_id)) return false
+    if (vVtIds.length && !vVtIds.includes(v.vehicle_type_id)) return false
+    if (vStatus && (vStatus === 'active') !== v.is_active) return false
+    const q = vSearch.trim().toLowerCase()
+    if (q && !`${v.license_plate} ${v.vehicle_type?.name ?? ''} ${v.ncc?.name ?? ''}`.toLowerCase().includes(q)) return false
+    return true
+  })
   const { mutate: deleteV, isPending: deletingV } = useDeleteTmsVehicle()
   const [editingV, setEditingV] = useState<TmsVehicle | null>(null)
   const [showVDlg, setShowVDlg] = useState(false)
@@ -442,6 +482,24 @@ export default function TMSSettings() {
   const [detailST, setDetailST] = useState<SlotTemplate | null>(null)
   const [detailCo, setDetailCo] = useState<TransportCompany | null>(null)
   const [detailV,  setDetailV]  = useState<TmsVehicle | null>(null)
+
+  const STATUS_OPTS = [{ value: 'active', label: 'Hoạt động' }, { value: 'inactive', label: 'Tạm dừng' }]
+  const vtFilterDefs: FilterDef[] = [
+    { key: 'vtst', label: 'Trạng thái', type: 'single', value: vtStatus, onChange: setVtStatus, allLabel: 'Tất cả', options: STATUS_OPTS },
+  ]
+  const stFilterDefs: FilterDef[] = [
+    { key: 'stvt', label: 'Loại xe', type: 'multi', selected: filterVTIds, onChange: setFilterVTIds, options: vehicleTypes.map(vt => ({ value: vt.id, label: vt.name })) },
+    { key: 'stst', label: 'Trạng thái', type: 'single', value: stStatus, onChange: setStStatus, allLabel: 'Tất cả', options: STATUS_OPTS },
+  ]
+  const coFilterDefs: FilterDef[] = [
+    { key: 'cotype', label: 'Loại', type: 'single', value: coType, onChange: setCoType, allLabel: 'Tất cả', options: [{ value: 'NCC', label: 'NCC' }, { value: 'ĐVVT', label: 'ĐVVT' }] },
+    { key: 'cost', label: 'Trạng thái', type: 'single', value: coStatus, onChange: setCoStatus, allLabel: 'Tất cả', options: STATUS_OPTS },
+  ]
+  const vFilterDefs: FilterDef[] = [
+    { key: 'vvt', label: 'Loại xe', type: 'multi', selected: vVtIds, onChange: setVVtIds, options: vehicleTypes.map(vt => ({ value: vt.id, label: vt.name })) },
+    { key: 'vst', label: 'Trạng thái', type: 'single', value: vStatus, onChange: setVStatus, allLabel: 'Tất cả', options: STATUS_OPTS },
+  ]
+  if (!userNccId) vFilterDefs.splice(1, 0, { key: 'vncc', label: 'ĐVVT / NCC', type: 'multi', selected: filterNccs, onChange: setFilterNccs, options: companies.map(c => ({ value: c.id, label: c.name })) })
 
   return (
     <div className="h-full overflow-auto sm:p-3">
@@ -484,17 +542,24 @@ export default function TMSSettings() {
 
         {/* ── Tab: Loại xe ── */}
         <TabsContent value="vehicle-types" className="space-y-3">
-          <div className="flex items-center justify-between">
-            <p className="text-xs text-slate-500">{vehicleTypes.length} loại xe</p>
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <p className="text-xs text-slate-500">{shownVT.length}/{vehicleTypes.length} loại xe</p>
             {vtCreate && (
               <Button size="sm" className="gap-1.5" onClick={() => { setEditingVT(null); setShowVTDlg(true) }}>
                 <Plus className="h-4 w-4" /> Thêm loại xe
               </Button>
             )}
           </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <SearchInput value={vtSearch} onChange={setVtSearch} placeholder="Tìm mã, tên loại xe…" className="flex-1 min-w-[200px]" />
+            <FilterBar defs={vtFilterDefs} />
+          </div>
           <div className="flex gap-3 items-start">
             <Card className="flex-1 min-w-0">
-              {loadingVT ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> : (
+              {loadingVT ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> :
+                shownVT.length === 0 ? (
+                  <div className="p-12 text-center text-slate-400 text-sm">{vehicleTypes.length === 0 ? 'Chưa có loại xe nào' : 'Không có loại xe khớp bộ lọc'}</div>
+                ) : (
                 <div className="overflow-auto max-h-[60vh]">
                   <Table>
                     <TableHeader>
@@ -507,25 +572,26 @@ export default function TMSSettings() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {orderedVT.map((vt, idx) => {
+                      {shownVT.map((vt, idx) => {
+                        const canDrag = vtEdit && !vtFiltering
                         const isOver = overVT?.idx === idx && dragVTIdx !== null && dragVTIdx !== idx
                         return (
                         <TableRow key={vt.id}
-                          draggable={vtEdit}
+                          draggable={canDrag}
                           onDragStart={() => setDragVTIdx(idx)}
-                          onDragOver={vtEdit ? (e => {
+                          onDragOver={canDrag ? (e => {
                             e.preventDefault()
                             const r = e.currentTarget.getBoundingClientRect()
                             const below = (e.clientY - r.top) > r.height / 2
                             if (overVT?.idx !== idx || overVT?.below !== below) setOverVT({ idx, below })
                           }) : undefined}
-                          onDrop={vtEdit ? (e => { e.preventDefault(); dropVT() }) : undefined}
+                          onDrop={canDrag ? (e => { e.preventDefault(); dropVT() }) : undefined}
                           onDragEnd={() => { setDragVTIdx(null); setOverVT(null) }}
                           className={`cursor-pointer ${detailVT?.id === vt.id ? 'bg-slate-100' : 'hover:bg-slate-50'} ${dragVTIdx === idx ? 'opacity-40' : ''} ${isOver && !overVT?.below ? '[&>td]:border-t-2 [&>td]:border-t-sky-500' : ''} ${isOver && overVT?.below ? '[&>td]:border-b-2 [&>td]:border-b-sky-500' : ''}`}
                           onClick={() => setDetailVT(prev => prev?.id === vt.id ? null : vt)}>
                           {vtEdit && (
-                            <TableCell className="px-2 py-1 w-7 text-slate-300 cursor-grab active:cursor-grabbing" onClick={e => e.stopPropagation()} title="Kéo để đổi thứ tự">
-                              <GripVertical className="h-3.5 w-3.5" />
+                            <TableCell className="px-2 py-1 w-7 text-slate-300 cursor-grab active:cursor-grabbing" onClick={e => e.stopPropagation()} title={vtFiltering ? 'Xóa bộ lọc để sắp thứ tự' : 'Kéo để đổi thứ tự'}>
+                              {!vtFiltering && <GripVertical className="h-3.5 w-3.5" />}
                             </TableCell>
                           )}
                           <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-600">{vt.code}</TableCell>
@@ -601,13 +667,9 @@ export default function TMSSettings() {
                   </Button>
                 )}
               </div>
-              <div className="flex gap-2 flex-wrap">
-                <MultiSelectFilter
-                  label="Loại xe"
-                  options={vehicleTypes.map(vt => ({ value: vt.id, label: vt.name }))}
-                  selected={filterVTIds}
-                  onChange={setFilterVTIds}
-                />
+              <div className="flex items-center gap-2 flex-wrap">
+                <SearchInput value={stSearch} onChange={setStSearch} placeholder="Tìm loại xe, loại hàng…" className="flex-1 min-w-[200px]" />
+                <FilterBar defs={stFilterDefs} />
               </div>
               <div className="flex gap-3 items-start">
                 <Card className="flex-1 min-w-0">
@@ -699,13 +761,17 @@ export default function TMSSettings() {
 
         {/* ── Tab: ĐVVT / NCC ── */}
         <TabsContent value="companies" className="space-y-3">
-          <div className="flex items-center justify-between">
-            <p className="text-xs text-slate-500">{companies.length} ĐVVT / NCC</p>
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <p className="text-xs text-slate-500">{filteredCompanies.length}/{companies.length} ĐVVT / NCC</p>
             {coCreate && (
               <Button size="sm" className="gap-1.5" onClick={() => { setEditingCo(null); setShowCoDlg(true) }}>
                 <Plus className="h-4 w-4" /> Thêm ĐVVT
               </Button>
             )}
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <SearchInput value={coSearch} onChange={setCoSearch} placeholder="Tìm mã, tên, người LH, SĐT…" className="flex-1 min-w-[200px]" />
+            <FilterBar defs={coFilterDefs} />
           </div>
           <div className="flex gap-3 items-start">
             <Card className="flex-1 min-w-0">
@@ -717,6 +783,8 @@ export default function TMSSettings() {
                     <Plus className="h-4 w-4 mr-1" /> Thêm ĐVVT đầu tiên
                   </Button>}
                 </div>
+              ) : filteredCompanies.length === 0 ? (
+                <div className="p-12 text-center text-slate-400 text-sm">Không có ĐVVT / NCC khớp bộ lọc</div>
               ) : (
                 <div className="overflow-auto max-h-[60vh]">
                   <Table>
@@ -732,7 +800,7 @@ export default function TMSSettings() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {companies.map(co => (
+                      {filteredCompanies.map(co => (
                         <TableRow key={co.id}
                           className={`cursor-pointer ${detailCo?.id === co.id ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
                           onClick={() => setDetailCo(prev => prev?.id === co.id ? null : co)}>
@@ -799,25 +867,21 @@ export default function TMSSettings() {
 
         {/* ── Tab: Xe ── */}
         <TabsContent value="vehicles" className="space-y-3">
-          <div className="flex items-center justify-between">
-            <p className="text-xs text-slate-500">{filteredVehicles.length} xe</p>
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <p className="text-xs text-slate-500">{filteredVehicles.length}/{(vehicles as TmsVehicle[]).length} xe</p>
             {vCreate && (
               <Button size="sm" className="gap-1.5" onClick={() => { setEditingV(null); setShowVDlg(true) }}>
                 <Plus className="h-4 w-4" /> Thêm xe
               </Button>
             )}
           </div>
-          {!userNccId && (
-            <MultiSelectFilter
-              label="ĐVVT / NCC"
-              options={companies.map(c => ({ value: c.id, label: c.name }))}
-              selected={filterNccs}
-              onChange={setFilterNccs}
-            />
-          )}
+          <div className="flex items-center gap-2 flex-wrap">
+            <SearchInput value={vSearch} onChange={setVSearch} placeholder="Tìm biển số, loại xe, ĐVVT…" className="flex-1 min-w-[200px]" />
+            <FilterBar defs={vFilterDefs} />
+          </div>
           <div className="flex gap-3 items-start">
             <Card className="flex-1 min-w-0">
-              {loadingV ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> : filteredVehicles.length === 0 ? (
+              {loadingV ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> : (vehicles as TmsVehicle[]).length === 0 ? (
                 <div className="p-12 text-center text-slate-400 space-y-2">
                   <Truck className="h-10 w-10 mx-auto opacity-30" />
                   <p className="text-sm">Chưa có xe nào</p>
@@ -825,6 +889,8 @@ export default function TMSSettings() {
                     <Plus className="h-4 w-4 mr-1" /> Thêm xe đầu tiên
                   </Button>}
                 </div>
+              ) : filteredVehicles.length === 0 ? (
+                <div className="p-12 text-center text-slate-400 text-sm">Không có xe khớp bộ lọc</div>
               ) : (
                 <div className="overflow-auto max-h-[60vh]">
                   <Table>

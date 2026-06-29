@@ -603,7 +603,7 @@ export default function PalletLabels() {
           {tab === 'generate' ? (
             /* Form gọn: gom 2–3 cột để vừa 1 màn, không phải kéo dọc */
             <div className="space-y-2">
-              <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-2">
                 <div className="space-y-1">
                   <Label className="text-xs">Loại hàng</Label>
                   <Select value={genCat || '__all__'} onValueChange={v => { setGenCat(v === '__all__' ? '' : v); setMat(null) }}>
@@ -616,7 +616,8 @@ export default function PalletLabels() {
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">Ngày SX <span className="text-red-500">*</span></Label>
-                  <Input type="date" className="h-8 text-sm" value={prodDate} onChange={e => setProdDate(e.target.value)} />
+                  {/* full-width: cột form 288px hẹp, để date dd/mm/yyyy + icon lịch không bị cắt */}
+                  <Input type="date" className="h-8 text-sm w-full" value={prodDate} onChange={e => setProdDate(e.target.value)} />
                 </div>
               </div>
               <div className="space-y-1">

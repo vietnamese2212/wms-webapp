@@ -489,6 +489,7 @@ export interface TransportCompany {
   code:          string
   name:          string
   type:          'ĐVVT' | 'NCC'
+  alias_codes?:  string[] | null
   contact_name:  string | null
   contact_phone: string | null
   is_active:     boolean

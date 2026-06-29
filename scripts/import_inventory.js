@@ -21,7 +21,7 @@ async function main() {
   const whByName = new Map((whs ?? []).map(w => [String(w.name).trim().toLowerCase(), w.id]))
   const { data: locs } = await supabase.from('Location').select('id, location_code')
   const locMap = new Map((locs ?? []).map(l => [String(l.location_code).trim().toLowerCase(), l.id]))
-  const { data: cos } = await supabase.from('TransportCompany').select('id, code, name, type')
+  const { data: cos } = await supabase.from('TransportCompany').select('id, code, name, type, alias_codes')
   const resolveNcc = codeNameResolver((cos ?? []).filter(c => c.type === 'NCC'))
   const { data: qas } = await supabase.from('QAStatus').select('id, name')
   const qaMap = new Map((qas ?? []).map(q => [String(q.name).trim().toLowerCase(), q.id]))

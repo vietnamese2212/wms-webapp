@@ -15,7 +15,7 @@ async function main() {
   const rows = readRows(process.argv[2] || '../templates/4_Xe.xlsx', KEYS)
   const { data: vts } = await supabase.from('VehicleType').select('id, code, name')
   const resolveVt = codeNameResolver(vts ?? [])
-  const { data: cos } = await supabase.from('TransportCompany').select('id, code, name, type')
+  const { data: cos } = await supabase.from('TransportCompany').select('id, code, name, type, alias_codes')
   const resolveNcc = codeNameResolver((cos ?? []).filter(c => c.type === 'ĐVVT'))
   const { data: ex } = await supabase.from('Vehicle').select('license_plate, ncc_id')
   const seen = new Set((ex ?? []).map(v => `${(v.license_plate || '').trim().toLowerCase()}|${v.ncc_id}`))

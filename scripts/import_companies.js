@@ -6,7 +6,8 @@
 const { supabase, S, readRows } = require('./_upload_util')
 const { randomUUID } = require('crypto')
 
-const KEYS = ['code', 'name', 'type', 'contact_name', 'contact_phone']
+const KEYS = ['code', 'name', 'type', 'contact_name', 'contact_phone', 'alias_codes']
+const parseAlias = v => [...new Set(String(v ?? '').split(',').map(s => s.toUpperCase().trim()).filter(Boolean))]
 
 async function main() {
   const rows = readRows(process.argv[2] || '../templates/2_NCC_DVVT.xlsx', KEYS)
@@ -22,6 +23,7 @@ async function main() {
     if (seen.has(code.toLowerCase())) { console.log('  SKIP (đã có):', code); skip++; continue }
     const rec = {
       id: randomUUID(), code, name, type,
+      alias_codes: parseAlias(r.alias_codes).filter(a => a !== code.toUpperCase()),
       contact_name: S(r.contact_name), contact_phone: S(r.contact_phone),
       is_active: true, created_at: now, updated_at: now,
     }

@@ -200,6 +200,7 @@ function TransportCompanyDialog({ co, open, onClose }: { co: TransportCompany | 
   const [code,     setCode]     = useState(co?.code         ?? '')
   const [name,     setName]     = useState(co?.name         ?? '')
   const [type,     setType]     = useState<'ĐVVT' | 'NCC'>(co?.type ?? 'ĐVVT')
+  const [aliasCodes, setAliasCodes] = useState((co?.alias_codes ?? []).join(', '))
   const [contact,  setContact]  = useState(co?.contact_name  ?? '')
   const [phone,    setPhone]    = useState(co?.contact_phone ?? '')
   const [isActive, setIsActive] = useState(co?.is_active ?? true)
@@ -213,10 +214,10 @@ function TransportCompanyDialog({ co, open, onClose }: { co: TransportCompany | 
     setErr('')
     if (!code || !name) { setErr('Mã và tên là bắt buộc'); return }
     if (isEdit) {
-      update({ id: co.id, name, type, contact_name: contact || undefined, contact_phone: phone || undefined, is_active: isActive },
+      update({ id: co.id, name, type, contact_name: contact || undefined, contact_phone: phone || undefined, is_active: isActive, alias_codes: aliasCodes },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
     } else {
-      create({ code, name, type, contact_name: contact || undefined, contact_phone: phone || undefined },
+      create({ code, name, type, contact_name: contact || undefined, contact_phone: phone || undefined, alias_codes: aliasCodes },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
     }
   }
@@ -242,6 +243,10 @@ function TransportCompanyDialog({ co, open, onClose }: { co: TransportCompany | 
                 <SelectItem value="NCC"  className="text-xs">NCC – Nhà cung cấp</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+          <div className="space-y-1"><Label className="text-xs">Mã phụ</Label>
+            <Input value={aliasCodes} onChange={e => setAliasCodes(e.target.value.toUpperCase())} placeholder="vd: 10009281, 10009290" />
+            <p className="text-[10px] text-slate-400">Mã ERP khác của CÙNG nhà cung cấp (cách nhau dấu phẩy). Upload theo mã nào cũng về NCC này; HSD/báo cáo gộp chung.</p>
           </div>
           <div className="space-y-1"><Label className="text-xs">Người liên hệ</Label>
             <Input value={contact} onChange={e => setContact(e.target.value)} /></div>

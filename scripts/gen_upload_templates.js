@@ -48,9 +48,10 @@ make('2_NCC_DVVT.xlsx', 'NCC_DVVT', [
   { label: 'Loại (NCC/ĐVVT) *',  key: 'type' },
   { label: 'Người liên hệ',      key: 'contact_name' },
   { label: 'SĐT',                key: 'contact_phone' },
+  { label: 'Mã phụ (phẩy)',      key: 'alias_codes' },
 ], [
-  { code: 'DTV',  name: 'Đại Tân Việt', type: 'NCC',  contact_name: '', contact_phone: '' },
-  { code: 'ALCA', name: 'ALCA',         type: 'ĐVVT', contact_name: '', contact_phone: '' },
+  { code: 'DTV',  name: 'Đại Tân Việt', type: 'NCC',  contact_name: '', contact_phone: '', alias_codes: '' },
+  { code: 'ALCA', name: 'ALCA',         type: 'ĐVVT', contact_name: '', contact_phone: '', alias_codes: '' },
 ])
 
 // 3) LOẠI XE — làm tay nhanh ở Cài đặt TMS; hướng dẫn dạng text

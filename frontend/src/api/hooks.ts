@@ -2048,7 +2048,7 @@ export function useTransportCompanies(onlyActive = false) {
 export function useCreateTransportCompany() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { code: string; name: string; type?: 'ĐVVT' | 'NCC'; contact_name?: string; contact_phone?: string }) =>
+    mutationFn: (body: { code: string; name: string; type?: 'ĐVVT' | 'NCC'; contact_name?: string; contact_phone?: string; alias_codes?: string }) =>
       apiClient.post('/tms/transport-companies', body).then(r => r.data.data as TransportCompany),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-transport-companies'] }),
   })
@@ -2057,7 +2057,7 @@ export function useCreateTransportCompany() {
 export function useUpdateTransportCompany() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; code?: string; name?: string; type?: 'ĐVVT' | 'NCC'; contact_name?: string; contact_phone?: string; is_active?: boolean }) =>
+    mutationFn: ({ id, ...body }: { id: string; code?: string; name?: string; type?: 'ĐVVT' | 'NCC'; contact_name?: string; contact_phone?: string; is_active?: boolean; alias_codes?: string }) =>
       apiClient.put(`/tms/transport-companies/${id}`, body).then(r => r.data.data as TransportCompany),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-transport-companies'] }),
   })

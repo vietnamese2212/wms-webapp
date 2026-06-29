@@ -1101,7 +1101,10 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
   const whByName     = Object.fromEntries(warehouses.map(w => [w.name.toLowerCase().trim(), w.id]))
   const validWhTypes = new Set(warehouseTypes.map(t => t.toLowerCase().trim()))
   const validVtNames = new Set(vehicleTypes.map(vt => vt.name.toLowerCase().trim()))
-  const nccByCode    = Object.fromEntries(transportCompanies.map(c => [c.code.toLowerCase().trim(), c.id]))
+  const nccByCode    = Object.fromEntries(transportCompanies.flatMap(c => [
+    [c.code.toLowerCase().trim(), c.id] as [string, string],
+    ...((c.alias_codes ?? []).map(a => [String(a).toLowerCase().trim(), c.id] as [string, string])),
+  ]))
 
   const reset = () => { setRows([]); setResult(null); setErr('') }
   useEffect(() => { if (open) reset() }, [open])
@@ -1505,8 +1508,11 @@ function InboundPlanBulkUploadDialog({ open, date, warehouseId, onClose }: {
 
   const nccByCode = new Map(
     (transportCompanies as import('@/types').TransportCompany[])
-      .filter((c) => (c as unknown as { type?: string }).type === 'NCC')
-      .map((c) => [String((c as unknown as { code?: string }).code ?? '').trim().toUpperCase(), c.id])
+      .filter((c) => c.type === 'NCC')
+      .flatMap((c) => [
+        [String(c.code ?? '').trim().toUpperCase(), c.id] as [string, string],
+        ...((c.alias_codes ?? []).map(a => [String(a).trim().toUpperCase(), c.id] as [string, string])),
+      ])
   )
   const whByCode  = new Map((warehouses as { code: string; id: string }[]).map(w => [String(w.code).trim().toUpperCase(), w.id]))
   const whTypeSet = new Set(whTypesData.map(t => t.value))

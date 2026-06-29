@@ -3,6 +3,26 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 
+// "A, B" → ['A','B'] (UPPER, bỏ trùng/rỗng)
+function normAlias(input: unknown): string[] {
+  const raw = Array.isArray(input) ? input : String(input ?? '').split(',')
+  return [...new Set(raw.map(s => String(s).toUpperCase().trim()).filter(Boolean))]
+}
+
+// Chặn 1 mã (code/alias) thuộc >1 NCC/ĐVVT (gây mơ hồ khi upload khớp theo mã). Trả mã đụng (nếu có).
+async function findCodeClash(codes: string[], excludeId?: string): Promise<string | null> {
+  const all = [...new Set(codes.filter(Boolean))]
+  if (!all.length) return null
+  const { data } = await supabase.from('TransportCompany').select('id, code, alias_codes')
+  for (const c of (data ?? []) as { id: string; code: string; alias_codes: string[] | null }[]) {
+    if (excludeId && c.id === excludeId) continue
+    const owned = new Set([String(c.code).toUpperCase().trim(), ...(c.alias_codes ?? []).map(s => String(s).toUpperCase().trim())])
+    const hit = all.find(x => owned.has(x))
+    if (hit) return hit
+  }
+  return null
+}
+
 export async function listTransportCompanies(req: Request, res: Response) {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -21,17 +41,21 @@ export async function listTransportCompanies(req: Request, res: Response) {
 
 export async function createTransportCompany(req: Request, res: Response) {
   try {
-    const { code, name, type, contact_name, contact_phone } = req.body as {
-      code: string; name: string; type?: string; contact_name?: string; contact_phone?: string
+    const { code, name, type, contact_name, contact_phone, alias_codes } = req.body as {
+      code: string; name: string; type?: string; contact_name?: string; contact_phone?: string; alias_codes?: unknown
     }
     if (!code || !name) return fail(res, 'code và name là bắt buộc', 400)
+    const codeU = code.toUpperCase().trim()
+    const aliasArr = normAlias(alias_codes).filter(c => c !== codeU)
+    const clash = await findCodeClash([codeU, ...aliasArr])
+    if (clash) return fail(res, `Mã "${clash}" đã thuộc NCC/ĐVVT khác`, 409)
     const now = new Date().toISOString()
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const actor = req.user?.name || null
     const { data, error } = await supabase.from('TransportCompany')
       .insert({
-        id: randomUUID(), code: code.toUpperCase().trim(), name: name.trim(),
-        type: type ?? 'ĐVVT',
+        id: randomUUID(), code: codeU, name: name.trim(),
+        type: type ?? 'ĐVVT', alias_codes: aliasArr,
         contact_name: contact_name?.trim() ?? null,
         contact_phone: contact_phone?.trim() ?? null,
         is_active: true, created_at: now, updated_at: now,
@@ -51,8 +75,8 @@ export async function updateTransportCompany(req: Request, res: Response) {
     // ĐVVT user: chỉ được sửa công ty của mình
     if (userNccId && id !== userNccId)
       return fail(res, 'Bạn không có quyền chỉnh sửa ĐVVT này', 403)
-    const { name, type, contact_name, contact_phone, is_active } = req.body as {
-      name?: string; type?: string; contact_name?: string; contact_phone?: string; is_active?: boolean
+    const { name, type, contact_name, contact_phone, is_active, alias_codes } = req.body as {
+      name?: string; type?: string; contact_name?: string; contact_phone?: string; is_active?: boolean; alias_codes?: unknown
     }
     const updates: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: req.user?.name || null }
     if (name          !== undefined) updates.name          = name.trim()
@@ -60,6 +84,14 @@ export async function updateTransportCompany(req: Request, res: Response) {
     if (contact_name  !== undefined) updates.contact_name  = contact_name?.trim() ?? null
     if (contact_phone !== undefined) updates.contact_phone = contact_phone?.trim() ?? null
     if (is_active     !== undefined) updates.is_active     = is_active
+    if (alias_codes   !== undefined) {
+      const { data: cur } = await supabase.from('TransportCompany').select('code').eq('id', id).maybeSingle()
+      const codeU = String((cur as { code?: string } | null)?.code ?? '').toUpperCase().trim()
+      const aliasArr = normAlias(alias_codes).filter(c => c !== codeU)
+      const clash = await findCodeClash([codeU, ...aliasArr], id)
+      if (clash) return fail(res, `Mã "${clash}" đã thuộc NCC/ĐVVT khác`, 409)
+      updates.alias_codes = aliasArr
+    }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await supabase.from('TransportCompany')
       .update(updates).eq('id', id).select().single()

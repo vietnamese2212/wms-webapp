@@ -41,12 +41,15 @@ function readRows(file, keys) {
  * Bộ phân giải theo MÃ (ưu tiên) → TÊN (fallback). Tên trùng → buộc dùng mã (trả error).
  * Dùng cho cột tham chiếu ĐVVT/NCC/Loại xe trong file upload (đồng bộ app: app khớp theo mã).
  */
-function codeNameResolver(items, codeKey = 'code', nameKey = 'name', idKey = 'id') {
+function codeNameResolver(items, codeKey = 'code', nameKey = 'name', idKey = 'id', aliasKey = 'alias_codes') {
   const byCode = new Map(), byName = new Map(), nameCount = new Map()
   for (const it of items) {
     const c = String(it[codeKey] ?? '').trim().toLowerCase()
     const n = String(it[nameKey] ?? '').trim().toLowerCase()
     if (c) byCode.set(c, it[idKey])
+    // mã phụ (alias_codes) → cùng id (nhiều mã ERP cho 1 NCC/ĐVVT)
+    const aliases = Array.isArray(it[aliasKey]) ? it[aliasKey] : []
+    for (const a of aliases) { const ac = String(a ?? '').trim().toLowerCase(); if (ac) byCode.set(ac, it[idKey]) }
     if (n) { byName.set(n, it[idKey]); nameCount.set(n, (nameCount.get(n) ?? 0) + 1) }
   }
   return input => {

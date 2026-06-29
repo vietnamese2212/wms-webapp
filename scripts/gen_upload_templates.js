@@ -69,7 +69,7 @@ make('4_Xe.xlsx', 'Xe', [
   { license_plate: '29H-12345', vehicle_type: 'PALLET', ncc: 'ALCA' },
 ])
 
-// 5) VỊ TRÍ KHO  (location_code tự ghép = MãKho_Khu_Dãy_Tầng)
+// 5) VỊ TRÍ KHO  (location_code tự ghép = Tiền tố_Khu_Dãy_Tầng; tiền tố = nmsx_code nếu có, không thì Mã kho)
 make('5_ViTriKho.xlsx', 'ViTriKho', [
   { label: 'Kho (mã) *',          key: 'warehouse' },
   { label: 'Khu (sub_code) *',    key: 'sub_code' },

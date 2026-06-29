@@ -1,7 +1,8 @@
 /**
  * Import Vị trí kho từ templates/5_ViTriKho.xlsx  (chạy SAU khi đã có Kho)
  * Run: cd backend && node ../scripts/import_locations.js ../templates/5_ViTriKho.xlsx
- * location_code tự ghép = MãKho_Khu_Dãy_Tầng (vd BV_TP1_1_T1). Bỏ qua location_code đã tồn tại.
+ * location_code tự ghép = TIỀN TỐ_Khu_Dãy_Tầng. Tiền tố = nmsx_code nếu có, không thì Mã kho
+ *   (vd Ba Vì nmsx=B → B_TP1_1_T1; NPP không có nmsx → 10000329_TP1_1_T1). Bỏ qua location_code đã tồn tại.
  * ĐỒNG BỘ Khu vực: mỗi (kho, sub_code) tự tạo 1 WarehouseZone cùng MÃ (code=sub_code) → dashboard
  * theo khu khớp 100% với Location.sub_code. Zone đã có (theo kho+code) thì bỏ qua.
  */
@@ -12,7 +13,7 @@ const KEYS = ['warehouse', 'sub_code', 'row', 'shelf', 'max_pallets', 'category'
 
 async function main() {
   const rows = readRows(process.argv[2] || '../templates/5_ViTriKho.xlsx', KEYS)
-  const { data: whs } = await supabase.from('Warehouse').select('id, code, name')
+  const { data: whs } = await supabase.from('Warehouse').select('id, code, name, nmsx_code')
   const whByCode = new Map((whs ?? []).map(w => [String(w.code).trim().toLowerCase(), w]))
   const whByName = new Map((whs ?? []).map(w => [String(w.name).trim().toLowerCase(), w]))
   const { data: ex } = await supabase.from('Location').select('location_code')
@@ -52,7 +53,8 @@ async function main() {
     if (!whRaw || !sub || !row || !shelf) { console.log('  SKIP (thiếu kho/khu/dãy/tầng)'); skip++; continue }
     const wh = whByCode.get(whRaw.toLowerCase()) || whByName.get(whRaw.toLowerCase())
     if (!wh) { console.error('  ERR — Kho không khớp:', whRaw); err++; continue }
-    const code = `${wh.code}_${sub}_${row}_${shelf}`
+    const prefix = (wh.nmsx_code && String(wh.nmsx_code).trim()) || wh.code
+    const code = `${prefix}_${sub}_${row}_${shelf}`
     if (seen.has(code.toLowerCase())) { console.log('  SKIP (đã có):', code); skip++; continue }
     const rec = {
       id: randomUUID(), location_code: code, warehouse_id: wh.id,

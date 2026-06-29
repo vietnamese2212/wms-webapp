@@ -3,8 +3,9 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 
-function buildLocationCode(warehouseCode: string, subCode: string, row: string, shelf: string) {
-  return [warehouseCode, subCode, row, shelf].filter(Boolean).join('_')
+// location_code = <tiền tố kho>_<khu>_<dãy>_<tầng>. Tiền tố = nmsx_code nếu có, không thì mã kho.
+function buildLocationCode(prefix: string, subCode: string, row: string, shelf: string) {
+  return [prefix, subCode, row, shelf].filter(Boolean).join('_')
 }
 
 // Warehouse-scope: NATIONAL = mọi kho (null), còn lại = danh sách kho được gán.
@@ -130,12 +131,13 @@ export async function createLocation(req: Request, res: Response) {
       return fail(res, 403, 'FORBIDDEN', 'Không thể tạo vị trí ở kho ngoài phạm vi của bạn')
 
     const { data: wh, error: whErr } = await supabase
-      .from('Warehouse').select('code').eq('id', warehouse_id).maybeSingle()
+      .from('Warehouse').select('code, nmsx_code').eq('id', warehouse_id).maybeSingle()
     if (whErr) throw whErr
     if (!wh) return fail(res, 404, 'NOT_FOUND', 'Kho không tồn tại')
 
+    const prefix = (wh.nmsx_code && String(wh.nmsx_code).trim()) || wh.code
     const location_code = buildLocationCode(
-      wh.code,
+      prefix,
       String(sub_code).trim().toUpperCase(),
       String(row).trim(),
       String(shelf ?? '').trim()

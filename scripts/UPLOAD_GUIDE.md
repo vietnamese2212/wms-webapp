@@ -28,7 +28,7 @@ Mỗi file: dòng 1 = nhãn tiếng Việt, **dòng 2 = KEY (đừng sửa/đừ
 - **Kho:** `warehouse_type` = CENTRAL hoặc NPP · `inventory_mode` = QR / QTY / NONE (mặc định QR).
 - **NCC/ĐVVT:** cột `type` phải đúng `NCC` hoặc `ĐVVT`.
 - **Xe:** `Loại xe` và `ĐVVT` điền **đúng tên** đã tạo ở bước 2–3.
-- **Vị trí kho:** `location_code` tự ghép = `MãKho_Khu_Dãy_Tầng` (vd `BV_TP1_1_T1`).
+- **Vị trí kho:** `location_code` tự ghép = `Tiền tố_Khu_Dãy_Tầng`. Tiền tố = `nmsx_code` của kho **nếu có**, không thì **Mã kho** (vd Ba Vì nmsx=`B` → `B_TP1_1_T1`; NPP không có nmsx → `10000329_TP1_1_T1`).
 - **Tồn kho:** mỗi dòng = 1 pallet. `Mã hàng` = `material_code` đã có. `Mã vị trí` = location_code ở bước 5. Để trống NCC/QA nếu không có (QA mặc định OK).
 
 ## Sau khi upload

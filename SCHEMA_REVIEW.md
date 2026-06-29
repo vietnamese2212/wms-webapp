@@ -48,6 +48,8 @@ BV_TP1_1_T1 = {warehouse.code}_{sub_code}_{row}_{shelf}
 ### Warehouse
 ```sql
 id TEXT PK, code TEXT UNIQUE, name TEXT, address TEXT,
+warehouse_type TEXT, inventory_mode TEXT, nmsx_code TEXT,
+shipto_codes TEXT[] DEFAULT '{}',  -- mã ship-to phụ; auto-detect chuyển kho khớp code HOẶC phần tử mảng này
 is_active BOOL DEFAULT true, created_at, updated_at
 ```
 

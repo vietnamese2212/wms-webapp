@@ -23,7 +23,7 @@ export async function listZones(req: Request, res: Response) {
 }
 
 export async function createZone(req: Request, res: Response) {
-  const { warehouse_id, name, category } = req.body as { warehouse_id?: string; name?: string; category?: string }
+  const { warehouse_id, name, category, code } = req.body as { warehouse_id?: string; name?: string; category?: string; code?: string }
   if (!warehouse_id || !name?.trim()) return fail(res, 'warehouse_id và name là bắt buộc')
 
   const reqUser = req.user
@@ -43,13 +43,23 @@ export async function createZone(req: Request, res: Response) {
 
   const nextSort = existing?.length ? (Number((existing[0] as any).sort_order ?? 0) + 1) : 1
 
-  // Tự sinh mã: Z01, Z02, ... tìm số chưa dùng
-  const usedCodes = new Set((existing ?? []).map((z: any) => z.code as string))
-  let seq = nextSort
-  let autoCode = `Z${String(seq).padStart(2, '0')}`
-  while (usedCodes.has(autoCode)) {
-    seq++
-    autoCode = `Z${String(seq).padStart(2, '0')}`
+  const usedCodes = new Set((existing ?? []).map((z: any) => String(z.code).toUpperCase()))
+
+  // Mã do người dùng nhập (ưu tiên) — chuẩn hoá UPPER, bỏ khoảng trắng. Để trống → tự sinh Z01, Z02…
+  // Trùng trong CÙNG kho → chặn (DB cũng có unique (warehouse_id, code)). Khác kho trùng nhau OK.
+  const manualCode = String(code ?? '').toUpperCase().trim().replace(/\s+/g, '')
+  let finalCode: string
+  if (manualCode) {
+    if (usedCodes.has(manualCode)) return fail(res, `Mã khu vực "${manualCode}" đã tồn tại trong kho này`, 409)
+    finalCode = manualCode
+  } else {
+    let seq = nextSort
+    let autoCode = `Z${String(seq).padStart(2, '0')}`
+    while (usedCodes.has(autoCode)) {
+      seq++
+      autoCode = `Z${String(seq).padStart(2, '0')}`
+    }
+    finalCode = autoCode
   }
 
   const actorName = reqUser?.name || null
@@ -58,7 +68,7 @@ export async function createZone(req: Request, res: Response) {
     .insert({
       id:           randomUUID(),
       warehouse_id,
-      code:         autoCode,
+      code:         finalCode,
       name:         name.trim(),
       category:     category?.trim() || null,
       sort_order:   nextSort,
@@ -69,7 +79,10 @@ export async function createZone(req: Request, res: Response) {
     .select('id, warehouse_id, code, name, category, sort_order, is_active, created_at, updated_at, created_by, updated_by')
     .single()
 
-  if (error) return fail(res, error.message, 500)
+  if (error) {
+    if ((error as { code?: string }).code === '23505') return fail(res, `Mã khu vực "${finalCode}" đã tồn tại trong kho này`, 409)
+    return fail(res, error.message, 500)
+  }
   res.json({ success: true, data })
 }
 

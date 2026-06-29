@@ -155,6 +155,7 @@ function ZoneDialog({ zone, warehouseId, warehouses, warehouseTypes, open, onClo
 }) {
   const isEdit = !!zone
   const [selectedWhId, setSelectedWhId] = useState(zone?.warehouse_id ?? warehouseId)
+  const [code,     setCode]     = useState(zone?.code ?? '')
   const [name,     setName]     = useState(zone?.name ?? '')
   const [category, setCategory] = useState(zone?.category ?? '')
   const [isActive, setIsActive] = useState(zone?.is_active ?? true)
@@ -175,7 +176,7 @@ function ZoneDialog({ zone, warehouseId, warehouses, warehouseTypes, open, onClo
       )
     } else {
       create(
-        { warehouse_id: selectedWhId, name: name.trim(), category: category || undefined },
+        { warehouse_id: selectedWhId, name: name.trim(), category: category || undefined, code: code.trim() || undefined },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     }
@@ -229,12 +230,24 @@ function ZoneDialog({ zone, warehouseId, warehouses, warehouseTypes, open, onClo
             </Select>
           </div>
 
+          {/* Mã khu vực */}
+          <div className="space-y-1">
+            <Label className="text-xs">Mã khu vực{!isEdit && <span className="text-slate-400"> (tùy chọn)</span>}</Label>
+            {isEdit ? (
+              <p className="text-sm font-mono font-semibold text-slate-700">{zone.code}</p>
+            ) : (
+              <>
+                <Input value={code} onChange={e => setCode(e.target.value.toUpperCase().replace(/\s+/g, ''))} placeholder="vd: TP1, K4RAW…" />
+                <p className="text-[10px] text-slate-400">Là phần giữa mã vị trí (B_<b>TP1</b>_1_T1). Để trống = tự tạo Z01, Z02… Không trùng trong cùng kho (khác kho trùng nhau OK).</p>
+              </>
+            )}
+          </div>
+
           {/* Tên */}
           <div className="space-y-1">
             <Label className="text-xs">Tên khu vực *</Label>
             <Input value={name} onChange={e => setName(e.target.value)} placeholder="Khu Thành phẩm, Khu NVL…" />
           </div>
-          {!isEdit && <p className="text-[10px] text-slate-400">Mã khu vực sẽ được hệ thống tự tạo (Z01, Z02…)</p>}
 
           {isEdit && (
             <div className="flex items-center gap-2">

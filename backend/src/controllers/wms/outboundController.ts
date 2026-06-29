@@ -1936,6 +1936,7 @@ export async function scanItem(req: Request, res: Response) {
     const { error: insertErr } = await supabase.from('OutboundScanEntry').insert({
       id: scanId, item_id: itemId, inventory_entry_id: inv.id,
       pallet_code: qr, cartons_scanned: to_take,
+      nmsx: inv.nmsx ?? null,   // NMSX (đoạn 6 QR) kế thừa từ pallet tồn
       production_date: inv.production_date ?? null,
       best_available_date,
       pct_date,
@@ -2430,7 +2431,7 @@ export async function getScanLog(req: Request, res: Response) {
   const {
     from_date, to_date, warehouse_ids, material_category,
     group_code, distributor, delivery_code,
-    pallet_code, material, machine_codes, cycles, scanner_name,
+    pallet_code, material, machine_codes, cycles, scanner_name, nmsx,
     page = '1', limit = '500',
   } = req.query
 
@@ -2467,6 +2468,7 @@ export async function getScanLog(req: Request, res: Response) {
     p_machine_codes:     machine_codes     ? String(machine_codes)     : null,
     p_cycles:            cycles            ? String(cycles)            : null,
     p_scanner_name:      scanner_name      ? String(scanner_name)      : null,
+    p_nmsx:              nmsx              ? String(nmsx)              : null,
     p_limit:  limitNum,
     p_offset: offset,
   })

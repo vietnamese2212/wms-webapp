@@ -32,7 +32,7 @@ function apiMsg(err: unknown) {
 
 // ─── Warehouse Dialog ─────────────────────────────────────────────────────────
 
-interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
 
 // Chế độ quản tồn — độc lập với warehouse_type (CENTRAL/NPP). Xem migration 20260626_warehouse_inventory_mode.sql
 type InvMode = 'QR' | 'QTY' | 'NONE'
@@ -51,6 +51,7 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
   const [warehouseType, setWarehouseType] = useState<'CENTRAL' | 'NPP'>((wh?.warehouse_type as 'CENTRAL' | 'NPP') ?? 'CENTRAL')
   const [invMode,       setInvMode]       = useState<InvMode>((wh?.inventory_mode as InvMode) ?? 'QR')
   const [shiptoCodes,   setShiptoCodes]   = useState((wh?.shipto_codes ?? []).join(', '))
+  const [nmsxCode,      setNmsxCode]      = useState(wh?.nmsx_code ?? '')
   const [isActive,      setIsActive]      = useState(wh?.is_active ?? true)
   const [err, setErr] = useState('')
 
@@ -63,12 +64,12 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
     if (!code.trim() || !name.trim()) { setErr('Mã và tên kho là bắt buộc'); return }
     if (isEdit) {
       update(
-        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes },
+        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     } else {
       create(
-        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes },
+        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     }
@@ -122,6 +123,11 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
             <Label className="text-xs">Mã ship-to phụ</Label>
             <Input value={shiptoCodes} onChange={e => setShiptoCodes(e.target.value.toUpperCase())} placeholder="vd: 20000018, 20000019" />
             <p className="text-[10px] text-slate-400">Ngoài mã kho chính. Nhiều mã cách nhau dấu phẩy. Chuyển kho về các mã này đều tự nhận về kho này.</p>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Mã NMSX (kho tổng)</Label>
+            <Input value={nmsxCode} onChange={e => setNmsxCode(e.target.value.toUpperCase())} placeholder="vd: B, D…" maxLength={8} />
+            <p className="text-[10px] text-slate-400">Đoạn thứ 6 của QR pallet + tiền tố mã vị trí. Để trống nếu kho không có NMSX (vị trí sẽ dùng mã kho). Không trùng giữa các kho.</p>
           </div>
           {isEdit && (
             <div className="flex items-center gap-2">
@@ -623,6 +629,7 @@ export default function WMSSettings() {
                     <TableHeader>
                       <TableRow>
                         <TableHead className="px-3 py-2 text-xs">Mã</TableHead>
+                        <TableHead className="px-3 py-2 text-xs">NMSX</TableHead>
                         <TableHead className="px-3 py-2 text-xs">Ship-to phụ</TableHead>
                         <TableHead className="px-3 py-2 text-xs">Tên kho</TableHead>
                         <TableHead className="px-3 py-2 text-xs">Chức năng</TableHead>
@@ -638,6 +645,7 @@ export default function WMSSettings() {
                           className={`text-sm cursor-pointer ${!wh.is_active ? 'opacity-50' : ''} ${detailWh?.id === wh.id ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
                           onClick={() => setDetailWh(prev => prev?.id === wh.id ? null : wh)}>
                           <TableCell className="px-3 py-2 font-mono font-semibold text-[11px] text-slate-600">{wh.code}</TableCell>
+                          <TableCell className="px-3 py-2 font-mono font-semibold text-[11px] text-slate-600">{wh.nmsx_code || <span className="text-slate-300 font-sans font-normal">—</span>}</TableCell>
                           <TableCell className="px-3 py-2 font-mono text-[11px] text-slate-500">{wh.shipto_codes?.length ? wh.shipto_codes.join(', ') : <span className="text-slate-300">—</span>}</TableCell>
                           <TableCell className="px-3 py-2 font-medium text-slate-800">{wh.name}</TableCell>
                           <TableCell className="px-3 py-2">
@@ -686,6 +694,7 @@ export default function WMSSettings() {
                 </div>
                 <div><span className="text-slate-400">Chức năng:</span> <span className="font-medium">{detailWh.warehouse_type === 'NPP' ? 'Kho NPP' : 'Kho tổng'}</span></div>
                 <div><span className="text-slate-400">Quản tồn:</span> <span className="font-medium">{invModeMeta(detailWh.inventory_mode).label}</span></div>
+                <div><span className="text-slate-400">NMSX:</span> <span className="font-mono font-medium">{detailWh.nmsx_code || '—'}</span></div>
                 <div><span className="text-slate-400">Ship-to phụ:</span> <span className="font-mono font-medium">{detailWh.shipto_codes?.length ? detailWh.shipto_codes.join(', ') : '—'}</span></div>
                 <div><span className="text-slate-400">Địa chỉ:</span> <span className="font-medium">{detailWh.address ?? '—'}</span></div>
                 <div><span className="text-slate-400">Trạng thái:</span> <span className="font-medium">{detailWh.is_active ? 'Hoạt động' : 'Tạm dừng'}</span></div>

@@ -44,6 +44,7 @@ interface InventoryFilters {
   manufacturerId: string
   filterCycles: string[]
   filterMachines: string[]
+  filterNmsx: string[]
   nccIds: string[]
   datePctRanges: string[]
 }
@@ -70,6 +71,7 @@ export interface ScanLogFilters {
   machines: string[]
   cycles: string[]
   scanner_name: string
+  nmsx: string[]
 }
 interface LocationsFilters {
   search: string
@@ -230,7 +232,7 @@ function initialFilters() {
       search: '', warehouseIds: [], materialCategories: [],
       filterLocations: [], filterMaterialIds: [],
       qaStatusIds: [], status: '', page: 1, manufacturerId: '',
-      filterCycles: [], filterMachines: [], nccIds: [], datePctRanges: [],
+      filterCycles: [], filterMachines: [], filterNmsx: [], nccIds: [], datePctRanges: [],
     },
     loosePicking: {
       warehouseId: '', dateFrom: today(), dateTo: today(), search: '',
@@ -240,7 +242,7 @@ function initialFilters() {
       from_date: today(), to_date: today(),
       warehouses: [], material_category: '',
       group_code: '', distributor: '', delivery_code: '',
-      pallet_code: '', materials: [], machines: [], cycles: [], scanner_name: '',
+      pallet_code: '', materials: [], machines: [], cycles: [], scanner_name: '', nmsx: [],
     },
     stocktake:        { warehouseId: '', category: '', locationId: '', requiresOnly: false },
     stocktakeSummary: { warehouseId: '', category: '', locationIds: [], requiresOnly: false, view: 'problem' as StocktakeView },

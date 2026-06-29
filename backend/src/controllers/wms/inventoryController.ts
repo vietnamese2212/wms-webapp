@@ -5,7 +5,7 @@ import { randomUUID } from 'crypto'
 import { resolveShelfLife } from '../../utils/shelfLife'
 
 const ENTRY_SELECT = `
-  id, pallet_code, location_id, warehouse_id, material_id, manufacturer_id, cycle, machine_code,
+  id, pallet_code, location_id, warehouse_id, material_id, manufacturer_id, nmsx, cycle, machine_code,
   pallet_sequence_no, qa_status_id, stack_layer, cartons_imported, cartons_remaining, cartons_reserved,
   production_date, status, import_date, update_date, adjustment_qty, ncc_id, shelf_life_days,
   parent_pallet_code, origin,
@@ -61,6 +61,7 @@ interface FilterParams {
   manufacturer_id?: string
   filterCycles?: string[]
   filterMachines?: string[]
+  filterNmsx?: string[]
   nccIds?: string[]
   import_date_from?: string
   import_date_to?: string
@@ -103,6 +104,9 @@ function applyInventoryFilters(q: any, p: FilterParams): any {
   const fMach = p.filterMachines ?? []
   if (fMach.length === 1)    q = q.eq('machine_code', fMach[0])
   else if (fMach.length > 1) q = q.in('machine_code', fMach)
+  const fNmsx = p.filterNmsx ?? []
+  if (fNmsx.length === 1)    q = q.eq('nmsx', fNmsx[0])
+  else if (fNmsx.length > 1) q = q.in('nmsx', fNmsx)
   const fNcc = p.nccIds ?? []
   if (fNcc.length === 1)    q = q.eq('ncc_id', fNcc[0])
   else if (fNcc.length > 1) q = q.in('ncc_id', fNcc)
@@ -228,6 +232,7 @@ async function resolveInventoryFilter(req: Request): Promise<ResolvedFilter> {
   const filterLocations   = parseArr(q.filter_locations)
   const filterCycles      = parseArr(q.filter_cycles)
   const filterMachines    = parseArr(q.filter_machines)
+  const filterNmsx        = parseArr(q.filter_nmsx)
   const filterMaterialIds = parseArr(q.filter_material_ids)
   const qa_status_ids     = parseArr(q.qa_status_ids).length > 0 ? parseArr(q.qa_status_ids) : undefined
   const nccIds            = parseArr(q.ncc_ids)
@@ -331,7 +336,7 @@ async function resolveInventoryFilter(req: Request): Promise<ResolvedFilter> {
     status, locationFilter, materialFilter,
     warehouseIds: effectiveWarehouseIds.length > 0 ? effectiveWarehouseIds : undefined,
     categoryFilter: effectiveCategories.length > 0 ? effectiveCategories : undefined,
-    qa_status_ids, search, searchMatIds, searchLocIds, manufacturer_id, filterCycles, filterMachines, nccIds, import_date_from, import_date_to,
+    qa_status_ids, search, searchMatIds, searchLocIds, manufacturer_id, filterCycles, filterMachines, filterNmsx, nccIds, import_date_from, import_date_to,
   }
 
   // Pre-filter by %date: fetch ALL IDs (no pagination) with same filters, compute pct in JS

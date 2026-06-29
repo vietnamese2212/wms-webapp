@@ -38,7 +38,7 @@ type LabelData = {
   seq: string           // "001"
 }
 
-type WarehouseLite = { id: string; code: string; name: string; warehouse_type?: string | null }
+type WarehouseLite = { id: string; code: string; name: string; warehouse_type?: string | null; nmsx_code?: string | null }
 
 // ddmmyy từ yyyy-mm-dd
 function toDdmmyy(iso: string): string {
@@ -190,9 +190,9 @@ export default function PalletLabels() {
   const allowedWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
     ? new Set(user.warehouse_ids) : null
   const whOptions = (warehouses as WarehouseLite[]).filter(w => !allowedWhIds || allowedWhIds.has(w.id))
-  // NMSX = mã kho tổng theo WMS Settings (chức năng = Kho tổng).
-  // Toàn app coi mọi kho KHÔNG phải NPP là Kho tổng (kho cũ có thể NULL) → lọc !== 'NPP' cho khớp.
-  const nmsxOptions = (warehouses as WarehouseLite[]).filter(w => w.warehouse_type !== 'NPP')
+  // NMSX = mã nmsx_code của kho tổng (B/D…) theo Cài đặt WMS → Kho. Chỉ kho có nmsx_code mới chọn được;
+  // thêm "O — Gia công ngoài" (không thuộc kho nào) cho hàng gia công từ ngoài về.
+  const nmsxOptions = (warehouses as WarehouseLite[]).filter(w => w.warehouse_type !== 'NPP' && !!(w.nmsx_code ?? '').trim())
 
   // ── Generate form ──
   const [genCat, setGenCat]   = useState<string>(SAVED.genCat ?? '')   // Loại hàng — lọc nhanh mã hàng
@@ -205,8 +205,8 @@ export default function PalletLabels() {
   const [count, setCount]     = useState('4')
   const [qty, setQty]         = useState('')
 
-  // NMSX (mã kho tổng) → id kho để áp ngoại lệ Thùng/Pallet theo kho
-  const nmsxWarehouseId = nmsxOptions.find(w => w.code === nmsx)?.id ?? null
+  // NMSX (nmsx_code kho tổng) → id kho để áp ngoại lệ Thùng/Pallet theo kho ('O' không có kho → null)
+  const nmsxWarehouseId = nmsxOptions.find(w => (w.nmsx_code ?? '').trim() === nmsx)?.id ?? null
   // Số lượng auto theo định mức thùng/pallet (ngoại lệ theo kho NMSX nếu có) khi chọn mã / đổi kho
   useEffect(() => {
     if (!mat) return
@@ -635,18 +635,20 @@ export default function PalletLabels() {
                 </div>
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">NMSX (mã kho tổng) <span className="text-red-500">*</span></Label>
+                <Label className="text-xs">NMSX <span className="text-red-500">*</span></Label>
                 <Select value={nmsx || '__none__'} onValueChange={v => setNmsx(v === '__none__' ? '' : v)}>
-                  <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Chọn kho tổng" /></SelectTrigger>
+                  <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Chọn NMSX" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__none__">— Không —</SelectItem>
-                    {nmsxOptions.map(w => (
-                      <SelectItem key={w.id} value={w.code}>{w.code}{w.name ? ` — ${w.name}` : ''}</SelectItem>
-                    ))}
+                    {nmsxOptions.map(w => {
+                      const code = (w.nmsx_code ?? '').trim()
+                      return <SelectItem key={w.id} value={code}>{code}{w.name ? ` — ${w.name}` : ''}</SelectItem>
+                    })}
+                    <SelectItem value="O">O — Gia công ngoài</SelectItem>
                   </SelectContent>
                 </Select>
                 {nmsxOptions.length === 0 && (
-                  <p className="text-[10px] text-amber-600">Chưa có kho chức năng "Kho tổng" — tạo ở Cài đặt WMS → Kho (chức năng = Kho tổng).</p>
+                  <p className="text-[10px] text-amber-600">Chưa có kho tổng nào có mã NMSX — đặt ở Cài đặt WMS → Kho (ô "Mã NMSX").</p>
                 )}
               </div>
               <div className="grid grid-cols-3 gap-2">

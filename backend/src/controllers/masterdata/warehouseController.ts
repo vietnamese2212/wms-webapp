@@ -30,6 +30,23 @@ async function findShiptoClash(codes: string[], code: string, excludeId?: string
   return null
 }
 
+// Chuẩn hoá mã NMSX (đoạn 6 QR + tiền tố location_code): UPPER trim, rỗng → null.
+function normNmsx(input: unknown): string | null {
+  const v = String(input ?? '').toUpperCase().trim()
+  return v || null
+}
+
+// Chặn 2 kho cùng 1 mã NMSX (gây trùng location_code + mơ hồ NMSX). Trả mã đụng (nếu có).
+async function findNmsxClash(nmsx: string | null, excludeId?: string): Promise<string | null> {
+  if (!nmsx) return null
+  const { data } = await supabase.from('Warehouse').select('id, nmsx_code')
+  for (const w of (data ?? []) as { id: string; nmsx_code: string | null }[]) {
+    if (excludeId && w.id === excludeId) continue
+    if (String(w.nmsx_code ?? '').toUpperCase().trim() === nmsx) return nmsx
+  }
+  return null
+}
+
 export async function listWarehouses(req: Request, res: Response) {
   try {
     const onlyActive = req.query.active === 'true'
@@ -75,7 +92,7 @@ export async function getWarehouse(req: Request, res: Response) {
 
 export async function createWarehouse(req: Request, res: Response) {
   try {
-    const { code, name, address, warehouse_type, inventory_mode, shipto_codes } = req.body
+    const { code, name, address, warehouse_type, inventory_mode, shipto_codes, nmsx_code } = req.body
     if (!code || !name) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu code hoặc name')
     if (!warehouse_type || !['CENTRAL', 'NPP'].includes(warehouse_type))
       return fail(res, 400, 'VALIDATION_ERROR', 'Chức năng kho không hợp lệ (CENTRAL hoặc NPP)')
@@ -86,11 +103,14 @@ export async function createWarehouse(req: Request, res: Response) {
     const shiptoArr = normShiptoCodes(shipto_codes)
     const clash = await findShiptoClash(shiptoArr, String(code))
     if (clash) return fail(res, 409, 'DUPLICATE', `Mã ship-to "${clash}" đã thuộc kho khác`)
+    const nmsx = normNmsx(nmsx_code)
+    const nmsxClash = await findNmsxClash(nmsx)
+    if (nmsxClash) return fail(res, 409, 'DUPLICATE', `Mã NMSX "${nmsxClash}" đã thuộc kho khác`)
 
     const actor = req.user?.name || null
     const { data, error } = await supabase
       .from('Warehouse')
-      .insert({ id: randomUUID(), code: String(code).toUpperCase().trim(), name: String(name).trim(), address, warehouse_type, inventory_mode: mode, shipto_codes: shiptoArr, created_by: actor, updated_by: actor, updated_at: new Date().toISOString() })
+      .insert({ id: randomUUID(), code: String(code).toUpperCase().trim(), name: String(name).trim(), address, warehouse_type, inventory_mode: mode, shipto_codes: shiptoArr, nmsx_code: nmsx, created_by: actor, updated_by: actor, updated_at: new Date().toISOString() })
       .select().single()
 
     if (error) {
@@ -103,11 +123,17 @@ export async function createWarehouse(req: Request, res: Response) {
 
 export async function updateWarehouse(req: Request, res: Response) {
   try {
-    const { name, address, is_active, warehouse_type, inventory_mode, shipto_codes } = req.body
+    const { name, address, is_active, warehouse_type, inventory_mode, shipto_codes, nmsx_code } = req.body
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: req.user?.name || null }
     if (name !== undefined) patch.name = String(name).trim()
     if (address !== undefined) patch.address = address
     if (is_active !== undefined) patch.is_active = Boolean(is_active)
+    if (nmsx_code !== undefined) {
+      const nmsx = normNmsx(nmsx_code)
+      const nmsxClash = await findNmsxClash(nmsx, req.params.id)
+      if (nmsxClash) return fail(res, 409, 'DUPLICATE', `Mã NMSX "${nmsxClash}" đã thuộc kho khác`)
+      patch.nmsx_code = nmsx
+    }
     if (shipto_codes !== undefined) {
       const shiptoArr = normShiptoCodes(shipto_codes)
       const { data: cur } = await supabase.from('Warehouse').select('code').eq('id', req.params.id).maybeSingle()

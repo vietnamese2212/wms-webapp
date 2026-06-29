@@ -977,6 +977,7 @@ export async function scanQR(req: Request, res: Response) {
         location_id,
         material_id:     material.id,
         manufacturer_id: manufacturer?.id ?? null,
+        nmsx:               parsed.manufacturer_code || null,   // đoạn 6 QR (B/D/O) = NMSX
         cycle:              parsed.cycle || null,
         machine_code:       parsed.machine_code || null,
         pallet_sequence_no: parsed.pallet_sequence_no,

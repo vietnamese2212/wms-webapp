@@ -92,7 +92,7 @@ function writeXlsx(rows: Record<string, unknown>[], baseName: string) {
   XLSX.writeFile(wb, `${baseName}.xlsx`)
 }
 
-// Cột bảng tồn kho — số phần tử PHẢI khớp số <TableCell> mỗi dòng EntryRow (18 cột)
+// Cột bảng tồn kho — số phần tử PHẢI khớp số <TableCell> mỗi dòng EntryRow (19 cột)
 const INVENTORY_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
   { id: 'check',     label: '',         w: 32 },
   { id: 'warehouse', label: 'Kho',      w: 110 },
@@ -101,6 +101,7 @@ const INVENTORY_COLS: { id: string; label: string; w: number; align?: 'right' }[
   { id: 'matName',   label: 'Tên hàng', w: 150 },
   { id: 'ncc',       label: 'NCC',      w: 110 },
   { id: 'pallet',    label: 'Mã pallet',w: 110 },
+  { id: 'nmsx',      label: 'NMSX',     w: 52 },
   { id: 'location',  label: 'Vị trí',   w: 90 },
   { id: 'imported',  label: 'Nhập',     w: 60, align: 'right' },
   { id: 'exported',  label: 'Xuất',     w: 60, align: 'right' },
@@ -690,6 +691,7 @@ export default function Inventory() {
     manufacturer_id:    f.manufacturerId || undefined,
     filter_cycles:      f.filterCycles.length > 0 ? f.filterCycles : undefined,
     filter_machines:    f.filterMachines.length > 0 ? f.filterMachines : undefined,
+    filter_nmsx:        f.filterNmsx.length > 0 ? f.filterNmsx : undefined,
     date_pct_ranges:    f.datePctRanges.length > 0 ? f.datePctRanges : undefined,
     ncc_ids:            f.nccIds.length > 0 ? f.nccIds : undefined,
   }
@@ -742,7 +744,7 @@ export default function Inventory() {
             'Kho': e.location?.warehouse?.name ?? '', 'Loại kho': e.material?.category ?? '',
             'Mã hàng': e.material?.material_code ?? '', 'Tên hàng': e.material?.short_name ?? '',
             'NCC': e.ncc?.name ?? '', 'Shelflife (ngày)': e.shelf_life_days ?? '',
-            'Mã pallet': e.pallet_code, 'Vị trí': e.location?.location_code ?? '',
+            'Mã pallet': e.pallet_code, 'NMSX': e.nmsx ?? '', 'Vị trí': e.location?.location_code ?? '',
             'Nhập': e.cartons_imported, 'Xuất': exported, 'Tồn': remaining,
             'Nhặt lẻ': reserved, 'Khả dụng': Math.max(0, Number(remaining) - Number(reserved)),
             'Ngày SX': e.production_date ? formatTimestampDate(e.production_date) : '',
@@ -785,7 +787,7 @@ export default function Inventory() {
   function resetFilters() {
     setInventory({
       search: '', filterLocations: [], filterMaterialIds: [], qaStatusIds: [], status: '',
-      materialCategories: [], manufacturerId: '', filterCycles: [], filterMachines: [], nccIds: [], datePctRanges: [], page: 1,
+      materialCategories: [], manufacturerId: '', filterCycles: [], filterMachines: [], filterNmsx: [], nccIds: [], datePctRanges: [], page: 1,
     })
   }
 
@@ -801,7 +803,7 @@ export default function Inventory() {
 
   const hasFilters = !!(f.search || f.filterLocations.length > 0 || f.filterMaterialIds.length > 0
     || f.qaStatusIds.length > 0 || f.status || f.materialCategories.length > 0
-    || f.manufacturerId || f.filterCycles.length > 0 || f.filterMachines.length > 0 || f.nccIds.length > 0 || f.datePctRanges.length > 0)
+    || f.manufacturerId || f.filterCycles.length > 0 || f.filterMachines.length > 0 || f.filterNmsx.length > 0 || f.nccIds.length > 0 || f.datePctRanges.length > 0)
 
   // Filter option lists
   const allowedWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
@@ -820,6 +822,17 @@ export default function Inventory() {
   const materialOpts   = (facets?.materials ?? []).map(m => ({ value: m.id, label: m.name ? `${m.code} – ${m.name}` : m.code }))
   const cycleOpts      = (facets?.cycles ?? []).map(c => ({ value: c, label: c }))
   const machineOpts    = (facets?.machines ?? []).map(m => ({ value: m, label: m }))
+  // NMSX = nmsx_code các kho tổng (B/D…) + O (gia công ngoài). Dedup theo value.
+  const nmsxOpts: { value: string; label: string }[] = (() => {
+    const out: { value: string; label: string }[] = []
+    const seen = new Set<string>()
+    for (const w of (warehouses as any[])) {
+      const code = String(w.nmsx_code ?? '').trim()
+      if (code && !seen.has(code)) { seen.add(code); out.push({ value: code, label: `${code} — ${w.name}` }) }
+    }
+    if (!seen.has('O')) out.push({ value: 'O', label: 'O — Gia công ngoài' })
+    return out
+  })()
   const datePctOpts    = DATE_PCT_OPTIONS
 
   function closeActionModal() {
@@ -845,6 +858,8 @@ export default function Inventory() {
       onChange: v => setInventory({ filterCycles: v, page: 1 }) },
     { key: 'machine', label: 'Máy', type: 'multi', options: machineOpts, selected: f.filterMachines, searchable: machineOpts.length > 5,
       onChange: v => setInventory({ filterMachines: v, page: 1 }) },
+    { key: 'nmsx', label: 'NMSX', type: 'multi', options: nmsxOpts, selected: f.filterNmsx, searchable: false,
+      onChange: v => setInventory({ filterNmsx: v, page: 1 }) },
     { key: 'datePct', label: '% Date', type: 'multi', options: datePctOpts, selected: f.datePctRanges, searchable: false,
       onChange: v => setInventory({ datePctRanges: v, page: 1 }) },
     { key: 'ncc', label: 'NCC', type: 'multi', options: nccFilterOpts, selected: f.nccIds, searchable: nccFilterOpts.length > 5,
@@ -855,6 +870,7 @@ export default function Inventory() {
     search: f.search, warehouseIds: f.warehouseIds, materialCategories: f.materialCategories,
     status: f.status, filterMaterialIds: f.filterMaterialIds, filterLocations: f.filterLocations,
     qaStatusIds: f.qaStatusIds, filterCycles: f.filterCycles, filterMachines: f.filterMachines,
+    filterNmsx: f.filterNmsx,
     datePctRanges: f.datePctRanges,
     nccIds: f.nccIds,
   }
@@ -1204,6 +1220,10 @@ function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick, warehouse
           )}
         </div>
       </TableCell>
+      {/* NMSX (đoạn 6 QR pallet) */}
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        <span className="text-[10px] font-mono font-semibold">{e.nmsx ?? <span className="text-slate-300 font-sans font-normal">—</span>}</span>
+      </TableCell>
       {/* Vị trí */}
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px] font-mono text-slate-700 truncate block" title={loc}>{loc}</span>
@@ -1411,6 +1431,7 @@ function DetailPanel({ entry: e, onClose, warehouseMap }: { entry: InventoryEntr
           <Row label="NMSX"    value={e.manufacturer?.code ?? '—'} mono />
           <Row label="Chu kỳ" value={e.cycle ?? '—'} mono />
           <Row label="Máy"    value={e.machine_code ?? '—'} mono />
+          <Row label="NMSX"   value={e.nmsx ?? '—'} mono />
         </Section>
 
         {/* Import */}

@@ -28,7 +28,7 @@ const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Mi
 const PAGE_SIZE = 500
 const EXPORT_MAX = 50_000  // chặn export nếu vượt — yêu cầu lọc hẹp lại (tránh treo trình duyệt)
 
-// Cột bảng — thứ tự PHẢI khớp các <TableCell> mỗi dòng (31 cột). Cột 0 (Ngày xuất) sticky-left.
+// Cột bảng — thứ tự PHẢI khớp các <TableCell> mỗi dòng (32 cột). Cột 0 (Ngày xuất) sticky-left.
 const SCANLOG_COLS: { id: string; label: string; align?: 'right' }[] = [
   { id: 'delivery_date', label: 'Ngày xuất' },
   { id: 'warehouse',     label: 'Kho' },
@@ -47,6 +47,7 @@ const SCANLOG_COLS: { id: string; label: string; align?: 'right' }[] = [
   { id: 'location',      label: 'Vị trí' },
   { id: 'machine',       label: 'Máy' },
   { id: 'cycle',         label: 'Chu kỳ' },
+  { id: 'nmsx',          label: 'NMSX' },
   { id: 'import_date',   label: 'Ngày nhập' },
   { id: 'header_text',   label: 'Ghi chú' },
   { id: 'scanner',       label: 'Người quét' },
@@ -63,7 +64,7 @@ const SCANLOG_COLS: { id: string; label: string; align?: 'right' }[] = [
   { id: 'completed_at',  label: 'TG hoàn thành' },
 ]
 const SCANLOG_COL_DEFAULTS = [
-  72, 72, 70, 90, 110, 80, 100, 70, 130, 50, 58, 58, 58, 52, 70, 50, 52, 58, 110, 80,
+  72, 72, 70, 90, 110, 80, 100, 70, 130, 50, 58, 58, 58, 52, 70, 50, 52, 48, 58, 110, 80,
   120, 120, 90, 80, 90, 90, 80, 120, 120, 120, 120,
 ]
 
@@ -117,6 +118,7 @@ function buildParams(f: ScanLogFilters): ScanLogParams {
     machine_codes:     f.machines.length > 0  ? f.machines.join(',')  : undefined,
     cycles:            f.cycles.length > 0    ? f.cycles.join(',')    : undefined,
     scanner_name:      f.scanner_name  || undefined,
+    nmsx:              f.nmsx.length > 0      ? f.nmsx.join(',')      : undefined,
   }
 }
 
@@ -136,7 +138,7 @@ export default function OutboundScanLog() {
 
   const { data: warehousesData } = useWarehouses()
   const { data: whTypesData    } = useWarehouseTypes()
-  const warehouses  = (warehousesData as { id: string; name: string }[] | undefined) ?? []
+  const warehouses  = (warehousesData as { id: string; name: string; nmsx_code?: string | null }[] | undefined) ?? []
   const categories  = (whTypesData ?? []).map(t => t.value)
 
   const { data: facets } = useOutboundScanLogFacets(filters.material_category || undefined)
@@ -173,6 +175,17 @@ export default function OutboundScanLog() {
     })), [materials])
   const machineOpts   = useMemo(() => (facets?.machines ?? []).map(m => ({ value: m, label: m })), [facets])
   const cycleOpts     = useMemo(() => (facets?.cycles   ?? []).map(c => ({ value: c, label: c })), [facets])
+  // NMSX = nmsx_code các kho tổng (B/D…) + O (gia công ngoài). Dedup theo value.
+  const nmsxOpts      = useMemo(() => {
+    const out: { value: string; label: string }[] = []
+    const seen = new Set<string>()
+    for (const w of warehouses) {
+      const code = (w.nmsx_code ?? '').trim()
+      if (code && !seen.has(code)) { seen.add(code); out.push({ value: code, label: `${code} — ${w.name}` }) }
+    }
+    if (!seen.has('O')) out.push({ value: 'O', label: 'O — Gia công ngoài' })
+    return out
+  }, [warehouses])
 
   // ─── Filter chip bar (đồng nhất Manhattan FilterBar) ───
   const filterDefs: FilterDef[] = [
@@ -188,6 +201,8 @@ export default function OutboundScanLog() {
       onChange: v => setScanLog({ machines: v }) },
     { key: 'cycle',        label: 'Chu kỳ',      type: 'multi', options: cycleOpts, selected: filters.cycles, searchable: false,
       onChange: v => setScanLog({ cycles: v }) },
+    { key: 'nmsx',         label: 'NMSX',        type: 'multi', options: nmsxOpts, selected: filters.nmsx, searchable: false,
+      onChange: v => setScanLog({ nmsx: v }) },
     { key: 'group_code',   label: 'Số xe',       type: 'text', value: filters.group_code, placeholder: 'Số xe…',
       onChange: v => setScanLog({ group_code: v }) },
     { key: 'distributor',  label: 'NPP',         type: 'text', value: filters.distributor, placeholder: 'NPP…',
@@ -206,6 +221,7 @@ export default function OutboundScanLog() {
     material_category: filters.material_category, group_code: filters.group_code,
     distributor: filters.distributor, delivery_code: filters.delivery_code, pallet_code: filters.pallet_code,
     materials: filters.materials, machines: filters.machines, cycles: filters.cycles, scanner_name: filters.scanner_name,
+    nmsx: filters.nmsx,
   }
   const savedViews = useSavedViewsStore(s => s.views['scanlog'] ?? [])
   const activeViewId = useMemo(() =>
@@ -257,7 +273,8 @@ export default function OutboundScanLog() {
           'HSD': expiry ? formatDate(expiry) : '',
           'Date cũ nhất': row.best_available_date ? formatDate(row.best_available_date) : '',
           '% Date': pct ?? '', 'Vị trí': row.location_code ?? '', 'Máy': row.machine_code ?? '',
-          'Chu kỳ': row.cycle ?? '', 'Ngày nhập': row.import_date ? formatTimestampDate(row.import_date, true) : '',
+          'Chu kỳ': row.cycle ?? '', 'NMSX': row.nmsx ?? '',
+          'Ngày nhập': row.import_date ? formatTimestampDate(row.import_date, true) : '',
           'Ghi chú': row.header_text ?? '', 'Người quét': row.scanner_name ?? '',
           'TG quét': fmtTs(row.scanned_at),
           'TG check NL': row.is_loose_picking ? fmtTs(row.loose_confirmed_at) : '',
@@ -443,6 +460,7 @@ export default function OutboundScanLog() {
                     <TableCell className="px-2 py-1 text-[10px] font-mono whitespace-nowrap">{row.location_code ?? <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{row.machine_code ?? <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{row.cycle ?? <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">{row.nmsx ?? <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
                       {row.import_date ? formatTimestampDate(row.import_date, true) : <span className="text-slate-300">—</span>}
                     </TableCell>

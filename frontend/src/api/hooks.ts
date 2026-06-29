@@ -205,7 +205,7 @@ export function useUpdateQAStatus() {
 export function useCreateWarehouse() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { code: string; name: string; address?: string; warehouse_type: string; inventory_mode?: string; shipto_codes?: string }) =>
+    mutationFn: (body: { code: string; name: string; address?: string; warehouse_type: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string }) =>
       apiClient.post('/masterdata/warehouses', body).then((r) => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouses'] }),
   })
@@ -214,7 +214,7 @@ export function useCreateWarehouse() {
 export function useUpdateWarehouse() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; name?: string; address?: string; is_active?: boolean; warehouse_type?: string; inventory_mode?: string; shipto_codes?: string }) =>
+    mutationFn: ({ id, ...body }: { id: string; name?: string; address?: string; is_active?: boolean; warehouse_type?: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string }) =>
       apiClient.put(`/masterdata/warehouses/${id}`, body).then((r) => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouses'] }),
   })
@@ -772,6 +772,7 @@ export function useInventoryEntries(params?: {
   manufacturer_id?: string
   filter_cycles?: string[]
   filter_machines?: string[]
+  filter_nmsx?: string[]
   ncc_ids?: string[]
   date_pct_ranges?: string[]
 }, enabled = true) {
@@ -781,7 +782,7 @@ export function useInventoryEntries(params?: {
     staleTime: 30_000,
     placeholderData: keepPreviousData, // đổi trang/lọc: giữ dữ liệu cũ, không trắng bảng (cảm giác tức thì)
     queryFn: async () => {
-      const { warehouse_ids, categories, filter_locations, filter_material_ids, qa_status_ids, filter_cycles, filter_machines, ncc_ids, date_pct_ranges, ...rest } = params ?? {}
+      const { warehouse_ids, categories, filter_locations, filter_material_ids, qa_status_ids, filter_cycles, filter_machines, filter_nmsx, ncc_ids, date_pct_ranges, ...rest } = params ?? {}
       const { data } = await apiClient.get('/wms/inventory', {
         params: {
           ...rest,
@@ -792,6 +793,7 @@ export function useInventoryEntries(params?: {
           ...(qa_status_ids?.length       ? { qa_status_ids:      qa_status_ids.join(',')       } : {}),
           ...(filter_cycles?.length       ? { filter_cycles:      filter_cycles.join(',')       } : {}),
           ...(filter_machines?.length     ? { filter_machines:    filter_machines.join(',')     } : {}),
+          ...(filter_nmsx?.length         ? { filter_nmsx:        filter_nmsx.join(',')         } : {}),
           ...(ncc_ids?.length             ? { ncc_ids:            ncc_ids.join(',')             } : {}),
           ...(date_pct_ranges?.length     ? { date_pct_ranges:    date_pct_ranges.join(',')     } : {}),
         },
@@ -825,7 +827,7 @@ export function useInventorySummary(params?: Parameters<typeof useInventoryEntri
     staleTime: 30_000,
     placeholderData: keepPreviousData,
     queryFn: async () => {
-      const { warehouse_ids, categories, filter_locations, filter_material_ids, qa_status_ids, filter_cycles, filter_machines, ncc_ids, date_pct_ranges, page, limit, ...rest } = params ?? {}
+      const { warehouse_ids, categories, filter_locations, filter_material_ids, qa_status_ids, filter_cycles, filter_machines, filter_nmsx, ncc_ids, date_pct_ranges, page, limit, ...rest } = params ?? {}
       void page; void limit // tổng hợp trả tất cả nhóm, phân trang client-side
       const { data } = await apiClient.get('/wms/inventory/summary', {
         params: {
@@ -837,6 +839,7 @@ export function useInventorySummary(params?: Parameters<typeof useInventoryEntri
           ...(qa_status_ids?.length       ? { qa_status_ids:      qa_status_ids.join(',')       } : {}),
           ...(filter_cycles?.length       ? { filter_cycles:      filter_cycles.join(',')       } : {}),
           ...(filter_machines?.length     ? { filter_machines:    filter_machines.join(',')     } : {}),
+          ...(filter_nmsx?.length         ? { filter_nmsx:        filter_nmsx.join(',')         } : {}),
           ...(ncc_ids?.length             ? { ncc_ids:            ncc_ids.join(',')             } : {}),
           ...(date_pct_ranges?.length     ? { date_pct_ranges:    date_pct_ranges.join(',')     } : {}),
         },
@@ -848,7 +851,7 @@ export function useInventorySummary(params?: Parameters<typeof useInventoryEntri
 
 // Lấy TOÀN BỘ entry khớp filter để export Excel (BE phân trang nội bộ). On-demand, không phải useQuery.
 export async function fetchInventoryExport(params?: Parameters<typeof useInventoryEntries>[0]): Promise<InventoryEntry[]> {
-  const { warehouse_ids, categories, filter_locations, filter_material_ids, qa_status_ids, filter_cycles, filter_machines, ncc_ids, date_pct_ranges, page, limit, ...rest } = params ?? {}
+  const { warehouse_ids, categories, filter_locations, filter_material_ids, qa_status_ids, filter_cycles, filter_machines, filter_nmsx, ncc_ids, date_pct_ranges, page, limit, ...rest } = params ?? {}
   void page; void limit
   const { data } = await apiClient.get('/wms/inventory/export', {
     params: {
@@ -860,6 +863,7 @@ export async function fetchInventoryExport(params?: Parameters<typeof useInvento
       ...(qa_status_ids?.length       ? { qa_status_ids:      qa_status_ids.join(',')       } : {}),
       ...(filter_cycles?.length       ? { filter_cycles:      filter_cycles.join(',')       } : {}),
       ...(filter_machines?.length     ? { filter_machines:    filter_machines.join(',')     } : {}),
+      ...(filter_nmsx?.length         ? { filter_nmsx:        filter_nmsx.join(',')         } : {}),
       ...(ncc_ids?.length             ? { ncc_ids:            ncc_ids.join(',')             } : {}),
       ...(date_pct_ranges?.length     ? { date_pct_ranges:    date_pct_ranges.join(',')     } : {}),
     },
@@ -1863,6 +1867,7 @@ export type OutboundScanLogEntry = {
   shelf_life_days: number | null
   cycle: string | null
   machine_code: string | null
+  nmsx: string | null
   import_date: string | null
   location_code: string | null
   scanner_name: string | null
@@ -1882,6 +1887,7 @@ export type ScanLogParams = {
   machine_codes?: string       // comma-separated
   cycles?: string              // comma-separated
   scanner_name?: string
+  nmsx?: string                // comma-separated
   page?: number
   limit?: number
 }

@@ -353,6 +353,7 @@ export interface InventoryEntry {
   warehouse_id:       string | null
   material_id:        string | null
   manufacturer_id:    string | null
+  nmsx:               string | null
   cycle:              string | null
   machine_code:       string | null
   pallet_sequence_no: number | null

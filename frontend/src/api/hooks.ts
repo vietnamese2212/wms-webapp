@@ -205,7 +205,7 @@ export function useUpdateQAStatus() {
 export function useCreateWarehouse() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { code: string; name: string; address?: string; warehouse_type: string; inventory_mode?: string }) =>
+    mutationFn: (body: { code: string; name: string; address?: string; warehouse_type: string; inventory_mode?: string; shipto_codes?: string }) =>
       apiClient.post('/masterdata/warehouses', body).then((r) => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouses'] }),
   })
@@ -214,7 +214,7 @@ export function useCreateWarehouse() {
 export function useUpdateWarehouse() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; name?: string; address?: string; is_active?: boolean; warehouse_type?: string; inventory_mode?: string }) =>
+    mutationFn: ({ id, ...body }: { id: string; name?: string; address?: string; is_active?: boolean; warehouse_type?: string; inventory_mode?: string; shipto_codes?: string }) =>
       apiClient.put(`/masterdata/warehouses/${id}`, body).then((r) => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouses'] }),
   })

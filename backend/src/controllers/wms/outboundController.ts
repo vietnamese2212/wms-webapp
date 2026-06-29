@@ -466,9 +466,12 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
     .eq('id', gdoId).single()
   if (!gdo?.shipto_party || gdo.transfer_status) return
 
+  // Khớp ship-to → kho: code chính HOẶC mã ship-to phụ (shipto_codes). 1 kho có thể có nhiều ship-to.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: destWh } = await supabase.from('Warehouse')
-    .select('id, code, name, inventory_mode').eq('code', gdo.shipto_party).eq('is_active', true).maybeSingle()
+    .select('id, code, name, inventory_mode')
+    .or(`code.eq.${gdo.shipto_party},shipto_codes.cs.{${gdo.shipto_party}}`)
+    .eq('is_active', true).maybeSingle()
   if (!destWh) return
   // Kho đích NONE (không theo dõi tồn, vd bộ phận Sản xuất) → xuất TIÊU HAO: chỉ trừ tồn nguồn,
   // KHÔNG tạo lệnh chuyển kho / không bắt nhận. (đích QR/QTY mới là chuyển kho đầy đủ)

@@ -9,7 +9,10 @@
 const { supabase, S, readRows } = require('./_upload_util')
 const { randomUUID } = require('crypto')
 
-const KEYS = ['code', 'name', 'warehouse_type', 'inventory_mode', 'nmsx_code', 'address']
+const KEYS = ['code', 'name', 'warehouse_type', 'inventory_mode', 'nmsx_code', 'address', 'shipto_codes']
+
+// "A, B" → ['A','B'] (UPPER, bỏ trùng/rỗng)
+const parseShipto = v => [...new Set(String(v ?? '').split(',').map(s => s.toUpperCase().trim()).filter(Boolean))]
 
 async function main() {
   const rows = readRows(process.argv[2] || '../templates/1_Kho.xlsx', KEYS)
@@ -27,6 +30,7 @@ async function main() {
       inventory_mode: (S(r.inventory_mode) || 'QR').toUpperCase(),
       nmsx_code: S(r.nmsx_code), address: S(r.address), updated_at: now,
     }
+    if (r.shipto_codes !== undefined && S(r.shipto_codes) !== null) fields.shipto_codes = parseShipto(r.shipto_codes)
     const existing = byName.get(name.toLowerCase())
     const owner = codeOwner.get(code.toLowerCase())
     if (owner && (!existing || owner !== existing.id)) {

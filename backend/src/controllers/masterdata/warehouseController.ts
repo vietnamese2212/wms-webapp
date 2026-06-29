@@ -10,6 +10,26 @@ function extractCount(arr: unknown): number {
   return 0
 }
 
+// Chuẩn hoá danh sách ship-to phụ: nhận mảng hoặc chuỗi "A, B" → mảng mã UPPER, bỏ trùng/rỗng.
+function normShiptoCodes(input: unknown): string[] {
+  const raw = Array.isArray(input) ? input : String(input ?? '').split(',')
+  return [...new Set(raw.map(s => String(s).toUpperCase().trim()).filter(Boolean))]
+}
+
+// Chặn 1 mã ship-to thuộc >1 kho (gây mơ hồ auto-detect chuyển kho). Trả mã đụng đầu tiên (nếu có).
+async function findShiptoClash(codes: string[], code: string, excludeId?: string): Promise<string | null> {
+  const all = [...new Set([code.toUpperCase().trim(), ...codes].filter(Boolean))]
+  if (!all.length) return null
+  const { data } = await supabase.from('Warehouse').select('id, code, shipto_codes')
+  for (const w of (data ?? []) as { id: string; code: string; shipto_codes: string[] | null }[]) {
+    if (excludeId && w.id === excludeId) continue
+    const owned = new Set([String(w.code).toUpperCase().trim(), ...(w.shipto_codes ?? []).map(s => String(s).toUpperCase().trim())])
+    const hit = all.find(c => owned.has(c))
+    if (hit) return hit
+  }
+  return null
+}
+
 export async function listWarehouses(req: Request, res: Response) {
   try {
     const onlyActive = req.query.active === 'true'
@@ -55,7 +75,7 @@ export async function getWarehouse(req: Request, res: Response) {
 
 export async function createWarehouse(req: Request, res: Response) {
   try {
-    const { code, name, address, warehouse_type, inventory_mode } = req.body
+    const { code, name, address, warehouse_type, inventory_mode, shipto_codes } = req.body
     if (!code || !name) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu code hoặc name')
     if (!warehouse_type || !['CENTRAL', 'NPP'].includes(warehouse_type))
       return fail(res, 400, 'VALIDATION_ERROR', 'Chức năng kho không hợp lệ (CENTRAL hoặc NPP)')
@@ -63,10 +83,14 @@ export async function createWarehouse(req: Request, res: Response) {
     if (!INVENTORY_MODES.includes(mode))
       return fail(res, 400, 'VALIDATION_ERROR', 'Chế độ quản tồn không hợp lệ (QR, QTY hoặc NONE)')
 
+    const shiptoArr = normShiptoCodes(shipto_codes)
+    const clash = await findShiptoClash(shiptoArr, String(code))
+    if (clash) return fail(res, 409, 'DUPLICATE', `Mã ship-to "${clash}" đã thuộc kho khác`)
+
     const actor = req.user?.name || null
     const { data, error } = await supabase
       .from('Warehouse')
-      .insert({ id: randomUUID(), code: String(code).toUpperCase().trim(), name: String(name).trim(), address, warehouse_type, inventory_mode: mode, created_by: actor, updated_by: actor, updated_at: new Date().toISOString() })
+      .insert({ id: randomUUID(), code: String(code).toUpperCase().trim(), name: String(name).trim(), address, warehouse_type, inventory_mode: mode, shipto_codes: shiptoArr, created_by: actor, updated_by: actor, updated_at: new Date().toISOString() })
       .select().single()
 
     if (error) {
@@ -79,11 +103,19 @@ export async function createWarehouse(req: Request, res: Response) {
 
 export async function updateWarehouse(req: Request, res: Response) {
   try {
-    const { name, address, is_active, warehouse_type, inventory_mode } = req.body
+    const { name, address, is_active, warehouse_type, inventory_mode, shipto_codes } = req.body
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: req.user?.name || null }
     if (name !== undefined) patch.name = String(name).trim()
     if (address !== undefined) patch.address = address
     if (is_active !== undefined) patch.is_active = Boolean(is_active)
+    if (shipto_codes !== undefined) {
+      const shiptoArr = normShiptoCodes(shipto_codes)
+      const { data: cur } = await supabase.from('Warehouse').select('code').eq('id', req.params.id).maybeSingle()
+      const code = (cur as { code?: string } | null)?.code ?? ''
+      const clash = await findShiptoClash(shiptoArr, code, req.params.id)
+      if (clash) return fail(res, 409, 'DUPLICATE', `Mã ship-to "${clash}" đã thuộc kho khác`)
+      patch.shipto_codes = shiptoArr
+    }
     if (warehouse_type !== undefined) {
       if (!['CENTRAL', 'NPP'].includes(warehouse_type))
         return fail(res, 400, 'VALIDATION_ERROR', 'Chức năng kho không hợp lệ')

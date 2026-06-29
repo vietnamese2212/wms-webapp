@@ -36,8 +36,9 @@ make('1_Kho.xlsx', 'Kho', [
   { label: 'Chế độ tồn (QR/QTY/NONE)', key: 'inventory_mode' },
   { label: 'Mã NMSX',                  key: 'nmsx_code' },
   { label: 'Địa chỉ',                  key: 'address' },
+  { label: 'Ship-to phụ (phẩy)',       key: 'shipto_codes' },
 ], [
-  { code: 'BV', name: 'Kho Ba Vì', warehouse_type: 'CENTRAL', inventory_mode: 'QR', nmsx_code: 'B', address: 'Ba Vì, Hà Nội' },
+  { code: '20000016', name: 'Kho Ba Vì', warehouse_type: 'CENTRAL', inventory_mode: 'QR', nmsx_code: 'B', address: 'Ba Vì, Hà Nội', shipto_codes: '20000018, 20000019' },
 ])
 
 // 2) NCC / ĐVVT

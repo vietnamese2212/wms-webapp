@@ -32,7 +32,7 @@ function apiMsg(err: unknown) {
 
 // ─── Warehouse Dialog ─────────────────────────────────────────────────────────
 
-interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
 
 // Chế độ quản tồn — độc lập với warehouse_type (CENTRAL/NPP). Xem migration 20260626_warehouse_inventory_mode.sql
 type InvMode = 'QR' | 'QTY' | 'NONE'
@@ -50,6 +50,7 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
   const [address,       setAddress]       = useState(wh?.address ?? '')
   const [warehouseType, setWarehouseType] = useState<'CENTRAL' | 'NPP'>((wh?.warehouse_type as 'CENTRAL' | 'NPP') ?? 'CENTRAL')
   const [invMode,       setInvMode]       = useState<InvMode>((wh?.inventory_mode as InvMode) ?? 'QR')
+  const [shiptoCodes,   setShiptoCodes]   = useState((wh?.shipto_codes ?? []).join(', '))
   const [isActive,      setIsActive]      = useState(wh?.is_active ?? true)
   const [err, setErr] = useState('')
 
@@ -62,12 +63,12 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
     if (!code.trim() || !name.trim()) { setErr('Mã và tên kho là bắt buộc'); return }
     if (isEdit) {
       update(
-        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode },
+        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     } else {
       create(
-        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType, inventory_mode: invMode },
+        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     }
@@ -116,6 +117,11 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
               </SelectContent>
             </Select>
             <p className="text-[10px] text-slate-400">{INV_MODE_META[invMode].desc}</p>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Mã ship-to phụ</Label>
+            <Input value={shiptoCodes} onChange={e => setShiptoCodes(e.target.value.toUpperCase())} placeholder="vd: 20000018, 20000019" />
+            <p className="text-[10px] text-slate-400">Ngoài mã kho chính. Nhiều mã cách nhau dấu phẩy. Chuyển kho về các mã này đều tự nhận về kho này.</p>
           </div>
           {isEdit && (
             <div className="flex items-center gap-2">

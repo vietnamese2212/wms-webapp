@@ -6,8 +6,10 @@
 const { supabase, S, I, readRows } = require('./_upload_util')
 const { randomUUID } = require('crypto')
 
+const KEYS = ['warehouse', 'sub_code', 'row', 'shelf', 'max_pallets', 'category', 'sub_name', 'sub_type']
+
 async function main() {
-  const rows = readRows(process.argv[2] || '../templates/5_ViTriKho.xlsx')
+  const rows = readRows(process.argv[2] || '../templates/5_ViTriKho.xlsx', KEYS)
   const { data: whs } = await supabase.from('Warehouse').select('id, code, name')
   const whByCode = new Map((whs ?? []).map(w => [String(w.code).trim().toLowerCase(), w]))
   const whByName = new Map((whs ?? []).map(w => [String(w.name).trim().toLowerCase(), w]))

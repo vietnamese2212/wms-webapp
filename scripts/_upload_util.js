@@ -14,15 +14,26 @@ const supabase = createClient(
 const S = v => { const s = String(v ?? '').trim(); return s || null }
 const I = v => { const n = parseInt(String(v ?? '').trim(), 10); return Number.isNaN(n) ? null : n }
 
-/** Đọc template: dòng 1 = nhãn, dòng 2 = key, dòng 3+ = data. Trả mảng object theo key. */
-function readRows(file) {
+/**
+ * Đọc template. Truyền `keys` (mảng key theo đúng thứ tự cột) để map theo VỊ TRÍ —
+ * chịu được cả khi người dùng đã xoá dòng key (chỉ còn nhãn + data).
+ *   - Nếu còn dòng key (raw[1] khớp keys): data từ dòng 3.
+ *   - Nếu mất dòng key: bỏ dòng nhãn (raw[0]), data từ dòng 2, map theo vị trí.
+ * Không truyền keys → giữ hành vi cũ (dòng 2 = key).
+ */
+function readRows(file, keys) {
   const wb = XLSX.readFile(path.resolve(file))
-  const ws = wb.Sheets[wb.SheetNames[0]]
-  const raw = XLSX.utils.sheet_to_json(ws, { defval: '', header: 1 })
+  const raw = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '', header: 1 })
   if (raw.length < 2) return []
-  const keys = raw[1].map(k => String(k || '').trim())
-  return raw.slice(2)
-    .map(r => Object.fromEntries(keys.map((k, i) => [k, r[i]])))
+  const norm = a => (a || []).map(x => String(x == null ? '' : x).trim())
+  const isKeyRow = r => keys && keys.length && keys.every((k, i) => norm(r)[i] === k)
+  let headerKeys, start
+  if (isKeyRow(raw[1]))           { headerKeys = keys; start = 2 }
+  else if (isKeyRow(raw[0]))      { headerKeys = keys; start = 1 }
+  else if (keys && keys.length)   { headerKeys = keys; start = 1 } // mất dòng key → map theo vị trí
+  else                            { headerKeys = norm(raw[1]); start = 2 }
+  return raw.slice(start)
+    .map(r => Object.fromEntries(headerKeys.map((k, i) => [k, r[i]])))
     .filter(r => Object.values(r).some(v => S(v)))
 }
 

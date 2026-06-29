@@ -9,8 +9,10 @@ const { randomUUID } = require('crypto')
 
 const num = v => { const n = parseFloat(String(v ?? '').replace(',', '.')); return Number.isNaN(n) ? null : n }
 
+const KEYS = ['pallet_code', 'material_code', 'warehouse', 'location_code', 'cartons', 'production_date', 'ncc', 'qa_status', 'shelf_life_days']
+
 async function main() {
-  const rows = readRows(process.argv[2] || '../templates/6_TonKho.xlsx')
+  const rows = readRows(process.argv[2] || '../templates/6_TonKho.xlsx', KEYS)
 
   const { data: mats } = await supabase.from('Material').select('id, material_code')
   const matMap = new Map((mats ?? []).map(m => [String(m.material_code).trim().toLowerCase(), m.id]))

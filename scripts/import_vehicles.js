@@ -6,8 +6,10 @@
 const { supabase, S, readRows } = require('./_upload_util')
 const { randomUUID } = require('crypto')
 
+const KEYS = ['license_plate', 'vehicle_type', 'ncc']
+
 async function main() {
-  const rows = readRows(process.argv[2] || '../templates/4_Xe.xlsx')
+  const rows = readRows(process.argv[2] || '../templates/4_Xe.xlsx', KEYS)
   const { data: vts } = await supabase.from('VehicleType').select('id, name')
   const vtMap = new Map((vts ?? []).map(v => [String(v.name).trim().toLowerCase(), v.id]))
   const { data: cos } = await supabase.from('TransportCompany').select('id, name, type')

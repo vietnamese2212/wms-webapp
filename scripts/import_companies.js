@@ -6,8 +6,10 @@
 const { supabase, S, readRows } = require('./_upload_util')
 const { randomUUID } = require('crypto')
 
+const KEYS = ['code', 'name', 'type', 'contact_name', 'contact_phone']
+
 async function main() {
-  const rows = readRows(process.argv[2] || '../templates/2_NCC_DVVT.xlsx')
+  const rows = readRows(process.argv[2] || '../templates/2_NCC_DVVT.xlsx', KEYS)
   const { data: ex } = await supabase.from('TransportCompany').select('code')
   const seen = new Set((ex ?? []).map(c => (c.code || '').toLowerCase()))
   const now = new Date().toISOString()

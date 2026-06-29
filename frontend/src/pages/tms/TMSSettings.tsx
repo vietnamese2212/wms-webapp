@@ -15,7 +15,7 @@ import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { toast } from '@/components/ui/use-toast'
 import {
   useWarehouses, useWarehouseTypes,
-  useVehicleTypes, useCreateVehicleType, useUpdateVehicleType, useReorderVehicleTypes,
+  useVehicleTypes, useCreateVehicleType, useUpdateVehicleType, useReorderVehicleTypes, useDeleteVehicleType,
   useSlotTemplates, useCreateSlotTemplate, useUpdateSlotTemplate, useDeleteSlotTemplate,
   useTransportCompanies, useCreateTransportCompany, useUpdateTransportCompany, useDeleteTransportCompany,
   useTmsVehicles, useCreateTmsVehicle, useUpdateTmsVehicle, useDeleteTmsVehicle,
@@ -47,7 +47,7 @@ function VehicleTypeDialog({ vt, open, onClose }: { vt: TmsVehicleType | null; o
     setErr('')
     if (!code || !name) { setErr('Mã và tên là bắt buộc'); return }
     if (isEdit) {
-      update({ id: vt.id, code, is_active: isActive }, { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
+      update({ id: vt.id, name, is_active: isActive }, { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
     } else {
       create({ code, name }, { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
     }
@@ -60,10 +60,11 @@ function VehicleTypeDialog({ vt, open, onClose }: { vt: TmsVehicleType | null; o
         <div className="space-y-3 py-1">
           {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
           <div className="space-y-1"><Label className="text-xs">Mã *</Label>
-            <Input value={code} onChange={e => setCode(e.target.value.toUpperCase())} placeholder="PALLET, SCA, XA…" /></div>
+            <Input value={code} onChange={e => setCode(e.target.value.toUpperCase())} placeholder="PALLET, SCA, XA…"
+              disabled={isEdit} className={isEdit ? 'bg-slate-50 cursor-not-allowed' : ''} />
+            {isEdit && <p className="text-[10px] text-slate-400">Mã là định danh cố định, không sửa được.</p>}</div>
           <div className="space-y-1"><Label className="text-xs">Tên *</Label>
-            <Input value={name} onChange={e => setName(e.target.value)} placeholder="Xe pallet, Xe SCA…"
-              disabled={isEdit} className={isEdit ? 'bg-slate-50 cursor-not-allowed' : ''} /></div>
+            <Input value={name} onChange={e => setName(e.target.value)} placeholder="Xe pallet, Xe SCA…" /></div>
           {isEdit && <div className="flex items-center gap-2">
             <input id="vt-active" type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} className="h-4 w-4 rounded accent-blue-600" />
             <Label htmlFor="vt-active" className="text-sm cursor-pointer">Đang hoạt động</Label>
@@ -340,7 +341,8 @@ export default function TMSSettings() {
   // Quyền write từng tab — mịn theo capability (create / edit / delete)
   const vtCreate = can(perms, 'tms_vehicle_types', 'create')
   const vtEdit   = can(perms, 'tms_vehicle_types', 'edit')      // sửa + kéo-thả thứ tự
-  const vtWrite  = vtCreate || vtEdit                            // hiện cột thao tác
+  const vtDelete = can(perms, 'tms_vehicle_types', 'delete')
+  const vtWrite  = vtCreate || vtEdit || vtDelete               // hiện cột thao tác
 
   const slotCreate = can(perms, 'tms_slots', 'create')
   const slotEdit   = can(perms, 'tms_slots', 'edit')
@@ -379,6 +381,7 @@ export default function TMSSettings() {
   const { data: vehicleTypes = [], isLoading: loadingVT } = useVehicleTypes()
   const [editingVT, setEditingVT] = useState<TmsVehicleType | null>(null)
   const [showVTDlg, setShowVTDlg] = useState(false)
+  const { mutate: deleteVT } = useDeleteVehicleType()
 
   // Kéo-thả sắp thứ tự loại xe (kiểu AppSheet: grip + chỉ báo trên/dưới theo nửa dòng)
   const reorderVT = useReorderVehicleTypes()
@@ -500,7 +503,7 @@ export default function TMSSettings() {
                         <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Mã</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Tên loại xe</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Trạng thái</TableHead>
-                        {vtEdit && <TableHead className="px-2 py-1.5 w-12" />}
+                        {vtWrite && <TableHead className="px-2 py-1.5 w-16" />}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -532,12 +535,22 @@ export default function TMSSettings() {
                               {vt.is_active ? 'Hoạt động' : 'Tạm dừng'}
                             </Badge>
                           </TableCell>
-                          {vtEdit && (
+                          {vtWrite && (
                             <TableCell className="px-2 py-1">
-                              <button className="text-slate-400 hover:text-blue-500 transition-colors p-1"
-                                onClick={e => { e.stopPropagation(); setEditingVT(vt); setShowVTDlg(true) }}>
-                                <Pencil className="h-3.5 w-3.5" />
-                              </button>
+                              <div className="flex items-center gap-0.5">
+                                {vtEdit && (
+                                  <button className="text-slate-400 hover:text-blue-500 transition-colors p-1"
+                                    onClick={e => { e.stopPropagation(); setEditingVT(vt); setShowVTDlg(true) }}>
+                                    <Pencil className="h-3.5 w-3.5" />
+                                  </button>
+                                )}
+                                {vtDelete && (
+                                  <button className="text-slate-400 hover:text-red-500 transition-colors p-1"
+                                    onClick={e => { e.stopPropagation(); if (confirm(`Xóa loại xe "${vt.name}"?`)) deleteVT(vt.id, { onError: e2 => toast({ variant: 'destructive', title: 'Không xóa được loại xe', description: apiMsg(e2) }) }) }}>
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </button>
+                                )}
+                              </div>
                             </TableCell>
                           )}
                         </TableRow>

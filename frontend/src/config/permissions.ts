@@ -161,6 +161,7 @@ export const MODULES = {
       view:   'Xem danh sách',
       create: 'Thêm loại xe',
       edit:   'Sửa loại xe',
+      delete: 'Xóa loại xe',
     },
   },
   tms_slots: {

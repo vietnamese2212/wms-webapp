@@ -1985,6 +1985,14 @@ export function useUpdateVehicleType() {
   })
 }
 
+export function useDeleteVehicleType() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.delete(`/tms/vehicle-types/${id}`).then(r => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-vehicle-types'] }),
+  })
+}
+
 export function useSlotTemplates(params?: { warehouse_id?: string; vehicle_type_id?: string }) {
   return useQuery({
     queryKey: ['tms-slot-templates', params],

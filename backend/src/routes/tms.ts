@@ -25,6 +25,7 @@ router.get('/vehicle-types',     requireTmsView,                               v
 router.post('/vehicle-types',    requirePerm('tms_vehicle_types', 'create'),   vehicleType.createVehicleType)
 router.put('/vehicle-types/reorder', requirePerm('tms_vehicle_types', 'edit'), vehicleType.reorderVehicleTypes)  // ĐẶT TRƯỚC /:id
 router.put('/vehicle-types/:id', requirePerm('tms_vehicle_types', 'edit'),   vehicleType.updateVehicleType)
+router.delete('/vehicle-types/:id', requirePerm('tms_vehicle_types', 'delete'), vehicleType.deleteVehicleType)
 
 // DeliverySlot
 router.get('/slots',           requirePerm('tms_plan', 'view'),                slot.listSlots)

@@ -59,14 +59,37 @@ export async function createVehicleType(req: Request, res: Response) {
 export async function updateVehicleType(req: Request, res: Response) {
   try {
     const { id } = req.params
-    const { code, is_active } = req.body as { code?: string; is_active?: boolean }
+    const { code, name, is_active } = req.body as { code?: string; name?: string; is_active?: boolean }
     const updates: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: req.user?.name || null }
     if (code      !== undefined) updates.code      = code.toUpperCase().trim()
+    if (name      !== undefined) updates.name      = name.trim()
     if (is_active !== undefined) updates.is_active = is_active
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await supabase.from('VehicleType')
       .update(updates).eq('id', id).select().single()
     if (error) return fail(res, error.message)
     return ok(res, data)
+  } catch (e) { return fail(res, String(e)) }
+}
+
+export async function deleteVehicleType(req: Request, res: Response) {
+  try {
+    const { id } = req.params
+    // Gác: không xóa loại xe đang được tham chiếu (Xe / Khung giờ template / Slot booking)
+    const [veh, tpl, slot] = await Promise.all([
+      supabase.from('Vehicle').select('id', { count: 'exact', head: true }).eq('vehicle_type_id', id),
+      supabase.from('SlotTemplate').select('id', { count: 'exact', head: true }).eq('vehicle_type_id', id),
+      supabase.from('DeliverySlot').select('id', { count: 'exact', head: true }).eq('vehicle_type_id', id),
+    ])
+    const used = (veh.count ?? 0) + (tpl.count ?? 0) + (slot.count ?? 0)
+    if (used > 0) {
+      const parts = []
+      if (veh.count)  parts.push(`${veh.count} xe`)
+      if (tpl.count)  parts.push(`${tpl.count} khung giờ`)
+      if (slot.count) parts.push(`${slot.count} lịch booking`)
+      return fail(res, `Không thể xóa: loại xe đang được dùng bởi ${parts.join(', ')}. Hãy gỡ liên kết trước hoặc đặt Tạm dừng.`, 409)
+    }
+    const { error } = await supabase.from('VehicleType').delete().eq('id', id)
+    if (error) return fail(res, error.message)
+    return ok(res, { deleted: id })
   } catch (e) { return fail(res, String(e)) }
 }

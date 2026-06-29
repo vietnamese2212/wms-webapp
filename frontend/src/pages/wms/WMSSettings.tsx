@@ -14,6 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { toast } from '@/components/ui/use-toast'
 import { FilterBar, type FilterDef } from '@/components/shared/FilterBar'
 import { SearchInput } from '@/components/shared/SearchInput'
+import { SingleSelect } from '@/components/shared/SingleSelect'
 import {
   useWarehouses, useCreateWarehouse, useUpdateWarehouse, useDeleteWarehouse,
   useWarehouseTypes, useAddWarehouseType, useUpdateWarehouseType, useDeleteWarehouseType, useReorderWarehouseTypes,
@@ -798,16 +799,14 @@ export default function WMSSettings() {
           {/* Chọn kho */}
           <div className="flex items-center gap-2">
             <Label className="text-xs shrink-0 text-slate-500">Kho:</Label>
-            <Select value={effectiveWhId} onValueChange={setSelectedWhId}>
-              <SelectTrigger className="h-8 text-sm w-48">
-                <SelectValue placeholder="Chọn kho" />
-              </SelectTrigger>
-              <SelectContent>
-                {zoneAccessWh.map(w => (
-                  <SelectItem key={w.id} value={w.id}>{w.name} ({w.code})</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SingleSelect
+              options={zoneAccessWh.map(w => ({ value: w.id, label: w.name, sub: w.code }))}
+              value={effectiveWhId}
+              onChange={setSelectedWhId}
+              placeholder="Chọn kho"
+              searchPlaceholder="Tìm kho…"
+              triggerClassName="h-8 w-56 text-sm"
+            />
             {canManageZone && (
               <Button size="sm" className="gap-1.5 ml-auto" onClick={() => { setEditingZone(null); setShowZoneDlg(true) }}>
                 <Plus className="h-4 w-4" /> Thêm khu vực

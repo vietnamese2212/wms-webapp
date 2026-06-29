@@ -50,11 +50,12 @@ async function main() {
   let ok = 0, skip = 0, err = 0
   for (const r of rows) {
     const whRaw = S(r.warehouse), sub = S(r.sub_code), row = S(r.row), shelf = S(r.shelf)
-    if (!whRaw || !sub || !row || !shelf) { console.log('  SKIP (thiếu kho/khu/dãy/tầng)'); skip++; continue }
+    // Tầng (shelf) TÙY CHỌN: vị trí khối/sàn (Ngoài đường, Kho Lạnh…) không có tầng.
+    if (!whRaw || !sub || !row) { console.log('  SKIP (thiếu kho/khu/dãy)'); skip++; continue }
     const wh = whByCode.get(whRaw.toLowerCase()) || whByName.get(whRaw.toLowerCase())
     if (!wh) { console.error('  ERR — Kho không khớp:', whRaw); err++; continue }
     const prefix = (wh.nmsx_code && String(wh.nmsx_code).trim()) || wh.code
-    const code = `${prefix}_${sub}_${row}_${shelf}`
+    const code = [prefix, sub, row, shelf].filter(Boolean).join('_')
     if (seen.has(code.toLowerCase())) { console.log('  SKIP (đã có):', code); skip++; continue }
     const rec = {
       id: randomUUID(), location_code: code, warehouse_id: wh.id,

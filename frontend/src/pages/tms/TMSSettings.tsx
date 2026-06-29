@@ -785,6 +785,7 @@ export default function TMSSettings() {
                     <TableHeader>
                       <TableRow>
                         <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Mã</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Mã phụ</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Loại</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Tên ĐVVT / NCC</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Người liên hệ</TableHead>
@@ -799,6 +800,7 @@ export default function TMSSettings() {
                           className={`cursor-pointer ${detailCo?.id === co.id ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
                           onClick={() => setDetailCo(prev => prev?.id === co.id ? null : co)}>
                           <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-600">{co.code}</TableCell>
+                          <TableCell className="px-2 py-1 font-mono text-[10px] text-slate-500 whitespace-nowrap">{co.alias_codes?.length ? co.alias_codes.join(', ') : <span className="text-slate-300">—</span>}</TableCell>
                           <TableCell className="px-2 py-1 whitespace-nowrap">
                             <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${co.type === 'NCC' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>
                               {co.type ?? 'ĐVVT'}
@@ -844,6 +846,7 @@ export default function TMSSettings() {
                 </div>
                 <div><span className="text-slate-400">Loại:</span> <span className={`ml-1 text-[9px] px-1.5 py-0.5 rounded-full font-medium ${detailCo.type === 'NCC' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>{detailCo.type ?? 'ĐVVT'}</span></div>
                 <div><span className="text-slate-400">Tên:</span> <span className="font-medium">{detailCo.name}</span></div>
+                <div><span className="text-slate-400">Mã phụ:</span> <span className="font-mono font-medium">{detailCo.alias_codes?.length ? detailCo.alias_codes.join(', ') : '—'}</span></div>
                 <div><span className="text-slate-400">Người LH:</span> <span className="font-medium">{detailCo.contact_name ?? '—'}</span></div>
                 <div><span className="text-slate-400">SĐT:</span> <span className="font-medium">{detailCo.contact_phone ?? '—'}</span></div>
                 <div><span className="text-slate-400">Trạng thái:</span> <span className="font-medium">{detailCo.is_active ? 'Hoạt động' : 'Tạm dừng'}</span></div>

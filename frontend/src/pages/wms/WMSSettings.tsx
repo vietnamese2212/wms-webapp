@@ -623,6 +623,7 @@ export default function WMSSettings() {
                     <TableHeader>
                       <TableRow>
                         <TableHead className="px-3 py-2 text-xs">Mã</TableHead>
+                        <TableHead className="px-3 py-2 text-xs">Ship-to phụ</TableHead>
                         <TableHead className="px-3 py-2 text-xs">Tên kho</TableHead>
                         <TableHead className="px-3 py-2 text-xs">Chức năng</TableHead>
                         <TableHead className="px-3 py-2 text-xs">Quản tồn</TableHead>
@@ -637,6 +638,7 @@ export default function WMSSettings() {
                           className={`text-sm cursor-pointer ${!wh.is_active ? 'opacity-50' : ''} ${detailWh?.id === wh.id ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
                           onClick={() => setDetailWh(prev => prev?.id === wh.id ? null : wh)}>
                           <TableCell className="px-3 py-2 font-mono font-semibold text-[11px] text-slate-600">{wh.code}</TableCell>
+                          <TableCell className="px-3 py-2 font-mono text-[11px] text-slate-500">{wh.shipto_codes?.length ? wh.shipto_codes.join(', ') : <span className="text-slate-300">—</span>}</TableCell>
                           <TableCell className="px-3 py-2 font-medium text-slate-800">{wh.name}</TableCell>
                           <TableCell className="px-3 py-2">
                             <Badge variant="outline" className={`text-[10px] ${wh.warehouse_type === 'NPP' ? 'border-amber-400 text-amber-700 bg-amber-50' : 'border-blue-400 text-blue-700 bg-blue-50'}`}>
@@ -684,6 +686,7 @@ export default function WMSSettings() {
                 </div>
                 <div><span className="text-slate-400">Chức năng:</span> <span className="font-medium">{detailWh.warehouse_type === 'NPP' ? 'Kho NPP' : 'Kho tổng'}</span></div>
                 <div><span className="text-slate-400">Quản tồn:</span> <span className="font-medium">{invModeMeta(detailWh.inventory_mode).label}</span></div>
+                <div><span className="text-slate-400">Ship-to phụ:</span> <span className="font-mono font-medium">{detailWh.shipto_codes?.length ? detailWh.shipto_codes.join(', ') : '—'}</span></div>
                 <div><span className="text-slate-400">Địa chỉ:</span> <span className="font-medium">{detailWh.address ?? '—'}</span></div>
                 <div><span className="text-slate-400">Trạng thái:</span> <span className="font-medium">{detailWh.is_active ? 'Hoạt động' : 'Tạm dừng'}</span></div>
                 <div className="border-t pt-2 space-y-1.5">

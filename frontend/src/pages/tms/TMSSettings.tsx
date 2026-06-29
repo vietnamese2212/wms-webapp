@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { FilterBar, type FilterDef } from '@/components/shared/FilterBar'
 import { SearchInput } from '@/components/shared/SearchInput'
+import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { toast } from '@/components/ui/use-toast'
 import {
   useWarehouses, useWarehouseTypes,
@@ -84,11 +85,13 @@ function VehicleTypeDialog({ vt, open, onClose }: { vt: TmsVehicleType | null; o
 
 // ─── SlotTemplate form ───────────────────────────────────────────────────────
 
-function SlotTemplateDialog({ st, open, onClose, vehicleTypes, warehouseId, cargoOptions }: {
+function SlotTemplateDialog({ st, open, onClose, vehicleTypes, warehouseId, warehouses, cargoOptions }: {
   st: SlotTemplate | null; open: boolean; onClose: () => void
-  vehicleTypes: TmsVehicleType[]; warehouseId: string; cargoOptions: string[]
+  vehicleTypes: TmsVehicleType[]; warehouseId: string
+  warehouses: { id: string; code?: string; name: string }[]; cargoOptions: string[]
 }) {
   const isEdit = !!st
+  const [whId,        setWhId]        = useState(warehouseId)
   const [vtId,        setVtId]        = useState(st?.vehicle_type_id ?? '')
   const [cargoType,   setCargoType]   = useState(st?.cargo_type ?? 'ALL')
   const [daysOfWeek,  setDaysOfWeek]  = useState<number[]>(isEdit ? [st.day_of_week] : [1,2,3,4,5,6])
@@ -108,13 +111,14 @@ function SlotTemplateDialog({ st, open, onClose, vehicleTypes, warehouseId, carg
 
   function handleSubmit() {
     setErr('')
+    if (!isEdit && !whId) { setErr('Vui lòng chọn kho'); return }
     if (!vtId || !timeFrom || !timeTo || !maxVehicles) { setErr('Vui lòng điền đủ thông tin'); return }
     if (!isEdit && daysOfWeek.length === 0) { setErr('Chọn ít nhất 1 thứ'); return }
     if (isEdit) {
       update({ id: st.id, time_from: timeFrom, time_to: timeTo, max_vehicles: Number(maxVehicles), cargo_type: cargoType, is_active: isActive },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
     } else {
-      create({ warehouse_id: warehouseId, vehicle_type_id: vtId, cargo_type: cargoType, days_of_week: daysOfWeek, time_from: timeFrom, time_to: timeTo, max_vehicles: Number(maxVehicles) },
+      create({ warehouse_id: whId, vehicle_type_id: vtId, cargo_type: cargoType, days_of_week: daysOfWeek, time_from: timeFrom, time_to: timeTo, max_vehicles: Number(maxVehicles) },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
     }
   }
@@ -127,6 +131,9 @@ function SlotTemplateDialog({ st, open, onClose, vehicleTypes, warehouseId, carg
           {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
 
           {!isEdit && <>
+            <div className="space-y-1"><Label className="text-xs">Kho *</Label>
+              <WarehouseSingleSelect warehouses={warehouses} value={whId} onChange={setWhId} placeholder="Chọn kho…" triggerClassName="w-full h-9" />
+            </div>
             <div className="space-y-1"><Label className="text-xs">Loại xe *</Label>
               <Select value={vtId || '__none__'} onValueChange={v => setVtId(v === '__none__' ? '' : v)}>
                 <SelectTrigger><SelectValue placeholder="Chọn loại xe" /></SelectTrigger>
@@ -504,30 +511,12 @@ export default function TMSSettings() {
   return (
     <div className="h-full overflow-auto sm:p-3">
      <div className="max-w-7xl mx-auto bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm p-4 space-y-4">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <h1 className="text-base font-semibold text-slate-800 flex items-center gap-2">
-            <Settings2 className="h-4 w-4 text-slate-500" />
-            Cài đặt TMS
-          </h1>
-          <p className="text-xs text-slate-400 mt-0.5">Loại xe, khung giờ booking, ĐVVT và phương tiện</p>
-        </div>
-
-        {/* Warehouse selector — áp dụng cho tab Khung giờ */}
-        <div className="flex items-center gap-2 shrink-0">
-          <Warehouse className="h-4 w-4 text-slate-400" />
-          <Select value={warehouseId || '__none__'} onValueChange={v => setWarehouseId(v === '__none__' ? '' : v)}>
-            <SelectTrigger className="h-8 text-sm w-[200px]">
-              <SelectValue placeholder="Chọn kho…" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__none__">— Chọn kho —</SelectItem>
-              {(warehouses as { id: string; name: string }[]).map(w => (
-                <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+      <div>
+        <h1 className="text-base font-semibold text-slate-800 flex items-center gap-2">
+          <Settings2 className="h-4 w-4 text-slate-500" />
+          Cài đặt TMS
+        </h1>
+        <p className="text-xs text-slate-400 mt-0.5">Loại xe, khung giờ booking, ĐVVT và phương tiện</p>
       </div>
 
       <Tabs defaultValue={defaultTab}>
@@ -648,6 +637,26 @@ export default function TMSSettings() {
 
         {/* ── Tab: Khung giờ ── */}
         <TabsContent value="slot-templates" className="space-y-3">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <p className="text-xs text-slate-500">
+              {selectedWarehouse
+                ? <><span className="font-medium text-slate-700">{selectedWarehouse.name}</span>{' '}· {filteredTemplates.length} template</>
+                : 'Chọn kho để xem và cài đặt khung giờ'}
+            </p>
+            {slotCreate && warehouseId && (
+              <Button size="sm" className="gap-1.5" onClick={() => { setEditingST(null); setShowSTDlg(true) }}>
+                <Plus className="h-4 w-4" /> Thêm khung giờ
+              </Button>
+            )}
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1.5 shrink-0">
+              <Warehouse className="h-4 w-4 text-slate-400" />
+              <WarehouseSingleSelect warehouses={warehouses as { id: string; code?: string; name: string }[]} value={warehouseId} onChange={setWarehouseId} placeholder="Chọn kho…" triggerClassName="w-52" />
+            </div>
+            <SearchInput value={stSearch} onChange={setStSearch} placeholder="Tìm loại xe, loại hàng…" className="flex-1 min-w-[200px]" />
+            <FilterBar defs={stFilterDefs} />
+          </div>
           {!warehouseId ? (
             <div className="py-16 text-center text-slate-400 space-y-2">
               <Warehouse className="h-10 w-10 mx-auto opacity-30" />
@@ -655,23 +664,7 @@ export default function TMSSettings() {
               <p className="text-xs">Mỗi kho có khung giờ và số xe tối đa riêng</p>
             </div>
           ) : (
-            <>
-              <div className="flex items-center justify-between">
-                <p className="text-xs text-slate-500">
-                  <span className="font-medium text-slate-700">{selectedWarehouse?.name}</span>
-                  {' '}· {filteredTemplates.length} template
-                </p>
-                {slotCreate && (
-                  <Button size="sm" className="gap-1.5" onClick={() => { setEditingST(null); setShowSTDlg(true) }}>
-                    <Plus className="h-4 w-4" /> Thêm khung giờ
-                  </Button>
-                )}
-              </div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <SearchInput value={stSearch} onChange={setStSearch} placeholder="Tìm loại xe, loại hàng…" className="flex-1 min-w-[200px]" />
-                <FilterBar defs={stFilterDefs} />
-              </div>
-              <div className="flex gap-3 items-start">
+            <div className="flex gap-3 items-start">
                 <Card className="flex-1 min-w-0">
                   {loadingST ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> : filteredTemplates.length === 0 ? (
                     <div className="p-12 text-center text-slate-400 space-y-2">
@@ -754,8 +747,7 @@ export default function TMSSettings() {
                     </div>
                   </Card>
                 )}
-              </div>
-            </>
+            </div>
           )}
         </TabsContent>
 
@@ -961,7 +953,7 @@ export default function TMSSettings() {
       </Tabs>
 
       {showVTDlg && <VehicleTypeDialog vt={editingVT} open={showVTDlg} onClose={() => setShowVTDlg(false)} />}
-      {showSTDlg && warehouseId && <SlotTemplateDialog st={editingST} open={showSTDlg} onClose={() => setShowSTDlg(false)} vehicleTypes={vehicleTypes} warehouseId={warehouseId} cargoOptions={cargoOptions} />}
+      {showSTDlg && <SlotTemplateDialog st={editingST} open={showSTDlg} onClose={() => setShowSTDlg(false)} vehicleTypes={vehicleTypes} warehouseId={warehouseId} warehouses={warehouses as { id: string; code?: string; name: string }[]} cargoOptions={cargoOptions} />}
       {showCoDlg && <TransportCompanyDialog co={editingCo} open={showCoDlg} onClose={() => setShowCoDlg(false)} />}
       {showVDlg  && <VehicleDialog v={editingV} open={showVDlg} onClose={() => setShowVDlg(false)} companies={companies} vehicleTypes={vehicleTypes} lockedNccId={userNccId} />}
      </div>

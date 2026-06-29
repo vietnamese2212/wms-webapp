@@ -49,11 +49,12 @@ interface RealLocation {
 }
 
 interface WhWithCount {
-  id:        string
-  code:      string
-  name:      string
-  is_active: boolean
-  _count:    { locations: number }
+  id:         string
+  code:       string
+  name:       string
+  nmsx_code:  string | null
+  is_active:  boolean
+  _count:     { locations: number }
 }
 
 const EMPTY_FORM = { warehouse_id: '', category: '', sub_code: '', sub_name: '', row: '', shelf: '', max_pallets: '' }
@@ -151,9 +152,10 @@ export default function Locations() {
   )
 
   // ── Location code preview ────────────────────────────────────
+  // Tiền tố = nmsx_code (nếu có) || code — khớp 100% backend buildLocationCode.
   const selectedWh = warehouses.find(w => w.id === form.warehouse_id)
   const locationPreview = selectedWh && form.sub_code && form.row
-    ? [selectedWh.code, form.sub_code, form.row, form.shelf].filter(Boolean).join('_')
+    ? [(selectedWh.nmsx_code?.trim() || selectedWh.code), form.sub_code, form.row, form.shelf].filter(Boolean).join('_')
     : null
 
   // ── Handlers: location ───────────────────────────────────────

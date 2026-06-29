@@ -388,7 +388,7 @@ export default function TMSSettings() {
   const [orderedVT, setOrderedVT] = useState<TmsVehicleType[]>([])
   const [dragVTIdx, setDragVTIdx] = useState<number | null>(null)
   const [overVT, setOverVT] = useState<{ idx: number; below: boolean } | null>(null)
-  const vtKey = vehicleTypes.map(v => v.id).join(',')   // dep ổn định (tránh loop do fallback [] đổi ref)
+  const vtKey = vehicleTypes.map(v => `${v.id}:${v.code}:${v.name}:${v.is_active}`).join(',')   // gồm nội dung → sửa tên/trạng thái cũng re-sync (tránh loop do fallback [] đổi ref)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (dragVTIdx === null) setOrderedVT(vehicleTypes) }, [vtKey, dragVTIdx])
   function dropVT() {

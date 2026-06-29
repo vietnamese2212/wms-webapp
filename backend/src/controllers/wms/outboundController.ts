@@ -382,6 +382,25 @@ export async function getGDO(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
+// ─── DVVT trên phiếu xuất nguồn PHẢI khớp 1 ĐVVT (code/alias/tên) → chuẩn hoá về TÊN chính tắc ──
+// Trả { ok, name }: trống → ok(null); khớp → ok(tên chính tắc); không khớp → !ok (chặn, báo lỗi).
+async function buildDvvtResolver() {
+  const { data } = await supabase.from('TransportCompany').select('code, name, alias_codes').eq('type', 'ĐVVT')
+  const byKey = new Map<string, string>()
+  for (const c of (data ?? []) as { code: string; name: string; alias_codes: string[] | null }[]) {
+    const nm = String(c.name).trim()
+    if (c.code) byKey.set(String(c.code).trim().toLowerCase(), nm)
+    byKey.set(nm.toLowerCase(), nm)
+    for (const a of (c.alias_codes ?? [])) { const k = String(a).trim().toLowerCase(); if (k) byKey.set(k, nm) }
+  }
+  return (raw: string | null | undefined): { ok: boolean; name: string | null } => {
+    const k = String(raw ?? '').trim().toLowerCase()
+    if (!k) return { ok: true, name: null }
+    const nm = byKey.get(k)
+    return nm ? { ok: true, name: nm } : { ok: false, name: null }
+  }
+}
+
 // ─── Create GDO manually ──────────────────────────────────────
 
 export async function createGDO(req: Request, res: Response) {
@@ -395,6 +414,9 @@ export async function createGDO(req: Request, res: Response) {
     if (!delivery_code?.trim()) return fail(res, 'Số DO là bắt buộc', 400)
     if (!items?.length) return fail(res, 'Phải có ít nhất 1 mặt hàng', 400)
     if (!guardWhCreate(req, res, warehouse_id)) return
+
+    const dvvtRes = (await buildDvvtResolver())(dvvt)
+    if (!dvvtRes.ok) return fail(res, `ĐVVT "${dvvt}" không khớp danh mục — kiểm tra lại mã/tên ĐVVT`, 400)
 
     // Auto-generate group_code: warehouseCode_X_ddmmyy_stt
     const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -414,7 +436,7 @@ export async function createGDO(req: Request, res: Response) {
     const actor = req.user?.name || null
     const { error } = await supabase.from('GroupDeliveryOrder').insert({
       id: gdoId, group_code, planned_date: delivery_date, delivery_date,
-      warehouse_id: warehouse_id ?? null, dvvt: dvvt ?? null,
+      warehouse_id: warehouse_id ?? null, dvvt: dvvtRes.name,
       warehouse_type: warehouse_type ?? null, shipto_party: shipto_party ?? null, status: 'PENDING',
       created_by: actor, updated_by: actor, updated_at: now(),
     })
@@ -584,9 +606,12 @@ export async function updateGDO(req: Request, res: Response) {
     if (!gdo) return fail(res, 'Không tìm thấy chuyến xe', 404)
     if (!['PENDING', 'PAUSED'].includes(gdo.status)) return fail(res, 'Chỉ sửa được đơn ở trạng thái PENDING hoặc PAUSED', 400)
 
+    const dvvtRes = (await buildDvvtResolver())(dvvt)
+    if (!dvvtRes.ok) return fail(res, `ĐVVT "${dvvt}" không khớp danh mục — kiểm tra lại mã/tên ĐVVT`, 400)
+
     const t = now()
     const gdoUpdates: Record<string, unknown> = {
-      delivery_date, warehouse_id: warehouse_id ?? null, dvvt: dvvt ?? null, updated_at: t,
+      delivery_date, warehouse_id: warehouse_id ?? null, dvvt: dvvtRes.name, updated_at: t,
     }
     if ('gate_registration_id' in req.body) gdoUpdates.gate_registration_id = gate_registration_id ?? null
     if ('shipto_party' in req.body) gdoUpdates.shipto_party = shipto_party ?? null
@@ -1285,6 +1310,7 @@ export async function uploadExcel(req: Request, res: Response) {
 
     // ── Phase 1: pre-validate ALL vehicles, block entire upload on any error ──
 
+    const resolveDvvt = await buildDvvtResolver()
     const validationErrors: { group_code: string; errors: string[] }[] = []
 
     for (const [group_code, groupRows] of byVehicle) {
@@ -1321,6 +1347,9 @@ export async function uploadExcel(req: Request, res: Response) {
       )].filter(c => !matMap.has(c))
       if (unknownMatsV.length) errs.push(`Mã hàng chưa có trong hệ thống: ${unknownMatsV.join(', ')}`)
 
+      const dvvt_v = String(groupRows[0]['DVVT'] ?? groupRows[0]['Đơn vị'] ?? '').trim()
+      if (dvvt_v && !resolveDvvt(dvvt_v).ok) errs.push(`ĐVVT "${dvvt_v}" không khớp danh mục (mã/alias/tên)`)
+
       if (groupRows.some(r => !String(r['Material'] ?? '').trim()))
         errs.push('Có dòng trống cột Material')
 
@@ -1356,7 +1385,7 @@ export async function uploadExcel(req: Request, res: Response) {
       const delivery_date = parseExcelDate(groupRows[0]['Ngày xuất'])!
       const planned_date  = parsePlannedDate(group_code)!
 
-      const dvvt     = String(groupRows[0]['DVVT']     ?? groupRows[0]['Đơn vị']  ?? '').trim() || null
+      const dvvt     = resolveDvvt(String(groupRows[0]['DVVT'] ?? groupRows[0]['Đơn vị'] ?? '')).name
       const kho_xuat = String(groupRows[0]['Kho xuất'] ?? groupRows[0]['Kho xuat'] ?? '').trim()
       const loaiKhoSet = [...new Set(groupRows.map(r => String(r['Loại kho'] ?? r['Loai kho'] ?? '').trim()).filter(Boolean))]
       const loai_kho = loaiKhoSet.length ? loaiKhoSet.join('+') : null

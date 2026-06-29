@@ -1,10 +1,11 @@
 /**
- * Import Vị trí kho từ templates/5_ViTriKho.xlsx  (chạy SAU khi đã có Kho)
+ * Import Vị trí kho từ templates/5_ViTriKho.xlsx  (chạy SAU khi đã tạo Kho + KHU VỰC)
  * Run: cd backend && node ../scripts/import_locations.js ../templates/5_ViTriKho.xlsx
- * location_code tự ghép = TIỀN TỐ_Khu_Dãy_Tầng. Tiền tố = nmsx_code nếu có, không thì Mã kho
- *   (vd Ba Vì nmsx=B → B_TP1_1_T1; NPP không có nmsx → 10000329_TP1_1_T1). Bỏ qua location_code đã tồn tại.
- * ĐỒNG BỘ Khu vực: mỗi (kho, sub_code) tự tạo 1 WarehouseZone cùng MÃ (code=sub_code) → dashboard
- * theo khu khớp 100% với Location.sub_code. Zone đã có (theo kho+code) thì bỏ qua.
+ * location_code = TIỀN TỐ_Khu_Dãy_Tầng. Tiền tố = nmsx_code nếu có, không thì Mã kho
+ *   (vd Ba Vì nmsx=B → B_TP1_1_T1). Tầng tùy chọn (vị trí khối/sàn không có tầng).
+ * KHU VỰC (WarehouseZone) là CHUẨN: chỉ up vị trí khi sub_code đã có trong Khu vực của kho đó;
+ *   sub_name + category LẤY TỪ ZONE (theo sub_code), KHÔNG lấy từ file.
+ *   sub_code chưa có zone → BỎ QUA + báo rõ (không tự tạo zone).
  */
 const { supabase, S, I, readRows } = require('./_upload_util')
 const { randomUUID } = require('crypto')
@@ -18,56 +19,42 @@ async function main() {
   const whByName = new Map((whs ?? []).map(w => [String(w.name).trim().toLowerCase(), w]))
   const { data: ex } = await supabase.from('Location').select('location_code')
   const seen = new Set((ex ?? []).map(l => (l.location_code || '').trim().toLowerCase()))
+
+  // KHU VỰC là CHUẨN: map (warehouse_id|sub_code-lower) → zone {name, category}
+  const { data: zones } = await supabase.from('WarehouseZone').select('warehouse_id, code, name, category')
+  const zoneMap = new Map((zones ?? []).map(z => [`${z.warehouse_id}|${String(z.code).trim().toLowerCase()}`, z]))
+
   const now = new Date().toISOString()
-
-  // ── Đồng bộ Khu vực (WarehouseZone) từ sub_code: mỗi (kho, sub_code) → 1 zone cùng mã ──
-  const { data: exZones } = await supabase.from('WarehouseZone').select('warehouse_id, code, sort_order')
-  const zoneSeen = new Set((exZones ?? []).map(z => `${z.warehouse_id}|${(z.code || '').trim().toLowerCase()}`))
-  const nextSort = {}   // warehouse_id -> sort_order lớn nhất hiện có
-  ;(exZones ?? []).forEach(z => { const m = Number(z.sort_order ?? 0); if (m > (nextSort[z.warehouse_id] || 0)) nextSort[z.warehouse_id] = m })
-  const zonesToAdd = new Map()   // key = wh.id|sub(lower) → {warehouse_id, code, name, category}
-  for (const r of rows) {
-    const whRaw = S(r.warehouse), sub = S(r.sub_code)
-    if (!whRaw || !sub) continue
-    const wh = whByCode.get(whRaw.toLowerCase()) || whByName.get(whRaw.toLowerCase())
-    if (!wh) continue
-    const key = `${wh.id}|${sub.toLowerCase()}`
-    if (zoneSeen.has(key) || zonesToAdd.has(key)) continue
-    zonesToAdd.set(key, { warehouse_id: wh.id, code: sub, name: S(r.sub_name) || sub, category: S(r.category) })
-  }
-  let zoneOk = 0
-  if (zonesToAdd.size) {
-    const zrows = [...zonesToAdd.values()].map(z => {
-      nextSort[z.warehouse_id] = (nextSort[z.warehouse_id] || 0) + 1
-      return { id: randomUUID(), warehouse_id: z.warehouse_id, code: z.code, name: z.name, category: z.category, sort_order: nextSort[z.warehouse_id], is_active: true, created_at: now, updated_at: now }
-    })
-    const { error: zErr } = await supabase.from('WarehouseZone').insert(zrows)
-    if (zErr) console.error('  KHU VỰC ERR:', zErr.message)
-    else zoneOk = zrows.length
-  }
-  console.log(`Khu vực (đồng bộ từ sub_code): ${zoneOk} thêm · ${zoneSeen.size} đã có\n`)
-
   let ok = 0, skip = 0, err = 0
+  const missingZones = new Set()
   for (const r of rows) {
     const whRaw = S(r.warehouse), sub = S(r.sub_code), row = S(r.row), shelf = S(r.shelf)
-    // Tầng (shelf) TÙY CHỌN: vị trí khối/sàn (Ngoài đường, Kho Lạnh…) không có tầng.
+    // Tầng (shelf) TÙY CHỌN: vị trí khối/sàn không có tầng.
     if (!whRaw || !sub || !row) { console.log('  SKIP (thiếu kho/khu/dãy)'); skip++; continue }
     const wh = whByCode.get(whRaw.toLowerCase()) || whByName.get(whRaw.toLowerCase())
     if (!wh) { console.error('  ERR — Kho không khớp:', whRaw); err++; continue }
+
+    // Chỉ up khi sub_code đã có trong Khu vực kho của kho đó.
+    const zone = zoneMap.get(`${wh.id}|${sub.toLowerCase()}`)
+    if (!zone) { missingZones.add(sub); skip++; continue }
+
     const prefix = (wh.nmsx_code && String(wh.nmsx_code).trim()) || wh.code
     const code = [prefix, sub, row, shelf].filter(Boolean).join('_')
     if (seen.has(code.toLowerCase())) { console.log('  SKIP (đã có):', code); skip++; continue }
     const rec = {
       id: randomUUID(), location_code: code, warehouse_id: wh.id,
-      sub_code: sub, row, shelf,
+      sub_code: sub, row, shelf: shelf ?? '',   // cột shelf NOT NULL → vị trí khối dùng '' (rỗng)
       max_pallets: I(r.max_pallets) ?? 1,
-      category: S(r.category), sub_name: S(r.sub_name), sub_type: S(r.sub_type),
+      category: zone.category ?? null,   // ← lấy từ ZONE
+      sub_name: zone.name ?? null,       // ← lấy từ ZONE (theo sub_code)
+      sub_type: S(r.sub_type),
       is_active: true, created_at: now, updated_at: now,
     }
     const { error } = await supabase.from('Location').insert(rec)
     if (error) { console.error('  ERR', code, '—', error.message); err++ }
     else { console.log('  OK', code); seen.add(code.toLowerCase()); ok++ }
   }
+  if (missingZones.size) console.log(`\n⚠️ Khu chưa có trong Khu vực kho → vị trí bị BỎ QUA: ${[...missingZones].join(', ')}`)
   console.log(`\nVị trí: ${ok} thêm · ${skip} bỏ qua · ${err} lỗi`)
 }
 main().catch(e => { console.error(e); process.exit(1) })

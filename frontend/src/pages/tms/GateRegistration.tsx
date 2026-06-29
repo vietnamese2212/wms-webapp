@@ -892,9 +892,14 @@ export default function GateRegistration() {
     )
   }
 
-  // ── Vehicle options filtered by company
+  // ── Vehicle options lọc theo công ty — GOM CHI NHÁNH theo tên (1 ĐVVT nhiều mã, cùng tên)
+  // → chọn 1 ĐVVT vẫn ra đủ xe của mọi chi nhánh cùng tên.
+  const selCompanyName = companies.find(c => c.id === form.company_id)?.name
+  const companyGroupIds = selCompanyName
+    ? new Set(companies.filter(c => (c.name ?? '').trim().toLowerCase() === selCompanyName.trim().toLowerCase()).map(c => c.id))
+    : null
   const vehicleOptions: ComboOption[] = vehicles
-    .filter(v => !form.company_id || v.ncc_id === form.company_id)
+    .filter(v => !form.company_id || (companyGroupIds ? companyGroupIds.has(v.ncc_id) : v.ncc_id === form.company_id))
     .map(v => ({
       value: v.id,
       label: v.license_plate,

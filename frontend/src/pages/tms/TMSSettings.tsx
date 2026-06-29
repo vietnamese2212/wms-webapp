@@ -14,6 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { FilterBar, type FilterDef } from '@/components/shared/FilterBar'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
+import { SingleSelect } from '@/components/shared/SingleSelect'
 import { toast } from '@/components/ui/use-toast'
 import {
   useWarehouses, useWarehouseTypes,
@@ -302,26 +303,22 @@ function VehicleDialog({ v, open, onClose, companies, vehicleTypes, lockedNccId 
             {lockedNccId ? (
               <Input value={companies.find(c => c.id === lockedNccId)?.name ?? lockedNccId} disabled className="bg-slate-50 cursor-not-allowed" />
             ) : (
-              <Select value={nccId || '__none__'} onValueChange={val => setNccId(val === '__none__' ? '' : val)}>
-                <SelectTrigger><SelectValue placeholder="Chọn ĐVVT" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">— Chọn ĐVVT —</SelectItem>
-                  {companies.filter(c => c.is_active).map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <SingleSelect
+                options={companies.filter(c => c.is_active).map(c => ({ value: c.id, label: c.name, sub: c.code }))}
+                value={nccId} onChange={setNccId}
+                placeholder="Chọn ĐVVT" searchPlaceholder="Tìm tên hoặc mã ĐVVT…"
+                triggerClassName="w-full h-9" />
             )}
           </div>
           <div className="space-y-1"><Label className="text-xs">Biển số xe *</Label>
             <Input value={plate} onChange={e => setPlate(normalizeLicensePlate(e.target.value))} placeholder="30H1234"
               disabled={isEdit} className={isEdit ? 'bg-slate-50 cursor-not-allowed' : ''} /></div>
           <div className="space-y-1"><Label className="text-xs">Loại xe *</Label>
-            <Select value={vtId || '__none__'} onValueChange={val => setVtId(val === '__none__' ? '' : val)}>
-              <SelectTrigger><SelectValue placeholder="Chọn loại xe" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none__">— Chọn loại xe —</SelectItem>
-                {vehicleTypes.filter(vt => vt.is_active).map(vt => <SelectItem key={vt.id} value={vt.id}>{vt.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
+            <SingleSelect
+              options={vehicleTypes.filter(vt => vt.is_active).map(vt => ({ value: vt.id, label: vt.name, sub: vt.code }))}
+              value={vtId} onChange={setVtId}
+              placeholder="Chọn loại xe" searchPlaceholder="Tìm tên hoặc mã loại xe…"
+              triggerClassName="w-full h-9" />
           </div>
           {isEdit && <div className="flex items-center gap-2">
             <input id="v-active" type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} className="h-4 w-4 rounded accent-blue-600" />

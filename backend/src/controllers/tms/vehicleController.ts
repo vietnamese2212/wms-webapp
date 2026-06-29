@@ -26,11 +26,24 @@ export async function listVehicles(req: Request, res: Response) {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const userNccId: string | null = req.user?.ncc_id ?? null
-    const { ncc_id, is_active, unassigned } = req.query as Record<string, string>
+    const { ncc_id, is_active, unassigned, pool_branches } = req.query as Record<string, string>
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let q = supabase.from('Vehicle').select('*').order('license_plate')
     // ĐVVT user: chỉ được xem xe của mình
     if (userNccId)               q = q.eq('ncc_id', userNccId)
+    else if (ncc_id && pool_branches === 'true') {
+      // Gom CHI NHÁNH: 1 NCC/ĐVVT có thể có nhiều mã (cùng tên, khác mã) → lấy xe của TẤT CẢ
+      // công ty cùng (type, tên chuẩn hoá) để booking/đăng ký không bị thiếu xe.
+      const { data: sel } = await supabase.from('TransportCompany').select('type, name').eq('id', ncc_id).single()
+      const norm = (s: unknown) => String(s ?? '').trim().toLowerCase()
+      let ids = [ncc_id]
+      if (sel) {
+        const { data: sameType } = await supabase.from('TransportCompany').select('id, name').eq('type', (sel as { type: string }).type)
+        const group = (sameType ?? []).filter((c: { name: string }) => norm(c.name) === norm((sel as { name: string }).name)).map((c: { id: string }) => c.id)
+        if (group.length) ids = group
+      }
+      q = q.in('ncc_id', ids)
+    }
     else if (ncc_id)             q = q.eq('ncc_id', ncc_id)
     if (is_active !== undefined) q = q.eq('is_active', is_active === 'true')
     const { data, error } = await q

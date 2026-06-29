@@ -181,7 +181,7 @@ function BookSlotDialog({ vslot, order, onClose, allOrders }: {
   const isDriver = user?.job_title_name === 'Lái xe'
 
   const { data: nccVehicles = [] } = useTmsVehicles(
-    !isDriver && order?.ncc_id ? { ncc_id: order.ncc_id, is_active: 'true' } : undefined
+    !isDriver && order?.ncc_id ? { ncc_id: order.ncc_id, is_active: 'true', pool_branches: 'true' } : undefined
   )
 
   const [selectedSlot, setSelectedSlot] = useState<DeliverySlot | null>(null)
@@ -1933,7 +1933,7 @@ function TransportUpdateDialog({ order, onClose }: { order: TransferOrder | null
   const { data: allCompanies = [] } = useTransportCompanies(true)
   const dvvtName = order?.ncc?.name ?? order?.transfer_gdo?.dvvt ?? ''
   const resolvedNccId = order?.ncc?.id ?? allCompanies.find(c => c.name === dvvtName)?.id ?? null
-  const { data: dvvtVehicles = [] } = useTmsVehicles(resolvedNccId ? { ncc_id: resolvedNccId, is_active: 'true' } : undefined)
+  const { data: dvvtVehicles = [] } = useTmsVehicles(resolvedNccId ? { ncc_id: resolvedNccId, is_active: 'true', pool_branches: 'true' } : undefined)
 
   const [licensePlate, setPlate]    = useState('')
   const [driverPhone, setPhone]     = useState('')

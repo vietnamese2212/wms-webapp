@@ -37,6 +37,28 @@ function readRows(file, keys) {
     .filter(r => Object.values(r).some(v => S(v)))
 }
 
+/**
+ * Bộ phân giải theo MÃ (ưu tiên) → TÊN (fallback). Tên trùng → buộc dùng mã (trả error).
+ * Dùng cho cột tham chiếu ĐVVT/NCC/Loại xe trong file upload (đồng bộ app: app khớp theo mã).
+ */
+function codeNameResolver(items, codeKey = 'code', nameKey = 'name', idKey = 'id') {
+  const byCode = new Map(), byName = new Map(), nameCount = new Map()
+  for (const it of items) {
+    const c = String(it[codeKey] ?? '').trim().toLowerCase()
+    const n = String(it[nameKey] ?? '').trim().toLowerCase()
+    if (c) byCode.set(c, it[idKey])
+    if (n) { byName.set(n, it[idKey]); nameCount.set(n, (nameCount.get(n) ?? 0) + 1) }
+  }
+  return input => {
+    const k = String(input ?? '').trim().toLowerCase()
+    if (!k) return { id: null, error: null }
+    if (byCode.has(k)) return { id: byCode.get(k), error: null }
+    if ((nameCount.get(k) ?? 0) > 1) return { id: null, error: 'trùng tên, hãy dùng MÃ' }
+    if (byName.has(k)) return { id: byName.get(k), error: null }
+    return { id: null, error: 'không khớp (mã hoặc tên)' }
+  }
+}
+
 /** Map tên(lowercase) → id từ 1 bảng. */
 async function nameMap(table, nameCol = 'name', idCol = 'id', extra) {
   let q = supabase.from(table).select(`${idCol}, ${nameCol}`)
@@ -46,4 +68,4 @@ async function nameMap(table, nameCol = 'name', idCol = 'id', extra) {
   return m
 }
 
-module.exports = { supabase, XLSX, S, I, readRows, nameMap }
+module.exports = { supabase, XLSX, S, I, readRows, nameMap, codeNameResolver }

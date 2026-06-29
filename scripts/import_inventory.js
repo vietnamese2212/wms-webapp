@@ -4,7 +4,7 @@
  * Chạy SAU CÙNG (cần Kho + Vị trí + NCC; mã hàng đã có sẵn).
  * Mỗi dòng = 1 pallet tồn. Bỏ qua pallet_code đã tồn tại. status=IN_STOCK, origin=IMPORT.
  */
-const { supabase, S, I, readRows } = require('./_upload_util')
+const { supabase, S, I, readRows, codeNameResolver } = require('./_upload_util')
 const { randomUUID } = require('crypto')
 
 const num = v => { const n = parseFloat(String(v ?? '').replace(',', '.')); return Number.isNaN(n) ? null : n }
@@ -21,8 +21,8 @@ async function main() {
   const whByName = new Map((whs ?? []).map(w => [String(w.name).trim().toLowerCase(), w.id]))
   const { data: locs } = await supabase.from('Location').select('id, location_code')
   const locMap = new Map((locs ?? []).map(l => [String(l.location_code).trim().toLowerCase(), l.id]))
-  const { data: cos } = await supabase.from('TransportCompany').select('id, name, type')
-  const nccMap = new Map((cos ?? []).filter(c => c.type === 'NCC').map(c => [String(c.name).trim().toLowerCase(), c.id]))
+  const { data: cos } = await supabase.from('TransportCompany').select('id, code, name, type')
+  const resolveNcc = codeNameResolver((cos ?? []).filter(c => c.type === 'NCC'))
   const { data: qas } = await supabase.from('QAStatus').select('id, name')
   const qaMap = new Map((qas ?? []).map(q => [String(q.name).trim().toLowerCase(), q.id]))
   const { data: ex } = await supabase.from('InventoryEntry').select('pallet_code')
@@ -44,7 +44,7 @@ async function main() {
     if (locRaw) { locId = locMap.get(locRaw.toLowerCase()); if (!locId) { console.error('  ERR', pallet, '— Vị trí không khớp:', locRaw); err++; continue } }
     const nccRaw = S(r.ncc)
     let nccId = null
-    if (nccRaw) { nccId = nccMap.get(nccRaw.toLowerCase()); if (!nccId) { console.error('  ERR', pallet, '— NCC không khớp:', nccRaw); err++; continue } }
+    if (nccRaw) { const res = resolveNcc(nccRaw); if (!res.id) { console.error('  ERR', pallet, '— NCC ' + (res.error ?? 'không khớp') + ':', nccRaw); err++; continue } nccId = res.id }
     const qaRaw = S(r.qa_status) || 'OK'
     const qaId = qaMap.get(qaRaw.toLowerCase()) ?? null
     const prod = S(r.production_date)

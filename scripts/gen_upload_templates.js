@@ -61,10 +61,10 @@ console.log('  ✓ 3_LoaiXe_huongdan.txt')
 // 4) XE
 make('4_Xe.xlsx', 'Xe', [
   { label: 'Biển số *',           key: 'license_plate' },
-  { label: 'Loại xe (tên) *',     key: 'vehicle_type' },
-  { label: 'ĐVVT (tên) *',        key: 'ncc' },
+  { label: 'Loại xe (mã/tên) *',  key: 'vehicle_type' },
+  { label: 'ĐVVT (mã/tên) *',     key: 'ncc' },
 ], [
-  { license_plate: '29H-12345', vehicle_type: 'Xe Pallet', ncc: 'ALCA' },
+  { license_plate: '29H-12345', vehicle_type: 'PALLET', ncc: 'ALCA' },
 ])
 
 // 5) VỊ TRÍ KHO  (location_code tự ghép = MãKho_Khu_Dãy_Tầng)
@@ -89,11 +89,11 @@ make('6_TonKho.xlsx', 'TonKho', [
   { label: 'Mã vị trí',              key: 'location_code' },
   { label: 'Số thùng *',             key: 'cartons' },
   { label: 'Ngày SX (yyyy-mm-dd)',   key: 'production_date' },
-  { label: 'NCC (tên, tùy)',         key: 'ncc' },
+  { label: 'NCC (mã/tên, tùy)',      key: 'ncc' },
   { label: 'QA (mặc định OK)',       key: 'qa_status' },
   { label: 'HSD (ngày, tùy)',        key: 'shelf_life_days' },
 ], [
-  { pallet_code: 'BV-OPEN-0001', material_code: '210000262', warehouse: 'BV', location_code: 'BV_NVL1_1_T1', cartons: 100, production_date: '2026-06-01', ncc: 'Đại Tân Việt', qa_status: 'OK', shelf_life_days: '' },
+  { pallet_code: 'BV-OPEN-0001', material_code: '210000262', warehouse: 'BV', location_code: 'BV_NVL1_1_T1', cartons: 100, production_date: '2026-06-01', ncc: 'DTV', qa_status: 'OK', shelf_life_days: '' },
 ])
 
 console.log('\nXong. Mở thư mục templates/ — XOÁ dòng ví dụ rồi điền dữ liệu thật.')

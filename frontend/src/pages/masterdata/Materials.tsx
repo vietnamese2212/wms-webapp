@@ -124,10 +124,12 @@ export default function Materials() {
   const catFilter    = mf.catFilter
   const statusFilter = mf.statusFilter
   const qrFilter     = mf.qrFilter ?? []
+  const dqFilter     = mf.dqFilter ?? []
   const setSearch       = (v: string)   => setMaterials({ search: v })
   const setCatFilter    = (v: string[]) => setMaterials({ catFilter: v })
   const setStatusFilter = (v: string[]) => setMaterials({ statusFilter: v })
   const setQrFilter     = (v: string[]) => setMaterials({ qrFilter: v })
+  const setDqFilter     = (v: string[]) => setMaterials({ dqFilter: v })
 
   // Density
   const [dense, setDense] = useState(() => localStorage.getItem('materials_density') !== 'comfortable')
@@ -181,6 +183,17 @@ export default function Materials() {
   const updateMaterial = useUpdateMaterial()
   const deleteMaterial = useDeleteMaterial()
 
+  // Tên hàng (material_description) bị TRÙNG: tính trên TOÀN BỘ mã (raw), không theo filter.
+  const dupNames = useMemo(() => {
+    const cnt = new Map<string, number>()
+    for (const m of raw as Material[]) {
+      const k = (m.material_description ?? '').trim().toLowerCase()
+      if (k) cnt.set(k, (cnt.get(k) ?? 0) + 1)
+    }
+    return new Set([...cnt.entries()].filter(([, n]) => n > 1).map(([k]) => k))
+  }, [raw])
+  const isDupName = (m: Material) => dupNames.has((m.material_description ?? '').trim().toLowerCase())
+
   // Filtered list
   const filtered = useMemo(() => {
     const showActive   = statusFilter.includes('active')   || statusFilter.length === 0
@@ -193,10 +206,16 @@ export default function Materials() {
       if (m.no_qr_tracking  && !showNoQr) return false
       if (!m.no_qr_tracking && !showQr)  return false
       if (catFilter.length > 0 && !catFilter.includes(m.category ?? '')) return false
+      // Lọc chất lượng dữ liệu (OR giữa các tuỳ chọn đã chọn)
+      if (dqFilter.length > 0) {
+        const okIncomplete = dqFilter.includes('incomplete') && missingRequiredFields(m).length > 0
+        const okDup        = dqFilter.includes('dup')        && isDupName(m)
+        if (!okIncomplete && !okDup) return false
+      }
       if (!omniMatch([m.material_code, m.material_description, m.short_name, m.old_code, m.category, m.unit], search)) return false
       return true
     })
-  }, [raw, catFilter, search, statusFilter, qrFilter])
+  }, [raw, catFilter, search, statusFilter, qrFilter, dqFilter, dupNames])
 
   const allSelected  = filtered.length > 0 && filtered.every(m => selected.has(m.id))
   const someSelected = selected.size > 0 && !allSelected
@@ -421,9 +440,12 @@ export default function Materials() {
     { key: 'qr', label: 'QR', type: 'multi',
       options: [{ value: 'has_qr', label: 'Có QR' }, { value: 'no_qr', label: 'Không QR' }], selected: qrFilter,
       onChange: setQrFilter },
+    { key: 'dq', label: 'Dữ liệu', type: 'multi',
+      options: [{ value: 'incomplete', label: 'Thiếu thông tin' }, { value: 'dup', label: 'Trùng tên' }], selected: dqFilter,
+      onChange: setDqFilter },
   ]
 
-  const viewSnapshot = { search, catFilter, statusFilter, qrFilter }
+  const viewSnapshot = { search, catFilter, statusFilter, qrFilter, dqFilter }
   const savedViews = useSavedViewsStore(s => s.views['materials'] ?? [])
   const activeViewId = useMemo(() => {
     const cur = JSON.stringify(viewSnapshot)
@@ -436,7 +458,8 @@ export default function Materials() {
     inactive:   filtered.filter(m => !m.is_active).length,
     noQr:       filtered.filter(m => m.no_qr_tracking).length,
     incomplete: filtered.filter(m => missingRequiredFields(m).length > 0).length,
-  }), [filtered])
+    dup:        filtered.filter(m => isDupName(m)).length,
+  }), [filtered, dupNames])
 
   return (
     <div className="flex flex-col h-full sm:p-3">
@@ -480,6 +503,7 @@ export default function Materials() {
         { label: 'Đã ẩn', value: summary.inactive },
         { label: 'Không QR', value: summary.noQr, accent: summary.noQr > 0 },
         { label: 'Thiếu DL', value: summary.incomplete, danger: summary.incomplete > 0 },
+        { label: 'Trùng tên', value: summary.dup, accent: summary.dup > 0 },
       ]} />
 
       {/* ── Table ─────────────────────────────────────────────────────── */}
@@ -510,11 +534,13 @@ export default function Materials() {
               ) : filtered.map(mat => {
                 const hasOverrides = (mat.warehouse_pallet_overrides?.length ?? 0) > 0
                 const miss = missingRequiredFields(mat)
+                const dup  = isDupName(mat)
+                const tip = [miss.length ? `Thiếu: ${miss.join(', ')}` : '', dup ? 'Trùng Tên hàng với mã khác' : ''].filter(Boolean).join(' · ')
                 return (
                   <TableRow
                     key={mat.id}
-                    title={miss.length ? `Thiếu dữ liệu bắt buộc: ${miss.join(', ')}` : undefined}
-                    className={`${!mat.is_active ? 'opacity-50' : ''} hover:bg-slate-50 cursor-pointer ${detailMat?.id === mat.id ? 'bg-blue-50 hover:bg-blue-50' : ''} ${miss.length ? '[&_td]:text-red-600' : ''} ${dense ? '' : '[&_td]:py-2.5'}`}
+                    title={tip || undefined}
+                    className={`${!mat.is_active ? 'opacity-50' : ''} hover:bg-slate-50 cursor-pointer ${detailMat?.id === mat.id ? 'bg-blue-50 hover:bg-blue-50' : ''} ${miss.length ? '[&_td]:text-red-600' : dup ? '[&_td]:text-amber-600' : ''} ${dense ? '' : '[&_td]:py-2.5'}`}
                     onClick={() => setDetailMat(detailMat?.id === mat.id ? null : mat)}
                   >
                     {canDel && (

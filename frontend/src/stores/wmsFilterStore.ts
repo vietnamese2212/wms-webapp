@@ -109,6 +109,7 @@ interface MaterialsFilters {
   catFilter: string[]
   statusFilter: string[]
   qrFilter: string[]
+  dqFilter: string[]   // chất lượng dữ liệu: 'incomplete' (thiếu thông tin) | 'dup' (trùng tên)
 }
 interface InboundReportFilters {
   dateFrom: string
@@ -251,7 +252,7 @@ function initialFilters() {
       fDate: today(), fDateTo: '', fWarehouse: '', fWarehouseType: '',
       fVehicleTypes: [], fCompany: '', fDirection: '', fStatus: '',
     },
-    materials:  { search: '', catFilter: [], statusFilter: ['active'], qrFilter: [] },
+    materials:  { search: '', catFilter: [], statusFilter: ['active'], qrFilter: [], dqFilter: [] },
     inboundReport: {
       dateFrom: (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }) })(),
       dateTo: today(), warehouseId: '', selCategories: [],

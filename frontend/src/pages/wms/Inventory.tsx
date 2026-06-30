@@ -616,6 +616,7 @@ function ProductionDatePanel({ ids, onClose }: { ids: string[]; onClose: () => v
 export default function Inventory() {
   const user = useAuthStore(s => s.user)
   const { inventory: f, setInventory } = useWmsFilterStore()
+  const limit = f.pageSize || LIMIT   // số dòng/trang user chọn (50/100/500/1000); fallback mặc định
 
   const navigate = useNavigate()
   const [selected,     setSelected]     = useState<InventoryEntry | null>(null)
@@ -695,16 +696,16 @@ export default function Inventory() {
     date_pct_ranges:    f.datePctRanges.length > 0 ? f.datePctRanges : undefined,
     ncc_ids:            f.nccIds.length > 0 ? f.nccIds : undefined,
   }
-  const { data, isLoading } = useInventoryEntries({ ...queryParams, page: f.page, limit: LIMIT }, !aggregate)
+  const { data, isLoading } = useInventoryEntries({ ...queryParams, page: f.page, limit }, !aggregate)
   const { data: summaryData, isLoading: summaryLoading } = useInventorySummary(queryParams, aggregate)
 
   const displayEntries    = data?.entries               ?? []
   const summaryGroups     = summaryData?.groups          ?? []
-  const pagedGroups       = useMemo(() => summaryGroups.slice((f.page - 1) * LIMIT, f.page * LIMIT), [summaryGroups, f.page])
+  const pagedGroups       = useMemo(() => summaryGroups.slice((f.page - 1) * limit, f.page * limit), [summaryGroups, f.page, limit])
   const loading           = aggregate ? summaryLoading : isLoading
   const total             = aggregate ? (summaryData?.total ?? 0) : (data?.total ?? 0)
   const totalCartons      = aggregate ? (summaryData?.total_cartons_remaining ?? 0) : (data?.total_cartons_remaining ?? 0)
-  const totalPages        = Math.max(1, Math.ceil(total / LIMIT))
+  const totalPages        = Math.max(1, Math.ceil(total / limit))
   const checkedCount      = checkedIds.size
   const checkedIdArr      = useMemo(() => [...checkedIds], [checkedIds])
   // Mã hàng chung của các pallet đang chọn (để panel Sửa NCC hiện HSD ngoại lệ theo NCC); null nếu nhiều mã
@@ -1070,9 +1071,18 @@ export default function Inventory() {
       {/* Footer đếm bản ghi */}
       <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 sm:rounded-b-xl">
         {total > 0
-          ? `${(f.page - 1) * LIMIT + 1}–${Math.min(f.page * LIMIT, total)} / ${total.toLocaleString('vi-VN')} ${aggregate ? 'nhóm' : 'pallet'}`
+          ? `${(f.page - 1) * limit + 1}–${Math.min(f.page * limit, total)} / ${total.toLocaleString('vi-VN')} ${aggregate ? 'nhóm' : 'pallet'}`
           : (aggregate ? '0 nhóm' : '0 pallet')}
         {selected && checkedCount === 0 && <span className="ml-2 text-blue-600">· 1 đang xem</span>}
+        <label className="ml-3 inline-flex items-center gap-1 text-slate-400">
+          <span className="hidden sm:inline">·</span> Dòng/trang:
+          <select
+            value={limit}
+            onChange={e => setInventory({ pageSize: Number(e.target.value), page: 1 })}
+            className="h-5 rounded border border-slate-200 bg-white px-1 text-[11px] text-slate-600 tabular-nums cursor-pointer">
+            {[50, 100, 500, 1000].map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </label>
       </div>
      </div>
 

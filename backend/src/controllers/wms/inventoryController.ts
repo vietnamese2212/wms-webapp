@@ -244,7 +244,7 @@ async function resolveInventoryFilter(req: Request): Promise<ResolvedFilter> {
   const datePctRanges     = parseArr(q.date_pct_ranges)
 
   const pageNum  = Math.max(1, parseInt(page) || 1)
-  const limitNum = Math.min(200, Math.max(1, parseInt(limit) || 50))
+  const limitNum = Math.min(1000, Math.max(1, parseInt(limit) || 50))   // tối đa 1000/trang (= cap PostgREST 1 response)
   const offset   = (pageNum - 1) * limitNum
 
   const base = { params: {} as FilterParams, datePctIds: null as string[] | null, pageNum, limitNum, offset }

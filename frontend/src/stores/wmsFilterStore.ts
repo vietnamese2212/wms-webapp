@@ -41,6 +41,7 @@ interface InventoryFilters {
   qaStatusIds: string[]
   status: string
   page: number
+  pageSize: number
   manufacturerId: string
   filterCycles: string[]
   filterMachines: string[]
@@ -232,7 +233,7 @@ function initialFilters() {
     inventory: {
       search: '', warehouseIds: [], materialCategories: [],
       filterLocations: [], filterMaterialIds: [],
-      qaStatusIds: [], status: '', page: 1, manufacturerId: '',
+      qaStatusIds: [], status: '', page: 1, pageSize: 50, manufacturerId: '',
       filterCycles: [], filterMachines: [], filterNmsx: [], nccIds: [], datePctRanges: [],
     },
     loosePicking: {

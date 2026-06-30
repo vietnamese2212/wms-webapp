@@ -272,6 +272,7 @@ export function useCreateMaterial() {
       unit?: string; manufacturer_id?: string; notes?: string; old_code?: string
       weight_kg?: number | null; cartons_per_pallet?: number | null
       units_per_carton?: number | null; shelf_life_days?: number | null; no_qr_tracking?: boolean
+      pallet_per_ea?: number | null
       warehouse_pallet_overrides?: import('@/types').WarehousePalletOverride[]
       supplier_shelf_life_overrides?: import('@/types').SupplierShelfLifeOverride[]
     }) => apiClient.post('/masterdata/materials', body).then((r) => r.data.data),
@@ -288,7 +289,7 @@ export function useUpdateMaterial() {
       manufacturer_id?: string; notes?: string; old_code?: string
       weight_kg?: number | null; cartons_per_pallet?: number | null
       units_per_carton?: number | null; shelf_life_days?: number | null
-      is_active?: boolean; no_qr_tracking?: boolean
+      is_active?: boolean; no_qr_tracking?: boolean; pallet_per_ea?: number | null
       warehouse_pallet_overrides?: import('@/types').WarehousePalletOverride[]
       supplier_shelf_life_overrides?: import('@/types').SupplierShelfLifeOverride[]
     }) => apiClient.put(`/masterdata/materials/${id}`, body).then((r) => r.data.data),

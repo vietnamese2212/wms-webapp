@@ -64,7 +64,7 @@ export async function createMaterial(req: Request, res: Response) {
       material_code, material_description, custom_short_name,
       category, product_type, unit, manufacturer_id, notes, no_qr_tracking,
       weight_kg, cartons_per_pallet, cartons_per_pallet_mn,
-      units_per_carton, ea_per_pallet, shelf_life_days, storage_category, old_code, image_url,
+      units_per_carton, pallet_per_ea, shelf_life_days, storage_category, old_code, image_url,
       warehouse_pallet_overrides, supplier_shelf_life_overrides,
     } = req.body
     if (!material_code || !material_description)
@@ -87,7 +87,7 @@ export async function createMaterial(req: Request, res: Response) {
         cartons_per_pallet: cartons_per_pallet != null ? Number(cartons_per_pallet) : null,
         cartons_per_pallet_mn: cartons_per_pallet_mn != null ? Number(cartons_per_pallet_mn) : null,
         units_per_carton: units_per_carton != null ? Number(units_per_carton) : null,
-        ea_per_pallet: ea_per_pallet != null ? Number(ea_per_pallet) : null,
+        pallet_per_ea: pallet_per_ea != null ? Number(pallet_per_ea) : null,
         shelf_life_days: shelf_life_days != null ? Number(shelf_life_days) : null,
         storage_category: storage_category ?? null,
         old_code: old_code ? String(old_code).trim() : null,
@@ -119,7 +119,7 @@ export async function updateMaterial(req: Request, res: Response) {
       material_description, custom_short_name, category, product_type, unit,
       manufacturer_id, notes, is_active, no_qr_tracking,
       weight_kg, cartons_per_pallet, cartons_per_pallet_mn,
-      units_per_carton, ea_per_pallet, shelf_life_days, storage_category, old_code, image_url,
+      units_per_carton, pallet_per_ea, shelf_life_days, storage_category, old_code, image_url,
       warehouse_pallet_overrides, supplier_shelf_life_overrides,
     } = req.body
 
@@ -146,7 +146,7 @@ export async function updateMaterial(req: Request, res: Response) {
     if (cartons_per_pallet !== undefined) patch.cartons_per_pallet = cartons_per_pallet != null ? Number(cartons_per_pallet) : null
     if (cartons_per_pallet_mn !== undefined) patch.cartons_per_pallet_mn = cartons_per_pallet_mn != null ? Number(cartons_per_pallet_mn) : null
     if (units_per_carton !== undefined) patch.units_per_carton = units_per_carton != null ? Number(units_per_carton) : null
-    if (ea_per_pallet !== undefined) patch.ea_per_pallet = ea_per_pallet != null ? Number(ea_per_pallet) : null
+    if (pallet_per_ea !== undefined) patch.pallet_per_ea = pallet_per_ea != null ? Number(pallet_per_ea) : null
     if (shelf_life_days !== undefined) patch.shelf_life_days = shelf_life_days != null ? Number(shelf_life_days) : null
     if (storage_category !== undefined) patch.storage_category = storage_category
     if (old_code !== undefined) patch.old_code = old_code ? String(old_code).trim() : null

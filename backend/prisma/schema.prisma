@@ -84,9 +84,9 @@ model Material {
   unit                  String?                // "thùng", "cái", "kg"
   weight_kg             Decimal?               // KG – trọng lượng 1 thùng (kg)
   cartons_per_pallet    Int?                   // Thùng/Pallet (Thành phẩm)
-  cartons_per_pallet_mn Int?                   // Thùng/Pallet khu vực MN (Thành phẩm)
+  cartons_per_pallet_mn Int?                   // (DEPRECATED) Thùng/Pallet MN — thay bằng warehouse_pallet_overrides; giữ data cũ
   units_per_carton      Int?                   // Hộp/Thùng
-  ea_per_pallet         Int?                   // EA/Pallet (NVL) – tính pallet = tổng EA ÷ ea_per_pallet
+  pallet_per_ea         Decimal?               // Pallet/EA (NVL): 1 EA = ? pallet (vd 0.00005) — quy đổi tồn EA→pallet
   shelf_life_days       Int?                   // Shelf life (ngày)
   storage_category      String?                // KHO: "UHT", "Fresh", "Frozen"...
   old_code              String?                // Mã cũ (legacy)

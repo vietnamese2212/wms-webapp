@@ -6,6 +6,7 @@
  *
  * Bắt buộc: Mã hàng, Tên hàng, Loại hàng, ĐVT, Thùng/Pallet, KL (kg).
  * HSD (ngày): bắt buộc nếu Loại hàng KHÔNG phải Thùng/POSM (giống luật trong form). Thùng/POSM để trống được.
+ * Pallet/EA: "1 EA = ? pallet" (vd 0.00005) — BẮT BUỘC cho Raw/Thùng/Giấy (kho NVL), dùng quy đổi tồn EA→pallet.
  * Trùng Mã hàng đã có → bỏ qua (không ghi đè). short_name tự sinh = "Tên hàng [3 số cuối mã]".
  */
 const path = require('path')
@@ -18,9 +19,8 @@ const cols = [
   { label: 'Loại hàng *',       key: 'category' },              // Thành phẩm / Thùng / POSM / Raw / Giấy
   { label: 'ĐVT *',             key: 'unit' },                  // CAR / EA / KG
   { label: 'Thùng/Pallet *',    key: 'cartons_per_pallet' },
-  { label: 'Thùng/Pallet (MN)', key: 'cartons_per_pallet_mn' },
   { label: 'Đv/Thùng',          key: 'units_per_carton' },
-  { label: 'EA/Pallet',         key: 'ea_per_pallet' },
+  { label: 'Pallet/EA',         key: 'pallet_per_ea' },          // 1 EA = ? pallet (vd 0.00005) — BẮT BUỘC cho Raw/Thùng/Giấy
   { label: 'KL (kg) *',         key: 'weight_kg' },
   { label: 'HSD (ngày)',        key: 'shelf_life_days' },       // bắt buộc nếu KHÔNG phải Thùng/POSM
   { label: 'Loại SP',           key: 'product_type' },
@@ -30,8 +30,8 @@ const cols = [
 
 const example = {
   material_code: '210000262', material_description: 'Sữa tươi tiệt trùng 180ml',
-  category: 'Thành phẩm', unit: 'CAR', cartons_per_pallet: 80, cartons_per_pallet_mn: '',
-  units_per_carton: 48, ea_per_pallet: '', weight_kg: 9.6, shelf_life_days: 180,
+  category: 'Thành phẩm', unit: 'CAR', cartons_per_pallet: 80,
+  units_per_carton: 48, pallet_per_ea: '', weight_kg: 9.6, shelf_life_days: 180,
   product_type: 'UHT', custom_short_name: '', notes: '',
 }
 

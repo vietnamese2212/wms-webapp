@@ -85,6 +85,7 @@ const EMPTY_FORM = {
   unit: '',
   cartons_per_pallet: '',
   units_per_carton: '',
+  pallet_per_ea: '',
   weight_kg: '',
   shelf_life_days: '',
   old_code: '',
@@ -94,6 +95,10 @@ const EMPTY_FORM = {
 // HSD (shelflife) BẮT BUỘC cho MỌI loại hàng, TRỪ Thùng & POSM (bao bì/vật phẩm quảng cáo — không cần hạn dùng).
 const NO_SHELF_LIFE_CATS = ['Thùng', 'POSM']
 const needsShelfLife = (cat: string | null | undefined) => !!cat && !NO_SHELF_LIFE_CATS.includes(cat)
+
+// Pallet/EA (1 EA = ? pallet) BẮT BUỘC cho loại hàng kho NVL: Raw / Thùng / Giấy (để quy đổi tồn EA → pallet).
+const PALLET_PER_EA_CATS = ['Raw', 'Thùng', 'Giấy']
+const needsPalletPerEa = (cat: string | null | undefined) => !!cat && PALLET_PER_EA_CATS.includes(cat)
 
 // ── Main component ───────────────────────────────────────────────────────────
 export default function Materials() {
@@ -199,6 +204,8 @@ export default function Materials() {
     if (!form.weight_kg) return 'Khối lượng (KG) là bắt buộc'
     if (needsShelfLife(form.category) && !form.shelf_life_days)
       return `HSD (ngày) là bắt buộc cho loại "${form.category}" (chỉ Thùng/POSM mới được để trống)`
+    if (needsPalletPerEa(form.category) && !form.pallet_per_ea)
+      return `Pallet/EA là bắt buộc cho loại "${form.category}" (kho NVL — để quy đổi tồn)`
     for (const ov of overrides) {
       if (!ov.warehouse_id || !ov.cartons_per_pallet) return 'Điền đủ kho và số thùng cho mọi ngoại lệ'
     }
@@ -227,6 +234,7 @@ export default function Materials() {
       unit:                 mat.unit ?? '',
       cartons_per_pallet:   mat.cartons_per_pallet != null ? String(mat.cartons_per_pallet) : '',
       units_per_carton:     mat.units_per_carton   != null ? String(mat.units_per_carton)   : '',
+      pallet_per_ea:        mat.pallet_per_ea      != null ? String(mat.pallet_per_ea)      : '',
       weight_kg:            mat.weight_kg           != null ? String(mat.weight_kg)           : '',
       shelf_life_days:      mat.shelf_life_days     != null ? String(mat.shelf_life_days)     : '',
       old_code:             mat.old_code ?? '',
@@ -271,6 +279,7 @@ export default function Materials() {
         unit:                          form.unit || undefined,
         cartons_per_pallet:            Number(form.cartons_per_pallet),
         units_per_carton:              form.units_per_carton ? Number(form.units_per_carton) : undefined,
+        pallet_per_ea:                 form.pallet_per_ea ? Number(form.pallet_per_ea) : undefined,
         weight_kg:                     Number(form.weight_kg),
         shelf_life_days:               form.shelf_life_days ? Number(form.shelf_life_days) : undefined,
         old_code:                      form.old_code.trim() || undefined,
@@ -637,6 +646,7 @@ export default function Materials() {
                   <div className="space-y-0">
                     <DRow label="Thùng/pallet (PL)" value={detailMat.cartons_per_pallet != null ? `${detailMat.cartons_per_pallet} thùng` : null} />
                     <DRow label="EA/thùng"           value={detailMat.units_per_carton  != null ? `${detailMat.units_per_carton} EA`     : null} />
+                    <DRow label="Pallet/EA"          value={detailMat.pallet_per_ea     != null ? `${detailMat.pallet_per_ea}`          : null} />
                     <DRow label="Khối lượng"         value={detailMat.weight_kg         != null ? `${detailMat.weight_kg} kg`            : null} />
                     <DRow label="HSD"                value={detailMat.shelf_life_days   != null ? `${detailMat.shelf_life_days} ngày`     : null} />
                   </div>
@@ -847,6 +857,12 @@ export default function Materials() {
             <div className="grid grid-cols-3 items-center gap-2">
               <Label className="text-xs text-right">EA/thùng</Label>
               <Input type="number" min={1} className="col-span-2 h-7 text-xs" value={form.units_per_carton} onChange={e => setField('units_per_carton', e.target.value)} placeholder="Số đơn vị/thùng" />
+            </div>
+
+            {/* Pallet/EA — quy đổi tồn EA → pallet (bắt buộc Raw/Thùng/Giấy) */}
+            <div className="grid grid-cols-3 items-center gap-2">
+              <Label className="text-xs text-right">Pallet/EA{needsPalletPerEa(form.category) && ' *'}</Label>
+              <Input type="number" min={0} step="any" className="col-span-2 h-7 text-xs" value={form.pallet_per_ea} onChange={e => setField('pallet_per_ea', e.target.value)} placeholder="1 EA = ? pallet (vd 0.00005)" />
             </div>
 
             {/* KG */}

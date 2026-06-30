@@ -77,8 +77,8 @@ short_name TEXT,          -- auto: "{desc} [{3 số cuối code}]"
 custom_short_name TEXT,   -- user override (suffix giữ nguyên)
 category TEXT,            -- "Thành phẩm" | "NVL" | "POSM" | "Bao bì"
 product_type TEXT, unit TEXT,
-weight_kg DECIMAL, cartons_per_pallet INT, cartons_per_pallet_mn INT,
-units_per_carton INT, ea_per_pallet INT,
+weight_kg DECIMAL, cartons_per_pallet INT, cartons_per_pallet_mn INT,  -- _mn DEPRECATED (thay bằng warehouse_pallet_overrides)
+units_per_carton INT, pallet_per_ea NUMERIC,  -- pallet_per_ea: 1 EA = ? pallet (NVL), quy đổi tồn EA→pallet
 shelf_life_days INT, storage_category TEXT,  -- "UHT" | "Fresh" | "Frozen"
 old_code TEXT, image_url TEXT,
 manufacturer_id TEXT FK, notes TEXT,

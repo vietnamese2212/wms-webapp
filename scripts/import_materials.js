@@ -9,8 +9,8 @@
  *
  * Cột Excel (row 1 = label, row 2 = key, row 3+ = data):
  *   material_code, material_description, category, product_type, unit,
- *   weight_kg, cartons_per_pallet, cartons_per_pallet_mn, units_per_carton,
- *   ea_per_pallet, shelf_life_days, custom_short_name, notes
+ *   weight_kg, cartons_per_pallet, units_per_carton, pallet_per_ea (1 EA=? pallet),
+ *   shelf_life_days, custom_short_name, notes
  */
 
 const path = require('path')
@@ -82,9 +82,8 @@ async function main() {
     const unit         = str(row['unit']                  ?? row['Đơn vị'])
     const weight_kg    = num(row['weight_kg']             ?? row['KL (kg)'])
     const cpp          = int(row['cartons_per_pallet']    ?? row['Thùng/Pallet'])
-    const cppMn        = int(row['cartons_per_pallet_mn'] ?? row['Thùng/Pallet MN'])
     const upc          = int(row['units_per_carton']      ?? row['Đv/Thùng'])
-    const epp          = int(row['ea_per_pallet']         ?? row['EA/Pallet'])
+    const ppe          = num(row['pallet_per_ea']         ?? row['Pallet/EA'])   // 1 EA = ? pallet (số thập phân)
     const sld          = int(row['shelf_life_days']       ?? row['HSD (ngày)'])
     const notes        = str(row['notes']                 ?? row['Ghi chú'])
     const shortOf = d => `${d} [${material_code.slice(-3)}]`
@@ -100,9 +99,8 @@ async function main() {
       if (unit         != null) patch.unit = unit
       if (weight_kg    != null) patch.weight_kg = weight_kg
       if (cpp          != null) patch.cartons_per_pallet = cpp
-      if (cppMn        != null) patch.cartons_per_pallet_mn = cppMn
       if (upc          != null) patch.units_per_carton = upc
-      if (epp          != null) patch.ea_per_pallet = epp
+      if (ppe          != null) patch.pallet_per_ea = ppe
       if (sld          != null) patch.shelf_life_days = sld
       if (notes        != null) patch.notes = notes
       const { error } = await supabase.from('Material').update(patch).eq('id', existingId)
@@ -114,8 +112,8 @@ async function main() {
       const record = {
         id: randomUUID(), material_code, material_description: description, short_name: shortOf(description),
         custom_short_name: customShort, category, product_type, unit, weight_kg,
-        cartons_per_pallet: cpp, cartons_per_pallet_mn: cppMn, units_per_carton: upc,
-        ea_per_pallet: epp, shelf_life_days: sld, notes,
+        cartons_per_pallet: cpp, units_per_carton: upc, pallet_per_ea: ppe,
+        shelf_life_days: sld, notes,
         is_active: true, created_at: now, updated_at: now,
       }
       const { error } = await supabase.from('Material').insert(record)

@@ -67,6 +67,11 @@ interface FilterParams {
   import_date_to?: string
 }
 
+// Escape ký tự đặc biệt LIKE/ILIKE (\ % _) → coi là literal. Mã pallet/vị trí đầy dấu '_';
+// không escape thì '_' thành wildcard "1 ký tự bất kỳ" → search sai + omni khớp phình (URL fail).
+// PostgreSQL dùng '\' làm ESCAPE mặc định nên '\_' = literal '_'. Áp cả term truyền vào RPC omni.
+const escapeLike = (s: string) => s.replace(/[\\%_]/g, m => '\\' + m)
+
 function applyInventoryFilters(q: any, p: FilterParams): any {
   if (!p.status || p.status === '') q = q.in('status', ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'])
   else if (p.status !== 'ALL')       q = q.eq('status', p.status)
@@ -91,7 +96,7 @@ function applyInventoryFilters(q: any, p: FilterParams): any {
   if (p.qa_status_ids && p.qa_status_ids.length > 0) q = q.in('qa_status_id', p.qa_status_ids)
   if (p.search) {
     // Omni-search: khớp mã pallet HOẶC mã/tên hàng HOẶC mã vị trí (đã resolve ID trước)
-    const term = p.search.replace(/[,()]/g, ' ').trim()
+    const term = escapeLike(p.search.replace(/[,()]/g, ' ').trim())
     const ors = [`pallet_code.ilike.%${term}%`]
     if (p.searchMatIds?.length) ors.push(`material_id.in.(${p.searchMatIds.join(',')})`)
     if (p.searchLocIds?.length) ors.push(`location_id.in.(${p.searchLocIds.join(',')})`)
@@ -269,7 +274,7 @@ async function resolveInventoryFilter(req: Request): Promise<ResolvedFilter> {
     needMatFilter ? (async () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let matQ = supabase.from('Material').select('id')
-      if (material_search)            matQ = matQ.or(`material_code.ilike.%${material_search}%,short_name.ilike.%${material_search}%`)
+      if (material_search)            matQ = matQ.or(`material_code.ilike.%${escapeLike(material_search)}%,short_name.ilike.%${escapeLike(material_search)}%`)
       if (filterMaterialIds.length > 0) matQ = matQ.in('id', filterMaterialIds)
       return await matQ
     })() : Promise.resolve({ data: null, error: null }),
@@ -304,7 +309,7 @@ async function resolveInventoryFilter(req: Request): Promise<ResolvedFilter> {
   let searchMatIds: string[] | undefined
   let searchLocIds: string[] | undefined
   if (search) {
-    const term = search.replace(/[,()]/g, ' ').trim()
+    const term = escapeLike(search.replace(/[,()]/g, ' ').trim())   // escape '_'/'%' → literal (mã đầy '_')
     if (term) {
       // Ưu tiên RPC unaccent (bỏ dấu). Nếu chưa apply migration → fallback ilike (phân biệt dấu).
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -1,14 +1,16 @@
 /**
- * Import Material master data từ Excel vào Supabase.
- * Usage: cd backend && node ../scripts/import_materials.js ../Material_Template.xlsx
+ * Import / cập nhật Material master data từ Excel vào Supabase (UPSERT).
+ * Template: node scripts/gen_material_template.js  → templates/0_MaHang.xlsx
+ * Usage: cd backend && node ../scripts/import_materials.js ../templates/0_MaHang.xlsx
+ *
+ * UPSERT theo material_code: mã MỚI → thêm (Tên hàng bắt buộc); mã ĐÃ CÓ → CẬP NHẬT.
+ *   Khi cập nhật: chỉ ghi đè ô CÓ GIÁ TRỊ trong file; ô để trống = giữ nguyên (muốn xoá 1 trường → sửa trong form).
+ *   short_name tự sinh lại = "Tên hàng [3 số cuối mã]" khi đổi Tên hàng. KHÔNG đụng overrides/NCC/QR/trạng thái.
  *
  * Cột Excel (row 1 = label, row 2 = key, row 3+ = data):
  *   material_code, material_description, category, product_type, unit,
  *   weight_kg, cartons_per_pallet, cartons_per_pallet_mn, units_per_carton,
  *   ea_per_pallet, shelf_life_days, custom_short_name, notes
- *
- * Lưu ý: manufacturer_id lấy từ ký tự thứ 6 của QR code khi nhập kho
- *   B = NM Ba Vì · D = NM Bình Dương · O = NM Gia công
  */
 
 const path = require('path')
@@ -62,58 +64,66 @@ async function main() {
 
   if (!rows.length) { console.error('Không có dữ liệu'); process.exit(1) }
 
-  const { data: existing } = await supabase.from('Material').select('material_code')
-  const existingSet = new Set((existing ?? []).map(m => m.material_code))
+  // UPSERT: mã mới → thêm; mã đã có → CẬP NHẬT (chỉ field có giá trị trong file; ô trống = giữ nguyên, không xoá).
+  const { data: existing } = await supabase.from('Material').select('id, material_code')
+  const existingMap = new Map((existing ?? []).map(m => [m.material_code, m.id]))
 
   const now = new Date().toISOString()
-  let inserted = 0, skipped = 0, errors = 0
+  let inserted = 0, updated = 0, skipped = 0, errors = 0
 
   for (const row of rows) {
     const material_code = str(row['material_code'] ?? row['Mã hàng'])
     if (!material_code) { skipped++; continue }
 
-    if (existingSet.has(material_code)) {
-      console.log(`  SKIP: ${material_code} đã tồn tại`)
-      skipped++
-      continue
-    }
+    const description  = str(row['material_description'] ?? row['Tên hàng'])
+    const customShort  = str(row['custom_short_name']     ?? row['Tên rút gọn'])
+    const category     = str(row['category']              ?? row['Loại'])
+    const product_type = str(row['product_type']          ?? row['Product Type'])
+    const unit         = str(row['unit']                  ?? row['Đơn vị'])
+    const weight_kg    = num(row['weight_kg']             ?? row['KL (kg)'])
+    const cpp          = int(row['cartons_per_pallet']    ?? row['Thùng/Pallet'])
+    const cppMn        = int(row['cartons_per_pallet_mn'] ?? row['Thùng/Pallet MN'])
+    const upc          = int(row['units_per_carton']      ?? row['Đv/Thùng'])
+    const epp          = int(row['ea_per_pallet']         ?? row['EA/Pallet'])
+    const sld          = int(row['shelf_life_days']       ?? row['HSD (ngày)'])
+    const notes        = str(row['notes']                 ?? row['Ghi chú'])
+    const shortOf = d => `${d} [${material_code.slice(-3)}]`
 
-    const material_description = str(row['material_description'] ?? row['Tên hàng'])
-    const suffix    = material_code.slice(-3)
-    const short_name = material_description ? `${material_description} [${suffix}]` : material_code
-
-    const record = {
-      id:                   randomUUID(),
-      material_code,
-      material_description,
-      short_name,
-      custom_short_name:    str(row['custom_short_name']    ?? row['Tên rút gọn']) || null,
-      category:             str(row['category']             ?? row['Loại']),
-      product_type:         str(row['product_type']         ?? row['Product Type']),
-      unit:                 str(row['unit']                 ?? row['Đơn vị']),
-      weight_kg:            num(row['weight_kg']            ?? row['KL (kg)']),
-      cartons_per_pallet:   int(row['cartons_per_pallet']   ?? row['Thùng/Pallet']),
-      cartons_per_pallet_mn:int(row['cartons_per_pallet_mn']?? row['Thùng/Pallet MN']),
-      units_per_carton:     int(row['units_per_carton']     ?? row['Đv/Thùng']),
-      ea_per_pallet:        int(row['ea_per_pallet']        ?? row['EA/Pallet']),
-      shelf_life_days:      int(row['shelf_life_days']      ?? row['HSD (ngày)']),
-      notes:                str(row['notes']                ?? row['Ghi chú']),
-      is_active:            true,
-      created_at:           now,
-      updated_at:           now,
-    }
-
-    const { error } = await supabase.from('Material').insert(record)
-    if (error) {
-      console.error(`  ERR: ${material_code} — ${error.message}`)
-      errors++
+    const existingId = existingMap.get(material_code)
+    if (existingId) {
+      // CẬP NHẬT mã đã có — chỉ ghi đè ô có giá trị (muốn XOÁ 1 trường thì sửa trong form).
+      const patch = { updated_at: now }
+      if (description  != null) { patch.material_description = description; patch.short_name = shortOf(description) }
+      if (customShort  != null) patch.custom_short_name = customShort
+      if (category     != null) patch.category = category
+      if (product_type != null) patch.product_type = product_type
+      if (unit         != null) patch.unit = unit
+      if (weight_kg    != null) patch.weight_kg = weight_kg
+      if (cpp          != null) patch.cartons_per_pallet = cpp
+      if (cppMn        != null) patch.cartons_per_pallet_mn = cppMn
+      if (upc          != null) patch.units_per_carton = upc
+      if (epp          != null) patch.ea_per_pallet = epp
+      if (sld          != null) patch.shelf_life_days = sld
+      if (notes        != null) patch.notes = notes
+      const { error } = await supabase.from('Material').update(patch).eq('id', existingId)
+      if (error) { console.error(`  ERR cập nhật ${material_code} — ${error.message}`); errors++ }
+      else { console.log(`  UPD: ${material_code}`); updated++ }
     } else {
-      console.log(`  OK:  ${material_code} — ${material_description}`)
-      inserted++
-      existingSet.add(material_code)
+      // THÊM mã mới — Tên hàng bắt buộc (cột NOT NULL).
+      if (!description) { console.error(`  ERR ${material_code} — thiếu Tên hàng (mã mới)`); errors++; continue }
+      const record = {
+        id: randomUUID(), material_code, material_description: description, short_name: shortOf(description),
+        custom_short_name: customShort, category, product_type, unit, weight_kg,
+        cartons_per_pallet: cpp, cartons_per_pallet_mn: cppMn, units_per_carton: upc,
+        ea_per_pallet: epp, shelf_life_days: sld, notes,
+        is_active: true, created_at: now, updated_at: now,
+      }
+      const { error } = await supabase.from('Material').insert(record)
+      if (error) { console.error(`  ERR thêm ${material_code} — ${error.message}`); errors++ }
+      else { console.log(`  NEW: ${material_code} — ${description}`); existingMap.set(material_code, record.id); inserted++ }
     }
   }
-  console.log(`\nKết quả: ${inserted} inserted · ${skipped} skipped · ${errors} errors`)
+  console.log(`\nKết quả: ${inserted} thêm · ${updated} cập nhật · ${skipped} bỏ qua · ${errors} lỗi`)
 }
 
 main().catch(e => { console.error(e); process.exit(1) })

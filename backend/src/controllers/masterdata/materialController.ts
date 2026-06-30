@@ -62,7 +62,7 @@ export async function createMaterial(req: Request, res: Response) {
   try {
     const {
       material_code, material_description, custom_short_name,
-      category, product_type, unit, manufacturer_id, notes,
+      category, product_type, unit, manufacturer_id, notes, no_qr_tracking,
       weight_kg, cartons_per_pallet, cartons_per_pallet_mn,
       units_per_carton, ea_per_pallet, shelf_life_days, storage_category, old_code, image_url,
       warehouse_pallet_overrides, supplier_shelf_life_overrides,
@@ -94,6 +94,7 @@ export async function createMaterial(req: Request, res: Response) {
         image_url: image_url ?? null,
         manufacturer_id: manufacturer_id ?? null,
         notes: notes ?? null,
+        no_qr_tracking: Boolean(no_qr_tracking),
         warehouse_pallet_overrides: Array.isArray(warehouse_pallet_overrides) ? warehouse_pallet_overrides : [],
         supplier_shelf_life_overrides: Array.isArray(supplier_shelf_life_overrides) ? supplier_shelf_life_overrides : [],
         created_by: req.user?.name || null,

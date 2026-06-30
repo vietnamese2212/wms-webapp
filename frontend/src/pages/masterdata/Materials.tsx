@@ -81,12 +81,14 @@ const EMPTY_FORM = {
   material_description: '',
   custom_short_name: '',
   category: '',
+  product_type: '',
   unit: '',
   cartons_per_pallet: '',
   units_per_carton: '',
   weight_kg: '',
   shelf_life_days: '',
   old_code: '',
+  notes: '',
 }
 
 // HSD (shelflife) BẮT BUỘC cho MỌI loại hàng, TRỪ Thùng & POSM (bao bì/vật phẩm quảng cáo — không cần hạn dùng).
@@ -125,6 +127,7 @@ export default function Materials() {
   const [editing,    setEditing]    = useState<Material | null>(null)
   const [form,       setForm]       = useState(EMPTY_FORM)
   const [editActive,       setEditActive]       = useState(true)
+  const [noQr,             setNoQr]             = useState(false)
   const [overrides,        setOverrides]        = useState<{ warehouse_id: string; cartons_per_pallet: string }[]>([])
   const [supplierOverrides,setSupplierOverrides] = useState<{ transport_company_id: string; shelf_life_days: string }[]>([])
   const [formError,        setFormError]        = useState('')
@@ -191,7 +194,7 @@ export default function Materials() {
     if (dialogMode === 'add' && !form.material_code.trim()) return 'Mã hàng là bắt buộc'
     if (!form.material_description.trim()) return 'Mô tả là bắt buộc'
     if (!form.category) return 'Loại hàng là bắt buộc'
-    if (!form.unit) return 'ĐVT là bắt buộc (CAR hoặc EA)'
+    if (!form.unit) return 'ĐVT là bắt buộc'
     if (!form.cartons_per_pallet) return 'Thùng/pallet là bắt buộc'
     if (!form.weight_kg) return 'Khối lượng (KG) là bắt buộc'
     if (needsShelfLife(form.category) && !form.shelf_life_days)
@@ -208,6 +211,7 @@ export default function Materials() {
     setOverrides([])
     setSupplierOverrides([])
     setEditActive(true)
+    setNoQr(false)
     setFormError('')
     setDialogMode('add')
   }
@@ -219,12 +223,14 @@ export default function Materials() {
       material_description: mat.material_description,
       custom_short_name:    mat.custom_short_name ?? '',
       category:             mat.category ?? '',
+      product_type:         mat.product_type ?? '',
       unit:                 mat.unit ?? '',
       cartons_per_pallet:   mat.cartons_per_pallet != null ? String(mat.cartons_per_pallet) : '',
       units_per_carton:     mat.units_per_carton   != null ? String(mat.units_per_carton)   : '',
       weight_kg:            mat.weight_kg           != null ? String(mat.weight_kg)           : '',
       shelf_life_days:      mat.shelf_life_days     != null ? String(mat.shelf_life_days)     : '',
       old_code:             mat.old_code ?? '',
+      notes:                mat.notes ?? '',
     })
     setOverrides(
       (mat.warehouse_pallet_overrides ?? []).map(o => ({
@@ -239,6 +245,7 @@ export default function Materials() {
       }))
     )
     setEditActive(mat.is_active)
+    setNoQr(mat.no_qr_tracking ?? false)
     setFormError('')
     setDialogMode('edit')
   }
@@ -260,12 +267,15 @@ export default function Materials() {
         material_description:          form.material_description.trim(),
         custom_short_name:             form.custom_short_name.trim() || undefined,
         category:                      form.category || undefined,
+        product_type:                  form.product_type.trim() || undefined,
         unit:                          form.unit || undefined,
         cartons_per_pallet:            Number(form.cartons_per_pallet),
         units_per_carton:              form.units_per_carton ? Number(form.units_per_carton) : undefined,
         weight_kg:                     Number(form.weight_kg),
         shelf_life_days:               form.shelf_life_days ? Number(form.shelf_life_days) : undefined,
         old_code:                      form.old_code.trim() || undefined,
+        notes:                         form.notes.trim() || undefined,
+        no_qr_tracking:                noQr,
         warehouse_pallet_overrides:    palletOverrides,
         supplier_shelf_life_overrides: supplierHsdOverrides,
       }
@@ -764,26 +774,30 @@ export default function Materials() {
             {/* Loại hàng — từ WMS Settings */}
             <div className="grid grid-cols-3 items-center gap-2">
               <Label className="text-xs text-right">Loại hàng *</Label>
-              <Select value={form.category || '__none__'} onValueChange={v => setField('category', v === '__none__' ? '' : v)}>
+              <Select value={form.category || undefined} onValueChange={v => setField('category', v)}>
                 <SelectTrigger className="col-span-2 h-7 text-xs">
                   <SelectValue placeholder="Chọn loại hàng" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="__none__" className="text-xs text-slate-400">— Chọn loại hàng —</SelectItem>
                   {categories.map(c => <SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
 
+            {/* Loại SP (product_type) */}
+            <div className="grid grid-cols-3 items-center gap-2">
+              <Label className="text-xs text-right">Loại SP</Label>
+              <Input className="col-span-2 h-7 text-xs" value={form.product_type} onChange={e => setField('product_type', e.target.value)} placeholder="Vd: UHT, SCA, POSM (tùy chọn)" />
+            </div>
+
             {/* ĐVT */}
             <div className="grid grid-cols-3 items-center gap-2">
               <Label className="text-xs text-right">ĐVT *</Label>
-              <Select value={form.unit || '__none__'} onValueChange={v => setField('unit', v === '__none__' ? '' : v)}>
+              <Select value={form.unit || undefined} onValueChange={v => setField('unit', v)}>
                 <SelectTrigger className="col-span-2 h-7 text-xs">
                   <SelectValue placeholder="Chọn ĐVT" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="__none__" className="text-xs text-slate-400">— Chọn ĐVT —</SelectItem>
                   <SelectItem value="CAR" className="text-xs font-mono">CAR – Carton (thùng)</SelectItem>
                   <SelectItem value="EA"  className="text-xs font-mono">EA – Each (cái)</SelectItem>
                   <SelectItem value="KG"  className="text-xs font-mono">KG – Kilogram</SelectItem>
@@ -891,6 +905,27 @@ export default function Materials() {
             <div className="grid grid-cols-3 items-center gap-2">
               <Label className="text-xs text-right">Mã cũ</Label>
               <Input className="col-span-2 h-7 text-xs font-mono" value={form.old_code} onChange={e => setField('old_code', e.target.value)} placeholder="Mã trước đây (nếu có)" />
+            </div>
+
+            {/* Ghi chú */}
+            <div className="grid grid-cols-3 items-start gap-2">
+              <Label className="text-xs text-right pt-1.5">Ghi chú</Label>
+              <Input className="col-span-2 h-7 text-xs" value={form.notes} onChange={e => setField('notes', e.target.value)} placeholder="Ghi chú thêm (tùy chọn)" />
+            </div>
+
+            {/* Quản QR / số lượng */}
+            <div className="grid grid-cols-3 items-center gap-2">
+              <Label className="text-xs text-right">Quản tồn</Label>
+              <label className="col-span-2 flex items-center gap-2 text-xs cursor-pointer">
+                <div
+                  onClick={() => setNoQr(v => !v)}
+                  className={`w-3.5 h-3.5 border rounded flex items-center justify-center cursor-pointer transition-colors
+                    ${noQr ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white hover:border-blue-400'}`}
+                >
+                  {noQr && <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />}
+                </div>
+                <span>{noQr ? 'Không quản QR (theo số lượng)' : 'Quản theo QR từng pallet'}</span>
+              </label>
             </div>
 
             {/* Trạng thái (edit only) */}

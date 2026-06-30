@@ -96,6 +96,8 @@ async function main() {
     if (!locMap.get(locRaw.toLowerCase())) { errors.push(`${at} — vị trí không khớp: ${locRaw}`); badLocSamples.add(locRaw); continue }
     const nccRaw = S(r.ncc)
     if (nccRaw) { const res = resolveNcc(nccRaw); if (!res.id) { errors.push(`${at} — NCC ${res.error ?? 'không khớp'}: ${nccRaw}`); continue } }
+    const qaRaw = S(r.qa_status)
+    if (qaRaw && !qaMap.get(qaRaw.toLowerCase())) { errors.push(`${at} — QA không khớp: "${qaRaw}" (hợp lệ: ${qas.map(q => q.name).join(' / ')})`); continue }
     seenInFile.add(palletLc)
     okCount++
   }

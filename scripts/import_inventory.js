@@ -16,9 +16,9 @@ async function main() {
 
   const { data: mats } = await supabase.from('Material').select('id, material_code')
   const matMap = new Map((mats ?? []).map(m => [String(m.material_code).trim().toLowerCase(), m.id]))
-  const { data: whs } = await supabase.from('Warehouse').select('id, code, name')
-  const whByCode = new Map((whs ?? []).map(w => [String(w.code).trim().toLowerCase(), w.id]))
-  const whByName = new Map((whs ?? []).map(w => [String(w.name).trim().toLowerCase(), w.id]))
+  const { data: whs } = await supabase.from('Warehouse').select('id, code, name, nmsx_code')
+  const whByCode = new Map((whs ?? []).map(w => [String(w.code).trim().toLowerCase(), w]))
+  const whByName = new Map((whs ?? []).map(w => [String(w.name).trim().toLowerCase(), w]))
   const { data: locs } = await supabase.from('Location').select('id, location_code')
   const locMap = new Map((locs ?? []).map(l => [String(l.location_code).trim().toLowerCase(), l.id]))
   const { data: cos } = await supabase.from('TransportCompany').select('id, code, name, type, alias_codes')
@@ -37,8 +37,10 @@ async function main() {
     if (seen.has(pallet.toLowerCase())) { console.log('  SKIP (đã có):', pallet); skip++; continue }
     const matId = matMap.get(mcode.toLowerCase())
     if (!matId) { console.error('  ERR', pallet, '— Mã hàng không khớp:', mcode); err++; continue }
-    const whId = whByCode.get(whRaw.toLowerCase()) || whByName.get(whRaw.toLowerCase())
-    if (!whId) { console.error('  ERR', pallet, '— Kho không khớp:', whRaw); err++; continue }
+    const wh = whByCode.get(whRaw.toLowerCase()) || whByName.get(whRaw.toLowerCase())
+    if (!wh) { console.error('  ERR', pallet, '— Kho không khớp:', whRaw); err++; continue }
+    const whId = wh.id
+    const nmsx = (wh.nmsx_code && String(wh.nmsx_code).trim()) || null   // NMSX tự suy từ kho (Ba Vì → B), kho không có → trống
     const locRaw = S(r.location_code)
     let locId = null
     if (locRaw) { locId = locMap.get(locRaw.toLowerCase()); if (!locId) { console.error('  ERR', pallet, '— Vị trí không khớp:', locRaw); err++; continue } }
@@ -54,7 +56,7 @@ async function main() {
       cartons_imported: cartons, cartons_remaining: cartons, cartons_reserved: 0, adjustment_qty: 0,
       stack_layer: 1, status: 'IN_STOCK', origin: 'IMPORT',
       production_date: prod ? `${prod}T00:00:00` : null,
-      shelf_life_days: I(r.shelf_life_days), ncc_id: nccId, qa_status_id: qaId,
+      shelf_life_days: I(r.shelf_life_days), ncc_id: nccId, qa_status_id: qaId, nmsx,
       import_date: now, created_at: now, updated_at: now,
     }
     const { error } = await supabase.from('InventoryEntry').insert(rec)

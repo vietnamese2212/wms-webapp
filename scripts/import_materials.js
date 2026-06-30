@@ -51,16 +51,15 @@ async function main() {
   const ws = wb.Sheets[wb.SheetNames[0]]
   const raw = XLSX.utils.sheet_to_json(ws, { defval: '', header: 1 })
 
-  // Row 0 = display labels, Row 1 = field keys, Row 2+ = data
-  // Support both: template format (key row) or plain format (just headers)
-  let rows
-  if (raw.length >= 2 && String(raw[1][0]).includes('material_code')) {
-    // Template format: row 1 is field keys
-    const keys = raw[1]
-    rows = raw.slice(2).map(r => Object.fromEntries(keys.map((k, i) => [k, r[i]])))
-  } else {
-    rows = XLSX.utils.sheet_to_json(ws, { defval: '' })
-  }
+  // Map theo VỊ TRÍ cột (đúng thứ tự KEYS) — CHỊU ĐƯỢC khi mất dòng key/nhãn.
+  // Dòng 1 = nhãn, dòng 2 = KEY (tuỳ chọn), dòng 3+ = data. (Cột PHẢI đúng thứ tự template.)
+  const KEYS = ['material_code', 'material_description', 'category', 'unit', 'cartons_per_pallet',
+    'units_per_carton', 'pallet_per_ea', 'weight_kg', 'shelf_life_days', 'product_type', 'custom_short_name', 'notes']
+  const isKeyRow = r => KEYS.every((k, i) => String((r || [])[i] ?? '').trim() === k)
+  const start = raw.length > 1 && isKeyRow(raw[1]) ? 2 : 1   // có dòng key → data từ dòng 3; không → bỏ dòng nhãn, data từ dòng 2
+  const rows = raw.slice(start)
+    .map(r => Object.fromEntries(KEYS.map((k, i) => [k, r[i]])))
+    .filter(r => Object.values(r).some(v => String(v ?? '').trim()))
 
   if (!rows.length) { console.error('Không có dữ liệu'); process.exit(1) }
 

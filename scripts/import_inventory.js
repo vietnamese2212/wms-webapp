@@ -1,9 +1,10 @@
 /**
  * Import TỒN KHO ĐẦU KỲ từ templates/6_TonKho.xlsx
  * Run: cd backend && node ../scripts/import_inventory.js ../templates/6_TonKho.xlsx
- * Chạy SAU CÙNG (cần Kho + Vị trí + NCC; mã hàng đã có sẵn).
- * Mỗi dòng = 1 pallet tồn. Bỏ qua pallet_code đã tồn tại. status=IN_STOCK, origin=IMPORT.
- * BẮT BUỘC mỗi dòng: pallet, mã hàng, kho, số thùng, VỊ TRÍ, NGÀY SX (thiếu/sai → BÁO LỖI, không bỏ qua).
+ * Chạy SAU CÙNG (cần Kho + Vị trí + NCC; mã hàng đã có sẵn). status=IN_STOCK, origin=IMPORT.
+ * ALL-OR-NOTHING: kiểm TOÀN BỘ file trước; CÓ BẤT KỲ LỖI NÀO → in hết lỗi & KHÔNG nhập gì (sửa rồi up lại).
+ *   File sạch 100% mới nhập, và nhập NGUYÊN KHỐI 1 lệnh (lỗi DB → rollback hết).
+ * BẮT BUỘC mỗi dòng: pallet, mã hàng, kho, số thùng, VỊ TRÍ, NGÀY SX. Trùng pallet (trong file/đã có) = lỗi.
  * NMSX tự suy từ nmsx_code của kho. shelf_life_days/HSD tùy chọn (không khai → không tính %date).
  */
 const { supabase, S, I, readRows, codeNameResolver } = require('./_upload_util')
@@ -47,7 +48,12 @@ async function main() {
   const seen = new Set((ex ?? []).map(e => (e.pallet_code || '').trim().toLowerCase()))
 
   const now = new Date().toISOString()
-  let ok = 0, skip = 0, err = 0, lineNo = 0
+
+  // ── PHA 1: kiểm tra TOÀN BỘ file. Có BẤT KỲ lỗi nào → KHÔNG nhập gì, in hết lỗi để sửa rồi up lại. ──
+  const errors = []        // mọi lỗi dữ liệu, gom hết
+  const records = []       // bản ghi hợp lệ chờ nhập (chỉ dùng khi 0 lỗi)
+  const seenInFile = new Set()
+  let lineNo = 0
   for (const r of rows) {
     lineNo++
     const pallet = S(r.pallet_code), mcode = S(r.material_code), whRaw = S(r.warehouse)
@@ -55,7 +61,8 @@ async function main() {
     const locRaw = S(r.location_code)
     const prodRaw = S(r.production_date)
     const prodIso = toISODate(r.production_date)
-    // Tồn đầu kỳ BẮT BUỘC: pallet/mã hàng/kho/số thùng/vị trí/ngày SX. Thiếu → BÁO LỖI (không bỏ qua) để sửa rồi up lại.
+    const at = pallet || `(dòng dữ liệu #${lineNo})`
+
     const missing = []
     if (!pallet)         missing.push('mã pallet')
     if (!mcode)          missing.push('mã hàng')
@@ -63,37 +70,48 @@ async function main() {
     if (cartons == null) missing.push('số thùng')
     if (!locRaw)         missing.push('vị trí')
     if (!prodIso)        missing.push(prodRaw ? `ngày SX sai định dạng "${prodRaw}"` : 'ngày SX')
-    if (missing.length) {
-      console.error('  ERR', pallet || `(dòng dữ liệu #${lineNo})`, '— thiếu/sai:', missing.join(', '))
-      err++; continue
-    }
-    if (seen.has(pallet.toLowerCase())) { console.log('  SKIP (đã có):', pallet); skip++; continue }
+    if (missing.length) { errors.push(`${at} — thiếu/sai: ${missing.join(', ')}`); continue }
+
+    const palletLc = pallet.toLowerCase()
+    if (seenInFile.has(palletLc)) { errors.push(`${at} — trùng mã pallet trong file`); continue }
+    if (seen.has(palletLc))       { errors.push(`${at} — mã pallet đã tồn tại trong kho`); continue }
     const matId = matMap.get(mcode.toLowerCase())
-    if (!matId) { console.error('  ERR', pallet, '— Mã hàng không khớp:', mcode); err++; continue }
+    if (!matId) { errors.push(`${at} — mã hàng không khớp: ${mcode}`); continue }
     const wh = whByCode.get(whRaw.toLowerCase()) || whByName.get(whRaw.toLowerCase())
-    if (!wh) { console.error('  ERR', pallet, '— Kho không khớp:', whRaw); err++; continue }
-    const whId = wh.id
-    const nmsx = (wh.nmsx_code && String(wh.nmsx_code).trim()) || null   // NMSX tự suy từ kho (Ba Vì → B), kho không có → trống
+    if (!wh) { errors.push(`${at} — kho không khớp: ${whRaw}`); continue }
     const locId = locMap.get(locRaw.toLowerCase())
-    if (!locId) { console.error('  ERR', pallet, '— Vị trí không khớp:', locRaw); err++; continue }
+    if (!locId) { errors.push(`${at} — vị trí không khớp: ${locRaw}`); continue }
     const nccRaw = S(r.ncc)
     let nccId = null
-    if (nccRaw) { const res = resolveNcc(nccRaw); if (!res.id) { console.error('  ERR', pallet, '— NCC ' + (res.error ?? 'không khớp') + ':', nccRaw); err++; continue } nccId = res.id }
+    if (nccRaw) { const res = resolveNcc(nccRaw); if (!res.id) { errors.push(`${at} — NCC ${res.error ?? 'không khớp'}: ${nccRaw}`); continue } nccId = res.id }
     const qaRaw = S(r.qa_status) || 'OK'
     const qaId = qaMap.get(qaRaw.toLowerCase()) ?? null
+    const nmsx = (wh.nmsx_code && String(wh.nmsx_code).trim()) || null   // NMSX tự suy từ kho (Ba Vì → B), kho không có → trống
 
-    const rec = {
-      id: randomUUID(), pallet_code: pallet, material_id: matId, warehouse_id: whId, location_id: locId,
+    seenInFile.add(palletLc)
+    records.push({
+      id: randomUUID(), pallet_code: pallet, material_id: matId, warehouse_id: wh.id, location_id: locId,
       cartons_imported: cartons, cartons_remaining: cartons, cartons_reserved: 0, adjustment_qty: 0,
       stack_layer: 1, status: 'IN_STOCK', origin: 'IMPORT',
       production_date: `${prodIso}T00:00:00`,
       shelf_life_days: I(r.shelf_life_days), ncc_id: nccId, qa_status_id: qaId, nmsx,
       import_date: now, created_at: now, updated_at: now,
-    }
-    const { error } = await supabase.from('InventoryEntry').insert(rec)
-    if (error) { console.error('  ERR', pallet, '—', error.message); err++ }
-    else { console.log('  OK', pallet, '—', mcode, `${cartons} thùng`); seen.add(pallet.toLowerCase()); ok++ }
+    })
   }
-  console.log(`\nTồn kho: ${ok} thêm · ${skip} bỏ qua · ${err} lỗi`)
+
+  if (errors.length) {
+    console.error(`\n❌ ${errors.length} dòng lỗi — CHƯA NHẬP GÌ CẢ. Sửa các dòng dưới đây rồi chạy lại:`)
+    errors.forEach(e => console.error('  •', e))
+    process.exit(1)
+  }
+  if (!records.length) { console.log('Không có dòng dữ liệu nào để nhập.'); return }
+
+  // ── PHA 2: file sạch 100% → nhập NGUYÊN KHỐI (1 lệnh, atomic — lỗi DB thì rollback hết, không nhập nửa vời). ──
+  const { error } = await supabase.from('InventoryEntry').insert(records)
+  if (error) {
+    console.error(`\n❌ Lỗi khi nhập (đã rollback, KHÔNG nhập gì): ${error.message}`)
+    process.exit(1)
+  }
+  console.log(`\n✅ Đã nhập ${records.length} pallet tồn đầu kỳ (100%, không lỗi).`)
 }
 main().catch(e => { console.error(e); process.exit(1) })

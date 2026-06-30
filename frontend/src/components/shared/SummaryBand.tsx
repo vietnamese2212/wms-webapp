@@ -9,7 +9,8 @@ import React from 'react'
 export interface BandTile {
   label: string
   value: React.ReactNode
-  accent?: boolean   // tô số bằng màu nổi (vd tổng quan trọng)
+  accent?: boolean   // tô số bằng màu nổi (amber — vd tổng quan trọng)
+  danger?: boolean   // tô số đỏ (cảnh báo, vd thiếu dữ liệu)
 }
 
 export function SummaryBand({ tiles, className, compact }: { tiles: BandTile[]; className?: string; compact?: boolean }) {
@@ -18,7 +19,7 @@ export function SummaryBand({ tiles, className, compact }: { tiles: BandTile[]; 
       {tiles.map((t, i) => (
         <div key={i} className={`flex-1 min-w-[84px] text-center ${compact ? 'px-3 py-0.5' : 'px-3 py-1.5'}`}>
           <div className="text-[9px] font-medium uppercase tracking-wider text-sky-200/90 truncate">{t.label}</div>
-          <div className={`font-semibold leading-tight tabular-nums ${compact ? 'text-xs' : 'text-base'} ${t.accent ? 'text-amber-300' : 'text-white'}`}>
+          <div className={`font-semibold leading-tight tabular-nums ${compact ? 'text-xs' : 'text-base'} ${t.danger ? 'text-red-300' : t.accent ? 'text-amber-300' : 'text-white'}`}>
             {t.value}
           </div>
         </div>

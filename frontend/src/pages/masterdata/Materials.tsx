@@ -100,6 +100,17 @@ const needsShelfLife = (cat: string | null | undefined) => !!cat && !NO_SHELF_LI
 const PALLET_PER_EA_CATS = ['Raw', 'Thùng', 'Giấy']
 const needsPalletPerEa = (cat: string | null | undefined) => !!cat && PALLET_PER_EA_CATS.includes(cat)
 
+// Mã hàng THIẾU dữ liệu bắt buộc → trả danh sách field thiếu (để tô đỏ + tooltip trong danh sách). Khớp luật form.
+function missingRequiredFields(m: Material): string[] {
+  const miss: string[] = []
+  if (!m.category) miss.push('Loại hàng')
+  if (!m.unit) miss.push('ĐVT')
+  if (m.cartons_per_pallet == null || Number(m.cartons_per_pallet) <= 0) miss.push('Thùng/pallet')
+  if (needsShelfLife(m.category) && m.shelf_life_days == null) miss.push('HSD')
+  if (needsPalletPerEa(m.category) && m.pallet_per_ea == null) miss.push('Pallet/EA')
+  return miss
+}
+
 // ── Main component ───────────────────────────────────────────────────────────
 export default function Materials() {
   const user  = useAuthStore(s => s.user)
@@ -420,10 +431,11 @@ export default function Materials() {
   }, [savedViews, viewSnapshot])
 
   const summary = useMemo(() => ({
-    total:    filtered.length,
-    active:   filtered.filter(m => m.is_active).length,
-    inactive: filtered.filter(m => !m.is_active).length,
-    noQr:     filtered.filter(m => m.no_qr_tracking).length,
+    total:      filtered.length,
+    active:     filtered.filter(m => m.is_active).length,
+    inactive:   filtered.filter(m => !m.is_active).length,
+    noQr:       filtered.filter(m => m.no_qr_tracking).length,
+    incomplete: filtered.filter(m => missingRequiredFields(m).length > 0).length,
   }), [filtered])
 
   return (
@@ -467,6 +479,7 @@ export default function Materials() {
         { label: 'Đang dùng', value: summary.active },
         { label: 'Đã ẩn', value: summary.inactive },
         { label: 'Không QR', value: summary.noQr, accent: summary.noQr > 0 },
+        { label: 'Thiếu DL', value: summary.incomplete, danger: summary.incomplete > 0 },
       ]} />
 
       {/* ── Table ─────────────────────────────────────────────────────── */}
@@ -496,10 +509,12 @@ export default function Materials() {
                 <tr><td colSpan={colCount}><EmptyState title="Không có mã hàng" /></td></tr>
               ) : filtered.map(mat => {
                 const hasOverrides = (mat.warehouse_pallet_overrides?.length ?? 0) > 0
+                const miss = missingRequiredFields(mat)
                 return (
                   <TableRow
                     key={mat.id}
-                    className={`${!mat.is_active ? 'opacity-50' : ''} hover:bg-slate-50 cursor-pointer ${detailMat?.id === mat.id ? 'bg-blue-50 hover:bg-blue-50' : ''} ${dense ? '' : '[&_td]:py-2.5'}`}
+                    title={miss.length ? `Thiếu dữ liệu bắt buộc: ${miss.join(', ')}` : undefined}
+                    className={`${!mat.is_active ? 'opacity-50' : ''} hover:bg-slate-50 cursor-pointer ${detailMat?.id === mat.id ? 'bg-blue-50 hover:bg-blue-50' : ''} ${miss.length ? '[&_td]:text-red-600' : ''} ${dense ? '' : '[&_td]:py-2.5'}`}
                     onClick={() => setDetailMat(detailMat?.id === mat.id ? null : mat)}
                   >
                     {canDel && (

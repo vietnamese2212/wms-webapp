@@ -26,9 +26,10 @@ export function useWarehouses(onlyActive = false) {
   })
 }
 
-export function useLocationsReal(params?: { warehouse_id?: string; sub_code?: string; category?: string; material_id?: string }) {
+export function useLocationsReal(params?: { warehouse_id?: string; sub_code?: string; category?: string; material_id?: string }, enabled = true) {
   return useQuery({
     queryKey: ['locations-real', params],
+    enabled,
     queryFn: async () => {
       const { data } = await apiClient.get('/masterdata/locations', { params })
       return data.data as any[]

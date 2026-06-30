@@ -109,16 +109,16 @@ export default function Locations() {
   const categoryOptions                  = whTypes.map(t => t.value)
   const { data: formZones = [] }        = useWarehouseZones(form.warehouse_id || undefined)
   const { data: activeWhRaw = [] }      = useWarehouses(true)
-  const { data: allRaw = [] }           = useLocationsReal()
+  // Chỉ nạp vị trí khi đã chọn kho (tránh kéo toàn bộ dữ liệu).
   const { data: raw = [], isLoading }   = useLocationsReal(
-    warehouseId ? { warehouse_id: warehouseId } : undefined
+    warehouseId ? { warehouse_id: warehouseId } : undefined,
+    !!warehouseId,
   )
 
   const allowedLocWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
     ? new Set(user.warehouse_ids)
     : null
   const warehouses   = (activeWhRaw as WhWithCount[]).filter(w => !allowedLocWhIds || allowedLocWhIds.has(w.id))
-  const allLocations = (allRaw as RealLocation[]).filter(l => l.is_active)
   const showInactive = statusFilter.includes('inactive')
   const locations    = showInactive
     ? (raw as RealLocation[])
@@ -310,7 +310,11 @@ export default function Locations() {
       {/* Table + Detail panel */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
         <div className="flex-1 overflow-auto pb-20 lg:pb-4">
-          {isLoading ? (
+          {!warehouseId ? (
+            <div className="p-8 text-center text-sm text-slate-400">
+              Chọn <span className="font-semibold text-slate-600">Kho</span> ở thanh lọc để xem vị trí
+            </div>
+          ) : isLoading ? (
             <div className="p-4"><TableSkeleton rows={8} cols={8} /></div>
           ) : filtered.length === 0 ? (
             <EmptyState icon={MapPin} title="Không tìm thấy vị trí" />

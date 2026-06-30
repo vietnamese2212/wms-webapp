@@ -3,7 +3,7 @@
  * Run: cd backend && node ../scripts/import_inventory.js ../templates/6_TonKho.xlsx
  * Chạy SAU CÙNG (cần Kho + Vị trí + NCC; mã hàng đã có sẵn).
  * Mỗi dòng = 1 pallet tồn. Bỏ qua pallet_code đã tồn tại. status=IN_STOCK, origin=IMPORT.
- * BẮT BUỘC mỗi dòng: pallet, mã hàng, kho, số thùng, VỊ TRÍ, NGÀY SX (thiếu → bỏ qua).
+ * BẮT BUỘC mỗi dòng: pallet, mã hàng, kho, số thùng, VỊ TRÍ, NGÀY SX (thiếu/sai → BÁO LỖI, không bỏ qua).
  * NMSX tự suy từ nmsx_code của kho. shelf_life_days/HSD tùy chọn (không khai → không tính %date).
  */
 const { supabase, S, I, readRows, codeNameResolver } = require('./_upload_util')
@@ -47,15 +47,25 @@ async function main() {
   const seen = new Set((ex ?? []).map(e => (e.pallet_code || '').trim().toLowerCase()))
 
   const now = new Date().toISOString()
-  let ok = 0, skip = 0, err = 0
+  let ok = 0, skip = 0, err = 0, lineNo = 0
   for (const r of rows) {
+    lineNo++
     const pallet = S(r.pallet_code), mcode = S(r.material_code), whRaw = S(r.warehouse)
     const cartons = num(r.cartons)
     const locRaw = S(r.location_code)
+    const prodRaw = S(r.production_date)
     const prodIso = toISODate(r.production_date)
-    // Tồn đầu kỳ: BẮT BUỘC có Vị trí + Ngày SX (để xếp vị trí + xuất trước theo ngày).
-    if (!pallet || !mcode || !whRaw || cartons == null || !locRaw || !prodIso) {
-      console.log('  SKIP (thiếu pallet/mã hàng/kho/số thùng/vị trí/ngày SX)'); skip++; continue
+    // Tồn đầu kỳ BẮT BUỘC: pallet/mã hàng/kho/số thùng/vị trí/ngày SX. Thiếu → BÁO LỖI (không bỏ qua) để sửa rồi up lại.
+    const missing = []
+    if (!pallet)         missing.push('mã pallet')
+    if (!mcode)          missing.push('mã hàng')
+    if (!whRaw)          missing.push('kho')
+    if (cartons == null) missing.push('số thùng')
+    if (!locRaw)         missing.push('vị trí')
+    if (!prodIso)        missing.push(prodRaw ? `ngày SX sai định dạng "${prodRaw}"` : 'ngày SX')
+    if (missing.length) {
+      console.error('  ERR', pallet || `(dòng dữ liệu #${lineNo})`, '— thiếu/sai:', missing.join(', '))
+      err++; continue
     }
     if (seen.has(pallet.toLowerCase())) { console.log('  SKIP (đã có):', pallet); skip++; continue }
     const matId = matMap.get(mcode.toLowerCase())

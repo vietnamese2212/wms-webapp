@@ -12,6 +12,18 @@ const { randomUUID } = require('crypto')
 
 const num = v => { const n = parseFloat(String(v ?? '').replace(',', '.')); return Number.isNaN(n) ? null : n }
 
+// Nạp TẤT CẢ dòng 1 bảng — phân trang (PostgREST cap 1000/response; Material 1788, InventoryEntry sẽ >1000 sau nhập).
+async function selectAll(table, cols) {
+  const out = []
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase.from(table).select(cols).range(from, from + 999)
+    if (error) { console.error(`Lỗi nạp ${table}: ${error.message}`); process.exit(1) }
+    out.push(...(data ?? []))
+    if (!data || data.length < 1000) break
+  }
+  return out
+}
+
 // Ngày SX → yyyy-mm-dd. Chịu được: chuỗi yyyy-mm-dd / dd-mm-yyyy (dùng - hoặc /) · Date · số serial Excel.
 function toISODate(v) {
   if (v == null || v === '') return null
@@ -33,19 +45,19 @@ const KEYS = ['pallet_code', 'material_code', 'warehouse', 'location_code', 'car
 async function main() {
   const rows = readRows(process.argv[2] || '../templates/6_TonKho.xlsx', KEYS)
 
-  const { data: mats } = await supabase.from('Material').select('id, material_code')
-  const matMap = new Map((mats ?? []).map(m => [String(m.material_code).trim().toLowerCase(), m.id]))
-  const { data: whs } = await supabase.from('Warehouse').select('id, code, name, nmsx_code')
-  const whByCode = new Map((whs ?? []).map(w => [String(w.code).trim().toLowerCase(), w]))
-  const whByName = new Map((whs ?? []).map(w => [String(w.name).trim().toLowerCase(), w]))
-  const { data: locs } = await supabase.from('Location').select('id, location_code')
-  const locMap = new Map((locs ?? []).map(l => [String(l.location_code).trim().toLowerCase(), l.id]))
-  const { data: cos } = await supabase.from('TransportCompany').select('id, code, name, type, alias_codes')
-  const resolveNcc = codeNameResolver((cos ?? []).filter(c => c.type === 'NCC'))
-  const { data: qas } = await supabase.from('QAStatus').select('id, name')
-  const qaMap = new Map((qas ?? []).map(q => [String(q.name).trim().toLowerCase(), q.id]))
-  const { data: ex } = await supabase.from('InventoryEntry').select('pallet_code')
-  const seen = new Set((ex ?? []).map(e => (e.pallet_code || '').trim().toLowerCase()))
+  const mats = await selectAll('Material', 'id, material_code')
+  const matMap = new Map(mats.map(m => [String(m.material_code).trim().toLowerCase(), m.id]))
+  const whs = await selectAll('Warehouse', 'id, code, name, nmsx_code')
+  const whByCode = new Map(whs.map(w => [String(w.code).trim().toLowerCase(), w]))
+  const whByName = new Map(whs.map(w => [String(w.name).trim().toLowerCase(), w]))
+  const locs = await selectAll('Location', 'id, location_code')
+  const locMap = new Map(locs.map(l => [String(l.location_code).trim().toLowerCase(), l.id]))
+  const cos = await selectAll('TransportCompany', 'id, code, name, type, alias_codes')
+  const resolveNcc = codeNameResolver(cos.filter(c => c.type === 'NCC'))
+  const qas = await selectAll('QAStatus', 'id, name')
+  const qaMap = new Map(qas.map(q => [String(q.name).trim().toLowerCase(), q.id]))
+  const ex = await selectAll('InventoryEntry', 'pallet_code')
+  const seen = new Set(ex.map(e => (e.pallet_code || '').trim().toLowerCase()))
 
   const now = new Date().toISOString()
 

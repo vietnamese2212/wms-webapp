@@ -96,9 +96,14 @@ async function main() {
     const nccRaw = S(r.ncc)
     let nccId = null
     if (nccRaw) { const res = resolveNcc(nccRaw); if (!res.id) { errors.push(`${at} — NCC ${res.error ?? 'không khớp'}: ${nccRaw}`); continue } nccId = res.id }
-    const qaRaw = S(r.qa_status) || 'OK'
-    const qaId = qaMap.get(qaRaw.toLowerCase()) ?? null
-    if (S(r.qa_status) && qaId == null) { errors.push(`${at} — QA không khớp: "${qaRaw}" (hợp lệ: ${qas.map(q => q.name).join(' / ')})`); continue }
+    // QA: trống hoặc "OK" = pallet tốt → qa_status_id NULL (đồng bộ luồng nhập thật: ?? null).
+    // Chỉ gán khi là cờ GIỮ thật (X / X 7 ngày / X cảm quan); giá trị lạ → lỗi (không âm thầm bỏ).
+    const qaRaw = S(r.qa_status)
+    let qaId = null
+    if (qaRaw && qaRaw.toLowerCase() !== 'ok') {
+      qaId = qaMap.get(qaRaw.toLowerCase()) ?? null
+      if (qaId == null) { errors.push(`${at} — QA không khớp: "${qaRaw}" (hợp lệ: ${qas.map(q => q.name).join(' / ')})`); continue }
+    }
     const nmsx = (wh.nmsx_code && String(wh.nmsx_code).trim()) || null   // NMSX tự suy từ kho (Ba Vì → B), kho không có → trống
 
     seenInFile.add(palletLc)

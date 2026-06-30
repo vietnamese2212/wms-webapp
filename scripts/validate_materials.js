@@ -15,8 +15,13 @@ const num = v => { const n = parseFloat(String(v ?? '').replace(',', '.')); retu
 
 async function main() {
   const rows = readRows(process.argv[2] || '../templates/0_MaHang.xlsx', KEYS)
-  const { data: ex } = await supabase.from('Material').select('material_code')
-  const existing = new Set((ex ?? []).map(m => String(m.material_code).trim()))
+  // Nạp TẤT CẢ mã đã có — phân trang (PostgREST cap 1000 dòng/response).
+  const existing = new Set()
+  for (let from = 0; ; from += 1000) {
+    const { data } = await supabase.from('Material').select('material_code').range(from, from + 999)
+    for (const m of data ?? []) existing.add(String(m.material_code).trim())
+    if (!data || data.length < 1000) break
+  }
 
   const errors = [], warns = []
   const seen = new Map()

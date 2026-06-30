@@ -64,8 +64,14 @@ async function main() {
   if (!rows.length) { console.error('Không có dữ liệu'); process.exit(1) }
 
   // UPSERT: mã mới → thêm; mã đã có → CẬP NHẬT (chỉ field có giá trị trong file; ô trống = giữ nguyên, không xoá).
-  const { data: existing } = await supabase.from('Material').select('id, material_code')
-  const existingMap = new Map((existing ?? []).map(m => [m.material_code, m.id]))
+  // Nạp TẤT CẢ mã đã có — PHÂN TRANG (PostgREST cap 1000 dòng/response; >1000 mã sẽ thiếu → tưởng "mới" → INSERT trùng).
+  const existingMap = new Map()
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase.from('Material').select('id, material_code').range(from, from + 999)
+    if (error) { console.error('Lỗi nạp danh sách mã:', error.message); process.exit(1) }
+    for (const m of data ?? []) existingMap.set(String(m.material_code).trim(), m.id)
+    if (!data || data.length < 1000) break
+  }
 
   const now = new Date().toISOString()
   let inserted = 0, updated = 0, skipped = 0, errors = 0

@@ -89,7 +89,9 @@ const EMPTY_FORM = {
   old_code: '',
 }
 
-const SHELF_LIFE_CATS = ['Thành phẩm', 'NVL']
+// HSD (shelflife) BẮT BUỘC cho MỌI loại hàng, TRỪ Thùng & POSM (bao bì/vật phẩm quảng cáo — không cần hạn dùng).
+const NO_SHELF_LIFE_CATS = ['Thùng', 'POSM']
+const needsShelfLife = (cat: string | null | undefined) => !!cat && !NO_SHELF_LIFE_CATS.includes(cat)
 
 // ── Main component ───────────────────────────────────────────────────────────
 export default function Materials() {
@@ -192,8 +194,8 @@ export default function Materials() {
     if (!form.unit) return 'ĐVT là bắt buộc (CAR hoặc EA)'
     if (!form.cartons_per_pallet) return 'Thùng/pallet là bắt buộc'
     if (!form.weight_kg) return 'Khối lượng (KG) là bắt buộc'
-    if (SHELF_LIFE_CATS.includes(form.category) && !form.shelf_life_days)
-      return `HSD (ngày) là bắt buộc cho ${form.category}`
+    if (needsShelfLife(form.category) && !form.shelf_life_days)
+      return `HSD (ngày) là bắt buộc cho loại "${form.category}" (chỉ Thùng/POSM mới được để trống)`
     for (const ov of overrides) {
       if (!ov.warehouse_id || !ov.cartons_per_pallet) return 'Điền đủ kho và số thùng cho mọi ngoại lệ'
     }
@@ -842,7 +844,7 @@ export default function Materials() {
             {/* HSD */}
             <div className="grid grid-cols-3 items-center gap-2">
               <Label className="text-xs text-right">
-                HSD (ngày){SHELF_LIFE_CATS.includes(form.category) && ' *'}
+                HSD (ngày){needsShelfLife(form.category) && ' *'}
               </Label>
               <Input type="number" min={0} className="col-span-2 h-7 text-xs" value={form.shelf_life_days} onChange={e => setField('shelf_life_days', e.target.value)} placeholder="Số ngày hạn sử dụng" />
             </div>

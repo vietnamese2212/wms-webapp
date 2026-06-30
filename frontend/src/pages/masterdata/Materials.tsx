@@ -201,7 +201,7 @@ export default function Materials() {
     if (!form.category) return 'Loại hàng là bắt buộc'
     if (!form.unit) return 'ĐVT là bắt buộc'
     if (!form.cartons_per_pallet) return 'Thùng/pallet là bắt buộc'
-    if (!form.weight_kg) return 'Khối lượng (KG) là bắt buộc'
+    if (form.unit !== 'KG' && !form.weight_kg) return 'Khối lượng (KG) là bắt buộc'
     if (needsShelfLife(form.category) && !form.shelf_life_days)
       return `HSD (ngày) là bắt buộc cho loại "${form.category}" (chỉ Thùng/POSM mới được để trống)`
     if (needsPalletPerEa(form.category) && !form.pallet_per_ea)
@@ -867,7 +867,7 @@ export default function Materials() {
 
             {/* KG */}
             <div className="grid grid-cols-3 items-center gap-2">
-              <Label className="text-xs text-right">KG *</Label>
+              <Label className="text-xs text-right">KG{form.unit !== 'KG' && ' *'}</Label>
               <Input type="number" min={0} step="0.01" className="col-span-2 h-7 text-xs" value={form.weight_kg} onChange={e => setField('weight_kg', e.target.value)} placeholder="Khối lượng (kg/thùng)" />
             </div>
 

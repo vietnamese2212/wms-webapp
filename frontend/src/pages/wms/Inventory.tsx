@@ -63,7 +63,7 @@ function entryRowBg(selected: boolean, checked: boolean): string {
 //   QA status = cờ chất lượng (OK = không có qa_status). < 60% date → tím · 60–80% → cam.
 function entryRowText(e: InventoryEntry, selected: boolean): string {
   if (selected)    return '[&_td_span]:text-white'
-  if (e.qa_status) return '[&_td_span]:text-red-600'
+  if (e.qa_status && e.qa_status.code !== 'OK') return '[&_td_span]:text-red-600'   // chỉ đỏ khi QA GIỮ thật; OK (hoặc NULL) = không đỏ
   const pct = calcDatePct(e.production_date, resolveShelfLife(e.shelf_life_days, e.material, e.ncc_id))
   if (pct !== null && pct < 60) return '[&_td_span]:text-purple-600'
   if (pct !== null && pct < 80) return '[&_td_span]:text-orange-600'

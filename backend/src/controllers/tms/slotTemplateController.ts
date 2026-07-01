@@ -164,8 +164,9 @@ export async function batchUpsertSlotTemplates(req: Request, res: Response) {
     const seen = new Set<string>()
     for (const ts of time_slots) {
       const f = hhmm(ts.time_from), t = hhmm(ts.time_to)
-      if (!f || !t || !ts.max_vehicles || Number(ts.max_vehicles) < 1)
-        return fail(res, 'Khung giờ không hợp lệ: cần giờ bắt đầu, kết thúc và số xe tối đa ≥ 1', 400)
+      const mv = Number(ts.max_vehicles)
+      if (!f || !t || !Number.isInteger(mv) || mv < 0)
+        return fail(res, 'Khung giờ không hợp lệ: cần giờ bắt đầu, kết thúc và số xe tối đa ≥ 0 (đặt 0 để khóa khung giờ)', 400)
       if (f >= t) return fail(res, `Giờ kết thúc phải sau giờ bắt đầu (${f}–${t})`, 400)
       if (seen.has(`${f}-${t}`)) return fail(res, `Khung giờ ${f}–${t} bị lặp trong biểu mẫu`, 400)
       seen.add(`${f}-${t}`)

@@ -134,13 +134,15 @@ function SlotBatchDialog({ open, onClose, preset, warehouseId, warehouseName, ve
     if (!vtId) { setErr('Vui lòng chọn loại xe'); return }
     if (!cargoType) { setErr('Vui lòng chọn loại kho'); return }
     if (!days.length) { setErr('Chọn ít nhất 1 thứ'); return }
-    const clean = slots.map(s => ({ time_from: s.time_from, time_to: s.time_to, max_vehicles: Number(s.max_vehicles) }))
     const seen = new Set<string>()
-    for (const s of clean) {
-      if (!s.time_from || !s.time_to || !s.max_vehicles || s.max_vehicles < 1) { setErr('Mỗi khung giờ cần giờ bắt đầu, kết thúc và số xe tối đa ≥ 1'); return }
+    for (const s of slots) {
+      const mv = Number(s.max_vehicles)
+      if (!s.time_from || !s.time_to) { setErr('Mỗi khung giờ cần giờ bắt đầu và kết thúc'); return }
+      if (s.max_vehicles === '' || !Number.isInteger(mv) || mv < 0) { setErr('Số xe tối đa phải là số ≥ 0 (đặt 0 để khóa khung giờ)'); return }
       if (s.time_from >= s.time_to) { setErr(`Giờ kết thúc phải sau giờ bắt đầu (${s.time_from}–${s.time_to})`); return }
       const k = `${s.time_from}-${s.time_to}`; if (seen.has(k)) { setErr(`Khung giờ ${s.time_from}–${s.time_to} bị lặp`); return } seen.add(k)
     }
+    const clean = slots.map(s => ({ time_from: s.time_from, time_to: s.time_to, max_vehicles: Number(s.max_vehicles) }))
     batch({ warehouse_id: warehouseId, vehicle_type_id: vtId, cargo_type: cargoType, days_of_week: days, time_slots: clean },
       { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
   }
@@ -217,7 +219,7 @@ function SlotBatchDialog({ open, onClose, preset, warehouseId, warehouseName, ve
                 <div key={i} className="grid grid-cols-[1fr_1fr_auto_auto] gap-2 px-2 py-1.5 items-center">
                   <Input type="time" value={s.time_from} onChange={e => setSlot(i, { time_from: e.target.value })} className="h-8" />
                   <Input type="time" value={s.time_to} onChange={e => setSlot(i, { time_to: e.target.value })} className="h-8" />
-                  <Input type="number" min="1" value={s.max_vehicles} onChange={e => setSlot(i, { max_vehicles: e.target.value })} className="h-8 w-16 text-right" />
+                  <Input type="number" min="0" value={s.max_vehicles} onChange={e => setSlot(i, { max_vehicles: e.target.value })} className="h-8 w-16 text-right" />
                   <button type="button" disabled={slots.length <= 1} onClick={() => setSlots(prev => prev.filter((_, idx) => idx !== i))}
                     className="text-slate-400 hover:text-red-500 disabled:opacity-30 disabled:hover:text-slate-400 p-1" title="Xóa khung giờ này">
                     <Trash2 className="h-3.5 w-3.5" />
@@ -255,7 +257,8 @@ function SlotRowEditDialog({ st, open, onClose, cargoOptions }: {
 
   function handleSubmit() {
     setErr('')
-    if (!timeFrom || !timeTo || !maxVehicles) { setErr('Vui lòng điền đủ thông tin'); return }
+    const mv = Number(maxVehicles)
+    if (!timeFrom || !timeTo || maxVehicles === '' || !Number.isInteger(mv) || mv < 0) { setErr('Vui lòng điền đủ thông tin (số xe tối đa ≥ 0)'); return }
     if (timeFrom >= timeTo) { setErr('Giờ kết thúc phải sau giờ bắt đầu'); return }
     update({ id: st.id, time_from: timeFrom, time_to: timeTo, max_vehicles: Number(maxVehicles), cargo_type: cargoType, is_active: isActive },
       { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
@@ -284,7 +287,7 @@ function SlotRowEditDialog({ st, open, onClose, cargoOptions }: {
               <Input type="time" value={timeTo} onChange={e => setTimeTo(e.target.value)} /></div>
           </div>
           <div className="space-y-1"><Label className="text-xs">Số xe tối đa *</Label>
-            <Input type="number" min="1" value={maxVehicles} onChange={e => setMaxVehicles(e.target.value)} /></div>
+            <Input type="number" min="0" value={maxVehicles} onChange={e => setMaxVehicles(e.target.value)} /></div>
           <div className="flex items-center gap-2">
             <input id="st-active" type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} className="h-4 w-4 rounded accent-blue-600" />
             <Label htmlFor="st-active" className="text-sm cursor-pointer">Đang hoạt động</Label>

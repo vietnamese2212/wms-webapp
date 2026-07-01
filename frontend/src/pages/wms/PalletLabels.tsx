@@ -110,26 +110,28 @@ function PalletLabel({ d }: { d: LabelData }) {
         </div>
       </div>
 
-      {/* Footer lớn — 3 cột tiêu đề + giá trị to để nhận diện từ xa */}
+      {/* Footer lớn — 3 cột tiêu đề + giá trị. Ô giá trị CHIỀU CAO CỐ ĐỊNH → mọi tem cùng cỡ (không resize) */}
       <div className="mt-[1.5mm] grid grid-cols-3 shrink-0 border-t-2 border-black text-center">
-        <div className="border-r border-black">
+        <div className="border-r border-black flex flex-col">
           <div className="text-[8pt] font-semibold leading-tight">Chu kỳ</div>
-          <div className="text-[24pt] font-bold leading-none">{d.cycle || '—'}</div>
+          <div className="h-[9mm] flex items-center justify-center overflow-hidden text-[24pt] font-bold leading-none">{d.cycle || '—'}</div>
         </div>
         {isNccCategory(d.category) ? (
-          <div className="border-r border-black">
+          <div className="border-r border-black flex flex-col">
             <div className="text-[8pt] font-semibold leading-tight">NCC</div>
-            <div className="text-[13pt] font-bold leading-tight line-clamp-2 px-0.5">{d.nccName || d.machine || '—'}</div>
+            <div className="h-[9mm] flex items-center justify-center overflow-hidden px-0.5">
+              <span className="text-[11pt] font-bold leading-[1.05] line-clamp-2">{d.nccName || d.machine || '—'}</span>
+            </div>
           </div>
         ) : (
-          <div className="border-r border-black">
+          <div className="border-r border-black flex flex-col">
             <div className="text-[8pt] font-semibold leading-tight">Máy</div>
-            <div className="text-[24pt] font-bold leading-none">{d.machine || '—'}</div>
+            <div className="h-[9mm] flex items-center justify-center overflow-hidden text-[24pt] font-bold leading-none">{d.machine || '—'}</div>
           </div>
         )}
-        <div>
+        <div className="flex flex-col">
           <div className="text-[8pt] font-semibold leading-tight">Số pallet</div>
-          <div className="text-[24pt] font-bold leading-none">{Number(d.seq) || d.seq}</div>
+          <div className="h-[9mm] flex items-center justify-center overflow-hidden text-[24pt] font-bold leading-none">{Number(d.seq) || d.seq}</div>
         </div>
       </div>
     </div>
@@ -220,6 +222,10 @@ export default function PalletLabels() {
   const { data: companies = [] } = useTransportCompanies(true)
   const nccList = (companies as { id: string; code: string; name: string; type?: string }[]).filter(c => c.type === 'NCC')
   const nccOptions = nccList.map(c => ({ value: c.code, label: c.name, sub: c.code }))
+  const nccNameByCode = useMemo(() => new Map(nccList.map(c => [c.code, c.name])), [nccList])
+  // Đoạn 4 hiển thị: hàng NCC → TÊN NCC (tra theo mã); thành phẩm → Máy như cũ
+  const seg4Display = (category: string | null | undefined, seg4Val: string | null | undefined) =>
+    isNccCategory(category) ? (nccNameByCode.get(seg4Val ?? '') ?? seg4Val ?? '—') : (seg4Val || '—')
   // Loại hàng đang chọn quyết định đoạn 4: thành phẩm → Máy; POSM/Raw/Thùng/Giấy → NCC
   const genCategory = mat?.category ?? genCat
   const genIsNcc = isNccCategory(genCategory)
@@ -412,6 +418,7 @@ export default function PalletLabels() {
       nmsx: (parts[5] ?? e.manufacturer?.code ?? null) as string | null,
       cycle: (e.cycle ?? parts[2] ?? null) as string | null,
       machine: (e.machine_code ?? parts[3] ?? null) as string | null,
+      ncc_name: (e.ncc?.name ?? null) as string | null,
       production_date: (e.production_date ?? null) as string | null,
       import_date: (e.import_date ?? null) as string | null,
       imported_by: (e.created_by_emp?.name ?? null) as string | null,
@@ -518,6 +525,7 @@ export default function PalletLabels() {
       qty: r.qty ?? '',
       cycle: r.cycle ?? parts[2] ?? '',
       machine: r.machine ?? parts[3] ?? '',
+      nccName: isNccCategory(r.category ?? mat?.category) ? (nccNameByCode.get(r.machine ?? parts[3] ?? '') ?? '') : '',
       seq: r.seq ?? parts[4] ?? '',
     }
   }
@@ -852,7 +860,7 @@ export default function PalletLabels() {
               <colgroup>{auCols.widths.map((w, i) => <col key={i} style={{ width: w }} />)}</colgroup>
               <thead>
                 <tr className="text-left text-[9px] font-medium text-slate-500">
-                  {['Mã pallet (QR)', 'Mã hàng', 'Loại', 'NMSX', 'Chu kỳ', 'Máy', 'Ngày nhập', 'Người nhập', 'Số lần in', 'Lần in gần nhất'].map((h, i) => (
+                  {['Mã pallet (QR)', 'Mã hàng', 'Loại', 'NMSX', 'Chu kỳ', 'Máy / NCC', 'Ngày nhập', 'Người nhập', 'Số lần in', 'Lần in gần nhất'].map((h, i) => (
                     <th key={i} className={`sticky top-0 bg-slate-50 px-2 py-1.5 whitespace-nowrap ${i === 0 ? 'left-0 z-20' : 'z-10'} ${i === 8 ? 'text-right' : ''}`}>
                       {h}
                       <span onPointerDown={e => auCols.startResize(i, e)} className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70" />
@@ -873,7 +881,7 @@ export default function PalletLabels() {
                       <td className="px-2 py-1 whitespace-nowrap">{g.category ?? '—'}</td>
                       <td className="px-2 py-1 whitespace-nowrap">{g.nmsx ?? '—'}</td>
                       <td className="px-2 py-1 whitespace-nowrap">{g.cycle ?? '—'}</td>
-                      <td className="px-2 py-1 whitespace-nowrap">{g.machine ?? '—'}</td>
+                      <td className="px-2 py-1 whitespace-nowrap">{isNccCategory(g.category) ? (g.ncc_name || seg4Display(g.category, g.machine)) : (g.machine ?? '—')}</td>
                       <td className="px-2 py-1 whitespace-nowrap">{g.import_date ? formatTimestampDate(g.import_date, true) : '—'}</td>
                       <td className="px-2 py-1 whitespace-nowrap">{g.imported_by ?? '—'}</td>
                       <td className={`px-2 py-1 text-right tabular-nums font-bold whitespace-nowrap ${g.count === 0 ? 'text-slate-300' : g.count > 1 ? 'text-amber-600' : 'text-slate-700'}`}>{g.count}</td>
@@ -963,7 +971,7 @@ export default function PalletLabels() {
               <thead>
                 <tr className="text-left text-[9px] font-medium text-slate-500">
                   {canReprint && <th className="sticky top-0 left-0 z-20 bg-slate-50 px-2 py-1.5" />}
-                  {['Thời gian in', 'Chế độ', 'Số tem', 'Mã hàng', 'Tên hàng', 'Chu kỳ', 'Máy', 'Người in'].map((h, i) => (
+                  {['Thời gian in', 'Chế độ', 'Số tem', 'Mã hàng', 'Tên hàng', 'Chu kỳ', 'Máy / NCC', 'Người in'].map((h, i) => (
                     <th key={i} className={`sticky top-0 bg-slate-50 px-2 py-1.5 whitespace-nowrap ${i === 0 ? (canReprint ? 'z-20 left-[36px]' : 'z-20 left-0') : 'z-10'} ${i === 2 ? 'text-right' : ''}`}>
                       {h}
                       <span onPointerDown={e => histCols.startResize(i, e)} className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70" />
@@ -978,7 +986,7 @@ export default function PalletLabels() {
                   const mats  = [...new Set(b.rows.map(r => r.material_code).filter(Boolean))]
                   const names = [...new Set(b.rows.map(r => matByCode.get(r.material_code ?? '')?.short_name).filter(Boolean))]
                   const cycs  = [...new Set(b.rows.map(r => r.cycle).filter(Boolean))]
-                  const macs  = [...new Set(b.rows.map(r => r.machine).filter(Boolean))]
+                  const macs  = [...new Set(b.rows.map(r => seg4Display(r.category, r.machine)).filter(v => v && v !== '—'))]
                   const open  = histOpen.has(b.key)
                   const pinBg = histSelBatch === b.key ? 'bg-sky-50' : 'bg-white'
                   return (

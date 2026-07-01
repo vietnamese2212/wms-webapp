@@ -145,9 +145,9 @@ function SlotBatchDialog({ open, onClose, preset, warehouseId, warehouseName, ve
   const hasExisting = existingRows.length > 0
   return (
     <Dialog open={open} onOpenChange={v => { if (!v) onClose() }}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader><DialogTitle>{preset ? 'Sửa cả cụm khung giờ' : 'Thêm khung giờ'}</DialogTitle></DialogHeader>
-        <div className="space-y-3 py-1 max-h-[70vh] overflow-y-auto pr-1">
+      <DialogContent className="!flex flex-col w-[80vw] max-w-[80vw] h-[80dvh] sm:rounded-xl">
+        <DialogHeader className="shrink-0"><DialogTitle>{preset ? 'Sửa cả cụm khung giờ' : 'Thêm khung giờ'}</DialogTitle></DialogHeader>
+        <div className="space-y-3 py-1 flex-1 min-h-0 overflow-y-auto pr-1">
           {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
 
           <div className="text-[11px] text-slate-500">Kho: <span className="font-medium text-slate-700">{warehouseName}</span></div>
@@ -222,7 +222,7 @@ function SlotBatchDialog({ open, onClose, preset, warehouseId, warehouseName, ve
             <p className="text-[10px] text-slate-400">Lưu sẽ tạo khung giờ cho từng thứ đã chọn × từng dòng khung giờ.</p>
           </div>
         </div>
-        <DialogFooter>
+        <DialogFooter className="shrink-0">
           <Button variant="outline" size="sm" onClick={onClose}>Huỷ</Button>
           <Button size="sm" onClick={handleSubmit} disabled={isPending}>
             {isPending ? 'Đang lưu…' : 'Lưu'}

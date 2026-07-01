@@ -254,6 +254,18 @@ export async function undoOp(req: Request, res: Response) {
     if (op.undone_at) return fail(res, 'Thao tác này đã được hoàn tác trước đó')
 
     const now = new Date().toISOString()
+    // CHIẾM NGUYÊN TỬ quyền hoàn tác (chống 2 lượt undo cùng op — double-click / 2 user — chạy song song
+    // → SPLIT cộng `total` về nguồn 2 lần = over-restore). Chỉ lượt set được undone_at (đang NULL) mới chạy;
+    // lượt kia khớp 0 dòng → dừng. Nếu guard nghiệp vụ phía dưới fail thì RELEASE (trả undone_at về NULL).
+    const { data: claimed } = await supabase.from('PalletOperation')
+      .update({ undone_at: now, undone_by: req.user?.sub ?? null, undone_by_name: req.user?.name ?? null, updated_at: now })
+      .eq('id', id).is('undone_at', null).select('id')
+    if (!claimed?.length) return fail(res, 'Thao tác đang được hoàn tác bởi phiên khác')
+    const release = async () => {
+      await supabase.from('PalletOperation')
+        .update({ undone_at: null, undone_by: null, undone_by_name: null, updated_at: new Date().toISOString() })
+        .eq('id', id)
+    }
     // Scope theo kho của thao tác (resolve qua location, cột warehouse_id thường NULL) → không hoàn tác nhầm kho khác
     const opWh: string | null = op.warehouse_id ?? null
     // Lấy entries khớp kho theo danh sách mã (kèm field tùy chọn)
@@ -290,11 +302,11 @@ export async function undoOp(req: Request, res: Response) {
       const found = await fetchInWh(childCodes, 'origin, parent_pallet_code, cartons_imported, cartons_remaining, cartons_reserved')
       // Guard: pallet con phải còn nguyên (chưa xuất/giữ chỗ/dồn/đổi số lượng) mới hoàn tác được
       const bad = found.find(k => k.origin !== 'SPLIT' || k.parent_pallet_code || Number(k.cartons_remaining) !== Number(k.cartons_imported) || Number(k.cartons_reserved || 0) > 0)
-      if (found.length !== childCodes.length) return fail(res, 'Không hoàn tác được: pallet con đã bị xuất/xóa.')
-      if (bad) return fail(res, `Không hoàn tác được: pallet con "${bad.pallet_code}" đã thay đổi (xuất/giữ chỗ/dồn).`)
+      if (found.length !== childCodes.length) { await release(); return fail(res, 'Không hoàn tác được: pallet con đã bị xuất/xóa.') }
+      if (bad) { await release(); return fail(res, `Không hoàn tác được: pallet con "${bad.pallet_code}" đã thay đổi (xuất/giữ chỗ/dồn).`) }
       const total = found.reduce((s, k) => s + Number(k.cartons_remaining), 0)
       const { error: delErr } = await supabase.from('InventoryEntry').delete().in('id', found.map(k => k.id))
-      if (delErr) return fail(res, delErr.message, 500)
+      if (delErr) { await release(); return fail(res, delErr.message, 500) }
       const srcRows = await fetchInWh([srcCode], 'cartons_imported, cartons_remaining')
       const src = srcRows[0]
       if (src) {
@@ -303,10 +315,11 @@ export async function undoOp(req: Request, res: Response) {
         await supabase.from('InventoryEntry').update({ cartons_remaining: newRemaining, status, update_date: vnDate(), updated_at: now }).eq('id', src.id)
       }
     } else {
+      await release()
       return fail(res, 'Loại thao tác không hỗ trợ hoàn tác')
     }
 
-    await supabase.from('PalletOperation').update({ undone_at: now, undone_by: req.user?.sub ?? null, undone_by_name: req.user?.name ?? null, updated_at: now }).eq('id', id)
+    // undone_at đã set ở bước CHIẾM NGUYÊN TỬ đầu hàm (không cần cập nhật lại).
     return ok(res, { undone: true, type: op.type })
   } catch (e) { return fail(res, (e as Error).message, 500) }
 }

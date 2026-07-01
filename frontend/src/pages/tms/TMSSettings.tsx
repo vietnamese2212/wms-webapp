@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Fragment } from 'react'
 import type { AxiosError } from 'axios'
 import { Plus, Pencil, Trash2, Truck, Clock, Building2, Settings2, Warehouse, X, GripVertical } from 'lucide-react'
-import { formatDateTime, normalizeLicensePlate, normalizePhone } from '@/utils/formatters'
+import { formatDate, formatDateTime, normalizeLicensePlate, normalizePhone } from '@/utils/formatters'
 import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
 import { Label }    from '@/components/ui/label'
@@ -19,7 +19,7 @@ import { toast } from '@/components/ui/use-toast'
 import {
   useWarehouses, useWarehouseTypes,
   useVehicleTypes, useCreateVehicleType, useUpdateVehicleType, useReorderVehicleTypes, useDeleteVehicleType,
-  useSlotTemplates, useCreateSlotTemplate, useUpdateSlotTemplate, useDeleteSlotTemplate,
+  useSlotTemplates, useUpdateSlotTemplate, useDeleteSlotTemplate, useBatchSlotTemplates, useSlotApplyInfo,
   useTransportCompanies, useCreateTransportCompany, useUpdateTransportCompany, useDeleteTransportCompany,
   useTmsVehicles, useCreateTmsVehicle, useUpdateTmsVehicle, useDeleteTmsVehicle,
 } from '@/api/hooks'
@@ -84,80 +84,184 @@ function VehicleTypeDialog({ vt, open, onClose }: { vt: TmsVehicleType | null; o
   )
 }
 
-// ─── SlotTemplate form ───────────────────────────────────────────────────────
+// ─── SlotTemplate: form gộp (tạo + sửa cả cụm) ───────────────────────────────
+// Form đại diện SETUP khung giờ của 1 (loại xe × loại hàng): tick thứ + BẢNG khung giờ (giờ từ/đến/max).
+// Lưu → BE upsert lưới (thứ × khung giờ) rồi áp xuống các ngày tương lai chưa booking.
 
-function SlotTemplateDialog({ st, open, onClose, vehicleTypes, warehouseId, warehouses, cargoOptions }: {
-  st: SlotTemplate | null; open: boolean; onClose: () => void
-  vehicleTypes: TmsVehicleType[]; warehouseId: string
-  warehouses: { id: string; code?: string; name: string }[]; cargoOptions: string[]
+type SlotRowDraft = { time_from: string; time_to: string; max_vehicles: string }
+
+function SlotBatchDialog({ open, onClose, preset, warehouseId, warehouseName, vehicleTypes, cargoOptions, allTemplates }: {
+  open: boolean; onClose: () => void
+  preset: { vtId: string; cargoType: string } | null   // null = thêm mới
+  warehouseId: string; warehouseName: string
+  vehicleTypes: TmsVehicleType[]; cargoOptions: string[]; allTemplates: SlotTemplate[]
 }) {
-  const isEdit = !!st
-  const [whId,        setWhId]        = useState(warehouseId)
-  const [vtId,        setVtId]        = useState(st?.vehicle_type_id ?? '')
-  const [cargoType,   setCargoType]   = useState(st?.cargo_type ?? 'ALL')
-  const [daysOfWeek,  setDaysOfWeek]  = useState<number[]>(isEdit ? [st.day_of_week] : [1,2,3,4,5,6])
-  const [timeFrom,    setTimeFrom]    = useState(st?.time_from?.slice(0,5) ?? '')
-  const [timeTo,      setTimeTo]      = useState(st?.time_to?.slice(0,5) ?? '')
-  const [maxVehicles, setMaxVehicles] = useState(String(st?.max_vehicles ?? '1'))
-  const [isActive,    setIsActive]    = useState(st?.is_active ?? true)
+  const [vtId,      setVtId]      = useState(preset?.vtId ?? '')
+  const [cargoType, setCargoType] = useState(preset?.cargoType ?? 'ALL')
+  const [days,      setDays]      = useState<number[]>([1,2,3,4,5,6])
+  const [slots,     setSlots]     = useState<SlotRowDraft[]>([{ time_from:'', time_to:'', max_vehicles:'1' }])
+  const [loadedKey, setLoadedKey] = useState('')
   const [err, setErr] = useState('')
 
-  const { mutate: create, isPending: creating } = useCreateSlotTemplate()
-  const { mutate: update, isPending: updating } = useUpdateSlotTemplate()
-  const isPending = creating || updating
+  const { mutate: batch, isPending } = useBatchSlotTemplates()
+  const { data: applyInfo } = useSlotApplyInfo({ warehouse_id: warehouseId || undefined, vehicle_type_id: vtId || undefined })
 
-  function toggleDay(d: number) {
-    setDaysOfWeek(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d].sort())
-  }
+  const groupKey = vtId ? `${vtId}|${cargoType}` : ''
+  const existingRows = allTemplates.filter(t => t.vehicle_type_id === vtId && t.cargo_type === cargoType)
+
+  // Khi chọn (loại xe, loại hàng) → nạp cấu hình hiện có (nếu có) để sửa cả cụm; không có → khởi tạo trống
+  useEffect(() => {
+    if (!vtId || loadedKey === groupKey) return
+    setLoadedKey(groupKey)
+    const rows = allTemplates.filter(t => t.vehicle_type_id === vtId && t.cargo_type === cargoType)
+    if (rows.length) {
+      setDays([...new Set(rows.map(r => r.day_of_week))].sort((a,b) => a-b))
+      const byTime = new Map<string, string>()
+      for (const r of rows) { const k = `${r.time_from.slice(0,5)}|${r.time_to.slice(0,5)}`; if (!byTime.has(k)) byTime.set(k, String(r.max_vehicles)) }
+      setSlots([...byTime.entries()].map(([k, max]) => { const [f,t] = k.split('|'); return { time_from:f, time_to:t, max_vehicles:max } }))
+    } else {
+      setDays([1,2,3,4,5,6]); setSlots([{ time_from:'', time_to:'', max_vehicles:'1' }])
+    }
+  }, [groupKey, vtId, cargoType, loadedKey, allTemplates])
+
+  function toggleDay(d: number) { setDays(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d].sort((a,b) => a-b)) }
+  function setSlot(i: number, patch: Partial<SlotRowDraft>) { setSlots(prev => prev.map((s, idx) => idx === i ? { ...s, ...patch } : s)) }
 
   function handleSubmit() {
     setErr('')
-    if (!isEdit && !whId) { setErr('Vui lòng chọn kho'); return }
-    if (!vtId || !timeFrom || !timeTo || !maxVehicles) { setErr('Vui lòng điền đủ thông tin'); return }
-    if (!isEdit && daysOfWeek.length === 0) { setErr('Chọn ít nhất 1 thứ'); return }
-    if (isEdit) {
-      update({ id: st.id, time_from: timeFrom, time_to: timeTo, max_vehicles: Number(maxVehicles), cargo_type: cargoType, is_active: isActive },
-        { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
-    } else {
-      create({ warehouse_id: whId, vehicle_type_id: vtId, cargo_type: cargoType, days_of_week: daysOfWeek, time_from: timeFrom, time_to: timeTo, max_vehicles: Number(maxVehicles) },
-        { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
+    if (!vtId) { setErr('Vui lòng chọn loại xe'); return }
+    if (!days.length) { setErr('Chọn ít nhất 1 thứ'); return }
+    const clean = slots.map(s => ({ time_from: s.time_from, time_to: s.time_to, max_vehicles: Number(s.max_vehicles) }))
+    const seen = new Set<string>()
+    for (const s of clean) {
+      if (!s.time_from || !s.time_to || !s.max_vehicles || s.max_vehicles < 1) { setErr('Mỗi khung giờ cần giờ bắt đầu, kết thúc và số xe tối đa ≥ 1'); return }
+      if (s.time_from >= s.time_to) { setErr(`Giờ kết thúc phải sau giờ bắt đầu (${s.time_from}–${s.time_to})`); return }
+      const k = `${s.time_from}-${s.time_to}`; if (seen.has(k)) { setErr(`Khung giờ ${s.time_from}–${s.time_to} bị lặp`); return } seen.add(k)
     }
+    batch({ warehouse_id: warehouseId, vehicle_type_id: vtId, cargo_type: cargoType, days_of_week: days, time_slots: clean },
+      { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
   }
 
+  const hasExisting = existingRows.length > 0
   return (
     <Dialog open={open} onOpenChange={v => { if (!v) onClose() }}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader><DialogTitle>{isEdit ? 'Sửa khung giờ' : 'Thêm khung giờ'}</DialogTitle></DialogHeader>
-        <div className="space-y-3 py-1">
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader><DialogTitle>{preset ? 'Sửa cả cụm khung giờ' : 'Thêm khung giờ'}</DialogTitle></DialogHeader>
+        <div className="space-y-3 py-1 max-h-[70vh] overflow-y-auto pr-1">
           {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
 
-          {!isEdit && <>
-            <div className="space-y-1"><Label className="text-xs">Kho *</Label>
-              <WarehouseSingleSelect warehouses={warehouses} value={whId} onChange={setWhId} placeholder="Chọn kho…" triggerClassName="w-full h-9" />
+          <div className="text-[11px] text-slate-500">Kho: <span className="font-medium text-slate-700">{warehouseName}</span></div>
+
+          {/* 2 dòng info khi cấu hình đã tồn tại */}
+          {hasExisting && applyInfo && (
+            <div className="rounded-lg bg-sky-50 border border-sky-200 px-3 py-2 space-y-1 text-[11px]">
+              <div className="text-sky-800">Áp dụng được từ ngày: <span className="font-semibold">{applyInfo.applicable_from ? formatDate(applyInfo.applicable_from) : '—'}</span></div>
+              {applyInfo.nearest_blocked
+                ? <div className="text-amber-700">Ngày gần nhất còn dữ liệu cũ: <span className="font-semibold">{formatDate(applyInfo.nearest_blocked.date)}</span> — {applyInfo.nearest_blocked.booked} xe đã booking. <span className="text-amber-600">Gỡ booking ngày này rồi lưu lại để cập nhật.</span></div>
+                : <div className="text-slate-500">Chưa ngày nào bị booking chặn — thay đổi áp cho mọi ngày tương lai.</div>}
             </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1"><Label className="text-xs">Loại xe *</Label>
-              <Select value={vtId || '__none__'} onValueChange={v => setVtId(v === '__none__' ? '' : v)}>
-                <SelectTrigger><SelectValue placeholder="Chọn loại xe" /></SelectTrigger>
+              <Select value={vtId || '__none__'} onValueChange={v => setVtId(v === '__none__' ? '' : v)} disabled={!!preset}>
+                <SelectTrigger className={preset ? 'bg-slate-50' : ''}><SelectValue placeholder="Chọn loại xe" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__none__">— Chọn loại xe —</SelectItem>
                   {vehicleTypes.filter(v => v.is_active).map(v => <SelectItem key={v.id} value={v.id}>{v.name}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Áp dụng thứ *</Label>
-              <div className="flex gap-1.5">
-                {[1,2,3,4,5,6].map(d => (
-                  <button key={d} type="button" onClick={() => toggleDay(d)}
-                    className={`w-9 h-9 rounded-lg text-xs font-semibold border transition-all
-                      ${daysOfWeek.includes(d) ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-200 text-slate-500 hover:border-slate-400'}`}>
-                    {DOW_LABEL[d]}
-                  </button>
-                ))}
-              </div>
+            <div className="space-y-1"><Label className="text-xs">Loại hàng</Label>
+              <Select value={cargoType} onValueChange={setCargoType} disabled={!!preset}>
+                <SelectTrigger className={preset ? 'bg-slate-50' : ''}><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ALL">Tất cả loại hàng</SelectItem>
+                  {cargoOptions.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                </SelectContent>
+              </Select>
             </div>
-          </>}
+          </div>
 
+          <div className="space-y-1">
+            <Label className="text-xs">Áp dụng thứ *</Label>
+            <div className="flex gap-1.5 flex-wrap">
+              {[1,2,3,4,5,6].map(d => (
+                <button key={d} type="button" onClick={() => toggleDay(d)}
+                  className={`w-9 h-9 rounded-lg text-xs font-semibold border transition-all
+                    ${days.includes(d) ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-200 text-slate-500 hover:border-slate-400'}`}>
+                  {DOW_LABEL[d]}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <Label className="text-xs">Khung giờ *</Label>
+              <Button type="button" size="sm" variant="outline" className="h-6 px-2 text-[10px] gap-1" onClick={() => setSlots(prev => [...prev, { time_from:'', time_to:'', max_vehicles:'1' }])}>
+                <Plus className="h-3 w-3" /> Thêm khung
+              </Button>
+            </div>
+            <div className="rounded-lg border border-slate-200 divide-y divide-slate-100">
+              <div className="grid grid-cols-[1fr_1fr_auto_auto] gap-2 px-2 py-1.5 bg-slate-50 text-[9px] font-medium text-slate-500 uppercase">
+                <span>Giờ bắt đầu</span><span>Giờ kết thúc</span><span className="text-right w-16">Max xe</span><span className="w-6" />
+              </div>
+              {slots.map((s, i) => (
+                <div key={i} className="grid grid-cols-[1fr_1fr_auto_auto] gap-2 px-2 py-1.5 items-center">
+                  <Input type="time" value={s.time_from} onChange={e => setSlot(i, { time_from: e.target.value })} className="h-8" />
+                  <Input type="time" value={s.time_to} onChange={e => setSlot(i, { time_to: e.target.value })} className="h-8" />
+                  <Input type="number" min="1" value={s.max_vehicles} onChange={e => setSlot(i, { max_vehicles: e.target.value })} className="h-8 w-16 text-right" />
+                  <button type="button" disabled={slots.length <= 1} onClick={() => setSlots(prev => prev.filter((_, idx) => idx !== i))}
+                    className="text-slate-400 hover:text-red-500 disabled:opacity-30 disabled:hover:text-slate-400 p-1" title="Xóa khung giờ này">
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <p className="text-[10px] text-slate-400">Lưu sẽ tạo khung giờ cho từng thứ đã chọn × từng dòng khung giờ.</p>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={onClose}>Huỷ</Button>
+          <Button size="sm" onClick={handleSubmit} disabled={isPending}>
+            {isPending ? 'Đang lưu…' : 'Lưu'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ─── SlotTemplate: sửa lẻ 1 dòng (tùy biến giờ/số xe của riêng 1 thứ) ─────────
+
+function SlotRowEditDialog({ st, open, onClose, cargoOptions }: {
+  st: SlotTemplate; open: boolean; onClose: () => void; cargoOptions: string[]
+}) {
+  const [cargoType,   setCargoType]   = useState(st.cargo_type)
+  const [timeFrom,    setTimeFrom]    = useState(st.time_from.slice(0,5))
+  const [timeTo,      setTimeTo]      = useState(st.time_to.slice(0,5))
+  const [maxVehicles, setMaxVehicles] = useState(String(st.max_vehicles))
+  const [isActive,    setIsActive]    = useState(st.is_active)
+  const [err, setErr] = useState('')
+
+  const { mutate: update, isPending } = useUpdateSlotTemplate()
+
+  function handleSubmit() {
+    setErr('')
+    if (!timeFrom || !timeTo || !maxVehicles) { setErr('Vui lòng điền đủ thông tin'); return }
+    if (timeFrom >= timeTo) { setErr('Giờ kết thúc phải sau giờ bắt đầu'); return }
+    update({ id: st.id, time_from: timeFrom, time_to: timeTo, max_vehicles: Number(maxVehicles), cargo_type: cargoType, is_active: isActive },
+      { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={v => { if (!v) onClose() }}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader><DialogTitle>Sửa khung giờ · {DOW_LABEL[st.day_of_week] ?? st.day_of_week}</DialogTitle></DialogHeader>
+        <div className="space-y-3 py-1">
+          {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
+          <p className="text-[11px] text-slate-500">Sửa riêng dòng <span className="font-medium text-slate-700">{st.vehicle_type?.name ?? '—'} · {DOW_LABEL[st.day_of_week] ?? st.day_of_week}</span>. Thay đổi áp xuống các ngày tương lai chưa booking.</p>
           <div className="space-y-1"><Label className="text-xs">Loại hàng</Label>
             <Select value={cargoType} onValueChange={setCargoType}>
               <SelectTrigger><SelectValue /></SelectTrigger>
@@ -167,7 +271,6 @@ function SlotTemplateDialog({ st, open, onClose, vehicleTypes, warehouseId, ware
               </SelectContent>
             </Select>
           </div>
-
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1"><Label className="text-xs">Giờ bắt đầu *</Label>
               <Input type="time" value={timeFrom} onChange={e => setTimeFrom(e.target.value)} /></div>
@@ -176,16 +279,15 @@ function SlotTemplateDialog({ st, open, onClose, vehicleTypes, warehouseId, ware
           </div>
           <div className="space-y-1"><Label className="text-xs">Số xe tối đa *</Label>
             <Input type="number" min="1" value={maxVehicles} onChange={e => setMaxVehicles(e.target.value)} /></div>
-
-          {isEdit && <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2">
             <input id="st-active" type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} className="h-4 w-4 rounded accent-blue-600" />
             <Label htmlFor="st-active" className="text-sm cursor-pointer">Đang hoạt động</Label>
-          </div>}
+          </div>
         </div>
         <DialogFooter>
           <Button variant="outline" size="sm" onClick={onClose}>Huỷ</Button>
           <Button size="sm" onClick={handleSubmit} disabled={isPending}>
-            {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo'}
+            {isPending ? 'Đang lưu…' : 'Lưu'}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -445,6 +547,16 @@ export default function TMSSettings() {
   const { mutate: deleteST, isPending: deletingST } = useDeleteSlotTemplate()
   const [editingST, setEditingST] = useState<SlotTemplate | null>(null)
   const [showSTDlg, setShowSTDlg] = useState(false)
+  const [showBatchDlg, setShowBatchDlg] = useState(false)
+  const [batchPreset, setBatchPreset]   = useState<{ vtId: string; cargoType: string } | null>(null)
+  // Gom template theo (loại xe × loại hàng) để hiển thị + "Sửa cả cụm"
+  const stGroupsMap = new Map<string, { vtId: string; vtName: string; cargo: string; rows: SlotTemplate[] }>()
+  for (const st of filteredTemplates) {
+    const k = `${st.vehicle_type_id}|${st.cargo_type}`
+    if (!stGroupsMap.has(k)) stGroupsMap.set(k, { vtId: st.vehicle_type_id, vtName: st.vehicle_type?.name ?? '—', cargo: st.cargo_type, rows: [] })
+    stGroupsMap.get(k)!.rows.push(st)
+  }
+  const stGroups = [...stGroupsMap.values()]
 
   // TransportCompany
   const { data: companies = [], isLoading: loadingCo } = useTransportCompanies()
@@ -646,7 +758,7 @@ export default function TMSSettings() {
                 : 'Chọn kho để xem và cài đặt khung giờ'}
             </p>
             {slotCreate && warehouseId && (
-              <Button size="sm" className="gap-1.5" onClick={() => { setEditingST(null); setShowSTDlg(true) }}>
+              <Button size="sm" className="gap-1.5" onClick={() => { setBatchPreset(null); setShowBatchDlg(true) }}>
                 <Plus className="h-4 w-4" /> Thêm khung giờ
               </Button>
             )}
@@ -672,7 +784,7 @@ export default function TMSSettings() {
                     <div className="p-12 text-center text-slate-400 space-y-2">
                       <Clock className="h-10 w-10 mx-auto opacity-30" />
                       <p className="text-sm">Chưa có khung giờ nào cho kho này</p>
-                      {slotCreate && <Button size="sm" variant="outline" onClick={() => { setEditingST(null); setShowSTDlg(true) }}>
+                      {slotCreate && <Button size="sm" variant="outline" onClick={() => { setBatchPreset(null); setShowBatchDlg(true) }}>
                         <Plus className="h-4 w-4 mr-1" /> Thêm khung giờ đầu tiên
                       </Button>}
                     </div>
@@ -681,8 +793,6 @@ export default function TMSSettings() {
                       <Table>
                         <TableHeader>
                           <TableRow>
-                            <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Loại xe</TableHead>
-                            <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Loại hàng</TableHead>
                             <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Thứ</TableHead>
                             <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Khung giờ</TableHead>
                             <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right">Max xe</TableHead>
@@ -691,38 +801,56 @@ export default function TMSSettings() {
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {filteredTemplates.map(st => (
-                            <TableRow key={st.id}
-                              className={`cursor-pointer ${!st.is_active ? 'opacity-50' : ''} ${detailST?.id === st.id ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
-                              onClick={() => setDetailST(prev => prev?.id === st.id ? null : st)}>
-                              <TableCell className="px-2 py-1 text-[10px] font-medium text-slate-700">{st.vehicle_type?.name ?? '—'}</TableCell>
-                              <TableCell className="px-2 py-1 text-[10px] text-slate-500">{st.cargo_type === 'ALL' ? 'Tất cả' : st.cargo_type}</TableCell>
-                              <TableCell className="px-2 py-1 font-semibold text-[10px] text-slate-700">{DOW_LABEL[st.day_of_week] ?? st.day_of_week}</TableCell>
-                              <TableCell className="px-2 py-1 font-mono text-[10px] text-slate-700">
-                                {st.time_from?.slice(0,5)} – {st.time_to?.slice(0,5)}
-                              </TableCell>
-                              <TableCell className="px-2 py-1 text-right font-semibold tabular-nums text-[10px]">{st.max_vehicles}</TableCell>
-                              <TableCell className="px-2 py-1">
-                                <Badge variant={st.is_active ? 'default' : 'secondary'} className="text-[10px]">
-                                  {st.is_active ? 'Hoạt động' : 'Tạm dừng'}
-                                </Badge>
-                              </TableCell>
-                              {slotWrite && (
-                                <TableCell className="px-2 py-1">
-                                  <div className="flex items-center gap-0.5">
-                                    {slotEdit && <button className="text-slate-400 hover:text-blue-500 p-1"
-                                      onClick={e => { e.stopPropagation(); setEditingST(st); setShowSTDlg(true) }}>
-                                      <Pencil className="h-3.5 w-3.5" />
-                                    </button>}
-                                    {slotDelete && <button className="text-slate-400 hover:text-red-500 p-1"
-                                      disabled={deletingST}
-                                      onClick={e => { e.stopPropagation(); if (confirm('Xóa template này?')) deleteST(st.id, { onError: e2 => toast({ variant: 'destructive', title: 'Không xóa được template', description: apiMsg(e2) }) }) }}>
-                                      <Trash2 className="h-3.5 w-3.5" />
-                                    </button>}
+                          {stGroups.map(g => (
+                            <Fragment key={`${g.vtId}|${g.cargo}`}>
+                              <TableRow className="bg-slate-50 hover:bg-slate-50">
+                                <TableCell colSpan={slotWrite ? 5 : 4} className="px-2 py-1.5">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <div className="text-[11px] font-semibold text-slate-700">
+                                      {g.vtName}
+                                      <span className="font-normal text-slate-400"> · {g.cargo === 'ALL' ? 'Tất cả loại hàng' : g.cargo} · {g.rows.length} khung</span>
+                                    </div>
+                                    {slotCreate && (
+                                      <Button size="sm" variant="outline" className="h-6 px-2 text-[10px] gap-1"
+                                        onClick={() => { setBatchPreset({ vtId: g.vtId, cargoType: g.cargo }); setShowBatchDlg(true) }}>
+                                        <Settings2 className="h-3 w-3" /> Sửa cả cụm
+                                      </Button>
+                                    )}
                                   </div>
                                 </TableCell>
-                              )}
-                            </TableRow>
+                              </TableRow>
+                              {g.rows.map(st => (
+                                <TableRow key={st.id}
+                                  className={`cursor-pointer ${!st.is_active ? 'opacity-50' : ''} ${detailST?.id === st.id ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
+                                  onClick={() => setDetailST(prev => prev?.id === st.id ? null : st)}>
+                                  <TableCell className="px-2 py-1 pl-4 font-semibold text-[10px] text-slate-700">{DOW_LABEL[st.day_of_week] ?? st.day_of_week}</TableCell>
+                                  <TableCell className="px-2 py-1 font-mono text-[10px] text-slate-700">
+                                    {st.time_from?.slice(0,5)} – {st.time_to?.slice(0,5)}
+                                  </TableCell>
+                                  <TableCell className="px-2 py-1 text-right font-semibold tabular-nums text-[10px]">{st.max_vehicles}</TableCell>
+                                  <TableCell className="px-2 py-1">
+                                    <Badge variant={st.is_active ? 'default' : 'secondary'} className="text-[10px]">
+                                      {st.is_active ? 'Hoạt động' : 'Tạm dừng'}
+                                    </Badge>
+                                  </TableCell>
+                                  {slotWrite && (
+                                    <TableCell className="px-2 py-1">
+                                      <div className="flex items-center gap-0.5">
+                                        {slotEdit && <button className="text-slate-400 hover:text-blue-500 p-1"
+                                          onClick={e => { e.stopPropagation(); setEditingST(st); setShowSTDlg(true) }} title="Sửa riêng dòng này">
+                                          <Pencil className="h-3.5 w-3.5" />
+                                        </button>}
+                                        {slotDelete && <button className="text-slate-400 hover:text-red-500 p-1"
+                                          disabled={deletingST}
+                                          onClick={e => { e.stopPropagation(); if (confirm('Xóa khung giờ này?')) deleteST(st.id, { onError: e2 => toast({ variant: 'destructive', title: 'Không xóa được khung giờ', description: apiMsg(e2) }) }) }}>
+                                          <Trash2 className="h-3.5 w-3.5" />
+                                        </button>}
+                                      </div>
+                                    </TableCell>
+                                  )}
+                                </TableRow>
+                              ))}
+                            </Fragment>
                           ))}
                         </TableBody>
                       </Table>
@@ -958,7 +1086,8 @@ export default function TMSSettings() {
       </Tabs>
 
       {showVTDlg && <VehicleTypeDialog vt={editingVT} open={showVTDlg} onClose={() => setShowVTDlg(false)} />}
-      {showSTDlg && <SlotTemplateDialog st={editingST} open={showSTDlg} onClose={() => setShowSTDlg(false)} vehicleTypes={vehicleTypes} warehouseId={warehouseId} warehouses={warehouses as { id: string; code?: string; name: string }[]} cargoOptions={cargoOptions} />}
+      {showBatchDlg && <SlotBatchDialog open={showBatchDlg} onClose={() => { setShowBatchDlg(false); setBatchPreset(null) }} preset={batchPreset} warehouseId={warehouseId} warehouseName={selectedWarehouse?.name ?? ''} vehicleTypes={vehicleTypes} cargoOptions={cargoOptions} allTemplates={templates} />}
+      {showSTDlg && editingST && <SlotRowEditDialog st={editingST} open={showSTDlg} onClose={() => setShowSTDlg(false)} cargoOptions={cargoOptions} />}
       {showCoDlg && <TransportCompanyDialog co={editingCo} open={showCoDlg} onClose={() => setShowCoDlg(false)} />}
       {showVDlg  && <VehicleDialog v={editingV} open={showVDlg} onClose={() => setShowVDlg(false)} companies={companies} vehicleTypes={vehicleTypes} lockedNccId={userNccId} />}
      </div>

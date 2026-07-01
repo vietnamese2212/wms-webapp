@@ -2028,7 +2028,10 @@ export function useUpdateSlotTemplate() {
   return useMutation({
     mutationFn: ({ id, ...body }: { id: string; time_from?: string; time_to?: string; max_vehicles?: number; cargo_type?: string; is_active?: boolean }) =>
       apiClient.put(`/tms/slot-templates/${id}`, body).then(r => r.data.data as SlotTemplate),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-slot-templates'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tms-slot-templates'] })
+      qc.invalidateQueries({ queryKey: ['tms-delivery-slots'] })   // reapply đổi slot ngày tương lai
+    },
   })
 }
 
@@ -2036,7 +2039,42 @@ export function useDeleteSlotTemplate() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => apiClient.delete(`/tms/slot-templates/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-slot-templates'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tms-slot-templates'] })
+      qc.invalidateQueries({ queryKey: ['tms-delivery-slots'] })
+    },
+  })
+}
+
+// Lưu cả cụm khung giờ (lưới thứ × khung giờ) của 1 loại xe
+export function useBatchSlotTemplates() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: {
+      warehouse_id: string; vehicle_type_id: string; cargo_type: string
+      days_of_week: number[]; time_slots: { time_from: string; time_to: string; max_vehicles: number }[]
+    }) => apiClient.post('/tms/slot-templates/batch', body).then(r => r.data.data as { inserted: number; updated: number; removed: number }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tms-slot-templates'] })
+      qc.invalidateQueries({ queryKey: ['tms-delivery-slots'] })
+      qc.invalidateQueries({ queryKey: ['tms-vehicle-types-by-warehouse'] })
+    },
+  })
+}
+
+export interface SlotApplyInfo {
+  today: string
+  applicable_from: string | null
+  nearest_blocked: { date: string; booked: number } | null
+}
+export function useSlotApplyInfo(params: { warehouse_id?: string; vehicle_type_id?: string }) {
+  return useQuery({
+    queryKey: ['tms-slot-apply-info', params],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/tms/slot-templates/apply-info', { params })
+      return data.data as SlotApplyInfo
+    },
+    enabled: !!params.warehouse_id && !!params.vehicle_type_id,
   })
 }
 

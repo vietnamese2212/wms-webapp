@@ -541,6 +541,7 @@ export default function TMSSettings() {
 
   // SlotTemplate — chỉ load khi đã chọn kho, filter client-side
   const [filterVTIds, setFilterVTIds] = useState<string[]>([])
+  const [filterCargos, setFilterCargos] = useState<string[]>([])
   const [stSearch, setStSearch] = useState('')
   const [stStatus, setStStatus] = useState('')   // '' | active | inactive
   const { data: templates = [], isLoading: loadingST } = useSlotTemplates({
@@ -548,6 +549,7 @@ export default function TMSSettings() {
   })
   const filteredTemplates = templates.filter(st => {
     if (filterVTIds.length && !filterVTIds.includes(st.vehicle_type_id)) return false
+    if (filterCargos.length && !filterCargos.includes(st.cargo_type)) return false
     if (stStatus && (stStatus === 'active') !== st.is_active) return false
     const q = stSearch.trim().toLowerCase()
     if (q && !`${st.vehicle_type?.name ?? ''} ${st.cargo_type ?? ''}`.toLowerCase().includes(q)) return false
@@ -621,6 +623,7 @@ export default function TMSSettings() {
     { key: 'vtst', label: 'Trạng thái', type: 'single', value: vtStatus, onChange: setVtStatus, allLabel: 'Tất cả', options: STATUS_OPTS },
   ]
   const stFilterDefs: FilterDef[] = [
+    { key: 'stcargo', label: 'Loại kho', type: 'multi', selected: filterCargos, onChange: setFilterCargos, options: cargoOptions.map(c => ({ value: c, label: c })) },
     { key: 'stvt', label: 'Loại xe', type: 'multi', selected: filterVTIds, onChange: setFilterVTIds, options: vehicleTypes.map(vt => ({ value: vt.id, label: vt.name })) },
     { key: 'stst', label: 'Trạng thái', type: 'single', value: stStatus, onChange: setStStatus, allLabel: 'Tất cả', options: STATUS_OPTS },
   ]

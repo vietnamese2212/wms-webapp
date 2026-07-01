@@ -2,7 +2,8 @@ import { useRef, useState, useMemo, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
-import { Upload, Truck, CheckCircle2, AlertTriangle, X, Bookmark, Info, Plus, Trash2, PenSquare, Rows3, AlignJustify, ChevronDown, Building2, PackageCheck, ArrowRight } from 'lucide-react'
+import { Upload, Truck, CheckCircle2, AlertTriangle, X, Bookmark, Info, Plus, Trash2, PenSquare, Rows3, AlignJustify, ChevronDown, Building2, PackageCheck, ArrowRight, Download } from 'lucide-react'
+import * as XLSX from 'xlsx'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
@@ -341,6 +342,21 @@ export default function Outbound() {
     remaining: nppBreakdown.reduce((s, r) => s + r.remaining, 0),
   }), [nppBreakdown])
 
+  // Tải mẫu Excel Xuất kho — cột khớp uploadExcel (backend). Ngày + ddmmyy động (ngày mai) để không quá khứ.
+  function downloadTemplate() {
+    const d = new Date(); d.setDate(d.getDate() + 1)
+    const dd = String(d.getDate()).padStart(2, '0'), mm = String(d.getMonth() + 1).padStart(2, '0'), yyyy = d.getFullYear()
+    const ddmmyy = `${dd}${mm}${String(yyyy).slice(2)}`
+    const headers = ['Số xe', 'Ngày xuất', 'Kho xuất', 'Loại kho', 'DVVT', 'Delivery', 'Tên NPP', 'Material', 'Material_type',
+      'Thùng', 'Hộp', 'Tải', 'Nhặt lẻ', 'Pallet', 'Loại xuất', 'HEADER TEXT', 'Batch_Yêu cầu', '%Date_Yêu cầu', 'CS phụ trách']
+    const ex = [`20000016_X_${ddmmyy}_01`, `${dd}/${mm}/${yyyy}`, 'Kho Ba Vì', 'Thành phẩm', '3S', 'DO-0001', 'NPP mẫu',
+      '510000126', '', 100, '', '', 0, 5, '', '', '', '', '']
+    const ws = XLSX.utils.aoa_to_sheet([headers, ex])
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'XuatKho')
+    XLSX.writeFile(wb, 'mau_xuat_kho.xlsx')
+  }
+
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
@@ -489,6 +505,12 @@ export default function Outbound() {
               <Button size="sm" variant="outline" onClick={() => setShowCreate(true)} className="h-7 text-xs gap-1">
                 <PenSquare className="h-3.5 w-3.5" />
                 Tạo đơn
+              </Button>
+            )}
+            {can(perms, 'outbound', 'create') && (
+              <Button size="sm" variant="outline" onClick={downloadTemplate} className="hidden sm:inline-flex h-7 text-xs gap-1">
+                <Download className="h-3.5 w-3.5" />
+                Tải mẫu
               </Button>
             )}
             {can(perms, 'outbound', 'create') && (

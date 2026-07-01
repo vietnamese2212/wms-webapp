@@ -1199,9 +1199,13 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
   }
 
   const downloadTemplate = () => {
+    // Ngày + ddmmyy động (ngày mai) để mẫu không quá khứ; Mã đơn đúng format Mãkho_X_ddmmyy_stt; Loại kho/xe/ĐVVT hợp lệ.
+    const d = new Date(); d.setDate(d.getDate() + 1)
+    const dd = String(d.getDate()).padStart(2, '0'), mm = String(d.getMonth() + 1).padStart(2, '0'), yyyy = d.getFullYear()
+    const ddmmyy = `${dd}${mm}${String(yyyy).slice(2)}`
     const ws = XLSX.utils.aoa_to_sheet([
       ['Mã đơn', 'NPP', 'Kho', 'Ngày', 'Hướng', 'Loại kho', 'Loại xe', 'ĐVVT', 'Thùng', 'Pallet', 'Tấn', 'GDO', 'Ghi chú', 'Ưu tiên'],
-      ['240526_BV_1', 'Tên NPP mẫu', 'Kho Ba Vì', '21/05/2026', 'Xuất', 'Khô', 'Xe tải 5T', 'NCC001', 100, 5, 2.5, 'GDO-001', '', ''],
+      [`20000016_X_${ddmmyy}_1`, 'Tên NPP mẫu', 'Kho Ba Vì', `${dd}/${mm}/${yyyy}`, 'Xuất', 'Thành phẩm', 'XE 4 PALLET', '3S', 100, 5, 2.5, 'GDO-001', '', ''],
     ])
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Import')

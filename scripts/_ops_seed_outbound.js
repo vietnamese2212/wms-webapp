@@ -106,7 +106,7 @@ async function main() {
     gdoRows.push({
       id: gid, group_code: `20000016_X_010726_${String(seq).padStart(3, '0')}`,
       planned_date: DATE, delivery_date: DATE, warehouse_id: WH,
-      dvvt: dvvts[i % dvvts.length], warehouse_type: 'CENTRAL', shipto_party: null,
+      dvvt: dvvts[i % dvvts.length], warehouse_type: 'Thành phẩm', shipto_party: null,  // loại kho = loại hàng (KHÔNG phải CENTRAL)
       status: 'PENDING', created_by: 'seed-ops', updated_by: 'seed-ops', updated_at: now,
     })
     doRows.push({

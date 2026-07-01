@@ -3,6 +3,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { randomUUID } from 'crypto'
 import { resolveShelfLife } from '../../utils/shelfLife'
+import { fetchAllRowsParallel } from '../../utils/pagination'
 
 const ENTRY_SELECT = `
   id, pallet_code, location_id, warehouse_id, material_id, manufacturer_id, nmsx, cycle, machine_code,
@@ -393,25 +394,24 @@ export async function listInventory(req: Request, res: Response) {
     .order('id', { ascending: true })
     .range(r.offset, r.offset + r.limitNum - 1)
 
-  const { data, count, error } = await mainQ
+  // Tổng thùng tồn: aggregate SUM phía DB (db-aggregates-enabled đã bật lại) — 1 query thay vì kéo ~4000
+  // dòng về Node. Tái dùng NGUYÊN applyInventoryFilters → tổng khớp tuyệt đối list. catActive: embed
+  // material!inner để lọc category → PostgREST group-by category (mỗi category 1 dòng) nên cộng .sum tất cả.
+  const sumSelect = catActive ? 'cartons_remaining.sum(), material:Material!inner(category)' : 'cartons_remaining.sum()'
+  let sumQ = applyInventoryFilters(supabase.from('InventoryEntry').select(sumSelect), r.params)
+  if (r.datePctIds !== null) sumQ = sumQ.in('id', r.datePctIds)
+
+  // Chạy SONG SONG: list rows (main) + tổng (sum) độc lập nhau → giảm 1 round-trip tuần tự.
+  const [mainRes, sumRes] = await Promise.all([mainQ, sumQ])
+  const { data, count, error } = mainRes
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
 
-  // Tổng thùng tồn: dùng aggregate SUM phía DB (db-aggregates-enabled đã bật lại) — 1 query thay vì
-  // kéo ~4000 dòng về Node (trước đây ~5s). Tái dùng NGUYÊN applyInventoryFilters → tổng khớp tuyệt đối
-  // list. catActive: embed material!inner để lọc category → PostgREST group-by category (mỗi category 1
-  // dòng) nên cộng .sum tất cả dòng. Lỗi sum KHÔNG chặn list (rows vẫn hiện), chỉ để tổng = 0 và log.
-  const sumSelect = catActive ? 'cartons_remaining.sum(), material:Material!inner(category)' : 'cartons_remaining.sum()'
+  // Lỗi sum KHÔNG chặn list (rows vẫn hiện), chỉ để tổng = 0 và log.
   let total_cartons_remaining = 0
-  try {
-    let sumQ = applyInventoryFilters(supabase.from('InventoryEntry').select(sumSelect), r.params)
-    if (r.datePctIds !== null) sumQ = sumQ.in('id', r.datePctIds)
-    const { data: sumData, error: sumErr } = await sumQ
-    if (sumErr) throw new Error(sumErr.message)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    total_cartons_remaining = ((sumData ?? []) as any[]).reduce((s, row) => s + Number(row.sum ?? 0), 0)
-  } catch (e) {
-    console.error('[inventory] tính tổng thùng tồn lỗi:', (e as Error).message)
-  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  if ((sumRes as any).error) console.error('[inventory] tính tổng thùng tồn lỗi:', (sumRes as any).error.message)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  else total_cartons_remaining = (((sumRes as any).data ?? []) as any[]).reduce((s, row) => s + Number(row.sum ?? 0), 0)
 
   return ok(res, { entries: data ?? [], total: count ?? 0, page: r.pageNum, limit: r.limitNum, total_cartons_remaining })
 }
@@ -516,62 +516,52 @@ export async function listFacets(req: Request, res: Response) {
   const warehouseIds = parseArr(q.warehouse_ids)
   const categories   = parseArr(q.categories)
 
-  // Materials: query Material table directly (5-10k rows, always complete)
-  let matQ = supabase.from('Material')
-    .select('id, material_code, short_name')
-    .order('material_code')
-  if (categories.length === 1)    matQ = matQ.eq('category', categories[0])
-  else if (categories.length > 1) matQ = matQ.in('category', categories)
-
-  // Locations: query Location table directly (small, always complete)
-  let locQ = supabase.from('Location')
-    .select('id, location_code')
-    .order('location_code')
+  // Materials: PHÂN TRANG để trả ĐỦ — >1000 mã (hiện 1788) → cap 1000/response CẮT MẤT ~788 mã khỏi
+  // filter "Tên hàng" (facet.materials). Batch song song (fetchAllRowsParallel).
+  const buildMatQ = () => {
+    let q = supabase.from('Material').select('id, material_code, short_name').order('material_code')
+    if (categories.length === 1)    q = q.eq('category', categories[0])
+    else if (categories.length > 1) q = q.in('category', categories)
+    return q
+  }
+  // Locations: nhỏ (≈193 dòng, dưới cap) → 1 query đủ.
+  let locQ = supabase.from('Location').select('id, location_code').order('location_code')
   if (warehouseIds.length === 1)    locQ = locQ.eq('warehouse_id', warehouseIds[0])
   else if (warehouseIds.length > 1) locQ = locQ.in('warehouse_id', warehouseIds)
 
-  const [{ data: matData }, { data: locData }] = await Promise.all([matQ, locQ])
-
-  // Cycles & machines: no reference table — query InventoryEntry, lọc theo category/warehouse
+  // Cycles & machines & ncc: no reference table — query InventoryEntry, lọc theo category/warehouse
   // bằng INNER JOIN (Material/Location) thay vì nhồi hàng nghìn id vào .in() (URL quá dài → 500).
-  // Phân trang ĐỦ dòng (cap ~1000/response) — không lấy mẫu, tránh sót giá trị Chu kỳ/Máy.
+  // Phân trang ĐỦ dòng (cap ~1000/response) — không lấy mẫu, tránh sót giá trị Chu kỳ/Máy/NCC.
   const invSelect = 'id, cycle, machine_code, ncc_id'
     + (categories.length > 0   ? ', material:Material!inner(category)'    : '')
     + (warehouseIds.length > 0 ? ', location:Location!inner(warehouse_id)' : '')
+  const buildInvQ = () => {
+    let q = supabase.from('InventoryEntry').select(invSelect)
+      .in('status', ['IN_STOCK', 'PARTIAL'])
+      .order('id', { ascending: true })
+    if (warehouseIds.length === 1)    q = q.eq('location.warehouse_id', warehouseIds[0])
+    else if (warehouseIds.length > 1) q = q.in('location.warehouse_id', warehouseIds)
+    if (categories.length === 1)      q = q.eq('material.category', categories[0])
+    else if (categories.length > 1)   q = q.in('material.category', categories)
+    return q
+  }
 
-  // Phân trang SONG SONG (trang 1 lấy count exact rồi bắn các trang còn lại đồng thời) thay cho
-  // fetchAllPaged tuần tự (trước đây ~5s do 4 round-trip nối tiếp). Giữ NGUYÊN semantics/filter.
-  let invData: any[] = []
+  // Tất cả fetch chạy SONG SONG (materials + inventory phân trang song song; locations 1 query) —
+  // né cap 1000 + giảm round-trip tuần tự (trước fetchAllPaged tuần tự ~5s).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let matData: any[], invData: any[], locData: any[]
   try {
+    const [m, inv, loc] = await Promise.all([
+      fetchAllRowsParallel(buildMatQ),
+      fetchAllRowsParallel(buildInvQ),
+      locQ,
+    ])
+    matData = m
+    invData = inv
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const build = (withCount: boolean): any => {
-      let q = supabase.from('InventoryEntry')
-        .select(invSelect, withCount ? { count: 'exact' } : undefined)
-        .in('status', ['IN_STOCK', 'PARTIAL'])
-        .order('id', { ascending: true })
-      if (warehouseIds.length === 1)    q = q.eq('location.warehouse_id', warehouseIds[0])
-      else if (warehouseIds.length > 1) q = q.in('location.warehouse_id', warehouseIds)
-      if (categories.length === 1)      q = q.eq('material.category', categories[0])
-      else if (categories.length > 1)   q = q.in('material.category', categories)
-      return q
-    }
-    const PAGE = 1000
-    const first = await build(true).range(0, PAGE - 1)
-    if (first.error) throw new Error(first.error.message)
-    invData = [...(first.data ?? [])]
-    const n = first.count ?? invData.length
-    if (n > PAGE) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const reqs: any[] = []
-      for (let p = 1; p * PAGE < n; p++) reqs.push(build(false).range(p * PAGE, p * PAGE + PAGE - 1))
-      const results = await Promise.all(reqs)
-      for (const rr of results) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        if ((rr as any).error) throw new Error((rr as any).error.message)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        invData.push(...((rr as any).data ?? []))
-      }
-    }
+    if ((loc as any).error) throw new Error((loc as any).error.message)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    locData = ((loc as any).data ?? [])
   } catch (e) {
     return fail(res, 500, 'DB_ERROR', (e as Error).message)
   }

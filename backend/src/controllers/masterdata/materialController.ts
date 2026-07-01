@@ -32,14 +32,26 @@ export async function listMaterials(req: Request, res: Response) {
       }
       return query
     }
+    // Phân trang SONG SONG theo lô (BATCH) thay vì tuần tự — >1000 mã cần 2+ round-trip, chạy đồng thời
+    // giảm độ trễ (trước ~3.5s do 2 lượt nối tiếp). Trang <1000 → hết dữ liệu (order ổn định theo material_code).
     const PAGE = 1000
+    const BATCH = 2
     const out: unknown[] = []
-    for (let page = 0; ; page++) {
-      const { data, error } = await buildQuery().range(page * PAGE, page * PAGE + PAGE - 1)
-      if (error) throw error
-      const arr = data ?? []
-      out.push(...arr)
-      if (arr.length < PAGE) break
+    for (let start = 0; ; start += BATCH) {
+      const reqs = []
+      for (let i = 0; i < BATCH; i++) {
+        const p = start + i
+        reqs.push(buildQuery().range(p * PAGE, p * PAGE + PAGE - 1))
+      }
+      const results = await Promise.all(reqs)
+      let done = false
+      for (const { data, error } of results) {
+        if (error) throw error
+        const arr = data ?? []
+        out.push(...arr)
+        if (arr.length < PAGE) done = true
+      }
+      if (done) break
     }
     ok(res, out)
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }

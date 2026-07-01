@@ -43,10 +43,11 @@ function toISODate(v) {
 // NMSX = ĐOẠN 6 mã pallet (QR: ddmmyy_Mã_ChuKy_May_Seq_NMSX). Đuôi hash 8 ký tự / mã <6 đoạn → không có
 // NMSX → fallback nmsx_code của kho. (NMSX = nhà máy sản xuất theo từng pallet, không phải theo kho lưu.)
 const HASH = /^[0-9a-f]{8}$/i
+const NMSX_ALIAS = { A: 'O' }   // "A" là mã cũ của nhà máy O → gộp về O
 function nmsxFromCode(code, fallback) {
   const parts = String(code || '').split('_')
-  if (parts.length >= 6 && parts[5] && !HASH.test(parts[5])) return parts[5]
-  return fallback
+  const raw = (parts.length >= 6 && parts[5] && !HASH.test(parts[5])) ? parts[5] : fallback
+  return raw ? (NMSX_ALIAS[raw] ?? raw) : raw
 }
 
 const KEYS = ['pallet_code', 'material_code', 'warehouse', 'location_code', 'cartons', 'production_date', 'ncc', 'qa_status', 'shelf_life_days']

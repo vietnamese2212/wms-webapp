@@ -7,10 +7,11 @@
 const { supabase } = require('./_upload_util')
 
 const HASH = /^[0-9a-f]{8}$/i
+const NMSX_ALIAS = { A: 'O' }   // "A" là mã cũ của nhà máy O → gộp về O
 function nmsxFromCode(code, fallback) {
   const parts = String(code || '').split('_')
-  if (parts.length >= 6 && parts[5] && !HASH.test(parts[5])) return parts[5]
-  return fallback
+  const raw = (parts.length >= 6 && parts[5] && !HASH.test(parts[5])) ? parts[5] : fallback
+  return raw ? (NMSX_ALIAS[raw] ?? raw) : raw
 }
 
 async function selectAll(table, cols) {

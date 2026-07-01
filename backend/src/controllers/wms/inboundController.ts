@@ -817,7 +817,7 @@ export async function scanQR(req: Request, res: Response) {
     // Load order with material + source_type
     const { data: order } = await supabase
       .from('ProductionImport')
-      .select('id, import_code, status, source_type, material_id, warehouse_id, warehouse_type, location_id, location_history, ncc_id, material:Material(material_code, cartons_per_pallet, warehouse_pallet_overrides), warehouse:Warehouse(id, nmsx_code)')
+      .select('id, import_code, status, source_type, material_id, warehouse_id, warehouse_type, location_id, location_history, ncc_id, material:Material(material_code, cartons_per_pallet, warehouse_pallet_overrides, category), warehouse:Warehouse(id, nmsx_code)')
       .eq('id', order_id).maybeSingle()
     if (!order)                     return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (order.status !== 'OPEN')    return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập không còn ở trạng thái mở')
@@ -957,8 +957,20 @@ export async function scanQR(req: Request, res: Response) {
     // - Nếu trống & là chuyển kho → kế thừa NCC + shelflife từ pallet GỐC cùng pallet_code.
     //   (pallet đổi tên A→B không kế thừa được → operator chọn ở sheet.)
     // - shelflife lưu thẳng trên pallet vì 1 mã+1 NCC có thể nhiều shelflife (không suy được từ NCC).
+    // Hàng nhập NCC (POSM/Raw/Thùng/Giấy): đoạn 4 QR = MÃ NCC (không phải Máy) → lưu vào ncc_id.
+    const NCC_CATEGORIES = ['POSM', 'Raw', 'Thùng', 'Giấy']
+    const isNccGoods = NCC_CATEGORIES.includes((((order as any).material?.category ?? '') as string))
+
     let resolvedNcc: string | null = ncc_override ?? (order as { ncc_id?: string | null }).ncc_id ?? null
     let resolvedShelf: number | null = (shelf_override != null && Number(shelf_override) > 0) ? Number(shelf_override) : null
+    // Chưa có NCC & là hàng NCC → resolve từ đoạn 4 QR (khớp code hoặc mã phụ alias)
+    if (isNccGoods && !resolvedNcc && parsed.machine_code?.trim()) {
+      const seg4 = parsed.machine_code.trim()
+      const { data: co } = await supabase.from('TransportCompany')
+        .select('id').eq('type', 'NCC')
+        .or(`code.eq.${seg4},alias_codes.cs.{${seg4}}`).limit(1).maybeSingle()
+      resolvedNcc = (co as { id?: string } | null)?.id ?? resolvedNcc
+    }
     if (isTransfer && (!resolvedNcc || resolvedShelf == null)) {
       const { data: src } = await supabase.from('InventoryEntry')
         .select('ncc_id, shelf_life_days').eq('pallet_code', parsed.pallet_code)
@@ -977,9 +989,9 @@ export async function scanQR(req: Request, res: Response) {
         location_id,
         material_id:     material.id,
         manufacturer_id: manufacturer?.id ?? null,
-        nmsx:               parsed.manufacturer_code || null,   // đoạn 6 QR (B/D/O) = NMSX
+        nmsx:               parsed.manufacturer_code || null,   // đoạn 6 QR (B/D/O) = NMSX (hàng NCC = nơi nhận đầu tiên)
         cycle:              parsed.cycle || null,
-        machine_code:       parsed.machine_code || null,
+        machine_code:       isNccGoods ? null : (parsed.machine_code || null),   // hàng NCC: đoạn 4 là mã NCC → vào ncc_id, không phải máy
         pallet_sequence_no: parsed.pallet_sequence_no,
         stack_layer:        stackLayerNum,
         cartons_imported,

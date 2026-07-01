@@ -1,5 +1,8 @@
-// QR code format: ddmmyy_MaterialCode_ChuKy_MayCode_PalletSeq_NMSX
-// Example: 070526_510000127_C05_M1_001_A
+// QR code format: ddmmyy_MaterialCode_ChuKy_<Máy|NCC>_PalletSeq_NMSX
+// Đoạn 4 (machine_code) = Máy với thành phẩm; = MÃ NCC với hàng nhập NCC (POSM/Raw/Thùng/Giấy),
+//   khi đó NMSX (đoạn 6) = nơi nhận đầu tiên. Parser đọc theo VỊ TRÍ; ý nghĩa do loại hàng quyết định.
+// Example TP:  070526_510000127_C05_M1_001_B
+// Example NCC: 070526_<maPOSM>_C05_10008728_001_B
 
 export interface ParsedQR {
   pallet_code:        string

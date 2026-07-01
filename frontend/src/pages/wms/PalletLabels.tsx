@@ -6,14 +6,16 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
+import { SingleSelect } from '@/components/shared/SingleSelect'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { QRScanner } from '@/components/shared/QRScanner'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { SummaryBand } from '@/components/shared/SummaryBand'
+import { isNccCategory } from '@/utils/cargoCategory'
 import {
   useWarehouses, useWarehouseTypes, useMaterials, useInventoryEntries, useInventoryFacets,
-  useLogPalletPrints, usePalletPrints, type PalletPrintRow,
+  useLogPalletPrints, usePalletPrints, useTransportCompanies, type PalletPrintRow,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -34,7 +36,8 @@ type LabelData = {
   shortName: string
   qty: number | ''
   cycle: string
-  machine: string
+  machine: string       // đoạn 4 của QR: Máy (thành phẩm) HOẶC mã NCC (hàng NCC)
+  nccName?: string      // tên NCC để HIỂN THỊ trên tem (QR vẫn dùng mã ở machine); rỗng với thành phẩm
   seq: string           // "001"
 }
 
@@ -113,10 +116,17 @@ function PalletLabel({ d }: { d: LabelData }) {
           <div className="text-[8pt] font-semibold leading-tight">Chu kỳ</div>
           <div className="text-[24pt] font-bold leading-none">{d.cycle || '—'}</div>
         </div>
-        <div className="border-r border-black">
-          <div className="text-[8pt] font-semibold leading-tight">Máy</div>
-          <div className="text-[24pt] font-bold leading-none">{d.machine || '—'}</div>
-        </div>
+        {isNccCategory(d.category) ? (
+          <div className="border-r border-black">
+            <div className="text-[8pt] font-semibold leading-tight">NCC</div>
+            <div className="text-[13pt] font-bold leading-tight line-clamp-2 px-0.5">{d.nccName || d.machine || '—'}</div>
+          </div>
+        ) : (
+          <div className="border-r border-black">
+            <div className="text-[8pt] font-semibold leading-tight">Máy</div>
+            <div className="text-[24pt] font-bold leading-none">{d.machine || '—'}</div>
+          </div>
+        )}
         <div>
           <div className="text-[8pt] font-semibold leading-tight">Số pallet</div>
           <div className="text-[24pt] font-bold leading-none">{Number(d.seq) || d.seq}</div>
@@ -201,9 +211,20 @@ export default function PalletLabels() {
   const [cycle, setCycle]     = useState<string>(SAVED.cycle ?? '')
   const [machine, setMachine] = useState<string>(SAVED.machine ?? '')
   const [nmsx, setNmsx]       = useState<string>(SAVED.nmsx ?? '')
+  const [nccCode, setNccCode] = useState('')   // hàng NCC: đoạn 4 = mã NCC
   const [seqStart, setSeqStart] = useState('1')
   const [count, setCount]     = useState('4')
   const [qty, setQty]         = useState('')
+
+  // Danh mục NCC (đoạn 4 cho hàng nhập NCC)
+  const { data: companies = [] } = useTransportCompanies(true)
+  const nccList = (companies as { id: string; code: string; name: string; type?: string }[]).filter(c => c.type === 'NCC')
+  const nccOptions = nccList.map(c => ({ value: c.code, label: c.name, sub: c.code }))
+  // Loại hàng đang chọn quyết định đoạn 4: thành phẩm → Máy; POSM/Raw/Thùng/Giấy → NCC
+  const genCategory = mat?.category ?? genCat
+  const genIsNcc = isNccCategory(genCategory)
+  const seg4 = genIsNcc ? nccCode : machine                                   // giá trị vào QR (đoạn 4)
+  const seg4Name = genIsNcc ? (nccList.find(c => c.code === nccCode)?.name ?? '') : ''
 
   // NMSX (nmsx_code kho tổng) → id kho để áp ngoại lệ Thùng/Pallet theo kho ('O' không có kho → null)
   const nmsxWarehouseId = nmsxOptions.find(w => (w.nmsx_code ?? '').trim() === nmsx)?.id ?? null
@@ -214,7 +235,7 @@ export default function PalletLabels() {
     setQty(eff > 0 ? String(eff) : '')
   }, [mat, nmsxWarehouseId])
 
-  const genReady = !!(mat && prodDate && cycle.trim() && machine.trim() && nmsx.trim())
+  const genReady = !!(mat && prodDate && cycle.trim() && seg4.trim() && nmsx.trim())
   const genLabels: LabelData[] = useMemo(() => {
     if (tab !== 'generate' || !genReady || !mat) return []
     const ddmmyy = toDdmmyy(prodDate)
@@ -225,7 +246,7 @@ export default function PalletLabels() {
       const seq = String(start + i)   // số thứ tự thuần (3 chứ không 003) — tránh 003≠3 khi tạo lại
       out.push({
         key: `gen-${seq}`,
-        qr: buildQR({ ddmmyy, code: mat.material_code, cycle, machine, seq, nmsx }),
+        qr: buildQR({ ddmmyy, code: mat.material_code, cycle, machine: seg4, seq, nmsx }),
         dateDisplay: toDisplayDate(prodDate),
         materialCode: mat.material_code,
         materialId: mat.id,
@@ -235,15 +256,16 @@ export default function PalletLabels() {
         shortName: mat.short_name ?? '',
         qty: qty === '' ? '' : Number(qty),
         cycle: clean(cycle),
-        machine: clean(machine),
+        machine: clean(seg4),
+        nccName: seg4Name,
         seq,
       })
     }
     return out
-  }, [tab, mat, prodDate, cycle, machine, nmsx, seqStart, count, qty])
+  }, [tab, mat, prodDate, cycle, seg4, seg4Name, nmsx, seqStart, count, qty])
 
   // F1 — cảnh báo trùng: QR sắp sinh đã có pallet trong tồn kho? (tránh in QR trùng pallet đang tồn)
-  const genPrefix = genReady && mat ? `${toDdmmyy(prodDate)}_${clean(mat.material_code)}_${clean(cycle)}_${clean(machine)}_` : ''
+  const genPrefix = genReady && mat ? `${toDdmmyy(prodDate)}_${clean(mat.material_code)}_${clean(cycle)}_${clean(seg4)}_` : ''
   const { data: genDupData } = useInventoryEntries(
     { search: genPrefix, status: '', page: 1, limit: 500 },
     tab === 'generate' && genPrefix.length >= 3,
@@ -269,6 +291,7 @@ export default function PalletLabels() {
       qty: e.cartons_imported ?? '',
       cycle: e.cycle ?? parts[2] ?? '',
       machine: e.machine_code ?? parts[3] ?? '',
+      nccName: e.ncc?.name ?? '',   // hàng NCC: tem hiện tên NCC
       seq: parts[4] ?? '',
     }
   }
@@ -631,12 +654,22 @@ export default function PalletLabels() {
                   <Input className="h-8 text-sm" placeholder="C05" value={cycle} onChange={e => setCycle(e.target.value)} />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs">Máy <span className="text-red-500">*</span></Label>
-                  <Input className="h-8 text-sm" placeholder="M1" value={machine} onChange={e => setMachine(e.target.value)} />
+                  {genIsNcc ? (
+                    <>
+                      <Label className="text-xs">NCC <span className="text-red-500">*</span></Label>
+                      <SingleSelect options={nccOptions} value={nccCode} onChange={setNccCode}
+                        placeholder="Chọn NCC" searchPlaceholder="Tìm NCC…" triggerClassName="h-8 w-full" />
+                    </>
+                  ) : (
+                    <>
+                      <Label className="text-xs">Máy <span className="text-red-500">*</span></Label>
+                      <Input className="h-8 text-sm" placeholder="M1" value={machine} onChange={e => setMachine(e.target.value)} />
+                    </>
+                  )}
                 </div>
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">NMSX <span className="text-red-500">*</span></Label>
+                <Label className="text-xs">{genIsNcc ? 'Nơi nhận (NMSX)' : 'NMSX'} <span className="text-red-500">*</span></Label>
                 <Select value={nmsx || '__none__'} onValueChange={v => setNmsx(v === '__none__' ? '' : v)}>
                   <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Chọn NMSX" /></SelectTrigger>
                   <SelectContent>
@@ -666,7 +699,7 @@ export default function PalletLabels() {
                   <Input type="number" min={0} className="h-8 text-sm" value={qty} onChange={e => setQty(e.target.value)} />
                 </div>
               </div>
-              {!genReady && <p className="flex items-start gap-1 text-[11px] text-amber-600"><AlertTriangle className="h-3.5 w-3.5 shrink-0" /> Chọn đủ Mã hàng, Chu kỳ, Máy, NMSX để sinh tem.</p>}
+              {!genReady && <p className="flex items-start gap-1 text-[11px] text-amber-600"><AlertTriangle className="h-3.5 w-3.5 shrink-0" /> Chọn đủ Mã hàng, Chu kỳ, {genIsNcc ? 'NCC' : 'Máy'}, NMSX để sinh tem.</p>}
               {genReady && genDupes.length > 0 && (
                 <div className="flex items-start gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-800">
                   <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />

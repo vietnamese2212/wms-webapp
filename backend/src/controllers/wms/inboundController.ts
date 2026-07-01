@@ -6,6 +6,7 @@ import { parseInboundQR } from '../../utils/qrParser'
 import { emitInboundChanged } from '../../lib/events'
 import { effectiveNoQr } from '../../lib/inventoryMode'
 import { effCartonsPerPallet } from '../../utils/palletCalc'
+import { fetchAllRowsParallel } from '../../utils/pagination'
 
 // Kho QTY → ép no-QR hiệu lực cho phiếu (mutate material.no_qr_tracking theo inventory_mode của kho)
 function applyInboundMode(
@@ -99,33 +100,22 @@ async function computeGdoTotalCartons(gdoId: string, materialId: string | null):
   return (scans ?? []).reduce((sum: number, s: any) => sum + (Number(s.cartons_scanned) || 0), 0)
 }
 
-async function attachCount(raw: unknown): Promise<Record<string, unknown>> {
-  const order = raw as Record<string, unknown>
-  const locationId = order.location_id as string | null
-  const fromGdoId = order.from_gdo_id as string | null
-  const isTransfer = order.source_type === 'TRANSFER'
-
-  const [entriesRes, slotsRes, gdoCartons] = await Promise.all([
-    supabase.from('InventoryEntry')
-      .select('pallet_code, cartons_imported, cycle, machine_code, location:Location(location_code, sub_code)')
-      .eq('import_order_id', order.id as string),
-    locationId
-      ? supabase.from('InventoryEntry').select('*', { count: 'exact', head: true })
-          .eq('location_id', locationId).eq('stack_layer', 1).in('status', ['IN_STOCK', 'PARTIAL'])
-      : Promise.resolve({ count: 0, data: null, error: null }),
-    isTransfer && fromGdoId && order.planned_cartons == null
-      ? computeGdoTotalCartons(fromGdoId, order.material_id as string | null)
-      : Promise.resolve(null),
-  ])
-
-  const entries = (entriesRes.data ?? []) as unknown as {
-    pallet_code: string | null
-    cartons_imported: number
-    cycle: string | null
-    machine_code: string | null
-    location: { location_code: string; sub_code: string } | null
-  }[]
-  const cycles       = [...new Set(entries.map(e => e.cycle).filter((c): c is string => !!c))]
+// Tính thống kê 1 phiếu từ dữ liệu ĐÃ FETCH SẴN (bulk) — tách khỏi query để listOrders gọi 1 lần cho
+// TẤT CẢ phiếu (bulk-fetch) thay vì N+1 (mỗi phiếu 2-3 query). Logic GIỮ NGUYÊN như attachCount cũ.
+// entries = pallet của phiếu; slotCount = số pallet active layer-1 tại location của phiếu (đếm sẵn);
+// gdoCartons = tổng thùng GDO (chỉ transfer thiếu planned_cartons), null nếu không áp dụng.
+type OrderEntry = {
+  import_order_id: string
+  pallet_code: string | null
+  cartons_imported: number
+  cycle: string | null
+  machine_code: string | null
+  location: { location_code: string; sub_code: string } | null
+}
+function computeOrderStats(
+  order: Record<string, unknown>, entries: OrderEntry[], slotCount: number, gdoCartons: number | null,
+): Record<string, unknown> {
+  const cycles        = [...new Set(entries.map(e => e.cycle).filter((c): c is string => !!c))]
   const machine_codes = [...new Set(entries.map(e => e.machine_code).filter((m): m is string => !!m))]
 
   // Aggregate theo location thực tế của từng pallet entry (không phụ thuộc vào order.location_id)
@@ -165,9 +155,31 @@ async function attachCount(raw: unknown): Promise<Record<string, unknown>> {
     total_cartons,
     cycles,
     machine_codes,
-    location_used_slots: slotsRes.count ?? 0,
+    location_used_slots: slotCount,
     entries_by_location,
   }
+}
+
+// Bản 1-PHIẾU (getOrder / complete / uncomplete / cancel…): fetch dữ liệu cho 1 phiếu rồi computeOrderStats.
+// (listOrders KHÔNG dùng hàm này — nó bulk-fetch cho tất cả phiếu để tránh N+1.)
+async function attachCount(raw: unknown): Promise<Record<string, unknown>> {
+  const order = raw as Record<string, unknown>
+  const locationId = order.location_id as string | null
+  const fromGdoId = order.from_gdo_id as string | null
+  const isTransfer = order.source_type === 'TRANSFER'
+  const [entriesRes, slotsRes, gdoCartons] = await Promise.all([
+    supabase.from('InventoryEntry')
+      .select('import_order_id, pallet_code, cartons_imported, cycle, machine_code, location:Location(location_code, sub_code)')
+      .eq('import_order_id', order.id as string),
+    locationId
+      ? supabase.from('InventoryEntry').select('*', { count: 'exact', head: true })
+          .eq('location_id', locationId).eq('stack_layer', 1).in('status', ['IN_STOCK', 'PARTIAL'])
+      : Promise.resolve({ count: 0 } as { count: number | null }),
+    isTransfer && fromGdoId && order.planned_cartons == null
+      ? computeGdoTotalCartons(fromGdoId, order.material_id as string | null)
+      : Promise.resolve(null),
+  ])
+  return computeOrderStats(order, (entriesRes.data ?? []) as unknown as OrderEntry[], slotsRes.count ?? 0, gdoCartons)
 }
 
 // ─── List inbound orders ─────────────────────────────────────
@@ -267,7 +279,48 @@ export async function listOrders(req: Request, res: Response) {
 
     filtered.forEach(applyInboundMode)  // kho QTY → ép no-QR hiệu lực
 
-    const withCount = await Promise.all(filtered.map(attachCount))
+    // ── BULK thay N+1 (trước: mỗi phiếu 2-3 query → hàng trăm phiếu × trăm user = cạn connection) ──
+    // 1 query entries cho TẤT CẢ phiếu (chunk id ≤100 tránh URL dài + phân trang né cap-1000) + 1 query
+    // đếm slot theo location + computeGdoTotalCartons chỉ cho transfer thiếu planned_cartons (subset).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const orderIds = filtered.map((o: any) => o.id as string)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const locationIds = [...new Set(filtered.map((o: any) => o.location_id as string | null).filter(Boolean))] as string[]
+
+    const entriesByOrder = new Map<string, OrderEntry[]>()
+    const slotByLoc = new Map<string, number>()
+    if (orderIds.length) {
+      const CHUNK = 100
+      const idChunks: string[][] = []
+      for (let i = 0; i < orderIds.length; i += CHUNK) idChunks.push(orderIds.slice(i, i + CHUNK))
+      const [entryGroups, slotRows] = await Promise.all([
+        Promise.all(idChunks.map(slice => fetchAllRowsParallel(() => supabase.from('InventoryEntry')
+          .select('import_order_id, pallet_code, cartons_imported, cycle, machine_code, location:Location(location_code, sub_code)')
+          .in('import_order_id', slice).order('id'), 1000, 4))),
+        locationIds.length
+          ? fetchAllRowsParallel(() => supabase.from('InventoryEntry')
+              .select('location_id').in('location_id', locationIds).eq('stack_layer', 1).in('status', ['IN_STOCK', 'PARTIAL']).order('id'), 1000, 4)
+          : Promise.resolve([] as unknown[]),
+      ])
+      for (const e of (entryGroups.flat() as OrderEntry[])) {
+        const arr = entriesByOrder.get(e.import_order_id) ?? []
+        arr.push(e); entriesByOrder.set(e.import_order_id, arr)
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      for (const s of (slotRows as any[])) slotByLoc.set(s.location_id, (slotByLoc.get(s.location_id) ?? 0) + 1)
+    }
+
+    // GDO cartons cho transfer thiếu planned_cartons (subset) — chạy song song
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const transfersNeedGdo = filtered.filter((o: any) => o.source_type === 'TRANSFER' && o.from_gdo_id && o.planned_cartons == null)
+    const gdoCartonsMap = new Map<string, number | null>()
+    await Promise.all(transfersNeedGdo.map(async (o: any) => {
+      gdoCartonsMap.set(o.id as string, await computeGdoTotalCartons(o.from_gdo_id as string, o.material_id as string | null))
+    }))
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const withCount = filtered.map((o: any) => computeOrderStats(
+      o, entriesByOrder.get(o.id as string) ?? [], slotByLoc.get(o.location_id as string) ?? 0, gdoCartonsMap.get(o.id as string) ?? null))
 
     // Batch-fetch delivery codes for TRANSFER orders
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

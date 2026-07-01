@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
 import type { AxiosError } from 'axios'
-import { Package, X, SlidersHorizontal, ChevronRight, Check, Rows3, AlignJustify, Scissors, Layers, Sigma, Download } from 'lucide-react'
+import { Package, X, SlidersHorizontal, ChevronRight, Check, Rows3, AlignJustify, Scissors, Layers, Sigma, Download, Upload } from 'lucide-react'
+import { UploadExcelDialog } from '@/components/shared/UploadExcelDialog'
 import { useNavigate } from 'react-router-dom'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -14,7 +15,7 @@ import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import {
-  useInventoryEntries, useInventoryFacets, useWarehouses, useQAStatuses, useAdjustInventory,
+  useInventoryEntries, useInventoryFacets, useWarehouses, useQAStatuses, useAdjustInventory, useUploadInventoryExcel,
   useAdjustmentLog,
   useLocationsReal, useMaterials, useWarehouseTypes,
   useBulkUpdateInventoryQA, useBulkTransferLocation, useBulkTransferMaterial,
@@ -629,6 +630,8 @@ export default function Inventory() {
   const [aggregate, setAggregate] = useState(() => localStorage.getItem('inventory_view_mode') === 'summary')
   const [exporting, setExporting]     = useState(false)
   const [exportError, setExportError] = useState('')
+  const [showUpload, setShowUpload]   = useState(false)
+  const uploadInventory = useUploadInventoryExcel()
   function toggleAggregate() {
     const next = !aggregate
     localStorage.setItem('inventory_view_mode', next ? 'summary' : 'pallet')
@@ -759,6 +762,17 @@ export default function Inventory() {
     } finally {
       setExporting(false)
     }
+  }
+
+  // Mẫu Excel Tồn kho đầu kỳ — cột KHỚP thứ tự INV_KEYS backend (dòng 1 nhãn, dòng 2 key, dòng 3 ví dụ).
+  function downloadInventoryTemplate() {
+    const labels = ['Mã pallet *', 'Mã hàng *', 'Kho (mã) *', 'Mã vị trí *', 'Số thùng *', 'Ngày SX * (yyyy-mm-dd)', 'NCC (mã/tên, tùy)', 'QA (mặc định OK)', 'HSD (ngày, tùy)']
+    const keys = ['pallet_code', 'material_code', 'warehouse', 'location_code', 'cartons', 'production_date', 'ncc', 'qa_status', 'shelf_life_days']
+    const ex = ['BV-OPEN-0001', '210000262', '20000016', 'B_TP1_1_T1', 100, '2026-06-01', 'DTV', 'OK', '']
+    const ws = XLSX.utils.aoa_to_sheet([labels, keys, ex])
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'TonKho')
+    XLSX.writeFile(wb, 'mau_ton_kho.xlsx')
   }
 
   // Derive pallet context for action modals (from first checked entry on current page)
@@ -919,6 +933,13 @@ export default function Inventory() {
               className="hidden sm:inline-flex h-7 items-center gap-1 px-2 rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0 disabled:opacity-50"
               title={`Xuất Excel ${aggregate ? 'bảng tổng hợp' : 'chi tiết pallet'} theo bộ lọc hiện tại`}>
               <Download className="h-3.5 w-3.5" />{exporting ? 'Đang xuất…' : 'Excel'}
+            </button>
+          )}
+          {can(user?.module_permissions, 'inventory', 'import') && (
+            <button type="button" onClick={() => setShowUpload(true)}
+              className="hidden sm:inline-flex h-7 items-center gap-1 px-2 rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0"
+              title="Upload tồn kho đầu kỳ từ Excel">
+              <Upload className="h-3.5 w-3.5" />Upload
             </button>
           )}
         </div>
@@ -1153,6 +1174,16 @@ export default function Inventory() {
             <X className="h-4 w-4" />
           </button>
         </div>
+      )}
+
+      {showUpload && (
+        <UploadExcelDialog
+          title="Upload Tồn kho đầu kỳ từ Excel"
+          hint="Kiểm toàn bộ file trước — có bất kỳ lỗi nào thì KHÔNG nhập gì. Mỗi dòng = 1 pallet. NCC tham chiếu theo mã (ưu tiên) hoặc tên."
+          onClose={() => setShowUpload(false)}
+          onDownloadTemplate={downloadInventoryTemplate}
+          onUpload={file => uploadInventory.mutateAsync({ file })}
+        />
       )}
 
     </div>

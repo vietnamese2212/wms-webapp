@@ -1,4 +1,5 @@
 import { Request, Response } from 'express'
+import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { randomUUID } from 'crypto'
@@ -998,4 +999,166 @@ export async function getInventoryEntry(req: Request, res: Response) {
   if (error) return fail(res, error.message)
   if (!data)  return fail(res, 'Không tìm thấy pallet', 404)
   return ok(res, data)
+}
+
+// ─── Upload Excel: TỒN KHO ĐẦU KỲ (all-or-nothing) ──────────────────────────
+// Mirror scripts/import_inventory.js: kiểm TOÀN BỘ file trước — có BẤT KỲ lỗi nào thì KHÔNG nhập gì
+// (trả về danh sách lỗi để sửa & up lại). File sạch 100% → nhập theo lô. status=IN_STOCK, origin=IMPORT.
+// NMSX = đoạn 6 mã pallet (QR), thiếu → nmsx_code của kho. Trùng pallet (trong file / đã có) = lỗi.
+const INV_KEYS = ['pallet_code', 'material_code', 'warehouse', 'location_code', 'cartons', 'production_date', 'ncc', 'qa_status', 'shelf_life_days'] as const
+
+const invNum = (v: unknown): number | null => { const n = parseFloat(String(v ?? '').replace(',', '.')); return Number.isNaN(n) ? null : n }
+const invInt = (v: unknown): number | null => { const n = parseInt(String(v ?? '').trim(), 10); return Number.isNaN(n) ? null : n }
+const invStr = (v: unknown): string | null => { const s = String(v ?? '').trim(); return s || null }
+
+const HASH8 = /^[0-9a-f]{8}$/i
+const NMSX_ALIAS: Record<string, string> = { A: 'O' }   // "A" là mã cũ của nhà máy O → gộp về O
+function nmsxFromPallet(code: string, fallback: string | null): string | null {
+  const parts = String(code || '').split('_')
+  const raw = (parts.length >= 6 && parts[5] && !HASH8.test(parts[5])) ? parts[5] : fallback
+  return raw ? (NMSX_ALIAS[raw] ?? raw) : raw
+}
+// Ngày SX → yyyy-mm-dd. Chịu: yyyy-mm-dd / dd-mm-yyyy (- hoặc /), số serial Excel.
+function invToISODate(v: unknown): string | null {
+  if (v == null || v === '') return null
+  if (v instanceof Date && !Number.isNaN(v.getTime())) return v.toISOString().slice(0, 10)
+  const s = String(v).trim()
+  let m = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/.exec(s)
+  if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`
+  m = /^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/.exec(s)
+  if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`
+  if (/^\d+(\.\d+)?$/.test(s)) {
+    const d = new Date(Math.round((Number(s) - 25569) * 86400000))
+    return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10)
+  }
+  return null
+}
+// Phân giải theo MÃ (ưu tiên) → TÊN (fallback); tên trùng → buộc dùng mã.
+function makeNccResolver(items: { id: string; code?: string | null; name?: string | null; alias_codes?: string[] | null }[]) {
+  const byCode = new Map<string, string>(), byName = new Map<string, string>(), nameCount = new Map<string, number>()
+  for (const it of items) {
+    const c = String(it.code ?? '').trim().toLowerCase()
+    const n = String(it.name ?? '').trim().toLowerCase()
+    if (c) byCode.set(c, it.id)
+    for (const a of (it.alias_codes ?? [])) { const ac = String(a ?? '').trim().toLowerCase(); if (ac) byCode.set(ac, it.id) }
+    if (n) { byName.set(n, it.id); nameCount.set(n, (nameCount.get(n) ?? 0) + 1) }
+  }
+  return (input: string): { id: string | null; error: string | null } => {
+    const k = String(input ?? '').trim().toLowerCase()
+    if (!k) return { id: null, error: null }
+    if (byCode.has(k)) return { id: byCode.get(k)!, error: null }
+    if ((nameCount.get(k) ?? 0) > 1) return { id: null, error: 'trùng tên, hãy dùng MÃ' }
+    if (byName.has(k)) return { id: byName.get(k)!, error: null }
+    return { id: null, error: 'không khớp (mã hoặc tên)' }
+  }
+}
+
+export async function uploadExcel(req: Request, res: Response) {
+  try {
+    if (!req.file) return fail(res, 'Không có file upload', 400)
+    const wb = XLSX.read(req.file.buffer, { type: 'buffer' })
+    const ws = wb.Sheets[wb.SheetNames[0]]
+    const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { defval: '', header: 1 })
+    if (raw.length < 2) return fail(res, 'File Excel trống hoặc không đúng định dạng', 400)
+
+    const norm = (a: unknown[]) => (a || []).map(x => String(x ?? '').trim())
+    const isKeyRow = (r: unknown[]) => INV_KEYS.every((k, i) => norm(r)[i] === k)
+    const start = isKeyRow(raw[1] as unknown[]) ? 2 : 1
+    const rows = raw.slice(start)
+      .map(r => Object.fromEntries(INV_KEYS.map((k, i) => [k, (r as unknown[])[i]])) as Record<string, unknown>)
+      .filter(r => Object.values(r).some(v => String(v ?? '').trim()))
+    if (!rows.length) return fail(res, 'Không có dòng dữ liệu nào', 400)
+
+    const [mats, whs, locs, cos, qas, exEntries] = await Promise.all([
+      fetchAllRowsParallel(() => supabase.from('Material').select('id, material_code')),
+      fetchAllRowsParallel(() => supabase.from('Warehouse').select('id, code, name, nmsx_code')),
+      fetchAllRowsParallel(() => supabase.from('Location').select('id, location_code')),
+      fetchAllRowsParallel(() => supabase.from('TransportCompany').select('id, code, name, type, alias_codes')),
+      fetchAllRowsParallel(() => supabase.from('QAStatus').select('id, name')),
+      fetchAllRowsParallel(() => supabase.from('InventoryEntry').select('pallet_code')),
+    ]) as [
+      { id: string; material_code: string }[],
+      { id: string; code: string; name: string; nmsx_code: string | null }[],
+      { id: string; location_code: string }[],
+      { id: string; code: string | null; name: string | null; type: string; alias_codes: string[] | null }[],
+      { id: string; name: string }[],
+      { pallet_code: string | null }[],
+    ]
+
+    const matMap = new Map(mats.map(m => [String(m.material_code).trim().toLowerCase(), m.id]))
+    const whByCode = new Map(whs.map(w => [String(w.code).trim().toLowerCase(), w]))
+    const whByName = new Map(whs.map(w => [String(w.name).trim().toLowerCase(), w]))
+    const locMap = new Map(locs.map(l => [String(l.location_code).trim().toLowerCase(), l.id]))
+    const resolveNcc = makeNccResolver(cos.filter(c => c.type === 'NCC'))
+    const qaMap = new Map(qas.map(q => [String(q.name).trim().toLowerCase(), q.id]))
+    const qaNames = qas.map(q => q.name).join(' / ')
+    const seen = new Set(exEntries.map(e => (e.pallet_code || '').trim().toLowerCase()))
+
+    const now = new Date().toISOString()
+
+    // ── PHA 1: kiểm TOÀN BỘ. Có lỗi → KHÔNG nhập gì. ──
+    const errors: string[] = []
+    const records: Record<string, unknown>[] = []
+    const seenInFile = new Set<string>()
+    let lineNo = 0
+    for (const r of rows) {
+      lineNo++
+      const pallet = invStr(r.pallet_code), mcode = invStr(r.material_code), whRaw = invStr(r.warehouse)
+      const cartons = invNum(r.cartons)
+      const locRaw = invStr(r.location_code)
+      const prodRaw = invStr(r.production_date)
+      const prodIso = invToISODate(r.production_date)
+      const at = pallet || `(dòng #${lineNo})`
+
+      const missing: string[] = []
+      if (!pallet)         missing.push('mã pallet')
+      if (!mcode)          missing.push('mã hàng')
+      if (!whRaw)          missing.push('kho')
+      if (cartons == null) missing.push('số thùng')
+      if (!locRaw)         missing.push('vị trí')
+      if (!prodIso)        missing.push(prodRaw ? `ngày SX sai định dạng "${prodRaw}"` : 'ngày SX')
+      if (missing.length) { errors.push(`${at} — thiếu/sai: ${missing.join(', ')}`); continue }
+
+      const palletLc = pallet!.toLowerCase()
+      if (seenInFile.has(palletLc)) { errors.push(`${at} — trùng mã pallet trong file`); continue }
+      if (seen.has(palletLc))       { errors.push(`${at} — mã pallet đã tồn tại trong kho`); continue }
+      const matId = matMap.get(mcode!.toLowerCase())
+      if (!matId) { errors.push(`${at} — mã hàng không khớp: ${mcode}`); continue }
+      const wh = whByCode.get(whRaw!.toLowerCase()) || whByName.get(whRaw!.toLowerCase())
+      if (!wh) { errors.push(`${at} — kho không khớp: ${whRaw}`); continue }
+      const locId = locMap.get(locRaw!.toLowerCase())
+      if (!locId) { errors.push(`${at} — vị trí không khớp: ${locRaw}`); continue }
+      const nccRaw = invStr(r.ncc)
+      let nccId: string | null = null
+      if (nccRaw) { const resu = resolveNcc(nccRaw); if (!resu.id) { errors.push(`${at} — NCC ${resu.error ?? 'không khớp'}: ${nccRaw}`); continue } nccId = resu.id }
+      // QA: trống hoặc "OK" = pallet tốt → NULL. Chỉ gán khi là cờ GIỮ thật; giá trị lạ → lỗi.
+      const qaRaw = invStr(r.qa_status)
+      let qaId: string | null = null
+      if (qaRaw && qaRaw.toLowerCase() !== 'ok') {
+        qaId = qaMap.get(qaRaw.toLowerCase()) ?? null
+        if (qaId == null) { errors.push(`${at} — QA không khớp: "${qaRaw}" (hợp lệ: ${qaNames})`); continue }
+      }
+      const nmsx = nmsxFromPallet(pallet!, (wh.nmsx_code && String(wh.nmsx_code).trim()) || null)
+
+      seenInFile.add(palletLc)
+      records.push({
+        id: randomUUID(), pallet_code: pallet, material_id: matId, warehouse_id: wh.id, location_id: locId,
+        cartons_imported: cartons, cartons_remaining: cartons, cartons_reserved: 0, adjustment_qty: 0,
+        stack_layer: 1, status: 'IN_STOCK', origin: 'IMPORT',
+        production_date: `${prodIso}T00:00:00`,
+        shelf_life_days: invInt(r.shelf_life_days), ncc_id: nccId, qa_status_id: qaId, nmsx,
+        import_date: now, created_at: now, updated_at: now,
+      })
+    }
+
+    if (errors.length) return ok(res, { inserted: 0, errors })
+    if (!records.length) return ok(res, { inserted: 0, errors: [] })
+
+    // ── PHA 2: file sạch → nhập theo lô 500 (validate đã chặn hết lỗi dữ liệu). ──
+    for (let i = 0; i < records.length; i += 500) {
+      const { error } = await supabase.from('InventoryEntry').insert(records.slice(i, i + 500))
+      if (error) return fail(res, `Lỗi khi nhập (đã nhập ${i} pallet trước đó): ${error.message}`, 500)
+    }
+    return ok(res, { inserted: records.length, errors: [] })
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }

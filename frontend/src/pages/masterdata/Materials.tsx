@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react'
-import { Tag, Plus, Pencil, Trash2, X, Check, Minus, PlusCircle, QrCode, Rows3, AlignJustify } from 'lucide-react'
+import * as XLSX from 'xlsx'
+import { Tag, Plus, Upload, Pencil, Trash2, X, Check, Minus, PlusCircle, QrCode, Rows3, AlignJustify } from 'lucide-react'
+import { UploadExcelDialog } from '@/components/shared/UploadExcelDialog'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
@@ -20,7 +22,7 @@ import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { omniMatch } from '@/utils/omniSearch'
 import {
   useMaterials, useWarehouses, useWarehouseTypes, useTransportCompanies,
-  useCreateMaterial, useUpdateMaterial, useDeleteMaterial,
+  useCreateMaterial, useUpdateMaterial, useDeleteMaterial, useUploadMaterialsExcel,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
@@ -143,6 +145,7 @@ export default function Materials() {
   // Add/Edit dialog
   const [dialogMode, setDialogMode] = useState<'add' | 'edit' | null>(null)
   const [editing,    setEditing]    = useState<Material | null>(null)
+  const [showUpload, setShowUpload] = useState(false)
   const [form,       setForm]       = useState(EMPTY_FORM)
   const [editActive,       setEditActive]       = useState(true)
   const [noQr,             setNoQr]             = useState(false)
@@ -180,6 +183,7 @@ export default function Materials() {
 
   // Mutations
   const createMaterial = useCreateMaterial()
+  const uploadMaterials = useUploadMaterialsExcel()
   const updateMaterial = useUpdateMaterial()
   const deleteMaterial = useDeleteMaterial()
 
@@ -239,6 +243,17 @@ export default function Materials() {
       if (!ov.warehouse_id || !ov.cartons_per_pallet) return 'Điền đủ kho và số thùng cho mọi ngoại lệ'
     }
     return null
+  }
+
+  // Mẫu Excel Mã hàng — cột KHỚP thứ tự M_KEYS backend (dòng 1 nhãn, dòng 2 key, dòng 3 ví dụ).
+  function downloadMaterialTemplate() {
+    const labels = ['Mã hàng *', 'Tên hàng *', 'Loại hàng *', 'ĐVT *', 'Thùng/Pallet *', 'Đv/Thùng', 'Pallet/EA', 'KL (kg) *', 'HSD (ngày)', 'Loại SP', 'Tên rút gọn', 'Ghi chú']
+    const keys = ['material_code', 'material_description', 'category', 'unit', 'cartons_per_pallet', 'units_per_carton', 'pallet_per_ea', 'weight_kg', 'shelf_life_days', 'product_type', 'custom_short_name', 'notes']
+    const ex = ['210000262', 'Sữa tươi tiệt trùng 180ml', 'Thành phẩm', 'CAR', 80, 48, '', 9.6, 180, 'UHT', '', '']
+    const ws = XLSX.utils.aoa_to_sheet([labels, keys, ex])
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'MaHang')
+    XLSX.writeFile(wb, 'mau_ma_hang.xlsx')
   }
 
   function openAdd() {
@@ -483,6 +498,11 @@ export default function Materials() {
             title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
+          {can(perms, 'materials', 'import') && (
+            <Button size="sm" variant="outline" onClick={() => setShowUpload(true)} className="hidden sm:inline-flex h-7 text-xs gap-1">
+              <Upload className="h-3.5 w-3.5" />Upload Excel
+            </Button>
+          )}
           {can(perms, 'materials', 'create') && (
             <Button size="sm" onClick={openAdd} className="h-7 text-xs gap-1">
               <Plus className="h-3.5 w-3.5" />Thêm
@@ -1065,6 +1085,16 @@ export default function Materials() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {showUpload && (
+        <UploadExcelDialog
+          title="Upload Mã hàng từ Excel"
+          hint="Mã mới → thêm (Tên hàng bắt buộc). Mã đã có → cập nhật ô có giá trị (ô trống = giữ nguyên)."
+          onClose={() => setShowUpload(false)}
+          onDownloadTemplate={downloadMaterialTemplate}
+          onUpload={file => uploadMaterials.mutateAsync({ file })}
+        />
+      )}
     </div>
   )
 }

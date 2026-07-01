@@ -1499,6 +1499,46 @@ export function useUploadGDOExcel() {
   })
 }
 
+export interface UploadResult { inserted: number; updated?: number; skipped?: number; errors: string[] }
+
+export function useUploadMaterialsExcel() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ file }: { file: File }): Promise<UploadResult> => {
+      const form = new FormData()
+      form.append('file', file)
+      return apiClient.post('/masterdata/materials/upload', form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 120000,
+      }).then(r => r.data.data)
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['materials'] })
+      qc.invalidateQueries({ queryKey: ['material-categories'] })
+    },
+  })
+}
+
+export function useUploadInventoryExcel() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ file }: { file: File }): Promise<UploadResult> => {
+      const form = new FormData()
+      form.append('file', file)
+      return apiClient.post('/wms/inventory/upload', form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 120000,
+      }).then(r => r.data.data)
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['inventory-entries'] })
+      qc.invalidateQueries({ queryKey: ['inventory-facets'] })
+      qc.invalidateQueries({ queryKey: ['inventory-summary'] })
+      qc.invalidateQueries({ queryKey: ['inventory'] })
+    },
+  })
+}
+
 export function useScanOutboundItem() {
   const qc = useQueryClient()
   return useMutation({

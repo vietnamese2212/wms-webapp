@@ -1,5 +1,6 @@
 import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
+import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { fetchAllRowsParallel } from '../../utils/pagination'
@@ -192,5 +193,95 @@ export async function listCategories(_req: Request, res: Response) {
     }
     const cats = [...new Set(rows.map(m => m.category).filter(Boolean))].sort()
     ok(res, cats)
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+}
+
+// ─── Upload Excel: UPSERT Material theo material_code ────────────────────────
+// Mirror scripts/import_materials.js: mã MỚI → thêm (Tên hàng bắt buộc); mã ĐÃ CÓ → cập nhật
+// chỉ ô CÓ GIÁ TRỊ trong file (ô trống = giữ nguyên). short_name tự sinh khi đổi Tên hàng.
+const M_KEYS = ['material_code', 'material_description', 'category', 'unit', 'cartons_per_pallet',
+  'units_per_carton', 'pallet_per_ea', 'weight_kg', 'shelf_life_days', 'product_type', 'custom_short_name', 'notes'] as const
+
+const mStr = (v: unknown): string | null => { const s = String(v ?? '').trim(); return s || null }
+const mNum = (v: unknown): number | null => { if (v == null || v === '') return null; const n = parseFloat(String(v).replace(',', '.')); return Number.isNaN(n) ? null : n }
+const mInt = (v: unknown): number | null => { if (v == null || v === '') return null; const n = parseInt(String(v), 10); return Number.isNaN(n) ? null : n }
+
+export async function uploadExcel(req: Request, res: Response) {
+  try {
+    if (!req.file) return fail(res, 'Không có file upload', 400)
+    const wb = XLSX.read(req.file.buffer, { type: 'buffer' })
+    const ws = wb.Sheets[wb.SheetNames[0]]
+    const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { defval: '', header: 1 })
+    if (raw.length < 2) return fail(res, 'File Excel trống hoặc không đúng định dạng', 400)
+
+    // Map theo VỊ TRÍ cột (đúng thứ tự M_KEYS) — chịu được khi mất dòng key/nhãn.
+    const norm = (a: unknown[]) => (a || []).map(x => String(x ?? '').trim())
+    const isKeyRow = (r: unknown[]) => M_KEYS.every((k, i) => norm(r)[i] === k)
+    const start = isKeyRow(raw[1] as unknown[]) ? 2 : 1   // có dòng key → data từ dòng 3; không → bỏ dòng nhãn
+    const rows = raw.slice(start)
+      .map(r => Object.fromEntries(M_KEYS.map((k, i) => [k, (r as unknown[])[i]])) as Record<string, unknown>)
+      .filter(r => Object.values(r).some(v => String(v ?? '').trim()))
+
+    if (!rows.length) return fail(res, 'Không có dòng dữ liệu nào', 400)
+
+    // Nạp TẤT CẢ mã đã có (phân trang) → phân biệt thêm/cập nhật (tránh insert trùng khi >1000 mã).
+    const existing = await fetchAllRowsParallel(() => supabase.from('Material').select('id, material_code')) as { id: string; material_code: string }[]
+    const existingMap = new Map<string, string>()
+    for (const m of existing) existingMap.set(String(m.material_code).trim(), m.id)
+
+    const now = new Date().toISOString()
+    let inserted = 0, updated = 0, skipped = 0
+    const errors: string[] = []
+
+    for (const row of rows) {
+      const material_code = mStr(row.material_code)
+      if (!material_code) { skipped++; continue }
+
+      const description  = mStr(row.material_description)
+      const customShort  = mStr(row.custom_short_name)
+      const category     = mStr(row.category)
+      const product_type = mStr(row.product_type)
+      const unit         = mStr(row.unit)
+      const weight_kg    = mNum(row.weight_kg)
+      const cpp          = mInt(row.cartons_per_pallet)
+      const upc          = mInt(row.units_per_carton)
+      const ppe          = mNum(row.pallet_per_ea)
+      const sld          = mInt(row.shelf_life_days)
+      const notes        = mStr(row.notes)
+      const shortOf = (d: string) => `${d} [${material_code.slice(-3)}]`
+
+      const existingId = existingMap.get(material_code)
+      if (existingId) {
+        const patch: Record<string, unknown> = { updated_at: now }
+        if (description  != null) { patch.material_description = description; patch.short_name = shortOf(description) }
+        if (customShort  != null) patch.custom_short_name = customShort
+        if (category     != null) patch.category = category
+        if (product_type != null) patch.product_type = product_type
+        if (unit         != null) patch.unit = unit
+        if (weight_kg    != null) patch.weight_kg = weight_kg
+        if (cpp          != null) patch.cartons_per_pallet = cpp
+        if (upc          != null) patch.units_per_carton = upc
+        if (ppe          != null) patch.pallet_per_ea = ppe
+        if (sld          != null) patch.shelf_life_days = sld
+        if (notes        != null) patch.notes = notes
+        const { error } = await supabase.from('Material').update(patch).eq('id', existingId)
+        if (error) errors.push(`${material_code} — lỗi cập nhật: ${error.message}`)
+        else updated++
+      } else {
+        if (!description) { errors.push(`${material_code} — thiếu Tên hàng (mã mới)`); continue }
+        const record = {
+          id: randomUUID(), material_code, material_description: description, short_name: shortOf(description),
+          custom_short_name: customShort, category, product_type, unit, weight_kg,
+          cartons_per_pallet: cpp, units_per_carton: upc, pallet_per_ea: ppe,
+          shelf_life_days: sld, notes,
+          is_active: true, created_at: now, updated_at: now,
+        }
+        const { error } = await supabase.from('Material').insert(record)
+        if (error) errors.push(`${material_code} — lỗi thêm: ${error.message}`)
+        else { existingMap.set(material_code, record.id); inserted++ }
+      }
+    }
+
+    ok(res, { inserted, updated, skipped, errors })
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }

@@ -7,8 +7,10 @@ import * as shiftQa     from '../controllers/masterdata/shiftQaController'
 import * as department  from '../controllers/masterdata/departmentController'
 import * as employee    from '../controllers/masterdata/employeeController'
 import { requirePerm, requireAnyPerm } from '../middlewares/auth'
+import multer from 'multer'
 
 const router = Router()
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } })
 
 // Warehouse
 router.get('/warehouses',        warehouse.listWarehouses)
@@ -36,6 +38,7 @@ router.delete('/manufacturers/:id',  requirePerm('materials', 'delete'), manufac
 router.get('/materials',            requireAnyPerm(['materials', 'view'], ['inbound', 'view'], ['inbound', 'create']), material.listMaterials)
 router.get('/materials/categories', requireAnyPerm(['materials', 'view'], ['inbound', 'view'], ['inbound', 'create']), material.listCategories)
 router.post('/materials',           requirePerm('materials', 'create'), material.createMaterial)
+router.post('/materials/upload',    requirePerm('materials', 'import'), upload.single('file'), material.uploadExcel)
 router.get('/materials/:id',        requirePerm('materials', 'view'),   material.getMaterial)
 router.put('/materials/:id',        requirePerm('materials', 'edit'),   material.updateMaterial)
 router.delete('/materials/:id',     requirePerm('materials', 'delete'), material.deleteMaterial)

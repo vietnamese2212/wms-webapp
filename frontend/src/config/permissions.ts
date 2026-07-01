@@ -19,6 +19,7 @@ export const MODULES = {
       update_ncc:      'Sửa NCC hàng loạt',
       update_prod_date:'Cập nhật ngày SX',
       export:          'Xuất Excel',
+      import:          'Upload tồn kho (Excel)',
     },
   },
   inbound: {
@@ -213,6 +214,7 @@ export const MODULES = {
       view:   'Xem danh sách',
       create: 'Thêm mã hàng',
       edit:   'Sửa mã hàng',
+      import: 'Upload mã hàng (Excel)',
       delete: 'Ẩn mã hàng',
     },
   },

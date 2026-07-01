@@ -1,5 +1,5 @@
 export const ALL_PERMISSIONS: Record<string, string[]> = {
-  inventory:    ['view', 'adjust', 'move_location', 'recode', 'qa_update', 'update_ncc', 'update_prod_date', 'export'],
+  inventory:    ['view', 'adjust', 'move_location', 'recode', 'qa_update', 'update_ncc', 'update_prod_date', 'export', 'import'],
   inbound:      ['view', 'create', 'edit', 'scan', 'edit_pallet', 'force_edit_pallet', 'delete_pallet', 'force_delete_pallet', 'cancel', 'complete', 'uncomplete'],
   outbound:     ['view', 'prepare', 'create', 'import', 'edit', 'assign', 'unassign', 'start', 'unstart', 'scan', 'complete', 'uncomplete', 'cancel'],
   scanlog:      ['view'],
@@ -16,7 +16,7 @@ export const ALL_PERMISSIONS: Record<string, string[]> = {
   tms_vehicles:      ['view', 'create', 'edit', 'delete'],
   gate_registration: ['view', 'create', 'edit', 'delete', 'call', 'entry', 'exit'],
   inbound_plan:      ['view', 'create', 'edit', 'delete', 'cancel'],
-  materials:         ['view', 'create', 'edit', 'delete'],
+  materials:         ['view', 'create', 'edit', 'import', 'delete'],
   pallet_print:      ['view', 'generate', 'reprint'],
   pallet_ops:        ['view', 'merge', 'ungroup', 'split'],
   work_skill:        ['view', 'create', 'edit', 'delete', 'assign'],

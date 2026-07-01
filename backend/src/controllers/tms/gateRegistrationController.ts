@@ -887,18 +887,26 @@ export async function deleteGateRegistration(req: Request, res: Response) {
 
   if (error) return apiErr(res, 'DB_ERROR', error.message, 500)
 
-  // Re-link gate_regs còn lại vào đúng vị trí booking
-  if (reg?.license_plate && reg?.date && reg?.warehouse_id) {
-    await relinkAfterDelete(
-      reg.license_plate, reg.date, reg.warehouse_id,
-      reg.direction, reg.warehouse_type, reg.vehicle_type, reg.company_id ?? null,
-    )
-  }
+  // Các bước hậu-xóa (re-link booking, tính lại export_status, clear vslot cũ) là BEST-EFFORT: gate ĐÃ
+  // xóa xong (thao tác chính thành công). Hàm này KHÔNG có error-middleware bọc → nếu 1 bước ở đây ném
+  // lỗi sẽ treo/500 dù xóa đã xong. Bọc try/catch: lỗi chỉ log, vẫn trả success; realtime/lần thao tác
+  // kế sẽ hội tụ lại (relink + export_status tự tính lại).
+  try {
+    // Re-link gate_regs còn lại vào đúng vị trí booking
+    if (reg?.license_plate && reg?.date && reg?.warehouse_id) {
+      await relinkAfterDelete(
+        reg.license_plate, reg.date, reg.warehouse_id,
+        reg.direction, reg.warehouse_type, reg.vehicle_type, reg.company_id ?? null,
+      )
+    }
 
-  // Tính lại export_status cho từng order dựa trên trạng thái cao nhất của các gate còn lại
+  // Tính lại export_status cho từng order dựa trên trạng thái cao nhất của các gate còn lại.
+  // BEST-EFFORT (allSettled): gate ĐÃ xóa xong ở trên — 1 lỗi cập nhật export_status KHÔNG được ném ra
+  // làm cả request 500 (client tưởng xóa thất bại + retry oan). Lỗi chỉ log; export_status stale sẽ tự
+  // tính lại ở lần đổi gate kế/realtime.
   if (deletedOrderIds.length > 0) {
     const now = new Date().toISOString()
-    await Promise.all(deletedOrderIds.map(async (orderId) => {
+    const results = await Promise.allSettled(deletedOrderIds.map(async (orderId) => {
       const { data: remaining } = await supabase
         .from('gate_registrations')
         .select('status')
@@ -910,6 +918,8 @@ export async function deleteGateRegistration(req: Request, res: Response) {
         :                                                'Đăng ký'
       await supabase.from('TmsOrder').update({ export_status: exportStatus, updated_at: now }).eq('id', orderId)
     }))
+    const failed = results.filter(r => r.status === 'rejected')
+    if (failed.length) console.error(`[deleteGate] tính lại export_status lỗi ${failed.length}/${deletedOrderIds.length}:`, (failed[0] as PromiseRejectedResult).reason)
   }
 
   // Clear gate_export_status trên VSlot cũ nếu không còn gate nào linked vào slot đó
@@ -925,6 +935,9 @@ export async function deleteGateRegistration(req: Request, res: Response) {
     if (!stillLinked || stillLinked.length === 0) {
       await updateVSlotGateStatus(deletedVSlotId, { gate_export_status: null, gate_registered_at: null, gate_entry_at: null, gate_exit_at: null, updated_at: now })
     }
+  }
+  } catch (e) {
+    console.error('[deleteGate] bước hậu-xóa (relink/export_status/clear vslot) lỗi — gate đã xóa, bỏ qua:', (e as Error).message)
   }
 
   return res.json({ success: true })

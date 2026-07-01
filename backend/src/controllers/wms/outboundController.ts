@@ -6,6 +6,7 @@ import { ok, fail } from '../../utils/response'
 import { effectiveNoQr, markItemsNoQrIfQty } from '../../lib/inventoryMode'
 import { effCartonsPerPallet } from '../../utils/palletCalc'
 import { resolveShelfLife } from '../../utils/shelfLife'
+import { fetchAllRowsParallel } from '../../utils/pagination'
 
 const now = () => new Date().toISOString()
 
@@ -2225,23 +2226,24 @@ export async function listLoosePickingItems(req: Request, res: Response) {
     if (date) gdoQ = gdoQ.eq('delivery_date', date)
     if (date_from) gdoQ = gdoQ.gte('delivery_date', date_from)
     if (date_to)   gdoQ = gdoQ.lte('delivery_date', date_to)
-    const { data: gdos } = await gdoQ
+    // Phân trang né cap-1000 (khoảng ngày rộng có thể >1000 GDO/DO/item → trước đây cụt danh sách nhặt lẻ).
+    const gdos = await fetchAllRowsParallel(() => gdoQ.order('id'), 1000, 4)
 
     if (!gdos?.length) return ok(res, [])
 
     const gdoIds = (gdos as any[]).map((g: any) => g.id as string)
-    const { data: dos } = await supabase.from('OutboundDelivery')
-      .select('id, gdo_id, distributor_name').in('gdo_id', gdoIds)
+    const dos = await fetchAllRowsParallel(() => supabase.from('OutboundDelivery')
+      .select('id, gdo_id, distributor_name').in('gdo_id', gdoIds).order('id'), 1000, 4)
 
     const doIds = (dos ?? []).map((d: any) => d.id as string)
     if (!doIds.length) return ok(res, [])
 
-    const { data: items } = await supabase.from('OutboundItem')
+    const items = await fetchAllRowsParallel(() => supabase.from('OutboundItem')
       .select('*, material:Material(id,material_code,short_name)')
       .in('do_id', doIds)
       .gt('loose_picking', 0)
       .neq('status', 'CANCELLED')
-      .order('id')
+      .order('id'), 1000, 4)
 
     if (!items?.length) return ok(res, [])
 
@@ -2257,10 +2259,10 @@ export async function listLoosePickingItems(req: Request, res: Response) {
         nppByGdo[d.gdo_id].push(d.distributor_name)
     }
 
-    // Tính loose_scanned (thùng thực sự quét qua chế độ nhặt lẻ) per item
+    // Tính loose_scanned (thùng thực sự quét qua chế độ nhặt lẻ) per item — phân trang né cap-1000.
     const itemIds = (items as any[]).map((i: any) => i.id as string)
-    const { data: looseScans } = await supabase.from('OutboundScanEntry')
-      .select('item_id, cartons_scanned').in('item_id', itemIds).eq('is_loose_picking', true)
+    const looseScans = await fetchAllRowsParallel(() => supabase.from('OutboundScanEntry')
+      .select('item_id, cartons_scanned').in('item_id', itemIds).eq('is_loose_picking', true).order('id'), 1000, 4)
     const looseScannedByItem: Record<string, number> = {}
     for (const scan of (looseScans ?? [])) {
       looseScannedByItem[scan.item_id] = (looseScannedByItem[scan.item_id] ?? 0) + Number(scan.cartons_scanned)

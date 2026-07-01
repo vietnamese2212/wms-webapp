@@ -43,6 +43,7 @@ export const MODULES = {
       view:       'Xem danh sách',
       prepare:    'Chuẩn bị hàng (soạn hàng)',
       create:     'Tạo đơn',
+      import:     'Upload Excel (nhập kế hoạch xuất)',
       edit:       'Sửa đơn / xe',
       assign:     'Giao đơn',
       unassign:   'Gỡ giao đơn',

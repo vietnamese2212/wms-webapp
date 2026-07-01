@@ -199,6 +199,7 @@ export default function Outbound() {
   const [uploadWarn,      setUploadWarn]      = useState<string | null>(null)
   const [postUploadLoading, setPostUploadLoading] = useState(false)
   const [showCreate,  setShowCreate]  = useState(false)
+  const [showUpload,  setShowUpload]  = useState(false)
   const [dense, setDense] = useState(() => localStorage.getItem('outbound_density') !== 'comfortable')
   const [nppOpen, setNppOpen] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -507,39 +508,15 @@ export default function Outbound() {
                 Tạo đơn
               </Button>
             )}
-            {can(perms, 'outbound', 'create') && (
-              <Button size="sm" variant="outline" onClick={downloadTemplate} className="hidden sm:inline-flex h-7 text-xs gap-1">
-                <Download className="h-3.5 w-3.5" />
-                Tải mẫu
-              </Button>
-            )}
-            {can(perms, 'outbound', 'create') && (
-              <Button size="sm" disabled={uploading} onClick={() => fileRef.current?.click()} className="hidden sm:inline-flex h-7 text-xs gap-1">
+            {can(perms, 'outbound', 'import') && (
+              <Button size="sm" variant="outline" onClick={() => { setUploadErr(null); setUploadOk(null); setUploadWarn(null); setShowUpload(true) }} className="hidden sm:inline-flex h-7 text-xs gap-1">
                 <Upload className="h-3.5 w-3.5" />
-                {uploading ? 'Đang xử lý…' : 'Upload Excel'}
+                Upload Excel
               </Button>
             )}
           </div>
           <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFileChange} />
         </div>
-
-        {uploadOk && (
-          <div className="rounded-lg bg-green-50 border border-green-200 px-3 py-2 text-sm text-green-800 flex items-center gap-2">
-            <CheckCircle2 className="h-4 w-4 shrink-0" />{uploadOk}
-          </div>
-        )}
-        {uploadWarn && (
-          <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800 flex items-start gap-2">
-            <Info className="h-4 w-4 shrink-0 mt-0.5" />
-            <pre className="whitespace-pre-wrap font-sans">{uploadWarn}</pre>
-          </div>
-        )}
-        {uploadErr && (
-          <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700 flex gap-2">
-            <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-            <pre className="whitespace-pre-wrap font-sans">{uploadErr}</pre>
-          </div>
-        )}
 
         {/* Row 2: Filter chip bar (desktop) — mobile dùng nút Lọc ở hàng trên */}
         <div className="hidden sm:flex items-center gap-1.5 flex-wrap">
@@ -704,6 +681,46 @@ export default function Outbound() {
           defaultWarehouseId={f.warehouseId || user?.warehouse_id || ''}
           onClose={() => setShowCreate(false)}
         />
+      )}
+      {showUpload && (
+        <ModalOverlay onClose={() => setShowUpload(false)} className="w-full max-w-lg max-h-[90vh]">
+          <div className="flex items-center justify-between border-b px-4 py-3">
+            <h3 className="text-sm font-semibold text-slate-700">Upload kế hoạch xuất từ Excel</h3>
+            <button onClick={() => setShowUpload(false)} className="text-slate-400 hover:text-slate-600"><X className="h-4 w-4" /></button>
+          </div>
+          <div className="p-4 space-y-3 overflow-auto">
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="outline" onClick={downloadTemplate} className="h-8 text-xs gap-1">
+                <Download className="h-3.5 w-3.5" />
+                Tải mẫu
+              </Button>
+              <Button size="sm" disabled={uploading} onClick={() => fileRef.current?.click()} className="h-8 text-xs gap-1">
+                <Upload className="h-3.5 w-3.5" />
+                {uploading ? 'Đang xử lý…' : 'Chọn file Excel'}
+              </Button>
+            </div>
+            <p className="text-[11px] text-slate-500">
+              Tải file mẫu để xem đúng định dạng cột, điền dữ liệu rồi chọn file để upload. Xe đang xuất chỉ ghi đè được khi ở trạng thái PAUSED.
+            </p>
+            {uploadOk && (
+              <div className="rounded-lg bg-green-50 border border-green-200 px-3 py-2 text-sm text-green-800 flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 shrink-0" />{uploadOk}
+              </div>
+            )}
+            {uploadWarn && (
+              <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800 flex items-start gap-2">
+                <Info className="h-4 w-4 shrink-0 mt-0.5" />
+                <pre className="whitespace-pre-wrap font-sans">{uploadWarn}</pre>
+              </div>
+            )}
+            {uploadErr && (
+              <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700 flex gap-2">
+                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                <pre className="whitespace-pre-wrap font-sans">{uploadErr}</pre>
+              </div>
+            )}
+          </div>
+        </ModalOverlay>
       )}
     </div>
   )
@@ -1471,11 +1488,11 @@ function GDOFormBody({
 
 // ─── Shared modal wrapper ─────────────────────────────────────
 
-function ModalOverlay({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+function ModalOverlay({ children, onClose, className }: { children: React.ReactNode; onClose: () => void; className?: string }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 bg-white rounded-xl shadow-2xl w-[80vw] max-w-5xl max-h-[90vh] flex flex-col">
+      <div className={`relative z-10 bg-white rounded-xl shadow-2xl flex flex-col ${className ?? 'w-[80vw] max-w-5xl max-h-[90vh]'}`}>
         {children}
       </div>
     </div>

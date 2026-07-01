@@ -55,7 +55,7 @@ export function SingleSelect({
             ${!value ? 'text-slate-400' : 'text-slate-700'}`}
           style={{ minHeight: '28px' }}
         >
-          <span className="truncate">{displayLabel}</span>
+          <span className="truncate" title={selected?.label ?? undefined}>{displayLabel}</span>
           <ChevronDown className={`h-3.5 w-3.5 text-slate-400 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
         </button>
 
@@ -91,7 +91,7 @@ export function SingleSelect({
                     />
                     {o.node ?? (
                       <>
-                        <span className="text-[11px] text-slate-700 flex-1 truncate">{o.label}</span>
+                        <span className="text-[11px] text-slate-700 flex-1 truncate" title={o.label}>{o.label}</span>
                         {o.sub && <span className="text-[10px] text-slate-400 font-mono shrink-0">{o.sub}</span>}
                       </>
                     )}

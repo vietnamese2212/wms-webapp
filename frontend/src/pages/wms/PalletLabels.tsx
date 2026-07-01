@@ -5,9 +5,9 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
+import { FilterBar, FilterSheetButton, type FilterDef, type FBOpt } from '@/components/shared/FilterBar'
 import { QRScanner } from '@/components/shared/QRScanner'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -120,7 +120,7 @@ function PalletLabel({ d }: { d: LabelData }) {
           <div className="border-r border-black flex flex-col">
             <div className="text-[8pt] font-semibold leading-tight">NCC</div>
             <div className="h-[9mm] flex items-center justify-center overflow-hidden px-0.5">
-              <span className="text-[11pt] font-bold leading-[1.05] line-clamp-2">{d.nccName || d.machine || '—'}</span>
+              <span className="text-[11pt] font-bold leading-[1.05] line-clamp-2" title={d.nccName || d.machine || undefined}>{d.nccName || d.machine || '—'}</span>
             </div>
           </div>
         ) : (
@@ -308,6 +308,7 @@ export default function PalletLabels() {
   const [rpMatIds, setRpMatIds]     = useState<string[]>(SAVED.rpMatIds ?? [])
   const [rpCycles, setRpCycles]     = useState<string[]>(SAVED.rpCycles ?? [])
   const [rpMachines, setRpMachines] = useState<string[]>(SAVED.rpMachines ?? [])
+  const [rpNccs, setRpNccs]         = useState<string[]>(SAVED.rpNccs ?? [])
   const [picked, setPicked]         = useState<Record<string, LabelData>>({})
 
   const rpFacets = useInventoryFacets({
@@ -320,6 +321,7 @@ export default function PalletLabels() {
     filter_material_ids: rpMatIds.length ? rpMatIds : undefined,
     filter_cycles: rpCycles.length ? rpCycles : undefined,
     filter_machines: rpMachines.length ? rpMachines : undefined,
+    ncc_ids: rpNccs.length ? rpNccs : undefined,
     status: '', page: 1, limit: 500,
   })
   const invEntries = invData?.entries ?? []
@@ -370,6 +372,7 @@ export default function PalletLabels() {
   const [auMatIds, setAuMatIds]     = useState<string[]>(SAVED.auMatIds ?? [])
   const [auCycles, setAuCycles]     = useState<string[]>(SAVED.auCycles ?? [])
   const [auMachines, setAuMachines] = useState<string[]>(SAVED.auMachines ?? [])
+  const [auNccs, setAuNccs]         = useState<string[]>(SAVED.auNccs ?? [])
   const [auQr, setAuQr]             = useState('')   // quét/điền tay mã pallet
   const [auOpen, setAuOpen]         = useState<string | null>(null)
 
@@ -387,6 +390,7 @@ export default function PalletLabels() {
     filter_material_ids: auMatIds.length ? auMatIds : undefined,
     filter_cycles: auCycles.length ? auCycles : undefined,
     filter_machines: auMachines.length ? auMachines : undefined,
+    ncc_ids: auNccs.length ? auNccs : undefined,
     search: auQr.trim().length >= 3 ? auQr.trim() : undefined,
     status: '', page: 1, limit: 500,
   }, tab === 'audit' && auReady)
@@ -436,11 +440,11 @@ export default function PalletLabels() {
     try {
       localStorage.setItem('palletLabels_filters', JSON.stringify({
         genCat, cycle, machine, nmsx,
-        rpWh, rpCats, rpMatIds, rpCycles, rpMachines,
-        auWh, auCats, auMatIds, auCycles, auMachines,
+        rpWh, rpCats, rpMatIds, rpCycles, rpMachines, rpNccs,
+        auWh, auCats, auMatIds, auCycles, auMachines, auNccs,
       }))
     } catch { /* ignore */ }
-  }, [genCat, cycle, machine, nmsx, rpWh, rpCats, rpMatIds, rpCycles, rpMachines, auWh, auCats, auMatIds, auCycles, auMachines])
+  }, [genCat, cycle, machine, nmsx, rpWh, rpCats, rpMatIds, rpCycles, rpMachines, rpNccs, auWh, auCats, auMatIds, auCycles, auMachines, auNccs])
 
   const labels = tab === 'generate' ? genLabels : tab === 'reprint' ? Object.values(picked) : []
 
@@ -487,7 +491,12 @@ export default function PalletLabels() {
     .map(c => ({ value: c, label: matByCode.get(c)?.short_name ? `${c} – ${matByCode.get(c)!.short_name}` : c })), [histRows, matByCode])
   const histByOpts = useMemo(() => [...new Set(histRows.map(r => r.printed_by_name).filter((x): x is string => !!x))].map(n => ({ value: n, label: n })), [histRows])
   const histCycleOpts = useMemo(() => [...new Set(histRows.map(r => r.cycle).filter((x): x is string => !!x))].map(c => ({ value: c, label: c })), [histRows])
-  const histMachineOpts = useMemo(() => [...new Set(histRows.map(r => r.machine).filter((x): x is string => !!x))].map(m => ({ value: m, label: m })), [histRows])
+  // Đoạn 4 (Máy / NCC): value = giá trị thô trong log; nhãn = tên NCC nếu là hàng NCC, ngược lại giữ mã Máy
+  const histMachineOpts = useMemo(() => {
+    const seen = new Map<string, string>()
+    for (const r of histRows) { if (r.machine && !seen.has(r.machine)) seen.set(r.machine, seg4Display(r.category, r.machine)) }
+    return [...seen.entries()].map(([value, label]) => ({ value, label }))
+  }, [histRows, nccNameByCode])
   const histFiltered = useMemo(() => histRows.filter(r =>
     (!histMode.length || histMode.includes(r.mode)) &&
     (!histMats.length || (r.material_code != null && histMats.includes(r.material_code))) &&
@@ -546,6 +555,56 @@ export default function PalletLabels() {
   const histCols = useColumnResize('palletHistory_col_widths', [150, 78, 58, 104, 150, 60, 56, 100])
   const auCols   = useColumnResize('palletAudit_col_widths',   [190, 100, 88, 56, 56, 56, 92, 110, 72, 132])
 
+  // ─── FilterBar declarative (chuẩn filter) — theo tab ───────────
+  const whOpts: FBOpt[]  = whOptions.map(w => ({ value: w.id, label: w.name ? `${w.code} — ${w.name}` : w.code }))
+  const catOpts: FBOpt[] = categoryOpts.map(c => ({ value: c, label: c }))
+
+  const rpDefs: FilterDef[] = [
+    { key: 'wh', label: 'Kho', type: 'single', options: whOpts, value: rpWh, allLabel: 'Tất cả kho',
+      onChange: v => { setRpWh(v); setRpMatIds([]); setRpCycles([]); setRpMachines([]); setRpNccs([]) } },
+    { key: 'cat', label: 'Loại hàng', type: 'multi', searchable: false, options: catOpts, selected: rpCats,
+      onChange: v => { setRpCats(v); setRpMatIds([]) } },
+    { key: 'mat', label: 'Tên hàng', type: 'multi', selected: rpMatIds, onChange: setRpMatIds,
+      options: (rpFacets?.materials ?? []).map((m: { id: string; code: string; name: string | null }) => ({ value: m.id, label: m.name ? `${m.code} – ${m.name}` : m.code })) },
+    { key: 'cyc', label: 'Chu kỳ', type: 'multi', selected: rpCycles, onChange: setRpCycles,
+      searchable: (rpFacets?.cycles ?? []).length > 6, options: (rpFacets?.cycles ?? []).map((c: string) => ({ value: c, label: c })) },
+    { key: 'mac', label: 'Máy', type: 'multi', selected: rpMachines, onChange: setRpMachines,
+      searchable: (rpFacets?.machines ?? []).length > 6, options: (rpFacets?.machines ?? []).map((m: string) => ({ value: m, label: m })) },
+    { key: 'ncc', label: 'NCC', type: 'multi', selected: rpNccs, onChange: setRpNccs,
+      options: (rpFacets?.nccs ?? []).map((n: { id: string; name: string }) => ({ value: n.id, label: n.name })) },
+  ]
+
+  const auDefs: FilterDef[] = [
+    { key: 'wh', label: 'Kho', type: 'single', options: whOpts, value: auWh, allLabel: 'Tất cả kho',
+      onChange: v => { setAuWh(v); setAuMatIds([]); setAuCycles([]); setAuMachines([]); setAuNccs([]) } },
+    { key: 'cat', label: 'Loại hàng', type: 'multi', searchable: false, options: catOpts, selected: auCats,
+      onChange: v => { setAuCats(v); setAuMatIds([]) } },
+    { key: 'mat', label: 'Tên hàng', type: 'multi', selected: auMatIds, onChange: setAuMatIds,
+      options: (auFacets?.materials ?? []).map((m: { id: string; code: string; name: string | null }) => ({ value: m.id, label: m.name ? `${m.code} – ${m.name}` : m.code })) },
+    { key: 'cyc', label: 'Chu kỳ', type: 'multi', selected: auCycles, onChange: setAuCycles,
+      searchable: (auFacets?.cycles ?? []).length > 6, options: (auFacets?.cycles ?? []).map((c: string) => ({ value: c, label: c })) },
+    { key: 'mac', label: 'Máy', type: 'multi', selected: auMachines, onChange: setAuMachines,
+      searchable: (auFacets?.machines ?? []).length > 6, options: (auFacets?.machines ?? []).map((m: string) => ({ value: m, label: m })) },
+    { key: 'ncc', label: 'NCC', type: 'multi', selected: auNccs, onChange: setAuNccs,
+      options: (auFacets?.nccs ?? []).map((n: { id: string; name: string }) => ({ value: n.id, label: n.name })) },
+  ]
+
+  const histDefs: FilterDef[] = [
+    { key: 'date', label: 'Khoảng ngày', type: 'daterange', from: histFrom, to: histTo,
+      onChange: (f, t) => { setHistFrom(f); setHistTo(t) } },
+    { key: 'mode', label: 'Chế độ', type: 'multi', searchable: false, selected: histMode, onChange: setHistMode,
+      options: [{ value: 'GENERATE', label: 'Sinh mới' }, { value: 'REPRINT', label: 'In lại' }] },
+    { key: 'mat', label: 'Tên hàng', type: 'multi', selected: histMats, onChange: setHistMats, options: histMatOpts },
+    { key: 'cyc', label: 'Chu kỳ', type: 'multi', selected: histCycles, onChange: setHistCycles,
+      searchable: histCycleOpts.length > 6, options: histCycleOpts },
+    { key: 'mac', label: 'Máy / NCC', type: 'multi', selected: histMachines, onChange: setHistMachines,
+      searchable: histMachineOpts.length > 6, options: histMachineOpts },
+    { key: 'by', label: 'Người in', type: 'multi', selected: histBy, onChange: setHistBy,
+      searchable: histByOpts.length > 6, options: histByOpts },
+  ]
+
+  const tabDefs = tab === 'reprint' ? rpDefs : tab === 'audit' ? auDefs : tab === 'history' ? histDefs : null
+
   return (
     <div className="flex flex-col h-full sm:p-3">
       {/* CSS in: chỉ in vùng .pl-print-area, mỗi tem 1/4 A4 */}
@@ -593,6 +652,7 @@ export default function PalletLabels() {
               className={`px-3 py-1 border-l border-slate-200 transition-colors inline-flex items-center gap-1 ${tab === 'audit' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}><History className="h-3 w-3" />Truy cứu</button>
           </div>
           <div className="flex-1" />
+          {tabDefs && <FilterSheetButton defs={tabDefs} className="sm:hidden" />}
           {tab === 'generate' && canGenerate && (
             <Button size="sm" className="h-7 text-xs gap-1" disabled={!labels.length} onClick={handlePrint}>
               <Printer className="h-3.5 w-3.5" /> In {labels.length > 0 ? `(${labels.length})` : ''}
@@ -604,6 +664,8 @@ export default function PalletLabels() {
             </Button>
           )}
         </div>
+        {/* Hàng 2: FilterBar chuẩn (desktop/tablet); mobile gom vào nút "Lọc" ở trên */}
+        {tabDefs && <FilterBar defs={tabDefs} />}
       </div>
 
       {/* Summary band — theo tab */}
@@ -629,7 +691,8 @@ export default function PalletLabels() {
           ]} />
 
       <div className="flex-1 min-h-0 flex flex-col lg:flex-row overflow-y-auto lg:overflow-hidden">
-        {/* Bảng điều khiển trái — full-width trên mobile, cột 288px trên desktop */}
+        {/* Panel trái — form Sinh tem HOẶC quét/chọn pallet (In lại/Truy cứu). Lịch sử: lọc ở FilterBar, không cần panel */}
+        {tab !== 'history' && (
         <div className="w-full lg:w-72 lg:shrink-0 border-b lg:border-b-0 lg:border-r bg-white lg:overflow-y-auto p-3 space-y-3 no-print">
           {tab === 'generate' ? (
             /* Form gọn: gom 2–3 cột để vừa 1 màn, không phải kéo dọc */
@@ -742,20 +805,9 @@ export default function PalletLabels() {
                 )}
               </div>
 
-              <div className="space-y-1 pt-1 border-t">
-                <Label className="text-xs">Hoặc lọc rồi chọn nhiều</Label>
-                <WarehouseSingleSelect warehouses={whOptions} value={rpWh} onChange={v => { setRpWh(v); setRpMatIds([]); setRpCycles([]); setRpMachines([]) }} allLabel="Tất cả kho" triggerClassName="h-8" />
-              </div>
-              {/* stack dọc, mỗi filter full-width → KHÔNG xê dịch khi chọn */}
-              <div className="flex flex-col gap-2">
-                <MultiSelectFilter label="Loại hàng" options={categoryOpts.map(c => ({ value: c, label: c }))} selected={rpCats} onChange={v => { setRpCats(v); setRpMatIds([]) }} searchable={false} width="w-full" />
-                <MultiSelectFilter label="Tên hàng" options={(rpFacets?.materials ?? []).map((m: any) => ({ value: m.id, label: m.name ? `${m.code} – ${m.name}` : m.code }))} selected={rpMatIds} onChange={setRpMatIds} width="w-full" />
-                <MultiSelectFilter label="Chu kỳ" options={(rpFacets?.cycles ?? []).map((c: string) => ({ value: c, label: c }))} selected={rpCycles} onChange={setRpCycles} searchable={(rpFacets?.cycles ?? []).length > 6} width="w-full" />
-                <MultiSelectFilter label="Máy" options={(rpFacets?.machines ?? []).map((m: string) => ({ value: m, label: m }))} selected={rpMachines} onChange={setRpMachines} searchable={(rpFacets?.machines ?? []).length > 6} width="w-full" />
-              </div>
-
               <div className="space-y-1">
                 <Label className="text-xs">Mã pallet (chọn nhiều) — {invEntries.length}{invTotal > invEntries.length ? `/${invTotal}` : ''} kết quả</Label>
+                <p className="text-[10px] text-slate-400">Thu hẹp danh sách bằng bộ lọc <b>Kho / Loại hàng / Tên hàng / Chu kỳ / Máy / NCC</b> ở thanh trên.</p>
                 {invTotal > invEntries.length && (
                   <p className="text-[10px] text-amber-600">Chỉ tải {invEntries.length}/{invTotal} pallet — lọc hẹp hơn (Chu kỳ/Máy/Tên hàng) để chọn đủ.</p>
                 )}
@@ -788,8 +840,8 @@ export default function PalletLabels() {
                 {Object.keys(picked).length === 0 && <p className="text-[11px] text-slate-400">Chọn mã pallet ở trên để in lại.</p>}
               </div>
             </>
-          ) : tab === 'audit' ? (
-            /* Truy cứu — quét pallet + filter */
+          ) : (
+            /* Truy cứu — quét pallet + hint (lọc ở FilterBar trên) */
             <>
               <div className="space-y-1">
                 <Label className="text-xs">Quét / nhập mã pallet</Label>
@@ -802,58 +854,22 @@ export default function PalletLabels() {
                     <QrCode className="h-4 w-4" />
                   </Button>
                 </div>
-                <p className="text-[10px] text-slate-400">Tra riêng 1 pallet, hoặc lọc theo nhóm bên dưới.</p>
+                <p className="text-[10px] text-slate-400">Tra riêng 1 pallet, hoặc lọc theo nhóm ở thanh trên.</p>
               </div>
-              <div className="space-y-1 pt-1 border-t">
-                <Label className="text-xs">Hoặc lọc theo nhóm</Label>
-                <WarehouseSingleSelect warehouses={whOptions} value={auWh} onChange={v => { setAuWh(v); setAuMatIds([]); setAuCycles([]); setAuMachines([]) }} allLabel="Chọn kho" triggerClassName="h-8" />
-              </div>
-              <div className="flex flex-col gap-2">
-                <MultiSelectFilter label="Loại hàng" options={categoryOpts.map(c => ({ value: c, label: c }))} selected={auCats} onChange={v => { setAuCats(v); setAuMatIds([]) }} searchable={false} width="w-full" />
-                <MultiSelectFilter label="Tên hàng" options={(auFacets?.materials ?? []).map((m: any) => ({ value: m.id, label: m.name ? `${m.code} – ${m.name}` : m.code }))} selected={auMatIds} onChange={setAuMatIds} width="w-full" />
-                <MultiSelectFilter label="Chu kỳ" options={(auFacets?.cycles ?? []).map((c: string) => ({ value: c, label: c }))} selected={auCycles} onChange={setAuCycles} searchable={(auFacets?.cycles ?? []).length > 6} width="w-full" />
-                <MultiSelectFilter label="Máy" options={(auFacets?.machines ?? []).map((m: string) => ({ value: m, label: m }))} selected={auMachines} onChange={setAuMachines} searchable={(auFacets?.machines ?? []).length > 6} width="w-full" />
-              </div>
-              <p className={`text-[10px] ${auReady ? 'text-slate-400' : 'text-amber-600'}`}>
+              <p className={`text-[10px] pt-1 border-t ${auReady ? 'text-slate-400' : 'text-amber-600'}`}>
                 {auReady
                   ? 'Pallet chưa in vẫn hiện với số lần = 0. Bấm 1 dòng để xem ai in, lúc nào.'
-                  : 'Chọn đủ Kho + Loại hàng + Tên hàng + Chu kỳ (hoặc quét/nhập mã pallet) mới truy vấn — dữ liệu rất lớn.'}
+                  : 'Chọn đủ Kho + Loại hàng + Tên hàng + Chu kỳ ở thanh lọc trên (hoặc quét/nhập mã pallet) mới truy vấn — dữ liệu rất lớn.'}
               </p>
               {auReady && auTotal > auPallets.length && (
                 <p className="text-[10px] text-amber-600">Chỉ tải {auPallets.length}/{auTotal} pallet — lọc hẹp hơn để tra đủ.</p>
               )}
             </>
-          ) : (
-            /* Lịch sử in — bộ lọc */
-            <>
-              <div className="space-y-1">
-                <Label className="text-xs flex items-center gap-1"><Printer className="h-3.5 w-3.5 text-slate-400" />Lịch sử in</Label>
-                <p className="text-[11px] text-slate-500">Mỗi dòng = 1 lệnh in. Bấm 1 dòng để xem các tem & chọn in lại.</p>
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">Từ ngày</Label>
-                <Input type="date" className="h-8 text-sm w-full" value={histFrom} max={histTo || undefined} onChange={e => setHistFrom(e.target.value)} />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">Đến ngày</Label>
-                <Input type="date" className="h-8 text-sm w-full" value={histTo} min={histFrom || undefined} onChange={e => setHistTo(e.target.value)} />
-              </div>
-              <div className="flex flex-col gap-2">
-                <MultiSelectFilter label="Chế độ" options={[{ value: 'GENERATE', label: 'Sinh mới' }, { value: 'REPRINT', label: 'In lại' }]} selected={histMode} onChange={setHistMode} searchable={false} width="w-full" />
-                <MultiSelectFilter label="Tên hàng" options={histMatOpts} selected={histMats} onChange={setHistMats} width="w-full" />
-                <MultiSelectFilter label="Chu kỳ" options={histCycleOpts} selected={histCycles} onChange={setHistCycles} searchable={histCycleOpts.length > 6} width="w-full" />
-                <MultiSelectFilter label="Máy" options={histMachineOpts} selected={histMachines} onChange={setHistMachines} searchable={histMachineOpts.length > 6} width="w-full" />
-                <MultiSelectFilter label="Người in" options={histByOpts} selected={histBy} onChange={setHistBy} searchable={histByOpts.length > 6} width="w-full" />
-              </div>
-              {(!!histFrom || !!histTo || histMode.length > 0 || histMats.length > 0 || histCycles.length > 0 || histMachines.length > 0 || histBy.length > 0) && (
-                <button onClick={() => { setHistFrom(''); setHistTo(''); setHistMode([]); setHistMats([]); setHistCycles([]); setHistMachines([]); setHistBy([]) }} className="text-[11px] text-red-500 hover:text-red-700">Xóa lọc</button>
-              )}
-              {!canReprint && <p className="text-[10px] text-amber-600">Bạn không có quyền in lại — chỉ xem được lịch sử.</p>}
-            </>
           )}
         </div>
+        )}
 
-        {/* Vùng phải: preview in (generate/reprint) HOẶC bảng truy cứu */}
+        {/* Vùng phải: preview in (generate/reprint) HOẶC bảng truy cứu / lịch sử */}
         {tab === 'audit' ? (
           <div className="lg:flex-1 min-h-[55vh] lg:min-h-0 overflow-auto">
             <table className="text-[10px] border-collapse table-fixed [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100 [&_td]:overflow-hidden [&_th]:overflow-hidden" style={{ width: auCols.totalWidth, minWidth: '100%' }}>
@@ -881,7 +897,9 @@ export default function PalletLabels() {
                       <td className="px-2 py-1 whitespace-nowrap">{g.category ?? '—'}</td>
                       <td className="px-2 py-1 whitespace-nowrap">{g.nmsx ?? '—'}</td>
                       <td className="px-2 py-1 whitespace-nowrap">{g.cycle ?? '—'}</td>
-                      <td className="px-2 py-1 whitespace-nowrap">{isNccCategory(g.category) ? (g.ncc_name || seg4Display(g.category, g.machine)) : (g.machine ?? '—')}</td>
+                      {(() => { const s = isNccCategory(g.category) ? (g.ncc_name || seg4Display(g.category, g.machine)) : (g.machine ?? '—'); return (
+                      <td className="px-2 py-1 whitespace-nowrap" title={s}>{s}</td>
+                      ) })()}
                       <td className="px-2 py-1 whitespace-nowrap">{g.import_date ? formatTimestampDate(g.import_date, true) : '—'}</td>
                       <td className="px-2 py-1 whitespace-nowrap">{g.imported_by ?? '—'}</td>
                       <td className={`px-2 py-1 text-right tabular-nums font-bold whitespace-nowrap ${g.count === 0 ? 'text-slate-300' : g.count > 1 ? 'text-amber-600' : 'text-slate-700'}`}>{g.count}</td>
@@ -1003,7 +1021,7 @@ export default function PalletLabels() {
                       <td className="px-2 py-1 font-mono whitespace-nowrap">{mats.join(', ') || '—'}</td>
                       <td className="px-2 py-1 whitespace-nowrap" title={names.join(', ')}>{names.join(', ') || '—'}</td>
                       <td className="px-2 py-1 whitespace-nowrap">{cycs.join('/') || '—'}</td>
-                      <td className="px-2 py-1 whitespace-nowrap">{macs.join('/') || '—'}</td>
+                      <td className="px-2 py-1 whitespace-nowrap" title={macs.join('/')}>{macs.join('/') || '—'}</td>
                       <td className="px-2 py-1 whitespace-nowrap">{b.by ?? '—'}</td>
                     </tr>
                     {open && (

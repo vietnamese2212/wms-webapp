@@ -890,6 +890,7 @@ export function useInventoryFacets(params?: { warehouse_ids?: string[]; categori
         machines:  string[]
         locations: { id: string; code: string }[]
         materials: { id: string; code: string; name: string | null }[]
+        nccs:      { id: string; name: string }[]
       }
     },
   })

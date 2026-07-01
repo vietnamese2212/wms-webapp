@@ -529,7 +529,7 @@ export async function listFacets(req: Request, res: Response) {
   // Cycles & machines: no reference table — query InventoryEntry, lọc theo category/warehouse
   // bằng INNER JOIN (Material/Location) thay vì nhồi hàng nghìn id vào .in() (URL quá dài → 500).
   // Phân trang ĐỦ dòng (cap ~1000/response) — không lấy mẫu, tránh sót giá trị Chu kỳ/Máy.
-  const invSelect = 'id, cycle, machine_code'
+  const invSelect = 'id, cycle, machine_code, ncc_id'
     + (categories.length > 0   ? ', material:Material!inner(category)'    : '')
     + (warehouseIds.length > 0 ? ', location:Location!inner(warehouse_id)' : '')
 
@@ -553,12 +553,22 @@ export async function listFacets(req: Request, res: Response) {
   const cycles   = [...new Set(invData.map((e: any) => e.cycle).filter(Boolean))].sort() as string[]
   const machines = [...new Set(invData.map((e: any) => e.machine_code).filter(Boolean))].sort() as string[]
 
+  // NCC facet: hàng nhập NCC có ncc_id (đoạn 4 QR = mã NCC, machine_code = null) → lọc "Máy" không ra.
+  // Lấy tên NCC từ TransportCompany cho các ncc_id thực có trong tồn (scope kho/loại hàng).
+  const nccIds = [...new Set(invData.map((e: any) => e.ncc_id).filter(Boolean))] as string[]
+  let nccs: { id: string; name: string }[] = []
+  if (nccIds.length) {
+    const { data: nccData } = await supabase.from('TransportCompany')
+      .select('id, name').in('id', nccIds).order('name')
+    nccs = ((nccData ?? []) as any[]).map((n: any) => ({ id: n.id as string, name: n.name as string }))
+  }
+
   const materials = ((matData ?? []) as any[])
     .map((m: any) => ({ id: m.id as string, code: m.material_code as string, name: (m.short_name ?? null) as string | null }))
   const locations = ((locData ?? []) as any[])
     .map((l: any) => ({ id: l.id as string, code: l.location_code as string }))
 
-  return ok(res, { cycles, machines, locations, materials })
+  return ok(res, { cycles, machines, locations, materials, nccs })
 }
 
 const ACTIVE_STATUSES = ['IN_STOCK', 'PARTIAL', 'EXPORTED']

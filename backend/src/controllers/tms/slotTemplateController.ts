@@ -47,8 +47,7 @@ async function reapplyFutureSlots(warehouse_id: string, vehicle_type_id: string)
   const rows: object[] = []
   for (const dateStr of unbookedDates) {
     const [y, m, d] = dateStr.split('-').map(Number)
-    const jsDay = new Date(Date.UTC(y, m - 1, d)).getUTCDay()   // 0=CN…6=T7
-    if (jsDay === 0) continue                                    // bỏ Chủ nhật
+    const jsDay = new Date(Date.UTC(y, m - 1, d)).getUTCDay()   // 0=CN…6=T7 (CN chỉ sinh nếu có template CN)
     for (const t of templates as { id: string; cargo_type: string; day_of_week: number; time_from: string; time_to: string; max_vehicles: number }[]) {
       if (t.day_of_week !== jsDay) continue
       rows.push({
@@ -290,13 +289,13 @@ export async function getSlotApplyInfo(req: Request, res: Response) {
       .map(([date, booked]) => ({ date, booked })).sort((a, b) => (a.date < b.date ? -1 : 1))
     const blockedSet = new Set(blocked.map(x => x.date))
 
-    // Ngày áp được = ngày ≥ hôm nay đầu tiên không bị booking chặn và không phải Chủ nhật
+    // Ngày áp được = ngày ≥ hôm nay đầu tiên không bị booking chặn
     let applicable: string | null = null
     const [y, m, d] = today.split('-').map(Number)
     const cur = new Date(Date.UTC(y, m - 1, d))
     for (let i = 0; i < 400; i++) {
       const ds = cur.toISOString().slice(0, 10)
-      if (cur.getUTCDay() !== 0 && !blockedSet.has(ds)) { applicable = ds; break }
+      if (!blockedSet.has(ds)) { applicable = ds; break }
       cur.setUTCDate(cur.getUTCDate() + 1)
     }
 

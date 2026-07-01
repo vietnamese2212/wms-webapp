@@ -27,7 +27,9 @@ import { can, canAccess, type ModulePermissions } from '@/config/permissions'
 import { useAuthStore } from '@/stores/authStore'
 import type { TmsVehicleType, SlotTemplate, TransportCompany, TmsVehicle } from '@/types'
 
-const DOW_LABEL: Record<number, string> = { 1:'T2', 2:'T3', 3:'T4', 4:'T5', 5:'T6', 6:'T7' }
+const DOW_LABEL: Record<number, string> = { 1:'T2', 2:'T3', 3:'T4', 4:'T5', 5:'T6', 6:'T7', 0:'CN' }
+const DOW_BUTTONS = [1, 2, 3, 4, 5, 6, 0]   // T2–T7 rồi CN cuối
+const dowOrder = (d: number) => (d === 0 ? 7 : d)   // CN xếp cuối khi hiển thị
 
 function apiMsg(err: unknown) {
   return (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? String(err)
@@ -188,9 +190,9 @@ function SlotBatchDialog({ open, onClose, preset, warehouseId, warehouseName, ve
           </div>
 
           <div className="space-y-1">
-            <Label className="text-xs">Áp dụng thứ *</Label>
+            <Label className="text-xs">Áp dụng thứ * <span className="font-normal text-slate-400">(mặc định T2–T7; chọn CN nếu cần)</span></Label>
             <div className="flex gap-1.5 flex-wrap">
-              {[1,2,3,4,5,6].map(d => (
+              {DOW_BUTTONS.map(d => (
                 <button key={d} type="button" onClick={() => toggleDay(d)}
                   className={`w-9 h-9 rounded-lg text-xs font-semibold border transition-all
                     ${days.includes(d) ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-200 text-slate-500 hover:border-slate-400'}`}>
@@ -562,6 +564,8 @@ export default function TMSSettings() {
     stGroupsMap.get(k)!.rows.push(st)
   }
   const stGroups = [...stGroupsMap.values()]
+  // CN (day 0) hiển thị cuối cụm, sau đó theo giờ
+  stGroups.forEach(g => g.rows.sort((a, b) => dowOrder(a.day_of_week) - dowOrder(b.day_of_week) || (a.time_from || '').localeCompare(b.time_from || '')))
 
   // TransportCompany
   const { data: companies = [], isLoading: loadingCo } = useTransportCompanies()

@@ -486,7 +486,10 @@ export default function PalletLabels() {
     for (const x of allMats as Material[]) m.set(x.material_code, x)
     return m
   }, [allMats])
-  const { data: histRows = [] } = usePalletPrints({ date_from: histFrom || undefined, date_to: histTo || undefined }, tab === 'history')
+  // Bắt buộc tối thiểu 1 filter (khoảng ngày) mới tải — tránh dump toàn bộ log in.
+  // Các filter còn lại (Chế độ/Tên hàng/Chu kỳ/Máy-NCC/Người in) lọc client-side trên tập đã tải.
+  const histReady = !!(histFrom || histTo)
+  const { data: histRows = [] } = usePalletPrints({ date_from: histFrom || undefined, date_to: histTo || undefined }, tab === 'history' && histReady)
   const histMatOpts = useMemo(() => [...new Set(histRows.map(r => r.material_code).filter((x): x is string => !!x))]
     .map(c => ({ value: c, label: matByCode.get(c)?.short_name ? `${c} – ${matByCode.get(c)!.short_name}` : c })), [histRows, matByCode])
   const histByOpts = useMemo(() => [...new Set(histRows.map(r => r.printed_by_name).filter((x): x is string => !!x))].map(n => ({ value: n, label: n })), [histRows])
@@ -719,26 +722,31 @@ export default function PalletLabels() {
                 <MatPicker value={mat?.material_code ?? ''} label={mat?.short_name ?? mat?.material_description ?? ''} category={genCat} onPick={setMat} />
                 {mat && <p className="text-[10px] text-slate-400">Loại: {mat.category ?? '—'} · Thùng/pallet: {mat.cartons_per_pallet ?? '—'}</p>}
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1">
-                  <Label className="text-xs">Chu kỳ <span className="text-red-500">*</span></Label>
-                  <Input className="h-8 text-sm" placeholder="C05" value={cycle} onChange={e => setCycle(e.target.value)} />
+              {genIsNcc ? (
+                /* Hàng NCC: Chu kỳ + NCC mỗi ô 1 hàng full-width → dropdown NCC (rộng) không tràn cột hẹp gây xê dịch panel */
+                <>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Chu kỳ <span className="text-red-500">*</span></Label>
+                    <Input className="h-8 text-sm" placeholder="C05" value={cycle} onChange={e => setCycle(e.target.value)} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">NCC <span className="text-red-500">*</span></Label>
+                    <SingleSelect options={nccOptions} value={nccCode} onChange={setNccCode}
+                      placeholder="Chọn NCC" searchPlaceholder="Tìm NCC…" triggerClassName="h-8 w-full" />
+                  </div>
+                </>
+              ) : (
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Chu kỳ <span className="text-red-500">*</span></Label>
+                    <Input className="h-8 text-sm" placeholder="C05" value={cycle} onChange={e => setCycle(e.target.value)} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Máy <span className="text-red-500">*</span></Label>
+                    <Input className="h-8 text-sm" placeholder="M1" value={machine} onChange={e => setMachine(e.target.value)} />
+                  </div>
                 </div>
-                <div className="space-y-1">
-                  {genIsNcc ? (
-                    <>
-                      <Label className="text-xs">NCC <span className="text-red-500">*</span></Label>
-                      <SingleSelect options={nccOptions} value={nccCode} onChange={setNccCode}
-                        placeholder="Chọn NCC" searchPlaceholder="Tìm NCC…" triggerClassName="h-8 w-full" />
-                    </>
-                  ) : (
-                    <>
-                      <Label className="text-xs">Máy <span className="text-red-500">*</span></Label>
-                      <Input className="h-8 text-sm" placeholder="M1" value={machine} onChange={e => setMachine(e.target.value)} />
-                    </>
-                  )}
-                </div>
-              </div>
+              )}
               <div className="space-y-1">
                 <Label className="text-xs">{genIsNcc ? 'Nơi nhận (NMSX)' : 'NMSX'} <span className="text-red-500">*</span></Label>
                 <Select value={nmsx || '__none__'} onValueChange={v => setNmsx(v === '__none__' ? '' : v)}>
@@ -998,8 +1006,10 @@ export default function PalletLabels() {
                 </tr>
               </thead>
               <tbody>
-                {histBatches.length === 0 ? (
-                  <tr><td colSpan={canReprint ? 9 : 8} className="px-2 py-10 text-center text-slate-400">Chưa có lệnh in nào</td></tr>
+                {!histReady ? (
+                  <tr><td colSpan={canReprint ? 9 : 8} className="px-2 py-10 text-center text-slate-400">Chọn <b>Khoảng ngày</b> ở thanh lọc trên để xem lịch sử in — tránh tải quá nhiều dữ liệu</td></tr>
+                ) : histBatches.length === 0 ? (
+                  <tr><td colSpan={canReprint ? 9 : 8} className="px-2 py-10 text-center text-slate-400">Không có lệnh in nào trong khoảng đã chọn</td></tr>
                 ) : histBatches.map(b => {
                   const mats  = [...new Set(b.rows.map(r => r.material_code).filter(Boolean))]
                   const names = [...new Set(b.rows.map(r => matByCode.get(r.material_code ?? '')?.short_name).filter(Boolean))]

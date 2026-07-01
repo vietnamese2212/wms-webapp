@@ -987,6 +987,7 @@ export async function scanQR(req: Request, res: Response) {
         id:              randomUUID(),
         pallet_code:     parsed.pallet_code,
         location_id,
+        warehouse_id:    orderWarehouseId,   // set để unique (warehouse_id, pallet_code) hoạt động (no-QR cùng mã ở nhiều kho vẫn OK)
         material_id:     material.id,
         manufacturer_id: manufacturer?.id ?? null,
         nmsx:               parsed.manufacturer_code || null,   // đoạn 6 QR (B/D/O) = NMSX (hàng NCC = nơi nhận đầu tiên)

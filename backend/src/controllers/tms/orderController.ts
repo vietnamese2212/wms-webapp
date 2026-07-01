@@ -381,16 +381,22 @@ export async function updateOrder(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: existing, error: fetchErr } = await supabase.from('TmsOrder')
-      .select('id, date').eq('id', id).single()
+      .select('id, date, status').eq('id', id).single()
     if (fetchErr || !existing) return fail(res, 'Không tìm thấy đơn hàng', 404)
 
     // Scope-write: lệnh phải thuộc kho trong phạm vi; nếu chuyển sang kho mới thì kho đó cũng phải trong phạm vi.
     if (!(await guardOrderScope(req, res, id))) return
     if (warehouse_id !== undefined && !guardWhCreate(req, res, warehouse_id)) return
 
-    // Chỉ chặn khi ĐỔI ngày sang quá khứ (không chặn update giữ nguyên ngày cũ — vd đơn chuyển kho chỉ sửa eta/biển số).
-    if (date !== undefined && date !== existing.date && date < todayVN())
-      return fail(res, 'Không thể chuyển sang ngày quá khứ', 400)
+    // ĐỔI NGÀY chỉ cho đơn PENDING (mirror bulkUpdateOrderDate): đơn đã BOOKED/ARRIVED có TmsVehicleSlot
+    // gắn DeliverySlot theo ngày cũ — đổi TmsOrder.date ở đây KHÔNG recount slot → booked_count lệch (xe ma).
+    // Muốn đổi ngày đơn đã đặt lịch → huỷ đặt lịch (revoke) rồi đặt lại, hoặc dùng luồng đổi lịch chuyên dụng.
+    if (date !== undefined && date !== existing.date) {
+      if (existing.status !== 'PENDING')
+        return fail(res, 'Đơn đã đặt lịch/đã đến — không đổi được ngày ở đây (huỷ đặt lịch trước rồi đặt lại)', 400)
+      if (date < todayVN())
+        return fail(res, 'Không thể chuyển sang ngày quá khứ', 400)
+    }
     if (eta && String(eta).slice(0, 10) < todayVN())
       return fail(res, 'Dự kiến giao không thể là ngày quá khứ', 400)
 

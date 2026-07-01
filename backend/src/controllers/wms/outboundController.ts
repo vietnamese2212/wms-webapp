@@ -40,14 +40,16 @@ function guardWhCreate(req: Request, res: Response, whId: string | null | undefi
 
 // ─── Helpers ──────────────────────────────────────────────────
 
-// Điều chỉnh remaining/reserved của 1 InventoryEntry AN TOÀN ĐUA (optimistic-lock + retry).
+// Điều chỉnh remaining/reserved của 1 InventoryEntry AN TOÀN ĐUA (optimistic-lock + retry + JITTER).
 // delta âm = trừ, dương = cộng. Chỉ ghi khi remaining&reserved CHƯA đổi so với lúc đọc → chặn
 // lost-update khi nhiều thao tác (quét / xóa-scan / xác nhận nhặt lẻ) chạm cùng pallet đồng thời.
-// Trả về true nếu áp dụng được trong 5 lần thử, false nếu entry biến mất hoặc đua liên tục.
+// Trả về true nếu áp dụng được trong 15 lần thử, false nếu entry biến mất hoặc đua liên tục.
+// (Trước: 5 lần KHÔNG jitter → 3+ lượt confirm/xóa cùng pallet gây thundering herd → false âm thầm →
+// reserved không giảm = lệch tồn. Nay 15 lần + jitter, khớp consumeInventoryExact/addItemScanned.)
 async function adjustInventoryAtomic(
   invId: string, deltaRemaining: number, deltaReserved: number,
 ): Promise<boolean> {
-  for (let attempt = 0; attempt < 5; attempt++) {
+  for (let attempt = 0; attempt < 15; attempt++) {
     const { data: inv } = await supabase.from('InventoryEntry')
       .select('cartons_remaining, cartons_imported, cartons_reserved').eq('id', invId).single()
     if (!inv) return false
@@ -65,6 +67,8 @@ async function adjustInventoryAtomic(
       .eq('id', invId).eq('cartons_remaining', curRemaining).eq('cartons_reserved', curReserved)
       .select('id')
     if (applied?.length) return true
+    // CAS trượt → jitter tăng dần phá thundering herd rồi đọc lại (như consumeInventoryExact).
+    await new Promise(r => setTimeout(r, 10 + Math.floor(Math.random() * (30 + attempt * 20))))
   }
   return false
 }

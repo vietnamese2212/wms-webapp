@@ -19,7 +19,7 @@ import { toast } from '@/components/ui/use-toast'
 import {
   useWarehouses, useWarehouseTypes,
   useVehicleTypes, useCreateVehicleType, useUpdateVehicleType, useReorderVehicleTypes, useDeleteVehicleType,
-  useSlotTemplates, useUpdateSlotTemplate, useDeleteSlotTemplate, useBatchSlotTemplates, useSlotApplyInfo,
+  useSlotTemplates, useUpdateSlotTemplate, useDeleteSlotTemplate, useBatchSlotTemplates, useSlotApplyInfo, useDeleteSlotTemplateCluster,
   useTransportCompanies, useCreateTransportCompany, useUpdateTransportCompany, useDeleteTransportCompany,
   useTmsVehicles, useCreateTmsVehicle, useUpdateTmsVehicle, useDeleteTmsVehicle,
 } from '@/api/hooks'
@@ -97,7 +97,7 @@ function SlotBatchDialog({ open, onClose, preset, warehouseId, warehouseName, ve
   vehicleTypes: TmsVehicleType[]; cargoOptions: string[]; allTemplates: SlotTemplate[]
 }) {
   const [vtId,      setVtId]      = useState(preset?.vtId ?? '')
-  const [cargoType, setCargoType] = useState(preset?.cargoType ?? 'ALL')
+  const [cargoType, setCargoType] = useState(preset?.cargoType ?? '')
   const [days,      setDays]      = useState<number[]>([1,2,3,4,5,6])
   const [slots,     setSlots]     = useState<SlotRowDraft[]>([{ time_from:'', time_to:'', max_vehicles:'1' }])
   const [loadedKey, setLoadedKey] = useState('')
@@ -130,6 +130,7 @@ function SlotBatchDialog({ open, onClose, preset, warehouseId, warehouseName, ve
   function handleSubmit() {
     setErr('')
     if (!vtId) { setErr('Vui lòng chọn loại xe'); return }
+    if (!cargoType) { setErr('Vui lòng chọn loại kho'); return }
     if (!days.length) { setErr('Chọn ít nhất 1 thứ'); return }
     const clean = slots.map(s => ({ time_from: s.time_from, time_to: s.time_to, max_vehicles: Number(s.max_vehicles) }))
     const seen = new Set<string>()
@@ -172,11 +173,14 @@ function SlotBatchDialog({ open, onClose, preset, warehouseId, warehouseName, ve
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-1"><Label className="text-xs">Loại hàng</Label>
-              <Select value={cargoType} onValueChange={setCargoType} disabled={!!preset}>
-                <SelectTrigger className={preset ? 'bg-slate-50' : ''}><SelectValue /></SelectTrigger>
+            <div className="space-y-1"><Label className="text-xs">Loại kho *</Label>
+              <Select value={cargoType || '__none__'} onValueChange={v => setCargoType(v === '__none__' ? '' : v)} disabled={!!preset}>
+                <SelectTrigger className={preset ? 'bg-slate-50' : ''}><SelectValue placeholder="— Chọn loại kho —" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="ALL">Tất cả loại hàng</SelectItem>
+                  <SelectItem value="__none__">— Chọn loại kho —</SelectItem>
+                  {cargoType && cargoType !== '__none__' && !cargoOptions.includes(cargoType) && (
+                    <SelectItem value={cargoType}>{cargoType === 'ALL' ? 'Tất cả loại kho' : cargoType}</SelectItem>
+                  )}
                   {cargoOptions.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                 </SelectContent>
               </Select>
@@ -545,6 +549,7 @@ export default function TMSSettings() {
     return true
   })
   const { mutate: deleteST, isPending: deletingST } = useDeleteSlotTemplate()
+  const { mutate: deleteCluster, isPending: deletingCluster } = useDeleteSlotTemplateCluster()
   const [editingST, setEditingST] = useState<SlotTemplate | null>(null)
   const [showSTDlg, setShowSTDlg] = useState(false)
   const [showBatchDlg, setShowBatchDlg] = useState(false)
@@ -808,14 +813,23 @@ export default function TMSSettings() {
                                   <div className="flex items-center justify-between gap-2">
                                     <div className="text-[11px] font-semibold text-slate-700">
                                       {g.vtName}
-                                      <span className="font-normal text-slate-400"> · {g.cargo === 'ALL' ? 'Tất cả loại hàng' : g.cargo} · {g.rows.length} khung</span>
+                                      <span className="font-normal text-slate-400"> · {g.cargo === 'ALL' ? 'Tất cả loại kho' : g.cargo} · {g.rows.length} khung</span>
                                     </div>
-                                    {slotCreate && (
-                                      <Button size="sm" variant="outline" className="h-6 px-2 text-[10px] gap-1"
-                                        onClick={() => { setBatchPreset({ vtId: g.vtId, cargoType: g.cargo }); setShowBatchDlg(true) }}>
-                                        <Settings2 className="h-3 w-3" /> Sửa cả cụm
-                                      </Button>
-                                    )}
+                                    <div className="flex items-center gap-1.5">
+                                      {slotCreate && (
+                                        <Button size="sm" variant="outline" className="h-6 px-2 text-[10px] gap-1"
+                                          onClick={() => { setBatchPreset({ vtId: g.vtId, cargoType: g.cargo }); setShowBatchDlg(true) }}>
+                                          <Settings2 className="h-3 w-3" /> Sửa cả cụm
+                                        </Button>
+                                      )}
+                                      {slotDelete && (
+                                        <Button size="sm" variant="outline" disabled={deletingCluster}
+                                          className="h-6 px-2 text-[10px] gap-1 text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700"
+                                          onClick={() => { if (confirm(`Xóa cả cụm khung giờ "${g.vtName} · ${g.cargo === 'ALL' ? 'Tất cả loại kho' : g.cargo}"?\nCác ngày tương lai chưa có xe booking sẽ không còn khung giờ này.`)) deleteCluster({ warehouse_id: warehouseId, vehicle_type_id: g.vtId, cargo_type: g.cargo }, { onError: e2 => toast({ variant: 'destructive', title: 'Không xóa được cụm khung giờ', description: apiMsg(e2) }) }) }}>
+                                          <Trash2 className="h-3 w-3" /> Xóa cả cụm
+                                        </Button>
+                                      )}
+                                    </div>
                                   </div>
                                 </TableCell>
                               </TableRow>

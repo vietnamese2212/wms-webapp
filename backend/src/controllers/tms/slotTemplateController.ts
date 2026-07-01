@@ -233,6 +233,42 @@ export async function batchUpsertSlotTemplates(req: Request, res: Response) {
 }
 
 /**
+ * Xóa CẢ CỤM khung giờ của 1 (kho, loại xe, loại hàng) = xóa "rule".
+ * Tắt hết template trong cụm → reapply (gỡ slot ngày tương lai chưa booking; ngày đã booking giữ)
+ * → xóa hẳn template nào không còn slot tham chiếu. Sau đó các ngày tương lai KHÔNG sinh lại cụm này.
+ */
+export async function deleteSlotTemplateCluster(req: Request, res: Response) {
+  try {
+    const { warehouse_id, vehicle_type_id, cargo_type = 'ALL' } = req.query as Record<string, string>
+    if (!warehouse_id || !vehicle_type_id) return fail(res, 'warehouse_id và vehicle_type_id là bắt buộc', 400)
+
+    const { data: rows, error: exErr } = await supabase.from('SlotTemplate')
+      .select('id')
+      .eq('warehouse_id', warehouse_id).eq('vehicle_type_id', vehicle_type_id).eq('cargo_type', cargo_type)
+    if (exErr) return fail(res, exErr.message)
+    const ids = (rows ?? []).map((r: { id: string }) => r.id)
+    if (!ids.length) return ok(res, { deleted: 0, deactivated: 0 })
+
+    // Tắt trước để reapply không sinh lại
+    const now = new Date().toISOString()
+    const { error: offErr } = await supabase.from('SlotTemplate')
+      .update({ is_active: false, updated_at: now, updated_by: req.user?.name || null }).in('id', ids)
+    if (offErr) return fail(res, offErr.message)
+
+    // Gỡ slot ngày tương lai chưa booking (ngày đã booking giữ nguyên)
+    await reapplyFutureSlots(warehouse_id, vehicle_type_id)
+
+    // Xóa hẳn template không còn slot tham chiếu
+    const { data: refd } = await supabase.from('DeliverySlot').select('template_id').in('template_id', ids)
+    const refSet = new Set((refd ?? []).map((r: { template_id: string }) => r.template_id))
+    const del = ids.filter(id => !refSet.has(id))
+    if (del.length) { const { error } = await supabase.from('SlotTemplate').delete().in('id', del); if (error) return fail(res, error.message) }
+
+    return ok(res, { deleted: del.length, deactivated: ids.length - del.length })
+  } catch (e) { return fail(res, String(e)) }
+}
+
+/**
  * Thông tin áp dụng khi sửa cụm khung giờ của 1 (kho, loại xe):
  *  - applicable_from: ngày gần nhất ≥ hôm nay mà thay đổi sẽ áp được (không bị booking chặn, không phải CN).
  *  - nearest_blocked: ngày gần nhất còn dữ liệu cũ đã có booking { date, booked } — user phải gỡ booking để sửa ngày đó.

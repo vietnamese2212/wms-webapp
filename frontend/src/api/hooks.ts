@@ -2062,6 +2062,20 @@ export function useBatchSlotTemplates() {
   })
 }
 
+// Xóa cả cụm khung giờ (rule) của 1 loại xe + loại kho
+export function useDeleteSlotTemplateCluster() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (params: { warehouse_id: string; vehicle_type_id: string; cargo_type: string }) =>
+      apiClient.delete('/tms/slot-templates/cluster', { params }).then(r => r.data.data as { deleted: number; deactivated: number }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tms-slot-templates'] })
+      qc.invalidateQueries({ queryKey: ['tms-delivery-slots'] })
+      qc.invalidateQueries({ queryKey: ['tms-vehicle-types-by-warehouse'] })
+    },
+  })
+}
+
 export interface SlotApplyInfo {
   today: string
   applicable_from: string | null

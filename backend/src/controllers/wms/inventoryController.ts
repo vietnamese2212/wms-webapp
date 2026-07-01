@@ -553,7 +553,7 @@ export async function listFacets(req: Request, res: Response) {
   try {
     const [m, inv, loc] = await Promise.all([
       fetchAllRowsParallel(buildMatQ),
-      fetchAllRowsParallel(buildInvQ),
+      fetchAllRowsParallel(buildInvQ, 1000, 4),   // tồn ~4000 dòng → batch 4 lấy trong 1 round-trip
       locQ,
     ])
     matData = m

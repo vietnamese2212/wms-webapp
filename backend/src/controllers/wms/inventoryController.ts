@@ -396,13 +396,19 @@ export async function listInventory(req: Request, res: Response) {
   const { data, count, error } = await mainQ
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
 
-  // Tổng thùng tồn: aggregate functions bị tắt + cap 1000 dòng → cộng theo trang (helper). Lỗi sum
-  // KHÔNG chặn list (rows vẫn hiện), chỉ để tổng = 0 và log.
-  const sumSelect = catActive ? 'cartons_remaining, material:Material!inner(category)' : 'cartons_remaining'
+  // Tổng thùng tồn: dùng aggregate SUM phía DB (db-aggregates-enabled đã bật lại) — 1 query thay vì
+  // kéo ~4000 dòng về Node (trước đây ~5s). Tái dùng NGUYÊN applyInventoryFilters → tổng khớp tuyệt đối
+  // list. catActive: embed material!inner để lọc category → PostgREST group-by category (mỗi category 1
+  // dòng) nên cộng .sum tất cả dòng. Lỗi sum KHÔNG chặn list (rows vẫn hiện), chỉ để tổng = 0 và log.
+  const sumSelect = catActive ? 'cartons_remaining.sum(), material:Material!inner(category)' : 'cartons_remaining.sum()'
   let total_cartons_remaining = 0
   try {
-    const sumRows = await fetchAllInventory(sumSelect, r.params, r.datePctIds)
-    total_cartons_remaining = sumRows.reduce((s, row) => s + Number(row.cartons_remaining ?? 0), 0)
+    let sumQ = applyInventoryFilters(supabase.from('InventoryEntry').select(sumSelect), r.params)
+    if (r.datePctIds !== null) sumQ = sumQ.in('id', r.datePctIds)
+    const { data: sumData, error: sumErr } = await sumQ
+    if (sumErr) throw new Error(sumErr.message)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    total_cartons_remaining = ((sumData ?? []) as any[]).reduce((s, row) => s + Number(row.sum ?? 0), 0)
   } catch (e) {
     console.error('[inventory] tính tổng thùng tồn lỗi:', (e as Error).message)
   }
@@ -533,11 +539,14 @@ export async function listFacets(req: Request, res: Response) {
     + (categories.length > 0   ? ', material:Material!inner(category)'    : '')
     + (warehouseIds.length > 0 ? ', location:Location!inner(warehouse_id)' : '')
 
-  let invData: any[]
+  // Phân trang SONG SONG (trang 1 lấy count exact rồi bắn các trang còn lại đồng thời) thay cho
+  // fetchAllPaged tuần tự (trước đây ~5s do 4 round-trip nối tiếp). Giữ NGUYÊN semantics/filter.
+  let invData: any[] = []
   try {
-    invData = await fetchAllPaged(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const build = (withCount: boolean): any => {
       let q = supabase.from('InventoryEntry')
-        .select(invSelect)
+        .select(invSelect, withCount ? { count: 'exact' } : undefined)
         .in('status', ['IN_STOCK', 'PARTIAL'])
         .order('id', { ascending: true })
       if (warehouseIds.length === 1)    q = q.eq('location.warehouse_id', warehouseIds[0])
@@ -545,7 +554,24 @@ export async function listFacets(req: Request, res: Response) {
       if (categories.length === 1)      q = q.eq('material.category', categories[0])
       else if (categories.length > 1)   q = q.in('material.category', categories)
       return q
-    })
+    }
+    const PAGE = 1000
+    const first = await build(true).range(0, PAGE - 1)
+    if (first.error) throw new Error(first.error.message)
+    invData = [...(first.data ?? [])]
+    const n = first.count ?? invData.length
+    if (n > PAGE) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const reqs: any[] = []
+      for (let p = 1; p * PAGE < n; p++) reqs.push(build(false).range(p * PAGE, p * PAGE + PAGE - 1))
+      const results = await Promise.all(reqs)
+      for (const rr of results) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        if ((rr as any).error) throw new Error((rr as any).error.message)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        invData.push(...((rr as any).data ?? []))
+      }
+    }
   } catch (e) {
     return fail(res, 500, 'DB_ERROR', (e as Error).message)
   }

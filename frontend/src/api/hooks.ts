@@ -907,6 +907,8 @@ export interface AdjustmentLog {
   adjusted_at: string
 }
 
+interface InvListCache { entries: InventoryEntry[]; total: number; page: number; limit: number; total_cartons_remaining: number }
+
 export function useAdjustInventory() {
   const qc = useQueryClient()
   return useMutation({
@@ -916,9 +918,34 @@ export function useAdjustInventory() {
       const { data } = await apiClient.patch(`/wms/inventory/${id}/adjust`, { adjustment, employee_id, note, actor_name })
       return data.data as { entry: InventoryEntry }
     },
+    // Optimistic: cộng ngay delta vào dòng + ô tổng của MỌI cache inventory-entries đang giữ → user thấy
+    // số mới TỨC THÌ (không chờ refetch ~1.5s). Trạng thái badge để refetch nền chỉnh (delta không đủ suy ra).
+    onMutate: async ({ id, adjustment }) => {
+      await qc.cancelQueries({ queryKey: ['inventory-entries'] })
+      const snapshots = qc.getQueriesData<InvListCache>({ queryKey: ['inventory-entries'] })
+      qc.setQueriesData<InvListCache>({ queryKey: ['inventory-entries'] }, (old) => {
+        if (!old?.entries) return old
+        let touched = false
+        const entries = old.entries.map(e => {
+          if (e.id !== id) return e
+          touched = true
+          return { ...e, cartons_remaining: Number(e.cartons_remaining ?? 0) + adjustment }
+        })
+        if (!touched) return old
+        return { ...old, entries, total_cartons_remaining: Number(old.total_cartons_remaining ?? 0) + adjustment }
+      })
+      return { snapshots }
+    },
+    onError: (_e, _v, ctx) => {
+      ctx?.snapshots?.forEach(([key, data]) => qc.setQueryData(key, data))
+    },
     onSuccess: (_d, vars) => {
-      qc.invalidateQueries({ queryKey: ['inventory-entries'] })
       qc.invalidateQueries({ queryKey: ['adjustment-log', vars.id] })
+    },
+    onSettled: () => {
+      // Reconcile nền: lấy giá trị + trạng thái chuẩn từ server (không chặn UI đã cập nhật optimistic).
+      qc.invalidateQueries({ queryKey: ['inventory-entries'] })
+      qc.invalidateQueries({ queryKey: ['inventory-summary'] })
     },
   })
 }

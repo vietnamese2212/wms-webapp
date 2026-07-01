@@ -1111,32 +1111,28 @@ export async function scanManual(req: Request, res: Response) {
     const sharedPalletCode = ((order as any).material as any)?.material_code
       ?? `POSM-${order.material_id.replace(/-/g, '').slice(0, 12)}`
 
-    // Tìm entry chung theo KHO HIỆU DỤNG (cột warehouse_id, hoặc kho của vị trí nếu cột null)
-    // → tránh tạo trùng khi tồn tại entry data cũ có warehouse_id null nhưng gắn location.
-    const { data: candidates } = await supabase
-      .from('InventoryEntry')
-      .select('id, cartons_remaining, cartons_imported, warehouse_id, location:Location!location_id(warehouse_id)')
-      .eq('pallet_code', sharedPalletCode)
-      .in('status', ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'])
-    const existingPallet = ((candidates ?? []) as any[])
-      .find(e => (e.warehouse_id ?? e.location?.warehouse_id) === warehouseId) ?? null
+    // Tìm-hoặc-tạo entry chung (POSM/no-QR: 1 entry/(kho,mã), pallet_code = mã hàng) NGUYÊN TỬ trong 1
+    // vòng retry — xử lý CẢ 2 đua đồng thời khi nhiều phiếu lưu cùng (kho,mã):
+    //   (a) entry đã có → CAS `cartons_remaining = đọc + delta` (ghi mù sẽ mất cộng dồn);
+    //   (b) entry CHƯA có → INSERT; nếu phiếu khác vừa tạo (23505 do unique wh+pallet) → đọc lại + CAS,
+    //       KHÔNG trả 409 (tự merge, người dùng không phải bấm lại).
+    let entryId: string | null = null
+    for (let attempt = 0; attempt < 15 && !entryId; attempt++) {
+      const { data: candidates } = await supabase
+        .from('InventoryEntry')
+        .select('id, cartons_remaining, cartons_imported, warehouse_id, location:Location!location_id(warehouse_id)')
+        .eq('pallet_code', sharedPalletCode)
+        .in('status', ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'])
+      const existingPallet = ((candidates ?? []) as any[])
+        .find(e => (e.warehouse_id ?? e.location?.warehouse_id) === warehouseId) ?? null
 
-    let entryId: string
-    if (existingPallet) {
-      // Cộng dồn NGUYÊN TỬ vào entry chung + chuẩn hoá warehouse_id. Entry POSM dùng chung NHIỀU phiếu →
-      // ghi mù `cartons = đọc + delta` sẽ MẤT cộng dồn khi 2 phiếu lưu POSM cùng (kho,mã) đồng thời.
-      // CAS trên cartons_remaining + jitter; đọc lại số mới mỗi lần trượt.
-      let ok = false
-      for (let attempt = 0; attempt < 15; attempt++) {
-        const { data: cur } = await supabase.from('InventoryEntry')
-          .select('cartons_remaining, cartons_imported').eq('id', existingPallet.id).maybeSingle()
-        if (!cur) return fail(res, 404, 'NOT_FOUND', 'Pallet tồn không còn tồn tại')
-        const before = Number(cur.cartons_remaining)
+      if (existingPallet) {
+        const before = Number(existingPallet.cartons_remaining)
         const { data: upd, error: updErr } = await supabase
           .from('InventoryEntry')
           .update({
             cartons_remaining: before + cartonsNum,
-            cartons_imported:  Number(cur.cartons_imported) + cartonsNum,
+            cartons_imported:  Number(existingPallet.cartons_imported) + cartonsNum,
             warehouse_id:      warehouseId,
             update_date:       vnDate(),
             updated_at:        now,
@@ -1144,41 +1140,38 @@ export async function scanManual(req: Request, res: Response) {
           })
           .eq('id', existingPallet.id).eq('cartons_remaining', before).select('id')
         if (updErr) throw updErr
-        if (upd?.length) { ok = true; break }
-        await new Promise(r => setTimeout(r, 10 + Math.floor(Math.random() * (30 + attempt * 20))))
+        if (upd?.length) { entryId = existingPallet.id; break }
+        // CAS trượt (phiếu khác vừa cộng) → jitter rồi đọc lại
+      } else {
+        const { data: newEntry, error: insErr } = await supabase
+          .from('InventoryEntry')
+          .insert({
+            id:                randomUUID(),
+            pallet_code:       sharedPalletCode,
+            location_id:       null,
+            warehouse_id:      warehouseId,
+            material_id:       order.material_id,
+            cartons_imported:  cartonsNum,
+            cartons_remaining: cartonsNum,
+            stack_layer:       1,
+            import_order_id:   order_id,
+            created_by:        employee_id ?? null,
+            updated_by:        employee_id ?? null,
+            status:            'IN_STOCK',
+            import_date:       vnDate(),
+            update_date:       vnDate(),
+            created_at:        now,
+            updated_at:        now,
+          })
+          .select('id')
+          .single()
+        if (!insErr) { entryId = newEntry.id; break }
+        if (insErr.code !== '23505') throw insErr
+        // 23505: phiếu khác vừa tạo entry chung → jitter rồi đọc lại + CAS ở vòng sau
       }
-      if (!ok) return fail(res, 409, 'STOCK_CHANGED', 'Tồn POSM đang bận (nhiều người lưu) — thử lại')
-      entryId = existingPallet.id
-    } else {
-      // Tạo entry chung lần đầu
-      const { data: newEntry, error: insErr } = await supabase
-        .from('InventoryEntry')
-        .insert({
-          id:                randomUUID(),
-          pallet_code:       sharedPalletCode,
-          location_id:       null,
-          warehouse_id:      warehouseId,
-          material_id:       order.material_id,
-          cartons_imported:  cartonsNum,
-          cartons_remaining: cartonsNum,
-          stack_layer:       1,
-          import_order_id:   order_id,
-          created_by:        employee_id ?? null,
-          updated_by:        employee_id ?? null,
-          status:            'IN_STOCK',
-          import_date:       vnDate(),
-          update_date:       vnDate(),
-          created_at:        now,
-          updated_at:        now,
-        })
-        .select('id')
-        .single()
-      if (insErr) {
-        if (insErr.code === '23505') return fail(res, 409, 'DUPLICATE_PALLET', 'Pallet chung đã tồn tại')
-        throw insErr
-      }
-      entryId = newEntry.id
+      await new Promise(r => setTimeout(r, 10 + Math.floor(Math.random() * (30 + attempt * 20))))
     }
+    if (!entryId) return fail(res, 409, 'STOCK_CHANGED', 'Tồn POSM đang bận (nhiều người lưu) — thử lại')
 
     // Đánh dấu phiếu này đã lưu thủ công (lock tránh lưu 2 lần) + ghi đóng góp của phiếu
     // imported_by = người quét thực tế (để detail hiển thị đúng người/giờ của phiếu này)

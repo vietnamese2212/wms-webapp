@@ -3588,16 +3588,14 @@ export default function TMSBookings() {
         </div>
         {activeTab === 'main' && (
           <div className="flex items-center gap-2 flex-wrap">
-            <Select value={warehouseId || '__none__'} onValueChange={v => setWarehouseId(v === '__none__' ? '' : v)}>
-              <SelectTrigger className="h-8 text-sm w-[180px] min-w-[140px] max-w-[200px]"><SelectValue placeholder="— Chọn kho —" /></SelectTrigger>
-              <SelectContent>
-                {isNccUser && <SelectItem value="__none__">— Tất cả kho —</SelectItem>}
-                {!isNccUser && <SelectItem value="__none__">— Chọn kho —</SelectItem>}
-                {(warehouses as { id: string; name: string }[]).map(w => (
-                  <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <WarehouseSingleSelect
+              warehouses={warehouses as { id: string; code?: string; name: string }[]}
+              value={warehouseId}
+              onChange={setWarehouseId}
+              allLabel={isNccUser ? '— Tất cả kho —' : undefined}
+              placeholder="— Chọn kho —"
+              triggerClassName="h-8 w-[200px]"
+            />
             {(warehouseId || isNccUser) && <FilterBar defs={mainFilterDefs} />}
             {(warehouseId || isNccUser) && <FilterSheetButton defs={mainFilterDefs} className="sm:hidden" />}
             {canChangeDate && selectedOrderIds.size > 0 && (

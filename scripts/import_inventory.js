@@ -40,6 +40,15 @@ function toISODate(v) {
   return null
 }
 
+// NMSX = ĐOẠN 6 mã pallet (QR: ddmmyy_Mã_ChuKy_May_Seq_NMSX). Đuôi hash 8 ký tự / mã <6 đoạn → không có
+// NMSX → fallback nmsx_code của kho. (NMSX = nhà máy sản xuất theo từng pallet, không phải theo kho lưu.)
+const HASH = /^[0-9a-f]{8}$/i
+function nmsxFromCode(code, fallback) {
+  const parts = String(code || '').split('_')
+  if (parts.length >= 6 && parts[5] && !HASH.test(parts[5])) return parts[5]
+  return fallback
+}
+
 const KEYS = ['pallet_code', 'material_code', 'warehouse', 'location_code', 'cartons', 'production_date', 'ncc', 'qa_status', 'shelf_life_days']
 
 async function main() {
@@ -104,7 +113,7 @@ async function main() {
       qaId = qaMap.get(qaRaw.toLowerCase()) ?? null
       if (qaId == null) { errors.push(`${at} — QA không khớp: "${qaRaw}" (hợp lệ: ${qas.map(q => q.name).join(' / ')})`); continue }
     }
-    const nmsx = (wh.nmsx_code && String(wh.nmsx_code).trim()) || null   // NMSX tự suy từ kho (Ba Vì → B), kho không có → trống
+    const nmsx = nmsxFromCode(pallet, (wh.nmsx_code && String(wh.nmsx_code).trim()) || null)   // NMSX = đoạn 6 QR; thiếu → nmsx_code kho
 
     seenInFile.add(palletLc)
     records.push({

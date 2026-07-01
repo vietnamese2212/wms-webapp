@@ -855,40 +855,64 @@ export async function scanQR(req: Request, res: Response) {
     // TRANSFER + pallet từ phiếu KHÁC (IN_STOCK hoặc PARTIAL) → merge (cộng tồn)
     if (isTransfer && existingPallet && ['IN_STOCK', 'PARTIAL'].includes(existingPallet.status) && existingPallet.import_order_id !== order_id) {
       const addCartons = cartons_override ? Number(cartons_override) : effCartonsPerPallet(material, orderWarehouseId)
-      const cartonsBeforeAdjust = Number(existingPallet.cartons_remaining)
-      const newRemaining = cartonsBeforeAdjust + addCartons
       const now = new Date().toISOString()
       const importCode = (order as any).import_code as string
 
-      await Promise.all([
-        supabase.from('InventoryEntry').update({
-          cartons_remaining: newRemaining,
-          adjustment_qty:    Number(existingPallet.adjustment_qty ?? 0) + addCartons,
+      // Đọc–tính–ghi NGUYÊN TỬ (optimistic-CAS + jitter): 2 lượt quét cùng pallet trả-về đồng thời mà
+      // ghi mù `cartons = đọc + delta` sẽ MẤT cộng dồn. CAS .eq('cartons_remaining', before) chỉ cho 1
+      // lượt thắng mỗi vòng; lượt trượt đọc lại số mới rồi cộng tiếp. Lần thử đầu dùng số vừa fetch
+      // (dupResult) — không thêm round-trip khi không tranh chấp.
+      let curRemaining = Number(existingPallet.cartons_remaining)
+      let curAdjust    = Number(existingPallet.adjustment_qty ?? 0)
+      let mergedBefore = 0, mergedAfter = 0, done = false
+      for (let attempt = 0; attempt < 15; attempt++) {
+        if (attempt > 0) {
+          const { data: cur } = await supabase.from('InventoryEntry')
+            .select('cartons_remaining, adjustment_qty').eq('id', existingPallet.id).maybeSingle()
+          if (!cur) return fail(res, 404, 'NOT_FOUND', 'Pallet tồn không còn tồn tại')
+          curRemaining = Number(cur.cartons_remaining)
+          curAdjust    = Number(cur.adjustment_qty ?? 0)
+        }
+        const before = curRemaining
+        const after  = before + addCartons
+        const { data: upd, error: uErr } = await supabase.from('InventoryEntry').update({
+          cartons_remaining: after,
+          adjustment_qty:    curAdjust + addCartons,
           status:            'IN_STOCK',
           updated_at:        now,
           update_date:       vnDate(),
           updated_by:        employee_id ?? null,
-        }).eq('id', existingPallet.id),
-        supabase.from('InventoryAdjustmentLog' as any).insert({
-          id:             randomUUID(),
-          entry_id:       existingPallet.id,
-          delta:          addCartons,
-          cartons_before: cartonsBeforeAdjust,
-          cartons_after:  newRemaining,
-          note:           `Nhập trả về từ phiếu transfer ${importCode}`,
-          actor_name:     null,
-          actor_id:       employee_id ?? null,
-          adjusted_at:    now,
-        }),
-      ])
+        }).eq('id', existingPallet.id).eq('cartons_remaining', before).select('id')
+        if (uErr) return fail(res, 500, 'DB_ERROR', uErr.message)
+        if (upd?.length) {
+          // Audit log — KHÔNG nuốt lỗi âm thầm. cartons_before/after khớp thật (sau CAS).
+          const { error: logErr } = await supabase.from('InventoryAdjustmentLog' as any).insert({
+            id:             randomUUID(),
+            entry_id:       existingPallet.id,
+            delta:          addCartons,
+            cartons_before: before,
+            cartons_after:  after,
+            note:           `Nhập trả về từ phiếu transfer ${importCode}`,
+            actor_name:     null,
+            actor_id:       employee_id ?? null,
+            adjusted_at:    now,
+          })
+          if (logErr) console.error('[scanQR merge] Ghi InventoryAdjustmentLog thất bại:', logErr.message)
+          mergedBefore = before; mergedAfter = after; done = true
+          break
+        }
+        // CAS trượt (người khác vừa cộng/trừ tồn pallet này): chờ jitter rồi đọc lại
+        await new Promise(r => setTimeout(r, 10 + Math.floor(Math.random() * (30 + attempt * 20))))
+      }
+      if (!done) return fail(res, 409, 'STOCK_CHANGED', 'Tồn pallet này đang bận (nhiều người nhập) — thử lại')
 
       emitInboundChanged()
       return ok(res, {
         merged:        true,
         entry_id:      existingPallet.id,
         added_cartons: addCartons,
-        new_remaining: newRemaining,
-        warnings:      [`Đã cộng ${addCartons} thùng vào tồn hiện tại (${cartonsBeforeAdjust} → ${newRemaining}). Log ghi nhận tại phiếu transfer ${importCode}.`],
+        new_remaining: mergedAfter,
+        warnings:      [`Đã cộng ${addCartons} thùng vào tồn hiện tại (${mergedBefore} → ${mergedAfter}). Log ghi nhận tại phiếu transfer ${importCode}.`],
       })
     }
 
@@ -1099,19 +1123,31 @@ export async function scanManual(req: Request, res: Response) {
 
     let entryId: string
     if (existingPallet) {
-      // Cộng dồn vào entry chung + chuẩn hoá warehouse_id để lần sau khớp ngay
-      const { error: updErr } = await supabase
-        .from('InventoryEntry')
-        .update({
-          cartons_remaining: existingPallet.cartons_remaining + cartonsNum,
-          cartons_imported:  existingPallet.cartons_imported  + cartonsNum,
-          warehouse_id:      warehouseId,
-          update_date:       vnDate(),
-          updated_at:        now,
-          updated_by:        employee_id ?? null,
-        })
-        .eq('id', existingPallet.id)
-      if (updErr) throw updErr
+      // Cộng dồn NGUYÊN TỬ vào entry chung + chuẩn hoá warehouse_id. Entry POSM dùng chung NHIỀU phiếu →
+      // ghi mù `cartons = đọc + delta` sẽ MẤT cộng dồn khi 2 phiếu lưu POSM cùng (kho,mã) đồng thời.
+      // CAS trên cartons_remaining + jitter; đọc lại số mới mỗi lần trượt.
+      let ok = false
+      for (let attempt = 0; attempt < 15; attempt++) {
+        const { data: cur } = await supabase.from('InventoryEntry')
+          .select('cartons_remaining, cartons_imported').eq('id', existingPallet.id).maybeSingle()
+        if (!cur) return fail(res, 404, 'NOT_FOUND', 'Pallet tồn không còn tồn tại')
+        const before = Number(cur.cartons_remaining)
+        const { data: upd, error: updErr } = await supabase
+          .from('InventoryEntry')
+          .update({
+            cartons_remaining: before + cartonsNum,
+            cartons_imported:  Number(cur.cartons_imported) + cartonsNum,
+            warehouse_id:      warehouseId,
+            update_date:       vnDate(),
+            updated_at:        now,
+            updated_by:        employee_id ?? null,
+          })
+          .eq('id', existingPallet.id).eq('cartons_remaining', before).select('id')
+        if (updErr) throw updErr
+        if (upd?.length) { ok = true; break }
+        await new Promise(r => setTimeout(r, 10 + Math.floor(Math.random() * (30 + attempt * 20))))
+      }
+      if (!ok) return fail(res, 409, 'STOCK_CHANGED', 'Tồn POSM đang bận (nhiều người lưu) — thử lại')
       entryId = existingPallet.id
     } else {
       // Tạo entry chung lần đầu
@@ -1203,19 +1239,31 @@ export async function updateEntry(req: Request, res: Response) {
       const oldContribution = (order as any).posm_cartons != null ? Number((order as any).posm_cartons) : Number(entry.cartons_imported)
       const newContribution = Math.max(0, Number(cartons_imported))
       const delta = newContribution - oldContribution
-      const newRemaining = Number(entry.cartons_remaining) + delta
-      // Không cho giảm xuống dưới phần đã xuất/giữ cho đơn xuất
-      if (newRemaining < Number(entry.cartons_reserved ?? 0))
-        return fail(res, 400, 'INVENTORY_CHANGED', 'Một phần hàng đã xuất hoặc đang được giữ — không thể giảm xuống mức này')
-      const { data: updatedEntry, error } = await supabase
-        .from('InventoryEntry')
-        .update({ cartons_imported: Number(entry.cartons_imported) + delta, cartons_remaining: newRemaining, update_date: vnDate(), updated_at: nowTs })
-        .eq('id', entryId).select(ENTRY_SELECT).maybeSingle()
-      if (error) throw error
+      // Entry POSM dùng chung nhiều phiếu → cộng/trừ delta NGUYÊN TỬ (CAS trên cartons_remaining + jitter),
+      // đọc lại số mới mỗi lần trượt. Ghi mù sẽ mất cập nhật khi phiếu khác cũng đang sửa/lưu cùng entry.
+      let updatedEntry: any = null
+      for (let attempt = 0; attempt < 15; attempt++) {
+        const { data: cur } = await supabase.from('InventoryEntry')
+          .select('cartons_remaining, cartons_imported, cartons_reserved').eq('id', entryId).maybeSingle()
+        if (!cur) return fail(res, 404, 'NOT_FOUND', 'Pallet không còn tồn tại')
+        const before = Number(cur.cartons_remaining)
+        const newRemaining = before + delta
+        // Không cho giảm xuống dưới phần đã xuất/giữ cho đơn xuất
+        if (newRemaining < Number(cur.cartons_reserved ?? 0))
+          return fail(res, 400, 'INVENTORY_CHANGED', 'Một phần hàng đã xuất hoặc đang được giữ — không thể giảm xuống mức này')
+        const { data: upd, error } = await supabase
+          .from('InventoryEntry')
+          .update({ cartons_imported: Number(cur.cartons_imported) + delta, cartons_remaining: newRemaining, update_date: vnDate(), updated_at: nowTs })
+          .eq('id', entryId).eq('cartons_remaining', before).select(ENTRY_SELECT)
+        if (error) throw error
+        if (upd?.length) { updatedEntry = upd[0]; break }
+        await new Promise(r => setTimeout(r, 10 + Math.floor(Math.random() * (30 + attempt * 20))))
+      }
+      if (!updatedEntry) return fail(res, 409, 'STOCK_CHANGED', 'Tồn POSM đang bận (nhiều người sửa) — thử lại')
       await supabase.from('ProductionImport').update({ posm_cartons: newContribution, updated_at: nowTs }).eq('id', order_id)
       emitInboundChanged()
       // Trả về đóng góp của phiếu (không phải tổng entry chung) để detail hiển thị đúng
-      return ok(res, { ...(updatedEntry as any), cartons_imported: newContribution, cartons_remaining: newContribution })
+      return ok(res, { ...updatedEntry, cartons_imported: newContribution, cartons_remaining: newContribution })
     }
 
     // Pallet QR thường: phải còn nguyên IN_STOCK, chưa xuất/giữ/điều chỉnh

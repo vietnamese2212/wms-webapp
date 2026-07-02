@@ -24,6 +24,7 @@ import {
 } from '@/api/hooks'
 import { can, isAdmin, type ModulePermissions } from '@/config/permissions'
 import { useAuthStore } from '@/stores/authStore'
+import { useScopedWhTypes } from '@/hooks/useUserScope'
 
 function apiMsg(err: unknown) {
   return (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? String(err)
@@ -512,6 +513,8 @@ export default function WMSSettings() {
   const [detailZone, setDetailZone] = useState<WarehouseZone | null>(null)
 
   // Khu vực kho — lọc theo warehouse_scope của user
+  // Loại kho trong form/filter Khu vực cắt theo allowed_categories (tab Loại kho vẫn full — quản trị taxonomy)
+  const { data: scopedWhTypes = [] } = useScopedWhTypes()
   const activeWh = (allWh as WhRow[]).filter(w => w.is_active)
   // Scope kho cho tab Khu vực: ASSIGNED → chỉ kho được gán (khớp gác BE zoneController); còn lại → tất cả.
   const zoneAccessWh = (admin || user?.warehouse_scope !== 'ASSIGNED')
@@ -574,7 +577,7 @@ export default function WMSSettings() {
   })
   const zoneFilterDefs: FilterDef[] = [
     { key: 'zcat', label: 'Loại kho', type: 'single', value: zoneCat, onChange: setZoneCat, allLabel: 'Tất cả',
-      options: (warehouseTypes as { id: string; value: string }[]).map(t => ({ value: t.value, label: t.value })) },
+      options: (scopedWhTypes as { id: string; value: string }[]).map(t => ({ value: t.value, label: t.value })) },
     { key: 'zst', label: 'Trạng thái', type: 'single', value: zoneStatus, onChange: setZoneStatus, allLabel: 'Tất cả',
       options: [{ value: 'active', label: 'Hoạt động' }, { value: 'inactive', label: 'Tạm dừng' }] },
   ]
@@ -937,7 +940,7 @@ export default function WMSSettings() {
         <TypeDialog type={editingType} open={showTypeDlg} onClose={() => setShowTypeDlg(false)} />
       )}
       {showZoneDlg && (
-        <ZoneDialog zone={editingZone} warehouseId={effectiveWhId} warehouses={zoneAccessWh} warehouseTypes={warehouseTypes} open={showZoneDlg} onClose={() => setShowZoneDlg(false)} />
+        <ZoneDialog zone={editingZone} warehouseId={effectiveWhId} warehouses={zoneAccessWh} warehouseTypes={scopedWhTypes} open={showZoneDlg} onClose={() => setShowZoneDlg(false)} />
       )}
       {showShiftDlg && (
         <MetaDialog kind="shift" row={editShift} open={showShiftDlg} onClose={() => setShowShiftDlg(false)} />

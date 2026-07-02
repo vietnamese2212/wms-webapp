@@ -1,6 +1,7 @@
 import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
+import { scopeCategoriesOf, categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 
 function fail(res: Response, message: string, status = 400) {
   return res.status(status).json({ success: false, error: { message } })
@@ -14,6 +15,15 @@ export async function listZones(req: Request, res: Response) {
     .select('id, warehouse_id, code, name, category, sort_order, is_active, created_at, updated_at, created_by, updated_by')
     .order('sort_order')
     .order('created_at')
+
+  // Cắt theo scope Kho + Loại kho của user (null-inclusive: khu vực chưa gắn loại vẫn hiện)
+  if (req.user?.warehouse_scope === 'ASSIGNED') {
+    const allowedWh: string[] = req.user.warehouse_ids ?? []
+    if (warehouse_id && !allowedWh.includes(warehouse_id)) return res.json({ success: true, data: [] })
+    if (!warehouse_id && allowedWh.length > 0) query = query.in('warehouse_id', allowedWh)
+  }
+  const scopeCats = scopeCategoriesOf(req)
+  if (scopeCats) query = query.or(`category.is.null,category.in.("${scopeCats.join('","')}")`)
 
   if (warehouse_id) query = query.eq('warehouse_id', warehouse_id)
 
@@ -31,6 +41,7 @@ export async function createZone(req: Request, res: Response) {
     const allowed: string[] = reqUser.warehouse_ids ?? []
     if (!allowed.includes(warehouse_id)) return fail(res, 'Không có quyền thao tác trên kho này', 403)
   }
+  if (!categoryAllowed(req, category?.trim() || null)) return fail(res, CATEGORY_FORBIDDEN_MSG, 403)
 
   const t = new Date().toISOString()
 
@@ -91,11 +102,18 @@ export async function updateZone(req: Request, res: Response) {
   const { name, category, is_active } = req.body as { name?: string; category?: string | null; is_active?: boolean }
 
   const actor = req.user
-  if (actor?.warehouse_scope === 'ASSIGNED') {
-    const { data: target } = await supabase.from('WarehouseZone').select('warehouse_id').eq('id', id).single()
-    const allowed: string[] = actor.warehouse_ids ?? []
-    if (!target || !allowed.includes((target as any).warehouse_id)) return fail(res, 'Không có quyền thao tác trên kho này', 403)
+  const scopeCats = scopeCategoriesOf(req)
+  if (actor?.warehouse_scope === 'ASSIGNED' || scopeCats) {
+    const { data: target } = await supabase.from('WarehouseZone').select('warehouse_id, category').eq('id', id).single()
+    if (!target) return fail(res, 'Không tìm thấy khu vực', 404)
+    if (actor?.warehouse_scope === 'ASSIGNED') {
+      const allowed: string[] = actor.warehouse_ids ?? []
+      if (!allowed.includes((target as any).warehouse_id)) return fail(res, 'Không có quyền thao tác trên kho này', 403)
+    }
+    // Khu vực đang gắn loại ngoài scope → không được sửa; đổi sang loại ngoài scope cũng chặn
+    if (!categoryAllowed(req, (target as any).category)) return fail(res, CATEGORY_FORBIDDEN_MSG, 403)
   }
+  if (category !== undefined && !categoryAllowed(req, category?.trim() || null)) return fail(res, CATEGORY_FORBIDDEN_MSG, 403)
 
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: actor?.name || null }
   if (name !== undefined) updates.name = name.trim()
@@ -118,7 +136,7 @@ export async function deleteZone(req: Request, res: Response) {
 
   const { data: zone } = await supabase
     .from('WarehouseZone')
-    .select('code, warehouse_id')
+    .select('code, warehouse_id, category')
     .eq('id', id)
     .single()
 
@@ -128,6 +146,7 @@ export async function deleteZone(req: Request, res: Response) {
       const allowed: string[] = deleteActor.warehouse_ids ?? []
       if (!allowed.includes((zone as any).warehouse_id)) return fail(res, 'Không có quyền thao tác trên kho này', 403)
     }
+    if (!categoryAllowed(req, (zone as any).category)) return fail(res, CATEGORY_FORBIDDEN_MSG, 403)
 
     const { count } = await supabase
       .from('Location')

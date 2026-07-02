@@ -5,7 +5,7 @@ import { useWarehouses, useWarehouseTypes } from '@/api/hooks'
 /**
  * Scope người dùng: Loại hàng/Loại kho (allowed_categories) + Kho (warehouse_ids).
  * Dùng cho MỌI filter/form nghiệp vụ — option chỉ hiện trong phạm vi user được phép.
- * Trang admin/cấu hình (WMSSettings, UserManagement, TMSSettings) vẫn dùng hook gốc.
+ * Chỉ UserManagement + tab Loại kho/Kho của WMSSettings (quản trị taxonomy) còn dùng hook gốc.
  */
 
 // Chuẩn hoá giá trị cũ còn trong JWT/DB về taxonomy hiện hành

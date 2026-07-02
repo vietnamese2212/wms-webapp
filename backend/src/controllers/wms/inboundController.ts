@@ -448,7 +448,11 @@ export async function createOrder(req: Request, res: Response) {
         .single()
 
       if (!error) { order = data; break }
-      if (error.code === '23505') continue  // race condition — đếm lại và thử seq tiếp
+      if (error.code === '23505') {
+        // Race cấp số: jitter phá thundering herd rồi đếm lại (retry trần → các request đua lại cùng seq)
+        await new Promise(r => setTimeout(r, 15 + Math.floor(Math.random() * (40 + attempt * 25))))
+        continue
+      }
       if (error.code === '23503') return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy kho hoặc hàng hóa — kiểm tra warehouse_id, material_id, location_id, shift_id')
       throw error
     }

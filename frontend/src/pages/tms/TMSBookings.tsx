@@ -1078,7 +1078,12 @@ function parseDirection(val: unknown): string {
 
 function parseExcelDate(val: unknown): string | null {
   if (!val) return null
-  if (val instanceof Date) return val.toISOString().slice(0, 10)
+  // Ô ngày Excel (cellDates) thành Date 00:00 GIỜ MÁY → toISOString() lùi về UTC = LỆCH -1 NGÀY.
+  // Phải lấy thành phần ngày local (đã dính thật: file 03/07 lưu thành 02/07 cả 7777 dòng).
+  if (val instanceof Date) {
+    if (Number.isNaN(val.getTime())) return null
+    return `${val.getFullYear()}-${String(val.getMonth() + 1).padStart(2, '0')}-${String(val.getDate()).padStart(2, '0')}`
+  }
   const s = String(val).trim()
   const m = s.match(/^(\d{1,2})[/\-](\d{1,2})[/\-](\d{4})$/)
   if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`

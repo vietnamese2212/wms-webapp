@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import * as XLSX from 'xlsx'
-import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, CalendarDays, ShieldX, FileSpreadsheet, X, QrCode, CheckCircle2, Boxes, ChevronDown } from 'lucide-react'
+import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, CalendarDays, ShieldX, FileSpreadsheet, X, QrCode, CheckCircle2, Boxes, ChevronDown, Loader2 } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -1187,7 +1187,11 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
       })))
       setResult({ inserted: data.inserted })
     } catch (e: unknown) {
-      const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ?? 'Lỗi import'
+      const resp = (e as { response?: { status?: number; data?: { error?: { message?: string } } } })?.response
+      const msg = resp?.data?.error?.message
+        ?? (resp?.status === 413
+          ? 'File quá lớn — vui lòng tách thành nhiều file nhỏ hơn rồi upload từng file'
+          : 'Lỗi import')
       const dupMatch = msg.match(/Mã đơn đã tồn tại: (.+)/)
       if (dupMatch) {
         const dupCodes = new Set(dupMatch[1].split(',').map((c: string) => c.trim().toUpperCase()))
@@ -1290,6 +1294,7 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
           <Button variant="outline" size="sm" onClick={() => { reset(); onClose() }}>Đóng</Button>
           {!result && rows.length > 0 && errorCount === 0 && (
             <Button size="sm" onClick={handleImport} disabled={importing}>
+              {importing && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}
               {importing ? 'Đang import...' : `Import ${rows.length} đơn`}
             </Button>
           )}
@@ -1703,6 +1708,7 @@ function InboundPlanBulkUploadDialog({ open, date, warehouseId, onClose }: {
           {preview && (
             <Button size="sm" onClick={handleConfirm}
               disabled={bulkCreate.isPending || preview.filter(r => r._valid).length === 0}>
+              {bulkCreate.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}
               {bulkCreate.isPending ? 'Đang lưu...' : `Lưu ${preview.filter(r => r._valid).length} dòng`}
             </Button>
           )}
@@ -1848,6 +1854,7 @@ function UploadPlanLinesDialog({ orderId, warehouseType, existingCodes, onClose 
         <DialogFooter>
           <Button variant="outline" size="sm" onClick={onClose}>Hủy</Button>
           <Button size="sm" onClick={handleSave} disabled={saving || validCount === 0 || !!dupError}>
+            {saving && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}
             {saving ? 'Đang lưu...' : `Lưu ${validCount} dòng`}
           </Button>
         </DialogFooter>

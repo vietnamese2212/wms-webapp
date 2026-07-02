@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { Upload, Download, CheckCircle2, AlertTriangle, Info } from 'lucide-react'
+import { Upload, Download, CheckCircle2, AlertTriangle, Info, Loader2 } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -57,7 +57,8 @@ export function UploadExcelDialog({ title, hint, onClose, onDownloadTemplate, on
               <Download className="h-3.5 w-3.5" />Tải mẫu
             </Button>
             <Button size="sm" disabled={busy} onClick={() => fileRef.current?.click()} className="h-8 text-xs gap-1">
-              <Upload className="h-3.5 w-3.5" />{busy ? 'Đang xử lý…' : 'Chọn file Excel'}
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+              {busy ? 'Đang xử lý…' : 'Chọn file Excel'}
             </Button>
             <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFile} />
           </div>

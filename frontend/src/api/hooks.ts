@@ -2450,7 +2450,7 @@ export function useBulkCreateOrders() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (orders: OrderWriteBody[]) =>
-      apiClient.post('/tms/orders/bulk', { orders }).then(r => r.data.data as { inserted: number }),
+      apiClient.post('/tms/orders/bulk', { orders }, { timeout: 120000 }).then(r => r.data.data as { inserted: number }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-orders'] }),
   })
 }

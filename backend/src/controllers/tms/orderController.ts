@@ -321,13 +321,17 @@ export async function bulkCreateOrders(req: Request, res: Response) {
     if (pastDated.length) return fail(res, `Không thể upload đơn ngày quá khứ: ${pastDated.join(', ')}`, 400)
 
     // Check trùng order_code trong DB → 409 (upload là TẠO MỚI, không cập nhật đơn đã có)
+    // Chunk 300 code/lượt: file vài nghìn dòng mà .in() một phát → URL quá dài, PostgREST từ chối.
     const incomingCodes = inputList.map(o => o.order_code).filter(Boolean) as string[]
     if (incomingCodes.length) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: existing } = await supabase.from('TmsOrder')
-        .select('order_code').in('order_code', incomingCodes)
-      if (existing?.length) {
-        const dupes = (existing as { order_code: string }[]).map(r => r.order_code).join(', ')
+      const codeChunks: string[][] = []
+      for (let i = 0; i < incomingCodes.length; i += 300) codeChunks.push(incomingCodes.slice(i, i + 300))
+      const dupResults = await Promise.all(codeChunks.map(chunk =>
+        supabase.from('TmsOrder').select('order_code').in('order_code', chunk)
+      ))
+      const existing = dupResults.flatMap(r => (r.data ?? []) as { order_code: string }[])
+      if (existing.length) {
+        const dupes = existing.map(r => r.order_code).join(', ')
         return fail(res, `Mã đơn đã tồn tại: ${dupes}`, 409)
       }
     }

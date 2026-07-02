@@ -20,7 +20,9 @@ app.use(cors({
   ],
   credentials: true,
 }))
-app.use(express.json())
+// Limit mặc định 100kb làm upload bulk JSON (KH xuất/nhập hàng nghìn dòng) chết 413.
+// Trần thực tế là 4.5MB của Vercel serverless — 8mb để express không bao giờ chặn trước.
+app.use(express.json({ limit: '8mb' }))
 
 // Warm up: simple HTTP call to Supabase (no TCP pool to initialize)
 app.get('/api/health', async (_req, res) => {

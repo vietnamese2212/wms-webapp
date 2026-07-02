@@ -327,7 +327,9 @@ export async function listOrders(req: Request, res: Response) {
     const transferGdoIds = [...new Set(filtered.filter((o: any) => o.source_type === 'TRANSFER' && o.from_gdo_id).map((o: any) => o.from_gdo_id as string))]
     const codesByGdo = new Map<string, string[]>()
     if (transferGdoIds.length > 0) {
-      const { data: dos } = await supabase.from('OutboundDelivery').select('gdo_id, delivery_code').in('gdo_id', transferGdoIds)
+      // Phân trang (cap ~1000/response) — khoảng ngày rộng nhiều chuyến transfer → DO dễ vượt 1000
+      const dos = await fetchAllRowsParallel(() => supabase.from('OutboundDelivery')
+        .select('id, gdo_id, delivery_code').in('gdo_id', transferGdoIds).order('id'))
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       for (const d of (dos ?? []) as any[]) {
         if (!d.delivery_code) continue
@@ -543,7 +545,9 @@ export async function getOrder(req: Request, res: Response) {
 export async function updateOrder(req: Request, res: Response) {
   try {
     if (!(await guardInboundScope(req, res, req.params.id))) return
-    const { location_id, planned_pallets, planned_cartons, shift_id, import_date, notes, updated_by } = req.body
+    // KHÔNG nhận location_id ở đây — đổi vị trí có route riêng PATCH /:id/location
+    // (gate edit_pallet/force_edit_pallet); nhận ở PATCH chung = quyền `edit` sửa được vị trí ké.
+    const { planned_pallets, planned_cartons, shift_id, import_date, notes, updated_by } = req.body
 
     const { data: existing } = await supabase
       .from('ProductionImport').select('status').eq('id', req.params.id).maybeSingle()
@@ -551,7 +555,6 @@ export async function updateOrder(req: Request, res: Response) {
     if (existing.status !== 'OPEN') return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập đã đóng, không thể sửa')
 
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
-    if (location_id     !== undefined) patch.location_id = location_id
     if (planned_pallets !== undefined) patch.planned_pallets = Number(planned_pallets)
     if (planned_cartons !== undefined) patch.planned_cartons = planned_cartons === null ? null : Number(planned_cartons)
     if (shift_id        !== undefined) patch.shift_id = shift_id
@@ -660,6 +663,24 @@ export async function completeOrder(req: Request, res: Response) {
           await supabase.from('GroupDeliveryOrder')
             .update({ transfer_status: 'DELIVERED', updated_at: nowTs })
             .eq('id', tmsOrder.transfer_gdo_id)
+        }
+        // RE-CHECK sau khi ghi DONE: check-siblings→ghi ở trên không nguyên tử — nếu 1 phiếu anh em
+        // vừa bị bỏ-hoàn-thành ĐÚNG giữa lúc đọc và ghi (uncomplete đọc TmsOrder trước khi DONE được
+        // ghi nên không tự hoàn) → hoàn về PENDING/RECEIVING tại đây. Hai chiều đều hội tụ.
+        const { data: recheck } = await supabase
+          .from('ProductionImport').select('id, status').eq('tms_order_id', existing.tms_order_id)
+        const stillDone = (recheck ?? []).length > 0 && (recheck ?? []).every((s: { status: string }) => s.status === 'COMPLETED')
+        if (!stillDone) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await supabase.from('TmsOrder')
+            .update({ status: 'PENDING', completed_at: null, updated_at: nowTs })
+            .eq('id', existing.tms_order_id).eq('status', 'DONE')
+          if (existing.source_type === 'TRANSFER' && tmsOrder?.transfer_gdo_id) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            await supabase.from('GroupDeliveryOrder')
+              .update({ transfer_status: 'RECEIVING', updated_at: nowTs })
+              .eq('id', tmsOrder.transfer_gdo_id).eq('transfer_status', 'DELIVERED')
+          }
         }
       }
     }

@@ -274,11 +274,17 @@ async function resolveInventoryFilter(req: Request): Promise<ResolvedFilter> {
     })() : Promise.resolve({ data: null, error: null }),
 
     needMatFilter ? (async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let matQ = supabase.from('Material').select('id')
-      if (material_search)            matQ = matQ.or(`material_code.ilike.%${escapeLike(material_search)}%,short_name.ilike.%${escapeLike(material_search)}%`)
-      if (filterMaterialIds.length > 0) matQ = matQ.in('id', filterMaterialIds)
-      return await matQ
+      // Phân trang (cap ~1000/response): material_search khớp rộng có thể >1000 mã → bị cắt
+      // âm thầm = filter "Tên hàng" thiếu mã (dòng tồn của mã bị rớt không hiện).
+      const buildMatQ = () => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let matQ = supabase.from('Material').select('id').order('id')
+        if (material_search)            matQ = matQ.or(`material_code.ilike.%${escapeLike(material_search)}%,short_name.ilike.%${escapeLike(material_search)}%`)
+        if (filterMaterialIds.length > 0) matQ = matQ.in('id', filterMaterialIds)
+        return matQ
+      }
+      try { return { data: await fetchAllRowsParallel(buildMatQ), error: null } }
+      catch (e) { return { data: null, error: { message: (e as Error).message } } }
     })() : Promise.resolve({ data: null, error: null }),
   ])
 

@@ -172,6 +172,14 @@ export async function autoAssign(req: Request, res: Response) {
     if (!layout_id) return fail(res, 'Phiếu chưa gắn layout', 400)
     if ((sheet as { status: string }).status === 'PUBLISHED') return fail(res, 'Phiếu đã phát hành — Hoàn tác trước khi xếp lại', 409)
 
+    // CHIẾM phiếu nguyên tử (CAS trên updated_at): 2 lượt auto-xếp cùng phiếu đồng thời
+    // delete-then-insert chồng nhau → dòng trùng/thiếu. Chỉ lượt CAS thắng được chạy.
+    const { data: claimed } = await supabase.from('WorkAssignmentSheet')
+      .update({ updated_at: now() })
+      .eq('id', id).eq('updated_at', (sheet as { updated_at: string }).updated_at)
+      .select('id')
+    if (!claimed?.length) return fail(res, 'Phiếu đang được người khác thao tác — tải lại rồi thử lại', 409)
+
     // Gộp lưu yêu cầu vào luôn (1 round-trip): nếu body có demands → cập nhật trước khi xếp
     const bodyDemands = (req.body as { demands?: { skill_id: string; required_count: number; note?: string }[] })?.demands
     if (Array.isArray(bodyDemands)) {

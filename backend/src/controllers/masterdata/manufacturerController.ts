@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
+import { fetchAllRowsParallel } from '../../utils/pagination'
 
 function extractCount(arr: unknown): number {
   if (Array.isArray(arr) && arr.length > 0) return (arr[0] as { count: number }).count ?? 0
@@ -27,12 +28,13 @@ export async function listManufacturers(req: Request, res: Response) {
 
 export async function getManufacturer(req: Request, res: Response) {
   try {
-    const [{ data: mfr, error: mErr }, { data: mats, error: matErr }] = await Promise.all([
+    // Materials phân trang (cap ~1000/response) — 1 nhà máy >1000 mã active sẽ bị cắt danh sách
+    const [{ data: mfr, error: mErr }, mats] = await Promise.all([
       supabase.from('Manufacturer').select('*').eq('id', req.params.id).maybeSingle(),
-      supabase.from('Material').select('*').eq('manufacturer_id', req.params.id).eq('is_active', true).order('material_code'),
+      fetchAllRowsParallel(() => supabase.from('Material').select('*')
+        .eq('manufacturer_id', req.params.id).eq('is_active', true).order('material_code').order('id')),
     ])
     if (mErr) throw mErr
-    if (matErr) throw matErr
     if (!mfr) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy nhà máy')
     ok(res, { ...mfr, materials: mats ?? [] })
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }

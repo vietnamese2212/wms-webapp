@@ -153,10 +153,12 @@ async function fetchFull(opts: {
     : { data: [] as { id: string; name: string }[] }
 
   // ── Warehouse access ───────────────────────────────────────────────────────
+  // Phân trang (cap ~1000/response) — NV × kho được gán dễ vượt 1000 khi nhân sự tăng
   const empIds = emps.map(e => e.id)
-  const { data: waRows } = await supabase.from('UserWarehouseAccess')
+  const waRows = await fetchAllRowsParallel(() => supabase.from('UserWarehouseAccess')
     .select('employee_id, warehouse_id')
     .in('employee_id', empIds)
+    .order('employee_id').order('warehouse_id')) as { employee_id: string; warehouse_id: string }[]
 
   const wIds = [...new Set(((waRows ?? []) as { employee_id: string; warehouse_id: string }[]).map(r => r.warehouse_id))]
   const { data: whs } = wIds.length

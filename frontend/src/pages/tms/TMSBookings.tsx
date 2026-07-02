@@ -1240,7 +1240,7 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
                   <span className="text-xs text-slate-500">
                     {rows.length} dòng
                     {errorCount > 0
-                      ? <> · <span className="text-red-600 font-medium">{errorCount} lỗi</span></>
+                      ? <> · <span className="text-red-600 font-medium">{errorCount} lỗi</span> · chỉ hiện dòng lỗi bên dưới</>
                       : <> · <span className="text-green-600 font-medium">Tất cả hợp lệ</span></>}
                   </span>
                 )}
@@ -1256,7 +1256,7 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
                       </tr>
                     </thead>
                     <tbody>
-                      {rows.map((r, i) => (
+                      {rows.map((r, i) => ({ r, i })).filter(x => errorCount === 0 || !x.r.valid).map(({ r, i }) => (
                         <tr key={i} className={r.valid ? '' : 'bg-red-50'}>
                           <td className="px-2 py-0.5 text-slate-400">{i + 1}</td>
                           <td className="px-2 py-0.5 font-mono">{r.order_code || '—'}</td>

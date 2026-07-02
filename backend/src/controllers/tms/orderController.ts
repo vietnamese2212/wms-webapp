@@ -315,10 +315,12 @@ export async function bulkCreateOrders(req: Request, res: Response) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const inputList = orders as any[]
 
-    // Chặn ngày quá khứ (đồng bộ với tạo đơn lẻ — upload không back-date).
-    const today = todayVN()
-    const pastDated = inputList.filter(o => o.date && o.date < today).map(o => o.order_code || o.date)
-    if (pastDated.length) return fail(res, `Không thể upload đơn ngày quá khứ: ${pastDated.join(', ')}`, 400)
+    // Chặn ngày quá khứ với user thường; superadmin được back-date (nhập bù dữ liệu cũ).
+    if (user?.name !== 'Admin') {
+      const today = todayVN()
+      const pastDated = inputList.filter(o => o.date && o.date < today).map(o => o.order_code || o.date)
+      if (pastDated.length) return fail(res, `Không thể upload đơn ngày quá khứ: ${pastDated.join(', ')}`, 400)
+    }
 
     // Check trùng order_code trong DB → 409 (upload là TẠO MỚI, không cập nhật đơn đã có)
     // Chunk 300 code/lượt: file vài nghìn dòng mà .in() một phát → URL quá dài, PostgREST từ chối.

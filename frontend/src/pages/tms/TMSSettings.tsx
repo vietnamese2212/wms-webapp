@@ -654,7 +654,7 @@ export default function TMSSettings() {
         </div>
 
         {/* ── Tab: Loại xe ── */}
-        <TabsContent value="vehicle-types" className="mt-0 flex-1 min-h-0 flex flex-col">
+        <TabsContent value="vehicle-types" className="mt-0 flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">
           <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
             <SearchInput value={vtSearch} onChange={setVtSearch} placeholder="Tìm mã, tên loại xe…" className="flex-1 min-w-[160px]" />
             <FilterBar defs={vtFilterDefs} />
@@ -756,7 +756,7 @@ export default function TMSSettings() {
         </TabsContent>
 
         {/* ── Tab: Khung giờ ── */}
-        <TabsContent value="slot-templates" className="mt-0 flex-1 min-h-0 flex flex-col">
+        <TabsContent value="slot-templates" className="mt-0 flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">
           <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
             <WarehouseSingleSelect warehouses={warehouses as { id: string; code?: string; name: string }[]} value={warehouseId} onChange={setWarehouseId} placeholder="Chọn kho…" triggerClassName="h-8 w-44 shrink-0" />
             <SearchInput value={stSearch} onChange={setStSearch} placeholder="Tìm loại xe, loại hàng…" className="flex-1 min-w-[140px]" />
@@ -888,7 +888,7 @@ export default function TMSSettings() {
         </TabsContent>
 
         {/* ── Tab: ĐVVT / NCC ── */}
-        <TabsContent value="companies" className="mt-0 flex-1 min-h-0 flex flex-col">
+        <TabsContent value="companies" className="mt-0 flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">
           <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
             <SearchInput value={coSearch} onChange={setCoSearch} placeholder="Tìm mã, tên, người LH, SĐT…" className="flex-1 min-w-[160px]" />
             <FilterBar defs={coFilterDefs} />
@@ -993,7 +993,7 @@ export default function TMSSettings() {
         </TabsContent>
 
         {/* ── Tab: Xe ── */}
-        <TabsContent value="vehicles" className="mt-0 flex-1 min-h-0 flex flex-col">
+        <TabsContent value="vehicles" className="mt-0 flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">
           <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
             <SearchInput value={vSearch} onChange={setVSearch} placeholder="Tìm biển số, loại xe, ĐVVT…" className="flex-1 min-w-[160px]" />
             <FilterBar defs={vFilterDefs} />

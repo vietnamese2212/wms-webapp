@@ -613,7 +613,7 @@ export default function WMSSettings() {
         </div>
 
         {/* ── Tab: Kho ── */}
-        <TabsContent value="warehouses" className="mt-0 flex-1 min-h-0 flex flex-col">
+        <TabsContent value="warehouses" className="mt-0 flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">
           <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
             <SearchInput value={whSearch} onChange={setWhSearch} placeholder="Tìm mã, tên, địa chỉ kho…" className="flex-1 min-w-[160px]" />
             <FilterBar defs={whFilterDefs} />
@@ -715,7 +715,7 @@ export default function WMSSettings() {
         </TabsContent>
 
         {/* ── Tab: Loại kho ── */}
-        <TabsContent value="types" className="mt-0 flex-1 min-h-0 flex flex-col">
+        <TabsContent value="types" className="mt-0 flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">
           <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
             <p className="text-xs text-slate-500 flex-1 min-w-[160px] truncate">
               {canManageType ? <>Kéo <GripVertical className="inline h-3 w-3 -mt-0.5" /> để đổi thứ tự (áp cho cây Đăng ký cổng)</> : 'Danh mục loại kho'}
@@ -811,7 +811,7 @@ export default function WMSSettings() {
         </TabsContent>
 
         {/* ── Tab: Khu vực kho ── */}
-        <TabsContent value="zones" className="mt-0 flex-1 min-h-0 flex flex-col">
+        <TabsContent value="zones" className="mt-0 flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">
           <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
             <SingleSelect
               options={zoneAccessWh.map(w => ({ value: w.id, label: w.name, sub: w.code }))}
@@ -915,14 +915,14 @@ export default function WMSSettings() {
         </TabsContent>
 
         {/* ── Tab: Ca nhập ── */}
-        <TabsContent value="shifts" className="mt-0 flex-1 min-h-0 flex flex-col">
+        <TabsContent value="shifts" className="mt-0 flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">
           <MetaTab noun="ca nhập" rows={shifts} loading={loadingShifts} canManage={canManageShift}
             onAdd={() => { setEditShift(null); setShowShiftDlg(true) }}
             onEdit={r => { setEditShift(r); setShowShiftDlg(true) }} />
         </TabsContent>
 
         {/* ── Tab: Tình trạng QA ── */}
-        <TabsContent value="qa" className="mt-0 flex-1 min-h-0 flex flex-col">
+        <TabsContent value="qa" className="mt-0 flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">
           <MetaTab noun="trạng thái QA" rows={qaStatuses} loading={loadingQA} canManage={canManageQA}
             onAdd={() => { setEditQA(null); setShowQADlg(true) }}
             onEdit={r => { setEditQA(r); setShowQADlg(true) }} />

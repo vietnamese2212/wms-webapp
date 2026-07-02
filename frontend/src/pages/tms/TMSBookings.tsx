@@ -152,20 +152,49 @@ function SlotPicker({ warehouseId, date, selectedSlotId, onSelect, cargoType, ve
 
 // ── Combobox biển số: gợi ý từ DS xe ĐVVT nhưng cho gõ biển số lạ ───────────
 // Dùng <datalist> native (popup trình duyệt) — KHÔNG bị overflow-y-auto của DialogContent cắt.
-function PlateCombobox({ value, onChange, plates, listId }: {
+// Combobox biển số chuẩn app (kiểu NppCombobox): gõ tự do + gợi ý từ danh mục xe ĐVVT.
+// Rule BE không chặn biển ngoài danh mục — danh sách chỉ là gợi ý, giá trị lạ vẫn lưu được.
+function PlateCombobox({ value, onChange, plates }: {
   value: string
   onChange: (v: string) => void
   plates: string[]
-  listId: string
 }) {
+  const [open, setOpen] = React.useState(false)
+  const uniq = React.useMemo(() => [...new Set(plates)], [plates])
+  const filtered = React.useMemo(() => {
+    const q = value.toUpperCase()
+    return (q ? uniq.filter(p => p.toUpperCase().includes(q)) : uniq).slice(0, 10)
+  }, [value, uniq])
+  const inList = uniq.includes(value)
   return (
-    <>
-      <Input className="h-8 text-sm mt-1 font-mono" list={listId} placeholder="Chọn hoặc gõ biển số…"
-        value={value} onChange={e => onChange(normalizeLicensePlate(e.target.value))} />
-      <datalist id={listId}>
-        {[...new Set(plates)].map(p => <option key={p} value={p} />)}
-      </datalist>
-    </>
+    <div className="relative">
+      <input
+        value={value}
+        onChange={e => { onChange(normalizeLicensePlate(e.target.value)); setOpen(true) }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 120)}
+        placeholder="Chọn hoặc gõ biển số…"
+        className="flex h-8 w-full rounded-md border border-input bg-background px-3 py-1 text-sm font-mono shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring mt-1"
+      />
+      {open && (filtered.length > 0 || (!!value && !inList)) && (
+        <div className="absolute z-[200] top-full left-0 mt-0.5 w-full bg-white border border-slate-200 rounded-md shadow-lg max-h-48 overflow-auto">
+          {filtered.map(p => (
+            <button
+              key={p}
+              type="button"
+              className={`w-full text-left px-3 py-1.5 text-sm font-mono hover:bg-blue-50 ${p === value ? 'bg-blue-50 text-blue-700 font-medium' : ''}`}
+              onMouseDown={e => e.preventDefault()}
+              onClick={() => { onChange(p); setOpen(false) }}
+            >
+              {p}
+            </button>
+          ))}
+          {!!value && !inList && (
+            <p className="px-3 py-1.5 text-[10px] text-slate-400 border-t">Biển ngoài danh mục xe — vẫn dùng được “{value}”</p>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -275,7 +304,7 @@ function BookSlotDialog({ vslot, order, onClose, allOrders }: {
               {isDriver ? (
                 <Input value={licensePlate} disabled className="h-8 text-sm mt-1 bg-slate-50 font-mono" />
               ) : (
-                <PlateCombobox value={licensePlate} onChange={setLicensePlate} listId="bookslot-plates"
+                <PlateCombobox value={licensePlate} onChange={setLicensePlate}
                   plates={(nccVehicles as TmsVehicle[]).map(v => v.license_plate)} />
               )}
             </div>
@@ -2039,7 +2068,7 @@ function TransportUpdateDialog({ order, onClose }: { order: TransferOrder | null
           <div className="grid grid-cols-2 gap-2">
             <div>
               <Label className="text-xs">Biển số xe <span className="text-red-500">*</span></Label>
-              <PlateCombobox value={licensePlate} onChange={setPlate} listId="transfer-plates"
+              <PlateCombobox value={licensePlate} onChange={setPlate}
                 plates={(dvvtVehicles as TmsVehicle[]).map(v => v.license_plate)} />
             </div>
             <div>

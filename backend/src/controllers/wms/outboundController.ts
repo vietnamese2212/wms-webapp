@@ -2237,6 +2237,10 @@ export async function listLoosePickingItems(req: Request, res: Response) {
       .select('id, group_code, delivery_date, planned_date, status, started_at, dvvt, warehouse_type, warehouse:Warehouse(id,code,name)')
       .neq('status', 'CANCELLED')
 
+    // Cắt theo Loại hàng được phép (đồng bộ listGDOs)
+    const looseCats = scopeCategoriesOf(req)
+    if (looseCats) gdoQ = gdoQ.or(`warehouse_type.is.null,warehouse_type.in.(${looseCats.map(c => `"${c}"`).join(',')})`)
+
     if (scopeWhIds.length > 0) {
       const effective = warehouse_id
         ? scopeWhIds.filter(id => id === warehouse_id)
@@ -2487,7 +2491,12 @@ export async function getScanLog(req: Request, res: Response) {
     effectiveWarehouseIds = warehouse_ids ? String(warehouse_ids) : null
   }
 
-  const { data, error } = await supabase.rpc('get_outbound_scan_log', {
+  // Scope Loại hàng: chọn loại ngoài phạm vi → rỗng; không chọn → cắt theo scope (RPC p_allowed_categories)
+  const scanCats = scopeCategoriesOf(req)
+  if (scanCats && material_category && !scanCats.includes(String(material_category))) {
+    return ok(res, { rows: [], total: 0, page: pageNum, limit: limitNum })
+  }
+  const rpcParams: Record<string, unknown> = {
     p_from_date:         from_date         ? String(from_date)         : null,
     p_to_date:           to_date           ? String(to_date)           : null,
     p_warehouse_ids:     effectiveWarehouseIds,
@@ -2503,7 +2512,14 @@ export async function getScanLog(req: Request, res: Response) {
     p_nmsx:              nmsx              ? String(nmsx)              : null,
     p_limit:  limitNum,
     p_offset: offset,
-  })
+  }
+  if (scanCats) rpcParams.p_allowed_categories = scanCats.join(',')
+  let { data, error } = await supabase.rpc('get_outbound_scan_log', rpcParams)
+  // Fallback trước khi apply migration 20260702_scanlog_category_scope (RPC chưa có param mới)
+  if (error && scanCats && /p_allowed_categories|function|schema cache/i.test(error.message)) {
+    delete rpcParams.p_allowed_categories
+    ;({ data, error } = await supabase.rpc('get_outbound_scan_log', rpcParams))
+  }
 
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
 

@@ -4,6 +4,7 @@ import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { fetchAllRowsParallel } from '../../utils/pagination'
+import { scopeCategoriesOf } from '../../utils/categoryScope'
 
 function buildShortName(description: string, code: string, custom?: string | null) {
   const suffix = code.slice(-3)
@@ -14,6 +15,8 @@ function buildShortName(description: string, code: string, custom?: string | nul
 export async function listMaterials(req: Request, res: Response) {
   try {
     const { active, search, manufacturer_id, storage_category, category } = req.query
+    // Scope Loại hàng: chỉ thấy mã hàng thuộc loại được phân quyền (mã chưa gán loại vẫn hiện)
+    const scopeCats = scopeCategoriesOf(req)
 
     // Rebuild mỗi trang — phân trang vượt cap ~1000 dòng/response của PostgREST.
     // Đã >1000 mã hàng active → không phân trang thì 4+ mã biến mất khỏi mọi list + dropdown chọn mã (Inbound/Outbound/TMS...).

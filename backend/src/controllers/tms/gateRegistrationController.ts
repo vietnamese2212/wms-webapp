@@ -1,6 +1,7 @@
 import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
+import { scopeCategoriesOf } from '../../utils/categoryScope'
 
 function apiErr(res: Response, code: string, message: string, status = 400) {
   return res.status(status).json({ success: false, error: { code, message } })
@@ -44,6 +45,7 @@ export async function listGateRegistrations(req: Request, res: Response) {
   const scopeWhs = req.user?.warehouse_scope !== 'NATIONAL'
     ? (req.user?.warehouse_ids ?? [])
     : []
+  const scopeCats = scopeCategoriesOf(req)
   // Rebuild mỗi trang — phân trang vượt cap ~1000 dòng/response (cổng đông/khoảng ngày rộng → mất bản ghi)
   const buildQuery = () => {
     let q = supabase
@@ -58,6 +60,8 @@ export async function listGateRegistrations(req: Request, res: Response) {
       if (date_to)   q = q.lte('date', date_to)
     }
     if (scopeWhs.length > 0) q = q.in('warehouse_id', scopeWhs)
+    // Cắt theo Loại hàng được phép — đăng ký không khai loại hoặc 'Khác' vẫn hiện
+    if (scopeCats) q = q.or(`warehouse_type.is.null,warehouse_type.eq.Khác,warehouse_type.in.(${scopeCats.map(c => `"${c}"`).join(',')})`)
     if (warehouse_id)   q = q.eq('warehouse_id', warehouse_id)
     if (warehouse_type) q = q.eq('warehouse_type', warehouse_type)
     if (vehicle_type)   q = q.eq('vehicle_type', vehicle_type)
@@ -256,6 +260,11 @@ export async function createGateRegistration(req: Request, res: Response) {
   if (cScope !== null && !cScope.includes(warehouse_id as string)) {
     return apiErr(res, 'FORBIDDEN', 'Ngoài phạm vi kho được giao — không thể tạo đăng ký cổng cho kho này', 403)
   }
+  // Phạm vi Loại hàng ('Khác'/không khai → không chặn)
+  const cCats = scopeCategoriesOf(req)
+  if (cCats && warehouse_type && warehouse_type !== 'Khác' && !cCats.includes(warehouse_type as string)) {
+    return apiErr(res, 'FORBIDDEN', 'Ngoài phạm vi Loại hàng được phép — không thể tạo đăng ký loại kho này', 403)
+  }
 
   const now = new Date().toISOString()
   // Trường DÙNG CHUNG cho cả 1 record lẫn 2 chân kết hợp (cùng xe/biển/kho/Loại kho)
@@ -379,6 +388,9 @@ export async function updateGateRegistration(req: Request, res: Response) {
     if (warehouse_id !== undefined && warehouse_id && !uScope.includes(warehouse_id))
       return apiErr(res, 'FORBIDDEN', 'Không thể chuyển đăng ký sang kho ngoài phạm vi được giao', 403)
   }
+  const uCats = scopeCategoriesOf(req)
+  if (uCats && warehouse_type !== undefined && warehouse_type && warehouse_type !== 'Khác' && !uCats.includes(warehouse_type))
+    return apiErr(res, 'FORBIDDEN', 'Ngoài phạm vi Loại hàng được phép — không thể đổi sang loại kho này', 403)
 
   const patch: Record<string, unknown> = {
     updated_by: userName,

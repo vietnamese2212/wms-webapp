@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
+import { scopeCategoriesOf } from '../../utils/categoryScope'
 
 // location_code = <tiền tố kho>_<khu>_<dãy>_<tầng>. Tiền tố = nmsx_code nếu có, không thì mã kho.
 function buildLocationCode(prefix: string, subCode: string, row: string, shelf: string) {
@@ -31,11 +32,23 @@ export async function listLocations(req: Request, res: Response) {
       .select('*, warehouse:Warehouse(id, code, name), InventoryEntry(count)')
       .order('sub_code').order('row').order('shelf')
 
-    if (warehouse_id) query = query.eq('warehouse_id', String(warehouse_id))
+    // Scope kho: ASSIGNED chỉ thấy vị trí kho được gán — kể cả khi KHÔNG truyền warehouse_id
+    // (vd Check vị trí để "tất cả kho" trước đây lộ toàn bộ vị trí mọi kho)
+    const scope = scopeWhIds(req)
+    if (scope !== null) {
+      const effective = warehouse_id ? scope.filter(id => id === String(warehouse_id)) : scope
+      if (effective.length === 0) return ok(res, [])
+      query = effective.length === 1 ? query.eq('warehouse_id', effective[0]) : query.in('warehouse_id', effective)
+    } else if (warehouse_id) {
+      query = query.eq('warehouse_id', String(warehouse_id))
+    }
     if (sub_code) query = query.eq('sub_code', String(sub_code))
     if (active === 'true') query = query.eq('is_active', true)
     // category filter: match exact OR null (uncategorized locations accept all)
     if (category) query = (query as any).or(`category.eq.${String(category)},category.is.null`)
+    // Scope Loại hàng: không truyền category → vẫn cắt theo allowed_categories (vị trí chưa gán loại vẫn hiện)
+    const scopeCats = scopeCategoriesOf(req)
+    if (scopeCats) query = (query as any).or(`category.is.null,category.in.(${scopeCats.map(c => `"${c}"`).join(',')})`)
 
     const { data, error } = await query
     if (error) throw error
@@ -82,6 +95,8 @@ export async function listSubGroups(req: Request, res: Response) {
   try {
     const { warehouse_id } = req.query
     if (!warehouse_id) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu warehouse_id')
+    const zoneScope = scopeWhIds(req)
+    if (zoneScope !== null && !zoneScope.includes(String(warehouse_id))) return ok(res, [])
 
     const { data, error } = await supabase
       .from('Location')

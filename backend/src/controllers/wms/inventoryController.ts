@@ -5,6 +5,7 @@ import { ok, fail } from '../../utils/response'
 import { randomUUID } from 'crypto'
 import { resolveShelfLife } from '../../utils/shelfLife'
 import { fetchAllRowsParallel } from '../../utils/pagination'
+import { scopeCategoriesOf } from '../../utils/categoryScope'
 
 const ENTRY_SELECT = `
   id, pallet_code, location_id, warehouse_id, material_id, manufacturer_id, nmsx, cycle, machine_code,
@@ -494,8 +495,16 @@ export async function exportInventory(req: Request, res: Response) {
 
 export async function listFacets(req: Request, res: Response) {
   const q = req.query as Record<string, string>
-  const warehouseIds = parseArr(q.warehouse_ids)
-  const categories   = parseArr(q.categories)
+  // Intersect với scope JWT — không tin query param (trước đây truyền tay kho/loại khác vẫn xem được facet)
+  const scopeWh   = req.user?.warehouse_scope !== 'NATIONAL' ? (req.user?.warehouse_ids ?? []) : []
+  const scopeCats = scopeCategoriesOf(req)
+  const reqWh  = parseArr(q.warehouse_ids)
+  const reqCat = parseArr(q.categories)
+  const warehouseIds = scopeWh.length > 0 ? (reqWh.length > 0 ? reqWh.filter(id => scopeWh.includes(id)) : scopeWh) : reqWh
+  const categories   = scopeCats ? (reqCat.length > 0 ? reqCat.filter(c => scopeCats.includes(c)) : scopeCats) : reqCat
+  if ((scopeWh.length > 0 && warehouseIds.length === 0) || (scopeCats && categories.length === 0)) {
+    return ok(res, { cycles: [], machines: [], locations: [], materials: [], nccs: [] })
+  }
 
   // Materials: PHÂN TRANG để trả ĐỦ — >1000 mã (hiện 1788) → cap 1000/response CẮT MẤT ~788 mã khỏi
   // filter "Tên hàng" (facet.materials). Batch song song (fetchAllRowsParallel).
@@ -861,9 +870,17 @@ export async function stocktakeEntries(req: Request, res: Response) {
   const explicitIds = location_ids
     ? String(location_ids).split(',').filter(Boolean)
     : (location_id ? [location_id] : [])
+  const stCats = scopeCategoriesOf(req)
   let resolvedLocationIds: string[]
   if (explicitIds.length) {
-    resolvedLocationIds = explicitIds
+    // KHÔNG tin location_ids từ client — chỉ giữ vị trí thuộc kho + loại trong phạm vi user
+    let vQ = supabase.from('Location').select('id').in('id', explicitIds)
+    if (scopeWhIds.length > 0) vQ = scopeWhIds.length === 1 ? vQ.eq('warehouse_id', scopeWhIds[0]) : vQ.in('warehouse_id', scopeWhIds)
+    if (stCats) vQ = vQ.or(`category.is.null,category.in.(${stCats.map(c => `"${c}"`).join(',')})`)
+    const { data: valid, error: vErr } = await vQ
+    if (vErr) return fail(res, 500, 'DB_ERROR', vErr.message)
+    resolvedLocationIds = ((valid ?? []) as { id: string }[]).map(l => l.id)
+    if (!resolvedLocationIds.length) return ok(res, { stats: { total: 0, checked: 0, unchecked: 0, flagged: 0 }, entries: [] })
   } else {
     let locQuery = supabase.from('Location').select('id').eq('is_active', true)
 
@@ -880,6 +897,7 @@ export async function stocktakeEntries(req: Request, res: Response) {
     }
 
     if (category)     locQuery = locQuery.or(`category.eq.${category},category.is.null`)
+    if (stCats)       locQuery = locQuery.or(`category.is.null,category.in.(${stCats.map(c => `"${c}"`).join(',')})`)
     const { data: locs, error: locErr } = await locQuery
     if (locErr) return fail(res, 500, 'DB_ERROR', locErr.message)
     if (!locs?.length) return ok(res, { stats: { total: 0, checked: 0, unchecked: 0, flagged: 0 }, entries: [] })

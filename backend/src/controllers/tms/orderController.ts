@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { effectiveNoQr } from '../../lib/inventoryMode'
-import { categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
+import { categoryAllowed, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 
 // Ngày hôm nay theo giờ VN (YYYY-MM-DD) — chặn nghiệp vụ ngày quá khứ. So sánh chuỗi ISO date là an toàn.
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -100,6 +100,8 @@ export async function listOrders(req: Request, res: Response) {
         .eq('source_type', 'TRANSFER')
         .order('created_at', { ascending: false })
       if (destination_warehouse_id) q = q.eq('destination_warehouse_id', destination_warehouse_id)
+      const tCats = scopeCategoriesOf(req)
+      if (tCats) q = q.or(`warehouse_type.is.null,warehouse_type.in.(${tCats.map(c => `"${c}"`).join(',')})`)
       const { data, error } = await q
       if (error) return fail(res, error.message)
 
@@ -178,6 +180,11 @@ export async function listOrders(req: Request, res: Response) {
     if (!from) return fail(res, 'date_from là bắt buộc', 400)
     if (!warehouse_id && !userNccId) return fail(res, 'warehouse_id là bắt buộc', 400)
 
+    // Scope kho + Loại hàng: ASSIGNED không xem được kho ngoài phạm vi / loại ngoài allowed_categories
+    const listScope = scopeWhIds(req)
+    if (listScope !== null && warehouse_id && !listScope.includes(warehouse_id)) return ok(res, [])
+    const listCats = scopeCategoriesOf(req)
+
     // Phân trang né cap-1000 của PostgREST: >1000 đơn/ngày/kho sẽ bị mất nếu không page.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const data = await fetchAllPaged(() => {
@@ -191,6 +198,7 @@ export async function listOrders(req: Request, res: Response) {
         .order('created_at')
       if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
       if (userNccId)    q = q.eq('ncc_id', userNccId)
+      if (listCats)     q = q.or(`warehouse_type.is.null,warehouse_type.in.(${listCats.map(c => `"${c}"`).join(',')})`)
       return q
     })
     return ok(res, data)

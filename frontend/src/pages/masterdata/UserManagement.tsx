@@ -273,7 +273,10 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
       phone: phone || undefined,
       department_id: deptId || null,
       job_title_id: jobTitleId || null,
-      allowed_categories: categories,
+      // Dọn giá trị ngoài danh mục hiện hành (taxonomy cũ NVL/Bao bì còn sót trong DB)
+      allowed_categories: categoryOptions.length > 0
+        ? categories.filter(c => categoryOptions.includes(c))
+        : categories,
       warehouse_scope: scope,
       warehouse_ids: scope === 'ASSIGNED' ? warehouseIds : [],
       ncc_id: (isDriverRole || isDispatcherRole) ? (nccId || null) : null,

@@ -19,10 +19,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import {
-  useLocationsReal, useWarehouses, useWarehouseTypes, useWarehouseZones,
+  useLocationsReal, useWarehouses, useWarehouseZones,
   useCreateLocation, useUpdateLocation, useDeleteLocation,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
+import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { rowText, type RowStatusKey } from '@/lib/rowStatus'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -105,7 +106,7 @@ export default function Locations() {
   const [selectedLoc,   setSelectedLoc]   = useState<RealLocation | null>(null)
 
   // Data
-  const { data: whTypes = [] }          = useWarehouseTypes()
+  const { data: whTypes = [] }          = useScopedWhTypes()
   const categoryOptions                  = whTypes.map(t => t.value)
   const { data: formZones = [] }        = useWarehouseZones(form.warehouse_id || undefined)
   const { data: activeWhRaw = [] }      = useWarehouses(true)

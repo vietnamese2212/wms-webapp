@@ -43,7 +43,8 @@ router.delete('/lookup/:id', requirePerm('wms_settings', 'manage_type'), lookup.
 
 // In tem pallet — log truy vết (in mấy lần, ai in)
 router.post('/pallet-prints', requireAnyPerm(['pallet_print', 'generate'], ['pallet_print', 'reprint']), palletPrint.logPrints)
-router.get('/pallet-prints',  requirePerm('pallet_print', 'view'),  palletPrint.listPrints)
+// list dùng cho tab Lịch sử in + Truy cứu + chọn tem In lại — anyOf theo tab
+router.get('/pallet-prints',  requireAnyPerm(['pallet_print', 'view'], ['pallet_print', 'history'], ['pallet_print', 'audit'], ['pallet_print', 'reprint']), palletPrint.listPrints)
 
 // Dồn / Tách pallet
 router.get('/pallet-ops',          requirePerm('pallet_ops', 'view'),    palletOps.listOps)

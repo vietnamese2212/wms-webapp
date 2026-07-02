@@ -21,12 +21,12 @@ import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import {
-  useWarehouses,
   useSheets, useSheet, useUpsertSheet, useAutoAssign, useSetPositions, usePublishSheet, useDeleteSheet,
   useLayouts, useLayout, useCreateLayout, useUpdateLayout, useDeleteLayout, useSetLayoutSkills, useSetLayoutJobTitles, useSkills, useJobTitles,
   useShiftRules, useCreateShiftRule, useDeleteShiftRule,
   type SheetDetail, type LayoutRow,
 } from '@/api/hooks'
+import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { useAuthStore } from '@/stores/authStore'
 import { can, isAdmin, type ModulePermissions } from '@/config/permissions'
 import { formatDate, formatDateTime, formatTimestampDate } from '@/utils/formatters'
@@ -162,7 +162,7 @@ const SHEET_COL_DEFAULTS = SHEET_COLS.map(c => c.w)
 const sheetKey = (status: 'DRAFT' | 'PUBLISHED'): RowStatusKey => status === 'PUBLISHED' ? 'full' : 'pending'
 
 function DailyTab({ canCreate, perms }: { canCreate: boolean; perms: ModulePermissions | null }) {
-  const { data: warehouses = [] } = useWarehouses(true)
+  const { data: warehouses = [] } = useScopedWarehouses(true)
   const whNameById = useMemo(() => new Map((warehouses as { id: string; name: string }[]).map(w => [w.id, w.name])), [warehouses])
   const { assignment: af, setAssignment } = useWmsFilterStore()
   const { search, warehouseId, layoutId, dateFrom } = af
@@ -735,7 +735,7 @@ function ImagePreview({ onClose, ...props }: DocProps & { onClose: () => void })
 
 // ════════ TAB LAYOUT (quản lý mẫu theo Kho) ════════
 function LayoutTab({ canCreate }: { canCreate: boolean }) {
-  const { data: warehouses = [] } = useWarehouses(true)
+  const { data: warehouses = [] } = useScopedWarehouses(true)
   const saved = (() => { try { return JSON.parse(localStorage.getItem(SCOPE_KEY) || '{}') } catch { return {} } })()
   const [wh, setWh] = useState<string>(saved.wh ?? '')
   const { data: layouts = [], isLoading } = useLayouts(wh || undefined, !!wh)

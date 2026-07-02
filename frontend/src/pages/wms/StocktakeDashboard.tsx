@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import {
-  useWarehouses, useWarehouseTypes, useLocationsReal,
+  useWarehouses, useLocationsReal,
   useUnflagEntry, useStocktakeEntries, useInventoryEntry,
   type StocktakeEntryRow,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
+import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import * as XLSX from 'xlsx'
@@ -248,7 +249,7 @@ export default function StocktakeDashboard() {
 
   const unflag = useUnflagEntry()
   const { data: warehouses = [] } = useWarehouses(true)
-  const { data: whTypes    = [] } = useWarehouseTypes()
+  const { data: whTypes    = [] } = useScopedWhTypes()
   const categories = whTypes.map(t => t.value)
   const { data: locations  = [] } = useLocationsReal(
     warehouseId ? { warehouse_id: warehouseId, category: category || undefined } : undefined

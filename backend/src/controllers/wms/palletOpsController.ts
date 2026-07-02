@@ -18,6 +18,18 @@ const ENTRY_WH = (e: { warehouse_id?: string | null; location?: { warehouse_id?:
 const matchWh = (e: Parameters<typeof ENTRY_WH>[0], wh?: string | null): boolean => !wh || ENTRY_WH(e) === wh
 const WH_SELECT = 'warehouse_id, location:Location!location_id(warehouse_id)'
 
+// Gác scope kho theo KHO THẬT của entry (không tin warehouse_id từ body — body chỉ để khử trùng mã)
+function guardEntryWh(req: Request, res: Response, whId: string | null): boolean {
+  if (req.user?.warehouse_scope === 'NATIONAL') return true
+  const scope = req.user?.warehouse_ids ?? []
+  if (scope.length === 0) return true
+  if (!whId || !scope.includes(whId)) {
+    fail(res, 'Ngoài phạm vi kho được giao — không thể thao tác pallet của kho này', 403)
+    return false
+  }
+  return true
+}
+
 // Bản ghi truy vết thao tác
 async function logOp(req: Request, type: string, source_codes: string[], target_codes: string[], detail: unknown, warehouse_id: string | null) {
   const now = new Date().toISOString()
@@ -48,6 +60,7 @@ export async function mergePallets(req: Request, res: Response) {
     if (tMatch.length > 1) return fail(res, `Mã "${target}" có ở nhiều kho — chọn Kho trước khi dồn`)
     const tgt = tMatch[0]
     if (!tgt) return fail(res, `Không tìm thấy pallet đích "${target}" đang tồn ${warehouse_id ? 'trong kho đã chọn' : 'kho'}`, 404)
+    if (!guardEntryWh(req, res, ENTRY_WH(tgt as unknown as Parameters<typeof ENTRY_WH>[0]))) return
     if (tgt.parent_pallet_code) return fail(res, 'Pallet đích đang là pallet con của nhóm khác — chọn pallet đầu nhóm')
 
     const { data: kRows, error: kErr } = await supabase.from('InventoryEntry')
@@ -84,6 +97,9 @@ export async function ungroupPallets(req: Request, res: Response) {
     const { data: bRows } = await supabase.from('InventoryEntry')
       .select(`id, pallet_code, parent_pallet_code, ${WH_SELECT}`).in('pallet_code', codes).not('parent_pallet_code', 'is', null)
     const before = (bRows ?? []).filter((b: any) => matchWh(b, warehouse_id))
+    for (const b of before) {
+      if (!guardEntryWh(req, res, ENTRY_WH(b as unknown as Parameters<typeof ENTRY_WH>[0]))) return
+    }
     const prev = before.map((b: any) => ({ code: b.pallet_code, parent: b.parent_pallet_code }))
     let n = 0
     if (before.length) {
@@ -121,6 +137,7 @@ export async function splitPallet(req: Request, res: Response) {
     if (sMatch.length > 1) return fail(res, `Mã "${src}" có ở nhiều kho — chọn Kho trước khi tách`)
     const source = sMatch[0]
     if (!source) return fail(res, `Không tìm thấy pallet gốc "${src}" đang tồn ${warehouse_id ? 'trong kho đã chọn' : 'kho'}`, 404)
+    if (!guardEntryWh(req, res, ENTRY_WH(source as unknown as Parameters<typeof ENTRY_WH>[0]))) return
 
     const remaining = Number(source.cartons_remaining ?? 0)
     const reserved = Number(source.cartons_reserved ?? 0)

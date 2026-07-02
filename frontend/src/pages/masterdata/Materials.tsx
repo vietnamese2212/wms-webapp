@@ -21,10 +21,11 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { omniMatch } from '@/utils/omniSearch'
 import {
-  useMaterials, useWarehouses, useWarehouseTypes, useTransportCompanies,
+  useMaterials, useWarehouses, useTransportCompanies,
   useCreateMaterial, useUpdateMaterial, useDeleteMaterial, useUploadMaterialsExcel,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
+import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import type { Material, WarehousePalletOverride, SupplierShelfLifeOverride } from '@/types'
@@ -166,7 +167,7 @@ export default function Materials() {
 
   // Data
   const { data: raw = [], isLoading }    = useMaterials(undefined)
-  const { data: warehouseTypes = [] }    = useWarehouseTypes()
+  const { data: warehouseTypes = [] }    = useScopedWhTypes()
   const { data: warehousesRaw = [] }     = useWarehouses(true)
   const { data: allCompanies = [] }      = useTransportCompanies(true)
   const warehouses = warehousesRaw as WhRow[]

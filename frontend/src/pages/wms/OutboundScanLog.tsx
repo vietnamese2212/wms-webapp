@@ -15,10 +15,11 @@ import { useColumnResize } from '@/components/shared/useColumnResize'
 import { QRScanner } from '@/components/shared/QRScanner'
 import type { QRScannerHandle } from '@/components/shared/QRScanner'
 import {
-  useOutboundScanLog, useOutboundScanLogFacets, useWarehouses, useWarehouseTypes, useMaterials,
+  useOutboundScanLog, useOutboundScanLogFacets, useWarehouses, useMaterials,
   fetchScanLogExport,
 } from '@/api/hooks'
 import type { ScanLogParams } from '@/api/hooks'
+import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { useWmsFilterStore, type ScanLogFilters } from '@/stores/wmsFilterStore'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
@@ -137,7 +138,7 @@ export default function OutboundScanLog() {
   const setScanLog = useWmsFilterStore(s => s.setScanLog)
 
   const { data: warehousesData } = useWarehouses()
-  const { data: whTypesData    } = useWarehouseTypes()
+  const { data: whTypesData    } = useScopedWhTypes()
   const warehouses  = (warehousesData as { id: string; name: string; nmsx_code?: string | null }[] | undefined) ?? []
   const categories  = (whTypesData ?? []).map(t => t.value)
 

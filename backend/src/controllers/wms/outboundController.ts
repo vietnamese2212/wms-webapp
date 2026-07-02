@@ -7,6 +7,7 @@ import { effectiveNoQr, markItemsNoQrIfQty } from '../../lib/inventoryMode'
 import { effCartonsPerPallet } from '../../utils/palletCalc'
 import { resolveShelfLife } from '../../utils/shelfLife'
 import { fetchAllRowsParallel } from '../../utils/pagination'
+import { categoryAllowed, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 
 const now = () => new Date().toISOString()
 
@@ -259,6 +260,7 @@ export async function listGDOs(req: Request, res: Response) {
     const scopeWarehouseIds = req.user?.warehouse_scope !== 'NATIONAL'
       ? (req.user?.warehouse_ids ?? [])
       : []
+    const scopeCats = scopeCategoriesOf(req)
 
     // Rebuild query mỗi trang (builder PostgREST dùng 1 lần) — phân trang vượt cap ~1000 dòng/response
     // (kho nhiều chuyến/khoảng ngày rộng → trước đây mất chuyến từ dòng 1001).
@@ -266,6 +268,8 @@ export async function listGDOs(req: Request, res: Response) {
       let q = supabase.from('GroupDeliveryOrder')
         .select('*, warehouse:Warehouse(id,code,name,inventory_mode), forklift_driver:Employee!forklift_driver_id(id,name)')
         .order('delivery_date', { ascending: false })
+      // Cắt theo Loại hàng được phép (chuyến không khai loại vẫn hiện)
+      if (scopeCats) q = q.or(`warehouse_type.is.null,warehouse_type.in.(${scopeCats.map(c => `"${c}"`).join(',')})`)
       if (scopeWarehouseIds.length > 0) {
         const effective = warehouse_id ? scopeWarehouseIds.filter(id => id === warehouse_id) : scopeWarehouseIds
         if (effective.length === 0) return null
@@ -420,6 +424,7 @@ export async function createGDO(req: Request, res: Response) {
     if (!delivery_code?.trim()) return fail(res, 'Số DO là bắt buộc', 400)
     if (!items?.length) return fail(res, 'Phải có ít nhất 1 mặt hàng', 400)
     if (!guardWhCreate(req, res, warehouse_id)) return
+    if (!categoryAllowed(req, warehouse_type)) return fail(res, CATEGORY_FORBIDDEN_MSG, 403)
 
     const dvvtRes = (await buildDvvtResolver())(dvvt)
     if (!dvvtRes.ok) return fail(res, `ĐVVT "${dvvt}" không khớp danh mục — kiểm tra lại mã/tên ĐVVT`, 400)
@@ -606,6 +611,7 @@ export async function updateGDO(req: Request, res: Response) {
 
     if (!(await guardGdoScope(req, res, req.params.id))) return
     if (warehouse_id && !guardWhCreate(req, res, warehouse_id)) return
+    if ('warehouse_type' in req.body && !categoryAllowed(req, warehouse_type)) return fail(res, CATEGORY_FORBIDDEN_MSG, 403)
 
     const { data: gdo } = await supabase.from('GroupDeliveryOrder')
       .select('status').eq('id', req.params.id).single()
@@ -1619,6 +1625,11 @@ export async function getPrepareBoard(req: Request, res: Response) {
     const { data: gdos } = await supabase.from('GroupDeliveryOrder')
       .select('id, warehouse_id, warehouse:Warehouse(inventory_mode)').in('id', gdoIds)
     const warehouseIds = [...new Set((gdos ?? []).map((g: any) => g.warehouse_id).filter(Boolean))] as string[]
+    // Scope kho: board chỉ xem được chuyến thuộc kho được giao
+    const boardScope = req.user?.warehouse_scope !== 'NATIONAL' ? (req.user?.warehouse_ids ?? []) : null
+    if (boardScope && warehouseIds.some(id => !boardScope.includes(id))) {
+      return fail(res, 'Ngoài phạm vi kho được giao — không thể xem board chuẩn bị của kho này', 403)
+    }
     // Ngoại lệ Thùng/Pallet theo kho — chỉ áp khi board gom đúng 1 kho (trường hợp thường);
     // gom nhiều kho khác override → fallback định mức chung (hiếm).
     const prepareWarehouseId = warehouseIds.length === 1 ? warehouseIds[0] : null

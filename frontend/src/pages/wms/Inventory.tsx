@@ -17,12 +17,13 @@ import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import {
   useInventoryEntries, useInventoryFacets, useWarehouses, useQAStatuses, useAdjustInventory, useUploadInventoryExcel,
   useAdjustmentLog,
-  useLocationsReal, useMaterials, useWarehouseTypes,
+  useLocationsReal, useMaterials,
   useBulkUpdateInventoryQA, useBulkTransferLocation, useBulkTransferMaterial,
   useBulkUpdateProductionDate, useBulkUpdateInventoryNcc, useTransportCompanies,
   useInventorySummary, type InventorySummaryGroup, fetchInventoryExport,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
+import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { can } from '@/config/permissions'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
@@ -645,7 +646,7 @@ export default function Inventory() {
 
   const { data: warehouses   = [] } = useWarehouses(true)
   const { data: qaStatuses   = [] } = useQAStatuses()
-  const { data: whTypes      = [] } = useWarehouseTypes()
+  const { data: whTypes      = [] } = useScopedWhTypes()
   const { data: allCompaniesF = [] } = useTransportCompanies(true)
   const nccFilterOpts = (allCompaniesF as { id: string; name: string; type?: string }[]).filter(c => c.type === 'NCC').map(c => ({ value: c.id, label: c.name }))
   const categories = whTypes.map(t => t.value)

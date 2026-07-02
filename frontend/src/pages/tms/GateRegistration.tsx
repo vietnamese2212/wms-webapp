@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from '@/api/client'
 import { useWarehouses, useWarehouseTypes, useVehicleTypesByWarehouse } from '@/api/hooks'
+import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { useAuthStore } from '@/stores/authStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -529,14 +530,15 @@ export default function GateRegistration() {
   })
 
   const { data: warehouses = [] } = useWarehouses(true)
-  const { data: whTypes = [] } = useWarehouseTypes()
+  const { data: allWhTypes = [] } = useWarehouseTypes()   // đủ loại — chỉ dùng sắp thứ tự hiển thị
+  const { data: whTypes = [] } = useScopedWhTypes()       // option filter + form theo scope user
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const renderList = useMemo(() => {
-    const wtOrder = new Map<string, number>((whTypes as { value: string }[]).map((t, i) => [t.value, i]))
+    const wtOrder = new Map<string, number>((allWhTypes as { value: string }[]).map((t, i) => [t.value, i]))
     const vtOrder = new Map<string, number>((vehicleTypes as { name: string }[]).map((t, i) => [t.name, i]))
     return buildRenderList(warehouses as { id: string; name: string }[], wtOrder, vtOrder)
-  }, [displayRegs, collapsed, warehouses, whTypes, vehicleTypes])
+  }, [displayRegs, collapsed, warehouses, allWhTypes, vehicleTypes])
 
   // Lọc loại xe theo kho + loại kho — warehouse_type dùng thẳng; 'Khác' = không filter
   const _gateCargoType = (form.warehouse_type && form.warehouse_type !== 'Khác') ? form.warehouse_type : undefined

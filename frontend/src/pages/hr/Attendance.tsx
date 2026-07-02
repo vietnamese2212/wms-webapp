@@ -12,10 +12,11 @@ import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import {
-  useWarehouses, useDepartments, useJobTitles, useEmployeeRecords,
+  useDepartments, useJobTitles, useEmployeeRecords,
   useAttendance, useUpsertAttendance, useDeleteAttendance, type AttendanceRow,
   useLeaves,
 } from '@/api/hooks'
+import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { formatDate } from '@/utils/formatters'
@@ -333,7 +334,7 @@ type MatrixRow = { id: string; name: string; code: string; job: string | null; b
 
 function TeamSection({ perms }: { perms: ModulePermissions | null }) {
   const canEdit = can(perms, 'attendance', 'edit')
-  const { data: warehouses = [] } = useWarehouses(true)
+  const { data: warehouses = [] } = useScopedWarehouses(true)
   const { data: departments = [] } = useDepartments()
   const { data: jobTitles = [] } = useJobTitles()
   const { data: employees = [] } = useEmployeeRecords()

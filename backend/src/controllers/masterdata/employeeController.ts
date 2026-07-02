@@ -245,6 +245,15 @@ export async function createEmployee(req: Request, res: Response) {
     const tempPassword = generateTempPassword()
     const hashedPw = await bcrypt.hash(tempPassword, 10)
 
+    // Default loại hàng = toàn bộ danh mục hiện hành (LookupValue warehouse_type),
+    // KHÔNG hardcode taxonomy cũ (NVL/Bao bì đã bỏ)
+    let defaultCategories = allowed_categories
+    if (defaultCategories === undefined) {
+      const { data: whTypes } = await supabase.from('LookupValue')
+        .select('value').eq('type', 'warehouse_type').order('sort_order')
+      defaultCategories = ((whTypes ?? []) as { value: string }[]).map(t => t.value)
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const now = new Date().toISOString()
     const actor = req.user?.name || null
@@ -253,7 +262,7 @@ export async function createEmployee(req: Request, res: Response) {
       email: email || null, phone: phone || null,
       department_id: department_id || null,
       job_title_id:  job_title_id  || null,
-      allowed_categories: allowed_categories ?? ['Thành phẩm', 'NVL', 'POSM', 'Bao bì'],
+      allowed_categories: defaultCategories,
       warehouse_scope: warehouse_scope ?? 'ASSIGNED',
       ncc_id: ncc_id || null,
       is_driver: is_driver ?? false,

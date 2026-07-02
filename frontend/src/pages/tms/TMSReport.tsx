@@ -8,7 +8,8 @@ import { SummaryBand } from '@/components/shared/SummaryBand'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { rowText, type RowStatusKey } from '@/lib/rowStatus'
-import { useWarehouses, useInboundReport, useUpdatePlanLine, type InboundReportRow } from '@/api/hooks'
+import { useInboundReport, useUpdatePlanLine, type InboundReportRow } from '@/api/hooks'
+import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { formatDate } from '@/utils/formatters'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
@@ -51,7 +52,7 @@ export default function TMSReport() {
   const { inboundReport, setInboundReport } = useWmsFilterStore()
   const { dateFrom, dateTo, warehouseId, selCategories } = inboundReport
 
-  const { data: warehouses = [] } = useWarehouses(true)
+  const { data: warehouses = [] } = useScopedWarehouses(true)
   const { data: rows = [], isLoading } = useInboundReport(
     dateFrom && dateTo
       ? { date_from: dateFrom, date_to: dateTo, ...(warehouseId ? { warehouse_id: warehouseId } : {}) }

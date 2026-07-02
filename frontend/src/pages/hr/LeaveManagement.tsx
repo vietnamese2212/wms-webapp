@@ -9,10 +9,11 @@ import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/share
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { SavedViews } from '@/components/shared/SavedViews'
 import {
-  useWarehouses, useDepartments, useEmployeeRecords, useJobTitles,
+  useDepartments, useEmployeeRecords, useJobTitles,
   useLeaves, useCreateLeave, useDecideLeave, useDeleteLeave,
   type LeaveRow,
 } from '@/api/hooks'
+import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { useAuthStore } from '@/stores/authStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
@@ -42,7 +43,7 @@ export function LeaveSection() {
   const canApprove = can(perms, 'leave', 'approve')
   const canDelete  = can(perms, 'leave', 'delete')
 
-  const { data: warehouses = [] } = useWarehouses(true)
+  const { data: warehouses = [] } = useScopedWarehouses(true)
   const { data: departments = [] } = useDepartments()
   const { data: jobTitles = [] } = useJobTitles()
 

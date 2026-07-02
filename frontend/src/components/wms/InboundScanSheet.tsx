@@ -350,8 +350,9 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
           <div className="relative">
             <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} />
 
-            {/* "Quét tiếp": shown on error */}
-            {pendingQR && validation?.ok === false && (
+            {/* "Quét tiếp": hiện ở MỌI lỗi — cả lỗi validate client lẫn lỗi API khi Lưu
+                (vd "Pallet đã được quét") — để quét pallet khác ngay, không phải Huỷ ra vào lại */}
+            {((pendingQR && validation?.ok === false) || feedback?.type === 'error') && (
               <button
                 className="absolute left-1/2 top-[8%] -translate-x-1/2 -translate-y-1/2 z-10
                            bg-white/90 hover:bg-white text-slate-700 border border-slate-300

@@ -18,10 +18,11 @@ import { Label }               from '@/components/ui/label'
 import {
   useInboundOrders, useCreateInboundOrder,
   useWarehouses, useMaterials, useLocationsReal, useImportShifts,
-  useEmployeeRecords, useWarehouseTypes, useWarehouseZones,
+  useEmployeeRecords, useWarehouseZones,
   useActiveGateRegistrations, useInboundPlanLines,
   useUpdateInboundOrder, useCancelInboundOrder, useTransportCompanies,
 } from '@/api/hooks'
+import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
@@ -220,7 +221,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
   const { data: zones     = [] } = useWarehouseZones(warehouseId || undefined)
   const allLocs = locations as LocationWithCapacity[]
 
-  const { data: allWhTypes = [] } = useWarehouseTypes()
+  const { data: allWhTypes = [] } = useScopedWhTypes()
   const loaiKhoOpts = allWhTypes.map(t => t.value)
   const selectedZone = zones.find(z => z.name === subType)
   // Khuyến nghị vị trí (sau khi chọn Mã hàng): CHỈ vị trí còn chỗ + đang để dở đúng loại
@@ -1187,7 +1188,7 @@ export default function Inbound() {
 
   const { data: shifts     = [] } = useImportShifts()
   const { data: warehouses = [] } = useWarehouses(true)
-  const { data: whTypes = [] } = useWarehouseTypes()
+  const { data: whTypes = [] } = useScopedWhTypes()
   const categories = whTypes.map(t => t.value)
 
   // Compute allowed warehouses + categories from user's scope

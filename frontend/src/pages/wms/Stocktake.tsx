@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { QRScanner } from '@/components/shared/QRScanner'
-import { useWarehouses, useLocationsReal, useWarehouseTypes } from '@/api/hooks'
+import { useWarehouses, useLocationsReal } from '@/api/hooks'
+import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { useAuthStore } from '@/stores/authStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -77,7 +78,7 @@ export default function Stocktake() {
   }, [locationId])
 
   const { data: warehouses = [] } = useWarehouses(true)
-  const { data: whTypes    = [] } = useWarehouseTypes()
+  const { data: whTypes    = [] } = useScopedWhTypes()
   const categories = whTypes.map(t => t.value)
   const { data: locations  = [] } = useLocationsReal(
     warehouseId ? { warehouse_id: warehouseId, category: category || undefined } : undefined
@@ -259,10 +260,15 @@ export default function Stocktake() {
               </div>
             )}
 
-            {/* Error */}
+            {/* Error — cho quét tiếp ngay, không phải mở lại camera thủ công */}
             {resultState.mode === 'error' && (
-              <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2">
+              <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 flex items-center justify-between gap-2">
                 <p className="text-xs text-red-700">{resultState.message}</p>
+                <Button type="button" size="sm" variant="outline"
+                  className="h-7 px-2.5 text-xs shrink-0 border-red-300 text-red-700 hover:bg-red-100"
+                  onClick={() => { setResultState({ mode: 'none' }); setInputVal(''); setScannerOpen(true) }}>
+                  Quét tiếp
+                </Button>
               </div>
             )}
 

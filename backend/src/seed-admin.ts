@@ -58,7 +58,7 @@ async function run() {
     const { error } = await supabase.from('Employee').update({
       password:           hash,
       warehouse_scope:    'NATIONAL',
-      allowed_categories: ['Thành phẩm', 'NVL', 'POSM', 'Bao bì'],
+      allowed_categories: ['Thành phẩm', 'POSM', 'Raw', 'Giấy', 'Thùng'],
       is_active:          true,
       updated_at:         now,
     }).eq('id', found.id)
@@ -74,7 +74,7 @@ async function run() {
       email:              ADMIN_EMAIL,
       password:           hash,
       warehouse_scope:    'NATIONAL',
-      allowed_categories: ['Thành phẩm', 'NVL', 'POSM', 'Bao bì'],
+      allowed_categories: ['Thành phẩm', 'POSM', 'Raw', 'Giấy', 'Thùng'],
       is_active:          true,
       created_at:         now,
       updated_at:         now,

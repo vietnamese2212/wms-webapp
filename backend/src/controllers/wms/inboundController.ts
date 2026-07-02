@@ -7,6 +7,7 @@ import { emitInboundChanged } from '../../lib/events'
 import { effectiveNoQr } from '../../lib/inventoryMode'
 import { effCartonsPerPallet } from '../../utils/palletCalc'
 import { fetchAllRowsParallel } from '../../utils/pagination'
+import { categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 
 // Kho QTY → ép no-QR hiệu lực cho phiếu (mutate material.no_qr_tracking theo inventory_mode của kho)
 function applyInboundMode(
@@ -358,6 +359,7 @@ export async function createOrder(req: Request, res: Response) {
     if (!warehouse_id) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu warehouse_id')
     if (!material_id)  return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu material_id')
     if (!guardWhCreate(req, res, warehouse_id)) return
+    if (!categoryAllowed(req, warehouse_type)) return fail(res, 403, 'FORBIDDEN', CATEGORY_FORBIDDEN_MSG)
     const resolvedSourceType = source_type === 'NCC' ? 'NCC' : source_type === 'TRANSFER' ? 'TRANSFER' : 'FACTORY'
     // Nhập NCC bắt buộc chọn NCC (để áp HSD ngoại lệ); SX/chuyển kho tùy chọn
     if (resolvedSourceType === 'NCC' && !ncc_id) return fail(res, 400, 'VALIDATION_ERROR', 'Nhập NCC phải chọn Nhà cung cấp')

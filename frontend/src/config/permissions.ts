@@ -221,8 +221,10 @@ export const MODULES = {
     page: 'In tem pallet',
     actions: {
       view:    'Xem trang',
-      generate:'Sinh tem mới (in)',
-      reprint: 'In lại (tồn kho / lịch sử)',
+      generate:'Tab Sinh tem mới (in)',
+      reprint: 'Tab In lại từ tồn kho + nút In lại trong Lịch sử',
+      history: 'Tab Lịch sử in (xem)',
+      audit:   'Tab Truy cứu (lịch sử in theo pallet)',
     },
   },
   pallet_ops: {

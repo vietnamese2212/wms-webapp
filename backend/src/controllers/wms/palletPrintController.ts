@@ -1,6 +1,7 @@
 import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
+import { categoryAllowed, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 
 function ok(res: Response, data: unknown) {
   return res.json({ success: true, data })
@@ -33,6 +34,14 @@ export async function logPrints(req: Request, res: Response) {
     const isAdmin = req.user?.name === 'Admin'
     if (!isAdmin && !req.user?.module_permissions?.['pallet_print']?.includes(action)) {
       return fail(res, printMode === 'REPRINT' ? 'Bạn không có quyền in lại' : 'Bạn không có quyền sinh tem mới', 403)
+    }
+    // Scope kho + Loại hàng: không in tem cho kho/loại ngoài phạm vi
+    const scopeWh = req.user?.warehouse_scope !== 'NATIONAL' ? (req.user?.warehouse_ids ?? []) : null
+    for (const l of labels) {
+      if (scopeWh && l.warehouse_id && !scopeWh.includes(l.warehouse_id)) {
+        return fail(res, 'Ngoài phạm vi kho được giao — không thể in tem cho kho này', 403)
+      }
+      if (!categoryAllowed(req, l.category)) return fail(res, CATEGORY_FORBIDDEN_MSG, 403)
     }
     const batchId = randomUUID()
     const now = new Date().toISOString()
@@ -75,12 +84,18 @@ export async function listPrints(req: Request, res: Response) {
     const { qr_code, qr_codes, search, categories, cycles, machines, nmsx, material_codes, date_from, date_to, limit } = req.query as Record<string, string | undefined>
     const csv = (s?: string) => (s ? s.split(',').map(x => x.trim()).filter(Boolean) : [])
 
+    // Scope theo user: kho được giao + Loại hàng được phép (dòng cũ chưa gắn kho/loại vẫn hiện)
+    const scopeWh = req.user?.warehouse_scope !== 'NATIONAL' ? (req.user?.warehouse_ids ?? []) : null
+    const scopeCats = scopeCategoriesOf(req)
+
     // Lọc dùng chung; tạo query MỚI mỗi trang (PostgREST cap ~1000 dòng/response → phải phân trang)
     const applyFilters = () => {
       let q = supabase
         .from('PalletLabelPrint')
         .select('id, batch_id, qr_code, material_code, category, cycle, machine, seq, nmsx, qty, mode, printed_by_name, created_at')
         .order('created_at', { ascending: false })
+      if (scopeWh) q = q.or(`warehouse_id.is.null,warehouse_id.in.(${scopeWh.join(',')})`)
+      if (scopeCats) q = q.or(`category.is.null,category.in.(${scopeCats.map(c => `"${c}"`).join(',')})`)
       if (qr_code) q = q.eq('qr_code', qr_code)
       if (search)  q = q.ilike('qr_code', `%${search}%`)
       const codes = csv(qr_codes)

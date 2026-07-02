@@ -14,7 +14,8 @@ import { Button } from '@/components/ui/button'
 import { Input }  from '@/components/ui/input'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { useGDOs, useUploadGDOExcel, useWarehouses, useWarehouseTypes, useCreateGDO, useUpdateGDO, useMaterials, useGDO, useAssignGDO, useVehicleTypes, useVehicleTypesByWarehouse, useTransportCompanies } from '@/api/hooks'
+import { useGDOs, useUploadGDOExcel, useWarehouses, useCreateGDO, useUpdateGDO, useMaterials, useGDO, useAssignGDO, useVehicleTypes, useVehicleTypesByWarehouse, useTransportCompanies } from '@/api/hooks'
+import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
@@ -1119,7 +1120,7 @@ function GDOFormBody({
     ? new Set(formUser.warehouse_ids)
     : null
   const { data: warehouses = [] } = useWarehouses(true)
-  const { data: whTypesInForm = [] } = useWarehouseTypes()
+  const { data: whTypesInForm = [] } = useScopedWhTypes()
   const { data: allVehicleTypes = [] } = useVehicleTypes()
   const { data: vtByWarehouse = [] } = useVehicleTypesByWarehouse(warehouseId || null, warehouseType || undefined)
   const { data: allMatsData = [] } = useMaterials()

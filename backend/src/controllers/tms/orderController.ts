@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { effectiveNoQr } from '../../lib/inventoryMode'
+import { categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 
 // Ngày hôm nay theo giờ VN (YYYY-MM-DD) — chặn nghiệp vụ ngày quá khứ. So sánh chuỗi ISO date là an toàn.
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -210,6 +211,7 @@ export async function createOrder(req: Request, res: Response) {
     if (!ncc_id)     return fail(res, 'ĐVVT là bắt buộc', 400)
     if (date < todayVN()) return fail(res, 'Không thể tạo đơn cho ngày quá khứ', 400)
     if (!guardWhCreate(req, res, warehouse_id)) return
+    if (!categoryAllowed(req, warehouse_type)) return fail(res, CATEGORY_FORBIDDEN_MSG, 403)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const user = req.user
@@ -389,6 +391,7 @@ export async function updateOrder(req: Request, res: Response) {
     // Scope-write: lệnh phải thuộc kho trong phạm vi; nếu chuyển sang kho mới thì kho đó cũng phải trong phạm vi.
     if (!(await guardOrderScope(req, res, id))) return
     if (warehouse_id !== undefined && !guardWhCreate(req, res, warehouse_id)) return
+    if (warehouse_type !== undefined && !categoryAllowed(req, warehouse_type)) return fail(res, CATEGORY_FORBIDDEN_MSG, 403)
 
     // ĐỔI NGÀY chỉ cho đơn PENDING (mirror bulkUpdateOrderDate): đơn đã BOOKED/ARRIVED có TmsVehicleSlot
     // gắn DeliverySlot theo ngày cũ — đổi TmsOrder.date ở đây KHÔNG recount slot → booked_count lệch (xe ma).

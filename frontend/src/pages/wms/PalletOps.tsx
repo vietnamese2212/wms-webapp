@@ -14,8 +14,9 @@ import { useColumnResize } from '@/components/shared/useColumnResize'
 import { PalletPrintArea, PALLET_PRINT_CSS, qrToLabel, type LabelData } from '@/components/shared/palletLabel'
 import {
   useInventoryEntries, useMergePallets, useUngroupPallets, useSplitPallet, useLogPalletPrints,
-  usePalletOps, useUndoPalletOp, useMaterials, useWarehouses, useWarehouseTypes, useLocationsReal, type PalletOpRow,
+  usePalletOps, useUndoPalletOp, useMaterials, useWarehouses, useLocationsReal, type PalletOpRow,
 } from '@/api/hooks'
+import { useScopedWhTypes } from '@/hooks/useUserScope'
 import type { Material } from '@/types'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -46,7 +47,7 @@ export default function PalletOps() {
 
   // ── Kho + Loại kho (chọn trước — scope thao tác vào đúng kho, mỗi kho 1 tem unique) ──
   const { data: warehouses = [] } = useWarehouses(true)
-  const { data: whTypes = [] } = useWarehouseTypes()
+  const { data: whTypes = [] } = useScopedWhTypes()
   const categoryOpts = (whTypes as { value: string }[]).map(t => t.value)
   const allowedWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length ? new Set(user.warehouse_ids) : null
   const whOptions = (warehouses as any[]).filter(w => !allowedWhIds || allowedWhIds.has(w.id))

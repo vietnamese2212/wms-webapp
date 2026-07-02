@@ -4,8 +4,9 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import {
-  useJobTitles, useWarehouses, useEmployeeRecords, useSetJobTitleParent,
+  useJobTitles, useEmployeeRecords, useSetJobTitleParent,
 } from '@/api/hooks'
+import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import type { JobTitle, EmployeeRecord } from '@/types'
@@ -35,7 +36,7 @@ export default function OrgChart() {
   const canEdit = can(perms, 'user_admin', 'manage_roles')
 
   const { data: jobTitles = [], isLoading } = useJobTitles()
-  const { data: warehouses = [] } = useWarehouses(true)
+  const { data: warehouses = [] } = useScopedWarehouses(true)
   const [wh, setWh] = useState('')
   const { data: emps = [] } = useEmployeeRecords()
   const setParent = useSetJobTitleParent()

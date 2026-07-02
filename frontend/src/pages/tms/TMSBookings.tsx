@@ -17,9 +17,10 @@ import type { MSOpt } from '@/components/shared/MultiSelectFilter'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { rowText, statusText, type RowStatusKey } from '@/lib/rowStatus'
 import { useAuthStore } from '@/stores/authStore'
+import { useScopedWhTypes, useScopedWarehouses } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import {
-  useWarehouses, useWarehouseTypes, useVehicleTypes, useVehicleTypesByWarehouse, useTransportCompanies, useTmsVehicles,
+  useWarehouses, useVehicleTypes, useVehicleTypesByWarehouse, useTransportCompanies, useTmsVehicles,
   useDeliverySlots, useGenerateSlots,
   useTmsOrders, useCreateOrder, useUpdateOrder, useDeleteOrder, useBulkCreateOrders, useBulkUpdateOrderDate,
   useAddVehicleSlot, useUpdateVehicleSlot, useReleaseVehicleSlot, useRevokeVehicleSlot, useDeleteVehicleSlot,
@@ -564,8 +565,8 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
   defaultDate: string; defaultWarehouseId: string
   nppSuggestions: string[]
 }) {
-  const { data: warehouses = [] }          = useWarehouses(true)
-  const { data: whTypesData = [] }         = useWarehouseTypes()
+  const { data: warehouses = [] }          = useScopedWarehouses(true)
+  const { data: whTypesData = [] }         = useScopedWhTypes()
   const { data: vehicleTypes = [] }        = useVehicleTypes(true)
   const { data: transportCompanies = [] }  = useTransportCompanies(true)
   const createOrder  = useCreateOrder()
@@ -1501,7 +1502,7 @@ function InboundPlanBulkUploadDialog({ open, date, warehouseId, onClose }: {
   const { data: transportCompanies = [] } = useTransportCompanies(true)
   const { data: materials = [] }          = useMaterials()
   const { data: warehouses = [] }         = useWarehouses(true)
-  const { data: whTypesData = [] }        = useWarehouseTypes()
+  const { data: whTypesData = [] }        = useScopedWhTypes()
   const { data: vehicleTypes = [] }       = useVehicleTypes(true)
   const bulkCreate = useBulkCreatePlanLines()
 
@@ -3188,9 +3189,9 @@ export default function TMSBookings() {
   const [changeDateOpen, setChangeDateOpen] = useState(false)
   const [pendingRelease, setPendingRelease] = useState<{ type: 'release' | 'revoke' | 'delete'; id: string; vslot?: TmsVehicleSlot; label: string } | null>(null)
 
-  const { data: warehouses = [] }             = useWarehouses(true)
+  const { data: warehouses = [] }             = useScopedWarehouses(true)
   const { data: slotsList = [] }              = useDeliverySlots(warehouseId ? { date: dateFrom, warehouse_id: warehouseId } : undefined)
-  const { data: whTypesMain = [] }            = useWarehouseTypes()
+  const { data: whTypesMain = [] }            = useScopedWhTypes()
   const { data: vehicleTypesMain = [] }       = useVehicleTypes(true)
   const { data: transportCompaniesMain = [] } = useTransportCompanies(true)
   const { data: orders = [], isLoading }      = useTmsOrders(

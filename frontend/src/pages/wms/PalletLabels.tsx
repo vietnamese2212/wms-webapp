@@ -14,10 +14,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { isNccCategory } from '@/utils/cargoCategory'
 import {
-  useWarehouses, useWarehouseTypes, useMaterials, useInventoryEntries, useInventoryFacets,
+  useWarehouses, useMaterials, useInventoryEntries, useInventoryFacets,
   useLogPalletPrints, usePalletPrints, useTransportCompanies, type PalletPrintRow,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
+import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { effCartonsPerPallet } from '@/utils/palletCalc'
@@ -179,11 +180,17 @@ function MatPicker({ value, label, category, onPick }: {
 export default function PalletLabels() {
   const user  = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
-  const canGenerate = can(perms, 'pallet_print', 'generate')   // sinh tem mới
-  const canReprint  = can(perms, 'pallet_print', 'reprint')    // in lại (tồn kho / lịch sử)
+  const canGenerate = can(perms, 'pallet_print', 'generate')   // tab Sinh tem mới
+  const canReprint  = can(perms, 'pallet_print', 'reprint')    // tab In lại từ tồn kho (+ nút In lại trong Lịch sử)
+  const canAudit    = can(perms, 'pallet_print', 'audit')      // tab Truy cứu
+  const canHistory  = can(perms, 'pallet_print', 'history')    // tab Lịch sử in
   const logPrints = useLogPalletPrints()
 
-  const [tab, setTab] = useState<'generate' | 'reprint' | 'audit' | 'history'>('generate')
+  type LabelTab = 'generate' | 'reprint' | 'audit' | 'history'
+  // Mỗi tab 1 quyền riêng — mở tab đầu tiên user có quyền
+  const tabAllowed: Record<LabelTab, boolean> = { generate: canGenerate, history: canHistory, reprint: canReprint, audit: canAudit }
+  const firstTab = (['generate', 'history', 'reprint', 'audit'] as LabelTab[]).find(t => tabAllowed[t]) ?? 'generate'
+  const [tab, setTab] = useState<LabelTab>(firstTab)
   const [scanFor, setScanFor] = useState<null | 'reprint' | 'audit'>(null)
   function handleScanned(code: string) {
     const c = code.trim()
@@ -197,7 +204,7 @@ export default function PalletLabels() {
   }, [])
 
   const { data: warehouses = [] } = useWarehouses(true)
-  const { data: whTypes = [] } = useWarehouseTypes()
+  const { data: whTypes = [] } = useScopedWhTypes()
   const categoryOpts = (whTypes as { value: string }[]).map(t => t.value)
   const allowedWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
     ? new Set(user.warehouse_ids) : null
@@ -645,14 +652,14 @@ export default function PalletLabels() {
             <QrCode className="h-4 w-4 text-slate-500" /> In tem pallet
           </span>
           <div className="flex rounded-lg border border-slate-200 overflow-x-auto text-xs font-medium max-w-full [&>button]:shrink-0 [&>button]:whitespace-nowrap">
-            <button onClick={() => setTab('generate')}
-              className={`px-3 py-1 transition-colors ${tab === 'generate' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>Sinh tem mới</button>
-            <button onClick={() => setTab('history')}
-              className={`px-3 py-1 border-l border-slate-200 transition-colors inline-flex items-center gap-1 ${tab === 'history' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}><Printer className="h-3 w-3" />Lịch sử in</button>
-            <button onClick={() => setTab('reprint')}
-              className={`px-3 py-1 border-l border-slate-200 transition-colors ${tab === 'reprint' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>In lại từ tồn kho</button>
-            <button onClick={() => setTab('audit')}
-              className={`px-3 py-1 border-l border-slate-200 transition-colors inline-flex items-center gap-1 ${tab === 'audit' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}><History className="h-3 w-3" />Truy cứu</button>
+            {canGenerate && <button onClick={() => setTab('generate')}
+              className={`px-3 py-1 transition-colors ${tab === 'generate' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>Sinh tem mới</button>}
+            {canHistory && <button onClick={() => setTab('history')}
+              className={`px-3 py-1 border-l border-slate-200 transition-colors inline-flex items-center gap-1 ${tab === 'history' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}><Printer className="h-3 w-3" />Lịch sử in</button>}
+            {canReprint && <button onClick={() => setTab('reprint')}
+              className={`px-3 py-1 border-l border-slate-200 transition-colors ${tab === 'reprint' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>In lại từ tồn kho</button>}
+            {canAudit && <button onClick={() => setTab('audit')}
+              className={`px-3 py-1 border-l border-slate-200 transition-colors inline-flex items-center gap-1 ${tab === 'audit' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}><History className="h-3 w-3" />Truy cứu</button>}
           </div>
           <div className="flex-1" />
           {tabDefs && <FilterSheetButton defs={tabDefs} className="sm:hidden" />}

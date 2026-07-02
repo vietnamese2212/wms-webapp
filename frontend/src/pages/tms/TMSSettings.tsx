@@ -16,12 +16,12 @@ import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { toast } from '@/components/ui/use-toast'
 import {
-  useWarehouses, useWarehouseTypes,
   useVehicleTypes, useCreateVehicleType, useUpdateVehicleType, useReorderVehicleTypes, useDeleteVehicleType,
   useSlotTemplates, useUpdateSlotTemplate, useDeleteSlotTemplate, useBatchSlotTemplates, useSlotApplyInfo, useDeleteSlotTemplateCluster,
   useTransportCompanies, useCreateTransportCompany, useUpdateTransportCompany, useDeleteTransportCompany,
   useTmsVehicles, useCreateTmsVehicle, useUpdateTmsVehicle, useDeleteTmsVehicle,
 } from '@/api/hooks'
+import { useScopedWarehouses, useScopedWhTypes } from '@/hooks/useUserScope'
 import { can, canAccess, type ModulePermissions } from '@/config/permissions'
 import { useAuthStore } from '@/stores/authStore'
 import type { TmsVehicleType, SlotTemplate, TransportCompany, TmsVehicle } from '@/types'
@@ -489,12 +489,13 @@ export default function TMSSettings() {
     : showCompaniesTab ? 'companies'
     : 'vehicles'
 
-  // Warehouse selector — context cho tab Khung giờ
-  const { data: warehouses = [] } = useWarehouses(true)
+  // Warehouse selector — context cho tab Khung giờ. Scope theo phân quyền Kho + Loại kho
+  // của user (rule: chỉ thấy/cài khung giờ trong phạm vi được phân).
+  const { data: warehouses = [] } = useScopedWarehouses(true)
   const [warehouseId, setWarehouseId] = useState('')
 
-  // Cargo options từ LookupValue(warehouse_type)
-  const { data: whTypes = [] } = useWarehouseTypes()
+  // Cargo options từ LookupValue(warehouse_type) — cắt theo allowed_categories
+  const { data: whTypes = [] } = useScopedWhTypes()
   const cargoOptions = whTypes.map(t => t.value)
 
   // VehicleType

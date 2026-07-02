@@ -2,6 +2,32 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
+import { scopeCategoriesOf } from '../../utils/categoryScope'
+
+// Scope Kho: NATIONAL → null (toàn quyền); ASSIGNED → danh sách kho được gán.
+function scopeWhIds(req: Request): string[] | null {
+  return req.user?.warehouse_scope === 'NATIONAL' ? null : (req.user?.warehouse_ids ?? [])
+}
+// Gác write theo kho — false = đã gửi 403.
+function guardWh(req: Request, res: Response, whId: string | null | undefined): boolean {
+  const scope = scopeWhIds(req)
+  if (scope === null) return true
+  if (!whId || !scope.includes(whId)) {
+    fail(res, 'Ngoài phạm vi kho được giao — không thể cài khung giờ cho kho này', 403)
+    return false
+  }
+  return true
+}
+// Gác write theo Loại hàng: user bị giới hạn loại KHÔNG được đặt/sửa khung 'ALL' (bao trùm loại ngoài phạm vi).
+function guardCargo(req: Request, res: Response, cargoType: string | null | undefined): boolean {
+  const cats = scopeCategoriesOf(req)
+  if (!cats) return true
+  if (!cargoType || cargoType === 'ALL' || !cats.includes(cargoType)) {
+    fail(res, 'Ngoài phạm vi Loại hàng được phép — không thể cài khung giờ cho loại kho này', 403)
+    return false
+  }
+  return true
+}
 
 // Ngày hôm nay theo giờ VN (YYYY-MM-DD) — mốc "ngày ≥ hôm nay" cho reapply/apply-info.
 function vnToday(): string {
@@ -65,12 +91,17 @@ export async function listSlotTemplates(req: Request, res: Response) {
   try {
     const { warehouse_id, vehicle_type_id } = req.query as Record<string, string>
     if (!warehouse_id) return fail(res, 'warehouse_id là bắt buộc', 400)
+    // Scope: kho ngoài phạm vi → rỗng; loại hàng cắt theo allowed_categories (khung 'ALL' vẫn hiện)
+    const listScope = scopeWhIds(req)
+    if (listScope !== null && !listScope.includes(warehouse_id)) return ok(res, [])
+    const listCats = scopeCategoriesOf(req)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let q = supabase.from('SlotTemplate')
       .select('*, vehicle_type:VehicleType(id, code, name)')
       .eq('warehouse_id', warehouse_id)
       .order('vehicle_type_id').order('day_of_week').order('time_from')
     if (vehicle_type_id) q = q.eq('vehicle_type_id', vehicle_type_id)
+    if (listCats) q = q.in('cargo_type', [...listCats, 'ALL'])
     const { data, error } = await q
     if (error) return fail(res, error.message)
     return ok(res, data ?? [])
@@ -85,6 +116,7 @@ export async function createSlotTemplate(req: Request, res: Response) {
     }
     if (!warehouse_id || !vehicle_type_id || !days_of_week?.length || !time_from || !time_to || !max_vehicles)
       return fail(res, 'Thiếu thông tin bắt buộc', 400)
+    if (!guardWh(req, res, warehouse_id) || !guardCargo(req, res, cargo_type)) return
     const now = new Date().toISOString()
     const actor = req.user?.name || null
     const rows = days_of_week.map(dow => ({
@@ -108,6 +140,12 @@ export async function updateSlotTemplate(req: Request, res: Response) {
       time_from?: string; time_to?: string; max_vehicles?: number
       cargo_type?: string; is_active?: boolean
     }
+    // Scope: khung phải thuộc kho + loại trong phạm vi; đổi cargo_type cũng phải trong phạm vi
+    const { data: cur } = await supabase.from('SlotTemplate')
+      .select('warehouse_id, cargo_type').eq('id', id).maybeSingle()
+    if (!cur) return fail(res, 'Không tìm thấy khung giờ', 404)
+    if (!guardWh(req, res, cur.warehouse_id)) return
+    if (scopeCategoriesOf(req) && !guardCargo(req, res, cargo_type !== undefined ? cargo_type : cur.cargo_type)) return
     const updates: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: req.user?.name || null }
     if (time_from    !== undefined) updates.time_from    = time_from
     if (time_to      !== undefined) updates.time_to      = time_to
@@ -129,8 +167,10 @@ export async function deleteSlotTemplate(req: Request, res: Response) {
     const { id } = req.params
     // Lấy kho + loại xe trước khi xóa (để reapply)
     const { data: tmpl, error: fErr } = await supabase.from('SlotTemplate')
-      .select('id, warehouse_id, vehicle_type_id').eq('id', id).single()
+      .select('id, warehouse_id, vehicle_type_id, cargo_type').eq('id', id).single()
     if (fErr || !tmpl) return fail(res, fErr?.message || 'Không tìm thấy khung giờ', 404)
+    if (!guardWh(req, res, tmpl.warehouse_id)) return
+    if (scopeCategoriesOf(req) && !guardCargo(req, res, tmpl.cargo_type)) return
     const now = new Date().toISOString()
     // Tắt trước để reapply không sinh lại khung giờ này
     const { error: offErr } = await supabase.from('SlotTemplate')
@@ -159,6 +199,7 @@ export async function batchUpsertSlotTemplates(req: Request, res: Response) {
     }
     if (!warehouse_id || !vehicle_type_id || !days_of_week?.length || !time_slots?.length)
       return fail(res, 'Thiếu thông tin bắt buộc (kho, loại xe, thứ, khung giờ)', 400)
+    if (!guardWh(req, res, warehouse_id) || !guardCargo(req, res, cargo_type)) return
 
     const hhmm = (s: string) => (s || '').slice(0, 5)
     const seen = new Set<string>()
@@ -241,6 +282,7 @@ export async function deleteSlotTemplateCluster(req: Request, res: Response) {
   try {
     const { warehouse_id, vehicle_type_id, cargo_type = 'ALL' } = req.query as Record<string, string>
     if (!warehouse_id || !vehicle_type_id) return fail(res, 'warehouse_id và vehicle_type_id là bắt buộc', 400)
+    if (!guardWh(req, res, warehouse_id) || !guardCargo(req, res, cargo_type)) return
 
     const { data: rows, error: exErr } = await supabase.from('SlotTemplate')
       .select('id')
@@ -277,6 +319,7 @@ export async function getSlotApplyInfo(req: Request, res: Response) {
   try {
     const { warehouse_id, vehicle_type_id } = req.query as Record<string, string>
     if (!warehouse_id || !vehicle_type_id) return fail(res, 'warehouse_id và vehicle_type_id là bắt buộc', 400)
+    if (!guardWh(req, res, warehouse_id)) return
     const today = vnToday()
     const { data: slots, error } = await supabase.from('DeliverySlot')
       .select('date, booked_count')

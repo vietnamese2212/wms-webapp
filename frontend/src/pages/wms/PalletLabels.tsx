@@ -156,6 +156,7 @@ function MatPicker({ value, label, category, onPick }: {
         className="h-8 text-sm"
         placeholder={category ? `Mã / tên hàng (${category})…` : 'Tìm mã / tên hàng…'}
         value={open ? q : (value ? `${value} — ${label}` : q)}
+        title={!open && value ? `${value} — ${label}` : undefined}
         onChange={e => { setQ(e.target.value); setOpen(true); onPick(null) }}
         onFocus={() => { setQ(''); setOpen(true) }}
         onBlur={() => setTimeout(() => setOpen(false), 150)}
@@ -165,10 +166,13 @@ function MatPicker({ value, label, category, onPick }: {
           {(mats as Material[]).slice(0, 50).map(m => (
             <button key={m.id} type="button"
               onMouseDown={() => { onPick(m); setOpen(false) }}
-              className="flex w-full items-center gap-2 border-b border-slate-50 px-2.5 py-1.5 text-left last:border-0 hover:bg-blue-50">
-              <span className="font-mono text-xs font-semibold shrink-0">{m.material_code}</span>
-              <span className="text-[11px] text-slate-500 truncate">{m.short_name ?? m.material_description}</span>
-              {m.category && <span className="ml-auto shrink-0 text-[9px] text-slate-400">{m.category}</span>}
+              className="w-full border-b border-slate-50 px-2.5 py-1.5 text-left last:border-0 hover:bg-blue-50">
+              {/* Panel hẹp (288px) — tên dài xuống dòng hiển thị ĐỦ, không truncate */}
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-xs font-semibold">{m.material_code}</span>
+                {m.category && <span className="ml-auto shrink-0 text-[9px] text-slate-400">{m.category}</span>}
+              </div>
+              <p className="text-[11px] leading-snug text-slate-500 break-words">{m.short_name ?? m.material_description}</p>
             </button>
           ))}
         </div>
@@ -727,7 +731,12 @@ export default function PalletLabels() {
               <div className="space-y-1">
                 <Label className="text-xs">Mã hàng <span className="text-red-500">*</span></Label>
                 <MatPicker value={mat?.material_code ?? ''} label={mat?.short_name ?? mat?.material_description ?? ''} category={genCat} onPick={setMat} />
-                {mat && <p className="text-[10px] text-slate-400">Loại: {mat.category ?? '—'} · Thùng/pallet: {mat.cartons_per_pallet ?? '—'}</p>}
+                {mat && (
+                  <p className="text-[10px] text-slate-400 break-words">
+                    <span className="text-slate-600">{mat.short_name ?? mat.material_description}</span>
+                    {' · '}Loại: {mat.category ?? '—'} · Thùng/pallet: {mat.cartons_per_pallet ?? '—'}
+                  </p>
+                )}
               </div>
               {genIsNcc ? (
                 /* Hàng NCC: Chu kỳ + NCC mỗi ô 1 hàng full-width → dropdown NCC (rộng) không tràn cột hẹp gây xê dịch panel */

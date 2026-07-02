@@ -1295,7 +1295,8 @@ export async function uploadExcel(req: Request, res: Response) {
     const [warehousesRes, materialsRes, whTypesRes, existingRes] = await Promise.all([
       supabase.from('Warehouse').select('id, code, name').eq('is_active', true),
       supabase.from('Material').select('id, material_code'),
-      supabase.from('LookupValue').select('value').eq('type', 'warehouse_type').eq('is_active', true),
+      // LookupValue KHÔNG có cột is_active — lọc theo nó làm query lỗi → validWhTypes rỗng → chặn oan mọi file
+      supabase.from('LookupValue').select('value').eq('type', 'warehouse_type'),
       supabase.from('GroupDeliveryOrder')
         .select('id, group_code, status, assigned_at, assigned_by')
         .in('group_code', allGroupCodes),

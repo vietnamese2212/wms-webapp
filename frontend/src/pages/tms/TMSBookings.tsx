@@ -1150,6 +1150,10 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
           else if (!ORDER_CODE_RE.test(orderCode)) errors.push(`mã đơn "${orderCode}" sai định dạng (vd: BV_X_260610_1)`)
           else if (seenCodes.has(orderCode.toUpperCase())) errors.push(`mã đơn "${orderCode}" bị trùng trong file`)
           else seenCodes.add(orderCode.toUpperCase())
+          // Trần DB: Tấn = numeric(10,3). Vượt → Postgres "numeric field overflow" — chặn từ preview cho rõ dòng.
+          const tonsNum = norm.planned_tons ? Number(norm.planned_tons) : null
+          if (tonsNum != null && Math.abs(tonsNum) > 9999999.999)
+            errors.push(`Tấn "${norm.planned_tons}" quá lớn (tối đa 9,999,999.999)`)
 
           return {
             date, warehouse_id: whId, warehouse_name: whName,
@@ -1158,7 +1162,7 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
             ncc_code: nccCode, ncc_id: nccId, order_code: orderCode,
             planned_boxes: norm.planned_boxes ? Number(norm.planned_boxes) : null,
             planned_pallets: norm.planned_pallets ? Number(norm.planned_pallets) : null,
-            planned_tons: norm.planned_tons ? Number(norm.planned_tons) : null,
+            planned_tons: tonsNum,
             gdo_refs: String(norm.gdo_refs ?? ''), notes: String(norm.notes ?? ''),
             priority: parsePriority(norm.priority),
             valid: errors.length === 0, error: errors.join(', '),

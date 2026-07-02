@@ -557,7 +557,8 @@ export default function OutboundItemDetail() {
                 Tồn kho{inventoryData.length > 0 ? ` (${inventoryData.length})` : ''}
               </button>
               {isNoQr ? (
-                can(perms, 'outbound', 'complete') && <Button size="sm" variant="outline" className="h-7 text-xs" disabled={isPaused || !gdo.started_at}
+                /* "Lưu thủ công" = ghi nhận xuất no-QR — capability QUÉT (khớp BE requirePerm outbound.scan) */
+                can(perms, 'outbound', 'scan') && <Button size="sm" variant="outline" className="h-7 text-xs" disabled={isPaused || !gdo.started_at}
                   onClick={() => { setLoscamCartons(String(isDone ? item.cartons_scanned : item.cartons_ordered)); setShowLoscamDialog(true) }}>
                   {isDone ? 'Sửa SL' : 'Lưu thủ công'}
                 </Button>

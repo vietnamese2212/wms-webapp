@@ -786,6 +786,20 @@ export async function patchGDO(req: Request, res: Response) {
     if (!(await guardGdoScope(req, res, req.params.id))) return
     const { delivery_date, status } = req.body as { delivery_date?: string; status?: string }
 
+    // Bóc tách quyền theo NỘI DUNG thay đổi (route nhận anyOf(edit, complete)):
+    // - status=COMPLETED (nút "Hoàn thành chuyến") → outbound.complete — trước đây đi ké `edit`
+    //   khiến người có edit hoàn thành được chuyến dù không được cấp quyền Hoàn thành.
+    // - Thay đổi khác (đổi ngày giao, PAUSED/IN_PROGRESS) → outbound.edit.
+    if (req.user?.name !== 'Admin') {
+      const p = req.user?.module_permissions ?? {}
+      const wantsComplete = status === 'COMPLETED'
+      const changesOther = delivery_date !== undefined || (status !== undefined && status !== 'COMPLETED')
+      if (wantsComplete && !p['outbound']?.includes('complete'))
+        return fail(res, 'Bạn không có quyền Hoàn thành chuyến', 403)
+      if (changesOther && !p['outbound']?.includes('edit'))
+        return fail(res, 'Bạn không có quyền Sửa đơn', 403)
+    }
+
     // PAUSED: chỉ cho đổi status (ví dụ resume → IN_PROGRESS), không sửa dữ liệu khác
     if (delivery_date) {
       const { data: current } = await supabase.from('GroupDeliveryOrder')

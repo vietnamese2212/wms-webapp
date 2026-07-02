@@ -743,20 +743,24 @@ export default function InboundDetail() {
                     >✓</button>
                     <button className="text-[10px] text-slate-400" onClick={() => setEditingPlannedCartons(false)}>✕</button>
                   </span>
-                ) : (
-                  <span
-                    className={`font-semibold font-mono ${isOpen ? 'cursor-pointer hover:text-blue-600' : ''}`}
-                    onClick={() => {
-                      if (!isOpen) return
-                      setPlannedCartonsInput(order.planned_cartons != null ? String(order.planned_cartons) : '')
-                      setEditingPlannedCartons(true)
-                    }}
-                    title={isOpen ? 'Click để sửa SL dự kiến' : undefined}
-                  >
-                    {order.planned_cartons != null ? `${order.planned_cartons} thùng` : <span className="text-slate-400 font-normal">—</span>}
-                    {isOpen && <Pencil className="inline h-2.5 w-2.5 ml-1 text-slate-400" />}
-                  </span>
-                )}
+                ) : (() => {
+                  // Sửa SL dự kiến = PATCH phiếu → phải có inbound.edit (trước đây chỉ check isOpen — nút trần)
+                  const canEditPlan = isOpen && can(perms, 'inbound', 'edit')
+                  return (
+                    <span
+                      className={`font-semibold font-mono ${canEditPlan ? 'cursor-pointer hover:text-blue-600' : ''}`}
+                      onClick={() => {
+                        if (!canEditPlan) return
+                        setPlannedCartonsInput(order.planned_cartons != null ? String(order.planned_cartons) : '')
+                        setEditingPlannedCartons(true)
+                      }}
+                      title={canEditPlan ? 'Click để sửa SL dự kiến' : undefined}
+                    >
+                      {order.planned_cartons != null ? `${order.planned_cartons} thùng` : <span className="text-slate-400 font-normal">—</span>}
+                      {canEditPlan && <Pencil className="inline h-2.5 w-2.5 ml-1 text-slate-400" />}
+                    </span>
+                  )
+                })()}
               </span>
             )}
 

@@ -253,6 +253,15 @@ export async function undoOp(req: Request, res: Response) {
     if (!op) return fail(res, 'Không tìm thấy thao tác', 404)
     if (op.undone_at) return fail(res, 'Thao tác này đã được hoàn tác trước đó')
 
+    // Hoàn tác = nghịch đảo của thao tác → đòi ĐÚNG quyền của loại op đó (route chỉ chặn
+    // anyOf(merge|ungroup|split) — người chỉ có split không được undo op MERGE của người khác).
+    if (req.user?.name !== 'Admin') {
+      const needAction = op.type === 'MERGE' ? 'merge' : op.type === 'UNGROUP' ? 'ungroup' : op.type === 'SPLIT' ? 'split' : null
+      const p = req.user?.module_permissions ?? {}
+      if (needAction && !p['pallet_ops']?.includes(needAction))
+        return fail(res, `Bạn không có quyền hoàn tác thao tác ${op.type}`, 403)
+    }
+
     const now = new Date().toISOString()
     // CHIẾM NGUYÊN TỬ quyền hoàn tác (chống 2 lượt undo cùng op — double-click / 2 user — chạy song song
     // → SPLIT cộng `total` về nguồn 2 lần = over-restore). Chỉ lượt set được undone_at (đang NULL) mới chạy;

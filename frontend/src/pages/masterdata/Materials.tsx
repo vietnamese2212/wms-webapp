@@ -648,9 +648,11 @@ export default function Materials() {
       {selected.size > 0 && (
         <div className="fixed bottom-20 lg:bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-800 text-white rounded-xl px-4 py-2.5 flex items-center gap-4 shadow-2xl">
           <span className="text-xs text-slate-300">{selected.size} mã đã chọn</span>
-          <button onClick={() => setBulkQrOpen(true)} className="flex items-center gap-1 text-xs text-amber-300 hover:text-amber-200 transition-colors">
-            <QrCode className="h-3.5 w-3.5" />Không theo dõi QR
-          </button>
+          {canEdit && (
+            <button onClick={() => setBulkQrOpen(true)} className="flex items-center gap-1 text-xs text-amber-300 hover:text-amber-200 transition-colors">
+              <QrCode className="h-3.5 w-3.5" />Không theo dõi QR
+            </button>
+          )}
           {canDel && (
             <button onClick={() => setBulkDeleteOpen(true)} className="flex items-center gap-1 text-xs text-red-300 hover:text-red-200 transition-colors">
               <Trash2 className="h-3.5 w-3.5" />Ẩn tất cả

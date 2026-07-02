@@ -19,6 +19,9 @@ export function Shell() {
     // Refresh user permissions from DB on every app load so permission
     // changes made by admin take effect without requiring a re-login.
     refreshUser()
+    // Quyền nhúng trong JWT → tab SPA mở suốt sẽ giữ quyền cũ (kể cả quyền ĐÃ GỠ) vô hạn.
+    // Refresh định kỳ: /me trả token mới → cấp/gỡ quyền có hiệu lực trong ≤5 phút không cần reload.
+    const permSync = setInterval(refreshUser, 5 * 60_000)
 
     // Warm up serverless function + DB connection on app load.
     // Cold start can take 3-5s; this ping fires early so subsequent
@@ -35,6 +38,7 @@ export function Shell() {
 
     // Connect to SSE for real-time sync (no-op if VITE_API_URL is not set)
     connectRealtimeEvents()
+    return () => clearInterval(permSync)
   }, [qc, refreshUser])
 
   return (

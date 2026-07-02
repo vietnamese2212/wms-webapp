@@ -15,7 +15,7 @@ export const ALL_PERMISSIONS: Record<string, string[]> = {
   tms_companies:     ['view', 'create', 'edit', 'delete'],
   tms_vehicles:      ['view', 'create', 'edit', 'delete'],
   gate_registration: ['view', 'create', 'edit', 'delete', 'call', 'entry', 'exit'],
-  inbound_plan:      ['view', 'create', 'edit', 'delete', 'cancel'],
+  inbound_plan:      ['view', 'edit'],   // create/delete/cancel ĐÃ BỎ (mồ côi — đi theo tms_plan.upload_inbound/edit)
   materials:         ['view', 'create', 'edit', 'import', 'delete'],
   pallet_print:      ['view', 'generate', 'reprint'],
   pallet_ops:        ['view', 'merge', 'ungroup', 'split'],

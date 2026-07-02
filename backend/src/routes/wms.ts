@@ -60,13 +60,16 @@ router.delete('/zones/:id',  requirePerm('wms_settings', 'manage_zone'), zone.de
 
 // Inbound plan lines (kế hoạch nhập chuyển kho — sửa trong tab Kế hoạch của TMS Bookings,
 // gate FE bằng tms_plan → BE dùng requireAnyPerm để KH nhập đi cùng quyền tms_plan, tránh 403 giữa chừng khi lưu)
+// Sửa/xóa dòng KH nhập cũng nằm trong flow "Sửa đơn" của TMS Bookings (FE gate tms_plan.edit)
+// → nhận thêm tms_plan.edit, tránh user có quyền Sửa đơn bấm lưu bị 403 giữa chừng.
+// inbound_plan chỉ còn view + edit (create/delete/cancel đã bỏ — mồ côi, không UI nào cấp trải nghiệm dùng).
 router.get('/inbound-plan',         requireAnyPerm(['inbound_plan', 'view'],   ['tms_plan', 'view']),           inboundPlan.listPlanLines)
-router.post('/inbound-plan',        requireAnyPerm(['inbound_plan', 'create'], ['tms_plan', 'upload_inbound']), inboundPlan.createPlanLine)
-router.post('/inbound-plan/bulk',           requireAnyPerm(['inbound_plan', 'create'], ['tms_plan', 'upload_inbound']), inboundPlan.bulkCreatePlanLines)
+router.post('/inbound-plan',        requirePerm('tms_plan', 'upload_inbound'),   inboundPlan.createPlanLine)
+router.post('/inbound-plan/bulk',           requirePerm('tms_plan', 'upload_inbound'), inboundPlan.bulkCreatePlanLines)
 router.post('/inbound-plan/bulk-for-order', requirePerm('tms_plan', 'upload_inbound'),   inboundPlan.bulkCreateForOrder)
-router.patch('/inbound-plan/:id',        requireAnyPerm(['inbound_plan', 'edit'],   ['tms_plan', 'upload_inbound']), inboundPlan.updatePlanLine)
-router.patch('/inbound-plan/:id/cancel', requireAnyPerm(['inbound_plan', 'cancel'], ['tms_plan', 'upload_inbound']), inboundPlan.cancelPlanLine)
-router.delete('/inbound-plan/:id',       requireAnyPerm(['inbound_plan', 'delete'], ['tms_plan', 'upload_inbound']), inboundPlan.deletePlanLine)
+router.patch('/inbound-plan/:id',        requireAnyPerm(['inbound_plan', 'edit'], ['tms_plan', 'upload_inbound'], ['tms_plan', 'edit']), inboundPlan.updatePlanLine)
+router.patch('/inbound-plan/:id/cancel', requireAnyPerm(['tms_plan', 'upload_inbound'], ['tms_plan', 'edit']), inboundPlan.cancelPlanLine)
+router.delete('/inbound-plan/:id',       requireAnyPerm(['tms_plan', 'upload_inbound'], ['tms_plan', 'edit']), inboundPlan.deletePlanLine)
 
 // Inbound orders (phiếu nhập kho)
 router.get('/inbound-orders',                           inbound.listOrders)
@@ -118,7 +121,9 @@ router.get('/outbound/prepare',                               requirePerm('outbo
 router.get('/outbound/inventory-by-material',                 requirePerm('outbound', 'prepare'), outbound.getInventoryByMaterial)
 router.get('/outbound/:id',                                   requireAnyPerm(['outbound', 'view'], ['loosepicking', 'view']), outbound.getGDO)
 router.put('/outbound/:id',                                   requirePerm('outbound', 'edit'), outbound.updateGDO)
-router.patch('/outbound/:id',                                 requirePerm('outbound', 'edit'), outbound.patchGDO)
+// PATCH nhận cả edit lẫn complete — controller kiểm chi tiết: đổi status=COMPLETED cần
+// outbound.complete; các thay đổi khác (ngày giao, pause/resume) cần outbound.edit.
+router.patch('/outbound/:id',                                 requireAnyPerm(['outbound', 'edit'], ['outbound', 'complete']), outbound.patchGDO)
 router.delete('/outbound/:id',                                requirePerm('outbound', 'cancel'), outbound.deleteGDO)
 router.post('/outbound/:id/assign',                           requirePerm('outbound', 'assign'), outbound.assignGDO)
 router.post('/outbound/:id/unassign',                         requirePerm('outbound', 'unassign'), outbound.unassignGDO)

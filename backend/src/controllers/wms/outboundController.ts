@@ -295,18 +295,19 @@ export async function listGDOs(req: Request, res: Response) {
     const gdoIds = (data ?? []).map((g: any) => g.id)
     if (!gdoIds.length) return ok(res, [])
 
-    // Bulk fetch DOs and items for aggregation
-    const { data: dos } = await supabase.from('OutboundDelivery')
+    // Bulk fetch DOs and items for aggregation — PHÂN TRANG (cap ~1000/response): khoảng ngày rộng
+    // → items gộp qua mọi GDO dễ vượt 1000, bị cắt âm thầm = tổng thùng/pallet mỗi GDO tính THIẾU.
+    const dos = await fetchAllRowsParallel(() => supabase.from('OutboundDelivery')
       .select('id, gdo_id, distributor_name, delivery_code')
-      .in('gdo_id', gdoIds)
+      .in('gdo_id', gdoIds).order('id'))
 
     const doIds = (dos ?? []).map((d: any) => d.id)
 
-    const { data: items } = doIds.length
-      ? await supabase.from('OutboundItem')
-          .select('do_id, cartons_ordered, cartons_scanned, pallets_estimated, material_type, export_type, material_code_raw, material_id, material:Material!material_id(no_qr_tracking, short_name)')
-          .in('do_id', doIds)
-      : { data: [] }
+    const items = doIds.length
+      ? await fetchAllRowsParallel(() => supabase.from('OutboundItem')
+          .select('id, do_id, cartons_ordered, cartons_scanned, pallets_estimated, material_type, export_type, material_code_raw, material_id, material:Material!material_id(no_qr_tracking, short_name)')
+          .in('do_id', doIds).order('id'), 1000, 4)
+      : []
 
     // Kho QTY → ép no-QR hiệu lực cho item của các GDO QTY (do_id → gdo → inventory_mode)
     const gdoModeById = new Map<string, string | null>((data ?? []).map((g: any) => [g.id, g.warehouse?.inventory_mode ?? null]))

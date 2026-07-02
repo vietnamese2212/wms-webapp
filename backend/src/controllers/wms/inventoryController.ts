@@ -1095,6 +1095,9 @@ export async function uploadExcel(req: Request, res: Response) {
     const seen = new Set(exEntries.map(e => (e.pallet_code || '').trim().toLowerCase()))
 
     const now = new Date().toISOString()
+    // import_date là timestamp KHÔNG timezone, luồng quét nhập ghi ngày VN thuần (vnDate) —
+    // upload phải cùng convention, ghi ISO UTC sẽ rớt filter biên "đến ngày" + lệch ngày lúc 0h-7h VN.
+    const importDateVN = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
     // ── PHA 1: kiểm TOÀN BỘ. Có lỗi → KHÔNG nhập gì. ──
     const errors: string[] = []
@@ -1114,7 +1117,8 @@ export async function uploadExcel(req: Request, res: Response) {
       if (!pallet)         missing.push('mã pallet')
       if (!mcode)          missing.push('mã hàng')
       if (!whRaw)          missing.push('kho')
-      if (cartons == null) missing.push('số thùng')
+      if (cartons == null)      missing.push('số thùng')
+      else if (cartons <= 0)    missing.push(`số thùng phải > 0 (nhận ${cartons})`)   // chặn tồn âm/0 ngay từ đầu kỳ
       if (!locRaw)         missing.push('vị trí')
       if (!prodIso)        missing.push(prodRaw ? `ngày SX sai định dạng "${prodRaw}"` : 'ngày SX')
       if (missing.length) { errors.push(`${at} — thiếu/sai: ${missing.join(', ')}`); continue }
@@ -1147,7 +1151,7 @@ export async function uploadExcel(req: Request, res: Response) {
         stack_layer: 1, status: 'IN_STOCK', origin: 'IMPORT',
         production_date: `${prodIso}T00:00:00`,
         shelf_life_days: invInt(r.shelf_life_days), ncc_id: nccId, qa_status_id: qaId, nmsx,
-        import_date: now, created_at: now, updated_at: now,
+        import_date: importDateVN, created_at: now, updated_at: now,
       })
     }
 

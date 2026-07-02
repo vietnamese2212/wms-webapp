@@ -1416,23 +1416,37 @@ export async function removeEntry(req: Request, res: Response) {
     if (isNoQrShared) {
       // Pool dùng chung: cho phép trừ kể cả khi entry đã PARTIAL (đã xuất 1 phần),
       // miễn phần còn trống (remaining - reserved) đủ để trừ đóng góp của phiếu.
+      // Trừ NGUYÊN TỬ (CAS trên cartons_remaining + jitter — mirror updateEntry nhánh POSM):
+      // ghi mù từ số đọc đầu hàm sẽ mất cập nhật khi phiếu khác cộng/sửa cùng entry đồng thời.
       const contribution = (order as any).posm_cartons != null
         ? Number((order as any).posm_cartons)
         : Number(entry.cartons_imported) // dữ liệu cũ chưa có posm_cartons → coi như phiếu này là toàn bộ
-      const available = Number(entry.cartons_remaining) - Number(entry.cartons_reserved ?? 0)
-      if (contribution > available)
-        return fail(res, 400, 'INVENTORY_CHANGED', 'Một phần hàng đã xuất hoặc đang được giữ cho đơn xuất — không thể xóa đóng góp của phiếu này')
-      const newImported  = Number(entry.cartons_imported)  - contribution
-      const newRemaining = Number(entry.cartons_remaining) - contribution
-      if (newImported <= 0) {
-        const { error } = await supabase.from('InventoryEntry').delete().eq('id', entryId)
-        if (error) throw error
-      } else {
-        const { error } = await supabase.from('InventoryEntry')
-          .update({ cartons_imported: newImported, cartons_remaining: newRemaining, update_date: vnDate(), updated_at: nowTs })
-          .eq('id', entryId)
-        if (error) throw error
+      let done = false
+      for (let attempt = 0; attempt < 15; attempt++) {
+        const { data: cur } = await supabase.from('InventoryEntry')
+          .select('cartons_imported, cartons_remaining, cartons_reserved').eq('id', entryId).maybeSingle()
+        if (!cur) { done = true; break }   // entry chung đã bị phiếu khác xóa hết → đóng góp cũng không còn
+        const curRem = Number(cur.cartons_remaining)
+        if (contribution > curRem - Number(cur.cartons_reserved ?? 0))
+          return fail(res, 400, 'INVENTORY_CHANGED', 'Một phần hàng đã xuất hoặc đang được giữ cho đơn xuất — không thể xóa đóng góp của phiếu này')
+        const newImported  = Number(cur.cartons_imported) - contribution
+        const newRemaining = curRem - contribution
+        if (newImported <= 0) {
+          // Xóa cũng phải CAS (khớp remaining vừa đọc) — không nuốt phần vừa được phiếu khác cộng thêm
+          const { data: del, error } = await supabase.from('InventoryEntry')
+            .delete().eq('id', entryId).eq('cartons_remaining', curRem).select('id')
+          if (error) throw error
+          if (del?.length) { done = true; break }
+        } else {
+          const { data: upd, error } = await supabase.from('InventoryEntry')
+            .update({ cartons_imported: newImported, cartons_remaining: newRemaining, update_date: vnDate(), updated_at: nowTs })
+            .eq('id', entryId).eq('cartons_remaining', curRem).select('id')
+          if (error) throw error
+          if (upd?.length) { done = true; break }
+        }
+        await new Promise(r => setTimeout(r, 10 + Math.floor(Math.random() * (30 + attempt * 20))))
       }
+      if (!done) return fail(res, 409, 'STOCK_CHANGED', 'Tồn POSM đang bận (nhiều người thao tác) — thử lại')
       await supabase.from('ProductionImport')
         .update({ posm_entry_id: null, posm_cartons: null, updated_at: nowTs })
         .eq('id', order_id)

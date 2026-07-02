@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto'
 import bcrypt from 'bcrypt'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
+import { fetchAllRowsParallel } from '../../utils/pagination'
 
 // ─── Phân quyền: bảo vệ tài khoản Admin + giới hạn phạm vi thấy nhân sự ─────────
 function isSuperadmin(req: Request): boolean {
@@ -122,17 +123,19 @@ async function fetchFull(opts: {
   search?: string
   include_deleted?: boolean
 }) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let q = supabase.from('Employee').select(EMP_BASE).order('name')
-  if (!opts.include_deleted) q = q.is('deleted_at', null)
-  if (opts.ids?.length)      q = q.in('id', opts.ids)
-  if (opts.department_id)    q = q.eq('department_id', opts.department_id)
-  if (opts.is_active !== undefined) q = q.eq('is_active', opts.is_active)
-  if (opts.search)           q = q.or(`name.ilike.%${opts.search}%,employee_code.ilike.%${opts.search}%,email.ilike.%${opts.search}%`)
-
-  const { data, error } = await q
-  if (error) throw new Error(error.message)
-  const emps = (data ?? []) as unknown as EmpRow[]
+  // Phân trang (cap ~1000 dòng/response) — Employee sẽ vượt 1000 khi thêm tài khoản lái xe;
+  // scope lọc SAU fetch (listEmployees) nên bị cắt là mất người khỏi DS âm thầm.
+  const buildQ = () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let q = supabase.from('Employee').select(EMP_BASE).order('name').order('id')
+    if (!opts.include_deleted) q = q.is('deleted_at', null)
+    if (opts.ids?.length)      q = q.in('id', opts.ids)
+    if (opts.department_id)    q = q.eq('department_id', opts.department_id)
+    if (opts.is_active !== undefined) q = q.eq('is_active', opts.is_active)
+    if (opts.search)           q = q.or(`name.ilike.%${opts.search}%,employee_code.ilike.%${opts.search}%,email.ilike.%${opts.search}%`)
+    return q
+  }
+  const emps = await fetchAllRowsParallel(buildQ) as unknown as EmpRow[]
   if (!emps.length) return []
 
   // ── Departments ────────────────────────────────────────────────────────────

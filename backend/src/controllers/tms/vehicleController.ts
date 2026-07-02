@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
+import { fetchAllRowsParallel } from '../../utils/pagination'
 
 // Helper: fetch related ncc + vehicle_type and merge into vehicle rows
 // Avoids PostgREST FK-join syntax which requires schema-cache to know about FKs
@@ -27,29 +28,39 @@ export async function listVehicles(req: Request, res: Response) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const userNccId: string | null = req.user?.ncc_id ?? null
     const { ncc_id, is_active, unassigned, pool_branches } = req.query as Record<string, string>
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let q = supabase.from('Vehicle').select('*').order('license_plate')
-    // ĐVVT user: chỉ được xem xe của mình
-    if (userNccId)               q = q.eq('ncc_id', userNccId)
-    else if (ncc_id && pool_branches === 'true') {
-      // Gom CHI NHÁNH: 1 NCC/ĐVVT có thể có nhiều mã (cùng tên, khác mã) → lấy xe của TẤT CẢ
-      // công ty cùng (type, tên chuẩn hoá) để booking/đăng ký không bị thiếu xe.
+
+    // Gom CHI NHÁNH: 1 NCC/ĐVVT có thể có nhiều mã (cùng tên, khác mã) → lấy xe của TẤT CẢ
+    // công ty cùng (type, tên chuẩn hoá) để booking/đăng ký không bị thiếu xe. (Resolve trước
+    // khi build query — query phải thuần để phân trang được.)
+    let branchIds: string[] | null = null
+    if (!userNccId && ncc_id && pool_branches === 'true') {
       const { data: sel } = await supabase.from('TransportCompany').select('type, name').eq('id', ncc_id).single()
       const norm = (s: unknown) => String(s ?? '').trim().toLowerCase()
-      let ids = [ncc_id]
+      branchIds = [ncc_id]
       if (sel) {
         const { data: sameType } = await supabase.from('TransportCompany').select('id, name').eq('type', (sel as { type: string }).type)
         const group = (sameType ?? []).filter((c: { name: string }) => norm(c.name) === norm((sel as { name: string }).name)).map((c: { id: string }) => c.id)
-        if (group.length) ids = group
+        if (group.length) branchIds = group
       }
-      q = q.in('ncc_id', ids)
     }
-    else if (ncc_id)             q = q.eq('ncc_id', ncc_id)
-    if (is_active !== undefined) q = q.eq('is_active', is_active === 'true')
-    const { data, error } = await q
-    if (error) return fail(res, error.message)
 
-    let vehicles = (data ?? []) as Record<string, unknown>[]
+    // Phân trang (cap ~1000 dòng/response) — đội xe đã ~950, không lọc ncc thì 1 response sẽ cắt mất xe.
+    const buildQ = () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let q = supabase.from('Vehicle').select('*').order('license_plate').order('id')
+      // ĐVVT user: chỉ được xem xe của mình
+      if (userNccId)               q = q.eq('ncc_id', userNccId)
+      else if (branchIds)          q = q.in('ncc_id', branchIds)
+      else if (ncc_id)             q = q.eq('ncc_id', ncc_id)
+      if (is_active !== undefined) q = q.eq('is_active', is_active === 'true')
+      return q
+    }
+    let vehicles: Record<string, unknown>[]
+    try {
+      vehicles = await fetchAllRowsParallel(buildQ) as Record<string, unknown>[]
+    } catch (e) {
+      return fail(res, (e as Error).message)
+    }
 
     // Lọc xe chưa có tài khoản lái xe (kể cả soft-deleted)
     if (unassigned === 'true' && vehicles.length > 0) {

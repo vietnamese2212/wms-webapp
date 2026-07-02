@@ -387,17 +387,6 @@ export async function updateGateRegistration(req: Request, res: Response) {
 
   if (date !== undefined)             patch.date = date
 
-  // Khi đổi ngày → cấp registration_number mới cho ngày đích (tránh duplicate key)
-  if (date !== undefined && before && date !== before.date) {
-    const { data: maxRow } = await supabase
-      .from('gate_registrations')
-      .select('registration_number')
-      .eq('date', date)
-      .order('registration_number', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-    patch.registration_number = ((maxRow as { registration_number: number } | null)?.registration_number ?? 0) + 1
-  }
   if (driver_name !== undefined)      patch.driver_name = driver_name
   if (phone !== undefined)            patch.phone = phone
   if (company_id !== undefined)       patch.company_id = company_id
@@ -413,12 +402,34 @@ export async function updateGateRegistration(req: Request, res: Response) {
   if (seal_number !== undefined)      patch.seal_number = seal_number
   if (notes !== undefined)            patch.notes = notes
 
-  const { data, error } = await supabase
-    .from('gate_registrations')
-    .update(patch)
-    .eq('id', id)
-    .select()
-    .single()
+  // Khi đổi ngày → cấp registration_number mới (max+1) cho ngày đích. Đua với xe khác cùng
+  // tạo/đổi sang ngày đó → unique(date, registration_number) 23505 → đọc lại max+1 + jitter rồi
+  // thử lại (mirror insertGateWithNumber) — không trả DB_ERROR thô bắt user thao tác lại.
+  const renumber = date !== undefined && before && date !== before.date
+  let data: unknown = null
+  let error: { code?: string; message: string } | null = null
+  for (let attempt = 0; attempt < 25; attempt++) {
+    if (renumber) {
+      const { data: maxRow } = await supabase
+        .from('gate_registrations')
+        .select('registration_number')
+        .eq('date', date)
+        .order('registration_number', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      patch.registration_number = ((maxRow as { registration_number: number } | null)?.registration_number ?? 0) + 1
+    }
+    const r = await supabase
+      .from('gate_registrations')
+      .update(patch)
+      .eq('id', id)
+      .select()
+      .single()
+    data = r.data; error = r.error
+    if (!error) break
+    if (!renumber || error.code !== '23505') break
+    await new Promise(rs => setTimeout(rs, 15 + Math.floor(Math.random() * (40 + attempt * 25))))
+  }
 
   if (error) return apiErr(res, 'DB_ERROR', error.message, 500)
 

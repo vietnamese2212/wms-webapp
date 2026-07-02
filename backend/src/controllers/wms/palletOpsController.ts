@@ -310,9 +310,25 @@ export async function undoOp(req: Request, res: Response) {
       const srcRows = await fetchInWh([srcCode], 'cartons_imported, cartons_remaining')
       const src = srcRows[0]
       if (src) {
-        const newRemaining = Number(src.cartons_remaining) + total
-        const status = newRemaining >= Number(src.cartons_imported) ? 'IN_STOCK' : 'PARTIAL'
-        await supabase.from('InventoryEntry').update({ cartons_remaining: newRemaining, status, update_date: vnDate(), updated_at: now }).eq('id', src.id)
+        // Cộng trả tồn gốc NGUYÊN TỬ (CAS + jitter) — pallet gốc có thể đang bị adjust/scan/split
+        // đồng thời; ghi mù từ số đọc cũ sẽ nuốt cập nhật của thao tác kia (undone_at chỉ chặn
+        // double-undo cùng op, KHÔNG chặn đua với thao tác ngoài).
+        let restored = false
+        for (let attempt = 0; attempt < 15; attempt++) {
+          const { data: cur } = await supabase.from('InventoryEntry')
+            .select('cartons_remaining, cartons_imported').eq('id', src.id).maybeSingle()
+          if (!cur) break
+          const curRem = Number(cur.cartons_remaining)
+          const newRemaining = curRem + total
+          const status = newRemaining >= Number(cur.cartons_imported) ? 'IN_STOCK' : 'PARTIAL'
+          const { data: upd } = await supabase.from('InventoryEntry')
+            .update({ cartons_remaining: newRemaining, status, update_date: vnDate(), updated_at: now })
+            .eq('id', src.id).eq('cartons_remaining', curRem).select('id')
+          if (upd?.length) { restored = true; break }
+          await new Promise(r => setTimeout(r, 10 + Math.floor(Math.random() * (30 + attempt * 20))))
+        }
+        if (!restored)
+          return fail(res, `Pallet gốc "${srcCode}" đang bận (nhiều người thao tác) — pallet con đã xóa nhưng CHƯA cộng trả ${total} thùng về gốc, dùng Điều chỉnh tồn để bù`, 409)
       }
     } else {
       await release()

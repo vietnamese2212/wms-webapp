@@ -70,6 +70,9 @@ async function main() {
   const seen = new Set(ex.map(e => (e.pallet_code || '').trim().toLowerCase()))
 
   const now = new Date().toISOString()
+  // import_date là timestamp KHÔNG timezone; luồng quét nhập ghi ngày VN thuần (nửa đêm) —
+  // ghi ISO UTC kèm giờ sẽ rớt filter "Ngày nhập đến X" + lệch ngày lúc 0h-7h VN.
+  const importDateVN = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
   // ── PHA 1: kiểm tra TOÀN BỘ file. Có BẤT KỲ lỗi nào → KHÔNG nhập gì, in hết lỗi để sửa rồi up lại. ──
   const errors = []        // mọi lỗi dữ liệu, gom hết
@@ -123,7 +126,7 @@ async function main() {
       stack_layer: 1, status: 'IN_STOCK', origin: 'IMPORT',
       production_date: `${prodIso}T00:00:00`,
       shelf_life_days: I(r.shelf_life_days), ncc_id: nccId, qa_status_id: qaId, nmsx,
-      import_date: now, created_at: now, updated_at: now,
+      import_date: importDateVN, created_at: now, updated_at: now,
     })
   }
 

@@ -270,6 +270,8 @@ export async function createOrder(req: Request, res: Response) {
       const lastCode = (existing?.[0]?.order_code ?? '') as string
       const lastSeq = parseInt(lastCode.split('_').pop() ?? '0') || 0
       order_code = `${codePrefix}_${lastSeq + 1}`
+      // Jitter phá thundering herd — retry ngay lập tức thì các request đua lại cùng tranh max+1 → 409 oan
+      await new Promise(r => setTimeout(r, 15 + Math.floor(Math.random() * (40 + attempt * 25))))
     }
     if (ordErr) {
       if (ordErr.code === '23505') return fail(res, `Mã đơn "${order_code}" đã tồn tại`, 409)

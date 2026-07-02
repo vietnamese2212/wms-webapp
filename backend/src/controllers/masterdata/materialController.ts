@@ -29,6 +29,7 @@ export async function listMaterials(req: Request, res: Response) {
       if (manufacturer_id) query = query.eq('manufacturer_id', String(manufacturer_id))
       if (storage_category) query = query.eq('storage_category', String(storage_category))
       if (category) query = query.eq('category', String(category))
+      if (scopeCats) query = query.or(`category.is.null,category.in.(${scopeCats.map(c => `"${c}"`).join(',')})`)
       if (search) {
         const s = String(search)
         query = query.or(

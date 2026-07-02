@@ -720,7 +720,7 @@ export async function cancelOrder(req: Request, res: Response) {
     if (!(await guardInboundScope(req, res, req.params.id))) return
     const { data: existing } = await supabase
       .from('ProductionImport')
-      .select('status, source_type, from_gdo_id')
+      .select('status, source_type, from_gdo_id, posm_entry_id')
       .eq('id', req.params.id).maybeSingle()
     if (!existing) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (existing.status === 'COMPLETED') return fail(res, 400, 'ALREADY_COMPLETED', 'Phiếu nhập đã hoàn thành, không thể hủy')
@@ -729,6 +729,15 @@ export async function cancelOrder(req: Request, res: Response) {
       .from('InventoryEntry').select('id', { count: 'exact', head: true }).eq('import_order_id', req.params.id)
     if (entriesCount && entriesCount > 0)
       return fail(res, 400, 'HAS_ENTRIES', 'Phiếu đã có pallet nhập, xóa hết pallet trước khi hủy')
+    // POSM GÓP VÀO pool có sẵn: pool không trỏ import_order_id về phiếu này → check trên không thấy.
+    // Hủy thẳng sẽ để đóng góp nằm lại trong tồn (tồn ảo). Bắt xóa đóng góp (removeEntry — trừ pool
+    // CAS đúng) trước khi hủy. Pool đã bị xóa rồi → cho hủy bình thường.
+    if ((existing as { posm_entry_id?: string | null }).posm_entry_id) {
+      const { data: poolE } = await supabase.from('InventoryEntry')
+        .select('id').eq('id', (existing as { posm_entry_id: string }).posm_entry_id).maybeSingle()
+      if (poolE)
+        return fail(res, 400, 'HAS_ENTRIES', 'Phiếu đã lưu hàng no-QR vào tồn — xóa pallet của phiếu trước khi hủy')
+    }
 
     const nowTs = new Date().toISOString()
     const { error } = await supabase.from('ProductionImport').delete().eq('id', req.params.id)

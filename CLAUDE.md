@@ -161,7 +161,7 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 | `leave` | Nghỉ phép | Chấm công (tab Nghỉ phép) | view, request, approve, delete |
 | `tms_plan` | Vận chuyển: Đặt lịch & Chuyển kho | TMS Bookings (tab Đặt lịch + Chuyển kho) | view, create, edit, delete, add_vehicle, release, change_date, book, revoke, upload_outbound, upload_inbound, **confirm_receipt**=nhận hàng chuyển kho (xác nhận/quét/hoàn thành) |
 | `tms_vehicle_types` | TMS — Loại xe | Cài đặt TMS | view, create, edit, delete (sửa chỉ đổi Tên + trạng thái; Mã khóa cố định) |
-| `tms_slots` | TMS — Khung giờ | Cài đặt TMS | view, manage |
+| `tms_slots` | TMS — Khung giờ | Cài đặt TMS | view, create (gồm "Sửa cả cụm" — endpoint batch), edit (sửa lẻ 1 dòng), delete (xóa lẻ + cả cụm) |
 | `tms_companies` | TMS — ĐVVT / NCC | Cài đặt TMS | view, manage |
 | `tms_vehicles` | TMS — Xe | Cài đặt TMS | view, manage |
 | `gate_registration` | Đăng ký cổng | Đăng ký cổng | view, create, edit, delete, call, entry, exit |

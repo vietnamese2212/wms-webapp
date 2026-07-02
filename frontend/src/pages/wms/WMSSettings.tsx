@@ -5,7 +5,6 @@ import { formatDateTime } from '@/utils/formatters'
 import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
 import { Label }    from '@/components/ui/label'
-import { Card }     from '@/components/ui/card'
 import { Badge }    from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
@@ -394,44 +393,43 @@ function MetaTab({ noun, rows, loading, canManage, onAdd, onEdit }: {
   onAdd: () => void; onEdit: (r: MetaRow) => void
 }) {
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <p className="text-xs text-slate-500">{rows.length} {noun}</p>
+    <>
+      <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2">
+        <p className="text-xs text-slate-500 flex-1">{rows.length} {noun}</p>
         {canManage && (
-          <Button size="sm" className="gap-1.5" onClick={onAdd}>
-            <Plus className="h-4 w-4" /> Thêm {noun}
+          <Button size="sm" className="h-7 text-xs gap-1 shrink-0" onClick={onAdd}>
+            <Plus className="h-3.5 w-3.5" /> Thêm {noun}
           </Button>
         )}
       </div>
-      <Card>
+      <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
         {loading ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> :
           rows.length === 0 ? (
             <div className="p-12 text-center text-slate-400 text-sm">Chưa có {noun} nào</div>
           ) : (
-            <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="px-3 py-2 text-xs">Mã</TableHead>
-                    <TableHead className="px-3 py-2 text-xs">Tên</TableHead>
-                    <TableHead className="px-3 py-2 text-xs">Thứ tự</TableHead>
-                    <TableHead className="px-3 py-2 text-xs">Trạng thái</TableHead>
-                    {canManage && <TableHead className="px-3 py-2 w-12" />}
+                    <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Mã</TableHead>
+                    <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Tên</TableHead>
+                    <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Thứ tự</TableHead>
+                    <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Trạng thái</TableHead>
+                    {canManage && <TableHead className="px-2 py-1.5 w-12" />}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {rows.map(r => (
-                    <TableRow key={r.id} className={`text-sm ${!r.is_active ? 'opacity-50' : ''}`}>
-                      <TableCell className="px-3 py-2 font-mono font-semibold text-[11px] text-slate-600">{r.code}</TableCell>
-                      <TableCell className="px-3 py-2 font-medium text-slate-800">{r.name}</TableCell>
-                      <TableCell className="px-3 py-2 text-slate-500 text-xs tabular-nums">{r.display_order}</TableCell>
-                      <TableCell className="px-3 py-2">
+                    <TableRow key={r.id} className={`${!r.is_active ? 'opacity-50' : ''}`}>
+                      <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-600 whitespace-nowrap">{r.code}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] font-medium text-slate-800 whitespace-nowrap">{r.name}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] text-slate-500 tabular-nums whitespace-nowrap">{r.display_order}</TableCell>
+                      <TableCell className="px-2 py-1 whitespace-nowrap">
                         <Badge variant={r.is_active ? 'default' : 'secondary'} className="text-xs">
                           {r.is_active ? 'Hoạt động' : 'Tạm dừng'}
                         </Badge>
                       </TableCell>
                       {canManage && (
-                        <TableCell className="px-2 py-2">
+                        <TableCell className="px-2 py-1 whitespace-nowrap">
                           <button className="text-slate-400 hover:text-blue-500 p-1 transition-colors" onClick={() => onEdit(r)}>
                             <Pencil className="h-3.5 w-3.5" />
                           </button>
@@ -441,11 +439,10 @@ function MetaTab({ noun, rows, loading, canManage, onAdd, onEdit }: {
                   ))}
                 </TableBody>
               </Table>
-            </div>
           )
         }
-      </Card>
-    </div>
+      </div>
+    </>
   )
 }
 
@@ -593,92 +590,86 @@ export default function WMSSettings() {
   }
 
   return (
-    <div className="h-full overflow-auto sm:p-3">
-     <div className="max-w-5xl mx-auto bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm p-4 space-y-4">
-      <div>
-        <h1 className="text-base font-semibold text-slate-800 flex items-center gap-2">
-          <Settings2 className="h-4 w-4 text-slate-500" />
-          Cài đặt WMS
-        </h1>
-        <p className="text-xs text-slate-400 mt-0.5">Kho, loại kho, khu vực kho — master data dùng chung cho toàn hệ thống</p>
-      </div>
-
+    <div className="flex flex-col h-full sm:p-3">
+     <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
       {!defaultTab ? (
         <div className="p-12 text-center text-slate-400 text-sm">
           Bạn chưa được cấp quyền quản lý mục nào trong Cài đặt WMS.
         </div>
       ) : (
-      <Tabs defaultValue={defaultTab}>
-        <TabsList className="mb-2">
-          {canManageWarehouse && <TabsTrigger value="warehouses" className="gap-1.5"><Warehouse className="h-3.5 w-3.5" /> Kho</TabsTrigger>}
-          {canManageType      && <TabsTrigger value="types"      className="gap-1.5"><Tag      className="h-3.5 w-3.5" /> Loại kho</TabsTrigger>}
-          {canManageZone      && <TabsTrigger value="zones"      className="gap-1.5"><MapPin     className="h-3.5 w-3.5" /> Khu vực kho</TabsTrigger>}
-          {canManageShift     && <TabsTrigger value="shifts"     className="gap-1.5"><Clock      className="h-3.5 w-3.5" /> Ca nhập</TabsTrigger>}
-          {canManageQA        && <TabsTrigger value="qa"         className="gap-1.5"><ShieldCheck className="h-3.5 w-3.5" /> Tình trạng QA</TabsTrigger>}
-        </TabsList>
+      <Tabs defaultValue={defaultTab} className="flex flex-col flex-1 min-h-0">
+        {/* Phần trên gọn 1 hàng (tiêu đề + tab) — bảng chiếm toàn bộ phần còn lại */}
+        <div className="border-b bg-white px-3 py-2 shrink-0 flex items-center gap-2 flex-wrap sm:rounded-t-xl">
+          <span className="text-sm font-semibold text-slate-700 shrink-0 flex items-center gap-1.5">
+            <Settings2 className="h-4 w-4 text-slate-500" /> Cài đặt WMS
+          </span>
+          <TabsList className="h-8 max-w-full overflow-x-auto">
+            {canManageWarehouse && <TabsTrigger value="warehouses" className="gap-1.5 text-xs"><Warehouse className="h-3.5 w-3.5" /> Kho</TabsTrigger>}
+            {canManageType      && <TabsTrigger value="types"      className="gap-1.5 text-xs"><Tag      className="h-3.5 w-3.5" /> Loại kho</TabsTrigger>}
+            {canManageZone      && <TabsTrigger value="zones"      className="gap-1.5 text-xs"><MapPin     className="h-3.5 w-3.5" /> Khu vực</TabsTrigger>}
+            {canManageShift     && <TabsTrigger value="shifts"     className="gap-1.5 text-xs"><Clock      className="h-3.5 w-3.5" /> Ca nhập</TabsTrigger>}
+            {canManageQA        && <TabsTrigger value="qa"         className="gap-1.5 text-xs"><ShieldCheck className="h-3.5 w-3.5" /> QA</TabsTrigger>}
+          </TabsList>
+        </div>
 
         {/* ── Tab: Kho ── */}
-        <TabsContent value="warehouses" className="space-y-3">
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <p className="text-xs text-slate-500">{filteredWh.length}/{(allWh as WhRow[]).length} kho</p>
+        <TabsContent value="warehouses" className="mt-0 flex-1 min-h-0 flex flex-col">
+          <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
+            <SearchInput value={whSearch} onChange={setWhSearch} placeholder="Tìm mã, tên, địa chỉ kho…" className="flex-1 min-w-[160px]" />
+            <FilterBar defs={whFilterDefs} />
             {canManageWarehouse && (
-              <Button size="sm" className="gap-1.5" onClick={() => { setEditingWh(null); setShowWhDlg(true) }}>
-                <Plus className="h-4 w-4" /> Thêm kho
+              <Button size="sm" className="h-7 text-xs gap-1 shrink-0" onClick={() => { setEditingWh(null); setShowWhDlg(true) }}>
+                <Plus className="h-3.5 w-3.5" /> Thêm kho
               </Button>
             )}
           </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <SearchInput value={whSearch} onChange={setWhSearch} placeholder="Tìm mã, tên, địa chỉ kho…" className="flex-1 min-w-[200px]" />
-            <FilterBar defs={whFilterDefs} />
-          </div>
-          <div className="flex gap-3 items-start">
-            <Card className="flex-1 min-w-0">
+          <div className="flex-1 min-h-0 flex">
+            <div className="flex-1 min-w-0 overflow-auto pb-20 lg:pb-4">
               {loadingWh ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> :
                 filteredWh.length === 0 ? (
                   <div className="p-12 text-center text-slate-400 text-sm">Không có kho khớp bộ lọc</div>
                 ) : (
-                <div className="overflow-x-auto">
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead className="px-3 py-2 text-xs">Mã</TableHead>
-                        <TableHead className="px-3 py-2 text-xs">NMSX</TableHead>
-                        <TableHead className="px-3 py-2 text-xs">Ship-to phụ</TableHead>
-                        <TableHead className="px-3 py-2 text-xs">Tên kho</TableHead>
-                        <TableHead className="px-3 py-2 text-xs">Chức năng</TableHead>
-                        <TableHead className="px-3 py-2 text-xs">Quản tồn</TableHead>
-                        <TableHead className="px-3 py-2 text-xs">Địa chỉ</TableHead>
-                        <TableHead className="px-3 py-2 text-xs">Trạng thái</TableHead>
-                        {canManageWarehouse && <TableHead className="px-3 py-2 w-16" />}
+                        <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Mã</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">NMSX</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Ship-to phụ</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Tên kho</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Chức năng</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Quản tồn</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Địa chỉ</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Trạng thái</TableHead>
+                        {canManageWarehouse && <TableHead className="px-2 py-1.5 w-16" />}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {filteredWh.map(wh => (
                         <TableRow key={wh.id}
-                          className={`text-sm cursor-pointer ${!wh.is_active ? 'opacity-50' : ''} ${detailWh?.id === wh.id ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
+                          className={`cursor-pointer ${!wh.is_active ? 'opacity-50' : ''} ${detailWh?.id === wh.id ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
                           onClick={() => setDetailWh(prev => prev?.id === wh.id ? null : wh)}>
-                          <TableCell className="px-3 py-2 font-mono font-semibold text-[11px] text-slate-600">{wh.code}</TableCell>
-                          <TableCell className="px-3 py-2 font-mono font-semibold text-[11px] text-slate-600">{wh.nmsx_code || <span className="text-slate-300 font-sans font-normal">—</span>}</TableCell>
-                          <TableCell className="px-3 py-2 font-mono text-[11px] text-slate-500">{wh.shipto_codes?.length ? wh.shipto_codes.join(', ') : <span className="text-slate-300">—</span>}</TableCell>
-                          <TableCell className="px-3 py-2 font-medium text-slate-800">{wh.name}</TableCell>
-                          <TableCell className="px-3 py-2">
+                          <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-600 whitespace-nowrap">{wh.code}</TableCell>
+                          <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-600 whitespace-nowrap">{wh.nmsx_code || <span className="text-slate-300 font-sans font-normal">—</span>}</TableCell>
+                          <TableCell className="px-2 py-1 font-mono text-[10px] text-slate-500 whitespace-nowrap">{wh.shipto_codes?.length ? wh.shipto_codes.join(', ') : <span className="text-slate-300">—</span>}</TableCell>
+                          <TableCell className="px-2 py-1 text-[10px] font-medium text-slate-800 whitespace-nowrap">{wh.name}</TableCell>
+                          <TableCell className="px-2 py-1 whitespace-nowrap">
                             <Badge variant="outline" className={`text-[10px] ${wh.warehouse_type === 'NPP' ? 'border-amber-400 text-amber-700 bg-amber-50' : 'border-blue-400 text-blue-700 bg-blue-50'}`}>
                               {wh.warehouse_type === 'NPP' ? 'Kho NPP' : 'Kho tổng'}
                             </Badge>
                           </TableCell>
-                          <TableCell className="px-3 py-2">
+                          <TableCell className="px-2 py-1 whitespace-nowrap">
                             <Badge variant="outline" className={`text-[10px] ${invModeMeta(wh.inventory_mode).badge}`}>
                               {invModeMeta(wh.inventory_mode).label}
                             </Badge>
                           </TableCell>
-                          <TableCell className="px-3 py-2 text-slate-500 text-xs">{wh.address ?? '—'}</TableCell>
-                          <TableCell className="px-3 py-2">
+                          <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{wh.address ?? '—'}</TableCell>
+                          <TableCell className="px-2 py-1 whitespace-nowrap">
                             <Badge variant={wh.is_active ? 'default' : 'secondary'} className="text-xs">
                               {wh.is_active ? 'Hoạt động' : 'Tạm dừng'}
                             </Badge>
                           </TableCell>
                           {canManageWarehouse && (
-                            <TableCell className="px-2 py-2">
+                            <TableCell className="px-2 py-1 whitespace-nowrap">
                               <div className="flex items-center gap-0.5">
                                 <button className="text-slate-400 hover:text-blue-500 p-1 transition-colors"
                                   onClick={e => { e.stopPropagation(); setEditingWh(wh); setShowWhDlg(true) }}>
@@ -696,11 +687,10 @@ export default function WMSSettings() {
                       ))}
                     </TableBody>
                   </Table>
-                </div>
               )}
-            </Card>
+            </div>
             {detailWh && (
-              <Card className="w-60 shrink-0 p-3 space-y-2 text-xs">
+              <aside className="hidden lg:block w-60 shrink-0 border-l p-3 space-y-2 text-xs overflow-y-auto">
                 <div className="flex items-center justify-between">
                   <span className="font-semibold text-slate-700">{detailWh.code} — {detailWh.name}</span>
                   <button onClick={() => setDetailWh(null)} className="text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>
@@ -718,27 +708,27 @@ export default function WMSSettings() {
                   <div><span className="text-slate-400">Người sửa:</span> <span className="font-medium">{detailWh.updated_by ?? '—'}</span></div>
                   <div><span className="text-slate-400">Ngày giờ sửa:</span> <span className="font-medium">{detailWh.updated_at ? formatDateTime(detailWh.updated_at) : '—'}</span></div>
                 </div>
-              </Card>
+              </aside>
             )}
           </div>
+          <div className="border-t px-3 py-1 text-[10px] text-slate-500 shrink-0">1–{filteredWh.length} / {(allWh as WhRow[]).length} kho</div>
         </TabsContent>
 
         {/* ── Tab: Loại kho ── */}
-        <TabsContent value="types" className="space-y-3">
-          <div className="flex items-center justify-between">
-            <p className="text-xs text-slate-500">
-              Danh sách loại kho — dùng cho phân loại vị trí, mã hàng, phân quyền nhân viên và đăng ký vận chuyển TMS.
-              {canManageType && <span className="text-slate-400"> Kéo <GripVertical className="inline h-3 w-3 -mt-0.5" /> để đổi thứ tự (áp dụng cho cây Đăng ký cổng).</span>}
+        <TabsContent value="types" className="mt-0 flex-1 min-h-0 flex flex-col">
+          <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
+            <p className="text-xs text-slate-500 flex-1 min-w-[160px] truncate">
+              {canManageType ? <>Kéo <GripVertical className="inline h-3 w-3 -mt-0.5" /> để đổi thứ tự (áp cho cây Đăng ký cổng)</> : 'Danh mục loại kho'}
             </p>
             {canManageType && (
-              <Button size="sm" className="gap-1.5 shrink-0" onClick={() => { setEditingType(null); setShowTypeDlg(true) }}>
-                <Plus className="h-4 w-4" /> Thêm loại kho
+              <Button size="sm" className="h-7 text-xs gap-1 shrink-0" onClick={() => { setEditingType(null); setShowTypeDlg(true) }}>
+                <Plus className="h-3.5 w-3.5" /> Thêm loại kho
               </Button>
             )}
           </div>
 
-          <div className="flex gap-3 items-start">
-            <Card className="flex-1 min-w-0">
+          <div className="flex-1 min-h-0 flex">
+            <div className="flex-1 min-w-0 overflow-auto pb-20 lg:pb-4">
               {loadingTypes ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> :
                 warehouseTypes.length === 0 ? (
                   <div className="p-12 text-center text-slate-400 space-y-2">
@@ -747,13 +737,12 @@ export default function WMSSettings() {
                     {canManageType && <p className="text-xs">Nhấn "Thêm loại kho" để tạo loại kho đầu tiên</p>}
                   </div>
                 ) : (
-                  <div className="overflow-x-auto">
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          {canManageType && <TableHead className="px-2 py-2 w-8" />}
-                          <TableHead className="px-3 py-2 text-xs">Tên loại kho</TableHead>
-                          {canManageType && <TableHead className="px-3 py-2 w-16" />}
+                          {canManageType && <TableHead className="px-2 py-1.5 w-8" />}
+                          <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Tên loại kho</TableHead>
+                          {canManageType && <TableHead className="px-2 py-1.5 w-16" />}
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -771,16 +760,16 @@ export default function WMSSettings() {
                             }) : undefined}
                             onDrop={canManageType ? (e => { e.preventDefault(); dropType() }) : undefined}
                             onDragEnd={() => { setDragIdx(null); setOverType(null) }}
-                            className={`text-sm cursor-pointer ${detailType?.id === t.id ? 'bg-slate-100' : 'hover:bg-slate-50'} ${dragIdx === idx ? 'opacity-40' : ''} ${isOver && !overType?.below ? '[&>td]:border-t-2 [&>td]:border-t-sky-500' : ''} ${isOver && overType?.below ? '[&>td]:border-b-2 [&>td]:border-b-sky-500' : ''}`}
+                            className={`cursor-pointer ${detailType?.id === t.id ? 'bg-slate-100' : 'hover:bg-slate-50'} ${dragIdx === idx ? 'opacity-40' : ''} ${isOver && !overType?.below ? '[&>td]:border-t-2 [&>td]:border-t-sky-500' : ''} ${isOver && overType?.below ? '[&>td]:border-b-2 [&>td]:border-b-sky-500' : ''}`}
                             onClick={() => setDetailType(prev => prev?.id === t.id ? null : t)}>
                             {canManageType && (
-                              <TableCell className="px-2 py-2 w-8 text-slate-300 cursor-grab active:cursor-grabbing" onClick={e => e.stopPropagation()} title="Kéo để đổi thứ tự">
+                              <TableCell className="px-2 py-1 w-8 text-slate-300 cursor-grab active:cursor-grabbing" onClick={e => e.stopPropagation()} title="Kéo để đổi thứ tự">
                                 <GripVertical className="h-4 w-4" />
                               </TableCell>
                             )}
-                            <TableCell className="px-3 py-2 font-medium text-slate-800">{t.value}</TableCell>
+                            <TableCell className="px-2 py-1 text-[10px] font-medium text-slate-800 whitespace-nowrap">{t.value}</TableCell>
                             {canManageType && (
-                              <TableCell className="px-2 py-2">
+                              <TableCell className="px-2 py-1 whitespace-nowrap">
                                 <div className="flex items-center gap-0.5">
                                   <button className="text-slate-400 hover:text-blue-500 p-1 transition-colors"
                                     onClick={e => { e.stopPropagation(); setEditingType({ id: t.id, value: t.value }); setShowTypeDlg(true) }}>
@@ -799,12 +788,11 @@ export default function WMSSettings() {
                         })}
                       </TableBody>
                     </Table>
-                  </div>
                 )
               }
-            </Card>
+            </div>
             {detailType && (
-              <Card className="w-60 shrink-0 p-3 space-y-2 text-xs">
+              <aside className="hidden lg:block w-60 shrink-0 border-l p-3 space-y-2 text-xs overflow-y-auto">
                 <div className="flex items-center justify-between">
                   <span className="font-semibold text-slate-700">{detailType.value}</span>
                   <button onClick={() => setDetailType(null)} className="text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>
@@ -816,45 +804,38 @@ export default function WMSSettings() {
                   <div><span className="text-slate-400">Người sửa:</span> <span className="font-medium">{detailType.updated_by ?? '—'}</span></div>
                   <div><span className="text-slate-400">Ngày giờ sửa:</span> <span className="font-medium">{detailType.updated_at ? formatDateTime(detailType.updated_at) : '—'}</span></div>
                 </div>
-              </Card>
+              </aside>
             )}
           </div>
+          <div className="border-t px-3 py-1 text-[10px] text-slate-500 shrink-0">1–{orderedTypes.length} / {orderedTypes.length} loại kho</div>
         </TabsContent>
 
         {/* ── Tab: Khu vực kho ── */}
-        <TabsContent value="zones" className="space-y-3">
-          <p className="text-xs text-slate-500">
-            Khu vực kho phân chia vị trí vật lý trong từng kho — VD: Kho BV có khu TP (Thành phẩm), NVL, POSM.
-          </p>
-
-          {/* Chọn kho */}
-          <div className="flex items-center gap-2">
-            <Label className="text-xs shrink-0 text-slate-500">Kho:</Label>
+        <TabsContent value="zones" className="mt-0 flex-1 min-h-0 flex flex-col">
+          <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
             <SingleSelect
               options={zoneAccessWh.map(w => ({ value: w.id, label: w.name, sub: w.code }))}
               value={effectiveWhId}
               onChange={setSelectedWhId}
               placeholder="Chọn kho"
               searchPlaceholder="Tìm kho…"
-              triggerClassName="h-8 w-56 text-sm"
+              triggerClassName="h-8 w-44 text-xs shrink-0"
             />
+            {effectiveWhId && (
+              <>
+                <SearchInput value={zoneSearch} onChange={setZoneSearch} placeholder="Tìm mã, tên khu vực…" className="flex-1 min-w-[140px]" />
+                <FilterBar defs={zoneFilterDefs} />
+              </>
+            )}
             {canManageZone && (
-              <Button size="sm" className="gap-1.5 ml-auto" onClick={() => { setEditingZone(null); setShowZoneDlg(true) }}>
-                <Plus className="h-4 w-4" /> Thêm khu vực
+              <Button size="sm" className="h-7 text-xs gap-1 ml-auto shrink-0" onClick={() => { setEditingZone(null); setShowZoneDlg(true) }}>
+                <Plus className="h-3.5 w-3.5" /> Thêm khu vực
               </Button>
             )}
           </div>
 
-          {effectiveWhId && (
-            <div className="flex items-center gap-2 flex-wrap">
-              <SearchInput value={zoneSearch} onChange={setZoneSearch} placeholder="Tìm mã, tên khu vực…" className="flex-1 min-w-[200px]" />
-              <FilterBar defs={zoneFilterDefs} />
-              <p className="text-xs text-slate-500 shrink-0">{filteredZones.length}/{(zones as WarehouseZone[]).length}</p>
-            </div>
-          )}
-
-          <div className="flex gap-3 items-start">
-            <Card className="flex-1 min-w-0">
+          <div className="flex-1 min-h-0 flex">
+            <div className="flex-1 min-w-0 overflow-auto pb-20 lg:pb-4">
               {!effectiveWhId ? (
                 <div className="p-8 text-center text-sm text-slate-400">Chọn kho để xem khu vực</div>
               ) : loadingZones ? (
@@ -868,32 +849,31 @@ export default function WMSSettings() {
               ) : filteredZones.length === 0 ? (
                 <div className="p-12 text-center text-slate-400 text-sm">Không có khu vực khớp bộ lọc</div>
               ) : (
-                <div className="overflow-x-auto">
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead className="px-3 py-2 text-xs">Mã khu vực</TableHead>
-                        <TableHead className="px-3 py-2 text-xs">Tên khu vực</TableHead>
-                        <TableHead className="px-3 py-2 text-xs">Loại kho</TableHead>
-                        <TableHead className="px-3 py-2 text-xs">Trạng thái</TableHead>
-                        {canManageZone && <TableHead className="px-3 py-2 w-16" />}
+                        <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Mã khu vực</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Tên khu vực</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Loại kho</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Trạng thái</TableHead>
+                        {canManageZone && <TableHead className="px-2 py-1.5 w-16" />}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {filteredZones.map(z => (
                         <TableRow key={z.id}
-                          className={`text-sm cursor-pointer ${!z.is_active ? 'opacity-50' : ''} ${detailZone?.id === z.id ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
+                          className={`cursor-pointer ${!z.is_active ? 'opacity-50' : ''} ${detailZone?.id === z.id ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
                           onClick={() => setDetailZone(prev => prev?.id === z.id ? null : z)}>
-                          <TableCell className="px-3 py-2 font-mono font-semibold text-[11px] text-slate-600">{z.code}</TableCell>
-                          <TableCell className="px-3 py-2 font-medium text-slate-800">{z.name}</TableCell>
-                          <TableCell className="px-3 py-2 text-xs text-slate-500">{z.category ?? <span className="text-slate-300">—</span>}</TableCell>
-                          <TableCell className="px-3 py-2">
+                          <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-600 whitespace-nowrap">{z.code}</TableCell>
+                          <TableCell className="px-2 py-1 text-[10px] font-medium text-slate-800 whitespace-nowrap">{z.name}</TableCell>
+                          <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{z.category ?? <span className="text-slate-300">—</span>}</TableCell>
+                          <TableCell className="px-2 py-1 whitespace-nowrap">
                             <Badge variant={z.is_active ? 'default' : 'secondary'} className="text-xs">
                               {z.is_active ? 'Hoạt động' : 'Tạm dừng'}
                             </Badge>
                           </TableCell>
                           {canManageZone && (
-                            <TableCell className="px-2 py-2">
+                            <TableCell className="px-2 py-1 whitespace-nowrap">
                               <div className="flex items-center gap-0.5">
                                 <button className="text-slate-400 hover:text-blue-500 p-1 transition-colors"
                                   onClick={e => { e.stopPropagation(); setEditingZone(z); setShowZoneDlg(true) }}>
@@ -911,11 +891,10 @@ export default function WMSSettings() {
                       ))}
                     </TableBody>
                   </Table>
-                </div>
               )}
-            </Card>
+            </div>
             {detailZone && (
-              <Card className="w-60 shrink-0 p-3 space-y-2 text-xs">
+              <aside className="hidden lg:block w-60 shrink-0 border-l p-3 space-y-2 text-xs overflow-y-auto">
                 <div className="flex items-center justify-between">
                   <span className="font-semibold text-slate-700">{detailZone.code} — {detailZone.name}</span>
                   <button onClick={() => setDetailZone(null)} className="text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>
@@ -929,22 +908,21 @@ export default function WMSSettings() {
                   <div><span className="text-slate-400">Người sửa:</span> <span className="font-medium">{detailZone.updated_by ?? '—'}</span></div>
                   <div><span className="text-slate-400">Ngày giờ sửa:</span> <span className="font-medium">{detailZone.updated_at ? formatDateTime(detailZone.updated_at) : '—'}</span></div>
                 </div>
-              </Card>
+              </aside>
             )}
           </div>
+          <div className="border-t px-3 py-1 text-[10px] text-slate-500 shrink-0">1–{filteredZones.length} / {(zones as WarehouseZone[]).length} khu vực</div>
         </TabsContent>
 
         {/* ── Tab: Ca nhập ── */}
-        <TabsContent value="shifts">
-          <p className="text-xs text-slate-500 mb-3">Danh mục ca nhập hàng — dùng khi tạo phiếu nhập kho.</p>
+        <TabsContent value="shifts" className="mt-0 flex-1 min-h-0 flex flex-col">
           <MetaTab noun="ca nhập" rows={shifts} loading={loadingShifts} canManage={canManageShift}
             onAdd={() => { setEditShift(null); setShowShiftDlg(true) }}
             onEdit={r => { setEditShift(r); setShowShiftDlg(true) }} />
         </TabsContent>
 
         {/* ── Tab: Tình trạng QA ── */}
-        <TabsContent value="qa">
-          <p className="text-xs text-slate-500 mb-3">Danh mục tình trạng kiểm định chất lượng — gắn cho từng pallet tồn kho.</p>
+        <TabsContent value="qa" className="mt-0 flex-1 min-h-0 flex flex-col">
           <MetaTab noun="trạng thái QA" rows={qaStatuses} loading={loadingQA} canManage={canManageQA}
             onAdd={() => { setEditQA(null); setShowQADlg(true) }}
             onEdit={r => { setEditQA(r); setShowQADlg(true) }} />

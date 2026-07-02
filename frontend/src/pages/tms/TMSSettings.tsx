@@ -5,7 +5,6 @@ import { formatDate, formatDateTime, normalizeLicensePlate, normalizePhone } fro
 import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
 import { Label }    from '@/components/ui/label'
-import { Card }     from '@/components/ui/card'
 import { Badge }    from '@/components/ui/badge'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -638,47 +637,39 @@ export default function TMSSettings() {
   if (!userNccId) vFilterDefs.splice(1, 0, { key: 'vncc', label: 'ĐVVT / NCC', type: 'multi', selected: filterNccs, onChange: setFilterNccs, options: companies.map(c => ({ value: c.id, label: c.name })) })
 
   return (
-    <div className="h-full overflow-auto sm:p-3">
-     <div className="max-w-7xl mx-auto bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm p-4 space-y-4">
-      <div>
-        <h1 className="text-base font-semibold text-slate-800 flex items-center gap-2">
-          <Settings2 className="h-4 w-4 text-slate-500" />
-          Cài đặt TMS
-        </h1>
-        <p className="text-xs text-slate-400 mt-0.5">Loại xe, khung giờ booking, ĐVVT và phương tiện</p>
-      </div>
-
-      <Tabs defaultValue={defaultTab}>
-        <div className="overflow-x-auto mb-2">
-          <TabsList className="w-max">
-            {showVtTab        && <TabsTrigger value="vehicle-types"  className="gap-1.5"><Truck className="h-3.5 w-3.5" /> Loại xe</TabsTrigger>}
-            {showSlotsTab     && <TabsTrigger value="slot-templates" className="gap-1.5"><Clock className="h-3.5 w-3.5" /> Khung giờ</TabsTrigger>}
-            {showCompaniesTab && <TabsTrigger value="companies"      className="gap-1.5"><Building2 className="h-3.5 w-3.5" /> ĐVVT / NCC</TabsTrigger>}
-            {showVehiclesTab  && <TabsTrigger value="vehicles"       className="gap-1.5"><Truck className="h-3.5 w-3.5" /> Xe</TabsTrigger>}
+    <div className="flex flex-col h-full sm:p-3">
+     <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
+      <Tabs defaultValue={defaultTab} className="flex flex-col flex-1 min-h-0">
+        {/* Phần trên gọn 1 hàng (tiêu đề + tab) — bảng chiếm toàn bộ phần còn lại */}
+        <div className="border-b bg-white px-3 py-2 shrink-0 flex items-center gap-2 flex-wrap sm:rounded-t-xl">
+          <span className="text-sm font-semibold text-slate-700 shrink-0 flex items-center gap-1.5">
+            <Settings2 className="h-4 w-4 text-slate-500" /> Cài đặt TMS
+          </span>
+          <TabsList className="h-8 max-w-full overflow-x-auto">
+            {showVtTab        && <TabsTrigger value="vehicle-types"  className="gap-1.5 text-xs"><Truck className="h-3.5 w-3.5" /> Loại xe</TabsTrigger>}
+            {showSlotsTab     && <TabsTrigger value="slot-templates" className="gap-1.5 text-xs"><Clock className="h-3.5 w-3.5" /> Khung giờ</TabsTrigger>}
+            {showCompaniesTab && <TabsTrigger value="companies"      className="gap-1.5 text-xs"><Building2 className="h-3.5 w-3.5" /> ĐVVT / NCC</TabsTrigger>}
+            {showVehiclesTab  && <TabsTrigger value="vehicles"       className="gap-1.5 text-xs"><Truck className="h-3.5 w-3.5" /> Xe</TabsTrigger>}
           </TabsList>
         </div>
 
         {/* ── Tab: Loại xe ── */}
-        <TabsContent value="vehicle-types" className="space-y-3">
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <p className="text-xs text-slate-500">{shownVT.length}/{vehicleTypes.length} loại xe</p>
+        <TabsContent value="vehicle-types" className="mt-0 flex-1 min-h-0 flex flex-col">
+          <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
+            <SearchInput value={vtSearch} onChange={setVtSearch} placeholder="Tìm mã, tên loại xe…" className="flex-1 min-w-[160px]" />
+            <FilterBar defs={vtFilterDefs} />
             {vtCreate && (
-              <Button size="sm" className="gap-1.5" onClick={() => { setEditingVT(null); setShowVTDlg(true) }}>
-                <Plus className="h-4 w-4" /> Thêm loại xe
+              <Button size="sm" className="h-7 text-xs gap-1 shrink-0" onClick={() => { setEditingVT(null); setShowVTDlg(true) }}>
+                <Plus className="h-3.5 w-3.5" /> Thêm loại xe
               </Button>
             )}
           </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <SearchInput value={vtSearch} onChange={setVtSearch} placeholder="Tìm mã, tên loại xe…" className="flex-1 min-w-[200px]" />
-            <FilterBar defs={vtFilterDefs} />
-          </div>
-          <div className="flex gap-3 items-start">
-            <Card className="flex-1 min-w-0">
+          <div className="flex-1 min-h-0 flex">
+            <div className="flex-1 min-w-0 overflow-auto pb-20 lg:pb-4">
               {loadingVT ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> :
                 shownVT.length === 0 ? (
                   <div className="p-12 text-center text-slate-400 text-sm">{vehicleTypes.length === 0 ? 'Chưa có loại xe nào' : 'Không có loại xe khớp bộ lọc'}</div>
                 ) : (
-                <div className="overflow-auto max-h-[60vh]">
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -742,11 +733,10 @@ export default function TMSSettings() {
                       })}
                     </TableBody>
                   </Table>
-                </div>
               )}
-            </Card>
+            </div>
             {detailVT && (
-              <Card className="w-56 shrink-0 p-3 space-y-2 text-xs">
+              <aside className="hidden lg:block w-56 shrink-0 border-l p-3 space-y-2 text-xs overflow-y-auto">
                 <div className="flex items-center justify-between">
                   <span className="font-semibold text-slate-700">{detailVT.code} — {detailVT.name}</span>
                   <button onClick={() => setDetailVT(null)} className="text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>
@@ -759,42 +749,34 @@ export default function TMSSettings() {
                   <div><span className="text-slate-400">Người sửa:</span> <span className="font-medium">{detailVT.updated_by ?? '—'}</span></div>
                   <div><span className="text-slate-400">Ngày giờ sửa:</span> <span className="font-medium">{detailVT.updated_at ? formatDateTime(detailVT.updated_at) : '—'}</span></div>
                 </div>
-              </Card>
+              </aside>
             )}
           </div>
+          <div className="border-t px-3 py-1 text-[10px] text-slate-500 shrink-0">1–{shownVT.length} / {vehicleTypes.length} loại xe</div>
         </TabsContent>
 
         {/* ── Tab: Khung giờ ── */}
-        <TabsContent value="slot-templates" className="space-y-3">
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <p className="text-xs text-slate-500">
-              {selectedWarehouse
-                ? <><span className="font-medium text-slate-700">{selectedWarehouse.name}</span>{' '}· {filteredTemplates.length} template</>
-                : 'Chọn kho để xem và cài đặt khung giờ'}
-            </p>
+        <TabsContent value="slot-templates" className="mt-0 flex-1 min-h-0 flex flex-col">
+          <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
+            <WarehouseSingleSelect warehouses={warehouses as { id: string; code?: string; name: string }[]} value={warehouseId} onChange={setWarehouseId} placeholder="Chọn kho…" triggerClassName="h-8 w-44 shrink-0" />
+            <SearchInput value={stSearch} onChange={setStSearch} placeholder="Tìm loại xe, loại hàng…" className="flex-1 min-w-[140px]" />
+            <FilterBar defs={stFilterDefs} />
             {slotCreate && warehouseId && (
-              <Button size="sm" className="gap-1.5" onClick={() => { setBatchPreset(null); setShowBatchDlg(true) }}>
-                <Plus className="h-4 w-4" /> Thêm khung giờ
+              <Button size="sm" className="h-7 text-xs gap-1 shrink-0" onClick={() => { setBatchPreset(null); setShowBatchDlg(true) }}>
+                <Plus className="h-3.5 w-3.5" /> Thêm khung giờ
               </Button>
             )}
           </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="flex items-center gap-1.5 shrink-0">
-              <Warehouse className="h-4 w-4 text-slate-400" />
-              <WarehouseSingleSelect warehouses={warehouses as { id: string; code?: string; name: string }[]} value={warehouseId} onChange={setWarehouseId} placeholder="Chọn kho…" triggerClassName="w-52" />
-            </div>
-            <SearchInput value={stSearch} onChange={setStSearch} placeholder="Tìm loại xe, loại hàng…" className="flex-1 min-w-[200px]" />
-            <FilterBar defs={stFilterDefs} />
-          </div>
           {!warehouseId ? (
-            <div className="py-16 text-center text-slate-400 space-y-2">
+            <div className="flex-1 py-16 text-center text-slate-400 space-y-2">
               <Warehouse className="h-10 w-10 mx-auto opacity-30" />
               <p className="text-sm font-medium">Chọn kho để xem và cài đặt khung giờ</p>
               <p className="text-xs">Mỗi kho có khung giờ và số xe tối đa riêng</p>
             </div>
           ) : (
-            <div className="flex gap-3 items-start">
-                <Card className="flex-1 min-w-0">
+            <>
+            <div className="flex-1 min-h-0 flex">
+                <div className="flex-1 min-w-0 overflow-auto pb-20 lg:pb-4">
                   {loadingST ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> : filteredTemplates.length === 0 ? (
                     <div className="p-12 text-center text-slate-400 space-y-2">
                       <Clock className="h-10 w-10 mx-auto opacity-30" />
@@ -804,7 +786,6 @@ export default function TMSSettings() {
                       </Button>}
                     </div>
                   ) : (
-                    <div className="overflow-auto max-h-[60vh]">
                       <Table>
                         <TableHeader>
                           <TableRow>
@@ -878,11 +859,10 @@ export default function TMSSettings() {
                           ))}
                         </TableBody>
                       </Table>
-                    </div>
                   )}
-                </Card>
+                </div>
                 {detailST && (
-                  <Card className="w-56 shrink-0 p-3 space-y-2 text-xs">
+                  <aside className="hidden lg:block w-56 shrink-0 border-l p-3 space-y-2 text-xs overflow-y-auto">
                     <div className="flex items-center justify-between">
                       <span className="font-semibold text-slate-700">{detailST.vehicle_type?.name ?? '—'}</span>
                       <button onClick={() => setDetailST(null)} className="text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>
@@ -899,28 +879,27 @@ export default function TMSSettings() {
                       <div><span className="text-slate-400">Người sửa:</span> <span className="font-medium">{detailST.updated_by ?? '—'}</span></div>
                       <div><span className="text-slate-400">Ngày giờ sửa:</span> <span className="font-medium">{detailST.updated_at ? formatDateTime(detailST.updated_at) : '—'}</span></div>
                     </div>
-                  </Card>
+                  </aside>
                 )}
             </div>
+            <div className="border-t px-3 py-1 text-[10px] text-slate-500 shrink-0">{selectedWarehouse?.name} · {filteredTemplates.length} khung giờ</div>
+            </>
           )}
         </TabsContent>
 
         {/* ── Tab: ĐVVT / NCC ── */}
-        <TabsContent value="companies" className="space-y-3">
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <p className="text-xs text-slate-500">{filteredCompanies.length}/{companies.length} ĐVVT / NCC</p>
+        <TabsContent value="companies" className="mt-0 flex-1 min-h-0 flex flex-col">
+          <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
+            <SearchInput value={coSearch} onChange={setCoSearch} placeholder="Tìm mã, tên, người LH, SĐT…" className="flex-1 min-w-[160px]" />
+            <FilterBar defs={coFilterDefs} />
             {coCreate && (
-              <Button size="sm" className="gap-1.5" onClick={() => { setEditingCo(null); setShowCoDlg(true) }}>
-                <Plus className="h-4 w-4" /> Thêm ĐVVT
+              <Button size="sm" className="h-7 text-xs gap-1 shrink-0" onClick={() => { setEditingCo(null); setShowCoDlg(true) }}>
+                <Plus className="h-3.5 w-3.5" /> Thêm ĐVVT
               </Button>
             )}
           </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <SearchInput value={coSearch} onChange={setCoSearch} placeholder="Tìm mã, tên, người LH, SĐT…" className="flex-1 min-w-[200px]" />
-            <FilterBar defs={coFilterDefs} />
-          </div>
-          <div className="flex gap-3 items-start">
-            <Card className="flex-1 min-w-0">
+          <div className="flex-1 min-h-0 flex">
+            <div className="flex-1 min-w-0 overflow-auto pb-20 lg:pb-4">
               {loadingCo ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> : companies.length === 0 ? (
                 <div className="p-12 text-center text-slate-400 space-y-2">
                   <Building2 className="h-10 w-10 mx-auto opacity-30" />
@@ -932,7 +911,6 @@ export default function TMSSettings() {
               ) : filteredCompanies.length === 0 ? (
                 <div className="p-12 text-center text-slate-400 text-sm">Không có ĐVVT / NCC khớp bộ lọc</div>
               ) : (
-                <div className="overflow-auto max-h-[60vh]">
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -987,11 +965,10 @@ export default function TMSSettings() {
                       ))}
                     </TableBody>
                   </Table>
-                </div>
               )}
-            </Card>
+            </div>
             {detailCo && (
-              <Card className="w-56 shrink-0 p-3 space-y-2 text-xs">
+              <aside className="hidden lg:block w-56 shrink-0 border-l p-3 space-y-2 text-xs overflow-y-auto">
                 <div className="flex items-center justify-between">
                   <span className="font-semibold text-slate-700">{detailCo.code}</span>
                   <button onClick={() => setDetailCo(null)} className="text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>
@@ -1009,27 +986,25 @@ export default function TMSSettings() {
                   <div><span className="text-slate-400">Người sửa:</span> <span className="font-medium">{detailCo.updated_by ?? '—'}</span></div>
                   <div><span className="text-slate-400">Ngày giờ sửa:</span> <span className="font-medium">{detailCo.updated_at ? formatDateTime(detailCo.updated_at) : '—'}</span></div>
                 </div>
-              </Card>
+              </aside>
             )}
           </div>
+          <div className="border-t px-3 py-1 text-[10px] text-slate-500 shrink-0">1–{filteredCompanies.length} / {companies.length} ĐVVT / NCC</div>
         </TabsContent>
 
         {/* ── Tab: Xe ── */}
-        <TabsContent value="vehicles" className="space-y-3">
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <p className="text-xs text-slate-500">{filteredVehicles.length}/{(vehicles as TmsVehicle[]).length} xe</p>
+        <TabsContent value="vehicles" className="mt-0 flex-1 min-h-0 flex flex-col">
+          <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
+            <SearchInput value={vSearch} onChange={setVSearch} placeholder="Tìm biển số, loại xe, ĐVVT…" className="flex-1 min-w-[160px]" />
+            <FilterBar defs={vFilterDefs} />
             {vCreate && (
-              <Button size="sm" className="gap-1.5" onClick={() => { setEditingV(null); setShowVDlg(true) }}>
-                <Plus className="h-4 w-4" /> Thêm xe
+              <Button size="sm" className="h-7 text-xs gap-1 shrink-0" onClick={() => { setEditingV(null); setShowVDlg(true) }}>
+                <Plus className="h-3.5 w-3.5" /> Thêm xe
               </Button>
             )}
           </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <SearchInput value={vSearch} onChange={setVSearch} placeholder="Tìm biển số, loại xe, ĐVVT…" className="flex-1 min-w-[200px]" />
-            <FilterBar defs={vFilterDefs} />
-          </div>
-          <div className="flex gap-3 items-start">
-            <Card className="flex-1 min-w-0">
+          <div className="flex-1 min-h-0 flex">
+            <div className="flex-1 min-w-0 overflow-auto pb-20 lg:pb-4">
               {loadingV ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> : (vehicles as TmsVehicle[]).length === 0 ? (
                 <div className="p-12 text-center text-slate-400 space-y-2">
                   <Truck className="h-10 w-10 mx-auto opacity-30" />
@@ -1041,7 +1016,6 @@ export default function TMSSettings() {
               ) : filteredVehicles.length === 0 ? (
                 <div className="p-12 text-center text-slate-400 text-sm">Không có xe khớp bộ lọc</div>
               ) : (
-                <div className="overflow-auto max-h-[60vh]">
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -1084,11 +1058,10 @@ export default function TMSSettings() {
                       ))}
                     </TableBody>
                   </Table>
-                </div>
               )}
-            </Card>
+            </div>
             {detailV && (
-              <Card className="w-56 shrink-0 p-3 space-y-2 text-xs">
+              <aside className="hidden lg:block w-56 shrink-0 border-l p-3 space-y-2 text-xs overflow-y-auto">
                 <div className="flex items-center justify-between">
                   <span className="font-semibold text-slate-700 font-mono">{detailV.license_plate}</span>
                   <button onClick={() => setDetailV(null)} className="text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>
@@ -1103,9 +1076,10 @@ export default function TMSSettings() {
                   <div><span className="text-slate-400">Người sửa:</span> <span className="font-medium">{detailV.updated_by ?? '—'}</span></div>
                   <div><span className="text-slate-400">Ngày giờ sửa:</span> <span className="font-medium">{detailV.updated_at ? formatDateTime(detailV.updated_at) : '—'}</span></div>
                 </div>
-              </Card>
+              </aside>
             )}
           </div>
+          <div className="border-t px-3 py-1 text-[10px] text-slate-500 shrink-0">1–{filteredVehicles.length} / {(vehicles as TmsVehicle[]).length} xe</div>
         </TabsContent>
       </Tabs>
 

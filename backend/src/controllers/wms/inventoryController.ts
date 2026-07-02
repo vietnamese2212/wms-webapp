@@ -208,7 +208,6 @@ async function resolveInventoryFilter(req: Request): Promise<ResolvedFilter> {
   const q = req.query as Record<string, string>
   const status           = q.status
   const search           = q.search
-  const material_search  = q.material_search
   const manufacturer_id  = q.manufacturer_id
   const import_date_from = q.import_date_from
   const import_date_to   = q.import_date_to
@@ -258,40 +257,19 @@ async function resolveInventoryFilter(req: Request): Promise<ResolvedFilter> {
     return { ...base, empty: true }
 
   const needLocFilter = effectiveWarehouseIds.length > 0 || filterLocations.length > 0
-  // Category filter dùng embedded resource filter — không cần pre-query material IDs
-  const needMatFilter = !!(material_search) || filterMaterialIds.length > 0
 
-  // Resolve location_ids and material_ids in parallel — they are independent queries
-  const [locResult, matResult] = await Promise.all([
-    needLocFilter ? (async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let locQ = supabase.from('Location').select('id')
-      if (effectiveWarehouseIds.length === 1)    locQ = locQ.eq('warehouse_id', effectiveWarehouseIds[0])
-      else if (effectiveWarehouseIds.length > 1) locQ = locQ.in('warehouse_id', effectiveWarehouseIds)
-      if (filterLocations.length === 1)          locQ = locQ.eq('location_code', filterLocations[0])
-      else if (filterLocations.length > 1)       locQ = locQ.in('location_code', filterLocations)
-      return await locQ
-    })() : Promise.resolve({ data: null, error: null }),
-
-    needMatFilter ? (async () => {
-      // Phân trang (cap ~1000/response): material_search khớp rộng có thể >1000 mã → bị cắt
-      // âm thầm = filter "Tên hàng" thiếu mã (dòng tồn của mã bị rớt không hiện).
-      const buildMatQ = () => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        let matQ = supabase.from('Material').select('id').order('id')
-        if (material_search)            matQ = matQ.or(`material_code.ilike.%${escapeLike(material_search)}%,short_name.ilike.%${escapeLike(material_search)}%`)
-        if (filterMaterialIds.length > 0) matQ = matQ.in('id', filterMaterialIds)
-        return matQ
-      }
-      try { return { data: await fetchAllRowsParallel(buildMatQ), error: null } }
-      catch (e) { return { data: null, error: { message: (e as Error).message } } }
-    })() : Promise.resolve({ data: null, error: null }),
-  ])
+  const locResult = needLocFilter ? await (async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let locQ = supabase.from('Location').select('id')
+    if (effectiveWarehouseIds.length === 1)    locQ = locQ.eq('warehouse_id', effectiveWarehouseIds[0])
+    else if (effectiveWarehouseIds.length > 1) locQ = locQ.in('warehouse_id', effectiveWarehouseIds)
+    if (filterLocations.length === 1)          locQ = locQ.eq('location_code', filterLocations[0])
+    else if (filterLocations.length > 1)       locQ = locQ.in('location_code', filterLocations)
+    return await locQ
+  })() : { data: null, error: null }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   if ((locResult as any).error) return { ...base, error: (locResult as any).error.message }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  if ((matResult as any).error) return { ...base, error: (matResult as any).error.message }
 
   let locationFilter: string[] | null = null
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -304,13 +282,9 @@ async function resolveInventoryFilter(req: Request): Promise<ResolvedFilter> {
       return { ...base, empty: true }
   }
 
-  let materialFilter: string[] | null = null
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  if ((matResult as any).data !== null) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    materialFilter = ((matResult as any).data ?? []).map((m: any) => m.id as string)
-    if (materialFilter!.length === 0) return { ...base, empty: true }
-  }
+  // filter_material_ids từ facet ĐÃ là material_id → dùng thẳng, không cần query Material resolve.
+  // (Param material_search cũ đã BỎ — dead param 0 caller, term rộng resolve >1000 id nhét .in() = URL quá dài → 500.)
+  const materialFilter: string[] | null = filterMaterialIds.length > 0 ? filterMaterialIds : null
 
   // Omni-search 1 ô: resolve material/location ID khớp term → search tìm cả mã pallet / mã+tên hàng / mã vị trí.
   // (ilike Postgres KHÔNG bỏ dấu — bỏ dấu server-side cần extension unaccent, xem ghi chú.)

@@ -765,7 +765,6 @@ export function useInventoryEntries(params?: {
   categories?: string[]
   filter_locations?: string[]
   filter_material_ids?: string[]
-  material_search?: string
   qa_status_ids?: string[]
   status?: string
   search?: string

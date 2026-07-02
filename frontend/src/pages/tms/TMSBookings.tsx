@@ -367,7 +367,8 @@ const EMPTY_FORM = (date: string, warehouse_id: string): OrderFormData => ({
   gdo_refs: '', notes: '', priority: false,
 })
 
-const ORDER_CODE_RE = /^[A-Za-z0-9]+_[XN]_\d{6}_\d+$/
+// Phần cuối (sau ngày) không bắt buộc là số — cho phép hậu tố dạng chữ như "gộp 1"
+const ORDER_CODE_RE = /^[A-Za-z0-9]+_[XN]_\d{6}_.+$/
 
 
 type PlanLineRow = {

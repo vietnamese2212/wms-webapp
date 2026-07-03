@@ -1,5 +1,6 @@
 {
   "version": 2,
+  "regions": ["sin1"],
   "installCommand": "cd backend && npm install",
   "buildCommand": "cd frontend && npm install && npm run build",
   "outputDirectory": "frontend/dist",

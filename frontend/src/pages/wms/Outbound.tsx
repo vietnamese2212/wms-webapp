@@ -327,6 +327,7 @@ export default function Outbound() {
   const summary = useMemo(() => ({
     count:     sorted.length,
     cartons:   sorted.reduce((s, g) => s + (g.total_cartons ?? 0), 0),
+    cartonsQr:   sorted.reduce((s, g) => s + ((g.total_cartons ?? 0) - (g.total_cartons_noqr ?? 0)), 0),
     cartonsNoqr: sorted.reduce((s, g) => s + (g.total_cartons_noqr ?? 0), 0),
     pallets:   sorted.reduce((s, g) => s + (g.total_pallets ?? 0), 0),
     completed: sorted.filter(g => g.status === 'COMPLETED').length,
@@ -610,6 +611,7 @@ export default function Outbound() {
       <SummaryBand tiles={[
         { label: 'Chuyến xe', value: summary.count },
         { label: 'Tổng thùng', value: summary.cartons.toLocaleString('vi-VN') },
+        { label: 'Tổng (QR)', value: summary.cartonsQr.toLocaleString('vi-VN') },
         { label: 'Tổng (k QR)', value: summary.cartonsNoqr.toLocaleString('vi-VN') },
         { label: 'Pallet', value: fmtPallets(summary.pallets).toLocaleString('vi-VN') },
         { label: 'Hoàn thành', value: summary.completed, accent: summary.completed > 0 },

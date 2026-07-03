@@ -1,5 +1,7 @@
-import { useState, type ReactNode } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { ChevronDown } from 'lucide-react'
+import { usePopoverAnchor } from './usePopoverAnchor'
 
 export interface SingleSelectOption {
   value: string
@@ -17,22 +19,24 @@ interface SingleSelectProps {
   searchPlaceholder?: string
   searchable?: boolean      // default true; tắt cho danh sách ngắn nếu muốn
   disabled?: boolean
-  dropUp?: boolean
+  dropUp?: boolean          // giữ prop cho tương thích — vị trí thực do usePopoverAnchor tự tính
   triggerClassName?: string
 }
 
 /**
  * Dropdown chọn-1 dùng chung — ĐỒNG NHẤT look/behavior với WarehouseSingleSelect ("Kho").
- * Button → popover có ô tìm kiếm + list (checkbox + nhãn). Thay cho <Select> Radix để
- * mọi dropdown trong app thể hiện giống nhau. Hỗ trợ `node` cho option render giàu (★/màu).
+ * Menu render qua PORTAL (position:fixed neo theo nút) nên KHÔNG bị `overflow` của
+ * Dialog/Sheet cắt mất. Hỗ trợ `node` cho option render giàu (★/màu).
  */
 export function SingleSelect({
   options, value, onChange,
   placeholder = 'Chọn…', searchPlaceholder = 'Tìm…',
-  searchable = true, disabled, dropUp, triggerClassName = '',
+  searchable = true, disabled, triggerClassName = '',
 }: SingleSelectProps) {
   const [open, setOpen]     = useState(false)
   const [search, setSearch] = useState('')
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const anchor = usePopoverAnchor(triggerRef, open)
 
   const filtered = search
     ? options.filter(o => o.label.toLowerCase().includes(search.toLowerCase()) || (o.sub ?? '').toLowerCase().includes(search.toLowerCase()))
@@ -47,6 +51,7 @@ export function SingleSelect({
     <div className={triggerClassName}>
       <div className="relative">
         <button
+          ref={triggerRef}
           type="button"
           disabled={disabled}
           onClick={() => setOpen(o => !o)}
@@ -59,11 +64,19 @@ export function SingleSelect({
           <ChevronDown className={`h-3.5 w-3.5 text-slate-400 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
         </button>
 
-        {open && (
+        {open && anchor && createPortal(
           <>
-            <div className="fixed inset-0 z-40" onClick={close} />
-            <div className={`absolute z-50 w-full min-w-[180px] bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden
-              ${dropUp ? 'bottom-full mb-1' : 'top-full mt-1'}`}>
+            <div className="fixed inset-0 z-[190] pointer-events-auto" onClick={close} />
+            <div
+              className="fixed z-[200] pointer-events-auto bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden"
+              style={{
+                left: anchor.left,
+                width: Math.max(anchor.width, 180),
+                ...(anchor.dropUp
+                  ? { bottom: window.innerHeight - anchor.top + 4 }
+                  : { top: anchor.top + 4 }),
+              }}
+            >
               {searchable && (
                 <div className="p-2 border-b border-slate-100">
                   <input
@@ -99,7 +112,8 @@ export function SingleSelect({
                 ))}
               </div>
             </div>
-          </>
+          </>,
+          document.body,
         )}
       </div>
     </div>

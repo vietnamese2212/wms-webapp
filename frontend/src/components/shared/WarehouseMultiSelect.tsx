@@ -1,5 +1,7 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { ChevronDown, X } from 'lucide-react'
+import { usePopoverAnchor } from './usePopoverAnchor'
 
 interface Warehouse {
   id: string
@@ -20,10 +22,12 @@ interface WarehouseMultiSelectProps {
 export function WarehouseMultiSelect({
   warehouses, selected, onChange,
   placeholder = 'Chọn kho…',
-  dropUp, showTags = true, triggerClassName = '',
+  showTags = true, triggerClassName = '',
 }: WarehouseMultiSelectProps) {
   const [open, setOpen]   = useState(false)
   const [search, setSearch] = useState('')
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const anchor = usePopoverAnchor(triggerRef, open)
 
   const filtered = warehouses.filter(w =>
     w.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -40,6 +44,7 @@ export function WarehouseMultiSelect({
     <div className={triggerClassName}>
       <div className="relative">
         <button
+          ref={triggerRef}
           type="button"
           onClick={() => setOpen(o => !o)}
           className="w-full flex items-center justify-between bg-white border border-slate-200 rounded-md px-3 py-1.5 text-xs hover:border-slate-300 transition-colors"
@@ -51,11 +56,19 @@ export function WarehouseMultiSelect({
           <ChevronDown className={`h-3.5 w-3.5 text-slate-400 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
         </button>
 
-        {open && (
+        {open && anchor && createPortal(
           <>
-            <div className="fixed inset-0 z-40" onClick={close} />
-            <div className={`absolute z-50 w-full min-w-[180px] bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden
-              ${dropUp ? 'bottom-full mb-1' : 'top-full mt-1'}`}>
+            <div className="fixed inset-0 z-[190] pointer-events-auto" onClick={close} />
+            <div
+              className="fixed z-[200] pointer-events-auto bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden"
+              style={{
+                left: anchor.left,
+                width: Math.max(anchor.width, 180),
+                ...(anchor.dropUp
+                  ? { bottom: window.innerHeight - anchor.top + 4 }
+                  : { top: anchor.top + 4 }),
+              }}
+            >
               <div className="p-2 border-b border-slate-100">
                 <input
                   type="text"
@@ -91,7 +104,8 @@ export function WarehouseMultiSelect({
                 </div>
               )}
             </div>
-          </>
+          </>,
+          document.body,
         )}
       </div>
 

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import * as XLSX from 'xlsx'
 import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, CalendarDays, ShieldX, FileSpreadsheet, X, QrCode, CheckCircle2, Boxes, ChevronDown, Loader2 } from 'lucide-react'
 import type { AxiosError } from 'axios'
@@ -11,6 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
+import { usePopoverAnchor } from '@/components/shared/usePopoverAnchor'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import type { MSOpt } from '@/components/shared/MultiSelectFilter'
@@ -160,6 +162,8 @@ function PlateCombobox({ value, onChange, plates }: {
   plates: string[]
 }) {
   const [open, setOpen] = React.useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const anchor = usePopoverAnchor(inputRef, open)
   const uniq = React.useMemo(() => [...new Set(plates)], [plates])
   const filtered = React.useMemo(() => {
     const q = value.toUpperCase()
@@ -169,6 +173,7 @@ function PlateCombobox({ value, onChange, plates }: {
   return (
     <div className="relative">
       <input
+        ref={inputRef}
         value={value}
         onChange={e => { onChange(normalizeLicensePlate(e.target.value)); setOpen(true) }}
         onFocus={() => setOpen(true)}
@@ -176,8 +181,14 @@ function PlateCombobox({ value, onChange, plates }: {
         placeholder="Chọn hoặc gõ biển số…"
         className="flex h-8 w-full rounded-md border border-input bg-background px-3 py-1 text-sm font-mono shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring mt-1"
       />
-      {open && (filtered.length > 0 || (!!value && !inList)) && (
-        <div className="absolute z-[200] top-full left-0 mt-0.5 w-full bg-white border border-slate-200 rounded-md shadow-lg max-h-48 overflow-auto">
+      {open && anchor && (filtered.length > 0 || (!!value && !inList)) && createPortal(
+        <div
+          className="fixed z-[200] pointer-events-auto bg-white border border-slate-200 rounded-md shadow-lg max-h-48 overflow-auto"
+          style={{
+            left: anchor.left, width: anchor.width,
+            ...(anchor.dropUp ? { bottom: window.innerHeight - anchor.top + 4 } : { top: anchor.top + 4 }),
+          }}
+        >
           {filtered.map(p => (
             <button
               key={p}
@@ -192,7 +203,8 @@ function PlateCombobox({ value, onChange, plates }: {
           {!!value && !inList && (
             <p className="px-3 py-1.5 text-[10px] text-slate-400 border-t">Biển ngoài danh mục xe — vẫn dùng được “{value}”</p>
           )}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   )
@@ -554,6 +566,8 @@ function NppCombobox({ value, onChange, suggestions }: {
   suggestions: string[]
 }) {
   const [open, setOpen] = React.useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const anchor = usePopoverAnchor(inputRef, open)
   const filtered = React.useMemo(() => {
     const lower = value.toLowerCase()
     const list = value
@@ -564,6 +578,7 @@ function NppCombobox({ value, onChange, suggestions }: {
   return (
     <div className="relative">
       <input
+        ref={inputRef}
         value={value}
         onChange={e => { onChange(e.target.value); setOpen(true) }}
         onFocus={() => setOpen(true)}
@@ -571,8 +586,14 @@ function NppCombobox({ value, onChange, suggestions }: {
         placeholder="Tên nhà phân phối"
         className="flex h-8 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring mt-1"
       />
-      {open && filtered.length > 0 && (
-        <div className="absolute z-[200] top-full left-0 mt-0.5 w-full bg-white border border-slate-200 rounded-md shadow-lg max-h-48 overflow-auto">
+      {open && anchor && filtered.length > 0 && createPortal(
+        <div
+          className="fixed z-[200] pointer-events-auto bg-white border border-slate-200 rounded-md shadow-lg max-h-48 overflow-auto"
+          style={{
+            left: anchor.left, width: anchor.width,
+            ...(anchor.dropUp ? { bottom: window.innerHeight - anchor.top + 4 } : { top: anchor.top + 4 }),
+          }}
+        >
           {filtered.map(s => (
             <button
               key={s}
@@ -584,7 +605,8 @@ function NppCombobox({ value, onChange, suggestions }: {
               {s}
             </button>
           ))}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   )

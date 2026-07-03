@@ -18,6 +18,7 @@ import { Badge }    from '@/components/ui/badge'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
+import { FormSheet } from '@/components/shared/FormSheet'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import {
   useDepartments, useJobTitles, useEmployeeRecords,
@@ -305,14 +306,12 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
 
   if (createdInfo) {
     return (
-      <Dialog open={open} onOpenChange={v => { if (!v) onClose() }}>
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-green-700">
-              <Check className="h-5 w-5" /> Tạo tài khoản thành công
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
+      <FormSheet
+        open={open} onClose={onClose}
+        title={<span className="flex items-center gap-2 text-green-700"><Check className="h-5 w-5" /> Tạo tài khoản thành công</span>}
+        footer={<Button onClick={onClose}>Đóng</Button>}
+      >
+          <div className="space-y-4">
             <p className="text-sm text-slate-600">
               Tài khoản <span className="font-semibold text-slate-800">{createdInfo.name}</span> đã được tạo.
               Cấp thông tin đăng nhập dưới đây cho nhân viên:
@@ -341,23 +340,19 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
               Nhân viên nên đổi mật khẩu sau lần đăng nhập đầu tiên.
             </p>
           </div>
-          <DialogFooter>
-            <Button onClick={onClose}>Đóng</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      </FormSheet>
     )
   }
 
   // Non-admin: chỉ cho chỉnh Kỹ năng / Vị trí, không sửa hồ sơ
   if (skillOnly && emp) {
     return (
-      <Dialog open={open} onOpenChange={v => { if (!v) onClose() }}>
-        <DialogContent className="sm:max-w-lg max-h-[90dvh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Kỹ năng / Vị trí — {emp.name}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3 py-1">
+      <FormSheet
+        open={open} onClose={onClose}
+        title={`Kỹ năng / Vị trí — ${emp.name}`}
+        footer={<Button variant="outline" onClick={onClose}>Đóng</Button>}
+      >
+          <div className="space-y-3">
             <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
               <p className="font-medium text-slate-800">{emp.name}</p>
               <p className="text-xs text-slate-500">{emp.employee_code} · {emp.dept?.name ?? '—'} · {emp.job_title?.name ?? '—'}</p>
@@ -367,22 +362,22 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
               : <p className="text-xs text-amber-600">Nhân viên chưa có chức danh — không thể gán kỹ năng.</p>}
             <p className="text-[11px] text-slate-400">Chỉ Admin mới sửa được hồ sơ. Bạn chỉ chỉnh Kỹ năng / Vị trí.</p>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={onClose}>Đóng</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      </FormSheet>
     )
   }
 
   return (
-    <Dialog open={open} onOpenChange={v => { if (!v) onClose() }}>
-      <DialogContent className="sm:max-w-lg max-h-[90dvh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>{isEdit ? 'Sửa nhân viên' : 'Thêm nhân viên'}</DialogTitle>
-        </DialogHeader>
-
-        <div className="space-y-4 py-1">
+    <FormSheet
+      open={open} onClose={onClose}
+      title={isEdit ? 'Sửa nhân viên' : 'Thêm nhân viên'}
+      footer={<>
+        <Button variant="outline" onClick={onClose}>Huỷ</Button>
+        <Button onClick={handleSubmit} disabled={isPending || !showRestOfForm || !name || (isDriverRole ? (!isEdit && !driverVehicleId) : !empCode)}>
+          {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo nhân viên'}
+        </Button>
+      </>}
+    >
+        <div className="space-y-4">
           {apiError && (
             <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{apiError}</div>
           )}
@@ -540,15 +535,7 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
             </>
           )}
         </div>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Huỷ</Button>
-          <Button onClick={handleSubmit} disabled={isPending || !showRestOfForm || !name || (isDriverRole ? (!isEdit && !driverVehicleId) : !empCode)}>
-            {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo nhân viên'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    </FormSheet>
   )
 }
 
@@ -576,12 +563,17 @@ function DepartmentFormDialog({ dept, open, onClose }: { dept: Department | null
   }
 
   return (
-    <Dialog open={open} onOpenChange={v => { if (!v) onClose() }}>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader>
-          <DialogTitle>{isEdit ? 'Sửa phòng ban' : 'Thêm phòng ban'}</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-3 py-1">
+    <FormSheet
+      open={open} onClose={onClose}
+      title={isEdit ? 'Sửa phòng ban' : 'Thêm phòng ban'}
+      footer={<>
+        <Button variant="outline" onClick={onClose}>Huỷ</Button>
+        <Button onClick={handleSubmit} disabled={isPending || !name || !code}>
+          {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo'}
+        </Button>
+      </>}
+    >
+        <div className="space-y-3">
           {apiError && (
             <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{apiError}</div>
           )}
@@ -602,14 +594,7 @@ function DepartmentFormDialog({ dept, open, onClose }: { dept: Department | null
             </div>
           )}
         </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Huỷ</Button>
-          <Button onClick={handleSubmit} disabled={isPending || !name || !code}>
-            {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    </FormSheet>
   )
 }
 
@@ -663,12 +648,12 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
   // Non-admin: chỉ cho sửa Danh mục Vị trí/Skill (BE đã chặn chỉ chức danh cấp dưới)
   if (skillOnly && jt) {
     return (
-      <Dialog open={open} onOpenChange={v => { if (!v) onClose() }}>
-        <DialogContent className="sm:max-w-lg max-h-[90dvh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Vị trí / Skill — {jt.name}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3 py-1">
+      <FormSheet
+        open={open} onClose={onClose}
+        title={`Vị trí / Skill — ${jt.name}`}
+        footer={<Button variant="outline" onClick={onClose}>Đóng</Button>}
+      >
+          <div className="space-y-3">
             <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
               <p className="font-medium text-slate-800">{jt.name}</p>
               <p className="text-xs text-slate-500">{jt.department?.name ?? '—'}</p>
@@ -676,21 +661,22 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
             <JobTitleSkillSection jobTitleId={jt.id} />
             <p className="text-[11px] text-slate-400">Chỉ Admin mới sửa tên/phòng ban/phân quyền. Bạn chỉ chỉnh Danh mục Vị trí/Skill của chức danh cấp dưới.</p>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={onClose}>Đóng</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      </FormSheet>
     )
   }
 
   return (
-    <Dialog open={open} onOpenChange={v => { if (!v) onClose() }}>
-      <DialogContent className="sm:max-w-lg max-h-[90dvh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>{isEdit ? 'Sửa chức danh' : 'Thêm chức danh'}</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-4 py-1">
+    <FormSheet
+      open={open} onClose={onClose}
+      title={isEdit ? 'Sửa chức danh' : 'Thêm chức danh'}
+      footer={<>
+        <Button variant="outline" onClick={onClose}>Huỷ</Button>
+        <Button onClick={handleSubmit} disabled={isPending || !name || !deptId}>
+          {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo'}
+        </Button>
+      </>}
+    >
+        <div className="space-y-4">
           {apiError && (
             <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{apiError}</div>
           )}
@@ -810,14 +796,7 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
             </div>
           )}
         </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Huỷ</Button>
-          <Button onClick={handleSubmit} disabled={isPending || !name || !deptId}>
-            {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    </FormSheet>
   )
 }
 

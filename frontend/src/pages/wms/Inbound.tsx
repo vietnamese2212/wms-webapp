@@ -350,6 +350,18 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
     return [...filtered].sort((a, b) => (planMatIds.has(b.id) ? 1 : 0) - (planMatIds.has(a.id) ? 1 : 0))
   }
 
+  // Paste cột SL dự kiến từ Excel: điền lần lượt xuống các dòng bắt đầu từ dòng đang dán
+  // (mirror handleNccMatCodePaste — dán cột mã trước, dán cột SL sau)
+  function handleNccQtyPaste(idx: number, e: React.ClipboardEvent) {
+    const text = e.clipboardData.getData('text')
+    const lines = text.split(/[\n\r]+/).map(s => s.trim().replace(/\s/g, '').replace(',', '.')).filter(Boolean)
+    if (lines.length <= 1) return
+    e.preventDefault()
+    setNccRows(prev => prev.map((r, i) =>
+      i >= idx && i - idx < lines.length ? { ...r, planned_qty: lines[i - idx] } : r
+    ))
+  }
+
   function setNccRowField(idx: number, field: 'unit_input' | 'planned_qty', val: string) {
     setNccRows(prev => prev.map((r, i) => i !== idx ? r : { ...r, [field]: val }))
   }
@@ -583,7 +595,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                   value={locationId}
                   onChange={setLocationId}
                   disabled={!subType || !materialId}
-                  searchable={false}
+                  searchPlaceholder="Tìm vị trí…"
                   triggerClassName="h-8 mt-0.5"
                   placeholder={!warehouseId ? 'Chọn kho trước' : !subType ? 'Chọn loại kho trước' : !materialId ? 'Chọn Mã hàng trước' : 'Chọn vị trí'}
                   options={filteredLocs.map(l => {
@@ -1019,6 +1031,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                           <td className="px-1.5 py-1">
                             <input type="number" min="0" value={row.planned_qty}
                               onChange={e => setNccRowField(idx, 'planned_qty', e.target.value)}
+                              onPaste={e => handleNccQtyPaste(idx, e)}
                               className="w-full h-7 px-1.5 text-[10px] border border-slate-200 rounded text-right bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
                             />
                           </td>

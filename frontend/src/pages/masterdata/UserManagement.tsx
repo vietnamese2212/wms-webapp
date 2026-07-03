@@ -1098,6 +1098,42 @@ export default function UserManagement() {
                   <span className="font-semibold text-slate-700">{selectedEmp.name}</span>
                   <button onClick={() => setSelectedEmp(null)} className="text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>
                 </div>
+                {/* Thao tác nhanh — khỏi phải kéo ngang bảng để thấy cột action */}
+                {(selectedEmp.deleted_at
+                  ? canDeleteEmp
+                  : (canSetPwd || canEditEmp || (canDeleteEmp && selectedEmp.id !== user?.id))) && (
+                  <div className="flex flex-wrap gap-1.5 border-b pb-2">
+                    {selectedEmp.deleted_at ? (
+                      canDeleteEmp && (
+                        <Button size="sm" variant="outline" className="!min-h-0 h-7 gap-1 text-xs text-green-700"
+                          disabled={restoring} onClick={() => restore(selectedEmp.id)}>
+                          <RotateCcw className="h-3.5 w-3.5" /> Khôi phục
+                        </Button>
+                      )
+                    ) : (
+                      <>
+                        {canEditEmp && (
+                          <Button size="sm" className="!min-h-0 h-7 gap-1 text-xs"
+                            onClick={() => { setEditingEmp(selectedEmp); setShowEmpDlg(true) }}>
+                            <Pencil className="h-3.5 w-3.5" /> Sửa
+                          </Button>
+                        )}
+                        {canSetPwd && (
+                          <Button size="sm" variant="outline" className="!min-h-0 h-7 gap-1 text-xs"
+                            onClick={() => setPwdEmp(selectedEmp)}>
+                            <KeyRound className="h-3.5 w-3.5" /> Mật khẩu
+                          </Button>
+                        )}
+                        {canDeleteEmp && selectedEmp.id !== user?.id && (
+                          <Button size="sm" variant="outline" className="!min-h-0 h-7 gap-1 text-xs text-red-600 hover:text-red-700"
+                            onClick={() => setConfirmDeleteEmp(selectedEmp)}>
+                            <Trash2 className="h-3.5 w-3.5" /> Xóa
+                          </Button>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
                 <div><span className="text-slate-400">Mã NV:</span> <span className="font-mono font-medium">{selectedEmp.employee_code}</span></div>
                 <div><span className="text-slate-400">Đăng nhập:</span> <span className="font-medium">{selectedEmp.email ?? '—'}</span></div>
                 <div><span className="text-slate-400">SĐT:</span> <span className="font-medium">{selectedEmp.phone ?? '—'}</span></div>

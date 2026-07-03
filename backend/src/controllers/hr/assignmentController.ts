@@ -10,6 +10,16 @@ type ReqUser = { sub?: string; name?: string }
 const userOf = (req: Request): ReqUser => (req as { user?: ReqUser }).user ?? {}
 const now = () => new Date().toISOString()
 
+// .in() trên danh sách id lớn: chunk 300 (URL dài) + phân trang từng chunk (cap ~1000/response)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function fetchByChunks(ids: string[], make: (chunk: string[]) => any): Promise<any[]> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const out: any[] = []
+  for (let i = 0; i < ids.length; i += 300)
+    out.push(...await fetchAllRowsParallel(() => make(ids.slice(i, i + 300))))
+  return out
+}
+
 const SHEET_SELECT = 'id, work_date, warehouse_id, layout_id, status, note, published_at, created_at, updated_at, created_by, updated_by'
 
 // Vị trí (skill) của phiếu = skill trong layout. Trả {id: skill_id, name, shift_tag, sort_order, job_title}
@@ -46,10 +56,12 @@ export async function listSheets(req: Request, res: Response) {
     const { data: whs } = wIds.length ? await supabase.from('Warehouse').select('id, name').in('id', wIds) : { data: [] }
     const wMap = new Map((whs ?? []).map((w: { id: string; name: string }) => [w.id, w.name]))
 
-    // đếm demand + assignment cho từng sheet
-    const [{ data: demands }, { data: asgs }] = await Promise.all([
-      supabase.from('WorkAssignmentDemand').select('sheet_id, required_count').in('sheet_id', ids),
-      supabase.from('WorkAssignment').select('sheet_id, status').in('sheet_id', ids),
+    // đếm demand + assignment cho từng sheet — phân trang (khoảng ngày rộng × NV/ngày dễ >1000 → đếm thiếu)
+    const [demands, asgs] = await Promise.all([
+      fetchAllRowsParallel(() => supabase.from('WorkAssignmentDemand')
+        .select('sheet_id, required_count').in('sheet_id', ids).order('id')),
+      fetchAllRowsParallel(() => supabase.from('WorkAssignment')
+        .select('sheet_id, status').in('sheet_id', ids).order('id')),
     ])
     const demandBy = new Map<string, number>()
     for (const d of (demands ?? []) as { sheet_id: string; required_count: number }[])
@@ -202,15 +214,19 @@ export async function autoAssign(req: Request, res: Response) {
     const scopeSkillIds = new Set(layoutSkills.map(s => s.skill_id))
 
     // ── 2. Ứng viên: NV có quyền truy cập kho + có ≥1 skill trong layout + đang hoạt động ──
-    const { data: waRows } = await supabase.from('UserWarehouseAccess').select('employee_id').eq('warehouse_id', warehouse_id)
+    // Phân trang/chunk toàn bộ (NV × skill >1000 → pool ứng viên bị cắt âm thầm → auto-xếp thiếu người)
+    const waRows = await fetchAllRowsParallel(() => supabase.from('UserWarehouseAccess')
+      .select('employee_id').eq('warehouse_id', warehouse_id).order('id'))
     const accessSet = new Set((waRows ?? []).map((r: { employee_id: string }) => r.employee_id))
-    const { data: esRows } = scopeSkillIds.size
-      ? await supabase.from('EmployeeSkill').select('employee_id, skill_id, priority').in('skill_id', [...scopeSkillIds])
-      : { data: [] as { employee_id: string; skill_id: string; priority: number }[] }
+    const esRows = scopeSkillIds.size
+      ? await fetchAllRowsParallel(() => supabase.from('EmployeeSkill')
+          .select('employee_id, skill_id, priority').in('skill_id', [...scopeSkillIds]).order('id'))
+      : [] as { employee_id: string; skill_id: string; priority: number }[]
     const empWithSkill = [...new Set(((esRows ?? []) as { employee_id: string }[]).map(r => r.employee_id))].filter(eid => accessSet.has(eid))
-    const { data: emps } = empWithSkill.length
-      ? await supabase.from('Employee').select('id, job_title_id').in('id', empWithSkill).eq('is_active', true).is('deleted_at', null)
-      : { data: [] as { id: string; job_title_id: string | null }[] }
+    const emps = empWithSkill.length
+      ? await fetchByChunks(empWithSkill, chunk => supabase.from('Employee')
+          .select('id, job_title_id').in('id', chunk).eq('is_active', true).is('deleted_at', null).order('id'))
+      : [] as { id: string; job_title_id: string | null }[]
     // pool theo chức danh trong layout (nếu layout có khai báo chức danh) — "gọi đúng người"
     const ljtSet = new Set(await layoutJobTitleIds(layout_id))
     const candidateIds = ((emps ?? []) as { id: string; job_title_id: string | null }[])
@@ -218,9 +234,11 @@ export async function autoAssign(req: Request, res: Response) {
       .map(e => e.id)
     const candidateSet = new Set(candidateIds)
 
-    // ── 3. Nghỉ phép đã duyệt phủ work_date ──
-    const { data: leaves } = await supabase.from('LeaveRequest').select('employee_id')
-      .eq('status', 'APPROVED').lte('date_from', work_date).gte('date_to', work_date).in('employee_id', candidateIds.length ? candidateIds : ['__none__'])
+    // ── 3. Nghỉ phép đã duyệt phủ work_date ── (chunk candidateIds tránh URL dài + cap)
+    const leaves = candidateIds.length
+      ? await fetchByChunks(candidateIds, chunk => supabase.from('LeaveRequest').select('employee_id')
+          .eq('status', 'APPROVED').lte('date_from', work_date).gte('date_to', work_date).in('employee_id', chunk).order('id'))
+      : []
     const onLeave = new Set((leaves ?? []).map((l: { employee_id: string }) => l.employee_id))
     const available = candidateIds.filter((eid: string) => !onLeave.has(eid))
 
@@ -251,8 +269,10 @@ export async function autoAssign(req: Request, res: Response) {
       const { data: pSheets } = await supabase.from('WorkAssignmentSheet').select('id').eq('warehouse_id', warehouse_id).eq('work_date', prevDate)
       const pSheetIds = (pSheets ?? []).map((s: { id: string }) => s.id)
       if (pSheetIds.length) {
-        const { data: pAsg } = await supabase.from('WorkAssignment').select('employee_id, skill_id')
-          .in('sheet_id', pSheetIds).eq('status', 'ASSIGNED').in('employee_id', candidateIds)
+        // Chunk candidateIds + phân trang (nhân sự đông → phân công ngày trước >1000 dòng)
+        const pAsg = await fetchByChunks(candidateIds, chunk => supabase.from('WorkAssignment')
+          .select('employee_id, skill_id')
+          .in('sheet_id', pSheetIds).eq('status', 'ASSIGNED').in('employee_id', chunk).order('id'))
         const pSkillIds = [...new Set(((pAsg ?? []) as { skill_id: string | null }[]).map(a => a.skill_id).filter(Boolean))] as string[]
         const { data: pSkills } = pSkillIds.length ? await supabase.from('Skill').select('id, shift_tag').in('id', pSkillIds) : { data: [] }
         const pShiftOf = new Map(((pSkills ?? []) as { id: string; shift_tag: string | null }[]).map(s => [s.id, s.shift_tag]))
@@ -285,8 +305,10 @@ export async function autoAssign(req: Request, res: Response) {
         .eq('warehouse_id', warehouse_id).gte('work_date', monthStart).lt('work_date', nextMonthStart).neq('id', id)
       const mSheetIds = (mSheets ?? []).map((s: { id: string }) => s.id)
       if (mSheetIds.length) {
-        const { data: mAsg } = await supabase.from('WorkAssignment').select('employee_id, skill_id')
-          .in('sheet_id', mSheetIds).eq('status', 'ASSIGNED').in('employee_id', candidateIds)
+        // Chunk + phân trang (NV × ngày trong tháng dễ >1000 → cân bằng tải tháng tính sai)
+        const mAsg = await fetchByChunks(candidateIds, chunk => supabase.from('WorkAssignment')
+          .select('employee_id, skill_id')
+          .in('sheet_id', mSheetIds).eq('status', 'ASSIGNED').in('employee_id', chunk).order('id'))
         const mSkillIds = [...new Set(((mAsg ?? []) as { skill_id: string | null }[]).map(a => a.skill_id).filter(Boolean))] as string[]
         const { data: mSkills } = mSkillIds.length ? await supabase.from('Skill').select('id, shift_tag').in('id', mSkillIds) : { data: [] }
         const mShiftOf = new Map(((mSkills ?? []) as { id: string; shift_tag: string | null }[]).map(s => [s.id, s.shift_tag]))

@@ -60,9 +60,9 @@ async function visibleEmployeeIds(req: Request): Promise<Set<string> | null> {
       for (const c of (childrenOf.get(cur) ?? [])) stack.push(c)
     }
     if (descJt.size) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: subs } = await supabase.from('Employee')
-        .select('id').in('job_title_id', [...descJt])
+      // Phân trang (>1000 nhân sự cấp dưới thì list bị cắt → nhân viên biến mất khỏi scope)
+      const subs = await fetchAllRowsParallel(() => supabase.from('Employee')
+        .select('id').in('job_title_id', [...descJt]).order('id'))
       for (const s of ((subs ?? []) as { id: string }[])) allowed.add(s.id)
     }
   }
@@ -71,9 +71,9 @@ async function visibleEmployeeIds(req: Request): Promise<Set<string> | null> {
   if (u.warehouse_scope === 'ASSIGNED') {
     const whIds: string[] = u.warehouse_ids ?? []
     if (!whIds.length) return new Set<string>([self])
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: wa } = await supabase.from('UserWarehouseAccess')
-      .select('employee_id').in('warehouse_id', whIds)
+    // Phân trang (nhân sự × kho >1000 thì inWh thiếu → cắt oan khỏi scope)
+    const wa = await fetchAllRowsParallel(() => supabase.from('UserWarehouseAccess')
+      .select('employee_id').in('warehouse_id', whIds).order('employee_id').order('warehouse_id'))
     const inWh = new Set(((wa ?? []) as { employee_id: string }[]).map(r => r.employee_id))
     return new Set<string>([...allowed].filter(id => id === self || inWh.has(id)))
   }

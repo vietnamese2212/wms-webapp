@@ -1057,10 +1057,10 @@ export async function getTransferGoods(req: Request, res: Response) {
         for (const item of items ?? []) itemMatMap.set(item.id, item.material_id)
 
         if (itemIds.length) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { data: scans } = await supabase.from('OutboundScanEntry')
+          // Chunk + phân trang né cap-1000: 1 chuyến chuyển kho có thể >1000 pallet quét
+          const scans = await fetchAllByIdChunks(itemIds, chunk => supabase.from('OutboundScanEntry')
             .select('item_id, pallet_code, cartons_scanned')
-            .in('item_id', itemIds)
+            .in('item_id', chunk).order('id'))
 
           for (const scan of scans ?? []) {
             if (!scan.pallet_code) continue

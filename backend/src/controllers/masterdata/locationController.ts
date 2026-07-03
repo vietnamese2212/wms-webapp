@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { scopeCategoriesOf } from '../../utils/categoryScope'
+import { fetchAllRowsParallel } from '../../utils/pagination'
 
 // location_code = <tiền tố kho>_<khu>_<dãy>_<tầng>. Tiền tố = nmsx_code nếu có, không thì mã kho.
 function buildLocationCode(prefix: string, subCode: string, row: string, shelf: string) {
@@ -27,63 +28,73 @@ export async function listLocations(req: Request, res: Response) {
   try {
     const { warehouse_id, sub_code, active, category, material_id } = req.query
 
-    let query = supabase
-      .from('Location')
-      .select('*, warehouse:Warehouse(id, code, name), InventoryEntry(count)')
-      .order('sub_code').order('row').order('shelf')
-
     // Scope kho: ASSIGNED chỉ thấy vị trí kho được gán — kể cả khi KHÔNG truyền warehouse_id
     // (vd Check vị trí để "tất cả kho" trước đây lộ toàn bộ vị trí mọi kho)
     const scope = scopeWhIds(req)
+    let effective: string[] | null = null
     if (scope !== null) {
-      const effective = warehouse_id ? scope.filter(id => id === String(warehouse_id)) : scope
+      effective = warehouse_id ? scope.filter(id => id === String(warehouse_id)) : scope
       if (effective.length === 0) return ok(res, [])
-      query = effective.length === 1 ? query.eq('warehouse_id', effective[0]) : query.in('warehouse_id', effective)
-    } else if (warehouse_id) {
-      query = query.eq('warehouse_id', String(warehouse_id))
     }
-    if (sub_code) query = query.eq('sub_code', String(sub_code))
-    if (active === 'true') query = query.eq('is_active', true)
-    // category filter: match exact OR null (uncategorized locations accept all)
-    if (category) query = (query as any).or(`category.eq.${String(category)},category.is.null`)
-    // Scope Loại hàng: không truyền category → vẫn cắt theo allowed_categories (vị trí chưa gán loại vẫn hiện)
     const scopeCats = scopeCategoriesOf(req)
-    if (scopeCats) query = (query as any).or(`category.is.null,category.in.(${scopeCats.map(c => `"${c}"`).join(',')})`)
 
-    const { data, error } = await query
-    if (error) throw error
+    // Phân trang né cap ~1000 (>1000 vị trí thì list/dropdown mất vị trí)
+    const data = await fetchAllRowsParallel(() => {
+      let query = supabase
+        .from('Location')
+        .select('*, warehouse:Warehouse(id, code, name), InventoryEntry(count)')
+        .order('sub_code').order('row').order('shelf').order('id')
+      if (effective) {
+        query = effective.length === 1 ? query.eq('warehouse_id', effective[0]) : query.in('warehouse_id', effective)
+      } else if (warehouse_id) {
+        query = query.eq('warehouse_id', String(warehouse_id))
+      }
+      if (sub_code) query = query.eq('sub_code', String(sub_code))
+      if (active === 'true') query = query.eq('is_active', true)
+      // category filter: match exact OR null (uncategorized locations accept all)
+      if (category) query = (query as any).or(`category.eq.${String(category)},category.is.null`)
+      // Scope Loại hàng: không truyền category → vẫn cắt theo allowed_categories (vị trí chưa gán loại vẫn hiện)
+      if (scopeCats) query = (query as any).or(`category.is.null,category.in.(${scopeCats.map(c => `"${c}"`).join(',')})`)
+      return query
+    })
 
-    // Add used_slots (layer 1 IN_STOCK or PARTIAL) for each location in parallel
-    const withUsage = await Promise.all(
-      (data ?? []).map(async (loc) => {
-        const { InventoryEntry, ...rest } = loc as Record<string, unknown>
-        const { count } = await supabase
-          .from('InventoryEntry')
-          .select('*', { count: 'exact', head: true })
-          .eq('location_id', (rest as { id: string }).id)
-          .eq('stack_layer', 1)
-          .in('status', ['IN_STOCK', 'PARTIAL'])
-        return {
-          ...rest,
-          _count: { inventory_entries: Array.isArray(InventoryEntry) ? ((InventoryEntry[0] as { count: number })?.count ?? 0) : 0 },
-          used_slots: count ?? 0,
-          has_same_material: false,
-        } as Record<string, unknown>
-      })
-    )
+    // used_slots (layer 1 IN_STOCK/PARTIAL): 1 lượt quét gộp thay N+1 count query
+    // (trước: mỗi vị trí 1 roundtrip — nghìn vị trí = nghìn query song song, cạn connection)
+    const locIdsAll = (data ?? []).map((l: Record<string, unknown>) => l.id as string)
+    const usedCount = new Map<string, number>()
+    for (let i = 0; i < locIdsAll.length; i += 300) {
+      const rows = await fetchAllRowsParallel(() => supabase.from('InventoryEntry')
+        .select('location_id').in('location_id', locIdsAll.slice(i, i + 300))
+        .eq('stack_layer', 1).in('status', ['IN_STOCK', 'PARTIAL']).order('id'))
+      for (const r of rows as { location_id: string }[])
+        usedCount.set(r.location_id, (usedCount.get(r.location_id) ?? 0) + 1)
+    }
+    const withUsage = (data ?? []).map((loc: Record<string, unknown>) => {
+      const { InventoryEntry, ...rest } = loc
+      return {
+        ...rest,
+        _count: { inventory_entries: Array.isArray(InventoryEntry) ? ((InventoryEntry[0] as { count: number })?.count ?? 0) : 0 },
+        used_slots: usedCount.get(rest.id as string) ?? 0,
+        has_same_material: false,
+      } as Record<string, unknown>
+    })
 
     // has_same_material: vị trí đang chứa (layer-1, IN_STOCK/PARTIAL) đúng material_id này
-    // → để FE gợi ý "nơi loại hàng đó đang để dở". 1 query gộp cho tất cả vị trí.
+    // → để FE gợi ý "nơi loại hàng đó đang để dở". Chunk 300 + phân trang.
     if (material_id && withUsage.length > 0) {
       const locIds = withUsage.map(l => l.id as string)
-      const { data: sameMat } = await supabase
-        .from('InventoryEntry')
-        .select('location_id')
-        .in('location_id', locIds)
-        .eq('material_id', String(material_id))
-        .eq('stack_layer', 1)
-        .in('status', ['IN_STOCK', 'PARTIAL'])
-      const sameSet = new Set((sameMat ?? []).map((e: { location_id: string }) => e.location_id))
+      const sameSet = new Set<string>()
+      for (let i = 0; i < locIds.length; i += 300) {
+        const sameMat = await fetchAllRowsParallel(() => supabase
+          .from('InventoryEntry')
+          .select('location_id')
+          .in('location_id', locIds.slice(i, i + 300))
+          .eq('material_id', String(material_id))
+          .eq('stack_layer', 1)
+          .in('status', ['IN_STOCK', 'PARTIAL'])
+          .order('id'))
+        for (const e of sameMat as { location_id: string }[]) sameSet.add(e.location_id)
+      }
       for (const l of withUsage) l.has_same_material = sameSet.has(l.id as string)
     }
 
@@ -98,13 +109,13 @@ export async function listSubGroups(req: Request, res: Response) {
     const zoneScope = scopeWhIds(req)
     if (zoneScope !== null && !zoneScope.includes(String(warehouse_id))) return ok(res, [])
 
-    const { data, error } = await supabase
+    // Phân trang (kho lớn >1000 vị trí → sót khu)
+    const data = await fetchAllRowsParallel(() => supabase
       .from('Location')
       .select('sub_code, sub_name, sub_type')
       .eq('warehouse_id', String(warehouse_id))
       .eq('is_active', true)
-      .order('sub_code')
-    if (error) throw error
+      .order('sub_code').order('id'))
 
     const groupMap = new Map<string, { sub_code: string; sub_name: string | null; sub_type: string | null; location_count: number }>()
     for (const loc of data ?? []) {

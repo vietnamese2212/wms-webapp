@@ -3,7 +3,7 @@
  * Run: cd backend && node ../scripts/import_companies.js ../templates/2_NCC_DVVT.xlsx
  * type phải là 'NCC' hoặc 'ĐVVT'. Bỏ qua mã đã tồn tại.
  */
-const { supabase, S, readRows } = require('./_upload_util')
+const { supabase, S, readRows, fetchAll } = require('./_upload_util')
 const { randomUUID } = require('crypto')
 
 const KEYS = ['code', 'name', 'type', 'contact_name', 'contact_phone', 'alias_codes']
@@ -11,7 +11,8 @@ const parseAlias = v => [...new Set(String(v ?? '').split(',').map(s => s.toUppe
 
 async function main() {
   const rows = readRows(process.argv[2] || '../templates/2_NCC_DVVT.xlsx', KEYS)
-  const { data: ex } = await supabase.from('TransportCompany').select('code, alias_codes')
+  // fetchAll: né cap ~1000/response (thiếu dòng thì kiểm trùng mã sót)
+  const ex = await fetchAll('TransportCompany', 'code, alias_codes')
   // seen = TẤT CẢ mã đang dùng (chính + phụ) → 1 mã chỉ thuộc 1 NCC, chống mơ hồ khi khớp theo mã.
   const seen = new Set()
   for (const c of ex ?? []) {

@@ -7,21 +7,22 @@
  *   sub_name + category LẤY TỪ ZONE (theo sub_code), KHÔNG lấy từ file.
  *   sub_code chưa có zone → BỎ QUA + báo rõ (không tự tạo zone).
  */
-const { supabase, S, I, readRows } = require('./_upload_util')
+const { supabase, S, I, readRows, fetchAll } = require('./_upload_util')
 const { randomUUID } = require('crypto')
 
 const KEYS = ['warehouse', 'sub_code', 'row', 'shelf', 'max_pallets', 'category', 'sub_name', 'sub_type']
 
 async function main() {
   const rows = readRows(process.argv[2] || '../templates/5_ViTriKho.xlsx', KEYS)
-  const { data: whs } = await supabase.from('Warehouse').select('id, code, name, nmsx_code')
+  // fetchAll: né cap ~1000/response (thiếu dòng thì dedup hỏng → chèn trùng)
+  const whs = await fetchAll('Warehouse', 'id, code, name, nmsx_code')
   const whByCode = new Map((whs ?? []).map(w => [String(w.code).trim().toLowerCase(), w]))
   const whByName = new Map((whs ?? []).map(w => [String(w.name).trim().toLowerCase(), w]))
-  const { data: ex } = await supabase.from('Location').select('location_code')
+  const ex = await fetchAll('Location', 'location_code')
   const seen = new Set((ex ?? []).map(l => (l.location_code || '').trim().toLowerCase()))
 
   // KHU VỰC là CHUẨN: map (warehouse_id|sub_code-lower) → zone {name, category}
-  const { data: zones } = await supabase.from('WarehouseZone').select('warehouse_id, code, name, category')
+  const zones = await fetchAll('WarehouseZone', 'warehouse_id, code, name, category')
   const zoneMap = new Map((zones ?? []).map(z => [`${z.warehouse_id}|${String(z.code).trim().toLowerCase()}`, z]))
 
   const now = new Date().toISOString()

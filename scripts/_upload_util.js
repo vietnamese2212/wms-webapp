@@ -62,13 +62,27 @@ function codeNameResolver(items, codeKey = 'code', nameKey = 'name', idKey = 'id
   }
 }
 
+/** Lấy TẤT CẢ dòng của 1 query — né cap ~1000 dòng/response của PostgREST (range-loop).
+ *  makeQuery phải trả query MỚI mỗi lần gọi (đã .select + filter + .order ổn định, CHƯA .range). */
+async function fetchAllQ(makeQuery) {
+  const out = []
+  for (let p = 0; ; p++) {
+    const { data, error } = await makeQuery().range(p * 1000, p * 1000 + 999)
+    if (error) throw new Error(error.message)
+    out.push(...(data ?? []))
+    if ((data ?? []).length < 1000) break
+  }
+  return out
+}
+/** Lấy TẤT CẢ dòng 1 bảng (không filter). */
+const fetchAll = (table, select) => fetchAllQ(() => supabase.from(table).select(select).order('id'))
+
 /** Map tên(lowercase) → id từ 1 bảng. */
 async function nameMap(table, nameCol = 'name', idCol = 'id', extra) {
-  let q = supabase.from(table).select(`${idCol}, ${nameCol}`)
-  const { data } = await q
+  const data = await fetchAll(table, `${idCol}, ${nameCol}`)
   const m = new Map()
   for (const r of data ?? []) m.set(String(r[nameCol] || '').trim().toLowerCase(), r[idCol])
   return m
 }
 
-module.exports = { supabase, XLSX, S, I, readRows, nameMap, codeNameResolver }
+module.exports = { supabase, XLSX, S, I, readRows, nameMap, codeNameResolver, fetchAll, fetchAllQ }

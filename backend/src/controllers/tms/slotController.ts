@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
+import { fetchAllRowsParallel } from '../../utils/pagination'
 
 interface SlotTemplateRow {
   id: string; vehicle_type_id: string; cargo_type: string
@@ -47,21 +48,25 @@ export async function generateSlotsForDates(req: Request, res: Response) {
     const validDates = dates.filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d))
     if (!validDates.length) return fail(res, 'Không có ngày hợp lệ (cần định dạng YYYY-MM-DD)', 400)
 
-    // Lấy template đang hoạt động của kho này
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: templates, error: tmplErr } = await supabase.from('SlotTemplate')
-      .select('id, vehicle_type_id, cargo_type, day_of_week, time_from, time_to, max_vehicles')
-      .eq('is_active', true)
-      .eq('warehouse_id', warehouse_id)
-    if (tmplErr) return fail(res, tmplErr.message)
+    // Lấy template đang hoạt động của kho này — phân trang (SlotTemplate đã >1000 dòng toàn hệ thống)
+    let templates: SlotTemplateRow[]
+    try {
+      templates = await fetchAllRowsParallel(() => supabase.from('SlotTemplate')
+        .select('id, vehicle_type_id, cargo_type, day_of_week, time_from, time_to, max_vehicles')
+        .eq('is_active', true)
+        .eq('warehouse_id', warehouse_id)
+        .order('id')) as SlotTemplateRow[]
+    } catch (e) { return fail(res, e instanceof Error ? e.message : String(e)) }
     if (!templates?.length) return ok(res, { created: 0, message: 'Chưa có template nào được tạo' })
 
-    // Tìm slot đã tồn tại để tránh duplicate
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: existing } = await supabase.from('DeliverySlot')
+    // Tìm slot đã tồn tại để tránh duplicate — LỌC THEO KHO (trước đây quét mọi kho: vừa thừa
+    // vừa dễ vượt cap 1000 → existingSet thiếu → sinh TRÙNG slot) + phân trang
+    const existing = await fetchAllRowsParallel(() => supabase.from('DeliverySlot')
       .select('template_id, date')
+      .eq('warehouse_id', warehouse_id)
       .in('date', validDates)
       .not('template_id', 'is', null)
+      .order('id'))
     const existingSet = new Set(
       ((existing ?? []) as { template_id: string; date: string }[])
         .map(e => `${e.template_id}:${e.date}`)

@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
+import { fetchAllRowsParallel } from '../../utils/pagination'
 
 const INVENTORY_MODES = ['QR', 'QTY', 'NONE'] as const
 
@@ -20,7 +21,9 @@ function normShiptoCodes(input: unknown): string[] {
 async function findShiptoClash(codes: string[], code: string, excludeId?: string): Promise<string | null> {
   const all = [...new Set([code.toUpperCase().trim(), ...codes].filter(Boolean))]
   if (!all.length) return null
-  const { data } = await supabase.from('Warehouse').select('id, code, shipto_codes')
+  // Phân trang (>1000 kho thì kiểm trùng ship-to sót → mã đụng lọt qua)
+  const data = await fetchAllRowsParallel(() =>
+    supabase.from('Warehouse').select('id, code, shipto_codes').order('id'))
   for (const w of (data ?? []) as { id: string; code: string; shipto_codes: string[] | null }[]) {
     if (excludeId && w.id === excludeId) continue
     const owned = new Set([String(w.code).toUpperCase().trim(), ...(w.shipto_codes ?? []).map(s => String(s).toUpperCase().trim())])
@@ -39,7 +42,9 @@ function normNmsx(input: unknown): string | null {
 // Chặn 2 kho cùng 1 mã NMSX (gây trùng location_code + mơ hồ NMSX). Trả mã đụng (nếu có).
 async function findNmsxClash(nmsx: string | null, excludeId?: string): Promise<string | null> {
   if (!nmsx) return null
-  const { data } = await supabase.from('Warehouse').select('id, nmsx_code')
+  // Phân trang (>1000 kho thì kiểm trùng NMSX sót)
+  const data = await fetchAllRowsParallel(() =>
+    supabase.from('Warehouse').select('id, nmsx_code').order('id'))
   for (const w of (data ?? []) as { id: string; nmsx_code: string | null }[]) {
     if (excludeId && w.id === excludeId) continue
     if (String(w.nmsx_code ?? '').toUpperCase().trim() === nmsx) return nmsx
@@ -50,11 +55,12 @@ async function findNmsxClash(nmsx: string | null, excludeId?: string): Promise<s
 export async function listWarehouses(req: Request, res: Response) {
   try {
     const onlyActive = req.query.active === 'true'
-    let query = supabase.from('Warehouse').select('*, Location(count), Employee(count)').order('name')
-    if (onlyActive) query = query.eq('is_active', true)
-
-    const { data, error } = await query
-    if (error) throw error
+    // Phân trang (>1000 kho thì list/dropdown mất kho)
+    const data = await fetchAllRowsParallel(() => {
+      let query = supabase.from('Warehouse').select('*, Location(count), Employee(count)').order('name').order('id')
+      if (onlyActive) query = query.eq('is_active', true)
+      return query
+    })
 
     const result = (data ?? []).map((w) => {
       const { Location, Employee, ...rest } = w as Record<string, unknown>
@@ -71,13 +77,13 @@ export async function getWarehouse(req: Request, res: Response) {
     if (error) throw error
     if (!data) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy kho')
 
-    const { data: locs, error: locErr } = await supabase
+    // Phân trang (kho lớn >1000 vị trí → sót khu)
+    const locs = await fetchAllRowsParallel(() => supabase
       .from('Location')
       .select('sub_code, sub_name, sub_type')
       .eq('warehouse_id', req.params.id)
       .eq('is_active', true)
-      .order('sub_code')
-    if (locErr) throw locErr
+      .order('sub_code').order('id'))
 
     const groupMap = new Map<string, { sub_code: string; sub_name: string | null; sub_type: string | null; location_count: number }>()
     for (const loc of locs ?? []) {

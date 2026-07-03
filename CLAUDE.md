@@ -74,6 +74,11 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 ---
 ## Chuẩn code bắt buộc (luật cốt tử — chi tiết nằm trong skill)
 
+**QUY MÔ — app phục vụ VÀI NGHÌN người dùng, dữ liệu VÀI TRIỆU dòng/năm:**
+- Mọi thiết kế/query phải giả định bảng nghiệp vụ (InventoryEntry, OutboundScanEntry, TmsOrder, Attendance, gate_registrations…) sẽ có **hàng triệu dòng** — "hiện tại mới vài trăm dòng" KHÔNG phải lý do bỏ qua.
+- **PostgREST cap ~1000 dòng/response** — query không phân trang bị cắt ÂM THẦM (data thiếu, báo oan, dedup hỏng); `.limit(N>1000)` cũng KHÔNG vượt được cap. Mọi query trả list phải: `fetchAllRowsParallel` (`utils/pagination`) / range-loop; `.in('col', ids)` với ids lớn phải **chunk 300–500**; kiểm quyền/scope trên list phải kiểm **ĐỦ MỌI dòng** (cắt 1000 đầu = lỗ hổng). Chiến dịch quét: memory `cap-1000-campaign`.
+- Gặp vấn đề cùng họ scale (query kéo cả bảng, N+1 roundtrip, đếm/tổng client-side trên list cắt cụt, ghi tuần tự từng dòng…) → **tìm giải pháp và xử lý NGAY trong lượt làm việc đó**, không hoãn, không chỉ fix chỗ đang đụng — quét luôn các chỗ cùng pattern.
+
 **Mutation & realtime** (skill `mutation-realtime` + `verify-feature`):
 - Mọi INSERT phải có `id: randomUUID()` + `updated_at: new Date().toISOString()` — DB không có DEFAULT, thiếu → **lỗi 23502**. `import { randomUUID } from 'crypto'`. DB client: `import { supabase } from '../../lib/supabase'`.
 - **Upload/ghi hàng loạt (Excel, bulk) KHÔNG ghi tuần tự từng dòng trong `for...await`** — file lớn (vài trăm–nghìn dòng) → hàng nghìn roundtrip nối tiếp → **quá `maxDuration=60s` của Vercel** → user thấy trang "An error occurred with your deployment" (crash hạ tầng, không phải JSON lỗi app). Cách đúng = **ghi theo LÔ MẢNG chunk ~500** (nhanh như upload Tồn kho `inventoryController.uploadExcel`): mã mới → `insert(chunk)`; mã đã có → **`upsert(chunk, { onConflict: 'id' })`** (KHÔNG update lẻ từng dòng, kể cả song song vẫn chậm). Muốn giữ ngữ nghĩa "ô trống giữ giá trị cũ" thì **merge trong JS** (nạp record cũ đủ cột → đắp ô có giá trị → upsert full record; cột không đưa vào payload sẽ giữ nguyên, vd `created_at`/`is_active`). Lỗi lô → fallback từng dòng để chỉ đúng mã hỏng. Mẫu: `materialController.uploadExcel`.

@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
+import { fetchAllRowsParallel } from '../../utils/pagination'
 
 const LINE_SELECT = `
   *,
@@ -118,19 +119,18 @@ export async function listPlanLines(req: Request, res: Response) {
     const to   = date_to   ?? date
     if (!tms_order_id && (!from || !warehouse_id)) return fail(res, 'date_from và warehouse_id là bắt buộc', 400)
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let q = supabase.from('inbound_plan_lines').select(LINE_SELECT)
-
-    if (tms_order_id && !from) {
-      q = q.eq('tms_order_id', tms_order_id)
-    } else {
-      q = q.gte('date', from).lte('date', to).eq('warehouse_id', warehouse_id)
-      if (tms_order_id) q = q.eq('tms_order_id', tms_order_id)
-    }
-    q = q.order('date').order('created_at')
-
-    const { data, error } = await q
-    if (error) return fail(res, error.message)
+    // Phân trang né cap ~1000 (khoảng ngày rộng × nhiều NCC → KH nhập dễ vượt)
+    const data = await fetchAllRowsParallel(() => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let q = supabase.from('inbound_plan_lines').select(LINE_SELECT)
+      if (tms_order_id && !from) {
+        q = q.eq('tms_order_id', tms_order_id)
+      } else {
+        q = q.gte('date', from).lte('date', to).eq('warehouse_id', warehouse_id)
+        if (tms_order_id) q = q.eq('tms_order_id', tms_order_id)
+      }
+      return q.order('date').order('created_at').order('id')
+    })
     return ok(res, data ?? [])
   } catch (e) { return fail(res, String(e)) }
 }

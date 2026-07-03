@@ -6,18 +6,19 @@
  * Dedup theo (biển số + ĐVVT) — KHỚP ràng buộc DB Vehicle_plate_ncc_uidx: 1 biển có thể
  * thuộc NHIỀU ĐVVT (xe chạy cho nhiều đơn vị) → vào cả 2; chỉ bỏ khi trùng cả biển lẫn ĐVVT.
  */
-const { supabase, S, readRows, codeNameResolver } = require('./_upload_util')
+const { supabase, S, readRows, codeNameResolver, fetchAll } = require('./_upload_util')
 const { randomUUID } = require('crypto')
 
 const KEYS = ['license_plate', 'vehicle_type', 'ncc']
 
 async function main() {
   const rows = readRows(process.argv[2] || '../templates/4_Xe.xlsx', KEYS)
-  const { data: vts } = await supabase.from('VehicleType').select('id, code, name')
+  // fetchAll: né cap ~1000/response (Vehicle đã ~1000 xe — thiếu dòng thì dedup hỏng → chèn trùng)
+  const vts = await fetchAll('VehicleType', 'id, code, name')
   const resolveVt = codeNameResolver(vts ?? [])
-  const { data: cos } = await supabase.from('TransportCompany').select('id, code, name, type, alias_codes')
+  const cos = await fetchAll('TransportCompany', 'id, code, name, type, alias_codes')
   const resolveNcc = codeNameResolver((cos ?? []).filter(c => c.type === 'ĐVVT'))
-  const { data: ex } = await supabase.from('Vehicle').select('license_plate, ncc_id')
+  const ex = await fetchAll('Vehicle', 'license_plate, ncc_id')
   const seen = new Set((ex ?? []).map(v => `${(v.license_plate || '').trim().toLowerCase()}|${v.ncc_id}`))
   const now = new Date().toISOString()
   let ok = 0, skip = 0, err = 0

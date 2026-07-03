@@ -1,6 +1,7 @@
 import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
+import { fetchAllRowsParallel } from '../../utils/pagination'
 
 function ok(res: Response, data: unknown) { return res.json({ success: true, data }) }
 function fail(res: Response, message: string, status = 400) {
@@ -145,10 +146,13 @@ export async function splitPallet(req: Request, res: Response) {
     const totalSplit = items.reduce((s, q) => s + q, 0)
     if (totalSplit > free) return fail(res, `Tách ${totalSplit} thùng vượt số khả dụng (${free} thùng, đã trừ ${reserved} giữ chỗ)`)
 
-    // Tìm số thứ tự con kế tiếp (baseSeq.N) — quét theo cùng mã hàng
+    // Tìm số thứ tự con kế tiếp (baseSeq.N) — thu hẹp về đúng các con của pallet gốc (ilike prefix)
+    // + phân trang: quét cả bảng theo material_id sẽ bị cap ~1000 → maxN sai → SINH MÃ TRÙNG.
     const baseSeq = parts[4]
-    const { data: sameMat } = await supabase.from('InventoryEntry')
+    const childPrefix = `${parts.slice(0, 4).join('_')}_${baseSeq}.%`
+    const sameMat = await fetchAllRowsParallel(() => supabase.from('InventoryEntry')
       .select('pallet_code').eq('material_id', source.material_id)
+      .ilike('pallet_code', childPrefix).order('id'))
     let maxN = 0
     for (const r of (sameMat ?? []) as { pallet_code: string }[]) {
       const p = String(r.pallet_code).split('_')

@@ -66,12 +66,17 @@ export async function listVehicles(req: Request, res: Response) {
     if (unassigned === 'true' && vehicles.length > 0) {
       const plates = vehicles.map(v => v.license_plate as string)
       const nccIds = [...new Set(vehicles.map(v => v.ncc_id as string))]
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: drivers } = await supabase.from('Employee')
-        .select('employee_code, ncc_id')
-        .in('employee_code', plates)
-        .in('ncc_id', nccIds)
-        .eq('is_driver', true)
+      // Chunk plates 300/lượt (Vehicle đã ~1000 xe: URL dài + cap output cắt → xe bị chấm nhầm "chưa có tài khoản")
+      const drivers: { employee_code: string; ncc_id: string }[] = []
+      for (let i = 0; i < plates.length; i += 300) {
+        const rows = await fetchAllRowsParallel(() => supabase.from('Employee')
+          .select('employee_code, ncc_id')
+          .in('employee_code', plates.slice(i, i + 300))
+          .in('ncc_id', nccIds)
+          .eq('is_driver', true)
+          .order('id'))
+        drivers.push(...(rows as { employee_code: string; ncc_id: string }[]))
+      }
       if (drivers?.length) {
         const assigned = new Set(
           (drivers as { employee_code: string; ncc_id: string }[]).map(d => `${d.employee_code}|${d.ncc_id}`)

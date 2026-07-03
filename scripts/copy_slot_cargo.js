@@ -4,7 +4,7 @@
  * Idempotent: bỏ qua nếu đã có template trùng (kho, loại xe, loại kho đích, thứ, giờ từ/đến).
  * KHÔNG đụng slot đã sinh — ngày tương lai sẽ lazy-sinh loại kho mới khi mở lịch booking.
  */
-const { supabase } = require('./_upload_util')
+const { supabase, fetchAllQ } = require('./_upload_util')
 const { randomUUID } = require('crypto')
 
 const WH = '56cf7a64-d3aa-4fd2-948d-490ec487acb9'   // Kho Ba Vì
@@ -12,17 +12,17 @@ const SRC = 'Thành phẩm'
 const TARGETS = ['POSM', 'Raw', 'Giấy', 'Thùng']
 
 ;(async () => {
-  const { data: src, error } = await supabase.from('SlotTemplate')
+  // fetchAllQ: né cap ~1000/response (SlotTemplate đã >1000 dòng — thiếu dòng thì dedup hỏng → copy trùng)
+  const src = await fetchAllQ(() => supabase.from('SlotTemplate')
     .select('vehicle_type_id, day_of_week, time_from, time_to, max_vehicles, is_active, direction, created_by')
-    .eq('warehouse_id', WH).eq('cargo_type', SRC)
-  if (error) { console.error('Lỗi nạp nguồn:', error.message); process.exit(1) }
+    .eq('warehouse_id', WH).eq('cargo_type', SRC).order('id'))
   if (!src?.length) { console.error('Không có template', SRC, 'cho kho này.'); process.exit(1) }
   console.log(`Nguồn: ${src.length} dòng "${SRC}".`)
 
   // Đã có gì ở các loại kho đích (để bỏ qua trùng)
-  const { data: existing } = await supabase.from('SlotTemplate')
+  const existing = await fetchAllQ(() => supabase.from('SlotTemplate')
     .select('cargo_type, vehicle_type_id, day_of_week, time_from, time_to')
-    .eq('warehouse_id', WH).in('cargo_type', TARGETS)
+    .eq('warehouse_id', WH).in('cargo_type', TARGETS).order('id'))
   const key = r => `${r.cargo_type}|${r.vehicle_type_id}|${r.day_of_week}|${String(r.time_from).slice(0,5)}|${String(r.time_to).slice(0,5)}`
   const have = new Set((existing ?? []).map(key))
 
@@ -54,8 +54,8 @@ const TARGETS = ['POSM', 'Raw', 'Giấy', 'Thùng']
   console.log(`✓ Đã copy ${rows.length} dòng khung giờ sang ${TARGETS.join(', ')}.`)
 
   // Tổng kết
-  const { data: after } = await supabase.from('SlotTemplate')
-    .select('cargo_type').eq('warehouse_id', WH)
+  const after = await fetchAllQ(() => supabase.from('SlotTemplate')
+    .select('cargo_type').eq('warehouse_id', WH).order('id'))
   const cnt = {}
   for (const r of after ?? []) cnt[r.cargo_type] = (cnt[r.cargo_type] ?? 0) + 1
   console.log('Tổng theo loại kho:', JSON.stringify(cnt))

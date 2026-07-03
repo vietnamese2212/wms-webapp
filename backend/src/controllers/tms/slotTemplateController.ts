@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { scopeCategoriesOf } from '../../utils/categoryScope'
+import { fetchAllRowsParallel } from '../../utils/pagination'
 
 // Scope Kho: NATIONAL → null (toàn quyền); ASSIGNED → danh sách kho được gán.
 function scopeWhIds(req: Request): string[] | null {
@@ -43,12 +44,13 @@ function vnToday(): string {
  */
 async function reapplyFutureSlots(warehouse_id: string, vehicle_type_id: string): Promise<void> {
   const today = vnToday()
-  const { data: slots, error: sErr } = await supabase.from('DeliverySlot')
+  // Phân trang: slot sinh trước nhiều tháng × nhiều khung/ngày → dễ vượt cap ~1000 → reapply sót ngày
+  const slots = await fetchAllRowsParallel(() => supabase.from('DeliverySlot')
     .select('date, booked_count')
     .eq('warehouse_id', warehouse_id)
     .eq('vehicle_type_id', vehicle_type_id)
     .gte('date', today)
-  if (sErr) throw new Error(sErr.message)
+    .order('id'))
   if (!slots?.length) return
 
   const bookedByDate = new Map<string, number>()
@@ -95,15 +97,17 @@ export async function listSlotTemplates(req: Request, res: Response) {
     const listScope = scopeWhIds(req)
     if (listScope !== null && !listScope.includes(warehouse_id)) return ok(res, [])
     const listCats = scopeCategoriesOf(req)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let q = supabase.from('SlotTemplate')
-      .select('*, vehicle_type:VehicleType(id, code, name)')
-      .eq('warehouse_id', warehouse_id)
-      .order('vehicle_type_id').order('day_of_week').order('time_from')
-    if (vehicle_type_id) q = q.eq('vehicle_type_id', vehicle_type_id)
-    if (listCats) q = q.in('cargo_type', [...listCats, 'ALL'])
-    const { data, error } = await q
-    if (error) return fail(res, error.message)
+    // Phân trang (SlotTemplate toàn hệ thống đã >1000; kho lớn nhiều loại xe × khung giờ tiến sát cap)
+    const data = await fetchAllRowsParallel(() => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let q = supabase.from('SlotTemplate')
+        .select('*, vehicle_type:VehicleType(id, code, name)')
+        .eq('warehouse_id', warehouse_id)
+        .order('vehicle_type_id').order('day_of_week').order('time_from').order('id')
+      if (vehicle_type_id) q = q.eq('vehicle_type_id', vehicle_type_id)
+      if (listCats) q = q.in('cargo_type', [...listCats, 'ALL'])
+      return q
+    })
     return ok(res, data ?? [])
   } catch (e) { return fail(res, String(e)) }
 }
@@ -261,9 +265,11 @@ export async function batchUpsertSlotTemplates(req: Request, res: Response) {
     // Áp lưới mới xuống ngày tương lai chưa booking
     await reapplyFutureSlots(warehouse_id, vehicle_type_id)
 
-    // Xóa hẳn các template đã bỏ mà không còn slot nào tham chiếu
+    // Xóa hẳn các template đã bỏ mà không còn slot nào tham chiếu — phân trang (mỗi template nhiều slot,
+    // >1000 dòng ref bị cắt → refSet thiếu → xóa nhầm template còn slot → lỗi FK)
     if (removedIds.length) {
-      const { data: refd } = await supabase.from('DeliverySlot').select('template_id').in('template_id', removedIds)
+      const refd = await fetchAllRowsParallel(() => supabase.from('DeliverySlot')
+        .select('template_id').in('template_id', removedIds).order('id'))
       const refSet = new Set((refd ?? []).map((r: { template_id: string }) => r.template_id))
       const del = removedIds.filter(id => !refSet.has(id))
       if (del.length) { const { error } = await supabase.from('SlotTemplate').delete().in('id', del); if (error) return fail(res, error.message) }
@@ -300,8 +306,9 @@ export async function deleteSlotTemplateCluster(req: Request, res: Response) {
     // Gỡ slot ngày tương lai chưa booking (ngày đã booking giữ nguyên)
     await reapplyFutureSlots(warehouse_id, vehicle_type_id)
 
-    // Xóa hẳn template không còn slot tham chiếu
-    const { data: refd } = await supabase.from('DeliverySlot').select('template_id').in('template_id', ids)
+    // Xóa hẳn template không còn slot tham chiếu — phân trang (refSet thiếu → xóa nhầm → lỗi FK)
+    const refd = await fetchAllRowsParallel(() => supabase.from('DeliverySlot')
+      .select('template_id').in('template_id', ids).order('id'))
     const refSet = new Set((refd ?? []).map((r: { template_id: string }) => r.template_id))
     const del = ids.filter(id => !refSet.has(id))
     if (del.length) { const { error } = await supabase.from('SlotTemplate').delete().in('id', del); if (error) return fail(res, error.message) }
@@ -321,10 +328,11 @@ export async function getSlotApplyInfo(req: Request, res: Response) {
     if (!warehouse_id || !vehicle_type_id) return fail(res, 'warehouse_id và vehicle_type_id là bắt buộc', 400)
     if (!guardWh(req, res, warehouse_id)) return
     const today = vnToday()
-    const { data: slots, error } = await supabase.from('DeliverySlot')
+    // Phân trang: slot sinh trước nhiều tháng dễ vượt cap ~1000 → tính applicable/blocked sai
+    const slots = await fetchAllRowsParallel(() => supabase.from('DeliverySlot')
       .select('date, booked_count')
       .eq('warehouse_id', warehouse_id).eq('vehicle_type_id', vehicle_type_id).gte('date', today)
-    if (error) return fail(res, error.message)
+      .order('id'))
 
     const bookedByDate = new Map<string, number>()
     for (const s of (slots ?? []) as { date: string; booked_count: number }[])
@@ -352,14 +360,17 @@ export async function getVehicleTypesByWarehouse(req: Request, res: Response) {
   try {
     const { warehouse_id, cargo_type } = req.query as Record<string, string>
     if (!warehouse_id) return fail(res, 'warehouse_id là bắt buộc', 400)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let q = supabase.from('SlotTemplate')
-      .select('vehicle_type:VehicleType(id, code, name)')
-      .eq('warehouse_id', warehouse_id)
-      .eq('is_active', true)
-    if (cargo_type) q = q.in('cargo_type', [cargo_type, 'ALL'])
-    const { data, error } = await q
-    if (error) return fail(res, error.message)
+    // Phân trang (kho nhiều template tiến sát cap ~1000 → thiếu loại xe)
+    const data = await fetchAllRowsParallel(() => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let q = supabase.from('SlotTemplate')
+        .select('vehicle_type:VehicleType(id, code, name)')
+        .eq('warehouse_id', warehouse_id)
+        .eq('is_active', true)
+        .order('id')
+      if (cargo_type) q = q.in('cargo_type', [cargo_type, 'ALL'])
+      return q
+    })
     const seen = new Set<string>()
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const unique = (data ?? []).map((r: any) => r.vehicle_type).filter((vt: any) => vt && !seen.has(vt.id) && seen.add(vt.id))

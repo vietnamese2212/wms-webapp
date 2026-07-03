@@ -1743,26 +1743,30 @@ export async function getPrepareBoard(req: Request, res: Response) {
       rowMap.set(key, cur)
     }
 
-    // FEFO suggestions cho các mã hàng (1 batch query)
+    // FEFO suggestions cho các mã hàng — chunk matIds (URL dài) + phân trang (cap ~1000, tồn 1 mã có thể >1000 pallet);
+    // lọc kho bằng INNER JOIN Location (không nhồi nghìn location_id vào .in())
     const matIds = [...new Set([...rowMap.values()].map(r => r.material_id).filter(Boolean))] as string[]
-    let locIds: string[] | null = null
-    if (warehouseIds.length) {
-      const { data: locs } = await supabase.from('Location')
-        .select('id').in('warehouse_id', warehouseIds)
-      locIds = ((locs ?? []) as any[]).map((l: any) => l.id as string)
-    }
-    if (matIds.length && (!locIds || locIds.length)) {
-      let q = supabase.from('InventoryEntry')
-        .select('material_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, ncc_id, shelf_life_days, location:Location(location_code), material:Material!material_id(shelf_life_days, supplier_shelf_life_overrides)')
-        .in('material_id', matIds)
-        .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING'])
-      if (locIds) q = q.in('location_id', locIds)
-      const { data: entries } = await q as { data: Array<{
+    const useWhFilter = warehouseIds.length > 0
+    if (matIds.length) {
+      const entryChunks = await Promise.all(
+        Array.from({ length: Math.ceil(matIds.length / 200) }, (_, ci) => matIds.slice(ci * 200, ci * 200 + 200)).map(chunk =>
+          fetchAllRowsParallel(() => {
+            let q = supabase.from('InventoryEntry')
+              .select(`material_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, ncc_id, shelf_life_days, location:Location${useWhFilter ? '!inner' : ''}(location_code, warehouse_id), material:Material!material_id(shelf_life_days, supplier_shelf_life_overrides)`)
+              .in('material_id', chunk)
+              .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING'])
+              .order('id')
+            if (useWhFilter) q = q.in('location.warehouse_id', warehouseIds)
+            return q
+          })
+        )
+      )
+      const entries = entryChunks.flat() as Array<{
         material_id: string; cartons_remaining: number | null; cartons_imported: number | null
         cartons_reserved: number | null; production_date: string | null; ncc_id: string | null; shelf_life_days: number | null
         location: { location_code: string | null } | null
         material: { shelf_life_days: number | null; supplier_shelf_life_overrides: { transport_company_id: string; shelf_life_days: number }[] | null } | null
-      }> | null }
+      }>
       const nowMs = Date.now()
       const byMat = new Map<string, Map<string, { location_code: string | null; pct_date: number | null; available: number }>>()
       for (const e of (entries ?? [])) {
@@ -1878,21 +1882,19 @@ export async function checkScanItem(req: Request, res: Response) {
 
     let best_available_date: string | null = null
     if (inv.material_id && gdo?.warehouse_id) {
-      const { data: locs } = await supabase.from('Location')
-        .select('id').eq('warehouse_id', gdo.warehouse_id)
-      const locIds = (locs ?? []).map((l: any) => l.id as string)
-      if (locIds.length > 0) {
-        const { data: bestEntries } = await supabase.from('InventoryEntry')
-          .select('production_date')
-          .eq('material_id', inv.material_id)
-          .in('location_id', locIds)
-          .in('status', ['IN_STOCK', 'PARTIAL'])
-          .is('qa_status_id', null)
-          .not('production_date', 'is', null)
-          .or('cartons_remaining.gt.0,cartons_remaining.is.null')
-        const dates = (bestEntries ?? []).map((e: any) => e.production_date as string).filter(Boolean)
-        if (dates.length > 0) best_available_date = dates.reduce((a: string, b: string) => a < b ? a : b)
-      }
+      // MIN(production_date) = order + limit(1) — không kéo cả list (mã >1000 pallet bị cap cắt → min SAI);
+      // lọc kho bằng INNER JOIN Location thay vì nhồi location_id vào .in()
+      const { data: bestRow } = await supabase.from('InventoryEntry')
+        .select('production_date, location:Location!inner(warehouse_id)')
+        .eq('material_id', inv.material_id)
+        .eq('location.warehouse_id', gdo.warehouse_id)
+        .in('status', ['IN_STOCK', 'PARTIAL'])
+        .is('qa_status_id', null)
+        .not('production_date', 'is', null)
+        .or('cartons_remaining.gt.0,cartons_remaining.is.null')
+        .order('production_date', { ascending: true })
+        .limit(1).maybeSingle()
+      best_available_date = (bestRow as { production_date: string | null } | null)?.production_date ?? null
     }
 
     return res.json({
@@ -1951,20 +1953,18 @@ export async function scanItem(req: Request, res: Response) {
         : Promise.resolve({ data: null }),
       (async (): Promise<string | null> => {
         if (!inv.material_id || !gdo?.warehouse_id) return null
-        const { data: locs } = await supabase.from('Location')
-          .select('id').eq('warehouse_id', gdo.warehouse_id)
-        const locIds = (locs ?? []).map((l: any) => l.id as string)
-        if (!locIds.length) return null
-        const { data: bestEntries } = await supabase.from('InventoryEntry')
-          .select('production_date')
+        // MIN(production_date) = order + limit(1) — không kéo cả list (cap 1000 làm min SAI); lọc kho bằng INNER JOIN
+        const { data: bestRow } = await supabase.from('InventoryEntry')
+          .select('production_date, location:Location!inner(warehouse_id)')
           .eq('material_id', inv.material_id)
-          .in('location_id', locIds)
+          .eq('location.warehouse_id', gdo.warehouse_id)
           .in('status', ['IN_STOCK', 'PARTIAL'])
           .is('qa_status_id', null)
           .not('production_date', 'is', null)
           .or('cartons_remaining.gt.0,cartons_remaining.is.null')
-        const dates = (bestEntries ?? []).map((e: any) => e.production_date as string).filter(Boolean)
-        return dates.length > 0 ? dates.reduce((a: string, b: string) => a < b ? a : b) : null
+          .order('production_date', { ascending: true })
+          .limit(1).maybeSingle()
+        return (bestRow as { production_date: string | null } | null)?.production_date ?? null
       })(),
     ])
     const shelfLifeDays = resolveShelfLife(inv.shelf_life_days, shelfMat, inv.ncc_id)

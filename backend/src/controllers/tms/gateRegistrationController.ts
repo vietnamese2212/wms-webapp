@@ -115,18 +115,20 @@ export async function suggestBooking(req: Request, res: Response) {
     position = (existingGates ?? []).length
   }
 
-  // 2. Tìm TmsVehicleSlot theo biển số
+  // 2. Tìm TmsVehicleSlot theo biển số + NGÀY (INNER JOIN — không chặn ngày thì 1 biển tích lũy
+  // nhiều năm sẽ vượt cap ~1000 → gợi ý sót; JS filter date bên dưới vẫn giữ nguyên)
   const { data: vslots, error } = await supabase
     .from('TmsVehicleSlot')
     .select(`
       id, order_id, slot_id, license_plate, is_consolidation_primary,
-      order:TmsOrder!order_id (
+      order:TmsOrder!order_id!inner (
         id, order_code, date, warehouse_id, warehouse_type, vehicle_type, direction,
         planned_boxes, planned_pallets, planned_tons, gdo_refs, npp_name, priority, ncc_id
       ),
       slot:DeliverySlot!slot_id (time_from, time_to)
     `)
     .eq('license_plate', license_plate)
+    .eq('order.date', date)
 
   if (error) return apiErr(res, 'DB_ERROR', error.message, 500)
 
@@ -732,10 +734,12 @@ export async function relinkAfterDelete(
     } | null
     slot: { time_from: string; time_to: string } | null
   }
+  // Chặn theo NGÀY bằng INNER JOIN (không chặn thì 1 biển tích lũy nhiều năm vượt cap ~1000 → relink sót)
   const { data: vslots } = await supabase
     .from('TmsVehicleSlot')
-    .select(`id, order_id, slot_id, is_consolidation_primary, order:TmsOrder!order_id(order_code, date, warehouse_id, warehouse_type, vehicle_type, direction, priority, ncc_id, npp_name, gdo_refs, planned_boxes, planned_pallets), slot:DeliverySlot!slot_id(time_from, time_to)`)
+    .select(`id, order_id, slot_id, is_consolidation_primary, order:TmsOrder!order_id!inner(order_code, date, warehouse_id, warehouse_type, vehicle_type, direction, priority, ncc_id, npp_name, gdo_refs, planned_boxes, planned_pallets), slot:DeliverySlot!slot_id(time_from, time_to)`)
     .eq('license_plate', license_plate)
+    .eq('order.date', date)
 
   const allRelinkVslots = ((vslots ?? []) as unknown as RelinkSlot[])
   const filtered = allRelinkVslots.filter(vs => {

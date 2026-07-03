@@ -333,12 +333,15 @@ export async function bulkCreateOrders(req: Request, res: Response) {
       const codeChunks: string[][] = []
       for (let i = 0; i < incomingCodes.length; i += 300) codeChunks.push(incomingCodes.slice(i, i + 300))
       const dupResults = await Promise.all(codeChunks.map(chunk =>
-        supabase.from('TmsOrder').select('order_code').in('order_code', chunk)
+        supabase.from('TmsOrder').select('order_code, date, warehouse:Warehouse(name)').in('order_code', chunk)
       ))
-      const existing = dupResults.flatMap(r => (r.data ?? []) as { order_code: string }[])
+      const existing = dupResults.flatMap(r => (r.data ?? []) as unknown as { order_code: string; date: string; warehouse: { name: string } | null }[])
       if (existing.length) {
-        const dupes = existing.map(r => r.order_code).join(', ')
-        return fail(res, `Mã đơn đã tồn tại: ${dupes}`, 409)
+        // Chỉ rõ đơn trùng đang nằm Ở ĐÂU (kho + ngày) — tab Kế hoạch lọc theo 1 kho + khoảng ngày,
+        // không ghi vị trí thì user không tìm thấy để xóa (đã dính thật: file 2 kho, xóa 1 kho vẫn sót kho kia).
+        const fmtD = (d: string) => { const [y, m, dd] = String(d).slice(0, 10).split('-'); return `${dd}/${m}/${y}` }
+        const dupes = existing.map(r => `${r.order_code} (${r.warehouse?.name ?? 'kho ?'} — ngày ${fmtD(r.date)})`).join(', ')
+        return fail(res, `Mã đơn đã tồn tại: ${dupes}. Mở đúng kho + ngày ghi trong ngoặc để tìm và xóa đơn cũ, rồi upload lại.`, 409)
       }
     }
 

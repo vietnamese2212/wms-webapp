@@ -1249,7 +1249,8 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
           : 'Lỗi import')
       const dupMatch = msg.match(/Mã đơn đã tồn tại: (.+)/)
       if (dupMatch) {
-        const dupCodes = new Set(dupMatch[1].split(',').map((c: string) => c.trim().toUpperCase()))
+        // BE giờ kèm vị trí "(kho — ngày ...)" sau mỗi mã → lấy phần mã trước khoảng trắng/ngoặc.
+        const dupCodes = new Set(dupMatch[1].split(',').map((c: string) => c.trim().split(/[\s(]/)[0].toUpperCase()).filter(Boolean))
         setRows(prev => prev.map(r =>
           r.order_code && dupCodes.has(r.order_code.toUpperCase())
             ? { ...r, valid: false, error: 'mã đơn đã tồn tại trong hệ thống' } : r

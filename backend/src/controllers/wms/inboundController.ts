@@ -1029,6 +1029,10 @@ export async function scanQR(req: Request, res: Response) {
     const manufacturerP = parsed.manufacturer_code
       ? supabase.from('Manufacturer').select('id, code, name').eq('code', parsed.manufacturer_code).maybeSingle()
       : Promise.resolve({ data: null, error: null })
+    // Đoạn 6 QR cũng có thể là mã NMSX của kho tổng (Warehouse.nmsx_code, vd B/D) — hợp lệ, không được cảnh báo
+    const whNmsxP = parsed.manufacturer_code
+      ? supabase.from('Warehouse').select('id').eq('nmsx_code', parsed.manufacturer_code).limit(1)
+      : Promise.resolve({ data: null, error: null })
 
     const stackLayerNum = Number(stack_layer)
     if (stackLayerNum === 1) {
@@ -1142,7 +1146,9 @@ export async function scanQR(req: Request, res: Response) {
 
     const warnings: string[] = []
     if (!manufacturer && parsed.manufacturer_code) {
-      warnings.push(`NMSX "${parsed.manufacturer_code}" chưa có trong hệ thống – đã bỏ qua`)
+      // Chỉ cảnh báo khi đoạn 6 KHÔNG khớp cả Nhà sản xuất lẫn mã NMSX kho (Warehouse.nmsx_code) — vd "B" = Kho Ba Vì là hợp lệ
+      const isWhNmsx = (((await whNmsxP).data ?? []) as { id: string }[]).length > 0
+      if (!isWhNmsx) warnings.push(`NMSX "${parsed.manufacturer_code}" chưa có trong hệ thống – đã bỏ qua`)
     }
     if (cartons_imported === 0) {
       warnings.push('Số thùng/pallet chưa được cấu hình cho hàng hóa này – đã nhập 0')

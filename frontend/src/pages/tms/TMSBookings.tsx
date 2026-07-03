@@ -1123,11 +1123,11 @@ function parseDirection(val: unknown): string {
 
 function parseExcelDate(val: unknown): string | null {
   if (!val) return null
-  // Ô ngày Excel (cellDates) thành Date 00:00 GIỜ MÁY → toISOString() lùi về UTC = LỆCH -1 NGÀY.
-  // Phải lấy thành phần ngày local (đã dính thật: file 03/07 lưu thành 02/07 cả 7777 dòng).
-  if (val instanceof Date) {
-    if (Number.isNaN(val.getTime())) return null
-    return `${val.getFullYear()}-${String(val.getMonth() + 1).padStart(2, '0')}-${String(val.getDate()).padStart(2, '0')}`
+  // Serial Excel (đọc KHÔNG cellDates) → quy đổi bằng lịch Excel thuần (SSF), KHÔNG qua Date/giờ máy →
+  // lấy ĐÚNG ngày hiển thị trên file, không suy luận timezone (cellDates từng làm 04/07 → 03/07).
+  if (typeof val === 'number') {
+    const d = XLSX.SSF.parse_date_code(val)
+    return d ? `${d.y}-${String(d.m).padStart(2, '0')}-${String(d.d).padStart(2, '0')}` : null
   }
   const s = String(val).trim()
   const m = s.match(/^(\d{1,2})[/\-](\d{1,2})[/\-](\d{4})$/)
@@ -1167,7 +1167,8 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
     const reader = new FileReader()
     reader.onload = evt => {
       try {
-        const wb = XLSX.read(evt.target?.result, { type: 'array', cellDates: true })
+        // KHÔNG cellDates: để ô ngày ở dạng serial → parseExcelDate quy đổi bằng lịch Excel thuần (không lệch timezone).
+        const wb = XLSX.read(evt.target?.result, { type: 'array' })
         const ws = wb.Sheets[wb.SheetNames[0]]
         const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' })
         const seenCodes = new Set<string>()
@@ -1594,7 +1595,7 @@ function InboundPlanBulkUploadDialog({ open, date, warehouseId, onClose }: {
     const reader = new FileReader()
     reader.onload = e => {
       try {
-        const wb = XLSX.read(e.target?.result, { type: 'binary', cellDates: true })
+        const wb = XLSX.read(e.target?.result, { type: 'binary' })
         const ws = wb.Sheets[wb.SheetNames[0]]
         const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' })
         const parsed: PlanBulkRow[] = rows.map((row, i) => {

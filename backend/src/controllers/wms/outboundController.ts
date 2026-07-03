@@ -382,6 +382,30 @@ export async function listGDOs(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
+// ─── Tra cứu chuyến xuất theo tem pallet ──────────────────────
+// Cho ô tìm kiếm ở danh sách Xuất: quét/gõ mã tem pallet → ra chuyến đã xuất pallet đó.
+// Chỉ chạy khi user gõ search (FE gọi enabled q≥2) → không phình payload endpoint list nóng.
+// pallet_code (OutboundScanEntry) → item_id → OutboundItem.do_id → OutboundDelivery.gdo_id
+export async function lookupPalletGdos(req: Request, res: Response) {
+  try {
+    const q = String(req.query.q ?? '').trim()
+    if (q.length < 2) return ok(res, [])
+    const { data: scans } = await supabase.from('OutboundScanEntry')
+      .select('item_id').ilike('pallet_code', `%${q}%`).limit(2000)
+    const itemIds = [...new Set(((scans ?? []) as { item_id: string | null }[])
+      .map(s => s.item_id).filter((v): v is string => !!v))]
+    if (!itemIds.length) return ok(res, [])
+    const { data: items } = await supabase.from('OutboundItem').select('do_id').in('id', itemIds)
+    const doIds = [...new Set(((items ?? []) as { do_id: string | null }[])
+      .map(i => i.do_id).filter((v): v is string => !!v))]
+    if (!doIds.length) return ok(res, [])
+    const { data: dos } = await supabase.from('OutboundDelivery').select('gdo_id').in('id', doIds)
+    const gdoIds = [...new Set(((dos ?? []) as { gdo_id: string | null }[])
+      .map(d => d.gdo_id).filter((v): v is string => !!v))]
+    return ok(res, gdoIds)
+  } catch (e) { return fail(res, String(e)) }
+}
+
 // ─── Get GDO detail ───────────────────────────────────────────
 
 export async function getGDO(req: Request, res: Response) {

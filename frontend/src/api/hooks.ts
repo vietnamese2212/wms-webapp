@@ -1449,6 +1449,19 @@ export function useGDOs(params?: { warehouse_id?: string; status?: string; trans
   })
 }
 
+// Tra cứu chuyến xuất theo tem pallet (ô tìm kiếm danh sách Xuất) — chỉ chạy khi q≥2
+export function useOutboundPalletLookup(q?: string) {
+  const term = (q ?? '').trim()
+  return useQuery({
+    queryKey: ['outbound-pallet-lookup', term],
+    enabled: term.length >= 2,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/outbound/pallet-lookup', { params: { q: term } })
+      return data.data as string[]
+    },
+  })
+}
+
 export function useGDO(id?: string) {
   return useQuery({
     queryKey: ['gdo', id],

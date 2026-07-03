@@ -224,12 +224,21 @@ export async function listOrders(req: Request, res: Response) {
     // Search → resolve material ids ONCE (trước khi phân trang)
     let searchFilters: string | null = null
     if (search) {
-      const { data: mats } = await supabase
-        .from('Material').select('id')
-        .or(`material_code.ilike.%${search}%,short_name.ilike.%${search}%`)
-      const matIds = (mats ?? []).map((m: { id: string }) => m.id)
+      const [matRes, palletRes] = await Promise.all([
+        supabase.from('Material').select('id')
+          .or(`material_code.ilike.%${search}%,short_name.ilike.%${search}%`),
+        // Tem pallet: quét/gõ mã tem (hoặc 1 đoạn) → ra phiếu nhập chứa pallet đó
+        supabase.from('InventoryEntry').select('import_order_id')
+          .ilike('pallet_code', `%${search}%`).not('import_order_id', 'is', null).limit(500),
+      ])
+      const matIds = (matRes.data ?? []).map((m: { id: string }) => m.id)
+      const orderIds = [...new Set(
+        ((palletRes.data ?? []) as { import_order_id: string | null }[])
+          .map(p => p.import_order_id).filter((v): v is string => !!v)
+      )]
       const filters = [`import_code.ilike.%${search}%`]
-      if (matIds.length > 0) filters.push(`material_id.in.(${matIds.join(',')})`)
+      if (matIds.length > 0)   filters.push(`material_id.in.(${matIds.join(',')})`)
+      if (orderIds.length > 0) filters.push(`id.in.(${orderIds.join(',')})`)
       searchFilters = filters.join(',')
     }
 

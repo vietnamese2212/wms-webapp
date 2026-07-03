@@ -14,7 +14,7 @@ import { Button } from '@/components/ui/button'
 import { Input }  from '@/components/ui/input'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { useGDOs, useUploadGDOExcel, useWarehouses, useCreateGDO, useUpdateGDO, useMaterials, useGDO, useAssignGDO, useVehicleTypes, useVehicleTypesByWarehouse, useTransportCompanies } from '@/api/hooks'
+import { useGDOs, useUploadGDOExcel, useWarehouses, useCreateGDO, useUpdateGDO, useMaterials, useGDO, useAssignGDO, useVehicleTypes, useVehicleTypesByWarehouse, useTransportCompanies, useOutboundPalletLookup } from '@/api/hooks'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -236,6 +236,9 @@ export default function Outbound() {
   })
   const { mutate: uploadExcel, isPending: uploading } = useUploadGDOExcel()
   const { mutate: assignGDO } = useAssignGDO()
+  // Tem pallet: quét/gõ mã tem ở ô tìm kiếm → ra chuyến đã xuất pallet đó
+  const { data: palletGdoIds = [] } = useOutboundPalletLookup(f.search)
+  const palletGdoSet = useMemo(() => new Set(palletGdoIds), [palletGdoIds])
 
   useEffect(() => {
     if (postUploadLoading && !isFetching) setPostUploadLoading(false)
@@ -275,11 +278,13 @@ export default function Outbound() {
     if (filterWarehouseTypes.length > 0 && !filterWarehouseTypes.includes(g.warehouse_type ?? ''))                  return false
     if (filterStatuses.length       > 0 && !filterStatuses.includes(gdoStatusInfo(g).label))                        return false
     // Search khớp cả mã/tên hàng (item_breakdown) → gõ mã hàng ra đơn xuất chứa mã đó.
+    // + tem pallet: chuyến khớp nếu id nằm trong kết quả tra tem (palletGdoSet).
     if (!omniMatch([g.group_code, g.export_type, g.dvvt, g.warehouse_type, gdoStatusInfo(g).label,
       ...(g.distributor_names ?? []),
-      ...(g.item_breakdown ?? []).flatMap(b => [b.material_code, b.material_name])], f.search)) return false
+      ...(g.item_breakdown ?? []).flatMap(b => [b.material_code, b.material_name])], f.search)
+      && !((f.search ?? '').trim() && palletGdoSet.has(g.id))) return false
     return true
-  }), [gdos, f.search, filterTypes, filterDvvts, filterNpps, filterMaterials, filterWarehouseTypes, filterStatuses])
+  }), [gdos, f.search, filterTypes, filterDvvts, filterNpps, filterMaterials, filterWarehouseTypes, filterStatuses, palletGdoSet])
 
   const sorted = useMemo(() => [...filtered].sort((a, b) => {
     if (a.delivery_date !== b.delivery_date)
@@ -483,7 +488,7 @@ export default function Outbound() {
         {/* Row 1: Title + Search + Views + Density + Actions */}
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-semibold text-slate-700 shrink-0">Xuất kho</span>
-          <SearchInput value={f.search} onChange={v => setOutbound({ search: v })} placeholder="Tìm số xe, ĐVVT, NPP, trạng thái…" className="flex-1 min-w-[140px]" />
+          <SearchInput value={f.search} onChange={v => setOutbound({ search: v })} placeholder="Tìm số xe, ĐVVT, NPP, mã hàng, tem pallet…" className="flex-1 min-w-[140px]" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
           <SavedViews
             module="outbound"

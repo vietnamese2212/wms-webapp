@@ -18,7 +18,7 @@ import { Badge }    from '@/components/ui/badge'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { SingleSelect } from '@/components/shared/SingleSelect'
 import {
   useDepartments, useJobTitles, useEmployeeRecords,
   useCreateEmployee, useUpdateEmployee, useDeleteEmployee, useRestoreEmployee, useWarehouses, useWarehouseTypes,
@@ -391,27 +391,24 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
               <Label className="text-xs">Phòng ban</Label>
-              <Select value={deptId || '__none__'} onValueChange={v => setDeptId(v === '__none__' ? '' : v)}>
-                <SelectTrigger><SelectValue placeholder="Chọn phòng ban" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">— Không chọn —</SelectItem>
-                  {departments.map(d => (
-                    <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SingleSelect
+                value={deptId || '__none__'}
+                onChange={v => setDeptId(v === '__none__' ? '' : v)}
+                placeholder="Chọn phòng ban"
+                searchPlaceholder="Tìm phòng ban…"
+                options={[{ value: '__none__', label: '— Không chọn —' }, ...departments.map(d => ({ value: d.id, label: d.name }))]}
+              />
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Chức danh (template)</Label>
-              <Select value={jobTitleId || '__none__'} onValueChange={v => setJobTitleId(v === '__none__' ? '' : v)} disabled={!deptId && !jobTitleId}>
-                <SelectTrigger><SelectValue placeholder="Chọn chức danh" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">— Không chọn —</SelectItem>
-                  {jobTitles.map(jt => (
-                    <SelectItem key={jt.id} value={jt.id}>{jt.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SingleSelect
+                value={jobTitleId || '__none__'}
+                onChange={v => setJobTitleId(v === '__none__' ? '' : v)}
+                disabled={!deptId && !jobTitleId}
+                placeholder="Chọn chức danh"
+                searchPlaceholder="Tìm chức danh…"
+                options={[{ value: '__none__', label: '— Không chọn —' }, ...jobTitles.map(jt => ({ value: jt.id, label: jt.name }))]}
+              />
             </div>
           </div>
 
@@ -424,19 +421,18 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
               {(isDriverRole || isDispatcherRole) && (
                 <div className="space-y-1">
                   <Label className="text-xs">Công ty vận tải (ĐVVT) *</Label>
-                  <Select value={nccId || '__none__'} onValueChange={v => {
-                    const next = v === '__none__' ? '' : v
-                    setNccId(next)
-                    if (isDriverRole) setDriverVehicleId('')
-                  }} disabled={lockDriverPlate}>
-                    <SelectTrigger><SelectValue placeholder="— Chọn công ty —" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__none__">— Chọn công ty —</SelectItem>
-                      {(transportCompanies as { id: string; name: string }[]).map(tc => (
-                        <SelectItem key={tc.id} value={tc.id}>{tc.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <SingleSelect
+                    value={nccId || '__none__'}
+                    onChange={v => {
+                      const next = v === '__none__' ? '' : v
+                      setNccId(next)
+                      if (isDriverRole) setDriverVehicleId('')
+                    }}
+                    disabled={lockDriverPlate}
+                    placeholder="— Chọn công ty —"
+                    searchPlaceholder="Tìm ĐVVT…"
+                    options={[{ value: '__none__', label: '— Chọn công ty —' }, ...(transportCompanies as { id: string; name: string }[]).map(tc => ({ value: tc.id, label: tc.name }))]}
+                  />
                   {lockDriverPlate && (
                     <p className="text-[10px] text-slate-400">Đổi biển số qua Cài đặt TMS → thông tin sẽ tự cập nhật</p>
                   )}
@@ -454,19 +450,14 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
                   {isDriverRole && lockDriverPlate ? (
                     <Input value={emp?.employee_code ?? ''} disabled className="bg-slate-50 cursor-not-allowed" />
                   ) : isDriverRole ? (
-                    <Select
+                    <SingleSelect
                       value={driverVehicleId || '__none__'}
-                      onValueChange={v => setDriverVehicleId(v === '__none__' ? '' : v)}
+                      onChange={v => setDriverVehicleId(v === '__none__' ? '' : v)}
                       disabled={!nccId}
-                    >
-                      <SelectTrigger><SelectValue placeholder={nccId ? 'Chọn biển số xe' : 'Chọn ĐVVT trước'} /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__none__">— Chọn biển số xe —</SelectItem>
-                        {(allVehicles as TmsVehicle[]).map(v => (
-                          <SelectItem key={v.id} value={v.id}>{v.license_plate}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                      placeholder={nccId ? 'Chọn biển số xe' : 'Chọn ĐVVT trước'}
+                      searchPlaceholder="Tìm biển số…"
+                      options={[{ value: '__none__', label: '— Chọn biển số xe —' }, ...(allVehicles as TmsVehicle[]).map(v => ({ value: v.id, label: v.license_plate }))]}
+                    />
                   ) : (
                     <Input value={empCode} onChange={e => setEmpCode(e.target.value)} placeholder="NV001" />
                   )}
@@ -507,13 +498,15 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
 
                 <div className="space-y-1">
                   <Label className="text-xs">Phạm vi kho</Label>
-                  <Select value={scope} onValueChange={v => setScope(v as 'NATIONAL'|'ASSIGNED')}>
-                    <SelectTrigger className="bg-white"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="NATIONAL">Toàn quốc (tất cả kho)</SelectItem>
-                      <SelectItem value="ASSIGNED">Kho được chỉ định</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <SingleSelect
+                    value={scope}
+                    onChange={v => setScope(v as 'NATIONAL'|'ASSIGNED')}
+                    searchable={false}
+                    options={[
+                      { value: 'NATIONAL', label: 'Toàn quốc (tất cả kho)' },
+                      { value: 'ASSIGNED', label: 'Kho được chỉ định' },
+                    ]}
+                  />
                 </div>
 
                 {scope === 'ASSIGNED' && (
@@ -707,15 +700,13 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
           </div>
           <div className="space-y-1">
             <Label className="text-xs">Phòng ban *</Label>
-            <Select value={deptId || '__none__'} onValueChange={v => setDeptId(v === '__none__' ? '' : v)}>
-              <SelectTrigger><SelectValue placeholder="Chọn phòng ban" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none__">— Chọn phòng ban —</SelectItem>
-                {departments.map(d => (
-                  <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SingleSelect
+              value={deptId || '__none__'}
+              onChange={v => setDeptId(v === '__none__' ? '' : v)}
+              placeholder="Chọn phòng ban"
+              searchPlaceholder="Tìm phòng ban…"
+              options={[{ value: '__none__', label: '— Chọn phòng ban —' }, ...departments.map(d => ({ value: d.id, label: d.name }))]}
+            />
           </div>
 
           <div className="space-y-2">

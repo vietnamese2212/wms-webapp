@@ -2301,31 +2301,35 @@ export async function listLoosePickingItems(req: Request, res: Response) {
       ? (req.user?.warehouse_ids ?? [])
       : []
 
-    let gdoQ = supabase.from('GroupDeliveryOrder')
-      .select('id, group_code, delivery_date, planned_date, status, started_at, dvvt, warehouse_type, warehouse:Warehouse(id,code,name)')
-      .neq('status', 'CANCELLED')
-
     // Cắt theo Loại hàng được phép (đồng bộ listGDOs)
     const looseCats = scopeCategoriesOf(req)
-    if (looseCats) gdoQ = gdoQ.or(`warehouse_type.is.null,warehouse_type.in.(${looseCats.map(c => `"${c}"`).join(',')})`)
 
+    let effectiveWh: string[] | null = null
     if (scopeWhIds.length > 0) {
       const effective = warehouse_id
         ? scopeWhIds.filter(id => id === warehouse_id)
         : scopeWhIds
       if (effective.length === 0) return ok(res, [])
-      effective.length === 1
-        ? (gdoQ = gdoQ.eq('warehouse_id', effective[0]))
-        : (gdoQ = gdoQ.in('warehouse_id', effective))
-    } else {
-      if (warehouse_id) gdoQ = gdoQ.eq('warehouse_id', warehouse_id)
+      effectiveWh = effective
+    } else if (warehouse_id) {
+      effectiveWh = [warehouse_id]
     }
 
-    if (date) gdoQ = gdoQ.eq('delivery_date', date)
-    if (date_from) gdoQ = gdoQ.gte('delivery_date', date_from)
-    if (date_to)   gdoQ = gdoQ.lte('delivery_date', date_to)
     // Phân trang né cap-1000 (khoảng ngày rộng có thể >1000 GDO/DO/item → trước đây cụt danh sách nhặt lẻ).
-    const gdos = await fetchAllRowsParallel(() => gdoQ.order('id'), 1000, 4)
+    // makeQuery PHẢI build query MỚI mỗi lần (fetchAllRowsParallel gọi nhiều lần/lô) — tái dùng 1 builder
+    // sẽ khiến .range() các trang đè lên nhau ⇒ chỉ còn trang cuối (offset lớn) ⇒ trả RỖNG.
+    const makeGdoQ = () => {
+      let q = supabase.from('GroupDeliveryOrder')
+        .select('id, group_code, delivery_date, planned_date, status, started_at, dvvt, warehouse_type, warehouse:Warehouse(id,code,name)')
+        .neq('status', 'CANCELLED')
+      if (looseCats) q = q.or(`warehouse_type.is.null,warehouse_type.in.(${looseCats.map(c => `"${c}"`).join(',')})`)
+      if (effectiveWh) q = effectiveWh.length === 1 ? q.eq('warehouse_id', effectiveWh[0]) : q.in('warehouse_id', effectiveWh)
+      if (date) q = q.eq('delivery_date', date)
+      if (date_from) q = q.gte('delivery_date', date_from)
+      if (date_to)   q = q.lte('delivery_date', date_to)
+      return q.order('id')
+    }
+    const gdos = await fetchAllRowsParallel(makeGdoQ, 1000, 4)
 
     if (!gdos?.length) return ok(res, [])
 

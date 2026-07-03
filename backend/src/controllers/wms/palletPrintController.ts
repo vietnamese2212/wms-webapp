@@ -89,7 +89,9 @@ export async function listPrints(req: Request, res: Response) {
     const scopeCats = scopeCategoriesOf(req)
 
     // Lọc dùng chung; tạo query MỚI mỗi trang (PostgREST cap ~1000 dòng/response → phải phân trang)
-    const applyFilters = () => {
+    const cats = csv(categories), cyc = csv(cycles), mac = csv(machines), nm = csv(nmsx), mats = csv(material_codes)
+    // codeChunk = 1 lô mã pallet của filter Truy cứu/In lại (null = không lọc theo tập mã)
+    const applyFilters = (codeChunk: string[] | null) => {
       let q = supabase
         .from('PalletLabelPrint')
         .select('id, batch_id, qr_code, material_code, category, cycle, machine, seq, nmsx, qty, mode, printed_by_name, created_at')
@@ -98,9 +100,7 @@ export async function listPrints(req: Request, res: Response) {
       if (scopeCats) q = q.or(`category.is.null,category.in.(${scopeCats.map(c => `"${c}"`).join(',')})`)
       if (qr_code) q = q.eq('qr_code', qr_code)
       if (search)  q = q.ilike('qr_code', `%${search}%`)
-      const codes = csv(qr_codes)
-      if (codes.length) q = q.in('qr_code', codes)
-      const cats = csv(categories), cyc = csv(cycles), mac = csv(machines), nm = csv(nmsx), mats = csv(material_codes)
+      if (codeChunk && codeChunk.length) q = q.in('qr_code', codeChunk)
       if (cats.length) q = q.in('category', cats)
       if (cyc.length)  q = q.in('cycle', cyc)
       if (mac.length)  q = q.in('machine', mac)
@@ -111,16 +111,26 @@ export async function listPrints(req: Request, res: Response) {
       return q
     }
 
+    // Chunk tập mã Truy cứu/In lại theo lô 300 (né .in quá lớn → URL dài + cap ~1000 làm sót). Không có tập mã → 1 lượt null.
+    const codesAll = csv(qr_codes)
+    const codeChunks: (string[] | null)[] = codesAll.length
+      ? Array.from({ length: Math.ceil(codesAll.length / 300) }, (_, i) => codesAll.slice(i * 300, i * 300 + 300))
+      : [null]
+
     const PAGE = 1000
     const hardCap = Math.min(parseInt(limit ?? '20000', 10) || 20000, 20000)
-    const out: unknown[] = []
-    for (let p = 0; p * PAGE < hardCap; p++) {
-      const { data, error } = await applyFilters().range(p * PAGE, p * PAGE + PAGE - 1)
-      if (error) return fail(res, error.message, 500)
-      const batch = data ?? []
-      out.push(...batch)
-      if (batch.length < PAGE) break
+    const out: { id: string; created_at: string }[] = []
+    for (const chunk of codeChunks) {
+      for (let p = 0; p * PAGE < hardCap; p++) {
+        const { data, error } = await applyFilters(chunk).range(p * PAGE, p * PAGE + PAGE - 1)
+        if (error) return fail(res, error.message, 500)
+        const batch = (data ?? []) as { id: string; created_at: string }[]
+        out.push(...batch)
+        if (batch.length < PAGE) break
+      }
     }
+    // Nhiều lô mã → gộp mất thứ tự DB; sắp lại created_at desc cho nhất quán
+    if (codeChunks.length > 1) out.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))
     return ok(res, out)
   } catch (e) {
     return fail(res, (e as Error).message, 500)

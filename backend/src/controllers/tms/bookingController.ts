@@ -92,17 +92,18 @@ export async function bulkCreateBookings(req: Request, res: Response) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const inputList = bookings as any[]
 
-    // Check trùng vehicle_code trong DB
+    // Check trùng vehicle_code trong DB — chunk .in theo lô 300 (file import lớn → tránh URL quá dài + cap ~1000 dòng làm sót trùng)
     const incomingCodes = inputList.map(b => b.vehicle_code).filter(Boolean) as string[]
     if (incomingCodes.length) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: existing } = await supabase.from('DeliveryBooking')
-        .select('vehicle_code')
-        .in('vehicle_code', incomingCodes)
-      if (existing?.length) {
-        const dupes = (existing as { vehicle_code: string }[]).map(r => r.vehicle_code).join(', ')
-        return fail(res, `Số xe đã tồn tại trong hệ thống: ${dupes}`)
+      const dupeCodes: string[] = []
+      for (let i = 0; i < incomingCodes.length; i += 300) {
+        const { data: existing, error: dupErr } = await supabase.from('DeliveryBooking')
+          .select('vehicle_code')
+          .in('vehicle_code', incomingCodes.slice(i, i + 300))
+        if (dupErr) return fail(res, dupErr.message)
+        if (existing?.length) dupeCodes.push(...(existing as { vehicle_code: string }[]).map(r => r.vehicle_code))
       }
+      if (dupeCodes.length) return fail(res, `Số xe đã tồn tại trong hệ thống: ${dupeCodes.join(', ')}`)
     }
 
     const rows = inputList

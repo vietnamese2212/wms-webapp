@@ -18,6 +18,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { SummaryBand } from '@/components/shared/SummaryBand'
+import { FormSheet } from '@/components/shared/FormSheet'
 import {
   useGDO, useAssignGDO, useStartGDO, useWarehouseEmployees, usePatchGDO,
   useUnassignGDO, useUnstartGDO, useUncompleteGDO, useUpdateTransport,
@@ -326,10 +327,19 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
   }
 
   return (
-    <Dialog open={open} onOpenChange={v => { if (!v) onClose() }}>
-      <DialogContent className="max-w-sm">
-        <DialogHeader><DialogTitle className="text-base">Bắt đầu xuất kho</DialogTitle></DialogHeader>
-        <div className="space-y-3 py-1">
+    <FormSheet
+      open={open}
+      onClose={() => onClose()}
+      title="Bắt đầu xuất kho"
+      widthClass="sm:max-w-lg"
+      footer={<>
+        <Button variant="outline" size="sm" onClick={onClose} disabled={isPending}>Hủy</Button>
+        <Button size="sm" onClick={handleSubmit} disabled={isPending}>
+          {isPending ? 'Đang lưu…' : 'Bắt đầu'}
+        </Button>
+      </>}
+    >
+        <div className="space-y-3">
           <div className="space-y-1">
             <Label className="text-xs">Chuyến xe / Biển số *</Label>
             <ChuyenPicker gates={gatesWithEntry} value={gateRegId}
@@ -382,14 +392,7 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
             <div className="rounded bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{err}</div>
           )}
         </div>
-        <DialogFooter className="gap-2">
-          <Button variant="outline" size="sm" onClick={onClose} disabled={isPending}>Hủy</Button>
-          <Button size="sm" onClick={handleSubmit} disabled={isPending}>
-            {isPending ? 'Đang lưu…' : 'Bắt đầu'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    </FormSheet>
   )
 }
 
@@ -460,10 +463,19 @@ function EditTransportDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; 
   }
 
   return (
-    <Dialog open={open} onOpenChange={v => { if (!v) onClose() }}>
-      <DialogContent className="max-w-sm">
-        <DialogHeader><DialogTitle className="text-base">Sửa thông tin xe</DialogTitle></DialogHeader>
-        <div className="space-y-3 py-1">
+    <FormSheet
+      open={open}
+      onClose={() => onClose()}
+      title="Sửa thông tin xe"
+      widthClass="sm:max-w-lg"
+      footer={<>
+        <Button variant="outline" size="sm" onClick={onClose} disabled={isPending}>Hủy</Button>
+        <Button size="sm" onClick={handleSubmit} disabled={isPending}>
+          {isPending ? 'Đang lưu…' : 'Lưu'}
+        </Button>
+      </>}
+    >
+        <div className="space-y-3">
           <div className="space-y-1">
             <Label className="text-xs">Chuyến xe / Biển số *</Label>
             <ChuyenPicker gates={gatesWithEntry} value={gateRegId}
@@ -507,14 +519,7 @@ function EditTransportDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; 
             <div className="rounded bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{err}</div>
           )}
         </div>
-        <DialogFooter className="gap-2">
-          <Button variant="outline" size="sm" onClick={onClose} disabled={isPending}>Hủy</Button>
-          <Button size="sm" onClick={handleSubmit} disabled={isPending}>
-            {isPending ? 'Đang lưu…' : 'Lưu'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    </FormSheet>
   )
 }
 

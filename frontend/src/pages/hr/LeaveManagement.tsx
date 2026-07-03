@@ -3,7 +3,7 @@ import * as XLSX from 'xlsx'
 import { Plus, Check, X, Trash2, CalendarOff, AlertTriangle, Download, Rows3, AlignJustify } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { FormSheet } from '@/components/shared/FormSheet'
 import { Badge } from '@/components/ui/badge'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SummaryBand } from '@/components/shared/SummaryBand'
@@ -283,10 +283,13 @@ export function CreateLeaveDialog({ wh, dept, onClose, fixedEmployeeId }: { wh: 
   }
 
   return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-md">
-        <DialogHeader><DialogTitle>Gửi đơn nghỉ phép</DialogTitle></DialogHeader>
-        <div className="space-y-3">
+    <FormSheet open onClose={onClose} title="Gửi đơn nghỉ phép" widthClass="sm:max-w-lg" footer={
+      <>
+        <Button variant="outline" onClick={onClose} className="h-8">Hủy</Button>
+        <Button onClick={submit} disabled={create.isPending || selfDup} className="h-8">{create.isPending ? 'Đang gửi…' : 'Gửi đơn'}</Button>
+      </>
+    }>
+      <div className="space-y-3">
           {err && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{err}</div>}
           {!fixedEmployeeId && canPickOther && (
             <div>
@@ -340,12 +343,7 @@ export function CreateLeaveDialog({ wh, dept, onClose, fixedEmployeeId }: { wh: 
             <label className="text-[11px] text-slate-500">Lý do</label>
             <Input value={reason} onChange={e => setReason(e.target.value)} placeholder="(không bắt buộc)" className="h-9 text-sm" />
           </div>
-          <div className="flex justify-end gap-2 pt-1">
-            <Button variant="outline" onClick={onClose} className="h-8">Hủy</Button>
-            <Button onClick={submit} disabled={create.isPending || selfDup} className="h-8">{create.isPending ? 'Đang gửi…' : 'Gửi đơn'}</Button>
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
+      </div>
+    </FormSheet>
   )
 }

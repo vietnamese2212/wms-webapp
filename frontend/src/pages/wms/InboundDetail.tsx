@@ -17,6 +17,7 @@ import { Card }                from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
+import { FormSheet } from '@/components/shared/FormSheet'
 import {
   useInboundOrder, useInboundOrders, useCancelInboundOrder,
   useCompleteInboundOrder, useUncompleteInboundOrder,
@@ -353,32 +354,13 @@ export default function InboundDetail() {
 
       {/* ── Edit pallet dialog ── */}
       {editState && (
-        <Dialog open onOpenChange={(v) => { if (!v) setEditState(null) }}>
-          <DialogContent className="sm:max-w-xs">
-            <DialogHeader>
-              <DialogTitle className="text-sm">Sửa pallet <span className="font-mono">{editState.entry.pallet_code}</span></DialogTitle>
-            </DialogHeader>
-            <div className="space-y-3 py-1">
-              <div className="space-y-1">
-                <Label className="text-xs">Số thùng</Label>
-                <Input
-                  type="number" min={1}
-                  className="h-8 text-sm"
-                  value={editState.cartons}
-                  onChange={(e) => setEditState(s => s && ({ ...s, cartons: Number(e.target.value) }))}
-                />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">Tầng chồng</Label>
-                <Input
-                  type="number" min={1}
-                  className="h-8 text-sm"
-                  value={editState.stack}
-                  onChange={(e) => setEditState(s => s && ({ ...s, stack: Number(e.target.value) }))}
-                />
-              </div>
-            </div>
-            <DialogFooter className="gap-2">
+        <FormSheet
+          open={editState !== null}
+          onClose={() => setEditState(null)}
+          title={<span className="text-sm">Sửa pallet <span className="font-mono">{editState.entry.pallet_code}</span></span>}
+          widthClass="sm:max-w-lg"
+          footer={
+            <>
               <Button variant="outline" size="sm" onClick={() => setEditState(null)}>Hủy</Button>
               <Button
                 size="sm"
@@ -399,9 +381,30 @@ export default function InboundDetail() {
               >
                 {saving ? 'Đang lưu…' : 'Lưu'}
               </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+            </>
+          }
+        >
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Số thùng</Label>
+              <Input
+                type="number" min={1}
+                className="h-8 text-sm"
+                value={editState.cartons}
+                onChange={(e) => setEditState(s => s && ({ ...s, cartons: Number(e.target.value) }))}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Tầng chồng</Label>
+              <Input
+                type="number" min={1}
+                className="h-8 text-sm"
+                value={editState.stack}
+                onChange={(e) => setEditState(s => s && ({ ...s, stack: Number(e.target.value) }))}
+              />
+            </div>
+          </div>
+        </FormSheet>
       )}
 
       {/* ── Confirm dialog ── */}

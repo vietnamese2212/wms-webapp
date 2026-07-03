@@ -1316,15 +1316,16 @@ export async function uploadExcel(req: Request, res: Response) {
 
     // Pre-load warehouses, materials, warehouse types, and existing GDOs in parallel
     const allGroupCodes = [...byVehicle.keys()]
-    const [warehousesRes, materialsRes, whTypesRes, vehicleTypesRes, existingRes] = await Promise.all([
+    const [warehousesRes, whTypesRes, vehicleTypesRes, existingRes, allMaterials] = await Promise.all([
       supabase.from('Warehouse').select('id, code, name').eq('is_active', true),
-      supabase.from('Material').select('id, material_code'),
       // LookupValue KHÔNG có cột is_active — lọc theo nó làm query lỗi → validWhTypes rỗng → chặn oan mọi file
       supabase.from('LookupValue').select('value').eq('type', 'warehouse_type'),
       supabase.from('VehicleType').select('code, name').eq('is_active', true),
       supabase.from('GroupDeliveryOrder')
         .select('id, group_code, status, assigned_at, assigned_by')
         .in('group_code', allGroupCodes),
+      // PHÂN TRANG: >1000 mã → nếu không phân trang bị cap 1000 → mã ngoài 1000 bị báo oan "chưa có trong hệ thống"
+      fetchAllRowsParallel(() => supabase.from('Material').select('id, material_code')) as Promise<{ id: string; material_code: string }[]>,
     ])
 
     const warehouseByKey = new Map<string, string>()
@@ -1333,7 +1334,7 @@ export async function uploadExcel(req: Request, res: Response) {
       warehouseByKey.set(w.name.trim().toLowerCase(), w.id)
     }
     const matMap = new Map<string, string>(
-      (materialsRes.data ?? []).map((m: any) => [m.material_code.trim(), m.id])
+      allMaterials.map(m => [String(m.material_code).trim(), m.id])
     )
     const validWhTypes = new Set<string>(
       (whTypesRes.data ?? []).map((t: any) => String(t.value).trim())
@@ -1584,7 +1585,7 @@ export async function uploadExcel(req: Request, res: Response) {
     }
 
     // ── Batch inserts ──
-    const CHUNK = 100
+    const CHUNK = 500
     async function batchInsert(table: string, rows: any[]) {
       for (let i = 0; i < rows.length; i += CHUNK) {
         const { error } = await supabase.from(table).insert(rows.slice(i, i + CHUNK))

@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { QRScanner } from '@/components/shared/QRScanner'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
+import { SingleSelect } from '@/components/shared/SingleSelect'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { PalletPrintArea, PALLET_PRINT_CSS, qrToLabel, type LabelData } from '@/components/shared/palletLabel'
@@ -432,19 +433,23 @@ export default function PalletOps() {
                 {/* Vị trí pallet con — lọc theo Loại kho, mặc định = vị trí pallet gốc */}
                 <div className="rounded-lg border border-slate-200 p-3 space-y-2">
                   <Label className="text-xs font-semibold">Vị trí pallet con</Label>
-                  <Select value={splitLoc || '__src__'} onValueChange={v => setSplitLoc(v === '__src__' ? (srcEntry?.location_id ?? '') : v)}>
-                    <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Vị trí" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__src__">Cùng vị trí pallet gốc{srcEntry?.location ? ` (${srcEntry.location.location_code}-${srcEntry.location.sub_code})` : ''}</SelectItem>
-                      {(splitLocs as any[]).map(l => {
+                  <SingleSelect
+                    value={splitLoc || '__src__'}
+                    onChange={v => setSplitLoc(v === '__src__' ? (srcEntry?.location_id ?? '') : v)}
+                    placeholder="Vị trí"
+                    searchPlaceholder="Tìm vị trí…"
+                    triggerClassName="h-9"
+                    options={[
+                      { value: '__src__', label: `Cùng vị trí pallet gốc${srcEntry?.location ? ` (${srcEntry.location.location_code}-${srcEntry.location.sub_code})` : ''}` },
+                      ...(splitLocs as any[]).map(l => {
                         const max = Number(l.max_pallets ?? 0)
                         const used = Number(l.used_slots ?? 0)
                         const isFull = max > 0 && used >= max
                         const stat = max > 0 ? (isFull ? 'ĐẦY' : `còn ${max - used}/${max}`) : 'không giới hạn'
-                        return <SelectItem key={l.id} value={l.id} disabled={isFull}>{locName(l)} · {stat}</SelectItem>
-                      })}
-                    </SelectContent>
-                  </Select>
+                        return { value: l.id as string, label: `${locName(l)} · ${stat}`, disabled: isFull }
+                      }),
+                    ]}
+                  />
                   <p className="text-[10px] text-slate-400">Mặc định ở vị trí pallet gốc. Vị trí <b>ĐẦY</b> bị mờ, không chọn được. Còn slot hiện "còn N/Max".</p>
                 </div>
 

@@ -7,6 +7,7 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
+import { SingleSelect } from '@/components/shared/SingleSelect'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { MapPin, AlertTriangle, CheckCircle2, Flag, QrCode, Clock, UserRound } from 'lucide-react'
@@ -182,22 +183,26 @@ export default function Stocktake() {
               ))}
             </SelectContent>
           </Select>
-          <Select value={locationId || '__none__'} onValueChange={v => {
-            setStocktake({ locationId: v === '__none__' ? '' : v })
-            setResultState({ mode: 'none' })
-            setInputVal('')
-            setScannerOpen(false)
-          }} disabled={!warehouseId}>
-            <SelectTrigger className="h-7 text-xs w-[130px]"><SelectValue placeholder="Vị trí…" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__none__" className="text-xs">Chọn vị trí…</SelectItem>
-              {filteredLocations.map((l: any) => (
-                <SelectItem key={l.id} value={l.id} className="text-xs">
-                  {l.location_code}{l.requires_stocktake ? ' 🚩' : ''}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <SingleSelect
+            value={locationId || '__none__'}
+            onChange={v => {
+              setStocktake({ locationId: v === '__none__' ? '' : v })
+              setResultState({ mode: 'none' })
+              setInputVal('')
+              setScannerOpen(false)
+            }}
+            disabled={!warehouseId}
+            placeholder="Vị trí…"
+            searchPlaceholder="Tìm vị trí…"
+            triggerClassName="h-7 w-[130px]"
+            options={[
+              { value: '__none__', label: 'Chọn vị trí…' },
+              ...filteredLocations.map((l: any) => ({
+                value: l.id as string,
+                label: `${l.location_code}${l.requires_stocktake ? ' 🚩' : ''}`,
+              })),
+            ]}
+          />
           <label className="flex items-center gap-1.5 cursor-pointer select-none">
             <input type="checkbox" checked={requiresOnly} onChange={e => {
               setStocktake({ requiresOnly: e.target.checked, locationId: '' })

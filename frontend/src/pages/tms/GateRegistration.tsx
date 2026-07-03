@@ -15,6 +15,7 @@ import { Badge } from '@/components/ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { FormSheet } from '@/components/shared/FormSheet'
+import { usePopoverAnchor } from '@/components/shared/usePopoverAnchor'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { toast } from '@/components/ui/use-toast'
 import {
@@ -168,7 +169,7 @@ function ComboField({
   const triggerRef = useRef<HTMLDivElement>(null)
   const portalRef = useRef<HTMLDivElement>(null)
   const didOpenRef = useRef(false)
-  const [dropPos, setDropPos] = useState<{ top: number; left: number; width: number }>({ top: 0, left: 0, width: 0 })
+  const anchor = usePopoverAnchor(triggerRef, open, 200)
 
   const filtered = options.filter(o =>
     o.label.toLowerCase().includes(search.toLowerCase()) ||
@@ -187,10 +188,6 @@ function ComboField({
       return
     }
     didOpenRef.current = true
-    if (triggerRef.current) {
-      const r = triggerRef.current.getBoundingClientRect()
-      setDropPos({ top: r.bottom + 2, left: r.left, width: r.width })
-    }
     const handleMouseDown = (e: MouseEvent) => {
       if (
         triggerRef.current?.contains(e.target as Node) ||
@@ -241,11 +238,11 @@ function ComboField({
           </button>
         )}
       </div>
-      {open && createPortal(
+      {open && anchor && createPortal(
         <div
           ref={portalRef}
           data-combofield-portal=""
-          style={{ position: 'fixed', top: dropPos.top, left: dropPos.left, width: dropPos.width, zIndex: 9999, pointerEvents: 'auto' }}
+          style={{ ...anchor.style, zIndex: 9999, pointerEvents: 'auto' }}
           className="bg-white border rounded-md shadow-lg max-h-44 overflow-auto"
           onWheel={e => e.stopPropagation()}
           onTouchMove={e => e.stopPropagation()}
@@ -260,6 +257,7 @@ function ComboField({
                 key={o.value}
                 type="button"
                 className="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 flex flex-col"
+                onMouseDown={e => e.preventDefault()}
                 onClick={() => { onSelect(o); setOpen(false) }}
               >
                 <span className="font-medium">{o.label}</span>
@@ -268,7 +266,7 @@ function ComboField({
             ))
           )}
         </div>,
-        document.body
+        anchor.target
       )}
     </div>
   )

@@ -104,6 +104,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
   const [nccDropdownIdx, setNccDropdownIdx] = useState<number | null>(null)
   const [gateSpecial,      setGateSpecial]      = useState(false)   // mặc định CHỈ xe đang trong cổng; tích để xem cả xe đã ra (3 ngày)
   const [showGateDialog,   setShowGateDialog]   = useState(false)
+  const [gateSearch,       setGateSearch]       = useState('')      // tìm xe trong dialog chọn xe cổng
 
   useEffect(() => {
     if (open) {
@@ -166,9 +167,12 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
     ? (editGroup[0] as any).gate_registration
     : null
   const displayGate = selectedGate ?? (editModeGateInfo?.id === gateRegId ? editModeGateInfo : null)
+  const gateQ = gateSearch.trim().toLowerCase()
   const sortedGates = [...(activeGates as any[])]
     .filter(g => g.entry_at)                                              // chỉ xe đã vào cổng
     .filter(g => gateSpecial ? true : g.status === 'IN')                  // mặc định: chưa ra
+    .filter(g => !gateQ || [g.license_plate, g.company_name_raw, g.driver_name, g.content]
+      .some(v => (v ?? '').toLowerCase().includes(gateQ)))                // tìm biển số / ĐVVT / tài xế / nội dung
     .sort((a, b) => b.date.localeCompare(a.date) || a.registration_number - b.registration_number)
   // Lần = lượt thứ mấy của CÙNG (kho · loại xe · ngày · biển số) — cùng một xe vào nhiều lượt thì Lần 1,2,3…
   // Tính trên TẤT CẢ chuyến đã vào cổng (không lọc theo "đặc biệt") để Lần ổn định, không nhảy số.
@@ -722,7 +726,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                   </button>
 
                   {/* Dialog chọn xe cổng */}
-                  <Dialog open={showGateDialog} onOpenChange={setShowGateDialog}>
+                  <Dialog open={showGateDialog} onOpenChange={v => { setShowGateDialog(v); if (v) setGateSearch('') }}>
                     <DialogContent className="max-w-md">
                       <DialogHeader className="pb-1">
                         <div className="flex items-center justify-between">
@@ -738,10 +742,12 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                           </div>
                         </div>
                       </DialogHeader>
-                      <div className="space-y-1 max-h-[72vh] overflow-y-auto pr-0.5">
+                      <Input autoFocus value={gateSearch} onChange={e => setGateSearch(e.target.value)}
+                        placeholder="Tìm biển số, ĐVVT, tài xế…" className="h-8 text-xs" />
+                      <div className="space-y-1 max-h-[64vh] overflow-y-auto pr-0.5">
                         {sortedGates.length === 0 ? (
                           <div className="text-center text-xs text-slate-400 py-4">
-                            {gateSpecial ? 'Không có xe INBOUND trong 3 ngày' : 'Không có xe INBOUND đang vào cổng — tích "Trường hợp đặc biệt" để xem xe đã ra'}
+                            {gateQ ? 'Không có xe khớp từ khóa' : gateSpecial ? 'Không có xe INBOUND trong 3 ngày' : 'Không có xe INBOUND đang vào cổng — tích "Trường hợp đặc biệt" để xem xe đã ra'}
                           </div>
                         ) : (
                           sortedGates.map(g => {

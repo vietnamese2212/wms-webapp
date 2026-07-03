@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import type { AxiosError }              from 'axios'
 import {
@@ -15,9 +16,9 @@ import { Input }               from '@/components/ui/input'
 import { Label }               from '@/components/ui/label'
 import { Card }                from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { FormSheet } from '@/components/shared/FormSheet'
+import { usePopoverAnchor } from '@/components/shared/usePopoverAnchor'
 import {
   useInboundOrder, useInboundOrders, useCancelInboundOrder,
   useCompleteInboundOrder, useUncompleteInboundOrder,
@@ -33,6 +34,56 @@ import { SummaryBand } from '@/components/shared/SummaryBand'
 import { inboundOrderStatusLabel, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { unlockAudio }             from '@/utils/audio'
 import type { InboundOrder, InboundOrderStatus, PalletEntry } from '@/types'
+
+// ─── Pill chọn vị trí (có ô tìm) ──────────────────────────────
+// Thay Radix <Select> pill "Đổi vị trí"/"Chọn vị trí" — kho nhiều vị trí phải tìm được.
+function LocPickerPill({ trigger, triggerClass, options, onPick }: {
+  trigger: ReactNode
+  triggerClass: string
+  options: { id: string; node: ReactNode; searchText: string }[]
+  onPick: (id: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [q, setQ] = useState('')
+  const btnRef = useRef<HTMLButtonElement>(null)
+  const anchor = usePopoverAnchor(btnRef, open)
+  const filtered = q ? options.filter(o => o.searchText.toLowerCase().includes(q.toLowerCase())) : options
+  function close() { setOpen(false); setQ('') }
+  return (
+    <>
+      <button ref={btnRef} type="button" onClick={() => setOpen(o => !o)} className={triggerClass}>
+        {trigger}
+      </button>
+      {open && anchor && createPortal(
+        <>
+          <div className="fixed inset-0 z-[190] pointer-events-auto" onClick={close} />
+          <div
+            className="z-[200] pointer-events-auto bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden"
+            style={{ ...anchor.style, width: 280, left: Math.min(Number(anchor.style.left ?? 0), window.innerWidth - 288) }}
+          >
+            <div className="p-2 border-b border-slate-100">
+              <input type="text" value={q} onChange={e => setQ(e.target.value)} placeholder="Tìm vị trí…"
+                autoFocus className="w-full text-xs border border-slate-200 rounded px-2 py-1 outline-none focus:border-blue-400" />
+            </div>
+            <div className="max-h-56 overflow-y-auto">
+              {filtered.length === 0 ? (
+                <p className="text-[11px] text-slate-400 text-center py-3">Không tìm thấy</p>
+              ) : filtered.map(o => (
+                <button key={o.id} type="button"
+                  className="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-50"
+                  onMouseDown={e => e.preventDefault()}
+                  onClick={() => { onPick(o.id); close() }}>
+                  {o.node}
+                </button>
+              ))}
+            </div>
+          </div>
+        </>,
+        anchor.target,
+      )}
+    </>
+  )
+}
 
 // ─── Status badge ─────────────────────────────────────────────
 
@@ -149,18 +200,20 @@ export default function InboundDetail() {
   const locFull = (l: LocOpt) => l.max_pallets > 0 && (l.used_slots ?? 0) >= l.max_pallets
   const locRec  = (l: LocOpt) => !!l.has_same_material && !locFull(l)
   const locOptions = [...(allLocations as LocOpt[])].sort((a, b) => (locRec(b) ? 1 : 0) - (locRec(a) ? 1 : 0))
-  function renderLocItems() {
-    return locOptions.map(l => {
-      const isPartial = (l.used_slots ?? 0) > 0 && !locFull(l)
-      return (
-        <SelectItem key={l.id} value={l.id}>
+  const locPickOptions = locOptions.map(l => {
+    const isPartial = (l.used_slots ?? 0) > 0 && !locFull(l)
+    return {
+      id: l.id,
+      searchText: l.location_code,
+      node: (
+        <>
           {locRec(l) && <span className="text-amber-500 font-bold mr-1">★</span>}
           <span className={locFull(l) ? 'text-blue-700 font-semibold' : isPartial ? 'text-amber-600' : ''}>{l.location_code}</span>
           <span className="ml-2 text-xs text-slate-400">({l.used_slots ?? 0}/{l.max_pallets}{l.has_same_material ? ' · đang để' : ''})</span>
-        </SelectItem>
-      )
-    })
-  }
+        </>
+      ),
+    }
+  })
   const { mutate: saveManual, isPending: savingManual   } = useScanManualPallet()
 
   const isManualEntry = (order?.material as any)?.no_qr_tracking === true
@@ -632,14 +685,12 @@ export default function InboundDetail() {
                     <span className="font-mono font-medium" title={headerLocTitle}>{headerLocText}</span>
                     {headerLocMismatch && <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0" />}
                     {isOpen && canSetLocation && (
-                      <Select onValueChange={changeLoc}>
-                        <SelectTrigger className="h-6 w-auto gap-1 rounded-md border-0 bg-sky-600 px-2 text-[10px] font-semibold text-white shadow-sm hover:bg-sky-700">
-                          <Pencil className="h-3 w-3" /> Đổi vị trí
-                        </SelectTrigger>
-                        <SelectContent>
-                          {renderLocItems()}
-                        </SelectContent>
-                      </Select>
+                      <LocPickerPill
+                        trigger={<><Pencil className="h-3 w-3" /> Đổi vị trí</>}
+                        triggerClass="h-6 inline-flex items-center gap-1 rounded-md border-0 bg-sky-600 px-2 text-[10px] font-semibold text-white shadow-sm hover:bg-sky-700"
+                        options={locPickOptions}
+                        onPick={changeLoc}
+                      />
                     )}
                     {locHistory.length > 0 && (
                       <button type="button" onClick={() => setShowLocHistory(true)}
@@ -653,14 +704,12 @@ export default function InboundDetail() {
                     <AlertTriangle className="h-3 w-3" />
                     Chưa chọn vị trí
                     {canSetLocation && (
-                      <Select onValueChange={changeLoc}>
-                        <SelectTrigger className="h-6 w-auto gap-1 rounded-md border-0 bg-blue-600 px-2 text-[10px] font-semibold text-white shadow-sm hover:bg-blue-700 ml-1">
-                          <MapPin className="h-3 w-3" /> <SelectValue placeholder="Chọn vị trí" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {renderLocItems()}
-                        </SelectContent>
-                      </Select>
+                      <LocPickerPill
+                        trigger={<><MapPin className="h-3 w-3" /> Chọn vị trí</>}
+                        triggerClass="h-6 inline-flex items-center gap-1 rounded-md border-0 bg-blue-600 px-2 text-[10px] font-semibold text-white shadow-sm hover:bg-blue-700 ml-1"
+                        options={locPickOptions}
+                        onPick={changeLoc}
+                      />
                     )}
                   </span>
                 ) : (

@@ -10,6 +10,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { FormSheet } from '@/components/shared/FormSheet'
 import { FilterBar, type FilterDef } from '@/components/shared/FilterBar'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
@@ -58,30 +59,27 @@ function VehicleTypeDialog({ vt, open, onClose }: { vt: TmsVehicleType | null; o
   }
 
   return (
-    <Dialog open={open} onOpenChange={v => { if (!v) onClose() }}>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader><DialogTitle>{isEdit ? 'Sửa loại xe' : 'Thêm loại xe'}</DialogTitle></DialogHeader>
-        <div className="space-y-3 py-1">
-          {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
-          <div className="space-y-1"><Label className="text-xs">Mã *</Label>
-            <Input value={code} onChange={e => setCode(e.target.value.toUpperCase())} placeholder="PALLET, SCA, XA…"
-              disabled={isEdit} className={isEdit ? 'bg-slate-50 cursor-not-allowed' : ''} />
-            {isEdit && <p className="text-[10px] text-slate-400">Mã là định danh cố định, không sửa được.</p>}</div>
-          <div className="space-y-1"><Label className="text-xs">Tên *</Label>
-            <Input value={name} onChange={e => setName(e.target.value)} placeholder="Xe pallet, Xe SCA…" /></div>
-          {isEdit && <div className="flex items-center gap-2">
-            <input id="vt-active" type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} className="h-4 w-4 rounded accent-blue-600" />
-            <Label htmlFor="vt-active" className="text-sm cursor-pointer">Đang hoạt động</Label>
-          </div>}
-        </div>
-        <DialogFooter>
-          <Button variant="outline" size="sm" onClick={onClose}>Huỷ</Button>
-          <Button size="sm" onClick={handleSubmit} disabled={isPending || !code || !name}>
-            {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <FormSheet open={open} onClose={onClose} title={isEdit ? 'Sửa loại xe' : 'Thêm loại xe'} widthClass="sm:max-w-lg"
+      footer={<>
+        <Button variant="outline" size="sm" onClick={onClose}>Huỷ</Button>
+        <Button size="sm" onClick={handleSubmit} disabled={isPending || !code || !name}>
+          {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo'}
+        </Button>
+      </>}>
+      <div className="space-y-3">
+        {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
+        <div className="space-y-1"><Label className="text-xs">Mã *</Label>
+          <Input value={code} onChange={e => setCode(e.target.value.toUpperCase())} placeholder="PALLET, SCA, XA…"
+            disabled={isEdit} className={isEdit ? 'bg-slate-50 cursor-not-allowed' : ''} />
+          {isEdit && <p className="text-[10px] text-slate-400">Mã là định danh cố định, không sửa được.</p>}</div>
+        <div className="space-y-1"><Label className="text-xs">Tên *</Label>
+          <Input value={name} onChange={e => setName(e.target.value)} placeholder="Xe pallet, Xe SCA…" /></div>
+        {isEdit && <div className="flex items-center gap-2">
+          <input id="vt-active" type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} className="h-4 w-4 rounded accent-blue-600" />
+          <Label htmlFor="vt-active" className="text-sm cursor-pointer">Đang hoạt động</Label>
+        </div>}
+      </div>
+    </FormSheet>
   )
 }
 
@@ -264,42 +262,39 @@ function SlotRowEditDialog({ st, open, onClose, cargoOptions }: {
   }
 
   return (
-    <Dialog open={open} onOpenChange={v => { if (!v) onClose() }}>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader><DialogTitle>Sửa khung giờ · {DOW_LABEL[st.day_of_week] ?? st.day_of_week}</DialogTitle></DialogHeader>
-        <div className="space-y-3 py-1">
-          {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
-          <p className="text-[11px] text-slate-500">Sửa riêng dòng <span className="font-medium text-slate-700">{st.vehicle_type?.name ?? '—'} · {DOW_LABEL[st.day_of_week] ?? st.day_of_week}</span>. Thay đổi áp xuống các ngày tương lai chưa booking.</p>
-          <div className="space-y-1"><Label className="text-xs">Loại hàng</Label>
-            <Select value={cargoType} onValueChange={setCargoType}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="ALL">Tất cả loại hàng</SelectItem>
-                {cargoOptions.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1"><Label className="text-xs">Giờ bắt đầu *</Label>
-              <Input type="time" value={timeFrom} onChange={e => setTimeFrom(e.target.value)} /></div>
-            <div className="space-y-1"><Label className="text-xs">Giờ kết thúc *</Label>
-              <Input type="time" value={timeTo} onChange={e => setTimeTo(e.target.value)} /></div>
-          </div>
-          <div className="space-y-1"><Label className="text-xs">Số xe tối đa *</Label>
-            <Input type="number" min="0" value={maxVehicles} onChange={e => setMaxVehicles(e.target.value)} /></div>
-          <div className="flex items-center gap-2">
-            <input id="st-active" type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} className="h-4 w-4 rounded accent-blue-600" />
-            <Label htmlFor="st-active" className="text-sm cursor-pointer">Đang hoạt động</Label>
-          </div>
+    <FormSheet open={open} onClose={onClose} title={<>Sửa khung giờ · {DOW_LABEL[st.day_of_week] ?? st.day_of_week}</>} widthClass="sm:max-w-lg"
+      footer={<>
+        <Button variant="outline" size="sm" onClick={onClose}>Huỷ</Button>
+        <Button size="sm" onClick={handleSubmit} disabled={isPending}>
+          {isPending ? 'Đang lưu…' : 'Lưu'}
+        </Button>
+      </>}>
+      <div className="space-y-3">
+        {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
+        <p className="text-[11px] text-slate-500">Sửa riêng dòng <span className="font-medium text-slate-700">{st.vehicle_type?.name ?? '—'} · {DOW_LABEL[st.day_of_week] ?? st.day_of_week}</span>. Thay đổi áp xuống các ngày tương lai chưa booking.</p>
+        <div className="space-y-1"><Label className="text-xs">Loại hàng</Label>
+          <Select value={cargoType} onValueChange={setCargoType}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ALL">Tất cả loại hàng</SelectItem>
+              {cargoOptions.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+            </SelectContent>
+          </Select>
         </div>
-        <DialogFooter>
-          <Button variant="outline" size="sm" onClick={onClose}>Huỷ</Button>
-          <Button size="sm" onClick={handleSubmit} disabled={isPending}>
-            {isPending ? 'Đang lưu…' : 'Lưu'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1"><Label className="text-xs">Giờ bắt đầu *</Label>
+            <Input type="time" value={timeFrom} onChange={e => setTimeFrom(e.target.value)} /></div>
+          <div className="space-y-1"><Label className="text-xs">Giờ kết thúc *</Label>
+            <Input type="time" value={timeTo} onChange={e => setTimeTo(e.target.value)} /></div>
+        </div>
+        <div className="space-y-1"><Label className="text-xs">Số xe tối đa *</Label>
+          <Input type="number" min="0" value={maxVehicles} onChange={e => setMaxVehicles(e.target.value)} /></div>
+        <div className="flex items-center gap-2">
+          <input id="st-active" type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} className="h-4 w-4 rounded accent-blue-600" />
+          <Label htmlFor="st-active" className="text-sm cursor-pointer">Đang hoạt động</Label>
+        </div>
+      </div>
+    </FormSheet>
   )
 }
 
@@ -333,48 +328,45 @@ function TransportCompanyDialog({ co, open, onClose }: { co: TransportCompany | 
   }
 
   return (
-    <Dialog open={open} onOpenChange={v => { if (!v) onClose() }}>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader><DialogTitle>{isEdit ? 'Sửa ĐVVT/NCC' : 'Thêm ĐVVT/NCC'}</DialogTitle></DialogHeader>
-        <div className="space-y-3 py-1">
-          {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1"><Label className="text-xs">Mã *</Label>
-              <Input value={code} onChange={e => setCode(e.target.value.toUpperCase())} placeholder="DVVT01…"
-                disabled={isEdit} className={isEdit ? 'bg-slate-50 cursor-not-allowed' : ''} /></div>
-            <div className="space-y-1"><Label className="text-xs">Tên *</Label>
-              <Input value={name} onChange={e => setName(e.target.value)} placeholder="Công ty vận tải A…" /></div>
-          </div>
-          <div className="space-y-1"><Label className="text-xs">Loại *</Label>
-            <Select value={type} onValueChange={v => setType(v as 'ĐVVT' | 'NCC')}>
-              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="ĐVVT" className="text-xs">ĐVVT – Đơn vị vận tải</SelectItem>
-                <SelectItem value="NCC"  className="text-xs">NCC – Nhà cung cấp</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1"><Label className="text-xs">Mã phụ</Label>
-            <Input value={aliasCodes} onChange={e => setAliasCodes(e.target.value.toUpperCase())} placeholder="vd: 10009281, 10009290" />
-            <p className="text-[10px] text-slate-400">Mã ERP khác của CÙNG nhà cung cấp (cách nhau dấu phẩy). Upload theo mã nào cũng về NCC này; HSD/báo cáo gộp chung.</p>
-          </div>
-          <div className="space-y-1"><Label className="text-xs">Người liên hệ</Label>
-            <Input value={contact} onChange={e => setContact(e.target.value)} /></div>
-          <div className="space-y-1"><Label className="text-xs">SĐT liên hệ</Label>
-            <Input value={phone} onChange={e => setPhone(normalizePhone(e.target.value))} inputMode="numeric" placeholder="09xxxxxxxx" /></div>
-          {isEdit && <div className="flex items-center gap-2">
-            <input id="co-active" type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} className="h-4 w-4 rounded accent-blue-600" />
-            <Label htmlFor="co-active" className="text-sm cursor-pointer">Đang hoạt động</Label>
-          </div>}
+    <FormSheet open={open} onClose={onClose} title={isEdit ? 'Sửa ĐVVT/NCC' : 'Thêm ĐVVT/NCC'} widthClass="sm:max-w-lg"
+      footer={<>
+        <Button variant="outline" size="sm" onClick={onClose}>Huỷ</Button>
+        <Button size="sm" onClick={handleSubmit} disabled={isPending || !code || !name}>
+          {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo'}
+        </Button>
+      </>}>
+      <div className="space-y-3">
+        {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1"><Label className="text-xs">Mã *</Label>
+            <Input value={code} onChange={e => setCode(e.target.value.toUpperCase())} placeholder="DVVT01…"
+              disabled={isEdit} className={isEdit ? 'bg-slate-50 cursor-not-allowed' : ''} /></div>
+          <div className="space-y-1"><Label className="text-xs">Tên *</Label>
+            <Input value={name} onChange={e => setName(e.target.value)} placeholder="Công ty vận tải A…" /></div>
         </div>
-        <DialogFooter>
-          <Button variant="outline" size="sm" onClick={onClose}>Huỷ</Button>
-          <Button size="sm" onClick={handleSubmit} disabled={isPending || !code || !name}>
-            {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        <div className="space-y-1"><Label className="text-xs">Loại *</Label>
+          <Select value={type} onValueChange={v => setType(v as 'ĐVVT' | 'NCC')}>
+            <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ĐVVT" className="text-xs">ĐVVT – Đơn vị vận tải</SelectItem>
+              <SelectItem value="NCC"  className="text-xs">NCC – Nhà cung cấp</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1"><Label className="text-xs">Mã phụ</Label>
+          <Input value={aliasCodes} onChange={e => setAliasCodes(e.target.value.toUpperCase())} placeholder="vd: 10009281, 10009290" />
+          <p className="text-[10px] text-slate-400">Mã ERP khác của CÙNG nhà cung cấp (cách nhau dấu phẩy). Upload theo mã nào cũng về NCC này; HSD/báo cáo gộp chung.</p>
+        </div>
+        <div className="space-y-1"><Label className="text-xs">Người liên hệ</Label>
+          <Input value={contact} onChange={e => setContact(e.target.value)} /></div>
+        <div className="space-y-1"><Label className="text-xs">SĐT liên hệ</Label>
+          <Input value={phone} onChange={e => setPhone(normalizePhone(e.target.value))} inputMode="numeric" placeholder="09xxxxxxxx" /></div>
+        {isEdit && <div className="flex items-center gap-2">
+          <input id="co-active" type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} className="h-4 w-4 rounded accent-blue-600" />
+          <Label htmlFor="co-active" className="text-sm cursor-pointer">Đang hoạt động</Label>
+        </div>}
+      </div>
+    </FormSheet>
   )
 }
 
@@ -409,45 +401,42 @@ function VehicleDialog({ v, open, onClose, companies, vehicleTypes, lockedNccId 
   }
 
   return (
-    <Dialog open={open} onOpenChange={v => { if (!v) onClose() }}>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader><DialogTitle>{isEdit ? 'Sửa xe' : 'Thêm xe'}</DialogTitle></DialogHeader>
-        <div className="space-y-3 py-1">
-          {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
-          <div className="space-y-1"><Label className="text-xs">ĐVVT / NCC *</Label>
-            {lockedNccId ? (
-              <Input value={companies.find(c => c.id === lockedNccId)?.name ?? lockedNccId} disabled className="bg-slate-50 cursor-not-allowed" />
-            ) : (
-              <SingleSelect
-                options={companies.filter(c => c.is_active).map(c => ({ value: c.id, label: c.name, sub: c.code }))}
-                value={nccId} onChange={setNccId}
-                placeholder="Chọn ĐVVT" searchPlaceholder="Tìm tên hoặc mã ĐVVT…"
-                triggerClassName="w-full h-9" />
-            )}
-          </div>
-          <div className="space-y-1"><Label className="text-xs">Biển số xe *</Label>
-            <Input value={plate} onChange={e => setPlate(normalizeLicensePlate(e.target.value))} placeholder="30H1234"
-              disabled={isEdit} className={isEdit ? 'bg-slate-50 cursor-not-allowed' : ''} /></div>
-          <div className="space-y-1"><Label className="text-xs">Loại xe *</Label>
+    <FormSheet open={open} onClose={onClose} title={isEdit ? 'Sửa xe' : 'Thêm xe'} widthClass="sm:max-w-lg"
+      footer={<>
+        <Button variant="outline" size="sm" onClick={onClose}>Huỷ</Button>
+        <Button size="sm" onClick={handleSubmit} disabled={isPending || !nccId || !plate || !vtId}>
+          {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Thêm xe'}
+        </Button>
+      </>}>
+      <div className="space-y-3">
+        {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
+        <div className="space-y-1"><Label className="text-xs">ĐVVT / NCC *</Label>
+          {lockedNccId ? (
+            <Input value={companies.find(c => c.id === lockedNccId)?.name ?? lockedNccId} disabled className="bg-slate-50 cursor-not-allowed" />
+          ) : (
             <SingleSelect
-              options={vehicleTypes.filter(vt => vt.is_active).map(vt => ({ value: vt.id, label: vt.name, sub: vt.code }))}
-              value={vtId} onChange={setVtId}
-              placeholder="Chọn loại xe" searchPlaceholder="Tìm tên hoặc mã loại xe…"
+              options={companies.filter(c => c.is_active).map(c => ({ value: c.id, label: c.name, sub: c.code }))}
+              value={nccId} onChange={setNccId}
+              placeholder="Chọn ĐVVT" searchPlaceholder="Tìm tên hoặc mã ĐVVT…"
               triggerClassName="w-full h-9" />
-          </div>
-          {isEdit && <div className="flex items-center gap-2">
-            <input id="v-active" type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} className="h-4 w-4 rounded accent-blue-600" />
-            <Label htmlFor="v-active" className="text-sm cursor-pointer">Đang hoạt động</Label>
-          </div>}
+          )}
         </div>
-        <DialogFooter>
-          <Button variant="outline" size="sm" onClick={onClose}>Huỷ</Button>
-          <Button size="sm" onClick={handleSubmit} disabled={isPending || !nccId || !plate || !vtId}>
-            {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Thêm xe'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        <div className="space-y-1"><Label className="text-xs">Biển số xe *</Label>
+          <Input value={plate} onChange={e => setPlate(normalizeLicensePlate(e.target.value))} placeholder="30H1234"
+            disabled={isEdit} className={isEdit ? 'bg-slate-50 cursor-not-allowed' : ''} /></div>
+        <div className="space-y-1"><Label className="text-xs">Loại xe *</Label>
+          <SingleSelect
+            options={vehicleTypes.filter(vt => vt.is_active).map(vt => ({ value: vt.id, label: vt.name, sub: vt.code }))}
+            value={vtId} onChange={setVtId}
+            placeholder="Chọn loại xe" searchPlaceholder="Tìm tên hoặc mã loại xe…"
+            triggerClassName="w-full h-9" />
+        </div>
+        {isEdit && <div className="flex items-center gap-2">
+          <input id="v-active" type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} className="h-4 w-4 rounded accent-blue-600" />
+          <Label htmlFor="v-active" className="text-sm cursor-pointer">Đang hoạt động</Label>
+        </div>}
+      </div>
+    </FormSheet>
   )
 }
 

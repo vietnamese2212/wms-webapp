@@ -15,6 +15,7 @@ import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect
 import { usePopoverAnchor } from '@/components/shared/usePopoverAnchor'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { SummaryBand } from '@/components/shared/SummaryBand'
+import { FormSheet } from '@/components/shared/FormSheet'
 import type { MSOpt } from '@/components/shared/MultiSelectFilter'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { rowText, statusText, type RowStatusKey } from '@/lib/rowStatus'
@@ -289,13 +290,19 @@ function BookSlotDialog({ vslot, order, onClose, allOrders }: {
 
   if (!vslot || !order) return null
   return (
-    <Dialog open={!!vslot} onOpenChange={v => !v && onClose()}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>{vslot.status === 'PENDING' ? 'Đặt khung giờ' : 'Sửa khung giờ'}</DialogTitle>
-          <p className="text-xs text-slate-500 mt-1">{order.npp_name ?? '—'} · {formatDate(order.date)}</p>
-        </DialogHeader>
-        <div className="space-y-3 py-2">
+    <FormSheet
+      open={!!vslot}
+      onClose={() => onClose()}
+      title={vslot.status === 'PENDING' ? 'Đặt khung giờ' : 'Sửa khung giờ'}
+      description={<>{order.npp_name ?? '—'} · {formatDate(order.date)}</>}
+      footer={<>
+        <Button variant="outline" size="sm" onClick={onClose}>Hủy</Button>
+        <Button size="sm" onClick={() => handleSave()} disabled={updateSlot.isPending}>
+          {updateSlot.isPending ? 'Đang lưu...' : 'Xác nhận'}
+        </Button>
+      </>}
+    >
+        <div className="space-y-3">
           <div>
             <Label className="text-xs font-medium mb-2 block">Chọn khung giờ *</Label>
             <SlotPicker
@@ -376,14 +383,7 @@ function BookSlotDialog({ vslot, order, onClose, allOrders }: {
           )}
           {err && <p className="text-xs text-red-600">{err}</p>}
         </div>
-        <DialogFooter>
-          <Button variant="outline" size="sm" onClick={onClose}>Hủy</Button>
-          <Button size="sm" onClick={() => handleSave()} disabled={updateSlot.isPending}>
-            {updateSlot.isPending ? 'Đang lưu...' : 'Xác nhận'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    </FormSheet>
   )
 }
 
@@ -1518,29 +1518,26 @@ function ChangeDateDialog({ open, orderIds, currentDate, onClose }: {
   }
 
   return (
-    <Dialog open={open} onOpenChange={v => !v && onClose()}>
-      <DialogContent className="max-w-xs">
-        <DialogHeader>
-          <DialogTitle>Đổi ngày</DialogTitle>
-          <p className="text-xs text-slate-500 mt-1">
-            {orderIds.length} đơn · Ngày hiện tại: <span className="font-mono">{formatDate(currentDate)}</span>
-          </p>
-        </DialogHeader>
-        <div className="space-y-3 py-2">
+    <FormSheet
+      open={open}
+      onClose={() => onClose()}
+      title="Đổi ngày"
+      description={<>{orderIds.length} đơn · Ngày hiện tại: <span className="font-mono">{formatDate(currentDate)}</span></>}
+      footer={<>
+        <Button variant="outline" size="sm" onClick={onClose}>Hủy</Button>
+        <Button size="sm" onClick={handleSave} disabled={saving}>
+          {saving ? 'Đang lưu...' : `Đổi ${orderIds.length} đơn`}
+        </Button>
+      </>}
+    >
+        <div className="space-y-3">
           <div>
             <Label className="text-xs">Ngày mới *</Label>
             <Input type="date" value={newDate} min={today} onChange={e => setNewDate(e.target.value)} className="h-8 text-sm mt-1" />
           </div>
           {err && <p className="text-xs text-red-600">{err}</p>}
         </div>
-        <DialogFooter>
-          <Button variant="outline" size="sm" onClick={onClose}>Hủy</Button>
-          <Button size="sm" onClick={handleSave} disabled={saving}>
-            {saving ? 'Đang lưu...' : `Đổi ${orderIds.length} đơn`}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    </FormSheet>
   )
 }
 
@@ -2068,13 +2065,19 @@ function TransportUpdateDialog({ order, onClose }: { order: TransferOrder | null
   if (!order) return null
   const dvvtDisplay = order.ncc?.name ?? order.transfer_gdo?.dvvt ?? null
   return (
-    <Dialog open={!!order} onOpenChange={v => !v && onClose()}>
-      <DialogContent className="max-w-sm">
-        <DialogHeader>
-          <DialogTitle>ĐVVT booking</DialogTitle>
-          <p className="text-xs text-slate-500 mt-1">{order.order_code} · {order.transfer_gdo?.warehouse?.name ?? '—'} → {order.warehouse?.name ?? '—'}</p>
-        </DialogHeader>
-        <div className="space-y-3 py-2">
+    <FormSheet
+      open={!!order}
+      onClose={() => onClose()}
+      title="ĐVVT booking"
+      description={<>{order.order_code} · {order.transfer_gdo?.warehouse?.name ?? '—'} → {order.warehouse?.name ?? '—'}</>}
+      footer={<>
+        <Button variant="outline" size="sm" onClick={onClose}>Hủy</Button>
+        <Button size="sm" onClick={handleSave} disabled={saving || !licensePlate.trim() || !driverPhone.trim() || !eta}>
+          {saving ? 'Đang lưu...' : 'Lưu'}
+        </Button>
+      </>}
+    >
+        <div className="space-y-3">
           <div>
             <Label className="text-xs">ĐVVT <span className="text-slate-400 font-normal">(từ Outbound)</span></Label>
             <div className="h-8 mt-1 px-3 flex items-center rounded-md border border-slate-200 bg-slate-50 text-sm text-slate-600">
@@ -2111,14 +2114,7 @@ function TransportUpdateDialog({ order, onClose }: { order: TransferOrder | null
           </div>
           {err && <p className="text-xs text-red-600">{err}</p>}
         </div>
-        <DialogFooter>
-          <Button variant="outline" size="sm" onClick={onClose}>Hủy</Button>
-          <Button size="sm" onClick={handleSave} disabled={saving || !licensePlate.trim() || !driverPhone.trim() || !eta}>
-            {saving ? 'Đang lưu...' : 'Lưu'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    </FormSheet>
   )
 }
 

@@ -4,6 +4,7 @@
 - Ngôn ngữ trao đổi: **tiếng Việt**.
 - **Push GitHub sau mỗi lần sửa code** — Vercel tự deploy. Remote: `https://github.com/vietnamese2212/wms-webapp.git` (branch `main`).
 - **Đổi DB schema**: SQL → `backend/migrations/YYYYMMDD_<desc>.sql` → apply qua Supabase Dashboard → push → cập nhật `SCHEMA_REVIEW.md`. (Chi tiết: skill `mutation-realtime`.)
+- **`Template upload.xlsx` (thư mục gốc) = DỮ LIỆU UPLOAD GỐC của user — TUYỆT ĐỐI KHÔNG sửa/ghi đè, KHÔNG `git add`** (OneDrive hay tự lưu lại đổi byte; luôn `git add` từng file cụ thể, đừng `git add -A`/`git add .`). Chỉ ĐỌC để soi cấu trúc/debug upload.
 
 ---
 ## Nguyên tắc hành vi khi xây dựng app
@@ -75,6 +76,7 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 
 **Mutation & realtime** (skill `mutation-realtime` + `verify-feature`):
 - Mọi INSERT phải có `id: randomUUID()` + `updated_at: new Date().toISOString()` — DB không có DEFAULT, thiếu → **lỗi 23502**. `import { randomUUID } from 'crypto'`. DB client: `import { supabase } from '../../lib/supabase'`.
+- **Upload/ghi hàng loạt (Excel, bulk) KHÔNG ghi tuần tự từng dòng trong `for...await`** — file lớn (vài trăm–nghìn dòng) → hàng nghìn roundtrip nối tiếp → **quá `maxDuration=60s` của Vercel** → user thấy trang "An error occurred with your deployment" (crash hạ tầng, không phải JSON lỗi app). Cách đúng: gom **INSERT theo lô mảng** (chunk ~500, lỗi lô → fallback từng dòng để chỉ mã hỏng) + **UPDATE song song có giới hạn** (`Promise.all` từng cụm ~15, đừng bão `max_connections=60`). Mẫu: `materialController.uploadExcel`.
 - Tính năng cập nhật số liệu phải **realtime** (không refresh tay) + test đủ **4 case: tạo / sửa / xóa / làm lại**. `invalidateQueries` đủ MỌI key liên quan; thêm key vào `TABLE_QUERY_MAP` (`realtimeEvents.ts`); optimistic phải rollback khi lỗi.
 
 **Đồng thời — VÀI TRĂM nhân sự cùng thao tác** (skill `verify-feature` Cổng 5 + `concurrency-hardening`):

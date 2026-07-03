@@ -237,6 +237,10 @@ export async function uploadExcel(req: Request, res: Response) {
     let inserted = 0, updated = 0, skipped = 0
     const errors: string[] = []
 
+    // Phân loại trước (không ghi DB trong vòng lặp) → gom lô để tránh 1800 roundtrip tuần tự (quá 60s timeout Vercel)
+    const updates: { code: string; id: string; patch: Record<string, unknown> }[] = []
+    const inserts: Record<string, unknown>[] = []
+
     for (const row of rows) {
       const material_code = mStr(row.material_code)
       if (!material_code) { skipped++; continue }
@@ -268,22 +272,41 @@ export async function uploadExcel(req: Request, res: Response) {
         if (ppe          != null) patch.pallet_per_ea = ppe
         if (sld          != null) patch.shelf_life_days = sld
         if (notes        != null) patch.notes = notes
-        const { error } = await supabase.from('Material').update(patch).eq('id', existingId)
-        if (error) errors.push(`${material_code} — lỗi cập nhật: ${error.message}`)
-        else updated++
+        updates.push({ code: material_code, id: existingId, patch })
       } else {
         if (!description) { errors.push(`${material_code} — thiếu Tên hàng (mã mới)`); continue }
-        const record = {
-          id: randomUUID(), material_code, material_description: description, short_name: shortOf(description),
+        const id = randomUUID()
+        inserts.push({
+          id, material_code, material_description: description, short_name: shortOf(description),
           custom_short_name: customShort, category, product_type, unit, weight_kg,
           cartons_per_pallet: cpp, units_per_carton: upc, pallet_per_ea: ppe,
           shelf_life_days: sld, notes,
           is_active: true, created_at: now, updated_at: now,
-        }
-        const { error } = await supabase.from('Material').insert(record)
-        if (error) errors.push(`${material_code} — lỗi thêm: ${error.message}`)
-        else { existingMap.set(material_code, record.id); inserted++ }
+        })
+        existingMap.set(material_code, id)   // né chèn trùng nếu file lặp mã
       }
+    }
+
+    // INSERT theo lô mảng (chunk 500); lỗi lô → chèn lại từng dòng để chỉ đúng mã hỏng
+    for (let i = 0; i < inserts.length; i += 500) {
+      const chunk = inserts.slice(i, i + 500)
+      const { error } = await supabase.from('Material').insert(chunk)
+      if (!error) { inserted += chunk.length; continue }
+      for (const rec of chunk) {
+        const { error: e1 } = await supabase.from('Material').insert(rec)
+        if (e1) errors.push(`${rec.material_code} — lỗi thêm: ${e1.message}`)
+        else inserted++
+      }
+    }
+
+    // UPDATE song song có giới hạn (~15 đồng thời) — tránh bão max_connections=60
+    const CONC = 15
+    for (let i = 0; i < updates.length; i += CONC) {
+      const results = await Promise.all(updates.slice(i, i + CONC).map(u =>
+        supabase.from('Material').update(u.patch).eq('id', u.id)
+          .then(({ error }) => error ? `${u.code} — lỗi cập nhật: ${error.message}` : null)
+      ))
+      for (const r of results) { if (r) errors.push(r); else updated++ }
     }
 
     ok(res, { inserted, updated, skipped, errors })

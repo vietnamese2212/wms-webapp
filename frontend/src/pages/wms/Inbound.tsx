@@ -14,6 +14,7 @@ import { Button }              from '@/components/ui/button'
 import { Input }               from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
+import { FormSheet } from '@/components/shared/FormSheet'
 import { Label }               from '@/components/ui/label'
 import {
   useInboundOrders, useCreateInboundOrder,
@@ -467,13 +468,30 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
   const nccValidCount = nccRows.filter(r => r.material_id).length
 
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) onClose() }}>
-      <DialogContent className={sourceType === 'FACTORY' ? 'sm:max-w-lg' : 'max-w-2xl'}>
-        <DialogHeader>
-          <DialogTitle>{editGroup?.length ? 'Sửa nhóm phiếu NCC' : 'Tạo phiếu nhập kho'}</DialogTitle>
-        </DialogHeader>
+    <FormSheet
+      open={open} onClose={onClose}
+      title={editGroup?.length ? 'Sửa nhóm phiếu NCC' : 'Tạo phiếu nhập kho'}
+      widthClass={sourceType === 'FACTORY' ? 'sm:max-w-lg' : 'sm:max-w-4xl'}
+      footer={<>
+        <Button variant="outline" onClick={onClose}>Huỷ</Button>
+        {sourceType === 'FACTORY' ? (
+          <Button onClick={handleFactorySubmit}
+            disabled={!warehouseId || !subType || !materialId || !locationId || isPending}>
+            {isPending ? 'Đang tạo...' : 'Tạo phiếu'}
+          </Button>
+        ) : editGroup?.length ? (
+          <Button onClick={handleNccSubmit} disabled={nccSaving || nccDuplicateCodes.size > 0}>
+            {nccSaving ? 'Đang lưu…' : 'Lưu nhóm'}
+          </Button>
+        ) : (
+          <Button onClick={handleNccSubmit} disabled={nccSaving || nccValidCount === 0 || nccDuplicateCodes.size > 0}>
+            {nccSaving ? 'Đang tạo...' : nccValidCount > 0 ? `Tạo ${nccValidCount} phiếu nhập` : 'Tạo phiếu'}
+          </Button>
+        )}
+      </>}
+    >
 
-        <div className="space-y-3 py-1 max-h-[80vh] overflow-y-auto pr-0.5">
+        <div className="space-y-3">
           {/* Tab toggle */}
           {!editGroup?.length && (
             <div className="flex rounded-lg border overflow-hidden">
@@ -1023,26 +1041,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
 
           </>)}
         </div>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Huỷ</Button>
-          {sourceType === 'FACTORY' ? (
-            <Button onClick={handleFactorySubmit}
-              disabled={!warehouseId || !subType || !materialId || !locationId || isPending}>
-              {isPending ? 'Đang tạo...' : 'Tạo phiếu'}
-            </Button>
-          ) : editGroup?.length ? (
-            <Button onClick={handleNccSubmit} disabled={nccSaving || nccDuplicateCodes.size > 0}>
-              {nccSaving ? 'Đang lưu…' : 'Lưu nhóm'}
-            </Button>
-          ) : (
-            <Button onClick={handleNccSubmit} disabled={nccSaving || nccValidCount === 0 || nccDuplicateCodes.size > 0}>
-              {nccSaving ? 'Đang tạo...' : nccValidCount > 0 ? `Tạo ${nccValidCount} phiếu nhập` : 'Tạo phiếu'}
-            </Button>
-          )}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    </FormSheet>
   )
 }
 

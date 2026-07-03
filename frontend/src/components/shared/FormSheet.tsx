@@ -1,4 +1,4 @@
-import { type ReactNode } from 'react'
+import { type ComponentProps, type ReactNode } from 'react'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 
 interface FormSheetProps {
@@ -11,6 +11,8 @@ interface FormSheetProps {
   footer?: ReactNode
   /** Bề rộng panel trên desktop. Mặc định max-w-lg (giống dialog cũ). */
   widthClass?: string
+  /** Chặn đóng khi bấm ra ngoài (vd click vào combobox portal). Truyền thẳng cho SheetContent. */
+  onPointerDownOutside?: ComponentProps<typeof SheetContent>['onPointerDownOutside']
 }
 
 /**
@@ -21,11 +23,11 @@ interface FormSheetProps {
  */
 export function FormSheet({
   open, onClose, title, description, children, footer,
-  widthClass = 'sm:max-w-lg',
+  widthClass = 'sm:max-w-lg', onPointerDownOutside,
 }: FormSheetProps) {
   return (
     <Sheet open={open} onOpenChange={v => { if (!v) onClose() }}>
-      <SheetContent side="right" className={`w-full ${widthClass} p-0 gap-0 flex flex-col`}>
+      <SheetContent side="right" className={`w-full ${widthClass} p-0 gap-0 flex flex-col`} onPointerDownOutside={onPointerDownOutside}>
         <div className="border-b border-slate-200 px-4 py-3 shrink-0 pr-10">
           <SheetTitle className="text-base font-semibold text-slate-800">{title}</SheetTitle>
           {description && <p className="text-xs text-slate-500 mt-0.5">{description}</p>}

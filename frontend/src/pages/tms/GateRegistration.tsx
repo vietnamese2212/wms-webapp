@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
+import { FormSheet } from '@/components/shared/FormSheet'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { toast } from '@/components/ui/use-toast'
 import {
@@ -1295,20 +1296,33 @@ export default function GateRegistration() {
       </Dialog>
 
       {/* ── Create / Edit Modal */}
-      <Dialog open={modalOpen} onOpenChange={v => { if (!v) closeModal() }}>
-        <DialogContent
-          className="w-[90vw] max-w-3xl max-h-[90vh] flex flex-col p-0"
-          onPointerDownOutside={e => {
-            if ((e.target as Element).closest('[data-combofield-portal]')) e.preventDefault()
-          }}
-        >
-          <DialogHeader className="px-4 pt-4 pb-2 border-b shrink-0">
-            <DialogTitle className="text-sm">
-              {editReg ? `Sửa đăng ký #${editReg.registration_number}` : 'Thêm đăng ký xe'}
-            </DialogTitle>
-          </DialogHeader>
-
-          <div className="overflow-y-auto flex-1 px-4 py-3 space-y-4">
+      <FormSheet
+        open={modalOpen} onClose={closeModal}
+        title={editReg ? `Sửa đăng ký #${editReg.registration_number}` : 'Thêm đăng ký xe'}
+        widthClass="sm:max-w-3xl"
+        onPointerDownOutside={e => {
+          if ((e.target as Element).closest('[data-combofield-portal]')) e.preventDefault()
+        }}
+        footer={<>
+          <Button variant="outline" size="sm" onClick={closeModal}>Hủy</Button>
+          <Button
+            size="sm"
+            disabled={
+              createMut.isPending || updateMut.isPending ||
+              !form.date || !form.warehouse_id || !form.direction ||
+              !form.warehouse_type || !form.vehicle_type || !(form.company_id || form.company_name_raw) ||
+              !form.license_plate || !form.content || !form.driver_name || !form.phone ||
+              (isCombined && (!outLeg.vehicle_type || !(outLeg.company_id || outLeg.company_name_raw) || !outLeg.content))
+            }
+            onClick={handleSubmit}
+          >
+            {(createMut.isPending || updateMut.isPending)
+              ? <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />Đang lưu...</>
+              : (editReg ? 'Cập nhật' : 'Tạo đăng ký')}
+          </Button>
+        </>}
+      >
+          <div className="space-y-4">
             {apiError && (
               <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded px-3 py-2">{apiError}</div>
             )}
@@ -1597,27 +1611,7 @@ export default function GateRegistration() {
               </>
             )}
           </div>
-
-          <DialogFooter className="px-4 py-3 border-t shrink-0">
-            <Button variant="outline" size="sm" onClick={closeModal}>Hủy</Button>
-            <Button
-              size="sm"
-              disabled={
-                createMut.isPending || updateMut.isPending ||
-                !form.date || !form.warehouse_id || !form.direction ||
-                !form.warehouse_type || !form.vehicle_type || !(form.company_id || form.company_name_raw) ||
-                !form.license_plate || !form.content || !form.driver_name || !form.phone ||
-                (isCombined && (!outLeg.vehicle_type || !(outLeg.company_id || outLeg.company_name_raw) || !outLeg.content))
-              }
-              onClick={handleSubmit}
-            >
-              {(createMut.isPending || updateMut.isPending)
-                ? <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />Đang lưu...</>
-                : (editReg ? 'Cập nhật' : 'Tạo đăng ký')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      </FormSheet>
 
       {/* ── Dialog: Gọi xe */}
       <Dialog open={!!callTarget} onOpenChange={v => { if (!v) setCallTarget(null) }}>

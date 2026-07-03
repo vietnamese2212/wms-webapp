@@ -858,20 +858,28 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
   const isSaving = createOrder.isPending || updateOrder.isPending || planSaving
 
   return (
-    <Dialog open={open} onOpenChange={v => !v && onClose()}>
-      <DialogContent className={form.direction === 'INBOUND' ? 'max-w-3xl' : 'max-w-lg'}>
-        <DialogHeader><DialogTitle>{isEdit ? 'Sửa đơn hàng' : 'Thêm đơn hàng'}</DialogTitle></DialogHeader>
+    <FormSheet
+      open={open} onClose={onClose}
+      title={isEdit ? 'Sửa đơn hàng' : 'Thêm đơn hàng'}
+      widthClass={form.direction === 'INBOUND' ? 'sm:max-w-4xl' : 'sm:max-w-lg'}
+      footer={createdCode ? (
+        <Button onClick={onClose}>OK</Button>
+      ) : (<>
+        <Button variant="outline" size="sm" onClick={onClose}>Hủy</Button>
+        <Button size="sm" onClick={handleSubmit} disabled={isSaving}>
+          {isSaving ? 'Đang lưu...' : isEdit ? 'Cập nhật' : 'Thêm đơn'}
+        </Button>
+      </>)}
+    >
         {createdCode ? (
           <div className="py-8 flex flex-col items-center gap-4">
             <div className="text-center space-y-1">
               <p className="text-sm text-slate-600">Đã tạo thành công phiếu</p>
               <p className="text-xl font-mono font-bold text-green-700">{createdCode}</p>
             </div>
-            <Button className="mt-2" onClick={onClose}>OK</Button>
           </div>
         ) : (
-        <>
-        <div className="space-y-3 py-2">
+        <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label className="text-xs">Ngày *</Label>
@@ -1069,16 +1077,8 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
           </div>
           {err && <p className="text-xs text-red-600">{err}</p>}
         </div>
-        <DialogFooter>
-          <Button variant="outline" size="sm" onClick={onClose}>Hủy</Button>
-          <Button size="sm" onClick={handleSubmit} disabled={isSaving}>
-            {isSaving ? 'Đang lưu...' : isEdit ? 'Cập nhật' : 'Thêm đơn'}
-          </Button>
-        </DialogFooter>
-        </>
         )}
-      </DialogContent>
-    </Dialog>
+    </FormSheet>
   )
 }
 

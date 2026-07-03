@@ -4,7 +4,6 @@ import { Plus, Wand2, Send, Trash2, CalendarDays, Save, Layers, X, Loader2, Imag
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { FormSheet } from '@/components/shared/FormSheet'
@@ -855,9 +854,16 @@ function LayoutFormDialog({ warehouseId, warehouseName, layoutId, onClose, onSav
   }
 
   return (
-    <Dialog open onOpenChange={o => !o && onClose()}>
-      <DialogContent className="max-w-2xl">
-        <DialogHeader><DialogTitle>{isEdit ? 'Sửa layout' : 'Tạo layout mới'}</DialogTitle></DialogHeader>
+    <FormSheet
+      open onClose={onClose}
+      title={isEdit ? 'Sửa layout' : 'Tạo layout mới'}
+      widthClass="sm:max-w-3xl"
+      footer={<>
+        {isEdit && onDelete && <Button variant="outline" className="h-8 text-red-600" onClick={onDelete}><Trash2 className="h-3.5 w-3.5 mr-1" />Xóa</Button>}
+        <Button variant="outline" className="h-8" onClick={onClose}>Hủy</Button>
+        <Button className="h-8" onClick={submit} disabled={!name.trim() || saving}><Save className="h-3.5 w-3.5 mr-1" />{saving ? 'Đang lưu…' : (isEdit ? 'Lưu' : 'Tạo')}</Button>
+      </>}
+    >
         {isEdit && !layout ? <p className="text-xs text-slate-400 py-6 text-center">Đang tải…</p> : (
         <div className="space-y-3">
           {err && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{err}</div>}
@@ -915,17 +921,9 @@ function LayoutFormDialog({ warehouseId, warehouseName, layoutId, onClose, onSav
             )}
           </div>
 
-          {/* Footer */}
-          <div className="flex items-center gap-2 pt-1">
-            {isEdit && onDelete && <Button variant="outline" className="h-8 text-red-600" onClick={onDelete}><Trash2 className="h-3.5 w-3.5 mr-1" />Xóa</Button>}
-            <div className="flex-1" />
-            <Button variant="outline" className="h-8" onClick={onClose}>Hủy</Button>
-            <Button className="h-8" onClick={submit} disabled={!name.trim() || saving}><Save className="h-3.5 w-3.5 mr-1" />{saving ? 'Đang lưu…' : (isEdit ? 'Lưu' : 'Tạo')}</Button>
-          </div>
         </div>
         )}
-      </DialogContent>
-    </Dialog>
+    </FormSheet>
   )
 }
 

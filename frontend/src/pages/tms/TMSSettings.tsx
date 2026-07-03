@@ -8,7 +8,6 @@ import { Label }    from '@/components/ui/label'
 import { Badge }    from '@/components/ui/badge'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { FilterBar, type FilterDef } from '@/components/shared/FilterBar'
@@ -146,10 +145,18 @@ function SlotBatchDialog({ open, onClose, preset, warehouseId, warehouseName, ve
 
   const hasExisting = existingRows.length > 0
   return (
-    <Dialog open={open} onOpenChange={v => { if (!v) onClose() }}>
-      <DialogContent className="!flex flex-col w-[80vw] max-w-[80vw] h-[80dvh] sm:rounded-xl">
-        <DialogHeader className="shrink-0"><DialogTitle>{preset ? 'Sửa cả cụm khung giờ' : 'Thêm khung giờ'}</DialogTitle></DialogHeader>
-        <div className="space-y-3 py-1 flex-1 min-h-0 overflow-y-auto pr-1">
+    <FormSheet
+      open={open} onClose={onClose}
+      title={preset ? 'Sửa cả cụm khung giờ' : 'Thêm khung giờ'}
+      widthClass="sm:max-w-[85vw]"
+      footer={<>
+        <Button variant="outline" size="sm" onClick={onClose}>Huỷ</Button>
+        <Button size="sm" onClick={handleSubmit} disabled={isPending}>
+          {isPending ? 'Đang lưu…' : 'Lưu'}
+        </Button>
+      </>}
+    >
+        <div className="space-y-3">
           {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
 
           <div className="text-[11px] text-slate-500">Kho: <span className="font-medium text-slate-700">{warehouseName}</span></div>
@@ -227,14 +234,7 @@ function SlotBatchDialog({ open, onClose, preset, warehouseId, warehouseName, ve
             <p className="text-[10px] text-slate-400">Lưu sẽ tạo khung giờ cho từng thứ đã chọn × từng dòng khung giờ.</p>
           </div>
         </div>
-        <DialogFooter className="shrink-0">
-          <Button variant="outline" size="sm" onClick={onClose}>Huỷ</Button>
-          <Button size="sm" onClick={handleSubmit} disabled={isPending}>
-            {isPending ? 'Đang lưu…' : 'Lưu'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    </FormSheet>
   )
 }
 

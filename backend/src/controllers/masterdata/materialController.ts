@@ -228,18 +228,26 @@ export async function uploadExcel(req: Request, res: Response) {
 
     if (!rows.length) return fail(res, 'Không có dòng dữ liệu nào', 400)
 
-    // Nạp TẤT CẢ mã đã có (phân trang) → phân biệt thêm/cập nhật (tránh insert trùng khi >1000 mã).
-    const existing = await fetchAllRowsParallel(() => supabase.from('Material').select('id, material_code')) as { id: string; material_code: string }[]
-    const existingMap = new Map<string, string>()
-    for (const m of existing) existingMap.set(String(m.material_code).trim(), m.id)
+    // Nạp TẤT CẢ mã đã có (đủ cột để MERGE: ô trống trong file giữ giá trị cũ) — phân trang né cap-1000
+    type ExistingMat = {
+      id: string; material_code: string; material_description: string | null; short_name: string | null
+      custom_short_name: string | null; category: string | null; product_type: string | null; unit: string | null
+      weight_kg: number | null; cartons_per_pallet: number | null; units_per_carton: number | null
+      pallet_per_ea: number | null; shelf_life_days: number | null; notes: string | null
+    }
+    const existing = await fetchAllRowsParallel(() => supabase.from('Material').select(
+      'id, material_code, material_description, short_name, custom_short_name, category, product_type, unit, weight_kg, cartons_per_pallet, units_per_carton, pallet_per_ea, shelf_life_days, notes'
+    )) as ExistingMat[]
+    const existingByCode = new Map<string, ExistingMat>()
+    for (const m of existing) existingByCode.set(String(m.material_code).trim(), m)
 
     const now = new Date().toISOString()
-    let inserted = 0, updated = 0, skipped = 0
+    let skipped = 0
     const errors: string[] = []
 
-    // Phân loại trước (không ghi DB trong vòng lặp) → gom lô để tránh 1800 roundtrip tuần tự (quá 60s timeout Vercel)
-    const updates: { code: string; id: string; patch: Record<string, unknown> }[] = []
-    const inserts: Record<string, unknown>[] = []
+    // Gom record (không ghi DB trong vòng lặp) → mã đã có = UPSERT lô, mã mới = INSERT lô (nhanh như upload Tồn kho)
+    const upsertByCode = new Map<string, Record<string, unknown>>()
+    const insertByCode = new Map<string, Record<string, unknown>>()
 
     for (const row of rows) {
       const material_code = mStr(row.material_code)
@@ -257,39 +265,55 @@ export async function uploadExcel(req: Request, res: Response) {
       const sld          = mInt(row.shelf_life_days)
       const notes        = mStr(row.notes)
       const shortOf = (d: string) => `${d} [${material_code.slice(-3)}]`
+      // Đắp ô CÓ GIÁ TRỊ lên base (ô trống → giữ nguyên base)
+      const apply = (base: Record<string, unknown>) => {
+        if (description  != null) { base.material_description = description; base.short_name = shortOf(description) }
+        if (customShort  != null) base.custom_short_name = customShort
+        if (category     != null) base.category = category
+        if (product_type != null) base.product_type = product_type
+        if (unit         != null) base.unit = unit
+        if (weight_kg    != null) base.weight_kg = weight_kg
+        if (cpp          != null) base.cartons_per_pallet = cpp
+        if (upc          != null) base.units_per_carton = upc
+        if (ppe          != null) base.pallet_per_ea = ppe
+        if (sld          != null) base.shelf_life_days = sld
+        if (notes        != null) base.notes = notes
+        base.updated_at = now
+        return base
+      }
 
-      const existingId = existingMap.get(material_code)
-      if (existingId) {
-        const patch: Record<string, unknown> = { updated_at: now }
-        if (description  != null) { patch.material_description = description; patch.short_name = shortOf(description) }
-        if (customShort  != null) patch.custom_short_name = customShort
-        if (category     != null) patch.category = category
-        if (product_type != null) patch.product_type = product_type
-        if (unit         != null) patch.unit = unit
-        if (weight_kg    != null) patch.weight_kg = weight_kg
-        if (cpp          != null) patch.cartons_per_pallet = cpp
-        if (upc          != null) patch.units_per_carton = upc
-        if (ppe          != null) patch.pallet_per_ea = ppe
-        if (sld          != null) patch.shelf_life_days = sld
-        if (notes        != null) patch.notes = notes
-        updates.push({ code: material_code, id: existingId, patch })
+      const dbRow = existingByCode.get(material_code)
+      if (dbRow || upsertByCode.has(material_code)) {
+        // Mã đã có (hoặc đã gặp ở dòng trước) → merge full record để UPSERT (giữ created_at/is_active vì không đưa vào payload)
+        const base = upsertByCode.get(material_code) ?? {
+          id: dbRow!.id, material_code,
+          material_description: dbRow!.material_description, short_name: dbRow!.short_name,
+          custom_short_name: dbRow!.custom_short_name, category: dbRow!.category, product_type: dbRow!.product_type,
+          unit: dbRow!.unit, weight_kg: dbRow!.weight_kg, cartons_per_pallet: dbRow!.cartons_per_pallet,
+          units_per_carton: dbRow!.units_per_carton, pallet_per_ea: dbRow!.pallet_per_ea,
+          shelf_life_days: dbRow!.shelf_life_days, notes: dbRow!.notes,
+        }
+        upsertByCode.set(material_code, apply(base))
+      } else if (insertByCode.has(material_code)) {
+        apply(insertByCode.get(material_code)!)   // mã mới lặp lại trong cùng file → merge tiếp
       } else {
         if (!description) { errors.push(`${material_code} — thiếu Tên hàng (mã mới)`); continue }
-        const id = randomUUID()
-        inserts.push({
-          id, material_code, material_description: description, short_name: shortOf(description),
+        insertByCode.set(material_code, {
+          id: randomUUID(), material_code, material_description: description, short_name: shortOf(description),
           custom_short_name: customShort, category, product_type, unit, weight_kg,
           cartons_per_pallet: cpp, units_per_carton: upc, pallet_per_ea: ppe,
-          shelf_life_days: sld, notes,
-          is_active: true, created_at: now, updated_at: now,
+          shelf_life_days: sld, notes, is_active: true, created_at: now, updated_at: now,
         })
-        existingMap.set(material_code, id)   // né chèn trùng nếu file lặp mã
       }
     }
 
-    // INSERT theo lô mảng (chunk 500); lỗi lô → chèn lại từng dòng để chỉ đúng mã hỏng
-    for (let i = 0; i < inserts.length; i += 500) {
-      const chunk = inserts.slice(i, i + 500)
+    let inserted = 0, updated = 0
+    const insertRecords = [...insertByCode.values()]
+    const upsertRecords = [...upsertByCode.values()]
+
+    // INSERT mã mới theo lô 500 (lỗi lô → từng dòng để chỉ đúng mã hỏng)
+    for (let i = 0; i < insertRecords.length; i += 500) {
+      const chunk = insertRecords.slice(i, i + 500)
       const { error } = await supabase.from('Material').insert(chunk)
       if (!error) { inserted += chunk.length; continue }
       for (const rec of chunk) {
@@ -299,14 +323,16 @@ export async function uploadExcel(req: Request, res: Response) {
       }
     }
 
-    // UPDATE song song có giới hạn (~15 đồng thời) — tránh bão max_connections=60
-    const CONC = 15
-    for (let i = 0; i < updates.length; i += CONC) {
-      const results = await Promise.all(updates.slice(i, i + CONC).map(u =>
-        supabase.from('Material').update(u.patch).eq('id', u.id)
-          .then(({ error }) => error ? `${u.code} — lỗi cập nhật: ${error.message}` : null)
-      ))
-      for (const r of results) { if (r) errors.push(r); else updated++ }
+    // UPSERT mã đã có theo lô 500 (onConflict id) — thay 1800 update lẻ bằng ~4 roundtrip
+    for (let i = 0; i < upsertRecords.length; i += 500) {
+      const chunk = upsertRecords.slice(i, i + 500)
+      const { error } = await supabase.from('Material').upsert(chunk, { onConflict: 'id' })
+      if (!error) { updated += chunk.length; continue }
+      for (const rec of chunk) {
+        const { error: e1 } = await supabase.from('Material').upsert(rec, { onConflict: 'id' })
+        if (e1) errors.push(`${rec.material_code} — lỗi cập nhật: ${e1.message}`)
+        else updated++
+      }
     }
 
     ok(res, { inserted, updated, skipped, errors })

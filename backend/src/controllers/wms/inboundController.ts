@@ -896,7 +896,6 @@ export async function checkScanQR(req: Request, res: Response) {
 
 export async function scanQR(req: Request, res: Response) {
   try {
-    if (!(await guardInboundScope(req, res, req.params.id))) return
     const { id: order_id } = req.params
     const { qr_code, location_id, stack_layer = 1, cartons_override, qa_status_id, employee_id, ncc_id: ncc_override, shelf_life_days: shelf_override } = req.body
 
@@ -911,6 +910,13 @@ export async function scanQR(req: Request, res: Response) {
     if (!order)                     return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (order.status !== 'OPEN')    return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập không còn ở trạng thái mở')
     if (!order.material_id)         return fail(res, 400, 'NO_MATERIAL', 'Phiếu nhập chưa có hàng hóa')
+    // Scope kho inline từ order vừa tải (thay guardInboundScope — tránh query phiếu 2 lần, quét là hot-path)
+    {
+      const scope = scopeWhIds(req)
+      if (scope !== null && (!order.warehouse_id || !scope.includes(order.warehouse_id as string))) {
+        return fail(res, 403, 'FORBIDDEN', 'Ngoài phạm vi kho được giao — không thể thao tác phiếu nhập của kho này')
+      }
+    }
 
     // Parse QR
     const parsed = parseInboundQR(qr_code)
@@ -1025,14 +1031,16 @@ export async function scanQR(req: Request, res: Response) {
         `Vị trí ${location.location_code} thuộc loại "${location.category}" — không khớp loại hàng "${orderCategory}" của phiếu. Chọn vị trí đúng loại.`)
     }
 
-    // Fire manufacturer lookup now so it runs in parallel with the location capacity check below
-    const manufacturerP = parsed.manufacturer_code
-      ? supabase.from('Manufacturer').select('id, code, name').eq('code', parsed.manufacturer_code).maybeSingle()
-      : Promise.resolve({ data: null, error: null })
+    // Fire manufacturer lookup now so it runs in parallel with the location capacity check below.
+    // LƯU Ý: Supabase builder chỉ bắn request khi await/.then — phải bọc Promise.resolve() để bắn NGAY
+    // (không thì 2 lookup này chạy TUẦN TỰ sau capacity check → quét chậm thêm 1-2 round-trip).
+    const manufacturerP: Promise<{ data: { id: string; code: string; name: string } | null }> = parsed.manufacturer_code
+      ? Promise.resolve(supabase.from('Manufacturer').select('id, code, name').eq('code', parsed.manufacturer_code).maybeSingle())
+      : Promise.resolve({ data: null })
     // Đoạn 6 QR cũng có thể là mã NMSX của kho tổng (Warehouse.nmsx_code, vd B/D) — hợp lệ, không được cảnh báo
-    const whNmsxP = parsed.manufacturer_code
-      ? supabase.from('Warehouse').select('id').eq('nmsx_code', parsed.manufacturer_code).limit(1)
-      : Promise.resolve({ data: null, error: null })
+    const whNmsxP: Promise<{ data: { id: string }[] | null }> = parsed.manufacturer_code
+      ? Promise.resolve(supabase.from('Warehouse').select('id').eq('nmsx_code', parsed.manufacturer_code).limit(1))
+      : Promise.resolve({ data: null })
 
     const stackLayerNum = Number(stack_layer)
     if (stackLayerNum === 1) {

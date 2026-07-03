@@ -3565,12 +3565,13 @@ export default function TMSBookings() {
   const handleBulkDelete = async () => {
     setActionErr('')
     const ids = [...selectedOrderIds]
-    // Xóa song song (không for...await); báo phần lỗi nếu có, xóa được bao nhiêu vẫn giữ.
+    // Đóng dialog + bỏ chọn NGAY — dòng đã biến mất optimistic (useDeleteOrder.onMutate), không bắt user chờ.
+    setSelectedOrderIds(new Set())
+    setBulkDeleteOpen(false)
+    // Xóa song song; đơn lỗi sẽ tự hiện lại (onError refetch) + banner báo số lượng.
     const results = await Promise.allSettled(ids.map(id => deleteOrder.mutateAsync(id)))
     const failed = results.filter(r => r.status === 'rejected').length
     if (failed) setActionErr(`Đã xóa ${ids.length - failed}/${ids.length} đơn; ${failed} đơn lỗi (đơn đã đặt lịch/không xóa được)`)
-    setSelectedOrderIds(new Set())
-    setBulkDeleteOpen(false)
   }
 
   const handleAddVehicleSlot = async (e: React.MouseEvent, orderId: string) => {

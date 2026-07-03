@@ -2457,6 +2457,14 @@ export function useDeleteOrder() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => apiClient.delete(`/tms/orders/${id}`).then(() => id),
+    // Optimistic: gỡ đơn khỏi mọi cache 'tms-orders' NGAY khi bấm (không chờ refetch — xóa lẻ lẫn hàng loạt đều mượt).
+    onMutate: async (id: string) => {
+      await qc.cancelQueries({ queryKey: ['tms-orders'] })
+      qc.setQueriesData<import('@/types').TmsOrder[]>({ queryKey: ['tms-orders'] },
+        old => old?.filter(o => o.id !== id))
+    },
+    // Lỗi → refetch trả dòng về (rollback bằng dữ liệu thật, an toàn khi xóa song song nhiều đơn).
+    onError: () => qc.invalidateQueries({ queryKey: ['tms-orders'] }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-orders'] }),
   })
 }

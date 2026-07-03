@@ -3246,6 +3246,7 @@ export default function TMSBookings() {
   const [hoveredRow, setHoveredRow] = useState<string | null>(null)
   const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set())
   const [changeDateOpen, setChangeDateOpen] = useState(false)
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false)
   const [pendingRelease, setPendingRelease] = useState<{ type: 'release' | 'revoke' | 'delete'; id: string; vslot?: TmsVehicleSlot; label: string } | null>(null)
 
   const { data: warehouses = [] }             = useScopedWarehouses(true)
@@ -3540,8 +3541,8 @@ export default function TMSBookings() {
     !canReleaseSlot(vs)
 
   const checkableOrderIds = useMemo(() =>
-    canChangeDate ? filteredOrders.filter(o => o.direction !== 'INBOUND' && o.vehicle_slots.every(vs => vs.status === 'PENDING')).map(o => o.id) : [],
-    [filteredOrders, canChangeDate]
+    (canChangeDate || canDelete) ? filteredOrders.filter(o => o.direction !== 'INBOUND' && o.vehicle_slots.every(vs => vs.status === 'PENDING')).map(o => o.id) : [],
+    [filteredOrders, canChangeDate, canDelete]
   )
   const allChecked = checkableOrderIds.length > 0 && checkableOrderIds.every(id => selectedOrderIds.has(id))
   const someChecked = !allChecked && checkableOrderIds.some(id => selectedOrderIds.has(id))
@@ -3559,6 +3560,17 @@ export default function TMSBookings() {
       const msg = (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
       setActionErr(msg ?? 'Lỗi xóa đơn')
     }
+  }
+
+  const handleBulkDelete = async () => {
+    setActionErr('')
+    const ids = [...selectedOrderIds]
+    // Xóa song song (không for...await); báo phần lỗi nếu có, xóa được bao nhiêu vẫn giữ.
+    const results = await Promise.allSettled(ids.map(id => deleteOrder.mutateAsync(id)))
+    const failed = results.filter(r => r.status === 'rejected').length
+    if (failed) setActionErr(`Đã xóa ${ids.length - failed}/${ids.length} đơn; ${failed} đơn lỗi (đơn đã đặt lịch/không xóa được)`)
+    setSelectedOrderIds(new Set())
+    setBulkDeleteOpen(false)
   }
 
   const handleAddVehicleSlot = async (e: React.MouseEvent, orderId: string) => {
@@ -3658,12 +3670,19 @@ export default function TMSBookings() {
             />
             {(warehouseId || isNccUser) && <FilterBar defs={mainFilterDefs} />}
             {(warehouseId || isNccUser) && <FilterSheetButton defs={mainFilterDefs} className="sm:hidden" />}
-            {canChangeDate && selectedOrderIds.size > 0 && (
+            {(canChangeDate || canDelete) && selectedOrderIds.size > 0 && (
               <div className="flex items-center gap-2 w-full py-0.5">
                 <span className="text-xs text-slate-600 font-medium">{selectedOrderIds.size} đơn đã chọn</span>
-                <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => setChangeDateOpen(true)}>
-                  <CalendarDays className="h-3.5 w-3.5 mr-1" />Đổi ngày
-                </Button>
+                {canChangeDate && (
+                  <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => setChangeDateOpen(true)}>
+                    <CalendarDays className="h-3.5 w-3.5 mr-1" />Đổi ngày
+                  </Button>
+                )}
+                {canDelete && (
+                  <Button size="sm" variant="outline" className="h-7 px-2 text-xs text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700" onClick={() => setBulkDeleteOpen(true)}>
+                    <Trash2 className="h-3.5 w-3.5 mr-1" />Xóa
+                  </Button>
+                )}
                 <button onClick={() => setSelectedOrderIds(new Set())} className="text-xs text-slate-400 hover:text-slate-600">
                   Bỏ chọn
                 </button>
@@ -4115,6 +4134,20 @@ export default function TMSBookings() {
         currentDate={dateFrom}
         onClose={() => { setChangeDateOpen(false); setSelectedOrderIds(new Set()) }}
       />
+      <Dialog open={bulkDeleteOpen} onOpenChange={o => !o && setBulkDeleteOpen(false)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader><DialogTitle>Xóa {selectedOrderIds.size} đơn kế hoạch?</DialogTitle></DialogHeader>
+          <p className="text-sm text-slate-600">
+            Xóa vĩnh viễn {selectedOrderIds.size} đơn đã chọn (kèm slot xe chưa đặt lịch). Không thể hoàn tác.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBulkDeleteOpen(false)} disabled={deleteOrder.isPending}>Hủy</Button>
+            <Button className="bg-red-600 hover:bg-red-700 text-white" onClick={handleBulkDelete} disabled={deleteOrder.isPending}>
+              {deleteOrder.isPending ? 'Đang xóa…' : `Xóa ${selectedOrderIds.size} đơn`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <OrderDetailDialog
         order={detailOrder}
         onClose={() => setDetailOrder(null)}

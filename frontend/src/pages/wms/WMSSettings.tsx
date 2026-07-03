@@ -9,8 +9,8 @@ import { Badge }    from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { toast } from '@/components/ui/use-toast'
+import { FormSheet } from '@/components/shared/FormSheet'
 import { FilterBar, type FilterDef } from '@/components/shared/FilterBar'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { SingleSelect } from '@/components/shared/SingleSelect'
@@ -76,10 +76,13 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
   }
 
   return (
-    <Dialog open={open} onOpenChange={v => { if (!v) onClose() }}>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader><DialogTitle>{isEdit ? 'Sửa kho' : 'Thêm kho'}</DialogTitle></DialogHeader>
-        <div className="space-y-3 py-1">
+    <FormSheet open={open} onClose={onClose} title={isEdit ? 'Sửa kho' : 'Thêm kho'} widthClass="sm:max-w-lg" footer={<>
+          <Button variant="outline" size="sm" onClick={onClose}>Huỷ</Button>
+          <Button size="sm" onClick={handleSubmit} disabled={isPending || !code.trim() || !name.trim()}>
+            {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo'}
+          </Button>
+        </>}>
+        <div className="space-y-3">
           {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
           <div className="space-y-1">
             <Label className="text-xs">Mã kho *</Label>
@@ -136,14 +139,7 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
             </div>
           )}
         </div>
-        <DialogFooter>
-          <Button variant="outline" size="sm" onClick={onClose}>Huỷ</Button>
-          <Button size="sm" onClick={handleSubmit} disabled={isPending || !code.trim() || !name.trim()}>
-            {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    </FormSheet>
   )
 }
 
@@ -183,10 +179,13 @@ function ZoneDialog({ zone, warehouseId, warehouses, warehouseTypes, open, onClo
   }
 
   return (
-    <Dialog open={open} onOpenChange={v => { if (!v) onClose() }}>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader><DialogTitle>{isEdit ? 'Sửa khu vực' : 'Thêm khu vực kho'}</DialogTitle></DialogHeader>
-        <div className="space-y-3 py-1">
+    <FormSheet open={open} onClose={onClose} title={isEdit ? 'Sửa khu vực' : 'Thêm khu vực kho'} widthClass="sm:max-w-lg" footer={<>
+          <Button variant="outline" size="sm" onClick={onClose}>Huỷ</Button>
+          <Button size="sm" onClick={handleSubmit} disabled={isPending || !name.trim() || (!isEdit && !selectedWhId)}>
+            {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo'}
+          </Button>
+        </>}>
+        <div className="space-y-3">
           {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
 
           {/* Kho */}
@@ -256,14 +255,7 @@ function ZoneDialog({ zone, warehouseId, warehouses, warehouseTypes, open, onClo
             </div>
           )}
         </div>
-        <DialogFooter>
-          <Button variant="outline" size="sm" onClick={onClose}>Huỷ</Button>
-          <Button size="sm" onClick={handleSubmit} disabled={isPending || !name.trim() || (!isEdit && !selectedWhId)}>
-            {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    </FormSheet>
   )
 }
 
@@ -291,10 +283,13 @@ function TypeDialog({ type, open, onClose }: {
   }
 
   return (
-    <Dialog open={open} onOpenChange={v => { if (!v) onClose() }}>
-      <DialogContent className="sm:max-w-xs">
-        <DialogHeader><DialogTitle>{isEdit ? 'Sửa loại kho' : 'Thêm loại kho'}</DialogTitle></DialogHeader>
-        <div className="space-y-3 py-1">
+    <FormSheet open={open} onClose={onClose} title={isEdit ? 'Sửa loại kho' : 'Thêm loại kho'} widthClass="sm:max-w-lg" footer={<>
+          <Button variant="outline" size="sm" onClick={onClose}>Huỷ</Button>
+          <Button size="sm" onClick={handleSubmit} disabled={isPending || !value.trim()}>
+            {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo'}
+          </Button>
+        </>}>
+        <div className="space-y-3">
           {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
           <div className="space-y-1">
             <Label className="text-xs">Tên loại kho *</Label>
@@ -303,14 +298,7 @@ function TypeDialog({ type, open, onClose }: {
               placeholder="Thành phẩm, NVL, POSM…" />
           </div>
         </div>
-        <DialogFooter>
-          <Button variant="outline" size="sm" onClick={onClose}>Huỷ</Button>
-          <Button size="sm" onClick={handleSubmit} disabled={isPending || !value.trim()}>
-            {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    </FormSheet>
   )
 }
 
@@ -352,10 +340,13 @@ function MetaDialog({ kind, row, open, onClose }: {
   }
 
   return (
-    <Dialog open={open} onOpenChange={v => { if (!v) onClose() }}>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader><DialogTitle>{isEdit ? `Sửa ${noun}` : `Thêm ${noun}`}</DialogTitle></DialogHeader>
-        <div className="space-y-3 py-1">
+    <FormSheet open={open} onClose={onClose} title={isEdit ? `Sửa ${noun}` : `Thêm ${noun}`} widthClass="sm:max-w-lg" footer={<>
+          <Button variant="outline" size="sm" onClick={onClose}>Huỷ</Button>
+          <Button size="sm" onClick={handleSubmit} disabled={isPending || !code.trim() || !name.trim()}>
+            {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo'}
+          </Button>
+        </>}>
+        <div className="space-y-3">
           {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
           <div className="grid grid-cols-3 gap-2">
             <div className="space-y-1">
@@ -378,14 +369,7 @@ function MetaDialog({ kind, row, open, onClose }: {
             </div>
           )}
         </div>
-        <DialogFooter>
-          <Button variant="outline" size="sm" onClick={onClose}>Huỷ</Button>
-          <Button size="sm" onClick={handleSubmit} disabled={isPending || !code.trim() || !name.trim()}>
-            {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    </FormSheet>
   )
 }
 

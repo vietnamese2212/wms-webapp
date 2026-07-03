@@ -9,6 +9,7 @@ import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
+import { FormSheet } from '@/components/shared/FormSheet'
 import { TableSkeleton } from '@/components/shared/TableSkeleton'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { Input } from '@/components/ui/input'
@@ -800,13 +801,21 @@ export default function Materials() {
       </Sheet>
 
       {/* ── Add / Edit Dialog ──────────────────────────────────────────── */}
-      <Dialog open={dialogMode !== null} onOpenChange={open => !open && setDialogMode(null)}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle className="text-base">{dialogMode === 'add' ? 'Thêm mã hàng' : `Sửa: ${editing?.material_code}`}</DialogTitle>
-          </DialogHeader>
-
-          <div className="grid gap-3 py-1 max-h-[68vh] overflow-y-auto pr-1">
+      <FormSheet
+        open={dialogMode !== null}
+        onClose={() => setDialogMode(null)}
+        title={dialogMode === 'add' ? 'Thêm mã hàng' : `Sửa: ${editing?.material_code}`}
+        widthClass="sm:max-w-lg"
+        footer={
+          <>
+            <Button variant="outline" size="sm" onClick={() => setDialogMode(null)} className="text-xs h-7">Hủy</Button>
+            <Button size="sm" onClick={handleSave} disabled={saving} className="text-xs h-7">
+              {saving ? 'Đang lưu…' : 'Lưu'}
+            </Button>
+          </>
+        }
+      >
+          <div className="grid gap-3">
             {/* Mã hàng */}
             <div className="grid grid-cols-3 items-center gap-2">
               <Label className="text-xs text-right">Mã hàng *</Label>
@@ -1028,15 +1037,7 @@ export default function Materials() {
               <p className="text-xs text-red-500 text-center bg-red-50 rounded p-2">{formError}</p>
             )}
           </div>
-
-          <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setDialogMode(null)} className="text-xs h-7">Hủy</Button>
-            <Button size="sm" onClick={handleSave} disabled={saving} className="text-xs h-7">
-              {saving ? 'Đang lưu…' : 'Lưu'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      </FormSheet>
 
       {/* ── Single delete confirm ──────────────────────────────────────── */}
       <Dialog open={!!deleteTarget} onOpenChange={open => !open && setDeleteTarget(null)}>

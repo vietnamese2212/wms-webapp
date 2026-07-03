@@ -18,6 +18,7 @@ import { Label }          from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
+import { FormSheet } from '@/components/shared/FormSheet'
 import {
   useLocationsReal, useWarehouses, useWarehouseZones,
   useCreateLocation, useUpdateLocation, useDeleteLocation,
@@ -455,14 +456,22 @@ export default function Locations() {
       </div>
      </div>
 
-      {/* Add / Edit Dialog */}
-      <Dialog open={dialogMode !== null} onOpenChange={open => !open && closeDialog()}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>{dialogMode === 'add' ? 'Thêm vị trí' : 'Sửa vị trí'}</DialogTitle>
-          </DialogHeader>
-
-          <div className="space-y-3 py-1">
+      {/* Add / Edit FormSheet */}
+      <FormSheet
+        open={dialogMode !== null}
+        onClose={() => closeDialog()}
+        title={dialogMode === 'add' ? 'Thêm vị trí' : 'Sửa vị trí'}
+        widthClass="sm:max-w-lg"
+        footer={
+          <>
+            <Button variant="outline" size="sm" onClick={closeDialog}>Hủy</Button>
+            <Button size="sm" onClick={handleSave} disabled={isSaving}>
+              {isSaving ? 'Đang lưu…' : 'Lưu'}
+            </Button>
+          </>
+        }
+      >
+          <div className="space-y-3">
             {/* ── Edit: thông tin read-only ── */}
             {dialogMode === 'edit' && editing && (
               <div className="bg-slate-50 rounded px-3 py-2 space-y-0.5">
@@ -611,15 +620,7 @@ export default function Locations() {
               <p className="text-xs text-red-500 bg-red-50 border border-red-200 rounded px-2 py-1.5">{formError}</p>
             )}
           </div>
-
-          <DialogFooter>
-            <Button variant="outline" size="sm" onClick={closeDialog}>Hủy</Button>
-            <Button size="sm" onClick={handleSave} disabled={isSaving}>
-              {isSaving ? 'Đang lưu…' : 'Lưu'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      </FormSheet>
 
       {/* Delete Location Confirmation */}
       <Dialog open={deleteTarget !== null} onOpenChange={open => !open && setDeleteTarget(null)}>

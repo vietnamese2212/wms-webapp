@@ -437,8 +437,7 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <Label className="text-xs">Họ tên *</Label>
-                  <Input value={name} onChange={e => setName(e.target.value)} placeholder="Nguyễn Văn A"
-                    disabled={lockIdentity} className={lockIdentity ? 'bg-slate-50 cursor-not-allowed' : ''} />
+                  <Input value={name} onChange={e => setName(e.target.value)} placeholder="Nguyễn Văn A" />
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">{isDriverRole ? 'Biển số xe *' : 'Mã NV *'}</Label>

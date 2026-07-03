@@ -60,14 +60,8 @@ export function WarehouseMultiSelect({
           <>
             <div className="fixed inset-0 z-[190] pointer-events-auto" onClick={close} />
             <div
-              className="fixed z-[200] pointer-events-auto bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden"
-              style={{
-                left: anchor.left,
-                width: Math.max(anchor.width, 180),
-                ...(anchor.dropUp
-                  ? { bottom: window.innerHeight - anchor.top + 4 }
-                  : { top: anchor.top + 4 }),
-              }}
+              className="z-[200] pointer-events-auto min-w-[180px] bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden"
+              style={anchor.style}
             >
               <div className="p-2 border-b border-slate-100">
                 <input
@@ -105,7 +99,7 @@ export function WarehouseMultiSelect({
               )}
             </div>
           </>,
-          document.body,
+          anchor.target,
         )}
       </div>
 

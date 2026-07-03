@@ -183,11 +183,8 @@ function PlateCombobox({ value, onChange, plates }: {
       />
       {open && anchor && (filtered.length > 0 || (!!value && !inList)) && createPortal(
         <div
-          className="fixed z-[200] pointer-events-auto bg-white border border-slate-200 rounded-md shadow-lg max-h-48 overflow-auto"
-          style={{
-            left: anchor.left, width: anchor.width,
-            ...(anchor.dropUp ? { bottom: window.innerHeight - anchor.top + 4 } : { top: anchor.top + 4 }),
-          }}
+          className="z-[200] pointer-events-auto bg-white border border-slate-200 rounded-md shadow-lg max-h-48 overflow-auto"
+          style={anchor.style}
         >
           {filtered.map(p => (
             <button
@@ -204,7 +201,7 @@ function PlateCombobox({ value, onChange, plates }: {
             <p className="px-3 py-1.5 text-[10px] text-slate-400 border-t">Biển ngoài danh mục xe — vẫn dùng được “{value}”</p>
           )}
         </div>,
-        document.body,
+        anchor.target,
       )}
     </div>
   )
@@ -588,11 +585,8 @@ function NppCombobox({ value, onChange, suggestions }: {
       />
       {open && anchor && filtered.length > 0 && createPortal(
         <div
-          className="fixed z-[200] pointer-events-auto bg-white border border-slate-200 rounded-md shadow-lg max-h-48 overflow-auto"
-          style={{
-            left: anchor.left, width: anchor.width,
-            ...(anchor.dropUp ? { bottom: window.innerHeight - anchor.top + 4 } : { top: anchor.top + 4 }),
-          }}
+          className="z-[200] pointer-events-auto bg-white border border-slate-200 rounded-md shadow-lg max-h-48 overflow-auto"
+          style={anchor.style}
         >
           {filtered.map(s => (
             <button
@@ -606,7 +600,7 @@ function NppCombobox({ value, onChange, suggestions }: {
             </button>
           ))}
         </div>,
-        document.body,
+        anchor.target,
       )}
     </div>
   )

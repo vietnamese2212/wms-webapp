@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useRef, useState } from 'react'
+﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Plus, PackagePlus, X, ChevronDown, User, MapPin, QrCode, Pencil, Bookmark, Rows3, AlignJustify, ArrowRight, AlertTriangle } from 'lucide-react'
 import type { AxiosError } from 'axios'
@@ -73,6 +73,106 @@ type NccMatRow = {
 }
 const emptyNccRow = (): NccMatRow => ({
   material_code: '', material_id: '', mat_name: '', mat_unit: '', unit_input: '', planned_qty: '',
+})
+
+// Dòng danh sách hàng NCC — memo hóa để gõ ô nào chỉ render lại dòng đó
+// (trước đây mỗi phím gõ re-render toàn bộ N dòng → form chậm khi paste nhiều dòng)
+const NccRowItem = React.memo(function NccRowItem({
+  row, idx, isDup, noType, dropdownOpen, planMatIds,
+  onCodeChange, onCodePaste, onQtyPaste, onField, onRemove,
+  onDropdownFocus, onDropdownBlur, onSelectMat, getMatches,
+}: {
+  row: NccMatRow; idx: number; isDup: boolean; noType: boolean; dropdownOpen: boolean
+  planMatIds: Set<string>
+  onCodeChange: (idx: number, code: string) => void
+  onCodePaste: (idx: number, e: React.ClipboardEvent) => void
+  onQtyPaste: (idx: number, e: React.ClipboardEvent) => void
+  onField: (idx: number, field: 'unit_input' | 'planned_qty', val: string) => void
+  onRemove: (idx: number) => void
+  onDropdownFocus: (idx: number) => void
+  onDropdownBlur: (idx: number) => void
+  onSelectMat: (idx: number, m: MatItem) => void
+  getMatches: (code: string) => MatItem[]
+}) {
+  const invalid      = row.material_code !== '' && !row.material_id
+  const unitMismatch = row.unit_input && row.mat_unit && row.unit_input !== row.mat_unit
+  return (
+    <tr className={invalid ? 'bg-red-50' : isDup ? 'bg-amber-50' : ''}>
+      <td className="px-1.5 py-1">
+        <div className="relative">
+          <input type="text" value={row.material_code}
+            onChange={e => onCodeChange(idx, e.target.value)}
+            onPaste={e => onCodePaste(idx, e)}
+            onFocus={() => { if (!noType) onDropdownFocus(idx) }}
+            onBlur={() => onDropdownBlur(idx)}
+            disabled={noType}
+            placeholder={noType ? 'Chọn loại kho trước' : 'Paste hoặc tìm mã'}
+            className={`w-full h-7 px-1.5 text-[10px] font-mono border rounded focus:outline-none focus:ring-1 ${
+              noType ? 'opacity-50 cursor-not-allowed bg-slate-50 border-slate-200' :
+              invalid ? 'border-red-300 bg-red-50 focus:ring-red-400' : 'border-slate-200 bg-white focus:ring-blue-400'
+            }`}
+          />
+          {dropdownOpen && !row.material_id && (() => {
+            const matches = getMatches(row.material_code ?? '')
+            return (
+              <div className="absolute bottom-full left-0 z-[100] w-72 border rounded-md bg-white shadow-lg max-h-44 overflow-y-auto mb-1">
+                {matches.length === 0
+                  ? <p className="text-[10px] text-slate-400 px-2 py-2 text-center">Không tìm thấy</p>
+                  : matches.map(m => (
+                    <button key={m.id} type="button"
+                      onMouseDown={e => e.preventDefault()}
+                      onClick={() => onSelectMat(idx, m)}
+                      className="w-full text-left px-2 py-1.5 hover:bg-blue-50 flex items-center gap-2 border-b border-slate-50 last:border-0"
+                    >
+                      {planMatIds.has(m.id)
+                        ? <span className="text-[8px] bg-green-100 text-green-700 px-1 py-0.5 rounded shrink-0">KH</span>
+                        : planMatIds.size > 0
+                          ? <span className="text-[8px] text-slate-300 w-5 shrink-0" />
+                          : null
+                      }
+                      <span className="text-[10px] font-mono text-slate-700 shrink-0">{m.material_code}</span>
+                      <span className="text-[10px] text-slate-500 truncate">{m.short_name}</span>
+                    </button>
+                  ))
+                }
+              </div>
+            )
+          })()}
+        </div>
+      </td>
+      <td className="px-2 py-1">
+        {row.mat_name
+          ? <span className="text-[10px] text-slate-700">{row.mat_name}</span>
+          : invalid ? <span className="text-[9px] text-red-400">Không tìm thấy</span>
+          : <span className="text-[9px] text-slate-300">—</span>}
+      </td>
+      <td className="px-1.5 py-1">
+        <div className="relative">
+          <input type="text" value={row.unit_input}
+            onChange={e => onField(idx, 'unit_input', e.target.value)}
+            placeholder={row.mat_unit || '—'}
+            className={`w-full h-7 px-1.5 text-[10px] border rounded text-center focus:outline-none focus:ring-1 ${
+              unitMismatch ? 'border-amber-300 bg-amber-50 focus:ring-amber-400' : 'border-slate-200 bg-white focus:ring-blue-400'
+            }`}
+          />
+          {unitMismatch && <span className="absolute -top-4 left-0 text-[8px] text-amber-500 whitespace-nowrap">KH: {row.mat_unit}</span>}
+        </div>
+      </td>
+      <td className="px-1.5 py-1">
+        <input type="number" min="0" value={row.planned_qty}
+          onChange={e => onField(idx, 'planned_qty', e.target.value)}
+          onPaste={e => onQtyPaste(idx, e)}
+          className="w-full h-7 px-1.5 text-[10px] border border-slate-200 rounded text-right bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+        />
+      </td>
+      <td className="px-1 py-1 text-center">
+        <button type="button" onClick={() => onRemove(idx)}
+          className="text-slate-300 hover:text-red-500 transition-colors">
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </td>
+    </tr>
+  )
 })
 
 function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClose: () => void; editGroup?: InboundOrder[] | null }) {
@@ -296,13 +396,13 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
     return new Set([...seen.entries()].filter(([, n]) => n > 1).map(([c]) => c))
   }, [nccRows, editRows])
 
-  function lookupNccRow(code: string): NccMatRow {
+  const lookupNccRow = useCallback((code: string): NccMatRow => {
     const found = nccMatByCode.get(code.trim().toUpperCase())
     const valid = found && (!subType || found.category === subType) ? found : null
     return { material_code: code, material_id: valid?.id ?? '', mat_name: valid?.short_name ?? '', mat_unit: valid?.unit ?? '', unit_input: valid?.unit ?? '', planned_qty: '' }
-  }
+  }, [nccMatByCode, subType])
 
-  function handleNccMatCodeChange(idx: number, code: string) {
+  const handleNccMatCodeChange = useCallback((idx: number, code: string) => {
     const found = nccMatByCode.get(code.trim().toUpperCase())
     const valid = found && (!subType || found.category === subType) ? found : null
     setNccRows(prev => prev.map((r, i) => i !== idx ? r : {
@@ -310,9 +410,9 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
       material_id: valid?.id ?? '', mat_name: valid?.short_name ?? '',
       mat_unit: valid?.unit ?? '', unit_input: valid ? (valid.unit ?? '') : r.unit_input,
     }))
-  }
+  }, [nccMatByCode, subType])
 
-  function handleNccMatCodePaste(idx: number, e: React.ClipboardEvent) {
+  const handleNccMatCodePaste = useCallback((idx: number, e: React.ClipboardEvent) => {
     const text = e.clipboardData.getData('text')
     const lines = text.split(/[\n\r]+/).map(s => s.trim()).filter(Boolean)
     if (lines.length <= 1) return
@@ -324,17 +424,17 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
       return [...before, ...newRows, ...after]
     })
     setNccDropdownIdx(null)
-  }
+  }, [lookupNccRow])
 
-  function selectNccMatFromDropdown(idx: number, m: any) {
+  const selectNccMatFromDropdown = useCallback((idx: number, m: any) => {
     setNccRows(prev => prev.map((r, i) => i !== idx ? r : {
       ...r, material_code: m.material_code, material_id: m.id,
       mat_name: m.short_name ?? '', mat_unit: m.unit ?? '', unit_input: m.unit ?? '',
     }))
     setNccDropdownIdx(null)
-  }
+  }, [])
 
-  function getNccDropdownMatches(code: string) {
+  const getNccDropdownMatches = useCallback((code: string) => {
     const list = filteredNccMats
     let filtered: any[]
     if (!code) {
@@ -348,11 +448,11 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
     }
     if (planMatIds.size === 0) return filtered
     return [...filtered].sort((a, b) => (planMatIds.has(b.id) ? 1 : 0) - (planMatIds.has(a.id) ? 1 : 0))
-  }
+  }, [filteredNccMats, planMatIds])
 
   // Paste cột SL dự kiến từ Excel: điền lần lượt xuống các dòng bắt đầu từ dòng đang dán
   // (mirror handleNccMatCodePaste — dán cột mã trước, dán cột SL sau)
-  function handleNccQtyPaste(idx: number, e: React.ClipboardEvent) {
+  const handleNccQtyPaste = useCallback((idx: number, e: React.ClipboardEvent) => {
     const text = e.clipboardData.getData('text')
     const lines = text.split(/[\n\r]+/).map(s => s.trim().replace(/\s/g, '').replace(',', '.')).filter(Boolean)
     if (lines.length <= 1) return
@@ -360,16 +460,21 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
     setNccRows(prev => prev.map((r, i) =>
       i >= idx && i - idx < lines.length ? { ...r, planned_qty: lines[i - idx] } : r
     ))
-  }
+  }, [])
 
-  function setNccRowField(idx: number, field: 'unit_input' | 'planned_qty', val: string) {
+  const handleNccDropdownFocus = useCallback((idx: number) => setNccDropdownIdx(idx), [])
+  const handleNccDropdownBlur  = useCallback((idx: number) => {
+    setTimeout(() => setNccDropdownIdx(prev => prev === idx ? null : prev), 150)
+  }, [])
+
+  const setNccRowField = useCallback((idx: number, field: 'unit_input' | 'planned_qty', val: string) => {
     setNccRows(prev => prev.map((r, i) => i !== idx ? r : { ...r, [field]: val }))
-  }
+  }, [])
 
   function addNccRow()    { setNccRows(prev => [...prev, emptyNccRow()]) }
-  function removeNccRow(idx: number) {
+  const removeNccRow = useCallback((idx: number) => {
     setNccRows(prev => prev.length === 1 ? [emptyNccRow()] : prev.filter((_, i) => i !== idx))
-  }
+  }, [])
   function loadFromPlan() {
     const existingIds = editGroup?.length
       ? new Set(editRows.map(r => r.material_id).filter(Boolean))
@@ -961,89 +1066,26 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {nccRows.map((row, idx) => {
-                      const invalid      = row.material_code !== '' && !row.material_id
-                      const isDup        = row.material_code !== '' && nccDuplicateCodes.has(row.material_code)
-                      const unitMismatch = row.unit_input && row.mat_unit && row.unit_input !== row.mat_unit
-                      const noType       = !subType && !editGroup?.length
-                      return (
-                        <tr key={idx} className={invalid ? 'bg-red-50' : isDup ? 'bg-amber-50' : ''}>
-                          <td className="px-1.5 py-1">
-                            <div className="relative">
-                              <input type="text" value={row.material_code}
-                                onChange={e => handleNccMatCodeChange(idx, e.target.value)}
-                                onPaste={e => handleNccMatCodePaste(idx, e)}
-                                onFocus={() => { if (!noType) setNccDropdownIdx(idx) }}
-                                onBlur={() => setTimeout(() => setNccDropdownIdx(prev => prev === idx ? null : prev), 150)}
-                                disabled={noType}
-                                placeholder={noType ? 'Chọn loại kho trước' : 'Paste hoặc tìm mã'}
-                                className={`w-full h-7 px-1.5 text-[10px] font-mono border rounded focus:outline-none focus:ring-1 ${
-                                  noType ? 'opacity-50 cursor-not-allowed bg-slate-50 border-slate-200' :
-                                  invalid ? 'border-red-300 bg-red-50 focus:ring-red-400' : 'border-slate-200 bg-white focus:ring-blue-400'
-                                }`}
-                              />
-                              {nccDropdownIdx === idx && !row.material_id && (() => {
-                                const matches = getNccDropdownMatches(row.material_code ?? '')
-                                return (
-                                  <div className="absolute bottom-full left-0 z-[100] w-72 border rounded-md bg-white shadow-lg max-h-44 overflow-y-auto mb-1">
-                                    {matches.length === 0
-                                      ? <p className="text-[10px] text-slate-400 px-2 py-2 text-center">Không tìm thấy</p>
-                                      : matches.map((m: any) => (
-                                        <button key={m.id} type="button"
-                                          onMouseDown={e => e.preventDefault()}
-                                          onClick={() => selectNccMatFromDropdown(idx, m)}
-                                          className="w-full text-left px-2 py-1.5 hover:bg-blue-50 flex items-center gap-2 border-b border-slate-50 last:border-0"
-                                        >
-                                          {planMatIds.has(m.id)
-                                            ? <span className="text-[8px] bg-green-100 text-green-700 px-1 py-0.5 rounded shrink-0">KH</span>
-                                            : planMatIds.size > 0
-                                              ? <span className="text-[8px] text-slate-300 w-5 shrink-0" />
-                                              : null
-                                          }
-                                          <span className="text-[10px] font-mono text-slate-700 shrink-0">{m.material_code}</span>
-                                          <span className="text-[10px] text-slate-500 truncate">{m.short_name}</span>
-                                        </button>
-                                      ))
-                                    }
-                                  </div>
-                                )
-                              })()}
-                            </div>
-                          </td>
-                          <td className="px-2 py-1">
-                            {row.mat_name
-                              ? <span className="text-[10px] text-slate-700">{row.mat_name}</span>
-                              : invalid ? <span className="text-[9px] text-red-400">Không tìm thấy</span>
-                              : <span className="text-[9px] text-slate-300">—</span>}
-                          </td>
-                          <td className="px-1.5 py-1">
-                            <div className="relative">
-                              <input type="text" value={row.unit_input}
-                                onChange={e => setNccRowField(idx, 'unit_input', e.target.value)}
-                                placeholder={row.mat_unit || '—'}
-                                className={`w-full h-7 px-1.5 text-[10px] border rounded text-center focus:outline-none focus:ring-1 ${
-                                  unitMismatch ? 'border-amber-300 bg-amber-50 focus:ring-amber-400' : 'border-slate-200 bg-white focus:ring-blue-400'
-                                }`}
-                              />
-                              {unitMismatch && <span className="absolute -top-4 left-0 text-[8px] text-amber-500 whitespace-nowrap">KH: {row.mat_unit}</span>}
-                            </div>
-                          </td>
-                          <td className="px-1.5 py-1">
-                            <input type="number" min="0" value={row.planned_qty}
-                              onChange={e => setNccRowField(idx, 'planned_qty', e.target.value)}
-                              onPaste={e => handleNccQtyPaste(idx, e)}
-                              className="w-full h-7 px-1.5 text-[10px] border border-slate-200 rounded text-right bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
-                            />
-                          </td>
-                          <td className="px-1 py-1 text-center">
-                            <button type="button" onClick={() => removeNccRow(idx)}
-                              className="text-slate-300 hover:text-red-500 transition-colors">
-                              <X className="h-3.5 w-3.5" />
-                            </button>
-                          </td>
-                        </tr>
-                      )
-                    })}
+                    {nccRows.map((row, idx) => (
+                      <NccRowItem
+                        key={idx}
+                        row={row}
+                        idx={idx}
+                        isDup={row.material_code !== '' && nccDuplicateCodes.has(row.material_code)}
+                        noType={!subType && !editGroup?.length}
+                        dropdownOpen={nccDropdownIdx === idx}
+                        planMatIds={planMatIds}
+                        onCodeChange={handleNccMatCodeChange}
+                        onCodePaste={handleNccMatCodePaste}
+                        onQtyPaste={handleNccQtyPaste}
+                        onField={setNccRowField}
+                        onRemove={removeNccRow}
+                        onDropdownFocus={handleNccDropdownFocus}
+                        onDropdownBlur={handleNccDropdownBlur}
+                        onSelectMat={selectNccMatFromDropdown}
+                        getMatches={getNccDropdownMatches}
+                      />
+                    ))}
                   </tbody>
                 </table>
               </div>

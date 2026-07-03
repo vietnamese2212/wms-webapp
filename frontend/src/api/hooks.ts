@@ -137,6 +137,8 @@ export function useMaterials(params?: { search?: string; manufacturer_id?: strin
   return useQuery({
     queryKey: ['materials', params],
     enabled,
+    // Danh mục mã hàng đổi ít → cache 5' để form Thêm/Sửa (dùng full list) mở lại tức thì, không tải lại ~1800 dòng mỗi lần.
+    staleTime: 5 * 60_000,
     queryFn: async () => {
       const { data } = await apiClient.get('/masterdata/materials', { params })
       return data.data as import('@/types').Material[]

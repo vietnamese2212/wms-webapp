@@ -1404,6 +1404,13 @@ export async function uploadExcel(req: Request, res: Response) {
       if (groupRows.some(r => !String(r['Material'] ?? '').trim()))
         errs.push('Có dòng trống cột Material')
 
+      // Material_type + Loại xuất bắt buộc (chỉ xét dòng có mã hàng)
+      const dataRows = groupRows.filter(r => String(r['Material'] ?? '').trim())
+      const missMatType = dataRows.filter(r => !String(r['Material_type'] ?? '').trim()).length
+      if (missMatType) errs.push(`Thiếu Material_type ở ${missMatType} dòng`)
+      const missExport = dataRows.filter(r => !String(r['Loại xuất'] ?? '').trim()).length
+      if (missExport) errs.push(`Thiếu Loại xuất ở ${missExport} dòng`)
+
       if (blockedMap.has(group_code)) {
         const status = blockedMap.get(group_code)!
         errs.push(status === 'COMPLETED'

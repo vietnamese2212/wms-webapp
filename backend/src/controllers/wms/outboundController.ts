@@ -1316,11 +1316,12 @@ export async function uploadExcel(req: Request, res: Response) {
 
     // Pre-load warehouses, materials, warehouse types, and existing GDOs in parallel
     const allGroupCodes = [...byVehicle.keys()]
-    const [warehousesRes, materialsRes, whTypesRes, existingRes] = await Promise.all([
+    const [warehousesRes, materialsRes, whTypesRes, vehicleTypesRes, existingRes] = await Promise.all([
       supabase.from('Warehouse').select('id, code, name').eq('is_active', true),
       supabase.from('Material').select('id, material_code'),
       // LookupValue KHÔNG có cột is_active — lọc theo nó làm query lỗi → validWhTypes rỗng → chặn oan mọi file
       supabase.from('LookupValue').select('value').eq('type', 'warehouse_type'),
+      supabase.from('VehicleType').select('code, name').eq('is_active', true),
       supabase.from('GroupDeliveryOrder')
         .select('id, group_code, status, assigned_at, assigned_by')
         .in('group_code', allGroupCodes),
@@ -1337,6 +1338,15 @@ export async function uploadExcel(req: Request, res: Response) {
     const validWhTypes = new Set<string>(
       (whTypesRes.data ?? []).map((t: any) => String(t.value).trim())
     )
+    // Resolver Loại xuất theo danh mục Loại xe TMS: khớp tên HOẶC mã, bỏ dấu + hoa/thường (như FE)
+    const normVt = (s: string) => s.normalize('NFD').replace(/\p{Mn}/gu, '').toLowerCase().trim()
+    const vtByKey = new Map<string, string>()   // key chuẩn hoá → TÊN chính tắc
+    for (const v of ((vehicleTypesRes.data ?? []) as { code: string | null; name: string }[])) {
+      const nm = String(v.name).trim()
+      vtByKey.set(normVt(nm), nm)
+      if (v.code) vtByKey.set(normVt(String(v.code)), nm)
+    }
+    const resolveVehicleType = (raw: string): string | null => vtByKey.get(normVt(raw)) ?? null
 
     // Classify existing GDOs
     // pendingSimpleMap   : PENDING, no assignment → delete+recreate GDO
@@ -1410,6 +1420,10 @@ export async function uploadExcel(req: Request, res: Response) {
       if (missMatType) errs.push(`Thiếu Material_type ở ${missMatType} dòng`)
       const missExport = dataRows.filter(r => !String(r['Loại xuất'] ?? '').trim()).length
       if (missExport) errs.push(`Thiếu Loại xuất ở ${missExport} dòng`)
+      // Loại xuất PHẢI khớp danh mục Loại xe TMS (Material_type thì không khóa)
+      const badExport = [...new Set(dataRows.map(r => String(r['Loại xuất'] ?? '').trim()).filter(Boolean))]
+        .filter(v => !resolveVehicleType(v))
+      if (badExport.length) errs.push(`Loại xuất "${badExport.join(', ')}" không khớp danh mục Loại xe TMS`)
 
       if (blockedMap.has(group_code)) {
         const status = blockedMap.get(group_code)!
@@ -1427,6 +1441,14 @@ export async function uploadExcel(req: Request, res: Response) {
         error: { code: 'VALIDATION_FAILED', message: `File có ${validationErrors.length} chuyến xe lỗi — không upload` },
         validation_errors: validationErrors,
       })
+    }
+
+    // Chuẩn hoá Loại xuất về TÊN chính tắc (vd "xe container" → "XE CONTAINER") — mọi giá trị đã validate khớp
+    for (const [, groupRows] of byVehicle) {
+      for (const r of groupRows) {
+        const ev = String(r['Loại xuất'] ?? '').trim()
+        if (ev) r['Loại xuất'] = resolveVehicleType(ev) ?? ev
+      }
     }
 
     // ── Phase 2: build insert lists (all vehicles already validated) ──

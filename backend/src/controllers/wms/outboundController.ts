@@ -192,7 +192,7 @@ async function fetchGDOFull(id: string) {
 
   const { data: items } = doIds.length
     ? await supabase.from('OutboundItem')
-        .select('*, material:Material(id,material_code,short_name,custom_short_name,cartons_per_pallet,weight_kg,shelf_life_days,no_qr_tracking)')
+        .select('*, material:Material(id,material_code,short_name,custom_short_name,unit,cartons_per_pallet,weight_kg,shelf_life_days,no_qr_tracking)')
         .in('do_id', doIds)
         .order('id')
     : { data: [] }
@@ -309,7 +309,7 @@ export async function listGDOs(req: Request, res: Response) {
 
     const items = doIds.length
       ? await fetchAllRowsParallel(() => supabase.from('OutboundItem')
-          .select('id, do_id, cartons_ordered, cartons_scanned, pallets_estimated, material_type, export_type, material_code_raw, material_id, material:Material!material_id(no_qr_tracking, short_name)')
+          .select('id, do_id, cartons_ordered, cartons_scanned, pallets_estimated, loose_picking, material_type, export_type, material_code_raw, material_id, material:Material!material_id(no_qr_tracking, short_name)')
           .in('do_id', doIds).order('id'), 1000, 4)
       : []
 
@@ -376,6 +376,7 @@ export async function listGDOs(req: Request, res: Response) {
         total_cartons:      gdoItems.reduce((s: number, i: any) => s + Number(i.cartons_ordered),   0),
         total_cartons_noqr: noqrItems.reduce((s: number, i: any) => s + Number(i.cartons_ordered),  0),
         total_pallets:      gdoItems.reduce((s: number, i: any) => s + Number(i.pallets_estimated), 0),
+        total_loose:        gdoItems.reduce((s: number, i: any) => s + Number(i.loose_picking ?? 0), 0),
         item_breakdown:    [...breakdownMap.values()],
       }
     }))

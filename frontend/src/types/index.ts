@@ -672,6 +672,7 @@ export interface GDO {
   export_type?:     string | null
   total_cartons?:      number
   total_cartons_noqr?: number
+  total_loose?:     number
   total_pallets?:   number
   item_breakdown?:  GDOItemBreakdown[]
   // Workflow fields

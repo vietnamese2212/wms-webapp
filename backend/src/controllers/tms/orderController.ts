@@ -94,27 +94,29 @@ export async function listOrders(req: Request, res: Response) {
 
     // TRANSFER orders: không cần date
     if (source_type === 'TRANSFER') {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let q = supabase.from('TmsOrder')
-        .select(`${ORDER_SELECT}, transfer_gdo:GroupDeliveryOrder!transfer_gdo_id(id, group_code, shipto_party, transfer_status, delivery_date, dvvt, license_plate, warehouse:Warehouse!warehouse_id(id, code, name))`)
-        .eq('source_type', 'TRANSFER')
-        .order('created_at', { ascending: false })
-      if (destination_warehouse_id) q = q.eq('destination_warehouse_id', destination_warehouse_id)
       const tCats = scopeCategoriesOf(req)
-      if (tCats) q = q.or(`warehouse_type.is.null,warehouse_type.in.(${tCats.map(c => `"${c}"`).join(',')})`)
-      const { data, error } = await q
-      if (error) return fail(res, error.message)
-
-      const orders = data ?? []
+      // Phân trang né cap-1000: lệnh chuyển kho tích lũy không giới hạn ngày → 1 response sẽ cắt mất lệnh
+      const orders = await fetchAllPaged(() => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let q = supabase.from('TmsOrder')
+          .select(`${ORDER_SELECT}, transfer_gdo:GroupDeliveryOrder!transfer_gdo_id(id, group_code, shipto_party, transfer_status, delivery_date, dvvt, license_plate, warehouse:Warehouse!warehouse_id(id, code, name))`)
+          .eq('source_type', 'TRANSFER')
+          .order('created_at', { ascending: false })
+          .order('id')
+        if (destination_warehouse_id) q = q.eq('destination_warehouse_id', destination_warehouse_id)
+        if (tCats) q = q.or(`warehouse_type.is.null,warehouse_type.in.(${tCats.map(c => `"${c}"`).join(',')})`)
+        return q
+      })
       const orderIds = orders.map((o: any) => o.id as string)
 
       // Gắn delivery_codes từ OutboundDelivery
       const gdoIds = [...new Set(orders.map((o: any) => o.transfer_gdo_id).filter(Boolean))] as string[]
       const codesByGdo = new Map<string, string[]>()
       if (gdoIds.length) {
+        // Chunk + phân trang né cap-1000 (nhiều GDO → nhiều delivery)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: dos } = await supabase.from('OutboundDelivery')
-          .select('gdo_id, delivery_code').in('gdo_id', gdoIds)
+        const dos = await fetchAllByIdChunks(gdoIds, chunk => supabase.from('OutboundDelivery')
+          .select('gdo_id, delivery_code').in('gdo_id', chunk).order('id'))
         for (const d of (dos ?? [])) {
           if (!d.delivery_code) continue
           const list = codesByGdo.get(d.gdo_id) ?? []
@@ -129,12 +131,14 @@ export async function listOrders(req: Request, res: Response) {
       const actualReceivedByOrder = new Map<string, number>() // tms_order_id → total cartons
 
       if (orderIds.length) {
+        // Chunk + phân trang né cap-1000 (nhiều lệnh → nhiều phiếu nhập)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: importOrders } = await supabase.from('ProductionImport')
+        const importOrders = await fetchAllByIdChunks(orderIds, chunk => supabase.from('ProductionImport')
           .select('id, tms_order_id, created_at, posm_cartons, material:Material!material_id(no_qr_tracking), warehouse:Warehouse!warehouse_id(inventory_mode)')
-          .in('tms_order_id', orderIds)
+          .in('tms_order_id', chunk)
           .eq('source_type', 'TRANSFER')
           .neq('status', 'CANCELLED')
+          .order('id'))
 
         const qrImportIds: string[] = []
         for (const imp of (importOrders ?? []) as any[]) {
@@ -455,8 +459,9 @@ export async function bulkUpdateOrderDate(req: Request, res: Response) {
     // Scope-write: mọi lệnh trong lô phải thuộc kho trong phạm vi (ASSIGNED). NATIONAL/ĐVVT → bỏ qua.
     const scope = scopeWhIds(req)
     if (scope !== null) {
-      const { data: ords } = await supabase.from('TmsOrder')
-        .select('warehouse_id, destination_warehouse_id').in('id', ids)
+      // Chunk ids (500/lượt) + phân trang — ids >1000 mà không chunk thì cap-1000 làm LỌT lệnh khỏi kiểm scope
+      const ords = await fetchAllByIdChunks(ids, chunk => supabase.from('TmsOrder')
+        .select('warehouse_id, destination_warehouse_id').in('id', chunk).order('id'), 500)
       const bad = (ords ?? []).some((o: { warehouse_id: string | null; destination_warehouse_id: string | null }) =>
         !whInScope(scope, o.warehouse_id, o.destination_warehouse_id))
       if (bad) return fail(res, 'Ngoài phạm vi kho — có lệnh thuộc kho ngoài phạm vi được giao', 403)

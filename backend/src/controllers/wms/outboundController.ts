@@ -390,18 +390,28 @@ export async function lookupPalletGdos(req: Request, res: Response) {
   try {
     const q = String(req.query.q ?? '').trim()
     if (q.length < 2) return ok(res, [])
-    const { data: scans } = await supabase.from('OutboundScanEntry')
-      .select('item_id').ilike('pallet_code', `%${q}%`).limit(2000)
-    const itemIds = [...new Set(((scans ?? []) as { item_id: string | null }[])
+    // Phân trang đủ (cap ~1000/response — .limit(2000) KHÔNG vượt được cap)
+    const scans = await fetchAllRowsParallel(() => supabase.from('OutboundScanEntry')
+      .select('item_id').ilike('pallet_code', `%${q}%`).order('id'))
+    const itemIds = [...new Set((scans as { item_id: string | null }[])
       .map(s => s.item_id).filter((v): v is string => !!v))]
     if (!itemIds.length) return ok(res, [])
-    const { data: items } = await supabase.from('OutboundItem').select('do_id').in('id', itemIds)
-    const doIds = [...new Set(((items ?? []) as { do_id: string | null }[])
-      .map(i => i.do_id).filter((v): v is string => !!v))]
+    // Chunk ids 300/lượt (tránh URL dài + cap 1000)
+    const items: { do_id: string | null }[] = []
+    for (let i = 0; i < itemIds.length; i += 300) {
+      const { data, error } = await supabase.from('OutboundItem').select('do_id').in('id', itemIds.slice(i, i + 300))
+      if (error) throw new Error(error.message)
+      items.push(...((data ?? []) as { do_id: string | null }[]))
+    }
+    const doIds = [...new Set(items.map(i => i.do_id).filter((v): v is string => !!v))]
     if (!doIds.length) return ok(res, [])
-    const { data: dos } = await supabase.from('OutboundDelivery').select('gdo_id').in('id', doIds)
-    const gdoIds = [...new Set(((dos ?? []) as { gdo_id: string | null }[])
-      .map(d => d.gdo_id).filter((v): v is string => !!v))]
+    const dos: { gdo_id: string | null }[] = []
+    for (let i = 0; i < doIds.length; i += 300) {
+      const { data, error } = await supabase.from('OutboundDelivery').select('gdo_id').in('id', doIds.slice(i, i + 300))
+      if (error) throw new Error(error.message)
+      dos.push(...((data ?? []) as { gdo_id: string | null }[]))
+    }
+    const gdoIds = [...new Set(dos.map(d => d.gdo_id).filter((v): v is string => !!v))]
     return ok(res, gdoIds)
   } catch (e) { return fail(res, String(e)) }
 }
@@ -1106,14 +1116,16 @@ export async function uncompleteGDO(req: Request, res: Response) {
 export async function getWarehouseEmployees(req: Request, res: Response) {
   try {
     const { warehouse_id } = req.query as Record<string, string>
-    let q = supabase.from('Employee')
-      .select('id, name, employee_code, job_title_id')
-      .eq('is_active', true)
-      .order('name')
-    if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
-    const { data, error } = await q
-    if (error) return fail(res, error.message)
-    const emps = (data ?? []) as { id: string; name: string; employee_code: string; job_title_id: string | null }[]
+    // Phân trang đủ (cap ~1000/response — nhân sự có thể >1000)
+    const data = await fetchAllRowsParallel(() => {
+      let q = supabase.from('Employee')
+        .select('id, name, employee_code, job_title_id')
+        .eq('is_active', true)
+        .order('name').order('id')
+      if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
+      return q
+    })
+    const emps = data as { id: string; name: string; employee_code: string; job_title_id: string | null }[]
     // Kèm tên chức danh (để FE lọc "lái xe nâng" theo chức danh)
     const jtIds = [...new Set(emps.map(e => e.job_title_id).filter(Boolean))] as string[]
     const { data: jts } = jtIds.length
@@ -1604,21 +1616,23 @@ export async function uploadExcel(req: Request, res: Response) {
 // Tồn khả dụng của 1 mã hàng trong 1 kho (FEFO list) — dùng chung cho getItemInventory
 // và getInventoryByMaterial (nút search tồn kho ở bảng chuẩn bị). Trả [] nếu kho không có vị trí.
 async function fetchMaterialInventory(materialId: string, warehouseId: string | null) {
-  let q = supabase.from('InventoryEntry')
-    .select('id, pallet_code, cartons_imported, cartons_remaining, cartons_reserved, production_date, import_date, qa_status_id, ncc_id, shelf_life_days, qa_status:QAStatus(id,code,name), location:Location(location_code), material:Material!material_id(shelf_life_days, supplier_shelf_life_overrides)')
-    .eq('material_id', materialId)
-    .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING'])
-
+  let locIds: string[] | null = null
   if (warehouseId) {
     const { data: locs } = await supabase.from('Location')
       .select('id').eq('warehouse_id', warehouseId)
-    const locIds = ((locs ?? []) as any[]).map((l: any) => l.id as string)
+    locIds = ((locs ?? []) as any[]).map((l: any) => l.id as string)
     if (!locIds.length) return []
-    q = q.in('location_id', locIds)
   }
 
-  const { data, error } = await q.order('created_at')
-  if (error) throw new Error(error.message)
+  // Phân trang đủ (cap ~1000/response) — .order('id') phụ để phân trang ổn định
+  const data = await fetchAllRowsParallel(() => {
+    let q = supabase.from('InventoryEntry')
+      .select('id, pallet_code, cartons_imported, cartons_remaining, cartons_reserved, production_date, import_date, qa_status_id, ncc_id, shelf_life_days, qa_status:QAStatus(id,code,name), location:Location(location_code), material:Material!material_id(shelf_life_days, supplier_shelf_life_overrides)')
+      .eq('material_id', materialId)
+      .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING'])
+    if (locIds) q = q.in('location_id', locIds)
+    return q.order('created_at').order('id')
+  })
 
   const now = Date.now()
   return (data ?? []).map((e: any) => {

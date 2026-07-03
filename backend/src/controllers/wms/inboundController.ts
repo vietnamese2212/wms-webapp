@@ -226,7 +226,7 @@ export async function listOrders(req: Request, res: Response) {
     if (search) {
       const [matRes, palletRes] = await Promise.all([
         supabase.from('Material').select('id')
-          .or(`material_code.ilike.%${search}%,short_name.ilike.%${search}%`),
+          .or(`material_code.ilike.%${search}%,short_name.ilike.%${search}%`).limit(500),
         // Tem pallet: quét/gõ mã tem (hoặc 1 đoạn) → ra phiếu nhập chứa pallet đó
         supabase.from('InventoryEntry').select('import_order_id')
           .ilike('pallet_code', `%${search}%`).not('import_order_id', 'is', null).limit(500),

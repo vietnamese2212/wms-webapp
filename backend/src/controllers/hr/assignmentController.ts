@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
+import { fetchAllRowsParallel } from '../../utils/pagination'
 import { layoutSkillsDetailed, layoutJobTitleIds } from './layoutController'
 import { loadShiftRuleMap } from './shiftRuleController'
 
@@ -22,14 +23,16 @@ async function sheetSkills(layout_id: string | null) {
 export async function listSheets(req: Request, res: Response) {
   try {
     const { warehouse_id, layout_id, date_from, date_to, status } = req.query as Record<string, string>
-    let q = supabase.from('WorkAssignmentSheet').select(SHEET_SELECT).order('work_date', { ascending: false })
-    if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
-    if (layout_id)    q = q.eq('layout_id', layout_id)
-    if (status)       q = q.eq('status', status)
-    if (date_from)    q = q.gte('work_date', date_from)
-    if (date_to)      q = q.lte('work_date', date_to)
-    const { data, error } = await q
-    if (error) return fail(res, error.message)
+    // Phân trang né cap ~1000 dòng/response (khoảng ngày rộng × nhiều layout dễ vượt)
+    const data = await fetchAllRowsParallel(() => {
+      let q = supabase.from('WorkAssignmentSheet').select(SHEET_SELECT).order('work_date', { ascending: false }).order('id')
+      if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
+      if (layout_id)    q = q.eq('layout_id', layout_id)
+      if (status)       q = q.eq('status', status)
+      if (date_from)    q = q.gte('work_date', date_from)
+      if (date_to)      q = q.lte('work_date', date_to)
+      return q
+    })
 
     const sheets = (data ?? []) as { id: string; layout_id: string | null; warehouse_id: string }[]
     if (!sheets.length) return ok(res, [])

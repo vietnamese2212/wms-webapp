@@ -35,11 +35,18 @@ function scopeWhIds(req: Request): string[] | null {
 async function guardEntriesScope(req: Request, res: Response, ids: string[]): Promise<boolean> {
   const scope = scopeWhIds(req)
   if (scope === null) return true
-  const { data } = await supabase.from('InventoryEntry')
-    .select('id, warehouse_id, location:Location!location_id(warehouse_id)')
-    .in('id', ids)
+  // Chunk ids (cap ~1000 dòng/response + URL dài) — phải kiểm ĐỦ MỌI id, không chỉ 1000 đầu
+  const data: unknown[] = []
+  for (let i = 0; i < ids.length; i += 500) {
+    const chunk = ids.slice(i, i + 500)
+    const r = await supabase.from('InventoryEntry')
+      .select('id, warehouse_id, location:Location!location_id(warehouse_id)')
+      .in('id', chunk)
+    if (r.error) { fail(res, 500, 'DB_ERROR', r.error.message); return false }
+    data.push(...(r.data ?? []))
+  }
   type LocWh = { warehouse_id: string | null }
-  const rows = (data ?? []) as unknown as Array<{ warehouse_id: string | null; location: LocWh | LocWh[] | null }>
+  const rows = data as unknown as Array<{ warehouse_id: string | null; location: LocWh | LocWh[] | null }>
   for (const e of rows) {
     const loc = Array.isArray(e.location) ? e.location[0] : e.location
     const wh = loc?.warehouse_id ?? e.warehouse_id ?? null
@@ -260,13 +267,21 @@ async function resolveInventoryFilter(req: Request): Promise<ResolvedFilter> {
   const needLocFilter = effectiveWarehouseIds.length > 0 || filterLocations.length > 0
 
   const locResult = needLocFilter ? await (async () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let locQ = supabase.from('Location').select('id')
-    if (effectiveWarehouseIds.length === 1)    locQ = locQ.eq('warehouse_id', effectiveWarehouseIds[0])
-    else if (effectiveWarehouseIds.length > 1) locQ = locQ.in('warehouse_id', effectiveWarehouseIds)
-    if (filterLocations.length === 1)          locQ = locQ.eq('location_code', filterLocations[0])
-    else if (filterLocations.length > 1)       locQ = locQ.in('location_code', filterLocations)
-    return await locQ
+    try {
+      // fetchAllRowsParallel: vượt cap ~1000 dòng/response (kho lớn >1000 vị trí)
+      const rows = await fetchAllRowsParallel(() => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let locQ = supabase.from('Location').select('id').order('id')
+        if (effectiveWarehouseIds.length === 1)    locQ = locQ.eq('warehouse_id', effectiveWarehouseIds[0])
+        else if (effectiveWarehouseIds.length > 1) locQ = locQ.in('warehouse_id', effectiveWarehouseIds)
+        if (filterLocations.length === 1)          locQ = locQ.eq('location_code', filterLocations[0])
+        else if (filterLocations.length > 1)       locQ = locQ.in('location_code', filterLocations)
+        return locQ
+      })
+      return { data: rows, error: null }
+    } catch (e) {
+      return { data: null, error: { message: e instanceof Error ? e.message : String(e) } }
+    }
   })() : { data: null, error: null }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -514,10 +529,13 @@ export async function listFacets(req: Request, res: Response) {
     else if (categories.length > 1) q = q.in('category', categories)
     return q
   }
-  // Locations: nhỏ (≈193 dòng, dưới cap) → 1 query đủ.
-  let locQ = supabase.from('Location').select('id, location_code').order('location_code')
-  if (warehouseIds.length === 1)    locQ = locQ.eq('warehouse_id', warehouseIds[0])
-  else if (warehouseIds.length > 1) locQ = locQ.in('warehouse_id', warehouseIds)
+  // Locations: phân trang đủ (kho lớn có thể >1000 vị trí).
+  const buildLocQ = () => {
+    let q = supabase.from('Location').select('id, location_code').order('location_code').order('id')
+    if (warehouseIds.length === 1)    q = q.eq('warehouse_id', warehouseIds[0])
+    else if (warehouseIds.length > 1) q = q.in('warehouse_id', warehouseIds)
+    return q
+  }
 
   // Cycles & machines & ncc: no reference table — query InventoryEntry, lọc theo category/warehouse
   // bằng INNER JOIN (Material/Location) thay vì nhồi hàng nghìn id vào .in() (URL quá dài → 500).
@@ -536,7 +554,7 @@ export async function listFacets(req: Request, res: Response) {
     return q
   }
 
-  // Tất cả fetch chạy SONG SONG (materials + inventory phân trang song song; locations 1 query) —
+  // Tất cả fetch chạy SONG SONG (materials + inventory + locations phân trang song song) —
   // né cap 1000 + giảm round-trip tuần tự (trước fetchAllPaged tuần tự ~5s).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let matData: any[], invData: any[], locData: any[]
@@ -544,14 +562,11 @@ export async function listFacets(req: Request, res: Response) {
     const [m, inv, loc] = await Promise.all([
       fetchAllRowsParallel(buildMatQ),
       fetchAllRowsParallel(buildInvQ, 1000, 4),   // tồn ~4000 dòng → batch 4 lấy trong 1 round-trip
-      locQ,
+      fetchAllRowsParallel(buildLocQ),
     ])
     matData = m
     invData = inv
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    if ((loc as any).error) throw new Error((loc as any).error.message)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    locData = ((loc as any).data ?? [])
+    locData = loc
   } catch (e) {
     return fail(res, 500, 'DB_ERROR', (e as Error).message)
   }
@@ -882,25 +897,34 @@ export async function stocktakeEntries(req: Request, res: Response) {
     resolvedLocationIds = ((valid ?? []) as { id: string }[]).map(l => l.id)
     if (!resolvedLocationIds.length) return ok(res, { stats: { total: 0, checked: 0, unchecked: 0, flagged: 0 }, entries: [] })
   } else {
-    let locQuery = supabase.from('Location').select('id').eq('is_active', true)
+    if (scopeWhIds.length > 0 && warehouse_id && !scopeWhIds.includes(warehouse_id))
+      return ok(res, { stats: { total: 0, checked: 0, unchecked: 0, flagged: 0 }, entries: [] })
+    // Phân trang đủ (kho lớn >1000 vị trí)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let locs: any[]
+    try {
+      locs = await fetchAllRowsParallel(() => {
+        let locQuery = supabase.from('Location').select('id').eq('is_active', true).order('id')
 
-    if (scopeWhIds.length > 0) {
-      const effective = warehouse_id
-        ? scopeWhIds.filter(id => id === warehouse_id)
-        : scopeWhIds
-      if (effective.length === 0) return ok(res, { stats: { total: 0, checked: 0, unchecked: 0, flagged: 0 }, entries: [] })
-      effective.length === 1
-        ? (locQuery = locQuery.eq('warehouse_id', effective[0]))
-        : (locQuery = locQuery.in('warehouse_id', effective))
-    } else {
-      if (warehouse_id) locQuery = locQuery.eq('warehouse_id', warehouse_id)
+        if (scopeWhIds.length > 0) {
+          const effective = warehouse_id
+            ? scopeWhIds.filter(id => id === warehouse_id)
+            : scopeWhIds
+          effective.length === 1
+            ? (locQuery = locQuery.eq('warehouse_id', effective[0]))
+            : (locQuery = locQuery.in('warehouse_id', effective))
+        } else {
+          if (warehouse_id) locQuery = locQuery.eq('warehouse_id', warehouse_id)
+        }
+
+        if (category)     locQuery = locQuery.or(`category.eq.${category},category.is.null`)
+        if (stCats)       locQuery = locQuery.or(`category.is.null,category.in.(${stCats.map(c => `"${c}"`).join(',')})`)
+        return locQuery
+      })
+    } catch (e) {
+      return fail(res, 500, 'DB_ERROR', (e as Error).message)
     }
-
-    if (category)     locQuery = locQuery.or(`category.eq.${category},category.is.null`)
-    if (stCats)       locQuery = locQuery.or(`category.is.null,category.in.(${stCats.map(c => `"${c}"`).join(',')})`)
-    const { data: locs, error: locErr } = await locQuery
-    if (locErr) return fail(res, 500, 'DB_ERROR', locErr.message)
-    if (!locs?.length) return ok(res, { stats: { total: 0, checked: 0, unchecked: 0, flagged: 0 }, entries: [] })
+    if (!locs.length) return ok(res, { stats: { total: 0, checked: 0, unchecked: 0, flagged: 0 }, entries: [] })
     resolvedLocationIds = (locs as { id: string }[]).map(l => l.id)
   }
 

@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
+import { fetchAllRowsParallel } from '../../utils/pagination'
 
 type ReqUser = { sub?: string; name?: string; module_permissions?: Record<string, string[]> }
 const userOf = (req: Request): ReqUser => (req as { user?: ReqUser }).user ?? {}
@@ -13,7 +14,9 @@ const KINDS = ['CA1', 'CA2', 'CA3', 'HC', 'LEAVE']
 
 // NV thuộc 1 kho (qua quyền truy cập kho) — dùng để lọc Bảng công/Báo cáo theo kho
 async function employeeIdsOfWarehouse(warehouse_id: string): Promise<string[]> {
-  const { data } = await supabase.from('UserWarehouseAccess').select('employee_id').eq('warehouse_id', warehouse_id)
+  // Phân trang né cap ~1000 dòng/response của PostgREST
+  const data = await fetchAllRowsParallel(() =>
+    supabase.from('UserWarehouseAccess').select('employee_id').eq('warehouse_id', warehouse_id).order('id'))
   return (data ?? []).map((r: { employee_id: string }) => r.employee_id)
 }
 
@@ -123,14 +126,14 @@ export async function reportAttendance(req: Request, res: Response) {
   try {
     const { warehouse_id, department_id, date_from, date_to } = req.query as Record<string, string>
     if (!date_from || !date_to) return fail(res, 'date_from, date_to là bắt buộc', 400)
-    let q = supabase.from('Attendance').select('employee_id, warehouse_id, kind, ot_hours, early_leave_hours')
-      .gte('work_date', date_from).lte('work_date', date_to)
-    if (warehouse_id) {
-      const empIds = await employeeIdsOfWarehouse(warehouse_id)
-      q = q.in('employee_id', empIds.length ? empIds : ['__none__'])
-    }
-    const { data, error } = await q
-    if (error) return fail(res, error.message)
+    const empIds = warehouse_id ? await employeeIdsOfWarehouse(warehouse_id) : null
+    // Phân trang né cap ~1000 (nhân viên × ngày trong khoảng rộng dễ >1000 → thiếu công)
+    const data = await fetchAllRowsParallel(() => {
+      let q = supabase.from('Attendance').select('employee_id, warehouse_id, kind, ot_hours, early_leave_hours')
+        .gte('work_date', date_from).lte('work_date', date_to).order('id')
+      if (empIds) q = q.in('employee_id', empIds.length ? empIds : ['__none__'])
+      return q
+    })
     const rows = (data ?? []) as { employee_id: string; kind: string; ot_hours: number; early_leave_hours: number }[]
 
     type Agg = { employee_id: string; ca1: number; ca2: number; ca3: number; hc: number; leave: number; ot_hours: number; early_hours: number }

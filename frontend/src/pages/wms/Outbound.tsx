@@ -212,9 +212,6 @@ export default function Outbound() {
   }
 
   const { data: warehouses = [] } = useWarehouses(true)
-  // Prefetch danh mục mã hàng (nền) cho user có quyền tạo/sửa → mở form Thêm/Sửa lần đầu đã có sẵn,
-  // hết cảnh "click đầu chậm". Chung cache key với useMaterials() trong form; user chỉ-xem không tải.
-  useMaterials(undefined, can(perms, 'outbound', 'create') || can(perms, 'outbound', 'edit'))
   // Mã các kho NONE (xuất tiêu hao, vd Sản xuất) → badge "Xuất SX" ở cột Ship-to
   const noneWhCodes = useMemo(
     () => new Set((warehouses as WarehouseLite[]).filter(w => w.inventory_mode === 'NONE' && w.code).map(w => w.code as string)),
@@ -238,6 +235,10 @@ export default function Outbound() {
     date_from: f.dateFrom || undefined,
     date_to:   f.dateTo   || undefined,
   })
+  // Prefetch danh mục mã hàng (nền) cho user có quyền tạo/sửa → mở form Thêm/Sửa lần đầu đã sẵn.
+  // CHỈ chạy SAU khi danh sách chuyến tải xong (!isLoading) để 1.37MB mã hàng KHÔNG cạnh tranh,
+  // giữ danh sách hiện nhanh. Chung cache key với useMaterials() trong form; user chỉ-xem không tải.
+  useMaterials(undefined, !isLoading && (can(perms, 'outbound', 'create') || can(perms, 'outbound', 'edit')))
   const { mutate: uploadExcel, isPending: uploading } = useUploadGDOExcel()
   const { mutate: assignGDO } = useAssignGDO()
   // Tem pallet: quét/gõ mã tem ở ô tìm kiếm → ra chuyến đã xuất pallet đó

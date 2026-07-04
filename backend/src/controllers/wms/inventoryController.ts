@@ -1091,20 +1091,18 @@ export async function uploadExcel(req: Request, res: Response) {
       .filter(r => Object.values(r).some(v => String(v ?? '').trim()))
     if (!rows.length) return fail(res, 'Không có dòng dữ liệu nào', 400)
 
-    const [mats, whs, locs, cos, qas, exEntries] = await Promise.all([
+    const [mats, whs, locs, cos, qas] = await Promise.all([
       fetchAllRowsParallel(() => supabase.from('Material').select('id, material_code')),
       fetchAllRowsParallel(() => supabase.from('Warehouse').select('id, code, name, nmsx_code')),
       fetchAllRowsParallel(() => supabase.from('Location').select('id, location_code')),
       fetchAllRowsParallel(() => supabase.from('TransportCompany').select('id, code, name, type, alias_codes')),
       fetchAllRowsParallel(() => supabase.from('QAStatus').select('id, name')),
-      fetchAllRowsParallel(() => supabase.from('InventoryEntry').select('pallet_code')),
     ]) as [
       { id: string; material_code: string }[],
       { id: string; code: string; name: string; nmsx_code: string | null }[],
       { id: string; location_code: string }[],
       { id: string; code: string | null; name: string | null; type: string; alias_codes: string[] | null }[],
       { id: string; name: string }[],
-      { pallet_code: string | null }[],
     ]
 
     const matMap = new Map(mats.map(m => [String(m.material_code).trim().toLowerCase(), m.id]))
@@ -1114,16 +1112,34 @@ export async function uploadExcel(req: Request, res: Response) {
     const resolveNcc = makeNccResolver(cos.filter(c => c.type === 'NCC'))
     const qaMap = new Map(qas.map(q => [String(q.name).trim().toLowerCase(), q.id]))
     const qaNames = qas.map(q => q.name).join(' / ')
-    const seen = new Set(exEntries.map(e => (e.pallet_code || '').trim().toLowerCase()))
+
+    // Pallet ĐÃ CÓ (active) khớp mã trong file → CẬP NHẬT thay vì báo lỗi (user chốt 05/07).
+    // Khóa khớp = (kho, mã pallet) — 1 mã pallet tồn tại hợp lệ ở NHIỀU kho (no-QR pallet_code=mã hàng),
+    // khớp unique index uq_inventory_active_wh_pallet. Chỉ fetch entry theo mã trong file (không kéo cả bảng).
+    const ACTIVE_STATUSES = ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']
+    const filePallets = [...new Set(rows
+      .flatMap(r => { const p = invStr(r.pallet_code); return p ? [p, p.toUpperCase()] : [] }))]
+    const exRows: Record<string, unknown>[] = []
+    for (let i = 0; i < filePallets.length; i += 400) {
+      const chunk = filePallets.slice(i, i + 400)
+      exRows.push(...await fetchAllRowsParallel(() =>
+        supabase.from('InventoryEntry').select('*').in('pallet_code', chunk).in('status', ACTIVE_STATUSES).order('id')))
+    }
+    const exMap = new Map(exRows.map(e =>
+      [`${e.warehouse_id}|${String(e.pallet_code ?? '').trim().toLowerCase()}`, e]))
 
     const now = new Date().toISOString()
     // import_date là timestamp KHÔNG timezone, luồng quét nhập ghi ngày VN thuần (vnDate) —
     // upload phải cùng convention, ghi ISO UTC sẽ rớt filter biên "đến ngày" + lệch ngày lúc 0h-7h VN.
     const importDateVN = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
-    // ── PHA 1: kiểm TOÀN BỘ. Có lỗi → KHÔNG nhập gì. ──
+    // ── PHA 1: kiểm TOÀN BỘ. Có lỗi → KHÔNG nhập/cập nhật gì. ──
     const errors: string[] = []
     const records: Record<string, unknown>[] = []
+    const updates: Record<string, unknown>[] = []
+    const adjustLogs: Record<string, unknown>[] = []
+    const actorName = req.user?.name ?? null
+    const actorId = req.user?.sub ?? null
     const seenInFile = new Set<string>()
     let lineNo = 0
     for (const r of rows) {
@@ -1146,12 +1162,13 @@ export async function uploadExcel(req: Request, res: Response) {
       if (missing.length) { errors.push(`${at} — thiếu/sai: ${missing.join(', ')}`); continue }
 
       const palletLc = pallet!.toLowerCase()
-      if (seenInFile.has(palletLc)) { errors.push(`${at} — trùng mã pallet trong file`); continue }
-      if (seen.has(palletLc))       { errors.push(`${at} — mã pallet đã tồn tại trong kho`); continue }
       const matId = matMap.get(mcode!.toLowerCase())
       if (!matId) { errors.push(`${at} — mã hàng không khớp: ${mcode}`); continue }
       const wh = whByCode.get(whRaw!.toLowerCase()) || whByName.get(whRaw!.toLowerCase())
       if (!wh) { errors.push(`${at} — kho không khớp: ${whRaw}`); continue }
+      // Trùng trong file theo (kho, pallet) — cùng mã ở 2 kho khác nhau là hợp lệ
+      const fileKey = `${wh.id}|${palletLc}`
+      if (seenInFile.has(fileKey)) { errors.push(`${at} — trùng mã pallet trong file (cùng kho ${whRaw})`); continue }
       const locId = locMap.get(locRaw!.toLowerCase())
       if (!locId) { errors.push(`${at} — vị trí không khớp: ${locRaw}`); continue }
       const nccRaw = invStr(r.ncc)
@@ -1166,25 +1183,63 @@ export async function uploadExcel(req: Request, res: Response) {
       }
       const nmsx = nmsxFromPallet(pallet!, (wh.nmsx_code && String(wh.nmsx_code).trim()) || null)
 
-      seenInFile.add(palletLc)
-      records.push({
-        id: randomUUID(), pallet_code: pallet, material_id: matId, warehouse_id: wh.id, location_id: locId,
-        cartons_imported: cartons, cartons_remaining: cartons, cartons_reserved: 0, adjustment_qty: 0,
-        stack_layer: 1, status: 'IN_STOCK', origin: 'IMPORT',
-        production_date: `${prodIso}T00:00:00`,
-        shelf_life_days: invInt(r.shelf_life_days), ncc_id: nccId, qa_status_id: qaId, nmsx,
-        import_date: importDateVN, created_at: now, updated_at: now,
-      })
+      seenInFile.add(fileKey)
+      const ex = exMap.get(fileKey)
+      if (ex) {
+        // Pallet đã có (active) trong ĐÚNG kho này → CẬP NHẬT theo file (user chốt 05/07).
+        // Giữ nguyên: id, pallet, kho, cartons_imported, import_date, created_at, origin, status, reserved.
+        const reserved = Number(ex.cartons_reserved) || 0
+        if (cartons! < reserved) {
+          errors.push(`${at} — số thùng mới ${cartons} < đang giữ chỗ ${reserved} (kho ${whRaw}) — xử lý đơn xuất đang mở trước`)
+          continue
+        }
+        const before = Number(ex.cartons_remaining) || 0
+        updates.push({
+          ...ex,
+          material_id: matId, location_id: locId,
+          cartons_remaining: cartons,
+          production_date: `${prodIso}T00:00:00`,
+          shelf_life_days: invInt(r.shelf_life_days), ncc_id: nccId, qa_status_id: qaId, nmsx,
+          updated_at: now,
+        })
+        if (cartons! !== before) {
+          adjustLogs.push({
+            id: randomUUID(), entry_id: ex.id, delta: cartons! - before,
+            cartons_before: before, cartons_after: cartons,
+            note: 'Upload tồn kho (cập nhật theo file)', actor_name: actorName, actor_id: actorId,
+            adjusted_at: now,
+          })
+        }
+      } else {
+        records.push({
+          id: randomUUID(), pallet_code: pallet, material_id: matId, warehouse_id: wh.id, location_id: locId,
+          cartons_imported: cartons, cartons_remaining: cartons, cartons_reserved: 0, adjustment_qty: 0,
+          stack_layer: 1, status: 'IN_STOCK', origin: 'IMPORT',
+          production_date: `${prodIso}T00:00:00`,
+          shelf_life_days: invInt(r.shelf_life_days), ncc_id: nccId, qa_status_id: qaId, nmsx,
+          import_date: importDateVN, created_at: now, updated_at: now,
+        })
+      }
     }
 
-    if (errors.length) return ok(res, { inserted: 0, errors })
-    if (!records.length) return ok(res, { inserted: 0, errors: [] })
+    if (errors.length) return ok(res, { inserted: 0, updated: 0, errors })
+    if (!records.length && !updates.length) return ok(res, { inserted: 0, updated: 0, errors: [] })
 
-    // ── PHA 2: file sạch → nhập theo lô 500 (validate đã chặn hết lỗi dữ liệu). ──
+    // ── PHA 2: file sạch → ghi theo lô 500 (validate đã chặn hết lỗi dữ liệu). ──
     for (let i = 0; i < records.length; i += 500) {
       const { error } = await supabase.from('InventoryEntry').insert(records.slice(i, i + 500))
       if (error) return fail(res, `Lỗi khi nhập (đã nhập ${i} pallet trước đó): ${error.message}`, 500)
     }
-    return ok(res, { inserted: records.length, errors: [] })
+    // Cập nhật pallet đã có: merge full record (đắp field file lên record cũ) → upsert theo id
+    for (let i = 0; i < updates.length; i += 500) {
+      const { error } = await supabase.from('InventoryEntry').upsert(updates.slice(i, i + 500), { onConflict: 'id' })
+      if (error) return fail(res, `Lỗi khi cập nhật pallet (đã cập nhật ${i} trước đó): ${error.message}`, 500)
+    }
+    // Audit log điều chỉnh tồn cho pallet cập nhật có đổi số lượng
+    for (let i = 0; i < adjustLogs.length; i += 500) {
+      const { error } = await supabase.from('InventoryAdjustmentLog').insert(adjustLogs.slice(i, i + 500))
+      if (error) console.error('[uploadExcel] Ghi InventoryAdjustmentLog thất bại:', error.message)
+    }
+    return ok(res, { inserted: records.length, updated: updates.length, errors: [] })
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }

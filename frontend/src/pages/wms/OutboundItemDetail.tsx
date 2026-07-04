@@ -615,9 +615,9 @@ export default function OutboundItemDetail() {
             )}
           </div>
 
-          {/* Header text: hiển thị đầy đủ, cho phép wrap */}
+          {/* Header text: highlight ĐỎ nổi bật (ghi chú/điều kiện xuất quan trọng) */}
           {item.header_text && (
-            <div className="text-xs font-medium text-slate-700 bg-blue-50 border border-blue-100 rounded px-2 py-1 leading-snug">
+            <div className="text-xs font-semibold text-red-600 bg-red-50 border border-red-300 rounded px-2 py-1 leading-snug break-words">
               {item.header_text}
             </div>
           )}

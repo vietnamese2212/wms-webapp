@@ -1114,6 +1114,22 @@ function parsePriority(val: unknown): boolean {
   return String(val ?? '').trim().toLowerCase() === 'x'
 }
 
+// Chuẩn số VN: dấu CHẤM = ngăn nghìn, dấu PHẨY = thập phân (1.234,56).
+// Trả null nếu ô trống, NaN nếu không phải số (để báo lỗi thay vì nuốt im lặng).
+function parseVnNumber(val: unknown): number | null {
+  if (val == null || val === '') return null
+  if (typeof val === 'number') return val
+  let s = String(val).trim().replace(/\s/g, '')
+  if (!s) return null
+  const commas = (s.match(/,/g) ?? []).length
+  const dots   = (s.match(/\./g) ?? []).length
+  if (commas && dots)    s = s.replace(/\./g, '').replace(',', '.') // 1.234,56 → 1234.56
+  else if (commas > 1)   s = s.replace(/,/g, '')                    // 1,234,567 (kiểu US) → 1234567
+  else if (commas === 1) s = s.replace(',', '.')                    // 15,462 → 15.462
+  else if (dots > 1)     s = s.replace(/\./g, '')                   // 1.234.567 (nghìn VN) → 1234567
+  return Number(s)
+}
+
 function parseDirection(val: unknown): string {
   const s = String(val ?? '').trim().toLowerCase()
   if (['xuất', 'xuat', 'x', 'outbound', 'out'].includes(s)) return 'OUTBOUND'
@@ -1202,18 +1218,23 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
           else if (seenCodes.has(orderCode.toUpperCase())) errors.push(`mã đơn "${orderCode}" bị trùng trong file`)
           else seenCodes.add(orderCode.toUpperCase())
           // Trần DB: Tấn = numeric(10,3). Vượt → Postgres "numeric field overflow" — chặn từ preview cho rõ dòng.
-          const tonsNum = norm.planned_tons ? Number(norm.planned_tons) : null
+          const tonsNum    = parseVnNumber(norm.planned_tons)
+          const boxesNum   = parseVnNumber(norm.planned_boxes)
+          const palletsNum = parseVnNumber(norm.planned_pallets)
+          if (tonsNum != null && isNaN(tonsNum))       errors.push(`Tấn "${norm.planned_tons}" không phải số`)
+          if (boxesNum != null && isNaN(boxesNum))     errors.push(`Thùng "${norm.planned_boxes}" không phải số`)
+          if (palletsNum != null && isNaN(palletsNum)) errors.push(`Pallet "${norm.planned_pallets}" không phải số`)
           if (tonsNum != null && Math.abs(tonsNum) > 9999999.999)
-            errors.push(`Tấn "${norm.planned_tons}" quá lớn (tối đa 9,999,999.999)`)
+            errors.push(`Tấn "${norm.planned_tons}" quá lớn (tối đa 9.999.999,999)`)
 
           return {
             date, warehouse_id: whId, warehouse_name: whName,
             npp_name: String(norm.npp_name ?? ''), direction,
             warehouse_type: whType, vehicle_type: vtName,
             ncc_code: nccCode, ncc_id: nccId, order_code: orderCode,
-            planned_boxes: norm.planned_boxes ? Number(norm.planned_boxes) : null,
-            planned_pallets: norm.planned_pallets ? Number(norm.planned_pallets) : null,
-            planned_tons: tonsNum,
+            planned_boxes: boxesNum != null && !isNaN(boxesNum) ? boxesNum : null,
+            planned_pallets: palletsNum != null && !isNaN(palletsNum) ? palletsNum : null,
+            planned_tons: tonsNum != null && !isNaN(tonsNum) ? tonsNum : null,
             gdo_refs: String(norm.gdo_refs ?? ''), notes: String(norm.notes ?? ''),
             priority: parsePriority(norm.priority),
             valid: errors.length === 0, error: errors.join(', '),
@@ -1422,7 +1443,7 @@ function SlotOverviewDialog({ open, onClose, defaultDate, warehouseId, warehouse
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
       <DialogContent className="flex flex-col w-full sm:w-1/2 h-screen max-w-none max-h-none rounded-none m-0 p-0 top-0 left-0 translate-x-0 translate-y-0 sm:left-auto sm:right-0 [&>button:last-child]:hidden">
         <div className="shrink-0 flex items-center justify-between px-3 py-2 border-b bg-white">
-          <span className="text-sm font-semibold truncate">Tình trạng khung giờ — {warehouseName}</span>
+          <DialogTitle className="text-sm font-semibold truncate">Tình trạng khung giờ — {warehouseName}</DialogTitle>
           <Button variant="ghost" size="sm" onClick={onClose} className="ml-3 h-7 w-7 p-0 shrink-0">✕</Button>
         </div>
         <div className="shrink-0 flex items-center gap-2 px-3 py-1.5 border-b bg-white flex-wrap">

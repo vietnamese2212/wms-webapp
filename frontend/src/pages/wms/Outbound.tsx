@@ -1194,7 +1194,13 @@ function GDOFormBody({
   const { data: allMatsData = [] } = useMaterials()
   const allMats = allMatsData as { id: string; material_code: string; short_name?: string | null; unit?: string | null; category?: string | null }[]
 
-  const exportTypeOptions = warehouseId ? vtByWarehouse : allVehicleTypes
+  // Loại xe = DANH MỤC độc lập (user chốt 04/07) — kho chưa có khung giờ vẫn tạo được đơn;
+  // loại có khung giờ tại kho được ưu tiên lên đầu.
+  const exportTypeOptions = useMemo(() => {
+    const active = (allVehicleTypes as { id: string; name: string; is_active?: boolean }[]).filter(vt => vt.is_active !== false)
+    const inWh = new Set((vtByWarehouse as { name: string }[]).map(vt => vt.name))
+    return inWh.size ? [...active].sort((a, b) => Number(inWh.has(b.name)) - Number(inWh.has(a.name))) : active
+  }, [allVehicleTypes, vtByWarehouse])
   const isNPP = (warehouses as WarehouseLite[]).find(w => w.id === warehouseId)?.warehouse_type === 'NPP'
   const noVehicle = isNPP
   // Đa-NPP mới là tiêu chí "đơn gộp" (chuẩn 04/07) — DO chỉ là tham khảo, không có vai trò

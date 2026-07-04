@@ -138,7 +138,16 @@ function parsePlannedDate(group_code: string): string | null {
 
 function parseDecimal(val: any): number {
   if (!val && val !== 0) return 0
-  const n = parseFloat(String(val).replace(',', '.'))
+  if (typeof val === 'number') return isNaN(val) ? 0 : val
+  // Chuẩn số VN: dấu CHẤM = ngăn nghìn, dấu PHẨY = thập phân (1.234,56).
+  let s = String(val).trim().replace(/\s/g, '')
+  const commas = (s.match(/,/g) ?? []).length
+  const dots   = (s.match(/\./g) ?? []).length
+  if (commas && dots)       s = s.replace(/\./g, '').replace(',', '.') // 1.234,56 → 1234.56
+  else if (commas > 1)      s = s.replace(/,/g, '')                    // 1,234,567 (kiểu US) → 1234567
+  else if (commas === 1)    s = s.replace(',', '.')                    // 15,462 → 15.462
+  else if (dots > 1)        s = s.replace(/\./g, '')                   // 1.234.567 (nghìn VN) → 1234567
+  const n = parseFloat(s)
   return isNaN(n) ? 0 : n
 }
 

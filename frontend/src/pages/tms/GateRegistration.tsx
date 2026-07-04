@@ -210,7 +210,9 @@ function ComboField({
               value={open ? search : closedText}
               onChange={e => { setSearch(e.target.value); if (!open) setOpen(true) }}
               onFocus={() => { setSearch(closedText); setOpen(true) }}
-              onKeyDown={e => { if (e.key === 'Escape') setOpen(false) }}
+              // Enter/Tab/blur đều đóng dropdown → effect open→false commit free-text (trước đây chỉ click ra ngoài mới commit)
+              onKeyDown={e => { if (e.key === 'Escape' || e.key === 'Enter') { e.preventDefault(); setOpen(false) } }}
+              onBlur={() => setOpen(false)}
             />
           ) : open ? (
             <Input
@@ -386,6 +388,7 @@ export default function GateRegistration() {
 
   // ── Action dialogs
   const [callTarget,  setCallTarget]  = useState<GateRegistration | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<GateRegistration | null>(null)
   const [entryTarget, setEntryTarget] = useState<GateRegistration | null>(null)
   const [exitTarget,  setExitTarget]  = useState<GateRegistration | null>(null)
   const [exitWeight,  setExitWeight]  = useState('')
@@ -539,12 +542,15 @@ export default function GateRegistration() {
     return buildRenderList(warehouses as { id: string; name: string }[], wtOrder, vtOrder)
   }, [displayRegs, collapsed, warehouses, allWhTypes, vehicleTypes])
 
-  // Lọc loại xe theo kho + loại kho — warehouse_type dùng thẳng; 'Khác' = không filter
+  // Loại xe = DANH MỤC độc lập (user chốt 04/07: "Loại xe khác mà khung giờ khác") —
+  // không còn chặn theo khung giờ kho; chỉ ƯU TIÊN loại có khung giờ tại kho lên đầu cho dễ chọn.
   const _gateCargoType = (form.warehouse_type && form.warehouse_type !== 'Khác') ? form.warehouse_type : undefined
   const { data: filteredGateVehicleTypes = [] } = useVehicleTypesByWarehouse(form.warehouse_id || null, _gateCargoType)
-  // Đã chọn kho: dùng list lọc ('Khác'→ tất cả xe trong kho, cụ thể→ theo cargo_type, rỗng→ không có)
-  // Chưa chọn kho: hiện tất cả
-  const availableVehicleTypes = (form.warehouse_id ? filteredGateVehicleTypes : vehicleTypes) as TmsVehicleType[]
+  const _activeVts = (vehicleTypes as TmsVehicleType[]).filter(vt => vt.is_active !== false)
+  const _inWhVtNames = new Set((filteredGateVehicleTypes as TmsVehicleType[]).map(vt => vt.name))
+  const availableVehicleTypes = _inWhVtNames.size
+    ? [..._activeVts].sort((a, b) => Number(_inWhVtNames.has(b.name)) - Number(_inWhVtNames.has(a.name)))
+    : _activeVts
 
   // Xe "kết hợp" (chỉ ở chế độ tạo mới): Hướng = 'BOTH' (sentinel form). Chân chính = NHẬP, chân phụ = XUẤT.
   const isCombined = !editReg && form.direction === 'BOTH'
@@ -1163,7 +1169,7 @@ export default function GateRegistration() {
                   {can(perms, 'gate_registration', 'delete') && (
                     <Button size="sm" variant="outline"
                       className="h-6 px-2 text-[10px] gap-1 border-red-200 text-red-600 hover:bg-red-50"
-                      onClick={() => { if (confirm('Xóa đăng ký này?')) { deleteMut.mutate(selected.id); setSelected(null) } }}
+                      onClick={() => setDeleteTarget(selected)}
                     >
                       <Trash2 className="h-3 w-3" />Xóa
                     </Button>
@@ -1354,7 +1360,7 @@ export default function GateRegistration() {
             {/* Row 2: Hướng + Loại kho */}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
-                <label className="text-xs text-slate-500">Hướng</label>
+                <label className="text-xs text-slate-500">Hướng <span className="text-red-500">*</span></label>
                 <Select value={form.direction || '__none__'} onValueChange={v => fCriteria('direction', v === '__none__' ? '' : v)}>
                   <SelectTrigger className="h-8 text-xs">
                     <SelectValue placeholder="Chọn hướng" />
@@ -1368,7 +1374,7 @@ export default function GateRegistration() {
                 </Select>
               </div>
               <div className="space-y-1">
-                <label className="text-xs text-slate-500">Loại kho</label>
+                <label className="text-xs text-slate-500">Loại kho <span className="text-red-500">*</span></label>
                 <Select value={form.warehouse_type || '__none__'} onValueChange={v => {
                   const newVal = v === '__none__' ? '' : v
                   setForm(prev => {
@@ -1403,7 +1409,7 @@ export default function GateRegistration() {
             {/* Row 3: Loại xe + ĐVVT */}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
-                <label className="text-xs text-slate-500">Loại xe</label>
+                <label className="text-xs text-slate-500">Loại xe <span className="text-red-500">*</span></label>
                 <ComboField
                   value={form.vehicle_type}
                   displayValue={vtOptions.find(v => v.value === form.vehicle_type)?.label ?? form.vehicle_type}
@@ -1414,7 +1420,7 @@ export default function GateRegistration() {
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-xs text-slate-500">ĐVVT / NCC</label>
+                <label className="text-xs text-slate-500">ĐVVT / NCC <span className="text-red-500">*</span></label>
                 <ComboField
                   value={form.company_id}
                   displayValue={companies.find(c => c.id === form.company_id)?.name ?? form.company_name_raw}
@@ -1637,6 +1643,29 @@ export default function GateRegistration() {
               })}
             >
               {callMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><PhoneCall className="h-3.5 w-3.5 mr-1" />Gọi xe</>}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Dialog: Xác nhận xóa đăng ký */}
+      <Dialog open={!!deleteTarget} onOpenChange={v => { if (!v) setDeleteTarget(null) }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-sm">Xóa đăng ký</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm py-2">
+            Xóa đăng ký xe <span className="font-mono font-semibold">{deleteTarget?.license_plate ?? '—'}</span>?
+            Hành động này không thể hoàn tác.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setDeleteTarget(null)}>Không</Button>
+            <Button
+              size="sm" variant="destructive"
+              disabled={deleteMut.isPending}
+              onClick={() => { if (deleteTarget) { deleteMut.mutate(deleteTarget.id); setDeleteTarget(null); setSelected(null) } }}
+            >
+              {deleteMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><Trash2 className="h-3.5 w-3.5 mr-1" />Xóa</>}
             </Button>
           </DialogFooter>
         </DialogContent>

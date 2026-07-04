@@ -36,7 +36,7 @@ const statusLabel: Record<OutboundStatus, string> = {
 function Badge({ status }: { status: string }) {
   const s = status as OutboundStatus
   return (
-    <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${statusCls[s] ?? 'bg-slate-100 text-slate-600'}`}>
+    <span className={`inline-flex shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${statusCls[s] ?? 'bg-slate-100 text-slate-600'}`}>
       {statusLabel[s] ?? status}
     </span>
   )

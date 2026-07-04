@@ -570,14 +570,18 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
   }
 
   const selectedMat   = (materials as MatItem[]).find(m => m.id === materialId)
+  // Nhập SX cho phép cả mã no-QR (POSM/Loscam, nhập tồn đầu). No-QR hiệu lực = mã no_qr_tracking HOẶC kho QTY
+  // → backend tự bỏ vị trí + nhập số lượng thủ công ở trang chi tiết, nên form không bắt buộc chọn Vị trí.
+  const factoryNoQr   = ((materials as any[]).find(m => m.id === materialId)?.no_qr_tracking === true)
+    || ((warehouses as any[]).find(w => w.id === warehouseId)?.inventory_mode === 'QTY')
   const matInputValue = matOpen
     ? matSearch
     : (selectedMat ? `${selectedMat.material_code} – ${selectedMat.short_name ?? selectedMat.material_description}` : matSearch)
 
   function handleFactorySubmit() {
-    if (!warehouseId || !subType || !materialId || !locationId || !shiftId || !importDate) return
+    if (!warehouseId || !subType || !materialId || (!factoryNoQr && !locationId) || !shiftId || !importDate) return
     createOrder(
-      { warehouse_id: warehouseId, material_id: materialId, location_id: locationId || undefined,
+      { warehouse_id: warehouseId, material_id: materialId, location_id: factoryNoQr ? undefined : (locationId || undefined),
         shift_id: shiftId || undefined, import_date: importDate, notes: notes || undefined,
         imported_by: importedByEmpId || undefined, source_type: 'FACTORY', warehouse_type: subType || undefined,
         ncc_id: (showFactoryNcc && nccId) ? nccId : undefined },
@@ -597,7 +601,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
         <Button variant="outline" onClick={onClose}>Huỷ</Button>
         {sourceType === 'FACTORY' ? (
           <Button onClick={handleFactorySubmit}
-            disabled={!warehouseId || !subType || !materialId || !locationId || isPending}>
+            disabled={!warehouseId || !subType || !materialId || (!factoryNoQr && !locationId) || isPending}>
             {isPending ? 'Đang tạo...' : 'Tạo phiếu'}
           </Button>
         ) : editGroup?.length ? (
@@ -675,16 +679,17 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                   />
                   {matOpen && (
                     <div className="absolute z-[100] w-full mt-1 max-h-52 overflow-y-auto rounded-md border bg-white shadow-lg">
-                      {(materials as any[]).filter(m => !m.no_qr_tracking).map(m => (
+                      {(materials as any[]).map(m => (
                         <button key={m.id} type="button"
                           className={`w-full text-left px-3 py-2 text-sm hover:bg-slate-100 flex items-baseline gap-2 ${m.id === materialId ? 'bg-slate-50 font-medium' : ''}`}
                           onMouseDown={e => { e.preventDefault(); e.stopPropagation() }}
                           onClick={() => { setMaterialId(m.id); setMatSearch(''); setMatOpen(false); setLocationId('') }}>
                           <span className="font-mono text-xs text-slate-500 shrink-0">{m.material_code}</span>
                           <span className="text-slate-800 truncate">{m.short_name ?? m.material_description}</span>
+                          {m.no_qr_tracking && <span className="ml-auto text-[9px] text-slate-400 border border-slate-200 rounded px-1 shrink-0">no-QR</span>}
                         </button>
                       ))}
-                      {(materials as any[]).filter(m => !m.no_qr_tracking).length === 0 && (
+                      {(materials as any[]).length === 0 && (
                         <div className="px-3 py-3 text-sm text-slate-400 text-center">Không tìm thấy hàng hóa</div>
                       )}
                     </div>
@@ -693,6 +698,11 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
               </div>
 
               <div className="col-span-2">
+                {factoryNoQr ? (
+                  <div className="rounded-md bg-slate-50 border border-slate-200 px-3 py-2 text-[11px] text-slate-500">
+                    Mã hàng không theo dõi QR — không cần vị trí. Nhập số lượng thủ công ở trang chi tiết sau khi tạo phiếu.
+                  </div>
+                ) : (<>
                 <Label className="text-xs">Vị trí nhập <span className="text-red-500">*</span>
                   <span className="ml-2 text-[10px] font-normal text-slate-400">★ = còn chỗ · đang để dở cùng loại hàng</span>
                 </Label>
@@ -720,6 +730,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                     }
                   })}
                 />
+                </>)}
               </div>
 
               <div>

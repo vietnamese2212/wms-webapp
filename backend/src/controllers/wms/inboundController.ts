@@ -374,15 +374,12 @@ export async function createOrder(req: Request, res: Response) {
     if (resolvedSourceType === 'NCC' && !ncc_id) return fail(res, 400, 'VALIDATION_ERROR', 'Nhập NCC phải chọn Nhà cung cấp')
     const resolvedNccId = ncc_id ?? null
 
-    // Check no_qr_tracking: FACTORY block giữ ở CẤP MÃ (mã no_qr không nhập SX được).
-    // Kho QTY KHÔNG chặn FACTORY (kho SX vẫn có thể là QTY) — chỉ ép no-QR hiệu lực để bỏ vị trí + nhập tay.
+    // Nhập SX = nơi nhập tay MỌI mã (kể cả no-QR: POSM/Loscam, nhập tồn đầu, dự phòng khi luồng khác sai).
+    // Mã no-QR (hoặc kho QTY ép no-QR hiệu lực) → location_id tự = null, nhập số lượng thủ công ở trang chi tiết.
     const [{ data: matCheck }, { data: whMode }] = await Promise.all([
       supabase.from('Material').select('no_qr_tracking').eq('id', material_id).maybeSingle(),
       supabase.from('Warehouse').select('inventory_mode').eq('id', warehouse_id).maybeSingle(),
     ])
-    if (matCheck?.no_qr_tracking === true && resolvedSourceType === 'FACTORY') {
-      return fail(res, 400, 'VALIDATION_ERROR', 'Hàng hóa không theo dõi QR không thể nhập theo luồng Nhập SX')
-    }
     const noQrEffective = effectiveNoQr(matCheck?.no_qr_tracking, (whMode as { inventory_mode?: string | null } | null)?.inventory_mode)
     const resolvedLocationId = noQrEffective ? null : (location_id ?? null)
 

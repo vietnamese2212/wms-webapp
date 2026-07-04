@@ -521,7 +521,7 @@ export default function LoosePickingItemDetail() {
               >
                 <ArrowLeft className="h-4 w-4" />
               </button>
-              <span className="font-mono font-semibold text-sm">{matCode}</span>
+              <span className="font-mono font-semibold text-sm truncate">{matCode}</span>
               <Badge status={item.status} />
             </div>
 

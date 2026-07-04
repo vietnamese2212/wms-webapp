@@ -362,9 +362,9 @@ export default function Outbound() {
     const dd = String(d.getDate()).padStart(2, '0'), mm = String(d.getMonth() + 1).padStart(2, '0'), yyyy = d.getFullYear()
     const ddmmyy = `${dd}${mm}${String(yyyy).slice(2)}`
     const headers = ['Số xe', 'Ngày xuất', 'Kho xuất', 'Loại kho', 'DVVT', 'Delivery', 'Tên NPP', 'Material', 'Material_type',
-      'Thùng', 'Hộp', 'Tải', 'Nhặt lẻ', 'Pallet', 'Loại xuất', 'HEADER TEXT', 'Batch_Yêu cầu', '%Date_Yêu cầu', 'CS phụ trách']
+      'Thùng', 'Hộp', 'Tải', 'Nhặt lẻ', 'Pallet', 'Loại xuất', 'HEADER TEXT', 'Batch_Yêu cầu', '%Date_Yêu cầu', 'CS phụ trách', 'Shipto party']
     const ex = [`20000016_X_${ddmmyy}_01`, `${dd}/${mm}/${yyyy}`, 'Kho Ba Vì', 'Thành phẩm', '3S', 'DO-0001', 'NPP mẫu',
-      '510000126', '', 100, '', '', 0, 5, '', '', '', '', '']
+      '510000126', '', 100, '', '', 0, 5, '', '', '', '', '', '']
     const ws = XLSX.utils.aoa_to_sheet([headers, ex])
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'XuatKho')

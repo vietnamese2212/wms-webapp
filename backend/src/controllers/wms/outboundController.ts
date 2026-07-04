@@ -1387,7 +1387,7 @@ export async function uploadExcel(req: Request, res: Response) {
     // Pre-load warehouses, materials, warehouse types, and existing GDOs in parallel
     const allGroupCodes = [...byVehicle.keys()]
     const [warehousesRes, whTypesRes, vehicleTypesRes, existingRes, allMaterials] = await Promise.all([
-      supabase.from('Warehouse').select('id, code, name').eq('is_active', true),
+      supabase.from('Warehouse').select('id, code, name, shipto_codes').eq('is_active', true),
       // LookupValue KHÔNG có cột is_active — lọc theo nó làm query lỗi → validWhTypes rỗng → chặn oan mọi file
       supabase.from('LookupValue').select('value').eq('type', 'warehouse_type'),
       supabase.from('VehicleType').select('code, name').eq('is_active', true),
@@ -1399,9 +1399,18 @@ export async function uploadExcel(req: Request, res: Response) {
     ])
 
     const warehouseByKey = new Map<string, string>()
-    for (const w of (warehousesRes.data ?? [])) {
+    // Ship-to resolver: key (mã kho / mã ship-to phụ / tên kho, lower) → giá trị shipto_party sẽ lưu
+    // (mã kho hoặc mã ship-to phụ — cả hai đều khớp được maybeAutoCreateTransferOrder)
+    const shiptoByKey = new Map<string, string>()
+    for (const w of (warehousesRes.data ?? []) as { id: string; code: string; name: string; shipto_codes?: string[] | null }[]) {
       warehouseByKey.set(w.code.trim().toLowerCase(), w.id)
       warehouseByKey.set(w.name.trim().toLowerCase(), w.id)
+      shiptoByKey.set(w.code.trim().toLowerCase(), w.code.trim())
+      shiptoByKey.set(w.name.trim().toLowerCase(), w.code.trim())
+      for (const sc of (w.shipto_codes ?? [])) {
+        const s = String(sc).trim()
+        if (s) shiptoByKey.set(s.toLowerCase(), s)
+      }
     }
     const matMap = new Map<string, string>(
       allMaterials.map(m => [String(m.material_code).trim(), m.id])
@@ -1497,6 +1506,13 @@ export async function uploadExcel(req: Request, res: Response) {
         .filter(v => !resolveVehicleType(v))
       if (badExport.length) errs.push(`Loại xuất "${badExport.join(', ')}" không khớp danh mục Loại xe TMS`)
 
+      // Shipto party (cột tùy chọn — đơn chuyển kho): 1 giá trị/Số xe, phải khớp kho hệ thống
+      const shiptoVals = [...new Set(groupRows.map(r => String(r['Shipto party'] ?? r['Shipto_party'] ?? '').trim()).filter(Boolean))]
+      if (shiptoVals.length > 1)
+        errs.push(`Nhiều Shipto party khác nhau trong 1 Số xe: ${shiptoVals.join(', ')}`)
+      else if (shiptoVals.length === 1 && !shiptoByKey.has(shiptoVals[0].toLowerCase()))
+        errs.push(`Shipto party "${shiptoVals[0]}" không khớp kho nào (mã kho / mã ship-to phụ / tên kho)`)
+
       if (blockedMap.has(group_code)) {
         const status = blockedMap.get(group_code)!
         errs.push(status === 'COMPLETED'
@@ -1556,6 +1572,16 @@ export async function uploadExcel(req: Request, res: Response) {
         byNpp.set(npp, list)
       }
 
+      // Ship-to (chuyển kho): cột "Shipto party" ưu tiên (đã validate khớp kho);
+      // không có cột → tự khớp Tên NPP với kho hệ thống (chỉ khi chuyến có đúng 1 NPP);
+      // vẫn không → giữ ship-to đã gán tay trước đó (upload đè không làm mất).
+      const shiptoColVal = [...new Set(groupRows.map(r => String(r['Shipto party'] ?? r['Shipto_party'] ?? '').trim()).filter(Boolean))][0] ?? ''
+      const nppNames = [...byNpp.keys()].filter(Boolean)
+      const resolvedShipto =
+        (shiptoColVal ? shiptoByKey.get(shiptoColVal.toLowerCase()) ?? null : null)
+        ?? (nppNames.length === 1 ? shiptoByKey.get(nppNames[0].toLowerCase()) ?? null : null)
+        ?? shiptoByGroupCode.get(group_code) ?? null
+
       // PAUSED → merge (strict: scanned items must all exist in new file)
       if (pausedGDOMap.has(group_code)) {
         const mergeResult = await mergePausedGDO(
@@ -1564,6 +1590,11 @@ export async function uploadExcel(req: Request, res: Response) {
           resolved_warehouse_id, dvvt, loai_kho,
           byNpp, matMap
         )
+        if (resolvedShipto) {
+          await supabase.from('GroupDeliveryOrder')
+            .update({ shipto_party: resolvedShipto, updated_at: now() })
+            .eq('id', pausedGDOMap.get(group_code)!)
+        }
         created.push(mergeResult)
         continue
       }
@@ -1606,7 +1637,7 @@ export async function uploadExcel(req: Request, res: Response) {
         toPreserveIds.push(gdoId)
         preserveGDOUpdates.push({
           id: gdoId,
-          fields: { delivery_date, planned_date, warehouse_id: resolved_warehouse_id, dvvt, warehouse_type: loai_kho, updated_at: now() },
+          fields: { delivery_date, planned_date, warehouse_id: resolved_warehouse_id, dvvt, warehouse_type: loai_kho, shipto_party: resolvedShipto, updated_at: now() },
         })
         collectDOsAndItems(gdoId)
         created.push({ group_code, id: gdoId, created: true, preserved_assignment: true })
@@ -1622,7 +1653,7 @@ export async function uploadExcel(req: Request, res: Response) {
       gdoInserts.push({
         id: gdoId, group_code, planned_date, delivery_date,
         warehouse_id: resolved_warehouse_id, dvvt, warehouse_type: loai_kho,
-        shipto_party: shiptoByGroupCode.get(group_code) ?? null,   // giữ ship-to đã gán tay khi upload đè
+        shipto_party: resolvedShipto,   // cột > khớp Tên NPP > ship-to đã gán tay (upload đè không làm mất)
         status: 'PENDING', created_by: actor, updated_by: actor, updated_at: now(),
       })
       collectDOsAndItems(gdoId)

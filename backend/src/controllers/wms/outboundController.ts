@@ -537,46 +537,24 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
   const { data: gdo } = await supabase.from('GroupDeliveryOrder')
     .select('id, group_code, shipto_party, transfer_status, license_plate')
     .eq('id', gdoId).single()
-  if (!gdo || gdo.transfer_status) return
+  // Chỉ tạo chuyển kho khi có shipto_party (gốc từ upload) khớp KHO NHẬN theo dõi tồn (QR/QTY).
+  // shipto trỏ kho NONE / khách hàng / không có trong DB → xuất bán thường, KHÔNG tạo chuyển kho.
+  // (đổi kho NONE→QR/QTY rồi Hoàn thành: shipto đã lưu sẵn → tra lại thấy QR/QTY → tạo chuyển kho.)
+  if (!gdo?.shipto_party || gdo.transfer_status) return
 
-  // DO (kèm Tên NPP) — dùng cho fallback xác định kho đích + gom item
+  type DestWh = { id: string; code: string; name: string; inventory_mode?: string | null }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: destWhData } = await supabase.from('Warehouse')
+    .select('id, code, name, inventory_mode')
+    .or(`code.eq.${gdo.shipto_party},shipto_codes.cs.{${gdo.shipto_party}}`)
+    .eq('is_active', true).maybeSingle()
+  const destWh = (destWhData as DestWh) ?? null
+  if (!destWh || destWh.inventory_mode === 'NONE') return
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: dos } = await supabase.from('OutboundDelivery')
-    .select('id, distributor_name').eq('gdo_id', gdoId)
+    .select('id').eq('gdo_id', gdoId)
   const doIds = (dos ?? []).map((d: { id: string }) => d.id)
-
-  // Xác định KHO ĐÍCH (kho nhận theo dõi tồn QR/QTY):
-  //  1) shipto_party tường minh (mã kho / mã ship-to phụ), HOẶC
-  //  2) tra SỐNG theo Tên NPP của đơn → kho QR/QTY (đúng 1 kho khớp mới tạo).
-  // → đổi kho NONE→QR/QTY xong, Hoàn thành đơn cũ (shipto trống) VẪN tự đẩy sang Kế hoạch VC.
-  type DestWh = { id: string; code: string; name: string; inventory_mode?: string | null }
-  let destWh: DestWh | null = null
-  if (gdo.shipto_party) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data } = await supabase.from('Warehouse')
-      .select('id, code, name, inventory_mode')
-      .or(`code.eq.${gdo.shipto_party},shipto_codes.cs.{${gdo.shipto_party}}`)
-      .eq('is_active', true).maybeSingle()
-    destWh = (data as DestWh) ?? null
-  }
-  if (!destWh) {
-    const nppKeys = [...new Set((dos ?? []).map((d: { distributor_name?: string | null }) => String(d.distributor_name ?? '').trim().toLowerCase()).filter(Boolean))]
-    if (nppKeys.length) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: whs } = await supabase.from('Warehouse')
-        .select('id, code, name, inventory_mode')
-        .eq('is_active', true).neq('inventory_mode', 'NONE')
-      const matched = new Map<string, DestWh>()
-      for (const w of ((whs ?? []) as DestWh[])) {
-        if (nppKeys.includes(String(w.name).trim().toLowerCase()) || nppKeys.includes(String(w.code).trim().toLowerCase()))
-          matched.set(w.id, w)
-      }
-      if (matched.size === 1) destWh = [...matched.values()][0]
-    }
-  }
-  if (!destWh) return
-  // Kho đích NONE (không theo dõi tồn) → xuất bán/tiêu hao thường: chỉ trừ tồn nguồn, KHÔNG tạo chuyển kho.
-  if (destWh.inventory_mode === 'NONE') return
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: items } = doIds.length
@@ -637,7 +615,7 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   await supabase.from('GroupDeliveryOrder')
-    .update({ transfer_status: 'IN_TRANSIT', shipto_party: destWh.code, updated_at: nowTs }).eq('id', gdoId)
+    .update({ transfer_status: 'IN_TRANSIT', updated_at: nowTs }).eq('id', gdoId)
 }
 
 // ─── Delete GDO ───────────────────────────────────────────────
@@ -1410,7 +1388,7 @@ export async function uploadExcel(req: Request, res: Response) {
     // Pre-load warehouses, materials, warehouse types, and existing GDOs in parallel
     const allGroupCodes = [...byVehicle.keys()]
     const [warehousesRes, whTypesRes, vehicleTypesRes, existingRes, allMaterials] = await Promise.all([
-      supabase.from('Warehouse').select('id, code, name, shipto_codes, inventory_mode').eq('is_active', true),
+      supabase.from('Warehouse').select('id, code, name').eq('is_active', true),
       // LookupValue KHÔNG có cột is_active — lọc theo nó làm query lỗi → validWhTypes rỗng → chặn oan mọi file
       supabase.from('LookupValue').select('value').eq('type', 'warehouse_type'),
       supabase.from('VehicleType').select('code, name').eq('is_active', true),
@@ -1422,21 +1400,9 @@ export async function uploadExcel(req: Request, res: Response) {
     ])
 
     const warehouseByKey = new Map<string, string>()
-    // Ship-to resolver: key (mã kho / mã ship-to phụ / tên kho, lower) → giá trị shipto_party sẽ lưu.
-    // CHỈ nhận kho NHẬN thật = kho theo dõi tồn (inventory_mode QR/QTY). NPP/khách hàng (mode NONE)
-    // KHÔNG phải kho nhận — SAP điền mã ship-to khách hàng vào cột, nếu khớp nhầm sẽ hiện "Xuất SX" oan
-    // + không tạo chuyển kho gì (maybeAutoCreateTransferOrder bỏ NONE). Áp cho CẢ cột lẫn khớp Tên NPP.
-    const shiptoByKey = new Map<string, string>()
-    for (const w of (warehousesRes.data ?? []) as { id: string; code: string; name: string; shipto_codes?: string[] | null; inventory_mode?: string | null }[]) {
+    for (const w of (warehousesRes.data ?? []) as { id: string; code: string; name: string }[]) {
       warehouseByKey.set(w.code.trim().toLowerCase(), w.id)
       warehouseByKey.set(w.name.trim().toLowerCase(), w.id)
-      if (w.inventory_mode === 'NONE') continue   // khách hàng / kho không theo dõi tồn → không phải shipto
-      shiptoByKey.set(w.code.trim().toLowerCase(), w.code.trim())
-      shiptoByKey.set(w.name.trim().toLowerCase(), w.code.trim())
-      for (const sc of (w.shipto_codes ?? [])) {
-        const s = String(sc).trim()
-        if (s) shiptoByKey.set(s.toLowerCase(), w.code.trim())
-      }
     }
     const matMap = new Map<string, string>(
       allMaterials.map(m => [String(m.material_code).trim(), m.id])
@@ -1598,16 +1564,11 @@ export async function uploadExcel(req: Request, res: Response) {
         byNpp.set(npp, list)
       }
 
-      // Ship-to (chuyển kho): cột "Shipto party" ưu tiên — KHÔNG chặn khi không khớp
-      // (SAP điền ship-to cho MỌI khách hàng; chỉ giá trị khớp KHO NHẬN theo dõi tồn mới có ý nghĩa, còn lại bỏ qua);
-      // không khớp → tự khớp Tên NPP với kho nhận (chỉ khi chuyến có đúng 1 NPP);
-      // vẫn không → giữ ship-to đã gán tay trước đó (upload đè không làm mất).
+      // Ship-to = giá trị GỐC từ cột "Shipto party" của file (verbatim) — KHÔNG suy từ Tên NPP,
+      // KHÔNG chặn/lọc theo kho (SAP điền mã ship-to mọi khách hàng; lưu nguyên để hiển thị).
+      // Chuyển kho (Kế hoạch VC) tự lọc kho QR/QTY khi Hoàn thành. File không có → giữ ship-to đã gán tay.
       const shiptoColVals = [...new Set(groupRows.map(r => String(r['Shipto party'] ?? r['Shipto_party'] ?? '').trim()).filter(Boolean))]
-      const nppNames = [...byNpp.keys()].filter(Boolean)
-      const resolvedShipto =
-        shiptoColVals.map(v => shiptoByKey.get(v.toLowerCase())).find(Boolean)
-        ?? (nppNames.length === 1 ? shiptoByKey.get(nppNames[0].toLowerCase()) ?? null : null)
-        ?? shiptoByGroupCode.get(group_code) ?? null
+      const resolvedShipto = shiptoColVals[0] ?? shiptoByGroupCode.get(group_code) ?? null
 
       // PAUSED → merge (strict: scanned items must all exist in new file)
       if (pausedGDOMap.has(group_code)) {

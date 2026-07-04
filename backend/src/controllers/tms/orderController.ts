@@ -482,7 +482,17 @@ export async function bulkUpdateOrderDate(req: Request, res: Response) {
       .eq('status', 'PENDING')
       .select('id')
     if (error) return fail(res, error.message)
-    return ok(res, { updated: (data ?? []).length })
+
+    // Đơn NHẬP: dòng KH (inbound_plan_lines) mang date riêng — đổi theo, không thì lệch ngày đơn vs dòng
+    // (báo cáo nhập theo ngày + khóa gộp upload đều bám date của dòng). Đơn xuất không có lines → no-op.
+    const updatedIds = (data ?? []).map((o: { id: string }) => o.id)
+    for (let i = 0; i < updatedIds.length; i += 300) {
+      const { error: lineErr } = await supabase.from('inbound_plan_lines')
+        .update({ date, updated_by: user?.name || null, updated_at: now })
+        .in('tms_order_id', updatedIds.slice(i, i + 300))
+      if (lineErr) return fail(res, lineErr.message)
+    }
+    return ok(res, { updated: updatedIds.length })
   } catch (e) { return fail(res, String(e)) }
 }
 

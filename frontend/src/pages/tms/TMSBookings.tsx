@@ -2650,6 +2650,36 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
   )
 }
 
+// Cột lưới Kế hoạch (tab main) — kéo giãn từ 'Tên NPP' trở đi; checkbox + Mã đơn + cột action cố định
+// (yêu cầu user 05/07). Thứ tự PHẢI khớp <td> trong tbody.
+const MAIN_COLS: { label: string; cls?: string; align?: 'right'; resize?: boolean }[] = [
+  { label: '', resize: false },                    // checkbox
+  { label: 'Mã đơn', resize: false },
+  { label: 'Tên NPP' },
+  { label: 'Đặt giờ' },
+  { label: 'Ngày KH' },
+  { label: 'Khung giờ' },
+  { label: 'Biển số' },
+  { label: 'ĐVVT' },
+  { label: 'UT', cls: 'text-red-500' },
+  { label: 'Hướng' },
+  { label: 'Loại kho' },
+  { label: 'Loại xe' },
+  { label: 'Thùng', align: 'right' },
+  { label: 'Pallet', align: 'right' },
+  { label: 'Tấn', align: 'right' },
+  { label: 'SĐT' },
+  { label: 'Trạng thái' },
+  { label: 'Tình trạng XH' },
+  { label: 'Giờ HT', cls: 'text-green-600' },
+  { label: 'Giờ ĐK' },
+  { label: 'Giờ vào' },
+  { label: 'Giờ ra' },
+  { label: 'Kho' },
+  { label: '', resize: false },                    // actions
+]
+const MAIN_COL_DEFAULTS = [32, 148, 150, 44, 78, 88, 88, 110, 28, 56, 88, 100, 64, 56, 56, 90, 92, 96, 64, 64, 64, 64, 104, 64]
+
 // ── TransferOrdersPanel ───────────────────────────────────────────────────────
 
 // Cột bảng Chuyển kho (kéo giãn được) — label + độ rộng mặc định (px). Thứ tự PHẢI khớp <td> trong tbody.
@@ -3266,6 +3296,7 @@ export default function TMSBookings() {
   const [changeDateOpen, setChangeDateOpen] = useState(false)
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false)
   const [pendingRelease, setPendingRelease] = useState<{ type: 'release' | 'revoke' | 'delete'; id: string; vslot?: TmsVehicleSlot; label: string } | null>(null)
+  const { widths: mainColW, startResize: startMainResize, totalWidth: mainTotalWidth } = useColumnResize('tms_plan_col_widths', MAIN_COL_DEFAULTS)
 
   const { data: warehouses = [] }             = useScopedWarehouses(true)
   const { data: slotsList = [] }              = useDeliverySlots(warehouseId ? { date: dateFrom, warehouse_id: warehouseId } : undefined)
@@ -3558,8 +3589,10 @@ export default function TMSBookings() {
     ['BOOKED', 'ARRIVED'].includes(vs.status) &&
     !canReleaseSlot(vs)
 
+  // Đơn NHẬP cũng đổi ngày/xóa được như đơn xuất (BE dọn inbound_plan_lines + đổi date lines theo).
+  // Trừ đơn chuyển kho TRANSFER (tự tạo từ Outbound — BE chặn xóa, ngày đi theo GDO).
   const checkableOrderIds = useMemo(() =>
-    (canChangeDate || canDelete) ? filteredOrders.filter(o => o.direction !== 'INBOUND' && o.vehicle_slots.every(vs => vs.status === 'PENDING')).map(o => o.id) : [],
+    (canChangeDate || canDelete) ? filteredOrders.filter(o => o.source_type !== 'TRANSFER' && o.vehicle_slots.every(vs => vs.status === 'PENDING')).map(o => o.id) : [],
     [filteredOrders, canChangeDate, canDelete]
   )
   const allChecked = checkableOrderIds.length > 0 && checkableOrderIds.every(id => selectedOrderIds.has(id))
@@ -3745,43 +3778,35 @@ export default function TMSBookings() {
         ) : !tableRows.length ? (
           <div className="py-24 text-center text-sm text-slate-400">Chưa có đơn hàng nào trong khoảng ngày này</div>
         ) : (
-          <Table className="min-w-[960px] [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100">
+          <Table className="table-fixed [&_th]:overflow-hidden [&_td]:overflow-hidden [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100" style={{ width: mainTotalWidth, minWidth: '100%' }}>
+            <colgroup>
+              {mainColW.map((w, i) => <col key={i} style={{ width: w }} />)}
+            </colgroup>
             <TableHeader>
               <TableRow>
-                <TableHead className="px-2 py-1.5 w-8">
-                  {checkableOrderIds.length > 0 && (
-                    <input
-                      type="checkbox"
-                      className="h-3.5 w-3.5 cursor-pointer"
-                      checked={allChecked}
-                      ref={el => { if (el) el.indeterminate = someChecked }}
-                      onChange={toggleAll}
-                    />
-                  )}
-                </TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Mã đơn</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Tên NPP</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap w-10">Đặt giờ</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Ngày KH</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Khung giờ</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Biển số</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">ĐVVT</TableHead>
-                <TableHead className="text-[9px] font-medium text-red-500 px-2 py-1.5 whitespace-nowrap w-6">UT</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Hướng</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Loại kho</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Loại xe</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap text-right">Thùng</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap text-right">Pallet</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap text-right">Tấn</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">SĐT</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Trạng thái</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Tình trạng XH</TableHead>
-                <TableHead className="text-[9px] font-medium text-green-600 px-2 py-1.5 whitespace-nowrap">Giờ HT</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Giờ ĐK</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Giờ vào</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Giờ ra</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Kho</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 w-16"></TableHead>
+                {MAIN_COLS.map((c, i) => (
+                  <TableHead key={i} className={`px-2 py-1.5 text-[9px] font-medium whitespace-nowrap ${c.cls ?? 'text-slate-500'} ${c.align === 'right' ? 'text-right' : ''}`}>
+                    {i === 0
+                      ? checkableOrderIds.length > 0 && (
+                          <input
+                            type="checkbox"
+                            className="h-3.5 w-3.5 cursor-pointer"
+                            checked={allChecked}
+                            ref={el => { if (el) el.indeterminate = someChecked }}
+                            onChange={toggleAll}
+                          />
+                        )
+                      : c.label}
+                    {c.resize !== false && (
+                      <span
+                        onPointerDown={e => startMainResize(i, e)}
+                        onClick={e => e.stopPropagation()}
+                        className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70"
+                        title="Kéo để chỉnh độ rộng cột"
+                      />
+                    )}
+                  </TableHead>
+                ))}
               </TableRow>
             </TableHeader>
             <TableBody>

@@ -1101,12 +1101,16 @@ type ItemRow = {
   cartons: number
   min_cartons: number  // 0 for new items, cartons_scanned for existing
   loose_picking: number
+  batch_required: string
+  date_required: number
+  cs_responsible: string
   header_text: string
+  npp: string          // NPP của dòng (đơn đa-NPP: dòng thêm mới phải chọn; dòng cũ chỉ hiển thị)
 }
 
 let _uid = 0
 const uid = () => String(++_uid)
-const makeItem = (): ItemRow => ({ id: uid(), material_code: '', mat_name: '', unit: '', category: null, cartons: 0, min_cartons: 0, loose_picking: 0, header_text: '' })
+const makeItem = (): ItemRow => ({ id: uid(), material_code: '', mat_name: '', unit: '', category: null, cartons: 0, min_cartons: 0, loose_picking: 0, batch_required: '', date_required: 0, cs_responsible: '', header_text: '', npp: '' })
 
 // ─── Shared form UI ───────────────────────────────────────────
 
@@ -1160,7 +1164,9 @@ function GDOFormBody({
   // Đích là kho NONE (vd bộ phận Sản xuất) → xuất tiêu hao: không có xe, không tạo phiếu nhập
   const isProductionIssue = (warehouses as WarehouseLite[]).find(w => w.code === shiptoPartyId)?.inventory_mode === 'NONE'
   const noVehicle = isNPP || isProductionIssue
-  const isMultiDO = (gdo?.delivery_orders?.length ?? 0) > 1
+  // Đa-NPP mới là tiêu chí "đơn gộp" (chuẩn 04/07) — DO chỉ là tham khảo, không có vai trò
+  const nppOptions = useMemo(() => [...new Set((gdo?.delivery_orders ?? []).map(d => (d.distributor_name ?? '').trim()).filter(Boolean))], [gdo])
+  const isMultiNpp = nppOptions.length > 1
 
   const TODAY_STR = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   const [yr, mo, dy] = TODAY_STR.split('-')
@@ -1170,10 +1176,12 @@ function GDOFormBody({
     setItems(rows => rows.map(r => r.id === id ? { ...r, ...patch } : r))
   }
 
+  // Trùng = cùng mã hàng TRONG CÙNG NPP (khác NPP thì 1 mã được phép xuất hiện lại)
+  const dupKey = (i: ItemRow) => `${i.npp.trim()}||${i.material_code}`
   const duplicateCodes = useMemo(() => {
     const seen = new Map<string, number>()
     for (const item of items) {
-      if (item.material_code) seen.set(item.material_code, (seen.get(item.material_code) ?? 0) + 1)
+      if (item.material_code) seen.set(dupKey(item), (seen.get(dupKey(item)) ?? 0) + 1)
     }
     return new Set([...seen.entries()].filter(([, n]) => n > 1).map(([c]) => c))
   }, [items])
@@ -1204,11 +1212,15 @@ function GDOFormBody({
       const rows = [...prev]
       while (rows.length < startIdx + lines.length) rows.push(makeItem())
       lines.forEach((line, offset) => {
-        const cols = line.split('\t')
+        // Thứ tự cột khớp bảng form: Mã hàng | Thùng | Nhặt lẻ | Batch | %Date | CS | Header text
+        const cols  = line.split('\t')
         const code  = (cols[0] ?? '').trim()
         const cart  = parseInt((cols[1] ?? '').replace(/[^0-9]/g, '')) || 0
         const loose = parseInt((cols[2] ?? '').replace(/[^0-9]/g, '')) || 0
-        const note  = (cols[3] ?? '').trim()
+        const batch = (cols[3] ?? '').trim()
+        const dateR = parseInt((cols[4] ?? '').replace(/[^0-9]/g, '')) || 0
+        const cs    = (cols[5] ?? '').trim()
+        const note  = (cols[6] ?? '').trim()
         const mat   = lookupMat(code)
         rows[startIdx + offset] = {
           ...rows[startIdx + offset],
@@ -1218,6 +1230,9 @@ function GDOFormBody({
           category:  mat?.category  ?? rows[startIdx + offset].category,
           ...(cart  ? { cartons: cart }                              : {}),
           ...(loose !== 0 ? { loose_picking: loose }                 : {}),
+          ...(batch ? { batch_required: batch }                      : {}),
+          ...(dateR ? { date_required: dateR }                       : {}),
+          ...(cs    ? { cs_responsible: cs }                         : {}),
           ...(note  ? { header_text: note }                          : {}),
         }
       })
@@ -1265,6 +1280,22 @@ function GDOFormBody({
       while (rows.length < startIdx + values.length) rows.push(makeItem())
       values.forEach((val, offset) => {
         rows[startIdx + offset] = { ...rows[startIdx + offset], header_text: val.trim() }
+      })
+      return rows
+    })
+  }
+
+  // Paste nhiều dòng từ Excel vào 1 cột bất kỳ (Batch/%Date/CS) — điền lần lượt xuống từ ô đang dán
+  function handlePasteColAt(startIdx: number, e: React.ClipboardEvent<HTMLInputElement>, apply: (val: string) => Partial<ItemRow>) {
+    const text = e.clipboardData.getData('text')
+    if (!text.includes('\n')) return
+    e.preventDefault()
+    const values = text.trim().split(/\r?\n/).filter(Boolean)
+    setItems(prev => {
+      const rows = [...prev]
+      while (rows.length < startIdx + values.length) rows.push(makeItem())
+      values.forEach((val, offset) => {
+        rows[startIdx + offset] = { ...rows[startIdx + offset], ...apply(val.trim()) }
       })
       return rows
     })
@@ -1322,9 +1353,9 @@ function GDOFormBody({
           ) : <div />}
           <div className="space-y-1">
             <label className="text-[10px] font-medium text-slate-500">
-              Tên khách hàng {(!isMultiDO || mode === 'create') && <span className="text-red-500">*</span>}
+              Tên khách hàng {(!isMultiNpp || mode === 'create') && <span className="text-red-500">*</span>}
             </label>
-            {isMultiDO && mode === 'edit' ? (
+            {isMultiNpp && mode === 'edit' ? (
               <div className="text-[10px] px-2 py-1 border border-slate-100 rounded bg-white text-slate-600 truncate">
                 {(gdo?.delivery_orders ?? []).map(d => d.distributor_name).filter(Boolean).join(' · ') || '—'}
               </div>
@@ -1358,16 +1389,10 @@ function GDOFormBody({
               <DvvtCombobox value={dvvt} onChange={setDvvt} companies={dvvtCompanies} />
             )}
           </div>
-          {!isMultiDO && (
+          {!isMultiNpp && (
             <div className="space-y-1">
               <label className="text-[10px] font-medium text-slate-500">Số DO *</label>
-              {isMultiDO ? (
-                <div className="text-[10px] px-2 py-1 border border-slate-100 rounded bg-white text-slate-600 font-mono">
-                  {(gdo?.delivery_orders ?? []).map(d => d.delivery_code).filter(Boolean).join(', ') || '—'}
-                </div>
-              ) : (
-                <Input className="h-7 text-xs font-mono" placeholder="VD: 3000245103" value={deliveryCode} onChange={e => setDeliveryCode(e.target.value)} />
-              )}
+              <Input className="h-7 text-xs font-mono" placeholder="VD: 3000245103" value={deliveryCode} onChange={e => setDeliveryCode(e.target.value)} />
             </div>
           )}
           {!noVehicle && (
@@ -1401,7 +1426,7 @@ function GDOFormBody({
       <div className="flex-1 min-h-0 overflow-auto px-4 py-3">
         <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
           Danh sách hàng
-          <span className="text-slate-400 font-normal normal-case ml-2">paste từ Excel OK — Mã hàng | Thùng | Nhặt lẻ | Ghi chú</span>
+          <span className="text-slate-400 font-normal normal-case ml-2">paste từ Excel OK — Mã hàng | Thùng | Nhặt lẻ | Batch | %Date | CS | Ghi chú</span>
         </p>
         <div className="rounded-lg border border-slate-200 overflow-x-auto">
           <table className="min-w-max w-full">
@@ -1413,7 +1438,11 @@ function GDOFormBody({
                 <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-14">DVT</th>
                 <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right w-20">Thùng</th>
                 <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right w-20">Nhặt lẻ</th>
+                <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-28">Batch</th>
+                <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right w-16">%Date</th>
+                <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-24">CS</th>
                 <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-40">Ghi chú</th>
+                {isMultiNpp && <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-32">NPP</th>}
                 <th className="px-1 py-1.5 w-7" />
               </tr>
             </thead>
@@ -1422,7 +1451,7 @@ function GDOFormBody({
                 const fullScanned    = item.min_cartons > 0 && item.min_cartons >= item.cartons
                 const partScanned    = item.min_cartons > 0 && item.min_cartons < item.cartons
                 const cartonsInvalid = item.cartons > 0 && item.cartons < item.min_cartons
-                const isDup          = item.material_code !== '' && duplicateCodes.has(item.material_code)
+                const isDup          = item.material_code !== '' && duplicateCodes.has(dupKey(item))
                 const rowCls = fullScanned ? 'bg-blue-50' : partScanned ? 'bg-amber-50' : isDup ? 'bg-red-50' : ''
                 return (
                   <tr key={item.id} className={`border-t border-slate-100 ${rowCls}`}>
@@ -1465,6 +1494,34 @@ function GDOFormBody({
                       />
                     </td>
                     <td className="px-2 py-1">
+                      <input
+                        className="h-6 w-24 rounded border border-slate-200 px-1.5 text-[10px] focus:outline-none focus:ring-1 focus:ring-blue-400"
+                        placeholder="Batch…"
+                        value={item.batch_required}
+                        onChange={e => updateItem(item.id, { batch_required: e.target.value })}
+                        onPaste={e => handlePasteColAt(idx, e, v => ({ batch_required: v }))}
+                      />
+                    </td>
+                    <td className="px-2 py-1">
+                      <input
+                        type="number" min={0} max={100}
+                        className="h-6 w-12 rounded border border-slate-200 px-1 text-[10px] text-right focus:outline-none focus:ring-1 focus:ring-blue-400"
+                        placeholder="%"
+                        value={item.date_required || ''}
+                        onChange={e => updateItem(item.id, { date_required: parseInt(e.target.value) || 0 })}
+                        onPaste={e => handlePasteColAt(idx, e, v => ({ date_required: parseInt(v.replace(/[^0-9]/g, '')) || 0 }))}
+                      />
+                    </td>
+                    <td className="px-2 py-1">
+                      <input
+                        className="h-6 w-20 rounded border border-slate-200 px-1.5 text-[10px] focus:outline-none focus:ring-1 focus:ring-blue-400"
+                        placeholder="CS…"
+                        value={item.cs_responsible}
+                        onChange={e => updateItem(item.id, { cs_responsible: e.target.value })}
+                        onPaste={e => handlePasteColAt(idx, e, v => ({ cs_responsible: v }))}
+                      />
+                    </td>
+                    <td className="px-2 py-1">
                       {item.min_cartons > 0 ? (
                         <span className="text-[10px] text-slate-500 italic">{item.header_text || '—'}</span>
                       ) : (
@@ -1477,6 +1534,22 @@ function GDOFormBody({
                         />
                       )}
                     </td>
+                    {isMultiNpp && (
+                      <td className="px-2 py-1">
+                        {item.db_id ? (
+                          <span className="text-[10px] text-slate-600 truncate block max-w-[120px]" title={item.npp}>{item.npp || '—'}</span>
+                        ) : (
+                          <select
+                            className="h-6 w-full rounded border border-slate-200 px-1 text-[10px] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+                            value={item.npp}
+                            onChange={e => updateItem(item.id, { npp: e.target.value })}
+                          >
+                            <option value="">— Chọn NPP —</option>
+                            {nppOptions.map(n => <option key={n} value={n}>{n}</option>)}
+                          </select>
+                        )}
+                      </td>
+                    )}
                     <td className="px-1 py-1">
                       {item.min_cartons === 0 && (
                         <button onClick={() => setItems(rows => rows.filter(r => r.id !== item.id))}
@@ -1492,16 +1565,14 @@ function GDOFormBody({
           </table>
         </div>
 
-        {!isMultiDO && (
-          <button
-            onClick={() => setItems(rows => [...rows, makeItem()])}
-            className="flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-700 w-full justify-center border border-dashed border-blue-200 rounded-lg py-1.5 hover:border-blue-400 mt-2"
-          >
-            <Plus className="h-3 w-3" /> Thêm dòng
-          </button>
-        )}
+        <button
+          onClick={() => setItems(rows => [...rows, { ...makeItem(), npp: isMultiNpp ? '' : (nppOptions[0] ?? '') }])}
+          className="flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-700 w-full justify-center border border-dashed border-blue-200 rounded-lg py-1.5 hover:border-blue-400 mt-2"
+        >
+          <Plus className="h-3 w-3" /> Thêm dòng
+        </button>
         {duplicateCodes.size > 0 && (
-          <p className="text-[11px] text-red-600 mt-2">Mã hàng bị trùng: {[...duplicateCodes].join(', ')}</p>
+          <p className="text-[11px] text-red-600 mt-2">Mã hàng bị trùng trong cùng NPP: {[...duplicateCodes].map(k => k.split('||')[1]).join(', ')}</p>
         )}
       </div>
 
@@ -1577,7 +1648,7 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
         customer_name: customerName.trim(),
         delivery_code: deliveryCode.trim() || undefined,
         export_type: exportType,
-        items: filledItems.map(i => ({ material_code: i.material_code, cartons_ordered: i.cartons, loose_picking: i.loose_picking, header_text: i.header_text || undefined })),
+        items: filledItems.map(i => ({ material_code: i.material_code, cartons_ordered: i.cartons, loose_picking: i.loose_picking, header_text: i.header_text || undefined, batch_required: i.batch_required || undefined, date_required: i.date_required || undefined, cs_responsible: i.cs_responsible || undefined })),
       },
       {
         onSuccess: () => onClose(),
@@ -1659,7 +1730,11 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
         cartons: item.cartons_ordered ?? 0,
         min_cartons: item.cartons_scanned ?? 0,
         loose_picking: item.loose_picking ?? 0,
+        batch_required: item.batch_required ?? '',
+        date_required: item.date_required ?? 0,
+        cs_responsible: item.cs_responsible ?? '',
         header_text: item.header_text ?? '',
+        npp: (doRow.distributor_name ?? '').trim(),
       }))
     )
     setItems(allItems.length ? allItems : [makeItem()])
@@ -1669,15 +1744,17 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
   const isProdEdit = (warehousesForEdit as any[]).find(w => w.code === shiptoPartyId)?.inventory_mode === 'NONE'
 
   function handleSubmit() {
-    const isMultiDO = (gdo?.delivery_orders?.length ?? 0) > 1
+    // Đa-NPP (chuẩn 04/07) — DO chỉ là tham khảo, không dùng làm tiêu chí
+    const isMultiNpp = new Set((gdo?.delivery_orders ?? []).map(d => (d.distributor_name ?? '').trim()).filter(Boolean)).size > 1
     if (!date) return setError('Chọn ngày xuất')
-    if (!isMultiDO && !deliveryCode.trim()) return setError('Nhập Số DO')
-    if (!isMultiDO && !customerName.trim()) return setError('Nhập tên khách hàng')
+    if (!isMultiNpp && !deliveryCode.trim()) return setError('Nhập Số DO')
+    if (!isMultiNpp && !customerName.trim()) return setError('Nhập tên khách hàng')
     if (!isNPPEdit && !isProdEdit && !exportType) return setError('Chọn loại xe')
     for (const item of items) {
       if (!item.material_code.trim()) return setError('Chọn mã hàng cho tất cả dòng')
       if (!item.cartons || item.cartons <= 0) return setError('Số thùng phải > 0')
       if (item.cartons < item.min_cartons) return setError(`Số thùng không được nhỏ hơn đã xuất (${item.min_cartons})`)
+      if (isMultiNpp && !item.db_id && !item.npp.trim()) return setError(`Dòng "${item.material_code}": chọn NPP cho dòng thêm mới`)
     }
     setError('')
     updateGDO(
@@ -1691,7 +1768,7 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
         delivery_code: deliveryCode.trim() || undefined,
         export_type: exportType,
         warehouse_type: warehouseType || undefined,
-        items: items.map(i => ({ db_id: i.db_id, material_code: i.material_code, cartons_ordered: i.cartons, loose_picking: i.loose_picking, header_text: i.header_text || undefined })),
+        items: items.map(i => ({ db_id: i.db_id, material_code: i.material_code, cartons_ordered: i.cartons, loose_picking: i.loose_picking, header_text: i.header_text || undefined, batch_required: i.batch_required || undefined, date_required: i.date_required || undefined, cs_responsible: i.cs_responsible || undefined, npp: i.npp || undefined })),
       },
       {
         onSuccess: () => onClose(),

@@ -453,7 +453,7 @@ export async function createGDO(req: Request, res: Response) {
     const { delivery_date, warehouse_id, dvvt, customer_name, delivery_code, export_type, warehouse_type, shipto_party, items } = req.body as {
       delivery_date: string; warehouse_id?: string; dvvt?: string
       customer_name?: string; delivery_code?: string; export_type?: string; warehouse_type?: string; shipto_party?: string
-      items?: Array<{ material_code: string; cartons_ordered: number; loose_picking?: number; header_text?: string }>
+      items?: Array<{ material_code: string; cartons_ordered: number; loose_picking?: number; header_text?: string; batch_required?: string; date_required?: number; cs_responsible?: string }>
     }
     if (!delivery_date) return fail(res, 'delivery_date là bắt buộc', 400)
     if (!delivery_code?.trim()) return fail(res, 'Số DO là bắt buộc', 400)
@@ -512,7 +512,12 @@ export async function createGDO(req: Request, res: Response) {
         material_id: matInfo?.id ?? null,
         material_code_raw: item.material_code,
         cartons_ordered: item.cartons_ordered,
-        boxes_display: 0, weight: null, pallets_estimated: 0, loose_picking: 0,
+        boxes_display: 0, weight: null, pallets_estimated: 0,
+        loose_picking: item.loose_picking ?? 0,
+        header_text: item.header_text?.trim() || null,
+        batch_required: item.batch_required?.trim() || null,
+        date_required: item.date_required || null,
+        cs_responsible: item.cs_responsible?.trim() || null,
         material_type, export_type: export_type ?? null, cartons_scanned: 0,
         status: 'PENDING', updated_at: now(),
       }
@@ -641,7 +646,7 @@ export async function updateGDO(req: Request, res: Response) {
     const { delivery_date, warehouse_id, dvvt, customer_name, delivery_code, export_type, warehouse_type, items, gate_registration_id, shipto_party } = req.body as {
       delivery_date?: string; warehouse_id?: string; dvvt?: string
       customer_name?: string; delivery_code?: string; export_type?: string; warehouse_type?: string; gate_registration_id?: string | null; shipto_party?: string | null
-      items?: Array<{ db_id?: string; material_code: string; cartons_ordered: number; loose_picking?: number; header_text?: string }>
+      items?: Array<{ db_id?: string; material_code: string; cartons_ordered: number; loose_picking?: number; header_text?: string; batch_required?: string; date_required?: number; cs_responsible?: string; npp?: string }>
     }
 
     if (!(await guardGdoScope(req, res, req.params.id))) return
@@ -669,7 +674,7 @@ export async function updateGDO(req: Request, res: Response) {
       .eq('id', req.params.id)
 
     const { data: dos } = await supabase.from('OutboundDelivery')
-      .select('id').eq('gdo_id', req.params.id)
+      .select('id, distributor_name').eq('gdo_id', req.params.id)
     const doList = dos ?? []
     const isMultiDO = doList.length > 1
 
@@ -743,7 +748,7 @@ export async function updateGDO(req: Request, res: Response) {
             const ex = existingById.get(item.db_id!)!
             const scanned = Number(ex.cartons_scanned)
             const newStatus = scanned >= item.cartons_ordered ? 'COMPLETED' : scanned > 0 ? 'IN_PROGRESS' : 'PENDING'
-            const fields: Record<string, unknown> = { cartons_ordered: item.cartons_ordered, loose_picking: item.loose_picking ?? 0, header_text: item.header_text ?? null, export_type: export_type ?? null, status: newStatus, updated_at: t }
+            const fields: Record<string, unknown> = { cartons_ordered: item.cartons_ordered, loose_picking: item.loose_picking ?? 0, header_text: item.header_text?.trim() || null, batch_required: item.batch_required?.trim() || null, date_required: item.date_required || null, cs_responsible: item.cs_responsible?.trim() || null, export_type: export_type ?? null, status: newStatus, updated_at: t }
             if (scanned === 0 && ex.material_code_raw !== item.material_code) {
               const matInfo = changedMatMap.get(item.material_code)
               fields.material_code_raw = item.material_code
@@ -753,6 +758,38 @@ export async function updateGDO(req: Request, res: Response) {
             return supabase.from('OutboundItem').update(fields).eq('id', item.db_id!)
           })
       )
+
+      // Dòng THÊM MỚI (không db_id) ở đơn đa-NPP: gắn vào DO của NPP dòng đó chỉ định
+      const newRows = items.filter(item => !item.db_id && item.material_code)
+      if (newRows.length) {
+        const doByNpp = new Map<string, string>(
+          doList.map((d: any) => [String(d.distributor_name ?? '').trim(), d.id as string])
+        )
+        for (const item of newRows) {
+          if (!doByNpp.has(String(item.npp ?? '').trim()))
+            return fail(res, `Dòng "${item.material_code}": chưa chọn NPP hợp lệ cho dòng thêm mới`, 400)
+        }
+        const { data: newMats } = await supabase.from('Material')
+          .select('id, material_code, category').in('material_code', newRows.map(i => i.material_code))
+        const newMatMap = new Map((newMats ?? []).map((m: any) => [m.material_code as string, { id: m.id as string, category: m.category as string | null }]))
+        const inserts = newRows.map(item => {
+          const matInfo = newMatMap.get(item.material_code)
+          return {
+            id: randomUUID(), do_id: doByNpp.get(String(item.npp ?? '').trim())!,
+            material_id: matInfo?.id ?? null, material_code_raw: item.material_code,
+            cartons_ordered: item.cartons_ordered, boxes_display: 0, weight: null, pallets_estimated: 0,
+            loose_picking: item.loose_picking ?? 0,
+            header_text: item.header_text?.trim() || null,
+            batch_required: item.batch_required?.trim() || null,
+            date_required: item.date_required || null,
+            cs_responsible: item.cs_responsible?.trim() || null,
+            material_type: matInfo?.category ?? null, export_type: export_type ?? null,
+            cartons_scanned: 0, status: 'PENDING', updated_at: t,
+          }
+        })
+        const { error: insErr } = await supabase.from('OutboundItem').insert(inserts)
+        if (insErr) return fail(res, insErr.message)
+      }
     } else {
       // Single-DO: CRUD đầy đủ, match bằng material_code
       const doId = doList[0]?.id
@@ -803,11 +840,11 @@ export async function updateGDO(req: Request, res: Response) {
         if (ex) {
           const scanned = Number(ex.cartons_scanned)
           const newStatus = scanned >= item.cartons_ordered ? 'COMPLETED' : scanned > 0 ? 'IN_PROGRESS' : 'PENDING'
-          toUpdate.push({ id: ex.id, fields: { cartons_ordered: item.cartons_ordered, loose_picking: item.loose_picking ?? 0, header_text: item.header_text ?? null, export_type: export_type ?? null, status: newStatus, updated_at: t } })
+          toUpdate.push({ id: ex.id, fields: { cartons_ordered: item.cartons_ordered, loose_picking: item.loose_picking ?? 0, header_text: item.header_text?.trim() || null, batch_required: item.batch_required?.trim() || null, date_required: item.date_required || null, cs_responsible: item.cs_responsible?.trim() || null, export_type: export_type ?? null, status: newStatus, updated_at: t } })
         } else {
           const matInfo = matMap.get(item.material_code)
           const material_type = matInfo?.category ?? null
-          toInsert.push({ id: randomUUID(), do_id: doId, material_id: matInfo?.id ?? null, material_code_raw: item.material_code, cartons_ordered: item.cartons_ordered, boxes_display: 0, weight: null, pallets_estimated: 0, loose_picking: item.loose_picking ?? 0, header_text: item.header_text ?? null, material_type, export_type: export_type ?? null, cartons_scanned: 0, status: 'PENDING', updated_at: t })
+          toInsert.push({ id: randomUUID(), do_id: doId, material_id: matInfo?.id ?? null, material_code_raw: item.material_code, cartons_ordered: item.cartons_ordered, boxes_display: 0, weight: null, pallets_estimated: 0, loose_picking: item.loose_picking ?? 0, header_text: item.header_text?.trim() || null, batch_required: item.batch_required?.trim() || null, date_required: item.date_required || null, cs_responsible: item.cs_responsible?.trim() || null, material_type, export_type: export_type ?? null, cartons_scanned: 0, status: 'PENDING', updated_at: t })
         }
       }
       await Promise.all([
@@ -1143,6 +1180,24 @@ export async function getWarehouseEmployees(req: Request, res: Response) {
 
 // ─── Merge upload for PAUSED GDO ─────────────────────────────
 
+// Gộp các dòng CÙNG MÃ HÀNG trong 1 NPP (file SAP tách theo DO): cộng dồn số lượng,
+// field chữ lấy giá trị đầu tiên không rỗng. Sau gộp: 1 mã hàng chỉ còn 1 dòng / NPP.
+function mergeNppRows(rows: Record<string, any>[]): Record<string, any>[] {
+  const byMat = new Map<string, Record<string, any>>()
+  for (const row of rows) {
+    const code = String(row['Material'] ?? '').trim()
+    const cur = byMat.get(code)
+    if (!cur) { byMat.set(code, { ...row }); continue }
+    for (const f of ['Thùng', 'Hộp', 'Tải', 'Nhặt lẻ']) cur[f] = parseDecimal(cur[f]) + parseDecimal(row[f])
+    cur['Pallet'] = parseDecimal(String(cur['Pallet'] ?? '').replace(',', '.')) + parseDecimal(String(row['Pallet'] ?? '').replace(',', '.'))
+    for (const f of ['Material_type', 'Loại xuất', 'HEADER TEXT', 'Batch_Yêu cầu', '%Date_Yêu cầu', 'CS phụ trách'])
+      if (!String(cur[f] ?? '').trim()) cur[f] = row[f]
+  }
+  return [...byMat.values()]
+}
+
+// Khớp theo NPP + mã hàng (chuẩn nghiệp vụ 04/07) — DO chỉ là tham khảo.
+// Giả định sau script gộp: mỗi GDO có đúng 1 DO / NPP (legacy nhiều DO cùng NPP → DO đầu là canonical, item được re-point).
 async function mergePausedGDO(
   gdoId: string,
   group_code: string,
@@ -1151,13 +1206,13 @@ async function mergePausedGDO(
   warehouse_id: string | null,
   dvvt: string | null,
   warehouse_type: string | null,
-  byDelivery: Map<string, Record<string, any>[]>,
+  byNpp: Map<string, Record<string, any>[]>,
   matMap: Map<string, string>
 ): Promise<{ group_code: string; id?: string; merged?: boolean; skipped?: boolean; reason?: string }> {
   const t = now()
 
   const { data: existingDOs } = await supabase.from('OutboundDelivery')
-    .select('id, delivery_code').eq('gdo_id', gdoId)
+    .select('id, delivery_code, distributor_name').eq('gdo_id', gdoId)
 
   const existingDoIds = (existingDOs ?? []).map((d: any) => d.id as string)
   const { data: existingItems } = existingDoIds.length
@@ -1165,32 +1220,36 @@ async function mergePausedGDO(
         .select('id, do_id, material_code_raw, cartons_scanned').in('do_id', existingDoIds)
     : { data: [] }
 
-  const existingDOByCode = new Map<string, any>()
-  for (const d of (existingDOs ?? [])) existingDOByCode.set(d.delivery_code as string, d)
+  const nppOf = (d: any) => String(d.distributor_name ?? '').trim()
+  const existingDOByNpp = new Map<string, any>()
+  for (const d of (existingDOs ?? [])) if (!existingDOByNpp.has(nppOf(d))) existingDOByNpp.set(nppOf(d), d)
+  const doIdToNpp = new Map<string, string>((existingDOs ?? []).map((d: any) => [d.id as string, nppOf(d)]))
 
-  const itemKey = (doId: string, matCode: string) => `${doId}::${matCode}`
-  const existingItemByKey = new Map<string, any>()
+  // item cũ theo (npp, mã hàng) — có scan ưu tiên giữ
+  const existingItemByNppMat = new Map<string, any>()
   for (const i of (existingItems ?? [])) {
-    existingItemByKey.set(itemKey(i.do_id, i.material_code_raw ?? ''), i)
+    const k = `${doIdToNpp.get(i.do_id) ?? ''}::${i.material_code_raw ?? ''}`
+    const cur = existingItemByNppMat.get(k)
+    if (!cur || Number(i.cartons_scanned) > Number(cur.cartons_scanned)) existingItemByNppMat.set(k, i)
   }
 
-  // Build set of delivery_code::material_code present in new file
+  // File mới: gộp dòng cùng mã trong NPP rồi build set npp::mã
+  const mergedByNpp = new Map<string, Record<string, any>[]>()
   const newFileItemKeys = new Set<string>()
-  for (const [delivery_code, rows] of byDelivery) {
-    for (const row of rows) {
-      newFileItemKeys.add(`${delivery_code}::${String(row['Material'] ?? '').trim()}`)
-    }
+  for (const [npp, rows] of byNpp) {
+    const merged = mergeNppRows(rows)
+    mergedByNpp.set(npp, merged)
+    for (const row of merged) newFileItemKeys.add(`${npp}::${String(row['Material'] ?? '').trim()}`)
   }
-  const newDeliveryCodes = new Set([...byDelivery.keys()])
+  const newNpps = new Set([...byNpp.keys()])
 
-  // Validation 1: every scanned item must exist in new file (cannot remove exported items)
+  // Validation 1: hàng ĐÃ XUẤT phải còn trong file mới (không được bỏ hàng đã xuất)
   const scannedItems = (existingItems ?? []).filter((i: any) => Number(i.cartons_scanned) > 0)
   const missingScanned: string[] = []
   for (const item of scannedItems) {
-    const existingDO = (existingDOs ?? []).find((d: any) => d.id === item.do_id)
-    if (!existingDO) continue
-    if (!newFileItemKeys.has(`${existingDO.delivery_code}::${item.material_code_raw ?? ''}`)) {
-      missingScanned.push(`${item.material_code_raw} (DO ${existingDO.delivery_code}, đã xuất ${item.cartons_scanned} thùng)`)
+    const npp = doIdToNpp.get(item.do_id) ?? ''
+    if (!newFileItemKeys.has(`${npp}::${item.material_code_raw ?? ''}`)) {
+      missingScanned.push(`${item.material_code_raw} (NPP ${npp || '—'}, đã xuất ${item.cartons_scanned} thùng)`)
     }
   }
   if (missingScanned.length) {
@@ -1200,15 +1259,13 @@ async function mergePausedGDO(
     }
   }
 
-  // Validation 2: new cartons_ordered >= cartons_scanned — collect ALL failures before blocking
+  // Validation 2: số thùng mới >= đã xuất — gom đủ lỗi trước khi chặn
   const cartonErrors: string[] = []
-  for (const [delivery_code, doRows] of byDelivery) {
-    const existingDO = existingDOByCode.get(delivery_code)
-    if (!existingDO) continue
-    for (const row of doRows) {
+  for (const [npp, mergedRows] of mergedByNpp) {
+    for (const row of mergedRows) {
       const mat_code   = String(row['Material'] ?? '').trim()
       const newCartons = parseDecimal(row['Thùng'])
-      const existing   = existingItemByKey.get(itemKey(existingDO.id, mat_code))
+      const existing   = existingItemByNppMat.get(`${npp}::${mat_code}`)
       if (existing && newCartons < Number(existing.cartons_scanned)) {
         cartonErrors.push(`${mat_code} (mới ${newCartons} < đã xuất ${existing.cartons_scanned})`)
       }
@@ -1221,24 +1278,12 @@ async function mergePausedGDO(
     }
   }
 
-  // Cleanup: delete stale items not in new file (all have cartons_scanned=0, blocked otherwise)
+  // Cleanup: xóa item cũ không còn trong file (đều chưa xuất — đã chặn ở Validation 1)
   const staleItemIds = (existingItems ?? [])
-    .filter((i: any) => {
-      const d = (existingDOs ?? []).find((d: any) => d.id === i.do_id)
-      if (!d) return true
-      return !newFileItemKeys.has(`${d.delivery_code}::${i.material_code_raw ?? ''}`)
-    })
+    .filter((i: any) => !newFileItemKeys.has(`${doIdToNpp.get(i.do_id) ?? ''}::${i.material_code_raw ?? ''}`))
     .map((i: any) => i.id as string)
   if (staleItemIds.length) {
     await supabase.from('OutboundItem').delete().in('id', staleItemIds)
-  }
-
-  // Cleanup: delete stale DOs not in new file (items already deleted above)
-  const staleDOIds = (existingDOs ?? [])
-    .filter((d: any) => !newDeliveryCodes.has(d.delivery_code as string))
-    .map((d: any) => d.id as string)
-  if (staleDOIds.length) {
-    await supabase.from('OutboundDelivery').delete().in('id', staleDOIds)
   }
 
   // Update GDO header — preserve workflow fields (started_at, assigned_at, status, license_plate, etc.)
@@ -1246,27 +1291,28 @@ async function mergePausedGDO(
     .update({ delivery_date, planned_date, warehouse_id, dvvt, warehouse_type, updated_at: t })
     .eq('id', gdoId)
 
-  // Upsert DOs + items from new file
-  for (const [delivery_code, doRows] of byDelivery) {
-    const distributor_name = String(doRows[0]['Tên NPP'] ?? '').trim() || null
-    const existingDO = existingDOByCode.get(delivery_code)
+  // Upsert DO (1/NPP) + items — item cũ được re-point về DO canonical (do_id trong fields)
+  for (const [npp, mergedRows] of mergedByNpp) {
+    const deliveryRefs = [...new Set((byNpp.get(npp) ?? []).map(r => String(r['Delivery'] ?? '').trim()).filter(Boolean))].join(', ') || null
+    const existingDO = existingDOByNpp.get(npp)
     let doId: string
 
     if (existingDO) {
       doId = existingDO.id as string
-      await supabase.from('OutboundDelivery').update({ distributor_name, updated_at: t }).eq('id', doId)
+      await supabase.from('OutboundDelivery').update({ distributor_name: npp || null, delivery_code: deliveryRefs, updated_at: t }).eq('id', doId)
     } else {
       doId = randomUUID()
       await supabase.from('OutboundDelivery').insert({
-        id: doId, gdo_id: gdoId, delivery_code, distributor_name, status: 'PENDING', updated_at: t,
+        id: doId, gdo_id: gdoId, delivery_code: deliveryRefs, distributor_name: npp || null, status: 'PENDING', updated_at: t,
       })
     }
 
-    for (const row of doRows) {
+    for (const row of mergedRows) {
       const mat_code      = String(row['Material'] ?? '').trim()
       const material_type = String(row['Material_type'] ?? '').trim() || null
       const newCartons    = parseDecimal(row['Thùng'])
       const fields = {
+        do_id:             doId,
         material_id:       matMap.get(mat_code) ?? null,
         material_code_raw: mat_code,
         cartons_ordered:   newCartons,
@@ -1283,7 +1329,7 @@ async function mergePausedGDO(
         updated_at: t,
       }
 
-      const existing = existingDO ? existingItemByKey.get(itemKey(existingDO.id, mat_code)) : null
+      const existing = existingItemByNppMat.get(`${npp}::${mat_code}`)
       if (existing) {
         const scanned   = Number(existing.cartons_scanned)
         const newStatus = scanned >= newCartons ? 'COMPLETED'
@@ -1292,12 +1338,23 @@ async function mergePausedGDO(
         await supabase.from('OutboundItem').update({ ...fields, status: newStatus }).eq('id', existing.id)
       } else {
         await supabase.from('OutboundItem').insert({
-          id: randomUUID(), do_id: doId, ...fields,
+          id: randomUUID(), ...fields,
           cartons_scanned: 0,
           status: 'PENDING',
         })
       }
     }
+  }
+
+  // Cleanup DO thừa SAU khi item đã re-point: NPP không còn trong file, hoặc DO dư cùng NPP (legacy)
+  const staleDOIds = (existingDOs ?? [])
+    .filter((d: any) => {
+      const npp = nppOf(d)
+      return !newNpps.has(npp) || existingDOByNpp.get(npp)?.id !== d.id
+    })
+    .map((d: any) => d.id as string)
+  if (staleDOIds.length) {
+    await supabase.from('OutboundDelivery').delete().in('id', staleDOIds)
   }
 
   return { group_code, id: gdoId, merged: true }
@@ -1486,13 +1543,14 @@ export async function uploadExcel(req: Request, res: Response) {
         ? warehouseByKey.get(kho_xuat.toLowerCase())!
         : (warehouse_id ?? null)
 
-      const byDelivery = new Map<string, Record<string, any>[]>()
+      // Gom theo TÊN NPP (chuẩn nghiệp vụ chốt 04/07): NPP mới là chìa khóa tách dòng trong 1 chuyến;
+      // DO/Delivery chỉ là THAM KHẢO từ SAP — lưu nối chuỗi vào delivery_code, không có vai trò khác.
+      const byNpp = new Map<string, Record<string, any>[]>()
       for (const row of groupRows) {
-        const code = String(row['Delivery'] ?? '').trim()
-        if (!code) continue
-        const list = byDelivery.get(code) ?? []
+        const npp = String(row['Tên NPP'] ?? '').trim()
+        const list = byNpp.get(npp) ?? []
         list.push(row)
-        byDelivery.set(code, list)
+        byNpp.set(npp, list)
       }
 
       // PAUSED → merge (strict: scanned items must all exist in new file)
@@ -1501,19 +1559,19 @@ export async function uploadExcel(req: Request, res: Response) {
           pausedGDOMap.get(group_code)!,
           group_code, delivery_date, planned_date,
           resolved_warehouse_id, dvvt, loai_kho,
-          byDelivery, matMap
+          byNpp, matMap
         )
         created.push(mergeResult)
         continue
       }
 
-      // Helper: build DO + Item rows for a given gdoId
+      // Helper: build DO + Item rows for a given gdoId — 1 DO / NPP; delivery_code = các mã Delivery nối ', ' (tham khảo)
       const collectDOsAndItems = (gdoId: string) => {
-        for (const [delivery_code, doRows] of byDelivery) {
+        for (const [npp, nppRows] of byNpp) {
           const doId = randomUUID()
-          const distributor_name = String(doRows[0]['Tên NPP'] ?? '').trim() || null
-          doInserts.push({ id: doId, gdo_id: gdoId, delivery_code, distributor_name, status: 'PENDING', updated_at: now() })
-          for (const row of doRows) {
+          const deliveryRefs = [...new Set(nppRows.map(r => String(r['Delivery'] ?? '').trim()).filter(Boolean))].join(', ') || null
+          doInserts.push({ id: doId, gdo_id: gdoId, delivery_code: deliveryRefs, distributor_name: npp || null, status: 'PENDING', updated_at: now() })
+          for (const row of mergeNppRows(nppRows)) {
             const mat_code      = String(row['Material'] ?? '').trim()
             const material_type = String(row['Material_type'] ?? '').trim() || null
             itemInserts.push({

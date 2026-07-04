@@ -1310,7 +1310,7 @@ type GDOFormPayload = {
   customer_name: string
   delivery_code?: string
   export_type: string
-  items?: Array<{ db_id?: string; material_code: string; cartons_ordered: number; loose_picking?: number; header_text?: string }>
+  items?: Array<{ db_id?: string; material_code: string; cartons_ordered: number; loose_picking?: number; header_text?: string; batch_required?: string; date_required?: number; cs_responsible?: string; npp?: string }>
 }
 
 export type LookupItem = { id: string; value: string }

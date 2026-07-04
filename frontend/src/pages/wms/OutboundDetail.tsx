@@ -1117,6 +1117,8 @@ export default function OutboundDetail() {
 
   const allDOs    = gdo.delivery_orders ?? []
   const allItems  = allDOs.flatMap(d => d.items)
+  // HEADER TEXT: gom ghi chú riêng biệt của mọi dòng hàng → hiện nổi bật (đỏ) ở header chuyến.
+  const headerTexts = [...new Set(allItems.map(i => i.header_text?.trim()).filter(Boolean))] as string[]
   const countable = allItems.filter(i => !i.material?.no_qr_tracking)
   const totalOrdered = countable.reduce((s, i) => s + i.cartons_ordered, 0)
   const totalScanned = countable.reduce((s, i) => s + i.cartons_scanned, 0)
@@ -1410,6 +1412,13 @@ export default function OutboundDetail() {
               <span>Sửa bởi: <span className="font-medium">{gdo.updated_by}</span>{gdo.updated_at ? <span className="ml-1">{formatDateTime(gdo.updated_at)}</span> : null}</span>
             )}
           </div>
+
+          {/* CHUNG 1 ghi chú cho cả chuyến → hiện ở header (đỏ). Mỗi dòng có ghi chú RIÊNG → để trong bảng. */}
+          {headerTexts.length === 1 && (
+            <div className="rounded bg-red-50 border border-red-300 px-2 py-1">
+              <p className="text-[11px] font-semibold text-red-600 leading-snug">{headerTexts[0]}</p>
+            </div>
+          )}
 
           {undoErr && (
             <div className="rounded bg-red-50 border border-red-200 px-2 py-1 text-xs text-red-700 flex items-center gap-1">

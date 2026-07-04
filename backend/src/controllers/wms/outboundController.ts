@@ -1515,12 +1515,8 @@ export async function uploadExcel(req: Request, res: Response) {
         .filter(v => !resolveVehicleType(v))
       if (badExport.length) errs.push(`Loại xuất "${badExport.join(', ')}" không khớp danh mục Loại xe TMS`)
 
-      if (blockedMap.has(group_code)) {
-        const status = blockedMap.get(group_code)!
-        errs.push(status === 'COMPLETED'
-          ? 'Đã hoàn thành — không thể ghi đè'
-          : 'Đang xuất — chỉ upload được khi PAUSED')
-      }
+      // Chuyến Đang xuất / Đã hoàn thành: KHÔNG chặn cả file (user chốt 04/07) — bỏ qua chuyến đó
+      // ở Phase 2 + báo rõ trong kết quả; chỉ lỗi DỮ LIỆU thật mới chặn toàn file.
 
       if (errs.length) validationErrors.push({ group_code, errors: errs })
     }
@@ -1552,6 +1548,17 @@ export async function uploadExcel(req: Request, res: Response) {
     const preserveGDOUpdates: { id: string; fields: Record<string, unknown> }[] = []
 
     for (const [group_code, groupRows] of byVehicle) {
+      // Chuyến Đang xuất / Đã hoàn thành → bỏ qua (không ghi đè), up các chuyến còn lại
+      if (blockedMap.has(group_code)) {
+        created.push({
+          group_code, skipped: true,
+          reason: blockedMap.get(group_code) === 'COMPLETED'
+            ? 'Đã hoàn thành — bỏ qua, không ghi đè'
+            : 'Đang xuất — bỏ qua, không ghi đè',
+        })
+        continue
+      }
+
       const delivery_date = parseExcelDate(groupRows[0]['Ngày xuất'])!
       const planned_date  = parsePlannedDate(group_code)!
 

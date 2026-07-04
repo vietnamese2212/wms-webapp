@@ -30,8 +30,8 @@ export function StatsCard({
         <div className="flex items-start justify-between">
           <div className="space-y-1 min-w-0">
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide truncate">{title}</p>
-            <div className="flex items-baseline gap-1">
-              <span className="text-2xl font-bold text-foreground tabular-nums">{value}</span>
+            <div className="flex items-baseline gap-1 min-w-0">
+              <span className="text-2xl font-bold text-foreground tabular-nums truncate">{value}</span>
               {unit && <span className="text-sm font-medium text-muted-foreground">{unit}</span>}
             </div>
             {(change !== undefined || changeLabel) && (
@@ -54,7 +54,7 @@ export function StatsCard({
             )}
           </div>
           {Icon && (
-            <div className={cn('flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10', iconColor.replace('text-', 'bg-').replace('600', '100').replace('500', '100'))}>
+            <div className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10', iconColor.replace('text-', 'bg-').replace('600', '100').replace('500', '100'))}>
               <Icon className={cn('h-5 w-5', iconColor)} />
             </div>
           )}

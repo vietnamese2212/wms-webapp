@@ -69,8 +69,8 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* KPI tồn kho (data thật) */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        {/* KPI tồn kho (data thật) — 1 cột trên phone hẹp để số dài không bị cắt */}
+        <div className="grid grid-cols-1 min-[420px]:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
           {isLoading ? (
             Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-[92px] rounded-xl" />)
           ) : (

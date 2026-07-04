@@ -204,6 +204,9 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand }: {
       .filter(i => i.loose_picking > 0)
       .map(i => ({ ...i, delivery_code: d.delivery_code, distributor_name: d.distributor_name }))
   )
+  // Cột Batch/%Date chỉ hiện khi có mã yêu cầu (đồng bộ Xuất) — tránh làm bảng rộng vô ích
+  const hasBatchRequired = allItems.some(i => i.batch_required)
+  const hasDateRequired  = allItems.some(i => i.date_required != null && i.date_required > 0)
 
   const inventoryItem = inventoryItemId ? allItems.find(i => i.id === inventoryItemId) : null
 
@@ -234,6 +237,8 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand }: {
             <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Tên hàng</TableHead>
             <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Lẻ / Tổng</TableHead>
             <TableHead className="text-[9px] font-medium text-slate-500 px-1 py-1.5 text-center w-8">Kho</TableHead>
+            {hasBatchRequired && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Batch</TableHead>}
+            {hasDateRequired  && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">%Date</TableHead>}
             <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Số DO</TableHead>
             <TableHead className="w-5 px-1 py-1.5" />
           </TableRow>
@@ -290,6 +295,20 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand }: {
                       <Search className="h-5 w-5" />
                     </button>
                   </TableCell>
+                  {hasBatchRequired && (
+                    <TableCell className="px-2 py-1 align-top">
+                      {item.batch_required
+                        ? <span className="text-[10px] text-slate-600">{item.batch_required}</span>
+                        : <span className="text-[10px] text-slate-300">—</span>}
+                    </TableCell>
+                  )}
+                  {hasDateRequired && (
+                    <TableCell className="px-2 py-1 align-top text-right">
+                      {item.date_required != null && item.date_required > 0
+                        ? <span className="text-[10px] font-semibold tabular-nums text-amber-700">{item.date_required}%</span>
+                        : <span className="text-[10px] text-slate-300">—</span>}
+                    </TableCell>
+                  )}
                   <TableCell className="px-2 py-1 align-top whitespace-nowrap">
                     {(() => {
                       const codes = (item.delivery_code ?? '').split(',').map(s => s.trim()).filter(Boolean)
@@ -318,7 +337,7 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand }: {
                         <p className="text-[9px] text-red-600 leading-snug">{item.header_text}</p>
                       )}
                     </TableCell>
-                    <TableCell colSpan={5} className="px-0 py-0 border-b border-slate-100">
+                    <TableCell colSpan={5 + (hasBatchRequired ? 1 : 0) + (hasDateRequired ? 1 : 0)} className="px-0 py-0 border-b border-slate-100">
                       <div className="pl-3 pr-3 py-1.5 border-l-2 border-slate-200">
                         <table className="w-full border-collapse whitespace-nowrap">
                           <thead>

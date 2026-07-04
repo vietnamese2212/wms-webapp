@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, Fragment } from 'react'
+import { createPortal } from 'react-dom'
 import { useParams, useNavigate } from 'react-router-dom'
 import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
@@ -14,11 +15,11 @@ import { Label }   from '@/components/ui/label'
 import { Card }    from '@/components/ui/card'
 import { toast }   from '@/components/ui/use-toast'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { FormSheet } from '@/components/shared/FormSheet'
+import { usePopoverAnchor } from '@/components/shared/usePopoverAnchor'
 import {
   useGDO, useAssignGDO, useStartGDO, useWarehouseEmployees, usePatchGDO,
   useUnassignGDO, useUnstartGDO, useUncompleteGDO, useUpdateTransport,
@@ -89,12 +90,58 @@ type EmpOption = { id: string; name: string; employee_code?: string; job_title?:
 // Lái xe nâng = nhân viên có chức danh CHỨA "lái xe nâng" (không phân biệt hoa thường)
 const isForkliftDriver = (e: EmpOption) => (e.job_title ?? '').toLowerCase().includes('lái xe nâng')
 
+// Dropdown tìm kiếm chung (portal VÀO node Dialog qua usePopoverAnchor) — có ô tìm theo tên / mã NV
+function PersonSearchMenu({ options, onPick, placeholder }: {
+  options: EmpOption[]
+  onPick: (e: EmpOption) => void
+  placeholder: string
+}) {
+  const [open, setOpen]     = useState(false)
+  const [search, setSearch] = useState('')
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const anchor = usePopoverAnchor(triggerRef, open)
+  const q = search.trim().toLowerCase()
+  const filtered = options.filter(e =>
+    e.name.toLowerCase().includes(q) || (e.employee_code ?? '').toLowerCase().includes(q))
+  const close = () => { setOpen(false); setSearch('') }
+  return (
+    <div className="relative">
+      <button ref={triggerRef} type="button" onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between h-7 text-xs border border-dashed border-input rounded px-2 text-slate-500 hover:bg-slate-50">
+        <span>{placeholder}</span>
+        <ChevronDown className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+      </button>
+      {open && anchor && createPortal(
+        <>
+          <div className="fixed inset-0 z-[190] pointer-events-auto" onClick={close} />
+          <div className="z-[200] pointer-events-auto min-w-[220px] bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden" style={anchor.style}>
+            <div className="p-2 border-b border-slate-100">
+              <input type="text" value={search} onChange={e => setSearch(e.target.value)} autoFocus
+                placeholder="Tìm tên / mã NV…"
+                className="w-full text-xs border border-slate-200 rounded px-2 py-1 outline-none focus:border-blue-400" />
+            </div>
+            <div className="max-h-48 overflow-y-auto">
+              {filtered.length === 0 ? (
+                <p className="text-[11px] text-slate-400 text-center py-3">Không tìm thấy</p>
+              ) : filtered.map(e => (
+                <button key={e.id} type="button" onClick={() => { onPick(e); close() }}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 text-left">
+                  <span className="text-[11px] text-slate-700 flex-1 truncate">{e.name}</span>
+                  {e.employee_code && <span className="text-[10px] text-slate-400 font-mono shrink-0">{e.employee_code}</span>}
+                </button>
+              ))}
+            </div>
+          </div>
+        </>,
+        anchor.target,
+      )}
+    </div>
+  )
+}
+
+// Picker theo ID (Lái xe nâng — cần forklift_driver_id) — có ô tìm
 function TagPicker({
-  fixedName,
-  employees,
-  selectedIds,
-  onChange,
-  placeholder = 'Thêm người…',
+  fixedName, employees, selectedIds, onChange, placeholder = 'Thêm người…',
 }: {
   fixedName?: string
   employees: EmpOption[]
@@ -107,9 +154,7 @@ function TagPicker({
     <div className="rounded-md border border-input bg-background px-2 py-2 space-y-2">
       <div className="flex flex-wrap gap-1.5 min-h-[22px]">
         {fixedName && (
-          <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 font-medium">
-            {fixedName}
-          </span>
+          <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 font-medium">{fixedName}</span>
         )}
         {selectedIds.map(id => {
           const emp = employees.find(e => e.id === id)
@@ -124,19 +169,40 @@ function TagPicker({
         })}
       </div>
       {unselected.length > 0 && (
-        <Select value="" onValueChange={v => { if (v) onChange([...selectedIds, v]) }}>
-          <SelectTrigger className="h-7 text-xs border-dashed">
-            <SelectValue placeholder={placeholder} />
-          </SelectTrigger>
-          <SelectContent>
-            {unselected.map(e => (
-              <SelectItem key={e.id} value={e.id}>
-                {e.name}{e.employee_code ? ` (${e.employee_code})` : ''}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <PersonSearchMenu options={unselected} placeholder={placeholder} onPick={e => onChange([...selectedIds, e.id])} />
       )}
+    </div>
+  )
+}
+
+// Picker theo TÊN (Người xuất — backend lưu exporter_name dạng chuỗi tên) — có ô tìm, KHÔNG gõ tự do
+function NamePicker({
+  fixedName, employees, value, onChange, placeholder = 'Thêm người…',
+}: {
+  fixedName?: string
+  employees: EmpOption[]
+  value: string[]                       // danh sách TÊN đã chọn (ngoài fixedName)
+  onChange: (names: string[]) => void
+  placeholder?: string
+}) {
+  const chosen = new Set([...(fixedName ? [fixedName] : []), ...value])
+  const options = employees.filter(e => !chosen.has(e.name))
+  return (
+    <div className="rounded-md border border-input bg-background px-2 py-2 space-y-2">
+      <div className="flex flex-wrap gap-1.5 min-h-[22px]">
+        {fixedName && (
+          <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 font-medium">{fixedName}</span>
+        )}
+        {value.map(nm => (
+          <span key={nm} className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">
+            {nm}
+            <button type="button" onClick={() => onChange(value.filter(x => x !== nm))}>
+              <X className="h-3 w-3 text-slate-400 hover:text-red-500" />
+            </button>
+          </span>
+        ))}
+      </div>
+      <PersonSearchMenu options={options} placeholder={placeholder} onPick={e => onChange([...value, e.name])} />
     </div>
   )
 }
@@ -275,7 +341,7 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
   const [licPlate,         setLicPlate]         = useState('')
   const [containerNum,     setContainerNum]     = useState('')
   const [loaderName,       setLoaderName]       = useState('')
-  const [extraExporterIds, setExtraExporterIds] = useState<string[]>([])
+  const [exporterNames,    setExporterNames]    = useState<string[]>([])   // người xuất phụ (ngoài user hiện tại), lưu theo TÊN
   const [forklifterIds,    setForklifterIds]    = useState<string[]>([])
   const [gateRegId,        setGateRegId]        = useState('')
   const [special,          setSpecial]          = useState(false)   // mở khóa: xe đã ra / bốc thêm đơn / vãng lai
@@ -300,7 +366,7 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
 
   // Resolved names for submission
   const empMap = new Map((employees as EmpOption[]).map(e => [e.id, e.name]))
-  const exporterName = [user?.name, ...extraExporterIds.map(id => empMap.get(id) ?? id)]
+  const exporterName = [user?.name, ...exporterNames]
     .filter(Boolean).join(', ')
   const forklifterNames = forklifterIds.map(id => empMap.get(id) ?? id).filter(Boolean).join(', ')
 
@@ -366,11 +432,11 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
 
           <div className="space-y-1">
             <Label className="text-xs">Người xuất</Label>
-            <TagPicker
+            <NamePicker
               fixedName={user?.name}
               employees={employees as EmpOption[]}
-              selectedIds={extraExporterIds}
-              onChange={setExtraExporterIds}
+              value={exporterNames}
+              onChange={setExporterNames}
               placeholder="Thêm người xuất…"
             />
           </div>
@@ -411,7 +477,9 @@ function EditTransportDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; 
 
   const [licPlate,        setLicPlate]        = useState(gdo.license_plate ?? '')
   const [containerNum,    setContainerNum]    = useState(gdo.container_number ?? '')
-  const [exporterName,    setExporterName]    = useState(gdo.exporter_name ?? '')
+  const [exporterNames,   setExporterNames]   = useState<string[]>(
+    (gdo.exporter_name ?? '').split(',').map(s => s.trim()).filter(Boolean)
+  )
   const [loaderName,      setLoaderName]      = useState(gdo.loader_name ?? '')
   const [forklifterIds,   setForklifterIds]   = useState<string[]>(
     gdo.forklift_driver_id ? [gdo.forklift_driver_id] : []
@@ -448,7 +516,7 @@ function EditTransportDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; 
         id:                    gdo.id,
         license_plate:         effectivePlate.trim(),
         container_number:      containerNum  || undefined,
-        exporter_name:         exporterName  || undefined,
+        exporter_name:         exporterNames.join(', ') || undefined,
         loader_name:           loaderName    || undefined,
         forklift_driver_id:    forklifterIds[0] || undefined,
         forklift_driver_names: forklifterNames  || undefined,
@@ -501,8 +569,12 @@ function EditTransportDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; 
           )}
           <div className="space-y-1">
             <Label className="text-xs">Người xuất</Label>
-            <Input className="text-sm h-9" placeholder="Tên người xuất"
-              value={exporterName} onChange={e => setExporterName(e.target.value)} />
+            <NamePicker
+              employees={employees as EmpOption[]}
+              value={exporterNames}
+              onChange={setExporterNames}
+              placeholder="Chọn người xuất…"
+            />
           </div>
           <div className="space-y-1">
             <Label className="text-xs">Lái xe nâng</Label>

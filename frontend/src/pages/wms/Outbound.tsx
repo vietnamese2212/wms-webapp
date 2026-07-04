@@ -1509,7 +1509,13 @@ function GDOFormBody({
                         placeholder="%"
                         value={item.date_required || ''}
                         onChange={e => updateItem(item.id, { date_required: parseInt(e.target.value) || 0 })}
-                        onPaste={e => handlePasteColAt(idx, e, v => ({ date_required: parseInt(v.replace(/[^0-9]/g, '')) || 0 }))}
+                        onPaste={e => {
+                          const text = e.clipboardData.getData('text')
+                          if (text.includes('\n')) { handlePasteColAt(idx, e, v => ({ date_required: parseInt(v.replace(/[^0-9]/g, '')) || 0 })); return }
+                          // dán 1 giá trị đơn: chặn text lọt vào, chỉ giữ số (text → rỗng)
+                          e.preventDefault()
+                          updateItem(item.id, { date_required: parseInt(text.replace(/[^0-9]/g, '')) || 0 })
+                        }}
                       />
                     </td>
                     <td className="px-2 py-1">

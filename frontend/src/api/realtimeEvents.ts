@@ -8,7 +8,9 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   ProductionImport:    [['inbound-orders'], ['inbound-order'], ['inbound-report'], ['transfer-goods'], ['inbound-by-gdo'], ['tms-orders-transfer'], ['tms-material-summary']],
   InventoryEntry:      [['inbound-order'], ['inventory-entries'], ['inventory-summary'], ['inventory-facets'], ['locations-real'], ['plan-vs-actual'], ['inbound-report'], ['manual-item-stock'], ['item-inventory'], ['inventory-by-material'], ['transfer-goods'], ['inbound-by-gdo'], ['stocktake-entries'], ['tms-material-summary']],
   Location:            [['locations-real'], ['sub-groups']],
-  Material:            [['materials']],
+  // gdos/gdo: cột Tổng (QR)/(k QR) của Xuất tách theo Material.no_qr_tracking (join sống) —
+  // đổi cờ QR của mã hàng phải refetch list Xuất, không thì số liệu đứng im tới khi reload.
+  Material:            [['materials'], ['gdos'], ['gdo']],
   Manufacturer:        [['manufacturers']],
   PalletLabelPrint:    [['pallet-prints']],
   PalletOperation:     [['pallet-ops-log']],

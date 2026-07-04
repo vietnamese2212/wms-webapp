@@ -99,6 +99,7 @@ const OUTBOUND_COLS: { id: string; label: string; w: number; align?: 'right' }[]
   { id: 'dvvt',      label: 'ĐVVT',          w: 80 },
   { id: 'plate',     label: 'Biển số xe',    w: 110 },
   { id: 'cartons',   label: 'Tổng thùng',    w: 90,  align: 'right' },
+  { id: 'cartons_qr', label: 'Tổng (QR)',    w: 88,  align: 'right' },
   { id: 'cartons_noqr', label: 'Tổng (k QR)', w: 88, align: 'right' },
   { id: 'loose',     label: 'Tổng nhặt lẻ',  w: 92,  align: 'right' },
   { id: 'pallets',   label: 'Pallet',        w: 72,  align: 'right' },
@@ -812,6 +813,14 @@ function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         <span className="text-[10px] font-semibold tabular-nums">{gdo.total_cartons ?? 0}</span>
         <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
+      </TableCell>
+      <TableCell className="px-2 py-1 text-right whitespace-nowrap">
+        {((gdo.total_cartons ?? 0) - (gdo.total_cartons_noqr ?? 0)) > 0 ? (
+          <>
+            <span className="text-[10px] font-semibold tabular-nums">{(gdo.total_cartons ?? 0) - (gdo.total_cartons_noqr ?? 0)}</span>
+            <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
+          </>
+        ) : <span className="text-slate-300">—</span>}
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         {gdo.total_cartons_noqr ? (

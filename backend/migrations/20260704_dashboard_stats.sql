@@ -2,8 +2,9 @@
 -- không được kéo cả bảng về client). BE gọi qua supabase.rpc('dashboard_stats', ...); khi function
 -- CHƯA apply, controller tự fallback tính bằng JS (chậm hơn) nên app không hỏng — apply xong là nhanh.
 --
--- Lưu ý kiểu cột: InventoryEntry.warehouse_id = uuid, ProductionImport/GDO.warehouse_id = text,
--- Material.id = uuid vs InventoryEntry.material_id = text → tham số nhận text[] và cast về text khi so.
+-- Lưu ý kiểu cột (đã verify information_schema): Warehouse.id/Material.id = TEXT,
+-- InventoryEntry.warehouse_id = uuid (cast ::text khi join/so), ProductionImport/GDO.warehouse_id = text.
+-- Tham số nhận text[] cho đồng nhất.
 
 create or replace function dashboard_stats(
   p_warehouse_ids text[] default null,  -- scope kho của user (null = tất cả)
@@ -15,7 +16,7 @@ stable
 as $$
 with inv as (
   select
-    w.id::text                     as warehouse_id,
+    w.id                           as warehouse_id,
     w.name                         as warehouse_name,
     w.inventory_mode               as inventory_mode,
     coalesce(m.category, 'Khác')   as category,
@@ -23,8 +24,8 @@ with inv as (
     coalesce(sum(ie.cartons_remaining), 0) as cartons,
     count(distinct ie.material_id) as materials
   from "InventoryEntry" ie
-  join "Warehouse" w on w.id = ie.warehouse_id
-  left join "Material" m on m.id::text = ie.material_id
+  join "Warehouse" w on w.id = ie.warehouse_id::text
+  left join "Material" m on m.id = ie.material_id
   where ie.cartons_remaining > 0
     and (p_warehouse_ids is null or ie.warehouse_id::text = any(p_warehouse_ids))
     and (p_categories is null or m.category is null or m.category = any(p_categories))

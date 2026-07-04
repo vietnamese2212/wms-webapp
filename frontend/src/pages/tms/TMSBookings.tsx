@@ -1567,22 +1567,21 @@ function ChangeDateDialog({ open, orderIds, currentDate, onClose }: {
 // ── Inbound Plan Bulk Upload Dialog (upload Excel toàn bộ KH nhập — list page) ─
 
 type PlanBulkRow = {
+  date: string
   ncc_code: string; ncc_id: string
   kho_code: string; kho_id: string
   warehouse_type: string; vehicle_type: string
   material_code: string; material_id: string
-  dvt_input: string; mat_unit: string
   po_number: string; planned_boxes: number | null; planned_pallets: number | null
   _valid: boolean; _error: string
 }
 
-function InboundPlanBulkUploadDialog({ open, date, warehouseId, onClose }: {
-  open: boolean; date: string; warehouseId: string; onClose: () => void
+function InboundPlanBulkUploadDialog({ open, warehouseId, onClose }: {
+  open: boolean; warehouseId: string; onClose: () => void
 }) {
   const { data: transportCompanies = [] } = useTransportCompanies(true)
   const { data: materials = [] }          = useMaterials()
   const { data: warehouses = [] }         = useWarehouses(true)
-  const { data: whTypesData = [] }        = useScopedWhTypes()
   const { data: vehicleTypes = [] }       = useVehicleTypes(true)
   const bulkCreate = useBulkCreatePlanLines()
 
@@ -1591,25 +1590,28 @@ function InboundPlanBulkUploadDialog({ open, date, warehouseId, onClose }: {
   const [err, setErr]           = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
 
+  // Nhận CẢ mã lẫn tên (normalize trim + uppercase)
   const nccByCode = new Map(
     (transportCompanies as import('@/types').TransportCompany[])
       .filter((c) => c.type === 'NCC')
       .flatMap((c) => [
         [String(c.code ?? '').trim().toUpperCase(), c.id] as [string, string],
+        [String(c.name ?? '').trim().toUpperCase(), c.id] as [string, string],
         ...((c.alias_codes ?? []).map(a => [String(a).trim().toUpperCase(), c.id] as [string, string])),
-      ])
+      ].filter(([k]) => k))
   )
   const whByCode  = new Map<string, string>()
-  ;(warehouses as { code: string; id: string; shipto_codes?: string[] | null }[]).forEach(w => {
+  ;(warehouses as { code: string; name: string; id: string; shipto_codes?: string[] | null }[]).forEach(w => {
     whByCode.set(String(w.code).trim().toUpperCase(), w.id)
+    const nameKey = String(w.name ?? '').trim().toUpperCase()
+    if (nameKey) whByCode.set(nameKey, w.id)
     ;(w.shipto_codes ?? []).forEach(s => { const k = String(s).trim().toUpperCase(); if (k) whByCode.set(k, w.id) })
   })
-  const whTypeSet = new Set(whTypesData.map(t => t.value))
   const vtNameSet = new Set((vehicleTypes as import('@/types').TmsVehicleType[]).map(vt => String(vt.name)))
   const matByCode = new Map(
     (materials as import('@/types').Material[]).map(m => [
       String(m.material_code).trim(),
-      { id: m.id, unit: (m as unknown as { unit?: string }).unit ?? '' },
+      { id: m.id, category: m.category ?? '' },
     ])
   )
 
@@ -1621,12 +1623,11 @@ function InboundPlanBulkUploadDialog({ open, date, warehouseId, onClose }: {
         const ws = wb.Sheets[wb.SheetNames[0]]
         const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' })
         const parsed: PlanBulkRow[] = rows.map((row, i) => {
-          const khoCode  = String(row['Mã kho']    ?? row['kho_code']   ?? '').trim().toUpperCase()
+          const rowDate  = parseExcelDate(row['Ngày'] ?? row['Ngay'] ?? row['date'] ?? '')
+          const khoCode  = String(row['Mã kho']    ?? row['Kho']        ?? row['kho_code']   ?? '').trim().toUpperCase()
           const nccCode  = String(row['Mã NCC']    ?? row['NCC']        ?? row['ncc_code'] ?? '').trim().toUpperCase()
-          const whType   = String(row['Loại kho']  ?? row['warehouse_type'] ?? '').trim()
           const vt       = String(row['Loại xe']   ?? row['vehicle_type']   ?? '').trim()
           const matCode  = String(row['Mã hàng']   ?? row['material_code']  ?? '').trim()
-          const dvtInput = String(row['ĐVT']       ?? row['unit']           ?? '').trim()
           const po       = String(row['Số PO']     ?? row['PO']             ?? row['po_number'] ?? '').trim()
           const boxes    = row['Số thùng']  ?? row['planned_boxes']   ?? null
           const pallets  = row['Số pallet'] ?? row['planned_pallets'] ?? null
@@ -1635,31 +1636,29 @@ function InboundPlanBulkUploadDialog({ open, date, warehouseId, onClose }: {
           const nccId   = nccByCode.get(nccCode) ?? ''
           const matInfo = matByCode.get(matCode)
           const matId   = matInfo?.id ?? ''
-          const matUnit = matInfo?.unit ?? ''
+          const whType  = matInfo?.category ?? '' // Loại kho tự suy từ Mã hàng
 
           let error = ''
-          if (!nccCode)                               error = `Dòng ${i + 2}: thiếu Mã NCC`
-          else if (!nccId)                            error = `Dòng ${i + 2}: NCC "${nccCode}" không tìm thấy`
-          else if (khoCode && !whByCode.has(khoCode)) error = `Dòng ${i + 2}: kho "${khoCode}" không tìm thấy`
-          else if (whType && !whTypeSet.has(whType))  error = `Dòng ${i + 2}: Loại kho "${whType}" không hợp lệ`
+          if (!rowDate)                               error = `Dòng ${i + 2}: thiếu/sai Ngày (dd/mm/yyyy)`
+          else if (!nccCode)                          error = `Dòng ${i + 2}: thiếu Mã NCC`
+          else if (!nccId)                            error = `Dòng ${i + 2}: NCC "${nccCode}" không tìm thấy (mã hoặc tên)`
+          else if (khoCode && !whByCode.has(khoCode)) error = `Dòng ${i + 2}: kho "${khoCode}" không tìm thấy (mã hoặc tên)`
           else if (vt && !vtNameSet.has(vt))          error = `Dòng ${i + 2}: Loại xe "${vt}" không hợp lệ`
           else if (!matCode)                          error = `Dòng ${i + 2}: thiếu Mã hàng`
           else if (!matId)                            error = `Dòng ${i + 2}: hàng "${matCode}" không tìm thấy`
-          else if (dvtInput && matUnit && dvtInput.toUpperCase() !== matUnit.toUpperCase())
-                                                      error = `Dòng ${i + 2}: ĐVT "${dvtInput}" ≠ "${matUnit}"`
 
           return {
+            date: rowDate ?? '',
             ncc_code: nccCode, ncc_id: nccId,
             kho_code: khoCode, kho_id: khoId,
             warehouse_type: whType, vehicle_type: vt,
             material_code: matCode, material_id: matId,
-            dvt_input: dvtInput, mat_unit: matUnit,
             po_number: po,
             planned_boxes:   boxes   != null && boxes   !== '' ? Number(boxes)   : null,
             planned_pallets: pallets != null && pallets !== '' ? Number(pallets) : null,
             _valid: !error, _error: error,
           }
-        }).filter(r => r.ncc_code || r.material_code)
+        }).filter(r => r.date || r.ncc_code || r.material_code)
         setPreview(parsed)
         setErr('')
       } catch { setErr('Không đọc được file Excel') }
@@ -1673,7 +1672,7 @@ function InboundPlanBulkUploadDialog({ open, date, warehouseId, onClose }: {
     if (!valid.length) { setErr('Không có dòng hợp lệ nào'); return }
     try {
       const lines = valid.map(r => ({
-        date,
+        date:            r.date,
         warehouse_id:    r.kho_id   || warehouseId,
         warehouse_type:  r.warehouse_type  || null,
         vehicle_type:    r.vehicle_type    || null,
@@ -1693,7 +1692,7 @@ function InboundPlanBulkUploadDialog({ open, date, warehouseId, onClose }: {
 
   function downloadTemplate() {
     const data = [
-      { 'Mã kho': 'KHO1', 'Mã NCC': 'FAST', 'Loại kho': 'TP', 'Loại xe': 'PALLET', 'Mã hàng': '510000127', 'ĐVT': 'CTN', 'Số PO': 'PO-0001', 'Số thùng': 500, 'Số pallet': 10 },
+      { 'Ngày': '10/07/2026', 'Mã kho': 'KHO1', 'Mã NCC': 'FAST', 'Loại xe': 'PALLET', 'Mã hàng': '510000127', 'Số PO': 'PO-0001', 'Số thùng': 500, 'Số pallet': 10 },
     ]
     const ws = XLSX.utils.json_to_sheet(data)
     const wb = XLSX.utils.book_new()
@@ -1708,15 +1707,16 @@ function InboundPlanBulkUploadDialog({ open, date, warehouseId, onClose }: {
       <DialogContent className="max-w-3xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-sm">
-            <FileSpreadsheet className="h-4 w-4" /> Upload kế hoạch nhập — ngày {formatDate(date)}
+            <FileSpreadsheet className="h-4 w-4" /> Upload kế hoạch nhập
           </DialogTitle>
         </DialogHeader>
 
         {!preview ? (
           <div className="space-y-3 py-2 text-xs">
             <p className="text-slate-500">
-              Cột bắt buộc: <strong>Mã NCC</strong>, <strong>Mã hàng</strong>, <strong>Số thùng</strong>.
-              Tuỳ chọn: Mã kho (mặc định = kho đang chọn), Loại kho, Loại xe, ĐVT, Số PO, Số pallet.
+              Cột bắt buộc: <strong>Ngày</strong> (dd/mm/yyyy), <strong>Mã NCC</strong> (nhận mã hoặc tên), <strong>Mã hàng</strong>, <strong>Số thùng</strong>.
+              Tuỳ chọn: Mã kho (mã hoặc tên; trống = kho đang chọn), Loại xe, Số PO, Số pallet.
+              Loại kho tự suy từ Mã hàng.
             </p>
             <div className="flex gap-2">
               <Button variant="outline" size="sm" onClick={downloadTemplate}>
@@ -1744,7 +1744,7 @@ function InboundPlanBulkUploadDialog({ open, date, warehouseId, onClose }: {
               <table className="min-w-full text-[10px]">
                 <thead className="sticky top-0 bg-slate-50 border-b">
                   <tr>
-                    {['Kho', 'NCC', 'Loại kho', 'Loại xe', 'Mã hàng', 'ĐVT', 'Thùng', 'Trạng thái'].map(h => (
+                    {['Ngày', 'Kho', 'NCC', 'Loại kho', 'Loại xe', 'Mã hàng', 'Thùng', 'Trạng thái'].map(h => (
                       <th key={h} className="px-2 py-1 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
@@ -1752,16 +1752,12 @@ function InboundPlanBulkUploadDialog({ open, date, warehouseId, onClose }: {
                 <tbody>
                   {preview.map((r, i) => (
                     <tr key={i} className={r._valid ? 'hover:bg-slate-50' : 'bg-red-50'}>
+                      <td className="px-2 py-1 whitespace-nowrap">{r.date ? formatDate(r.date) : '—'}</td>
                       <td className="px-2 py-1 font-mono text-[9px] text-slate-400">{r.kho_code || '(mặc định)'}</td>
                       <td className="px-2 py-1 font-mono">{r.ncc_code || '—'}</td>
                       <td className="px-2 py-1">{r.warehouse_type || '—'}</td>
                       <td className="px-2 py-1">{r.vehicle_type || '—'}</td>
                       <td className="px-2 py-1 font-mono">{r.material_code || '—'}</td>
-                      <td className="px-2 py-1">
-                        {r.dvt_input && r.mat_unit && r.dvt_input.toUpperCase() !== r.mat_unit.toUpperCase()
-                          ? <span className="text-red-500">{r.dvt_input}</span>
-                          : <span>{r.dvt_input || r.mat_unit || '—'}</span>}
-                      </td>
                       <td className="px-2 py-1 tabular-nums text-right">{r.planned_boxes ?? '—'}</td>
                       <td className="px-2 py-1">
                         {r._valid
@@ -4139,7 +4135,6 @@ export default function TMSBookings() {
       />
       <InboundPlanBulkUploadDialog
         open={inboundPlanUploadOpen}
-        date={dateFrom}
         warehouseId={warehouseId}
         onClose={() => setInboundPlanUploadOpen(false)}
       />

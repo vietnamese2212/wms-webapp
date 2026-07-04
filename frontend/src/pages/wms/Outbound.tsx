@@ -1079,11 +1079,11 @@ function CustomerCombobox({ value, onChange, onNPPChange, warehouses }: {
 function DvvtCombobox({ value, onChange, companies }: {
   value: string
   onChange: (v: string) => void
-  companies: { id: string; name: string }[]
+  companies: { id: string; name: string; code?: string; type?: string | null }[]
 }) {
   const [open, setOpen] = useState(false)
   const filtered = value.trim()
-    ? companies.filter(c => c.name.toLowerCase().includes(value.toLowerCase()))
+    ? companies.filter(c => c.name.toLowerCase().includes(value.toLowerCase()) || String(c.code ?? '').toLowerCase().includes(value.toLowerCase()))
     : companies
   return (
     <div className="relative">
@@ -1099,9 +1099,16 @@ function DvvtCombobox({ value, onChange, companies }: {
         <div className="absolute z-50 w-full mt-0.5 bg-white border border-slate-200 rounded shadow-lg max-h-44 overflow-y-auto">
           {filtered.map(c => (
             <button key={c.id} type="button"
-              className="w-full text-left px-2.5 py-1.5 text-[11px] hover:bg-slate-50"
+              className="w-full text-left px-2.5 py-1.5 text-[11px] hover:bg-slate-50 flex items-center gap-2"
               onMouseDown={() => { onChange(c.name); setOpen(false) }}
-            >{c.name}</button>
+            >
+              <span className="flex-1 truncate">{c.name}</span>
+              {c.type && (
+                <span className={`shrink-0 text-[9px] font-medium rounded px-1 border ${c.type === 'NCC' ? 'text-amber-600 border-amber-300' : 'text-sky-600 border-sky-300'}`}>
+                  {c.type}
+                </span>
+              )}
+            </button>
           ))}
         </div>
       )}

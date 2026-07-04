@@ -427,10 +427,11 @@ export async function getGDO(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
-// ─── DVVT trên phiếu xuất nguồn PHẢI khớp 1 ĐVVT (code/alias/tên) → chuẩn hoá về TÊN chính tắc ──
+// ─── DVVT trên phiếu xuất khớp 1 ĐVVT hoặc NCC (code/alias/tên) → chuẩn hoá về TÊN chính tắc ──
+// NCC cũng có lúc TỰ CHỞ hàng của họ → nhận cả type NCC làm đơn vị vận tải, không chỉ ĐVVT.
 // Trả { ok, name }: trống → ok(null); khớp → ok(tên chính tắc); không khớp → !ok (chặn, báo lỗi).
 async function buildDvvtResolver() {
-  const { data } = await supabase.from('TransportCompany').select('code, name, alias_codes').eq('type', 'ĐVVT')
+  const { data } = await supabase.from('TransportCompany').select('code, name, alias_codes').in('type', ['ĐVVT', 'NCC'])
   const byKey = new Map<string, string>()
   for (const c of (data ?? []) as { code: string; name: string; alias_codes: string[] | null }[]) {
     const nm = String(c.name).trim()

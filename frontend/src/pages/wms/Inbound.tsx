@@ -624,7 +624,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                 <Label className="text-xs">Kho <span className="text-red-500">*</span></Label>
                 {canPickWarehouse ? (
                   <WarehouseSingleSelect
-                    warehouses={(warehouses as { id: string; code: string; name: string }[]).filter(w => !dialogAllowedWhIds || dialogAllowedWhIds.has(w.id))}
+                    warehouses={(warehouses as { id: string; code: string; name: string; inventory_mode?: string | null }[]).filter(w => (!dialogAllowedWhIds || dialogAllowedWhIds.has(w.id)) && w.inventory_mode !== 'NONE')}
                     value={warehouseId}
                     onChange={v => { setWarehouseId(v); setSubType(''); setLocationId(''); setMaterialId('') }}
                     placeholder="Chọn kho"
@@ -783,7 +783,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                   <Label className="text-xs">Kho *</Label>
                   {canPickWarehouse ? (
                     <WarehouseSingleSelect
-                      warehouses={(warehouses as any[]).filter(w => !dialogAllowedWhIds || dialogAllowedWhIds.has(w.id))}
+                      warehouses={(warehouses as any[]).filter(w => (!dialogAllowedWhIds || dialogAllowedWhIds.has(w.id)) && w.inventory_mode !== 'NONE')}
                       value={warehouseId}
                       onChange={v => { setWarehouseId(v); setSubType(''); setGateRegId(''); setNccRows([emptyNccRow()]) }}
                       placeholder="Chọn kho"

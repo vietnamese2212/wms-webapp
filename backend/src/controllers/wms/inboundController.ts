@@ -380,6 +380,10 @@ export async function createOrder(req: Request, res: Response) {
       supabase.from('Material').select('no_qr_tracking').eq('id', material_id).maybeSingle(),
       supabase.from('Warehouse').select('inventory_mode').eq('id', warehouse_id).maybeSingle(),
     ])
+    // Kho NONE = không theo dõi tồn (NPP/khách hàng, điểm đến xuất bán) → nhập kho vô nghĩa, chặn hẳn.
+    if ((whMode as { inventory_mode?: string | null } | null)?.inventory_mode === 'NONE') {
+      return fail(res, 400, 'VALIDATION_ERROR', 'Kho không theo dõi tồn (NONE) — không thể tạo phiếu nhập kho')
+    }
     const noQrEffective = effectiveNoQr(matCheck?.no_qr_tracking, (whMode as { inventory_mode?: string | null } | null)?.inventory_mode)
     const resolvedLocationId = noQrEffective ? null : (location_id ?? null)
 

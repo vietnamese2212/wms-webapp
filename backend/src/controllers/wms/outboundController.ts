@@ -1387,7 +1387,7 @@ export async function uploadExcel(req: Request, res: Response) {
     // Pre-load warehouses, materials, warehouse types, and existing GDOs in parallel
     const allGroupCodes = [...byVehicle.keys()]
     const [warehousesRes, whTypesRes, vehicleTypesRes, existingRes, allMaterials] = await Promise.all([
-      supabase.from('Warehouse').select('id, code, name, shipto_codes').eq('is_active', true),
+      supabase.from('Warehouse').select('id, code, name, shipto_codes, inventory_mode').eq('is_active', true),
       // LookupValue KHÔNG có cột is_active — lọc theo nó làm query lỗi → validWhTypes rỗng → chặn oan mọi file
       supabase.from('LookupValue').select('value').eq('type', 'warehouse_type'),
       supabase.from('VehicleType').select('code, name').eq('is_active', true),
@@ -1400,16 +1400,25 @@ export async function uploadExcel(req: Request, res: Response) {
 
     const warehouseByKey = new Map<string, string>()
     // Ship-to resolver: key (mã kho / mã ship-to phụ / tên kho, lower) → giá trị shipto_party sẽ lưu
-    // (mã kho hoặc mã ship-to phụ — cả hai đều khớp được maybeAutoCreateTransferOrder)
+    // (mã kho hoặc mã ship-to phụ — cả hai đều khớp được maybeAutoCreateTransferOrder).
+    // - shiptoByKey: MỌI kho — dùng cho cột "Shipto party" tường minh (kể cả kho NONE = xuất tiêu hao chủ ý)
+    // - shiptoTransferByKey: CHỈ kho theo dõi tồn (QR/QTY) — dùng cho fallback tự khớp Tên NPP,
+    //   tránh gán ship-to nhiễu cho mọi đơn NPP thường (149 NPP là Warehouse NONE trùng tên)
     const shiptoByKey = new Map<string, string>()
-    for (const w of (warehousesRes.data ?? []) as { id: string; code: string; name: string; shipto_codes?: string[] | null }[]) {
+    const shiptoTransferByKey = new Map<string, string>()
+    for (const w of (warehousesRes.data ?? []) as { id: string; code: string; name: string; shipto_codes?: string[] | null; inventory_mode?: string | null }[]) {
       warehouseByKey.set(w.code.trim().toLowerCase(), w.id)
       warehouseByKey.set(w.name.trim().toLowerCase(), w.id)
-      shiptoByKey.set(w.code.trim().toLowerCase(), w.code.trim())
-      shiptoByKey.set(w.name.trim().toLowerCase(), w.code.trim())
+      const tracksInventory = w.inventory_mode !== 'NONE'
+      const put = (key: string, val: string) => {
+        shiptoByKey.set(key, val)
+        if (tracksInventory) shiptoTransferByKey.set(key, val)
+      }
+      put(w.code.trim().toLowerCase(), w.code.trim())
+      put(w.name.trim().toLowerCase(), w.code.trim())
       for (const sc of (w.shipto_codes ?? [])) {
         const s = String(sc).trim()
-        if (s) shiptoByKey.set(s.toLowerCase(), s)
+        if (s) put(s.toLowerCase(), s)
       }
     }
     const matMap = new Map<string, string>(
@@ -1579,7 +1588,7 @@ export async function uploadExcel(req: Request, res: Response) {
       const nppNames = [...byNpp.keys()].filter(Boolean)
       const resolvedShipto =
         (shiptoColVal ? shiptoByKey.get(shiptoColVal.toLowerCase()) ?? null : null)
-        ?? (nppNames.length === 1 ? shiptoByKey.get(nppNames[0].toLowerCase()) ?? null : null)
+        ?? (nppNames.length === 1 ? shiptoTransferByKey.get(nppNames[0].toLowerCase()) ?? null : null)
         ?? shiptoByGroupCode.get(group_code) ?? null
 
       // PAUSED → merge (strict: scanned items must all exist in new file)

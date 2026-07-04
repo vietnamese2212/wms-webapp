@@ -2373,6 +2373,85 @@ export async function confirmLoosePickingItem(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
+// ─── Lưu thủ công nhặt lẻ (hàng no-QR: POSM/Loscam) ───────────
+// Ghi số thùng nhặt lẻ THỦ CÔNG (không quét camera) cho mã không-QR. Upsert 1 loose scan entry
+// (is_loose_picking=true, CHƯA xác nhận) + RESERVE tồn theo delta — trừ tồn thật khi "Check nhặt lẻ".
+// Entry POSM chung có location_id=null → tra theo cột warehouse_id trực tiếp (KHÔNG join Location như scanItem).
+export async function manualLooseItem(req: Request, res: Response) {
+  try {
+    const { gdoId, itemId } = req.params
+    const { cartons } = req.body as { cartons?: number }
+    if (cartons == null || Number(cartons) < 0) return fail(res, 'Số thùng không hợp lệ', 400)
+
+    const [{ data: gdo }, { data: item }] = await Promise.all([
+      supabase.from('GroupDeliveryOrder').select('status, warehouse_id, warehouse:Warehouse(inventory_mode)').eq('id', gdoId).single(),
+      supabase.from('OutboundItem')
+        .select('id, do_id, material_id, material_code_raw, cartons_ordered, cartons_scanned, loose_picking, material:Material!material_id(material_code, no_qr_tracking)')
+        .eq('id', itemId).single(),
+    ])
+    if (!inScope(req, gdo?.warehouse_id)) return fail(res, 'Chuyến xe không thuộc kho trong phạm vi của bạn', 403)
+    if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng — không thể cập nhật', 400)
+    if (!item) return fail(res, 'Không tìm thấy mặt hàng', 404)
+
+    const gdoMode = (gdo as { warehouse?: { inventory_mode?: string | null } | null } | null)?.warehouse?.inventory_mode
+    if (!effectiveNoQr((item.material as any)?.no_qr_tracking, gdoMode)) return fail(res, 'Chỉ áp dụng cho hàng không theo dõi QR', 400)
+    const matCode: string | null = (item.material as any)?.material_code ?? item.material_code_raw ?? null
+    if (!matCode || !gdo?.warehouse_id) return fail(res, 'Thiếu mã hàng hoặc kho', 400)
+
+    // Loose entries hiện có → tính effective loose + tìm bản ghi thủ công đang sửa
+    const { data: looseEntries } = await supabase.from('OutboundScanEntry')
+      .select('id, cartons_scanned, loose_confirmed, inventory_entry_id, pallet_code')
+      .eq('item_id', itemId).eq('is_loose_picking', true)
+    const existing = (looseEntries ?? []).find((e: any) => !e.loose_confirmed && e.pallet_code === matCode) as
+      { id: string; cartons_scanned: number } | undefined
+    const oldQty          = Number(existing?.cartons_scanned ?? 0)
+    const looseScannedTot = (looseEntries ?? []).reduce((s: number, e: any) => s + Number(e.cartons_scanned), 0)
+    const outboundScanned = Number(item.cartons_scanned) - looseScannedTot
+    const regularQuota    = Number(item.cartons_ordered) - Number(item.loose_picking)
+    const overshoot       = Math.max(0, outboundScanned - regularQuota)
+    const effectiveLoose  = Math.max(0, Number(item.loose_picking) - overshoot)
+    const otherLoose      = looseScannedTot - oldQty
+    const looseCap        = Math.max(0, effectiveLoose - otherLoose)
+
+    // Tồn chung theo warehouse_id trực tiếp (entry POSM location_id=null)
+    const { data: invEntry } = await supabase.from('InventoryEntry')
+      .select('id, cartons_remaining, cartons_imported, cartons_reserved')
+      .eq('pallet_code', matCode).eq('warehouse_id', gdo.warehouse_id).maybeSingle()
+    if (!invEntry) return fail(res, `Mã "${matCode}" chưa có tồn trong kho — kiểm tra phiếu nhập`, 404)
+
+    let newQty = Math.min(Math.round(Number(cartons)), looseCap)
+    // Cap theo tồn khả dụng (remaining - reserved) + phần đang giữ của chính bản ghi này (oldQty)
+    const availForThis = Number(invEntry.cartons_remaining ?? invEntry.cartons_imported ?? 0) - Number(invEntry.cartons_reserved ?? 0) + oldQty
+    if (newQty > availForThis) newQty = Math.max(0, availForThis)
+    const delta = newQty - oldQty
+
+    // RESERVE delta nguyên tử (không trừ remaining — trừ khi confirm). delta<0 = nhả bớt.
+    if (delta !== 0) {
+      const ok2 = await adjustInventoryAtomic(invEntry.id, 0, delta)
+      if (!ok2) return fail(res, 'Tồn kho mã này đang bận (nhiều người thao tác) — thử lại', 409)
+    }
+
+    const t = now()
+    // Upsert bản ghi lẻ thủ công
+    if (existing) {
+      if (newQty === 0) await supabase.from('OutboundScanEntry').delete().eq('id', existing.id)
+      else await supabase.from('OutboundScanEntry').update({ cartons_scanned: newQty, updated_at: t }).eq('id', existing.id)
+    } else if (newQty > 0) {
+      await supabase.from('OutboundScanEntry').insert({
+        id: randomUUID(), item_id: itemId, inventory_entry_id: invEntry.id,
+        pallet_code: matCode, cartons_scanned: newQty,
+        is_loose_picking: true, loose_confirmed: false,
+        scanned_at: t, created_at: t, updated_at: t,
+      })
+    }
+
+    // Cập nhật cartons_scanned của item theo delta (chưa complete — loose chưa xác nhận)
+    if (delta !== 0) await addItemScanned(itemId, delta, n => n === 0 ? 'PENDING' : 'IN_PROGRESS')
+
+    return ok(res, { scan_entry: { pallet_code: matCode, cartons_scanned: newQty } })
+  } catch (e) { return fail(res, String(e)) }
+}
+
 // ─── List loose picking items (nhặt lẻ) ──────────────────────
 
 export async function listLoosePickingItems(req: Request, res: Response) {

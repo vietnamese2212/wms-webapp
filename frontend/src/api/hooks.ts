@@ -1407,6 +1407,23 @@ export function useScanLoosePickingItem() {
   })
 }
 
+// Lưu thủ công nhặt lẻ cho hàng no-QR (POSM/Loscam) — ghi số thùng tay, reserve tồn (trừ khi Check nhặt lẻ)
+export function useManualLooseItem() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ gdoId, itemId, cartons }: { gdoId: string; itemId: string; cartons: number }) =>
+      apiClient.post(`/wms/outbound/${gdoId}/items/${itemId}/manual-loose`, { cartons }).then(r => r.data.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['loosepicking'] })
+      qc.invalidateQueries({ queryKey: ['gdos'] })
+      qc.invalidateQueries({ queryKey: ['gdo'] })
+      qc.invalidateQueries({ queryKey: ['inventory-entries'] })
+      qc.invalidateQueries({ queryKey: ['item-inventory'] })
+      qc.invalidateQueries({ queryKey: ['inventory-by-material'] })
+    },
+  })
+}
+
 export function useCreateGDO() {
   const qc = useQueryClient()
   return useMutation({

@@ -140,6 +140,8 @@ router.delete('/outbound/:gdoId/items/:itemId/scans/:scanId', requireAnyPerm(['o
 // "Lưu thủ công" = ghi nhận xuất cho hàng không QR (trừ tồn + tạo scan entry) → là capability QUÉT, không phải complete
 router.post('/outbound/:gdoId/items/:itemId/manual-complete', requirePerm('outbound', 'scan'), outbound.manualCompleteItem)
 router.post('/outbound/:gdoId/items/:itemId/confirm-loose',   requireAnyPerm(['outbound', 'complete'], ['loosepicking', 'complete']), outbound.confirmLoosePickingItem)
+// "Lưu thủ công nhặt lẻ" = ghi số thùng lẻ tay cho hàng không QR (reserve, trừ khi Check) → capability QUÉT
+router.post('/outbound/:gdoId/items/:itemId/manual-loose',    requireAnyPerm(['outbound', 'scan'], ['loosepicking', 'scan']), outbound.manualLooseItem)
 router.get('/outbound/:gdoId/items/:itemId/inventory',        requireAnyPerm(['outbound', 'view'], ['loosepicking', 'view']), outbound.getItemInventory)
 router.get('/outbound/:gdoId/items/:itemId/manual-stock',     requirePerm('outbound', 'view'), outbound.getManualItemStock)
 

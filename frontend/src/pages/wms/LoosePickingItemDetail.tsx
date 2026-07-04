@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { QRScanner } from '@/components/shared/QRScanner'
 import type { QRScannerHandle } from '@/components/shared/QRScanner'
-import { useGDO, useScanLoosePickingItem, useCheckOutboundScan, useConfirmLoosePickingItem, useItemInventory, type CheckOutboundScanResult, type ItemInventoryEntry } from '@/api/hooks'
+import { useGDO, useScanLoosePickingItem, useCheckOutboundScan, useConfirmLoosePickingItem, useManualLooseItem, useItemInventory, type CheckOutboundScanResult, type ItemInventoryEntry } from '@/api/hooks'
 import { PalletDetailDialog } from '@/components/shared/PalletDetailDialog'
 import { useActiveLoosePickingStore } from '@/stores/activeLoosePickingStore'
 import { useAuthStore } from '@/stores/authStore'
@@ -297,12 +297,18 @@ export default function LoosePickingItemDetail() {
   const { data: gdo, isLoading } = useGDO(gdoId)
   const { data: inventoryData = [], isLoading: invLoading } = useItemInventory(gdoId, itemId)
   const { mutate: confirmLoose, isPending: confirming } = useConfirmLoosePickingItem()
+  const { mutateAsync: manualLooseAsync } = useManualLooseItem()
   const [showScan,          setShowScan]          = useState(false)
   const [showInventory,     setShowInventory]     = useState(false)
   const [confirmLooseOpen,  setConfirmLooseOpen]  = useState(false)
   const [looseError,        setLooseError]        = useState<string | null>(null)
   const [expandedInvKeys,   setExpandedInvKeys]   = useState<Set<string>>(new Set())
   const [detailEntryId,     setDetailEntryId]     = useState<string | null>(null)
+  // Lưu thủ công (hàng no-QR: POSM/Loscam) — nhập số lượng lẻ tay, không quét camera
+  const [showManualLoose,   setShowManualLoose]   = useState(false)
+  const [manualLooseCartons, setManualLooseCartons] = useState('')
+  const [manualLooseError,  setManualLooseError]  = useState('')
+  const [manualLooseSaving, setManualLooseSaving] = useState(false)
 
   const hasAutoScanned = useRef(false)
 
@@ -316,8 +322,15 @@ export default function LoosePickingItemDetail() {
     const ov = Math.max(0, (current.cartons_scanned - ls) - (current.cartons_ordered - current.loose_picking))
     const el = Math.max(0, current.loose_picking - ov)
     if (ls < el) {
-      unlockAudio()
-      setShowScan(true)
+      // Hàng no-QR → mở dialog nhập tay; hàng QR → mở camera quét
+      if ((current.material as any)?.no_qr_tracking === true) {
+        setManualLooseCartons(String(el - ls))
+        setManualLooseError('')
+        setShowManualLoose(true)
+      } else {
+        unlockAudio()
+        setShowScan(true)
+      }
       hasAutoScanned.current = true
     }
   }, [autoScan, gdo]) // eslint-disable-line
@@ -388,9 +401,41 @@ export default function LoosePickingItemDetail() {
     .filter(s => !s.loose_confirmed)
     .reduce((sum, s) => sum + Number(s.cartons_scanned), 0)
 
+  // Hàng no-QR (POSM/Loscam) → nhập tay số lượng lẻ thay vì quét camera
+  const isNoQr        = item.material?.no_qr_tracking === true
+  const looseRemaining = Math.max(0, effectiveLoose - looseDone)
+  // Bản ghi lẻ thủ công hiện có (pallet_code = mã hàng, chưa xác nhận) — để sửa (xóa rồi ghi lại)
+  const existingManualLoose = scans.find(s => !s.loose_confirmed && s.pallet_code === matCode)
+  const otherLoose    = looseScanned - Number(existingManualLoose?.cartons_scanned ?? 0)
+  const manualLooseMax = Math.max(0, effectiveLoose - otherLoose)
+  const manualLooseNum = Math.max(0, parseInt(manualLooseCartons) || 0)
+  const overLooseMax   = manualLooseNum > manualLooseMax
+
   function openScan() {
     unlockAudio()
     setShowScan(true)
+  }
+
+  function openManualLoose() {
+    setManualLooseCartons(String(existingManualLoose?.cartons_scanned ?? looseRemaining))
+    setManualLooseError('')
+    setShowManualLoose(true)
+  }
+
+  async function saveManualLoose() {
+    const qty = Math.max(0, parseInt(manualLooseCartons) || 0)
+    if (qty > manualLooseMax) { setManualLooseError(`Vượt số cần nhặt lẻ (tối đa ${manualLooseMax} thùng)`); return }
+    setManualLooseSaving(true); setManualLooseError('')
+    try {
+      // BE upsert: ghi/sửa/xóa bản ghi lẻ thủ công + reserve tồn theo delta (trừ khi "Check nhặt lẻ")
+      await manualLooseAsync({ gdoId: gdoId!, itemId: item!.id, cartons: qty })
+      setShowManualLoose(false)
+    } catch (e) {
+      const msg = (e as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi lưu số lượng'
+      setManualLooseError(msg)
+    } finally {
+      setManualLooseSaving(false)
+    }
   }
 
   return (
@@ -420,6 +465,47 @@ export default function LoosePickingItemDetail() {
         loading={confirming}
         error={looseError}
       />
+
+      {/* Lưu thủ công (hàng no-QR) — nhập số thùng lẻ, upsert bản ghi lẻ (trừ tồn khi "Check nhặt lẻ") */}
+      <Dialog open={showManualLoose} onOpenChange={v => { if (!v) { setShowManualLoose(false); setManualLooseError('') } }}>
+        <DialogContent className="max-w-xs">
+          <DialogHeader><DialogTitle className="text-base">Lưu số lượng nhặt lẻ</DialogTitle></DialogHeader>
+          <div className="space-y-3 py-1">
+            <p className="text-sm text-slate-600 font-medium">{matName}</p>
+            <div className="flex gap-3 bg-slate-50 rounded-lg px-3 py-2">
+              <div className="flex-1 text-center">
+                <div className="text-[10px] text-slate-500 mb-0.5">Cần nhặt lẻ</div>
+                <div className="text-base font-bold tabular-nums text-slate-700">{effectiveLoose}</div>
+                <div className="text-[9px] text-slate-400">thùng</div>
+              </div>
+              <div className="w-px bg-slate-200" />
+              <div className="flex-1 text-center">
+                <div className="text-[10px] text-slate-500 mb-0.5">Còn thiếu</div>
+                <div className={`text-base font-bold tabular-nums ${looseRemaining === 0 ? 'text-green-600' : 'text-amber-600'}`}>{looseRemaining}</div>
+                <div className="text-[9px] text-slate-400">thùng</div>
+              </div>
+            </div>
+            <div className="space-y-1">
+              <p className="text-xs text-slate-600">Số thùng lẻ đã chuẩn bị</p>
+              <Input
+                type="number" min={0}
+                value={manualLooseCartons}
+                onChange={e => { setManualLooseCartons(e.target.value); setManualLooseError('') }}
+                className={`text-center font-semibold text-lg h-11 ${overLooseMax ? 'border-red-400 focus-visible:ring-red-400' : ''}`}
+                autoFocus
+              />
+              {overLooseMax && <p className="text-xs text-red-600">Vượt số cần nhặt lẻ (tối đa {manualLooseMax} thùng)</p>}
+            </div>
+            {manualLooseError && <p className="text-xs text-red-600 bg-red-50 rounded px-2 py-1">{manualLooseError}</p>}
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" size="sm" onClick={() => { setShowManualLoose(false); setManualLooseError('') }} disabled={manualLooseSaving}>Hủy</Button>
+            <Button size="sm" disabled={manualLooseSaving || overLooseMax} onClick={saveManualLoose}>
+              {manualLooseSaving ? '…' : 'Lưu'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <div className="flex flex-col h-full min-h-0">
 
@@ -452,10 +538,18 @@ export default function LoosePickingItemDetail() {
                 <Package className="h-3.5 w-3.5" />
                 Tồn kho{inventoryData.length > 0 ? ` (${inventoryData.length})` : ''}
               </button>
-              {!isDone && can(perms, 'loosepicking', 'scan') && (
-                <Button size="sm" className="h-7 text-xs gap-1" onClick={openScan}>
-                  <QrCode className="h-3.5 w-3.5" /> Quét pallet
-                </Button>
+              {can(perms, 'loosepicking', 'scan') && (
+                isNoQr ? (
+                  (!isDone || existingManualLoose) && (
+                    <Button size="sm" variant="outline" className="h-7 text-xs" onClick={openManualLoose}>
+                      {existingManualLoose ? 'Sửa SL lẻ' : 'Lưu thủ công'}
+                    </Button>
+                  )
+                ) : !isDone && (
+                  <Button size="sm" className="h-7 text-xs gap-1" onClick={openScan}>
+                    <QrCode className="h-3.5 w-3.5" /> Quét pallet
+                  </Button>
+                )
               )}
             </div>
           </div>
@@ -635,10 +729,16 @@ export default function LoosePickingItemDetail() {
                 <div className="flex flex-col items-center gap-2 py-12 text-slate-400">
                   <QrCode className="h-10 w-10 opacity-30" />
                   <p className="text-sm">Chưa có pallet nào được quét</p>
-                  {!isDone && (
-                    <Button size="sm" variant="outline" onClick={openScan}>
-                      <QrCode className="h-4 w-4 mr-1" /> Quét pallet đầu tiên
-                    </Button>
+                  {!isDone && can(perms, 'loosepicking', 'scan') && (
+                    isNoQr ? (
+                      <Button size="sm" variant="outline" onClick={openManualLoose}>
+                        Lưu thủ công
+                      </Button>
+                    ) : (
+                      <Button size="sm" variant="outline" onClick={openScan}>
+                        <QrCode className="h-4 w-4 mr-1" /> Quét pallet đầu tiên
+                      </Button>
+                    )
                   )}
                 </div>
               ) : (

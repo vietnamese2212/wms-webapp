@@ -213,11 +213,6 @@ export default function Outbound() {
   }
 
   const { data: warehouses = [] } = useWarehouses(true)
-  // Mã các kho NONE (xuất tiêu hao, vd Sản xuất) → badge "Xuất SX" ở cột Ship-to
-  const noneWhCodes = useMemo(
-    () => new Set((warehouses as WarehouseLite[]).filter(w => w.inventory_mode === 'NONE' && w.code).map(w => w.code as string)),
-    [warehouses],
-  )
 
   const outboundAllowedWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
     ? new Set(user.warehouse_ids)
@@ -664,7 +659,6 @@ export default function Outbound() {
                     dense={dense}
                     pinW={colW[0]}
                     selected={gdo.id === selectedId}
-                    isProdDest={!!gdo.shipto_party && noneWhCodes.has(gdo.shipto_party)}
                     bracketPos={bpos}
                     onClick={() => { if (isDesktop) setSelectedId(gdo.id); else navigate(`/wms/outbound/${gdo.id}`) }}
                     onDoubleClick={() => navigate(`/wms/outbound/${gdo.id}`)}
@@ -742,14 +736,13 @@ export default function Outbound() {
 
 // ─── GDO Row ──────────────────────────────────────────────────
 
-function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34, isProdDest = false, selected = false, bracketPos = 'none' }: {
+function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34, selected = false, bracketPos = 'none' }: {
   gdo: GDO
   onClick: () => void
   onDoubleClick?: () => void
   onAssign?: (e: React.MouseEvent) => void
   dense?: boolean
   pinW?: number
-  isProdDest?: boolean
   selected?: boolean
   bracketPos?: BracketPos
 }) {
@@ -796,10 +789,7 @@ function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         {gdo.shipto_party ? (
-          <span className="inline-flex items-center gap-1">
-            <span className="text-[10px] font-mono">{gdo.shipto_party}</span>
-            {isProdDest && <span className="text-[8px] px-1 py-0.5 rounded bg-sky-100 text-sky-700 border border-sky-200 font-medium">Xuất SX</span>}
-          </span>
+          <span className="text-[10px] font-mono">{gdo.shipto_party}</span>
         ) : <span className="text-slate-300">—</span>}
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
@@ -1037,16 +1027,25 @@ function CustomerCombobox({ value, onChange, onNPPChange, warehouses }: {
               className="w-full text-left px-2.5 py-1.5 text-[11px] hover:bg-slate-50 flex items-center justify-between gap-2"
               onMouseDown={() => {
                 onChange(w.name)
-                onNPPChange(w.code)
+                // Chỉ set shipto (chuyển kho) khi đích là KHO NHẬN theo dõi tồn (QR/QTY);
+                // NPP/khách hàng (NONE) chỉ lấy tên, KHÔNG phải shipto
+                onNPPChange(w.inventory_mode !== 'NONE' ? w.code : '')
                 setOpen(false)
               }}
             >
               <span>{w.name} <span className="text-slate-400">({w.code})</span></span>
-              {w.warehouse_type && (
-                <span className={`text-[9px] font-medium rounded px-1 border ${w.warehouse_type === 'NPP' ? 'text-amber-600 border-amber-300' : 'text-blue-600 border-blue-300'}`}>
-                  {w.warehouse_type}
-                </span>
-              )}
+              <span className="flex items-center gap-1 shrink-0">
+                {w.warehouse_type && (
+                  <span className={`text-[9px] font-medium rounded px-1 border ${w.warehouse_type === 'NPP' ? 'text-amber-600 border-amber-300' : 'text-blue-600 border-blue-300'}`}>
+                    {w.warehouse_type}
+                  </span>
+                )}
+                {w.inventory_mode && (
+                  <span className={`text-[9px] font-medium rounded px-1 border ${w.inventory_mode === 'NONE' ? 'text-slate-500 border-slate-300' : 'text-green-600 border-green-300'}`}>
+                    {w.inventory_mode}
+                  </span>
+                )}
+              </span>
             </button>
           ))}
         </div>
@@ -1170,9 +1169,7 @@ function GDOFormBody({
 
   const exportTypeOptions = warehouseId ? vtByWarehouse : allVehicleTypes
   const isNPP = (warehouses as WarehouseLite[]).find(w => w.id === warehouseId)?.warehouse_type === 'NPP'
-  // Đích là kho NONE (vd bộ phận Sản xuất) → xuất tiêu hao: không có xe, không tạo phiếu nhập
-  const isProductionIssue = (warehouses as WarehouseLite[]).find(w => w.code === shiptoPartyId)?.inventory_mode === 'NONE'
-  const noVehicle = isNPP || isProductionIssue
+  const noVehicle = isNPP
   // Đa-NPP mới là tiêu chí "đơn gộp" (chuẩn 04/07) — DO chỉ là tham khảo, không có vai trò
   const nppOptions = useMemo(() => [...new Set((gdo?.delivery_orders ?? []).map(d => (d.distributor_name ?? '').trim()).filter(Boolean))], [gdo])
   const isMultiNpp = nppOptions.length > 1
@@ -1377,17 +1374,10 @@ function GDOFormBody({
               />
             )}
             {shiptoPartyId && (
-              isProductionIssue ? (
-                <div className="flex items-center gap-1.5 rounded bg-sky-50 border border-sky-200 px-2 py-1 text-[10px] text-sky-800">
-                  <AlertTriangle className="h-3 w-3 shrink-0" />
-                  <span>Xuất Sản xuất · <span className="font-mono font-semibold">{shiptoPartyId}</span> — chỉ trừ tồn nguồn, KHÔNG tạo phiếu nhập / lệnh chuyển kho</span>
-                </div>
-              ) : (
-                <div className="flex items-center gap-1.5 rounded bg-amber-50 border border-amber-200 px-2 py-1 text-[10px] text-amber-800">
-                  <AlertTriangle className="h-3 w-3 shrink-0" />
-                  <span>Chuyển kho · Ship-to: <span className="font-mono font-semibold">{shiptoPartyId}</span> — Hoàn thành đơn sẽ tạo phiếu nhập cho kho này</span>
-                </div>
-              )
+              <div className="flex items-center gap-1.5 rounded bg-amber-50 border border-amber-200 px-2 py-1 text-[10px] text-amber-800">
+                <AlertTriangle className="h-3 w-3 shrink-0" />
+                <span>Chuyển kho · Ship-to: <span className="font-mono font-semibold">{shiptoPartyId}</span> — Hoàn thành đơn sẽ tạo phiếu nhập cho kho này</span>
+              </div>
             )}
           </div>
           <div className="space-y-1">
@@ -1651,7 +1641,6 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
   const { mutate: createGDO, isPending } = useCreateGDO()
   const { data: warehousesForCreate = [] } = useWarehouses(true)
   const isNPPCreate = (warehousesForCreate as any[]).find(w => w.id === warehouseId)?.warehouse_type === 'NPP'
-  const isProdCreate = (warehousesForCreate as any[]).find(w => w.code === shiptoPartyId)?.inventory_mode === 'NONE'
 
   function handleSubmit() {
     if (!date)         return setError('Chọn ngày xuất')
@@ -1659,7 +1648,7 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
     if (!warehouseType) return setError('Chọn loại kho')
     if (!customerName.trim()) return setError('Nhập tên khách hàng')
     if (!dvvt.trim())  return setError('Nhập đơn vị vận tải')
-    if (!isNPPCreate && !isProdCreate && !exportType) return setError('Chọn loại xe')
+    if (!isNPPCreate && !exportType) return setError('Chọn loại xe')
     const filledItems = items.filter(i => i.material_code.trim())
     if (filledItems.length === 0) return setError('Nhập ít nhất một mã hàng')
     const seenCodes = new Set<string>()
@@ -1774,7 +1763,6 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
   }, [gdo, initialized, allVehicleTypes])
 
   const isNPPEdit = (warehousesForEdit as any[]).find(w => w.id === warehouseId)?.warehouse_type === 'NPP'
-  const isProdEdit = (warehousesForEdit as any[]).find(w => w.code === shiptoPartyId)?.inventory_mode === 'NONE'
 
   function handleSubmit() {
     // Đa-NPP (chuẩn 04/07) — DO chỉ là tham khảo, không dùng làm tiêu chí
@@ -1782,7 +1770,7 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
     if (!date) return setError('Chọn ngày xuất')
     if (!isMultiNpp && !deliveryCode.trim()) return setError('Nhập Số DO')
     if (!isMultiNpp && !customerName.trim()) return setError('Nhập tên khách hàng')
-    if (!isNPPEdit && !isProdEdit && !exportType) return setError('Chọn loại xe')
+    if (!isNPPEdit && !exportType) return setError('Chọn loại xe')
     for (const item of items) {
       if (!item.material_code.trim()) return setError('Chọn mã hàng cho tất cả dòng')
       if (!item.cartons || item.cartons <= 0) return setError('Số thùng phải > 0')

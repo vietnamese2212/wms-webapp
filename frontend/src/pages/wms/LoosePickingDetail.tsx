@@ -291,7 +291,12 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand }: {
                     </button>
                   </TableCell>
                   <TableCell className="px-2 py-1 align-top whitespace-nowrap">
-                    <span className="text-[10px] text-slate-500 font-mono">{item.delivery_code}</span>
+                    {(() => {
+                      const codes = (item.delivery_code ?? '').split(',').map(s => s.trim()).filter(Boolean)
+                      if (codes.length === 0) return <span className="text-[10px] text-slate-300">—</span>
+                      const disp = codes.length > 1 ? `${codes[0]} …` : codes[0]
+                      return <span className="text-[10px] text-slate-500 font-mono" title={codes.join(', ')}>{disp}</span>
+                    })()}
                   </TableCell>
                   <TableCell className="px-1 py-1 align-top">
                     {looseScanEntries.length > 0 && (

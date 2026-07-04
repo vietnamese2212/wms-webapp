@@ -182,6 +182,18 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
             </p>
           )}
 
+          {/* Điều kiện xuất Batch / %Date — highlight ĐỎ (đồng bộ Xuất) */}
+          {(item.batch_required || (item.date_required != null && item.date_required > 0)) && (
+            <div className="flex flex-wrap gap-1.5">
+              {item.batch_required && (
+                <span className="text-sm font-semibold text-red-600 border border-red-200 bg-red-50 rounded px-2 py-1">Batch: {item.batch_required}</span>
+              )}
+              {item.date_required != null && item.date_required > 0 && (
+                <span className="text-sm font-semibold text-red-600 border border-red-200 bg-red-50 rounded px-2 py-1">%Date ≥ {item.date_required}%</span>
+              )}
+            </div>
+          )}
+
           <div className="relative">
             <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} />
 
@@ -362,6 +374,10 @@ export default function LoosePickingItemDetail() {
 
   const matName      = item.material?.short_name ?? item.material_code_raw ?? '—'
   const matCode      = item.material?.material_code ?? item.material_code_raw ?? '—'
+  // DO/NPP của dòng này (đơn cha) — DO chỉ tham khảo, hiển thị đầy đủ trong header (đồng bộ Xuất)
+  const parentDO     = (gdo.delivery_orders ?? []).find(d => d.items.some(i => i.id === itemId))
+  const doCode       = parentDO?.delivery_code ?? ''
+  const doNpp        = (parentDO?.distributor_name ?? '').trim()
   const looseScanned = (item.scan_entries ?? []).filter(s => s.is_loose_picking).reduce((sum, s) => sum + Number(s.cartons_scanned), 0)
   const ov           = Math.max(0, (item.cartons_scanned - looseScanned) - (item.cartons_ordered - item.loose_picking))
   const effectiveLoose = Math.max(0, item.loose_picking - ov)
@@ -472,16 +488,25 @@ export default function LoosePickingItemDetail() {
               <Package className="h-3 w-3 text-slate-400 shrink-0" />
               Tổng: <span className="font-medium text-slate-700 ml-0.5">{item.cartons_ordered}</span> thùng
             </span>
-            {item.batch_required && (
-              <span>Batch: <span className="font-medium text-slate-700">{item.batch_required}</span></span>
-            )}
-            {item.date_required != null && item.date_required > 0 && (
-              <span>%Date: <span className="font-semibold text-amber-700">{item.date_required}%</span></span>
-            )}
           </div>
 
+          {/* Row 3b: DO (đầy đủ) + NPP tham khảo + điều kiện xuất Batch/%Date highlight ĐỎ (đồng bộ Xuất) */}
+          {(doNpp || doCode || item.batch_required || (item.date_required != null && item.date_required > 0)) && (
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]">
+              {doNpp && <span className="text-slate-600"><span className="text-slate-400">NPP:</span> <span className="font-medium">{doNpp}</span></span>}
+              {doCode && <span className="text-slate-500"><span className="text-slate-400">DO:</span> <span className="font-mono break-all">{doCode}</span></span>}
+              {item.batch_required && (
+                <span className="font-semibold text-red-600 bg-red-50 border border-red-200 rounded px-1.5 py-0.5">Batch: {item.batch_required}</span>
+              )}
+              {item.date_required != null && item.date_required > 0 && (
+                <span className="font-semibold text-red-600 bg-red-50 border border-red-200 rounded px-1.5 py-0.5">%Date ≥ {item.date_required}%</span>
+              )}
+            </div>
+          )}
+
+          {/* Header text: highlight ĐỎ nổi bật (đồng bộ Xuất) */}
           {item.header_text && (
-            <div className="text-xs font-medium text-slate-700 bg-blue-50 border border-blue-100 rounded px-2 py-1 leading-snug">
+            <div className="text-xs font-semibold text-red-600 bg-red-50 border border-red-300 rounded px-2 py-1 leading-snug break-words">
               {item.header_text}
             </div>
           )}

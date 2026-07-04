@@ -1515,13 +1515,6 @@ export async function uploadExcel(req: Request, res: Response) {
         .filter(v => !resolveVehicleType(v))
       if (badExport.length) errs.push(`Loại xuất "${badExport.join(', ')}" không khớp danh mục Loại xe TMS`)
 
-      // Shipto party (cột tùy chọn — đơn chuyển kho): 1 giá trị/Số xe, phải khớp kho hệ thống
-      const shiptoVals = [...new Set(groupRows.map(r => String(r['Shipto party'] ?? r['Shipto_party'] ?? '').trim()).filter(Boolean))]
-      if (shiptoVals.length > 1)
-        errs.push(`Nhiều Shipto party khác nhau trong 1 Số xe: ${shiptoVals.join(', ')}`)
-      else if (shiptoVals.length === 1 && !shiptoByKey.has(shiptoVals[0].toLowerCase()))
-        errs.push(`Shipto party "${shiptoVals[0]}" không khớp kho nào (mã kho / mã ship-to phụ / tên kho)`)
-
       if (blockedMap.has(group_code)) {
         const status = blockedMap.get(group_code)!
         errs.push(status === 'COMPLETED'
@@ -1581,13 +1574,14 @@ export async function uploadExcel(req: Request, res: Response) {
         byNpp.set(npp, list)
       }
 
-      // Ship-to (chuyển kho): cột "Shipto party" ưu tiên (đã validate khớp kho);
-      // không có cột → tự khớp Tên NPP với kho hệ thống (chỉ khi chuyến có đúng 1 NPP);
+      // Ship-to (chuyển kho): cột "Shipto party" ưu tiên — KHÔNG chặn khi không khớp
+      // (SAP điền ship-to cho mọi khách hàng; chỉ giá trị khớp kho hệ thống mới có ý nghĩa, còn lại bỏ qua);
+      // không khớp → tự khớp Tên NPP với kho hệ thống (chỉ khi chuyến có đúng 1 NPP);
       // vẫn không → giữ ship-to đã gán tay trước đó (upload đè không làm mất).
-      const shiptoColVal = [...new Set(groupRows.map(r => String(r['Shipto party'] ?? r['Shipto_party'] ?? '').trim()).filter(Boolean))][0] ?? ''
+      const shiptoColVals = [...new Set(groupRows.map(r => String(r['Shipto party'] ?? r['Shipto_party'] ?? '').trim()).filter(Boolean))]
       const nppNames = [...byNpp.keys()].filter(Boolean)
       const resolvedShipto =
-        (shiptoColVal ? shiptoByKey.get(shiptoColVal.toLowerCase()) ?? null : null)
+        shiptoColVals.map(v => shiptoByKey.get(v.toLowerCase())).find(Boolean)
         ?? (nppNames.length === 1 ? shiptoTransferByKey.get(nppNames[0].toLowerCase()) ?? null : null)
         ?? shiptoByGroupCode.get(group_code) ?? null
 

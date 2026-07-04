@@ -928,9 +928,8 @@ function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34
 
 type MatOption = { id: string; material_code: string; short_name: string | null; category: string | null; unit: string | null }
 
-function MatPicker({ value, matName, onSelect, disabled, disabledNoType, filterCategory, onPaste }: {
+function MatPicker({ value, onSelect, disabled, disabledNoType, filterCategory, onPaste }: {
   value: string
-  matName: string
   onSelect: (code: string, name: string, category: string | null, unit: string) => void
   disabled?: boolean
   disabledNoType?: boolean
@@ -1492,7 +1491,6 @@ function GDOFormBody({
                     <td className="px-2 py-1">
                       <MatPicker
                         value={item.material_code}
-                        matName=""
                         onSelect={(code, name, category, unit) => updateItem(item.id, { material_code: code, mat_name: name, category, unit })}
                         disabled={item.min_cartons > 0}
                         disabledNoType={!warehouseType && item.min_cartons === 0}

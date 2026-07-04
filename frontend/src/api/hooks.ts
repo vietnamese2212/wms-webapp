@@ -327,11 +327,6 @@ function lsGet<T>(key: string): T | undefined {
 function lsSet(key: string, val: unknown): void {
   try { localStorage.setItem(key, JSON.stringify(val)) } catch {}
 }
-function lsKey(prefix: string, params?: Record<string, string | undefined>): string {
-  const clean = Object.fromEntries(Object.entries(params ?? {}).filter(([, v]) => v !== undefined))
-  return `${prefix}:${JSON.stringify(clean)}`
-}
-
 export function useInboundOrders(params?: { warehouse_id?: string; status?: string; search?: string; date?: string; date_from?: string; date_to?: string; shift_id?: string; material_category?: string }) {
   return useQuery({
     queryKey: ['inbound-orders', params],

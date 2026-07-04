@@ -1334,7 +1334,7 @@ export async function updateEntry(req: Request, res: Response) {
     const permTarget = isNoQrShared
       ? [{ created_by: (order as any).imported_by ?? (order as any).created_by ?? null, import_date: (order as any).import_date as string | null, created_at: (order as any).created_at as string }]
       : [entry]
-    const perm = await checkDeletePermission(employee_id, permTarget, order.warehouse_id as string | null, hasForceEdit)
+    const perm = await checkDeletePermission(employee_id, permTarget, hasForceEdit)
     if (!perm.allowed) return fail(res, 403, 'FORBIDDEN', perm.reason!)
 
     const nowTs = new Date().toISOString()
@@ -1395,7 +1395,6 @@ export async function updateEntry(req: Request, res: Response) {
 async function checkDeletePermission(
   employee_id: string | undefined,
   entries: { created_by: string | null; import_date: string | null; created_at: string }[],
-  order_warehouse_id: string | null,
   forceAllowed = false
 ): Promise<{ allowed: boolean; reason?: string }> {
   if (!employee_id) return { allowed: true } // no auth yet → allow
@@ -1468,7 +1467,7 @@ export async function removeEntry(req: Request, res: Response) {
     const permTarget = isNoQrShared
       ? [{ created_by: (order as any).imported_by ?? (order as any).created_by ?? null, import_date: (order as any).import_date as string | null, created_at: (order as any).created_at as string }]
       : [entry]
-    const perm = await checkDeletePermission(employee_id, permTarget, order.warehouse_id as string | null, hasForceDelete)
+    const perm = await checkDeletePermission(employee_id, permTarget, hasForceDelete)
     if (!perm.allowed) return fail(res, 403, 'FORBIDDEN', perm.reason!)
 
     const nowTs = new Date().toISOString()
@@ -1553,7 +1552,7 @@ export async function removeEntries(req: Request, res: Response) {
     if (wrongOrder) return fail(res, 400, 'ENTRY_NOT_IN_ORDER', 'Một số pallet không thuộc phiếu nhập này')
 
     const hasForceDelete = req.user?.module_permissions?.['inbound']?.includes('force_delete_pallet') ?? false
-    const perm = await checkDeletePermission(employee_id, entries, order.warehouse_id as string | null, hasForceDelete)
+    const perm = await checkDeletePermission(employee_id, entries, hasForceDelete)
     if (!perm.allowed) return fail(res, 403, 'FORBIDDEN', perm.reason!)
 
     const inv = checkInventoryUnchanged(entries)

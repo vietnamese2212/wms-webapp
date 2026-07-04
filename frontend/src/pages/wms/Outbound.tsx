@@ -1112,6 +1112,14 @@ let _uid = 0
 const uid = () => String(++_uid)
 const makeItem = (): ItemRow => ({ id: uid(), material_code: '', mat_name: '', unit: '', category: null, cartons: 0, min_cartons: 0, loose_picking: 0, batch_required: '', date_required: 0, cs_responsible: '', header_text: '', npp: '' })
 
+// %Date chỉ nhận số nguyên 0–100 (cho phép đuôi "%"). Trả null nếu ô chứa chữ → dùng để CHẶN paste text.
+function parsePctCell(raw: string): number | null {
+  const s = raw.trim().replace(/%$/, '').trim()
+  if (s === '') return 0
+  if (!/^\d+$/.test(s)) return null
+  return parseInt(s, 10)
+}
+
 // ─── Shared form UI ───────────────────────────────────────────
 
 function GDOFormBody({
@@ -1148,6 +1156,7 @@ function GDOFormBody({
   onClose: () => void
 }) {
   const formUser = useAuthStore(s => s.user)
+  const [pasteErr, setPasteErr] = useState('')
   const { data: dvvtCompanies = [] } = useTransportCompanies(true)
   const formAllowedWhIds = formUser?.warehouse_scope !== 'NATIONAL' && formUser?.warehouse_ids?.length
     ? new Set(formUser.warehouse_ids)
@@ -1421,6 +1430,12 @@ function GDOFormBody({
       {error && (
         <div className="shrink-0 bg-red-50 border-b border-red-200 px-4 py-1.5 text-[11px] text-red-700">{error}</div>
       )}
+      {pasteErr && (
+        <div className="shrink-0 bg-red-50 border-b border-red-200 px-4 py-1.5 text-[11px] text-red-700 flex items-center justify-between gap-2">
+          <span>{pasteErr}</span>
+          <button type="button" onClick={() => setPasteErr('')} className="text-red-400 hover:text-red-600 shrink-0"><X className="h-3.5 w-3.5" /></button>
+        </div>
+      )}
 
       {/* Items table — flex-1, fills remaining height */}
       <div className="flex-1 min-h-0 overflow-auto px-4 py-3">
@@ -1508,13 +1523,25 @@ function GDOFormBody({
                         className="h-6 w-12 rounded border border-slate-200 px-1 text-[10px] text-right focus:outline-none focus:ring-1 focus:ring-blue-400"
                         placeholder="%"
                         value={item.date_required || ''}
-                        onChange={e => updateItem(item.id, { date_required: parseInt(e.target.value) || 0 })}
+                        onChange={e => { updateItem(item.id, { date_required: parseInt(e.target.value) || 0 }); if (pasteErr) setPasteErr('') }}
                         onPaste={e => {
-                          const text = e.clipboardData.getData('text')
-                          if (text.includes('\n')) { handlePasteColAt(idx, e, v => ({ date_required: parseInt(v.replace(/[^0-9]/g, '')) || 0 })); return }
-                          // dán 1 giá trị đơn: chặn text lọt vào, chỉ giữ số (text → rỗng)
                           e.preventDefault()
-                          updateItem(item.id, { date_required: parseInt(text.replace(/[^0-9]/g, '')) || 0 })
+                          const cells = e.clipboardData.getData('text').replace(/\r/g, '').split('\n')
+                          while (cells.length && cells[cells.length - 1].trim() === '') cells.pop()
+                          // Có ô chứa chữ (không phải số 0–100) → CHẶN, không lưu, báo lỗi
+                          const bad = cells.map(c => c.trim()).filter(c => parsePctCell(c) === null)
+                          if (bad.length > 0) {
+                            setPasteErr(`%Date chỉ nhận số 0–100 — giá trị không hợp lệ: ${bad.slice(0, 3).map(b => `"${b}"`).join(', ')}${bad.length > 3 ? '…' : ''}`)
+                            return
+                          }
+                          setPasteErr('')
+                          if (cells.length <= 1) { updateItem(item.id, { date_required: parsePctCell(cells[0] ?? '') ?? 0 }); return }
+                          setItems(prev => {
+                            const rows = [...prev]
+                            while (rows.length < idx + cells.length) rows.push(makeItem())
+                            cells.forEach((c, off) => { rows[idx + off] = { ...rows[idx + off], date_required: parsePctCell(c) ?? 0 } })
+                            return rows
+                          })
                         }}
                       />
                     </td>

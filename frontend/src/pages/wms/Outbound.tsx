@@ -906,7 +906,7 @@ function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         {gdo.delivery_codes?.length
-          ? <span className="text-[10px] font-mono font-semibold">{gdo.delivery_codes.join(', ')}</span>
+          ? <span className="text-[10px] font-mono font-semibold truncate block" title={gdo.delivery_codes.join(', ')}>{gdo.delivery_codes.join(', ')}</span>
           : <span className="text-[10px] text-slate-300">—</span>}
       </TableCell>
     </TableRow>

@@ -913,7 +913,8 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
                   </TableCell>
                 )}
                 <TableCell className="px-2 py-1 align-top whitespace-nowrap">
-                  <span className="text-[10px] text-slate-500 font-mono">{item.delivery_code}</span>
+                  {/* DO tham khảo có thể rất dài (nối nhiều mã) → cắt về sau, hover xem full — không phình cột/row */}
+                  <span className="text-[10px] text-slate-500 font-mono truncate block max-w-[140px]" title={item.delivery_code ?? ''}>{item.delivery_code}</span>
                 </TableCell>
                 <TableCell className="px-1 py-1 align-top">
                   {scans.length > 0 && (
@@ -1349,9 +1350,9 @@ export default function OutboundDetail() {
             {gdo.dvvt && <span>{gdo.dvvt}</span>}
             {npp && <span className="break-words">{npp}</span>}
             {(gdo.delivery_codes?.length ?? 0) > 0 && (
-              <span className="flex items-center gap-1">
-                <span className="text-slate-400">DO</span>
-                <span className="font-mono font-semibold">{gdo.delivery_codes!.join(' · ')}</span>
+              <span className="flex items-center gap-1 min-w-0 max-w-full">
+                <span className="text-slate-400 shrink-0">DO</span>
+                <span className="font-mono font-semibold truncate max-w-[420px]" title={gdo.delivery_codes!.join(' · ')}>{gdo.delivery_codes!.join(' · ')}</span>
               </span>
             )}
             <span className="flex items-center gap-1">

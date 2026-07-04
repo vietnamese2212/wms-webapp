@@ -372,7 +372,7 @@ async function resolveInventoryFilter(req: Request): Promise<ResolvedFilter> {
 export async function listInventory(req: Request, res: Response) {
   const r = await resolveInventoryFilter(req)
   if (r.error) return fail(res, 500, 'DB_ERROR', r.error)
-  if (r.empty) return ok(res, { entries: [], total: 0, page: r.pageNum, limit: r.limitNum, total_cartons_remaining: 0 })
+  if (r.empty) return ok(res, { entries: [], total: 0, page: r.pageNum, limit: r.limitNum, total_cartons_remaining: 0, total_pallets_in_stock: 0 })
 
   // Khi lọc Loại kho: dùng Material!inner để filter category loại HẲN entry khác loại. Embedded filter
   // non-inner (material:Material(...)) chỉ left-join → entry khác category vẫn trả về với material=null
@@ -398,19 +398,30 @@ export async function listInventory(req: Request, res: Response) {
   let sumQ = applyInventoryFilters(supabase.from('InventoryEntry').select(sumSelect), r.params)
   if (r.datePctIds !== null) sumQ = sumQ.in('id', r.datePctIds)
 
-  // Chạy SONG SONG: list rows (main) + tổng (sum) độc lập nhau → giảm 1 round-trip tuần tự.
-  const [mainRes, sumRes] = await Promise.all([mainQ, sumQ])
+  // Ô "Pallet" chỉ đếm pallet CÒN TỒN (>0) — list vẫn hiện cả pallet 0 (user chốt 05/07,
+  // sau khi upload cho phép tồn=0). Count head:true cùng bộ filter → khớp tuyệt đối list.
+  let cntQ = applyInventoryFilters(
+    supabase.from('InventoryEntry').select('id', { count: 'exact', head: true }), r.params,
+  ).gt('cartons_remaining', 0)
+  if (r.datePctIds !== null) cntQ = cntQ.in('id', r.datePctIds)
+
+  // Chạy SONG SONG: list rows (main) + tổng (sum) + đếm còn tồn (cnt) độc lập nhau.
+  const [mainRes, sumRes, cntRes] = await Promise.all([mainQ, sumQ, cntQ])
   const { data, count, error } = mainRes
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
 
-  // Lỗi sum KHÔNG chặn list (rows vẫn hiện), chỉ để tổng = 0 và log.
+  // Lỗi sum/cnt KHÔNG chặn list (rows vẫn hiện), chỉ để tổng = 0 và log.
   let total_cartons_remaining = 0
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   if ((sumRes as any).error) console.error('[inventory] tính tổng thùng tồn lỗi:', (sumRes as any).error.message)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   else total_cartons_remaining = (((sumRes as any).data ?? []) as any[]).reduce((s, row) => s + Number(row.sum ?? 0), 0)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  if ((cntRes as any).error) console.error('[inventory] đếm pallet còn tồn lỗi:', (cntRes as any).error.message)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const total_pallets_in_stock = ((cntRes as any).count as number | null) ?? 0
 
-  return ok(res, { entries: data ?? [], total: count ?? 0, page: r.pageNum, limit: r.limitNum, total_cartons_remaining })
+  return ok(res, { entries: data ?? [], total: count ?? 0, page: r.pageNum, limit: r.limitNum, total_cartons_remaining, total_pallets_in_stock })
 }
 
 // View tổng hợp: gom tồn kho theo (Kho × Mã hàng × Ngày SX) — KHÔNG chi tiết tới pallet.
@@ -474,7 +485,7 @@ export async function summaryInventory(req: Request, res: Response) {
     }
     g.cartons_imported  += Number(e.cartons_imported ?? 0)
     g.cartons_remaining += Number(e.cartons_remaining ?? 0)
-    g.pallet_count      += 1
+    g.pallet_count      += Number(e.cartons_remaining ?? 0) > 0 ? 1 : 0   // chỉ đếm pallet CÒN TỒN (user chốt 05/07)
   }
 
   const groups = [...map.values()]

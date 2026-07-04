@@ -796,7 +796,7 @@ export function useInventoryEntries(params?: {
           ...(date_pct_ranges?.length     ? { date_pct_ranges:    date_pct_ranges.join(',')     } : {}),
         },
       })
-      return data.data as { entries: InventoryEntry[]; total: number; page: number; limit: number; total_cartons_remaining: number }
+      return data.data as { entries: InventoryEntry[]; total: number; page: number; limit: number; total_cartons_remaining: number; total_pallets_in_stock?: number }
     },
   })
 }

@@ -960,7 +960,8 @@ export default function Inventory() {
         { label: 'Thùng tồn', value: totalCartons.toLocaleString('vi-VN') },
         { label: 'Trang', value: `${f.page}/${totalPages}` },
       ] : [
-        { label: 'Pallet', value: total.toLocaleString('vi-VN') },
+        // Chỉ đếm pallet CÒN TỒN (>0) — list vẫn hiện cả pallet 0 (fallback total khi BE cũ chưa deploy)
+        { label: 'Pallet', value: (data?.total_pallets_in_stock ?? total).toLocaleString('vi-VN') },
         { label: 'Thùng tồn', value: totalCartons.toLocaleString('vi-VN') },
         { label: 'Đang chọn', value: checkedCount, accent: checkedCount > 0 },
         { label: 'Trang', value: `${f.page}/${totalPages}` },

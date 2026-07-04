@@ -1399,26 +1399,20 @@ export async function uploadExcel(req: Request, res: Response) {
     ])
 
     const warehouseByKey = new Map<string, string>()
-    // Ship-to resolver: key (mã kho / mã ship-to phụ / tên kho, lower) → giá trị shipto_party sẽ lưu
-    // (mã kho hoặc mã ship-to phụ — cả hai đều khớp được maybeAutoCreateTransferOrder).
-    // - shiptoByKey: MỌI kho — dùng cho cột "Shipto party" tường minh (kể cả kho NONE = xuất tiêu hao chủ ý)
-    // - shiptoTransferByKey: CHỈ kho theo dõi tồn (QR/QTY) — dùng cho fallback tự khớp Tên NPP,
-    //   tránh gán ship-to nhiễu cho mọi đơn NPP thường (149 NPP là Warehouse NONE trùng tên)
+    // Ship-to resolver: key (mã kho / mã ship-to phụ / tên kho, lower) → giá trị shipto_party sẽ lưu.
+    // CHỈ nhận kho NHẬN thật = kho theo dõi tồn (inventory_mode QR/QTY). NPP/khách hàng (mode NONE)
+    // KHÔNG phải kho nhận — SAP điền mã ship-to khách hàng vào cột, nếu khớp nhầm sẽ hiện "Xuất SX" oan
+    // + không tạo chuyển kho gì (maybeAutoCreateTransferOrder bỏ NONE). Áp cho CẢ cột lẫn khớp Tên NPP.
     const shiptoByKey = new Map<string, string>()
-    const shiptoTransferByKey = new Map<string, string>()
     for (const w of (warehousesRes.data ?? []) as { id: string; code: string; name: string; shipto_codes?: string[] | null; inventory_mode?: string | null }[]) {
       warehouseByKey.set(w.code.trim().toLowerCase(), w.id)
       warehouseByKey.set(w.name.trim().toLowerCase(), w.id)
-      const tracksInventory = w.inventory_mode !== 'NONE'
-      const put = (key: string, val: string) => {
-        shiptoByKey.set(key, val)
-        if (tracksInventory) shiptoTransferByKey.set(key, val)
-      }
-      put(w.code.trim().toLowerCase(), w.code.trim())
-      put(w.name.trim().toLowerCase(), w.code.trim())
+      if (w.inventory_mode === 'NONE') continue   // khách hàng / kho không theo dõi tồn → không phải shipto
+      shiptoByKey.set(w.code.trim().toLowerCase(), w.code.trim())
+      shiptoByKey.set(w.name.trim().toLowerCase(), w.code.trim())
       for (const sc of (w.shipto_codes ?? [])) {
         const s = String(sc).trim()
-        if (s) put(s.toLowerCase(), s)
+        if (s) shiptoByKey.set(s.toLowerCase(), w.code.trim())
       }
     }
     const matMap = new Map<string, string>(
@@ -1582,14 +1576,14 @@ export async function uploadExcel(req: Request, res: Response) {
       }
 
       // Ship-to (chuyển kho): cột "Shipto party" ưu tiên — KHÔNG chặn khi không khớp
-      // (SAP điền ship-to cho mọi khách hàng; chỉ giá trị khớp kho hệ thống mới có ý nghĩa, còn lại bỏ qua);
-      // không khớp → tự khớp Tên NPP với kho hệ thống (chỉ khi chuyến có đúng 1 NPP);
+      // (SAP điền ship-to cho MỌI khách hàng; chỉ giá trị khớp KHO NHẬN theo dõi tồn mới có ý nghĩa, còn lại bỏ qua);
+      // không khớp → tự khớp Tên NPP với kho nhận (chỉ khi chuyến có đúng 1 NPP);
       // vẫn không → giữ ship-to đã gán tay trước đó (upload đè không làm mất).
       const shiptoColVals = [...new Set(groupRows.map(r => String(r['Shipto party'] ?? r['Shipto_party'] ?? '').trim()).filter(Boolean))]
       const nppNames = [...byNpp.keys()].filter(Boolean)
       const resolvedShipto =
         shiptoColVals.map(v => shiptoByKey.get(v.toLowerCase())).find(Boolean)
-        ?? (nppNames.length === 1 ? shiptoTransferByKey.get(nppNames[0].toLowerCase()) ?? null : null)
+        ?? (nppNames.length === 1 ? shiptoByKey.get(nppNames[0].toLowerCase()) ?? null : null)
         ?? shiptoByGroupCode.get(group_code) ?? null
 
       // PAUSED → merge (strict: scanned items must all exist in new file)

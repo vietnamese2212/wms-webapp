@@ -764,10 +764,12 @@ function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34
   const pinned    = isPinned(gdo.id)
   const dateLabel = format(parseISO(gdo.delivery_date), 'dd-MM-yy', { locale: vi })
   const npp       = gdo.distributor_names?.join(', ') ?? '—'
-  // Chế độ tồn của (các) NPP tra sống từ Warehouse — NPP không có trong DB thì không có badge
-  const nppModes  = [...new Set((gdo.distributor_names ?? [])
-    .map(n => whModeByKey.get(n.trim().toLowerCase()))
-    .filter(Boolean) as string[])]
+  // Chế độ tồn của ĐIỂM ĐẾN, tra sống từ Warehouse: ưu tiên shipto_party (gốc upload) + theo Tên NPP.
+  // Kho/NPP không có trong DB thì không có badge (để biết đâu còn thiếu).
+  const destModes = [...new Set([
+    ...(gdo.shipto_party ? [gdo.shipto_party] : []),
+    ...(gdo.distributor_names ?? []),
+  ].map(k => whModeByKey.get(k.trim().toLowerCase())).filter(Boolean) as string[])]
   const { label: statusLabel, cls: statusCls } = gdoStatusInfo(gdo)
   const isPending = gdo.status === 'PENDING'
   const showBracket = bracketPos !== 'none' && bracketPos !== 'only'
@@ -808,10 +810,10 @@ function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="inline-flex items-center gap-1">
           {gdo.shipto_party && <span className="text-[10px] font-mono">{gdo.shipto_party}</span>}
-          {nppModes.map(mode => (
+          {destModes.map(mode => (
             <span key={mode} className={`text-[8px] px-1 py-0.5 rounded border font-medium ${mode === 'NONE' ? 'text-slate-500 border-slate-300' : 'text-green-600 border-green-300'}`}>{mode}</span>
           ))}
-          {!gdo.shipto_party && nppModes.length === 0 && <span className="text-slate-300">—</span>}
+          {!gdo.shipto_party && destModes.length === 0 && <span className="text-slate-300">—</span>}
         </span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">

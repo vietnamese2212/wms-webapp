@@ -761,6 +761,14 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
     d.items.map(i => ({ ...i, delivery_code: d.delivery_code, distributor_name: d.distributor_name }))
   )
 
+  // Group-by NPP: 1 chuyến nhiều NPP → tách khối theo NPP (in đậm + fill màu). 1 NPP → không cần header.
+  const nppGroups = doRecords.map(d => ({
+    npp: (d.distributor_name ?? '').trim(),
+    delivery_code: d.delivery_code,
+    items: d.items.map(i => ({ ...i, delivery_code: d.delivery_code, distributor_name: d.distributor_name })),
+  })).filter(g => g.items.length > 0)
+  const showGroups = new Set(nppGroups.map(g => g.npp)).size > 1
+
   // Determine which optional columns have data
   const hasBatchRequired = allItems.some(i => i.batch_required)
   const hasDateRequired  = allItems.some(i => i.date_required != null && i.date_required > 0)
@@ -808,7 +816,18 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
           </TableRow>
         </TableHeader>
         <TableBody>
-          {allItems.map(item => {
+          {nppGroups.flatMap(g => [
+            ...(showGroups ? [(
+              <TableRow key={`npp-${g.npp}`} className="bg-sky-100 hover:bg-sky-100 border-t-2 border-sky-300">
+                <TableCell colSpan={totalCols} className="px-2 py-1.5">
+                  <span className="text-[11px] font-bold text-sky-900 uppercase tracking-wide">NPP: {g.npp || '—'}</span>
+                  <span className="text-[9px] font-medium text-sky-700 ml-2">
+                    {g.items.length} mã hàng · {g.items.reduce((s, i) => s + i.cartons_ordered, 0)} thùng
+                  </span>
+                </TableCell>
+              </TableRow>
+            )] : []),
+            ...g.items.map(item => {
             const textCls = itemTextCls(item)
             const rowBg   = itemRowBg(item)
             const matCode = item.material?.material_code ?? item.material_code_raw ?? '—'
@@ -913,8 +932,8 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
                   </TableCell>
                 )}
                 <TableCell className="px-2 py-1 align-top whitespace-nowrap">
-                  {/* DO tham khảo có thể rất dài (nối nhiều mã) → cắt về sau, hover xem full — không phình cột/row */}
-                  <span className="text-[10px] text-slate-500 font-mono truncate block max-w-[140px]" title={item.delivery_code ?? ''}>{item.delivery_code}</span>
+                  {/* DO tham khảo dài (nối nhiều mã) → rộng đủ nhìn 1 mã, cắt phần thừa về sau, hover xem full */}
+                  <span className="text-[10px] text-slate-500 font-mono truncate block min-w-[110px] max-w-[220px]" title={item.delivery_code ?? ''}>{item.delivery_code}</span>
                 </TableCell>
                 <TableCell className="px-1 py-1 align-top">
                   {scans.length > 0 && (
@@ -993,7 +1012,8 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
               )}
               </Fragment>
             )
-          })}
+          }),
+          ])}
         </TableBody>
     </Table>
     </>

@@ -11,6 +11,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { useDashboardStats } from '@/api/hooks'
 
 const nf = (n: number) => Number(n ?? 0).toLocaleString('vi-VN')
+// KPI tile: bỏ thập phân cho gọn (card hẹp trên phone) — chi tiết đủ số lẻ nằm ở bảng dưới
+const nf0 = (n: number) => Math.round(Number(n ?? 0)).toLocaleString('vi-VN')
 
 const MODE_BADGE: Record<string, string> = {
   QR:   'bg-green-100 text-green-700',
@@ -73,10 +75,10 @@ export default function Dashboard() {
             Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-[92px] rounded-xl" />)
           ) : (
             <>
-              <StatsCard title="Tồn kho (thùng)" value={nf(totals.cartons)} icon={Boxes} iconColor="text-sky-600" />
-              <StatsCard title="Pallet đang tồn" value={nf(totals.pallets)} icon={Layers} iconColor="text-indigo-600" />
+              <StatsCard title="Tồn (thùng)" value={nf0(totals.cartons)} icon={Boxes} iconColor="text-sky-600" />
+              <StatsCard title="Pallet tồn" value={nf0(totals.pallets)} icon={Layers} iconColor="text-indigo-600" />
               <StatsCard title="Kho có tồn" value={totals.warehouses} icon={Warehouse} iconColor="text-amber-600" />
-              <StatsCard title="Thùng xuất hôm nay" value={nf(t?.outbound_scanned ?? 0)} unit={t?.outbound_planned ? `/ ${nf(t.outbound_planned)} KH` : undefined} icon={PackageMinus} iconColor="text-blue-600" />
+              <StatsCard title="Xuất hôm nay" value={nf0(t?.outbound_scanned ?? 0)} unit={t?.outbound_planned ? `/ ${nf0(t.outbound_planned)} KH` : 'thùng'} icon={PackageMinus} iconColor="text-blue-600" />
             </>
           )}
         </div>

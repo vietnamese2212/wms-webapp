@@ -1156,7 +1156,7 @@ export async function uploadExcel(req: Request, res: Response) {
       if (!mcode)          missing.push('mã hàng')
       if (!whRaw)          missing.push('kho')
       if (cartons == null)      missing.push('số thùng')
-      else if (cartons <= 0)    missing.push(`số thùng phải > 0 (nhận ${cartons})`)   // chặn tồn âm/0 ngay từ đầu kỳ
+      else if (cartons < 0)     missing.push(`số thùng không được âm (nhận ${cartons})`)   // tồn = 0 HỢP LỆ (user chốt 05/07: chốt pallet hết hàng / đăng ký chỗ)
       if (!locRaw)         missing.push('vị trí')
       if (!prodIso)        missing.push(prodRaw ? `ngày SX sai định dạng "${prodRaw}"` : 'ngày SX')
       if (missing.length) { errors.push(`${at} — thiếu/sai: ${missing.join(', ')}`); continue }

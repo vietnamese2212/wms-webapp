@@ -1,36 +1,51 @@
+import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  Package, PackagePlus, PackageMinus, AlertTriangle,
-  CheckCircle2, TrendingUp, Warehouse, Clock, ArrowRight, Activity,
+  Package, PackagePlus, PackageMinus, Boxes, Layers, Warehouse, Clock, Truck,
 } from 'lucide-react'
 import { PageHeader } from '@/components/shared/PageHeader'
 import { StatsCard } from '@/components/shared/StatsCard'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
-import { TransactionStatusBadge, TransactionTypeBadge } from '@/components/shared/StatusBadge'
-import { useTransactions } from '@/api/hooks'
-import { dashboardKPIs } from '@/utils/mockData'
-import { formatTimeAgo, formatDateTime } from '@/utils/formatters'
+import { useDashboardStats } from '@/api/hooks'
 
-function AlertCard({ message, type }: { message: string; type: 'warning' | 'danger' | 'info' }) {
-  const colors = {
-    warning: 'bg-amber-50 border-amber-200 text-amber-800 dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-300',
-    danger: 'bg-red-50 border-red-200 text-red-800 dark:bg-red-950/30 dark:border-red-800 dark:text-red-300',
-    info: 'bg-blue-50 border-blue-200 text-blue-800 dark:bg-blue-950/30 dark:border-blue-800 dark:text-blue-300',
-  }
-  return (
-    <div className={`flex items-center gap-2.5 rounded-lg border px-3 py-2.5 text-sm ${colors[type]}`}>
-      <AlertTriangle className="h-4 w-4 shrink-0" />
-      <span>{message}</span>
-    </div>
-  )
+const nf = (n: number) => Number(n ?? 0).toLocaleString('vi-VN')
+
+const MODE_BADGE: Record<string, string> = {
+  QR:   'bg-green-100 text-green-700',
+  QTY:  'bg-blue-100 text-blue-700',
+  NONE: 'bg-slate-100 text-slate-500',
 }
 
 export default function Dashboard() {
-  const { data: transactions, isLoading } = useTransactions(6)
+  const { data: stats, isLoading, isError } = useDashboardStats()
   const today = new Date().toLocaleDateString('vi-VN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+
+  // Gộp theo kho (RPC trả dòng kho×loại) + tổng toàn scope
+  const { byWarehouse, totals } = useMemo(() => {
+    const rows = stats?.inventory ?? []
+    const map = new Map<string, {
+      warehouse_id: string; warehouse_name: string; inventory_mode: string | null
+      pallets: number; cartons: number
+      cats: { category: string; pallets: number; cartons: number; materials: number }[]
+    }>()
+    let pallets = 0, cartons = 0
+    for (const r of rows) {
+      let w = map.get(r.warehouse_id)
+      if (!w) {
+        w = { warehouse_id: r.warehouse_id, warehouse_name: r.warehouse_name, inventory_mode: r.inventory_mode, pallets: 0, cartons: 0, cats: [] }
+        map.set(r.warehouse_id, w)
+      }
+      w.pallets += Number(r.pallets); w.cartons += Number(r.cartons)
+      w.cats.push({ category: r.category, pallets: Number(r.pallets), cartons: Number(r.cartons), materials: Number(r.materials) })
+      pallets += Number(r.pallets); cartons += Number(r.cartons)
+    }
+    const list = [...map.values()].sort((a, b) => b.cartons - a.cartons)
+    return { byWarehouse: list, totals: { pallets, cartons, warehouses: list.length } }
+  }, [stats])
+
+  const t = stats?.today
 
   return (
     <div className="space-y-0">
@@ -45,170 +60,122 @@ export default function Dashboard() {
         }
       />
 
-      <div className="p-6 space-y-6">
-        {/* KPI Row */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatsCard
-            title="Độ chính xác tồn kho"
-            value={dashboardKPIs.inventoryAccuracy}
-            unit="%"
-            change={0.2}
-            changeLabel="so tháng trước"
-            trend="up"
-            icon={CheckCircle2}
-            iconColor="text-green-600"
-            progress={dashboardKPIs.inventoryAccuracy}
-            progressColor="bg-green-500"
-            target="≥ 99.5%"
-          />
-          <StatsCard
-            title="Tỷ lệ hoàn thành đơn"
-            value={dashboardKPIs.orderFulfillmentRate}
-            unit="%"
-            change={-0.3}
-            changeLabel="so tháng trước"
-            trend="down"
-            icon={TrendingUp}
-            iconColor="text-blue-600"
-            progress={dashboardKPIs.orderFulfillmentRate}
-            progressColor="bg-blue-500"
-            target="≥ 98%"
-          />
-          <StatsCard
-            title="Sử dụng kho"
-            value={dashboardKPIs.warehouseUtilization}
-            unit="%"
-            trend="neutral"
-            icon={Warehouse}
-            iconColor="text-amber-600"
-            progress={dashboardKPIs.warehouseUtilization}
-            progressColor="bg-amber-500"
-            target="< 85%"
-          />
+      <div className="p-4 sm:p-6 space-y-5">
+        {isError && (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700">
+            Không tải được số liệu dashboard — thử tải lại trang.
+          </div>
+        )}
+
+        {/* KPI tồn kho (data thật) */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+          {isLoading ? (
+            Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-[92px] rounded-xl" />)
+          ) : (
+            <>
+              <StatsCard title="Tồn kho (thùng)" value={nf(totals.cartons)} icon={Boxes} iconColor="text-sky-600" />
+              <StatsCard title="Pallet đang tồn" value={nf(totals.pallets)} icon={Layers} iconColor="text-indigo-600" />
+              <StatsCard title="Kho có tồn" value={totals.warehouses} icon={Warehouse} iconColor="text-amber-600" />
+              <StatsCard title="Thùng xuất hôm nay" value={nf(t?.outbound_scanned ?? 0)} unit={t?.outbound_planned ? `/ ${nf(t.outbound_planned)} KH` : undefined} icon={PackageMinus} iconColor="text-blue-600" />
+            </>
+          )}
         </div>
 
-        {/* Activity + Alerts row */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <Card>
-            <CardContent className="p-5">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-green-100 dark:bg-green-900/30">
-                  <PackagePlus className="h-5 w-5 text-green-600" />
+        {/* Hoạt động hôm nay */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+          {[
+            { icon: PackagePlus, color: 'text-green-600 bg-green-100', value: t?.inbound_orders, label: 'Phiếu nhập hôm nay' },
+            { icon: Package, color: 'text-emerald-600 bg-emerald-100', value: t?.inbound_cartons, label: 'Thùng nhập hôm nay' },
+            { icon: Truck, color: 'text-blue-600 bg-blue-100', value: t?.outbound_gdos, label: 'Chuyến xuất hôm nay' },
+            { icon: PackageMinus, color: 'text-sky-600 bg-sky-100', value: t?.outbound_planned, label: 'Thùng KH xuất hôm nay' },
+          ].map(({ icon: Icon, color, value, label }) => (
+            <Card key={label}>
+              <CardContent className="p-4 sm:p-5">
+                <div className="flex items-center gap-3">
+                  <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${color.split(' ')[1]}`}>
+                    <Icon className={`h-5 w-5 ${color.split(' ')[0]}`} />
+                  </div>
+                  <div className="min-w-0">
+                    {isLoading
+                      ? <Skeleton className="h-7 w-16 mb-1" />
+                      : <p className="text-2xl font-bold tabular-nums truncate">{nf(Number(value ?? 0))}</p>}
+                    <p className="text-xs text-muted-foreground">{label}</p>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-2xl font-bold">{dashboardKPIs.todayInbound}</p>
-                  <p className="text-xs text-muted-foreground">Phiếu nhập hôm nay</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-5">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-100 dark:bg-blue-900/30">
-                  <PackageMinus className="h-5 w-5 text-blue-600" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold">{dashboardKPIs.todayOutbound}</p>
-                  <p className="text-xs text-muted-foreground">Phiếu xuất hôm nay</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-5">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-100 dark:bg-amber-900/30">
-                  <AlertTriangle className="h-5 w-5 text-amber-600" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold">{dashboardKPIs.lowStockAlerts}</p>
-                  <p className="text-xs text-muted-foreground">Cảnh báo tồn kho</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          ))}
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Recent Transactions */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+          {/* Bảng tồn theo kho */}
           <div className="lg:col-span-2">
             <Card>
               <CardHeader className="flex flex-row items-center justify-between pb-3">
                 <CardTitle className="flex items-center gap-2">
-                  <Activity className="h-4 w-4 text-muted-foreground" />
-                  Hoạt động gần đây
+                  <Warehouse className="h-4 w-4 text-muted-foreground" />
+                  Tồn kho theo kho
                 </CardTitle>
                 <Button variant="ghost" size="sm" asChild>
-                  <Link to="/wms/inventory" className="flex items-center gap-1 text-xs">
-                    Xem tất cả <ArrowRight className="h-3.5 w-3.5" />
-                  </Link>
+                  <Link to="/wms/inventory" className="text-xs">Xem chi tiết →</Link>
                 </Button>
               </CardHeader>
               <CardContent className="p-0">
                 {isLoading ? (
-                  <div className="p-4 space-y-3">
-                    {Array.from({ length: 5 }).map((_, i) => (
-                      <div key={i} className="flex gap-3 items-center">
-                        <Skeleton className="h-8 w-8 rounded-lg" />
-                        <div className="flex-1 space-y-1.5">
-                          <Skeleton className="h-3.5 w-40" />
-                          <Skeleton className="h-3 w-24" />
-                        </div>
-                        <Skeleton className="h-5 w-20 rounded-full" />
-                      </div>
-                    ))}
+                  <div className="p-4 space-y-2">
+                    {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-9" />)}
                   </div>
+                ) : byWarehouse.length === 0 ? (
+                  <p className="px-4 pb-4 text-sm text-slate-400">Chưa có tồn kho trong phạm vi của bạn</p>
                 ) : (
-                  <div className="divide-y">
-                    {transactions?.map((txn) => (
-                      <div key={txn.id} className="flex items-center gap-3 px-4 py-3 hover:bg-muted/30 transition-colors">
-                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted">
-                          {txn.type === 'INBOUND' ? (
-                            <PackagePlus className="h-4 w-4 text-green-600" />
-                          ) : txn.type === 'OUTBOUND' ? (
-                            <PackageMinus className="h-4 w-4 text-blue-600" />
-                          ) : (
-                            <Package className="h-4 w-4 text-slate-500" />
-                          )}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium truncate">{txn.product.name}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {txn.referenceNo} · {txn.userName} · {formatTimeAgo(txn.createdAt)}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <span className="text-xs font-medium tabular-nums">
-                            {txn.type === 'OUTBOUND' ? '-' : '+'}{txn.pallets} pallet
-                          </span>
-                          <TransactionStatusBadge status={txn.status} />
-                        </div>
-                      </div>
-                    ))}
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[520px]">
+                      <thead>
+                        <tr className="border-y bg-slate-50">
+                          <th className="px-3 py-1.5 text-left text-[9px] font-medium text-slate-500 uppercase whitespace-nowrap">Kho</th>
+                          <th className="px-3 py-1.5 text-left text-[9px] font-medium text-slate-500 uppercase whitespace-nowrap">Loại hàng</th>
+                          <th className="px-3 py-1.5 text-right text-[9px] font-medium text-slate-500 uppercase whitespace-nowrap">Pallet</th>
+                          <th className="px-3 py-1.5 text-right text-[9px] font-medium text-slate-500 uppercase whitespace-nowrap">Thùng</th>
+                          <th className="px-3 py-1.5 text-right text-[9px] font-medium text-slate-500 uppercase whitespace-nowrap">Mã hàng</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {byWarehouse.map(w => (
+                          w.cats.map((c, ci) => (
+                            <tr key={`${w.warehouse_id}-${c.category}`} className={`border-b border-slate-100 hover:bg-slate-50 ${ci === 0 ? '[&_td]:border-t [&_td]:border-t-slate-200' : ''}`}>
+                              <td className="px-3 py-1.5 whitespace-nowrap">
+                                {ci === 0 && (
+                                  <span className="flex items-center gap-1.5">
+                                    <span className="text-[11px] font-semibold text-slate-700">{w.warehouse_name}</span>
+                                    {w.inventory_mode && (
+                                      <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${MODE_BADGE[w.inventory_mode] ?? 'bg-slate-100 text-slate-500'}`}>{w.inventory_mode}</span>
+                                    )}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-3 py-1.5 text-[10px] text-slate-600 whitespace-nowrap">{c.category}</td>
+                              <td className="px-3 py-1.5 text-[10px] text-right font-semibold tabular-nums whitespace-nowrap">{nf(c.pallets)}</td>
+                              <td className="px-3 py-1.5 text-[10px] text-right font-semibold tabular-nums whitespace-nowrap">{nf(c.cartons)}</td>
+                              <td className="px-3 py-1.5 text-[10px] text-right tabular-nums text-slate-500 whitespace-nowrap">{nf(c.materials)}</td>
+                            </tr>
+                          ))
+                        ))}
+                        <tr className="bg-slate-50 font-semibold">
+                          <td className="px-3 py-2 text-[11px] text-slate-700" colSpan={2}>Tổng ({totals.warehouses} kho)</td>
+                          <td className="px-3 py-2 text-[11px] text-right tabular-nums">{nf(totals.pallets)}</td>
+                          <td className="px-3 py-2 text-[11px] text-right tabular-nums">{nf(totals.cartons)}</td>
+                          <td className="px-3 py-2" />
+                        </tr>
+                      </tbody>
+                    </table>
                   </div>
                 )}
               </CardContent>
             </Card>
           </div>
 
-          {/* Alerts + Quick Actions */}
+          {/* Thao tác nhanh */}
           <div className="space-y-4">
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="flex items-center gap-2 text-sm">
-                  <AlertTriangle className="h-4 w-4 text-amber-500" />
-                  Cảnh báo
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                <AlertCard message="SKU-005: Hết hàng hoàn toàn" type="danger" />
-                <AlertCard message="SKU-007: Hết hàng hoàn toàn" type="danger" />
-                <AlertCard message="SKU-002: Tồn kho dưới mức tối thiểu" type="warning" />
-                <AlertCard message="Xe 51K-22222: Đăng kiểm sắp hết hạn (3 ngày)" type="warning" />
-              </CardContent>
-            </Card>
-
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-sm">
@@ -220,19 +187,25 @@ export default function Dashboard() {
                 <Button variant="outline" className="w-full justify-start gap-2 h-9" asChild>
                   <Link to="/wms/inbound">
                     <PackagePlus className="h-4 w-4 text-green-600" />
-                    Tạo phiếu nhập kho
+                    Nhập kho
                   </Link>
                 </Button>
                 <Button variant="outline" className="w-full justify-start gap-2 h-9" asChild>
                   <Link to="/wms/outbound">
                     <PackageMinus className="h-4 w-4 text-blue-600" />
-                    Tạo phiếu xuất kho
+                    Xuất kho
                   </Link>
                 </Button>
                 <Button variant="outline" className="w-full justify-start gap-2 h-9" asChild>
                   <Link to="/wms/inventory">
                     <Package className="h-4 w-4 text-slate-600" />
                     Xem tồn kho
+                  </Link>
+                </Button>
+                <Button variant="outline" className="w-full justify-start gap-2 h-9" asChild>
+                  <Link to="/tms/bookings">
+                    <Truck className="h-4 w-4 text-amber-600" />
+                    Kế hoạch vận chuyển
                   </Link>
                 </Button>
               </CardContent>

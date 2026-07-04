@@ -5,8 +5,8 @@ import type { DeliverySlot, TmsOrder } from '@/types'
 
 // Maps table name → query keys to invalidate (fallback refetch).
 const TABLE_QUERY_MAP: Record<string, string[][]> = {
-  ProductionImport:    [['inbound-orders'], ['inbound-order'], ['inbound-report'], ['transfer-goods'], ['inbound-by-gdo'], ['tms-orders-transfer'], ['tms-material-summary']],
-  InventoryEntry:      [['inbound-order'], ['inventory-entries'], ['inventory-summary'], ['inventory-facets'], ['locations-real'], ['plan-vs-actual'], ['inbound-report'], ['manual-item-stock'], ['item-inventory'], ['inventory-by-material'], ['transfer-goods'], ['inbound-by-gdo'], ['stocktake-entries'], ['tms-material-summary']],
+  ProductionImport:    [['inbound-orders'], ['inbound-order'], ['inbound-report'], ['transfer-goods'], ['inbound-by-gdo'], ['tms-orders-transfer'], ['tms-material-summary'], ['dashboard']],
+  InventoryEntry:      [['inbound-order'], ['inventory-entries'], ['inventory-summary'], ['inventory-facets'], ['locations-real'], ['plan-vs-actual'], ['inbound-report'], ['manual-item-stock'], ['item-inventory'], ['inventory-by-material'], ['transfer-goods'], ['inbound-by-gdo'], ['stocktake-entries'], ['tms-material-summary'], ['dashboard']],
   Location:            [['locations-real'], ['sub-groups']],
   // gdos/gdo: cột Tổng (QR)/(k QR) của Xuất tách theo Material.no_qr_tracking (join sống) —
   // đổi cờ QR của mã hàng phải refetch list Xuất, không thì số liệu đứng im tới khi reload.
@@ -29,9 +29,9 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   DeliverySlot:        [['tms-delivery-slots']],
   gate_registrations:  [['gate-registrations']],
   inbound_plan_lines:  [['inbound-plan-lines-by-order'], ['plan-vs-actual'], ['inbound-plan-lines'], ['inbound-report'], ['tms-material-summary']],
-  GroupDeliveryOrder:  [['gdos'], ['gdo'], ['tms-orders-transfer'], ['loosepicking']],
+  GroupDeliveryOrder:  [['gdos'], ['gdo'], ['tms-orders-transfer'], ['loosepicking'], ['dashboard']],
   OutboundDelivery:    [['gdo']],
-  OutboundItem:        [['gdo'], ['loosepicking'], ['item-inventory'], ['inventory-by-material']],
+  OutboundItem:        [['gdo'], ['loosepicking'], ['item-inventory'], ['inventory-by-material'], ['dashboard']],
   OutboundScanEntry:   [['gdo'], ['loosepicking'], ['item-inventory'], ['inventory-by-material']],
   Employee:             [['employees'], ['employee-records'], ['employee-record'], ['warehouse-employees']],
   JobTitle:             [['job-titles'], ['employee-records']],

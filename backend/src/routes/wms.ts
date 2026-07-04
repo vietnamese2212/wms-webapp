@@ -8,6 +8,7 @@ import * as zone from '../controllers/wms/zoneController'
 import * as inboundPlan from '../controllers/wms/inboundPlanController'
 import * as palletPrint from '../controllers/wms/palletPrintController'
 import * as palletOps from '../controllers/wms/palletOpsController'
+import * as dashboard from '../controllers/wms/dashboardController'
 import { inboundEmitter } from '../lib/events'
 import { requirePerm, requireAnyPerm } from '../middlewares/auth'
 
@@ -33,6 +34,9 @@ router.get('/events', (req, res) => {
     inboundEmitter.off('changed', send)
   })
 })
+
+// Dashboard tổng quan — hở đọc có chủ đích (auth-only, cắt scope kho+loại trong controller)
+router.get('/dashboard', dashboard.getDashboard)
 
 // Lookup values (loại xuất, v.v.)
 router.get('/lookup',        lookup.listLookup)

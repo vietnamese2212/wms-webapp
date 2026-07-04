@@ -1099,6 +1099,26 @@ export function useTransactions(limit?: number) {
   })
 }
 
+// ─── Dashboard tổng quan (data thật) ─────────────────────────
+export type DashboardStats = {
+  inventory: Array<{
+    warehouse_id: string; warehouse_name: string; inventory_mode: string | null
+    category: string; pallets: number; cartons: number; materials: number
+  }>
+  today: {
+    inbound_orders: number; inbound_cartons: number
+    outbound_gdos: number; outbound_planned: number; outbound_scanned: number
+  }
+  source?: 'rpc' | 'fallback'
+}
+export function useDashboardStats() {
+  return useQuery<DashboardStats>({
+    queryKey: ['dashboard'],
+    staleTime: 60_000,
+    queryFn: () => apiClient.get('/wms/dashboard').then(r => r.data.data),
+  })
+}
+
 export function useLocations() {
   return useQuery({
     queryKey: ['locations'],

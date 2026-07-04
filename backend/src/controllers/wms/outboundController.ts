@@ -1392,7 +1392,7 @@ export async function uploadExcel(req: Request, res: Response) {
       supabase.from('LookupValue').select('value').eq('type', 'warehouse_type'),
       supabase.from('VehicleType').select('code, name').eq('is_active', true),
       supabase.from('GroupDeliveryOrder')
-        .select('id, group_code, status, assigned_at, assigned_by')
+        .select('id, group_code, status, assigned_at, assigned_by, shipto_party')
         .in('group_code', allGroupCodes),
       // PHÂN TRANG: >1000 mã → nếu không phân trang bị cap 1000 → mã ngoài 1000 bị báo oan "chưa có trong hệ thống"
       fetchAllRowsParallel(() => supabase.from('Material').select('id, material_code')) as Promise<{ id: string; material_code: string }[]>,
@@ -1428,8 +1428,11 @@ export async function uploadExcel(req: Request, res: Response) {
     const pendingPreserveMap = new Map<string, string>() // group_code → id
     const pausedGDOMap       = new Map<string, string>()
     const blockedMap         = new Map<string, string>() // group_code → status
+    // Ship-to đã gán tay trên đơn PENDING — mang theo khi upload đè (xóa+tạo lại), không để mất âm thầm
+    const shiptoByGroupCode  = new Map<string, string>()
 
     for (const g of (existingRes.data ?? [])) {
+      if (g.shipto_party) shiptoByGroupCode.set(g.group_code as string, g.shipto_party as string)
       if (g.status === 'PENDING') {
         if (g.assigned_at) pendingPreserveMap.set(g.group_code as string, g.id)
         else               pendingSimpleMap.set(g.group_code as string, g.id)
@@ -1619,6 +1622,7 @@ export async function uploadExcel(req: Request, res: Response) {
       gdoInserts.push({
         id: gdoId, group_code, planned_date, delivery_date,
         warehouse_id: resolved_warehouse_id, dvvt, warehouse_type: loai_kho,
+        shipto_party: shiptoByGroupCode.get(group_code) ?? null,   // giữ ship-to đã gán tay khi upload đè
         status: 'PENDING', created_by: actor, updated_by: actor, updated_at: now(),
       })
       collectDOsAndItems(gdoId)

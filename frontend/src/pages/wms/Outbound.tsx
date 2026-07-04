@@ -1505,7 +1505,7 @@ function GDOFormBody({
                         </span>
                       )}
                     </td>
-                    <td className="px-2 py-1 text-[10px] text-slate-600 max-w-[176px] truncate">{item.mat_name || <span className="text-slate-300">—</span>}</td>
+                    <td className="px-2 py-1 text-[10px] text-slate-600 max-w-[176px] whitespace-normal break-words leading-tight align-top" title={item.mat_name || undefined}>{item.mat_name || <span className="text-slate-300">—</span>}</td>
                     <td className="px-2 py-1 text-[10px] text-slate-500">{item.unit || <span className="text-slate-300">—</span>}</td>
                     <td className="px-2 py-1">
                       <input

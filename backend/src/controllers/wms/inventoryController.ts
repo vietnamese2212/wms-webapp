@@ -400,8 +400,10 @@ export async function listInventory(req: Request, res: Response) {
 
   // Ô "Pallet" chỉ đếm pallet CÒN TỒN (>0) — list vẫn hiện cả pallet 0 (user chốt 05/07,
   // sau khi upload cho phép tồn=0). Count head:true cùng bộ filter → khớp tuyệt đối list.
+  // catActive PHẢI embed Material!inner (filter category lọc trên bảng nhúng — thiếu là PostgREST lỗi → tile về 0).
+  const cntSelect = catActive ? 'id, material:Material!inner(category)' : 'id'
   let cntQ = applyInventoryFilters(
-    supabase.from('InventoryEntry').select('id', { count: 'exact', head: true }), r.params,
+    supabase.from('InventoryEntry').select(cntSelect, { count: 'exact', head: true }), r.params,
   ).gt('cartons_remaining', 0)
   if (r.datePctIds !== null) cntQ = cntQ.in('id', r.datePctIds)
 

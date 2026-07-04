@@ -1,4 +1,4 @@
-﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+﻿import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Plus, PackagePlus, X, ChevronDown, User, MapPin, QrCode, Pencil, Bookmark, Rows3, AlignJustify, ArrowRight, AlertTriangle } from 'lucide-react'
 import type { AxiosError } from 'axios'
@@ -193,10 +193,6 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
   const [importDate,   setImportDate]   = useState(format(new Date(), 'yyyy-MM-dd'))
   const [notes,        setNotes]        = useState('')
   const [gateRegId,    setGateRegId]    = useState('')
-  // FACTORY combobox
-  const [matSearch, setMatSearch] = useState('')
-  const [matOpen,   setMatOpen]   = useState(false)
-  const matRef = useRef<HTMLDivElement>(null)
   // NCC table
   const [nccRows,        setNccRows]        = useState<NccMatRow[]>([emptyNccRow()])
   const [nccSaving,      setNccSaving]      = useState(false)
@@ -216,7 +212,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
         setGateRegId((first as any).gate_registration_id ?? '')
         setImportDate(((first as any).import_date ?? '').slice(0, 10) || format(new Date(), 'yyyy-MM-dd'))
         setShiftId((first as any).shift_id ?? '')
-        setMaterialId(''); setMatSearch(''); setMatOpen(false); setLocationId('')
+        setMaterialId(''); setLocationId('')
         setNotes('')
         setNccId((first as any).ncc_id ?? ''); setShowFactoryNcc(false)
         setNccRows([emptyNccRow()]); setNccSaving(false); setNccErr(''); setNccDropdownIdx(null)
@@ -235,7 +231,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
       } else {
         setSourceType('FACTORY')
         setWarehouseId(user?.warehouse_id ?? user?.warehouse_ids?.[0] ?? '')
-        setSubType(''); setMaterialId(''); setMatSearch(''); setMatOpen(false)
+        setSubType(''); setMaterialId('')
         setLocationId(''); setShiftId('')
         setImportDate(format(new Date(), 'yyyy-MM-dd'))
         setNotes(''); setGateRegId('')
@@ -342,7 +338,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
     return [...base].sort((a, b) => (isRecommended(b) ? 1 : 0) - (isRecommended(a) ? 1 : 0))
   }, [allLocs, subType, selectedZone, materialId])
 
-  const { data: materials    = [] } = useMaterials({ search: matSearch || undefined, category: subType || undefined })
+  const { data: materials    = [] } = useMaterials({ category: subType || undefined }, !!subType)
   const { data: allMaterials = [] } = useMaterials(undefined, sourceType === 'NCC')
 
   const { data: allEmployees = [] } = useEmployeeRecords({ is_active: 'true' })
@@ -357,15 +353,6 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
     const match = (warehouses as { id: string; name: string }[]).find(w => w.name === user.warehouse_name)
     if (match) setWarehouseId(match.id)
   }, [open, warehouses, user?.warehouse_name, warehouseId])
-
-  useEffect(() => {
-    if (!matOpen) return
-    const handler = (e: MouseEvent) => {
-      if (matRef.current && !matRef.current.contains(e.target as Node)) setMatOpen(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [matOpen])
 
   const { mutate: createOrder, mutateAsync: createOrderAsync, isPending, error } = useCreateInboundOrder()
   const { mutateAsync: updateOrderAsync } = useUpdateInboundOrder()
@@ -574,9 +561,6 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
   // → backend tự bỏ vị trí + nhập số lượng thủ công ở trang chi tiết, nên form không bắt buộc chọn Vị trí.
   const factoryNoQr   = ((materials as any[]).find(m => m.id === materialId)?.no_qr_tracking === true)
     || ((warehouses as any[]).find(w => w.id === warehouseId)?.inventory_mode === 'QTY')
-  const matInputValue = matOpen
-    ? matSearch
-    : (selectedMat ? `${selectedMat.material_code} – ${selectedMat.short_name ?? selectedMat.material_description}` : matSearch)
 
   function handleFactorySubmit() {
     if (!warehouseId || !subType || !materialId || (!factoryNoQr && !locationId) || !shiftId || !importDate) return
@@ -622,7 +606,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
             <div className="flex rounded-lg border overflow-hidden">
               {(['FACTORY', 'NCC'] as const).map(t => (
                 <button key={t} type="button"
-                  onClick={() => { setSourceType(t); setGateRegId(''); setMaterialId(''); setMatSearch(''); setNccRows([emptyNccRow()]); setNccErr('') }}
+                  onClick={() => { setSourceType(t); setGateRegId(''); setMaterialId(''); setNccRows([emptyNccRow()]); setNccErr('') }}
                   className={['flex-1 py-1.5 text-xs font-medium transition-colors',
                     sourceType === t ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'].join(' ')}>
                   {t === 'FACTORY' ? 'Nhập SX' : 'Nhập NCC'}
@@ -642,7 +626,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                   <WarehouseSingleSelect
                     warehouses={(warehouses as { id: string; code: string; name: string }[]).filter(w => !dialogAllowedWhIds || dialogAllowedWhIds.has(w.id))}
                     value={warehouseId}
-                    onChange={v => { setWarehouseId(v); setSubType(''); setLocationId(''); setMaterialId(''); setMatSearch('') }}
+                    onChange={v => { setWarehouseId(v); setSubType(''); setLocationId(''); setMaterialId('') }}
                     placeholder="Chọn kho"
                     triggerClassName="h-8 mt-0.5"
                   />
@@ -658,7 +642,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                 <SingleSelect
                   options={loaiKhoOpts.map(v => ({ value: v, label: v }))}
                   value={subType}
-                  onChange={v => { setSubType(v); setLocationId(''); setMaterialId(''); setMatSearch('') }}
+                  onChange={v => { setSubType(v); setLocationId(''); setMaterialId('') }}
                   placeholder="Chọn loại kho"
                   searchable={false}
                   disabled={!warehouseId}
@@ -669,32 +653,25 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
               {/* Chọn Mã hàng TRƯỚC → từ đó gợi ý vị trí phù hợp (full-width: search + tên dài) */}
               <div className="col-span-2">
                 <Label className="text-xs">Material <span className="text-red-500">*</span></Label>
-                <div ref={matRef} className="relative">
-                  <Input placeholder={!subType ? 'Chọn loại kho trước' : `Tìm hàng ${subType}…`}
-                    value={matInputValue}
-                    disabled={!subType}
-                    className="h-8 text-xs mt-0.5"
-                    onChange={e => { setMatSearch(e.target.value); setMaterialId(''); setLocationId(''); setMatOpen(true) }}
-                    onFocus={() => { if (subType) setMatOpen(true) }}
-                  />
-                  {matOpen && (
-                    <div className="absolute z-[100] w-full mt-1 max-h-52 overflow-y-auto rounded-md border bg-white shadow-lg">
-                      {(materials as any[]).map(m => (
-                        <button key={m.id} type="button"
-                          className={`w-full text-left px-3 py-2 text-sm hover:bg-slate-100 flex items-baseline gap-2 ${m.id === materialId ? 'bg-slate-50 font-medium' : ''}`}
-                          onMouseDown={e => { e.preventDefault(); e.stopPropagation() }}
-                          onClick={() => { setMaterialId(m.id); setMatSearch(''); setMatOpen(false); setLocationId('') }}>
-                          <span className="font-mono text-xs text-slate-500 shrink-0">{m.material_code}</span>
-                          <span className="text-slate-800 truncate">{m.short_name ?? m.material_description}</span>
-                          {m.no_qr_tracking && <span className="ml-auto text-[9px] text-slate-400 border border-slate-200 rounded px-1 shrink-0">no-QR</span>}
-                        </button>
-                      ))}
-                      {(materials as any[]).length === 0 && (
-                        <div className="px-3 py-3 text-sm text-slate-400 text-center">Không tìm thấy hàng hóa</div>
-                      )}
-                    </div>
-                  )}
-                </div>
+                <SingleSelect
+                  value={materialId}
+                  onChange={v => { setMaterialId(v); setLocationId('') }}
+                  disabled={!subType}
+                  searchPlaceholder={`Tìm hàng ${subType || ''}…`}
+                  triggerClassName="h-8 mt-0.5"
+                  placeholder={!subType ? 'Chọn loại kho trước' : 'Chọn mã hàng'}
+                  options={(materials as any[]).map(m => ({
+                    value: m.id,
+                    label: `${m.material_code} ${m.short_name ?? m.material_description ?? ''}`,
+                    node: (
+                      <span className="flex-1 flex items-baseline gap-2 truncate">
+                        <span className="font-mono text-[11px] text-slate-500 shrink-0">{m.material_code}</span>
+                        <span className="text-[11px] text-slate-700 truncate">{m.short_name ?? m.material_description}</span>
+                        {m.no_qr_tracking && <span className="ml-auto text-[9px] text-slate-400 border border-slate-200 rounded px-1 shrink-0">no-QR</span>}
+                      </span>
+                    ),
+                  }))}
+                />
               </div>
 
               <div className="col-span-2">

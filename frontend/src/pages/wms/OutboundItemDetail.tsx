@@ -160,6 +160,18 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
             </p>
           )}
 
+          {/* Điều kiện xuất Batch / %Date — highlight ĐỎ (nếu có) */}
+          {(item.batch_required || (item.date_required != null && item.date_required > 0)) && (
+            <div className="flex flex-wrap gap-1.5">
+              {item.batch_required && (
+                <span className="text-sm font-semibold text-red-600 border border-red-200 bg-red-50 rounded px-2 py-1">Batch: {item.batch_required}</span>
+              )}
+              {item.date_required != null && item.date_required > 0 && (
+                <span className="text-sm font-semibold text-red-600 border border-red-200 bg-red-50 rounded px-2 py-1">%Date ≥ {item.date_required}%</span>
+              )}
+            </div>
+          )}
+
           <div className="relative">
             <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} />
 
@@ -382,6 +394,11 @@ export default function OutboundItemDetail() {
   const matName  = item.material?.short_name ?? item.material_code_raw ?? '—'
   const matCode  = item.material?.material_code ?? item.material_code_raw ?? '—'
   const isNoQr = item.material?.no_qr_tracking === true
+
+  // DO/NPP của dòng này (lấy từ đơn cha) — DO chỉ tham khảo, hiển thị đầy đủ trong header
+  const parentDO = (gdo.delivery_orders ?? []).find(d => d.items.some(i => i.id === itemId))
+  const doCode   = parentDO?.delivery_code ?? ''
+  const doNpp    = (parentDO?.distributor_name ?? '').trim()
 
   function toggleInv(key: string) {
     setExpandedInvKeys(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n })
@@ -607,13 +624,21 @@ export default function OutboundItemDetail() {
             {item.material_type && (
               <span className="bg-slate-100 text-slate-600 rounded px-1.5 py-0.5">{item.material_type}</span>
             )}
-            {item.batch_required && (
-              <span>Batch: <span className="font-medium">{item.batch_required}</span></span>
-            )}
-            {item.date_required != null && item.date_required > 0 && (
-              <span>%Date: <span className="font-semibold text-amber-700">{item.date_required}%</span></span>
-            )}
           </div>
+
+          {/* Row 3b: DO (đầy đủ) + NPP tham khảo + điều kiện xuất Batch/%Date highlight ĐỎ */}
+          {(doNpp || doCode || item.batch_required || (item.date_required != null && item.date_required > 0)) && (
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]">
+              {doNpp && <span className="text-slate-600"><span className="text-slate-400">NPP:</span> <span className="font-medium">{doNpp}</span></span>}
+              {doCode && <span className="text-slate-500"><span className="text-slate-400">DO:</span> <span className="font-mono break-all">{doCode}</span></span>}
+              {item.batch_required && (
+                <span className="font-semibold text-red-600 bg-red-50 border border-red-200 rounded px-1.5 py-0.5">Batch: {item.batch_required}</span>
+              )}
+              {item.date_required != null && item.date_required > 0 && (
+                <span className="font-semibold text-red-600 bg-red-50 border border-red-200 rounded px-1.5 py-0.5">%Date ≥ {item.date_required}%</span>
+              )}
+            </div>
+          )}
 
           {/* Header text: highlight ĐỎ nổi bật (ghi chú/điều kiện xuất quan trọng) */}
           {item.header_text && (

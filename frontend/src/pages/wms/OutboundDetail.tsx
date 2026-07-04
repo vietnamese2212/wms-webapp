@@ -144,16 +144,18 @@ function TagPicker({
 // ─── Picker chọn CHUYẾN (nút mở dialog thẻ, giống bên Nhập) — dùng chung Start + Sửa thông tin xe ───
 type GateRegOpt = { id: string; registration_number: number; license_plate: string | null; company_name_raw?: string | null; warehouse_id?: string | null; vehicle_type?: string | null; status: string; entry_at: string | null; exit_at: string | null; date: string }
 
-function ChuyenPicker({ gates, value, onPick, freePlate, onFreeText, special, onSpecialChange, takenGateIds }: {
+function ChuyenPicker({ gates, value, onPick, freePlate, onFreeText, special, onSpecialChange, takenGateIds, outDate }: {
   gates: GateRegOpt[]                          // chỉ chuyến đã vào cổng (entry_at) — CHƯA lọc theo special
   value: string; onPick: (id: string) => void
   freePlate: string; onFreeText: (plate: string) => void
   special: boolean; onSpecialChange: (v: boolean) => void
   takenGateIds: Set<string>
+  outDate: string                             // ngày xuất của đơn — highlight đỏ nếu ngày xe khác ngày này
 }) {
   const [open, setOpen] = useState(false)
   const [walk, setWalk] = useState('')
   const fmtT = (ts: string | null) => ts ? formatTimestampTime(ts).slice(0, 5) : '—'
+  const fmtD = (d: string) => { try { return format(parseISO(d), 'dd/MM/yyyy') } catch { return d } }
   const selected = gates.find(g => g.id === value)
   // Rule (không đổi): mặc định CHỈ xe đang trong cổng (IN) + chưa bị phiếu khác gắn; đặc biệt → cả xe đã ra / đã gắn.
   const base = gates.filter(g => special ? true : (g.status === 'IN' && !takenGateIds.has(g.id)))
@@ -184,6 +186,7 @@ function ChuyenPicker({ gates, value, onPick, freePlate, onFreeText, special, on
             <span className="font-mono font-semibold">{selected.license_plate ?? '—'}</span>
             {selected.company_name_raw && <span className="ml-1.5 text-slate-500 text-xs">{selected.company_name_raw}</span>}
             {gateLane.get(selected.id) && <span className="ml-1.5 text-slate-400 text-xs">· Lần {gateLane.get(selected.id)}</span>}
+            {selected.date !== outDate && <span className="ml-1.5 text-red-600 font-semibold text-xs">· {fmtD(selected.date)}</span>}
           </span>
         ) : freePlate ? (
           <span className="truncate"><span className="font-mono font-semibold">{freePlate}</span><span className="ml-1.5 text-amber-600 text-xs">vãng lai</span></span>
@@ -245,7 +248,7 @@ function ChuyenPicker({ gates, value, onPick, freePlate, onFreeText, special, on
                     <span className="font-mono font-semibold text-[11px] text-slate-800">{g.license_plate ?? '—'}</span>
                     {g.company_name_raw && <span className="text-[10px] text-slate-500 truncate">{g.company_name_raw}</span>}
                     {g.status !== 'IN' && <span className="text-[8px] px-1 py-0.5 rounded bg-slate-200 text-slate-500 shrink-0">đã ra</span>}
-                    <span className="ml-auto text-[9px] text-slate-400 shrink-0">Lần {gateLane.get(g.id)} · vào {fmtT(g.entry_at)}{g.exit_at ? ` · ra ${fmtT(g.exit_at)}` : ''}</span>
+                    <span className="ml-auto text-[9px] text-slate-400 shrink-0">Lần {gateLane.get(g.id)} · <span className={g.date !== outDate ? 'text-red-600 font-semibold' : ''}>{fmtD(g.date)}</span> vào {fmtT(g.entry_at)}{g.exit_at ? ` · ra ${fmtT(g.exit_at)}` : ''}</span>
                   </div>
                   {isTaken && <div className="text-[9px] text-amber-600 mt-0.5">⚠ Đã gắn phiếu khác — chỉ dùng nếu bốc thêm đơn cùng chuyến</div>}
                 </button>
@@ -346,7 +349,7 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
               onPick={id => { setGateRegId(id); if (id) setLicPlate('') }}
               freePlate={licPlate} onFreeText={p => { setLicPlate(p); setGateRegId('') }}
               special={special} onSpecialChange={v => { setSpecial(v); if (!v) setLicPlate('') }}
-              takenGateIds={takenGateIds} />
+              takenGateIds={takenGateIds} outDate={gdo.delivery_date} />
           </div>
 
           {special && !gateRegId && licPlate.trim() && (
@@ -482,7 +485,7 @@ function EditTransportDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; 
               onPick={id => { setGateRegId(id); if (id) setLicPlate('') }}
               freePlate={licPlate} onFreeText={p => { setLicPlate(p); setGateRegId('') }}
               special={special} onSpecialChange={v => { setSpecial(v); if (!v) setLicPlate('') }}
-              takenGateIds={takenGateIds} />
+              takenGateIds={takenGateIds} outDate={gdo.delivery_date} />
           </div>
 
           {special && !gateRegId && licPlate.trim() && (
@@ -932,8 +935,13 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
                   </TableCell>
                 )}
                 <TableCell className="px-2 py-1 align-top whitespace-nowrap">
-                  {/* DO tham khảo dài (nối nhiều mã) → rộng đủ nhìn 1 mã, cắt phần thừa về sau, hover xem full */}
-                  <span className="text-[10px] text-slate-500 font-mono truncate block min-w-[110px] max-w-[220px]" title={item.delivery_code ?? ''}>{item.delivery_code}</span>
+                  {/* DO tham khảo: chỉ hiện DO đầu + "…" nếu có nhiều, hover xem đầy đủ */}
+                  {(() => {
+                    const codes = (item.delivery_code ?? '').split(',').map(s => s.trim()).filter(Boolean)
+                    if (codes.length === 0) return <span className="text-[10px] text-slate-300">—</span>
+                    const disp = codes.length > 1 ? `${codes[0]} …` : codes[0]
+                    return <span className="text-[10px] text-slate-500 font-mono" title={codes.join(', ')}>{disp}</span>
+                  })()}
                 </TableCell>
                 <TableCell className="px-1 py-1 align-top">
                   {scans.length > 0 && (

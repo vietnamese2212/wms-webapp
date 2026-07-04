@@ -1593,7 +1593,7 @@ function ModalOverlay({ children, onClose, className }: { children: React.ReactN
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
-      <div className={`relative z-10 bg-white rounded-xl shadow-2xl flex flex-col ${className ?? 'w-[80vw] max-w-5xl max-h-[90vh]'}`}>
+      <div className={`relative z-10 bg-white rounded-xl shadow-2xl flex flex-col ${className ?? 'w-[80vw] max-w-[80vw] max-h-[90vh]'}`}>
         {children}
       </div>
     </div>

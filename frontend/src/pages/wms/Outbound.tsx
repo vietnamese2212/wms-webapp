@@ -213,6 +213,18 @@ export default function Outbound() {
   }
 
   const { data: warehouses = [] } = useWarehouses(true)
+  // Tra chế độ tồn theo tên/mã NPP (SỐNG từ Warehouse) → badge None/QR/QTY ở cột Ship-to.
+  // Đổi inventory_mode HOẶC thêm kho mới ở Warehouse là cột này cập nhật ngay (không cần re-upload).
+  // NPP không khớp kho nào = không badge → biết NPP nào còn thiếu trong DB.
+  const whModeByKey = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const w of warehouses as WarehouseLite[]) {
+      if (!w.inventory_mode) continue
+      if (w.name) m.set(w.name.trim().toLowerCase(), w.inventory_mode)
+      if (w.code) m.set(w.code.trim().toLowerCase(), w.inventory_mode)
+    }
+    return m
+  }, [warehouses])
 
   const outboundAllowedWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
     ? new Set(user.warehouse_ids)
@@ -659,6 +671,7 @@ export default function Outbound() {
                     dense={dense}
                     pinW={colW[0]}
                     selected={gdo.id === selectedId}
+                    whModeByKey={whModeByKey}
                     bracketPos={bpos}
                     onClick={() => { if (isDesktop) setSelectedId(gdo.id); else navigate(`/wms/outbound/${gdo.id}`) }}
                     onDoubleClick={() => navigate(`/wms/outbound/${gdo.id}`)}
@@ -736,7 +749,7 @@ export default function Outbound() {
 
 // ─── GDO Row ──────────────────────────────────────────────────
 
-function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34, selected = false, bracketPos = 'none' }: {
+function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34, selected = false, whModeByKey, bracketPos = 'none' }: {
   gdo: GDO
   onClick: () => void
   onDoubleClick?: () => void
@@ -744,12 +757,17 @@ function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34
   dense?: boolean
   pinW?: number
   selected?: boolean
+  whModeByKey: Map<string, string>
   bracketPos?: BracketPos
 }) {
   const { pin, unpin, isPinned } = useActiveVehiclesStore()
   const pinned    = isPinned(gdo.id)
   const dateLabel = format(parseISO(gdo.delivery_date), 'dd-MM-yy', { locale: vi })
   const npp       = gdo.distributor_names?.join(', ') ?? '—'
+  // Chế độ tồn của (các) NPP tra sống từ Warehouse — NPP không có trong DB thì không có badge
+  const nppModes  = [...new Set((gdo.distributor_names ?? [])
+    .map(n => whModeByKey.get(n.trim().toLowerCase()))
+    .filter(Boolean) as string[])]
   const { label: statusLabel, cls: statusCls } = gdoStatusInfo(gdo)
   const isPending = gdo.status === 'PENDING'
   const showBracket = bracketPos !== 'none' && bracketPos !== 'only'
@@ -788,9 +806,13 @@ function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34
         <span className="text-[10px] truncate block" title={npp}>{npp}</span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
-        {gdo.shipto_party ? (
-          <span className="text-[10px] font-mono">{gdo.shipto_party}</span>
-        ) : <span className="text-slate-300">—</span>}
+        <span className="inline-flex items-center gap-1">
+          {gdo.shipto_party && <span className="text-[10px] font-mono">{gdo.shipto_party}</span>}
+          {nppModes.map(mode => (
+            <span key={mode} className={`text-[8px] px-1 py-0.5 rounded border font-medium ${mode === 'NONE' ? 'text-slate-500 border-slate-300' : 'text-green-600 border-green-300'}`}>{mode}</span>
+          ))}
+          {!gdo.shipto_party && nppModes.length === 0 && <span className="text-slate-300">—</span>}
+        </span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px]">{gdo.dvvt ?? '—'}</span>

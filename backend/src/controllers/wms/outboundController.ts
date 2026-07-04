@@ -537,23 +537,46 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
   const { data: gdo } = await supabase.from('GroupDeliveryOrder')
     .select('id, group_code, shipto_party, transfer_status, license_plate')
     .eq('id', gdoId).single()
-  if (!gdo?.shipto_party || gdo.transfer_status) return
+  if (!gdo || gdo.transfer_status) return
 
-  // Khớp ship-to → kho: code chính HOẶC mã ship-to phụ (shipto_codes). 1 kho có thể có nhiều ship-to.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: destWh } = await supabase.from('Warehouse')
-    .select('id, code, name, inventory_mode')
-    .or(`code.eq.${gdo.shipto_party},shipto_codes.cs.{${gdo.shipto_party}}`)
-    .eq('is_active', true).maybeSingle()
-  if (!destWh) return
-  // Kho đích NONE (không theo dõi tồn, vd bộ phận Sản xuất) → xuất TIÊU HAO: chỉ trừ tồn nguồn,
-  // KHÔNG tạo lệnh chuyển kho / không bắt nhận. (đích QR/QTY mới là chuyển kho đầy đủ)
-  if ((destWh as { inventory_mode?: string | null }).inventory_mode === 'NONE') return
-
+  // DO (kèm Tên NPP) — dùng cho fallback xác định kho đích + gom item
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: dos } = await supabase.from('OutboundDelivery')
-    .select('id').eq('gdo_id', gdoId)
+    .select('id, distributor_name').eq('gdo_id', gdoId)
   const doIds = (dos ?? []).map((d: { id: string }) => d.id)
+
+  // Xác định KHO ĐÍCH (kho nhận theo dõi tồn QR/QTY):
+  //  1) shipto_party tường minh (mã kho / mã ship-to phụ), HOẶC
+  //  2) tra SỐNG theo Tên NPP của đơn → kho QR/QTY (đúng 1 kho khớp mới tạo).
+  // → đổi kho NONE→QR/QTY xong, Hoàn thành đơn cũ (shipto trống) VẪN tự đẩy sang Kế hoạch VC.
+  type DestWh = { id: string; code: string; name: string; inventory_mode?: string | null }
+  let destWh: DestWh | null = null
+  if (gdo.shipto_party) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data } = await supabase.from('Warehouse')
+      .select('id, code, name, inventory_mode')
+      .or(`code.eq.${gdo.shipto_party},shipto_codes.cs.{${gdo.shipto_party}}`)
+      .eq('is_active', true).maybeSingle()
+    destWh = (data as DestWh) ?? null
+  }
+  if (!destWh) {
+    const nppKeys = [...new Set((dos ?? []).map((d: { distributor_name?: string | null }) => String(d.distributor_name ?? '').trim().toLowerCase()).filter(Boolean))]
+    if (nppKeys.length) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: whs } = await supabase.from('Warehouse')
+        .select('id, code, name, inventory_mode')
+        .eq('is_active', true).neq('inventory_mode', 'NONE')
+      const matched = new Map<string, DestWh>()
+      for (const w of ((whs ?? []) as DestWh[])) {
+        if (nppKeys.includes(String(w.name).trim().toLowerCase()) || nppKeys.includes(String(w.code).trim().toLowerCase()))
+          matched.set(w.id, w)
+      }
+      if (matched.size === 1) destWh = [...matched.values()][0]
+    }
+  }
+  if (!destWh) return
+  // Kho đích NONE (không theo dõi tồn) → xuất bán/tiêu hao thường: chỉ trừ tồn nguồn, KHÔNG tạo chuyển kho.
+  if (destWh.inventory_mode === 'NONE') return
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: items } = doIds.length
@@ -614,7 +637,7 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   await supabase.from('GroupDeliveryOrder')
-    .update({ transfer_status: 'IN_TRANSIT', updated_at: nowTs }).eq('id', gdoId)
+    .update({ transfer_status: 'IN_TRANSIT', shipto_party: destWh.code, updated_at: nowTs }).eq('id', gdoId)
 }
 
 // ─── Delete GDO ───────────────────────────────────────────────

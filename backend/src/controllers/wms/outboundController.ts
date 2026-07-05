@@ -1886,7 +1886,13 @@ export async function getPrepareBoard(req: Request, res: Response) {
         if (!r.material_id) continue
         const locMap = byMat.get(r.material_id)
         if (!locMap) continue
-        r.suggestions = [...locMap.values()].sort((a, b) => (a.pct_date ?? Infinity) - (b.pct_date ?? Infinity)).slice(0, 2)
+        // Hòa %Date → ưu tiên vị trí ÍT hàng nhất (dọn hàng lẻ trước) → tên vị trí; đồng bộ luật với panel tồn kho FE
+        r.suggestions = [...locMap.values()].sort((a, b) => {
+          const pa = a.pct_date ?? Infinity, pb = b.pct_date ?? Infinity
+          if (pa !== pb) return pa - pb
+          if (a.available !== b.available) return a.available - b.available
+          return (a.location_code ?? '').localeCompare(b.location_code ?? '')
+        }).slice(0, 2)
       }
     }
 

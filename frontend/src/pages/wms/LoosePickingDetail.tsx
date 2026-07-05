@@ -85,9 +85,13 @@ function InventoryModal({ gdoId, itemId, matCode, matName, onClose }: {
       if (r) { r.cartons += e.cartons_remaining ?? e.cartons_imported ?? 0; r.entries.push(e) }
       else map.set(k, { key: k, pct_date: e.pct_date, location_code: e.location_code, is_qa: q, cartons: e.cartons_remaining ?? e.cartons_imported ?? 0, entries: [e] })
     }
+    // Hòa %Date → hàng thường trước QA giữ → vị trí ÍT hàng nhất trước (dọn hàng lẻ) → tên vị trí
     return [...map.values()].sort((a, b) => {
       const pa = a.pct_date ?? Infinity, pb = b.pct_date ?? Infinity
-      return pa !== pb ? pa - pb : (a.is_qa ? 1 : -1)
+      if (pa !== pb) return pa - pb
+      if (a.is_qa !== b.is_qa) return a.is_qa ? 1 : -1
+      if (a.cartons !== b.cartons) return a.cartons - b.cartons
+      return (a.location_code ?? '').localeCompare(b.location_code ?? '')
     })
   })()
 

@@ -153,9 +153,26 @@ function matchDatePct(pct: number, range: string): boolean {
 // count đã biết) rồi gộp ở Node. Dùng cho summary (gom nhóm) và tổng thùng tồn. Throw nếu lỗi.
 // (Tối ưu sau: chuyển sang RPC để gom phía DB trong 1 call.)
 async function fetchAllInventory(select: string, params: FilterParams, datePctIds: string[] | null): Promise<any[]> {
+  // Lọc %Date: datePctIds ĐÃ là kết quả áp đủ filter (tính ở resolveInventoryFilter). Chỉ cần nạp
+  // entry theo id — CHUNK 300 (né URL 414 khi vài chục nghìn id) thay vì nhồi cả tập vào 1 `.in()`.
+  if (datePctIds !== null) {
+    if (!datePctIds.length) return []
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const results = await Promise.all(chunkArray(datePctIds, IN_CHUNK).map(c =>
+      supabase.from('InventoryEntry').select(select).in('id', c)))
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows: any[] = []
+    for (const r of results) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if ((r as any).error) throw new Error((r as any).error.message)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      rows.push(...((r as any).data ?? []))
+    }
+    return rows
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let cq = applyInventoryFilters(supabase.from('InventoryEntry').select(select, { count: 'exact', head: true }), params)
-  if (datePctIds !== null) cq = cq.in('id', datePctIds)
+  const cq = applyInventoryFilters(supabase.from('InventoryEntry').select(select, { count: 'exact', head: true }), params)
   const { count, error: cErr } = await cq
   if (cErr) throw new Error(cErr.message)
   const n = count ?? 0
@@ -165,10 +182,9 @@ async function fetchAllInventory(select: string, params: FilterParams, datePctId
   const reqs = []
   for (let p = 0; p * PAGE < n; p++) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let q = applyInventoryFilters(supabase.from('InventoryEntry').select(select), params)
+    const q = applyInventoryFilters(supabase.from('InventoryEntry').select(select), params)
       .order('id', { ascending: true })
       .range(p * PAGE, p * PAGE + PAGE - 1)
-    if (datePctIds !== null) q = q.in('id', datePctIds)
     reqs.push(q)
   }
   const results = await Promise.all(reqs)
@@ -181,6 +197,45 @@ async function fetchAllInventory(select: string, params: FilterParams, datePctId
     rows.push(...((r as any).data ?? []))
   }
   return rows
+}
+
+// Chia mảng thành các lô nhỏ — chống `.in('id', ids)` với ids lớn (URL quá dài → 414 URI Too Large
+// + cap ~1000 dòng/response). Dùng cho tập id lọc %Date (kho lớn có thể vài chục nghìn pallet).
+function chunkArray<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = []
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size))
+  return out
+}
+const IN_CHUNK = 300
+
+// Tổng cartons_remaining của 1 tập id (chunk 300 → tránh URL 414). Song song các lô.
+async function sumRemainingByIds(ids: string[]): Promise<number> {
+  if (!ids.length) return 0
+  const results = await Promise.all(chunkArray(ids, IN_CHUNK).map(c =>
+    supabase.from('InventoryEntry').select('cartons_remaining').in('id', c)))
+  let total = 0
+  for (const r of results) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if ((r as any).error) throw new Error((r as any).error.message)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const row of ((r as any).data ?? [])) total += Number(row.cartons_remaining ?? 0)
+  }
+  return total
+}
+
+// Đếm pallet còn tồn (>0) trong 1 tập id (chunk 300). Song song các lô.
+async function countPositiveByIds(ids: string[]): Promise<number> {
+  if (!ids.length) return 0
+  const results = await Promise.all(chunkArray(ids, IN_CHUNK).map(c =>
+    supabase.from('InventoryEntry').select('id', { count: 'exact', head: true }).in('id', c).gt('cartons_remaining', 0)))
+  let total = 0
+  for (const r of results) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if ((r as any).error) throw new Error((r as any).error.message)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    total += ((r as any).count as number | null) ?? 0
+  }
+  return total
 }
 
 // Phân trang TUẦN TỰ cho 1 query bất kỳ (không gắn applyInventoryFilters) — né cap ~1000 dòng/response.
@@ -349,7 +404,9 @@ async function resolveInventoryFilter(req: Request): Promise<ResolvedFilter> {
     // Phân trang 1000 (cap response) để lấy ĐỦ dòng tính pct, không bị thiếu khi >1000 dòng.
     let preEntries: any[]
     try {
-      preEntries = await fetchAllInventory('id, production_date, ncc_id, shelf_life_days, material:Material(shelf_life_days, supplier_shelf_life_overrides)', { ...params, status: '' }, null)
+      // import_date thêm vào để sort datePctIds ĐÚNG thứ tự list (import_date desc, id asc) — nhờ đó
+      // listInventory chỉ cần slice trang rồi `.in()` ~50 id, không nhồi cả tập id vào URL (tránh 414).
+      preEntries = await fetchAllInventory('id, import_date, production_date, ncc_id, shelf_life_days, material:Material(shelf_life_days, supplier_shelf_life_overrides)', { ...params, status: '' }, null)
     } catch (e) {
       return { ...base, error: (e as Error).message }
     }
@@ -360,6 +417,12 @@ async function resolveInventoryFilter(req: Request): Promise<ResolvedFilter> {
         if (!e.production_date || !shelfDays || shelfDays <= 0) return false
         const pct = calcPct(e.production_date as string, shelfDays, now)
         return datePctRanges.some(r => matchDatePct(pct, r))
+      })
+      // Sort khớp listInventory: import_date desc (null cuối) + id asc → slice trang là ra đúng trang.
+      .sort((a: any, b: any) => {
+        const ad = a.import_date ?? '', bd = b.import_date ?? ''
+        if (ad !== bd) { if (!ad) return 1; if (!bd) return -1; return ad > bd ? -1 : 1 }
+        return String(a.id) < String(b.id) ? -1 : 1
       })
       .map((e: any) => e.id as string)
 
@@ -380,13 +443,37 @@ export async function listInventory(req: Request, res: Response) {
   const catActive = !!(r.params.categoryFilter && r.params.categoryFilter.length)
   const mainSelect = catActive ? ENTRY_SELECT.replace('material:Material(', 'material:Material!inner(') : ENTRY_SELECT
 
+  // ── Nhánh LỌC %DATE: datePctIds đã lọc + sort sẵn (import_date desc, id asc) ở resolve. KHÔNG nhồi
+  // cả tập id vào `.in()` (kho lớn vài chục nghìn → URL 414). Slice trang → chỉ `.in()` ~limit id;
+  // tổng/đếm chunk 300. ──
+  if (r.datePctIds !== null) {
+    const allIds = r.datePctIds
+    const pageIds = allIds.slice(r.offset, r.offset + r.limitNum)
+    try {
+      let rows: any[] = []
+      if (pageIds.length) {
+        const { data, error } = await supabase.from('InventoryEntry').select(mainSelect).in('id', pageIds)
+        if (error) return fail(res, 500, 'DB_ERROR', error.message)
+        // `.in()` không giữ thứ tự → sắp lại theo pageIds (đã đúng import_date desc, id asc)
+        const pos = new Map(pageIds.map((id, i) => [id, i]))
+        rows = ((data ?? []) as any[]).sort((a, b) => (pos.get(a.id) ?? 0) - (pos.get(b.id) ?? 0))
+      }
+      const [total_cartons_remaining, total_pallets_in_stock] = await Promise.all([
+        sumRemainingByIds(allIds),
+        countPositiveByIds(allIds),
+      ])
+      return ok(res, { entries: rows, total: allIds.length, page: r.pageNum, limit: r.limitNum, total_cartons_remaining, total_pallets_in_stock })
+    } catch (e) {
+      return fail(res, 500, 'DB_ERROR', (e as Error).message)
+    }
+  }
+
+  // ── Nhánh KHÔNG lọc %Date: phân trang + aggregate SUM/count phía DB (nhanh) ──
   // Main paginated query — sort by import_date desc + id asc để đảm bảo thứ tự ổn định giữa các trang
-  let mainQ = applyInventoryFilters(
+  const mainQ = applyInventoryFilters(
     supabase.from('InventoryEntry').select(mainSelect, { count: 'exact' }),
     r.params
   )
-  if (r.datePctIds !== null) mainQ = mainQ.in('id', r.datePctIds)
-  mainQ = mainQ
     .order('import_date', { ascending: false, nullsFirst: false })
     .order('id', { ascending: true })
     .range(r.offset, r.offset + r.limitNum - 1)
@@ -395,17 +482,15 @@ export async function listInventory(req: Request, res: Response) {
   // dòng về Node. Tái dùng NGUYÊN applyInventoryFilters → tổng khớp tuyệt đối list. catActive: embed
   // material!inner để lọc category → PostgREST group-by category (mỗi category 1 dòng) nên cộng .sum tất cả.
   const sumSelect = catActive ? 'cartons_remaining.sum(), material:Material!inner(category)' : 'cartons_remaining.sum()'
-  let sumQ = applyInventoryFilters(supabase.from('InventoryEntry').select(sumSelect), r.params)
-  if (r.datePctIds !== null) sumQ = sumQ.in('id', r.datePctIds)
+  const sumQ = applyInventoryFilters(supabase.from('InventoryEntry').select(sumSelect), r.params)
 
   // Ô "Pallet" chỉ đếm pallet CÒN TỒN (>0) — list vẫn hiện cả pallet 0 (user chốt 05/07,
   // sau khi upload cho phép tồn=0). Count head:true cùng bộ filter → khớp tuyệt đối list.
   // catActive PHẢI embed Material!inner (filter category lọc trên bảng nhúng — thiếu là PostgREST lỗi → tile về 0).
   const cntSelect = catActive ? 'id, material:Material!inner(category)' : 'id'
-  let cntQ = applyInventoryFilters(
+  const cntQ = applyInventoryFilters(
     supabase.from('InventoryEntry').select(cntSelect, { count: 'exact', head: true }), r.params,
   ).gt('cartons_remaining', 0)
-  if (r.datePctIds !== null) cntQ = cntQ.in('id', r.datePctIds)
 
   // Chạy SONG SONG: list rows (main) + tổng (sum) + đếm còn tồn (cnt) độc lập nhau.
   const [mainRes, sumRes, cntRes] = await Promise.all([mainQ, sumQ, cntQ])

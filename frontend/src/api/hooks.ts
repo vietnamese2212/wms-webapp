@@ -1827,6 +1827,23 @@ export function usePrepareBoard(gdoIds: string[]) {
   })
 }
 
+// Cảnh báo thiếu tồn theo (kho, ngày giao) — level 1: tồn thiếu nhưng tồn + KH nhập đủ
+// (push hàng về đúng KH); level 2: tồn + KH nhập vẫn thiếu. Chỉ trả mã có cảnh báo.
+export type OutboundShortage = { material_id: string; demand: number; available: number; planned: number; level: 1 | 2 }
+export function useOutboundShortages(warehouseId: string | null | undefined, date: string | null | undefined) {
+  return useQuery({
+    queryKey: ['outbound-shortages', warehouseId, date],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/outbound/shortages', {
+        params: { warehouse_id: warehouseId, date },
+      })
+      return data.data as OutboundShortage[]
+    },
+    enabled: !!warehouseId && !!date,
+    staleTime: 15_000,
+  })
+}
+
 export function useManualItemStock(gdoId: string | undefined, itemId: string | undefined) {
   return useQuery({
     queryKey: ['manual-item-stock', gdoId, itemId],

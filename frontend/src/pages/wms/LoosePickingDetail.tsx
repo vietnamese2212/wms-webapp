@@ -8,7 +8,8 @@ import {
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { useGDO, useItemInventory, type ItemInventoryEntry } from '@/api/hooks'
+import { useGDO, useItemInventory, useOutboundShortages, type ItemInventoryEntry } from '@/api/hooks'
+import { ShortageBadge } from '@/components/shared/ShortageBadge'
 import { useActiveLoosePickingStore } from '@/stores/activeLoosePickingStore'
 import { PalletDetailDialog } from '@/components/shared/PalletDetailDialog'
 import type { OutboundItem, OutboundDelivery, OutboundStatus } from '@/types'
@@ -194,13 +195,18 @@ function InventoryModal({ gdoId, itemId, matCode, matName, onClose }: {
 
 // ─── Items table ───────────────────────────────────────────────
 
-function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand }: {
+function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouseId, deliveryDate }: {
   doRecords: OutboundDelivery[]
   gdoId: string
   expandedItemIds: Set<string>
   toggleExpand: (id: string) => void
+  warehouseId?: string | null
+  deliveryDate?: string | null
 }) {
   const navigate = useNavigate()
+  // Cảnh báo thiếu tồn theo (kho, ngày giao) — badge cuối cột Mã hàng (đồng bộ Xuất)
+  const { data: shortages = [] } = useOutboundShortages(warehouseId, deliveryDate)
+  const shortageByMat = new Map(shortages.map(s => [s.material_id, s]))
   const [inventoryItemId, setInventoryItemId] = useState<string | null>(null)
 
   const allItems = doRecords.flatMap(d =>
@@ -265,7 +271,10 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand }: {
                   onClick={() => navigate(`/wms/loosepicking/${gdoId}/items/${item.id}`)}
                 >
                   <TableCell className="px-2 py-1 align-top whitespace-nowrap">
-                    <div className={`text-[10px] font-mono font-semibold ${textCls}`}>{matCode}</div>
+                    <div className={`text-[10px] font-mono font-semibold ${textCls}`}>
+                      {matCode}
+                      <ShortageBadge s={item.material_id ? shortageByMat.get(item.material_id) : undefined} />
+                    </div>
                   </TableCell>
                   <TableCell className="px-2 py-1 align-top">
                     <div className={`text-[10px] font-medium leading-tight ${textCls}`}>{matName}</div>
@@ -537,7 +546,8 @@ export default function LoosePickingDetail() {
 
       {/* ── Items table ── */}
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
-        <ItemsTable doRecords={allDOs} gdoId={id!} expandedItemIds={expandedItemIds} toggleExpand={toggleExpand} />
+        <ItemsTable doRecords={allDOs} gdoId={id!} expandedItemIds={expandedItemIds} toggleExpand={toggleExpand}
+          warehouseId={gdo.warehouse_id} deliveryDate={gdo.delivery_date} />
       </div>
     </div>
   )

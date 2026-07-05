@@ -9,7 +9,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useColumnResize } from '@/components/shared/useColumnResize'
-import { useGDOs, useWarehouses, usePrepareBoard, useInventoryByMaterial, type ItemInventoryEntry } from '@/api/hooks'
+import { useGDOs, useWarehouses, usePrepareBoard, useInventoryByMaterial, useOutboundShortages, type ItemInventoryEntry } from '@/api/hooks'
+import { ShortageBadge } from '@/components/shared/ShortageBadge'
 import { useAuthStore } from '@/stores/authStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
@@ -197,6 +198,9 @@ export default function OutboundPrepare() {
   const selectedIds = useMemo(() => [...selected], [selected])
   const { data: board, isFetching } = usePrepareBoard(selectedIds)
   const rows = board?.rows ?? []
+  // Cảnh báo thiếu tồn theo (kho, ngày) — badge cuối cột Mã hàng
+  const { data: shortages = [] } = useOutboundShortages(warehouseId || undefined, date || undefined)
+  const shortageByMat = useMemo(() => new Map(shortages.map(s => [s.material_id, s])), [shortages])
   const { widths: colW, startResize, totalWidth } = useColumnResize('outbound_prepare_col_widths', PREPARE_COL_DEFAULTS)
 
   function addGdo(id: string) { setSelected(prev => new Set(prev).add(id)) }
@@ -350,7 +354,10 @@ export default function OutboundPrepare() {
                       </div>
                       {r.suggestions[1] && <div className="text-[9px] font-mono text-slate-400 pl-4">{r.suggestions[1].location_code}</div>}
                     </TableCell>
-                    <TableCell className="px-2 py-1 whitespace-nowrap"><span className="text-[10px] font-mono font-semibold text-slate-700">{r.material_code}</span></TableCell>
+                    <TableCell className="px-2 py-1 whitespace-nowrap">
+                      <span className="text-[10px] font-mono font-semibold text-slate-700">{r.material_code}</span>
+                      <ShortageBadge s={r.material_id ? shortageByMat.get(r.material_id) : undefined} />
+                    </TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap">
                       <div className="flex items-center gap-1 min-w-0">
                         <span className="text-[10px] text-slate-600 truncate" title={r.material_name ?? undefined}>{r.material_name ?? '—'}</span>

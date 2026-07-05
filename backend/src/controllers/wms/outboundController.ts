@@ -1765,6 +1765,32 @@ export async function getItemInventory(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
+// ─── Cảnh báo thiếu tồn theo (kho, ngày giao) ─────────────────
+// RPC outbound_shortage_stats (migration 20260705) tính trong DB: demand = còn phải xuất
+// của MỌI đơn chưa hủy trong ngày; available = tồn loại QA giữ + QUARANTINE; planned = KH
+// nhập (hôm nay → ngày giao) TRỪ lượng thực đã nhập từng chuyến. Level: 1 = tồn thiếu nhưng
+// tồn + KH đủ (push hàng về đúng KH); 2 = tồn + KH vẫn thiếu.
+export async function getOutboundShortages(req: Request, res: Response) {
+  try {
+    const { warehouse_id, date } = req.query as Record<string, string>
+    if (!warehouse_id || !date) return fail(res, 'warehouse_id và date là bắt buộc', 400)
+    const { data, error } = await supabase.rpc('outbound_shortage_stats', { p_warehouse_id: warehouse_id, p_date: date })
+    if (error) {
+      // Migration chưa apply → trả rỗng để trang không vỡ (chỉ mất cảnh báo)
+      console.error('outbound_shortage_stats:', error.message)
+      return ok(res, [])
+    }
+    const rows = ((data ?? []) as Array<{ material_id: string; demand: number; available: number; planned_remaining: number }>)
+      .map(r => {
+        const demand = Number(r.demand), available = Number(r.available), planned = Number(r.planned_remaining)
+        const level = available >= demand ? 0 : available + planned >= demand ? 1 : 2
+        return { material_id: r.material_id, demand, available, planned, level }
+      })
+      .filter(r => r.level > 0)
+    return ok(res, rows)
+  } catch (e) { return fail(res, String(e)) }
+}
+
 // Tồn theo mã hàng + kho (nút search tồn kho ở bảng chuẩn bị, không gắn item cụ thể)
 export async function getInventoryByMaterial(req: Request, res: Response) {
   try {

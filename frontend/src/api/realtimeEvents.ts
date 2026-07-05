@@ -6,7 +6,7 @@ import type { DeliverySlot, TmsOrder } from '@/types'
 // Maps table name → query keys to invalidate (fallback refetch).
 const TABLE_QUERY_MAP: Record<string, string[][]> = {
   ProductionImport:    [['inbound-orders'], ['inbound-order'], ['inbound-report'], ['transfer-goods'], ['inbound-by-gdo'], ['tms-orders-transfer'], ['tms-material-summary'], ['dashboard']],
-  InventoryEntry:      [['inbound-order'], ['inventory-entries'], ['inventory-summary'], ['inventory-facets'], ['locations-real'], ['plan-vs-actual'], ['inbound-report'], ['manual-item-stock'], ['item-inventory'], ['inventory-by-material'], ['transfer-goods'], ['inbound-by-gdo'], ['stocktake-entries'], ['tms-material-summary'], ['dashboard']],
+  InventoryEntry:      [['inbound-order'], ['inventory-entries'], ['inventory-summary'], ['inventory-facets'], ['locations-real'], ['plan-vs-actual'], ['inbound-report'], ['manual-item-stock'], ['item-inventory'], ['inventory-by-material'], ['transfer-goods'], ['inbound-by-gdo'], ['stocktake-entries'], ['tms-material-summary'], ['dashboard'], ['outbound-shortages']],
   Location:            [['locations-real'], ['sub-groups']],
   // gdos/gdo: cột Tổng (QR)/(k QR) của Xuất tách theo Material.no_qr_tracking (join sống) —
   // đổi cờ QR của mã hàng phải refetch list Xuất, không thì số liệu đứng im tới khi reload.
@@ -28,11 +28,11 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   TmsVehicleSlot:      [['tms-orders'], ['gate-registrations'], ['gate-suggest']],
   DeliverySlot:        [['tms-delivery-slots']],
   gate_registrations:  [['gate-registrations']],
-  inbound_plan_lines:  [['inbound-plan-lines-by-order'], ['plan-vs-actual'], ['inbound-plan-lines'], ['inbound-report'], ['tms-material-summary']],
-  GroupDeliveryOrder:  [['gdos'], ['gdo'], ['tms-orders-transfer'], ['loosepicking'], ['dashboard']],
+  inbound_plan_lines:  [['inbound-plan-lines-by-order'], ['plan-vs-actual'], ['inbound-plan-lines'], ['inbound-report'], ['tms-material-summary'], ['outbound-shortages']],
+  GroupDeliveryOrder:  [['gdos'], ['gdo'], ['tms-orders-transfer'], ['loosepicking'], ['dashboard'], ['outbound-shortages']],
   OutboundDelivery:    [['gdo']],
-  OutboundItem:        [['gdo'], ['loosepicking'], ['item-inventory'], ['inventory-by-material'], ['dashboard']],
-  OutboundScanEntry:   [['gdo'], ['loosepicking'], ['item-inventory'], ['inventory-by-material']],
+  OutboundItem:        [['gdo'], ['loosepicking'], ['item-inventory'], ['inventory-by-material'], ['dashboard'], ['outbound-shortages']],
+  OutboundScanEntry:   [['gdo'], ['loosepicking'], ['item-inventory'], ['inventory-by-material'], ['outbound-shortages']],
   Employee:             [['employees'], ['employee-records'], ['employee-record'], ['warehouse-employees']],
   JobTitle:             [['job-titles'], ['employee-records']],
   Department:           [['departments'], ['job-titles']],

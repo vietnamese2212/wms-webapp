@@ -24,8 +24,9 @@ import {
   useGDO, useAssignGDO, useStartGDO, useWarehouseEmployees, usePatchGDO,
   useUnassignGDO, useUnstartGDO, useUncompleteGDO, useUpdateTransport,
   useItemInventory, useManualItemStock, useDeleteGDO, useManualCompleteItem, type ItemInventoryEntry,
-  useActiveGateRegistrations, useGDOs,
+  useActiveGateRegistrations, useGDOs, useOutboundShortages,
 } from '@/api/hooks'
+import { ShortageBadge } from '@/components/shared/ShortageBadge'
 import { EditGDOModal, gdoKey } from './Outbound'
 import { statusText } from '@/lib/rowStatus'
 import { PalletDetailDialog } from '@/components/shared/PalletDetailDialog'
@@ -825,15 +826,20 @@ function ManualCompleteDialog({ gdoId, itemId, matName, initialCartons, onClose 
 
 // ─── Items table ───────────────────────────────────────────────
 
-function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, toggleExpand }: {
+function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, toggleExpand, warehouseId, deliveryDate }: {
   doRecords: OutboundDelivery[]
   gdoId: string
   canScan: boolean
   hasScanPerm: boolean
   expandedItemIds: Set<string>
   toggleExpand: (id: string) => void
+  warehouseId?: string | null
+  deliveryDate?: string | null
 }) {
   const navigate = useNavigate()
+  // Cảnh báo thiếu tồn theo (kho, ngày giao) — badge cuối cột Mã hàng
+  const { data: shortages = [] } = useOutboundShortages(warehouseId, deliveryDate)
+  const shortageByMat = new Map(shortages.map(s => [s.material_id, s]))
   const [inventoryItemId, setInventoryItemId] = useState<string | null>(null)
   const [manualDlg, setManualDlg] = useState<{ itemId: string; matName: string; cartons: number } | null>(null)
   const allItems = doRecords.flatMap(d =>
@@ -924,7 +930,10 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
                 onClick={() => navigate(`/wms/outbound/${gdoId}/items/${item.id}`)}
               >
                 <TableCell className={`px-2 py-1 align-top whitespace-nowrap`}>
-                  <div className={`text-[10px] font-mono font-semibold ${textCls}`}>{matCode}</div>
+                  <div className={`text-[10px] font-mono font-semibold ${textCls}`}>
+                    {matCode}
+                    <ShortageBadge s={item.material_id ? shortageByMat.get(item.material_id) : undefined} />
+                  </div>
                 </TableCell>
                 <TableCell className={`px-2 py-1 align-top`}>
                   <div className={`text-[10px] font-medium leading-tight ${textCls}`}>{matName}</div>
@@ -1577,6 +1586,8 @@ export default function OutboundDetail() {
               gdoId={id!}
               canScan={!!gdo.started_at && gdo.status !== 'PAUSED' && gdo.status !== 'COMPLETED'}
               hasScanPerm={can(perms, 'outbound', 'scan')}
+              warehouseId={gdo.warehouse_id}
+              deliveryDate={gdo.delivery_date}
               expandedItemIds={expandedItemIds}
               toggleExpand={toggleExpandItem}
             />

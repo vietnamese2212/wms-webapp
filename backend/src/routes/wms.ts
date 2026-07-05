@@ -125,6 +125,8 @@ router.get('/outbound/scan-log',                              requirePerm('scanl
 router.get('/outbound/prepare',                               requirePerm('outbound', 'prepare'), outbound.getPrepareBoard)
 router.get('/outbound/inventory-by-material',                 requirePerm('outbound', 'prepare'), outbound.getInventoryByMaterial)
 router.get('/outbound/pallet-lookup',                         requirePerm('outbound', 'view'), outbound.lookupPalletGdos)
+// Cảnh báo thiếu tồn theo (kho, ngày giao) — dùng ở cả Xuất kho lẫn Nhặt lẻ (read-only)
+router.get('/outbound/shortages',                             requireAnyPerm(['outbound', 'view'], ['loosepicking', 'view']), outbound.getOutboundShortages)
 router.get('/outbound/:id',                                   requireAnyPerm(['outbound', 'view'], ['loosepicking', 'view']), outbound.getGDO)
 router.put('/outbound/:id',                                   requirePerm('outbound', 'edit'), outbound.updateGDO)
 // PATCH nhận cả edit lẫn complete — controller kiểm chi tiết: đổi status=COMPLETED cần

@@ -99,7 +99,12 @@ export async function listPrints(req: Request, res: Response) {
       if (scopeWh) q = q.or(`warehouse_id.is.null,warehouse_id.in.(${scopeWh.join(',')})`)
       if (scopeCats) q = q.or(`category.is.null,category.in.(${scopeCats.map(c => `"${c}"`).join(',')})`)
       if (qr_code) q = q.eq('qr_code', qr_code)
-      if (search)  q = q.ilike('qr_code', `%${search}%`)
+      if (search) {
+        // Search chung (ô tìm + quét QR tab Lịch sử): mã pallet / mã hàng / người in.
+        // Bỏ ký tự phá cú pháp .or() của PostgREST (dấu phẩy, ngoặc)
+        const s = search.replace(/[,()]/g, ' ').trim()
+        if (s) q = q.or(`qr_code.ilike.%${s}%,material_code.ilike.%${s}%,printed_by_name.ilike.%${s}%`)
+      }
       if (codeChunk && codeChunk.length) q = q.in('qr_code', codeChunk)
       if (cats.length) q = q.in('category', cats)
       if (cyc.length)  q = q.in('cycle', cyc)

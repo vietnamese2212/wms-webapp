@@ -9,6 +9,7 @@ import { SingleSelect } from '@/components/shared/SingleSelect'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { FilterBar, FilterSheetButton, type FilterDef, type FBOpt } from '@/components/shared/FilterBar'
 import { QRScanner } from '@/components/shared/QRScanner'
+import { SearchInput } from '@/components/shared/SearchInput'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { SummaryBand } from '@/components/shared/SummaryBand'
@@ -497,10 +498,18 @@ export default function PalletLabels() {
     for (const x of allMats as Material[]) m.set(x.material_code, x)
     return m
   }, [allMats])
-  // Bắt buộc tối thiểu 1 filter (khoảng ngày) mới tải — tránh dump toàn bộ log in.
+  // Search server-side (mã pallet / mã hàng / người in) — debounce 400ms, tối thiểu 3 ký tự
+  const [histSearch, setHistSearch] = useState('')
+  const [histSearchDeb, setHistSearchDeb] = useState('')
+  useEffect(() => { const t = setTimeout(() => setHistSearchDeb(histSearch.trim()), 400); return () => clearTimeout(t) }, [histSearch])
+  const histSearchOk = histSearchDeb.length >= 3
+  // Bắt buộc tối thiểu 1 filter (khoảng ngày HOẶC search) mới tải — tránh dump toàn bộ log in.
   // Các filter còn lại (Chế độ/Tên hàng/Chu kỳ/Máy-NCC/Người in) lọc client-side trên tập đã tải.
-  const histReady = !!(histFrom || histTo)
-  const { data: histRows = [] } = usePalletPrints({ date_from: histFrom || undefined, date_to: histTo || undefined }, tab === 'history' && histReady)
+  const histReady = !!(histFrom || histTo || histSearchOk)
+  const { data: histRows = [] } = usePalletPrints({
+    date_from: histFrom || undefined, date_to: histTo || undefined,
+    search: histSearchOk ? histSearchDeb : undefined,
+  }, tab === 'history' && histReady)
   const histMatOpts = useMemo(() => [...new Set(histRows.map(r => r.material_code).filter((x): x is string => !!x))]
     .map(c => ({ value: c, label: matByCode.get(c)?.short_name ? `${c} – ${matByCode.get(c)!.short_name}` : c })), [histRows, matByCode])
   const histByOpts = useMemo(() => [...new Set(histRows.map(r => r.printed_by_name).filter((x): x is string => !!x))].map(n => ({ value: n, label: n })), [histRows])
@@ -665,7 +674,12 @@ export default function PalletLabels() {
             {canAudit && <button onClick={() => setTab('audit')}
               className={`px-3 py-1 border-l border-slate-200 transition-colors inline-flex items-center gap-1 ${tab === 'audit' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}><History className="h-3 w-3" />Truy cứu</button>}
           </div>
-          <div className="flex-1" />
+          {tab === 'history' ? (
+            <SearchInput value={histSearch} onChange={setHistSearch}
+              placeholder="Tìm mã pallet, mã hàng, người in…" className="flex-1 min-w-[180px] max-w-md" />
+          ) : (
+            <div className="flex-1" />
+          )}
           {tabDefs && <FilterSheetButton defs={tabDefs} className="sm:hidden" />}
           {tab === 'generate' && canGenerate && (
             <Button size="sm" className="h-7 text-xs gap-1" disabled={!labels.length} onClick={handlePrint}>
@@ -1023,9 +1037,9 @@ export default function PalletLabels() {
               </thead>
               <tbody>
                 {!histReady ? (
-                  <tr><td colSpan={canReprint ? 9 : 8} className="px-2 py-10 text-center text-slate-400">Chọn <b>Khoảng ngày</b> ở thanh lọc trên để xem lịch sử in — tránh tải quá nhiều dữ liệu</td></tr>
+                  <tr><td colSpan={canReprint ? 9 : 8} className="px-2 py-10 text-center text-slate-400">Chọn <b>Khoảng ngày</b> ở thanh lọc trên, hoặc <b>tìm / quét mã pallet</b> (≥3 ký tự) ở ô tìm kiếm — tránh tải quá nhiều dữ liệu</td></tr>
                 ) : histBatches.length === 0 ? (
-                  <tr><td colSpan={canReprint ? 9 : 8} className="px-2 py-10 text-center text-slate-400">Không có lệnh in nào trong khoảng đã chọn</td></tr>
+                  <tr><td colSpan={canReprint ? 9 : 8} className="px-2 py-10 text-center text-slate-400">Không có lệnh in nào khớp điều kiện đã chọn</td></tr>
                 ) : histBatches.map(b => {
                   const mats  = [...new Set(b.rows.map(r => r.material_code).filter(Boolean))]
                   const names = [...new Set(b.rows.map(r => matByCode.get(r.material_code ?? '')?.short_name).filter(Boolean))]

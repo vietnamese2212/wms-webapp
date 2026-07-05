@@ -1048,7 +1048,8 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                 {gateRegId && activePlanLines.length > 0 && (
                   <button type="button" onClick={loadFromPlan}
                     className="text-[10px] text-blue-600 hover:text-blue-700 underline">
-                    Nạp từ kế hoạch ({activePlanLines.length} hàng)
+                    {/* Đếm MÃ distinct (khớp số dòng sau khi nạp-gộp) — KH có thể nhiều PO cùng mã, đếm dòng gây hiểu lầm "3 mã" */}
+                    Nạp từ kế hoạch ({planMatIds.size} mã{activePlanLines.length > planMatIds.size ? ` · ${activePlanLines.length} PO` : ''})
                   </button>
                 )}
               </div>

@@ -1722,6 +1722,7 @@ async function fetchMaterialInventory(materialId: string, warehouseId: string | 
       .select('id, pallet_code, cartons_imported, cartons_remaining, cartons_reserved, production_date, import_date, qa_status_id, ncc_id, shelf_life_days, qa_status:QAStatus(id,code,name), location:Location(location_code), material:Material!material_id(shelf_life_days, supplier_shelf_life_overrides)')
       .eq('material_id', materialId)
       .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING'])
+      .gt('cartons_remaining', 0) // tồn=0 hợp lệ trong DB (upload snapshot) nhưng không phải tồn khả dụng
     if (locIds) q = q.in('location_id', locIds)
     return q.order('created_at').order('id')
   })
@@ -1847,6 +1848,7 @@ export async function getPrepareBoard(req: Request, res: Response) {
               .select(`material_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, ncc_id, shelf_life_days, location:Location${useWhFilter ? '!inner' : ''}(location_code, warehouse_id), material:Material!material_id(shelf_life_days, supplier_shelf_life_overrides)`)
               .in('material_id', chunk)
               .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING'])
+              .gt('cartons_remaining', 0) // bỏ pallet tồn=0 từ DB (JS bên dưới cũng skip, filter sớm đỡ kéo hàng chục nghìn dòng chết)
               .order('id')
             if (useWhFilter) q = q.in('location.warehouse_id', warehouseIds)
             return q

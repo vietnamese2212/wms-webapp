@@ -174,7 +174,7 @@ async function attachCount(raw: unknown): Promise<Record<string, unknown>> {
       .eq('import_order_id', order.id as string),
     locationId
       ? supabase.from('InventoryEntry').select('*', { count: 'exact', head: true })
-          .eq('location_id', locationId).eq('stack_layer', 1).in('status', ['IN_STOCK', 'PARTIAL'])
+          .eq('location_id', locationId).eq('stack_layer', 1).in('status', ['IN_STOCK', 'PARTIAL']).gt('cartons_remaining', 0)
       : Promise.resolve({ count: 0 } as { count: number | null }),
     isTransfer && fromGdoId && order.planned_cartons == null
       ? computeGdoTotalCartons(fromGdoId, order.material_id as string | null)
@@ -309,7 +309,7 @@ export async function listOrders(req: Request, res: Response) {
           .in('import_order_id', slice).order('id'), 1000, 4))),
         locationIds.length
           ? fetchAllRowsParallel(() => supabase.from('InventoryEntry')
-              .select('location_id').in('location_id', locationIds).eq('stack_layer', 1).in('status', ['IN_STOCK', 'PARTIAL']).order('id'), 1000, 4)
+              .select('location_id').in('location_id', locationIds).eq('stack_layer', 1).in('status', ['IN_STOCK', 'PARTIAL']).gt('cartons_remaining', 0).order('id'), 1000, 4)
           : Promise.resolve([] as unknown[]),
       ])
       for (const e of (entryGroups.flat() as OrderEntry[])) {
@@ -878,10 +878,11 @@ export async function checkScanQR(req: Request, res: Response) {
 
     const stackLayerNum = Number(stack_layer)
     if (stackLayerNum === 1) {
-      // Đếm pallet đang CHIẾM CHỖ layer 1: IN_STOCK + PARTIAL (xuất dở vẫn nằm đó) + QUARANTINE (cách ly vẫn chiếm chỗ) — khớp bulkTransferLocation
+      // Đếm pallet đang CHIẾM CHỖ layer 1: IN_STOCK + PARTIAL (xuất dở vẫn nằm đó) + QUARANTINE (cách ly vẫn chiếm chỗ) — khớp bulkTransferLocation.
+      // Loại tồn=0 (bản ghi snapshot upload — pallet không còn trên sàn, đếm vào là báo đầy oan)
       const { count: usedSlots } = await supabase
         .from('InventoryEntry').select('*', { count: 'exact', head: true })
-        .eq('location_id', location_id).eq('stack_layer', 1).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE'])
+        .eq('location_id', location_id).eq('stack_layer', 1).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE']).gt('cartons_remaining', 0)
       if ((usedSlots ?? 0) >= location.max_pallets) {
         return fail(res, 422, 'LOCATION_FULL',
           `Vị trí ${location.location_code} đã đầy (${usedSlots}/${location.max_pallets} pallet). Chọn tầng chồng hoặc vị trí khác.`)

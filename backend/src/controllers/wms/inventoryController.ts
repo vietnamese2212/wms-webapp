@@ -785,6 +785,7 @@ export async function bulkTransferLocation(req: Request, res: Response) {
       .select('id', { count: 'exact', head: true })
       .eq('location_id', location_id)
       .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE'])
+      .gt('cartons_remaining', 0)
     const available = loc.max_pallets - (usedSlots ?? 0)
     if (available < ids.length) {
       return fail(res, 400, 'LOCATION_FULL',

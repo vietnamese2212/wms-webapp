@@ -65,7 +65,7 @@ export async function listLocations(req: Request, res: Response) {
     for (let i = 0; i < locIdsAll.length; i += 300) {
       const rows = await fetchAllRowsParallel(() => supabase.from('InventoryEntry')
         .select('location_id').in('location_id', locIdsAll.slice(i, i + 300))
-        .eq('stack_layer', 1).in('status', ['IN_STOCK', 'PARTIAL']).order('id'))
+        .eq('stack_layer', 1).in('status', ['IN_STOCK', 'PARTIAL']).gt('cartons_remaining', 0).order('id'))
       for (const r of rows as { location_id: string }[])
         usedCount.set(r.location_id, (usedCount.get(r.location_id) ?? 0) + 1)
     }
@@ -92,6 +92,7 @@ export async function listLocations(req: Request, res: Response) {
           .eq('material_id', String(material_id))
           .eq('stack_layer', 1)
           .in('status', ['IN_STOCK', 'PARTIAL'])
+          .gt('cartons_remaining', 0)
           .order('id'))
         for (const e of sameMat as { location_id: string }[]) sameSet.add(e.location_id)
       }
@@ -140,6 +141,7 @@ export async function getLocation(req: Request, res: Response) {
       .select('*, material:Material(id, material_code, short_name)')
       .eq('location_id', req.params.id)
       .in('status', ['IN_STOCK', 'PARTIAL'])
+      .gt('cartons_remaining', 0) // pallet tồn=0 không còn nằm ở vị trí
       .order('stack_layer')
     if (entErr) throw entErr
 

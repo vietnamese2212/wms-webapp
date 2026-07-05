@@ -664,26 +664,31 @@ export async function getInboundReport(req: Request, res: Response) {
     const { date_from, date_to, warehouse_id } = req.query as Record<string, string>
     if (!date_from || !date_to) return fail(res, 'date_from và date_to là bắt buộc', 400)
 
-    // 1. Fetch plan lines với join material, ncc, warehouse
+    // 1. Fetch plan lines với join material, ncc, warehouse — PHÂN TRANG (cap ~1000/response):
+    // khoảng ngày rộng có thể vài nghìn dòng KH, không phân trang = báo cáo cắt cụt âm thầm.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let q = supabase.from('inbound_plan_lines')
-      .select(`
-        id, date, warehouse_id, ncc_id, material_id, po_number,
-        planned_boxes, tms_order_id, status,
-        material:Material!material_id(material_code, short_name, unit, category),
-        ncc:TransportCompany!ncc_id(code, name),
-        warehouse:Warehouse!warehouse_id(code, name)
-      `)
-      .gte('date', date_from)
-      .lte('date', date_to)
-      .neq('status', 'CANCELLED')
-      .order('date')
-      .order('ncc_id')
-
-    if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
-
-    const { data: planLines, error: planErr } = await q
-    if (planErr) return fail(res, planErr.message)
+    let planLines: any[]
+    try {
+      planLines = await fetchAllPaged(() => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let q = supabase.from('inbound_plan_lines')
+          .select(`
+            id, date, warehouse_id, ncc_id, material_id, po_number,
+            planned_boxes, tms_order_id, status,
+            material:Material!material_id(material_code, short_name, unit, category),
+            ncc:TransportCompany!ncc_id(code, name),
+            warehouse:Warehouse!warehouse_id(code, name)
+          `)
+          .gte('date', date_from)
+          .lte('date', date_to)
+          .neq('status', 'CANCELLED')
+          .order('date')
+          .order('ncc_id')
+          .order('id')
+        if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
+        return q
+      })
+    } catch (e) { return fail(res, (e as Error).message) }
 
     // 2. Collect distinct tms_order_ids từ plan lines
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -698,25 +703,32 @@ export async function getInboundReport(req: Request, res: Response) {
     const IMPORT_SELECT = 'id, tms_order_id, material_id, planned_cartons, import_date, material:Material!material_id(material_code, short_name, unit, category), warehouse:Warehouse!warehouse_id(name)'
 
     if (orderIds.length > 0) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: planImports, error: impErr } = await supabase.from('ProductionImport')
-        .select(IMPORT_SELECT)
-        .in('tms_order_id', orderIds)
-        .neq('status', 'CANCELLED')
-      if (impErr) return fail(res, impErr.message)
-      allImports = (planImports ?? []) as any[]
+      // Chunk orderIds (URL 414 khi hàng trăm/nghìn lệnh) + phân trang mỗi lô (cap ~1000)
+      try {
+        allImports = await fetchAllByIdChunks(orderIds, chunk => supabase.from('ProductionImport')
+          .select(IMPORT_SELECT)
+          .in('tms_order_id', chunk)
+          .neq('status', 'CANCELLED')
+          .order('id'))
+      } catch (e) { return fail(res, (e as Error).message) }
     }
 
-    // Thêm imports theo date range (bắt phát sinh thuần — không nằm trong plan nào)
+    // Thêm imports theo date range (bắt phát sinh thuần — không nằm trong plan nào) — phân trang
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let dateQ = supabase.from('ProductionImport')
-      .select(IMPORT_SELECT)
-      .gte('import_date', date_from)
-      .lte('import_date', date_to)
-      .neq('status', 'CANCELLED')
-    if (warehouse_id) dateQ = dateQ.eq('warehouse_id', warehouse_id)
-    const { data: dateImports, error: dateImpErr } = await dateQ
-    if (dateImpErr) return fail(res, dateImpErr.message)
+    let dateImports: any[]
+    try {
+      dateImports = await fetchAllPaged(() => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let dateQ = supabase.from('ProductionImport')
+          .select(IMPORT_SELECT)
+          .gte('import_date', date_from)
+          .lte('import_date', date_to)
+          .neq('status', 'CANCELLED')
+          .order('id')
+        if (warehouse_id) dateQ = dateQ.eq('warehouse_id', warehouse_id)
+        return dateQ
+      })
+    } catch (e) { return fail(res, (e as Error).message) }
 
     // Merge + dedup by id
     const seenImportIds = new Set<string>(allImports.map((i: any) => i.id as string))

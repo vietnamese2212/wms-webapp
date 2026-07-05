@@ -10,6 +10,23 @@ type SupaQuery = any
  * @param batch     Số trang bắn đồng thời mỗi lô (mặc định 2 — đủ cho ~2000 dòng trong 1 round-trip).
  * Trang trả < pageSize → hết dữ liệu (yêu cầu .order ổn định để phân trang không trùng/sót).
  */
+/**
+ * Nạp toàn bộ dòng theo TẬP ID LỚN: chia ids thành lô (mặc định 300) rồi `.in(col, lô)` — né URL
+ * quá dài (hàng nghìn id trong `.in()` → PostgREST Bad Request / Cloudflare 414); mỗi lô vẫn
+ * phân trang né cap ~1000. Các lô chạy song song.
+ * @param ids       Tập id cần lọc.
+ * @param makeQuery Nhận 1 LÔ id, trả query MỚI (đã .select + .in(col, chunk) + .order ổn định).
+ */
+export async function fetchAllByIdChunks(
+  ids: string[], makeQuery: (chunk: string[]) => SupaQuery, chunkSize = 300,
+): Promise<any[]> {
+  if (!ids.length) return []
+  const chunks: string[][] = []
+  for (let i = 0; i < ids.length; i += chunkSize) chunks.push(ids.slice(i, i + chunkSize))
+  const results = await Promise.all(chunks.map(c => fetchAllRowsParallel(() => makeQuery(c))))
+  return results.flat()
+}
+
 export async function fetchAllRowsParallel(
   makeQuery: () => SupaQuery, pageSize = 1000, batch = 2,
 ): Promise<any[]> {

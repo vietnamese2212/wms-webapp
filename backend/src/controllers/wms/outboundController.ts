@@ -6,7 +6,7 @@ import { ok, fail } from '../../utils/response'
 import { effectiveNoQr, markItemsNoQrIfQty } from '../../lib/inventoryMode'
 import { effCartonsPerPallet } from '../../utils/palletCalc'
 import { resolveShelfLife } from '../../utils/shelfLife'
-import { fetchAllRowsParallel } from '../../utils/pagination'
+import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 import { categoryAllowed, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 
 const now = () => new Date().toISOString()
@@ -308,19 +308,17 @@ export async function listGDOs(req: Request, res: Response) {
     const gdoIds = (data ?? []).map((g: any) => g.id)
     if (!gdoIds.length) return ok(res, [])
 
-    // Bulk fetch DOs and items for aggregation — PHÂN TRANG (cap ~1000/response): khoảng ngày rộng
-    // → items gộp qua mọi GDO dễ vượt 1000, bị cắt âm thầm = tổng thùng/pallet mỗi GDO tính THIẾU.
-    const dos = await fetchAllRowsParallel(() => supabase.from('OutboundDelivery')
+    // Bulk fetch DOs and items for aggregation — CHUNK id 300/lô (khoảng ngày rộng → hàng nghìn
+    // gdo/do id nhồi 1 `.in()` = URL quá dài → PostgREST Bad Request) + phân trang trong lô (cap ~1000).
+    const dos = await fetchAllByIdChunks(gdoIds, chunk => supabase.from('OutboundDelivery')
       .select('id, gdo_id, distributor_name, delivery_code')
-      .in('gdo_id', gdoIds).order('id'))
+      .in('gdo_id', chunk).order('id'))
 
     const doIds = (dos ?? []).map((d: any) => d.id)
 
-    const items = doIds.length
-      ? await fetchAllRowsParallel(() => supabase.from('OutboundItem')
-          .select('id, do_id, cartons_ordered, cartons_scanned, pallets_estimated, loose_picking, material_type, export_type, material_code_raw, material_id, material:Material!material_id(no_qr_tracking, short_name)')
-          .in('do_id', doIds).order('id'), 1000, 4)
-      : []
+    const items = await fetchAllByIdChunks(doIds, chunk => supabase.from('OutboundItem')
+      .select('id, do_id, cartons_ordered, cartons_scanned, pallets_estimated, loose_picking, material_type, export_type, material_code_raw, material_id, material:Material!material_id(no_qr_tracking, short_name)')
+      .in('do_id', chunk).order('id'))
 
     // Kho QTY → ép no-QR hiệu lực cho item của các GDO QTY (do_id → gdo → inventory_mode)
     const gdoModeById = new Map<string, string | null>((data ?? []).map((g: any) => [g.id, g.warehouse?.inventory_mode ?? null]))
@@ -2538,18 +2536,19 @@ export async function listLoosePickingItems(req: Request, res: Response) {
     if (!gdos?.length) return ok(res, [])
 
     const gdoIds = (gdos as any[]).map((g: any) => g.id as string)
-    const dos = await fetchAllRowsParallel(() => supabase.from('OutboundDelivery')
-      .select('id, gdo_id, distributor_name').in('gdo_id', gdoIds).order('id'), 1000, 4)
+    // CHUNK id 300/lô — hàng nghìn id trong 1 `.in()` = URL quá dài → PostgREST Bad Request (đồng bộ listGDOs)
+    const dos = await fetchAllByIdChunks(gdoIds, chunk => supabase.from('OutboundDelivery')
+      .select('id, gdo_id, distributor_name').in('gdo_id', chunk).order('id'))
 
     const doIds = (dos ?? []).map((d: any) => d.id as string)
     if (!doIds.length) return ok(res, [])
 
-    const items = await fetchAllRowsParallel(() => supabase.from('OutboundItem')
+    const items = await fetchAllByIdChunks(doIds, chunk => supabase.from('OutboundItem')
       .select('*, material:Material(id,material_code,short_name)')
-      .in('do_id', doIds)
+      .in('do_id', chunk)
       .gt('loose_picking', 0)
       .neq('status', 'CANCELLED')
-      .order('id'), 1000, 4)
+      .order('id'))
 
     if (!items?.length) return ok(res, [])
 
@@ -2565,10 +2564,10 @@ export async function listLoosePickingItems(req: Request, res: Response) {
         nppByGdo[d.gdo_id].push(d.distributor_name)
     }
 
-    // Tính loose_scanned (thùng thực sự quét qua chế độ nhặt lẻ) per item — phân trang né cap-1000.
+    // Tính loose_scanned (thùng thực sự quét qua chế độ nhặt lẻ) per item — chunk id + phân trang.
     const itemIds = (items as any[]).map((i: any) => i.id as string)
-    const looseScans = await fetchAllRowsParallel(() => supabase.from('OutboundScanEntry')
-      .select('item_id, cartons_scanned').in('item_id', itemIds).eq('is_loose_picking', true).order('id'), 1000, 4)
+    const looseScans = await fetchAllByIdChunks(itemIds, chunk => supabase.from('OutboundScanEntry')
+      .select('item_id, cartons_scanned').in('item_id', chunk).eq('is_loose_picking', true).order('id'))
     const looseScannedByItem: Record<string, number> = {}
     for (const scan of (looseScans ?? [])) {
       looseScannedByItem[scan.item_id] = (looseScannedByItem[scan.item_id] ?? 0) + Number(scan.cartons_scanned)

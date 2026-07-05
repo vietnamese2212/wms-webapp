@@ -1524,11 +1524,14 @@ export default function GateRegistration() {
                       <Loader2 className="h-3 w-3 animate-spin" />Đang tìm...
                     </span>
                   ) : suggestions[0] ? (
-                    <div className="bg-green-50 border border-green-200 rounded px-2 py-1.5 text-xs space-y-0.5">
+                    <div className={`rounded px-2 py-1.5 text-xs space-y-0.5 border ${suggestions[0].from_plan ? 'bg-amber-50 border-amber-200' : 'bg-green-50 border-green-200'}`}>
                       <div>
-                        <span className="font-mono font-semibold text-green-700">{suggestions[0].order_code}</span>
+                        <span className={`font-mono font-semibold ${suggestions[0].from_plan ? 'text-amber-700' : 'text-green-700'}`}>{suggestions[0].order_code}</span>
                         {(suggestions[0].booking_slot_from || suggestions[0].booking_slot_to) && (
                           <span className="ml-2 text-green-600">{suggestions[0].booking_slot_from}–{suggestions[0].booking_slot_to}</span>
+                        )}
+                        {suggestions[0].from_plan && (
+                          <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700">Kế hoạch nhập — chưa booking</span>
                         )}
                       </div>
                       <div className="text-slate-500 flex flex-wrap gap-x-3">

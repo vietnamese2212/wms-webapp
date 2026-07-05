@@ -581,8 +581,9 @@ export interface GateRegistration {
 
 export interface BookingSuggestion {
   tms_order_id:        string
-  tms_vehicle_slot_id: string
+  tms_vehicle_slot_id: string | null   // null = link theo kế hoạch (NCC chưa booking)
   order_code:          string   // comma-sep khi nhiều đơn/slot
+  from_plan?:          boolean  // true = gợi ý từ KH nhập PENDING, không phải booking
   booking_slot_from:   string | null
   booking_slot_to:     string | null
   planned_boxes:       string | null   // comma-sep

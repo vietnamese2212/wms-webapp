@@ -82,6 +82,27 @@ export async function listGateRegistrations(req: Request, res: Response) {
   return res.json({ success: true, data })
 }
 
+// NCC KHÔNG booking: fallback tìm đơn KH nhập PENDING (chưa book khung giờ) khớp tiêu chí gate
+// (ngày · kho · NCC · loại kho · loại xe) → gate vẫn link được kế hoạch để phiếu nhập "Nạp từ kế hoạch".
+// Nhiều xe cùng NCC không booking → cùng link 1 đơn KH (hợp lệ — nhiều phiếu nhập chung 1 tms_order_id).
+async function findPlanOrderFallback(
+  date: string, warehouse_id: string, direction: string | null,
+  warehouse_type: string | null, vehicle_type: string | null, company_id: string | null,
+): Promise<{ id: string; order_code: string; planned_boxes: number | null; planned_pallets: number | null; priority: boolean } | null> {
+  if (direction !== 'INBOUND' || !company_id) return null
+  let q = supabase.from('TmsOrder')
+    .select('id, order_code, planned_boxes, planned_pallets, priority')
+    .eq('date', date).eq('warehouse_id', warehouse_id)
+    .eq('direction', 'INBOUND').eq('ncc_id', company_id)
+    .eq('status', 'PENDING')
+    .order('created_at', { ascending: true })
+    .limit(1)
+  if (warehouse_type) q = q.eq('warehouse_type', warehouse_type)
+  if (vehicle_type)   q = q.eq('vehicle_type', vehicle_type)
+  const { data } = await q
+  return (data ?? [])[0] ?? null
+}
+
 // Gợi ý booking phù hợp với xe — nhóm theo slot_id để hỗ trợ nhiều đơn/xe
 export async function suggestBooking(req: Request, res: Response) {
   const { date, license_plate, warehouse_id, warehouse_type, vehicle_type, direction, company_id, exclude_gate_id } =
@@ -178,7 +199,25 @@ export async function suggestBooking(req: Request, res: Response) {
 
   // Lấy group tại đúng vị trí
   const group = sortedGroups[position]
-  if (!group) return res.json({ success: true, data: [] })
+  if (!group) {
+    // Không có booking khớp → gợi ý theo KẾ HOẠCH nhập của NCC (chưa booking)
+    const plan = await findPlanOrderFallback(
+      date, warehouse_id, direction ?? null, warehouse_type ?? null, vehicle_type ?? null, company_id ?? null)
+    if (!plan) return res.json({ success: true, data: [] })
+    return res.json({ success: true, data: [{
+      tms_order_id:        plan.id,
+      tms_vehicle_slot_id: null,
+      order_code:          plan.order_code,
+      booking_slot_from:   null,
+      booking_slot_to:     null,
+      planned_boxes:       plan.planned_boxes != null ? String(plan.planned_boxes) : null,
+      planned_pallets:     plan.planned_pallets != null ? String(plan.planned_pallets) : null,
+      gdo_refs:            null,
+      npp_names:           null,
+      priority:            plan.priority ?? false,
+      from_plan:           true,
+    }] })
+  }
 
   // Đơn chính = is_consolidation_primary=true, fallback = group[0]
   const primaryVSlot = group.find(vs => vs.is_consolidation_primary) ?? group[0]
@@ -778,13 +817,40 @@ export async function relinkAfterDelete(
   // Collect orders bị de-link để recalculate sau (không clear ngay — order có thể còn gate khác)
   const ordersToRecalculate = new Set<string>()
 
+  // NCC không booking: tìm 1 lần đơn KH PENDING khớp tiêu chí nhóm — gate không có booking sẽ link đơn này
+  // (tính lại mỗi lần relink nên link luôn deterministic, không bị relink xóa mất)
+  const planFallback = await findPlanOrderFallback(date, warehouse_id, direction, warehouse_type, vehicle_type, company_id)
+
   await Promise.all(gates.map((gate, i) => {
     const group = sortedGroups[i]
     const oldOrderIds = getAllOrderIds(gate)
     const ops: Promise<unknown>[] = []
     const patch: Record<string, unknown> = { updated_at: now }
 
-    if (!group) {
+    if (!group && planFallback) {
+      // Không có booking nhưng NCC có KẾ HOẠCH nhập PENDING → link đơn KH (không có slot)
+      Object.assign(patch, {
+        tms_order_id: planFallback.id, tms_vehicle_slot_id: null, tms_order_ids: null,
+        booking_order_code: planFallback.order_code,
+        booking_slot_from: null, booking_slot_to: null,
+        booking_npp_names: null, booking_gdo_refs: null,
+        booking_planned_boxes: planFallback.planned_boxes != null ? String(planFallback.planned_boxes) : null,
+        booking_planned_pallets: planFallback.planned_pallets != null ? String(planFallback.planned_pallets) : null,
+        priority: planFallback.priority ?? false,
+      })
+      const exportStatus =
+        gate.status === 'IN'        ? 'Đang xuất' :
+        gate.status === 'COMPLETED' ? 'Đã xuất'   : 'Đăng ký'
+      if (!oldOrderIds.includes(planFallback.id)) {
+        ops.push(supabase.from('TmsOrder').update({ export_status: exportStatus, updated_at: now }).eq('id', planFallback.id) as unknown as Promise<unknown>)
+      }
+      for (const oldId of oldOrderIds) {
+        if (oldId !== planFallback.id) ordersToRecalculate.add(oldId)
+      }
+      if (gate.tms_vehicle_slot_id) {
+        ops.push(updateVSlotGateStatus(gate.tms_vehicle_slot_id, { gate_export_status: null, gate_registered_at: null, gate_entry_at: null, gate_exit_at: null, updated_at: now }))
+      }
+    } else if (!group) {
       // Không có booking tại vị trí này → clear
       Object.assign(patch, {
         tms_order_id: null, tms_vehicle_slot_id: null, tms_order_ids: null,

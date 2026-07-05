@@ -312,7 +312,10 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
   const activePlanLines = useMemo(() =>
     (planMaterials as any[]).filter((m: any) =>
       m.status !== 'CANCELLED' && (!subType || !m.warehouse_type || m.warehouse_type === subType)
-    ), [planMaterials, subType])
+      // Gate chưa link đơn KH (NCC không booking) → fallback theo (ngày, kho) phải lọc theo NCC đã chọn,
+      // không thì "Nạp từ kế hoạch" trộn KH của mọi NCC trong ngày
+      && (gateTmsOrderId || !nccId || m.ncc_id === nccId)
+    ), [planMaterials, subType, gateTmsOrderId, nccId])
   const planMatIds = useMemo(() =>
     new Set(activePlanLines.map((m: any) => m.material_id).filter(Boolean) as string[]),
     [activePlanLines]
@@ -466,21 +469,28 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
     const existingIds = editGroup?.length
       ? new Set(editRows.map(r => r.material_id).filter(Boolean))
       : new Set<string>()
-    setNccRows(activePlanLines
-      .filter((m: any) => m.material_id && (!editGroup?.length || !existingIds.has(m.material_id)))
-      .map((m: any) => {
-        const fullMat = nccMatByCode.get((m.material?.material_code ?? '').trim().toUpperCase())
-        const unit = fullMat?.unit ?? m.material?.unit ?? ''
-        return {
-          material_code: m.material?.material_code ?? '',
-          material_id:   m.material_id ?? '',
-          mat_name:      m.material?.short_name ?? '',
-          mat_unit:      unit,
-          unit_input:    unit,
-          planned_qty:   m.planned_boxes != null ? String(m.planned_boxes) : '',
-        }
-      })
-    )
+    // KH có thể nhiều dòng cùng mã (PO bổ sung / PO line) — phiếu nhập chỉ 1 dòng/mã nên GỘP SL.
+    // KH gốc vẫn giữ nguyên từng PO; báo cáo KH vs thực tế cộng theo mã nên vẫn khớp.
+    const merged = new Map<string, { line: any; qty: number }>()
+    for (const m of activePlanLines as any[]) {
+      if (!m.material_id || (editGroup?.length && existingIds.has(m.material_id))) continue
+      const qty = Number(m.planned_boxes) || 0
+      const prev = merged.get(m.material_id)
+      if (prev) prev.qty += qty
+      else merged.set(m.material_id, { line: m, qty })
+    }
+    setNccRows([...merged.values()].map(({ line: m, qty }) => {
+      const fullMat = nccMatByCode.get((m.material?.material_code ?? '').trim().toUpperCase())
+      const unit = fullMat?.unit ?? m.material?.unit ?? ''
+      return {
+        material_code: m.material?.material_code ?? '',
+        material_id:   m.material_id ?? '',
+        mat_name:      m.material?.short_name ?? '',
+        mat_unit:      unit,
+        unit_input:    unit,
+        planned_qty:   qty > 0 ? String(qty) : '',
+      }
+    }))
   }
 
   async function handleNccSubmit() {

@@ -173,7 +173,7 @@ function QAPanel({ ids, qaStatuses, onClose }: {
   }
 
   return (
-    <div className="w-72 shrink-0 border-l bg-white overflow-y-auto flex flex-col">
+    <div className="fixed inset-0 z-50 w-full border-l bg-white overflow-y-auto flex flex-col lg:static lg:inset-auto lg:z-auto lg:w-72 lg:shrink-0">
       <div className="flex items-center justify-between px-3 py-2 border-b bg-slate-50 shrink-0">
         <p className="text-xs font-semibold text-slate-700">Cập nhật QA Status</p>
         <div className="flex items-center gap-2">
@@ -265,7 +265,7 @@ function NccPanel({ ids, material, onClose }: {
   ]
 
   return (
-    <div className="w-72 shrink-0 border-l bg-white overflow-y-auto flex flex-col">
+    <div className="fixed inset-0 z-50 w-full border-l bg-white overflow-y-auto flex flex-col lg:static lg:inset-auto lg:z-auto lg:w-72 lg:shrink-0">
       <div className="flex items-center justify-between px-3 py-2 border-b bg-slate-50 shrink-0">
         <p className="text-xs font-semibold text-slate-700">Sửa NCC hàng loạt</p>
         <div className="flex items-center gap-2">
@@ -358,7 +358,7 @@ function LocationPanel({ ids, warehouseId, category, onClose }: {
   }
 
   return (
-    <div className="w-72 shrink-0 border-l bg-white overflow-y-auto flex flex-col">
+    <div className="fixed inset-0 z-50 w-full border-l bg-white overflow-y-auto flex flex-col lg:static lg:inset-auto lg:z-auto lg:w-72 lg:shrink-0">
       <div className="flex items-center justify-between px-3 py-2 border-b bg-slate-50 shrink-0">
         <p className="text-xs font-semibold text-slate-700">Chuyển vị trí</p>
         <div className="flex items-center gap-2">
@@ -451,7 +451,7 @@ function MaterialPanel({ ids, category, onClose }: {
   }
 
   return (
-    <div className="w-72 shrink-0 border-l bg-white overflow-y-auto flex flex-col">
+    <div className="fixed inset-0 z-50 w-full border-l bg-white overflow-y-auto flex flex-col lg:static lg:inset-auto lg:z-auto lg:w-72 lg:shrink-0">
       <div className="flex items-center justify-between px-3 py-2 border-b bg-slate-50 shrink-0">
         <p className="text-xs font-semibold text-slate-700">Chuyển mã hàng</p>
         <div className="flex items-center gap-2">
@@ -565,7 +565,7 @@ function ProductionDatePanel({ ids, onClose }: { ids: string[]; onClose: () => v
   }
 
   return (
-    <div className="w-72 shrink-0 border-l bg-white overflow-y-auto flex flex-col">
+    <div className="fixed inset-0 z-50 w-full border-l bg-white overflow-y-auto flex flex-col lg:static lg:inset-auto lg:z-auto lg:w-72 lg:shrink-0">
       <div className="flex items-center justify-between px-3 py-2 border-b bg-slate-50 shrink-0">
         <p className="text-xs font-semibold text-slate-700">Sửa ngày sản xuất</p>
         <div className="flex items-center gap-2">
@@ -1087,7 +1087,9 @@ export default function Inventory() {
         ) : actionModal === 'production-date' ? (
           <ProductionDatePanel ids={checkedIdArr} onClose={closeActionModal} />
         ) : selected ? (
-          <DetailPanel entry={selected} onClose={() => setSelected(null)} warehouseMap={warehouseMap} />
+          <DetailPanel entry={selected} onClose={() => setSelected(null)} warehouseMap={warehouseMap}
+            onQuickAction={m => { setCheckedIds(new Set([selected.id])); setActionModal(m) }}
+            onSplit={() => navigate(`/wms/pallet-ops?tab=split&source=${encodeURIComponent(selected.pallet_code)}`)} />
         ) : null}
       </div>
 
@@ -1220,8 +1222,8 @@ function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick, warehouse
       className={`transition-colors cursor-pointer ${entryRowBg(isSelected, isChecked)} ${entryRowText(e, isSelected)} ${dense ? '' : '[&_td]:py-2.5'}`}
       onClick={onClick}
     >
-      {/* Checkbox */}
-      <TableCell className="px-2 py-1 sticky left-0 z-10 bg-inherit" onClick={onCheck}>
+      {/* Checkbox — cột sticky-left cần NỀN ĐẶC (bg-inherit + dòng trong suốt → lộ nội dung khi cuộn ngang) */}
+      <TableCell className={`px-2 py-1 sticky left-0 z-10 ${isSelected ? 'bg-blue-600' : isChecked ? 'bg-green-50' : 'bg-white'}`} onClick={onCheck}>
         <input type="checkbox" className="h-3.5 w-3.5 cursor-pointer"
           checked={isChecked} onChange={() => {}} />
       </TableCell>
@@ -1281,22 +1283,24 @@ function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick, warehouse
         <span className="text-[10px] font-semibold tabular-nums">{remaining}</span>
         <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
       </TableCell>
+      {/* Giữ chỗ / Khả dụng: bỏ màu riêng (purple/blue) → kế thừa màu dòng (entryRowText) cho đồng nhất */}
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         {(e.cartons_reserved ?? 0) > 0
-          ? <span className="text-[10px] font-semibold tabular-nums text-purple-600">{e.cartons_reserved}</span>
+          ? <span className="text-[10px] font-semibold tabular-nums">{e.cartons_reserved}</span>
           : <span className="text-[10px] text-slate-300">—</span>}
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
-        <span className="text-[10px] font-semibold tabular-nums text-blue-700">
+        <span className="text-[10px] font-semibold tabular-nums">
           {Math.max(0, Number(remaining) - Number(e.cartons_reserved ?? 0))}
         </span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px] tabular-nums text-slate-600">{prodDateStr}</span>
       </TableCell>
+      {/* %Date: dòng đã đổi màu theo %date (entryRowText) → cột không tô riêng (tránh 2 thang màu chọi nhau) */}
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         {pct !== null ? (
-          <span className={`text-[10px] tabular-nums ${datePctCls(pct)}`}>{pct}%</span>
+          <span className="text-[10px] tabular-nums">{pct}%</span>
         ) : (
           <span className="text-[10px] text-slate-300">—</span>
         )}
@@ -1306,9 +1310,10 @@ function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick, warehouse
           {qa}
         </span>
       </TableCell>
+      {/* Điều chỉnh: giữ dấu +/- (đủ phân biệt tăng/giảm), bỏ màu green/red → kế thừa màu dòng */}
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         {adjQty !== 0 ? (
-          <span className={`text-[10px] tabular-nums font-semibold ${adjQty > 0 ? 'text-green-600' : 'text-red-600'}`}>
+          <span className="text-[10px] tabular-nums font-semibold">
             {adjQty > 0 ? '+' : ''}{adjQty}
           </span>
         ) : (
@@ -1335,7 +1340,8 @@ function SummaryRow({ g, dense, onClick }: { g: InventorySummaryGroup; dense: bo
   const dateStr = g.production_date ? formatTimestampDate(g.production_date, true) : '—'
   return (
     <TableRow className={`transition-colors cursor-pointer hover:bg-slate-50 ${summaryRowText(g.date_pct)} ${dense ? '' : '[&_td]:py-2.5'}`} onClick={onClick}>
-      <TableCell className="px-2 py-1 whitespace-nowrap sticky left-0 z-10 bg-inherit">
+      {/* Cột Kho sticky-left cần nền ĐẶC (dòng tổng hợp trong suốt → lộ khi cuộn ngang) */}
+      <TableCell className="px-2 py-1 whitespace-nowrap sticky left-0 z-10 bg-white">
         <span className="text-[10px] text-slate-600 truncate block" title={g.warehouse_name}>{g.warehouse_name}</span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
@@ -1355,9 +1361,10 @@ function SummaryRow({ g, dense, onClick }: { g: InventorySummaryGroup; dense: bo
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px] tabular-nums text-slate-600">{dateStr}</span>
       </TableCell>
+      {/* %Date: dòng đã đổi màu theo %date (summaryRowText) → cột không tô riêng */}
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         {g.date_pct !== null
-          ? <span className={`text-[10px] tabular-nums ${datePctCls(g.date_pct)}`}>{g.date_pct}%</span>
+          ? <span className="text-[10px] tabular-nums">{g.date_pct}%</span>
           : <span className="text-[10px] text-slate-300">—</span>}
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
@@ -1371,7 +1378,7 @@ function SummaryRow({ g, dense, onClick }: { g: InventorySummaryGroup; dense: bo
         <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
-        <span className="text-[10px] font-semibold tabular-nums text-slate-700">{g.pallet_count}</span>
+        <span className="text-[10px] font-semibold tabular-nums">{g.pallet_count}</span>
       </TableCell>
     </TableRow>
   )
@@ -1379,7 +1386,11 @@ function SummaryRow({ g, dense, onClick }: { g: InventorySummaryGroup; dense: bo
 
 // ─── Detail panel ─────────────────────────────────────────────
 
-function DetailPanel({ entry: e, onClose, warehouseMap }: { entry: InventoryEntry; onClose: () => void; warehouseMap: Record<string, string> }) {
+type QuickAction = 'qa' | 'ncc' | 'location' | 'material' | 'production-date'
+function DetailPanel({ entry: e, onClose, warehouseMap, onQuickAction, onSplit }: {
+  entry: InventoryEntry; onClose: () => void; warehouseMap: Record<string, string>
+  onQuickAction: (m: QuickAction) => void; onSplit: () => void
+}) {
   const user = useAuthStore(s => s.user)
   const [adjInput, setAdjInput]       = useState('')
   const [adjNote, setAdjNote]         = useState('')
@@ -1413,7 +1424,7 @@ function DetailPanel({ entry: e, onClose, warehouseMap }: { entry: InventoryEntr
   const loaiKho     = e.material?.category ?? '—'
 
   return (
-    <div className="w-72 shrink-0 border-l bg-white overflow-y-auto flex flex-col">
+    <div className="fixed inset-0 z-50 w-full border-l bg-white overflow-y-auto flex flex-col lg:static lg:inset-auto lg:z-auto lg:w-72 lg:shrink-0">
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b bg-slate-50 shrink-0">
         <p className="text-xs font-semibold text-slate-700 font-mono truncate">{e.pallet_code}</p>
@@ -1497,6 +1508,35 @@ function DetailPanel({ entry: e, onClose, warehouseMap }: { entry: InventoryEntr
           <Row label="Ngày KK"   value={e.stocktake_at ? formatTimestampDate(e.stocktake_at) : '—'} />
           <Row label="Giờ KK"    value={e.stocktake_at ? formatTimestampTime(e.stocktake_at) : '—'} />
         </Section>
+
+        {/* Thao tác đơn-dòng — mirror thanh floating (khi tick), để xem chi tiết 1 pallet là đổi được ngay,
+            không cần quay ra tick. Mỗi nút gate đúng quyền như thanh floating. */}
+        {(() => {
+          const p = user?.module_permissions
+          const btns: { key: QuickAction | 'split'; label: string; show: boolean; onClick: () => void }[] = [
+            { key: 'qa',              label: 'QA Status', show: can(p, 'inventory', 'qa_update'),        onClick: () => onQuickAction('qa') },
+            { key: 'ncc',             label: 'NCC',       show: can(p, 'inventory', 'update_ncc'),       onClick: () => onQuickAction('ncc') },
+            { key: 'location',        label: 'Vị trí',    show: can(p, 'inventory', 'move_location'),    onClick: () => onQuickAction('location') },
+            { key: 'material',        label: 'Mã hàng',   show: can(p, 'inventory', 'recode'),           onClick: () => onQuickAction('material') },
+            { key: 'production-date', label: 'Ngày SX',   show: can(p, 'inventory', 'update_prod_date'), onClick: () => onQuickAction('production-date') },
+            { key: 'split',           label: 'Tách',      show: can(p, 'pallet_ops', 'split'),           onClick: onSplit },
+          ]
+          const visible = btns.filter(b => b.show)
+          if (!visible.length) return null
+          return (
+            <div className="border-t pt-3">
+              <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">Thao tác</p>
+              <div className="grid grid-cols-3 gap-1.5">
+                {visible.map(b => (
+                  <button key={b.key} onClick={b.onClick}
+                    className="text-[11px] px-2 py-1.5 rounded border border-slate-200 text-slate-600 hover:bg-slate-50 hover:border-sky-300 hover:text-sky-700 transition-colors">
+                    {b.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )
+        })()}
 
         {/* Adjust block */}
         <div className="border-t pt-3 space-y-2">

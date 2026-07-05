@@ -294,15 +294,24 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
       ? { warehouse_id: warehouseId, date_from: sevenDaysAgo, date_to: importDate }
       : undefined
   )
-  const takenGateMap = new Map<string, string>()
+  // gate → các phiếu ĐÃ chiếm (kèm NCC): 1 lượt vào cho phép NHIỀU nhóm phiếu miễn KHÁC NCC
+  // (xe ghép hàng nhiều NCC) — chỉ chặn tạo thêm nhóm CÙNG NCC (phải dùng "Sửa nhóm")
+  const takenGateMap = new Map<string, { code: string; ncc_id: string | null }[]>()
   for (const o of recentOrders as any[]) {
-    if (o.gate_registration_id) takenGateMap.set(o.gate_registration_id, o.import_code ?? '?')
+    if (o.gate_registration_id) {
+      const arr = takenGateMap.get(o.gate_registration_id) ?? []
+      arr.push({ code: o.import_code ?? '?', ncc_id: o.ncc_id ?? null })
+      takenGateMap.set(o.gate_registration_id, arr)
+    }
   }
 
   const gateTmsOrderId: string | undefined = displayGate?.tms_order_id ?? undefined
+  // Đơn KH gate link chỉ dùng được khi NCC đang chọn khớp NCC của gate (xe ghép nhiều NCC:
+  // phiếu cho NCC thứ 2 phải tra KH theo (ngày, kho, NCC) thay vì đơn của NCC thứ nhất)
+  const gateOrderUsable = !!gateTmsOrderId && (!nccId || displayGate?.company_id === nccId)
   const { data: planMaterials = [] } = useInboundPlanLines(
     sourceType === 'NCC'
-      ? gateTmsOrderId
+      ? gateOrderUsable
         ? { tms_order_id: gateTmsOrderId }
         : warehouseId && importDate
           ? { date: importDate, warehouse_id: warehouseId }
@@ -312,10 +321,9 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
   const activePlanLines = useMemo(() =>
     (planMaterials as any[]).filter((m: any) =>
       m.status !== 'CANCELLED' && (!subType || !m.warehouse_type || m.warehouse_type === subType)
-      // Gate chưa link đơn KH (NCC không booking) → fallback theo (ngày, kho) phải lọc theo NCC đã chọn,
-      // không thì "Nạp từ kế hoạch" trộn KH của mọi NCC trong ngày
-      && (gateTmsOrderId || !nccId || m.ncc_id === nccId)
-    ), [planMaterials, subType, gateTmsOrderId, nccId])
+      // Luôn lọc theo NCC đã chọn — fallback theo (ngày, kho) không thì trộn KH của mọi NCC trong ngày
+      && (!nccId || m.ncc_id === nccId)
+    ), [planMaterials, subType, nccId])
   const planMatIds = useMemo(() =>
     new Set(activePlanLines.map((m: any) => m.material_id).filter(Boolean) as string[]),
     [activePlanLines]
@@ -537,6 +545,12 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
     if (!shiftId)     { setNccErr('Vui lòng chọn Ca nhập'); return }
     if (!importDate)  { setNccErr('Vui lòng chọn Ngày nhập'); return }
     if (!nccId)       { setNccErr('Vui lòng chọn Nhà cung cấp (NCC)'); return }
+    // 1 lượt vào cổng = 1 nhóm phiếu / MỖI NCC — cùng NCC đã có nhóm thì phải "Sửa nhóm" (khác NCC = xe ghép, cho tạo)
+    const takenSameNcc = (takenGateMap.get(gateRegId) ?? []).filter(t => t.ncc_id && t.ncc_id === nccId)
+    if (takenSameNcc.length) {
+      setNccErr(`NCC này đã có phiếu ${[...new Set(takenSameNcc.map(t => t.code))].join(', ')} trên lượt xe này — mở phiếu đó và dùng "Sửa nhóm" để thêm hàng`)
+      return
+    }
     const validRows = nccRows.filter(r => r.material_id)
     if (!validRows.length) { setNccErr('Vui lòng nhập ít nhất 1 mã hàng hợp lệ'); return }
     const dupCodes = new Set<string>()
@@ -866,10 +880,9 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                           </div>
                         ) : (
                           sortedGates.map(g => {
-                            const isTaken      = takenGateMap.has(g.id)
-                            const takenCode    = takenGateMap.get(g.id)
+                            const takenBy      = takenGateMap.get(g.id)
                             const isDateBefore = importDate && g.date > importDate
-                            const isDisabled   = !!isDateBefore || isTaken
+                            const isDisabled   = !!isDateBefore
                             return (
                             <button
                               key={g.id}
@@ -897,8 +910,10 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                                   {g.date !== importDate && !isDateBefore && <span className="ml-1 text-amber-500">(trước)</span>}
                                 </span>
                               </div>
-                              {isTaken && (
-                                <div className="text-[9px] text-red-500 mt-0.5">Đã có phiếu nhập {takenCode} — lượt vào này không thể dùng lại</div>
+                              {takenBy && (
+                                <div className="text-[9px] text-amber-600 mt-0.5">
+                                  Đã có phiếu {[...new Set(takenBy.map(t => t.code))].join(', ')} — lượt này chỉ tạo thêm cho NCC KHÁC (cùng NCC → dùng “Sửa nhóm”)
+                                </div>
                               )}
                               {isDateBefore && (
                                 <div className="text-[9px] text-amber-600 mt-0.5">Đăng ký ({g.date}) sau ngày nhập — đổi ngày nhập trước</div>

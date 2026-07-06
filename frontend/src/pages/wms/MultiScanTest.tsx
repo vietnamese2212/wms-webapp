@@ -495,7 +495,7 @@ export default function MultiScanTest() {
         {/* Toolbar */}
         <div className="border-b bg-white px-3 py-2 shrink-0 sm:rounded-t-xl flex items-center gap-2 flex-wrap">
           <h1 className="text-sm font-semibold text-slate-800">Quét loạt QR (thử nghiệm)</h1>
-          <span className="text-[10px] text-slate-400">không ghi dữ liệu — chỉ để test tốc độ trên thiết bị thật</span>
+          <span className="hidden sm:inline text-[10px] text-slate-400">không ghi dữ liệu — chỉ để test tốc độ trên thiết bị thật</span>
           <div className="ml-auto flex items-center gap-1.5">
             {running ? (
               <>
@@ -514,10 +514,11 @@ export default function MultiScanTest() {
         </div>
 
         <div className="flex-1 min-h-0 overflow-auto">
-          <div className="flex flex-col lg:flex-row gap-3 p-3">
+          <div className="flex flex-col lg:flex-row gap-3 p-2 sm:p-3">
             {/* Camera + overlay */}
             <div className="lg:w-[55%] shrink-0">
-              <div ref={wrapRef} className="relative rounded-xl overflow-hidden border border-slate-200 bg-slate-900 aspect-[3/4] sm:aspect-[4/3]">
+              {/* mobile: cao tối đa 48vh (khỏi chiếm hết màn) · sm+: khung 4/3 · lg: dọc 3/4 */}
+              <div ref={wrapRef} className="relative rounded-xl overflow-hidden border border-slate-200 bg-slate-900 h-[48vh] sm:h-auto sm:aspect-[4/3] lg:aspect-[3/4]">
                 <video ref={videoRef} className="absolute inset-0 w-full h-full object-contain" playsInline muted />
                 <canvas ref={overlayRef} className="absolute inset-0 w-full h-full pointer-events-none" />
 
@@ -607,7 +608,11 @@ export default function MultiScanTest() {
                   </>
                 )}
               </div>
-              <p className="mt-1 text-[10px] text-slate-400 leading-snug">
+              {/* mobile: chú thích ngắn gọn 1 dòng, đỡ chiếm chỗ */}
+              <p className="mt-1 sm:hidden text-[10px] text-slate-400 leading-snug">
+                <span className="text-green-600 font-semibold">Xanh</span>=nhận · <span className="text-red-600 font-semibold">đỏ</span>=sai định dạng · <span className="text-amber-600 font-semibold">vàng</span>=đang xác nhận. Để độ phân giải <strong>Gốc</strong> + <strong>Quét kỹ</strong> nếu tem xa/mờ.
+              </p>
+              <p className="mt-1 hidden sm:block text-[10px] text-slate-400 leading-snug">
                 Khung <span className="text-green-600 font-semibold">xanh</span> = mã hợp lệ (nhận NGAY lần đầu) ·
                 <span className="text-slate-500 font-semibold"> xám</span> = đã quét (bỏ qua) ·
                 <span className="text-amber-600 font-semibold"> vàng</span> = mã lạ đang xác nhận ·
@@ -634,7 +639,7 @@ export default function MultiScanTest() {
                   Chưa có mã nào — mở camera và đưa vào vùng có QR
                 </p>
               ) : (
-                <div className="border border-slate-200 rounded-lg divide-y divide-slate-100 max-h-[60vh] overflow-auto">
+                <div className="border border-slate-200 rounded-lg divide-y divide-slate-100 max-h-[40vh] sm:max-h-[60vh] overflow-auto">
                   {codes.map(c => (
                     <div key={c.text} className="flex items-center gap-2 px-2 py-1">
                       <span className={`shrink-0 text-[9px] px-1.5 py-0.5 rounded-full font-semibold ${c.valid ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>

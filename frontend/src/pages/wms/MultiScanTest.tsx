@@ -76,8 +76,10 @@ interface FrameBox {
 
 type EngineKind = 'native' | 'wasm'
 const WASM_WIDTHS = [1280, 1920, 2560, 3840] as const
-// Phải thấy đủ N lần mới NHẬN — diệt bóng ma (false positive) chỉ xuất hiện 1 frame lúc lia/mờ
-const CONFIRM_HITS = 2
+// Mã ĐÚNG định dạng: nhận NGAY lần đầu (không làm chậm) — QR có mã sửa lỗi nên gần như
+// không thể decode nhầm ra đúng cấu trúc 40 ký tự. Mã SAI định dạng phải thấy đủ N lần
+// mới hiện → diệt "bóng ma" (giải rác 1 frame lúc lia/mờ, vd 524959, 4910).
+const INVALID_MIN_HITS = 2
 
 // ── Setup người dùng (nhớ giữa các lần quét) ──────────────────────────────────
 interface ScanSettings { wasmWidth?: number; lens?: 'wide' | 'ultra'; zoom?: number; tryHarder?: boolean }
@@ -203,12 +205,13 @@ export default function MultiScanTest() {
         codesRef.current.set(f.text, entry)
       }
       entry.hits++
-      const confirmed = entry.hits >= CONFIRM_HITS       // đủ số lần → NHẬN
-      const justConfirmed = entry.hits === CONFIRM_HITS  // frame vừa chốt
+      const need = entry.valid ? 1 : INVALID_MIN_HITS    // hợp lệ: nhận ngay · sai định dạng: cần 2 lần
+      const confirmed = entry.hits >= need
+      const justConfirmed = entry.hits === need           // frame vừa chốt
       if (justConfirmed) {
         if (entry.valid) anyNew = true; else anyInvalid = true
       }
-      // Chưa đủ hits → khung 'pending' (vàng), chưa kêu bíp, chưa tính
+      // Sai định dạng chưa đủ hits → khung 'pending' (vàng), chưa kêu bíp, chưa tính
       const kind: FrameBox['kind'] = !confirmed
         ? 'pending'
         : entry.valid ? (justConfirmed ? 'new' : 'dup') : 'invalid'
@@ -387,7 +390,7 @@ export default function MultiScanTest() {
 
   // Chốt phiên: lưu vào lịch sử nếu có ít nhất 1 mã (gọi khi Dừng camera / rời trang)
   function endSession() {
-    const codes = Array.from(codesRef.current.values()).filter(c => c.hits >= CONFIRM_HITS)
+    const codes = Array.from(codesRef.current.values()).filter(c => c.valid || c.hits >= INVALID_MIN_HITS)
     if (!sessionStartRef.current || codes.length === 0) { sessionStartRef.current = 0; return }
     const s: SavedSession = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -459,8 +462,8 @@ export default function MultiScanTest() {
     saveSettings({ zoom: v })
   }
 
-  // Chỉ hiện/đếm mã ĐÃ NHẬN (đủ CONFIRM_HITS) — mã hits=1 là bóng ma, ẩn đi
-  const codes = Array.from(codesRef.current.values()).filter(c => c.hits >= CONFIRM_HITS).sort((a, b) => b.at - a.at)
+  // Hợp lệ hiện ngay; sai định dạng phải đủ INVALID_MIN_HITS (ẩn bóng ma hits=1)
+  const codes = Array.from(codesRef.current.values()).filter(c => c.valid || c.hits >= INVALID_MIN_HITS).sort((a, b) => b.at - a.at)
   const validCount = codes.filter(c => c.valid).length
   const invalidCount = codes.length - validCount
 
@@ -605,10 +608,10 @@ export default function MultiScanTest() {
                 )}
               </div>
               <p className="mt-1 text-[10px] text-slate-400 leading-snug">
-                Khung <span className="text-amber-600 font-semibold">vàng</span> = đang xác nhận (thấy 1 lần) ·
-                <span className="text-green-600 font-semibold"> xanh</span> = đã nhận ·
+                Khung <span className="text-green-600 font-semibold">xanh</span> = mã hợp lệ (nhận NGAY lần đầu) ·
                 <span className="text-slate-500 font-semibold"> xám</span> = đã quét (bỏ qua) ·
-                <span className="text-red-600 font-semibold"> đỏ</span> = sai định dạng. Mã phải thấy ≥{CONFIRM_HITS} lần mới nhận → loại "bóng ma" giải sai 1 frame.
+                <span className="text-amber-600 font-semibold"> vàng</span> = mã lạ đang xác nhận ·
+                <span className="text-red-600 font-semibold"> đỏ</span> = sai định dạng (phải thấy ≥{INVALID_MIN_HITS} lần → loại "bóng ma" giải rác 1 frame).
                 <br />Mã 2cm: đưa cách ~20–60cm; để độ phân giải xử lý ở <strong>Gốc</strong> để quét xa nhất; bật <strong>Quét kỹ</strong> nếu tem xa/mờ (chậm hơn). Nút <strong>0.5×</strong> mở ống góc siêu rộng (bao trùm hơn nhưng QR nhỏ đi). Preview hiện TRỌN khung camera = đúng vùng đang quét.
               </p>
             </div>

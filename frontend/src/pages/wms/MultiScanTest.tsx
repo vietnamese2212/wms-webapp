@@ -31,8 +31,9 @@ type ExtCapabilities = MediaTrackCapabilities & {
 }
 type ExtConstraintSet = MediaTrackConstraintSet & { zoom?: number; torch?: boolean }
 
-// ── Validate định dạng mã (mirror backend qrParser: ≥6 đoạn, đoạn 1 = ddmmyy) ──
-function isValidFormat(raw: string): boolean {
+// ── Validate định dạng mã — nhận 1 trong 2 loại tem ───────────────────────────
+// Tem PALLET (mirror backend qrParser): ≥6 đoạn ngăn '_', đoạn 1 = ddmmyy
+function isValidPallet(raw: string): boolean {
   const parts = raw.trim().split('_')
   if (parts.length < 6) return false
   const d = parts[0]
@@ -42,6 +43,23 @@ function isValidFormat(raw: string): boolean {
   if (month < 1 || month > 12 || day < 1 || day > 31) return false
   const dt = new Date(Date.UTC(2000 + parseInt(d.slice(4, 6), 10), month - 1, day))
   return dt.getUTCMonth() === month - 1 && dt.getUTCDate() === day
+}
+
+// Tem THÙNG (2cm): ≥7 trường ngăn ';', trường 3 = serial XXyymmddXxxx
+// VD: 50033;      1;TA260705A017;05/07/2026;05/03/2027;      1;05:26
+const CARTON_SERIAL = /^[A-Z]{2}\d{6}[A-Z]\d{3}$/
+function isValidCarton(raw: string): boolean {
+  const parts = raw.trim().split(';').map(p => p.trim())
+  if (parts.length < 7) return false
+  const serial = parts[2] ?? ''
+  if (!CARTON_SERIAL.test(serial)) return false
+  const month = parseInt(serial.slice(4, 6), 10)
+  const day = parseInt(serial.slice(6, 8), 10)
+  return month >= 1 && month <= 12 && day >= 1 && day <= 31
+}
+
+function isValidFormat(raw: string): boolean {
+  return isValidCarton(raw) || isValidPallet(raw)
 }
 
 interface ScannedCode {
@@ -438,7 +456,7 @@ export default function MultiScanTest() {
               <p className="mt-1 text-[10px] text-slate-400 leading-snug">
                 Khung <span className="text-green-600 font-semibold">xanh</span> = mã mới ·
                 <span className="text-slate-500 font-semibold"> xám</span> = đã quét (bỏ qua) ·
-                <span className="text-red-600 font-semibold"> đỏ</span> = sai định dạng (cần ≥6 đoạn, mở đầu ddmmyy).
+                <span className="text-red-600 font-semibold"> đỏ</span> = sai định dạng (tem thùng 7 trường ";" serial XXyymmddXxxx · hoặc tem pallet 6 đoạn "_").
                 Mã 2cm: đưa camera cách ~20–40cm; máy hỗ trợ zoom quang thì tăng zoom thay vì tiến sát.
               </p>
             </div>

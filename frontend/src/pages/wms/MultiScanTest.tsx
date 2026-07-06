@@ -135,6 +135,8 @@ export default function MultiScanTest() {
   const [torchAvail, setTorchAvail] = useState(false)
   const [zoomCap, setZoomCap]   = useState<{ min: number; max: number; step: number } | null>(null)
   const [zoomVal, setZoomVal]   = useState(1)
+  const [ultraId, setUltraId]   = useState<string | null>(null)   // deviceId ống kính góc siêu rộng (nếu có)
+  const [lens, setLens]         = useState<'wide' | 'ultra'>('wide')
   const [videoRes, setVideoRes] = useState('')
   const [decodeMs, setDecodeMs] = useState(0)
   const [, setVersion]          = useState(0)   // bump khi codes thay đổi → re-render list
@@ -203,7 +205,7 @@ export default function MultiScanTest() {
     return boxes
   }
 
-  // Vẽ khung lên overlay — map tọa độ video → element (video dùng object-cover)
+  // Vẽ khung lên overlay — map tọa độ video → element (video dùng object-contain: hiện TRỌN khung)
   function drawOverlay(boxes: FrameBox[]) {
     const canvas = overlayRef.current, video = videoRef.current, wrap = wrapRef.current
     if (!canvas || !video || !wrap) return
@@ -216,7 +218,7 @@ export default function MultiScanTest() {
     ctx.clearRect(0, 0, W, H)
     const vw = video.videoWidth, vh = video.videoHeight
     if (!vw || !vh) return
-    const scale = Math.max(W / vw, H / vh)     // object-cover
+    const scale = Math.min(W / vw, H / vh)     // object-contain (khớp preview hiện trọn khung)
     const offX = (W - vw * scale) / 2
     const offY = (H - vh * scale) / 2
     const COLORS: Record<FrameBox['kind'], string> = {
@@ -283,27 +285,16 @@ export default function MultiScanTest() {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: 'environment', width: { ideal: 3840 }, height: { ideal: 2160 } },
       })
-      streamRef.current = stream
-      const video = videoRef.current
-      if (!video) return
-      video.srcObject = stream
-      await new Promise<void>(resolve => {
-        if (video.readyState >= 1) { resolve(); return }
-        video.onloadedmetadata = () => resolve()
-      })
-      await video.play()
-      setVideoRes(`${video.videoWidth}×${video.videoHeight}`)
-      videoResRef.current = `${video.videoWidth}×${video.videoHeight}`
+      await attachStream(stream)
       if (!sessionStartRef.current) sessionStartRef.current = Date.now()
+      setLens('wide')
 
-      // Khả năng torch / zoom quang học
-      const track = stream.getVideoTracks()[0]
-      const caps = (track.getCapabilities?.() ?? {}) as ExtCapabilities
-      setTorchAvail(!!caps.torch)
-      if (caps.zoom && caps.zoom.max > caps.zoom.min) {
-        setZoomCap(caps.zoom)
-        setZoomVal(caps.zoom.min)
-      }
+      // Dò ống kính góc siêu rộng (nhãn chỉ có sau khi đã cấp quyền camera)
+      try {
+        const devs = await navigator.mediaDevices.enumerateDevices()
+        const ultra = devs.find(d => d.kind === 'videoinput' && /ultra|siêu r|góc r|0\.5|wide angle/i.test(d.label))
+        setUltraId(ultra?.deviceId ?? null)
+      } catch { /* enumerate lỗi — ẩn nút góc rộng */ }
 
       stoppedRef.current = false
       pausedRef.current = false
@@ -312,6 +303,43 @@ export default function MultiScanTest() {
       loop()
     } catch {
       setError('Không thể mở camera. Kiểm tra quyền truy cập camera.')
+    }
+  }
+
+  // Gắn stream vào video + đọc lại độ phân giải + khả năng torch/zoom (dùng cho start & switchLens)
+  async function attachStream(stream: MediaStream) {
+    streamRef.current = stream
+    const video = videoRef.current
+    if (!video) return
+    video.srcObject = stream
+    await new Promise<void>(resolve => {
+      if (video.readyState >= 1) { resolve(); return }
+      video.onloadedmetadata = () => resolve()
+    })
+    await video.play()
+    setVideoRes(`${video.videoWidth}×${video.videoHeight}`)
+    videoResRef.current = `${video.videoWidth}×${video.videoHeight}`
+    const track = stream.getVideoTracks()[0]
+    const caps = (track.getCapabilities?.() ?? {}) as ExtCapabilities
+    setTorchAvail(!!caps.torch)
+    setTorchOn(false)
+    if (caps.zoom && caps.zoom.max > caps.zoom.min) { setZoomCap(caps.zoom); setZoomVal(caps.zoom.min) }
+    else setZoomCap(null)
+  }
+
+  // Đổi ống kính: 'wide' = ống chính (1×) · 'ultra' = góc siêu rộng (0.5×, bao trùm hơn nhưng QR nhỏ đi)
+  async function switchLens(target: 'wide' | 'ultra') {
+    if (target === lens) return
+    try {
+      streamRef.current?.getTracks().forEach(t => t.stop())
+      const video: MediaTrackConstraints = target === 'ultra' && ultraId
+        ? { deviceId: { exact: ultraId }, width: { ideal: 3840 }, height: { ideal: 2160 } }
+        : { facingMode: 'environment', width: { ideal: 3840 }, height: { ideal: 2160 } }
+      const stream = await navigator.mediaDevices.getUserMedia({ video })
+      await attachStream(stream)
+      setLens(target)
+    } catch {
+      setError('Không đổi được ống kính, thử lại.')
     }
   }
 
@@ -451,7 +479,7 @@ export default function MultiScanTest() {
             {/* Camera + overlay */}
             <div className="lg:w-[55%] shrink-0">
               <div ref={wrapRef} className="relative rounded-xl overflow-hidden border border-slate-200 bg-slate-900 aspect-[3/4] sm:aspect-[4/3]">
-                <video ref={videoRef} className="absolute inset-0 w-full h-full object-cover" playsInline muted />
+                <video ref={videoRef} className="absolute inset-0 w-full h-full object-contain" playsInline muted />
                 <canvas ref={overlayRef} className="absolute inset-0 w-full h-full pointer-events-none" />
 
                 {/* Bộ đếm lớn */}
@@ -463,7 +491,13 @@ export default function MultiScanTest() {
 
                 {/* Torch + zoom quang học (nếu máy hỗ trợ) */}
                 {running && (
-                  <div className="absolute bottom-2 right-2 flex flex-col gap-1.5">
+                  <div className="absolute bottom-2 right-2 flex flex-col gap-1.5 items-center">
+                    {ultraId && (
+                      <button onClick={() => switchLens(lens === 'wide' ? 'ultra' : 'wide')}
+                        className="bg-black/40 text-white rounded-full px-2.5 py-2 text-xs font-bold hover:bg-black/60 min-w-[40px]">
+                        {lens === 'wide' ? '0.5×' : '1×'}
+                      </button>
+                    )}
                     {torchAvail && (
                       <button onClick={toggleTorch} className="bg-black/40 text-white rounded-full p-2 hover:bg-black/60">
                         {torchOn ? <FlashlightOff className="h-4 w-4" /> : <Flashlight className="h-4 w-4" />}
@@ -533,6 +567,8 @@ export default function MultiScanTest() {
                 <span className="text-slate-500 font-semibold"> xám</span> = đã quét (bỏ qua) ·
                 <span className="text-red-600 font-semibold"> đỏ</span> = sai định dạng (tem thùng 7 trường ";" serial XXyymmddXxxx · hoặc tem pallet 6 đoạn "_").
                 Mã 2cm: đưa camera cách ~20–40cm; máy hỗ trợ zoom quang thì tăng zoom thay vì tiến sát.
+                Nút <strong>0.5×</strong> (nếu có) mở ống góc siêu rộng để bao trùm hơn — bù lại QR nhỏ đi nên phải đưa gần hơn.
+                Preview nay hiện TRỌN khung camera (có viền đen) = đúng vùng đang quét, đỡ phải lia tìm mã ở rìa.
               </p>
             </div>
 

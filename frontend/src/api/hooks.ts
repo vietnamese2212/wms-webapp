@@ -1060,6 +1060,9 @@ export interface StocktakeEntryRow {
 export interface StocktakeEntriesResult {
   stats:   { total: number; checked: number; unchecked: number; flagged: number }
   entries: StocktakeEntryRow[]
+  // BE cap 2000 dòng/lần (chọn cả kho vài chục nghìn pallet) — truncated=true → FE hiện cảnh báo thu hẹp vị trí
+  total_filtered?: number
+  truncated?: boolean
 }
 
 export function useStocktakeEntries(

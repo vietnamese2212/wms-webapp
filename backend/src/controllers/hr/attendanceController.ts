@@ -2,7 +2,7 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
-import { fetchAllRowsParallel } from '../../utils/pagination'
+import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 
 type ReqUser = { sub?: string; name?: string; module_permissions?: Record<string, string[]> }
 const userOf = (req: Request): ReqUser => (req as { user?: ReqUser }).user ?? {}
@@ -23,13 +23,14 @@ async function employeeIdsOfWarehouse(warehouse_id: string): Promise<string[]> {
 async function attachEmp<T extends { employee_id: string }>(rows: T[]) {
   if (!rows.length) return rows.map(r => ({ ...r, employee: null }))
   const ids = [...new Set(rows.map(r => r.employee_id))]
-  const { data: emps } = await supabase.from('Employee').select('id, name, employee_code, department_id, job_title_id').in('id', ids)
+  // Chunk 300 + phân trang — vài trăm/nghìn NV nhồi 1 .in() = URL quá dài + cap-1000 cắt thiếu tên âm thầm
+  const emps = await fetchAllByIdChunks(ids, chunk => supabase.from('Employee')
+    .select('id, name, employee_code, department_id, job_title_id').in('id', chunk).order('id'))
   const empList = (emps ?? []) as { id: string; job_title_id: string | null }[]
   // join tên chức danh
   const jtIds = [...new Set(empList.map(e => e.job_title_id).filter((x): x is string => !!x))]
-  const { data: jts } = jtIds.length
-    ? await supabase.from('JobTitle').select('id, name').in('id', jtIds)
-    : { data: [] as { id: string; name: string }[] }
+  const jts = await fetchAllByIdChunks(jtIds, chunk => supabase.from('JobTitle')
+    .select('id, name').in('id', chunk).order('id'))
   const jtMap = new Map(((jts ?? []) as { id: string; name: string }[]).map(j => [j.id, j.name]))
   const map = new Map(empList.map(e => [e.id, { ...e, job_title: jtMap.get(e.job_title_id ?? '') ?? null }]))
   return rows.map(r => ({ ...r, employee: map.get(r.employee_id) ?? null }))
@@ -39,23 +40,24 @@ export async function listAttendance(req: Request, res: Response) {
   try {
     const { warehouse_id, department_id, employee_id, date_from, date_to } = req.query as Record<string, string>
     const warehouseEmpIds = warehouse_id ? await employeeIdsOfWarehouse(warehouse_id) : null
-    // Rebuild mỗi trang — phân trang vượt cap ~1000 (nhân viên × ngày trong khoảng rộng dễ >1000 → mất công)
-    const buildQuery = () => {
-      let q = supabase.from('Attendance').select(SEL).order('work_date', { ascending: false })
-      if (warehouseEmpIds) q = q.in('employee_id', warehouseEmpIds.length ? warehouseEmpIds : ['__none__'])
+    // Phân trang vượt cap ~1000; kho nhiều NV → CHUNK empIds 300/lô (nhồi 1 .in() = URL quá dài)
+    const makeBase = () => {
+      let q = supabase.from('Attendance').select(SEL)
+        .order('work_date', { ascending: false }).order('id')
       if (employee_id)  q = q.eq('employee_id', employee_id)
       if (date_from)    q = q.gte('work_date', date_from)
       if (date_to)      q = q.lte('work_date', date_to)
       return q
     }
-    const PAGE = 1000
-    const data: unknown[] = []
-    for (let page = 0; ; page++) {
-      const { data: batch, error } = await buildQuery().range(page * PAGE, page * PAGE + PAGE - 1)
-      if (error) return fail(res, error.message)
-      const arr = batch ?? []
-      data.push(...arr)
-      if (arr.length < PAGE) break
+    let data: unknown[]
+    if (warehouseEmpIds) {
+      data = warehouseEmpIds.length
+        ? await fetchAllByIdChunks(warehouseEmpIds, chunk => makeBase().in('employee_id', chunk))
+        : []
+      // gộp nhiều lô → sort lại work_date desc cho ổn định
+      ;(data as { work_date: string }[]).sort((a, b) => (a.work_date < b.work_date ? 1 : a.work_date > b.work_date ? -1 : 0))
+    } else {
+      data = await fetchAllRowsParallel(makeBase)
     }
     let rows = await attachEmp((data ?? []) as { employee_id: string }[])
     if (department_id) rows = rows.filter(r => (r.employee as { department_id?: string } | null)?.department_id === department_id)
@@ -127,13 +129,12 @@ export async function reportAttendance(req: Request, res: Response) {
     const { warehouse_id, department_id, date_from, date_to } = req.query as Record<string, string>
     if (!date_from || !date_to) return fail(res, 'date_from, date_to là bắt buộc', 400)
     const empIds = warehouse_id ? await employeeIdsOfWarehouse(warehouse_id) : null
-    // Phân trang né cap ~1000 (nhân viên × ngày trong khoảng rộng dễ >1000 → thiếu công)
-    const data = await fetchAllRowsParallel(() => {
-      let q = supabase.from('Attendance').select('employee_id, warehouse_id, kind, ot_hours, early_leave_hours')
-        .gte('work_date', date_from).lte('work_date', date_to).order('id')
-      if (empIds) q = q.in('employee_id', empIds.length ? empIds : ['__none__'])
-      return q
-    })
+    // Phân trang né cap ~1000; kho nhiều NV → chunk empIds 300/lô (né URL dài). Tổng hợp không cần thứ tự.
+    const makeQ = () => supabase.from('Attendance').select('employee_id, warehouse_id, kind, ot_hours, early_leave_hours')
+      .gte('work_date', date_from).lte('work_date', date_to).order('id')
+    const data = empIds
+      ? (empIds.length ? await fetchAllByIdChunks(empIds, chunk => makeQ().in('employee_id', chunk)) : [])
+      : await fetchAllRowsParallel(makeQ)
     const rows = (data ?? []) as { employee_id: string; kind: string; ot_hours: number; early_leave_hours: number }[]
 
     type Agg = { employee_id: string; ca1: number; ca2: number; ca3: number; hc: number; leave: number; ot_hours: number; early_hours: number }

@@ -375,6 +375,12 @@ export default function StocktakeDashboard() {
           <>
             {/* Table — overflow-auto cho cả scroll dọc lẫn ngang + sticky header */}
             <div className="flex-1 min-w-0 overflow-auto pb-20 lg:pb-4">
+              {data?.truncated && (
+                <div className="mx-3 mt-2 px-3 py-1.5 rounded-md bg-amber-50 border border-amber-200 text-[11px] text-amber-800">
+                  Đang hiển thị {entries.length.toLocaleString('vi-VN')} / {(data.total_filtered ?? 0).toLocaleString('vi-VN')} dòng —
+                  thu hẹp <b>Vị trí</b> ở thanh lọc để xem đủ (xuất Excel cũng chỉ gồm dòng đang hiển thị). Số liệu thống kê phía trên vẫn tính trên TOÀN BỘ.
+                </div>
+              )}
               <Table className={`table-fixed [&_td]:overflow-hidden [&_th]:overflow-hidden [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100 ${dense ? '[&_td]:!py-0.5' : '[&_td]:!py-1.5'}`} style={{ width: totalWidth, minWidth: '100%' }}>
                 <colgroup>
                   {colW.map((w, i) => <col key={i} style={{ width: w }} />)}

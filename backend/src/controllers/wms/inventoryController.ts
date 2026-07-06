@@ -1030,51 +1030,95 @@ export async function stocktakeEntries(req: Request, res: Response) {
   const todayVN    = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   const todayStart = new Date(`${todayVN}T00:00:00+07:00`).toISOString()
 
-  // Phân trang lấy ĐỦ — PostgREST cap ~1000 dòng/response, range(0,9999) KHÔNG bypass (đã xác minh).
+  // "Đã kiểm" = quét hôm nay HOẶC nhập hôm nay. Điều kiện dựng bằng .or() PostgREST để LỌC + ĐẾM
+  // trong DB — kho lớn (vài chục nghìn pallet, chọn cả kho) không kéo toàn bộ dòng về Node nữa.
+  const CHECKED_OR   = `stocktake_at.gte.${todayStart},import_date.eq.${todayVN}`
+  // Chưa kiểm = (chưa quét hôm nay) AND (không nhập hôm nay) — tách 2 nhánh vì or/and lồng nhau;
+  // import_date.neq bỏ sót NULL nên phải or(is.null, neq).
+  const UNCHECKED_OR = `and(or(import_date.is.null,import_date.neq.${todayVN}),stocktake_at.is.null),and(or(import_date.is.null,import_date.neq.${todayVN}),stocktake_at.lt.${todayStart})`
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let entries: any[]
+  const applyView = (q: any): any => {
+    if (view === 'flagged')   return q.eq('stocktake_flagged', true)
+    if (view === 'unchecked') return q.or(UNCHECKED_OR)
+    if (view === 'checked')   return q.or(CHECKED_OR)
+    if (view === 'problem')   return q.or(`stocktake_flagged.eq.true,${UNCHECKED_OR}`)
+    return q
+  }
+
+  // Stats bằng COUNT head (không kéo dòng) — chunk vị trí 300/lô né URL dài, cộng dồn qua lô
+  const locChunks: string[][] = []
+  for (let i = 0; i < resolvedLocationIds.length; i += 300) locChunks.push(resolvedLocationIds.slice(i, i + 300))
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const baseCount = (chunk: string[]): any => supabase.from('InventoryEntry')
+    .select('id', { count: 'exact', head: true })
+    .in('location_id', chunk)
+    .in('status', ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'])
+  let total = 0, checked = 0, flagged = 0, totalFiltered = 0
   try {
-    entries = await fetchAllPaged(() => supabase.from('InventoryEntry')
-      .select(`
-        id, pallet_code, cartons_remaining, import_date,
-        stocktake_flagged, stocktake_flag_note, stocktake_at,
-        location:Location(id, location_code),
-        material:Material(material_code, short_name),
-        stocktake_by_emp:Employee!stocktake_by(id, name)
-      `)
-      .in('location_id', resolvedLocationIds)
-      .in('status', ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'])
-      .order('id', { ascending: true }))
+    for (const chunk of locChunks) {
+      const [t, c, f, v] = await Promise.all([
+        baseCount(chunk),
+        baseCount(chunk).or(CHECKED_OR),
+        baseCount(chunk).eq('stocktake_flagged', true),
+        applyView(baseCount(chunk)),
+      ])
+      for (const r of [t, c, f, v]) if (r.error) throw new Error(r.error.message)
+      total += t.count ?? 0; checked += c.count ?? 0; flagged += f.count ?? 0; totalFiltered += v.count ?? 0
+    }
+  } catch (e) {
+    return fail(res, 500, 'DB_ERROR', (e as Error).message)
+  }
+  const unchecked = total - checked
+
+  // Entries: lọc view TRONG SQL + CAP 2000 dòng (chọn cả kho vài chục nghìn pallet → payload/thời gian
+  // bị chặn; FE hiện cảnh báo thu hẹp vị trí khi truncated). Chưa-quét-bao-giờ lên đầu (nullsFirst).
+  const CAP = 2000
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const entries: any[] = []
+  try {
+    for (const chunk of locChunks) {
+      if (entries.length >= CAP) break
+      for (let p = 0; entries.length < CAP; p++) {
+        const { data, error } = await applyView(supabase.from('InventoryEntry')
+          .select(`
+            id, pallet_code, cartons_remaining, import_date,
+            stocktake_flagged, stocktake_flag_note, stocktake_at,
+            location:Location(id, location_code),
+            material:Material(material_code, short_name),
+            stocktake_by_emp:Employee!stocktake_by(id, name)
+          `)
+          .in('location_id', chunk)
+          .in('status', ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'])
+          .order('stocktake_at', { ascending: true, nullsFirst: true })
+          .order('id', { ascending: true }))
+          .range(p * 1000, p * 1000 + 999)
+        if (error) return fail(res, 500, 'DB_ERROR', error.message)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const batch = (data ?? []) as any[]
+        entries.push(...batch.slice(0, CAP - entries.length))
+        if (batch.length < 1000) break
+      }
+    }
   } catch (e) {
     return fail(res, 500, 'DB_ERROR', (e as Error).message)
   }
 
   type E = { id: string; import_date: string; stocktake_at: string | null; stocktake_flagged: boolean }
-  const all = (entries ?? []) as E[]
-
   const isChecked = (e: E) => !!(e.stocktake_at && e.stocktake_at >= todayStart) || e.import_date === todayVN
-
-  const total    = all.length
-  const checked  = all.filter(isChecked).length
-  const unchecked = total - checked
-  const flagged  = all.filter(e => e.stocktake_flagged).length
-
-  let filtered: E[]
-  if (view === 'flagged')   filtered = all.filter(e => e.stocktake_flagged)
-  else if (view === 'unchecked') filtered = all.filter(e => !isChecked(e))
-  else if (view === 'checked')   filtered = all.filter(isChecked)
-  else if (view === 'problem')   filtered = all.filter(e => e.stocktake_flagged || !isChecked(e))
-  else                           filtered = all
-
-  // CHƯA quét lên đầu (cần tập trung tìm); trong nhóm đã quét: lệch trước, rồi đã kiểm OK
-  filtered.sort((a, b) => {
+  // Sort chính xác trên tập đã cap (rẻ): CHƯA quét lên đầu; trong nhóm đã quét: lệch trước
+  ;(entries as E[]).sort((a, b) => {
     const aOk = isChecked(a), bOk = isChecked(b)
     if (aOk !== bOk) return aOk ? 1 : -1
     if (a.stocktake_flagged !== b.stocktake_flagged) return a.stocktake_flagged ? -1 : 1
     return 0
   })
 
-  return ok(res, { stats: { total, checked, unchecked, flagged }, entries: filtered })
+  return ok(res, {
+    stats: { total, checked, unchecked, flagged },
+    entries,
+    total_filtered: totalFiltered,
+    truncated: totalFiltered > entries.length,
+  })
 }
 
 export async function unflagEntry(req: Request, res: Response) {

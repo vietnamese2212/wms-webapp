@@ -47,6 +47,14 @@ Route `/wms/inbound` · quyền module `inbound`.
 | Ghim (bookmark) | — | Đánh dấu "Đang làm" → thanh chuyển nhanh ở trang chi tiết |
 
 **Form Nhập SX:** Kho → Loại kho → Mã hàng → **Vị trí** (★ = còn chỗ + đang để dở cùng loại) → Ca → Ngày. Mã không QR/kho QTY: bỏ qua vị trí, nhập số lượng ở trang chi tiết. Tùy chọn "+ Thêm NCC" để áp HSD ngoại lệ.
+
+![Form Nhập SX](images/form-inbound-sx.png)
+
+*Thứ tự điền (khớp số đỏ trên ảnh):* ① Kho * → ② Loại kho * → ③ Mã hàng (Material) * → ④ Vị trí nhập * (★ = gợi ý vị trí còn chỗ) → ⑤ Ca nhập * → ⑥ Ngày nhập * → ⑦ Người nhập (tự điền theo tài khoản) → ⑧ Ghi chú. Bấm **Tạo phiếu** để vào trang chi tiết quét pallet.
+
+![Form Nhập NCC](images/form-inbound-ncc.png)
+
+*Thứ tự điền tab Nhập NCC:* ① Kho * → ② Loại kho * → ③ Xe đang vào cổng * (chọn xe đã vào cổng) → ④ Nhà cung cấp (NCC) * → ⑤ Ngày nhập * → ⑥ Ca nhập * → ⑦ Người nhập → ⑧ Ghi chú. Sau đó điền **bảng Danh sách hàng** phía dưới (Mã hàng + SL dự kiến, hoặc bấm "Nạp từ kế hoạch") → **Tạo N phiếu nhập**.
 **Form Nhập NCC:** Kho/Loại kho → **Xe đang vào cổng** (bắt buộc — dialog chọn xe đang trong cổng; tick "Trường hợp đặc biệt" cho xe đã ra ≤3 ngày) → NCC → bảng mã hàng (nút **Nạp từ kế hoạch** gộp SL cùng mã; hỗ trợ paste Excel) → **Tạo N phiếu nhập**.
 
 ### Chi tiết phiếu
@@ -88,6 +96,12 @@ Route `/wms/outbound` · quyền module `outbound`.
 | **Giao đơn** inline | `outbound.assign` | Ngay trên dòng chuyến chưa giao |
 
 **Upload Excel:** mỗi *Số xe* (bắt buộc tiền tố ngày `ddmmyy_`) = 1 chuyến, gom nhiều NPP. Kết quả phân loại: Tạo mới / Cập nhật (chỉ chuyến **Tạm dừng**) / Bỏ qua (kèm lý do từng dòng — chuyến hoàn thành/đang xuất không bị ghi đè; không giảm số dưới mức đã xuất).
+
+**Form Tạo đơn xuất thủ công:**
+
+![Form Tạo đơn xuất](images/form-outbound.png)
+
+*Thứ tự điền:* ① Ngày xuất * → ② Kho xuất → ③ Loại kho * → ④ Tên khách hàng * (đích là kho quản tồn → tự đánh dấu chuyển kho) → ⑤ ĐVVT * (nhận cả NCC tự chở) → ⑥ Số DO * → ⑦ Loại xe *. Sau đó nhập **bảng Danh sách hàng** (Mã hàng · Thùng · Nhặt lẻ · Batch · %Date · CS · Ghi chú — dán được từ Excel) → **Tạo đơn xuất**.
 
 ### Chi tiết chuyến
 
@@ -287,6 +301,12 @@ Route `/tms/gate` · quyền module `gate_registration`.
 
 Xe kết hợp: chân Xuất chỉ Gọi/Vào được khi chân Nhập **Đã ra**; hệ thống tự chặn thứ tự. Click dòng mở dialog chi tiết đầy đủ (SĐT bấm gọi được).
 
+**Form đăng ký cổng (giai đoạn 1):**
+
+![Form Đăng ký cổng](images/form-gate.png)
+
+*Thứ tự điền:* ① Ngày * → ② Kho * → ③ Hướng * (Xuất / Nhập / Nhập + Xuất kết hợp) → ④ Loại kho * → ⑤ Loại xe * → ⑥ ĐVVT / NCC *. Điền đủ 6 tiêu chí này, form mở tiếp **giai đoạn 2**: Biển số xe · Nội dung vào ra · Họ tên lái xe · SĐT · Số niêm phong · Trả pallet (booking gợi ý tự động) → **Tạo đăng ký**.
+
 ## 4.16. Cài đặt TMS
 
 Route `/tms/settings` · 4 tab = 4 module quyền.
@@ -307,6 +327,12 @@ Route `/hr/assignments` · module `work_assignment` (tab Layout = `manage_layout
 ![Phân công](images/hr-assignments.png)
 
 **Tab Phân công**: danh sách phiếu theo Kho/Layout/Ngày (Yêu cầu · Đáp ứng · Chênh lệch — âm đỏ; Nháp vàng / Đã phát hành xanh). **Tạo phiếu** (`create`) — mỗi (layout, ngày) 1 phiếu.
+
+**Form tạo phiếu phân công:**
+
+![Form tạo phiếu phân công](images/form-assignment.png)
+
+*Thứ tự điền:* ① Kho → ② Layout (phụ thuộc kho) → ③ Ngày (mỗi layout/ngày chỉ 1 phiếu — trùng sẽ bị chặn). Tạo xong mở chi tiết để chỉnh yêu cầu nhân lực và **Tự xếp người**.
 
 Chi tiết phiếu 2 bước:
 1. **Yêu cầu nhân lực**: chỉnh Số lượng từng vị trí (−/+) → **Lưu** hoặc **Tự xếp người** (tự né người nghỉ phép đã duyệt, tôn trọng Quy tắc ca, cân bằng công tháng, ưu tiên phủ CA1+CA2 → CA3 → HC).
@@ -331,6 +357,12 @@ Route `/hr/attendance` · 3 tab theo quyền: **Của tôi** (`attendance.self_l
 ![Nghỉ phép](images/hr-leave.png)
 
 **Nghỉ phép**: **Gửi đơn nghỉ** (`request` — Từ/Đến ngày, Loại: Phép năm/Ốm/Không lương/Khác; chặn trùng ngày; cảnh báo người cùng bộ phận nghỉ trùng) → cấp trên (theo sơ đồ chức danh + chung kho) tick **"Chờ tôi duyệt"** → ✓ **Duyệt** / ✗ **Từ chối** (`approve`). Duyệt xong hệ thống **tự ghi công Nghỉ phép** các ngày trong đơn (ghi đè công cũ sẽ có cảnh báo). **Xóa** đơn (`delete`) gỡ công tương ứng.
+
+**Form gửi đơn nghỉ phép:**
+
+![Form đơn nghỉ phép](images/form-leave.png)
+
+*Thứ tự điền:* ① Nhân viên (chỉ hiện khi nộp hộ cấp dưới — người thường bỏ qua, tự nộp cho mình) → ② Từ ngày → ③ Đến ngày → ④ Loại nghỉ → ⑤ Lý do → **Gửi đơn**.
 
 ![Bảng công ma trận](images/hr-attendance-matrix.png)
 
@@ -365,6 +397,12 @@ Route `/masterdata/materials` · module `materials`.
 
 Nhà sản xuất hiển thị read-only trong panel chi tiết (chưa có màn quản lý riêng).
 
+**Form thêm/sửa mã hàng:**
+
+![Form Mã hàng](images/form-material.png)
+
+*Thứ tự điền:* ① Mã hàng * → ② Mô tả * → ③ Tên rút gọn (trống = tự tạo) → ④ Loại hàng * → ⑤ Loại SP → ⑥ ĐVT * → ⑦ Thùng/pallet * → ⑧ Ngoại lệ kho (thùng/pallet riêng theo kho) → ⑨ EA/thùng → ⑩ Pallet/EA → ⑪ KG → ⑫ HSD (ngày) → ⑬ HSD theo NCC → ⑭ Mã cũ → ⑮ Ghi chú → ⑯–⑰ Quản tồn (Quản theo QR từng pallet / Không QR). Ô có dấu * là bắt buộc; xem quy tắc HSD & Pallet/EA ở mục 4.20.
+
 ## 4.21. Vị trí kho
 
 Route `/wms/locations` · module `locations`.
@@ -386,6 +424,12 @@ Route `/wms/settings` · mỗi tab 1 quyền: Kho `manage_warehouse` · Loại k
 - **Khu vực**: theo kho; mã tự sinh Z01/Z02 nếu bỏ trống (là phần giữa của mã vị trí — không đổi được sau tạo).
 - **Ca nhập / QA**: mã + tên + thứ tự hiển thị + trạng thái.
 
+**Form thêm/sửa Kho:**
+
+![Form Kho](images/form-warehouse.png)
+
+*Thứ tự điền:* ① Mã kho * (khóa khi sửa) → ② Tên kho * → ③ Địa chỉ → ④ Chức năng kho * (Kho tổng / Kho NPP) → ⑤ Chế độ quản tồn * (QR / QTY / NONE) → ⑥ Mã ship-to phụ (các mã ERP trỏ về kho này) → ⑦ Mã NMSX (kho tổng — đoạn 6 của QR + tiền tố mã vị trí).
+
 ## 4.23. Quản lý người dùng
 
 Route `/masterdata/users` · module `user_admin` (+`work_skill`). 3 tab: **Nhân viên / Phòng ban / Chức danh**.
@@ -393,6 +437,12 @@ Route `/masterdata/users` · module `user_admin` (+`work_skill`). 3 tab: **Nhân
 ![Quản lý người dùng](images/users.png)
 
 **Tab Nhân viên** — cột: Họ tên · Mã NV · Đăng nhập · SĐT · Phòng ban · Chức danh · **Loại hàng** · **Kho** (Toàn quốc/danh sách/Chưa gán) · Trạng thái.
+
+**Form thêm nhân viên:**
+
+![Form thêm nhân viên](images/form-user.png)
+
+*Thứ tự điền:* ① Phòng ban → ② Chức danh (template). **Chọn 2 mục này trước**, form sẽ mở tiếp các trường: Họ tên *, Mã NV * (Lái xe ĐVVT = Biển số xe), Tên đăng nhập, SĐT, **Loại hàng được phép**, **Phạm vi kho** (Toàn quốc / chọn kho), Kho được phép. Lưu xong hiện **mật khẩu tạm** để copy giao nhân viên.
 
 | Nút | Quyền | Ghi chú |
 |---|---|---|

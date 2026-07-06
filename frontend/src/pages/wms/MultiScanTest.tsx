@@ -71,11 +71,23 @@ interface ScannedCode {
 
 interface FrameBox {
   points: { x: number; y: number }[]
-  kind: 'new' | 'dup' | 'invalid'
+  kind: 'new' | 'dup' | 'invalid' | 'pending'
 }
 
 type EngineKind = 'native' | 'wasm'
 const WASM_WIDTHS = [1280, 1920, 2560, 3840] as const
+// Phải thấy đủ N lần mới NHẬN — diệt bóng ma (false positive) chỉ xuất hiện 1 frame lúc lia/mờ
+const CONFIRM_HITS = 2
+
+// ── Setup người dùng (nhớ giữa các lần quét) ──────────────────────────────────
+interface ScanSettings { wasmWidth?: number; lens?: 'wide' | 'ultra'; zoom?: number; tryHarder?: boolean }
+const SETTINGS_KEY = 'multi_scan_settings_v1'
+function loadSettings(): ScanSettings {
+  try { return JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? '{}') || {} } catch { return {} }
+}
+function saveSettings(patch: ScanSettings) {
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...loadSettings(), ...patch })) } catch {}
+}
 
 // ── Lịch sử phiên quét — lưu localStorage của máy (trang test không ghi DB) ────
 interface SavedSession {
@@ -122,7 +134,8 @@ export default function MultiScanTest() {
   const workCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const codesRef    = useRef<Map<string, ScannedCode>>(new Map())
   const engineRef   = useRef<EngineKind>('wasm')
-  const wasmWidthRef = useRef<number>(1920)
+  const wasmWidthRef = useRef<number>(3840)
+  const tryHarderRef = useRef<boolean>(false)
   const decodeEmaRef = useRef(0)
 
   const [running, setRunning]   = useState(false)
@@ -130,7 +143,8 @@ export default function MultiScanTest() {
   const [error, setError]       = useState<string | null>(null)
   const [nativeAvail, setNativeAvail] = useState(false)
   const [engine, setEngine]     = useState<EngineKind>('wasm')
-  const [wasmWidth, setWasmWidth] = useState(1920)
+  const [wasmWidth, setWasmWidth] = useState(() => loadSettings().wasmWidth ?? 3840)   // mặc định giải ở độ phân giải GỐC (xa nhất)
+  const [tryHarder, setTryHarder] = useState(() => loadSettings().tryHarder ?? false)
   const [torchOn, setTorchOn]   = useState(false)
   const [torchAvail, setTorchAvail] = useState(false)
   const [zoomCap, setZoomCap]   = useState<{ min: number; max: number; step: number } | null>(null)
@@ -147,6 +161,7 @@ export default function MultiScanTest() {
 
   engineRef.current = engine
   wasmWidthRef.current = wasmWidth
+  tryHarderRef.current = tryHarder
 
   // ── Vòng quét ────────────────────────────────────────────────────────────────
   async function detectFrame(video: HTMLVideoElement): Promise<{ text: string; points: { x: number; y: number }[] }[]> {
@@ -168,7 +183,7 @@ export default function MultiScanTest() {
     if (!ctx) return []
     ctx.drawImage(video, 0, 0, cw, ch)
     const img = ctx.getImageData(0, 0, cw, ch)
-    const results = await read(img, { formats: ['QRCode'], maxNumberOfSymbols: 64, tryHarder: false, tryRotate: true })
+    const results = await read(img, { formats: ['QRCode'], maxNumberOfSymbols: 64, tryHarder: tryHarderRef.current, tryRotate: true })
     // Đưa tọa độ về hệ pixel của video gốc
     const inv = 1 / scale
     return results.map(r => ({
@@ -182,17 +197,22 @@ export default function MultiScanTest() {
     const boxes: FrameBox[] = []
     let anyNew = false, anyInvalid = false
     for (const f of found) {
-      const known = codesRef.current.get(f.text)
-      if (known) {
-        known.hits++
-        boxes.push({ points: f.points, kind: known.valid ? 'dup' : 'invalid' })
-        continue
+      let entry = codesRef.current.get(f.text)
+      if (!entry) {
+        entry = { text: f.text, valid: isValidFormat(f.text), at: Date.now(), hits: 0 }
+        codesRef.current.set(f.text, entry)
       }
-      const valid = isValidFormat(f.text)
-      codesRef.current.set(f.text, { text: f.text, valid, at: Date.now(), hits: 1 })
-      boxes.push({ points: f.points, kind: valid ? 'new' : 'invalid' })
-      if (valid) anyNew = true
-      else anyInvalid = true
+      entry.hits++
+      const confirmed = entry.hits >= CONFIRM_HITS       // đủ số lần → NHẬN
+      const justConfirmed = entry.hits === CONFIRM_HITS  // frame vừa chốt
+      if (justConfirmed) {
+        if (entry.valid) anyNew = true; else anyInvalid = true
+      }
+      // Chưa đủ hits → khung 'pending' (vàng), chưa kêu bíp, chưa tính
+      const kind: FrameBox['kind'] = !confirmed
+        ? 'pending'
+        : entry.valid ? (justConfirmed ? 'new' : 'dup') : 'invalid'
+      boxes.push({ points: f.points, kind })
     }
     if (anyNew) {
       playBeep()
@@ -222,7 +242,7 @@ export default function MultiScanTest() {
     const offX = (W - vw * scale) / 2
     const offY = (H - vh * scale) / 2
     const COLORS: Record<FrameBox['kind'], string> = {
-      new: '#22c55e', dup: '#94a3b8', invalid: '#ef4444',
+      new: '#22c55e', dup: '#94a3b8', invalid: '#ef4444', pending: '#f59e0b',
     }
     for (const b of boxes) {
       if (b.points.length < 4) continue
@@ -290,11 +310,18 @@ export default function MultiScanTest() {
       setLens('wide')
 
       // Dò ống kính góc siêu rộng (nhãn chỉ có sau khi đã cấp quyền camera)
+      let ultraDevId: string | null = null
       try {
         const devs = await navigator.mediaDevices.enumerateDevices()
         const ultra = devs.find(d => d.kind === 'videoinput' && /ultra|siêu r|góc r|0\.5|wide angle/i.test(d.label))
-        setUltraId(ultra?.deviceId ?? null)
+        ultraDevId = ultra?.deviceId ?? null
+        setUltraId(ultraDevId)
       } catch { /* enumerate lỗi — ẩn nút góc rộng */ }
+
+      // Khôi phục setup lần trước (ống kính + zoom)
+      const st = loadSettings()
+      if (st.lens === 'ultra' && ultraDevId) await switchLens('ultra', ultraDevId)
+      if (typeof st.zoom === 'number') setZoom(st.zoom)
 
       stoppedRef.current = false
       pausedRef.current = false
@@ -328,16 +355,17 @@ export default function MultiScanTest() {
   }
 
   // Đổi ống kính: 'wide' = ống chính (1×) · 'ultra' = góc siêu rộng (0.5×, bao trùm hơn nhưng QR nhỏ đi)
-  async function switchLens(target: 'wide' | 'ultra') {
-    if (target === lens) return
+  async function switchLens(target: 'wide' | 'ultra', forcedUltraId?: string) {
+    const uid = forcedUltraId ?? ultraId
     try {
       streamRef.current?.getTracks().forEach(t => t.stop())
-      const video: MediaTrackConstraints = target === 'ultra' && ultraId
-        ? { deviceId: { exact: ultraId }, width: { ideal: 3840 }, height: { ideal: 2160 } }
+      const video: MediaTrackConstraints = target === 'ultra' && uid
+        ? { deviceId: { exact: uid }, width: { ideal: 3840 }, height: { ideal: 2160 } }
         : { facingMode: 'environment', width: { ideal: 3840 }, height: { ideal: 2160 } }
       const stream = await navigator.mediaDevices.getUserMedia({ video })
       await attachStream(stream)
       setLens(target)
+      saveSettings({ lens: target })
     } catch {
       setError('Không đổi được ống kính, thử lại.')
     }
@@ -359,7 +387,7 @@ export default function MultiScanTest() {
 
   // Chốt phiên: lưu vào lịch sử nếu có ít nhất 1 mã (gọi khi Dừng camera / rời trang)
   function endSession() {
-    const codes = Array.from(codesRef.current.values())
+    const codes = Array.from(codesRef.current.values()).filter(c => c.hits >= CONFIRM_HITS)
     if (!sessionStartRef.current || codes.length === 0) { sessionStartRef.current = 0; return }
     const s: SavedSession = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -381,7 +409,10 @@ export default function MultiScanTest() {
   endSessionRef.current = endSession
 
   function stop() {
-    endSession()
+    endSession()                        // Dừng = LƯU phiên vào lịch sử…
+    codesRef.current.clear()            // …rồi XÓA dữ liệu lần quét này (sẵn sàng pallet kế tiếp)
+    decodeEmaRef.current = 0
+    setVersion(v => v + 1)
     stoppedRef.current = true
     setRunning(false)
     setPaused(false)
@@ -418,13 +449,18 @@ export default function MultiScanTest() {
   }
 
   function setZoom(z: number) {
-    if (!zoomCap) return
-    const v = Math.max(zoomCap.min, Math.min(zoomCap.max, z))
+    // đọc capabilities trực tiếp từ track (state zoomCap có thể chưa kịp cập nhật ngay sau đổi ống kính)
+    const track = streamRef.current?.getVideoTracks()[0]
+    const caps = (track?.getCapabilities?.() ?? {}) as ExtCapabilities
+    if (!track || !caps.zoom) return
+    const v = Math.max(caps.zoom.min, Math.min(caps.zoom.max, z))
     setZoomVal(v)
-    applyTrack({ zoom: v })
+    track.applyConstraints({ advanced: [{ zoom: v } as MediaTrackConstraintSet] }).catch(() => {})
+    saveSettings({ zoom: v })
   }
 
-  const codes = Array.from(codesRef.current.values()).sort((a, b) => b.at - a.at)
+  // Chỉ hiện/đếm mã ĐÃ NHẬN (đủ CONFIRM_HITS) — mã hits=1 là bóng ma, ẩn đi
+  const codes = Array.from(codesRef.current.values()).filter(c => c.hits >= CONFIRM_HITS).sort((a, b) => b.at - a.at)
   const validCount = codes.filter(c => c.valid).length
   const invalidCount = codes.length - validCount
 
@@ -552,23 +588,28 @@ export default function MultiScanTest() {
                       <span className="flex items-center gap-1">
                         Độ phân giải xử lý:
                         {WASM_WIDTHS.map(w => (
-                          <button key={w} onClick={() => { setWasmWidth(w); decodeEmaRef.current = 0 }}
+                          <button key={w} onClick={() => { setWasmWidth(w); saveSettings({ wasmWidth: w }); decodeEmaRef.current = 0 }}
                             className={`rounded px-1.5 py-0.5 border ${wasmWidth === w ? 'border-sky-500 bg-sky-50 text-sky-700 font-semibold' : 'border-slate-300 hover:bg-slate-50'}`}>
-                            {w === 3840 ? '4K' : `${w}p`}
+                            {w === 3840 ? 'Gốc' : `${w}p`}
                           </button>
                         ))}
                       </span>
+                    )}
+                    {engine === 'wasm' && (
+                      <button onClick={() => { const v = !tryHarder; setTryHarder(v); saveSettings({ tryHarder: v }); decodeEmaRef.current = 0 }}
+                        className={`rounded px-1.5 py-0.5 border ${tryHarder ? 'border-amber-500 bg-amber-50 text-amber-700 font-semibold' : 'border-slate-300 hover:bg-slate-50'}`}>
+                        Quét kỹ (xa hơn){tryHarder ? ' ✓' : ''}
+                      </button>
                     )}
                   </>
                 )}
               </div>
               <p className="mt-1 text-[10px] text-slate-400 leading-snug">
-                Khung <span className="text-green-600 font-semibold">xanh</span> = mã mới ·
+                Khung <span className="text-amber-600 font-semibold">vàng</span> = đang xác nhận (thấy 1 lần) ·
+                <span className="text-green-600 font-semibold"> xanh</span> = đã nhận ·
                 <span className="text-slate-500 font-semibold"> xám</span> = đã quét (bỏ qua) ·
-                <span className="text-red-600 font-semibold"> đỏ</span> = sai định dạng (tem thùng 7 trường ";" serial XXyymmddXxxx · hoặc tem pallet 6 đoạn "_").
-                Mã 2cm: đưa camera cách ~20–40cm; máy hỗ trợ zoom quang thì tăng zoom thay vì tiến sát.
-                Nút <strong>0.5×</strong> (nếu có) mở ống góc siêu rộng để bao trùm hơn — bù lại QR nhỏ đi nên phải đưa gần hơn.
-                Preview nay hiện TRỌN khung camera (có viền đen) = đúng vùng đang quét, đỡ phải lia tìm mã ở rìa.
+                <span className="text-red-600 font-semibold"> đỏ</span> = sai định dạng. Mã phải thấy ≥{CONFIRM_HITS} lần mới nhận → loại "bóng ma" giải sai 1 frame.
+                <br />Mã 2cm: đưa cách ~20–60cm; để độ phân giải xử lý ở <strong>Gốc</strong> để quét xa nhất; bật <strong>Quét kỹ</strong> nếu tem xa/mờ (chậm hơn). Nút <strong>0.5×</strong> mở ống góc siêu rộng (bao trùm hơn nhưng QR nhỏ đi). Preview hiện TRỌN khung camera = đúng vùng đang quét.
               </p>
             </div>
 

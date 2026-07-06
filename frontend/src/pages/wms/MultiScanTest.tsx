@@ -77,6 +77,38 @@ interface FrameBox {
 type EngineKind = 'native' | 'wasm'
 const WASM_WIDTHS = [1280, 1920, 2560, 3840] as const
 
+// ── Lịch sử phiên quét — lưu localStorage của máy (trang test không ghi DB) ────
+interface SavedSession {
+  id: string
+  started_at: number
+  ended_at: number
+  engine: EngineKind
+  video_res: string
+  wasm_width: number
+  decode_ms: number
+  device: string
+  codes: ScannedCode[]
+}
+const SESSIONS_KEY = 'multi_scan_sessions_v1'
+const SESSIONS_MAX = 20
+function loadSessions(): SavedSession[] {
+  try {
+    const arr = JSON.parse(localStorage.getItem(SESSIONS_KEY) ?? '[]')
+    return Array.isArray(arr) ? arr : []
+  } catch { return [] }
+}
+function persistSessions(list: SavedSession[]) {
+  try { localStorage.setItem(SESSIONS_KEY, JSON.stringify(list)) } catch {}
+}
+// Tốc độ quét thực = số mã hợp lệ / thời gian từ mã đầu → mã cuối
+function sessionSpeed(s: SavedSession): string {
+  const valid = s.codes.filter(c => c.valid)
+  if (valid.length < 2) return '—'
+  const secs = (Math.max(...valid.map(c => c.at)) - Math.min(...valid.map(c => c.at))) / 1000
+  if (secs <= 0) return '—'
+  return `${(valid.length / secs).toFixed(1)} mã/s`
+}
+
 export default function MultiScanTest() {
   const videoRef   = useRef<HTMLVideoElement>(null)
   const overlayRef = useRef<HTMLCanvasElement>(null)
@@ -106,6 +138,10 @@ export default function MultiScanTest() {
   const [videoRes, setVideoRes] = useState('')
   const [decodeMs, setDecodeMs] = useState(0)
   const [, setVersion]          = useState(0)   // bump khi codes thay đổi → re-render list
+  const [sessions, setSessions] = useState<SavedSession[]>(loadSessions)
+  const [openSession, setOpenSession] = useState<string | null>(null)
+  const sessionStartRef = useRef(0)
+  const videoResRef     = useRef('')
 
   engineRef.current = engine
   wasmWidthRef.current = wasmWidth
@@ -257,6 +293,8 @@ export default function MultiScanTest() {
       })
       await video.play()
       setVideoRes(`${video.videoWidth}×${video.videoHeight}`)
+      videoResRef.current = `${video.videoWidth}×${video.videoHeight}`
+      if (!sessionStartRef.current) sessionStartRef.current = Date.now()
 
       // Khả năng torch / zoom quang học
       const track = stream.getVideoTracks()[0]
@@ -291,7 +329,31 @@ export default function MultiScanTest() {
     readBarcodesRef.current = readBarcodes
   }
 
+  // Chốt phiên: lưu vào lịch sử nếu có ít nhất 1 mã (gọi khi Dừng camera / rời trang)
+  function endSession() {
+    const codes = Array.from(codesRef.current.values())
+    if (!sessionStartRef.current || codes.length === 0) { sessionStartRef.current = 0; return }
+    const s: SavedSession = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      started_at: sessionStartRef.current,
+      ended_at: Date.now(),
+      engine: engineRef.current,
+      video_res: videoResRef.current,
+      wasm_width: wasmWidthRef.current,
+      decode_ms: Math.round(decodeEmaRef.current),
+      device: navigator.userAgent,
+      codes,
+    }
+    const next = [s, ...loadSessions()].slice(0, SESSIONS_MAX)
+    persistSessions(next)
+    setSessions(next)
+    sessionStartRef.current = 0
+  }
+  const endSessionRef = useRef(endSession)
+  endSessionRef.current = endSession
+
   function stop() {
+    endSession()
     stoppedRef.current = true
     setRunning(false)
     setPaused(false)
@@ -304,7 +366,11 @@ export default function MultiScanTest() {
     if (ctx && overlayRef.current) ctx.clearRect(0, 0, overlayRef.current.width, overlayRef.current.height)
   }
 
-  useEffect(() => () => { stoppedRef.current = true; streamRef.current?.getTracks().forEach(t => t.stop()) }, [])
+  useEffect(() => () => {
+    endSessionRef.current()   // rời trang khi đang quét → vẫn chốt phiên
+    stoppedRef.current = true
+    streamRef.current?.getTracks().forEach(t => t.stop())
+  }, [])
 
   async function switchEngine(next: EngineKind) {
     if (next === 'wasm') await loadWasm()
@@ -345,6 +411,15 @@ export default function MultiScanTest() {
   function copyAll() {
     const txt = codes.filter(c => c.valid).map(c => c.text).join('\n')
     navigator.clipboard?.writeText(txt).catch(() => {})
+  }
+
+  function deleteSession(id: string) {
+    const next = loadSessions().filter(s => s.id !== id)
+    persistSessions(next)
+    setSessions(next)
+  }
+  function copySessionJson(s: SavedSession) {
+    navigator.clipboard?.writeText(JSON.stringify(s, null, 2)).catch(() => {})
   }
 
   return (
@@ -496,6 +571,63 @@ export default function MultiScanTest() {
                   ))}
                 </div>
               )}
+
+              {/* Lịch sử phiên quét — lưu trên máy này (localStorage), chốt khi Dừng camera / rời trang */}
+              <div className="mt-4">
+                <p className="text-xs font-semibold text-slate-700 mb-1.5">
+                  Phiên đã lưu ({sessions.length})
+                  <span className="ml-1 font-normal text-[10px] text-slate-400">— lưu trên máy này, giữ {SESSIONS_MAX} phiên gần nhất</span>
+                </p>
+                {sessions.length === 0 ? (
+                  <p className="text-[10px] text-slate-400">Chưa có phiên nào — phiên được chốt khi bấm "Dừng camera" (có ít nhất 1 mã).</p>
+                ) : (
+                  <div className="border border-slate-200 rounded-lg divide-y divide-slate-100">
+                    {sessions.map(s => {
+                      const valid = s.codes.filter(c => c.valid).length
+                      const invalid = s.codes.length - valid
+                      const durS = Math.max(1, Math.round((s.ended_at - s.started_at) / 1000))
+                      const isOpen = openSession === s.id
+                      return (
+                        <div key={s.id}>
+                          <div className="flex items-center gap-2 px-2 py-1.5 flex-wrap">
+                            <button onClick={() => setOpenSession(isOpen ? null : s.id)}
+                              className="text-[10px] font-semibold text-sky-700 hover:underline shrink-0">
+                              {new Date(s.started_at).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                            </button>
+                            <span className="text-[10px] text-slate-500">{durS}s · {s.engine === 'native' ? 'Native' : `WASM ${s.wasm_width}p`} · {s.video_res}</span>
+                            <span className="text-[10px] font-semibold text-green-700 tabular-nums">{valid} ✓</span>
+                            {invalid > 0 && <span className="text-[10px] font-semibold text-red-600 tabular-nums">{invalid} ✗</span>}
+                            <span className="text-[10px] text-slate-500">{sessionSpeed(s)} · decode {s.decode_ms}ms</span>
+                            <div className="ml-auto flex gap-1 shrink-0">
+                              <Button size="sm" variant="outline" className="h-5 px-1.5 text-[9px] !min-h-0" onClick={() => copySessionJson(s)}>
+                                <Copy className="h-2.5 w-2.5 mr-0.5" />JSON
+                              </Button>
+                              <button onClick={() => deleteSession(s.id)} className="text-slate-400 hover:text-red-600 p-0.5">
+                                <X className="h-3 w-3" />
+                              </button>
+                            </div>
+                          </div>
+                          {isOpen && (
+                            <div className="px-2 pb-1.5 max-h-48 overflow-auto">
+                              {[...s.codes].sort((a, b) => a.at - b.at).map(c => (
+                                <div key={c.text} className="flex items-center gap-2 py-0.5">
+                                  <span className={`shrink-0 text-[9px] px-1 rounded-full font-semibold ${c.valid ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                                    {c.valid ? '✓' : '✗'}
+                                  </span>
+                                  <span className="font-mono text-[9px] text-slate-600 truncate">{c.text}</span>
+                                  <span className="ml-auto shrink-0 text-[9px] text-slate-400 tabular-nums">
+                                    {new Date(c.at).toLocaleTimeString('vi-VN')} · {c.hits}×
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>

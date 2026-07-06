@@ -20,6 +20,7 @@ const stocktake          = () => import('@/pages/wms/Stocktake')
 const stocktakeDashboard = () => import('@/pages/wms/StocktakeDashboard')
 const palletLabels       = () => import('@/pages/wms/PalletLabels')
 const palletOps          = () => import('@/pages/wms/PalletOps')
+const multiScanTest      = () => import('@/pages/wms/MultiScanTest')
 const wmsSettings = () => import('@/pages/wms/WMSSettings')
 const tmsSettings = () => import('@/pages/tms/TMSSettings')
 const tmsBookings = () => import('@/pages/tms/TMSBookings')
@@ -51,6 +52,7 @@ export const Pages = {
   StocktakeDashboard: lazy(stocktakeDashboard),
   PalletLabels: lazy(palletLabels),
   PalletOps: lazy(palletOps),
+  MultiScanTest: lazy(multiScanTest),
   WMSSettings: lazy(wmsSettings),
   TMSSettings: lazy(tmsSettings),
   TMSBookings: lazy(tmsBookings),
@@ -73,6 +75,7 @@ const prefetchMap: Record<string, () => Promise<unknown>> = {
   '/wms/inbound': inbound,
   '/wms/pallet-labels': palletLabels,
   '/wms/pallet-ops': palletOps,
+  '/wms/multi-scan': multiScanTest,
   '/wms/outbound': outbound,
   '/wms/outbound/scan-log': outboundScanLog,
   '/wms/loosepicking': loosePicking,

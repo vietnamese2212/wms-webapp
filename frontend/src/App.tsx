@@ -12,7 +12,7 @@ const {
   Dashboard, Inventory, Inbound, InboundDetail,
   Outbound, OutboundDetail, OutboundItemDetail, OutboundScanLog, OutboundPrepare,
   LoosePicking, LoosePickingDetail, LoosePickingItemDetail,
-  Locations, Stocktake, StocktakeDashboard, PalletLabels, PalletOps,
+  Locations, Stocktake, StocktakeDashboard, PalletLabels, PalletOps, MultiScanTest,
   WMSSettings, TMSSettings, TMSBookings, TMSReport, GateRegistration,
   LeaveManagement, Assignments, Attendance, OrgChart,
   UserManagement, Materials, Settings,
@@ -91,6 +91,9 @@ export default function App() {
 
         <Route path="/wms/pallet-labels" element={<PermissionRoute module="pallet_print"><PalletLabels /></PermissionRoute>} />
         <Route path="/wms/pallet-ops" element={<PermissionRoute module="pallet_ops"><PalletOps /></PermissionRoute>} />
+
+        {/* Trang test quét loạt QR — không ghi dữ liệu, chỉ đo tốc độ trên thiết bị thật */}
+        <Route path="/wms/multi-scan" element={<MultiScanTest />} />
 
         {/* TMS */}
         <Route path="/tms/bookings"   element={<PermissionRoute module="tms_plan"><TMSBookings /></PermissionRoute>} />

@@ -41,6 +41,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { to: '/wms/pallet-ops',    icon: Scissors,       label: 'Dồn / Tách pallet', module: 'pallet_ops' },
       { to: '/wms/pallet-labels', icon: QrCode,         label: 'In tem pallet',     module: 'pallet_print' },
       { to: '/wms/stocktake',     icon: ClipboardCheck, label: 'Check vị trí',      module: 'stocktake' },
+      { to: '/wms/multi-scan',    icon: ScanLine,       label: 'Quét loạt (test)',  adminOnly: true },
     ],
   },
   {

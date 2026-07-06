@@ -62,3 +62,5 @@ Employee_Template.xlsx
 
 # Template upload (chứa dữ liệu thật khi điền — không commit)
 /templates/
+
+docs/handover/pdf/__render_tmp.html

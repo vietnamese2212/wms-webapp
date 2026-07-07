@@ -35,3 +35,39 @@ export function resolveShelfLife(
   if (entryShelfLife != null && Number(entryShelfLife) > 0) return Number(entryShelfLife)
   return effShelfLife(material, nccId)
 }
+
+export interface PctDateEntry {
+  production_date?: string | Date | null
+  expiry_date?:     string | Date | null   // HSD tường minh trên tem V2 (`;`) — nếu có thì ưu tiên tuyệt đối
+  shelf_life_days?: number | null
+  ncc_id?:          string | null
+}
+
+// %Date CÒN LẠI của 1 pallet (0..100+, CHƯA làm tròn). Trả null nếu không đủ dữ liệu.
+// - Tem V2 có expiry_date TƯỜNG MINH → dùng thẳng HSD (mẫu số = HSD − NSX; thiếu NSX thì lấy shelflife).
+//   ⇒ ĐV2 không cần khai shelf_life cho từng mã vẫn tính được %Date.
+// - Tem V1 (không expiry_date) → NSX + shelflife như cũ (kết quả TRÙNG KHỚP công thức cũ, không đổi hành vi).
+export function computePctDate(
+  entry: PctDateEntry,
+  material: MaterialShelfInfo | null | undefined,
+  nowMs: number = Date.now(),
+): number | null {
+  const prodMs = entry.production_date ? new Date(entry.production_date).getTime() : NaN
+
+  if (entry.expiry_date) {
+    const expMs = new Date(entry.expiry_date).getTime()
+    if (!isNaN(expMs)) {
+      const shelfDays = resolveShelfLife(entry.shelf_life_days, material, entry.ncc_id)
+      const totalMs = (!isNaN(prodMs) && expMs > prodMs)
+        ? expMs - prodMs
+        : (shelfDays > 0 ? shelfDays * 86_400_000 : NaN)
+      if (isNaN(totalMs) || totalMs <= 0) return null
+      return Math.max(0, ((expMs - nowMs) / totalMs) * 100)
+    }
+  }
+
+  const shelfDays = resolveShelfLife(entry.shelf_life_days, material, entry.ncc_id)
+  if (isNaN(prodMs) || shelfDays <= 0) return null
+  const totalMs = shelfDays * 86_400_000
+  return Math.max(0, ((prodMs + totalMs - nowMs) / totalMs) * 100)
+}

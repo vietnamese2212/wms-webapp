@@ -17,6 +17,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Button } from '@/components/ui/button'
 import { BarChart2, Flag, MapPin, X, Download, Rows3, AlignJustify } from 'lucide-react'
 import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
+import { computePctDate } from '@/utils/shelfLife'
 import { rowText, type RowStatusKey } from '@/lib/rowStatus'
 
 function parseDiff(note: string | null): { actual: number; app: number; diff: number } | null {
@@ -58,13 +59,6 @@ const STATUS_CLS: Record<string, string> = {
   QUARANTINE: 'bg-red-100 text-red-700', CANCELLED: 'bg-gray-100 text-gray-500',
 }
 
-function calcPct(prodDate: string | null, shelfDays: number | null): number | null {
-  if (!prodDate || !shelfDays || shelfDays <= 0) return null
-  const totalMs   = shelfDays * 86_400_000
-  const remaining = new Date(prodDate).getTime() + totalMs - Date.now()
-  return Math.max(0, Math.round((remaining / totalMs) * 100))
-}
-
 function DR({ label, value, mono, bold, cls }: {
   label: string; value: string; mono?: boolean; bold?: boolean; cls?: string
 }) {
@@ -91,7 +85,7 @@ function DetailPanel({ entryId, onClose }: { entryId: string; onClose: () => voi
   const { data: entry, isLoading } = useInventoryEntry(entryId)
   const remaining = entry ? (entry.cartons_remaining ?? entry.cartons_imported) : 0
   const exported  = entry ? Math.max(0, Number(entry.cartons_imported) - Number(remaining)) : 0
-  const pct       = entry ? calcPct(entry.production_date ?? null, entry.material?.shelf_life_days ?? null) : null
+  const pct       = entry ? computePctDate(entry, entry.material) : null
   const diff      = entry ? parseDiff(entry.stocktake_flag_note ?? null) : null
 
   return (
@@ -176,9 +170,12 @@ function DetailPanel({ entryId, onClose }: { entryId: string; onClose: () => voi
 
             <Sec title="Ngày / Hạn dùng">
               <DR label="NSX" value={entry.production_date ? formatDate(entry.production_date) : '—'} />
-              {entry.material?.shelf_life_days != null && (
-                <DR label="HSD" value={`${entry.material.shelf_life_days} ngày`} />
-              )}
+              {entry.batch && <DR label="Mã lô" value={entry.batch} mono />}
+              {entry.expiry_date
+                ? <DR label="HSD" value={formatDate(entry.expiry_date)} bold />
+                : entry.material?.shelf_life_days != null && (
+                  <DR label="HSD" value={`${entry.material.shelf_life_days} ngày`} />
+                )}
               {pct !== null && (
                 <DR label="%Date" value={`${pct}%`}
                   cls={pct >= 70 ? 'text-green-600 font-semibold' : pct >= 40 ? 'text-amber-600 font-semibold' : 'text-red-600 font-semibold'} />

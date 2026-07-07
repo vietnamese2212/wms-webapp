@@ -18,6 +18,7 @@ import {
   usePalletOps, useUndoPalletOp, useMaterials, useWarehouses, useLocationsReal, type PalletOpRow,
 } from '@/api/hooks'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
+import { materialCodeOf } from '@/utils/qr'
 import type { Material } from '@/types'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -144,13 +145,13 @@ export default function PalletOps() {
     if (!opCat) return opsRaw
     return opsRaw.filter(o => {
       const code = o.target_codes?.[0] || o.source_codes?.[0] || ''
-      return matByCode.get(code.split('_')[1])?.category === opCat
+      return matByCode.get(materialCodeOf(code))?.category === opCat
     })
   }, [opsRaw, opCat, matByCode])
   function printOp(o: PalletOpRow) {
     const qtyByCode = new Map<string, number>()
     for (const c of (o.detail?.children ?? []) as { code: string; qty: number }[]) qtyByCode.set(c.code, c.qty)
-    const labels = (o.target_codes ?? []).map(code => qrToLabel(code, matByCode.get(code.split('_')[1]), qtyByCode.get(code) ?? null))
+    const labels = (o.target_codes ?? []).map(code => qrToLabel(code, matByCode.get(materialCodeOf(code)), qtyByCode.get(code) ?? null))
     printTems(labels, 'REPRINT')
   }
   async function doUndo(o: PalletOpRow) {
@@ -273,7 +274,7 @@ export default function PalletOps() {
                     <tr><td colSpan={9} className="px-2 py-10 text-center text-slate-400">Chưa có thao tác dồn/tách nào{(hSearch || hType || opCat || hFrom || hTo) ? ' khớp bộ lọc' : ''}</td></tr>
                   ) : ops.map(o => {
                     const aCode = (o.target_codes?.[0] || o.source_codes?.[0] || '')
-                    const matName = matByCode.get(aCode.split('_')[1])?.short_name ?? aCode.split('_')[1] ?? '—'
+                    const matName = matByCode.get(materialCodeOf(aCode))?.short_name ?? materialCodeOf(aCode) ?? '—'
                     const qtySum = (o.detail?.children ?? []).reduce((s: number, c: any) => s + (Number(c.qty) || 0), 0)
                     const qtyText = o.type === 'SPLIT' ? `${qtySum} thùng` : `${(o.source_codes?.length ?? 0)} pallet`
                     return (

@@ -371,6 +371,8 @@ export interface InventoryEntry {
   adjustment_qty:     number | null
   ncc_id:              string | null
   shelf_life_days:     number | null
+  batch:               string | null   // tem V2 (`;` ĐV2): mã lô nguyên văn (khớp hệ thống kế toán qua import/API)
+  expiry_date:         string | null   // tem V2: HSD tường minh → %Date dùng HSD thật
   stocktake_at:        string | null
   stocktake_flagged:   boolean | null
   stocktake_flag_note: string | null

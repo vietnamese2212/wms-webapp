@@ -6,7 +6,7 @@ import { ok, fail } from '../../utils/response'
 import { effectiveNoQr, markItemsNoQrIfQty } from '../../lib/inventoryMode'
 import { effCartonsPerPallet } from '../../utils/palletCalc'
 import { normalizeQR } from '../../utils/qrParser'
-import { resolveShelfLife } from '../../utils/shelfLife'
+import { computePctDate } from '../../utils/shelfLife'
 import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 import { categoryAllowed, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 
@@ -1718,7 +1718,7 @@ async function fetchMaterialInventory(materialId: string, warehouseId: string | 
   // Phân trang đủ (cap ~1000/response) — .order('id') phụ để phân trang ổn định
   const data = await fetchAllRowsParallel(() => {
     let q = supabase.from('InventoryEntry')
-      .select('id, pallet_code, cartons_imported, cartons_remaining, cartons_reserved, production_date, import_date, qa_status_id, ncc_id, shelf_life_days, qa_status:QAStatus(id,code,name), location:Location(location_code), material:Material!material_id(shelf_life_days, supplier_shelf_life_overrides)')
+      .select('id, pallet_code, cartons_imported, cartons_remaining, cartons_reserved, production_date, expiry_date, import_date, qa_status_id, ncc_id, shelf_life_days, qa_status:QAStatus(id,code,name), location:Location(location_code), material:Material!material_id(shelf_life_days, supplier_shelf_life_overrides)')
       .eq('material_id', materialId)
       .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING'])
       .gt('cartons_remaining', 0) // tồn=0 hợp lệ trong DB (upload snapshot) nhưng không phải tồn khả dụng
@@ -1728,13 +1728,8 @@ async function fetchMaterialInventory(materialId: string, warehouseId: string | 
 
   const now = Date.now()
   return (data ?? []).map((e: any) => {
-    const shelfDays = resolveShelfLife(e.shelf_life_days, e.material, e.ncc_id)
-    let pct_date: number | null = null
-    if (shelfDays > 0 && e.production_date) {
-      const totalMs   = shelfDays * 86_400_000
-      const remaining = new Date(e.production_date).getTime() + totalMs - now
-      pct_date = Math.max(0, Math.round((remaining / totalMs) * 100))
-    }
+    const pctRaw = computePctDate(e, e.material, now)   // ưu tiên HSD tường minh (tem V2)
+    const pct_date: number | null = pctRaw == null ? null : Math.round(pctRaw)
     const reserved = Number(e.cartons_reserved ?? 0)
     return {
       id:                e.id,
@@ -1870,7 +1865,7 @@ export async function getPrepareBoard(req: Request, res: Response) {
         Array.from({ length: Math.ceil(matIds.length / 200) }, (_, ci) => matIds.slice(ci * 200, ci * 200 + 200)).map(chunk =>
           fetchAllRowsParallel(() => {
             let q = supabase.from('InventoryEntry')
-              .select(`material_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, ncc_id, shelf_life_days, location:Location${useWhFilter ? '!inner' : ''}(location_code, warehouse_id), material:Material!material_id(shelf_life_days, supplier_shelf_life_overrides)`)
+              .select(`material_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, expiry_date, ncc_id, shelf_life_days, location:Location${useWhFilter ? '!inner' : ''}(location_code, warehouse_id), material:Material!material_id(shelf_life_days, supplier_shelf_life_overrides)`)
               .in('material_id', chunk)
               .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING'])
               .gt('cartons_remaining', 0) // bỏ pallet tồn=0 từ DB (JS bên dưới cũng skip, filter sớm đỡ kéo hàng chục nghìn dòng chết)
@@ -1882,7 +1877,7 @@ export async function getPrepareBoard(req: Request, res: Response) {
       )
       const entries = entryChunks.flat() as Array<{
         material_id: string; cartons_remaining: number | null; cartons_imported: number | null
-        cartons_reserved: number | null; production_date: string | null; ncc_id: string | null; shelf_life_days: number | null
+        cartons_reserved: number | null; production_date: string | null; expiry_date: string | null; ncc_id: string | null; shelf_life_days: number | null
         location: { location_code: string | null } | null
         material: { shelf_life_days: number | null; supplier_shelf_life_overrides: { transport_company_id: string; shelf_life_days: number }[] | null } | null
       }>
@@ -1892,13 +1887,8 @@ export async function getPrepareBoard(req: Request, res: Response) {
         const reserved  = Number(e.cartons_reserved ?? 0)
         const available = Math.max(0, (e.cartons_remaining ?? e.cartons_imported ?? 0) - reserved)
         if (available <= 0) continue
-        const shelfDays = resolveShelfLife(e.shelf_life_days, e.material, e.ncc_id)
-        let pct_date: number | null = null
-        if (shelfDays > 0 && e.production_date) {
-          const totalMs   = shelfDays * 86_400_000
-          const remaining = new Date(e.production_date).getTime() + totalMs - nowMs
-          pct_date = Math.max(0, Math.round((remaining / totalMs) * 100))
-        }
+        const pctRaw = computePctDate(e, e.material, nowMs)   // ưu tiên HSD tường minh (tem V2)
+        const pct_date: number | null = pctRaw == null ? null : Math.round(pctRaw)
         const loc = e.location?.location_code ?? '(chưa xác định)'
         const k = `${pct_date ?? 'n'}|${loc}`
         const locMap = byMat.get(e.material_id) ?? new Map()
@@ -1992,16 +1982,11 @@ export async function checkScanItem(req: Request, res: Response) {
       const { data: mat } = matId
         ? await supabase.from('Material').select('shelf_life_days, supplier_shelf_life_overrides').eq('id', matId).single()
         : { data: null }
-      const shelfLifeDays = resolveShelfLife(inv.shelf_life_days, mat, inv.ncc_id)
-      if (!shelfLifeDays) return fail(res, `Mặt hàng chưa có Shelf Life — không thể kiểm tra %Date`, 400)
-      const prodDate = inv.production_date ? new Date(inv.production_date) : null
-      if (!prodDate || isNaN(prodDate.getTime())) return fail(res, `Pallet "${qr}" không có NSX — không thể kiểm tra %Date`, 400)
-      const today = new Date()
-      const expiryMs = prodDate.getTime() + shelfLifeDays * 86_400_000
-      const remainDays = (expiryMs - today.getTime()) / 86_400_000
-      const remainPct = (remainDays / shelfLifeDays) * 100
-      if (remainPct < dateReqPct) {
-        return fail(res, `%Date còn lại: ${Math.floor(remainPct)}% < yêu cầu ${dateReqPct}% (NSX ${inv.production_date}, HSD ${shelfLifeDays} ngày)`, 400)
+      // Ưu tiên HSD tường minh trên tem (V2) → không cần khai Shelf Life mã vẫn kiểm %Date được; fallback NSX+shelflife (V1).
+      const pct = computePctDate(inv, mat)
+      if (pct == null) return fail(res, `Pallet "${qr}" thiếu HSD hoặc NSX+Shelf Life — không thể kiểm tra %Date`, 400)
+      if (pct < dateReqPct) {
+        return fail(res, `%Date còn lại: ${Math.floor(pct)}% < yêu cầu ${dateReqPct}%`, 400)
       }
     }
 
@@ -2092,27 +2077,17 @@ export async function scanItem(req: Request, res: Response) {
         return (bestRow as { production_date: string | null } | null)?.production_date ?? null
       })(),
     ])
-    const shelfLifeDays = resolveShelfLife(inv.shelf_life_days, shelfMat, inv.ncc_id)
+    // %Date pallet: ưu tiên HSD tường minh trên tem (V2) → fallback NSX+shelflife (V1). Tính 1 lần, tái dùng cho check + lưu.
+    const pctRaw = computePctDate(inv, shelfMat)
 
     // Kiểm tra % shelf life còn lại nếu item có yêu cầu
     const dateReqPct = Number(item.date_required ?? 0)
     if (dateReqPct > 0) {
-      if (!shelfLifeDays) {
-        return fail(res, `Mặt hàng chưa có Shelf Life — không thể kiểm tra %Date`, 400)
+      if (pctRaw == null) {
+        return fail(res, `Pallet "${qr}" thiếu HSD hoặc NSX+Shelf Life — không thể kiểm tra %Date`, 400)
       }
-      const prodDate = inv.production_date ? new Date(inv.production_date) : null
-      if (!prodDate || isNaN(prodDate.getTime())) {
-        return fail(res, `Pallet "${qr}" không có NSX — không thể kiểm tra %Date`, 400)
-      }
-      const today      = new Date()
-      const expiryMs   = prodDate.getTime() + shelfLifeDays * 86_400_000
-      const remainDays = (expiryMs - today.getTime()) / 86_400_000
-      const remainPct  = (remainDays / shelfLifeDays) * 100
-      if (remainPct < dateReqPct) {
-        return fail(res,
-          `%Date còn lại: ${Math.floor(remainPct)}% < yêu cầu ${dateReqPct}% (NSX ${inv.production_date}, HSD ${shelfLifeDays} ngày)`,
-          400
-        )
+      if (pctRaw < dateReqPct) {
+        return fail(res, `%Date còn lại: ${Math.floor(pctRaw)}% < yêu cầu ${dateReqPct}%`, 400)
       }
     }
 
@@ -2144,13 +2119,8 @@ export async function scanItem(req: Request, res: Response) {
 
     const to_take = cartons_override ? Math.min(Math.max(1, Number(cartons_override)), cap) : cap
 
-    // Tính pct_date tại thời điểm quét — khóa cứng, không thay đổi theo thời gian
-    let pct_date: number | null = null
-    if (shelfLifeDays > 0 && inv.production_date) {
-      const totalMs = shelfLifeDays * 86_400_000
-      const remaining = new Date(inv.production_date).getTime() + totalMs - Date.now()
-      pct_date = Math.max(0, Math.round((remaining / totalMs) * 100))
-    }
+    // pct_date tại thời điểm quét — khóa cứng, không thay đổi theo thời gian (dùng lại pctRaw đã tính trên)
+    const pct_date: number | null = pctRaw == null ? null : Math.round(pctRaw)
 
     const t = now()
 

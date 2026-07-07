@@ -27,7 +27,7 @@ import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { can } from '@/config/permissions'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
-import { resolveShelfLife } from '@/utils/shelfLife'
+import { resolveShelfLife, computePctDate } from '@/utils/shelfLife'
 import type { InventoryEntry, SupplierShelfLifeOverride } from '@/types'
 
 // ─── Helpers ──────────────────────────────────────────────────
@@ -35,15 +35,6 @@ import type { InventoryEntry, SupplierShelfLifeOverride } from '@/types'
 function formatLoc(loc: { location_code: string } | null): string {
   if (!loc) return '—'
   return loc.location_code
-}
-
-function calcDatePct(prodDate: string | null, shelfDays: number | null): number | null {
-  if (!prodDate || !shelfDays || shelfDays <= 0) return null
-  const prod = new Date(prodDate)
-  if (isNaN(prod.getTime())) return null
-  const totalMs = shelfDays * 86_400_000
-  const remaining = prod.getTime() + totalMs - Date.now()
-  return Math.max(0, Math.round((remaining / totalMs) * 100))
 }
 
 function datePctCls(pct: number): string {
@@ -66,7 +57,7 @@ function entryRowBg(selected: boolean, checked: boolean): string {
 function entryRowText(e: InventoryEntry, selected: boolean): string {
   if (selected)    return '[&_td_span]:text-white'
   if (e.qa_status && e.qa_status.code !== 'OK') return '[&_td_span]:text-red-600'   // chỉ đỏ khi QA GIỮ thật; OK (hoặc NULL) = không đỏ
-  const pct = calcDatePct(e.production_date, resolveShelfLife(e.shelf_life_days, e.material, e.ncc_id))
+  const pct = computePctDate(e, e.material)
   if (pct !== null && pct < 60) return '[&_td_span]:text-purple-600'
   if (pct !== null && pct < 80) return '[&_td_span]:text-orange-600'
   return '[&_td_span]:text-slate-700'
@@ -744,7 +735,7 @@ export default function Inventory() {
           const remaining = e.cartons_remaining ?? e.cartons_imported
           const exported  = Math.max(0, Number(e.cartons_imported) - Number(remaining))
           const reserved  = e.cartons_reserved ?? 0
-          const pct       = calcDatePct(e.production_date, resolveShelfLife(e.shelf_life_days, e.material, e.ncc_id))
+          const pct       = computePctDate(e, e.material)
           return {
             'Kho': e.location?.warehouse?.name ?? '', 'Loại kho': e.material?.category ?? '',
             'Mã hàng': e.material?.material_code ?? '', 'Tên hàng': e.material?.short_name ?? '',
@@ -1211,7 +1202,7 @@ function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick, warehouse
   const qa            = e.qa_status?.code ?? '—'
   const remaining     = e.cartons_remaining ?? e.cartons_imported
   const exported      = Math.max(0, Number(e.cartons_imported) - Number(remaining))
-  const pct           = calcDatePct(e.production_date, resolveShelfLife(e.shelf_life_days, e.material, e.ncc_id))
+  const pct           = computePctDate(e, e.material)
   const prodDateStr   = e.production_date ? formatTimestampDate(e.production_date, true) : '—'
   const adjQty        = e.adjustment_qty ?? 0
   const warehouseNm   = e.location?.warehouse?.name ?? (e.warehouse_id ? warehouseMap[e.warehouse_id] : null) ?? '—'
@@ -1403,7 +1394,7 @@ function DetailPanel({ entry: e, onClose, warehouseMap, onQuickAction, onSplit }
   const loc       = formatLoc(e.location)
   const remaining = e.cartons_remaining ?? e.cartons_imported
   const exported  = Math.max(0, Number(e.cartons_imported) - Number(remaining))
-  const pct       = calcDatePct(e.production_date, resolveShelfLife(e.shelf_life_days, e.material, e.ncc_id))
+  const pct       = computePctDate(e, e.material)
 
   function handleAdjust() {
     const val = parseFloat(adjInput)

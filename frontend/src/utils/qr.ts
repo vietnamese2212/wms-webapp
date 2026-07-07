@@ -10,6 +10,14 @@ export function normalizeQR(raw: string): string {
   return clean.split(';').map(p => p.trim()).join(';')
 }
 
+/** Lấy MÃ HÀNG từ mã pallet, đúng cả 2 format: V2 (`;`) = đoạn 0; V1 (`_`) = đoạn 1. */
+export function materialCodeOf(palletCode: string | null | undefined): string {
+  const s = (palletCode ?? '').trim()
+  if (!s) return ''
+  if (s.includes(';')) return s.split(';')[0]?.trim() ?? ''
+  return s.split('_')[1] ?? ''
+}
+
 /** Kiểm tra dd/mm/yyyy hợp lệ theo lịch thật (chống 30/02 roll-over). */
 export function isValidDMY(s: string): boolean {
   const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s)

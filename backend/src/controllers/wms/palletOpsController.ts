@@ -123,16 +123,17 @@ export async function ungroupPallets(req: Request, res: Response) {
 export async function splitPallet(req: Request, res: Response) {
   try {
     const { source_pallet_code, children, warehouse_id, location_id } = req.body as { source_pallet_code?: string; children?: { qty: number }[]; warehouse_id?: string; location_id?: string }
-    const src = (source_pallet_code ?? '').trim()
+    const src = normalizeQR(source_pallet_code ?? '')
+    const isV2 = src.includes(';')          // tem V2 (`;`): mã lô nằm ở đoạn 3, KHÔNG split bằng `_`
     const parts = src.split('_')
     const items = Array.isArray(children) ? children.map(c => Math.floor(Number(c?.qty) || 0)).filter(q => q > 0) : []
     if (!src) return fail(res, 'Thiếu mã pallet gốc')
-    if (parts.length < 6) return fail(res, 'Mã pallet gốc không đúng định dạng QR')
+    if (!isV2 && parts.length < 6) return fail(res, 'Mã pallet gốc không đúng định dạng QR')
     if (!items.length) return fail(res, 'Chưa nhập số lượng tách')
 
     // Scope theo KHO qua location (cột warehouse_id thường NULL ở pallet nhập SX)
     const { data: sRows, error: sErr } = await supabase.from('InventoryEntry')
-      .select(`id, pallet_code, location_id, material_id, manufacturer_id, cycle, machine_code, pallet_sequence_no, qa_status_id, stack_layer, cartons_imported, cartons_remaining, cartons_reserved, production_date, ${WH_SELECT}`)
+      .select(`id, pallet_code, location_id, material_id, manufacturer_id, cycle, machine_code, pallet_sequence_no, qa_status_id, stack_layer, cartons_imported, cartons_remaining, cartons_reserved, production_date, batch, expiry_date, ${WH_SELECT}`)
       .eq('pallet_code', src).in('status', ACTIVE)
     if (sErr) return fail(res, sErr.message, 500)
     const sMatch = (sRows ?? []).filter((r: any) => matchWh(r, warehouse_id))
@@ -147,28 +148,46 @@ export async function splitPallet(req: Request, res: Response) {
     const totalSplit = items.reduce((s, q) => s + q, 0)
     if (totalSplit > free) return fail(res, `Tách ${totalSplit} thùng vượt số khả dụng (${free} thùng, đã trừ ${reserved} giữ chỗ)`)
 
-    // Tìm số thứ tự con kế tiếp (baseSeq.N) — thu hẹp về đúng các con của pallet gốc (ilike prefix)
-    // + phân trang: quét cả bảng theo material_id sẽ bị cap ~1000 → maxN sai → SINH MÃ TRÙNG.
-    const baseSeq = parts[4]
-    const childPrefix = `${parts.slice(0, 4).join('_')}_${baseSeq}.%`
+    // Tìm số thứ tự con kế tiếp (baseCode.N) — mã con = mã gốc + ".N".
+    // V1 (`_`): ".N" gắn vào ĐOẠN SEQ (đoạn 5) — giữ nguyên quy ước cũ.
+    // V2 (`;`): ".N" gắn vào CUỐI cả chuỗi — batch (đoạn 3) GIỮ NGUYÊN để khớp hệ thống kế toán.
+    // Phân trang (fetchAllRowsParallel): quét cả bảng theo material_id bị cap ~1000 → maxN sai → SINH MÃ TRÙNG.
+    const baseSeq = isV2 ? '' : parts[4]
+    const childPrefix = isV2 ? `${src}.%` : `${parts.slice(0, 4).join('_')}_${baseSeq}.%`
     const sameMat = await fetchAllRowsParallel(() => supabase.from('InventoryEntry')
       .select('pallet_code').eq('material_id', source.material_id)
       .ilike('pallet_code', childPrefix).order('id'))
     let maxN = 0
     for (const r of (sameMat ?? []) as { pallet_code: string }[]) {
-      const p = String(r.pallet_code).split('_')
-      if (p.length === parts.length && p[0] === parts[0] && p[1] === parts[1] && p[2] === parts[2] && p[3] === parts[3] && p[5] === parts[5] && p[4].startsWith(`${baseSeq}.`)) {
-        const n = parseInt(p[4].slice(baseSeq.length + 1), 10)
-        if (!isNaN(n) && n > maxN) maxN = n
+      const code = String(r.pallet_code)
+      if (isV2) {
+        // con V2 = "<src>.N" đúng nguyên văn (src đã chuẩn hóa) → lấy N sau dấu chấm cuối
+        if (code.startsWith(`${src}.`)) {
+          const n = parseInt(code.slice(src.length + 1), 10)
+          if (!isNaN(n) && n > maxN) maxN = n
+        }
+      } else {
+        const p = code.split('_')
+        if (p.length === parts.length && p[0] === parts[0] && p[1] === parts[1] && p[2] === parts[2] && p[3] === parts[3] && p[5] === parts[5] && p[4].startsWith(`${baseSeq}.`)) {
+          const n = parseInt(p[4].slice(baseSeq.length + 1), 10)
+          if (!isNaN(n) && n > maxN) maxN = n
+        }
       }
     }
 
     const now = new Date().toISOString()
     const rows = items.map((qty, i) => {
-      const childParts = [...parts]; childParts[4] = `${baseSeq}.${maxN + 1 + i}`
+      const n = maxN + 1 + i
+      let childCode: string
+      if (isV2) {
+        childCode = `${src}.${n}`
+      } else {
+        const childParts = [...parts]; childParts[4] = `${baseSeq}.${n}`
+        childCode = childParts.join('_')
+      }
       return {
         id: randomUUID(),
-        pallet_code: childParts.join('_'),
+        pallet_code: childCode,
         location_id: location_id || source.location_id,   // vị trí chọn, mặc định = vị trí pallet nguồn
         warehouse_id: source.warehouse_id ?? null,
         material_id: source.material_id,
@@ -182,6 +201,8 @@ export async function splitPallet(req: Request, res: Response) {
         cartons_remaining: qty,
         cartons_reserved: 0,
         production_date: source.production_date ?? null,
+        batch: source.batch ?? null,          // tem V2: giữ mã lô gốc (con cùng lô → khớp kế toán)
+        expiry_date: source.expiry_date ?? null,  // tem V2: giữ HSD gốc
         import_order_id: null,          // ⚠️ tách KHÔNG thuộc phiếu nhập → báo cáo nhập không bị thổi phồng
         origin: 'SPLIT',
         parent_pallet_code: null,

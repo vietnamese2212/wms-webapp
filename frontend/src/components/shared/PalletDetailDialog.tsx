@@ -1,6 +1,7 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useInventoryEntry } from '@/api/hooks'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
+import { computePctDate } from '@/utils/shelfLife'
 
 const STATUS_LABEL: Record<string, string> = {
   IN_STOCK: 'Còn hàng', PARTIAL: 'Xuất 1 phần', EXPORTED: 'Đã xuất',
@@ -12,12 +13,6 @@ const STATUS_CLS: Record<string, string> = {
   QUARANTINE: 'bg-red-100 text-red-700', CANCELLED: 'bg-gray-100 text-gray-500',
 }
 
-function calcPct(prodDate: string | null, shelfDays: number | null): number | null {
-  if (!prodDate || !shelfDays || shelfDays <= 0) return null
-  const totalMs = shelfDays * 86_400_000
-  const remaining = new Date(prodDate).getTime() + totalMs - Date.now()
-  return Math.max(0, Math.round((remaining / totalMs) * 100))
-}
 function datePctCls(pct: number): string {
   if (pct >= 70) return 'text-green-600 font-semibold'
   if (pct >= 40) return 'text-amber-600 font-semibold'
@@ -51,7 +46,7 @@ export function PalletDetailDialog({ entryId, onClose }: { entryId: string; onCl
 
   const remaining = entry ? (entry.cartons_remaining ?? entry.cartons_imported) : 0
   const exported  = entry ? Math.max(0, Number(entry.cartons_imported) - Number(remaining)) : 0
-  const pct       = entry ? calcPct(entry.production_date ?? null, entry.material?.shelf_life_days ?? null) : null
+  const pct       = entry ? computePctDate(entry, entry.material) : null
 
   return (
     <Dialog open onOpenChange={v => { if (!v) onClose() }}>
@@ -82,6 +77,7 @@ export function PalletDetailDialog({ entryId, onClose }: { entryId: string; onCl
                 {entry.qa_status && (
                   <Row label="QA" value={`${entry.qa_status.code} – ${entry.qa_status.name}`} />
                 )}
+                {entry.batch && <Row label="Mã lô" value={entry.batch} mono />}
               </Section>
 
               <Section title="Số lượng">
@@ -98,9 +94,11 @@ export function PalletDetailDialog({ entryId, onClose }: { entryId: string; onCl
               <Section title="Ngày / Hạn dùng">
                 <Row label="NSX"
                   value={entry.production_date ? formatTimestampDate(entry.production_date, false) : '—'} />
-                {entry.material?.shelf_life_days != null && (
-                  <Row label="HSD" value={`${entry.material.shelf_life_days} ngày`} />
-                )}
+                {entry.expiry_date
+                  ? <Row label="HSD" value={formatTimestampDate(entry.expiry_date, false)} bold />
+                  : entry.material?.shelf_life_days != null && (
+                    <Row label="HSD" value={`${entry.material.shelf_life_days} ngày`} />
+                  )}
                 {pct !== null && (
                   <Row label="%Date" value={`${pct}%`} cls={datePctCls(pct)} bold />
                 )}

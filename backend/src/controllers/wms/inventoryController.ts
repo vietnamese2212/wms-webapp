@@ -3,7 +3,7 @@ import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { randomUUID } from 'crypto'
-import { resolveShelfLife } from '../../utils/shelfLife'
+import { computePctDate } from '../../utils/shelfLife'
 import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 import { scopeCategoriesOf } from '../../utils/categoryScope'
 import { normalizeQR } from '../../utils/qrParser'
@@ -133,12 +133,6 @@ function applyInventoryFilters(q: any, p: FilterParams): any {
 
 function parseArr(raw: string | undefined): string[] {
   return raw ? raw.split(',').filter(Boolean) : []
-}
-
-function calcPct(prodDate: string, shelfDays: number, now: number): number {
-  const totalMs = shelfDays * 86_400_000
-  const remaining = new Date(prodDate).getTime() + totalMs - now
-  return Math.max(0, Math.round((remaining / totalMs) * 100))
 }
 
 function matchDatePct(pct: number, range: string): boolean {
@@ -407,17 +401,16 @@ async function resolveInventoryFilter(req: Request): Promise<ResolvedFilter> {
     try {
       // import_date thêm vào để sort datePctIds ĐÚNG thứ tự list (import_date desc, id asc) — nhờ đó
       // listInventory chỉ cần slice trang rồi `.in()` ~50 id, không nhồi cả tập id vào URL (tránh 414).
-      preEntries = await fetchAllInventory('id, import_date, production_date, ncc_id, shelf_life_days, material:Material(shelf_life_days, supplier_shelf_life_overrides)', { ...params, status: '' }, null)
+      preEntries = await fetchAllInventory('id, import_date, production_date, expiry_date, ncc_id, shelf_life_days, material:Material(shelf_life_days, supplier_shelf_life_overrides)', { ...params, status: '' }, null)
     } catch (e) {
       return { ...base, error: (e as Error).message }
     }
     const now = Date.now()
     datePctIds = (preEntries ?? [])
       .filter((e: any) => {
-        const shelfDays = resolveShelfLife(e.shelf_life_days, e.material, e.ncc_id)
-        if (!e.production_date || !shelfDays || shelfDays <= 0) return false
-        const pct = calcPct(e.production_date as string, shelfDays, now)
-        return datePctRanges.some(r => matchDatePct(pct, r))
+        const pct = computePctDate(e, e.material, now)   // ưu tiên HSD tường minh (tem V2), fallback NSX+shelflife
+        if (pct == null) return false
+        return datePctRanges.some(r => matchDatePct(Math.round(pct), r))
       })
       // Sort khớp listInventory: import_date desc (null cuối) + id asc → slice trang là ra đúng trang.
       .sort((a: any, b: any) => {
@@ -521,7 +514,7 @@ export async function summaryInventory(req: Request, res: Response) {
 
   // Lấy TOÀN BỘ entry khớp filter (phân trang 1000 — cap response + aggregate tắt) rồi gom JS.
   // !inner: lọc category phải loại HẲN entry khác loại, không để lọt với material=null.
-  const summarySelect = 'id, warehouse_id, production_date, cartons_imported, cartons_remaining, material_id, ncc_id, shelf_life_days, '
+  const summarySelect = 'id, warehouse_id, production_date, expiry_date, cartons_imported, cartons_remaining, material_id, ncc_id, shelf_life_days, '
     + 'location:Location(warehouse:Warehouse(id, name)), '
     + 'ncc:TransportCompany!ncc_id(id, name), '
     + 'material:Material!inner(material_code, short_name, category, shelf_life_days, supplier_shelf_life_overrides)'
@@ -551,21 +544,22 @@ export async function summaryInventory(req: Request, res: Response) {
     const whName = e.location?.warehouse?.name ?? (whId ? whMap[whId] : null) ?? '—'
     const matId  = e.material_id as string
     const prod   = (e.production_date ?? null) as string | null
+    const expiry = (e.expiry_date ?? null) as string | null
     const nccId  = (e.ncc_id ?? null) as string | null
     const shelfDays = (e.shelf_life_days ?? null) as number | null
-    // Gom theo NCC + shelflife-lô (cùng mã/kho/ngày nhưng khác NCC hoặc khác shelflife → %Date khác)
-    const key    = `${whId}|${matId}|${prod}|${nccId ?? ''}|${shelfDays ?? ''}`
+    // Gom theo NCC + shelflife-lô + HSD (cùng mã/kho/ngày nhưng khác NCC/shelflife/HSD → %Date khác)
+    const key    = `${whId}|${matId}|${prod}|${nccId ?? ''}|${shelfDays ?? ''}|${expiry ?? ''}`
 
     let g = map.get(key)
     if (!g) {
-      const shelf = resolveShelfLife(shelfDays, e.material, nccId)
+      const pct = computePctDate(e, e.material, now)   // ưu tiên HSD tường minh (tem V2)
       g = {
         warehouse_id: whId, warehouse_name: whName, material_id: matId,
         material_code: e.material?.material_code ?? null,
         short_name:    e.material?.short_name ?? null,
         category:      e.material?.category ?? null,
         production_date: prod,
-        date_pct: prod && shelf > 0 ? calcPct(prod, shelf, now) : null,
+        date_pct: pct == null ? null : Math.round(pct),
         ncc_name: e.ncc?.name ?? null,
         cartons_imported: 0, cartons_remaining: 0, pallet_count: 0,
       }

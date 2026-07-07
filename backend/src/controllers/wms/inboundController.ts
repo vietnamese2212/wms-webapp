@@ -1184,8 +1184,9 @@ export async function scanQR(req: Request, res: Response) {
       warnings.push('Số thùng/pallet chưa được cấu hình cho hàng hóa này – đã nhập 0')
     }
     // Cảnh báo khi KHÔNG xác định được shelflife thực: mã hàng CÓ ngoại lệ nhưng pallet ra HSD mặc định.
+    // Tem V2 mang HSD tường minh (expiry_date) → %Date dùng HSD thật, KHÔNG cảnh báo.
     const matOverrides = ((material as { supplier_shelf_life_overrides?: { transport_company_id: string; shelf_life_days: number }[] | null }).supplier_shelf_life_overrides) ?? []
-    if (resolvedShelf == null && matOverrides.length > 0) {
+    if (!parsed.expiry_date && resolvedShelf == null && matOverrides.length > 0) {
       const matchCount = resolvedNcc ? matOverrides.filter(o => o.transport_company_id === resolvedNcc).length : 0
       if (!resolvedNcc) {
         warnings.push('Chưa xác định NCC – HSD/%Date dùng mặc định. Chọn NCC nếu cần đúng hạn theo NCC.')

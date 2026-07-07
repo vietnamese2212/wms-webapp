@@ -9,6 +9,7 @@ import { Input }               from '@/components/ui/input'
 import { Label }               from '@/components/ui/label'
 import { useScanPallet, useCheckInboundScan, useInboundOrder, useLocationsReal, useTransportCompanies } from '@/api/hooks'
 import { playBeep } from '@/utils/audio'
+import { normalizeQR, isValidDMY } from '@/utils/qr'
 import { effCartonsPerPallet } from '@/utils/palletCalc'
 import type { InboundOrder } from '@/types'
 
@@ -39,7 +40,29 @@ type ValidationResult =
   | { ok: true; msg: string }
   | { ok: false; msg: string }
 
+// Tem V2 (`;` — đơn vị 2): Mã hàng;QA;Mã lô;NSX;HSD;Giờ;Phút:Giây — khớp backend parseInboundQR nhánh v2
+function validateQRv2(raw: string, order: InboundOrder): ValidationResult {
+  const parts = raw.trim().split(';').map(p => p.trim())
+  if (parts.length < 5) {
+    return { ok: false, msg: `Định dạng QR không hợp lệ (${parts.length} phần, cần ≥5: Mã hàng;QA;Mã lô;NSX;HSD)` }
+  }
+  const [qrMatRaw, qaStr, batch, nsx, hsd] = parts
+  if (!batch) return { ok: false, msg: 'QR thiếu mã lô (phần 3)' }
+  if (!isValidDMY(nsx ?? '')) return { ok: false, msg: `NSX không hợp lệ — cần dd/mm/yyyy (nhận được: "${nsx ?? ''}")` }
+  if (!isValidDMY(hsd ?? '')) return { ok: false, msg: `HSD không hợp lệ — cần dd/mm/yyyy (nhận được: "${hsd ?? ''}")` }
+  const qrMat    = (qrMatRaw ?? '').toUpperCase()
+  const orderMat = (order.material?.material_code ?? '').trim().toUpperCase()
+  if (orderMat && qrMat !== orderMat) {
+    return { ok: false, msg: `Sai mã hàng — QR: "${qrMatRaw}", phiếu: "${order.material?.material_code}"` }
+  }
+  const norm = normalizeQR(raw)
+  const alreadyIn = order.inventory_entries?.some(e => e.pallet_code === norm)
+  if (alreadyIn) return { ok: false, msg: 'Pallet này đã được nhập trong phiếu' }
+  return { ok: true, msg: `Hợp lệ · ${order.material?.material_code} · QA ${qaStr === '1' ? 'OK' : 'X'} · HSD ${hsd}` }
+}
+
 function validateQR(raw: string, order: InboundOrder): ValidationResult {
+  if (raw.includes(';')) return validateQRv2(raw, order)
   const parts = raw.split('_')
   if (parts.length < 6) {
     return { ok: false, msg: `Định dạng QR không hợp lệ (${parts.length} phần, cần ≥6: ddmmyy_Hàng_CK_Máy_STT_NMSX)` }

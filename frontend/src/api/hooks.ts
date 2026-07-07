@@ -168,6 +168,27 @@ export function useQAStatuses() {
   })
 }
 
+// Cờ hệ thống (SystemSetting — multi-tenant silo, cờ theo khác biệt). Đọc hở user đăng nhập; ghi = wms_settings.manage_system
+export interface SystemSetting { key: string; value: unknown; updated_by: string | null; updated_at: string }
+export function useSystemSettings() {
+  return useQuery({
+    queryKey: ['system-settings'],
+    staleTime: 10 * 60_000,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/settings')
+      return data.data as SystemSetting[]
+    },
+  })
+}
+export function useUpdateSystemSetting() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ key, value }: { key: string; value: unknown }) =>
+      apiClient.put(`/wms/settings/${key}`, { value }).then(r => r.data.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['system-settings'] }),
+  })
+}
+
 // Ca nhập — tạo/sửa (gate wms_settings.manage_global ở BE)
 export function useCreateImportShift() {
   const qc = useQueryClient()
@@ -512,10 +533,12 @@ export function useScanPallet() {
       await qc.cancelQueries({ queryKey: ['inbound-order', orderId] })
       const previous = qc.getQueryData<InboundOrder>(['inbound-order', orderId])
 
-      const parts = qr_code.split('_')
+      // Tem V2 (`;`) không có Chu kỳ/Máy ở vị trí 3/4 — chỉ bóc cho tem V1 (`_`)
+      const isV2 = qr_code.includes(';')
+      const parts = isV2 ? [] : qr_code.split('_')
       const tempEntry = {
         id: `_temp_${Date.now()}`,
-        pallet_code: qr_code,
+        pallet_code: isV2 ? qr_code.trim().split(';').map(p => p.trim()).join(';') : qr_code,
         location: previous?.location ?? { id: location_id, location_code: '…', sub_code: '' },
         material: previous?.material ?? { id: '', material_code: '', short_name: null },
         manufacturer: null,

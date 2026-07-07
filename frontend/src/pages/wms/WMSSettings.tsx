@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import type { AxiosError } from 'axios'
-import { Plus, Pencil, Trash2, Warehouse, Tag, Settings2, MapPin, X, Clock, ShieldCheck, GripVertical } from 'lucide-react'
+import { Plus, Pencil, Trash2, Warehouse, Tag, Settings2, MapPin, X, Clock, ShieldCheck, GripVertical, SlidersHorizontal } from 'lucide-react'
 import { formatDateTime } from '@/utils/formatters'
 import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
@@ -20,6 +20,7 @@ import {
   useWarehouseZones, useCreateWarehouseZone, useUpdateWarehouseZone, useDeleteWarehouseZone,
   useImportShifts, useCreateImportShift, useUpdateImportShift,
   useQAStatuses, useCreateQAStatus, useUpdateQAStatus,
+  useSystemSettings, useUpdateSystemSetting,
   type WarehouseZone,
 } from '@/api/hooks'
 import { can, isAdmin, type ModulePermissions } from '@/config/permissions'
@@ -28,6 +29,51 @@ import { useScopedWhTypes } from '@/hooks/useUserScope'
 
 function apiMsg(err: unknown) {
   return (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? String(err)
+}
+
+// ─── Tab Hệ thống (SystemSetting — cờ hành vi per-DB, multi-tenant silo) ─────
+// Cờ theo KHÁC BIỆT giữa các đơn vị, không theo tên đơn vị. Sổ cờ: backend systemSettingController.
+
+const LABEL_FORMAT_OPTS = [
+  { value: 'underscore', label: 'Tem gạch dưới ( _ )', sub: 'ddmmyy_Mã_ChuKỳ_Máy_STT_NMSX — vd 070526_510000127_C05_M1_001_B' },
+  { value: 'semicolon',  label: 'Tem chấm phẩy ( ; )', sub: 'Mã hàng;QA;Mã lô;NSX;HSD;Giờ SX — vd 50033;1;TA260705A045;05/07/2026;05/03/2027;1;05:26' },
+]
+
+function SystemTab({ canManage }: { canManage: boolean }) {
+  const { data: settings = [], isLoading } = useSystemSettings()
+  const { mutate: save, isPending } = useUpdateSystemSetting()
+  const [err, setErr] = useState('')
+  const row = settings.find(s => s.key === 'label_format')
+  const current = typeof row?.value === 'string' ? row.value : 'underscore'
+
+  if (isLoading) return <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div>
+  return (
+    <div className="flex-1 min-h-0 overflow-auto p-3 space-y-3">
+      {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
+      <div className="max-w-xl border border-slate-200 rounded-lg p-3 space-y-2">
+        <div>
+          <p className="text-sm font-medium text-slate-700">Định dạng tem pallet (khi in từ app)</p>
+          <p className="text-[11px] text-slate-500">
+            Chỉ áp cho chiều IN tem. Chiều quét nhận cả 2 định dạng tự động — không cần cấu hình.
+          </p>
+        </div>
+        <SingleSelect
+          options={LABEL_FORMAT_OPTS}
+          value={current}
+          onChange={v => {
+            setErr('')
+            save({ key: 'label_format', value: v }, { onError: e => setErr(apiMsg(e)) })
+          }}
+          searchable={false}
+          disabled={!canManage || isPending}
+          triggerClassName="w-full"
+        />
+        {row?.updated_by && (
+          <p className="text-[10px] text-slate-400">Cập nhật bởi {row.updated_by} · {formatDateTime(row.updated_at)}</p>
+        )}
+      </div>
+    </div>
+  )
 }
 
 // ─── Warehouse Dialog ─────────────────────────────────────────────────────────
@@ -443,12 +489,14 @@ export default function WMSSettings() {
   const canManageZone      = admin || can(perms, 'wms_settings', 'manage_zone')
   const canManageShift     = admin || can(perms, 'wms_settings', 'manage_shift')
   const canManageQA        = admin || can(perms, 'wms_settings', 'manage_qa')
+  const canManageSystem    = admin || can(perms, 'wms_settings', 'manage_system')
   const visibleTabs = [
     canManageWarehouse && 'warehouses',
     canManageType      && 'types',
     canManageZone      && 'zones',
     canManageShift     && 'shifts',
     canManageQA        && 'qa',
+    canManageSystem    && 'system',
   ].filter(Boolean) as string[]
   const defaultTab = visibleTabs[0]
 
@@ -596,6 +644,7 @@ export default function WMSSettings() {
             {canManageZone      && <TabsTrigger value="zones"      className="gap-1.5 text-xs"><MapPin     className="h-3.5 w-3.5" /> Khu vực</TabsTrigger>}
             {canManageShift     && <TabsTrigger value="shifts"     className="gap-1.5 text-xs"><Clock      className="h-3.5 w-3.5" /> Ca nhập</TabsTrigger>}
             {canManageQA        && <TabsTrigger value="qa"         className="gap-1.5 text-xs"><ShieldCheck className="h-3.5 w-3.5" /> QA</TabsTrigger>}
+            {canManageSystem    && <TabsTrigger value="system"     className="gap-1.5 text-xs"><SlidersHorizontal className="h-3.5 w-3.5" /> Hệ thống</TabsTrigger>}
           </TabsList>
         </div>
 
@@ -913,6 +962,11 @@ export default function WMSSettings() {
           <MetaTab noun="trạng thái QA" rows={qaStatuses} loading={loadingQA} canManage={canManageQA}
             onAdd={() => { setEditQA(null); setShowQADlg(true) }}
             onEdit={r => { setEditQA(r); setShowQADlg(true) }} />
+        </TabsContent>
+
+        {/* ── Tab: Hệ thống (cờ SystemSetting) ── */}
+        <TabsContent value="system" className="mt-0 flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">
+          <SystemTab canManage={canManageSystem} />
         </TabsContent>
       </Tabs>
       )}

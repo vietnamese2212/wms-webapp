@@ -63,7 +63,7 @@ const ORDER_SELECT = `
 
 const ENTRY_SELECT = `
   id, pallet_code, location_id, material_id, manufacturer_id, cycle, machine_code,
-  pallet_sequence_no, qa_status_id,
+  pallet_sequence_no, qa_status_id, batch, expiry_date,
   import_order_id, created_by, updated_by, stack_layer, cartons_imported, production_date,
   status, notes, import_date, update_date, created_at, updated_at,
   location:Location(id, location_code, sub_code),
@@ -1099,8 +1099,8 @@ export async function scanQR(req: Request, res: Response) {
 
     let resolvedNcc: string | null = ncc_override ?? (order as { ncc_id?: string | null }).ncc_id ?? null
     let resolvedShelf: number | null = (shelf_override != null && Number(shelf_override) > 0) ? Number(shelf_override) : null
-    // Chưa có NCC & là hàng NCC → resolve từ đoạn 4 QR (khớp code hoặc mã phụ alias)
-    if (isNccGoods && !resolvedNcc && parsed.machine_code?.trim()) {
+    // Chưa có NCC & là hàng NCC → resolve từ đoạn 4 QR (chỉ tem V1 — tem V2 `;` không mang mã NCC)
+    if (parsed.format === 'v1' && isNccGoods && !resolvedNcc && parsed.machine_code?.trim()) {
       const seg4 = parsed.machine_code.trim()
       const { data: co } = await supabase.from('TransportCompany')
         .select('id').eq('type', 'NCC')
@@ -1115,6 +1115,15 @@ export async function scanQR(req: Request, res: Response) {
       const s = src as { ncc_id?: string | null; shelf_life_days?: number | null } | null
       if (!resolvedNcc) resolvedNcc = s?.ncc_id ?? null
       if (resolvedShelf == null && s?.shelf_life_days != null && Number(s.shelf_life_days) > 0) resolvedShelf = Number(s.shelf_life_days)
+    }
+
+    // Tem V2 (`;`) mang sẵn QA trên tem (1=OK, khác=X) → tự gán khi operator không chọn tay.
+    // User chốt 07/07: QA=0 (X) VẪN CHO NHẬP — chỉ gán trạng thái, không chặn.
+    let resolvedQa: string | null = qa_status_id ?? null
+    if (!resolvedQa && parsed.qa_ok !== null) {
+      const { data: qa } = await supabase.from('QAStatus').select('id')
+        .eq('code', parsed.qa_ok ? 'OK' : 'X').maybeSingle()
+      resolvedQa = (qa as { id?: string } | null)?.id ?? null
     }
 
     const { data: entry, error: entErr } = await supabase
@@ -1134,7 +1143,9 @@ export async function scanQR(req: Request, res: Response) {
         cartons_imported,
         cartons_remaining:  cartons_imported,
         production_date:    parsed.production_date,
-        qa_status_id:       qa_status_id ?? null,
+        qa_status_id:       resolvedQa,
+        batch:              parsed.batch,                                                        // tem V2: mã lô nguyên văn
+        expiry_date:        parsed.expiry_date ? parsed.expiry_date.toISOString().slice(0, 10) : null,  // tem V2: HSD tường minh (Date UTC từ thành phần — không lệch ngày)
         import_order_id:    order_id,
         created_by:         employee_id ?? null,
         updated_by:         employee_id ?? null,

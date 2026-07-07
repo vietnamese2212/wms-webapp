@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { fetchAllRowsParallel } from '../../utils/pagination'
+import { normalizeQR } from '../../utils/qrParser'
 
 function ok(res: Response, data: unknown) { return res.json({ success: true, data }) }
 function fail(res: Response, message: string, status = 400) {
@@ -46,8 +47,8 @@ async function logOp(req: Request, type: string, source_codes: string[], target_
 export async function mergePallets(req: Request, res: Response) {
   try {
     const { target_pallet_code, child_pallet_codes, warehouse_id } = req.body as { target_pallet_code?: string; child_pallet_codes?: string[]; warehouse_id?: string }
-    const target = (target_pallet_code ?? '').trim()
-    const children = Array.isArray(child_pallet_codes) ? [...new Set(child_pallet_codes.map(c => (c ?? '').trim()).filter(Boolean))] : []
+    const target = normalizeQR(target_pallet_code ?? '')
+    const children = Array.isArray(child_pallet_codes) ? [...new Set(child_pallet_codes.map(c => normalizeQR(c ?? '')).filter(Boolean))] : []
     if (!target) return fail(res, 'Thiếu mã pallet đích')
     if (!children.length) return fail(res, 'Chưa chọn pallet con để dồn')
     if (children.includes(target)) return fail(res, 'Pallet đích không thể vừa là pallet con')
@@ -90,7 +91,7 @@ export async function mergePallets(req: Request, res: Response) {
 export async function ungroupPallets(req: Request, res: Response) {
   try {
     const { pallet_codes, warehouse_id } = req.body as { pallet_codes?: string[]; warehouse_id?: string }
-    const codes = Array.isArray(pallet_codes) ? [...new Set(pallet_codes.map(c => (c ?? '').trim()).filter(Boolean))] : []
+    const codes = Array.isArray(pallet_codes) ? [...new Set(pallet_codes.map(c => normalizeQR(c ?? '')).filter(Boolean))] : []
     if (!codes.length) return fail(res, 'Chưa chọn pallet để gỡ nhóm')
     const now = new Date().toISOString()
     // Scope theo KHO qua location (vd 810000000 ở 2 kho) → tránh gỡ nhầm pallet kho khác

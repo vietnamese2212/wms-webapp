@@ -6,12 +6,13 @@ import { randomUUID } from 'crypto'
 import { resolveShelfLife } from '../../utils/shelfLife'
 import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 import { scopeCategoriesOf } from '../../utils/categoryScope'
+import { normalizeQR } from '../../utils/qrParser'
 
 const ENTRY_SELECT = `
   id, pallet_code, location_id, warehouse_id, material_id, manufacturer_id, nmsx, cycle, machine_code,
   pallet_sequence_no, qa_status_id, stack_layer, cartons_imported, cartons_remaining, cartons_reserved,
   production_date, status, import_date, update_date, adjustment_qty, ncc_id, shelf_life_days,
-  parent_pallet_code, origin,
+  batch, expiry_date, parent_pallet_code, origin,
   stocktake_at, stocktake_flagged, stocktake_flag_note,
   created_at, updated_at,
   location:Location(id, location_code, sub_code, sub_name, sub_type, warehouse:Warehouse(id, name, code)),
@@ -916,7 +917,7 @@ export async function bulkTransferMaterial(req: Request, res: Response) {
 
 export async function stocktakeCheck(req: Request, res: Response) {
   const { qr_code } = req.body as { qr_code: string }
-  const palletCode = qr_code?.trim()
+  const palletCode = normalizeQR(qr_code ?? '')   // tem V2 (`;`) đệm space từng đoạn → chuẩn hóa để khớp pallet_code đã lưu
   if (!palletCode) return fail(res, 400, 'INVALID_INPUT', 'Thiếu mã pallet')
 
   const { data, error } = await supabase.from('InventoryEntry')

@@ -9,6 +9,7 @@ import * as inboundPlan from '../controllers/wms/inboundPlanController'
 import * as palletPrint from '../controllers/wms/palletPrintController'
 import * as palletOps from '../controllers/wms/palletOpsController'
 import * as dashboard from '../controllers/wms/dashboardController'
+import * as systemSetting from '../controllers/wms/systemSettingController'
 import { inboundEmitter } from '../lib/events'
 import { requirePerm, requireAnyPerm } from '../middlewares/auth'
 
@@ -37,6 +38,10 @@ router.get('/events', (req, res) => {
 
 // Dashboard tổng quan — hở đọc có chủ đích (auth-only, cắt scope kho+loại trong controller)
 router.get('/dashboard', dashboard.getDashboard)
+
+// Cờ hệ thống (SystemSetting) — đọc hở cho user đăng nhập (in tem/quét cần cờ); ghi = quyền riêng
+router.get('/settings',      systemSetting.listSettings)
+router.put('/settings/:key', requirePerm('wms_settings', 'manage_system'), systemSetting.updateSetting)
 
 // Lookup values (loại xuất, v.v.)
 router.get('/lookup',        lookup.listLookup)

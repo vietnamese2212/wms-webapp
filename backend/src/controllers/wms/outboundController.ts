@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { effectiveNoQr, markItemsNoQrIfQty } from '../../lib/inventoryMode'
 import { effCartonsPerPallet } from '../../utils/palletCalc'
+import { normalizeQR } from '../../utils/qrParser'
 import { resolveShelfLife } from '../../utils/shelfLife'
 import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 import { categoryAllowed, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
@@ -1949,7 +1950,7 @@ export async function checkScanItem(req: Request, res: Response) {
   try {
     const { gdoId, itemId } = req.params
     const { qr_code } = req.body as { qr_code: string }
-    const qr = (qr_code ?? '').trim()
+    const qr = normalizeQR(qr_code ?? '')   // tem V2 (`;`) đệm space từng đoạn → chuẩn hóa để khớp pallet_code đã lưu
     if (!qr) return fail(res, 'qr_code là bắt buộc', 400)
 
     const [
@@ -2040,7 +2041,7 @@ export async function scanItem(req: Request, res: Response) {
   try {
     const { gdoId, itemId } = req.params
     const { qr_code, employee_id, cartons_override, loose_picking_mode } = req.body as { qr_code: string; employee_id?: string; cartons_override?: number; loose_picking_mode?: boolean }
-    const qr = (qr_code ?? '').trim()
+    const qr = normalizeQR(qr_code ?? '')   // tem V2 (`;`) đệm space từng đoạn → chuẩn hóa để khớp pallet_code đã lưu
     if (!qr) return fail(res, 'qr_code là bắt buộc', 400)
 
     const [

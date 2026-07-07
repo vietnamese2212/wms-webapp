@@ -125,6 +125,7 @@ export const MODULES = {
       manage_zone:      'Quản lý Khu vực kho (kho được gán)',
       manage_shift:     'Quản lý Ca nhập',
       manage_qa:        'Quản lý Tình trạng QA',
+      manage_system:    'Cờ hệ thống (tab Hệ thống — định dạng tem in…)',
     },
   },
   tms_plan: {

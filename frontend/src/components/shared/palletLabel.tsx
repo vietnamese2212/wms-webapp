@@ -4,8 +4,8 @@ import QRCode from 'qrcode'
 // ─── Dữ liệu 1 tem ────────────────────────────────────────────
 export type LabelData = {
   key: string
-  qr: string            // chuỗi QR — PHẢI khớp parseInboundQR: ddmmyy_Mã_ChuKỳ_Máy_Seq_NMSX
-  dateDisplay: string   // dd/MM/yyyy
+  qr: string            // chuỗi QR — mã hóa NGUYÊN VĂN pallet_code (V1 `_` hoặc V2 `;`)
+  dateDisplay: string   // NSX dd/MM/yyyy
   materialCode: string
   materialId?: string
   nmsx: string
@@ -16,6 +16,8 @@ export type LabelData = {
   cycle: string
   machine: string
   seq: string
+  batch?: string          // tem V2 (`;`): mã lô (khớp kế toán); rỗng với V1
+  expiryDisplay?: string  // tem V2: HSD dd/MM/yyyy; rỗng với V1
 }
 
 export function toDdmmyy(iso: string): string {
@@ -36,24 +38,72 @@ export function buildQR(p: { ddmmyy: string; code: string; cycle: string; machin
   return [p.ddmmyy, clean(p.code), clean(p.cycle), clean(p.machine), p.seq, clean(p.nmsx)].join('_')
 }
 
-// Dựng LabelData từ 1 mã pallet (QR) + tra cứu tên/loại nếu có
-export function qrToLabel(qr: string, mat?: { id?: string; material_description?: string | null; short_name?: string | null; category?: string | null } | null, qty?: number | null): LabelData {
-  const parts = String(qr).split('_')
+// Bóc các trường hiển thị từ 1 mã pallet, đúng cả 2 format (khớp backend qrParser).
+// QR ảnh luôn mã hóa nguyên văn pallet_code nên scan không phụ thuộc hàm này — đây chỉ để in phần CHỮ.
+export interface CodeFields {
+  format: 'v1' | 'v2'
+  dateDisplay: string    // NSX dd/MM/yyyy
+  materialCode: string
+  batch: string          // '' với V1
+  expiryDisplay: string  // '' với V1
+  nmsx: string           // '' với V2
+  cycle: string          // '' với V2
+  machine: string
+  seq: string
+}
+const V2_BATCH_RE = /^[A-Z0-9]{2}\d{6}([A-Z])(\d{3})(\.\d+)?$/i
+export function parseCodeFields(code: string): CodeFields {
+  const s = String(code ?? '').trim()
+  if (s.includes(';')) {
+    const p = s.split(';').map(x => x.trim())   // Mã hàng;QA;Mã lô;NSX;HSD;Giờ;Phút:Giây
+    const batch = p[2] ?? ''
+    const m = V2_BATCH_RE.exec(batch)
+    return {
+      format: 'v2',
+      dateDisplay: p[3] ?? '',                  // NSX đã là dd/mm/yyyy
+      materialCode: p[0] ?? '',
+      batch,
+      expiryDisplay: p[4] ?? '',
+      nmsx: '',
+      cycle: '',
+      machine: m ? m[1].toUpperCase() : '',
+      seq: m ? m[2] : '',
+    }
+  }
+  const parts = s.split('_')
   const ddmmyy = parts[0] ?? ''
   const iso = ddmmyy.length === 6 ? `20${ddmmyy.slice(4, 6)}-${ddmmyy.slice(2, 4)}-${ddmmyy.slice(0, 2)}` : ''
   return {
-    key: qr, qr,
-    dateDisplay: iso ? toDisplayDate(iso) : '—',
+    format: 'v1',
+    dateDisplay: iso ? toDisplayDate(iso) : (ddmmyy ? '—' : ''),
     materialCode: parts[1] ?? '',
-    materialId: mat?.id,
+    batch: '',
+    expiryDisplay: '',
     nmsx: parts[5] ?? '',
+    cycle: parts[2] ?? '',
+    machine: parts[3] ?? '',
+    seq: parts[4] ?? '',
+  }
+}
+
+// Dựng LabelData từ 1 mã pallet (QR) + tra cứu tên/loại nếu có
+export function qrToLabel(qr: string, mat?: { id?: string; material_description?: string | null; short_name?: string | null; category?: string | null } | null, qty?: number | null): LabelData {
+  const f = parseCodeFields(qr)
+  return {
+    key: qr, qr,
+    dateDisplay: f.dateDisplay || '—',
+    materialCode: f.materialCode,
+    materialId: mat?.id,
+    nmsx: f.nmsx,
     category: mat?.category ?? '',
     fullName: mat?.material_description ?? '',
     shortName: mat?.short_name ?? '',
     qty: qty ?? '',
-    cycle: parts[2] ?? '',
-    machine: parts[3] ?? '',
-    seq: parts[4] ?? '',
+    cycle: f.cycle,
+    machine: f.machine,
+    seq: f.seq,
+    batch: f.batch || undefined,
+    expiryDisplay: f.expiryDisplay || undefined,
   }
 }
 
@@ -82,11 +132,14 @@ export function PalletLabel({ d }: { d: LabelData }) {
           <div className="space-y-[0.8mm] min-w-0">
             <p className="truncate"><span className="font-semibold">Ngày</span>: {d.dateDisplay}</p>
             <p className="truncate"><span className="font-semibold">Mã</span>: {d.materialCode}</p>
-            <p className="truncate"><span className="font-semibold">NMSX</span>: {d.nmsx || '—'}</p>
+            {d.batch
+              ? <p className="truncate"><span className="font-semibold">Mã lô</span>: {d.batch}</p>
+              : <p className="truncate"><span className="font-semibold">NMSX</span>: {d.nmsx || '—'}</p>}
             <p className="truncate"><span className="font-semibold">Số lượng</span>: {d.qty === '' ? '……' : d.qty}</p>
           </div>
           <div className="space-y-[0.8mm] min-w-0">
             <p className="truncate"><span className="font-semibold">Loại hàng</span>: {d.category || '—'}</p>
+            {d.expiryDisplay && <p className="truncate"><span className="font-semibold">HSD</span>: {d.expiryDisplay}</p>}
             <p className="line-clamp-3"><span className="font-semibold">Tên gói tắt</span>: {d.shortName || '—'}</p>
           </div>
         </div>
@@ -100,20 +153,34 @@ export function PalletLabel({ d }: { d: LabelData }) {
           </p>
         </div>
       </div>
-      <div className="mt-[1.5mm] grid grid-cols-3 shrink-0 border-t-2 border-black text-center">
-        <div className="border-r border-black">
-          <div className="text-[8pt] font-semibold leading-tight">Chu kỳ</div>
-          <div className="text-[24pt] font-bold leading-none">{d.cycle || '—'}</div>
+      {d.batch ? (
+        // Tem V2 (`;`) không có Chu kỳ → 2 ô lớn: Máy · Số pallet
+        <div className="mt-[1.5mm] grid grid-cols-2 shrink-0 border-t-2 border-black text-center">
+          <div className="border-r border-black">
+            <div className="text-[8pt] font-semibold leading-tight">Máy</div>
+            <div className="text-[24pt] font-bold leading-none">{d.machine || '—'}</div>
+          </div>
+          <div>
+            <div className="text-[8pt] font-semibold leading-tight">Số pallet</div>
+            <div className="text-[24pt] font-bold leading-none">{Number(d.seq) || d.seq || '—'}</div>
+          </div>
         </div>
-        <div className="border-r border-black">
-          <div className="text-[8pt] font-semibold leading-tight">Máy</div>
-          <div className="text-[24pt] font-bold leading-none">{d.machine || '—'}</div>
+      ) : (
+        <div className="mt-[1.5mm] grid grid-cols-3 shrink-0 border-t-2 border-black text-center">
+          <div className="border-r border-black">
+            <div className="text-[8pt] font-semibold leading-tight">Chu kỳ</div>
+            <div className="text-[24pt] font-bold leading-none">{d.cycle || '—'}</div>
+          </div>
+          <div className="border-r border-black">
+            <div className="text-[8pt] font-semibold leading-tight">Máy</div>
+            <div className="text-[24pt] font-bold leading-none">{d.machine || '—'}</div>
+          </div>
+          <div>
+            <div className="text-[8pt] font-semibold leading-tight">Số pallet</div>
+            <div className="text-[24pt] font-bold leading-none">{Number(d.seq) || d.seq}</div>
+          </div>
         </div>
-        <div>
-          <div className="text-[8pt] font-semibold leading-tight">Số pallet</div>
-          <div className="text-[24pt] font-bold leading-none">{Number(d.seq) || d.seq}</div>
-        </div>
-      </div>
+      )}
     </div>
   )
 }

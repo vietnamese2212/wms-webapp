@@ -14,9 +14,10 @@ import { useColumnResize } from '@/components/shared/useColumnResize'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { isNccCategory } from '@/utils/cargoCategory'
+import { parseCodeFields } from '@/components/shared/palletLabel'
 import {
   useWarehouses, useMaterials, useInventoryEntries, useInventoryFacets,
-  useLogPalletPrints, usePalletPrints, useTransportCompanies, type PalletPrintRow,
+  useLogPalletPrints, usePalletPrints, useTransportCompanies, useSystemSettings, type PalletPrintRow,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
@@ -41,6 +42,8 @@ type LabelData = {
   machine: string       // đoạn 4 của QR: Máy (thành phẩm) HOẶC mã NCC (hàng NCC)
   nccName?: string      // tên NCC để HIỂN THỊ trên tem (QR vẫn dùng mã ở machine); rỗng với thành phẩm
   seq: string           // "001"
+  batch?: string          // tem V2 (`;`): mã lô (khớp kế toán); rỗng với V1
+  expiryDisplay?: string  // tem V2: HSD dd/MM/yyyy; rỗng với V1
 }
 
 type WarehouseLite = { id: string; code: string; name: string; warehouse_type?: string | null; nmsx_code?: string | null }
@@ -92,11 +95,14 @@ function PalletLabel({ d }: { d: LabelData }) {
           <div className="space-y-[0.8mm] min-w-0">
             <p className="truncate"><span className="font-semibold">Ngày</span>: {d.dateDisplay}</p>
             <p className="truncate"><span className="font-semibold">Mã</span>: {d.materialCode}</p>
-            <p className="truncate"><span className="font-semibold">NMSX</span>: {d.nmsx || '—'}</p>
+            {d.batch
+              ? <p className="truncate"><span className="font-semibold">Mã lô</span>: {d.batch}</p>
+              : <p className="truncate"><span className="font-semibold">NMSX</span>: {d.nmsx || '—'}</p>}
             <p className="truncate"><span className="font-semibold">Số lượng</span>: {d.qty === '' ? '……' : d.qty}</p>
           </div>
           <div className="space-y-[0.8mm] min-w-0">
             <p className="truncate"><span className="font-semibold">Loại hàng</span>: {d.category || '—'}</p>
+            {d.expiryDisplay && <p className="truncate"><span className="font-semibold">HSD</span>: {d.expiryDisplay}</p>}
             <p className="line-clamp-3"><span className="font-semibold">Tên gói tắt</span>: {d.shortName || '—'}</p>
           </div>
         </div>
@@ -113,6 +119,19 @@ function PalletLabel({ d }: { d: LabelData }) {
       </div>
 
       {/* Footer lớn — 3 cột tiêu đề + giá trị. Ô giá trị CHIỀU CAO CỐ ĐỊNH → mọi tem cùng cỡ (không resize) */}
+      {d.batch ? (
+        // Tem V2 (`;`) không có Chu kỳ/NCC → 2 ô lớn: Máy · Số pallet
+        <div className="mt-[1.5mm] grid grid-cols-2 shrink-0 border-t-2 border-black text-center">
+          <div className="border-r border-black flex flex-col">
+            <div className="text-[8pt] font-semibold leading-tight">Máy</div>
+            <div className="h-[9mm] flex items-center justify-center overflow-hidden text-[24pt] font-bold leading-none">{d.machine || '—'}</div>
+          </div>
+          <div className="flex flex-col">
+            <div className="text-[8pt] font-semibold leading-tight">Số pallet</div>
+            <div className="h-[9mm] flex items-center justify-center overflow-hidden text-[24pt] font-bold leading-none">{Number(d.seq) || d.seq || '—'}</div>
+          </div>
+        </div>
+      ) : (
       <div className="mt-[1.5mm] grid grid-cols-3 shrink-0 border-t-2 border-black text-center">
         <div className="border-r border-black flex flex-col">
           <div className="text-[8pt] font-semibold leading-tight">Chu kỳ</div>
@@ -136,6 +155,7 @@ function PalletLabel({ d }: { d: LabelData }) {
           <div className="h-[9mm] flex items-center justify-center overflow-hidden text-[24pt] font-bold leading-none">{Number(d.seq) || d.seq}</div>
         </div>
       </div>
+      )}
     </div>
   )
 }
@@ -190,6 +210,10 @@ export default function PalletLabels() {
   const canAudit    = can(perms, 'pallet_print', 'audit')      // tab Truy cứu
   const canHistory  = can(perms, 'pallet_print', 'history')    // tab Lịch sử in
   const logPrints = useLogPalletPrints()
+  // Cờ định dạng tem của ĐƠN VỊ (SystemSetting per-DB). Sinh tem mới ở đây theo format `_` (ĐV cũ);
+  // ĐV dùng tem `;` → tem do hệ thống SX sinh, dùng tab "In lại từ tồn kho".
+  const { data: sysSettings = [] } = useSystemSettings()
+  const isV2Format = (sysSettings.find(s => s.key === 'label_format')?.value as string) === 'semicolon'
 
   type LabelTab = 'generate' | 'reprint' | 'audit' | 'history'
   // Mỗi tab 1 quyền riêng — mở tab đầu tiên user có quyền
@@ -294,23 +318,27 @@ export default function PalletLabels() {
   function entryToLabel(e: any): LabelData {
     const pd: string | null = e.production_date ?? null
     const disp = pd ? toDisplayDate(pd.slice(0, 10)) : '—'
-    // QR pallet: ddmmyy_Mã_ChuKỳ_Máy_Seq_NMSX → lấy đúng các phần từ chính mã QR
-    const parts = String(e.pallet_code ?? '').split('_')
+    // Bóc từ mã pallet đúng cả 2 format (V1 `_` / V2 `;`); ưu tiên giá trị DB khi có
+    const f = parseCodeFields(e.pallet_code ?? '')
+    const batch = e.batch ?? f.batch
+    const expiryDisplay = e.expiry_date ? toDisplayDate(String(e.expiry_date).slice(0, 10)) : f.expiryDisplay
     return {
       key: e.pallet_code,
       qr: e.pallet_code,
       dateDisplay: disp,
-      materialCode: e.material?.material_code ?? parts[1] ?? '',
+      materialCode: e.material?.material_code ?? f.materialCode,
       materialId: e.material?.id,
-      nmsx: parts[5] ?? e.manufacturer?.code ?? '',
+      nmsx: f.nmsx || e.manufacturer?.code || '',
       category: e.material?.category ?? '',
       fullName: e.material?.material_description ?? e.material?.short_name ?? '',
       shortName: e.material?.short_name ?? '',
       qty: e.cartons_imported ?? '',
-      cycle: e.cycle ?? parts[2] ?? '',
-      machine: e.machine_code ?? parts[3] ?? '',
+      cycle: e.cycle ?? f.cycle,
+      machine: e.machine_code ?? f.machine,
       nccName: e.ncc?.name ?? '',   // hàng NCC: tem hiện tên NCC
-      seq: parts[4] ?? '',
+      seq: f.seq,
+      batch: batch || undefined,
+      expiryDisplay: expiryDisplay || undefined,
     }
   }
 
@@ -424,16 +452,16 @@ export default function PalletLabels() {
   }, [auEvents])
 
   const auditSummary = useMemo(() => auPallets.map(e => {
-    const parts = String(e.pallet_code).split('_')
+    const f = parseCodeFields(e.pallet_code)
     const events = (auEventMap.get(e.pallet_code) ?? []).slice().sort((a, b) => b.created_at.localeCompare(a.created_at))
     return {
       qr: e.pallet_code as string,
-      material_code: e.material?.material_code ?? parts[1] ?? null,
+      material_code: e.material?.material_code ?? f.materialCode ?? null,
       short_name: (e.material?.short_name ?? null) as string | null,
       category: (e.material?.category ?? null) as string | null,
-      nmsx: (parts[5] ?? e.manufacturer?.code ?? null) as string | null,
-      cycle: (e.cycle ?? parts[2] ?? null) as string | null,
-      machine: (e.machine_code ?? parts[3] ?? null) as string | null,
+      nmsx: (f.nmsx || e.manufacturer?.code || null) as string | null,
+      cycle: (e.cycle ?? f.cycle ?? null) as string | null,
+      machine: (e.machine_code ?? f.machine ?? null) as string | null,
       ncc_name: (e.ncc?.name ?? null) as string | null,
       production_date: (e.production_date ?? null) as string | null,
       import_date: (e.import_date ?? null) as string | null,
@@ -541,24 +569,24 @@ export default function PalletLabels() {
   }, [histFiltered])
 
   function logRowToLabel(r: PalletPrintRow): LabelData {
-    const parts = String(r.qr_code).split('_')
-    const ddmmyy = parts[0] ?? ''
-    const iso = ddmmyy.length === 6 ? `20${ddmmyy.slice(4, 6)}-${ddmmyy.slice(2, 4)}-${ddmmyy.slice(0, 2)}` : ''
+    const f = parseCodeFields(r.qr_code)   // đúng cả 2 format (V1 `_` / V2 `;`)
     const mat = r.material_code ? matByCode.get(r.material_code) : undefined
     return {
       key: r.qr_code, qr: r.qr_code,
-      dateDisplay: iso ? toDisplayDate(iso) : '—',
-      materialCode: r.material_code ?? parts[1] ?? '',
+      dateDisplay: f.dateDisplay || '—',
+      materialCode: r.material_code ?? f.materialCode,
       materialId: mat?.id,
-      nmsx: r.nmsx ?? parts[5] ?? '',
+      nmsx: r.nmsx ?? f.nmsx,
       category: r.category ?? mat?.category ?? '',
       fullName: mat?.material_description ?? '',
       shortName: mat?.short_name ?? '',
       qty: r.qty ?? '',
-      cycle: r.cycle ?? parts[2] ?? '',
-      machine: r.machine ?? parts[3] ?? '',
-      nccName: isNccCategory(r.category ?? mat?.category) ? (nccNameByCode.get(r.machine ?? parts[3] ?? '') ?? '') : '',
-      seq: r.seq ?? parts[4] ?? '',
+      cycle: r.cycle ?? f.cycle,
+      machine: r.machine ?? f.machine,
+      nccName: isNccCategory(r.category ?? mat?.category) ? (nccNameByCode.get(r.machine ?? f.machine) ?? '') : '',
+      seq: r.seq ?? f.seq,
+      batch: f.batch || undefined,
+      expiryDisplay: f.expiryDisplay || undefined,
     }
   }
   // Chọn in lại: 1 LỆNH GOM (single) HOẶC nhiều TEM — loại trừ lẫn nhau
@@ -725,6 +753,11 @@ export default function PalletLabels() {
           {tab === 'generate' ? (
             /* Form gọn: gom 2–3 cột để vừa 1 màn, không phải kéo dọc */
             <div className="space-y-2">
+              {isV2Format && (
+                <div className="rounded-md bg-amber-50 border border-amber-200 p-2 text-[11px] text-amber-800">
+                  Đơn vị đang dùng <b>tem chấm phẩy&nbsp;(;)</b> — tem mới do hệ thống sản xuất sinh. Trang này sinh tem dạng gạch dưới&nbsp;(_) của đơn vị cũ; với tem&nbsp;(;) hãy dùng tab <b>In lại từ tồn kho</b> để in lại theo mã lô đã nhập.
+                </div>
+              )}
               <div className="space-y-2">
                 <div className="space-y-1">
                   <Label className="text-xs">Loại hàng</Label>

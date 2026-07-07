@@ -265,10 +265,12 @@ export default function Materials() {
   }
 
   // Mẫu Excel Mã hàng — cột KHỚP thứ tự M_KEYS backend (dòng 1 nhãn, dòng 2 key, dòng 3 ví dụ).
+  // ĐV tem `;` (isV2Format): mẫu tự thêm cột 13 batch_prefix (Mã tắt mã lô); ĐV tem `_` giữ 12 cột như cũ.
   function downloadMaterialTemplate() {
     const labels = ['Mã hàng *', 'Tên hàng *', 'Loại hàng *', 'ĐVT *', 'Thùng/Pallet *', 'Đv/Thùng', 'Pallet/EA', 'KL (kg) *', 'HSD (ngày)', 'Loại SP', 'Tên rút gọn', 'Ghi chú']
     const keys = ['material_code', 'material_description', 'category', 'unit', 'cartons_per_pallet', 'units_per_carton', 'pallet_per_ea', 'weight_kg', 'shelf_life_days', 'product_type', 'custom_short_name', 'notes']
     const ex = ['210000262', 'Sữa tươi tiệt trùng 180ml', 'Thành phẩm', 'CAR', 80, 48, '', 9.6, 180, 'UHT', '', '']
+    if (isV2Format) { labels.push('Mã tắt (mã lô)'); keys.push('batch_prefix'); ex.push('TA') }
     const ws = XLSX.utils.aoa_to_sheet([labels, keys, ex])
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'MaHang')

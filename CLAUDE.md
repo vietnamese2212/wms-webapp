@@ -139,6 +139,32 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 **Bối cảnh:** App dùng giữa Kho tổng và Kho NPP. Kho nhận có trong danh sách NPP → có inbound tại kho nhận, dùng nhập hàng / tồn kho bình thường.
 
 ---
+## Đa đơn vị (multi-tenant SILO) — ĐANG XÂY cho 2 đơn vị, khác nhau ở ĐỊNH DẠNG QR PALLET
+
+**1 codebase phục vụ NHIỀU đơn vị độc lập** — mỗi đơn vị 1 Supabase + 1 Vercel + 1 link riêng (cách ly dữ liệu tuyệt đối). **TUYỆT ĐỐI KHÔNG `if (tenant === 'X')`, không fork/copy project.** Khác biệt giữa đơn vị xử bằng **cờ theo KHÁC BIỆT** (không theo tên đơn vị) trong bảng `SystemSetting` (key-value jsonb, per-DB). Kiến trúc + thang xử lý khác biệt 5 bậc: memory `multi-tenant-silo-architecture`. Khác biệt ĐÃ CÓ THẬT hiện nay = **định dạng tem/QR pallet** (memory `qr-format-v2-semicolon`).
+
+**2 định dạng QR sống chung VÔ THỜI HẠN** (tồn cũ toàn V1; đơn vị mỗi bên 1 format cố định):
+
+| | **V1 — Đơn vị 1 (LOF), delimiter `_`** | **V2 — Đơn vị 2, delimiter `;`** |
+|---|---|---|
+| Ví dụ | `070526_510000127_C05_M1_001_B` | `50033;      1;TA260705A018;05/07/2026;05/03/2027;      1;05:26` |
+| Cấu trúc | `ddmmyy_MãHàng_ChuKỳ_<Máy\|MãNCC>_STT_NMSX` | `MãHàng;QA;MãLô;NSX;HSD;Giờ;Phút:Giây` (7 đoạn, **có đệm SPACE → phải trim**) |
+| Đoạn ý nghĩa | 1=ngày SX ddmmyy · 2=mã hàng · 3=chu kỳ · **4=Máy (thành phẩm) HOẶC mã NCC (hàng NCC: POSM/Raw/Thùng/Giấy)** · 5=STT pallet · 6=NMSX (hàng NCC: nơi nhận đầu) | 1=mã hàng · **2=QA (1=OK, 0/khác=X)** · **3=Mã lô** (`2 ký tự tắt hàng`+`yymmdd`+`Máy 1 ký tự`+`SEQ 3 số`, vd TA+260705+A+018) · 4=NSX dd/mm/yyyy · 5=HSD dd/mm/yyyy · 6+7=giờ:phút:giây SX |
+| HSD / %Date | suy từ NSX + shelf-life (mã/NCC) | **HSD tường minh trên tem** → %Date dùng thẳng HSD (không cần khai shelf-life mã) |
+| Mã lô (batch) | không có (cột `batch`=null) | **= khóa liên kết KẾ TOÁN/ERP** (kế toán chỉ giữ mã lô `TA260705A018`); khớp qua import/API sau khi có kết nối |
+| NCC | đoạn 4 (hàng NCC) → tự resolve khi quét | tem KHÔNG mang NCC → chọn tay nếu cần |
+
+**PARSE PHẢI TẬP TRUNG — KHÔNG tự `split('_')`/`split(';')` rải rác (nếu không, sửa 1 chỗ sẽ đè/lệch chỗ khác):**
+- **BE:** `backend/src/utils/qrParser.ts` — `parseInboundQR(raw)` tự nhận nhánh theo delimiter, trả `ParsedQR` (có `format:'v1'|'v2'`, `qa_ok`, `batch`, `expiry_date`, `machine_code`, `pallet_sequence_no`…) + `normalizeQR(raw)` (trim từng đoạn V2). MỌI điểm quét gọi `normalizeQR` trước khi khớp `pallet_code`: inbound scan, outbound scan (`checkScanItem`/`scanItem`), inventory `stocktakeCheck`, pallet-ops `merge`/`ungroup`/`split`.
+- **FE:** `frontend/src/utils/qr.ts` — `normalizeQR` / `materialCodeOf(code)` (V2=đoạn 0, V1=đoạn 1) / `isValidDMY`; `frontend/src/components/shared/palletLabel.tsx` — `parseCodeFields(code)` (bóc trường hiển thị 2 format, QR luôn mã hóa NGUYÊN VĂN `pallet_code` nên scan không phụ thuộc). `InboundScanSheet` validate cả 2; `PalletLabels` (entryToLabel/logRowToLabel/auditSummary) + render tem V2 (Mã lô + HSD, đáy 2 ô Máy/Số pallet).
+- **%Date TẬP TRUNG:** `computePctDate(entry, material, now)` ở `shelfLife.ts` (BE + FE KHỚP NHAU) — ưu tiên `expiry_date` tường minh (mẫu số HSD−NSX) → fallback NSX+shelflife (V1 kết quả không đổi). Áp mọi nơi tính %Date (inventory list/facets/summary, outbound check/scan/prepare, FE Inventory/PalletDetailDialog/StocktakeDashboard). **Sửa công thức %Date = sửa 1 hàm này**, đừng viết lại rời.
+
+**Cờ & hạ tầng:**
+- Cột: `InventoryEntry.batch` (mã lô V2, null với V1) + `InventoryEntry.expiry_date` (HSD V2) — migration `20260707_systemsetting_qr_v2.sql`.
+- Bảng `SystemSetting` + cờ `label_format` (`'underscore'`/`'semicolon'`) — **chỉ điều khiển chiều IN tem**, chiều QUÉT tự nhận theo delimiter. Controller `systemSettingController.ts` (sổ cờ `KNOWN_SETTINGS`) + route `GET /wms/settings` (hở đọc) / `PUT /wms/settings/:key` (`wms_settings.manage_system`). FE: tab **"Hệ thống"** trong Cài đặt WMS (`useSystemSettings`/`useUpdateSystemSetting`, `SingleSelect`). Sinh tem MỚI từ app cho V2: CHƯA làm (tem thật do nhà máy in; tab Sinh tem hiện ghi chú khi cờ=semicolon) — nếu build phải chốt quy tắc dải Máy/SEQ riêng để không trùng nhà máy.
+- **Luật vàng chống đè:** mọi thay đổi liên quan format QR phải đi qua các helper tập trung trên (BE↔FE giữ KHỚP NHAU); thêm điểm quét mới → BẮT BUỘC `normalizeQR`; thêm cờ khác biệt mới → thêm vào `KNOWN_SETTINGS` (sổ cờ) + default = hành vi V1 cũ (đơn vị 1 không đổi).
+
+---
 ## Phân quyền (RBAC) — chi tiết skill `add-permission`
 
 **Kiến trúc:**
@@ -166,7 +192,7 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 | `materials` | Mã hàng | Mã hàng (+ Nhà sản xuất) | view, create, edit, delete |
 | `pallet_print` | In tem pallet | In tem pallet | view, **mỗi tab 1 quyền (02/07)**: generate=tab Sinh tem mới, reprint=tab In lại từ tồn kho + nút In lại trong Lịch sử, history=tab Lịch sử in, audit=tab Truy cứu |
 | `pallet_ops` | Dồn / Tách pallet | Dồn / Tách pallet | view, merge, ungroup, split |
-| `wms_settings` | Cài đặt WMS | Cài đặt WMS (kho, loại kho, khu vực, ca nhập, QA) | view, manage_warehouse, manage_type, manage_zone, manage_shift, manage_qa |
+| `wms_settings` | Cài đặt WMS | Cài đặt WMS (kho, loại kho, khu vực, ca nhập, QA, **Hệ thống**) | view, manage_warehouse, manage_type, manage_zone, manage_shift, manage_qa, **manage_system**=tab Hệ thống (cờ `label_format` định dạng tem in — multi-tenant) |
 | `employees` | Sơ đồ tổ chức (xem) | Sơ đồ tổ chức + xem DS nhân sự | view |
 | `user_admin` | Quản lý người dùng | Quản lý người dùng | view, create, edit, set_password, delete, manage_roles |
 | `work_skill` | Vị trí & Skill | trong Quản lý người dùng (gán skill) | view, manage, assign |

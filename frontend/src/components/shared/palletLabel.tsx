@@ -38,6 +38,23 @@ export function buildQR(p: { ddmmyy: string; code: string; cycle: string; machin
   return [p.ddmmyy, clean(p.code), clean(p.cycle), clean(p.machine), p.seq, clean(p.nmsx)].join('_')
 }
 
+// ─── Sinh tem V2 (tem `;` đơn vị 2) ───────────────────────────
+export function toYymmdd(iso: string): string {
+  if (!iso || iso.length < 10) return ''
+  const [y, m, d] = iso.split('-')
+  return `${y.slice(2)}${m}${d}`
+}
+// Mã lô V2: <mã tắt 2 ký tự><yymmdd><Máy 1 ký tự><SEQ 3 số> — vd TA260705A018 (khớp qrParser V2_BATCH_RE)
+export function buildBatchV2(p: { prefix: string; yymmdd: string; machine: string; seq: string | number }): string {
+  const n = typeof p.seq === 'number' ? p.seq : parseInt(String(p.seq), 10)
+  const seqStr = Number.isNaN(n) ? String(p.seq) : String(n).padStart(3, '0')
+  return `${clean(p.prefix).toUpperCase()}${p.yymmdd}${clean(p.machine).toUpperCase()}${seqStr}`
+}
+// Chuỗi QR V2 khớp backend parseV2: MãHàng;QA;Mã lô;NSX;HSD (5 đoạn — app sinh KHÔNG có giờ SX của nhà máy)
+export function buildQRv2(p: { code: string; qaOk: boolean; batch: string; nsxDisplay: string; hsdDisplay: string }): string {
+  return [clean(p.code), p.qaOk ? '1' : '0', p.batch, p.nsxDisplay, p.hsdDisplay].join(';')
+}
+
 // Bóc các trường hiển thị từ 1 mã pallet, đúng cả 2 format (khớp backend qrParser).
 // QR ảnh luôn mã hóa nguyên văn pallet_code nên scan không phụ thuộc hàm này — đây chỉ để in phần CHỮ.
 export interface CodeFields {

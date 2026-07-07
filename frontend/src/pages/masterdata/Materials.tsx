@@ -24,6 +24,7 @@ import { omniMatch } from '@/utils/omniSearch'
 import {
   useMaterials, useWarehouses, useTransportCompanies,
   useCreateMaterial, useUpdateMaterial, useDeleteMaterial, useUploadMaterialsExcel,
+  useSystemSettings,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
@@ -93,6 +94,7 @@ const EMPTY_FORM = {
   weight_kg: '',
   shelf_life_days: '',
   old_code: '',
+  batch_prefix: '',
   notes: '',
 }
 
@@ -121,6 +123,10 @@ export default function Materials() {
   const perms = user?.module_permissions as ModulePermissions | null ?? null
   const canEdit = can(perms, 'materials', 'edit')
   const canDel  = can(perms, 'materials', 'delete')
+
+  // Cờ định dạng tem của ĐƠN VỊ — ĐV2 (tem `;`) mới cần Mã tắt (mã lô); ĐV1 ẩn ô này cho gọn.
+  const { data: sysSettings = [] } = useSystemSettings()
+  const isV2Format = (sysSettings.find(s => s.key === 'label_format')?.value as string) === 'semicolon'
 
   // Filters (persisted via wmsFilterStore)
   const { materials: mf, setMaterials } = useWmsFilterStore()
@@ -295,6 +301,7 @@ export default function Materials() {
       weight_kg:            mat.weight_kg           != null ? String(mat.weight_kg)           : '',
       shelf_life_days:      mat.shelf_life_days     != null ? String(mat.shelf_life_days)     : '',
       old_code:             mat.old_code ?? '',
+      batch_prefix:         mat.batch_prefix ?? '',
       notes:                mat.notes ?? '',
     })
     setOverrides(
@@ -340,6 +347,7 @@ export default function Materials() {
         weight_kg:                     Number(form.weight_kg),
         shelf_life_days:               form.shelf_life_days ? Number(form.shelf_life_days) : undefined,
         old_code:                      form.old_code.trim() || undefined,
+        batch_prefix:                  form.batch_prefix.trim().toUpperCase() || undefined,
         notes:                         form.notes.trim() || undefined,
         no_qr_tracking:                noQr,
         warehouse_pallet_overrides:    palletOverrides,
@@ -975,6 +983,19 @@ export default function Materials() {
               </Label>
               <Input type="number" min={0} className="col-span-2 h-7 text-xs" value={form.shelf_life_days} onChange={e => setField('shelf_life_days', e.target.value)} placeholder="Số ngày hạn sử dụng" />
             </div>
+
+            {/* Mã tắt (mã lô) — chỉ ĐV2 tem `;`: 2 ký tự đầu mã lô để sinh tem (vd TA → TA260705A018) */}
+            {isV2Format && (
+              <div className="grid grid-cols-3 items-center gap-2">
+                <Label className="text-xs text-right">Mã tắt (mã lô)</Label>
+                <div className="col-span-2">
+                  <Input maxLength={2} className="h-7 text-xs uppercase w-24" value={form.batch_prefix}
+                    onChange={e => setField('batch_prefix', e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
+                    placeholder="TA" />
+                  <p className="text-[10px] text-slate-400 mt-0.5">2 ký tự đầu mã lô khi sinh tem (;) — khớp mã lô kế toán, vd <b>TA</b> → TA260705A018.</p>
+                </div>
+              </div>
+            )}
 
             {/* HSD ngoại lệ theo NCC */}
             <div className="grid grid-cols-3 items-start gap-2">

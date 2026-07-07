@@ -65,7 +65,7 @@ export async function createMaterial(req: Request, res: Response) {
       category, product_type, unit, manufacturer_id, notes, no_qr_tracking,
       weight_kg, cartons_per_pallet, cartons_per_pallet_mn,
       units_per_carton, pallet_per_ea, shelf_life_days, storage_category, old_code, image_url,
-      warehouse_pallet_overrides, supplier_shelf_life_overrides,
+      warehouse_pallet_overrides, supplier_shelf_life_overrides, batch_prefix,
     } = req.body
     if (!material_code || !material_description)
       return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu material_code hoặc material_description')
@@ -91,6 +91,7 @@ export async function createMaterial(req: Request, res: Response) {
         shelf_life_days: shelf_life_days != null ? Number(shelf_life_days) : null,
         storage_category: storage_category ?? null,
         old_code: old_code ? String(old_code).trim() : null,
+        batch_prefix: batch_prefix ? String(batch_prefix).trim().toUpperCase() : null,
         image_url: image_url ?? null,
         manufacturer_id: manufacturer_id ?? null,
         notes: notes ?? null,
@@ -120,7 +121,7 @@ export async function updateMaterial(req: Request, res: Response) {
       manufacturer_id, notes, is_active, no_qr_tracking,
       weight_kg, cartons_per_pallet, cartons_per_pallet_mn,
       units_per_carton, pallet_per_ea, shelf_life_days, storage_category, old_code, image_url,
-      warehouse_pallet_overrides, supplier_shelf_life_overrides,
+      warehouse_pallet_overrides, supplier_shelf_life_overrides, batch_prefix,
     } = req.body
 
     let short_name: string | undefined
@@ -150,6 +151,7 @@ export async function updateMaterial(req: Request, res: Response) {
     if (shelf_life_days !== undefined) patch.shelf_life_days = shelf_life_days != null ? Number(shelf_life_days) : null
     if (storage_category !== undefined) patch.storage_category = storage_category
     if (old_code !== undefined) patch.old_code = old_code ? String(old_code).trim() : null
+    if (batch_prefix !== undefined) patch.batch_prefix = batch_prefix ? String(batch_prefix).trim().toUpperCase() : null
     if (image_url !== undefined) patch.image_url = image_url
     if (manufacturer_id !== undefined) patch.manufacturer_id = manufacturer_id || null
     if (notes !== undefined) patch.notes = notes

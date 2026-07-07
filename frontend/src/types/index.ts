@@ -225,6 +225,7 @@ export interface Material {
   shelf_life_days:            number | null
   storage_category:           string | null
   old_code:                   string | null
+  batch_prefix:               string | null   // ĐV2 tem `;`: 2 ký tự tắt hàng để sinh mã lô (khớp kế toán); null với ĐV1
   warehouse_pallet_overrides:     WarehousePalletOverride[] | null
   supplier_shelf_life_overrides?: SupplierShelfLifeOverride[] | null
   manufacturer_id:                string | null

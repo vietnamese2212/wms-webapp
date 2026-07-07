@@ -67,6 +67,21 @@ function buildQR(p: { ddmmyy: string; code: string; cycle: string; machine: stri
   return [p.ddmmyy, clean(p.code), clean(p.cycle), clean(p.machine), p.seq, clean(p.nmsx)].join('_')
 }
 
+// ─── Sinh tem V2 (tem `;` đơn vị 2) — khớp backend parseV2 ─────
+function toYymmdd(iso: string): string {
+  if (!iso || iso.length < 10) return ''
+  const [y, m, d] = iso.split('-')
+  return `${y.slice(2)}${m}${d}`
+}
+// Mã lô V2: <mã tắt 2 ký tự><yymmdd><Máy 1 ký tự><SEQ 3 số> — vd TA260705A018
+function buildBatchV2(p: { prefix: string; yymmdd: string; machine: string; seq: number }): string {
+  return `${clean(p.prefix).toUpperCase()}${p.yymmdd}${clean(p.machine).toUpperCase()}${String(p.seq).padStart(3, '0')}`
+}
+// Chuỗi QR V2: MãHàng;QA;Mã lô;NSX;HSD (5 đoạn — app sinh không có giờ SX của nhà máy)
+function buildQRv2(p: { code: string; qaOk: boolean; batch: string; nsxDisplay: string; hsdDisplay: string }): string {
+  return [clean(p.code), p.qaOk ? '1' : '0', p.batch, p.nsxDisplay, p.hsdDisplay].join(';')
+}
+
 // ─── QR ảnh (dataURL — in ổn định) ────────────────────────────
 function QRImg({ value, px = 320 }: { value: string; px?: number }) {
   const [src, setSrc] = useState('')
@@ -253,6 +268,11 @@ export default function PalletLabels() {
   const [seqStart, setSeqStart] = useState('1')
   const [count, setCount]     = useState('4')
   const [qty, setQty]         = useState('')
+  // ── Sinh tem V2 (tem `;`) — HSD tường minh + QA; mã lô = mã tắt mã hàng + ngày + Máy + STT ──
+  const [hsdV2, setHsdV2]     = useState('')      // HSD (auto NSX + hạn dùng mã, sửa được)
+  const [qaOkV2, setQaOkV2]   = useState(true)    // QA đạt (1) / X (0)
+  const [hsdEdited, setHsdEdited] = useState(false)  // user đã sửa tay HSD → ngừng auto-đè
+  const batchPrefix = (mat?.batch_prefix ?? '').trim().toUpperCase()
 
   // Danh mục NCC (đoạn 4 cho hàng nhập NCC)
   const { data: companies = [] } = useTransportCompanies(true)
@@ -277,13 +297,61 @@ export default function PalletLabels() {
     setQty(eff > 0 ? String(eff) : '')
   }, [mat, nmsxWarehouseId])
 
+  // Tem V2: HSD tự tính = NSX + hạn dùng mã (shelf_life_days), user sửa tay thì ngừng đè
+  useEffect(() => { setHsdEdited(false) }, [mat, prodDate])
+  useEffect(() => {
+    if (!isV2Format || hsdEdited || !mat || !prodDate) return
+    const days = mat.shelf_life_days
+    if (days == null) { setHsdV2(''); return }
+    const d = new Date(`${prodDate}T00:00:00`)
+    d.setDate(d.getDate() + days)
+    const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), dd = String(d.getDate()).padStart(2, '0')
+    setHsdV2(`${y}-${m}-${dd}`)
+  }, [isV2Format, hsdEdited, mat, prodDate])
+
   const genReady = !!(mat && prodDate && cycle.trim() && seg4.trim() && nmsx.trim())
+  const genReadyV2 = !!(mat && batchPrefix && prodDate && machine.trim() && hsdV2)
   const genLabels: LabelData[] = useMemo(() => {
-    if (tab !== 'generate' || !genReady || !mat) return []
-    const ddmmyy = toDdmmyy(prodDate)
-    const start  = parseInt(seqStart, 10) || 1
-    const n      = Math.min(Math.max(parseInt(count, 10) || 0, 0), 200)
+    if (tab !== 'generate' || !mat) return []
+    const start = parseInt(seqStart, 10) || 1
+    const n     = Math.min(Math.max(parseInt(count, 10) || 0, 0), 200)
     const out: LabelData[] = []
+
+    // ── Tem V2 (tem `;`): MãHàng;QA;Mã lô;NSX;HSD ──
+    if (isV2Format) {
+      if (!genReadyV2) return []
+      const yymmdd = toYymmdd(prodDate)
+      const nsxDisp = toDisplayDate(prodDate)
+      const hsdDisp = toDisplayDate(hsdV2)
+      const machineChar = clean(machine).toUpperCase().slice(0, 1)   // Máy = 1 ký tự trong mã lô
+      for (let i = 0; i < n; i++) {
+        const seq = start + i
+        const batch = buildBatchV2({ prefix: batchPrefix, yymmdd, machine: machineChar, seq })
+        out.push({
+          key: `gen-${batch}`,
+          qr: buildQRv2({ code: mat.material_code, qaOk: qaOkV2, batch, nsxDisplay: nsxDisp, hsdDisplay: hsdDisp }),
+          dateDisplay: nsxDisp,
+          materialCode: mat.material_code,
+          materialId: mat.id,
+          nmsx: '',
+          category: mat.category ?? '',
+          fullName: mat.material_description ?? '',
+          shortName: mat.short_name ?? '',
+          qty: qty === '' ? '' : Number(qty),
+          cycle: '',
+          machine: machineChar,
+          nccName: '',
+          seq: String(seq).padStart(3, '0'),
+          batch,
+          expiryDisplay: hsdDisp,
+        })
+      }
+      return out
+    }
+
+    // ── Tem V1 (tem `_`) ──
+    if (!genReady) return []
+    const ddmmyy = toDdmmyy(prodDate)
     for (let i = 0; i < n; i++) {
       const seq = String(start + i)   // số thứ tự thuần (3 chứ không 003) — tránh 003≠3 khi tạo lại
       out.push({
@@ -304,10 +372,12 @@ export default function PalletLabels() {
       })
     }
     return out
-  }, [tab, mat, prodDate, cycle, seg4, seg4Name, nmsx, seqStart, count, qty])
+  }, [tab, mat, prodDate, cycle, seg4, seg4Name, nmsx, seqStart, count, qty, isV2Format, genReadyV2, hsdV2, qaOkV2, machine, batchPrefix])
 
   // F1 — cảnh báo trùng: QR sắp sinh đã có pallet trong tồn kho? (tránh in QR trùng pallet đang tồn)
-  const genPrefix = genReady && mat ? `${toDdmmyy(prodDate)}_${clean(mat.material_code)}_${clean(cycle)}_${clean(seg4)}_` : ''
+  const genPrefix = isV2Format
+    ? (genReadyV2 && mat ? `${batchPrefix}${toYymmdd(prodDate)}${clean(machine).toUpperCase().slice(0, 1)}` : '')
+    : (genReady && mat ? `${toDdmmyy(prodDate)}_${clean(mat.material_code)}_${clean(cycle)}_${clean(seg4)}_` : '')
   const { data: genDupData } = useInventoryEntries(
     { search: genPrefix, status: '', page: 1, limit: 500 },
     tab === 'generate' && genPrefix.length >= 3,
@@ -751,13 +821,88 @@ export default function PalletLabels() {
         {tab !== 'history' && (
         <div className="w-full lg:w-72 lg:shrink-0 border-b lg:border-b-0 lg:border-r bg-white lg:overflow-y-auto p-3 space-y-3 no-print">
           {tab === 'generate' ? (
-            /* Form gọn: gom 2–3 cột để vừa 1 màn, không phải kéo dọc */
+            isV2Format ? (
+            /* Sinh tem V2 (tem `;`): MãHàng;QA;Mã lô;NSX;HSD — mã lô = mã tắt + ngày + Máy + STT */
             <div className="space-y-2">
-              {isV2Format && (
-                <div className="rounded-md bg-amber-50 border border-amber-200 p-2 text-[11px] text-amber-800">
-                  Đơn vị đang dùng <b>tem chấm phẩy&nbsp;(;)</b> — tem mới do hệ thống sản xuất sinh. Trang này sinh tem dạng gạch dưới&nbsp;(_) của đơn vị cũ; với tem&nbsp;(;) hãy dùng tab <b>In lại từ tồn kho</b> để in lại theo mã lô đã nhập.
+              <div className="rounded-md bg-sky-50 border border-sky-200 p-2 text-[11px] text-sky-800">
+                Tem <b>chấm phẩy&nbsp;(;)</b> — sinh mã lô <b>Mã tắt + ngày + Máy + STT</b> (vd TA260705A018). Mã tắt lấy từ ô “Mã tắt (mã lô)” của Mã hàng.
+              </div>
+              <div className="space-y-2">
+                <div className="space-y-1">
+                  <Label className="text-xs">Loại hàng</Label>
+                  <Select value={genCat || '__all__'} onValueChange={v => { setGenCat(v === '__all__' ? '' : v); setMat(null) }}>
+                    <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Tất cả loại" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all__">Tất cả loại</SelectItem>
+                      {categoryOpts.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Ngày SX <span className="text-red-500">*</span></Label>
+                  <Input type="date" className="h-8 text-sm w-full" value={prodDate} onChange={e => setProdDate(e.target.value)} />
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Mã hàng <span className="text-red-500">*</span></Label>
+                <MatPicker value={mat?.material_code ?? ''} label={mat?.short_name ?? mat?.material_description ?? ''} category={genCat} onPick={setMat} />
+                {mat && (
+                  <p className="text-[10px] text-slate-400 break-words">
+                    <span className="text-slate-600">{mat.short_name ?? mat.material_description}</span>
+                    {' · '}Mã tắt: <b className={batchPrefix ? 'text-slate-600' : 'text-red-500'}>{batchPrefix || 'CHƯA KHAI'}</b> · Thùng/pallet: {mat.cartons_per_pallet ?? '—'}
+                  </p>
+                )}
+                {mat && !batchPrefix && (
+                  <p className="text-[10px] text-red-500">Mã hàng chưa có “Mã tắt (mã lô)” — vào Mã hàng → Sửa để khai 2 ký tự (vd TA) rồi mới sinh được tem.</p>
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-xs">Máy <span className="text-red-500">*</span></Label>
+                  <Input maxLength={1} className="h-8 text-sm uppercase" placeholder="A" value={machine}
+                    onChange={e => setMachine(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 1))} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">QA</Label>
+                  <Select value={qaOkV2 ? '1' : '0'} onValueChange={v => setQaOkV2(v === '1')}>
+                    <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="1">Đạt (OK)</SelectItem>
+                      <SelectItem value="0">Không đạt (X)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">HSD <span className="text-red-500">*</span></Label>
+                <Input type="date" className="h-8 text-sm w-full" value={hsdV2} onChange={e => { setHsdV2(e.target.value); setHsdEdited(true) }} />
+                <p className="text-[10px] text-slate-400">Tự tính NSX + hạn dùng mã{mat?.shelf_life_days != null ? ` (${mat.shelf_life_days} ngày)` : ''} — sửa được.</p>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-xs">STT đầu</Label>
+                  <Input type="number" min={1} className="h-8 text-sm" value={seqStart} onChange={e => setSeqStart(e.target.value)} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Số pallet</Label>
+                  <Input type="number" min={1} max={200} className="h-8 text-sm" value={count} onChange={e => setCount(e.target.value)} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">SL/pallet</Label>
+                  <Input type="number" min={0} className="h-8 text-sm" value={qty} onChange={e => setQty(e.target.value)} />
+                </div>
+              </div>
+              {!genReadyV2 && <p className="flex items-start gap-1 text-[11px] text-amber-600"><AlertTriangle className="h-3.5 w-3.5 shrink-0" /> Chọn đủ Mã hàng (có Mã tắt), Máy, HSD để sinh tem.</p>}
+              {genReadyV2 && genDupes.length > 0 && (
+                <div className="flex items-start gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-800">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                  <span><b>{genDupes.length}</b> tem trùng pallet đã có trong tồn kho (STT: {genDupes.map(d => d.seq).join(', ')}). In sẽ tạo QR trùng — đổi STT bắt đầu để tránh.</span>
                 </div>
               )}
+            </div>
+            ) : (
+            /* Form gọn: gom 2–3 cột để vừa 1 màn, không phải kéo dọc */
+            <div className="space-y-2">
               <div className="space-y-2">
                 <div className="space-y-1">
                   <Label className="text-xs">Loại hàng</Label>
@@ -849,6 +994,7 @@ export default function PalletLabels() {
                 </div>
               )}
             </div>
+            )
           ) : tab === 'reprint' ? (
             <>
               {/* Quét / điền tay mã pallet — thêm nhanh, không phụ thuộc filter */}

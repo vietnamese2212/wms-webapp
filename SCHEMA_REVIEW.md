@@ -81,6 +81,7 @@ weight_kg DECIMAL, cartons_per_pallet INT, cartons_per_pallet_mn INT,  -- _mn DE
 units_per_carton INT, pallet_per_ea NUMERIC,  -- pallet_per_ea: 1 EA = ? pallet (NVL), quy đổi tồn EA→pallet
 shelf_life_days INT, storage_category TEXT,  -- "UHT" | "Fresh" | "Frozen"
 old_code TEXT, image_url TEXT,
+batch_prefix TEXT,        -- ĐV2 tem `;`: 2 ký tự tắt hàng để sinh mã lô V2 (TA260705A018); null ĐV1
 manufacturer_id TEXT FK, notes TEXT,
 is_active BOOL DEFAULT true, created_at, updated_at
 ```
@@ -171,6 +172,7 @@ created_at, updated_at
 | 2026-06-16 | — | HR: `JobTitle.parent_id` + `in_chart` (sơ đồ tổ chức). Skill `EmployeeSkill` scope mở rộng: cấp trên gán được skill của chức danh cấp dưới (walk parent_id). Migrations `_jobtitle_hierarchy.sql`, `_jobtitle_in_chart.sql`. |
 | 2026-06-16 | — | HR Layout: `WorkLayoutJobTitle` (layout ↔ chức danh, để gọi đúng pool người). `WorkLayoutSkill.note` + `WorkAssignmentDemand.note` (ghi chú vị trí). Migrations `20260616_layout_jobtitle.sql`, `20260616_layout_demand_note.sql`. |
 | 2026-06-28 | — | Ngoại lệ HSD theo NCC: `ProductionImport.ncc_id` + `InventoryEntry.ncc_id` (UUID FK `TransportCompany`, nullable). Lấy NCC ở phiếu nhập (NCC bắt buộc; SX/chuyển kho tùy chọn) → denormalize xuống pallet khi quét → `effShelfLife(material, ncc_id)` áp `supplier_shelf_life_overrides` cho %Date. Migration `20260628_add_ncc_id_for_shelflife.sql`. |
+| 2026-07-08 | — | Multi-tenant ĐV2 tem `;`: `Material.batch_prefix` (TEXT nullable) = 2 ký tự tắt hàng để SINH mã lô V2 từ app (tab Sinh tem). Mã lô = `batch_prefix + yymmdd + Máy + SEQ` (TA260705A018), khớp mã lô kế toán. Ô "Mã tắt (mã lô)" hiện trong form Mã hàng chỉ khi cờ `label_format='semicolon'`. Migration `20260707_material_batch_prefix.sql`. |
 | 2026-06-28 | — | Shelflife theo LÔ: `InventoryEntry.shelf_life_days` (INT nullable). 1 mã + 1 NCC khai được nhiều shelflife (100/200 ngày); chọn lúc quét (selector NCC-biến-thể trong InboundScanSheet) → lưu thẳng trên pallet. %Date ưu tiên `shelf_life_days → override-NCC(khi 1 giá trị) → Material.shelf_life_days`. Chuyển kho kế thừa shelf_life_days + ncc_id từ pallet gốc cùng pallet_code. Migration `20260628_02_inventory_shelf_life_days.sql`. |
 | 2026-06-16 | — | HR: `ShiftRestRule` (from_shift→to_shift bị cấm) — luật nghỉ giữa ca, KHÔNG hardcode; auto-assign đọc phân công ngày D-1 + bảng này để loại ca vi phạm. Seed: CA3→{CA1,CA3,HC}. Migration `20260616_shift_rest_rule.sql`. |
 | 2026-06-17 | — | HR Phân công: UNIQUE index `(work_date, layout_id)` — mỗi layout chỉ 1 phiếu/ngày. Migration `20260617_uniq_assignment_sheet_per_day.sql`. |

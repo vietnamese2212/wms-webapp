@@ -64,3 +64,5 @@ Employee_Template.xlsx
 /templates/
 
 docs/handover/pdf/__render_tmp.html
+
+.vercel

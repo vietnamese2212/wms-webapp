@@ -2,7 +2,11 @@
 
 ## Quy tắc làm việc
 - Ngôn ngữ trao đổi: **tiếng Việt**.
-- **Push GitHub sau mỗi lần sửa code** — Vercel tự deploy. Remote: `https://github.com/vietnamese2212/wms-webapp.git` (branch `main`).
+- **Quy trình 2 môi trường (từ 07/07/2026)** — remote `https://github.com/vietnamese2212/wms-webapp.git`:
+  - **Làm việc mặc định trên branch `dev`** — push `dev` sau mỗi lần sửa → Vercel Preview (URL riêng) + **DB STAGING** (Supabase cũ `bxxryrmpfabvjitqbdnw`, data test). Dev/test/load-test/seed thoải mái ở đây.
+  - **User nghiệm thu trên Preview → mới merge `dev` vào `main`** → Vercel Production (`wms-webapp.vercel.app`) + **DB LOF production** (`svicyfquresxaigfxsdb`). KHÔNG push thẳng main trừ hotfix khẩn (lỗi chặn vận hành) — hotfix phải verify kỹ hơn vì không qua staging.
+  - **Migration schema: apply STAGING trước → test → mới apply DB production** (cả 2 qua Supabase Dashboard từng project). `.env` local + `.mcp.json` trỏ STAGING; key production chỉ nằm trong Vercel env — Postgres MCP soi staging, muốn soi production phải nói rõ.
+  - Kiến trúc multi-tenant (1 code — mỗi đơn vị 1 DB+deploy, cờ theo khác biệt không theo tenant): memory `multi-tenant-silo-architecture`.
 - **Đổi DB schema**: SQL → `backend/migrations/YYYYMMDD_<desc>.sql` → apply qua Supabase Dashboard → push → cập nhật `SCHEMA_REVIEW.md`. (Chi tiết: skill `mutation-realtime`.)
 - **`Template upload.xlsx` (thư mục gốc) = DỮ LIỆU UPLOAD GỐC của user — TUYỆT ĐỐI KHÔNG sửa/ghi đè, KHÔNG `git add`** (OneDrive hay tự lưu lại đổi byte; luôn `git add` từng file cụ thể, đừng `git add -A`/`git add .`). Chỉ ĐỌC để soi cấu trúc/debug upload.
 
@@ -124,7 +128,7 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 ## Tech Stack
 - **Frontend:** React 18 + TS + Vite · Tailwind v3 + shadcn/ui · React Router v6 · TanStack Query · html5-qrcode · date-fns · Lucide. Supabase Realtime (`frontend/src/lib/supabase.ts`, anon key).
 - **Backend:** Node + Express + TS · `@supabase/supabase-js` service role (`backend/src/lib/supabase.ts`). JWT auth **đã implement** (`authController.ts`: bcrypt + `jwt.sign`; route bảo vệ bằng `requirePerm`/`requireAnyPerm`).
-- **Infra:** Supabase (PostgreSQL + Realtime) · Vercel (auto-deploy từ GitHub `main`, backend serverless qua `api/index.ts`).
+- **Infra:** Supabase (PostgreSQL + Realtime) ×2: staging `bxxryrmpfabvjitqbdnw` (branch `dev` → Vercel Preview) + production LOF `svicyfquresxaigfxsdb` (branch `main` → Vercel Production) · backend serverless qua `api/index.ts`.
 
 **API format:**
 ```json

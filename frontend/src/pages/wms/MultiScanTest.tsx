@@ -139,6 +139,7 @@ export default function MultiScanTest() {
   const wasmWidthRef = useRef<number>(3840)
   const tryHarderRef = useRef<boolean>(false)
   const decodeEmaRef = useRef(0)
+  const decodeMsAtRef = useRef(0)   // lần cập nhật state decodeMs gần nhất (throttle re-render)
 
   const [running, setRunning]   = useState(false)
   const [paused, setPaused]     = useState(false)
@@ -273,7 +274,12 @@ export default function MultiScanTest() {
       const found = await detectFrame(video)
       const ms = performance.now() - t0
       decodeEmaRef.current = decodeEmaRef.current === 0 ? ms : decodeEmaRef.current * 0.8 + ms * 0.2
-      setDecodeMs(Math.round(decodeEmaRef.current))
+      // Throttle 500ms — setState mỗi khung (native ~20fps) re-render CẢ trang mỗi khung (kèm sort
+      // danh sách mã) → tốn CPU/pin vô ích; số hiển thị 2 lần/s là đủ mượt
+      if (t0 - decodeMsAtRef.current > 500) {
+        decodeMsAtRef.current = t0
+        setDecodeMs(Math.round(decodeEmaRef.current))
+      }
       drawOverlay(processResults(found))
     } catch {
       // frame lỗi lẻ (vd video chưa sẵn sàng) — bỏ qua, quét tiếp
@@ -500,7 +506,11 @@ export default function MultiScanTest() {
             {running ? (
               <>
                 <Button size="sm" variant="outline" className="h-7 px-2 text-xs !min-h-0"
-                  onClick={() => { const p = !paused; setPaused(p); pausedRef.current = p }}>
+                  onClick={() => {
+                    const p = !paused; setPaused(p); pausedRef.current = p
+                    // Tạm dừng thì tắt đèn pin — đèn sáng lúc không quét chỉ tốn pin (bật lại khi cần)
+                    if (p && torchOn) { setTorchOn(false); applyTrack({ torch: false }) }
+                  }}>
                   {paused ? <><Play className="h-3.5 w-3.5 mr-1" />Tiếp tục</> : <><Pause className="h-3.5 w-3.5 mr-1" />Tạm dừng</>}
                 </Button>
                 <Button size="sm" variant="destructive" className="h-7 px-2 text-xs !min-h-0" onClick={stop}>Dừng camera</Button>

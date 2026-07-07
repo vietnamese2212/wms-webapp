@@ -1054,32 +1054,7 @@ export async function scanQR(req: Request, res: Response) {
       : Promise.resolve({ data: null })
 
     const stackLayerNum = Number(stack_layer)
-    if (stackLayerNum === 1) {
-      // Đếm pallet đang CHIẾM CHỖ layer 1: IN_STOCK + PARTIAL (xuất dở vẫn nằm đó) + QUARANTINE (cách ly vẫn chiếm chỗ) — khớp bulkTransferLocation.
-      // Loại tồn=0 (bản ghi snapshot upload — pallet không còn trên sàn, đếm vào là báo đầy oan). Khớp preview + move_pallets RPC.
-      const { count: usedSlots } = await supabase
-        .from('InventoryEntry')
-        .select('*', { count: 'exact', head: true })
-        .eq('location_id', location_id)
-        .eq('stack_layer', 1)
-        .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE'])
-        .gt('cartons_remaining', 0)
-      if ((usedSlots ?? 0) >= location.max_pallets) {
-        return fail(res, 422, 'LOCATION_FULL',
-          `Vị trí ${location.location_code} đã đầy (${usedSlots}/${location.max_pallets} pallet). Chọn tầng chồng (layer 2/3) hoặc vị trí khác.`)
-      }
-    } else {
-      const { data: baseArr } = await supabase
-        .from('InventoryEntry').select('id')
-        .eq('location_id', location_id)
-        .eq('stack_layer', stackLayerNum - 1)
-        .eq('status', 'IN_STOCK')
-        .limit(1)
-      if (!baseArr?.[0]) {
-        return fail(res, 422, 'NO_BASE_LAYER',
-          `Không có pallet tầng ${stackLayerNum - 1} tại vị trí này để chồng lên`)
-      }
-    }
+    // Sức chứa/kiểm tầng dưới làm NGUYÊN TỬ trong RPC scan_insert_pallet (khóa Location) — xem block insert bên dưới.
 
     // Lookup manufacturer by code — start in parallel with the location check above
     const manufacturer = parsed.manufacturer_code
@@ -1128,43 +1103,75 @@ export async function scanQR(req: Request, res: Response) {
       resolvedQa = (qa as { id?: string } | null)?.id ?? null
     }
 
-    const { data: entry, error: entErr } = await supabase
-      .from('InventoryEntry')
-      .insert({
-        id:              randomUUID(),
-        pallet_code:     parsed.pallet_code,
-        location_id,
-        warehouse_id:    orderWarehouseId,   // set để unique (warehouse_id, pallet_code) hoạt động (no-QR cùng mã ở nhiều kho vẫn OK)
-        material_id:     material.id,
-        manufacturer_id: manufacturer?.id ?? null,
-        nmsx:               parsed.manufacturer_code || null,   // đoạn 6 QR (B/D/O) = NMSX (hàng NCC = nơi nhận đầu tiên)
-        cycle:              parsed.cycle || null,
-        machine_code:       isNccGoods ? null : (parsed.machine_code || null),   // hàng NCC: đoạn 4 là mã NCC → vào ncc_id, không phải máy
-        pallet_sequence_no: parsed.pallet_sequence_no,
-        stack_layer:        stackLayerNum,
-        cartons_imported,
-        cartons_remaining:  cartons_imported,
-        production_date:    parsed.production_date,
-        qa_status_id:       resolvedQa,
-        batch:              parsed.batch,                                                        // tem V2: mã lô nguyên văn
-        expiry_date:        parsed.expiry_date ? parsed.expiry_date.toISOString().slice(0, 10) : null,  // tem V2: HSD tường minh (Date UTC từ thành phần — không lệch ngày)
-        import_order_id:    order_id,
-        created_by:         employee_id ?? null,
-        updated_by:         employee_id ?? null,
-        status:             'IN_STOCK',
-        ncc_id:             resolvedNcc,
-        shelf_life_days:    resolvedShelf,
-        import_date:        vnDate(),
-        update_date:        vnDate(),
-        created_at:         new Date().toISOString(),
-        updated_at:         new Date().toISOString(),
-      })
-      .select(ENTRY_SELECT)
-      .single()
+    const entryObj = {
+      id:              randomUUID(),
+      pallet_code:     parsed.pallet_code,
+      location_id,
+      warehouse_id:    orderWarehouseId,   // set để unique (warehouse_id, pallet_code) hoạt động (no-QR cùng mã ở nhiều kho vẫn OK)
+      material_id:     material.id,
+      manufacturer_id: manufacturer?.id ?? null,
+      nmsx:               parsed.manufacturer_code || null,   // đoạn 6 QR (B/D/O) = NMSX (hàng NCC = nơi nhận đầu tiên)
+      cycle:              parsed.cycle || null,
+      machine_code:       isNccGoods ? null : (parsed.machine_code || null),   // hàng NCC: đoạn 4 là mã NCC → vào ncc_id, không phải máy
+      pallet_sequence_no: parsed.pallet_sequence_no,
+      stack_layer:        stackLayerNum,
+      cartons_imported,
+      cartons_remaining:  cartons_imported,
+      production_date:    parsed.production_date,
+      qa_status_id:       resolvedQa,
+      batch:              parsed.batch,                                                        // tem V2: mã lô nguyên văn
+      expiry_date:        parsed.expiry_date ? parsed.expiry_date.toISOString().slice(0, 10) : null,  // tem V2: HSD tường minh (Date UTC từ thành phần — không lệch ngày)
+      import_order_id:    order_id,
+      created_by:         employee_id ?? null,
+      updated_by:         employee_id ?? null,
+      status:             'IN_STOCK',
+      ncc_id:             resolvedNcc,
+      shelf_life_days:    resolvedShelf,
+      import_date:        vnDate(),
+      update_date:        vnDate(),
+      created_at:         new Date().toISOString(),
+      updated_at:         new Date().toISOString(),
+    }
 
-    if (entErr) {
-      if (entErr.code === '23505') return fail(res, 409, 'DUPLICATE_PALLET', 'Pallet đã tồn tại trong hệ thống')
-      throw entErr
+    // NGUYÊN TỬ: RPC khóa dòng Location → đếm sức chứa/kiểm tầng dưới DƯỚI LOCK → insert cùng transaction.
+    // Chống đua quá-tải khi nhiều người quét cùng 1 vị trí (check-rồi-insert cũ có thể vượt max). Loại tồn=0 khớp preview/move.
+    let entry: unknown = null
+    const { data: rpcRes, error: rpcErr } = await supabase.rpc('scan_insert_pallet', {
+      p_entry: entryObj, p_location_id: location_id, p_stack_layer: stackLayerNum,
+    })
+    if (!rpcErr) {
+      const parts = String(rpcRes ?? '').split('|')
+      switch (parts[0]) {
+        case 'NOLOC':   return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy vị trí')
+        case 'FULL':    return fail(res, 422, 'LOCATION_FULL',
+          `Vị trí ${location.location_code} đã đầy (${parts[1]}/${parts[2]} pallet). Chọn tầng chồng (layer 2/3) hoặc vị trí khác.`)
+        case 'NO_BASE': return fail(res, 422, 'NO_BASE_LAYER', `Không có pallet tầng ${stackLayerNum - 1} tại vị trí này để chồng lên`)
+        case 'DUP':     return fail(res, 409, 'DUPLICATE_PALLET', 'Pallet đã tồn tại trong hệ thống')
+      }
+      const { data: e } = await supabase.from('InventoryEntry').select(ENTRY_SELECT).eq('id', parts[1]).single()
+      entry = e
+    } else {
+      // RPC chưa apply (function not found) → fallback logic cũ (KHÔNG nguyên tử) để không vỡ tính năng.
+      const notDeployed = rpcErr.code === 'PGRST202' || /Could not find the function|does not exist/i.test(rpcErr.message ?? '')
+      if (!notDeployed) return fail(res, 500, 'DB_ERROR', rpcErr.message)
+      if (stackLayerNum === 1) {
+        // Đếm pallet CHIẾM CHỖ layer 1 (IN_STOCK/PARTIAL/QUARANTINE + tồn>0 — loại snapshot tồn=0 báo đầy oan)
+        const { count: usedSlots } = await supabase.from('InventoryEntry').select('*', { count: 'exact', head: true })
+          .eq('location_id', location_id).eq('stack_layer', 1).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE']).gt('cartons_remaining', 0)
+        if ((usedSlots ?? 0) >= location.max_pallets)
+          return fail(res, 422, 'LOCATION_FULL',
+            `Vị trí ${location.location_code} đã đầy (${usedSlots}/${location.max_pallets} pallet). Chọn tầng chồng (layer 2/3) hoặc vị trí khác.`)
+      } else {
+        const { data: baseArr } = await supabase.from('InventoryEntry').select('id')
+          .eq('location_id', location_id).eq('stack_layer', stackLayerNum - 1).eq('status', 'IN_STOCK').limit(1)
+        if (!baseArr?.[0]) return fail(res, 422, 'NO_BASE_LAYER', `Không có pallet tầng ${stackLayerNum - 1} tại vị trí này để chồng lên`)
+      }
+      const { data: e, error: entErr } = await supabase.from('InventoryEntry').insert(entryObj).select(ENTRY_SELECT).single()
+      if (entErr) {
+        if (entErr.code === '23505') return fail(res, 409, 'DUPLICATE_PALLET', 'Pallet đã tồn tại trong hệ thống')
+        throw entErr
+      }
+      entry = e
     }
 
     // Persist vị trí "hiện tại" của phiếu = vị trí vừa quét + ghi lịch sử khi đổi (quyền scan)

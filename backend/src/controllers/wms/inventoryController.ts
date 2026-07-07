@@ -4,7 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { randomUUID } from 'crypto'
 import { resolveShelfLife } from '../../utils/shelfLife'
-import { fetchAllRowsParallel } from '../../utils/pagination'
+import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 import { scopeCategoriesOf } from '../../utils/categoryScope'
 
 const ENTRY_SELECT = `
@@ -677,9 +677,12 @@ export async function listFacets(req: Request, res: Response) {
   const nccIds = [...new Set(invData.map((e: any) => e.ncc_id).filter(Boolean))] as string[]
   let nccs: { id: string; name: string }[] = []
   if (nccIds.length) {
-    const { data: nccData } = await supabase.from('TransportCompany')
-      .select('id, name').in('id', nccIds).order('name')
-    nccs = ((nccData ?? []) as any[]).map((n: any) => ({ id: n.id as string, name: n.name as string }))
+    // Chunk 300 + phân trang (fetchAllByIdChunks) — >1000 NCC distinct trong tồn thì facet NCC bị cắt âm thầm
+    const nccData = await fetchAllByIdChunks(nccIds, chunk =>
+      supabase.from('TransportCompany').select('id, name').in('id', chunk).order('name'))
+    nccs = (nccData as any[])
+      .map((n: any) => ({ id: n.id as string, name: n.name as string }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'vi'))
   }
 
   const materials = ((matData ?? []) as any[])

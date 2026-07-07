@@ -2,19 +2,18 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
-import { fetchAllRowsParallel } from '../../utils/pagination'
+import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 
 // Helper: fetch related ncc + vehicle_type and merge into vehicle rows
 // Avoids PostgREST FK-join syntax which requires schema-cache to know about FKs
 async function withRelations(vehicles: Record<string, unknown>[]) {
   if (!vehicles.length) return vehicles
-  const nccIds = [...new Set(vehicles.map(v => v.ncc_id as string))]
-  const vtIds  = [...new Set(vehicles.map(v => v.vehicle_type_id as string))]
-  const [{ data: nccs }, { data: vts }] = await Promise.all([
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    supabase.from('TransportCompany').select('id, code, name').in('id', nccIds),
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    supabase.from('VehicleType').select('id, code, name').in('id', vtIds),
+  const nccIds = [...new Set(vehicles.map(v => v.ncc_id as string).filter(Boolean))]
+  const vtIds  = [...new Set(vehicles.map(v => v.vehicle_type_id as string).filter(Boolean))]
+  // Chunk 300 + phân trang — >1000 NCC/loại xe distinct thì response cap 1000 cắt âm thầm → cột ĐVVT/loại xe hiện null
+  const [nccs, vts] = await Promise.all([
+    fetchAllByIdChunks(nccIds, chunk => supabase.from('TransportCompany').select('id, code, name').in('id', chunk).order('id')),
+    fetchAllByIdChunks(vtIds,  chunk => supabase.from('VehicleType').select('id, code, name').in('id', chunk).order('id')),
   ])
   return vehicles.map(v => ({
     ...v,

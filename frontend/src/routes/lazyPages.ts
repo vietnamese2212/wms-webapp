@@ -1,8 +1,27 @@
-import { lazy } from 'react'
+import { lazy, type ComponentType } from 'react'
 
 // Nguồn DUY NHẤT cho code-splitting (React.lazy) + prefetch-on-hover.
 // Mỗi dynamic import khai báo 1 lần, dùng cho cả 2 việc → không trùng/drift.
 // Vite tách mỗi import thành 1 chunk riêng → bundle đầu nhỏ, chỉ tải trang đang vào.
+
+// Sau mỗi lần deploy, hash chunk đổi — tab đang mở giữ index.html cũ, click module
+// → tải chunk cũ đã bị xóa → 404 → lazy throw → MÀN HÌNH TRẮNG. Fix: reload 1 lần
+// lấy index.html mới (sessionStorage + mốc thời gian chống vòng lặp reload).
+function lazyRetry<T extends ComponentType<unknown>>(importer: () => Promise<{ default: T }>) {
+  return lazy(() =>
+    importer().catch((e: unknown) => {
+      const KEY = 'chunk_reload_at'
+      let last = 0
+      try { last = Number(sessionStorage.getItem(KEY) ?? 0) } catch {}
+      if (Date.now() - last > 30_000) {
+        try { sessionStorage.setItem(KEY, String(Date.now())) } catch {}
+        window.location.reload()
+        return new Promise<{ default: T }>(() => {})   // treo tới khi trang reload
+      }
+      throw e   // reload rồi vẫn lỗi (mất mạng…) → để ErrorBoundary hiện nút Tải lại
+    })
+  )
+}
 const dashboard          = () => import('@/pages/Dashboard')
 const inventory          = () => import('@/pages/wms/Inventory')
 const inbound            = () => import('@/pages/wms/Inbound')
@@ -35,36 +54,36 @@ const materials      = () => import('@/pages/masterdata/Materials')
 const settings = () => import('@/pages/Settings')
 
 export const Pages = {
-  Dashboard: lazy(dashboard),
-  Inventory: lazy(inventory),
-  Inbound: lazy(inbound),
-  InboundDetail: lazy(inboundDetail),
-  Outbound: lazy(outbound),
-  OutboundDetail: lazy(outboundDetail),
-  OutboundItemDetail: lazy(outboundItemDetail),
-  OutboundScanLog: lazy(outboundScanLog),
-  OutboundPrepare: lazy(outboundPrepare),
-  LoosePicking: lazy(loosePicking),
-  LoosePickingDetail: lazy(loosePickingDetail),
-  LoosePickingItemDetail: lazy(loosePickingItemDetail),
-  Locations: lazy(locations),
-  Stocktake: lazy(stocktake),
-  StocktakeDashboard: lazy(stocktakeDashboard),
-  PalletLabels: lazy(palletLabels),
-  PalletOps: lazy(palletOps),
-  MultiScanTest: lazy(multiScanTest),
-  WMSSettings: lazy(wmsSettings),
-  TMSSettings: lazy(tmsSettings),
-  TMSBookings: lazy(tmsBookings),
-  TMSReport: lazy(tmsReport),
-  GateRegistration: lazy(gateRegistration),
-  LeaveManagement: lazy(leaveManagement),
-  Assignments: lazy(assignments),
-  Attendance: lazy(attendance),
-  OrgChart: lazy(orgChart),
-  UserManagement: lazy(userManagement),
-  Materials: lazy(materials),
-  Settings: lazy(settings),
+  Dashboard: lazyRetry(dashboard),
+  Inventory: lazyRetry(inventory),
+  Inbound: lazyRetry(inbound),
+  InboundDetail: lazyRetry(inboundDetail),
+  Outbound: lazyRetry(outbound),
+  OutboundDetail: lazyRetry(outboundDetail),
+  OutboundItemDetail: lazyRetry(outboundItemDetail),
+  OutboundScanLog: lazyRetry(outboundScanLog),
+  OutboundPrepare: lazyRetry(outboundPrepare),
+  LoosePicking: lazyRetry(loosePicking),
+  LoosePickingDetail: lazyRetry(loosePickingDetail),
+  LoosePickingItemDetail: lazyRetry(loosePickingItemDetail),
+  Locations: lazyRetry(locations),
+  Stocktake: lazyRetry(stocktake),
+  StocktakeDashboard: lazyRetry(stocktakeDashboard),
+  PalletLabels: lazyRetry(palletLabels),
+  PalletOps: lazyRetry(palletOps),
+  MultiScanTest: lazyRetry(multiScanTest),
+  WMSSettings: lazyRetry(wmsSettings),
+  TMSSettings: lazyRetry(tmsSettings),
+  TMSBookings: lazyRetry(tmsBookings),
+  TMSReport: lazyRetry(tmsReport),
+  GateRegistration: lazyRetry(gateRegistration),
+  LeaveManagement: lazyRetry(leaveManagement),
+  Assignments: lazyRetry(assignments),
+  Attendance: lazyRetry(attendance),
+  OrgChart: lazyRetry(orgChart),
+  UserManagement: lazyRetry(userManagement),
+  Materials: lazyRetry(materials),
+  Settings: lazyRetry(settings),
 }
 
 // path menu → importer (chỉ các trang có trong sidebar). Rê chuột vào menu →

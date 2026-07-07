@@ -1055,13 +1055,15 @@ export async function scanQR(req: Request, res: Response) {
 
     const stackLayerNum = Number(stack_layer)
     if (stackLayerNum === 1) {
-      // Đếm pallet đang CHIẾM CHỖ layer 1: IN_STOCK + PARTIAL (xuất dở vẫn nằm đó) + QUARANTINE (cách ly vẫn chiếm chỗ) — khớp bulkTransferLocation
+      // Đếm pallet đang CHIẾM CHỖ layer 1: IN_STOCK + PARTIAL (xuất dở vẫn nằm đó) + QUARANTINE (cách ly vẫn chiếm chỗ) — khớp bulkTransferLocation.
+      // Loại tồn=0 (bản ghi snapshot upload — pallet không còn trên sàn, đếm vào là báo đầy oan). Khớp preview + move_pallets RPC.
       const { count: usedSlots } = await supabase
         .from('InventoryEntry')
         .select('*', { count: 'exact', head: true })
         .eq('location_id', location_id)
         .eq('stack_layer', 1)
         .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE'])
+        .gt('cartons_remaining', 0)
       if ((usedSlots ?? 0) >= location.max_pallets) {
         return fail(res, 422, 'LOCATION_FULL',
           `Vị trí ${location.location_code} đã đầy (${usedSlots}/${location.max_pallets} pallet). Chọn tầng chồng (layer 2/3) hoặc vị trí khác.`)
@@ -1604,7 +1606,8 @@ async function getLocationSuggestionsData(warehouse_id: string, material_id: str
 
   if (!locations?.length) return []
 
-  // For each location, get layer-1 IN_STOCK entry count and check for same-material entries
+  // For each location, get layer-1 occupying entry count and check for same-material entries.
+  // Pallet CHIẾM CHỖ = IN_STOCK/PARTIAL/QUARANTINE + tồn>0 (khớp scanQR + move RPC); loại tồn=0 (snapshot upload không còn trên sàn) để available_slots không lệch với lúc quét.
   const withSlots = await Promise.all(
     locations.map(async (loc) => {
       const { data: entries } = await supabase
@@ -1612,7 +1615,8 @@ async function getLocationSuggestionsData(warehouse_id: string, material_id: str
         .select('id, material_id')
         .eq('location_id', loc.id)
         .eq('stack_layer', 1)
-        .eq('status', 'IN_STOCK')
+        .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE'])
+        .gt('cartons_remaining', 0)
 
       const used_slots = entries?.length ?? 0
       const available_slots = loc.max_pallets - used_slots

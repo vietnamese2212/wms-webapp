@@ -226,6 +226,17 @@ export default function Materials() {
   const allSelected  = filtered.length > 0 && filtered.every(m => selected.has(m.id))
   const someSelected = selected.size > 0 && !allSelected
 
+  // Phân trang client 200/trang — ~1800 mã render hết một lượt = hàng chục nghìn DOM node,
+  // chậm rõ trên tablet/phone. Data đã có đủ ở client (BE cố ý trả hết cho dropdown) → chỉ cắt lúc render.
+  const PAGE_SIZE = 200
+  const [page, setPage] = useState(0)
+  const maxPage = Math.max(0, Math.ceil(filtered.length / PAGE_SIZE) - 1)
+  const curPage = Math.min(page, maxPage)   // filter thu hẹp → tự kéo về trang cuối còn dữ liệu
+  const pageItems = useMemo(
+    () => filtered.slice(curPage * PAGE_SIZE, (curPage + 1) * PAGE_SIZE),
+    [filtered, curPage]
+  )
+
   // ── Helpers ───────────────────────────────────────────────────────────────
   function setField(k: keyof typeof EMPTY_FORM, v: string) {
     setForm(f => ({ ...f, [k]: v }))
@@ -553,7 +564,7 @@ export default function Materials() {
                 <tr><td colSpan={colCount} className="p-0"><TableSkeleton cols={colCount} rows={12} /></td></tr>
               ) : filtered.length === 0 ? (
                 <tr><td colSpan={colCount}><EmptyState title="Không có mã hàng" /></td></tr>
-              ) : filtered.map(mat => {
+              ) : pageItems.map(mat => {
                 const hasOverrides = (mat.warehouse_pallet_overrides?.length ?? 0) > 0
                 const miss = missingRequiredFields(mat)
                 const dup  = isDupName(mat)
@@ -639,10 +650,24 @@ export default function Materials() {
           </Table>
       </div>
 
-      {/* Footer đếm bản ghi */}
-      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 sm:rounded-b-xl">
-        {summary.total > 0 ? `1–${summary.total} / ${(raw as Material[]).length} mã hàng` : '0 mã hàng'}
-        {selected.size > 0 && <span className="ml-2 text-green-600 font-medium">· {selected.size} đang chọn</span>}
+      {/* Footer đếm bản ghi + chuyển trang */}
+      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 sm:rounded-b-xl flex items-center gap-2">
+        <span>
+          {filtered.length > 0
+            ? `${curPage * PAGE_SIZE + 1}–${Math.min((curPage + 1) * PAGE_SIZE, filtered.length)} / ${filtered.length} mã hàng`
+            : '0 mã hàng'}
+          {(raw as Material[]).length !== filtered.length && <span className="text-slate-400"> (tổng {(raw as Material[]).length})</span>}
+        </span>
+        {selected.size > 0 && <span className="text-green-600 font-medium">· {selected.size} đang chọn</span>}
+        {maxPage > 0 && (
+          <span className="ml-auto flex items-center gap-1">
+            <button onClick={() => setPage(Math.max(0, curPage - 1))} disabled={curPage === 0}
+              className="px-2 py-0.5 rounded border border-slate-300 bg-white disabled:opacity-30 hover:bg-slate-100">‹</button>
+            <span className="tabular-nums">{curPage + 1}/{maxPage + 1}</span>
+            <button onClick={() => setPage(Math.min(maxPage, curPage + 1))} disabled={curPage >= maxPage}
+              className="px-2 py-0.5 rounded border border-slate-300 bg-white disabled:opacity-30 hover:bg-slate-100">›</button>
+          </span>
+        )}
       </div>
      </div>
 

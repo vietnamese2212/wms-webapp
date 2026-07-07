@@ -164,6 +164,8 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 - Bảng `SystemSetting` + cờ `label_format` (`'underscore'`/`'semicolon'`) — **chỉ điều khiển chiều IN tem**, chiều QUÉT tự nhận theo delimiter. Controller `systemSettingController.ts` (sổ cờ `KNOWN_SETTINGS`) + route `GET /wms/settings` (hở đọc) / `PUT /wms/settings/:key` (`wms_settings.manage_system`). FE: tab **"Hệ thống"** trong Cài đặt WMS (`useSystemSettings`/`useUpdateSystemSetting`, `SingleSelect`). Sinh tem MỚI từ app cho V2: CHƯA làm (tem thật do nhà máy in; tab Sinh tem hiện ghi chú khi cờ=semicolon) — nếu build phải chốt quy tắc dải Máy/SEQ riêng để không trùng nhà máy.
 - **Luật vàng chống đè:** mọi thay đổi liên quan format QR phải đi qua các helper tập trung trên (BE↔FE giữ KHỚP NHAU); thêm điểm quét mới → BẮT BUỘC `normalizeQR`; thêm cờ khác biệt mới → thêm vào `KNOWN_SETTINGS` (sổ cờ) + default = hành vi V1 cũ (đơn vị 1 không đổi).
 
+**ĐỊNH HƯỚNG QR-tới-THÙNG (CHỐT 07/07, CHƯA build — chi tiết memory `qr-format-v2-semicolon`):** 1 pallet có thể có QR tới từng thùng (154 thùng→154 tem; hiện giống hệt nhau, tương lai có thể mỗi thùng 1 STT). **Quản thùng = HƯỚNG LAI**: tồn VẪN theo pallet (KHÔNG mỗi thùng 1 dòng — nổ quy mô), tem thùng chỉ để quét-đếm + (khi có STT) bảng log chống-trùng/truy-vết. **STT thùng (tương lai) = ĐOẠN `;` MỚI Ở CUỐI (đoạn 8)** — quy tắc: 7 đoạn=không STT, 8 đoạn=đoạn cuối là STT; `pallet_code` = mọi đoạn TRƯỚC STT. **Đuôi TÁCH pallet `.N` = ĐẶT Ở ĐUÔI MÃ LÔ (đoạn 3)** `TA260705A018.1` (KHÔNG cuối chuỗi), cột `batch` DB vẫn lưu mã lô gốc để khớp kế toán. ⚠️ NỢ: `splitPallet` V2 hiện gắn `.N` cuối chuỗi → đổi sang đuôi mã lô khi build phần thùng.
+
 ---
 ## Phân quyền (RBAC) — chi tiết skill `add-permission`
 

@@ -126,9 +126,12 @@ export async function splitPallet(req: Request, res: Response) {
     const src = normalizeQR(source_pallet_code ?? '')
     const isV2 = src.includes(';')          // tem V2 (`;`): mã lô nằm ở đoạn 3, KHÔNG split bằng `_`
     const parts = src.split('_')
+    const segs = isV2 ? src.split(';') : []          // V2: đoạn 3 (index 2) = mã lô
+    const baseMalo = isV2 ? (segs[2] ?? '') : ''
     const items = Array.isArray(children) ? children.map(c => Math.floor(Number(c?.qty) || 0)).filter(q => q > 0) : []
     if (!src) return fail(res, 'Thiếu mã pallet gốc')
     if (!isV2 && parts.length < 6) return fail(res, 'Mã pallet gốc không đúng định dạng QR')
+    if (isV2 && (segs.length < 3 || !baseMalo)) return fail(res, 'Mã pallet V2 thiếu mã lô (đoạn 3)')
     if (!items.length) return fail(res, 'Chưa nhập số lượng tách')
 
     // Scope theo KHO qua location (cột warehouse_id thường NULL ở pallet nhập SX)
@@ -149,11 +152,12 @@ export async function splitPallet(req: Request, res: Response) {
     if (totalSplit > free) return fail(res, `Tách ${totalSplit} thùng vượt số khả dụng (${free} thùng, đã trừ ${reserved} giữ chỗ)`)
 
     // Tìm số thứ tự con kế tiếp (baseCode.N) — mã con = mã gốc + ".N".
-    // V1 (`_`): ".N" gắn vào ĐOẠN SEQ (đoạn 5) — giữ nguyên quy ước cũ.
-    // V2 (`;`): ".N" gắn vào CUỐI cả chuỗi — batch (đoạn 3) GIỮ NGUYÊN để khớp hệ thống kế toán.
+    // V1 (`_`): ".N" gắn vào ĐOẠN SEQ (đoạn 5).
+    // V2 (`;`): ".N" gắn vào ĐUÔI MÃ LÔ (đoạn 3) → vd TA260705A018.1. Cột `batch` DB vẫn lưu mã lô GỐC
+    //   (bỏ ".N") để khớp kế toán; ".N" chỉ để phân biệt con + tách bạch với STT thùng (đoạn 8 tương lai).
     // Phân trang (fetchAllRowsParallel): quét cả bảng theo material_id bị cap ~1000 → maxN sai → SINH MÃ TRÙNG.
     const baseSeq = isV2 ? '' : parts[4]
-    const childPrefix = isV2 ? `${src}.%` : `${parts.slice(0, 4).join('_')}_${baseSeq}.%`
+    const childPrefix = isV2 ? `%${baseMalo}.%` : `${parts.slice(0, 4).join('_')}_${baseSeq}.%`
     const sameMat = await fetchAllRowsParallel(() => supabase.from('InventoryEntry')
       .select('pallet_code').eq('material_id', source.material_id)
       .ilike('pallet_code', childPrefix).order('id'))
@@ -161,10 +165,11 @@ export async function splitPallet(req: Request, res: Response) {
     for (const r of (sameMat ?? []) as { pallet_code: string }[]) {
       const code = String(r.pallet_code)
       if (isV2) {
-        // con V2 = "<src>.N" đúng nguyên văn (src đã chuẩn hóa) → lấy N sau dấu chấm cuối
-        if (code.startsWith(`${src}.`)) {
-          const n = parseInt(code.slice(src.length + 1), 10)
-          if (!isNaN(n) && n > maxN) maxN = n
+        // con V2 = mọi đoạn GIỐNG src, chỉ đoạn 3 = "<baseMalo>.N" (N thuần số → loại cháu ".1.2")
+        const cs = code.split(';')
+        if (cs.length === segs.length && cs.every((v, idx) => idx === 2 || v === segs[idx]) && cs[2].startsWith(`${baseMalo}.`)) {
+          const suffix = cs[2].slice(baseMalo.length + 1)
+          if (/^\d+$/.test(suffix)) { const n = parseInt(suffix, 10); if (n > maxN) maxN = n }
         }
       } else {
         const p = code.split('_')
@@ -180,7 +185,8 @@ export async function splitPallet(req: Request, res: Response) {
       const n = maxN + 1 + i
       let childCode: string
       if (isV2) {
-        childCode = `${src}.${n}`
+        const childSegs = [...segs]; childSegs[2] = `${baseMalo}.${n}`   // ".N" vào đuôi mã lô (đoạn 3)
+        childCode = childSegs.join(';')
       } else {
         const childParts = [...parts]; childParts[4] = `${baseSeq}.${n}`
         childCode = childParts.join('_')

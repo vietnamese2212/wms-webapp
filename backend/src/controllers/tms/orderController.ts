@@ -664,6 +664,14 @@ export async function getInboundReport(req: Request, res: Response) {
     const { date_from, date_to, warehouse_id } = req.query as Record<string, string>
     if (!date_from || !date_to) return fail(res, 'date_from và date_to là bắt buộc', 400)
 
+    // Scope kho + loại hàng (RULE user): chọn "Tất cả" vẫn CHỈ thấy kho/loại được gán —
+    // trước đây không cắt gì → non-admin bỏ trống filter là xem được toàn bộ báo cáo nhập.
+    const whScope = scopeWhIds(req)
+    if (whScope !== null && warehouse_id && !whScope.includes(warehouse_id))
+      return fail(res, 'Ngoài phạm vi kho được giao', 403)
+    const whIds: string[] | null = warehouse_id ? [warehouse_id] : whScope   // null = không giới hạn
+    if (whIds !== null && whIds.length === 0) return ok(res, [])
+
     // 1. Fetch plan lines với join material, ncc, warehouse — PHÂN TRANG (cap ~1000/response):
     // khoảng ngày rộng có thể vài nghìn dòng KH, không phân trang = báo cáo cắt cụt âm thầm.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -685,10 +693,12 @@ export async function getInboundReport(req: Request, res: Response) {
           .order('date')
           .order('ncc_id')
           .order('id')
-        if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
+        if (whIds) q = whIds.length === 1 ? q.eq('warehouse_id', whIds[0]) : q.in('warehouse_id', whIds)
         return q
       })
     } catch (e) { return fail(res, (e as Error).message) }
+    // Cắt theo Loại hàng của user (null-inclusive: dòng không khai loại vẫn hiện)
+    planLines = planLines.filter((l: any) => categoryAllowed(req, l.material?.category))
 
     // 2. Collect distinct tms_order_ids từ plan lines
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -725,7 +735,7 @@ export async function getInboundReport(req: Request, res: Response) {
           .lte('import_date', date_to)
           .neq('status', 'CANCELLED')
           .order('id')
-        if (warehouse_id) dateQ = dateQ.eq('warehouse_id', warehouse_id)
+        if (whIds) dateQ = whIds.length === 1 ? dateQ.eq('warehouse_id', whIds[0]) : dateQ.in('warehouse_id', whIds)
         return dateQ
       })
     } catch (e) { return fail(res, (e as Error).message) }
@@ -738,6 +748,8 @@ export async function getInboundReport(req: Request, res: Response) {
         allImports.push(imp)
       }
     }
+    // Cắt phiếu nhập theo Loại hàng của user (null-inclusive)
+    allImports = allImports.filter((i: any) => categoryAllowed(req, i.material?.category))
 
     // Fetch InventoryEntry cho tất cả imports
     const importIds = allImports.map((i: any) => i.id as string)

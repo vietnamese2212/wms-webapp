@@ -205,8 +205,10 @@ export async function listCategories(_req: Request, res: Response) {
 // ─── Upload Excel: UPSERT Material theo material_code ────────────────────────
 // Mirror scripts/import_materials.js: mã MỚI → thêm (Tên hàng bắt buộc); mã ĐÃ CÓ → cập nhật
 // chỉ ô CÓ GIÁ TRỊ trong file (ô trống = giữ nguyên). short_name tự sinh khi đổi Tên hàng.
+// batch_prefix (ĐV2 tem `;`) THÊM Ở CUỐI để không xê dịch cột cũ. File ĐV1 KHÔNG có cột này (12 cột) →
+// r[12] undefined → giữ nguyên (không đụng). File ĐV2 thêm cột thứ 13 = mã tắt mã lô.
 const M_KEYS = ['material_code', 'material_description', 'category', 'unit', 'cartons_per_pallet',
-  'units_per_carton', 'pallet_per_ea', 'weight_kg', 'shelf_life_days', 'product_type', 'custom_short_name', 'notes'] as const
+  'units_per_carton', 'pallet_per_ea', 'weight_kg', 'shelf_life_days', 'product_type', 'custom_short_name', 'notes', 'batch_prefix'] as const
 
 const mStr = (v: unknown): string | null => { const s = String(v ?? '').trim(); return s || null }
 const mNum = (v: unknown): number | null => { if (v == null || v === '') return null; const n = parseFloat(String(v).replace(',', '.')); return Number.isNaN(n) ? null : n }
@@ -222,7 +224,9 @@ export async function uploadExcel(req: Request, res: Response) {
 
     // Map theo VỊ TRÍ cột (đúng thứ tự M_KEYS) — chịu được khi mất dòng key/nhãn.
     const norm = (a: unknown[]) => (a || []).map(x => String(x ?? '').trim())
-    const isKeyRow = (r: unknown[]) => M_KEYS.every((k, i) => norm(r)[i] === k)
+    // Dòng key nhận diện qua 2 ô đầu cố định (KHÔNG so đủ mọi cột) → file ĐV1 12 cột vẫn khớp
+    // khi M_KEYS thêm batch_prefix ở cuối; tránh hiểu nhầm dòng key thành dữ liệu.
+    const isKeyRow = (r: unknown[]) => norm(r)[0] === 'material_code' && norm(r)[1] === 'material_description'
     const start = isKeyRow(raw[1] as unknown[]) ? 2 : 1   // có dòng key → data từ dòng 3; không → bỏ dòng nhãn
     const rows = raw.slice(start)
       .map(r => Object.fromEntries(M_KEYS.map((k, i) => [k, (r as unknown[])[i]])) as Record<string, unknown>)
@@ -266,6 +270,7 @@ export async function uploadExcel(req: Request, res: Response) {
       const ppe          = mNum(row.pallet_per_ea)
       const sld          = mInt(row.shelf_life_days)
       const notes        = mStr(row.notes)
+      const batchPrefix  = (() => { const s = mStr(row.batch_prefix); return s ? s.toUpperCase() : null })()  // ĐV2: mã tắt mã lô
       const shortOf = (d: string) => `${d} [${material_code.slice(-3)}]`
       // Đắp ô CÓ GIÁ TRỊ lên base (ô trống → giữ nguyên base)
       const apply = (base: Record<string, unknown>) => {
@@ -280,6 +285,7 @@ export async function uploadExcel(req: Request, res: Response) {
         if (ppe          != null) base.pallet_per_ea = ppe
         if (sld          != null) base.shelf_life_days = sld
         if (notes        != null) base.notes = notes
+        if (batchPrefix  != null) base.batch_prefix = batchPrefix
         base.updated_at = now
         return base
       }
@@ -304,7 +310,7 @@ export async function uploadExcel(req: Request, res: Response) {
           id: randomUUID(), material_code, material_description: description, short_name: shortOf(description),
           custom_short_name: customShort, category, product_type, unit, weight_kg,
           cartons_per_pallet: cpp, units_per_carton: upc, pallet_per_ea: ppe,
-          shelf_life_days: sld, notes, is_active: true, created_at: now, updated_at: now,
+          shelf_life_days: sld, notes, batch_prefix: batchPrefix, is_active: true, created_at: now, updated_at: now,
         })
       }
     }

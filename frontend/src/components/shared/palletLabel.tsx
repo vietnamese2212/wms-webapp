@@ -50,9 +50,12 @@ export function buildBatchV2(p: { prefix: string; yymmdd: string; machine: strin
   const seqStr = Number.isNaN(n) ? String(p.seq) : String(n).padStart(3, '0')
   return `${clean(p.prefix).toUpperCase()}${p.yymmdd}${clean(p.machine).toUpperCase()}${seqStr}`
 }
-// Chuỗi QR V2 khớp backend parseV2: MãHàng;QA;Mã lô;NSX;HSD (5 đoạn — app sinh KHÔNG có giờ SX của nhà máy)
-export function buildQRv2(p: { code: string; qaOk: boolean; batch: string; nsxDisplay: string; hsdDisplay: string }): string {
-  return [clean(p.code), p.qaOk ? '1' : '0', p.batch, p.nsxDisplay, p.hsdDisplay].join(';')
+// Chuỗi QR V2 in ra tem GIỮ NGUYÊN như nhà máy: MãHàng;QA;Mã lô;NSX;HSD;Giờ;Phút:Giây (7 đoạn).
+// QA + Giờ ĐỆM SPACE canh phải width 7 (giống tem thật "      1") — KHÔNG trim khi in; chỉ trim khi bóc tách/so khớp (normalizeQR).
+export function buildQRv2(p: { code: string; qaOk: boolean; batch: string; nsxDisplay: string; hsdDisplay: string; hour: number; minSec: string }): string {
+  const qa = (p.qaOk ? '1' : '0').padStart(7, ' ')
+  const hr = String(p.hour).padStart(7, ' ')
+  return [clean(p.code), qa, p.batch, p.nsxDisplay, p.hsdDisplay, hr, p.minSec].join(';')
 }
 
 // Bóc các trường hiển thị từ 1 mã pallet, đúng cả 2 format (khớp backend qrParser).

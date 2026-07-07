@@ -15,6 +15,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { isNccCategory } from '@/utils/cargoCategory'
 import { parseCodeFields } from '@/components/shared/palletLabel'
+import { normalizeQR } from '@/utils/qr'
 import {
   useWarehouses, useMaterials, useInventoryEntries, useInventoryFacets,
   useLogPalletPrints, usePalletPrints, useTransportCompanies, useSystemSettings, type PalletPrintRow,
@@ -77,9 +78,12 @@ function toYymmdd(iso: string): string {
 function buildBatchV2(p: { prefix: string; yymmdd: string; machine: string; seq: number }): string {
   return `${clean(p.prefix).toUpperCase()}${p.yymmdd}${clean(p.machine).toUpperCase()}${String(p.seq).padStart(3, '0')}`
 }
-// Chuỗi QR V2: MãHàng;QA;Mã lô;NSX;HSD (5 đoạn — app sinh không có giờ SX của nhà máy)
-function buildQRv2(p: { code: string; qaOk: boolean; batch: string; nsxDisplay: string; hsdDisplay: string }): string {
-  return [clean(p.code), p.qaOk ? '1' : '0', p.batch, p.nsxDisplay, p.hsdDisplay].join(';')
+// Chuỗi QR V2 in ra tem GIỮ NGUYÊN như nhà máy: MãHàng;QA;Mã lô;NSX;HSD;Giờ;Phút:Giây (7 đoạn).
+// QA + Giờ đệm space canh phải width 7 (giống "      1"); chỉ trim khi bóc tách/so khớp (normalizeQR).
+function buildQRv2(p: { code: string; qaOk: boolean; batch: string; nsxDisplay: string; hsdDisplay: string; hour: number; minSec: string }): string {
+  const qa = (p.qaOk ? '1' : '0').padStart(7, ' ')
+  const hr = String(p.hour).padStart(7, ' ')
+  return [clean(p.code), qa, p.batch, p.nsxDisplay, p.hsdDisplay, hr, p.minSec].join(';')
 }
 
 // ─── QR ảnh (dataURL — in ổn định) ────────────────────────────
@@ -271,6 +275,8 @@ export default function PalletLabels() {
   // ── Sinh tem V2 (tem `;`) — HSD tường minh + QA; mã lô = mã tắt mã hàng + ngày + Máy + STT ──
   const [hsdV2, setHsdV2]     = useState('')      // HSD (auto NSX + hạn dùng mã, sửa được)
   const [qaOkV2, setQaOkV2]   = useState(true)    // QA đạt (1) / X (0)
+  const [hourV2, setHourV2]   = useState('1')     // Giờ SX (đoạn 6) — chọn 1..10
+  const [minSecV2, setMinSecV2] = useState('00:00') // Phút:giây SX (đoạn 7) — bắt buộc có trên tem
   const [hsdEdited, setHsdEdited] = useState(false)  // user đã sửa tay HSD → ngừng auto-đè
   const batchPrefix = (mat?.batch_prefix ?? '').trim().toUpperCase()
 
@@ -324,12 +330,14 @@ export default function PalletLabels() {
       const nsxDisp = toDisplayDate(prodDate)
       const hsdDisp = toDisplayDate(hsdV2)
       const machineChar = clean(machine).toUpperCase().slice(0, 1)   // Máy = 1 ký tự trong mã lô
+      const hourNum = parseInt(hourV2, 10) || 1
+      const minSec = minSecV2.trim() || '00:00'
       for (let i = 0; i < n; i++) {
         const seq = start + i
         const batch = buildBatchV2({ prefix: batchPrefix, yymmdd, machine: machineChar, seq })
         out.push({
           key: `gen-${batch}`,
-          qr: buildQRv2({ code: mat.material_code, qaOk: qaOkV2, batch, nsxDisplay: nsxDisp, hsdDisplay: hsdDisp }),
+          qr: buildQRv2({ code: mat.material_code, qaOk: qaOkV2, batch, nsxDisplay: nsxDisp, hsdDisplay: hsdDisp, hour: hourNum, minSec }),
           dateDisplay: nsxDisp,
           materialCode: mat.material_code,
           materialId: mat.id,
@@ -372,7 +380,7 @@ export default function PalletLabels() {
       })
     }
     return out
-  }, [tab, mat, prodDate, cycle, seg4, seg4Name, nmsx, seqStart, count, qty, isV2Format, genReadyV2, hsdV2, qaOkV2, machine, batchPrefix])
+  }, [tab, mat, prodDate, cycle, seg4, seg4Name, nmsx, seqStart, count, qty, isV2Format, genReadyV2, hsdV2, qaOkV2, hourV2, minSecV2, machine, batchPrefix])
 
   // F1 — cảnh báo trùng: QR sắp sinh đã có pallet trong tồn kho? (tránh in QR trùng pallet đang tồn)
   const genPrefix = isV2Format
@@ -383,7 +391,8 @@ export default function PalletLabels() {
     tab === 'generate' && genPrefix.length >= 3,
   )
   const genExistingCodes = useMemo(() => new Set((genDupData?.entries ?? []).map(e => e.pallet_code)), [genDupData])
-  const genDupes = useMemo(() => genLabels.filter(l => genExistingCodes.has(l.qr)), [genLabels, genExistingCodes])
+  // l.qr tem V2 có đệm space → so bằng bản CHUẨN HÓA (trim) với pallet_code tồn kho (đã chuẩn hóa); V1 normalizeQR là no-op
+  const genDupes = useMemo(() => genLabels.filter(l => genExistingCodes.has(normalizeQR(l.qr))), [genLabels, genExistingCodes])
 
   function entryToLabel(e: any): LabelData {
     const pd: string | null = e.production_date ?? null
@@ -570,7 +579,8 @@ export default function PalletLabels() {
     logPrints.mutate({
       mode,
       labels: items.map(l => ({
-        qr_code: l.qr, material_code: l.materialCode, material_id: l.materialId ?? null,
+        // Log theo pallet_code CHUẨN HÓA (trim) để Truy cứu khớp tồn kho; QR in ra vẫn giữ đệm (l.qr). V1 no-op.
+        qr_code: normalizeQR(l.qr), material_code: l.materialCode, material_id: l.materialId ?? null,
         category: l.category, cycle: l.cycle, machine: l.machine, seq: l.seq, nmsx: l.nmsx,
         qty: l.qty === '' ? null : l.qty,
       })),
@@ -877,6 +887,21 @@ export default function PalletLabels() {
                 <Label className="text-xs">HSD <span className="text-red-500">*</span></Label>
                 <Input type="date" className="h-8 text-sm w-full" value={hsdV2} onChange={e => { setHsdV2(e.target.value); setHsdEdited(true) }} />
                 <p className="text-[10px] text-slate-400">Tự tính NSX + hạn dùng mã{mat?.shelf_life_days != null ? ` (${mat.shelf_life_days} ngày)` : ''} — sửa được.</p>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-xs">Giờ SX</Label>
+                  <Select value={hourV2} onValueChange={setHourV2}>
+                    <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {Array.from({ length: 10 }, (_, i) => String(i + 1)).map(h => <SelectItem key={h} value={h}>{h}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Phút:giây</Label>
+                  <Input className="h-8 text-sm" placeholder="05:26" value={minSecV2} onChange={e => setMinSecV2(e.target.value)} />
+                </div>
               </div>
               <div className="grid grid-cols-3 gap-2">
                 <div className="space-y-1">

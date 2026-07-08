@@ -7,6 +7,7 @@ import { computePctDate } from '../../utils/shelfLife'
 import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 import { scopeCategoriesOf } from '../../utils/categoryScope'
 import { normalizeQR } from '../../utils/qrParser'
+import { wrongFormatHint } from './systemSettingController'
 
 const ENTRY_SELECT = `
   id, pallet_code, location_id, warehouse_id, material_id, manufacturer_id, nmsx, cycle, machine_code,
@@ -923,7 +924,7 @@ export async function stocktakeCheck(req: Request, res: Response) {
     .maybeSingle()
 
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
-  if (!data) return fail(res, 404, 'NOT_FOUND', `Không tìm thấy pallet "${palletCode}" trong tồn kho`)
+  if (!data) return fail(res, 404, 'NOT_FOUND', (await wrongFormatHint(palletCode)) ?? `Không tìm thấy pallet "${palletCode}" trong tồn kho`)
   // Scope: không cho tra cứu pallet ngoài phạm vi kho của user
   if (!(await guardEntriesScope(req, res, [(data as unknown as { id: string }).id]))) return
   return ok(res, { entry: data, pallet_code: palletCode })

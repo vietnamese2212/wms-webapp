@@ -24,6 +24,18 @@ export async function getLabelFormat(): Promise<'underscore' | 'semicolon'> {
   return value
 }
 
+// Gợi ý lỗi cho các điểm quét MATCH-BASED (outbound/stocktake/pallet-ops): CHỈ gọi KHI đã không khớp
+// pallet nào → nếu tem quét sai delimiter so với cờ đơn vị thì đổi thông báo mơ hồ ("chưa nhập kho")
+// thành "tem sai định dạng đơn vị". KHÔNG chặn match hợp lệ (tồn format cũ vẫn xuất/kiểm được) — chỉ inbound gate cứng.
+export async function wrongFormatHint(raw: string): Promise<string | null> {
+  const expectV2 = (await getLabelFormat()) === 'semicolon'
+  const scannedV2 = (raw ?? '').includes(';')
+  if (scannedV2 === expectV2) return null
+  return expectV2
+    ? 'Tem không đúng định dạng đơn vị: đơn vị này dùng tem chấm phẩy ( ; ), tem vừa quét là tem gạch dưới ( _ ). Kiểm tra lại tem.'
+    : 'Tem không đúng định dạng đơn vị: đơn vị này dùng tem gạch dưới ( _ ), tem vừa quét là tem chấm phẩy ( ; ). Kiểm tra lại tem.'
+}
+
 // GET /wms/settings — auth-only (mọi user đăng nhập đọc được: trang in tem/quét cần biết cờ)
 export async function listSettings(_req: Request, res: Response) {
   const { data, error } = await supabase.from('SystemSetting').select('key, value, updated_by, updated_at')

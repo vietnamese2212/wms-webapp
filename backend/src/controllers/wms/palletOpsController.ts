@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { fetchAllRowsParallel } from '../../utils/pagination'
 import { normalizeQR } from '../../utils/qrParser'
+import { wrongFormatHint } from './systemSettingController'
 
 function ok(res: Response, data: unknown) { return res.json({ success: true, data }) }
 function fail(res: Response, message: string, status = 400) {
@@ -61,7 +62,7 @@ export async function mergePallets(req: Request, res: Response) {
     const tMatch = (tRows ?? []).filter((r: any) => matchWh(r, warehouse_id))
     if (tMatch.length > 1) return fail(res, `Mã "${target}" có ở nhiều kho — chọn Kho trước khi dồn`)
     const tgt = tMatch[0]
-    if (!tgt) return fail(res, `Không tìm thấy pallet đích "${target}" đang tồn ${warehouse_id ? 'trong kho đã chọn' : 'kho'}`, 404)
+    if (!tgt) return fail(res, (await wrongFormatHint(target)) ?? `Không tìm thấy pallet đích "${target}" đang tồn ${warehouse_id ? 'trong kho đã chọn' : 'kho'}`, 404)
     if (!guardEntryWh(req, res, ENTRY_WH(tgt as unknown as Parameters<typeof ENTRY_WH>[0]))) return
     if (tgt.parent_pallet_code) return fail(res, 'Pallet đích đang là pallet con của nhóm khác — chọn pallet đầu nhóm')
 
@@ -71,7 +72,7 @@ export async function mergePallets(req: Request, res: Response) {
     const kids = (kRows ?? []).filter((k: any) => matchWh(k, warehouse_id))
     const found = kids.map((k: any) => k.pallet_code)
     const missing = children.filter(c => !found.includes(c))
-    if (missing.length) return fail(res, `Pallet không tồn tại/đã xuất: ${missing.join(', ')}`)
+    if (missing.length) return fail(res, (await wrongFormatHint(missing[0])) ?? `Pallet không tồn tại/đã xuất: ${missing.join(', ')}`)
 
     const now = new Date().toISOString()
     // Lưu trạng thái cũ (parent + vị trí) để hoàn tác
@@ -142,7 +143,7 @@ export async function splitPallet(req: Request, res: Response) {
     const sMatch = (sRows ?? []).filter((r: any) => matchWh(r, warehouse_id))
     if (sMatch.length > 1) return fail(res, `Mã "${src}" có ở nhiều kho — chọn Kho trước khi tách`)
     const source = sMatch[0]
-    if (!source) return fail(res, `Không tìm thấy pallet gốc "${src}" đang tồn ${warehouse_id ? 'trong kho đã chọn' : 'kho'}`, 404)
+    if (!source) return fail(res, (await wrongFormatHint(src)) ?? `Không tìm thấy pallet gốc "${src}" đang tồn ${warehouse_id ? 'trong kho đã chọn' : 'kho'}`, 404)
     if (!guardEntryWh(req, res, ENTRY_WH(source as unknown as Parameters<typeof ENTRY_WH>[0]))) return
 
     const remaining = Number(source.cartons_remaining ?? 0)

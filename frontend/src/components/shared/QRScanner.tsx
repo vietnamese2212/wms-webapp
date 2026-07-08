@@ -95,9 +95,9 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
           busyRef.current = true
           try {
             const hits = await engine.detect(video)
-            const boxes = process(hits)
+            const boxes = process(hits)   // process() có thể set paused=true (vừa bắt được) — vẫn PHẢI vẽ khung của khung hình này
             const ov = overlayRef.current, wr = wrapRef.current
-            if (ov && wr && !pausedRef.current) drawBoxes(ov, video, wr, boxes)
+            if (ov && wr) drawBoxes(ov, video, wr, boxes)   // bắt hợp lệ → vẽ khung xanh rồi ĐÓNG BĂNG (idle-poll ở đầu loop không vẽ lại nên không xoá)
           } catch { /* khung lỗi lẻ (video chưa sẵn sàng) — bỏ qua */ }
           finally { busyRef.current = false }
         }

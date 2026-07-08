@@ -77,8 +77,9 @@ export async function createScanEngine(): Promise<ScanEngine> {
 
 const COLORS: Record<BoxKind, string> = { valid: '#22c55e', invalid: '#ef4444', pending: '#f59e0b' }
 
-// Vẽ khung QR lên overlay. Video dùng object-contain (hiện TRỌN khung) → map pixel video → element.
-export function drawBoxes(overlay: HTMLCanvasElement, video: HTMLVideoElement, wrap: HTMLElement, boxes: Box[]) {
+// Vẽ khung QR lên overlay. `fit` PHẢI khớp CSS object-fit của <video> để khung nằm đúng vị trí QR:
+//   'contain' (trang quét loạt) = hiện trọn khung · 'cover' (quét đơn) = lấp đầy border, cắt bớt mép.
+export function drawBoxes(overlay: HTMLCanvasElement, video: HTMLVideoElement, wrap: HTMLElement, boxes: Box[], fit: 'contain' | 'cover' = 'contain') {
   const rect = wrap.getBoundingClientRect()
   const dpr = window.devicePixelRatio || 1
   const W = Math.round(rect.width * dpr), H = Math.round(rect.height * dpr)
@@ -88,7 +89,7 @@ export function drawBoxes(overlay: HTMLCanvasElement, video: HTMLVideoElement, w
   ctx.clearRect(0, 0, W, H)
   const vw = video.videoWidth, vh = video.videoHeight
   if (!vw || !vh) return
-  const scale = Math.min(W / vw, H / vh)          // object-contain
+  const scale = fit === 'cover' ? Math.max(W / vw, H / vh) : Math.min(W / vw, H / vh)
   const offX = (W - vw * scale) / 2, offY = (H - vh * scale) / 2
   for (const b of boxes) {
     if (b.points.length < 4) continue

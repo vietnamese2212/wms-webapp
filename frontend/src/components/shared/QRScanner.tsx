@@ -97,7 +97,7 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
             const hits = await engine.detect(video)
             const boxes = process(hits)   // process() có thể set paused=true (vừa bắt được) — vẫn PHẢI vẽ khung của khung hình này
             const ov = overlayRef.current, wr = wrapRef.current
-            if (ov && wr) drawBoxes(ov, video, wr, boxes)   // bắt hợp lệ → vẽ khung xanh rồi ĐÓNG BĂNG (idle-poll ở đầu loop không vẽ lại nên không xoá)
+            if (ov && wr) drawBoxes(ov, video, wr, boxes, 'cover')   // 'cover' khớp video object-cover; bắt hợp lệ → vẽ khung xanh rồi ĐÓNG BĂNG
           } catch { /* khung lỗi lẻ (video chưa sẵn sàng) — bỏ qua */ }
           finally { busyRef.current = false }
         }
@@ -196,7 +196,7 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
         >
-          <video ref={videoRef} className="absolute inset-0 w-full h-full object-contain" playsInline muted />
+          <video ref={videoRef} className="absolute inset-0 w-full h-full object-cover" playsInline muted />
           <canvas ref={overlayRef} className="absolute inset-0 w-full h-full pointer-events-none" />
 
           {error && (

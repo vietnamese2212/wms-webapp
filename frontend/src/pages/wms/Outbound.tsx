@@ -1639,7 +1639,7 @@ function GDOFormBody({
         <div className="flex-1" />
         <Button variant="outline" size="sm" onClick={onClose} disabled={submitting}>Hủy</Button>
         <Button size="sm" disabled={submitting} onClick={onSubmit} className="min-w-[100px]">
-          {submitting ? 'Đang lưu…' : (mode === 'create' ? 'Tạo đơn xuất' : 'Lưu thay đổi')}
+          {submitting ? 'Đang lưu…' : (mode === 'create' ? 'Lưu' : 'Lưu thay đổi')}
         </Button>
         {quickAction}
       </div>

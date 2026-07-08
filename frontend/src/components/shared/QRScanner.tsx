@@ -42,15 +42,21 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
     const pinchStartDist = useRef<number | null>(null)
     const pinchStartZoom = useRef(1)
 
-    // resume(): xóa trạng thái xác nhận + chạy tiếp. Loop luôn tự lên lịch (idle 100ms khi pause) nên chỉ cần bật cờ.
+    // resume(): xóa trạng thái xác nhận + phát lại video (bỏ đóng băng) + chạy tiếp vòng quét.
     useImperativeHandle(ref, () => ({
-      resume: () => { pendingRef.current = null; pausedRef.current = false },
+      resume: () => {
+        pendingRef.current = null
+        pausedRef.current = false
+        videoRef.current?.play().catch(() => {})
+      },
     }))
 
-    // Nhận 1 mã → tạm dừng loop (parent gọi resume() cho lần kế). Không bíp (parent tự bíp).
+    // Nhận 1 mã → ĐÓNG BĂNG khung hình (video.pause) + tạm dừng loop (parent gọi resume() cho lần kế).
+    // Đóng băng để thấy rõ "đã lấy tem này" + đỡ tốn pin (camera chạy tiếp lúc này vô ích). Không bíp (parent tự bíp).
     function handoff(text: string) {
       if (pausedRef.current) return
       pausedRef.current = true
+      videoRef.current?.pause()
       onScan(text)
     }
 

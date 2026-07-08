@@ -10,8 +10,26 @@ import { ok, fail } from '../../utils/response'
 //   Chiều IN: quyết định format tem sinh. Chiều QUÉT inbound: cờ GATE format (getLabelFormat) —
 //   ';' chỉ nhận tem ';', '_' chỉ nhận tem '_' (mỗi đơn vị 1 format cố định; quét nhầm → chặn).
 
+// - delivery_confirmation: { enabled: boolean, modes: ('QR'|'QTY'|'NONE'|'OTHER')[] } — xác nhận giao hàng.
+//     enabled=false → xuất kho KHÔNG tạo booking TMS (Chuyển kho).
+//     enabled=true  → chỉ tạo booking cho HÌNH THỨC KHO NHẬN có trong modes (theo inventory_mode của kho khớp
+//       shipto; không khớp DB = 'OTHER'). QR/QTY = luồng nhận-quét như cũ; NONE/OTHER = tài xế TỰ HOÀN THÀNH.
+//     Mặc định (khi chưa cấu hình) = { enabled:true, modes:['QR','QTY'] } → giữ nguyên hành vi đơn vị 1.
+
+export const DC_MODES = ['QR', 'QTY', 'NONE', 'OTHER'] as const
+export type DeliveryConfirmation = { enabled: boolean; modes: string[] }
+export const DC_DEFAULT: DeliveryConfirmation = { enabled: true, modes: ['QR', 'QTY'] }
+
+function isDeliveryConfirmation(v: unknown): v is DeliveryConfirmation {
+  if (!v || typeof v !== 'object') return false
+  const o = v as Record<string, unknown>
+  if (typeof o.enabled !== 'boolean' || !Array.isArray(o.modes)) return false
+  return o.modes.every(m => typeof m === 'string' && (DC_MODES as readonly string[]).includes(m))
+}
+
 const KNOWN_SETTINGS: Record<string, { validate: (v: unknown) => boolean; hint: string }> = {
   label_format: { validate: v => v === 'underscore' || v === 'semicolon', hint: "'underscore' | 'semicolon'" },
+  delivery_confirmation: { validate: isDeliveryConfirmation, hint: "{ enabled: boolean, modes: ('QR'|'QTY'|'NONE'|'OTHER')[] }" },
 }
 
 // Cờ label_format có cache ngắn (điểm quét đọc mỗi lần → không query DB liên tục; cờ đổi rất hiếm).
@@ -21,6 +39,17 @@ export async function getLabelFormat(): Promise<'underscore' | 'semicolon'> {
   const { data } = await supabase.from('SystemSetting').select('value').eq('key', 'label_format').maybeSingle()
   const value = data?.value === 'semicolon' ? 'semicolon' : 'underscore'
   _labelFormatCache = { value, at: Date.now() }
+  return value
+}
+
+// Cờ xác nhận giao hàng — cache ngắn (điểm tạo booking đọc mỗi lần xuất). Mặc định = hành vi đơn vị 1.
+let _dcCache: { value: DeliveryConfirmation; at: number } | null = null
+export async function getDeliveryConfirmation(): Promise<DeliveryConfirmation> {
+  if (_dcCache && Date.now() - _dcCache.at < 30_000) return _dcCache.value
+  const { data } = await supabase.from('SystemSetting').select('value').eq('key', 'delivery_confirmation').maybeSingle()
+  const v = data?.value
+  const value: DeliveryConfirmation = isDeliveryConfirmation(v) ? v : DC_DEFAULT
+  _dcCache = { value, at: Date.now() }
   return value
 }
 
@@ -58,5 +87,6 @@ export async function updateSetting(req: Request, res: Response) {
     updated_at: new Date().toISOString(),
   }, { onConflict: 'key' }).select('key, value, updated_by, updated_at').single()
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  _labelFormatCache = null; _dcCache = null   // đổi cờ → xoá cache để có hiệu lực ngay (không đợi TTL 30s)
   return ok(res, data)
 }

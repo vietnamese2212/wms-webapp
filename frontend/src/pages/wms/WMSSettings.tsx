@@ -39,12 +39,42 @@ const LABEL_FORMAT_OPTS = [
   { value: 'semicolon',  label: 'Tem chấm phẩy ( ; )', sub: 'Mã hàng;QA;Mã lô;NSX;HSD;Giờ SX — vd 50033;1;TA260705A045;05/07/2026;05/03/2027;1;05:26' },
 ]
 
+// Cờ xác nhận giao hàng — quyết định xuất kho có tạo booking TMS (Chuyển kho) không + theo hình thức kho nhận nào.
+const DC_ENABLED_OPTS = [
+  { value: 'on',  label: 'Có xác nhận giao hàng' },
+  { value: 'off', label: 'Không có xác nhận giao hàng' },
+]
+const DC_MODE_OPTS = [
+  { value: 'QR',    label: 'Kho QR — tồn kho QR (nhận & quét như hiện tại)' },
+  { value: 'QTY',   label: 'Kho QTY — tồn số lượng (nhận & quét như hiện tại)' },
+  { value: 'NONE',  label: 'Kho NONE — không quản tồn (tài xế tự Hoàn thành)' },
+  { value: 'OTHER', label: 'Khác — khách không có trong DB (tài xế tự Hoàn thành)' },
+]
+type DeliveryConf = { enabled: boolean; modes: string[] }
+function parseDc(v: unknown): DeliveryConf {
+  if (v && typeof v === 'object' && !Array.isArray(v)) {
+    const o = v as { enabled?: unknown; modes?: unknown }
+    return {
+      enabled: o.enabled === true,
+      modes: Array.isArray(o.modes) ? o.modes.filter((m): m is string => typeof m === 'string') : [],
+    }
+  }
+  return { enabled: true, modes: ['QR', 'QTY'] }   // mặc định = hành vi đơn vị 1
+}
+
 function SystemTab({ canManage }: { canManage: boolean }) {
   const { data: settings = [], isLoading } = useSystemSettings()
   const { mutate: save, isPending } = useUpdateSystemSetting()
   const [err, setErr] = useState('')
   const row = settings.find(s => s.key === 'label_format')
   const current = typeof row?.value === 'string' ? row.value : 'underscore'
+
+  const dcRow = settings.find(s => s.key === 'delivery_confirmation')
+  const dc = parseDc(dcRow?.value)
+  const saveDc = (next: DeliveryConf) => {
+    setErr('')
+    save({ key: 'delivery_confirmation', value: next }, { onError: e => setErr(apiMsg(e)) })
+  }
 
   if (isLoading) return <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div>
   return (
@@ -70,6 +100,53 @@ function SystemTab({ canManage }: { canManage: boolean }) {
         />
         {row?.updated_by && (
           <p className="text-[10px] text-slate-400">Cập nhật bởi {row.updated_by} · {formatDateTime(row.updated_at)}</p>
+        )}
+      </div>
+
+      {/* Xác nhận giao hàng — xuất kho có tạo booking TMS (Chuyển kho) không + theo hình thức kho nhận nào */}
+      <div className="max-w-xl border border-slate-200 rounded-lg p-3 space-y-2">
+        <div>
+          <p className="text-sm font-medium text-slate-700">Xác nhận giao hàng (booking TMS khi xuất kho)</p>
+          <p className="text-[11px] text-slate-500">
+            "Không" → xuất kho không tạo booking Chuyển kho. "Có" → chỉ tạo booking cho hình thức kho nhận được chọn dưới đây.
+          </p>
+        </div>
+        <SingleSelect
+          options={DC_ENABLED_OPTS}
+          value={dc.enabled ? 'on' : 'off'}
+          onChange={v => saveDc({ enabled: v === 'on', modes: dc.modes })}
+          searchable={false}
+          disabled={!canManage || isPending}
+          triggerClassName="w-full"
+        />
+        {dc.enabled && (
+          <div className="space-y-1.5 pt-1">
+            <p className="text-[11px] font-medium text-slate-600">Hình thức kho nhận sẽ tạo booking:</p>
+            {DC_MODE_OPTS.map(opt => {
+              const checked = dc.modes.includes(opt.value)
+              return (
+                <label key={opt.value} className="flex items-start gap-2 text-xs text-slate-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-4 w-4 shrink-0 accent-sky-500"
+                    checked={checked}
+                    disabled={!canManage || isPending}
+                    onChange={() => saveDc({
+                      enabled: true,
+                      modes: checked ? dc.modes.filter(m => m !== opt.value) : [...dc.modes, opt.value],
+                    })}
+                  />
+                  <span>{opt.label}</span>
+                </label>
+              )
+            })}
+            {dc.modes.length === 0 && (
+              <p className="text-[11px] text-amber-600">Chưa chọn hình thức nào → xuất kho sẽ không tạo booking cho loại nào.</p>
+            )}
+          </div>
+        )}
+        {dcRow?.updated_by && (
+          <p className="text-[10px] text-slate-400">Cập nhật bởi {dcRow.updated_by} · {formatDateTime(dcRow.updated_at)}</p>
         )}
       </div>
     </div>

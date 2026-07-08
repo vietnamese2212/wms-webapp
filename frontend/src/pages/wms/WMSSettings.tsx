@@ -1,6 +1,6 @@
-import { useState, useEffect, type ReactNode } from 'react'
+import { useState, useEffect } from 'react'
 import type { AxiosError } from 'axios'
-import { Plus, Pencil, Trash2, Warehouse, Tag, Settings2, MapPin, X, Clock, ShieldCheck, GripVertical, SlidersHorizontal, Truck, Check } from 'lucide-react'
+import { Plus, Pencil, Trash2, Warehouse, Tag, Settings2, MapPin, X, Clock, ShieldCheck, GripVertical, SlidersHorizontal, Check } from 'lucide-react'
 import { formatDateTime } from '@/utils/formatters'
 import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
@@ -58,41 +58,25 @@ function parseDc(v: unknown): DeliveryConf {
   return { enabled: true, modes: ['QR', 'QTY'] }   // mặc định = hành vi đơn vị 1
 }
 
-// Thẻ chọn 1 lựa chọn (radio-card) — dùng cho định dạng tem + Có/Không xác nhận giao hàng.
-function OptionCard({ selected, disabled, title, sub, onClick }: {
-  selected: boolean; disabled?: boolean; title: string; sub?: string; onClick: () => void
+// Dòng lựa chọn full-width — radio (1-chọn) hoặc checkbox (nhiều-chọn). Mỗi option = 1 dòng.
+function OptionRow({ selected, disabled, checkbox, title, sub, onClick }: {
+  selected: boolean; disabled?: boolean; checkbox?: boolean; title: string; sub?: string; onClick: () => void
 }) {
   return (
     <button type="button" disabled={disabled} onClick={onClick}
-      className={`text-left rounded-lg border p-2.5 transition-colors ${
-        selected ? 'border-sky-500 bg-sky-50 ring-1 ring-sky-500' : 'border-slate-200 hover:border-slate-300 bg-white'
+      className={`w-full flex items-start gap-3 rounded-lg border p-3 text-left transition-colors ${
+        selected ? 'border-sky-500 bg-sky-50 ring-1 ring-sky-500' : 'border-slate-200 bg-white hover:border-slate-300'
       } ${disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}>
-      <div className="flex items-center gap-1.5">
-        <span className={`h-3.5 w-3.5 rounded-full border flex items-center justify-center shrink-0 ${selected ? 'border-sky-500 bg-sky-500' : 'border-slate-300'}`}>
-          {selected && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
-        </span>
-        <span className={`text-xs font-medium ${selected ? 'text-sky-800' : 'text-slate-700'}`}>{title}</span>
-      </div>
-      {sub && <p className="text-[10px] text-slate-500 mt-1 leading-snug break-words">{sub}</p>}
+      <span className={`mt-0.5 h-4 w-4 shrink-0 flex items-center justify-center border ${checkbox ? 'rounded' : 'rounded-full'} ${
+        selected ? 'border-sky-500 bg-sky-500 text-white' : 'border-slate-300 bg-white'
+      }`}>
+        {selected && (checkbox ? <Check className="h-3 w-3" strokeWidth={3} /> : <span className="h-1.5 w-1.5 rounded-full bg-white" />)}
+      </span>
+      <span className="min-w-0">
+        <span className={`text-sm font-medium ${selected ? 'text-sky-800' : 'text-slate-700'}`}>{title}</span>
+        {sub && <p className="text-[11px] text-slate-500 mt-0.5 break-words leading-snug">{sub}</p>}
+      </span>
     </button>
-  )
-}
-
-function SectionCard({ icon, title, desc, meta, children }: {
-  icon: ReactNode; title: string; desc?: string; meta?: ReactNode; children: ReactNode
-}) {
-  return (
-    <section className="border border-slate-200 rounded-xl bg-white overflow-hidden">
-      <div className="px-4 py-2.5 border-b border-slate-100 bg-slate-50 flex items-center gap-2">
-        <span className="text-sky-600 shrink-0">{icon}</span>
-        <h3 className="text-sm font-semibold text-slate-800">{title}</h3>
-        {meta && <span className="ml-auto text-[10px] text-slate-400 text-right">{meta}</span>}
-      </div>
-      <div className="p-4 space-y-3">
-        {desc && <p className="text-[11px] text-slate-500 leading-snug">{desc}</p>}
-        {children}
-      </div>
-    </section>
   )
 }
 
@@ -109,7 +93,6 @@ function SystemTab({ canManage }: { canManage: boolean }) {
   // Draft (nháp) — thay đổi được STAGE tại chỗ, chỉ bấm "Lưu thay đổi" mới áp dụng.
   const [draftLabel, setDraftLabel] = useState(srvLabel)
   const [draftDc,    setDraftDc]    = useState<DeliveryConf>(srvDc)
-  // Đồng bộ nháp khi giá trị server đổi (lần tải đầu / sau khi lưu / đổi từ nơi khác).
   const srvKey = JSON.stringify([srvLabel, srvDc])
   const [baseKey, setBaseKey] = useState(srvKey)
   useEffect(() => {
@@ -129,7 +112,7 @@ function SystemTab({ canManage }: { canManage: boolean }) {
       toast({ title: 'Đã lưu cấu hình hệ thống' })
     } catch (e) { setErr(apiMsg(e)) }
   }
-  function resetDraft() { setDraftLabel(srvLabel); setDraftDc(srvDc); setErr('') }
+  const resetDraft = () => { setDraftLabel(srvLabel); setDraftDc(srvDc); setErr('') }
   const toggleMode = (v: string) => setDraftDc(d => ({
     enabled: true, modes: d.modes.includes(v) ? d.modes.filter(m => m !== v) : [...d.modes, v],
   }))
@@ -137,65 +120,53 @@ function SystemTab({ canManage }: { canManage: boolean }) {
   if (isLoading) return <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div>
   return (
     <div className="flex-1 min-h-0 flex flex-col">
-      <div className="flex-1 min-h-0 overflow-auto">
-        <div className="max-w-2xl mx-auto p-4 space-y-4">
-          {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{err}</p>}
+      <div className="flex-1 min-h-0 overflow-auto p-4 space-y-6">
+        {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{err}</p>}
 
-          <SectionCard
-            icon={<Tag className="h-4 w-4" />}
-            title="Định dạng tem pallet"
-            desc="Chỉ áp cho chiều IN tem từ app. Chiều quét nhận theo định dạng của đơn vị."
-            meta={labelRow?.updated_by ? <>Cập nhật: {labelRow.updated_by}<br />{formatDateTime(labelRow.updated_at)}</> : undefined}
-          >
-            <div className="grid sm:grid-cols-2 gap-2">
-              {LABEL_FORMAT_OPTS.map(o => (
-                <OptionCard key={o.value} selected={draftLabel === o.value} disabled={!canManage}
-                  title={o.label} sub={o.sub} onClick={() => setDraftLabel(o.value)} />
+        {/* 1. Định dạng tem pallet */}
+        <div className="space-y-2">
+          <div className="flex items-baseline justify-between gap-2 flex-wrap">
+            <h3 className="text-sm font-semibold text-slate-800">1. Định dạng tem pallet</h3>
+            {labelRow?.updated_by && <span className="text-[10px] text-slate-400">Cập nhật: {labelRow.updated_by} · {formatDateTime(labelRow.updated_at)}</span>}
+          </div>
+          <p className="text-[11px] text-slate-500">Chỉ áp cho chiều IN tem từ app. Chiều quét nhận theo định dạng của đơn vị.</p>
+          <div className="space-y-2">
+            {LABEL_FORMAT_OPTS.map(o => (
+              <OptionRow key={o.value} selected={draftLabel === o.value} disabled={!canManage}
+                title={o.label} sub={o.sub} onClick={() => setDraftLabel(o.value)} />
+            ))}
+          </div>
+        </div>
+
+        <div className="border-t border-slate-200" />
+
+        {/* 2. Xác nhận giao hàng */}
+        <div className="space-y-2">
+          <div className="flex items-baseline justify-between gap-2 flex-wrap">
+            <h3 className="text-sm font-semibold text-slate-800">2. Xác nhận giao hàng</h3>
+            {dcRow?.updated_by && <span className="text-[10px] text-slate-400">Cập nhật: {dcRow.updated_by} · {formatDateTime(dcRow.updated_at)}</span>}
+          </div>
+          <p className="text-[11px] text-slate-500">Khi xuất kho: "Không" → không tạo booking Chuyển kho. "Có" → tạo booking theo hình thức kho nhận chọn dưới.</p>
+          <div className="space-y-2">
+            <OptionRow selected={draftDc.enabled} disabled={!canManage}
+              title="Có xác nhận giao hàng" sub="Xuất kho tạo booking TMS (Chuyển kho) theo hình thức kho nhận."
+              onClick={() => setDraftDc(d => ({ ...d, enabled: true }))} />
+            <OptionRow selected={!draftDc.enabled} disabled={!canManage}
+              title="Không xác nhận giao hàng" sub="Xuất kho KHÔNG tạo booking Chuyển kho."
+              onClick={() => setDraftDc(d => ({ ...d, enabled: false }))} />
+          </div>
+          {draftDc.enabled && (
+            <div className="space-y-2 pt-1">
+              <p className="text-[11px] font-medium text-slate-600">Hình thức kho nhận sẽ tạo booking:</p>
+              {DC_MODE_OPTS.map(opt => (
+                <OptionRow key={opt.value} checkbox selected={draftDc.modes.includes(opt.value)} disabled={!canManage}
+                  title={opt.label} onClick={() => toggleMode(opt.value)} />
               ))}
+              {draftDc.modes.length === 0 && (
+                <p className="text-[11px] text-amber-600">Chưa chọn hình thức nào → xuất kho sẽ không tạo booking cho loại nào.</p>
+              )}
             </div>
-          </SectionCard>
-
-          <SectionCard
-            icon={<Truck className="h-4 w-4" />}
-            title="Xác nhận giao hàng"
-            desc={'Khi xuất kho: "Không" → không tạo booking Chuyển kho. "Có" → tạo booking cho các hình thức kho nhận được chọn.'}
-            meta={dcRow?.updated_by ? <>Cập nhật: {dcRow.updated_by}<br />{formatDateTime(dcRow.updated_at)}</> : undefined}
-          >
-            <div className="grid sm:grid-cols-2 gap-2">
-              <OptionCard selected={draftDc.enabled} disabled={!canManage}
-                title="Có xác nhận giao hàng" sub="Xuất kho tạo booking TMS (Chuyển kho) theo hình thức kho nhận."
-                onClick={() => setDraftDc(d => ({ ...d, enabled: true }))} />
-              <OptionCard selected={!draftDc.enabled} disabled={!canManage}
-                title="Không xác nhận giao hàng" sub="Xuất kho KHÔNG tạo booking Chuyển kho."
-                onClick={() => setDraftDc(d => ({ ...d, enabled: false }))} />
-            </div>
-
-            {draftDc.enabled && (
-              <div className="rounded-lg border border-slate-200 divide-y divide-slate-100">
-                <p className="px-3 py-1.5 text-[11px] font-medium text-slate-600 bg-slate-50 rounded-t-lg">
-                  Hình thức kho nhận sẽ tạo booking
-                </p>
-                {DC_MODE_OPTS.map(opt => {
-                  const checked = draftDc.modes.includes(opt.value)
-                  return (
-                    <button key={opt.value} type="button" disabled={!canManage}
-                      onClick={() => toggleMode(opt.value)}
-                      className={`w-full flex items-start gap-2.5 px-3 py-2 text-left transition-colors ${!canManage ? 'cursor-not-allowed' : 'hover:bg-slate-50'}`}>
-                      <span className={`mt-0.5 h-4 w-4 rounded border flex items-center justify-center shrink-0 ${checked ? 'border-sky-500 bg-sky-500 text-white' : 'border-slate-300 bg-white'}`}>
-                        {checked && <Check className="h-3 w-3" strokeWidth={3} />}
-                      </span>
-                      <span className="text-xs text-slate-700 leading-snug">{opt.label}</span>
-                    </button>
-                  )
-                })}
-                {draftDc.modes.length === 0 && (
-                  <p className="px-3 py-2 text-[11px] text-amber-600 bg-amber-50 rounded-b-lg">
-                    Chưa chọn hình thức nào → xuất kho sẽ không tạo booking cho loại nào.
-                  </p>
-                )}
-              </div>
-            )}
-          </SectionCard>
+          )}
         </div>
       </div>
 

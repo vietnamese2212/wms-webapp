@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import type { AxiosError } from 'axios'
-import { Plus, Pencil, Trash2, Warehouse, Tag, Settings2, MapPin, X, Clock, ShieldCheck, GripVertical, SlidersHorizontal, Check } from 'lucide-react'
+import { Plus, Pencil, Trash2, Warehouse, Tag, Settings2, MapPin, X, Clock, ShieldCheck, GripVertical, SlidersHorizontal } from 'lucide-react'
 import { formatDateTime } from '@/utils/formatters'
 import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
@@ -14,6 +14,7 @@ import { FormSheet } from '@/components/shared/FormSheet'
 import { FilterBar, type FilterDef } from '@/components/shared/FilterBar'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { SingleSelect } from '@/components/shared/SingleSelect'
+import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import {
   useWarehouses, useCreateWarehouse, useUpdateWarehouse, useDeleteWarehouse,
   useWarehouseTypes, useAddWarehouseType, useUpdateWarehouseType, useDeleteWarehouseType, useReorderWarehouseTypes,
@@ -40,11 +41,15 @@ const LABEL_FORMAT_OPTS = [
 ]
 
 // Cờ xác nhận giao hàng — quyết định xuất kho có tạo booking TMS (Chuyển kho) không + theo hình thức kho nhận nào.
+const DC_ENABLED_OPTS = [
+  { value: 'on',  label: 'Có xác nhận giao hàng',    sub: 'tạo booking Chuyển kho' },
+  { value: 'off', label: 'Không xác nhận giao hàng', sub: 'không tạo booking' },
+]
 const DC_MODE_OPTS = [
-  { value: 'QR',    label: 'Kho QR — tồn kho QR (nhận & quét như hiện tại)' },
-  { value: 'QTY',   label: 'Kho QTY — tồn số lượng (nhận & quét như hiện tại)' },
-  { value: 'NONE',  label: 'Kho NONE — không quản tồn (tài xế tự Hoàn thành)' },
-  { value: 'OTHER', label: 'Khác — khách không có trong DB (tài xế tự Hoàn thành)' },
+  { value: 'QR',    label: 'Kho QR (tồn kho QR)' },
+  { value: 'QTY',   label: 'Kho QTY (tồn số lượng)' },
+  { value: 'NONE',  label: 'Kho NONE (tài xế tự hoàn thành)' },
+  { value: 'OTHER', label: 'Khách ngoài (tài xế tự hoàn thành)' },
 ]
 type DeliveryConf = { enabled: boolean; modes: string[] }
 function parseDc(v: unknown): DeliveryConf {
@@ -56,28 +61,6 @@ function parseDc(v: unknown): DeliveryConf {
     }
   }
   return { enabled: true, modes: ['QR', 'QTY'] }   // mặc định = hành vi đơn vị 1
-}
-
-// Dòng lựa chọn full-width — radio (1-chọn) hoặc checkbox (nhiều-chọn). Mỗi option = 1 dòng.
-function OptionRow({ selected, disabled, checkbox, title, sub, onClick }: {
-  selected: boolean; disabled?: boolean; checkbox?: boolean; title: string; sub?: string; onClick: () => void
-}) {
-  return (
-    <button type="button" disabled={disabled} onClick={onClick}
-      className={`w-full flex items-start gap-3 rounded-lg border p-3 text-left transition-colors ${
-        selected ? 'border-sky-500 bg-sky-50 ring-1 ring-sky-500' : 'border-slate-200 bg-white hover:border-slate-300'
-      } ${disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}>
-      <span className={`mt-0.5 h-4 w-4 shrink-0 flex items-center justify-center border ${checkbox ? 'rounded' : 'rounded-full'} ${
-        selected ? 'border-sky-500 bg-sky-500 text-white' : 'border-slate-300 bg-white'
-      }`}>
-        {selected && (checkbox ? <Check className="h-3 w-3" strokeWidth={3} /> : <span className="h-1.5 w-1.5 rounded-full bg-white" />)}
-      </span>
-      <span className="min-w-0">
-        <span className={`text-sm font-medium ${selected ? 'text-sky-800' : 'text-slate-700'}`}>{title}</span>
-        {sub && <p className="text-[11px] text-slate-500 mt-0.5 break-words leading-snug">{sub}</p>}
-      </span>
-    </button>
-  )
 }
 
 function SystemTab({ canManage }: { canManage: boolean }) {
@@ -113,60 +96,52 @@ function SystemTab({ canManage }: { canManage: boolean }) {
     } catch (e) { setErr(apiMsg(e)) }
   }
   const resetDraft = () => { setDraftLabel(srvLabel); setDraftDc(srvDc); setErr('') }
-  const toggleMode = (v: string) => setDraftDc(d => ({
-    enabled: true, modes: d.modes.includes(v) ? d.modes.filter(m => m !== v) : [...d.modes, v],
-  }))
+  const roClass = canManage ? '' : 'pointer-events-none opacity-60'   // non-manager: xem, không sửa
 
   if (isLoading) return <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div>
   return (
     <div className="flex-1 min-h-0 flex flex-col">
-      <div className="flex-1 min-h-0 overflow-auto p-4 space-y-6">
-        {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{err}</p>}
+      <div className="flex-1 min-h-0 overflow-auto p-4">
+        {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3">{err}</p>}
 
-        {/* 1. Định dạng tem pallet */}
-        <div className="space-y-2">
-          <div className="flex items-baseline justify-between gap-2 flex-wrap">
-            <h3 className="text-sm font-semibold text-slate-800">1. Định dạng tem pallet</h3>
-            {labelRow?.updated_by && <span className="text-[10px] text-slate-400">Cập nhật: {labelRow.updated_by} · {formatDateTime(labelRow.updated_at)}</span>}
+        <div className="divide-y divide-slate-100 border-y border-slate-100">
+          {/* 1. Định dạng tem pallet */}
+          <div className="flex items-start justify-between gap-4 py-3">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-slate-800">1. Định dạng tem pallet</p>
+              <p className="text-[11px] text-slate-500 mt-0.5">Chỉ áp cho chiều IN tem từ app. Chiều quét nhận theo định dạng của đơn vị.</p>
+              {labelRow?.updated_by && <p className="text-[10px] text-slate-400 mt-0.5">Cập nhật: {labelRow.updated_by} · {formatDateTime(labelRow.updated_at)}</p>}
+            </div>
+            <div className={`shrink-0 ${roClass}`}>
+              <SingleSelect options={LABEL_FORMAT_OPTS} value={draftLabel}
+                onChange={setDraftLabel} searchable={false} triggerClassName="w-56" />
+            </div>
           </div>
-          <p className="text-[11px] text-slate-500">Chỉ áp cho chiều IN tem từ app. Chiều quét nhận theo định dạng của đơn vị.</p>
-          <div className="space-y-2">
-            {LABEL_FORMAT_OPTS.map(o => (
-              <OptionRow key={o.value} selected={draftLabel === o.value} disabled={!canManage}
-                title={o.label} sub={o.sub} onClick={() => setDraftLabel(o.value)} />
-            ))}
-          </div>
-        </div>
 
-        <div className="border-t border-slate-200" />
-
-        {/* 2. Xác nhận giao hàng */}
-        <div className="space-y-2">
-          <div className="flex items-baseline justify-between gap-2 flex-wrap">
-            <h3 className="text-sm font-semibold text-slate-800">2. Xác nhận giao hàng</h3>
-            {dcRow?.updated_by && <span className="text-[10px] text-slate-400">Cập nhật: {dcRow.updated_by} · {formatDateTime(dcRow.updated_at)}</span>}
-          </div>
-          <p className="text-[11px] text-slate-500">Khi xuất kho: "Không" → không tạo booking Chuyển kho. "Có" → tạo booking theo hình thức kho nhận chọn dưới.</p>
-          <div className="space-y-2">
-            <OptionRow selected={draftDc.enabled} disabled={!canManage}
-              title="Có xác nhận giao hàng" sub="Xuất kho tạo booking TMS (Chuyển kho) theo hình thức kho nhận."
-              onClick={() => setDraftDc(d => ({ ...d, enabled: true }))} />
-            <OptionRow selected={!draftDc.enabled} disabled={!canManage}
-              title="Không xác nhận giao hàng" sub="Xuất kho KHÔNG tạo booking Chuyển kho."
-              onClick={() => setDraftDc(d => ({ ...d, enabled: false }))} />
-          </div>
-          {draftDc.enabled && (
-            <div className="space-y-2 pt-1">
-              <p className="text-[11px] font-medium text-slate-600">Hình thức kho nhận sẽ tạo booking:</p>
-              {DC_MODE_OPTS.map(opt => (
-                <OptionRow key={opt.value} checkbox selected={draftDc.modes.includes(opt.value)} disabled={!canManage}
-                  title={opt.label} onClick={() => toggleMode(opt.value)} />
-              ))}
-              {draftDc.modes.length === 0 && (
-                <p className="text-[11px] text-amber-600">Chưa chọn hình thức nào → xuất kho sẽ không tạo booking cho loại nào.</p>
+          {/* 2. Xác nhận giao hàng */}
+          <div className="flex items-start justify-between gap-4 py-3">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-slate-800">2. Xác nhận giao hàng</p>
+              <p className="text-[11px] text-slate-500 mt-0.5">Khi xuất kho: "Không" → không tạo booking Chuyển kho. "Có" → tạo booking theo hình thức kho nhận chọn bên.</p>
+              {dcRow?.updated_by && <p className="text-[10px] text-slate-400 mt-0.5">Cập nhật: {dcRow.updated_by} · {formatDateTime(dcRow.updated_at)}</p>}
+            </div>
+            <div className={`shrink-0 flex flex-col items-end gap-1.5 ${roClass}`}>
+              <SingleSelect options={DC_ENABLED_OPTS} value={draftDc.enabled ? 'on' : 'off'}
+                onChange={v => setDraftDc(d => ({ ...d, enabled: v === 'on' }))} searchable={false} triggerClassName="w-56" />
+              {draftDc.enabled && (
+                <>
+                  <MultiSelectFilter label="Hình thức kho nhận" options={DC_MODE_OPTS}
+                    selected={draftDc.modes} onChange={m => setDraftDc(() => ({ enabled: true, modes: m }))}
+                    searchable={false} width="w-56" />
+                  <p className="text-[10px] text-right max-w-[14rem] break-words">
+                    {draftDc.modes.length
+                      ? <span className="text-slate-500">Đã chọn: {draftDc.modes.join(', ')}</span>
+                      : <span className="text-amber-600">Chưa chọn → không tạo booking</span>}
+                  </p>
+                </>
               )}
             </div>
-          )}
+          </div>
         </div>
       </div>
 

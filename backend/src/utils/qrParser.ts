@@ -33,11 +33,11 @@ export interface ParsedQR {
   error?:             string
 }
 
-/** Chuẩn hóa chuỗi QR để lưu/tra cứu pallet_code: V2 trim từng đoạn (tem nhà máy đệm space), V1 chỉ trim 2 đầu. */
+/** Chuẩn hóa chuỗi QR để lưu/khớp pallet_code: CHỈ trim NGOÀI (bỏ whitespace/newline reader thêm).
+ *  GIỮ NGUYÊN đệm space bên trong (tem V2 "      1") → pallet_code lưu ĐÚNG như QR quét ra.
+ *  Trim từng đoạn CHỈ khi BÓC TÁCH field (parseV2 lấy mã hàng/QA/mã lô…), KHÔNG ở đây. */
 export function normalizeQR(raw: string): string {
-  const clean = (raw ?? '').trim()
-  if (!clean.includes(';')) return clean
-  return clean.split(';').map(p => p.trim()).join(';')
+  return (raw ?? '').trim()
 }
 
 /** Parse dd/mm/yyyy → Date UTC (validate lịch thật, chống roll-over kiểu 30/02). */
@@ -55,8 +55,8 @@ function parseDMY(s: string): Date | null {
 const V2_BATCH_RE = /^[A-Z0-9]{2}\d{6}([A-Z])(\d{3})(\.\d+)?$/i
 
 function parseV2(clean: string): ParsedQR {
-  const parts = clean.split(';').map(p => p.trim())
-  const pallet_code = parts.join(';')
+  const parts = clean.split(';').map(p => p.trim())   // trim từng đoạn CHỈ để bóc tách field (mã hàng/QA/mã lô…)
+  const pallet_code = clean                            // GIỮ nguyên đệm space — lưu đúng như QR quét ra
 
   const base: Omit<ParsedQR, 'is_valid' | 'error'> = {
     pallet_code,

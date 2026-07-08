@@ -538,7 +538,7 @@ export function useScanPallet() {
       const parts = isV2 ? [] : qr_code.split('_')
       const tempEntry = {
         id: `_temp_${Date.now()}`,
-        pallet_code: isV2 ? qr_code.trim().split(';').map(p => p.trim()).join(';') : qr_code,
+        pallet_code: qr_code.trim(),   // GIỮ đệm space (tem V2) — lưu đúng như quét, khớp pallet_code server
         location: previous?.location ?? { id: location_id, location_code: '…', sub_code: '' },
         material: previous?.material ?? { id: '', material_code: '', short_name: null },
         manufacturer: null,

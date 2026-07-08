@@ -3,11 +3,10 @@
 // V2 (đơn vị 2, `;`): Mã hàng;QA(1=OK,0=X);Mã lô;NSX dd/mm/yyyy;HSD dd/mm/yyyy;Giờ;Phút:Giây
 //   Tem nhà máy đệm SPACE từng đoạn → pallet_code = chuỗi chuẩn hóa (trim từng đoạn, nối `;`).
 
-/** Chuẩn hóa chuỗi QR như backend normalizeQR — dùng trước mọi so sánh/gửi pallet_code. */
+/** Chuẩn hóa chuỗi QR như backend normalizeQR — CHỈ trim NGOÀI, GIỮ đệm space bên trong (tem V2)
+ *  để pallet_code lưu/khớp ĐÚNG như QR quét ra. Trim từng đoạn CHỈ khi bóc tách field (materialCodeOf…). */
 export function normalizeQR(raw: string): string {
-  const clean = (raw ?? '').trim()
-  if (!clean.includes(';')) return clean
-  return clean.split(';').map(p => p.trim()).join(';')
+  return (raw ?? '').trim()
 }
 
 /** Lấy MÃ HÀNG từ mã pallet, đúng cả 2 format: V2 (`;`) = đoạn 0; V1 (`_`) = đoạn 1. */

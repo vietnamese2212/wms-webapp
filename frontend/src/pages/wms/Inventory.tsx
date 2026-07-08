@@ -1461,8 +1461,13 @@ function DetailPanel({ entry: e, onClose, warehouseMap, onQuickAction, onSplit }
         <Section title="Ngày / Hạn dùng">
           <Row label="Ngày SX"
             value={e.production_date ? formatTimestampDate(e.production_date, false) : '—'} />
-          <Row label="HSD (ngày)"
-            value={resolveShelfLife(e.shelf_life_days, e.material, e.ncc_id) > 0 ? `${resolveShelfLife(e.shelf_life_days, e.material, e.ncc_id)} ngày` : '—'} />
+          {/* Mã lô (tem V2 `;`) — chỉ hiện khi có; khớp kế toán */}
+          {e.batch && <Row label="Mã lô" value={e.batch} mono />}
+          {/* HSD: tem V2 mang HSD tường minh (expiry_date, hiện dạng NGÀY); tem V1 suy từ shelf-life (số ngày) */}
+          {e.expiry_date
+            ? <Row label="HSD" value={formatTimestampDate(e.expiry_date, false)} bold />
+            : <Row label="HSD (ngày)"
+                value={resolveShelfLife(e.shelf_life_days, e.material, e.ncc_id) > 0 ? `${resolveShelfLife(e.shelf_life_days, e.material, e.ncc_id)} ngày` : '—'} />}
           {e.ncc && (
             <Row label="NCC" value={e.ncc.name} />
           )}

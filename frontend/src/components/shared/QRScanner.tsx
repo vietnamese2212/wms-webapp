@@ -6,6 +6,9 @@ import { createScanEngine, drawBoxes, type Box, type ScanEngine, type ScanHit, t
 interface QRScannerProps {
   onScan: (value: string) => void
   onClose: () => void
+  // fill=true: camera lấp đầy chiều cao parent (dùng trong sheet quét 1-màn flex, không cuộn).
+  // fill=false (mặc định): khung aspect-4/3 độc lập (dialog/khối inline như Stocktake, SearchInput…).
+  fill?: boolean
 }
 
 export interface QRScannerHandle {
@@ -18,7 +21,7 @@ export interface QRScannerHandle {
 // Confirm-flow (Nhập): quét → onScan → parent hiện preview, gọi resume() cho lần kế. Instant-flow (Xuất): onScan → API.
 // KHÔNG phát bíp ở đây — parent tự bíp trong onScan (tránh bíp đôi).
 export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
-  function QRScanner({ onScan }, ref) {
+  function QRScanner({ onScan, fill }, ref) {
     const videoRef   = useRef<HTMLVideoElement>(null)
     const overlayRef = useRef<HTMLCanvasElement>(null)
     const wrapRef    = useRef<HTMLDivElement>(null)
@@ -188,10 +191,10 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
     }
 
     return (
-      <div className="flex flex-col gap-3">
+      <div className={fill ? 'flex flex-col h-full min-h-0' : 'flex flex-col gap-3'}>
         <div
           ref={wrapRef}
-          className="relative rounded-xl overflow-hidden border border-slate-200 bg-slate-900 h-[85vh] max-h-[85vh]"
+          className={`relative rounded-xl overflow-hidden border border-slate-200 bg-slate-900 ${fill ? 'flex-1 min-h-0' : 'aspect-[4/3]'}`}
           onTouchStart={handleTouchStart}
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}

@@ -144,8 +144,8 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
   return createPortal(
     <div className="fixed inset-0 z-[60] flex flex-col pointer-events-auto">
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
-      <div className="relative mt-auto bg-white rounded-t-2xl max-h-[90dvh] overflow-y-auto">
-        <div className="p-4 space-y-3">
+      <div className="relative mt-auto bg-white rounded-t-2xl h-[92dvh] flex flex-col overflow-hidden">
+        <div className="p-4 flex-1 flex flex-col gap-3 min-h-0">
           <div>
             <p className="font-semibold text-lg text-slate-800">{matName}</p>
             <p className="text-sm text-slate-500">
@@ -172,8 +172,8 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
             </div>
           )}
 
-          <div className="relative">
-            <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} />
+          <div className="relative flex-1 min-h-0">
+            <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill />
 
             {checking && (
               <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10

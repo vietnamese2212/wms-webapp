@@ -242,9 +242,9 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
       {/* Backdrop */}
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
 
-      {/* Bottom sheet */}
-      <div className="relative mt-auto bg-white rounded-t-2xl max-h-[90dvh] overflow-y-auto">
-        <div className="p-4 space-y-3">
+      {/* Bottom sheet — 1 màn không cuộn: chiều cao cố định, camera flex-1 lấp đầy phần còn lại */}
+      <div className="relative mt-auto bg-white rounded-t-2xl h-[92dvh] flex flex-col overflow-hidden">
+        <div className="p-4 flex-1 flex flex-col gap-3 min-h-0">
 
           {/* Subtitle: material + active location + "Đổi vị trí" button */}
           <div className="flex items-center justify-between gap-2">
@@ -369,9 +369,9 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
               </div>
             </div>
 
-          {/* Camera with floating buttons */}
-          <div className="relative">
-            <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} />
+          {/* Camera with floating buttons — flex-1 lấp đầy phần còn lại của sheet (không cuộn) */}
+          <div className="relative flex-1 min-h-0">
+            <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill />
 
             {/* "Quét tiếp": hiện ở MỌI lỗi — cả lỗi validate client lẫn lỗi API khi Lưu
                 (vd "Pallet đã được quét") — để quét pallet khác ngay, không phải Huỷ ra vào lại */}

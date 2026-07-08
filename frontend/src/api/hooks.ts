@@ -1555,10 +1555,22 @@ export function usePatchGDO() {
   })
 }
 
+// Vercel serverless chặn request body >4.5MB (trả 413 text thô, không phải JSON app) —
+// chặn sớm ở FE với ngưỡng 4MB (chừa overhead multipart). Lỗi ném theo shape AxiosError
+// để các chỗ render lỗi upload hiện đúng message mà không phải sửa handler.
+const UPLOAD_MAX_BYTES = 4 * 1024 * 1024
+export const UPLOAD_TOO_LARGE_MSG = 'File quá lớn (giới hạn 4MB) — hãy tách nhỏ file rồi upload từng phần.'
+function guardUploadSize(file: File) {
+  if (file.size <= UPLOAD_MAX_BYTES) return
+  const msg = `File ${(file.size / 1024 / 1024).toFixed(1)}MB vượt giới hạn 4MB — hãy tách nhỏ file rồi upload từng phần.`
+  throw Object.assign(new Error(msg), { response: { data: { error: { message: msg } } } })
+}
+
 export function useUploadGDOExcel() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ file, warehouse_id }: { file: File; warehouse_id?: string }) => {
+      guardUploadSize(file)
       const form = new FormData()
       form.append('file', file)
       if (warehouse_id) form.append('warehouse_id', warehouse_id)
@@ -1577,6 +1589,7 @@ export function useUploadMaterialsExcel() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ file }: { file: File }): Promise<UploadResult> => {
+      guardUploadSize(file)
       const form = new FormData()
       form.append('file', file)
       return apiClient.post('/masterdata/materials/upload', form, {
@@ -1595,6 +1608,7 @@ export function useUploadInventoryExcel() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ file }: { file: File }): Promise<UploadResult> => {
+      guardUploadSize(file)
       const form = new FormData()
       form.append('file', file)
       return apiClient.post('/wms/inventory/upload', form, {

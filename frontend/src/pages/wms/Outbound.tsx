@@ -14,7 +14,7 @@ import { Button } from '@/components/ui/button'
 import { Input }  from '@/components/ui/input'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { useGDOs, useUploadGDOExcel, useWarehouses, useCreateGDO, useUpdateGDO, useMaterials, useGDO, useAssignGDO, useVehicleTypes, useVehicleTypesByWarehouse, useTransportCompanies, useOutboundPalletLookup } from '@/api/hooks'
+import { useGDOs, useUploadGDOExcel, useWarehouses, useCreateGDO, useUpdateGDO, useMaterials, useGDO, useAssignGDO, useVehicleTypes, useVehicleTypesByWarehouse, useTransportCompanies, useOutboundPalletLookup, UPLOAD_TOO_LARGE_MSG } from '@/api/hooks'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -440,7 +440,8 @@ export default function Outbound() {
             }
             setUploadErr(lines.join('\n'))
           } else {
-            setUploadErr(data?.error?.message ?? 'Lỗi upload file')
+            // 413 = Vercel chặn body >4.5MB, trả text thô (không phải JSON app)
+            setUploadErr(data?.error?.message ?? (axErr?.response?.status === 413 ? UPLOAD_TOO_LARGE_MSG : 'Lỗi upload file'))
           }
         },
       }

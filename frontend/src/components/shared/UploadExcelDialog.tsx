@@ -3,7 +3,7 @@ import { Upload, Download, CheckCircle2, AlertTriangle, Info, Loader2 } from 'lu
 import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import type { UploadResult } from '@/api/hooks'
+import { UPLOAD_TOO_LARGE_MSG, type UploadResult } from '@/api/hooks'
 
 /**
  * Dialog upload Excel dùng chung (Mã hàng / Tồn kho): nút Tải mẫu + Chọn file + hiển thị kết quả.
@@ -32,7 +32,8 @@ export function UploadExcelDialog({ title, hint, onClose, onDownloadTemplate, on
       setResult(await onUpload(file))
     } catch (ex) {
       const ax = ex as AxiosError<{ error?: { message?: string } }>
-      setErr(ax?.response?.data?.error?.message ?? 'Lỗi upload file')
+      // 413 = Vercel chặn body >4.5MB, trả text thô (không phải JSON app)
+      setErr(ax?.response?.data?.error?.message ?? (ax?.response?.status === 413 ? UPLOAD_TOO_LARGE_MSG : 'Lỗi upload file'))
     } finally {
       setBusy(false)
     }

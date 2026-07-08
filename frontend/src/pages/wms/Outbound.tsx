@@ -1165,8 +1165,7 @@ function GDOFormBody({
   isPending: submitting,
   onSubmit,
   onClose,
-  quickSlot,
-  submitLabel,
+  quickAction,
 }: {
   gdo?: GDO | null
   mode: 'create' | 'edit'
@@ -1183,8 +1182,7 @@ function GDOFormBody({
   isPending: boolean
   onSubmit: () => void
   onClose: () => void
-  quickSlot?: React.ReactNode   // vùng "Xuất luôn" (checkbox + biển số) — chỉ form tạo
-  submitLabel?: string
+  quickAction?: React.ReactNode   // nút "Tạo & Xuất luôn" + ô biển số — đặt cạnh nút Tạo đơn xuất (chỉ form tạo)
 }) {
   const formUser = useAuthStore(s => s.user)
   const [pasteErr, setPasteErr] = useState('')
@@ -1638,12 +1636,12 @@ function GDOFormBody({
 
       {/* Footer */}
       <div className="border-t px-4 py-2.5 shrink-0 bg-slate-50/50 flex items-center gap-2">
-        {quickSlot}
         <div className="flex-1" />
         <Button variant="outline" size="sm" onClick={onClose} disabled={submitting}>Hủy</Button>
         <Button size="sm" disabled={submitting} onClick={onSubmit} className="min-w-[100px]">
-          {submitting ? 'Đang lưu…' : (submitLabel ?? (mode === 'create' ? 'Tạo đơn xuất' : 'Lưu thay đổi'))}
+          {submitting ? 'Đang lưu…' : (mode === 'create' ? 'Tạo đơn xuất' : 'Lưu thay đổi')}
         </Button>
+        {quickAction}
       </div>
     </>
   )
@@ -1686,17 +1684,17 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
   const modalUser = useAuthStore(s => s.user)
   const modalPerms = (modalUser?.module_permissions ?? null) as ModulePermissions | null
   const canQuick = can(modalPerms, 'outbound', 'quick_export')
-  const [quickExport, setQuickExport] = useState(false)
   const [quickPlate, setQuickPlate]   = useState('')
   const { data: allMatsForQuick = [] } = useMaterials(undefined, canQuick)
   const quickWhMode: string | null = (warehousesForCreate as any[]).find(w => w.id === warehouseId)?.inventory_mode ?? null
   const quickFilled = items.filter(i => i.material_code.trim())
+  // Đủ điều kiện "Tạo & Xuất luôn": có quyền + có mã + MỌI mã là hàng không tem (no-QR hoặc kho QTY)
   const quickEligible = canQuick && quickFilled.length > 0 && quickFilled.every(i => {
     const m = allMatsForQuick.find(m => m.material_code === i.material_code)
     return !!m && (m.no_qr_tracking === true || quickWhMode === 'QTY')
   })
 
-  function handleSubmit() {
+  function handleSubmit(quick = false) {
     if (!date)         return setError('Chọn ngày xuất')
     if (!deliveryCode.trim()) return setError('Nhập Số DO')
     if (!warehouseType) return setError('Chọn loại kho')
@@ -1713,8 +1711,8 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
     for (const item of filledItems) {
       if (!item.cartons || item.cartons <= 0) return setError(`Số thùng phải > 0 (${item.material_code})`)
     }
-    const isQuick = quickExport && quickEligible
-    if (isQuick && !quickPlate.trim()) return setError('Nhập biển số xe để Xuất luôn')
+    const isQuick = quick && quickEligible
+    if (isQuick && !quickPlate.trim()) return setError('Nhập biển số xe để Tạo & Xuất luôn')
     setError('')
     const payload = {
       delivery_date: date,
@@ -1752,33 +1750,24 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
         exportType={exportType} setExportType={setExportType}
         items={items} setItems={setItems}
         error={error} isPending={isPending || quickPending}
-        onSubmit={handleSubmit} onClose={onClose}
-        submitLabel={quickExport && quickEligible ? 'Tạo & Xuất luôn' : undefined}
-        quickSlot={canQuick ? (
-          <div className="flex items-center gap-2 min-w-0">
-            <label
-              className={`flex items-center gap-1.5 text-[11px] whitespace-nowrap ${quickEligible ? 'text-slate-700 cursor-pointer' : 'text-slate-400 cursor-not-allowed'}`}
-              title={quickEligible
-                ? 'Tạo đơn + ghi nhận số lượng + Hoàn thành + trừ tồn trong 1 bước'
-                : 'Chỉ dùng khi MỌI mã trong đơn là hàng không tem (mã no-QR hoặc kho QTY)'}
+        onSubmit={() => handleSubmit(false)} onClose={onClose}
+        quickAction={quickEligible ? (
+          <div className="flex items-center gap-2">
+            <Input
+              value={quickPlate}
+              onChange={e => setQuickPlate(e.target.value)}
+              placeholder="Biển số xe *"
+              className="h-9 w-32 text-xs"
+            />
+            <Button
+              size="sm"
+              disabled={isPending || quickPending}
+              onClick={() => handleSubmit(true)}
+              className="bg-green-600 hover:bg-green-700 min-w-[120px]"
+              title="Tạo đơn + ghi nhận số lượng + Hoàn thành + trừ tồn trong 1 bước (hàng không tem)"
             >
-              <input
-                type="checkbox"
-                checked={quickExport && quickEligible}
-                disabled={!quickEligible}
-                onChange={e => setQuickExport(e.target.checked)}
-                className="h-3.5 w-3.5 accent-blue-600"
-              />
-              Xuất luôn (trừ tồn ngay)
-            </label>
-            {quickExport && quickEligible && (
-              <Input
-                value={quickPlate}
-                onChange={e => setQuickPlate(e.target.value)}
-                placeholder="Biển số xe *"
-                className="h-7 w-36 text-[11px]"
-              />
-            )}
+              {quickPending ? 'Đang xuất…' : 'Tạo & Xuất luôn'}
+            </Button>
           </div>
         ) : undefined}
       />

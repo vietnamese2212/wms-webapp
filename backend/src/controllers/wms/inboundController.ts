@@ -2,12 +2,22 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
-import { parseInboundQR } from '../../utils/qrParser'
+import { parseInboundQR, type ParsedQR } from '../../utils/qrParser'
+import { getLabelFormat } from './systemSettingController'
 import { emitInboundChanged } from '../../lib/events'
 import { effectiveNoQr } from '../../lib/inventoryMode'
 import { effCartonsPerPallet } from '../../utils/palletCalc'
 import { fetchAllRowsParallel } from '../../utils/pagination'
 import { categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
+
+// Cờ đơn vị: label_format ';' (semicolon) CHỈ nhận tem ';'; '_' (underscore) CHỈ nhận tem '_'
+// (mỗi đơn vị 1 format cố định — quét nhầm tem đơn vị khác phải bị chặn).
+async function qrFormatMismatch(parsed: ParsedQR): Promise<string | null> {
+  const expected = (await getLabelFormat()) === 'semicolon' ? 'v2' : 'v1'
+  if (parsed.format === expected) return null
+  const name = (f: string) => (f === 'v2' ? 'chấm phẩy (;)' : 'gạch dưới (_)')
+  return `Tem định dạng ${name(parsed.format)} không khớp đơn vị (đang dùng ${name(expected)}). Kiểm tra lại tem.`
+}
 
 // Kho QTY → ép no-QR hiệu lực cho phiếu (mutate material.no_qr_tracking theo inventory_mode của kho)
 function applyInboundMode(
@@ -817,6 +827,8 @@ export async function checkScanQR(req: Request, res: Response) {
 
     const parsed = parseInboundQR(qr_code)
     if (!parsed.is_valid) return fail(res, 400, 'INVALID_QR', parsed.error ?? 'QR không hợp lệ')
+    const fmtErr = await qrFormatMismatch(parsed)
+    if (fmtErr) return fail(res, 422, 'QR_FORMAT_MISMATCH', fmtErr)
 
     const orderWarehouseId = (order as any).warehouse_id as string
     const isTransfer = (order as any).source_type === 'TRANSFER'
@@ -932,6 +944,8 @@ export async function scanQR(req: Request, res: Response) {
     // Parse QR
     const parsed = parseInboundQR(qr_code)
     if (!parsed.is_valid) return fail(res, 400, 'INVALID_QR', parsed.error ?? 'QR không hợp lệ')
+    const fmtErr = await qrFormatMismatch(parsed)
+    if (fmtErr) return fail(res, 422, 'QR_FORMAT_MISMATCH', fmtErr)
 
     // Parallel: material lookup + duplicate check + location lookup
     const [matResult, dupResult, locResult] = await Promise.all([

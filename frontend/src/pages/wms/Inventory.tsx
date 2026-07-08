@@ -1446,9 +1446,10 @@ function DetailPanel({ entry: e, onClose, warehouseMap, onQuickAction, onSplit }
   return (
     <div className="fixed inset-0 z-50 w-full border-l bg-white overflow-y-auto flex flex-col lg:static lg:inset-auto lg:z-auto lg:w-72 lg:shrink-0">
       {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b bg-slate-50 shrink-0">
-        <p className="text-xs font-semibold text-slate-700 font-mono truncate">{e.pallet_code}</p>
-        <button onClick={onClose} className="text-slate-400 hover:text-slate-700 ml-2">
+      <div className="flex items-start justify-between px-3 py-2 border-b bg-slate-50 shrink-0">
+        {/* Mã pallet V2 dài (có đệm space) → hiện ĐẦY ĐỦ, tự xuống dòng thay vì cắt */}
+        <p className="text-xs font-semibold text-slate-700 font-mono break-words [overflow-wrap:anywhere] min-w-0">{e.pallet_code}</p>
+        <button onClick={onClose} className="text-slate-400 hover:text-slate-700 ml-2 shrink-0">
           <X className="h-4 w-4" />
         </button>
       </div>

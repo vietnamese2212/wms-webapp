@@ -518,7 +518,8 @@ export default function InboundDetail() {
         <Dialog open onOpenChange={(v) => { if (!v) setConfirm(null) }}>
           <DialogContent className="sm:max-w-sm">
             <DialogHeader><DialogTitle>{confirm.title}</DialogTitle></DialogHeader>
-            <p className="text-sm text-slate-600 py-1">{confirm.msg}</p>
+            {/* break mọi ký tự để mã pallet V2 (dài, có đệm space) tự xuống dòng — không tràn/scroll ngang */}
+            <p className="text-sm text-slate-600 py-1 break-words [overflow-wrap:anywhere]">{confirm.msg}</p>
             <DialogFooter className="gap-2">
               <Button variant="outline" onClick={() => setConfirm(null)}>Không</Button>
               <Button

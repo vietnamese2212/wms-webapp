@@ -13,6 +13,16 @@ const KNOWN_SETTINGS: Record<string, { validate: (v: unknown) => boolean; hint: 
   label_format: { validate: v => v === 'underscore' || v === 'semicolon', hint: "'underscore' | 'semicolon'" },
 }
 
+// Cờ label_format có cache ngắn (điểm quét đọc mỗi lần → không query DB liên tục; cờ đổi rất hiếm).
+let _labelFormatCache: { value: 'underscore' | 'semicolon'; at: number } | null = null
+export async function getLabelFormat(): Promise<'underscore' | 'semicolon'> {
+  if (_labelFormatCache && Date.now() - _labelFormatCache.at < 30_000) return _labelFormatCache.value
+  const { data } = await supabase.from('SystemSetting').select('value').eq('key', 'label_format').maybeSingle()
+  const value = data?.value === 'semicolon' ? 'semicolon' : 'underscore'
+  _labelFormatCache = { value, at: Date.now() }
+  return value
+}
+
 // GET /wms/settings — auth-only (mọi user đăng nhập đọc được: trang in tem/quét cần biết cờ)
 export async function listSettings(_req: Request, res: Response) {
   const { data, error } = await supabase.from('SystemSetting').select('key, value, updated_by, updated_at')

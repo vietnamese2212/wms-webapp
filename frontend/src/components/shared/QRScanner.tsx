@@ -52,26 +52,26 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
     }
 
     // Xử lý kết quả 1 khung → khung màu + quyết định nhận. Tem hợp lệ: nhận NGAY. Mã lạ: phải thấy 2 lần (vàng→đỏ).
+    // Khi ĐÃ nhận (handoff) → chỉ trả ĐÚNG 1 khung của tem được lấy → đóng băng đúng vị trí đó (không vẽ tem khác).
     function process(hits: ScanHit[]): Box[] {
-      const boxes: Box[] = []
       const valid = hits.find(h => isValidTem(h.text))
       if (valid) {
         pendingRef.current = null
-        for (const h of hits) boxes.push({ points: h.points, kind: isValidTem(h.text) ? 'valid' : 'pending' })
         handoff(valid.text)
-        return boxes
+        return [{ points: valid.points, kind: 'valid' }]
       }
-      let confirmedInvalid: string | null = null
+      const boxes: Box[] = []
+      let taken: ScanHit | null = null
       for (const h of hits) {
         const pend = pendingRef.current
         const next = (pend && pend.text === h.text) ? { text: h.text, hits: pend.hits + 1 } : { text: h.text, hits: 1 }
         pendingRef.current = next
         const confirmed = next.hits >= 2
         boxes.push({ points: h.points, kind: confirmed ? 'invalid' : 'pending' })
-        if (confirmed && confirmedInvalid === null) confirmedInvalid = h.text
+        if (confirmed && !taken) taken = h
       }
-      if (confirmedInvalid !== null) handoff(confirmedInvalid)   // "vẫn nhận" — parent/API báo lỗi tem
-      return boxes
+      if (taken) { handoff(taken.text); return [{ points: taken.points, kind: 'invalid' }] }   // "vẫn nhận" — parent/API báo lỗi
+      return boxes   // chưa bắt: hiện vàng cho các mã đang xác nhận
     }
 
     // Chặn cuộn trang khi pinch-zoom
@@ -191,7 +191,7 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
       <div className="flex flex-col gap-3">
         <div
           ref={wrapRef}
-          className="relative rounded-xl overflow-hidden border border-slate-200 bg-slate-900 aspect-[4/3]"
+          className="relative rounded-xl overflow-hidden border border-slate-200 bg-slate-900 h-[85vh] max-h-[85vh]"
           onTouchStart={handleTouchStart}
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}

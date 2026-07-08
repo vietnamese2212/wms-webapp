@@ -458,6 +458,23 @@ async function buildDvvtResolver() {
 
 // ─── Create GDO manually ──────────────────────────────────────
 
+// Sinh group_code kế tiếp theo prefix + insert GDO — retry+jitter khi đụng unique index group_code
+// (nhiều người tạo đơn cùng kho/ngày ĐỒNG THỜI sẽ tính ra cùng số thứ tự; thua race thì tính lại số mới,
+// không nhả 500 "duplicate key" cho user). Dùng chung createGDO + quickExportGDO.
+async function insertGdoNextCode(prefix: string, row: Record<string, unknown>): Promise<{ group_code: string; error?: undefined } | { error: string; group_code?: undefined }> {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const { data: existing } = await supabase.from('GroupDeliveryOrder')
+      .select('group_code').ilike('group_code', `${prefix}%`)
+    const maxNum = Math.max(0, ...((existing ?? []) as { group_code: string }[]).map(r => parseInt(r.group_code.split('_').at(-1) ?? '') || 0))
+    const group_code = `${prefix}${String(maxNum + 1).padStart(2, '0')}`
+    const { error } = await supabase.from('GroupDeliveryOrder').insert({ ...row, group_code })
+    if (!error) return { group_code }
+    if (!/duplicate|unique/i.test(error.message)) return { error: error.message }
+    await new Promise(r => setTimeout(r, 15 + Math.floor(Math.random() * (40 + attempt * 30))))
+  }
+  return { error: 'Không sinh được số chuyến (nhiều người tạo đơn cùng lúc) — thử lại' }
+}
+
 export async function createGDO(req: Request, res: Response) {
   try {
     const { delivery_date, warehouse_id, dvvt, customer_name, delivery_code, export_type, warehouse_type, shipto_party, items } = req.body as {
@@ -474,29 +491,23 @@ export async function createGDO(req: Request, res: Response) {
     const dvvtRes = (await buildDvvtResolver())(dvvt)
     if (!dvvtRes.ok) return fail(res, `ĐVVT "${dvvt}" không khớp danh mục — kiểm tra lại mã/tên ĐVVT`, 400)
 
-    // Auto-generate group_code: warehouseCode_X_ddmmyy_stt
+    // Auto-generate group_code: warehouseCode_X_ddmmyy_stt (retry+jitter trong insertGdoNextCode)
     const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
     const [yr, mo, dy] = today.split('-')
     const ddmmyy = `${dy}${mo}${yr.slice(2)}`
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const whData = warehouse_id ? (await supabase.from('Warehouse').select('code').eq('id', warehouse_id).single()).data : null
-    const whCode = whData?.code ? String(whData.code) : 'XX'
+    const whCode = (whData as { code?: string } | null)?.code ? String((whData as { code: string }).code) : 'XX'
     const prefix = `${whCode}_X_${ddmmyy}_`
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: existing } = await supabase.from('GroupDeliveryOrder')
-      .select('group_code').ilike('group_code', `${prefix}%`)
-    const maxNum = Math.max(0, ...(existing ?? []).map((r: any) => parseInt(r.group_code.split('_').at(-1) ?? '') || 0))
-    const group_code = `${prefix}${String(maxNum + 1).padStart(2, '0')}`
 
     const gdoId = randomUUID()
     const actor = req.user?.name || null
-    const { error } = await supabase.from('GroupDeliveryOrder').insert({
-      id: gdoId, group_code, planned_date: delivery_date, delivery_date,
+    const ins = await insertGdoNextCode(prefix, {
+      id: gdoId, planned_date: delivery_date, delivery_date,
       warehouse_id: warehouse_id ?? null, dvvt: dvvtRes.name,
       warehouse_type: warehouse_type ?? null, shipto_party: shipto_party ?? null, status: 'PENDING',
       created_by: actor, updated_by: actor, updated_at: now(),
     })
-    if (error) return fail(res, error.message)
+    if (ins.error) return fail(res, ins.error)
 
     // Load material info (id + category → material_type)
     const allCodes = [...new Set(items.map(i => i.material_code))]
@@ -593,20 +604,16 @@ export async function quickExportGDO(req: Request, res: Response) {
         `Không đủ tồn: ${short.map(i => `${i.material_code} cần ${i.cartons_ordered}, còn ${poolMap.get(i.material_code)}`).join(' · ')}`)
     }
 
-    // Group code: warehouseCode_X_ddmmyy_stt (cùng quy tắc createGDO)
+    // Group code: warehouseCode_X_ddmmyy_stt (cùng quy tắc createGDO, retry+jitter chống đụng số khi tạo đồng thời)
     const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
     const [yr, mo, dy] = today.split('-')
     const prefix = `${String((wh as { code?: string }).code ?? 'XX')}_X_${dy}${mo}${yr.slice(2)}_`
-    const { data: existing } = await supabase.from('GroupDeliveryOrder')
-      .select('group_code').ilike('group_code', `${prefix}%`)
-    const maxNum = Math.max(0, ...((existing ?? []) as { group_code: string }[]).map(r => parseInt(r.group_code.split('_').at(-1) ?? '') || 0))
-    const group_code = `${prefix}${String(maxNum + 1).padStart(2, '0')}`
 
     const t = now()
     const gdoId = randomUUID()
     const actor = req.user?.name || null
-    const { error } = await supabase.from('GroupDeliveryOrder').insert({
-      id: gdoId, group_code, planned_date: delivery_date, delivery_date,
+    const ins = await insertGdoNextCode(prefix, {
+      id: gdoId, planned_date: delivery_date, delivery_date,
       warehouse_id, dvvt: dvvtRes.name,
       warehouse_type: warehouse_type ?? null, shipto_party: shipto_party ?? null,
       status: 'IN_PROGRESS',
@@ -614,7 +621,8 @@ export async function quickExportGDO(req: Request, res: Response) {
       started_at: t, license_plate: license_plate.trim(),
       created_by: actor, updated_by: actor, updated_at: t,
     })
-    if (error) return fail(res, error.message)
+    if (ins.error) return fail(res, ins.error)
+    const group_code = ins.group_code
 
     const doId = randomUUID()
     const { error: doErr } = await supabase.from('OutboundDelivery').insert({

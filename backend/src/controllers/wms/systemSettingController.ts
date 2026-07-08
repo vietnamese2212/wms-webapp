@@ -7,7 +7,8 @@ import { ok, fail } from '../../utils/response'
 // - label_format: 'underscore' | 'semicolon' — định dạng tem pallet khi IN từ app.
 //     underscore (mặc định, đơn vị 1): ddmmyy_Mã_ChuKỳ_Máy_Seq_NMSX
 //     semicolon  (đơn vị 2):           Mã hàng;QA;Mã lô;NSX;HSD;Giờ;Phút:Giây
-//   Chiều QUÉT không đọc cờ này — parser tự nhận theo delimiter (2 format sống chung).
+//   Chiều IN: quyết định format tem sinh. Chiều QUÉT inbound: cờ GATE format (getLabelFormat) —
+//   ';' chỉ nhận tem ';', '_' chỉ nhận tem '_' (mỗi đơn vị 1 format cố định; quét nhầm → chặn).
 
 const KNOWN_SETTINGS: Record<string, { validate: (v: unknown) => boolean; hint: string }> = {
   label_format: { validate: v => v === 'underscore' || v === 'semicolon', hint: "'underscore' | 'semicolon'" },

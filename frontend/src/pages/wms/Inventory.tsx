@@ -21,6 +21,7 @@ import {
   useBulkUpdateInventoryQA, useBulkTransferLocation, useBulkTransferMaterial,
   useBulkUpdateProductionDate, useBulkUpdateInventoryNcc, useTransportCompanies,
   useInventorySummary, type InventorySummaryGroup, fetchInventoryExport,
+  useSystemSettings,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
@@ -632,7 +633,21 @@ export default function Inventory() {
     setCheckedIds(new Set())
     setInventory({ page: 1 })
   }
-  const { widths: colW,  startResize,                  totalWidth                } = useColumnResize('inventory_col_widths',         INVENTORY_COL_DEFAULTS)
+  // Cờ định dạng tem của ĐƠN VỊ — ĐV tem `;` (semicolon) mới thêm cột Mã lô + HSD vào bảng Tồn kho.
+  const { data: sysSettings = [] } = useSystemSettings()
+  const isV2Format = (sysSettings.find(s => s.key === 'label_format')?.value as string) === 'semicolon'
+  const invCols = useMemo(() => {
+    if (!isV2Format) return INVENTORY_COLS
+    const out = [...INVENTORY_COLS]
+    const iPallet = out.findIndex(c => c.id === 'pallet')
+    if (iPallet >= 0) out.splice(iPallet + 1, 0, { id: 'batch', label: 'Mã lô', w: 120 })
+    const iDate = out.findIndex(c => c.id === 'date')
+    if (iDate >= 0) out.splice(iDate + 1, 0, { id: 'hsd', label: 'HSD', w: 76 })
+    return out
+  }, [isV2Format])
+  const invColDefaults = useMemo(() => invCols.map(c => c.w), [invCols])
+  // Key riêng theo format → mảng width không lệch số cột khi 2 layout khác nhau
+  const { widths: colW,  startResize,                  totalWidth                } = useColumnResize(isV2Format ? 'inventory_col_widths_v2' : 'inventory_col_widths', invColDefaults)
   const { widths: sColW, startResize: sStartResize, totalWidth: sTotalWidth } = useColumnResize('inventory_summary_col_widths', SUMMARY_COL_DEFAULTS)
 
   const { data: warehouses   = [] } = useWarehouses(true)
@@ -1014,7 +1029,7 @@ export default function Inventory() {
                   <colgroup>{colW.map((w, i) => <col key={i} style={{ width: w }} />)}</colgroup>
                   <TableHeader>
                     <TableRow className="bg-slate-50">
-                      {INVENTORY_COLS.map((c, i) => (
+                      {invCols.map((c, i) => (
                         <TableHead key={c.id}
                           className={`text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap sticky top-0 bg-slate-50 ${c.align === 'right' ? 'text-right' : ''} ${i === 0 ? 'left-0 z-30' : 'z-20'}`}>
                           {c.id === 'check'
@@ -1039,6 +1054,7 @@ export default function Inventory() {
                         onClick={() => setSelected(prev => prev?.id === e.id ? null : e)}
                         warehouseMap={warehouseMap}
                         dense={dense}
+                        isV2={isV2Format}
                       />
                     ))}
                   </TableBody>
@@ -1187,7 +1203,7 @@ export default function Inventory() {
 
 // ─── EntryRow ─────────────────────────────────────────────────
 
-function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick, warehouseMap, dense = true }: {
+function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick, warehouseMap, dense = true, isV2 = false }: {
   entry: InventoryEntry
   isSelected: boolean
   isChecked: boolean
@@ -1195,6 +1211,7 @@ function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick, warehouse
   onClick: () => void
   warehouseMap: Record<string, string>
   dense?: boolean
+  isV2?: boolean
 }) {
   const loc           = formatLoc(e.location)
   const matCode       = e.material?.material_code ?? '—'
@@ -1256,6 +1273,12 @@ function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick, warehouse
           )}
         </div>
       </TableCell>
+      {/* Mã lô (tem V2 `;`) — chỉ ĐV semicolon; khớp kế toán */}
+      {isV2 && (
+        <TableCell className="px-2 py-1 whitespace-nowrap">
+          <span className="text-[10px] font-mono font-semibold truncate block" title={e.batch ?? ''}>{e.batch ?? <span className="text-slate-300 font-sans font-normal">—</span>}</span>
+        </TableCell>
+      )}
       {/* NMSX (đoạn 6 QR pallet) */}
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px] font-mono font-semibold">{e.nmsx ?? <span className="text-slate-300 font-sans font-normal">—</span>}</span>
@@ -1288,6 +1311,12 @@ function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick, warehouse
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px] tabular-nums text-slate-600">{prodDateStr}</span>
       </TableCell>
+      {/* HSD (tem V2 `;`) — HSD tường minh dạng ngày; chỉ ĐV semicolon */}
+      {isV2 && (
+        <TableCell className="px-2 py-1 whitespace-nowrap">
+          <span className="text-[10px] tabular-nums text-slate-600">{e.expiry_date ? formatTimestampDate(e.expiry_date, true) : <span className="text-slate-300">—</span>}</span>
+        </TableCell>
+      )}
       {/* %Date: dòng đã đổi màu theo %date (entryRowText) → cột không tô riêng (tránh 2 thang màu chọi nhau) */}
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         {pct !== null ? (
